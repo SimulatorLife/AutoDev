@@ -22,8 +22,9 @@ test('scheduler routes prompt, agent, and target repository', async () => {
 
 test('generic prompt runner supports AutoDev and target prompt scopes', async () => {
   const source = await readWorkflow('run-prompt.yml');
+  const runner = await readWorkflow('_agent-open-pr-and-ping.yml');
   assert.match(source, /prompt_scope/);
-  assert.match(source, /prompt_path must be a repository-relative \.agents\/prompts\/\*\.md path/);
+  assert.match(runner, /prompt_path must be a repository-relative \.agents\/prompts\/\*\.md path/);
   assert.match(source, /repository: \$\{\{ inputs\.target_repository \}\}/);
   assert.match(source, /uses: \.\/\.github\/workflows\/_agent-open-pr-and-ping\.yml/);
   assert.match(source, /prompt_scope:/);

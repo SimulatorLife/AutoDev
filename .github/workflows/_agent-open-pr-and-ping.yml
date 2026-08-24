@@ -11,7 +11,18 @@ on:
         required: true
         type: string
       prompt:
-        required: true
+        required: false
+        default: ""
+        type: string
+      prompt_path:
+        description: "Optional .agents/prompts/*.md path to load."
+        required: false
+        default: ""
+        type: string
+      prompt_scope:
+        description: "Prompt source: autodev or target."
+        required: false
+        default: "target"
         type: string
       base_branch:
         required: false
@@ -86,7 +97,16 @@ jobs:
           fetch-depth: 1
 
       - name: Stage AutoDev policy for this run
-        run: cp .autodev/.github/workflows/weights.json "$RUNNER_TEMP/autodev-weights.json"
+        env:
+          PROMPT_PATH: ${{ inputs.prompt_path }}
+          PROMPT_SCOPE: ${{ inputs.prompt_scope }}
+        run: |
+          set -euo pipefail
+          cp .autodev/.github/workflows/weights.json "$RUNNER_TEMP/autodev-weights.json"
+          if [ -n "${PROMPT_PATH}" ] && [ "${PROMPT_SCOPE}" = "autodev" ]; then
+            case "${PROMPT_PATH}" in .agents/prompts/*.md) ;; *) echo "Invalid prompt_path" >&2; exit 1 ;; esac
+            cp ".autodev/${PROMPT_PATH}" "$RUNNER_TEMP/autodev-prompt.md"
+          fi
 
       - name: Checkout target repository (with your token so pushes are yours)
         uses: actions/checkout@v6
@@ -95,6 +115,27 @@ jobs:
           ref: ${{ inputs.base_branch }}
           fetch-depth: 0
           token: ${{ secrets.GH_USER_TOKEN }}
+
+      - name: Resolve prompt content
+        id: resolve_prompt
+        if: ${{ inputs.prompt_path != '' }}
+        shell: bash
+        env:
+          PROMPT_PATH: ${{ inputs.prompt_path }}
+          PROMPT_SCOPE: ${{ inputs.prompt_scope }}
+        run: |
+          set -euo pipefail
+          case "${PROMPT_PATH}" in
+            .agents/prompts/*.md) ;;
+            *) echo "prompt_path must be a repository-relative .agents/prompts/*.md path" >&2; exit 1 ;;
+          esac
+          case "${PROMPT_SCOPE}" in
+            autodev) prompt_file="$RUNNER_TEMP/autodev-prompt.md" ;;
+            target) prompt_file="${PROMPT_PATH}" ;;
+            *) echo "prompt_scope must be autodev or target" >&2; exit 1 ;;
+          esac
+          test -s "${prompt_file}" || { echo "Prompt not found or empty: ${PROMPT_PATH}" >&2; exit 1; }
+          { echo 'prompt<<AUTODEV_PROMPT'; cat "${prompt_file}"; echo; echo 'AUTODEV_PROMPT'; } >> "$GITHUB_OUTPUT"
 
       - name: Select agent (deterministic weighted)
         id: select_agent
@@ -292,7 +333,7 @@ jobs:
         uses: actions/github-script@v8
         env:
           PR_TITLE: ${{ inputs.pr_title }}
-          PROMPT: ${{ inputs.prompt }}
+          PROMPT: ${{ steps.resolve_prompt.outputs.prompt || inputs.prompt }}
           BASE_BRANCH: ${{ inputs.base_branch }}
           BRANCH_NAME: ${{ steps.select_agent.outputs.branch }}
           STANDARD_BODY: "Seed PR to request agent to implement a requested improvement."
@@ -337,7 +378,7 @@ jobs:
         uses: actions/github-script@v8
         env:
           BASE_BRANCH: ${{ inputs.base_branch }}
-          PROMPT: ${{ inputs.prompt }}
+          PROMPT: ${{ steps.resolve_prompt.outputs.prompt || inputs.prompt }}
           BRANCH_NAME: ${{ steps.select_agent.outputs.branch }}
           PR_NUMBER: ${{ fromJSON(steps.pr.outputs.result).number }}
           HEAD_SHA: ${{ fromJSON(steps.pr.outputs.result).head_sha }}
