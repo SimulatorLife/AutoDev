@@ -40,13 +40,61 @@ permissions:
   actions: write
 
 jobs:
-  run:
-    uses: ./.github/workflows/_prompt-runner.yml
+  resolve_prompt:
+    runs-on: ubuntu-latest
+    outputs:
+      prompt: ${{ steps.read_prompt.outputs.prompt }}
+    steps:
+      - name: Checkout AutoDev prompt catalog
+        if: ${{ inputs.prompt_scope == 'autodev' }}
+        uses: actions/checkout@v6
+        with:
+          path: .autodev
+          fetch-depth: 1
+
+      - name: Checkout target prompt catalog
+        if: ${{ inputs.prompt_scope == 'target' }}
+        uses: actions/checkout@v6
+        with:
+          repository: ${{ inputs.target_repository }}
+          token: ${{ secrets.GH_USER_TOKEN }}
+          path: target
+          fetch-depth: 1
+
+      - name: Read and validate prompt
+        id: read_prompt
+        shell: bash
+        env:
+          PROMPT_SCOPE: ${{ inputs.prompt_scope }}
+          PROMPT_PATH: ${{ inputs.prompt_path }}
+        run: |
+          set -euo pipefail
+          case "${PROMPT_SCOPE}" in
+            autodev) root=".autodev" ;;
+            target) root="target" ;;
+            *) echo "prompt_scope must be autodev or target" >&2; exit 1 ;;
+          esac
+          case "${PROMPT_PATH}" in
+            .agents/prompts/*.md) ;;
+            *) echo "prompt_path must be a repository-relative .agents/prompts/*.md path" >&2; exit 1 ;;
+          esac
+          prompt_file="${root}/${PROMPT_PATH}"
+          test -f "${prompt_file}" || { echo "Prompt not found: ${PROMPT_PATH}" >&2; exit 1; }
+          test -s "${prompt_file}" || { echo "Prompt is empty: ${PROMPT_PATH}" >&2; exit 1; }
+          {
+            echo 'prompt<<AUTODEV_PROMPT'
+            cat "${prompt_file}"
+            echo
+            echo 'AUTODEV_PROMPT'
+          } >> "$GITHUB_OUTPUT"
+
+  open_and_ping:
+    needs: resolve_prompt
+    uses: ./.github/workflows/_agent-open-pr-and-ping.yml
     secrets: inherit
     with:
       target_repository: ${{ inputs.target_repository }}
       base_branch: ${{ inputs.base_branch }}
-      prompt_scope: ${{ inputs.prompt_scope }}
-      prompt_path: ${{ inputs.prompt_path }}
-      prompt_title: ${{ inputs.prompt_title }}
       agent: ${{ inputs.agent }}
+      pr_title: ${{ inputs.prompt_title }}
+      prompt: ${{ needs.resolve_prompt.outputs.prompt }}
