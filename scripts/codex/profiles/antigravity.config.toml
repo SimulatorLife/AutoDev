@@ -1,0 +1,23 @@
+model = "gemini-3.6-flash-medium"
+model_provider = "antigravity_cli"
+model_reasoning_effort = "medium"
+model_reasoning_summary = "none"
+model_catalog_json = "./antigravity-model-catalog.json"
+
+[features]
+multi_agent = true
+enable_fanout = true
+
+[agents]
+default_subagent_model = "gemini-3.6-flash-medium"
+default_subagent_reasoning_effort = "medium"
+
+[model_providers.antigravity_cli]
+name = "Antigravity CLI subscription through local LiteLLM"
+base_url = "http://127.0.0.1:4001/v1"
+env_key = "LITELLM_API_KEY"
+wire_api = "responses"
+requires_openai_auth = false
+request_max_retries = 0
+stream_max_retries = 0
+stream_idle_timeout_ms = 300000

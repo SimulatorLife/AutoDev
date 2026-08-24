@@ -1,0 +1,10 @@
+{
+  "name": "@simulatorlife/autodev",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test tests/**/*.test.mjs",
+    "validate:weights": "node tests/weights.test.mjs",
+    "test:python": "python3 -m unittest discover -s tests -p 'test_*.py'"
+  }
+}

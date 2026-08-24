@@ -1,0 +1,259 @@
+# Versioned user-level Codex routing configuration for RacingGame.
+# install-codex-integration.sh links this file to ~/.codex/config.toml.
+model = "gpt-5.6-luna"
+model_provider = "local_model_router"
+openai_base_url = "http://127.0.0.1:4100/v1"
+model_verbosity = "low"
+approval_policy = "never"
+model_reasoning_effort = "high"
+personality = "pragmatic"
+sandbox_mode = "workspace-write"
+suppress_unstable_features_warning = true
+service_tier = "default"
+model_catalog_json = "./codex-model-catalog.json"
+approvals_reviewer = "user"
+notify = ["/Users/henrykirk/.codex/computer-use/Codex Computer Use.app/Contents/SharedSupport/SkyComputerUseClient.app/Contents/MacOS/SkyComputerUseClient", "turn-ended"]
+
+[features]
+shell_snapshot = true
+unified_exec = true
+steer = true
+enable_fanout = true
+multi_agent = true
+multi_agent_v2 = false
+js_repl = false
+memories = true
+
+[model_providers.claude_code_subscription]
+name = "Claude Code OAuth subscription bridge"
+base_url = "http://127.0.0.1:4000/v1"
+env_key = "LITELLM_API_KEY"
+wire_api = "responses"
+requires_openai_auth = false
+request_max_retries = 1
+stream_max_retries = 2
+stream_idle_timeout_ms = 300000
+
+[model_providers.local_model_router]
+name = "Local model-aware Codex Responses router"
+base_url = "http://127.0.0.1:4100/v1"
+wire_api = "responses"
+requires_openai_auth = false
+request_max_retries = 1
+stream_max_retries = 2
+stream_idle_timeout_ms = 300000
+
+[model_providers.minimax]
+name = "MiniMax"
+base_url = "http://127.0.0.1:18765/v1"
+env_key = "MINIMAX_API_KEY"
+wire_api = "responses"
+requires_openai_auth = false
+request_max_retries = 4
+stream_max_retries = 10
+stream_idle_timeout_ms = 300000
+
+[model_providers.antigravity_cli]
+name = "Antigravity CLI subscription through local LiteLLM"
+base_url = "http://127.0.0.1:4001/v1"
+env_key = "LITELLM_API_KEY"
+wire_api = "responses"
+requires_openai_auth = false
+request_max_retries = 1
+stream_max_retries = 2
+stream_idle_timeout_ms = 300000
+
+[agents]
+max_threads = 4
+max_depth = 1
+default_subagent_model = "gpt-5.6-luna"
+default_subagent_reasoning_effort = "medium"
+
+[agents.explorer]
+description = "Read-only codebase explorer."
+config_file = "./agents/explorer.toml"
+[agents.worker]
+description = "Bounded implementation worker."
+config_file = "./agents/worker.toml"
+[agents.validator]
+description = "Validation agent."
+config_file = "./agents/validator.toml"
+[agents.default]
+description = "General-purpose developer."
+config_file = "./agents/default.toml"
+[agents."docs-researcher"]
+description = "Targeted documentation researcher."
+config_file = "./agents/docs-researcher.toml"
+[agents."browser-tester"]
+description = "Read-only RacingGame browser tester."
+config_file = "./agents/browser-tester.toml"
+
+[[hooks.SessionStart]]
+matcher = ".*"
+
+[[hooks.SessionStart.hooks]]
+type = "command"
+command = "bash ~/.codex/hooks/ensure-codex-model-router.sh"
+prevent_idle_sleep = true
+
+[[hooks.SubagentStart]]
+matcher = ".*"
+
+[[hooks.SubagentStart.hooks]]
+type = "command"
+command = "bash ~/.codex/hooks/ensure-codex-claude-bridge.sh"
+prevent_idle_sleep = true
+
+[[hooks.SubagentStart]]
+matcher = ".*"
+
+[[hooks.SubagentStart.hooks]]
+type = "command"
+command = "bash ~/.codex/hooks/ensure-codex-minimax-proxy.sh"
+prevent_idle_sleep = true
+
+[[hooks.SubagentStart]]
+matcher = ".*"
+
+[[hooks.SubagentStart.hooks]]
+type = "command"
+command = "bash ~/.codex/hooks/ensure-codex-antigravity-proxy.sh"
+prevent_idle_sleep = true
+
+[[hooks.SubagentStart]]
+matcher = ".*"
+
+[[hooks.SubagentStart.hooks]]
+type = "command"
+command = "bash ~/.codex/hooks/log-subagent-model.sh"
+
+[[hooks.UserPromptSubmit]]
+[[hooks.UserPromptSubmit.hooks]]
+type = "command"
+command = "bash ~/.codex/hooks/enforce-root-delegation.sh"
+statusMessage = "Applying root delegation policy"
+
+[hooks.state]
+
+[hooks.state."/Users/henrykirk/.codex/config.toml:user_prompt_submit:0:0"]
+trusted_hash = "sha256:6786815a989df912ae44843dbacc06a88408cc04c6bb20b41a50997da8e4dfb1"
+
+[hooks.state."/Users/henrykirk/.codex/config.toml:subagent_start:0:0"]
+trusted_hash = "sha256:7337d9950f2d27d40a8b79af9903aa24eac5532333882ac40ac0e83e01a34525"
+
+[hooks.state."/Users/henrykirk/.codex/config.toml:subagent_start:1:0"]
+trusted_hash = "sha256:fb8fc3e8382b976741f0b49a7056ad392b5b3b7d618ba16a3da4797fd83fc3f9"
+
+[hooks.state."/Users/henrykirk/.codex/config.toml:subagent_start:2:0"]
+trusted_hash = "sha256:07139ded17bd6a0567b6131e2c98f2d570c5d5fca5888261a467d7d52470eb5b"
+
+[hooks.state."/Users/henrykirk/.codex/config.toml:subagent_start:3:0"]
+trusted_hash = "sha256:57b9f929a4985ea2251af3cc9a30f38baa23a800e294bcedf2bf49f4bb2c8c80"
+
+[hooks.state."/Users/henrykirk/Desktop/RacingGame/.codex/config.toml:pre_tool_use:0:0"]
+trusted_hash = "sha256:c7500657d0863c1e63181d61245e5872b0eb75ea886307f7c7c5876f433d60c9"
+enabled = true
+
+[hooks.state."/Users/henrykirk/.codex/config.toml:session_start:0:0"]
+trusted_hash = "sha256:73544f44bcd549b209b5f53b231741c87b856430ebf555eb7f7d69f92d13c36b"
+
+[analytics]
+enabled = false
+
+[feedback]
+enabled = false
+
+[plugins."github@openai-curated"]
+enabled = true
+[plugins."chrome@openai-bundled"]
+enabled = false
+[plugins."visualize@openai-bundled"]
+enabled = true
+[plugins."documents@openai-primary-runtime"]
+enabled = true
+[plugins."presentations@openai-primary-runtime"]
+enabled = true
+[plugins."template-creator@openai-primary-runtime"]
+enabled = true
+[plugins."browser@openai-bundled"]
+enabled = true
+[plugins."codex-app-tools@openai-bundled"]
+enabled = true
+
+[marketplaces.openai-bundled]
+source_type = "local"
+source = "/Users/henrykirk/.codex/.tmp/bundled-marketplaces/openai-bundled"
+[marketplaces.openai-primary-runtime]
+last_updated = "2026-08-20T14:22:07Z"
+source_type = "local"
+source = "/Users/henrykirk/.cache/codex-runtimes/codex-primary-runtime/plugins/openai-primary-runtime"
+
+[tui.model_availability_nux]
+"gpt-5.5" = 4
+"gpt-5.6-sol" = 4
+[notice.model_migrations]
+"gpt-5.3-codex" = "gpt-5.4"
+
+[projects."/Users/henrykirk/Desktop/RacingGame"]
+trust_level = "trusted"
+[projects."/Users/henrykirk"]
+trust_level = "trusted"
+[projects."/Users/henrykirk/GMLoop"]
+trust_level = "trusted"
+[projects."/Users/henrykirk/Desktop/CannonFatherSource"]
+trust_level = "trusted"
+
+[projects."/Users/henrykirk/.codex"]
+trust_level = "trusted"
+
+[projects."/Users/henrykirk/AutoDev"]
+trust_level = "trusted"
+
+[mcp_servers.playwright]
+enabled = true
+command = "npx"
+args = ["-y", "@playwright/mcp@latest"]
+
+[mcp_servers.node_repl]
+args = []
+command = "/Applications/ChatGPT.app/Contents/Resources/cua_node/bin/node_repl"
+startup_timeout_sec = 120
+[mcp_servers.node_repl.env]
+NODE_REPL_NATIVE_PIPE_CONNECT_TIMEOUT_MS = "1000"
+NODE_REPL_NODE_MODULE_DIRS = "/Applications/ChatGPT.app/Contents/Resources/cua_node/lib/node_modules"
+NODE_REPL_NODE_PATH = "/Applications/ChatGPT.app/Contents/Resources/cua_node/bin/node"
+NODE_REPL_TRUSTED_CODE_PATHS = "/Users/henrykirk/.codex:/Applications/ChatGPT.app/Contents/Resources/cua_node/lib/node_modules"
+CODEX_HOME = "/Users/henrykirk/.codex"
+BROWSER_USE_AVAILABLE_BACKENDS = "chrome,iab"
+BROWSER_USE_TINYSKY_ENABLED = "0"
+NODE_REPL_INSTRUCTIONS_USE_CASE_BROWSER = "Control the in-app browser in conjunction with the Browser Plugin."
+NODE_REPL_INSTRUCTIONS_USE_CASE_CHROME = "Control the Chrome browser in conjunction with the Chrome Plugin. Prefer this method of controlling Chrome over alternatives (such as Computer Use) unless the user explicitly mentions an alternative."
+NODE_REPL_INSTRUCTIONS_USE_CASE_COMPUTER_USE = "Control desktop apps on macOS through Computer Use."
+BROWSER_USE_CODEX_APP_BUILD_FLAVOR = "prod"
+BROWSER_USE_CODEX_APP_VERSION = "26.818.41509"
+NODE_REPL_TRUSTED_SERVICES = '{"browser":"/Users/henrykirk/.codex/plugins/cache/openai-bundled/browser/26.818.41509/scripts/browser-service.mjs","sky":"@oai/sky/service"}'
+CODEX_CLI_PATH = "/Applications/ChatGPT.app/Contents/Resources/codex"
+
+[mcp_servers.computer-use]
+command = "./Codex Computer Use.app/Contents/SharedSupport/SkyComputerUseClient.app/Contents/MacOS/SkyComputerUseClient"
+args = ["mcp"]
+cwd = "."
+enabled = false
+
+[desktop]
+sansFontSize = 15
+codeFontSize = 15
+usePointerCursors = true
+followUpQueueMode = "queue"
+composerEnterBehavior = "enter"
+preventSleepWhileRunning = true
+notifications-turn-mode = "off"
+notifications-permissions-enabled = false
+ambient-suggestions-enabled = true
+dock-icon-preference = "codex-system"
+enabled-reasoning-efforts = ["low", "medium", "high", "xhigh", "ultra", "max"]
+show-context-window-usage = true
+open-link-in-target-preference = "in-app-browser"
+
+[shell_environment_policy.set]
+NODE_OPTIONS = "--disable-warning=ExperimentalWarning"

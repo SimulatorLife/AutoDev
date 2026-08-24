@@ -1,0 +1,34 @@
+name: "Agent 15 - Parameter Flexibility"
+on:
+  workflow_dispatch:
+    inputs:
+      target_repository:
+        description: "Target SimulatorLife repository (owner/name)."
+        required: true
+        type: string
+      agent:
+        description: "Optional agent override."
+        required: false
+        default: ""
+        type: string
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
+jobs:
+  run:
+    uses: ./.github/workflows/_agent-open-pr-and-ping.yml
+    secrets: inherit
+    with:
+      target_repository: ${{ inputs.target_repository }}
+      agent: ${{ inputs.agent }}
+      pr_title: "Agent: Parameter Flexibility"
+      prompt: >
+        Search for hardcoded constants or magic numbers that should be configurable.
+        If there are enough to justify it, move them into a dedicated constants file.
+        Refactor at least one meaningful value into a configurable parameter and
+        integrate it cleanly with existing systems. The change must address a real
+        extensibility or tuning limitation while avoiding unnecessary abstraction or
+        added complexity.

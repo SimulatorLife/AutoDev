@@ -1,0 +1,34 @@
+name: "Agent 73 - Stringly Typed Flags"
+on:
+  workflow_dispatch:
+    inputs:
+      target_repository:
+        description: "Target SimulatorLife repository (owner/name)."
+        required: true
+        type: string
+      agent:
+        description: "Optional agent override."
+        required: false
+        default: ""
+        type: string
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
+jobs:
+  run:
+    uses: ./.github/workflows/_agent-open-pr-and-ping.yml
+    secrets: inherit
+    with:
+      target_repository: ${{ inputs.target_repository }}
+      agent: ${{ inputs.agent }}
+      pr_title: "Agent: Stringly Typed Flags"
+      prompt: >
+        Locate code that branches on raw string literals to determine behaviour.
+        Introduce a typed alternative (enum object, constant map, schema) that
+        centralises valid values, validates inputs, and updates call sites. Add
+        regression coverage showing that invalid strings now fail fast while
+        valid ones keep working. Limit the change to one representative flag or
+        option to keep the diff focused.

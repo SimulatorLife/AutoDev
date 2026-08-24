@@ -1,0 +1,25 @@
+model = "MiniMax-M3"
+model_provider = "minimax"
+model_context_window = 1000000
+model_auto_compact_token_limit = 600000
+model_reasoning_effort = "high"
+model_reasoning_summary = "none"
+model_catalog_json = "./minimax-model-catalog.json"
+
+[features]
+multi_agent = true
+enable_fanout = true
+
+[agents]
+default_subagent_model = "MiniMax-M3"
+default_subagent_reasoning_effort = "high"
+
+[model_providers.minimax]
+name = "MiniMax"
+base_url = "http://127.0.0.1:18765/v1"
+env_key = "MINIMAX_API_KEY"
+wire_api = "responses"
+requires_openai_auth = false
+request_max_retries = 2
+stream_max_retries = 3
+stream_idle_timeout_ms = 300000

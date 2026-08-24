@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.codex.model-router</string>
+
+  <!-- Model-aware Codex Responses router on 127.0.0.1:4100. This is the
+       parent transport for Codex Desktop (openai_base_url), so it must stay
+       up across app restarts, crashes, and sleep. KeepAlive owns that. -->
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>/Users/henrykirk/.codex/hooks/run-codex-model-router.sh</string>
+  </array>
+
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+
+  <key>ThrottleInterval</key>
+  <integer>5</integer>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>/Users/henrykirk/.nvm/versions/node/v25.0.0/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    <key>CODEX_HOME</key>
+    <string>/Users/henrykirk/.codex</string>
+  </dict>
+
+  <key>StandardOutPath</key>
+  <string>/Users/henrykirk/.codex/hooks/model-router.launchd.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/henrykirk/.codex/hooks/model-router.launchd.log</string>
+</dict>
+</plist>

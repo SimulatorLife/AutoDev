@@ -1,0 +1,34 @@
+{
+  "models": [
+    {
+      "slug": "gemini-3.6-flash-medium",
+      "display_name": "Antigravity Gemini Flash subscription",
+      "description": "Antigravity CLI subscription through the local Responses adapter.",
+      "default_reasoning_level": "medium",
+      "supported_reasoning_levels": [
+        { "effort": "low", "description": "Gemini low reasoning" },
+        { "effort": "medium", "description": "Gemini medium reasoning" },
+        { "effort": "high", "description": "Gemini high reasoning" }
+      ],
+      "shell_type": "shell_command",
+      "visibility": "list",
+      "supported_in_api": true,
+      "priority": 0,
+      "base_instructions": "You are a bounded external-provider Codex agent.",
+      "model_messages": {
+        "instructions_template": "You are a bounded external-provider Codex agent."
+      },
+      "context_window": 1000000,
+      "max_context_window": 1000000,
+      "supports_parallel_tool_calls": false,
+      "support_verbosity": true,
+      "supports_search_tool": false,
+      "tool_mode": "code_mode_only",
+      "truncation_policy": { "mode": "tokens", "limit": 10000 },
+      "experimental_supported_tools": [],
+      "use_responses_lite": false,
+      "multi_agent_version": "v1",
+      "input_modalities": ["text"]
+    }
+  ]
+}

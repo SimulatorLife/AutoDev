@@ -1,0 +1,34 @@
+{
+  "models": [
+    {
+      "slug": "sonnet",
+      "display_name": "Claude Sonnet subscription",
+      "description": "Claude Code OAuth subscription through the local bridge.",
+      "default_reasoning_level": "medium",
+      "supported_reasoning_levels": [
+        { "effort": "low", "description": "Claude low reasoning" },
+        { "effort": "medium", "description": "Claude medium reasoning" },
+        { "effort": "high", "description": "Claude high reasoning" }
+      ],
+      "shell_type": "shell_command",
+      "visibility": "list",
+      "supported_in_api": true,
+      "priority": 0,
+      "base_instructions": "You are a bounded external-provider Codex agent.",
+      "model_messages": {
+        "instructions_template": "You are a bounded external-provider Codex agent."
+      },
+      "context_window": 200000,
+      "max_context_window": 200000,
+      "supports_parallel_tool_calls": false,
+      "support_verbosity": true,
+      "supports_search_tool": false,
+      "tool_mode": "code_mode_only",
+      "truncation_policy": { "mode": "tokens", "limit": 10000 },
+      "experimental_supported_tools": [],
+      "use_responses_lite": false,
+      "multi_agent_version": "v1",
+      "input_modalities": ["text"]
+    }
+  ]
+}

@@ -1,0 +1,287 @@
+{
+  "models": [
+    {
+      "slug": "gpt-5.6-luna",
+      "display_name": "GPT-5.6 Luna",
+      "description": "OpenAI Codex model for orchestration and exploration.",
+      "base_instructions": "You are a bounded Codex agent.",
+      "model_messages": {
+        "instructions_template": "You are a bounded Codex agent."
+      },
+      "default_reasoning_level": "medium",
+      "supported_reasoning_levels": [
+        {
+          "effort": "low",
+          "description": "Low reasoning"
+        },
+        {
+          "effort": "medium",
+          "description": "Balanced reasoning"
+        },
+        {
+          "effort": "high",
+          "description": "High reasoning"
+        },
+        {
+          "effort": "xhigh",
+          "description": "Extra-high reasoning"
+        },
+        {
+          "effort": "max",
+          "description": "Maximum reasoning"
+        }
+      ],
+      "shell_type": "shell_command",
+      "visibility": "list",
+      "supported_in_api": true,
+      "priority": 0,
+      "context_window": 1000000,
+      "max_context_window": 1000000,
+      "supports_parallel_tool_calls": true,
+      "supports_reasoning_summaries": true,
+      "support_verbosity": true,
+      "supports_search_tool": true,
+      "tool_mode": "code_mode_only",
+      "truncation_policy": {
+        "mode": "tokens",
+        "limit": 10000
+      },
+      "experimental_supported_tools": [],
+      "use_responses_lite": true,
+      "multi_agent_version": "v1",
+      "input_modalities": [
+        "text",
+        "image"
+      ]
+    },
+    {
+      "slug": "gpt-5.6-terra",
+      "display_name": "GPT-5.6 Terra",
+      "description": "OpenAI Codex model for implementation work.",
+      "base_instructions": "You are a bounded Codex agent.",
+      "model_messages": {
+        "instructions_template": "You are a bounded Codex agent."
+      },
+      "default_reasoning_level": "medium",
+      "supported_reasoning_levels": [
+        {
+          "effort": "low",
+          "description": "Low reasoning"
+        },
+        {
+          "effort": "medium",
+          "description": "Balanced reasoning"
+        },
+        {
+          "effort": "high",
+          "description": "High reasoning"
+        },
+        {
+          "effort": "xhigh",
+          "description": "Extra-high reasoning"
+        },
+        {
+          "effort": "max",
+          "description": "Maximum reasoning"
+        }
+      ],
+      "shell_type": "shell_command",
+      "visibility": "list",
+      "supported_in_api": true,
+      "priority": 0,
+      "context_window": 1000000,
+      "max_context_window": 1000000,
+      "supports_parallel_tool_calls": true,
+      "supports_reasoning_summaries": true,
+      "support_verbosity": true,
+      "supports_search_tool": true,
+      "tool_mode": "code_mode_only",
+      "truncation_policy": {
+        "mode": "tokens",
+        "limit": 10000
+      },
+      "experimental_supported_tools": [],
+      "use_responses_lite": true,
+      "multi_agent_version": "v1",
+      "input_modalities": [
+        "text",
+        "image"
+      ]
+    },
+    {
+      "slug": "gpt-5.6-luna",
+      "display_name": "GPT-5.6 Luna",
+      "description": "OpenAI Codex model for targeted research.",
+      "base_instructions": "You are a bounded Codex agent.",
+      "model_messages": {
+        "instructions_template": "You are a bounded Codex agent."
+      },
+      "default_reasoning_level": "medium",
+      "supported_reasoning_levels": [
+        {
+          "effort": "low",
+          "description": "Low reasoning"
+        },
+        {
+          "effort": "medium",
+          "description": "Balanced reasoning"
+        },
+        {
+          "effort": "high",
+          "description": "High reasoning"
+        }
+      ],
+      "shell_type": "shell_command",
+      "visibility": "list",
+      "supported_in_api": true,
+      "priority": 0,
+      "context_window": 400000,
+      "max_context_window": 400000,
+      "supports_parallel_tool_calls": true,
+      "supports_reasoning_summaries": true,
+      "support_verbosity": true,
+      "supports_search_tool": true,
+      "tool_mode": "code_mode_only",
+      "truncation_policy": {
+        "mode": "tokens",
+        "limit": 10000
+      },
+      "experimental_supported_tools": [],
+      "use_responses_lite": true,
+      "multi_agent_version": "v1",
+      "input_modalities": [
+        "text",
+        "image"
+      ]
+    },
+    {
+      "slug": "sonnet",
+      "display_name": "Claude Sonnet subscription",
+      "description": "Claude Code OAuth subscription through the local bridge.",
+      "default_reasoning_level": "medium",
+      "base_instructions": "You are a bounded external-provider Codex agent.",
+      "model_messages": {
+        "instructions_template": "You are a bounded external-provider Codex agent."
+      },
+      "supported_reasoning_levels": [
+        {
+          "effort": "low",
+          "description": "Low reasoning"
+        },
+        {
+          "effort": "medium",
+          "description": "Balanced reasoning"
+        },
+        {
+          "effort": "high",
+          "description": "High reasoning"
+        }
+      ],
+      "shell_type": "shell_command",
+      "visibility": "list",
+      "supported_in_api": true,
+      "priority": 0,
+      "context_window": 200000,
+      "max_context_window": 200000,
+      "supports_parallel_tool_calls": false,
+      "support_verbosity": true,
+      "supports_search_tool": false,
+      "tool_mode": "code_mode_only",
+      "truncation_policy": {
+        "mode": "tokens",
+        "limit": 10000
+      },
+      "experimental_supported_tools": [],
+      "use_responses_lite": false,
+      "multi_agent_version": "v1",
+      "input_modalities": [
+        "text"
+      ]
+    },
+    {
+      "slug": "MiniMax-M3",
+      "display_name": "MiniMax-M3",
+      "description": "MiniMax model through the local Responses proxy.",
+      "default_reasoning_level": "high",
+      "base_instructions": "You are a bounded external-provider Codex agent.",
+      "model_messages": {
+        "instructions_template": "You are a bounded external-provider Codex agent."
+      },
+      "supported_reasoning_levels": [
+        {
+          "effort": "none",
+          "description": "Think-off"
+        },
+        {
+          "effort": "high",
+          "description": "Deep reasoning"
+        }
+      ],
+      "shell_type": "shell_command",
+      "visibility": "list",
+      "supported_in_api": true,
+      "priority": 0,
+      "context_window": 1000000,
+      "max_context_window": 1000000,
+      "supports_parallel_tool_calls": true,
+      "supports_reasoning_summaries": true,
+      "support_verbosity": true,
+      "supports_search_tool": false,
+      "tool_mode": "code_mode_only",
+      "truncation_policy": {
+        "mode": "bytes",
+        "limit": 10000
+      },
+      "experimental_supported_tools": [],
+      "use_responses_lite": false,
+      "multi_agent_version": "v1",
+      "input_modalities": [
+        "text"
+      ]
+    },
+    {
+      "slug": "gemini-3.6-flash-medium",
+      "display_name": "Antigravity Gemini Flash subscription",
+      "description": "Antigravity CLI Gemini subscription through the local Responses adapter.",
+      "default_reasoning_level": "medium",
+      "base_instructions": "You are a bounded external-provider Codex agent.",
+      "model_messages": {
+        "instructions_template": "You are a bounded external-provider Codex agent."
+      },
+      "supported_reasoning_levels": [
+        {
+          "effort": "low",
+          "description": "Low reasoning"
+        },
+        {
+          "effort": "medium",
+          "description": "Balanced reasoning"
+        },
+        {
+          "effort": "high",
+          "description": "High reasoning"
+        }
+      ],
+      "shell_type": "shell_command",
+      "visibility": "list",
+      "supported_in_api": true,
+      "priority": 0,
+      "context_window": 1000000,
+      "max_context_window": 1000000,
+      "supports_parallel_tool_calls": false,
+      "support_verbosity": true,
+      "supports_search_tool": false,
+      "tool_mode": "code_mode_only",
+      "truncation_policy": {
+        "mode": "tokens",
+        "limit": 10000
+      },
+      "experimental_supported_tools": [],
+      "use_responses_lite": false,
+      "multi_agent_version": "v1",
+      "input_modalities": [
+        "text"
+      ]
+    }
+  ]
+}
