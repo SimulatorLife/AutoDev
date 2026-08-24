@@ -7,6 +7,11 @@ on:
         description: "Target SimulatorLife repository (owner/name)."
         required: true
         type: string
+      base_branch:
+        description: "Target base branch."
+        required: false
+        default: "main"
+        type: string
       custom_feature_prompt:
         description: "Describe the custom feature you want Agent to implement"
         required: true
@@ -28,6 +33,7 @@ jobs:
     secrets: inherit
     with:
       target_repository: ${{ inputs.target_repository }}
+      base_branch: ${{ inputs.base_branch }}
       agent: ${{ inputs.agent }}
       pr_title: "Agent: Implement custom feature"
       prompt: >

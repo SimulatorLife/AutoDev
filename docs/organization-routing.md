@@ -6,18 +6,18 @@ The policy file has four routing concerns:
 
 - `agents`: scheduled agent eligibility, cadence, and weight.
 - `agentPools.followUps`: weighted fallback routing for PR follow-up work.
-- `workflows`: scheduled workflow weights and task metadata.
+- `prompts`: scheduled generic prompt weights and task metadata.
 - `repositories`: target repositories in `owner/name` form and their scheduled-PR weights.
 
-Repository names must be unique and must not contain whitespace. Repository weights, like workflow and agent weights, are finite numbers; values less than or equal to zero disable selection. The scheduler rejects malformed names, duplicate records, invalid categories, invalid complexity, and non-finite weights before dispatching anything.
+Repository names must be unique and must not contain whitespace. Repository weights, like prompt and agent weights, are finite numbers; values less than or equal to zero disable selection. The scheduler rejects malformed names, duplicate records, invalid categories, invalid complexity, and non-finite weights before dispatching anything.
 
 A scheduled candidate has effective weight:
 
 ```text
-repository.weight × workflow.weight × agent.weight
+repository.weight × prompt.weight × agent.weight
 ```
 
-Agent cadence and category/complexity eligibility are applied before the weighted cycle is built. Selection is deterministic for a given scheduler run number, which makes routing auditable and testable.
+Agent cadence and category/complexity eligibility are applied before the weighted cycle is built. Scheduled prompts are repository-agnostic and live in AutoDev; repository-specific prompts are selected manually through `run-prompt.yml` from the target repository. Selection is deterministic for a given scheduler run number, which makes routing auditable and testable.
 
 ## PAT boundary
 

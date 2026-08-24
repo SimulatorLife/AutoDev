@@ -5,8 +5,8 @@ AutoDev is the SimulatorLife organization control plane for autonomous GitHub de
 ## How it works
 
 1. `.github/workflows/_scheduler.yml` reads `weights.json` on its 15-minute schedule.
-2. It selects a workflow, an eligible agent, and a target repository using the configured weights.
-3. The selected workflow runs in AutoDev, then `_agent-open-pr-and-ping.yml` checks out the target repository with `GH_USER_TOKEN`, creates a branch and PR, and dispatches the centralized provider workflow when needed.
+2. It selects a generic prompt, eligible agent, and target repository using the configured weights.
+3. `run-prompt.yml` reads either an AutoDev generic prompt or the target repository's `.agents/prompts/*.md`, then `_agent-open-pr-and-ping.yml` creates the target PR with `GH_USER_TOKEN`.
 4. Provider workflows call `agent-invoke.yml`, which continues working against the target repository and pushes through the PAT.
 
 ## Required GitHub configuration
@@ -21,7 +21,7 @@ Keep tokens in GitHub Secrets or the local credential store. Never commit them t
 
 ## Configure target repositories
 
-Edit `.github/workflows/weights.json` and add one `repositories` record per target in `owner/name` form. A non-positive weight disables a repository without invalidating the configuration. The scheduler combines repository, workflow, and agent weights, so repository weights directly control the share of scheduled PRs.
+Edit `.github/workflows/weights.json` and add one `repositories` record per target in `owner/name` form. A non-positive weight disables a repository without invalidating the configuration. The scheduler combines repository, generic-prompt, and agent weights, so repository weights directly control the share of scheduled PRs.
 
 The migrated policy keeps the source repository's agent weights unchanged; a zero agent weight is an intentional disable switch. Set a positive weight for at least one configured provider before enabling the scheduler.
 

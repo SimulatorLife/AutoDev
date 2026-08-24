@@ -6,23 +6,22 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
   actions: write
 
 jobs:
   plan-and-dispatch:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout repository
+      - name: Checkout AutoDev policy
         uses: actions/checkout@v6
 
-      - name: Load workflow configuration
+      - name: Load routing configuration
         id: cfg
+        shell: bash
         run: |
-          if [ ! -f .github/workflows/weights.json ]; then
-            echo "Configuration file .github/workflows/weights.json is missing" >&2
-            exit 1
-          fi
+          set -euo pipefail
+          test -f .github/workflows/weights.json
           echo "cfg=$(jq -c . .github/workflows/weights.json)" >> "$GITHUB_OUTPUT"
 
       - name: Compute dispatch plan
@@ -32,314 +31,124 @@ jobs:
           CFG_JSON: ${{ steps.cfg.outputs.cfg }}
         with:
           script: |
-            const cfgRaw = process.env.CFG_JSON;
-            const cfg = cfgRaw ? JSON.parse(cfgRaw) : {};
+            const cfg = JSON.parse(process.env.CFG_JSON || '{}');
             const WEIGHT_SCALE = 1000;
-            const TASK_CATEGORIES = new Set(["code", "merging", "regressions"]);
+            const CATEGORIES = new Set(['code', 'merging', 'regressions']);
 
-            const getRunNumber = () => {
-              const raw = (process.env.GITHUB_RUN_NUMBER || "").trim();
-              const parsed = Number.parseInt(raw, 10);
-              return Number.isInteger(parsed) && parsed > 0 ? parsed : 1;
+            const finite = (value, label) => {
+              const number = Number(value);
+              if (!Number.isFinite(number)) throw new Error(`${label} must be finite.`);
+              return number;
             };
-
-            const toSlots = (weight) => Math.max(1, Math.round(weight * WEIGHT_SCALE));
-
-            const buildInterleavedCycle = (items) => {
-              const maxSlots = Math.max(...items.map((item) => item.slots));
-              const cycle = [];
-              for (let slot = 1; slot <= maxSlots; slot += 1) {
-                for (const item of items) {
-                  if (item.slots >= slot) {
-                    cycle.push(item);
-                  }
-                }
-              }
-              return cycle;
+            const integer = (value, label) => {
+              const number = Number(value);
+              if (!Number.isInteger(number)) throw new Error(`${label} must be an integer.`);
+              return number;
             };
-
-            const chooseDeterministicWeighted = (items, runNumber) => {
-              if (items.length === 0) {
-                return null;
-              }
-
-              const sortedItems = [...items].sort((left, right) => left.sortKey.localeCompare(right.sortKey));
-              const cycle = buildInterleavedCycle(sortedItems);
-              if (cycle.length === 0) {
-                return null;
-              }
-
-              const cycleIndex = (runNumber - 1) % cycle.length;
-              return {
-                selected: cycle[cycleIndex],
-                cycleIndex,
-                cycleLength: cycle.length,
-              };
-            };
-
-            const assertInteger = (value, label) => {
-              if (!Number.isInteger(value)) {
-                throw new Error(`${label} must be an integer.`);
-              }
-            };
-
-            const assertFiniteNumber = (value, label) => {
-              if (!Number.isFinite(value)) {
-                throw new Error(`${label} must be a finite number.`);
-              }
-            };
-
-            const assertComplexityRange = (value, label) => {
-              assertInteger(value, label);
-              if (value < 1 || value > 3) {
-                throw new Error(`${label} must be between 1 and 3 inclusive.`);
-              }
-            };
-
-            const assertUniqueNames = (items, label) => {
+            const uniqueNames = (items, label) => {
               const seen = new Set();
               for (const item of items) {
-                if (seen.has(item.name)) {
-                  throw new Error(`${label} names must be unique. Duplicate: ${item.name}`);
-                }
+                if (seen.has(item.name)) throw new Error(`${label} names must be unique: ${item.name}`);
                 seen.add(item.name);
               }
             };
+            const slots = (weight) => Math.max(1, Math.round(weight * WEIGHT_SCALE));
 
-            const parseScheduledAgents = (rawAgents) => {
-              if (!Array.isArray(rawAgents)) {
-                throw new Error("weights.json must define a top-level agents array.");
+            const choose = (items, runNumber) => {
+              const sorted = [...items].sort((left, right) => left.sortKey.localeCompare(right.sortKey));
+              const maxSlots = Math.max(...sorted.map((item) => item.slots), 0);
+              const cycle = [];
+              for (let slot = 1; slot <= maxSlots; slot += 1) {
+                for (const item of sorted) if (item.slots >= slot) cycle.push(item);
               }
-
-              const agents = rawAgents.map((agent, index) => {
-                const name = typeof agent?.name === "string" ? agent.name.trim() : "";
-                const weight = Number(agent?.weight);
-                const rawCadenceTicks = agent?.cadenceTicks;
-                const cadenceTicks = rawCadenceTicks === undefined ? 1 : Number(rawCadenceTicks);
-                const category = Array.isArray(agent?.category) ? agent.category : [];
-                const minComplexity = agent?.minComplexity;
-                const maxComplexity = agent?.maxComplexity;
-
-                if (!name) {
-                  throw new Error(`agents[${index}] must define a non-empty name.`);
-                }
-
-                assertFiniteNumber(weight, `agents[${index}].weight`);
-                if (rawCadenceTicks !== undefined) {
-                  assertInteger(cadenceTicks, `agents[${index}].cadenceTicks`);
-                  if (cadenceTicks <= 0) {
-                    throw new Error(`agents[${index}].cadenceTicks must be positive.`);
-                  }
-                }
-
-                if (!Array.isArray(category) || category.length === 0) {
-                  throw new Error(`agents[${index}].category must be a non-empty array.`);
-                }
-
-                for (const categoryValue of category) {
-                  if (!TASK_CATEGORIES.has(categoryValue)) {
-                    throw new Error(`agents[${index}].category contains invalid value "${categoryValue}".`);
-                  }
-                }
-
-                if (minComplexity !== undefined) {
-                  assertComplexityRange(minComplexity, `agents[${index}].minComplexity`);
-                }
-
-                if (maxComplexity !== undefined) {
-                  assertComplexityRange(maxComplexity, `agents[${index}].maxComplexity`);
-                }
-
-                if (minComplexity !== undefined && maxComplexity !== undefined && minComplexity > maxComplexity) {
-                  throw new Error(`agents[${index}].minComplexity must be less than or equal to maxComplexity.`);
-                }
-
-                return {
-                  name,
-                  weight,
-                  cadenceTicks,
-                  category,
-                  minComplexity,
-                  maxComplexity,
-                };
-              });
-
-              assertUniqueNames(agents, "Agent");
-              return agents;
+              if (cycle.length === 0) return null;
+              const index = (runNumber - 1) % cycle.length;
+              return { selected: cycle[index], index, length: cycle.length };
             };
 
-            const parseScheduledWorkflows = (rawWorkflows) => {
-              if (!Array.isArray(rawWorkflows)) {
-                throw new Error("weights.json must define a workflows array.");
+            const agents = (cfg.agents || []).map((raw, index) => {
+              const name = typeof raw?.name === 'string' ? raw.name.trim() : '';
+              if (!name) throw new Error(`agents[${index}].name is required.`);
+              const weight = finite(raw.weight, `agents[${index}].weight`);
+              const cadenceTicks = raw.cadenceTicks === undefined ? 1 : integer(raw.cadenceTicks, `agents[${index}].cadenceTicks`);
+              if (cadenceTicks <= 0) throw new Error(`agents[${index}].cadenceTicks must be positive.`);
+              const category = Array.isArray(raw.category) ? raw.category : [];
+              if (category.length === 0 || category.some((value) => !CATEGORIES.has(value))) {
+                throw new Error(`agents[${index}].category is invalid.`);
               }
+              return { name, weight, cadenceTicks, category, minComplexity: raw.minComplexity, maxComplexity: raw.maxComplexity };
+            });
+            uniqueNames(agents, 'Agent');
 
-              const workflows = rawWorkflows.map((workflow, index) => {
-                const name = typeof workflow?.name === "string" ? workflow.name.trim() : "";
-                const weight = Number(workflow?.weight);
-                const category = workflow?.category;
-                const complexity = workflow?.complexity;
+            const prompts = (cfg.prompts || []).map((raw, index) => {
+              const name = typeof raw?.name === 'string' ? raw.name.trim() : '';
+              const path = typeof raw?.path === 'string' ? raw.path.trim() : '';
+              const scope = raw?.scope;
+              const title = typeof raw?.title === 'string' && raw.title.trim() ? raw.title.trim() : `Agent: ${name}`;
+              if (!name || !/^\.agents\/prompts\/[^/]+\.md$/.test(path)) throw new Error(`prompts[${index}] must define a safe Markdown path.`);
+              if (scope !== 'autodev' && scope !== 'target') throw new Error(`prompts[${index}].scope must be autodev or target.`);
+              const category = raw?.category;
+              if (!CATEGORIES.has(category)) throw new Error(`prompts[${index}].category is invalid.`);
+              const complexity = integer(raw.complexity, `prompts[${index}].complexity`);
+              if (complexity < 1 || complexity > 3) throw new Error(`prompts[${index}].complexity must be 1..3.`);
+              return { name, path, scope, title, category, complexity, weight: finite(raw.weight, `prompts[${index}].weight`) };
+            });
+            uniqueNames(prompts, 'Prompt');
 
-                if (!name) {
-                  throw new Error(`workflows[${index}] must define a non-empty name.`);
-                }
+            const repositories = (cfg.repositories || []).map((raw, index) => {
+              const name = typeof raw?.name === 'string' ? raw.name.trim() : '';
+              if (!/^[^/\s]+\/[^/\s]+$/.test(name)) throw new Error(`repositories[${index}].name must use owner/name.`);
+              const baseBranch = typeof raw.baseBranch === 'string' && raw.baseBranch.trim() ? raw.baseBranch.trim() : 'main';
+              return { name, baseBranch, weight: finite(raw.weight, `repositories[${index}].weight`) };
+            });
+            uniqueNames(repositories, 'Repository');
 
-                assertFiniteNumber(weight, `workflows[${index}].weight`);
-
-                if (!TASK_CATEGORIES.has(category)) {
-                  throw new Error(`workflows[${index}].category must be one of code, merging, or regressions.`);
-                }
-
-                assertComplexityRange(complexity, `workflows[${index}].complexity`);
-
-                const workflowFileName = name.endsWith(".yml") ? name : `${name}.yml`;
-                const path = workflowFileName.startsWith(".github/workflows/")
-                  ? workflowFileName
-                  : `.github/workflows/${workflowFileName}`;
-
-                return {
-                  name,
-                  path,
-                  weight,
-                  category,
-                  complexity,
-                };
-              });
-
-              assertUniqueNames(workflows, "Workflow");
-              return workflows;
-            };
-
-            const parseRepositories = (rawRepositories) => {
-              if (!Array.isArray(rawRepositories)) {
-                throw new Error("weights.json must define a top-level repositories array.");
-              }
-
-              const repositories = rawRepositories.map((repository, index) => {
-                const name = typeof repository?.name === "string" ? repository.name.trim() : "";
-                const weight = Number(repository?.weight);
-
-                if (!/^[^/\s]+\/[^/\s]+$/.test(name)) {
-                  throw new Error(`repositories[${index}].name must use the owner/repository form.`);
-                }
-                assertFiniteNumber(weight, `repositories[${index}].weight`);
-
-                return { name, weight };
-              });
-
-              assertUniqueNames(repositories, "Repository");
-              return repositories;
-            };
-
-            const isAgentDue = (agent, runNumber) => runNumber % agent.cadenceTicks === 0;
-
-            const isWorkflowEligibleForAgent = (workflow, agent) => {
-              if (!agent.category.includes(workflow.category)) {
-                return false;
-              }
-
-              if (agent.minComplexity !== undefined && workflow.complexity < agent.minComplexity) {
-                return false;
-              }
-
-              if (agent.maxComplexity !== undefined && workflow.complexity > agent.maxComplexity) {
-                return false;
-              }
-
-              return true;
-            };
-
-            const agents = parseScheduledAgents(cfg.agents);
-            const workflows = parseScheduledWorkflows(cfg.workflows);
-            const repositories = parseRepositories(cfg.repositories);
-            const runNumber = getRunNumber();
-            const dueAgents = agents.filter((agent) => isAgentDue(agent, runNumber));
-
-            if (dueAgents.length === 0) {
-              core.info(`No scheduled agents are due for run #${runNumber}.`);
-              return null;
-            }
-
+            const runNumber = Math.max(1, Number.parseInt(process.env.GITHUB_RUN_NUMBER || '1', 10));
             const candidates = [];
-
-            for (const agent of dueAgents) {
-              if (agent.weight <= 0) {
-                continue;
-              }
-
-              for (const workflow of workflows) {
-                if (workflow.weight <= 0) {
-                  continue;
-                }
-
-                if (!isWorkflowEligibleForAgent(workflow, agent)) {
-                  continue;
-                }
-
-                const pairWeight = workflow.weight * agent.weight;
-                if (!Number.isFinite(pairWeight) || pairWeight <= 0) {
-                  continue;
-                }
-
+            for (const agent of agents) {
+              if (runNumber % agent.cadenceTicks !== 0 || agent.weight <= 0) continue;
+              for (const prompt of prompts) {
+                if (prompt.weight <= 0 || !agent.category.includes(prompt.category)) continue;
+                if (agent.minComplexity !== undefined && prompt.complexity < agent.minComplexity) continue;
+                if (agent.maxComplexity !== undefined && prompt.complexity > agent.maxComplexity) continue;
                 for (const repository of repositories) {
-                  if (repository.weight <= 0) {
-                    continue;
-                  }
-
-                  const candidateWeight = pairWeight * repository.weight;
-                  if (!Number.isFinite(candidateWeight) || candidateWeight <= 0) {
-                    continue;
-                  }
-
+                  if (repository.weight <= 0) continue;
+                  const weight = agent.weight * prompt.weight * repository.weight;
+                  if (!Number.isFinite(weight) || weight <= 0) continue;
                   candidates.push({
-                    workflowName: workflow.name,
-                    workflowPath: workflow.path,
                     agentName: agent.name,
+                    promptName: prompt.name,
+                    promptPath: prompt.path,
+                    promptScope: prompt.scope,
+                    promptTitle: prompt.title,
                     targetRepository: repository.name,
-                    weight: candidateWeight,
-                    slots: toSlots(candidateWeight),
-                    sortKey: `${workflow.name.toLowerCase()}::${agent.name.toLowerCase()}::${repository.name.toLowerCase()}`,
+                    baseBranch: repository.baseBranch,
+                    weight,
+                    slots: slots(weight),
+                    sortKey: `${prompt.name}::${repository.name}::${agent.name}`.toLowerCase(),
                   });
                 }
               }
             }
 
-            if (candidates.length === 0) {
-              core.info(`No eligible workflow/agent pairs are due for run #${runNumber}.`);
+            const chosen = choose(candidates, runNumber);
+            if (!chosen) {
+              core.info(`No positive scheduled candidates for run #${runNumber}.`);
               return null;
             }
-
-            const totalWeight = candidates.reduce((sum, item) => sum + item.weight, 0);
-            const selection = chooseDeterministicWeighted(candidates, runNumber);
-            if (!selection) {
-              core.info("No deterministic weighted workflow/agent pair could be selected.");
-              return null;
-            }
-
-            const selected = selection.selected;
-            const cyclePosition = selection.cycleIndex + 1;
-            const baseDir = ".github/workflows/";
-            const workflowId = selected.workflowPath.startsWith(baseDir)
-              ? selected.workflowPath.slice(baseDir.length)
-              : selected.workflowPath;
-
-            core.info(
-              `Deterministic weighted selection picked workflow ${selected.workflowPath} with agent "${selected.agentName}" ` +
-              `(pairWeight=${selected.weight}, slots=${selected.slots}) for run #${runNumber} ` +
-              `at cycle position ${cyclePosition}/${selection.cycleLength} from total pair weight ${totalWeight.toFixed(6)}.`
-            );
-
+            const item = chosen.selected;
+            core.info(`Selected ${item.promptName} for ${item.targetRepository} with ${item.agentName} at ${chosen.index + 1}/${chosen.length}.`);
             return {
-              workflow_name: selected.workflowName,
-              workflow_path: selected.workflowPath,
-              workflow_id: workflowId,
-              agent_name: selected.agentName,
-              target_repository: selected.targetRepository,
-              run_number: String(runNumber),
-              cycle_position: `${cyclePosition}/${selection.cycleLength}`,
-              total_weight: totalWeight.toFixed(6),
+              workflow_id: 'run-prompt.yml',
+              agent_name: item.agentName,
+              prompt_path: item.promptPath,
+              prompt_scope: item.promptScope,
+              prompt_title: item.promptTitle,
+              target_repository: item.targetRepository,
+              base_branch: item.baseBranch,
             };
 
-      - name: Dispatch workflow
+      - name: Dispatch prompt runner
         if: ${{ steps.plan.outputs.result != '' }}
         uses: actions/github-script@v8
         env:
@@ -347,50 +156,20 @@ jobs:
         with:
           github-token: ${{ github.token }}
           script: |
-            const raw = process.env.PLAN_RESULT || "";
-            const plan = raw ? JSON.parse(raw) : null;
-
-            const workflowId = plan?.workflow_id;
-            const workflowPath = plan?.workflow_path || workflowId;
-            const agentName = typeof plan?.agent_name === "string" ? plan.agent_name : "";
-            const targetRepository = typeof plan?.target_repository === "string" ? plan.target_repository : "";
-
-            if (!workflowId || !agentName || !targetRepository) {
-              core.info("No workflow/agent pair selected for dispatch.");
-              return;
-            }
-
-            let ref = context.ref;
-            if (!ref) {
-              const { data } = await github.rest.repos.get({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-              });
-              ref = data?.default_branch;
-            }
-
-            if (!ref) {
-              throw new Error("Unable to determine reference for workflow dispatch.");
-            }
-
-            if (ref.startsWith("refs/heads/")) {
-              ref = ref.replace("refs/heads/", "");
-            } else if (ref.startsWith("refs/tags/")) {
-              ref = ref.replace("refs/tags/", "");
-            }
-
-            try {
-              await github.rest.actions.createWorkflowDispatch({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                workflow_id: workflowId,
-                ref,
-                inputs: {
-                  agent: agentName,
-                  target_repository: targetRepository,
-                },
-              });
-              core.info(`Dispatched ${workflowPath} for ${targetRepository} via workflow_dispatch on ref ${ref} with agent "${agentName}".`);
-            } catch (error) {
-              core.warning(`Failed to dispatch ${workflowPath} with agent "${agentName}": ${error.message}`);
-            }
+            const plan = JSON.parse(process.env.PLAN_RESULT || 'null');
+            if (!plan?.target_repository || !plan?.prompt_path || !plan?.agent_name) return;
+            await github.rest.actions.createWorkflowDispatch({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              workflow_id: plan.workflow_id,
+              ref: (context.ref || 'refs/heads/main').replace(/^refs\/(heads|tags)\//, ''),
+              inputs: {
+                target_repository: plan.target_repository,
+                base_branch: plan.base_branch,
+                prompt_scope: plan.prompt_scope,
+                prompt_path: plan.prompt_path,
+                prompt_title: plan.prompt_title,
+                agent: plan.agent_name,
+              },
+            });
+            core.info(`Dispatched ${plan.prompt_path} for ${plan.target_repository}.`);

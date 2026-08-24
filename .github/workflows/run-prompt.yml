@@ -1,0 +1,52 @@
+name: "Run Prompt"
+
+on:
+  workflow_dispatch:
+    inputs:
+      target_repository:
+        description: "Target repository in owner/name form."
+        required: true
+        type: string
+      prompt_scope:
+        description: "Read from AutoDev's generic catalog or the target repository."
+        required: true
+        default: "target"
+        type: choice
+        options:
+          - target
+          - autodev
+      prompt_path:
+        description: "Markdown prompt under .agents/prompts/."
+        required: true
+        type: string
+      base_branch:
+        description: "Target base branch."
+        required: false
+        default: "main"
+        type: string
+      prompt_title:
+        description: "Optional PR title."
+        required: false
+        default: "Agent: Apply repository prompt"
+        type: string
+      agent:
+        description: "Optional provider/agent override."
+        required: false
+        default: ""
+        type: string
+
+permissions:
+  contents: read
+  actions: write
+
+jobs:
+  run:
+    uses: ./.github/workflows/_prompt-runner.yml
+    secrets: inherit
+    with:
+      target_repository: ${{ inputs.target_repository }}
+      base_branch: ${{ inputs.base_branch }}
+      prompt_scope: ${{ inputs.prompt_scope }}
+      prompt_path: ${{ inputs.prompt_path }}
+      prompt_title: ${{ inputs.prompt_title }}
+      agent: ${{ inputs.agent }}

@@ -49,16 +49,18 @@ test('repository weights participate in deterministic routing', () => {
 
 test('existing scheduled policy remains structurally valid', () => {
   assert.ok(Array.isArray(config.agents) && config.agents.length > 0);
-  assert.ok(Array.isArray(config.workflows) && config.workflows.length > 0);
+  assert.ok(Array.isArray(config.prompts) && config.prompts.length > 0);
   assert.ok(config.agentPools?.followUps);
   for (const agent of config.agents) {
     assert.equal(Number.isFinite(agent.weight), true);
     assert.ok(Array.isArray(agent.category) && agent.category.length > 0);
     for (const category of agent.category) assert.equal(TASK_CATEGORIES.has(category), true);
   }
-  for (const workflow of config.workflows) {
-    assert.equal(TASK_CATEGORIES.has(workflow.category), true);
-    assert.ok(Number.isInteger(workflow.complexity) && workflow.complexity >= 1 && workflow.complexity <= 3);
-    assert.equal(Number.isFinite(workflow.weight), true);
+  for (const prompt of config.prompts) {
+    assert.equal(TASK_CATEGORIES.has(prompt.category), true);
+    assert.equal(prompt.scope, 'autodev');
+    assert.match(prompt.path, /^\.agents\/prompts\/[^/]+\.md$/u);
+    assert.ok(Number.isInteger(prompt.complexity) && prompt.complexity >= 1 && prompt.complexity <= 3);
+    assert.equal(Number.isFinite(prompt.weight), true);
   }
 });

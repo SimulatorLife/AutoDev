@@ -1,0 +1,138 @@
+name: "Target Auto-merge"
+
+on:
+  schedule:
+    - cron: "*/15 * * * *"
+  workflow_dispatch:
+    inputs:
+      target_repository:
+        description: "Optional target repository in owner/name form. Blank scans configured repositories."
+        required: false
+        default: ""
+        type: string
+      pr_number:
+        description: "Optional target PR number. Required when target_repository is supplied."
+        required: false
+        default: ""
+        type: string
+
+permissions:
+  contents: read
+  pull-requests: write
+  checks: read
+  statuses: read
+  issues: write
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.plan.outputs.matrix }}
+    steps:
+      - name: Checkout AutoDev policy
+        uses: actions/checkout@v6
+
+      - name: Plan target PRs
+        id: plan
+        uses: actions/github-script@v8
+        env:
+          GH_USER_TOKEN: ${{ secrets.GH_USER_TOKEN }}
+          REQUESTED_REPOSITORY: ${{ inputs.target_repository }}
+          REQUESTED_PR: ${{ inputs.pr_number }}
+        with:
+          github-token: ${{ secrets.GH_USER_TOKEN }}
+          script: |
+            const fs = require('fs');
+            const cfg = JSON.parse(fs.readFileSync('.github/workflows/weights.json', 'utf8'));
+            const requestedRepository = (process.env.REQUESTED_REPOSITORY || '').trim();
+            const requestedPr = (process.env.REQUESTED_PR || '').trim();
+            if (requestedRepository && !/^\S+\/\S+$/.test(requestedRepository)) {
+              throw new Error('target_repository must use owner/name form.');
+            }
+            if (requestedRepository && !/^\d+$/.test(requestedPr)) {
+              throw new Error('pr_number must be a positive integer when target_repository is supplied.');
+            }
+
+            const repositories = requestedRepository
+              ? [{ name: requestedRepository }]
+              : (cfg.repositories || []).filter((repo) => Number(repo.weight) > 0);
+            const targets = [];
+            for (const repository of repositories) {
+              const [owner, repo] = repository.name.split('/');
+              if (requestedPr) {
+                targets.push({ repository: repository.name, pr: Number(requestedPr) });
+                continue;
+              }
+              const pulls = await github.paginate(github.rest.pulls.list, {
+                owner,
+                repo,
+                state: 'open',
+                per_page: 100,
+                sort: 'updated',
+                direction: 'desc',
+              });
+              for (const pull of pulls) {
+                const labels = new Set((pull.labels || []).map((label) => label.name));
+                const agentBranch = /^(copilot|claude|codex|gemini|qwen|mini-max)(?:\/|$)/.test(pull.head?.ref || '');
+                if (!pull.draft && (labels.has('agent') || agentBranch)) targets.push({ repository: repository.name, pr: pull.number });
+              }
+            }
+            core.setOutput('matrix', JSON.stringify({ include: targets }));
+            core.info(`Planned ${targets.length} target PR(s).`);
+
+  merge:
+    needs: plan
+    if: ${{ fromJSON(needs.plan.outputs.matrix).include[0] != null }}
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Evaluate target PR checks and merge when safe
+        uses: actions/github-script@v8
+        env:
+          TARGET_REPOSITORY: ${{ matrix.repository }}
+          PR_NUMBER: ${{ matrix.pr }}
+        with:
+          github-token: ${{ secrets.GH_USER_TOKEN }}
+          script: |
+            const [owner, repo] = process.env.TARGET_REPOSITORY.split('/');
+            const pullNumber = Number(process.env.PR_NUMBER);
+            const marker = '<!-- autodev-target-automerge -->';
+            const { data: pull } = await github.rest.pulls.get({ owner, repo, pull_number: pullNumber });
+            if (pull.state !== 'open' || pull.draft) return;
+            if (pull.head?.repo?.full_name !== process.env.TARGET_REPOSITORY) {
+              core.info('Skipping external-head PR.');
+              return;
+            }
+            if (pull.mergeable_state === 'dirty' || pull.mergeable_state === 'blocked') {
+              core.info(`PR #${pullNumber} is not currently mergeable (${pull.mergeable_state}).`);
+              return;
+            }
+
+            const [{ data: checks }, { data: statuses }] = await Promise.all([
+              github.rest.checks.listForRef({ owner, repo, ref: pull.head.sha, per_page: 100 }),
+              github.rest.repos.listCommitStatusesForRef({ owner, repo, ref: pull.head.sha, per_page: 100 }),
+            ]);
+            const checkRuns = checks.check_runs || [];
+            const commitStatuses = statuses || [];
+            const completedChecks = checkRuns.filter((check) => check.status === 'completed');
+            const failedChecks = checkRuns.filter((check) => ['failure', 'timed_out', 'cancelled', 'action_required'].includes(check.conclusion));
+            const incompleteChecks = checkRuns.filter((check) => check.status !== 'completed');
+            const failedStatuses = commitStatuses.filter((status) => !['success'].includes(status.state));
+            const hasEvidence = completedChecks.length > 0 || commitStatuses.length > 0;
+            const ready = hasEvidence && failedChecks.length === 0 && incompleteChecks.length === 0 && failedStatuses.length === 0;
+            if (!ready) {
+              core.info(`Skipping ${process.env.TARGET_REPOSITORY}#${pullNumber}: checks are missing, failing, or incomplete.`);
+              return;
+            }
+
+            const comments = await github.paginate(github.rest.issues.listComments, {
+              owner, repo, issue_number: pullNumber, per_page: 100,
+            });
+            const body = `${marker}\nAutoDev verified ${completedChecks.length + commitStatuses.length} completed check/status result(s) and is merging this agent PR.`;
+            const existing = comments.find((comment) => comment.body?.includes(marker));
+            if (existing) await github.rest.issues.updateComment({ owner, repo, comment_id: existing.id, body });
+            else await github.rest.issues.createComment({ owner, repo, issue_number: pullNumber, body });
+            await github.rest.pulls.merge({ owner, repo, pull_number: pullNumber, sha: pull.head.sha, merge_method: 'squash' });
+            core.info(`Merged ${process.env.TARGET_REPOSITORY}#${pullNumber}.`);
