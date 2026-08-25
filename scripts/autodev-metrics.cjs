@@ -157,6 +157,7 @@ function renderDashboard(metrics) {
     '',
     `Generated: ${generated}`,
     `Lookback window: ${metrics.lookbackDays || 90} days (since ${metrics.since || 'rolling window'})`,
+    'Provider-run per-repository attribution is available for runs carrying the target repository in their run name; older runs are shown as unattributed.',
     '',
     '## Totals',
     '',
@@ -171,14 +172,14 @@ function renderDashboard(metrics) {
     '',
     '## Per repository',
     '',
-    '| Repository | PRs raised | PRs merged | Invokes | Succeeded | Failed | Stale closed |',
-    '|---|---:|---:|---:|---:|---:|---:|',
+    '| Repository | PRs raised | PRs merged | Invokes | Succeeded | Failed | Other | Stale closed |',
+    '|---|---:|---:|---:|---:|---:|---:|---:|',
   ];
   for (const [repository, item] of Object.entries(metrics.perRepository)) {
-    lines.push(`| ${repository} | ${item.agentPrsRaised} | ${item.agentPrsMerged} | ${item.agentInvokes.total} | ${item.agentInvokes.succeeded} | ${item.agentInvokes.failed} | ${item.staleEmptyPrsClosed} |`);
+    lines.push(`| ${repository} | ${item.agentPrsRaised} | ${item.agentPrsMerged} | ${item.agentInvokes.total} | ${item.agentInvokes.succeeded} | ${item.agentInvokes.failed} | ${item.agentInvokes.other} | ${item.staleEmptyPrsClosed} |`);
   }
-  lines.push('', '## Per agent', '', '| Agent | Invokes | Succeeded | Failed |', '|---|---:|---:|---:|');
-  for (const [agent, item] of Object.entries(metrics.perAgent)) lines.push(`| ${agent} | ${item.total} | ${item.succeeded} | ${item.failed} |`);
+  lines.push('', '## Per agent', '', '| Agent | Invokes | Succeeded | Failed | Other |', '|---|---:|---:|---:|---:|');
+  for (const [agent, item] of Object.entries(metrics.perAgent)) lines.push(`| ${agent} | ${item.total} | ${item.succeeded} | ${item.failed} | ${item.other} |`);
   lines.push('', '## Last 10 agent PRs', '');
   if (!metrics.recentPrs.length) lines.push('_No agent PRs found._');
   else for (const pr of metrics.recentPrs) lines.push(`- [${pr.repository}#${pr.number}: ${pr.title}](${pr.url}) — ${pr.agent}, ${pr.state}${pr.mergedAt ? ', merged' : ''}`);

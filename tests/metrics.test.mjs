@@ -27,6 +27,7 @@ test('metrics dashboard renders requested counters and recent links', () => {
     recentPrs: [{ repository: 'SimulatorLife/AutoDev', number: 7, title: 'Agent: Example', url: 'https://github.com/SimulatorLife/AutoDev/pull/7', agent: 'mini-max', state: 'open', mergedAt: null }],
   });
   assert.match(body, /Lookback window: 90 days/);
+  assert.match(body, /Provider-run per-repository attribution/);
   assert.match(body, /Agent PR-and-ping PRs raised/);
   assert.match(body, /Stale-empty PRs closed/);
   assert.match(body, /mini-max/);
