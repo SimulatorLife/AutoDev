@@ -4,9 +4,15 @@ on:
   workflow_dispatch:
     inputs:
       target_repository:
-        description: "Target SimulatorLife repository (owner/name)."
+        description: "Target repository."
         required: true
-        type: string
+        type: choice
+        options:
+          - SimulatorLife/3DSpider
+          - SimulatorLife/AutoDev
+          - SimulatorLife/Colourful-Life
+          - SimulatorLife/GMLoop
+          - SimulatorLife/RacingGame
       base_branch:
         description: "Target base branch."
         required: false

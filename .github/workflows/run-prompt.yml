@@ -4,17 +4,25 @@ on:
   workflow_dispatch:
     inputs:
       target_repository:
-        description: "Target repository in owner/name form."
+        description: "Target repository."
         required: true
-        type: string
-      prompt_scope:
-        description: "Read from AutoDev's generic catalog or the target repository."
-        required: true
-        default: "target"
         type: choice
         options:
-          - target
-          - autodev
+          - SimulatorLife/3DSpider
+          - SimulatorLife/AutoDev
+          - SimulatorLife/Colourful-Life
+          - SimulatorLife/GMLoop
+          - SimulatorLife/RacingGame
+      prompt_repository:
+        description: "Repository that owns the prompt."
+        required: true
+        type: choice
+        options:
+          - SimulatorLife/3DSpider
+          - SimulatorLife/AutoDev
+          - SimulatorLife/Colourful-Life
+          - SimulatorLife/GMLoop
+          - SimulatorLife/RacingGame
       prompt_path:
         description: "Markdown prompt under .agents/prompts/."
         required: true
@@ -49,7 +57,7 @@ jobs:
       target_repository: ${{ inputs.target_repository }}
       base_branch: ${{ inputs.base_branch }}
       prompt_path: ${{ inputs.prompt_path }}
-      prompt_scope: ${{ inputs.prompt_scope }}
+      prompt_repository: ${{ inputs.prompt_repository }}
       prompt: ""
       agent: ${{ inputs.agent }}
       pr_title: ${{ inputs.prompt_title }}

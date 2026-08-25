@@ -108,38 +108,38 @@
     {
       "name": "dry",
       "path": ".agents/prompts/dry.md",
-      "scope": "autodev",
       "title": "Agent: Reduce duplication",
       "weight": 1,
       "category": "code",
-      "complexity": 2
+      "complexity": 2,
+      "promptRepository": "SimulatorLife/AutoDev"
     },
     {
       "name": "kiss",
       "path": ".agents/prompts/kiss.md",
-      "scope": "autodev",
       "title": "Agent: Keep the design simple",
       "weight": 1,
       "category": "code",
-      "complexity": 2
+      "complexity": 2,
+      "promptRepository": "SimulatorLife/AutoDev"
     },
     {
       "name": "organization",
       "path": ".agents/prompts/organization.md",
-      "scope": "autodev",
       "title": "Agent: Improve ownership and organization",
       "weight": 1,
       "category": "code",
-      "complexity": 2
+      "complexity": 2,
+      "promptRepository": "SimulatorLife/AutoDev"
     },
     {
       "name": "bug-fix",
       "path": ".agents/prompts/bug-fix.md",
-      "scope": "autodev",
       "title": "Agent: Fix one real defect",
       "weight": 1,
       "category": "code",
-      "complexity": 3
+      "complexity": 3,
+      "promptRepository": "SimulatorLife/AutoDev"
     }
   ]
 }

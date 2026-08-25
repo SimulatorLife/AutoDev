@@ -4,9 +4,15 @@ on:
   workflow_dispatch:
     inputs:
       target_repository:
-        description: "Target repository in owner/name form."
+        description: "Target repository."
         required: true
-        type: string
+        type: choice
+        options:
+        - SimulatorLife/3DSpider
+        - SimulatorLife/AutoDev
+        - SimulatorLife/Colourful-Life
+        - SimulatorLife/GMLoop
+        - SimulatorLife/RacingGame
       target_sha:
         description: "Fallback target commit to validate."
         required: true

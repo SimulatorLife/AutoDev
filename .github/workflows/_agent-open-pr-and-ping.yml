@@ -19,10 +19,10 @@ on:
         required: false
         default: ""
         type: string
-      prompt_scope:
-        description: "Prompt source: autodev or target."
+      prompt_repository:
+        description: "Repository that owns the prompt."
         required: false
-        default: "target"
+        default: "SimulatorLife/AutoDev"
         type: string
       base_branch:
         required: false
@@ -99,14 +99,30 @@ jobs:
       - name: Stage AutoDev policy for this run
         env:
           PROMPT_PATH: ${{ inputs.prompt_path }}
-          PROMPT_SCOPE: ${{ inputs.prompt_scope }}
+          PROMPT_REPOSITORY: ${{ inputs.prompt_repository }}
+          TARGET_REPOSITORY: ${{ inputs.target_repository }}
         run: |
           set -euo pipefail
           cp .autodev/.github/workflows/weights.json "$RUNNER_TEMP/autodev-weights.json"
-          if [ -n "${PROMPT_PATH}" ] && [ "${PROMPT_SCOPE}" = "autodev" ]; then
+          if [ -n "${PROMPT_PATH}" ] && [ "${PROMPT_REPOSITORY}" = "SimulatorLife/AutoDev" ]; then
             case "${PROMPT_PATH}" in .agents/prompts/*.md) ;; *) echo "Invalid prompt_path" >&2; exit 1 ;; esac
             cp ".autodev/${PROMPT_PATH}" "$RUNNER_TEMP/autodev-prompt.md"
           fi
+
+      - name: Checkout external prompt repository
+        if: ${{ inputs.prompt_path != '' && inputs.prompt_repository != 'SimulatorLife/AutoDev' && inputs.prompt_repository != inputs.target_repository }}
+        uses: actions/checkout@v6
+        with:
+          repository: ${{ inputs.prompt_repository }}
+          token: ${{ secrets.GH_USER_TOKEN }}
+          path: .prompt-repository
+          fetch-depth: 1
+
+      - name: Stage external prompt
+        if: ${{ inputs.prompt_path != '' && inputs.prompt_repository != 'SimulatorLife/AutoDev' && inputs.prompt_repository != inputs.target_repository }}
+        env:
+          PROMPT_PATH: ${{ inputs.prompt_path }}
+        run: cp ".prompt-repository/${PROMPT_PATH}" "$RUNNER_TEMP/external-prompt.md"
 
       - name: Checkout target repository (with your token so pushes are yours)
         uses: actions/checkout@v6
@@ -122,18 +138,21 @@ jobs:
         shell: bash
         env:
           PROMPT_PATH: ${{ inputs.prompt_path }}
-          PROMPT_SCOPE: ${{ inputs.prompt_scope }}
+          PROMPT_REPOSITORY: ${{ inputs.prompt_repository }}
+          TARGET_REPOSITORY: ${{ inputs.target_repository }}
         run: |
           set -euo pipefail
           case "${PROMPT_PATH}" in
             .agents/prompts/*.md) ;;
             *) echo "prompt_path must be a repository-relative .agents/prompts/*.md path" >&2; exit 1 ;;
           esac
-          case "${PROMPT_SCOPE}" in
-            autodev) prompt_file="$RUNNER_TEMP/autodev-prompt.md" ;;
-            target) prompt_file="${PROMPT_PATH}" ;;
-            *) echo "prompt_scope must be autodev or target" >&2; exit 1 ;;
-          esac
+          if [ "${PROMPT_REPOSITORY}" = "SimulatorLife/AutoDev" ]; then
+            prompt_file="$RUNNER_TEMP/autodev-prompt.md"
+          elif [ "${PROMPT_REPOSITORY}" = "${TARGET_REPOSITORY}" ]; then
+            prompt_file="${PROMPT_PATH}"
+          else
+            prompt_file="$RUNNER_TEMP/external-prompt.md"
+          fi
           test -s "${prompt_file}" || { echo "Prompt not found or empty: ${PROMPT_PATH}" >&2; exit 1; }
           { echo 'prompt<<AUTODEV_PROMPT'; cat "${prompt_file}"; echo; echo 'AUTODEV_PROMPT'; } >> "$GITHUB_OUTPUT"
 

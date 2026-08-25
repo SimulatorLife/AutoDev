@@ -16,24 +16,25 @@ test('scheduler routes prompt, agent, and target repository', async () => {
   assert.match(source, /cfg\.prompts/);
   assert.match(source, /target_repository: item\.targetRepository/);
   assert.match(source, /prompt_path: item\.promptPath/);
-  assert.match(source, /prompt_scope: item\.promptScope/);
+  assert.match(source, /prompt_repository: item\.promptRepository/);
   assert.match(source, /workflow_id: 'run-prompt\.yml'/);
 });
 
 test('generic prompt runner supports AutoDev and target prompt scopes', async () => {
   const source = await readWorkflow('run-prompt.yml');
   const runner = await readWorkflow('_agent-open-pr-and-ping.yml');
-  assert.match(source, /prompt_scope/);
+  assert.match(source, /prompt_repository/);
   assert.match(runner, /prompt_path must be a repository-relative \.agents\/prompts\/\*\.md path/);
   assert.match(source, /repository: \$\{\{ inputs\.target_repository \}\}/);
   assert.match(source, /uses: \.\/\.github\/workflows\/_agent-open-pr-and-ping\.yml/);
-  assert.match(source, /prompt_scope:/);
+  assert.match(source, /prompt_repository:/);
+  assert.match(source, /SimulatorLife\/RacingGame/);
   assert.match(source, /prompt_path:/);
 });
 
 test('generic prompt catalog contains only repository-agnostic Markdown prompts', async () => {
   for (const prompt of config.prompts) {
-    assert.equal(prompt.scope, 'autodev', prompt.name);
+    assert.equal(prompt.promptRepository, 'SimulatorLife/AutoDev', prompt.name);
     assert.match(prompt.path, /^\.agents\/prompts\/[^/]+\.md$/u, prompt.name);
     const source = await readPrompt(path.basename(prompt.path));
     assert.ok(source.trim().length > 0, prompt.name);

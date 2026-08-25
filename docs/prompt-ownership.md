@@ -3,9 +3,9 @@
 AutoDev has one prompt-agnostic execution path: `.github/workflows/run-prompt.yml`.
 It accepts a target repository and reads one Markdown prompt from either:
 
-- `prompt_scope: autodev`: the repository-agnostic catalog under
+- `prompt_repository: SimulatorLife/AutoDev`: the repository-agnostic catalog under
   `.agents/prompts/*.md` in AutoDev.
-- `prompt_scope: target`: the selected repository's
+- `prompt_repository: <target repository>`: the selected repository's
   `.agents/prompts/*.md` directory.
 
 Target repositories own their domain context. For example, GMLoop keeps its

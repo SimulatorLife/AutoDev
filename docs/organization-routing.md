@@ -17,7 +17,7 @@ A scheduled candidate has effective weight:
 repository.weight × prompt.weight × agent.weight
 ```
 
-Agent cadence and category/complexity eligibility are applied before the weighted cycle is built. Scheduled prompts are repository-agnostic and live in AutoDev; repository-specific prompts are selected manually through `run-prompt.yml` from the target repository. Selection is deterministic for a given scheduler run number, which makes routing auditable and testable.
+Agent cadence and category/complexity eligibility are applied before the weighted cycle is built. Scheduled prompts are repository-agnostic and live in AutoDev; repository-specific prompts are selected through `run-prompt.yml` by choosing their owning repository. Selection is deterministic for a given scheduler run number, which makes routing auditable and testable.
 
 ## PAT boundary
 

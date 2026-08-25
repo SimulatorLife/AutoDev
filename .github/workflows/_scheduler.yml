@@ -83,15 +83,15 @@ jobs:
             const prompts = (cfg.prompts || []).map((raw, index) => {
               const name = typeof raw?.name === 'string' ? raw.name.trim() : '';
               const path = typeof raw?.path === 'string' ? raw.path.trim() : '';
-              const scope = raw?.scope;
+              const promptRepository = typeof raw?.promptRepository === 'string' ? raw.promptRepository.trim() : '';
               const title = typeof raw?.title === 'string' && raw.title.trim() ? raw.title.trim() : `Agent: ${name}`;
               if (!name || !/^\.agents\/prompts\/[^/]+\.md$/.test(path)) throw new Error(`prompts[${index}] must define a safe Markdown path.`);
-              if (scope !== 'autodev' && scope !== 'target') throw new Error(`prompts[${index}].scope must be autodev or target.`);
+              if (!/^[^/\s]+\/[^/\s]+$/.test(promptRepository)) throw new Error(`prompts[${index}].promptRepository must use owner/name.`);
               const category = raw?.category;
               if (!CATEGORIES.has(category)) throw new Error(`prompts[${index}].category is invalid.`);
               const complexity = integer(raw.complexity, `prompts[${index}].complexity`);
               if (complexity < 1 || complexity > 3) throw new Error(`prompts[${index}].complexity must be 1..3.`);
-              return { name, path, scope, title, category, complexity, weight: finite(raw.weight, `prompts[${index}].weight`) };
+              return { name, path, promptRepository, title, category, complexity, weight: finite(raw.weight, `prompts[${index}].weight`) };
             });
             uniqueNames(prompts, 'Prompt');
 
@@ -119,7 +119,7 @@ jobs:
                     agentName: agent.name,
                     promptName: prompt.name,
                     promptPath: prompt.path,
-                    promptScope: prompt.scope,
+                    promptRepository: prompt.promptRepository,
                     promptTitle: prompt.title,
                     targetRepository: repository.name,
                     baseBranch: repository.baseBranch,
@@ -142,7 +142,7 @@ jobs:
               workflow_id: 'run-prompt.yml',
               agent_name: item.agentName,
               prompt_path: item.promptPath,
-              prompt_scope: item.promptScope,
+              prompt_repository: item.promptRepository,
               prompt_title: item.promptTitle,
               target_repository: item.targetRepository,
               base_branch: item.baseBranch,
@@ -166,7 +166,7 @@ jobs:
               inputs: {
                 target_repository: plan.target_repository,
                 base_branch: plan.base_branch,
-                prompt_scope: plan.prompt_scope,
+                prompt_repository: plan.prompt_repository,
                 prompt_path: plan.prompt_path,
                 prompt_title: plan.prompt_title,
                 agent: plan.agent_name,
