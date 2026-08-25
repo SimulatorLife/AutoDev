@@ -94,7 +94,7 @@ jobs:
         run: |
           set -o pipefail
           {
-            pnpm exec playwright install --with-deps chromium
+            pnpm exec playwright install chromium
             pnpm run test:e2e
           } 2>&1 | tee "$RUNNER_TEMP/racinggame-e2e.log"
 
