@@ -35,7 +35,33 @@ permissions:
   issues: write
 
 jobs:
+  resolve_target:
+    runs-on: ubuntu-latest
+    outputs:
+      target_sha: ${{ steps.resolve.outputs.target_sha }}
+    steps:
+      - name: Resolve current target PR head
+        id: resolve
+        uses: actions/github-script@v8
+        env:
+          TARGET_REPOSITORY: ${{ inputs.target_repository }}
+          TARGET_SHA: ${{ needs.resolve_target.outputs.target_sha }}
+          PR_NUMBER: ${{ inputs.pr_number }}
+        with:
+          github-token: ${{ secrets.GH_USER_TOKEN }}
+          script: |
+            const [owner, repo] = process.env.TARGET_REPOSITORY.split('/');
+            let sha = process.env.TARGET_SHA;
+            if (process.env.PR_NUMBER) {
+              const { data: pull } = await github.rest.pulls.get({ owner, repo, pull_number: Number(process.env.PR_NUMBER) });
+              sha = pull.head.sha;
+            }
+            if (!/^[0-9a-f]{40}$/.test(sha)) throw new Error('Unable to resolve a full target commit SHA.');
+            core.setOutput('target_sha', sha);
+            core.info(`Validating ${process.env.TARGET_REPOSITORY} at ${sha}.`);
+
   validate:
+    needs: resolve_target
     if: ${{ inputs.validation_profile == 'racinggame' && inputs.target_repository == 'SimulatorLife/RacingGame' }}
     runs-on: ubuntu-latest
     timeout-minutes: 45
@@ -49,7 +75,7 @@ jobs:
         uses: actions/checkout@v6
         with:
           repository: ${{ inputs.target_repository }}
-          ref: ${{ inputs.target_sha }}
+          ref: ${{ needs.resolve_target.outputs.target_sha }}
           token: ${{ secrets.GH_USER_TOKEN }}
           fetch-depth: 0
 
