@@ -80,22 +80,22 @@
   "repositories": [
     {
       "name": "SimulatorLife/3DSpider",
-      "weight": 1,
+      "weight": 0,
       "baseBranch": "main"
     },
     {
       "name": "SimulatorLife/AutoDev",
-      "weight": 1,
+      "weight": 0,
       "baseBranch": "main"
     },
     {
       "name": "SimulatorLife/Colourful-Life",
-      "weight": 1,
+      "weight": 0.2,
       "baseBranch": "master"
     },
     {
       "name": "SimulatorLife/GMLoop",
-      "weight": 1,
+      "weight": 0,
       "baseBranch": "main"
     },
     {
