@@ -59,7 +59,8 @@ test('target-aware reusable workflows use the PAT checkout', async () => {
   assert.match(invoke, /repository: \$\{\{ inputs\.target_repository \}\}/);
   assert.match(invoke, /REPOSITORY: \$\{\{ inputs\.target_repository \}\}/);
   assert.match(invoke, /Detect target repository toolchain/);
-  assert.ok(invoke.includes('node-version-file: ${{ runner.temp }}/autodev.nvmrc'));
+  assert.ok(invoke.includes('node-version-file: .autodev/.nvmrc'));
+  assert.match(await readWorkflow('target-validation.yml'), /node-version-file: \.autodev\/.nvmrc/);
 });
 
 test('AutoDev CI is repository-native rather than GMLoop-specific', async () => {

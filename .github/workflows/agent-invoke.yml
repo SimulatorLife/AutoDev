@@ -279,7 +279,7 @@ jobs:
       - name: Setup node
         uses: actions/setup-node@v6
         with:
-          node-version-file: ${{ runner.temp }}/autodev.nvmrc
+          node-version-file: .autodev/.nvmrc
 
       - name: Install dependencies
         if: ${{ steps.toolchain.outputs.package_manager != 'none' }}
