@@ -84,8 +84,8 @@ jobs:
         run: |
           set -euo pipefail
           jq -e --arg repo "$TARGET_REPOSITORY" '.[$repo]' .autodev/.github/ci/validation-profiles.json > "$RUNNER_TEMP/profile.json"
-          echo "package_manager=$(jq -r --arg repo "$TARGET_REPOSITORY" '.[$repo].packageManager' "$RUNNER_TEMP/profile.json")" >> "$GITHUB_OUTPUT"
-          echo "pnpm_version=$(jq -r --arg repo "$TARGET_REPOSITORY" '.[$repo].pnpmVersion // empty' "$RUNNER_TEMP/profile.json")" >> "$GITHUB_OUTPUT"
+          echo "package_manager=$(jq -r '.packageManager' "$RUNNER_TEMP/profile.json")" >> "$GITHUB_OUTPUT"
+          echo "pnpm_version=$(jq -r '.pnpmVersion // empty' "$RUNNER_TEMP/profile.json")" >> "$GITHUB_OUTPUT"
 
       - name: Checkout private target through AutoDev PAT
         uses: actions/checkout@v6
