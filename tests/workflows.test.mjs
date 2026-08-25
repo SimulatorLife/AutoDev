@@ -59,7 +59,7 @@ test('target-aware reusable workflows use the PAT checkout', async () => {
   assert.match(invoke, /repository: \$\{\{ inputs\.target_repository \}\}/);
   assert.match(invoke, /REPOSITORY: \$\{\{ inputs\.target_repository \}\}/);
   assert.match(invoke, /Detect target repository toolchain/);
-  assert.match(invoke, /node-version-file: \$\{\{ runner\.temp \\}\}\/autodev\.nvmrc/);
+  assert.ok(invoke.includes('node-version-file: ${{ runner.temp }}/autodev.nvmrc'));
 });
 
 test('AutoDev CI is repository-native rather than GMLoop-specific', async () => {
@@ -133,7 +133,7 @@ test('Node actions use the AutoDev root .nvmrc', async () => {
   assert.equal(nvmrc.trim(), '22');
   for (const name of ['copilot-setup-steps.yml', 'agent-invoke.yml', 'target-validation.yml']) {
     const source = await readWorkflow(name);
-    assert.doesNotMatch(source, /node-version: ['\"]22['\"]/u, name);
+    assert.doesNotMatch(source, /node-version:\s*["']22["']/u, name);
     assert.match(source, /node-version-file:/u, name);
   }
 });
