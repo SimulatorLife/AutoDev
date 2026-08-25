@@ -4,6 +4,12 @@ on:
   schedule:
     - cron: "17 * * * *"
   workflow_dispatch:
+    inputs:
+      lookback_days:
+        description: "Rolling metrics lookback window in days."
+        required: false
+        default: 90
+        type: number
 
 permissions:
   contents: read
@@ -28,6 +34,7 @@ jobs:
         uses: actions/github-script@v8
         env:
           GH_USER_TOKEN: ${{ secrets.GH_USER_TOKEN }}
+          LOOKBACK_DAYS: ${{ inputs.lookback_days }}
         with:
           github-token: ${{ secrets.GH_USER_TOKEN }}
           script: |
@@ -40,6 +47,7 @@ jobs:
               owner: context.repo.owner,
               autoDevRepo: context.repo.repo,
               repositories,
+              lookbackDays: Number(process.env.LOOKBACK_DAYS || '90'),
             });
             const dashboard = renderDashboard(metrics);
             fs.writeFileSync('metrics-snapshot.json', JSON.stringify(metrics, null, 2));

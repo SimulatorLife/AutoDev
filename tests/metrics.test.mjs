@@ -19,11 +19,14 @@ test('metrics identify agent PRs and provider invocation comments', () => {
 test('metrics dashboard renders requested counters and recent links', () => {
   const body = metrics.renderDashboard({
     generatedAt: '2026-01-01T00:00:00.000Z',
+    lookbackDays: 90,
+    since: '2025-10-03',
     totals: { agentPrsRaised: 2, agentPrsMerged: 1, agentInvokes: 3, agentInvokesSucceeded: 2, agentInvokesFailed: 1, staleEmptyPrsClosed: 4 },
     perRepository: { 'SimulatorLife/AutoDev': { agentPrsRaised: 2, agentPrsMerged: 1, agentInvokes: { total: 3, succeeded: 2, failed: 1 }, staleEmptyPrsClosed: 4 } },
     perAgent: { 'mini-max': { total: 3, succeeded: 2, failed: 1 } },
     recentPrs: [{ repository: 'SimulatorLife/AutoDev', number: 7, title: 'Agent: Example', url: 'https://github.com/SimulatorLife/AutoDev/pull/7', agent: 'mini-max', state: 'open', mergedAt: null }],
   });
+  assert.match(body, /Lookback window: 90 days/);
   assert.match(body, /Agent PR-and-ping PRs raised/);
   assert.match(body, /Stale-empty PRs closed/);
   assert.match(body, /mini-max/);
@@ -33,6 +36,7 @@ test('metrics dashboard renders requested counters and recent links', () => {
 test('metrics workflow publishes an issue dashboard and artifact', async () => {
   const source = await readFile(path.join(root, '.github', 'workflows', 'metrics-dashboard.yml'), 'utf8');
   assert.match(source, /schedule:/);
+  assert.match(source, /lookback_days:[\s\S]*default: 90[\s\S]*type: number/);
   assert.match(source, /actions\/github-script@v8/);
   assert.match(source, /issues\.update/);
   assert.match(source, /autodev-metrics-dashboard-v1/);
