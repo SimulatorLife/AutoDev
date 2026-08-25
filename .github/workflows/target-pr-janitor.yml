@@ -88,7 +88,7 @@ jobs:
                   owner,
                   repo,
                   issue_number: details.number,
-                  body: `Closing automatically: this PR has been open for at least ${staleHours} hours and contains no file changes. If this is an agent seed PR, rerun the prompt after the target provider is available.`,
+                  body: `<!-- autodev-target-pr-janitor -->\nClosing automatically: this PR has been open for at least ${staleHours} hours and contains no file changes. If this is an agent seed PR, rerun the prompt after the target provider is available.`,
                 });
                 await github.rest.pulls.update({
                   owner,

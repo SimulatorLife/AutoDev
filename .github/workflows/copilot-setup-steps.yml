@@ -52,5 +52,5 @@ jobs:
         run: |
           set -euo pipefail
           while IFS= read -r file; do bash -n "$file"; done < <(find scripts -type f -name '*.sh' -print)
-          while IFS= read -r file; do node --check "$file"; done < <(find scripts -type f -name '*.mjs' -print)
+          while IFS= read -r file; do node --check "$file"; done < <(find scripts -type f \( -name '*.mjs' -o -name '*.cjs' \) -print)
           python3 -m py_compile scripts/*.py

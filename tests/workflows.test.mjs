@@ -118,6 +118,7 @@ test('central target PR janitor owns empty stale PR cleanup', async () => {
   assert.match(source, /pulls\.update/);
   assert.match(source, /git\.deleteRef/);
   assert.match(source, /secrets\.GH_USER_TOKEN/);
+  assert.match(source, /autodev-target-pr-janitor/);
 });
 
 test('target auto-merge requires completed target check evidence', async () => {

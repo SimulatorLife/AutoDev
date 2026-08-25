@@ -1,0 +1,68 @@
+name: "AutoDev Metrics Dashboard"
+
+on:
+  schedule:
+    - cron: "17 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: read
+  actions: read
+
+concurrency:
+  group: autodev-metrics-dashboard
+  cancel-in-progress: false
+
+jobs:
+  aggregate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout AutoDev policy
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
+
+      - name: Collect and publish metrics
+        uses: actions/github-script@v8
+        env:
+          GH_USER_TOKEN: ${{ secrets.GH_USER_TOKEN }}
+        with:
+          github-token: ${{ secrets.GH_USER_TOKEN }}
+          script: |
+            const fs = require('node:fs');
+            const { collectMetrics, renderDashboard } = require('./scripts/autodev-metrics.cjs');
+            const policy = JSON.parse(fs.readFileSync('.github/workflows/weights.json', 'utf8'));
+            const repositories = policy.repositories.map((item) => item.name);
+            const metrics = await collectMetrics({
+              github,
+              owner: context.repo.owner,
+              autoDevRepo: context.repo.repo,
+              repositories,
+            });
+            const dashboard = renderDashboard(metrics);
+            fs.writeFileSync('metrics-snapshot.json', JSON.stringify(metrics, null, 2));
+            core.summary.addRaw(dashboard).write();
+
+            const issues = await github.paginate(github.rest.issues.listForRepo, {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: 'open',
+              per_page: 100,
+            });
+            const existing = issues.find((issue) => issue.body?.includes('<!-- autodev-metrics-dashboard-v1 -->'));
+            if (existing) {
+              await github.rest.issues.update({ owner: context.repo.owner, repo: context.repo.repo, issue_number: existing.number, body: dashboard });
+              core.info(`Updated metrics dashboard issue #${existing.number}.`);
+            } else {
+              const created = await github.rest.issues.create({ owner: context.repo.owner, repo: context.repo.repo, title: '[AutoDev] Metrics Dashboard', body: dashboard });
+              core.info(`Created metrics dashboard issue #${created.data.number}.`);
+            }
+
+      - name: Upload metrics snapshot
+        uses: actions/upload-artifact@v4
+        with:
+          name: autodev-metrics-${{ github.run_id }}
+          path: metrics-snapshot.json
+          retention-days: 90
