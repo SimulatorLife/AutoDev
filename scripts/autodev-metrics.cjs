@@ -112,7 +112,8 @@ async function collectMetrics({ github, owner, autoDevRepo, repositories, lookba
           const { data: run } = await github.rest.actions.getWorkflowRun({ owner, repo: autoDevRepo, run_id: invocation.runId });
           conclusion = run.conclusion || run.status || 'unknown';
         } catch (error) {
-          core.warning(`Could not read AutoDev run ${invocation.runId}: ${error.message}`);
+          if (globalThis.core?.warning) globalThis.core.warning(`Could not read AutoDev run ${invocation.runId}: ${error.message}`);
+          else console.warn(`Could not read AutoDev run ${invocation.runId}: ${error.message}`);
         }
         invocationRuns.set(invocation.runId, { ...invocation, conclusion, repository: fullName });
       }
