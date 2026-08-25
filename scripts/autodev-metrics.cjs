@@ -54,32 +54,40 @@ async function collectMetrics({ github, owner, autoDevRepo, repositories, genera
 
   for (const fullName of repositories) {
     const [targetOwner, targetRepo] = fullName.split('/');
-    const pulls = await github.paginate(github.rest.pulls.list, {
-      owner: targetOwner,
-      repo: targetRepo,
-      state: 'all',
-      per_page: 100,
-      sort: 'created',
-      direction: 'desc',
-    });
+    const [pulls, janitorMatches, legacyJanitorMatches] = await Promise.all([
+      github.paginate(github.rest.pulls.list, {
+        owner: targetOwner,
+        repo: targetRepo,
+        state: 'all',
+        per_page: 100,
+        sort: 'created',
+        direction: 'desc',
+      }),
+      github.paginate(github.rest.search.issuesAndPullRequests, {
+        q: `repo:${fullName} is:pr is:closed "${JANITOR_MARKER}" in:comments`,
+        per_page: 100,
+      }),
+      github.paginate(github.rest.search.issuesAndPullRequests, {
+        q: `repo:${fullName} is:pr is:closed "Closing automatically" in:comments`,
+        per_page: 100,
+      }),
+    ]);
+    const janitorPrNumbers = new Set([
+      ...janitorMatches.map((item) => item.number),
+      ...legacyJanitorMatches.map((item) => item.number),
+    ]);
+    perRepository[fullName].staleEmptyPrsClosed = janitorPrNumbers.size;
+    staleEmptyPrsClosed += janitorPrNumbers.size;
 
     for (const summary of pulls) {
+      const agent = agentFromPull(summary);
+      if (!agent) continue;
       const comments = await github.paginate(github.rest.issues.listComments, {
         owner: targetOwner,
         repo: targetRepo,
         issue_number: summary.number,
         per_page: 100,
       });
-      const janitorClosed = comments.some((comment) =>
-        String(comment.body || '').includes(JANITOR_MARKER) || /Closing automatically: this PR has been open/i.test(comment.body || '')
-      );
-      if (janitorClosed && summary.state === 'closed') {
-        perRepository[fullName].staleEmptyPrsClosed += 1;
-        staleEmptyPrsClosed += 1;
-      }
-
-      const agent = agentFromPull(summary);
-      if (!agent) continue;
       const { data: pull } = await github.rest.pulls.get({ owner: targetOwner, repo: targetRepo, pull_number: summary.number });
       agentPrsRaised += 1;
       perRepository[fullName].agentPrsRaised += 1;
