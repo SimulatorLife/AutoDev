@@ -43,7 +43,7 @@ test('generic prompt catalog contains only repository-agnostic Markdown prompts'
 });
 
 test('generic prompt catalog includes the migrated organization-wide inventory', async () => {
-  assert.equal(config.prompts.length, 51);
+  assert.equal(config.prompts.length, 53);
   for (const prompt of config.prompts) {
     assert.equal(Object.hasOwn(prompt, 'promptRepository'), false, prompt.name);
     assert.equal(Object.hasOwn(prompt, 'sourceWorkflow'), false, prompt.name);

@@ -512,6 +512,22 @@
       "weight": 0.15,
       "category": "code",
       "complexity": 2
+    },
+    {
+      "name": "test-coverage",
+      "path": ".agents/prompts/test-coverage.md",
+      "title": "Agent: Improve test coverage and quality",
+      "weight": 0.5,
+      "category": "code",
+      "complexity": 2
+    },
+    {
+      "name": "configuration-improvement",
+      "path": ".agents/prompts/configuration-improvement.md",
+      "title": "Agent: Improve one configuration surface",
+      "weight": 0.2,
+      "category": "code",
+      "complexity": 2
     }
   ]
 }

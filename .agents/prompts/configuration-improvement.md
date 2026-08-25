@@ -1,0 +1,3 @@
+# Improve one configuration surface
+
+Select one configuration surface that can improve build, lint, test, or CI ergonomics without changing application behavior. Inspect the target repository's actual manifests and conventions rather than assuming filenames or tools. Make one concrete, small, reversible improvement—such as clarifying scripts, wiring a missing check, aligning conflicting tool settings, tightening a CI trigger, or documenting an environment requirement. Leave dependency churn and broad refactors to their dedicated prompts, and validate the change with the repository's documented commands.
