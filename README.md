@@ -34,4 +34,4 @@ npm run test:python
 
 AutoDev owns the organization workflows and local AI/provider setup. RacingGame intentionally retains only product-specific tooling such as build, performance, CSS-token, and source-boundary scripts; those are not organization automation and are not duplicated here.
 
-See [`docs/organization-routing.md`](docs/organization-routing.md) for the schema and operational details, and [`docs/provider-routing.md`](docs/provider-routing.md) plus [`docs/local-setup.md`](docs/local-setup.md) for the migrated local AI/provider setup.
+See [`docs/organization-routing.md`](docs/organization-routing.md) for routing, [`docs/private-target-validation.md`](docs/private-target-validation.md) for private-repository validation, and [`docs/provider-routing.md`](docs/provider-routing.md) plus [`docs/local-setup.md`](docs/local-setup.md) for local AI/provider setup.
