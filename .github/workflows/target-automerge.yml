@@ -28,6 +28,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       matrix: ${{ steps.plan.outputs.matrix }}
+      has_targets: ${{ steps.plan.outputs.has_targets }}
     steps:
       - name: Checkout AutoDev policy
         uses: actions/checkout@v6
@@ -78,11 +79,12 @@ jobs:
               }
             }
             core.setOutput('matrix', JSON.stringify({ include: targets }));
+            core.setOutput('has_targets', targets.length > 0 ? 'true' : 'false');
             core.info(`Planned ${targets.length} target PR(s).`);
 
   merge:
     needs: plan
-    if: ${{ fromJSON(needs.plan.outputs.matrix).include[0] != null }}
+    if: ${{ needs.plan.outputs.has_targets == 'true' }}
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
