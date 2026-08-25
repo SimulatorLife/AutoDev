@@ -39,16 +39,8 @@ function addInvocation(counter, conclusion) {
 }
 
 async function collectMetrics({ github, owner, autoDevRepo, repositories, lookbackDays = 90, generatedAt = new Date().toISOString() }) {
-  const since = new Date(Date.now() - lookbackDays * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
-  const titlePrefixes = [
-    { query: '"Agent:"', agent: 'unknown' },
-    { query: '"Codex:"', agent: 'codex' },
-    { query: '"MiniMax:"', agent: 'mini-max' },
-    { query: '"Claude:"', agent: 'claude' },
-    { query: '"Gemini:"', agent: 'gemini' },
-    { query: '"Qwen:"', agent: 'qwen' },
-    { query: '"Copilot:"', agent: 'copilot' },
-  ];
+  const sinceDate = new Date(Date.now() - lookbackDays * 24 * 60 * 60 * 1000);
+  const since = sinceDate.toISOString().slice(0, 10);
   const perRepository = Object.fromEntries(repositories.map((name) => [name, {
     agentPrsRaised: 0,
     agentPrsMerged: 0,
@@ -62,64 +54,56 @@ async function collectMetrics({ github, owner, autoDevRepo, repositories, lookba
   let agentPrsMerged = 0;
   let staleEmptyPrsClosed = 0;
 
-  const search = async (query, perPage = 10) => {
-    const { data } = await github.rest.search.issuesAndPullRequests({ q: query, per_page: perPage });
-    return data.items || [];
-  };
-  const count = async (query) => {
-    const { data } = await github.rest.search.issuesAndPullRequests({ q: query, per_page: 1 });
-    return Number(data.total_count || 0);
-  };
-
   for (const fullName of repositories) {
-    const baseQuery = `repo:${fullName} is:pr created:>=${since}`;
-    const [janitorMatches, legacyJanitorMatches] = await Promise.all([
-      search(`${baseQuery} is:closed "${JANITOR_MARKER}" in:comments`),
-      search(`${baseQuery} is:closed "Closing automatically" in:comments`),
-    ]);
-    const janitorPrNumbers = new Set([
-      ...janitorMatches.map((item) => item.number),
-      ...legacyJanitorMatches.map((item) => item.number),
-    ]);
-    perRepository[fullName].staleEmptyPrsClosed = janitorPrNumbers.size;
-    staleEmptyPrsClosed += janitorPrNumbers.size;
+    const [targetOwner, targetRepo] = fullName.split('/');
+    const pulls = await github.paginate(github.rest.pulls.list, {
+      owner: targetOwner,
+      repo: targetRepo,
+      state: 'all',
+      per_page: 100,
+      sort: 'created',
+      direction: 'desc',
+    });
 
-    const recentAgentPulls = new Map();
-    for (const prefix of titlePrefixes) {
-      const createdQuery = `${baseQuery} ${prefix.query} in:title`;
-      const mergedQuery = `${createdQuery} is:merged`;
-      const [createdCount, mergedCount, recent] = await Promise.all([
-        count(createdQuery),
-        count(mergedQuery),
-        search(`${createdQuery} sort:created-desc`, 10),
-      ]);
-      agentPrsRaised += createdCount;
-      agentPrsMerged += mergedCount;
-      perRepository[fullName].agentPrsRaised += createdCount;
-      perRepository[fullName].agentPrsMerged += mergedCount;
-      for (const item of recent) recentAgentPulls.set(item.number, { ...item, prefixAgent: prefix.agent });
-    }
+    for (const summary of pulls) {
+      const createdRecently = new Date(summary.created_at) >= sinceDate;
+      const closedRecently = summary.state === 'closed' && summary.closed_at && new Date(summary.closed_at) >= sinceDate;
+      const agent = agentFromPull(summary);
+      if (!createdRecently && !closedRecently) continue;
+      if (!agent && !closedRecently) continue;
 
-    const agentPrs = [...recentAgentPulls.values()];
-    for (const item of agentPrs) {
-      const agent = agentFromPull(item) || item.prefixAgent;
-      recentPrs.push({
-        repository: fullName,
-        number: item.number,
-        title: item.title,
-        url: item.html_url,
-        state: item.state,
-        createdAt: item.created_at,
-        mergedAt: item.pull_request?.merged_at || null,
-        agent,
-      });
-      const [targetOwner, targetRepo] = fullName.split('/');
       const comments = await github.paginate(github.rest.issues.listComments, {
         owner: targetOwner,
         repo: targetRepo,
-        issue_number: item.number,
+        issue_number: summary.number,
         per_page: 100,
       });
+      if (closedRecently && comments.some((comment) =>
+        String(comment.body || '').includes(JANITOR_MARKER) || /Closing automatically: this PR has been open/i.test(comment.body || '')
+      )) {
+        perRepository[fullName].staleEmptyPrsClosed += 1;
+        staleEmptyPrsClosed += 1;
+      }
+      if (!agent || !createdRecently) continue;
+
+      const { data: pull } = await github.rest.pulls.get({ owner: targetOwner, repo: targetRepo, pull_number: summary.number });
+      agentPrsRaised += 1;
+      perRepository[fullName].agentPrsRaised += 1;
+      if (pull.merged_at) {
+        agentPrsMerged += 1;
+        perRepository[fullName].agentPrsMerged += 1;
+      }
+      recentPrs.push({
+        repository: fullName,
+        number: pull.number,
+        title: pull.title,
+        url: pull.html_url,
+        state: pull.state,
+        createdAt: pull.created_at,
+        mergedAt: pull.merged_at,
+        agent,
+      });
+
       for (const comment of comments) {
         const invocation = parseInvocationComment(comment.body);
         if (!invocation || invocationRuns.has(invocation.runId)) continue;
@@ -158,7 +142,7 @@ async function collectMetrics({ github, owner, autoDevRepo, repositories, lookba
     },
     perRepository,
     perAgent,
-    recentPrs: recentPrs.sort((left, right) => right.createdAt.localeCompare(left.createdAt)).slice(0, 10),
+    recentPrs: recentPrs.slice(0, 10),
   };
 }
 
