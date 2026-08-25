@@ -104,6 +104,18 @@ test('AutoDev CI is repository-native and pnpm-native', async () => {
   assert.match(source, /node-version-file: \.nvmrc/);
 });
 
+test('central target PR janitor owns empty stale PR cleanup', async () => {
+  const source = await readWorkflow('target-pr-janitor.yml');
+  assert.match(source, /workflow_dispatch:/);
+  assert.match(source, /SimulatorLife\/Colourful-Life/);
+  assert.match(source, /weights\.json/);
+  assert.match(source, /pulls\.list/);
+  assert.match(source, /changed_files/);
+  assert.match(source, /pulls\.update/);
+  assert.match(source, /git\.deleteRef/);
+  assert.match(source, /secrets\.GH_USER_TOKEN/);
+});
+
 test('target auto-merge requires completed target check evidence', async () => {
   const source = await readWorkflow('target-automerge.yml');
   assert.match(source, /target_repository:/);

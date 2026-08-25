@@ -1,0 +1,113 @@
+name: "Target PR Janitor"
+
+on:
+  schedule:
+    - cron: "0 * * * *"
+  workflow_dispatch:
+    inputs:
+      target_repository:
+        description: "Target repository, or all configured repositories."
+        required: false
+        default: "all"
+        type: choice
+        options:
+          - all
+          - SimulatorLife/3DSpider
+          - SimulatorLife/AutoDev
+          - SimulatorLife/Colourful-Life
+          - SimulatorLife/GMLoop
+          - SimulatorLife/RacingGame
+      stale_hours:
+        description: "Minimum age for an unchanged, non-draft PR before cleanup."
+        required: false
+        default: "1.25"
+        type: string
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: write
+
+jobs:
+  janitor:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout AutoDev policy
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
+
+      - name: Close empty stale target PRs
+        uses: actions/github-script@v8
+        env:
+          TARGET_REPOSITORY: ${{ inputs.target_repository || 'all' }}
+          STALE_HOURS: ${{ inputs.stale_hours || '1.25' }}
+        with:
+          github-token: ${{ secrets.GH_USER_TOKEN }}
+          script: |
+            const fs = require('node:fs');
+            const policy = JSON.parse(fs.readFileSync('.github/workflows/weights.json', 'utf8'));
+            const configured = policy.repositories.map((repository) => repository.name);
+            const requested = process.env.TARGET_REPOSITORY || 'all';
+            const repositories = requested === 'all' ? configured : [requested];
+            const unknown = repositories.filter((repository) => !configured.includes(repository));
+            if (unknown.length) throw new Error(`Unconfigured target repository: ${unknown.join(', ')}`);
+
+            const staleHours = Number(process.env.STALE_HOURS || '1.25');
+            if (!Number.isFinite(staleHours) || staleHours <= 0) throw new Error('stale_hours must be a positive number.');
+            const thresholdMs = staleHours * 60 * 60 * 1000;
+            const protectedBranches = new Set(['main', 'master', 'mainline']);
+            const now = Date.now();
+            let closed = 0;
+            let branchesDeleted = 0;
+
+            for (const target of repositories) {
+              const [owner, repo] = target.split('/');
+              const openPrs = await github.paginate(github.rest.pulls.list, {
+                owner,
+                repo,
+                state: 'open',
+                per_page: 100,
+                sort: 'created',
+                direction: 'asc',
+              });
+
+              for (const summary of openPrs) {
+                const ageMs = now - new Date(summary.created_at).getTime();
+                if (ageMs < thresholdMs || summary.draft) continue;
+
+                const { data: details } = await github.rest.pulls.get({
+                  owner,
+                  repo,
+                  pull_number: summary.number,
+                });
+                if ((details.changed_files ?? 0) !== 0 || details.draft) continue;
+
+                await github.rest.issues.createComment({
+                  owner,
+                  repo,
+                  issue_number: details.number,
+                  body: `Closing automatically: this PR has been open for at least ${staleHours} hours and contains no file changes. If this is an agent seed PR, rerun the prompt after the target provider is available.`,
+                });
+                await github.rest.pulls.update({
+                  owner,
+                  repo,
+                  pull_number: details.number,
+                  state: 'closed',
+                });
+                closed += 1;
+
+                const headRepo = details.head?.repo?.full_name;
+                const headRef = details.head?.ref;
+                if (headRepo === target && headRef && !protectedBranches.has(headRef) && headRef !== details.base?.ref) {
+                  try {
+                    await github.rest.git.deleteRef({ owner, repo, ref: `heads/${headRef}` });
+                    branchesDeleted += 1;
+                  } catch (error) {
+                    core.warning(`Could not delete ${target}:${headRef}: ${error.message}`);
+                  }
+                }
+                core.info(`Closed ${target} PR #${details.number}.`);
+              }
+            }
+            core.notice(`Target PR janitor complete: closed ${closed} PR(s), deleted ${branchesDeleted} branch(es).`);
