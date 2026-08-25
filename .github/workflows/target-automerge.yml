@@ -29,6 +29,7 @@ permissions:
   checks: read
   statuses: read
   issues: write
+  actions: write
 
 jobs:
   plan:
@@ -108,14 +109,53 @@ jobs:
             const [owner, repo] = process.env.TARGET_REPOSITORY.split('/');
             const pullNumber = Number(process.env.PR_NUMBER);
             const marker = '<!-- autodev-target-automerge -->';
+
+            const upsertStatusComment = async (body) => {
+              const comments = await github.paginate(github.rest.issues.listComments, {
+                owner, repo, issue_number: pullNumber, per_page: 100,
+              });
+              const existing = comments.find((comment) => comment.body?.includes(marker));
+              if (existing) {
+                await github.rest.issues.updateComment({ owner, repo, comment_id: existing.id, body });
+              } else {
+                await github.rest.issues.createComment({ owner, repo, issue_number: pullNumber, body });
+              }
+            };
+
+            const requestConflictResolution = async (pull) => {
+              const sha = pull.head.sha;
+              await upsertStatusComment(
+                `${marker} sha:${sha}\nAutoDev could not merge this PR because GitHub reported merge conflicts for commit ${sha}. The PR remains open; a conflict-resolution request will be made for this commit.`
+              );
+              try {
+                await github.rest.actions.createWorkflowDispatch({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  workflow_id: 'agent-02-resolve-merge-conflicts.yml',
+                  ref: (context.ref || 'refs/heads/main').replace(/^refs\/(heads|tags)\//, '') || 'main',
+                  inputs: {
+                    target_repository: process.env.TARGET_REPOSITORY,
+                    target_pr_number: String(pullNumber),
+                  },
+                });
+                core.info(`Dispatched conflict resolution for ${process.env.TARGET_REPOSITORY}#${pullNumber} at ${sha}.`);
+              } catch (dispatchError) {
+                core.warning(`Could not dispatch conflict resolution for ${process.env.TARGET_REPOSITORY}#${pullNumber}: ${dispatchError.message}`);
+              }
+            };
+
             const { data: pull } = await github.rest.pulls.get({ owner, repo, pull_number: pullNumber });
             if (pull.state !== 'open' || pull.draft) return;
             if (pull.head?.repo?.full_name !== process.env.TARGET_REPOSITORY) {
               core.info('Skipping external-head PR.');
               return;
             }
-            if (pull.mergeable_state === 'dirty' || pull.mergeable_state === 'blocked') {
-              core.info(`PR #${pullNumber} is not currently mergeable (${pull.mergeable_state}).`);
+            if (pull.mergeable_state === 'dirty') {
+              await requestConflictResolution(pull);
+              return;
+            }
+            if (pull.mergeable_state === 'blocked') {
+              core.info(`PR #${pullNumber} is not currently mergeable (blocked).`);
               return;
             }
 
@@ -139,12 +179,15 @@ jobs:
               return;
             }
 
-            const comments = await github.paginate(github.rest.issues.listComments, {
-              owner, repo, issue_number: pullNumber, per_page: 100,
-            });
-            const body = `${marker}\nAutoDev verified ${completedChecks.length + commitStatuses.length} completed check/status result(s) and is merging this agent PR.`;
-            const existing = comments.find((comment) => comment.body?.includes(marker));
-            if (existing) await github.rest.issues.updateComment({ owner, repo, comment_id: existing.id, body });
-            else await github.rest.issues.createComment({ owner, repo, issue_number: pullNumber, body });
-            await github.rest.pulls.merge({ owner, repo, pull_number: pullNumber, sha: pull.head.sha, merge_method: 'squash' });
-            core.info(`Merged ${process.env.TARGET_REPOSITORY}#${pullNumber}.`);
+            try {
+              await upsertStatusComment(`${marker} sha:${pull.head.sha}\nAutoDev verified ${completedChecks.length + commitStatuses.length} completed check/status result(s) and is merging this agent PR.`);
+              await github.rest.pulls.merge({ owner, repo, pull_number: pullNumber, sha: pull.head.sha, merge_method: 'squash' });
+              core.info(`Merged ${process.env.TARGET_REPOSITORY}#${pullNumber}.`);
+            } catch (error) {
+              if (error.status === 405 && /conflict/i.test(error.message || '')) {
+                await requestConflictResolution(pull);
+                core.warning(`Merge conflict reported while merging ${process.env.TARGET_REPOSITORY}#${pullNumber}; leaving the workflow successful.`);
+                return;
+              }
+              throw error;
+            }

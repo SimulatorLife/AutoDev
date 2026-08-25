@@ -128,6 +128,11 @@ test('target auto-merge requires completed target check evidence', async () => {
   assert.match(source, /listCommitStatusesForRef/);
   assert.match(source, /hasEvidence/);
   assert.match(source, /pulls\.merge/);
+  assert.match(source, /error\.status === 405/);
+  assert.match(source, /Pull Request has merge conflicts|conflict/i);
+  assert.match(source, /createWorkflowDispatch/);
+  assert.match(source, /agent-02-resolve-merge-conflicts\.yml/);
+  assert.ok(source.includes('sha:${sha}'));
   assert.match(source, /GH_USER_TOKEN/);
 });
 
