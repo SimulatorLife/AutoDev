@@ -8,9 +8,15 @@ on:
         required: true
         type: string
       target_repository:
-        description: "Target repository in owner/name form."
-        required: true
-        type: string
+        description: "Target repository."
+          required: true
+          type: choice
+          options:
+            - SimulatorLife/3DSpider
+            - SimulatorLife/AutoDev
+            - SimulatorLife/Colourful-Life
+            - SimulatorLife/GMLoop
+            - SimulatorLife/RacingGame
 permissions:
   contents: write
   pull-requests: write

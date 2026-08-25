@@ -23,9 +23,15 @@ on:
   workflow_dispatch:
     inputs:
       target_repository:
-        description: "Target SimulatorLife repository (owner/name)."
-        required: true
-        type: string
+        description: "Target repository."
+          required: true
+          type: choice
+          options:
+            - SimulatorLife/3DSpider
+            - SimulatorLife/AutoDev
+            - SimulatorLife/Colourful-Life
+            - SimulatorLife/GMLoop
+            - SimulatorLife/RacingGame
       target_pr_number:
         description: "Optional PR number to target for conflict resolution."
         required: false

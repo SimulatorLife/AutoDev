@@ -6,10 +6,17 @@ on:
   workflow_dispatch:
     inputs:
       target_repository:
-        description: "Optional target repository in owner/name form. Blank scans configured repositories."
+        description: "Target repository, or all configured repositories."
         required: false
-        default: ""
-        type: string
+        default: "all"
+        type: choice
+        options:
+          - all
+          - SimulatorLife/3DSpider
+          - SimulatorLife/AutoDev
+          - SimulatorLife/Colourful-Life
+          - SimulatorLife/GMLoop
+          - SimulatorLife/RacingGame
       pr_number:
         description: "Optional target PR number. Required when target_repository is supplied."
         required: false
@@ -45,7 +52,8 @@ jobs:
           script: |
             const fs = require('fs');
             const cfg = JSON.parse(fs.readFileSync('.github/workflows/weights.json', 'utf8'));
-            const requestedRepository = (process.env.REQUESTED_REPOSITORY || '').trim();
+            const requestedInput = (process.env.REQUESTED_REPOSITORY || 'all').trim();
+            const requestedRepository = requestedInput === 'all' ? '' : requestedInput;
             const requestedPr = (process.env.REQUESTED_PR || '').trim();
             if (requestedRepository && !/^\S+\/\S+$/.test(requestedRepository)) {
               throw new Error('target_repository must use owner/name form.');
