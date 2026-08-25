@@ -11,16 +11,13 @@ on:
         description: "Target repository in owner/name form."
         required: true
         type: string
-  issue_comment:
-    types: [created]
-
 permissions:
   contents: write
   pull-requests: write
   issues: write
 
 concurrency:
-  group: '${{ github.workflow }}-invoke-${{ inputs.target_repository || github.repository }}-${{ inputs.pr_number || github.event.issue.number }}'
+  group: '${{ github.workflow }}-invoke-${{ inputs.target_repository }}-${{ inputs.pr_number }}'
   cancel-in-progress: false
 
 defaults:
@@ -29,15 +26,14 @@ defaults:
 
 jobs:
   invoke:
-    if: ${{ github.event_name == 'workflow_dispatch' || (github.event.issue.pull_request && contains(github.event.comment.body || '', '@mini-max')) }}
     uses: ./.github/workflows/agent-invoke.yml
     secrets:
       OPENAI_API_KEY: ${{ secrets.MINIMAX_API_KEY }}
       GH_USER_TOKEN: ${{ secrets.GH_USER_TOKEN }}
     with:
-      pr_number: ${{ inputs.pr_number || github.event.issue.number }}
-      target_repository: ${{ inputs.target_repository || github.repository }}
-      additional_context: ${{ github.event.comment.body }}
+      pr_number: ${{ inputs.pr_number }}
+      target_repository: ${{ inputs.target_repository }}
+      additional_context: ""
       agent: mini-max
       openai_base_url: 'https://api.minimax.io/v1'
       agent_command: |
