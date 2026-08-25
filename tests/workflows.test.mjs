@@ -97,7 +97,7 @@ test('private target validation clones through AutoDev and reports target status
   assert.match(source, /run_browser/);
 });
 
-test('private RacingGame auto-merge trusts only AutoDev validation status', async () => {
+test('private target auto-merge trusts only AutoDev validation status', async () => {
   const source = await readWorkflow('target-automerge.yml');
   assert.match(source, /autodev\/validation/);
   assert.match(source, /autoDevValidation/);
