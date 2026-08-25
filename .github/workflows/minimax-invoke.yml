@@ -38,6 +38,9 @@ jobs:
         set +e
         stdbuf -oL -eL npx --yes @qwen-code/qwen-code@latest \
           --approval-mode=yolo \
+          --auth-type openai \
+          --openai-api-key "${OPENAI_API_KEY}" \
+          --openai-base-url "${OPENAI_BASE_URL}" \
           --model=MiniMax-M3 \
           --experimental-lsp \
           --output-format=stream-json \
