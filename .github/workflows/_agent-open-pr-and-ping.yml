@@ -104,6 +104,12 @@ jobs:
         run: |
           set -euo pipefail
           cp .autodev/.github/workflows/weights.json "$RUNNER_TEMP/autodev-weights.json"
+          if [ -n "${PROMPT_PATH}" ]; then
+            jq -e --arg repo "${PROMPT_REPOSITORY}" '.repositories[] | select(.name == $repo)' "$RUNNER_TEMP/autodev-weights.json" >/dev/null || {
+              echo "prompt_repository is not configured in AutoDev weights: ${PROMPT_REPOSITORY}" >&2
+              exit 1
+            }
+          fi
           if [ -n "${PROMPT_PATH}" ] && [ "${PROMPT_REPOSITORY}" = "SimulatorLife/AutoDev" ]; then
             case "${PROMPT_PATH}" in .agents/prompts/*.md) ;; *) echo "Invalid prompt_path" >&2; exit 1 ;; esac
             cp ".autodev/${PROMPT_PATH}" "$RUNNER_TEMP/autodev-prompt.md"
