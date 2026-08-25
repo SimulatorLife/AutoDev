@@ -24,10 +24,10 @@ on:
     inputs:
       target_repository:
         description: "Target repository."
-          required: true
-          type: choice
-          options:
-            - SimulatorLife/3DSpider
+        required: true
+        type: choice
+        options:
+          - SimulatorLife/3DSpider
             - SimulatorLife/AutoDev
             - SimulatorLife/Colourful-Life
             - SimulatorLife/GMLoop
