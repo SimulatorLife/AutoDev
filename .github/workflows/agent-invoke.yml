@@ -1044,5 +1044,6 @@ jobs:
     secrets:
       GH_USER_TOKEN: ${{ secrets.GH_USER_TOKEN }}
     with:
+      target_repository: ${{ inputs.target_repository }}
       target_pr_number: ${{ needs.invoke.outputs.target_pr_number }}
       agent: ${{ needs.invoke.outputs.follow_up_agent }}

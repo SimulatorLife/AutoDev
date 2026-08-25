@@ -5,8 +5,7 @@ on:
     inputs:
       target_repository:
         description: "Target repository in owner/name form."
-        required: false
-        default: ${{ github.repository }}
+        required: true
         type: string
       target_pr_number:
         description: "Optional PR number to target for conflict resolution."
