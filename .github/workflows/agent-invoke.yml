@@ -185,6 +185,17 @@ jobs:
       - name: Stage AutoDev Node version
         run: cp .autodev/.nvmrc "$RUNNER_TEMP/autodev.nvmrc"
 
+      - name: Read AutoDev package manager version
+        id: autodev_package_manager
+        shell: bash
+        run: |
+          set -euo pipefail
+          package_manager="$(node -p "require('./.autodev/package.json').packageManager || ''")"
+          case "${package_manager}" in
+            pnpm@*) echo "pnpm_version=${package_manager#pnpm@}" >> "$GITHUB_OUTPUT" ;;
+            *) echo "AutoDev packageManager must be pnpm@<version>; got '${package_manager}'." >&2; exit 1 ;;
+          esac
+
       - name: Checkout target commit
         uses: actions/checkout@v6
         with:
@@ -269,20 +280,32 @@ jobs:
         run: |
           set -euo pipefail
           package_manager=none
-          if [ -f pnpm-lock.yaml ]; then
+          if [ -f package.json ]; then
+            configured_package_manager="$(node -p "require('./package.json').packageManager || ''")"
+            case "${configured_package_manager}" in
+              pnpm@*) package_manager=pnpm ;;
+              npm@*) package_manager=npm ;;
+            esac
+          fi
+          if [ "${package_manager}" = "none" ] && [ -f pnpm-lock.yaml ]; then
             package_manager=pnpm
-          elif [ -f package-lock.json ]; then
-            package_manager=npm
-          elif [ -f package.json ]; then
+          elif [ "${package_manager}" = "none" ] && { [ -f package-lock.json ] || [ -f npm-shrinkwrap.json ] || [ -f package.json ]; }; then
             package_manager=npm
           fi
           echo "package_manager=${package_manager}" >> "$GITHUB_OUTPUT"
           echo "Detected target package manager: ${package_manager}"
 
-      - name: Setup pnpm
+      - name: Setup pnpm for target repository
         if: ${{ steps.toolchain.outputs.package_manager == 'pnpm' }}
         uses: pnpm/action-setup@v6
         with:
+          cache: false
+
+      - name: Setup pnpm for provider tooling
+        if: ${{ steps.toolchain.outputs.package_manager != 'pnpm' }}
+        uses: pnpm/action-setup@v6
+        with:
+          version: ${{ steps.autodev_package_manager.outputs.pnpm_version }}
           cache: false
 
       - name: Setup node
@@ -613,7 +636,7 @@ jobs:
               printf '%s\n' 'Make one focused, minimal code change set for the user request.'
               printf '%s\n' 'Do not survey the entire repository exhaustively. Narrow to one candidate area first using targeted searches, then read only the files needed for that area.'
               printf '%s\n' 'Start from real command output and repository files you read; do not speculate.'
-              printf '%s\n' 'Keep command and tool output small. If lint is requested: run pnpm run lint, fix exactly one deterministic issue, then re-run pnpm run lint, pnpm run build:ts, and pnpm run lint:quiet.'
+              printf '%s\n' 'Keep command and tool output small. If lint is requested: discover the repository's documented lint command, fix exactly one deterministic issue, then rerun the relevant lint, build, and test checks.'
               printf '%s\n' 'Do not finish with only analysis or a plan. Leave a concrete repository diff in the worktree.'
               printf '%s\n' 'When executing user-requested tasks, do not edit golden .gml fixtures, generated files, dist files, workflow files, or configuration files unless explicitly requested.'
               printf '\n'

@@ -42,7 +42,7 @@ jobs:
         set -euo pipefail
 
         set +e
-        stdbuf -oL -eL npx --yes @qwen-code/qwen-code@latest \
+        stdbuf -oL -eL pnpm --silent dlx @qwen-code/qwen-code@latest \
           --approval-mode=yolo \
           --auth-type openai \
           --openai-api-key "${OPENAI_API_KEY}" \

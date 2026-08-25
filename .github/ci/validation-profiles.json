@@ -1,7 +1,88 @@
 {
-  "SimulatorLife/AutoDev": {"packageManager":"npm","install":"","commands":[{"name":"tests","run":"npm test"},{"name":"python-tests","run":"npm run test:python"}],"optionalCommands":[]},
-  "SimulatorLife/3DSpider": {"packageManager":"none","install":"","commands":[],"optionalCommands":[]},
-  "SimulatorLife/Colourful-Life": {"packageManager":"npm","install":"npm ci","commands":[{"name":"check","run":"npm run check"},{"name":"build","run":"npm run build"}],"optionalCommands":[]},
-  "SimulatorLife/GMLoop": {"packageManager":"pnpm","pnpmVersion":"11.7.0","install":"pnpm install --frozen-lockfile --recursive","commands":[{"name":"build-ts","run":"pnpm run build:ts"},{"name":"lint","run":"pnpm run lint:quiet"},{"name":"tests","run":"pnpm run test:quiet"}],"optionalCommands":[]},
-  "SimulatorLife/RacingGame": {"packageManager":"pnpm","pnpmVersion":"10.32.1","install":"pnpm install --frozen-lockfile","commands":[{"name":"lint","run":"pnpm run lint:ci"},{"name":"deadcode","run":"pnpm run quality:deadcode && pnpm run quality:deadcode:production"},{"name":"build","run":"pnpm run build"},{"name":"unit","run":"pnpm run test:unit"}],"optionalCommands":[{"name":"browser","run":"pnpm exec playwright install chromium && pnpm run test:e2e"}]}
+  "SimulatorLife/AutoDev": {
+    "packageManager": "pnpm",
+    "pnpmVersion": "10.32.1",
+    "install": "pnpm install --frozen-lockfile",
+    "commands": [
+      {
+        "name": "tests",
+        "run": "pnpm test"
+      },
+      {
+        "name": "python-tests",
+        "run": "pnpm run test:python"
+      }
+    ],
+    "optionalCommands": []
+  },
+  "SimulatorLife/3DSpider": {
+    "packageManager": "none",
+    "install": "",
+    "commands": [],
+    "optionalCommands": []
+  },
+  "SimulatorLife/Colourful-Life": {
+    "packageManager": "npm",
+    "install": "npm ci",
+    "commands": [
+      {
+        "name": "check",
+        "run": "npm run check"
+      },
+      {
+        "name": "build",
+        "run": "npm run build"
+      }
+    ],
+    "optionalCommands": []
+  },
+  "SimulatorLife/GMLoop": {
+    "packageManager": "pnpm",
+    "pnpmVersion": "11.7.0",
+    "install": "pnpm install --frozen-lockfile --recursive",
+    "commands": [
+      {
+        "name": "build-ts",
+        "run": "pnpm run build:ts"
+      },
+      {
+        "name": "lint",
+        "run": "pnpm run lint:quiet"
+      },
+      {
+        "name": "tests",
+        "run": "pnpm run test:quiet"
+      }
+    ],
+    "optionalCommands": []
+  },
+  "SimulatorLife/RacingGame": {
+    "packageManager": "pnpm",
+    "pnpmVersion": "10.32.1",
+    "install": "pnpm install --frozen-lockfile",
+    "commands": [
+      {
+        "name": "lint",
+        "run": "pnpm run lint:ci"
+      },
+      {
+        "name": "deadcode",
+        "run": "pnpm run quality:deadcode && pnpm run quality:deadcode:production"
+      },
+      {
+        "name": "build",
+        "run": "pnpm run build"
+      },
+      {
+        "name": "unit",
+        "run": "pnpm run test:unit"
+      }
+    ],
+    "optionalCommands": [
+      {
+        "name": "browser",
+        "run": "pnpm exec playwright install chromium && pnpm run test:e2e"
+      }
+    ]
+  }
 }

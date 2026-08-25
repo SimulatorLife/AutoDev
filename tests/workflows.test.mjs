@@ -76,16 +76,28 @@ test('target-aware reusable workflows use the PAT checkout', async () => {
   assert.match(invoke, /gh api --paginate --slurp.*repos\/\$\{REPOSITORY\}\/issues\/\$\{PR_NUMBER\}\/comments/);
   assert.match(invoke, /No \$\{mention\} task comment was found/);
   assert.match(invoke, /Detect target repository toolchain/);
+  assert.match(invoke, /Read AutoDev package manager version/);
+  assert.match(invoke, /Setup pnpm for provider tooling/);
   assert.ok(invoke.includes('node-version-file: ../../_temp/autodev.nvmrc'));
-  assert.match(invoke, /npm install --no-package-lock/);
+  assert.match(invoke, /elif \[ -f package-lock\.json \] \|\| \[ -f npm-shrinkwrap\.json \]/);
   assert.match(await readWorkflow('target-validation.yml'), /node-version-file: \.\.\/\.\.\/_temp\/autodev\.nvmrc/);
 });
 
-test('AutoDev CI is repository-native rather than GMLoop-specific', async () => {
+test('AutoDev CI is repository-native and pnpm-native', async () => {
+  const packageJson = JSON.parse(await readFile(path.join(root, 'package.json'), 'utf8'));
+  assert.equal(packageJson.packageManager, 'pnpm@10.32.1');
+  assert.ok((await readFile(path.join(root, 'pnpm-lock.yaml'), 'utf8')).startsWith('lockfileVersion:'));
+  const profile = JSON.parse(await readFile(path.join(root, '.github', 'ci', 'validation-profiles.json'), 'utf8'))['SimulatorLife/AutoDev'];
+  assert.equal(profile.packageManager, 'pnpm');
+  assert.equal(profile.pnpmVersion, '10.32.1');
+  assert.deepEqual(profile.commands.map(({ run }) => run), ['pnpm test', 'pnpm run test:python']);
   const source = await readWorkflow('copilot-setup-steps.yml');
-  assert.match(source, /npm test/);
-  assert.match(source, /npm run test:python/);
-  assert.doesNotMatch(source, /pnpm run build:ts/);
+  assert.match(source, /uses: pnpm\/action-setup@v6/);
+  assert.match(source, /cache: pnpm/);
+  assert.match(source, /pnpm install --frozen-lockfile/);
+  assert.match(source, /pnpm test/);
+  assert.match(source, /pnpm run test:python/);
+  assert.doesNotMatch(source, /\bnpm\b/);
   assert.match(source, /node-version-file: \.nvmrc/);
 });
 
@@ -105,7 +117,15 @@ test('MiniMax invocation configures headless OpenAI-compatible authentication', 
   assert.match(source, /--auth-type openai/);
   assert.match(source, /--openai-api-key/);
   assert.match(source, /--openai-base-url/);
-  assert.match(source, /npx --yes @qwen-code\/qwen-code/);
+  assert.match(source, /pnpm --silent dlx @qwen-code\/qwen-code/);
+  assert.doesNotMatch(source, /\bnpx\b/);
+});
+
+test('local provider tooling uses pnpm dlx', async () => {
+  const source = await readFile(path.join(root, 'scripts', 'codex', 'config.toml'), 'utf8');
+  assert.match(source, /command = "pnpm"/);
+  assert.match(source, /args = \["dlx", "@playwright\/mcp@latest"\]/);
+  assert.doesNotMatch(source, /\bnpx\b/);
 });
 
 test('private target validation clones through AutoDev and reports target status', async () => {

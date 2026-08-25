@@ -19,6 +19,14 @@ Configure these organization/repository secrets and variables on AutoDev:
 
 Keep tokens in GitHub Secrets or the local credential store. Never commit them to this repository.
 
+## Local validation toolchain
+
+AutoDev itself is managed with pnpm `10.32.1`, declared by `packageManager` in
+`package.json` and locked in `pnpm-lock.yaml`. Use `pnpm install --frozen-lockfile`
+before running the checks. The target-aware runner intentionally retains an npm
+compatibility branch for organization repositories that have not migrated their
+own package manager; that branch is not used to validate AutoDev.
+
 ## Configure target repositories
 
 Edit `.github/workflows/weights.json` and add one `repositories` record per target in `owner/name` form. A non-positive weight disables a repository without invalidating the configuration. The scheduler combines repository, generic-prompt, and agent weights, so repository weights directly control the share of scheduled PRs.
@@ -28,8 +36,9 @@ The migrated policy keeps the source repository's agent weights unchanged; a zer
 Run the focused policy and local setup tests locally with:
 
 ```bash
-npm test
-npm run test:python
+pnpm install --frozen-lockfile
+pnpm test
+pnpm run test:python
 ```
 
 AutoDev owns the organization workflows and local AI/provider setup. RacingGame intentionally retains only product-specific tooling such as build, performance, CSS-token, and source-boundary scripts; those are not organization automation and are not duplicated here.

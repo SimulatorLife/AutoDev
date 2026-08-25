@@ -30,4 +30,11 @@ The provider workflows are also dispatchable from AutoDev. A new PR's provider r
 1. Add `{ "name": "SimulatorLife/Example", "weight": 1 }` to `repositories`.
 2. Grant the AutoDev `GH_USER_TOKEN` write access to that repository.
 3. Confirm the target's default branch and set a workflow's `base_branch` only when it is not `main`.
-4. Run `npm test` and manually dispatch one small workflow with the target repository before enabling a larger weight.
+4. Run `pnpm test` and manually dispatch one small workflow with the target repository before enabling a larger weight.
+
+## AutoDev toolchain
+
+AutoDev's own checks and validation profile use pnpm `10.32.1` with the committed
+`pnpm-lock.yaml`. The generic target runner may still invoke npm when a different
+SimulatorLife target explicitly declares npm or has an npm lockfile; that is a
+target-repository compatibility path, not an AutoDev dependency.
