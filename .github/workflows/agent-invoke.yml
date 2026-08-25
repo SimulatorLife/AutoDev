@@ -251,27 +251,62 @@ jobs:
           git config --local --unset-all http.https://github.com/.extraheader || true
           git remote set-url origin "https://x-access-token:${GH_USER_TOKEN}@github.com/${{ inputs.target_repository }}.git"
 
+      - name: Detect target repository toolchain
+        id: toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          package_manager=none
+          if [ -f pnpm-lock.yaml ]; then
+            package_manager=pnpm
+          elif [ -f package-lock.json ]; then
+            package_manager=npm
+          elif [ -f package.json ]; then
+            package_manager=npm
+          fi
+          echo "package_manager=${package_manager}" >> "$GITHUB_OUTPUT"
+          echo "Detected target package manager: ${package_manager}"
+
       - name: Setup pnpm
+        if: ${{ steps.toolchain.outputs.package_manager == 'pnpm' }}
         uses: pnpm/action-setup@v6
         with:
-          cache: true
+          version: 10
+          cache: false
 
       - name: Setup node
         uses: actions/setup-node@v6
         with:
-          node-version-file: .nvmrc
-          cache: 'pnpm'
-          cache-dependency-path: |
-            pnpm-lock.yaml
-            **/pnpm-lock.yaml
+          node-version: "22"
 
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile --recursive
-
-      - name: Build TypeScript workspaces (best effort)
+        if: ${{ steps.toolchain.outputs.package_manager != 'none' }}
+        shell: bash
+        env:
+          PACKAGE_MANAGER: ${{ steps.toolchain.outputs.package_manager }}
         run: |
-          if ! pnpm run build:ts; then
-            echo "::warning::TypeScript workspace build failed; continuing environment setup."
+          set -euo pipefail
+          if [ "${PACKAGE_MANAGER}" = "pnpm" ]; then
+            pnpm install --frozen-lockfile --recursive
+          else
+            npm ci
+          fi
+
+      - name: Build target TypeScript (best effort)
+        if: ${{ steps.toolchain.outputs.package_manager != 'none' }}
+        shell: bash
+        env:
+          PACKAGE_MANAGER: ${{ steps.toolchain.outputs.package_manager }}
+        run: |
+          set -euo pipefail
+          if ! node -e "const p=require('./package.json'); process.exit(p.scripts?.['build:ts'] ? 0 : 1)"; then
+            echo "No build:ts script is defined; skipping target TypeScript build."
+            exit 0
+          fi
+          if [ "${PACKAGE_MANAGER}" = "pnpm" ]; then
+            pnpm run build:ts
+          else
+            npm run build:ts
           fi
         continue-on-error: true
 
