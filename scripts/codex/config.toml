@@ -180,11 +180,17 @@ enabled = true
 [plugins."codex-app-tools@openai-bundled"]
 enabled = true
 
+[plugins."pdf@openai-primary-runtime"]
+enabled = true
+
+[plugins."spreadsheets@openai-primary-runtime"]
+enabled = true
+
 [marketplaces.openai-bundled]
 source_type = "local"
 source = "/Users/henrykirk/.codex/.tmp/bundled-marketplaces/openai-bundled"
+
 [marketplaces.openai-primary-runtime]
-last_updated = "2026-08-20T14:22:07Z"
 source_type = "local"
 source = "/Users/henrykirk/.cache/codex-runtimes/codex-primary-runtime/plugins/openai-primary-runtime"
 

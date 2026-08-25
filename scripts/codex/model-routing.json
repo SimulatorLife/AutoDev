@@ -10,7 +10,7 @@
     "antigravity": {
       "models": {
         "fast": "gemini-3.6-flash-medium",
-        "smart": "gemini-3.6-pro"
+        "smart": "gemini-3.7-flash-high"
       }
     },
     "claude": {
@@ -39,11 +39,23 @@
     }
   },
   "roles": {
-    "default": { "tier": "smart" },
-    "docs-researcher": { "tier": "fast" },
-    "browser-tester": { "tier": "smart" },
-    "explorer": { "tier": "smart" },
-    "worker": { "tier": "smart" },
-    "validator": { "tier": "fast" }
+    "default": {
+      "tier": "smart"
+    },
+    "docs-researcher": {
+      "tier": "fast"
+    },
+    "browser-tester": {
+      "tier": "smart"
+    },
+    "explorer": {
+      "tier": "smart"
+    },
+    "worker": {
+      "tier": "smart"
+    },
+    "validator": {
+      "tier": "fast"
+    }
   }
 }
