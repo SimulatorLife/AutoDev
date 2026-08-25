@@ -38,6 +38,7 @@ test('metrics workflow publishes an issue dashboard and artifact', async () => {
   assert.match(source, /schedule:/);
   assert.match(source, /lookback_days:[\s\S]*default: 90[\s\S]*type: number/);
   assert.match(source, /actions\/github-script@v8/);
+  assert.match(await readFile(path.join(root, 'scripts', 'autodev-metrics.cjs'), 'utf8'), /listWorkflowRuns/);
   assert.match(source, /issues\.update/);
   assert.match(source, /autodev-metrics-dashboard-v1/);
   assert.match(source, /upload-artifact@v4/);

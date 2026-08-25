@@ -84,6 +84,11 @@ jobs:
                 });
                 if ((details.changed_files ?? 0) !== 0 || details.draft) continue;
 
+                try {
+                  await github.rest.issues.addLabels({ owner, repo, issue_number: details.number, labels: ['autodev-stale-closed'] });
+                } catch (labelError) {
+                  core.warning(`Could not label ${target}#${details.number} as janitor-closed: ${labelError.message}`);
+                }
                 await github.rest.issues.createComment({
                   owner,
                   repo,

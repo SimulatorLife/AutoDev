@@ -60,82 +60,72 @@ function addInvocation(counter, conclusion) {
 async function collectMetrics({ github, owner, autoDevRepo, repositories, lookbackDays = 90, generatedAt = new Date().toISOString() }) {
   const sinceDate = new Date(Date.now() - lookbackDays * 24 * 60 * 60 * 1000);
   const since = sinceDate.toISOString().slice(0, 10);
+  const providerWorkflows = [
+    ['claude-invoke.yml', 'claude'],
+    ['gemini-invoke.yml', 'gemini'],
+    ['qwen-invoke.yml', 'qwen'],
+    ['minimax-invoke.yml', 'mini-max'],
+    ['minimax-codex-invoke.yml', 'mini-max-codex'],
+  ];
   const perRepository = Object.fromEntries(repositories.map((name) => [name, {
     agentPrsRaised: 0,
     agentPrsMerged: 0,
     agentInvokes: emptyCounter(),
     staleEmptyPrsClosed: 0,
   }]));
-  const perAgent = Object.fromEntries(AGENT_NAMES.map((name) => [name, emptyCounter()]));
-  const invocationRuns = new Map();
+  const perAgent = Object.fromEntries([...AGENT_NAMES, 'unattributed'].map((name) => [name, emptyCounter()]));
   const recentPrs = [];
   let agentPrsRaised = 0;
   let agentPrsMerged = 0;
   let staleEmptyPrsClosed = 0;
 
+  // Workflow run names carry the target repository and PR number for all new provider invocations.
+  for (const [workflowId, agent] of providerWorkflows) {
+    const runs = await github.paginate(github.rest.actions.listWorkflowRuns, {
+      owner,
+      repo: autoDevRepo,
+      workflow_id: workflowId,
+      created: `>=${since}`,
+      per_page: 100,
+    });
+    for (const run of runs) {
+      addInvocation(perAgent[agent], run.conclusion || run.status || 'unknown');
+      const runTitle = run.display_title || '';
+      const target = repositories.find((repository) => runTitle.includes(repository));
+      if (target) addInvocation(perRepository[target].agentInvokes, run.conclusion || run.status || 'unknown');
+      else addInvocation(perAgent.unattributed, run.conclusion || run.status || 'unknown');
+    }
+  }
+
   for (const fullName of repositories) {
     const [targetOwner, targetRepo] = fullName.split('/');
     const pulls = await listRecentPulls({ github, owner: targetOwner, repo: targetRepo, sinceDate });
-
     for (const summary of pulls) {
       const createdRecently = new Date(summary.created_at) >= sinceDate;
       const closedRecently = summary.state === 'closed' && summary.closed_at && new Date(summary.closed_at) >= sinceDate;
-      const agent = agentFromPull(summary);
-      if (!createdRecently && !closedRecently) continue;
-      if (!agent && !closedRecently) continue;
-
-      const comments = await github.paginate(github.rest.issues.listComments, {
-        owner: targetOwner,
-        repo: targetRepo,
-        issue_number: summary.number,
-        per_page: 100,
-      });
-      if (closedRecently && comments.some((comment) =>
-        String(comment.body || '').includes(JANITOR_MARKER) || /Closing automatically: this PR has been open/i.test(comment.body || '')
-      )) {
+      if (closedRecently && (summary.labels || []).some((label) => label.name === 'autodev-stale-closed')) {
         perRepository[fullName].staleEmptyPrsClosed += 1;
         staleEmptyPrsClosed += 1;
       }
+      const agent = agentFromPull(summary);
       if (!agent || !createdRecently) continue;
-
-      const { data: pull } = await github.rest.pulls.get({ owner: targetOwner, repo: targetRepo, pull_number: summary.number });
       agentPrsRaised += 1;
       perRepository[fullName].agentPrsRaised += 1;
-      if (pull.merged_at) {
+      if (summary.merged_at) {
         agentPrsMerged += 1;
         perRepository[fullName].agentPrsMerged += 1;
       }
       recentPrs.push({
         repository: fullName,
-        number: pull.number,
-        title: pull.title,
-        url: pull.html_url,
-        state: pull.state,
-        createdAt: pull.created_at,
-        mergedAt: pull.merged_at,
+        number: summary.number,
+        title: summary.title,
+        url: summary.html_url,
+        state: summary.state,
+        createdAt: summary.created_at,
+        mergedAt: summary.merged_at,
         agent,
       });
-
-      for (const comment of comments) {
-        const invocation = parseInvocationComment(comment.body);
-        if (!invocation || invocationRuns.has(invocation.runId)) continue;
-        let conclusion = 'unknown';
-        try {
-          const { data: run } = await github.rest.actions.getWorkflowRun({ owner, repo: autoDevRepo, run_id: invocation.runId });
-          conclusion = run.conclusion || run.status || 'unknown';
-        } catch (error) {
-          if (globalThis.core?.warning) globalThis.core.warning(`Could not read AutoDev run ${invocation.runId}: ${error.message}`);
-          else console.warn(`Could not read AutoDev run ${invocation.runId}: ${error.message}`);
-        }
-        invocationRuns.set(invocation.runId, { ...invocation, conclusion, repository: fullName });
-      }
     }
-  }
-
-  for (const invocation of invocationRuns.values()) {
-    addInvocation(perRepository[invocation.repository].agentInvokes, invocation.conclusion);
-    if (!perAgent[invocation.agent]) perAgent[invocation.agent] = emptyCounter();
-    addInvocation(perAgent[invocation.agent], invocation.conclusion);
   }
 
   recentPrs.sort((left, right) => right.createdAt.localeCompare(left.createdAt));
@@ -148,9 +138,9 @@ async function collectMetrics({ github, owner, autoDevRepo, repositories, lookba
     totals: {
       agentPrsRaised,
       agentPrsMerged,
-      agentInvokes: Object.values(perRepository).reduce((sum, item) => sum + item.agentInvokes.total, 0),
-      agentInvokesSucceeded: Object.values(perRepository).reduce((sum, item) => sum + item.agentInvokes.succeeded, 0),
-      agentInvokesFailed: Object.values(perRepository).reduce((sum, item) => sum + item.agentInvokes.failed, 0),
+      agentInvokes: Object.values(perAgent).reduce((sum, item) => sum + item.total, 0),
+      agentInvokesSucceeded: Object.values(perAgent).reduce((sum, item) => sum + item.succeeded, 0),
+      agentInvokesFailed: Object.values(perAgent).reduce((sum, item) => sum + item.failed, 0),
       staleEmptyPrsClosed,
     },
     perRepository,

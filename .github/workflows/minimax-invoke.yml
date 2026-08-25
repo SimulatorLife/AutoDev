@@ -1,4 +1,5 @@
 name: '▶️ MiniMax Invoke'
+run-name: Agent invoke — ${{ inputs.target_repository || github.repository }} PR #${{ inputs.pr_number || github.event.issue.number }}
 
 on:
   workflow_dispatch:
