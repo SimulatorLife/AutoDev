@@ -60,7 +60,6 @@ jobs:
       pr_number: ${{ steps.select_pr.outputs.pr_number }}
       commented: ${{ steps.comment.outputs.commented }}
       manual_run: ${{ steps.select_pr.outputs.manual_run }}
-      allow_repeat: ${{ steps.select_pr.outputs.allow_repeat }}
 
     steps:
       - name: Validate GH_USER_TOKEN
@@ -83,7 +82,8 @@ jobs:
           script: |
             const owner = process.env.TARGET_REPOSITORY.split("/")[0];
             const repo = process.env.TARGET_REPOSITORY.split("/")[1];
-            const marker = "<!-- agent-resolve-merge-conflicts -->";
+            const markerPrefix = "<!-- agent-resolve-merge-conflicts";
+            const markerForSha = (sha) => `${markerPrefix} sha:${sha} -->`;
             const manualInputRaw = process.env.TARGET_PR_NUMBER_INPUT ?? "";
             const manualInput = typeof manualInputRaw === "string" ? manualInputRaw.trim() : "";
             const manualRun = context.eventName === "workflow_dispatch" && manualInput.length > 0;
@@ -95,10 +95,8 @@ jobs:
               baseRef = "",
               headSha = "",
               mergeableState = "",
-              allowRepeat = false,
             }) {
               core.setOutput("manual_run", manualRun ? "true" : "false");
-              core.setOutput("allow_repeat", allowRepeat ? "true" : "false");
               core.setOutput("found", found ? "true" : "false");
               core.setOutput("pr_number", prNumber);
               core.setOutput("head_ref", headRef);
@@ -119,12 +117,12 @@ jobs:
               return pr;
             }
 
-            async function hasExistingMarker(prNumber) {
+            async function hasExistingMarker(prNumber, headSha) {
               const comments = await github.paginate(
                 github.rest.issues.listComments,
                 { owner, repo, issue_number: prNumber, per_page: 100 }
               );
-              return comments.some((comment) => comment.body && comment.body.includes(marker));
+              return comments.some((comment) => comment.body && comment.body.includes(markerForSha(headSha)));
             }
 
             if (manualRun) {
@@ -161,7 +159,7 @@ jobs:
                 return;
               }
 
-              const hadExistingMarker = await hasExistingMarker(pr.number);
+              const hadExistingMarker = await hasExistingMarker(pr.number, pr.head.sha);
               if (hadExistingMarker) {
                 core.info(
                   `A conflict resolution request already exists on PR #${requestedNumber}, but manual override will request another comment.`
@@ -195,7 +193,7 @@ jobs:
                 if ((pr.changed_files || 0) === 0) continue;
                 const mergeableState = pr.mergeable_state || "unknown";
                 if (mergeableState !== "dirty") continue;
-                if (await hasExistingMarker(pr.number)) continue;
+                if (await hasExistingMarker(pr.number, pr.head.sha)) continue;
 
                 return pr;
               }
@@ -252,7 +250,6 @@ jobs:
           HEAD_SHA: ${{ steps.select_pr.outputs.head_sha }}
           MERGEABLE_STATE: ${{ steps.select_pr.outputs.mergeable_state }}
           MANUAL_RUN: ${{ steps.select_pr.outputs.manual_run }}
-          ALLOW_REPEAT: ${{ steps.select_pr.outputs.allow_repeat }}
           AGENT: ${{ inputs.agent || github.event.inputs.agent || '' }}
           WEIGHTS_PATH: ${{ runner.temp }}/autodev-weights.json
         with:
@@ -276,7 +273,7 @@ jobs:
 
             const owner = process.env.TARGET_REPOSITORY.split("/")[0];
             const repo = process.env.TARGET_REPOSITORY.split("/")[1];
-            const marker = "<!-- agent-resolve-merge-conflicts -->";
+            const marker = `<!-- agent-resolve-merge-conflicts sha:${process.env.HEAD_SHA} -->`;
             const FOLLOW_UP_AGENT_POOL = "followUps";
             const DEFAULT_FOLLOW_UP_AGENT = "codex";
             const WEIGHT_SCALE = 1000;
@@ -448,17 +445,10 @@ jobs:
             );
 
             const alreadyCommented = comments.some((comment) => comment.body && comment.body.includes(marker));
-            const manualRun = process.env.MANUAL_RUN === "true";
-            const allowRepeat = process.env.ALLOW_REPEAT === "true";
-
-            if (alreadyCommented && !(manualRun && allowRepeat)) {
-              core.info(`A conflict resolution request already exists on PR #${prNumber}.`);
+            if (alreadyCommented) {
+              core.info(`A conflict resolution request already exists for PR #${prNumber} at HEAD ${process.env.HEAD_SHA}.`);
               core.setOutput("commented", "false");
               return;
-            }
-
-            if (alreadyCommented && manualRun && allowRepeat) {
-              core.info(`Manual run requested another conflict resolution comment on PR #${prNumber}.`);
             }
 
             const rawAgent = normalize(process.env.AGENT);

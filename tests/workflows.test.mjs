@@ -133,6 +133,10 @@ test('target auto-merge requires completed target check evidence', async () => {
   assert.match(source, /createWorkflowDispatch/);
   assert.match(source, /agent-02-resolve-merge-conflicts\.yml/);
   assert.ok(source.includes('sha:${sha}'));
+  const resolver = await readWorkflow('agent-02-resolve-merge-conflicts.yml');
+  assert.match(resolver, /markerForSha/);
+  assert.match(resolver, /sha:\$\{process\.env\.HEAD_SHA\}/);
+  assert.doesNotMatch(resolver, /ALLOW_REPEAT|allow_repeat/);
   assert.match(source, /GH_USER_TOKEN/);
 });
 
