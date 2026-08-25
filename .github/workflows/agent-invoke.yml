@@ -271,7 +271,6 @@ jobs:
         if: ${{ steps.toolchain.outputs.package_manager == 'pnpm' }}
         uses: pnpm/action-setup@v6
         with:
-          version: 10
           cache: false
 
       - name: Setup node
