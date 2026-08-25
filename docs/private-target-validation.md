@@ -21,3 +21,8 @@ performed separately when unrelated repository failures are present.
 The target checkout never writes credentials into the target repository. The
 PAT is supplied only to checkout and GitHub API steps and is masked by GitHub
 Actions.
+
+For private RacingGame, the repository-local validation workflows are no longer
+used as the merge gate. The AutoDev target-auto-merge workflow trusts only the
+`autodev/racinggame-validate` status for RacingGame, so a historical or
+billing-blocked local Actions check cannot override the centralized result.
