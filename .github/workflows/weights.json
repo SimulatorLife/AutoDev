@@ -12,7 +12,7 @@
     },
     {
       "name": "codex",
-      "weight": 0,
+      "weight": 1,
       "cadenceTicks": 2,
       "category": [
         "code"
@@ -39,7 +39,7 @@
     },
     {
       "name": "mini-max",
-      "weight": 0,
+      "weight": 5,
       "cadenceTicks": 1,
       "category": [
         "code"
@@ -48,7 +48,7 @@
     },
     {
       "name": "claude",
-      "weight": 0,
+      "weight": 2,
       "cadenceTicks": 2,
       "category": [
         "code",
@@ -95,7 +95,7 @@
     },
     {
       "name": "SimulatorLife/GMLoop",
-      "weight": 0,
+      "weight": 0.2,
       "baseBranch": "main"
     },
     {
