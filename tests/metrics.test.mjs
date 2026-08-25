@@ -32,7 +32,8 @@ test('metrics dashboard renders requested counters and recent links', () => {
   assert.match(body, /Stale-empty PRs closed/);
   assert.match(body, /mini-max/);
   assert.match(body, /AutoDev\/pull\/7/);
-  assert.match(body, /created 2026-01-01 00:00 UTC/);
+  assert.match(body, /\| PR \| Title \| Repository \| Created \(EST5EDT\)/);
+  assert.match(body, /2025-12-31 19:00 EST/);
 });
 
 test('metrics workflow publishes an issue dashboard and artifact', async () => {

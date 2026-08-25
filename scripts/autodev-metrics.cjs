@@ -152,7 +152,22 @@ async function collectMetrics({ github, owner, autoDevRepo, repositories, lookba
 function formatTimestampToMinute(value) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return 'unknown time';
-  return `${date.toISOString().slice(0, 16).replace('T', ' ')} UTC`;
+  const parts = Object.fromEntries(new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/New_York',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+    timeZoneName: 'short',
+  }).formatToParts(date).map(({ type, value: part }) => [type, part]));
+  const hour = parts.hour === '24' ? '00' : parts.hour;
+  return `${parts.year}-${parts.month}-${parts.day} ${hour}:${parts.minute} ${parts.timeZoneName}`;
+}
+
+function markdownCell(value) {
+  return String(value ?? '').replaceAll('|', '\\|').replaceAll(/\r?\n/g, ' ');
 }
 
 function renderDashboard(metrics) {
@@ -186,9 +201,9 @@ function renderDashboard(metrics) {
   }
   lines.push('', '## Per agent', '', '| Agent | Invokes | Succeeded | Failed | Other |', '|---|---:|---:|---:|---:|');
   for (const [agent, item] of Object.entries(metrics.perAgent)) lines.push(`| ${agent} | ${item.total} | ${item.succeeded} | ${item.failed} | ${item.other} |`);
-  lines.push('', '## Last 10 agent PRs', '');
-  if (!metrics.recentPrs.length) lines.push('_No agent PRs found._');
-  else for (const pr of metrics.recentPrs) lines.push(`- [${pr.repository}#${pr.number}: ${pr.title}](${pr.url}) — created ${formatTimestampToMinute(pr.createdAt)}, ${pr.agent}, ${pr.state}${pr.mergedAt ? ', merged' : ''}`);
+  lines.push('', '## Last 10 agent PRs', '', '| PR | Title | Repository | Created (EST5EDT) | Agent | State | Merged |', '|---|---|---|---|---|---|---|');
+  if (!metrics.recentPrs.length) lines.push('| _None_ |  |  |  |  |  |  |');
+  else for (const pr of metrics.recentPrs) lines.push(`| [#${pr.number}](${pr.url}) | ${markdownCell(pr.title)} | ${markdownCell(pr.repository)} | ${formatTimestampToMinute(pr.createdAt)} | ${markdownCell(pr.agent)} | ${markdownCell(pr.state)} | ${pr.mergedAt ? 'Yes' : 'No'} |`);
   return `${lines.join('\n')}\n`;
 }
 
