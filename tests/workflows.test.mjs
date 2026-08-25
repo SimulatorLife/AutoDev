@@ -107,6 +107,7 @@ test('AutoDev CI is repository-native and pnpm-native', async () => {
 test('central target PR janitor owns empty stale PR cleanup', async () => {
   const source = await readWorkflow('target-pr-janitor.yml');
   assert.match(source, /workflow_dispatch:/);
+  assert.match(source, /stale_hours:[\s\S]*default: 1\.25[\s\S]*type: number/);
   assert.match(source, /SimulatorLife\/Colourful-Life/);
   assert.match(source, /weights\.json/);
   assert.match(source, /pulls\.list/);
