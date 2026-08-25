@@ -59,7 +59,7 @@ test('target-aware reusable workflows use the PAT checkout', async () => {
   assert.match(invoke, /repository: \$\{\{ inputs\.target_repository \}\}/);
   assert.match(invoke, /REPOSITORY: \$\{\{ inputs\.target_repository \}\}/);
   assert.match(invoke, /Detect target repository toolchain/);
-  assert.match(invoke, /node-version: \"22\"/);
+  assert.match(invoke, /node-version-file: \$\{\{ runner\.temp \\}\}\/autodev\.nvmrc/);
 });
 
 test('AutoDev CI is repository-native rather than GMLoop-specific', async () => {
@@ -67,7 +67,7 @@ test('AutoDev CI is repository-native rather than GMLoop-specific', async () => 
   assert.match(source, /npm test/);
   assert.match(source, /npm run test:python/);
   assert.doesNotMatch(source, /pnpm run build:ts/);
-  assert.doesNotMatch(source, /node-version-file: \.nvmrc/);
+  assert.match(source, /node-version-file: \.nvmrc/);
 });
 
 test('target auto-merge requires completed target check evidence', async () => {
@@ -126,4 +126,14 @@ test('agent invocation interface omits unused compatibility inputs', async () =>
   const source = await readWorkflow('agent-invoke.yml');
   assert.doesNotMatch(source, /\n      target_sha:/);
   assert.doesNotMatch(source, /\n      working_branch:/);
+});
+
+test('Node actions use the AutoDev root .nvmrc', async () => {
+  const nvmrc = await readFile(path.join(root, '.nvmrc'), 'utf8');
+  assert.equal(nvmrc.trim(), '22');
+  for (const name of ['copilot-setup-steps.yml', 'agent-invoke.yml', 'target-validation.yml']) {
+    const source = await readWorkflow(name);
+    assert.doesNotMatch(source, /node-version: ['\"]22['\"]/u, name);
+    assert.match(source, /node-version-file:/u, name);
+  }
 });

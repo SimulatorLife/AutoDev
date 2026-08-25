@@ -83,6 +83,7 @@ jobs:
           TARGET_REPOSITORY: ${{ inputs.target_repository }}
         run: |
           set -euo pipefail
+          cp .autodev/.nvmrc "$RUNNER_TEMP/autodev.nvmrc"
           jq -e --arg repo "$TARGET_REPOSITORY" '.[$repo]' .autodev/.github/ci/validation-profiles.json > "$RUNNER_TEMP/profile.json"
           echo "package_manager=$(jq -r '.packageManager' "$RUNNER_TEMP/profile.json")" >> "$GITHUB_OUTPUT"
           echo "pnpm_version=$(jq -r '.pnpmVersion // empty' "$RUNNER_TEMP/profile.json")" >> "$GITHUB_OUTPUT"
@@ -106,7 +107,7 @@ jobs:
         if: ${{ steps.profile.outputs.package_manager != 'none' }}
         uses: actions/setup-node@v6
         with:
-          node-version: "22"
+          node-version-file: ${{ runner.temp }}/autodev.nvmrc
 
       - name: Install target dependencies
         id: dependencies

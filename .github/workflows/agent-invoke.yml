@@ -167,6 +167,15 @@ jobs:
 
           gh issue comment "${ISSUE_NUMBER}" --body "${MESSAGE}" --repo "${REPOSITORY}"
 
+      - name: Checkout AutoDev runtime policy
+        uses: actions/checkout@v6
+        with:
+          path: .autodev
+          fetch-depth: 1
+
+      - name: Stage AutoDev Node version
+        run: cp .autodev/.nvmrc "$RUNNER_TEMP/autodev.nvmrc"
+
       - name: Checkout target commit
         uses: actions/checkout@v6
         with:
@@ -270,7 +279,7 @@ jobs:
       - name: Setup node
         uses: actions/setup-node@v6
         with:
-          node-version: "22"
+          node-version-file: ${{ runner.temp }}/autodev.nvmrc
 
       - name: Install dependencies
         if: ${{ steps.toolchain.outputs.package_manager != 'none' }}
