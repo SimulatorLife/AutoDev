@@ -57,6 +57,8 @@ test('target-aware reusable workflows use the PAT checkout', async () => {
   assert.match(openPr, /GH_USER_TOKEN does not have push permission/);
   assert.match(invoke, /repository: \$\{\{ inputs\.target_repository \}\}/);
   assert.match(invoke, /REPOSITORY: \$\{\{ inputs\.target_repository \}\}/);
+  assert.match(invoke, /Detect target repository toolchain/);
+  assert.match(invoke, /node-version: \"22\"/);
 });
 
 test('AutoDev CI is repository-native rather than GMLoop-specific', async () => {
@@ -76,4 +78,12 @@ test('target auto-merge requires completed target check evidence', async () => {
   assert.match(source, /hasEvidence/);
   assert.match(source, /pulls\.merge/);
   assert.match(source, /GH_USER_TOKEN/);
+});
+
+test('MiniMax invocation configures headless OpenAI-compatible authentication', async () => {
+  const source = await readWorkflow('minimax-invoke.yml');
+  assert.match(source, /--auth-type openai/);
+  assert.match(source, /--openai-api-key/);
+  assert.match(source, /--openai-base-url/);
+  assert.match(source, /npx --yes @qwen-code\/qwen-code/);
 });
