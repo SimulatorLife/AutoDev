@@ -27,6 +27,25 @@ function parseInvocationComment(body) {
   return { agent: normalizeAgent(match[1]) || match[1].trim().toLowerCase(), runId: Number(match[2]) };
 }
 
+
+async function listRecentPulls({ github, owner, repo, sinceDate }) {
+  const pulls = [];
+  for (let page = 1; page <= 50; page += 1) {
+    const { data } = await github.rest.pulls.list({
+      owner,
+      repo,
+      state: 'all',
+      per_page: 100,
+      page,
+      sort: 'created',
+      direction: 'desc',
+    });
+    pulls.push(...data);
+    if (data.length < 100 || new Date(data[data.length - 1].created_at) < sinceDate) break;
+  }
+  return pulls;
+}
+
 function emptyCounter() {
   return { total: 0, succeeded: 0, failed: 0, other: 0 };
 }
@@ -56,14 +75,7 @@ async function collectMetrics({ github, owner, autoDevRepo, repositories, lookba
 
   for (const fullName of repositories) {
     const [targetOwner, targetRepo] = fullName.split('/');
-    const pulls = await github.paginate(github.rest.pulls.list, {
-      owner: targetOwner,
-      repo: targetRepo,
-      state: 'all',
-      per_page: 100,
-      sort: 'created',
-      direction: 'desc',
-    });
+    const pulls = await listRecentPulls({ github, owner: targetOwner, repo: targetRepo, sinceDate });
 
     for (const summary of pulls) {
       const createdRecently = new Date(summary.created_at) >= sinceDate;
