@@ -8,11 +8,11 @@ on:
         required: true
         type: choice
         options:
-        - SimulatorLife/3DSpider
-        - SimulatorLife/AutoDev
-        - SimulatorLife/Colourful-Life
-        - SimulatorLife/GMLoop
-        - SimulatorLife/RacingGame
+          - SimulatorLife/3DSpider
+          - SimulatorLife/AutoDev
+          - SimulatorLife/Colourful-Life
+          - SimulatorLife/GMLoop
+          - SimulatorLife/RacingGame
       target_sha:
         description: "Fallback target commit to validate."
         required: true
@@ -107,7 +107,7 @@ jobs:
         if: ${{ steps.profile.outputs.package_manager != 'none' }}
         uses: actions/setup-node@v6
         with:
-          node-version-file: ${{ runner.temp }}/autodev.nvmrc
+          node-version-file: ../../_temp/autodev.nvmrc
 
       - name: Install target dependencies
         id: dependencies

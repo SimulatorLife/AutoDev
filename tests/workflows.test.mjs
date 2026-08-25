@@ -59,7 +59,8 @@ test('target-aware reusable workflows use the PAT checkout', async () => {
   assert.match(invoke, /repository: \$\{\{ inputs\.target_repository \}\}/);
   assert.match(invoke, /REPOSITORY: \$\{\{ inputs\.target_repository \}\}/);
   assert.match(invoke, /Detect target repository toolchain/);
-  assert.ok(invoke.includes('node-version-file: ${{ runner.temp }}/autodev.nvmrc'));
+  assert.ok(invoke.includes('node-version-file: ../../_temp/autodev.nvmrc'));
+  assert.match(await readWorkflow('target-validation.yml'), /node-version-file: \.\.\/\.\.\/_temp\/autodev\.nvmrc/);
 });
 
 test('AutoDev CI is repository-native rather than GMLoop-specific', async () => {
@@ -112,6 +113,19 @@ test('manual repository selectors expose the complete SimulatorLife choice list'
     if (!source.includes('target_repository:')) continue;
     assert.match(source, /type: choice/, name);
     for (const repository of expected) assert.match(source, new RegExp(repository.replace('/', '\\/')), name);
+  }
+});
+
+test('manual repository selectors keep each choice as a distinct option', async () => {
+  const expected = config.repositories.map((repository) => repository.name);
+  const optionBlock = expected.map((repository) => `          - ${repository}`).join('\n');
+  for (const name of ['run-prompt.yml', 'agent-01-custom-prompt.yml', 'target-validation.yml', 'target-automerge.yml', 'minimax-invoke.yml', 'claude-invoke.yml', 'gemini-invoke.yml', 'minimax-codex-invoke.yml', 'qwen-invoke.yml', 'private-qwen-minimax-swarm.yml']) {
+    const source = await readWorkflow(name);
+    if (source.includes('options: *simulator_life_repositories')) {
+      assert.match(source, new RegExp(`options: &simulator_life_repositories\n${optionBlock.replaceAll('\n', '\\n')}`), name);
+      continue;
+    }
+    assert.match(source, new RegExp(`options:\n(?:          - all\n)?${optionBlock.replaceAll('\n', '\\n')}`), name);
   }
 });
 

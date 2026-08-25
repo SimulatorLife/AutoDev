@@ -9,10 +9,10 @@ on:
         type: choice
         options:
           - SimulatorLife/3DSpider
-            - SimulatorLife/AutoDev
-            - SimulatorLife/Colourful-Life
-            - SimulatorLife/GMLoop
-            - SimulatorLife/RacingGame
+          - SimulatorLife/AutoDev
+          - SimulatorLife/Colourful-Life
+          - SimulatorLife/GMLoop
+          - SimulatorLife/RacingGame
       pr_number:
         description: "Target pull request number"
         required: true
