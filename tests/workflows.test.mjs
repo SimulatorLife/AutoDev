@@ -108,6 +108,9 @@ test('central target PR janitor owns empty stale PR cleanup', async () => {
   const source = await readWorkflow('target-pr-janitor.yml');
   assert.match(source, /workflow_dispatch:/);
   assert.match(source, /stale_hours:[\s\S]*default: 1\.25[\s\S]*type: number/);
+  assert.ok(source.includes('STALE_HOURS: ${{ inputs.stale_hours }}'));
+  assert.match(source, /rawStaleHours/);
+  assert.ok(source.includes("Number(rawStaleHours || '1.25')"));
   assert.match(source, /SimulatorLife\/Colourful-Life/);
   assert.match(source, /weights\.json/);
   assert.match(source, /pulls\.list/);

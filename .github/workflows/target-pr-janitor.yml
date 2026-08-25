@@ -40,20 +40,21 @@ jobs:
       - name: Close empty stale target PRs
         uses: actions/github-script@v8
         env:
-          TARGET_REPOSITORY: ${{ inputs.target_repository || 'all' }}
-          STALE_HOURS: ${{ inputs.stale_hours || 1.25 }}
+          TARGET_REPOSITORY: ${{ inputs.target_repository }}
+          STALE_HOURS: ${{ inputs.stale_hours }}
         with:
           github-token: ${{ secrets.GH_USER_TOKEN }}
           script: |
             const fs = require('node:fs');
             const policy = JSON.parse(fs.readFileSync('.github/workflows/weights.json', 'utf8'));
             const configured = policy.repositories.map((repository) => repository.name);
-            const requested = process.env.TARGET_REPOSITORY || 'all';
+            const requested = (process.env.TARGET_REPOSITORY || '').trim() || 'all';
             const repositories = requested === 'all' ? configured : [requested];
             const unknown = repositories.filter((repository) => !configured.includes(repository));
             if (unknown.length) throw new Error(`Unconfigured target repository: ${unknown.join(', ')}`);
 
-            const staleHours = Number(process.env.STALE_HOURS || '1.25');
+            const rawStaleHours = (process.env.STALE_HOURS || '').trim();
+            const staleHours = Number(rawStaleHours || '1.25');
             if (!Number.isFinite(staleHours) || staleHours <= 0) throw new Error('stale_hours must be a positive number.');
             const thresholdMs = staleHours * 60 * 60 * 1000;
             const protectedBranches = new Set(['main', 'master', 'mainline']);
