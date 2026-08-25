@@ -19,10 +19,6 @@ permissions:
   pull-requests: write
   issues: write
 
-concurrency:
-  group: "${{ github.workflow }}-invoke-${{ inputs.target_repository || github.repository }}-${{ inputs.pr_number || github.event.issue.number }}"
-  cancel-in-progress: false
-
 defaults:
   run:
     shell: "bash"
