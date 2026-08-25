@@ -8,8 +8,7 @@ on:
         required: true
       target_repository:
         type: string
-        required: false
-        default: ${{ github.repository }}
+        required: true
       target_sha:
         type: string
         required: false
