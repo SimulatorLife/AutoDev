@@ -62,7 +62,10 @@ async function collectMetrics({ github, owner, autoDevRepo, repositories, lookba
   let agentPrsMerged = 0;
   let staleEmptyPrsClosed = 0;
 
-  const search = async (query, perPage = 100) => github.paginate(github.rest.search.issuesAndPullRequests, { q: query, per_page: perPage });
+  const search = async (query, perPage = 10) => {
+    const { data } = await github.rest.search.issuesAndPullRequests({ q: query, per_page: perPage });
+    return data.items || [];
+  };
   const count = async (query) => {
     const { data } = await github.rest.search.issuesAndPullRequests({ q: query, per_page: 1 });
     return Number(data.total_count || 0);
@@ -88,7 +91,7 @@ async function collectMetrics({ github, owner, autoDevRepo, repositories, lookba
       const [createdCount, mergedCount, recent] = await Promise.all([
         count(createdQuery),
         count(mergedQuery),
-        search(`${createdQuery} sort:created-desc`, 100),
+        search(`${createdQuery} sort:created-desc`, 10),
       ]);
       agentPrsRaised += createdCount;
       agentPrsMerged += mergedCount;
