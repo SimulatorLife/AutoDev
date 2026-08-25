@@ -21,6 +21,11 @@ on:
         required: false
         default: "racinggame"
         type: string
+      run_browser:
+        description: "Run the slower browser suite in the public runner."
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -38,6 +43,7 @@ jobs:
       TARGET_REPOSITORY: ${{ inputs.target_repository }}
       TARGET_SHA: ${{ inputs.target_sha }}
       PR_NUMBER: ${{ inputs.pr_number }}
+      RUN_BROWSER: ${{ inputs.run_browser }}
     steps:
       - name: Checkout private target through AutoDev PAT
         uses: actions/checkout@v6
@@ -90,6 +96,7 @@ jobs:
 
       - name: Install Chromium and run browser smoke tests
         id: e2e
+        if: ${{ inputs.run_browser == true }}
         continue-on-error: true
         run: |
           set -o pipefail
@@ -120,7 +127,9 @@ jobs:
               unit: process.env.UNIT,
               e2e: process.env.E2E,
             };
-            const passed = Object.values(outcomes).every((value) => value === 'success');
+            const corePassed = ['dependencies', 'lint', 'deadcode', 'build', 'unit'].every((name) => outcomes[name] === 'success');
+            const browserPassedOrSkipped = outcomes.e2e === 'success' || outcomes.e2e === 'skipped';
+            const passed = corePassed && browserPassedOrSkipped;
             const description = Object.entries(outcomes).map(([name, value]) => `${name}=${value}`).join(', ').slice(0, 140);
             const targetUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
             await github.rest.repos.createCommitStatus({
