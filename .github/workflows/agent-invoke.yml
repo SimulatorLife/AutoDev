@@ -1063,6 +1063,31 @@ jobs:
           echo "[agent] PR #${PR_NUMBER} is conflict-dirty after the agent push; requesting merge-conflict resolution with @${FOLLOW_UP_AGENT}."
           write_outputs true "${PR_NUMBER}" "${FOLLOW_UP_AGENT}"
 
+      - name: Dispatch private RacingGame validation through AutoDev
+        if: always() && steps.report_outcome.outputs.agent_failed != 'true' && inputs.target_repository == 'SimulatorLife/RacingGame'
+        uses: actions/github-script@v8
+        env:
+          TARGET_REPOSITORY: ${{ inputs.target_repository }}
+          PR_NUMBER: ${{ inputs.pr_number }}
+        with:
+          github-token: ${{ secrets.GH_USER_TOKEN }}
+          script: |
+            const [owner, repo] = process.env.TARGET_REPOSITORY.split('/');
+            const { data: pull } = await github.rest.pulls.get({ owner, repo, pull_number: Number(process.env.PR_NUMBER) });
+            await github.rest.actions.createWorkflowDispatch({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              workflow_id: 'target-validation.yml',
+              ref: context.ref.replace(/^refs\/(heads|tags)\//, '') || 'main',
+              inputs: {
+                target_repository: process.env.TARGET_REPOSITORY,
+                target_sha: pull.head.sha,
+                pr_number: process.env.PR_NUMBER,
+                validation_profile: 'racinggame',
+              },
+            });
+            core.info(`Dispatched AutoDev validation for ${process.env.TARGET_REPOSITORY}#${process.env.PR_NUMBER} at ${pull.head.sha}.`);
+
       - name: Fail workflow after unsuccessful agent run
         if: always() && steps.report_outcome.outputs.agent_failed == 'true'
         shell: bash

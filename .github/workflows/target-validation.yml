@@ -1,0 +1,144 @@
+name: "Target Validation"
+
+on:
+  workflow_dispatch:
+    inputs:
+      target_repository:
+        description: "Private target repository in owner/name form."
+        required: true
+        type: string
+      target_sha:
+        description: "Exact target commit to validate."
+        required: true
+        type: string
+      pr_number:
+        description: "Optional target PR number for reporting."
+        required: false
+        default: ""
+        type: string
+      validation_profile:
+        description: "Target validation profile."
+        required: false
+        default: "racinggame"
+        type: string
+
+permissions:
+  contents: read
+  checks: read
+  statuses: write
+  pull-requests: write
+  issues: write
+
+jobs:
+  validate:
+    if: ${{ inputs.validation_profile == 'racinggame' && inputs.target_repository == 'SimulatorLife/RacingGame' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      TARGET_REPOSITORY: ${{ inputs.target_repository }}
+      TARGET_SHA: ${{ inputs.target_sha }}
+      PR_NUMBER: ${{ inputs.pr_number }}
+    steps:
+      - name: Checkout private target through AutoDev PAT
+        uses: actions/checkout@v6
+        with:
+          repository: ${{ inputs.target_repository }}
+          ref: ${{ inputs.target_sha }}
+          token: ${{ secrets.GH_USER_TOKEN }}
+          fetch-depth: 0
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v6
+        with:
+          version: 10.32.1
+          cache: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+
+      - name: Install dependencies
+        id: dependencies
+        continue-on-error: true
+        run: pnpm install --frozen-lockfile
+
+      - name: Run lint
+        id: lint
+        continue-on-error: true
+        run: pnpm run lint:ci 2>&1 | tee "$RUNNER_TEMP/racinggame-lint.log"
+
+      - name: Check dead code and dependency graph
+        id: deadcode
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          {
+            pnpm run quality:deadcode
+            pnpm run quality:deadcode:production
+          } 2>&1 | tee "$RUNNER_TEMP/racinggame-deadcode.log"
+
+      - name: Build prototype
+        id: build
+        continue-on-error: true
+        run: pnpm run build 2>&1 | tee "$RUNNER_TEMP/racinggame-build.log"
+
+      - name: Run unit tests
+        id: unit
+        continue-on-error: true
+        run: pnpm run test:unit 2>&1 | tee "$RUNNER_TEMP/racinggame-unit.log"
+
+      - name: Install Chromium and run browser smoke tests
+        id: e2e
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          {
+            pnpm exec playwright install --with-deps chromium
+            pnpm run test:e2e
+          } 2>&1 | tee "$RUNNER_TEMP/racinggame-e2e.log"
+
+      - name: Publish target validation status
+        if: always()
+        uses: actions/github-script@v8
+        env:
+          DEPENDENCIES: ${{ steps.dependencies.outcome }}
+          LINT: ${{ steps.lint.outcome }}
+          DEADC0DE: ${{ steps.deadcode.outcome }}
+          BUILD: ${{ steps.build.outcome }}
+          UNIT: ${{ steps.unit.outcome }}
+          E2E: ${{ steps.e2e.outcome }}
+        with:
+          github-token: ${{ secrets.GH_USER_TOKEN }}
+          script: |
+            const [owner, repo] = process.env.TARGET_REPOSITORY.split('/');
+            const outcomes = {
+              dependencies: process.env.DEPENDENCIES,
+              lint: process.env.LINT,
+              deadcode: process.env.DEADC0DE,
+              build: process.env.BUILD,
+              unit: process.env.UNIT,
+              e2e: process.env.E2E,
+            };
+            const passed = Object.values(outcomes).every((value) => value === 'success');
+            const description = Object.entries(outcomes).map(([name, value]) => `${name}=${value}`).join(', ').slice(0, 140);
+            const targetUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            await github.rest.repos.createCommitStatus({
+              owner,
+              repo,
+              sha: process.env.TARGET_SHA,
+              state: passed ? 'success' : 'failure',
+              context: 'autodev/racinggame-validate',
+              description,
+              target_url: targetUrl,
+            });
+            const prNumber = Number(process.env.PR_NUMBER || 0);
+            if (prNumber > 0) {
+              const marker = '<!-- autodev-target-validation -->';
+              const body = `${marker}\nAutoDev validation for \`${process.env.TARGET_SHA}\`: **${passed ? 'passed' : 'failed'}**.\n\n\`${description}\`\n\n[View AutoDev validation run](${targetUrl})`;
+              const comments = await github.paginate(github.rest.issues.listComments, { owner, repo, issue_number: prNumber, per_page: 100 });
+              const existing = comments.find((comment) => comment.body?.includes(marker));
+              if (existing) await github.rest.issues.updateComment({ owner, repo, comment_id: existing.id, body });
+              else await github.rest.issues.createComment({ owner, repo, issue_number: prNumber, body });
+            }
+            if (!passed) core.setFailed(`Target validation failed: ${description}`);
