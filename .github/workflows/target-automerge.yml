@@ -123,7 +123,12 @@ jobs:
             const incompleteChecks = checkRuns.filter((check) => check.status !== 'completed');
             const failedStatuses = commitStatuses.filter((status) => !['success'].includes(status.state));
             const hasEvidence = completedChecks.length > 0 || commitStatuses.length > 0;
-            const ready = hasEvidence && failedChecks.length === 0 && incompleteChecks.length === 0 && failedStatuses.length === 0;
+            const racingGameValidation = process.env.TARGET_REPOSITORY === 'SimulatorLife/RacingGame'
+              ? commitStatuses.find((status) => status.context === 'autodev/racinggame-validate')
+              : null;
+            const ready = racingGameValidation
+              ? racingGameValidation.state === 'success'
+              : hasEvidence && failedChecks.length === 0 && incompleteChecks.length === 0 && failedStatuses.length === 0;
             if (!ready) {
               core.info(`Skipping ${process.env.TARGET_REPOSITORY}#${pullNumber}: checks are missing, failing, or incomplete.`);
               return;
