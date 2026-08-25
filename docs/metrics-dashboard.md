@@ -12,7 +12,7 @@ The default lookback is 90 days and can be changed with the numeric
 - Agent PR-and-ping PRs raised and successfully merged, by target repository.
 - Provider workflow invocations, split into succeeded, failed, and other
   conclusions, by provider and target repository where attribution is available.
-- The last ten agent PR links.
+- The last ten agent PR links with creation timestamps (minute precision).
 - PRs closed by the centralized stale-empty janitor.
 
 Provider workflows include the target repository in their run name so new

@@ -22,9 +22,9 @@ test('metrics dashboard renders requested counters and recent links', () => {
     lookbackDays: 90,
     since: '2025-10-03',
     totals: { agentPrsRaised: 2, agentPrsMerged: 1, agentInvokes: 3, agentInvokesSucceeded: 2, agentInvokesFailed: 1, staleEmptyPrsClosed: 4 },
-    perRepository: { 'SimulatorLife/AutoDev': { agentPrsRaised: 2, agentPrsMerged: 1, agentInvokes: { total: 3, succeeded: 2, failed: 1 }, staleEmptyPrsClosed: 4 } },
-    perAgent: { 'mini-max': { total: 3, succeeded: 2, failed: 1 } },
-    recentPrs: [{ repository: 'SimulatorLife/AutoDev', number: 7, title: 'Agent: Example', url: 'https://github.com/SimulatorLife/AutoDev/pull/7', agent: 'mini-max', state: 'open', mergedAt: null }],
+    perRepository: { 'SimulatorLife/AutoDev': { agentPrsRaised: 2, agentPrsMerged: 1, agentInvokes: { total: 3, succeeded: 2, failed: 1, other: 0 }, staleEmptyPrsClosed: 4 } },
+    perAgent: { 'mini-max': { total: 3, succeeded: 2, failed: 1, other: 0 } },
+    recentPrs: [{ repository: 'SimulatorLife/AutoDev', number: 7, title: 'Agent: Example', url: 'https://github.com/SimulatorLife/AutoDev/pull/7', agent: 'mini-max', state: 'open', mergedAt: null, createdAt: '2026-01-01T00:00:00.000Z' }],
   });
   assert.match(body, /Lookback window: 90 days/);
   assert.match(body, /Provider-run per-repository attribution/);
@@ -32,6 +32,7 @@ test('metrics dashboard renders requested counters and recent links', () => {
   assert.match(body, /Stale-empty PRs closed/);
   assert.match(body, /mini-max/);
   assert.match(body, /AutoDev\/pull\/7/);
+  assert.match(body, /created 2026-01-01 00:00 UTC/);
 });
 
 test('metrics workflow publishes an issue dashboard and artifact', async () => {
