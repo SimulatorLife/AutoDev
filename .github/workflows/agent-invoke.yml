@@ -108,6 +108,12 @@ jobs:
         run: |
           set -euo pipefail
 
+          if [ -z "${RAW_COMMENT}" ]; then
+            mention="@${AGENT_NAME}"
+            comments_json="$(gh api --paginate --slurp "repos/${REPOSITORY}/issues/${PR_NUMBER}/comments" | jq 'add')"
+            RAW_COMMENT="$(jq -r --arg mention "${mention}" '[.[] | select((.body // "") | startswith($mention))] | last | .body // empty' <<<"${comments_json}")"
+          fi
+
           if [ -n "${RAW_COMMENT}" ]; then
             mention="@${AGENT_NAME}"
             normalized_comment="$(
@@ -133,6 +139,9 @@ jobs:
             printf '%s' "$ADDITIONAL_CTX" >> "$GITHUB_OUTPUT"
             echo >> "$GITHUB_OUTPUT"
             echo "EOF" >> "$GITHUB_OUTPUT"
+          else
+            echo "No ${mention} task comment was found on PR #${PR_NUMBER}; refusing to run without a user request." >&2
+            exit 1
           fi
 
           PR_JSON="$(gh pr view "${PR_NUMBER}" --repo "${REPOSITORY}" --json headRefName,headRefOid,title -q '.')"

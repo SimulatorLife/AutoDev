@@ -58,6 +58,8 @@ test('target-aware reusable workflows use the PAT checkout', async () => {
   assert.match(openPr, /GH_USER_TOKEN does not have push permission/);
   assert.match(invoke, /repository: \$\{\{ inputs\.target_repository \}\}/);
   assert.match(invoke, /REPOSITORY: \$\{\{ inputs\.target_repository \}\}/);
+  assert.match(invoke, /gh api --paginate --slurp.*repos\/\$\{REPOSITORY\}\/issues\/\$\{PR_NUMBER\}\/comments/);
+  assert.match(invoke, /No \$\{mention\} task comment was found/);
   assert.match(invoke, /Detect target repository toolchain/);
   assert.ok(invoke.includes('node-version-file: ../../_temp/autodev.nvmrc'));
   assert.match(invoke, /npm install --no-package-lock/);
