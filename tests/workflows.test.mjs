@@ -115,6 +115,15 @@ test('manual repository selectors expose the complete SimulatorLife choice list'
   }
 });
 
+test('manual repository selectors keep each choice as a distinct option', async () => {
+  const expected = ['SimulatorLife/3DSpider', 'SimulatorLife/AutoDev', 'SimulatorLife/Colourful-Life', 'SimulatorLife/GMLoop', 'SimulatorLife/RacingGame'];
+  const optionBlock = expected.map((repository) => `          - ${repository}`).join('\n');
+  for (const name of ['run-prompt.yml', 'agent-01-custom-prompt.yml', 'target-validation.yml', 'target-automerge.yml', 'minimax-invoke.yml', 'claude-invoke.yml', 'gemini-invoke.yml', 'minimax-codex-invoke.yml', 'qwen-invoke.yml', 'private-qwen-minimax-swarm.yml']) {
+    const source = await readWorkflow(name);
+    assert.match(source, new RegExp(`options:\n(?:          - all\n)?${optionBlock.replaceAll('\n', '\\n')}`), name);
+  }
+});
+
 test('validation profile selection is derived from target_repository', async () => {
   const source = await readWorkflow('target-validation.yml');
   assert.doesNotMatch(source, /validation_profile:/);

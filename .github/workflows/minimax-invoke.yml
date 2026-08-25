@@ -13,10 +13,10 @@ on:
         type: choice
         options:
           - SimulatorLife/3DSpider
-            - SimulatorLife/AutoDev
-            - SimulatorLife/Colourful-Life
-            - SimulatorLife/GMLoop
-            - SimulatorLife/RacingGame
+          - SimulatorLife/AutoDev
+          - SimulatorLife/Colourful-Life
+          - SimulatorLife/GMLoop
+          - SimulatorLife/RacingGame
 permissions:
   contents: write
   pull-requests: write
