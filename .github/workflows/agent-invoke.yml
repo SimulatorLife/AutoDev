@@ -9,12 +9,6 @@ on:
       target_repository:
         type: string
         required: true
-      target_sha:
-        type: string
-        required: false
-      working_branch:
-        type: string
-        required: false
       additional_context:
         type: string
         required: false

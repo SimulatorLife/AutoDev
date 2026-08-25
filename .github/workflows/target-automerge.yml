@@ -44,7 +44,6 @@ jobs:
         id: plan
         uses: actions/github-script@v8
         env:
-          GH_USER_TOKEN: ${{ secrets.GH_USER_TOKEN }}
           REQUESTED_REPOSITORY: ${{ inputs.target_repository }}
           REQUESTED_PR: ${{ inputs.pr_number }}
         with:

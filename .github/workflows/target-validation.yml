@@ -69,7 +69,6 @@ jobs:
       TARGET_REPOSITORY: ${{ inputs.target_repository }}
       TARGET_SHA: ${{ needs.resolve_target.outputs.target_sha }}
       PR_NUMBER: ${{ inputs.pr_number }}
-      RUN_BROWSER: ${{ inputs.run_browser }}
     steps:
       - name: Checkout AutoDev validation profiles
         uses: actions/checkout@v6

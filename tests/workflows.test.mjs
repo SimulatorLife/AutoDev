@@ -121,3 +121,9 @@ test('validation profile selection is derived from target_repository', async () 
   assert.match(source, /validation-profiles\.json/);
   assert.match(source, /--arg repo/);
 });
+
+test('agent invocation interface omits unused compatibility inputs', async () => {
+  const source = await readWorkflow('agent-invoke.yml');
+  assert.doesNotMatch(source, /\n      target_sha:/);
+  assert.doesNotMatch(source, /\n      working_branch:/);
+});
