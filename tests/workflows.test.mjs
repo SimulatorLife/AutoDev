@@ -93,13 +93,13 @@ test('private target validation clones through AutoDev and reports target status
   assert.match(source, /Checkout private target through AutoDev PAT/);
   assert.match(source, /repository: \$\{\{ inputs\.target_repository \}\}/);
   assert.match(source, /token: \$\{\{ secrets\.GH_USER_TOKEN \}\}/);
-  assert.match(source, /autodev\/racinggame-validate/);
+  assert.match(source, /autodev\/validation/);
   assert.match(source, /run_browser/);
 });
 
 test('private RacingGame auto-merge trusts only AutoDev validation status', async () => {
   const source = await readWorkflow('target-automerge.yml');
-  assert.match(source, /autodev\/racinggame-validate/);
-  assert.match(source, /racingGameValidation/);
-  assert.match(source, /racingGameValidation\.state === 'success'/);
+  assert.match(source, /autodev\/validation/);
+  assert.match(source, /autoDevValidation/);
+  assert.match(source, /autoDevValidation\.state === 'success'/);
 });

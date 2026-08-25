@@ -4,25 +4,25 @@ on:
   workflow_dispatch:
     inputs:
       target_repository:
-        description: "Private target repository in owner/name form."
+        description: "Target repository in owner/name form."
         required: true
         type: string
       target_sha:
-        description: "Exact target commit to validate."
+        description: "Fallback target commit to validate."
         required: true
         type: string
       pr_number:
-        description: "Optional target PR number for reporting."
+        description: "Optional target PR number; current head is resolved when supplied."
         required: false
         default: ""
         type: string
       validation_profile:
-        description: "Target validation profile."
+        description: "Validation profile key; auto selects the target repository profile."
         required: false
-        default: "racinggame"
+        default: "auto"
         type: string
       run_browser:
-        description: "Run the slower browser suite in the public runner."
+        description: "Run optional browser commands from the profile."
         required: false
         default: false
         type: boolean
@@ -62,15 +62,31 @@ jobs:
 
   validate:
     needs: resolve_target
-    if: ${{ inputs.validation_profile == 'racinggame' && inputs.target_repository == 'SimulatorLife/RacingGame' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 60
     env:
       TARGET_REPOSITORY: ${{ inputs.target_repository }}
       TARGET_SHA: ${{ needs.resolve_target.outputs.target_sha }}
       PR_NUMBER: ${{ inputs.pr_number }}
       RUN_BROWSER: ${{ inputs.run_browser }}
     steps:
+      - name: Checkout AutoDev validation profiles
+        uses: actions/checkout@v6
+        with:
+          path: .autodev
+          fetch-depth: 1
+
+      - name: Stage target validation profile
+        id: profile
+        shell: bash
+        env:
+          TARGET_REPOSITORY: ${{ inputs.target_repository }}
+        run: |
+          set -euo pipefail
+          jq -e --arg repo "$TARGET_REPOSITORY" '.[$repo]' .autodev/.github/ci/validation-profiles.json > "$RUNNER_TEMP/profile.json"
+          echo "package_manager=$(jq -r --arg repo "$TARGET_REPOSITORY" '.[$repo].packageManager' "$RUNNER_TEMP/profile.json")" >> "$GITHUB_OUTPUT"
+          echo "pnpm_version=$(jq -r --arg repo "$TARGET_REPOSITORY" '.[$repo].pnpmVersion // empty' "$RUNNER_TEMP/profile.json")" >> "$GITHUB_OUTPUT"
+
       - name: Checkout private target through AutoDev PAT
         uses: actions/checkout@v6
         with:
@@ -80,97 +96,90 @@ jobs:
           fetch-depth: 0
 
       - name: Setup pnpm
+        if: ${{ steps.profile.outputs.package_manager == 'pnpm' }}
         uses: pnpm/action-setup@v6
         with:
-          version: 10.32.1
+          version: ${{ steps.profile.outputs.pnpm_version }}
           cache: false
 
       - name: Setup Node.js
+        if: ${{ steps.profile.outputs.package_manager != 'none' }}
         uses: actions/setup-node@v6
         with:
           node-version: "22"
 
-      - name: Install dependencies
+      - name: Install target dependencies
         id: dependencies
+        if: ${{ steps.profile.outputs.package_manager != 'none' }}
         continue-on-error: true
-        run: pnpm install --frozen-lockfile
-
-      - name: Run lint
-        id: lint
-        continue-on-error: true
-        run: pnpm run lint:ci 2>&1 | tee "$RUNNER_TEMP/racinggame-lint.log"
-
-      - name: Check dead code and dependency graph
-        id: deadcode
-        continue-on-error: true
+        shell: bash
         run: |
-          set -o pipefail
-          {
-            pnpm run quality:deadcode
-            pnpm run quality:deadcode:production
-          } 2>&1 | tee "$RUNNER_TEMP/racinggame-deadcode.log"
+          set -euo pipefail
+          install_command="$(jq -r '.install // empty' "$RUNNER_TEMP/profile.json")"
+          if [ -n "$install_command" ]; then bash -lc "$install_command"; else echo "No install command configured."; fi
 
-      - name: Build prototype
-        id: build
+      - name: Run required target validation commands
+        id: required
         continue-on-error: true
-        run: pnpm run build 2>&1 | tee "$RUNNER_TEMP/racinggame-build.log"
+        shell: bash
+        run: |
+          set -euo pipefail
+          commands="$(jq -c '.commands // []' "$RUNNER_TEMP/profile.json")"
+          count="$(jq 'length' <<<"$commands")"
+          if [ "$count" -eq 0 ]; then echo "No required validation commands are configured for this target." >&2; exit 1; fi
+          failed=0
+          while IFS= read -r item; do
+            name="$(jq -r '.name' <<<"$item")"
+            command="$(jq -r '.run' <<<"$item")"
+            echo "::group::$name"
+            if ! bash -lc "$command"; then failed=1; fi
+            echo "::endgroup::"
+          done < <(jq -c '.[]' <<<"$commands")
+          exit "$failed"
 
-      - name: Run unit tests
-        id: unit
-        continue-on-error: true
-        run: pnpm run test:unit 2>&1 | tee "$RUNNER_TEMP/racinggame-unit.log"
-
-      - name: Install Chromium and run browser smoke tests
-        id: e2e
+      - name: Run optional target validation commands
+        id: optional
         if: ${{ inputs.run_browser == true }}
         continue-on-error: true
+        shell: bash
         run: |
-          set -o pipefail
-          {
-            pnpm exec playwright install chromium
-            pnpm run test:e2e
-          } 2>&1 | tee "$RUNNER_TEMP/racinggame-e2e.log"
+          set -euo pipefail
+          failed=0
+          while IFS= read -r item; do
+            name="$(jq -r '.name' <<<"$item")"
+            command="$(jq -r '.run' <<<"$item")"
+            echo "::group::$name"
+            if ! bash -lc "$command"; then failed=1; fi
+            echo "::endgroup::"
+          done < <(jq -c '.optionalCommands // []' "$RUNNER_TEMP/profile.json")
+          exit "$failed"
 
       - name: Publish target validation status
         if: always()
         uses: actions/github-script@v8
         env:
-          DEPENDENCIES: ${{ steps.dependencies.outcome }}
-          LINT: ${{ steps.lint.outcome }}
-          DEADC0DE: ${{ steps.deadcode.outcome }}
-          BUILD: ${{ steps.build.outcome }}
-          UNIT: ${{ steps.unit.outcome }}
-          E2E: ${{ steps.e2e.outcome }}
+          PROFILE_EXISTS: ${{ steps.profile.outcome }}
+          DEPENDENCIES: ${{ steps.dependencies.outcome || 'skipped' }}
+          REQUIRED: ${{ steps.required.outcome }}
+          OPTIONAL: ${{ steps.optional.outcome || 'skipped' }}
         with:
           github-token: ${{ secrets.GH_USER_TOKEN }}
           script: |
             const [owner, repo] = process.env.TARGET_REPOSITORY.split('/');
             const outcomes = {
+              profile: process.env.PROFILE_EXISTS,
               dependencies: process.env.DEPENDENCIES,
-              lint: process.env.LINT,
-              deadcode: process.env.DEADC0DE,
-              build: process.env.BUILD,
-              unit: process.env.UNIT,
-              e2e: process.env.E2E,
+              required: process.env.REQUIRED,
+              optional: process.env.OPTIONAL,
             };
-            const corePassed = ['dependencies', 'lint', 'deadcode', 'build', 'unit'].every((name) => outcomes[name] === 'success');
-            const browserPassedOrSkipped = outcomes.e2e === 'success' || outcomes.e2e === 'skipped';
-            const passed = corePassed && browserPassedOrSkipped;
+            const passed = outcomes.profile === 'success' && outcomes.required === 'success' && ['success', 'skipped'].includes(outcomes.dependencies) && ['success', 'skipped'].includes(outcomes.optional);
             const description = Object.entries(outcomes).map(([name, value]) => `${name}=${value}`).join(', ').slice(0, 140);
             const targetUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
-            await github.rest.repos.createCommitStatus({
-              owner,
-              repo,
-              sha: process.env.TARGET_SHA,
-              state: passed ? 'success' : 'failure',
-              context: 'autodev/racinggame-validate',
-              description,
-              target_url: targetUrl,
-            });
+            await github.rest.repos.createCommitStatus({ owner, repo, sha: process.env.TARGET_SHA, state: passed ? 'success' : 'failure', context: 'autodev/validation', description, target_url: targetUrl });
             const prNumber = Number(process.env.PR_NUMBER || 0);
             if (prNumber > 0) {
               const marker = '<!-- autodev-target-validation -->';
-              const body = `${marker}\nAutoDev validation for \`${process.env.TARGET_SHA}\`: **${passed ? 'passed' : 'failed'}**.\n\n\`${description}\`\n\n[View AutoDev validation run](${targetUrl})`;
+              const body = `${marker}\nAutoDev validation for ${process.env.TARGET_REPOSITORY} at ${process.env.TARGET_SHA}: **${passed ? 'passed' : 'failed'}**.\n\n${description}\n\n[View AutoDev validation run](${targetUrl})`;
               const comments = await github.paginate(github.rest.issues.listComments, { owner, repo, issue_number: prNumber, per_page: 100 });
               const existing = comments.find((comment) => comment.body?.includes(marker));
               if (existing) await github.rest.issues.updateComment({ owner, repo, comment_id: existing.id, body });

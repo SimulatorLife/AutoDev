@@ -1064,7 +1064,7 @@ jobs:
           write_outputs true "${PR_NUMBER}" "${FOLLOW_UP_AGENT}"
 
       - name: Dispatch private RacingGame validation through AutoDev
-        if: always() && steps.report_outcome.outputs.agent_failed != 'true' && inputs.target_repository == 'SimulatorLife/RacingGame'
+        if: always() && steps.report_outcome.outputs.agent_failed != 'true'
         uses: actions/github-script@v8
         env:
           TARGET_REPOSITORY: ${{ inputs.target_repository }}
@@ -1083,7 +1083,7 @@ jobs:
                 target_repository: process.env.TARGET_REPOSITORY,
                 target_sha: pull.head.sha,
                 pr_number: process.env.PR_NUMBER,
-                validation_profile: 'racinggame',
+                validation_profile: 'auto',
               },
             });
             core.info(`Dispatched AutoDev validation for ${process.env.TARGET_REPOSITORY}#${process.env.PR_NUMBER} at ${pull.head.sha}.`);
