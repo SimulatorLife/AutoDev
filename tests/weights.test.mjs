@@ -58,7 +58,7 @@ test('existing scheduled policy remains structurally valid', () => {
   }
   for (const prompt of config.prompts) {
     assert.equal(TASK_CATEGORIES.has(prompt.category), true);
-    assert.equal(prompt.promptRepository, 'SimulatorLife/AutoDev');
+    assert.equal(prompt.promptRepository ?? 'SimulatorLife/AutoDev', 'SimulatorLife/AutoDev');
     assert.match(prompt.path, /^\.agents\/prompts\/[^/]+\.md$/u);
     assert.ok(Number.isInteger(prompt.complexity) && prompt.complexity >= 1 && prompt.complexity <= 3);
     assert.equal(Number.isFinite(prompt.weight), true);

@@ -83,7 +83,9 @@ jobs:
             const prompts = (cfg.prompts || []).map((raw, index) => {
               const name = typeof raw?.name === 'string' ? raw.name.trim() : '';
               const path = typeof raw?.path === 'string' ? raw.path.trim() : '';
-              const promptRepository = typeof raw?.promptRepository === 'string' ? raw.promptRepository.trim() : '';
+              const promptRepository = typeof raw?.promptRepository === 'string' && raw.promptRepository.trim()
+                ? raw.promptRepository.trim()
+                : 'SimulatorLife/AutoDev';
               const title = typeof raw?.title === 'string' && raw.title.trim() ? raw.title.trim() : `Agent: ${name}`;
               if (!name || !/^\.agents\/prompts\/[^/]+\.md$/.test(path)) throw new Error(`prompts[${index}] must define a safe Markdown path.`);
               if (!/^[^/\s]+\/[^/\s]+$/.test(promptRepository)) throw new Error(`prompts[${index}].promptRepository must use owner/name.`);

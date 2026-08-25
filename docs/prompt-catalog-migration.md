@@ -12,9 +12,11 @@ current GMLoop checkout intentionally has no `.github` control-plane tree.
   provenance: DRY, KISS, organization, and bug fixing.
 - **47** additional generic prompts were converted from numbered GMLoop
   workflows into `.agents/prompts/*.md`.
-- Each registered prompt has a `sourceWorkflow` field so the migration remains
-  auditable without restoring one workflow file per prompt.
+- Prompt entries contain only scheduling metadata; the scheduler defaults their
+  prompt owner to `SimulatorLife/AutoDev` rather than repeating an owner field.
 - The scheduler still has one prompt-agnostic entry point: `run-prompt.yml`.
+
+The migration provenance is documented here rather than stored in runtime policy.
 
 The migrated prompts describe bounded engineering work without assuming a
 language, framework, package manager, repository layout, or fixture format.

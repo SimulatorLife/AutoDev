@@ -18,6 +18,7 @@ test('scheduler routes prompt, agent, and target repository', async () => {
   assert.match(source, /prompt_path: item\.promptPath/);
   assert.match(source, /prompt_repository: item\.promptRepository/);
   assert.match(source, /workflow_id: 'run-prompt\.yml'/);
+  assert.match(source, /promptRepository[\s\S]*SimulatorLife\/AutoDev/);
 });
 
 test('generic prompt runner supports AutoDev and target prompt scopes', async () => {
@@ -34,7 +35,7 @@ test('generic prompt runner supports AutoDev and target prompt scopes', async ()
 
 test('generic prompt catalog contains only repository-agnostic Markdown prompts', async () => {
   for (const prompt of config.prompts) {
-    assert.equal(prompt.promptRepository, 'SimulatorLife/AutoDev', prompt.name);
+    assert.equal(prompt.promptRepository ?? 'SimulatorLife/AutoDev', 'SimulatorLife/AutoDev', prompt.name);
     assert.match(prompt.path, /^\.agents\/prompts\/[^/]+\.md$/u, prompt.name);
     const source = await readPrompt(path.basename(prompt.path));
     assert.ok(source.trim().length > 0, prompt.name);
@@ -43,11 +44,9 @@ test('generic prompt catalog contains only repository-agnostic Markdown prompts'
 
 test('generic prompt catalog includes the migrated organization-wide inventory', async () => {
   assert.equal(config.prompts.length, 51);
-  const sourceWorkflows = config.prompts.map((prompt) => prompt.sourceWorkflow);
-  assert.equal(new Set(sourceWorkflows).size, config.prompts.length);
-  for (const sourceWorkflow of sourceWorkflows) {
-    assert.match(sourceWorkflow, /^agent-\d+-[a-z0-9-]+$/u);
-    assert.doesNotMatch(sourceWorkflow, /agent-(?:19|24|39|93|94|95|96|97|98|105|107|108|109)-/u);
+  for (const prompt of config.prompts) {
+    assert.equal(Object.hasOwn(prompt, 'promptRepository'), false, prompt.name);
+    assert.equal(Object.hasOwn(prompt, 'sourceWorkflow'), false, prompt.name);
   }
   const forbiddenTargetAssumptions = /\b(?:GMLoop|GameMaker|pnpm)\b|@gml|\.gml\b/iu;
   for (const prompt of config.prompts) {
