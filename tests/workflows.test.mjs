@@ -110,7 +110,7 @@ test('private target auto-merge trusts only AutoDev validation status', async ()
 });
 
 test('manual repository selectors expose the complete SimulatorLife choice list', async () => {
-  const expected = ['SimulatorLife/3DSpider', 'SimulatorLife/AutoDev', 'SimulatorLife/Colourful-Life', 'SimulatorLife/GMLoop', 'SimulatorLife/RacingGame'];
+  const expected = config.repositories.map((repository) => repository.name);
   for (const name of ['run-prompt.yml', 'agent-01-custom-prompt.yml', 'target-validation.yml', 'target-automerge.yml', 'minimax-invoke.yml', 'claude-invoke.yml', 'gemini-invoke.yml', 'minimax-codex-invoke.yml', 'qwen-invoke.yml', 'private-qwen-minimax-swarm.yml']) {
     const source = await readWorkflow(name);
     if (!source.includes('target_repository:')) continue;
