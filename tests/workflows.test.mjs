@@ -114,3 +114,10 @@ test('manual repository selectors expose the complete SimulatorLife choice list'
     for (const repository of expected) assert.match(source, new RegExp(repository.replace('/', '\\/')), name);
   }
 });
+
+test('validation profile selection is derived from target_repository', async () => {
+  const source = await readWorkflow('target-validation.yml');
+  assert.doesNotMatch(source, /validation_profile:/);
+  assert.match(source, /validation-profiles\.json/);
+  assert.match(source, /--arg repo/);
+});

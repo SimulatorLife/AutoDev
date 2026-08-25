@@ -22,11 +22,6 @@ on:
         required: false
         default: ""
         type: string
-      validation_profile:
-        description: "Validation profile key; auto selects the target repository profile."
-        required: false
-        default: "auto"
-        type: string
       run_browser:
         description: "Run optional browser commands from the profile."
         required: false
