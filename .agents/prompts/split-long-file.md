@@ -1,0 +1,6 @@
+# Split one genuinely oversized file
+
+Identify a **single lengthy source file (over 1000 lines)** that can be split or refactored to improve clarity and maintainability. Your investigation must include: - Measuring/confirming the file's line count and explaining why its size is harmful (hard to reason about, slows builds, etc.); - Choosing a concrete refactoring/split strategy (e.g., extract a module, reorganize functions, break into multiple files) that keeps behavior unchanged; - Implementing the split/refactor by creating new files or reorganizing exports/imports without introducing new features; - Running relevant tests or linters to ensure nothing breaks after the split.
+The pull request should describe the selected file, its line count, the chosen refactor plan, and demonstrate that the refactor keeps functionality intact. Do not touch other files or areas unrelated to the long-file refactor.
+
+Before editing, discover the target repository's documented conventions and validation commands. Do not assume a particular language, package manager, framework, directory layout, or fixture format. Keep the work to one bounded change, preserve unrelated work, and never weaken tests or add compatibility shims.

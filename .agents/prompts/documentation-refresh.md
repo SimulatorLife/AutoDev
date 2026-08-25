@@ -1,0 +1,5 @@
+# Refresh core documentation
+
+Focus on the project's primary documentation surfaces—README, docs/ guides, CHANGELOG entries, onboarding notes, and any top-level usage instructions—to ensure they accurately reflect the current architecture, features, and contributor workflow. Tighten quick-start steps, configuration references, and narrative explanations so new contributors and curious players can ramp up without wading through stale details. Expand or prune sections only where doing so improves accuracy, remove outdated callouts, and cross-link related guides when it boosts discoverability. Leave inline comments, docstrings, and API reference tidy-ups to their dedicated workflow. Keep edits practical, concise, and easy to review so the documentation remains welcoming and trustworthy.
+
+Before editing, discover the target repository's documented conventions and validation commands. Do not assume a particular language, package manager, framework, directory layout, or fixture format. Keep the work to one bounded change, preserve unrelated work, and never weaken tests or add compatibility shims.

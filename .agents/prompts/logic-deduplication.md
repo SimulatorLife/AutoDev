@@ -1,0 +1,5 @@
+# Deduplicate one logic cluster
+
+Hunt for duplicated conditionals, switch statements, or near-identical helper bodies that drift across the codebase. Select one small cluster and unify it by extracting a shared helper, reusing an existing one, or routing both code paths through the same implementation. When extracting something new, strongly prefer helpers that will see at least three call sites and hold five or more lines of executable logic (excluding comments and blank lines), unless you have a clear justification to diverge. Avoid expanding scope—focus on a single, well-understood duplication, keep naming and APIs stable, and add/regress tests as needed so the unified path stays safe. In your commit message, call out where the duplication lived and the helper/path that now covers it.
+
+Before editing, discover the target repository's documented conventions and validation commands. Do not assume a particular language, package manager, framework, directory layout, or fixture format. Keep the work to one bounded change, preserve unrelated work, and never weaken tests or add compatibility shims.

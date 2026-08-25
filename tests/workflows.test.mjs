@@ -41,6 +41,21 @@ test('generic prompt catalog contains only repository-agnostic Markdown prompts'
   }
 });
 
+test('generic prompt catalog includes the migrated organization-wide inventory', async () => {
+  assert.equal(config.prompts.length, 51);
+  const sourceWorkflows = config.prompts.map((prompt) => prompt.sourceWorkflow);
+  assert.equal(new Set(sourceWorkflows).size, config.prompts.length);
+  for (const sourceWorkflow of sourceWorkflows) {
+    assert.match(sourceWorkflow, /^agent-\d+-[a-z0-9-]+$/u);
+    assert.doesNotMatch(sourceWorkflow, /agent-(?:19|24|39|93|94|95|96|97|98|105|107|108|109)-/u);
+  }
+  const forbiddenTargetAssumptions = /\b(?:GMLoop|GameMaker|pnpm)\b|@gml|\.gml\b/iu;
+  for (const prompt of config.prompts) {
+    const source = await readPrompt(path.basename(prompt.path));
+    assert.doesNotMatch(source, forbiddenTargetAssumptions, prompt.name);
+  }
+});
+
 test('central provider invocations accept target repository and PR number', async () => {
   for (const name of ['claude-invoke.yml', 'gemini-invoke.yml', 'qwen-invoke.yml', 'minimax-invoke.yml', 'minimax-codex-invoke.yml']) {
     const source = await readWorkflow(name);
@@ -111,7 +126,7 @@ test('private target auto-merge trusts only AutoDev validation status', async ()
 
 test('manual repository selectors expose the complete SimulatorLife choice list', async () => {
   const expected = ['SimulatorLife/3DSpider', 'SimulatorLife/AutoDev', 'SimulatorLife/Colourful-Life', 'SimulatorLife/GMLoop', 'SimulatorLife/RacingGame'];
-  for (const name of ['run-prompt.yml', 'agent-01-custom-prompt.yml', 'target-validation.yml', 'target-automerge.yml', 'minimax-invoke.yml', 'claude-invoke.yml', 'gemini-invoke.yml', 'minimax-codex-invoke.yml', 'qwen-invoke.yml', 'private-qwen-minimax-swarm.yml']) {
+  for (const name of ['run-prompt.yml', 'agent-01-custom-prompt.yml', 'target-validation.yml', 'target-automerge.yml', 'minimax-invoke.yml', 'claude-invoke.yml', 'gemini-invoke.yml', 'minimax-codex-invoke.yml', 'qwen-invoke.yml']) {
     const source = await readWorkflow(name);
     if (!source.includes('target_repository:')) continue;
     assert.match(source, /type: choice/, name);
@@ -122,7 +137,7 @@ test('manual repository selectors expose the complete SimulatorLife choice list'
 test('manual repository selectors keep each choice as a distinct option', async () => {
   const expected = ['SimulatorLife/3DSpider', 'SimulatorLife/AutoDev', 'SimulatorLife/Colourful-Life', 'SimulatorLife/GMLoop', 'SimulatorLife/RacingGame'];
   const optionBlock = expected.map((repository) => `          - ${repository}`).join('\n');
-  for (const name of ['run-prompt.yml', 'agent-01-custom-prompt.yml', 'target-validation.yml', 'target-automerge.yml', 'minimax-invoke.yml', 'claude-invoke.yml', 'gemini-invoke.yml', 'minimax-codex-invoke.yml', 'qwen-invoke.yml', 'private-qwen-minimax-swarm.yml']) {
+  for (const name of ['run-prompt.yml', 'agent-01-custom-prompt.yml', 'target-validation.yml', 'target-automerge.yml', 'minimax-invoke.yml', 'claude-invoke.yml', 'gemini-invoke.yml', 'minimax-codex-invoke.yml', 'qwen-invoke.yml']) {
     const source = await readWorkflow(name);
     if (source.includes('options: *simulator_life_repositories')) {
       assert.match(source, new RegExp(`options: &simulator_life_repositories\n${optionBlock.replaceAll('\n', '\\n')}`), name);

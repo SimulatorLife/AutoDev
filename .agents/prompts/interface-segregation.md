@@ -1,0 +1,6 @@
+# Narrow one oversized interface
+
+Audit the repository for TypeScript or JavaScript interface/type definitions that accumulate many members (properties or methods) and use broad, catch-all names such as "Service", "Manager", or "Controller". Identify one such definition whose size or naming suggests it violates the Interface Segregation Principle. Explain why the contract is too wide, then split it into smaller, role-focused interfaces or types. Each replacement contract should model a cohesive responsibility with only the members required by its consumers.
+After defining the new contracts, update the existing implementations and call sites so they depend on the appropriate specialized interface. Prioritise minimal, well-scoped changes: keep renames atomic, avoid incidental refactors, and ensure tests continue to pass. If no suitable candidate is found, document the investigation in the commit message and outline what evidence you gathered.
+
+Before editing, discover the target repository's documented conventions and validation commands. Do not assume a particular language, package manager, framework, directory layout, or fixture format. Keep the work to one bounded change, preserve unrelated work, and never weaken tests or add compatibility shims.

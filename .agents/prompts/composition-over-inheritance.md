@@ -1,0 +1,5 @@
+# Prefer composition for one inheritance hotspot
+
+Locate the class that most egregiously subclasses another type (uses `extends`) while overriding at least three methods from the parent. Study the inheritance chain and determine whether those overrides are handling distinct concerns or conditional branches that would be better served by composing helper objects or mixins. Refactor the chosen class to delegate behaviour to injected collaborators, mixin utilities, or other composition-friendly structures instead of deepening the subclass. Keep the public API and observable behaviour identical, trim any now-unused overrides, update tests and docs if directly impacted, and verify formatters and linters succeed.
+
+Before editing, discover the target repository's documented conventions and validation commands. Do not assume a particular language, package manager, framework, directory layout, or fixture format. Keep the work to one bounded change, preserve unrelated work, and never weaken tests or add compatibility shims.

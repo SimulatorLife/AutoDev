@@ -1,0 +1,5 @@
+# Improve one area of code documentation
+
+Concentrate on inline documentation—JSDoc blocks, function/module comments, README-style API tables embedded in source, and other code-adjacent explanations. Pick one focused area and make the guidance timely, precise, and easy to skim. Clarify parameters and return types, describe edge cases or invariants, remove stale notes, add a new docstring to a function, or add short “why it matters”  context where behaviour is subtle. Avoid broad narrative docs; focus on in-code comments and docstrings. Keep the formatting consistent with existing comment  style. Deliver at least one tangible improvement while keeping the code itself  behaviourally unchanged and the diff compact.
+
+Before editing, discover the target repository's documented conventions and validation commands. Do not assume a particular language, package manager, framework, directory layout, or fixture format. Keep the work to one bounded change, preserve unrelated work, and never weaken tests or add compatibility shims.

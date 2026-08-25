@@ -109,19 +109,21 @@
       "name": "dry",
       "path": ".agents/prompts/dry.md",
       "title": "Agent: Reduce duplication",
-      "weight": 1,
+      "weight": 0.7,
       "category": "code",
-      "complexity": 2,
-      "promptRepository": "SimulatorLife/AutoDev"
+      "complexity": 1,
+      "promptRepository": "SimulatorLife/AutoDev",
+      "sourceWorkflow": "agent-03-dry"
     },
     {
       "name": "kiss",
       "path": ".agents/prompts/kiss.md",
       "title": "Agent: Keep the design simple",
-      "weight": 1,
+      "weight": 0.5,
       "category": "code",
       "complexity": 2,
-      "promptRepository": "SimulatorLife/AutoDev"
+      "promptRepository": "SimulatorLife/AutoDev",
+      "sourceWorkflow": "agent-86-kiss-sweeper"
     },
     {
       "name": "organization",
@@ -130,16 +132,488 @@
       "weight": 1,
       "category": "code",
       "complexity": 2,
-      "promptRepository": "SimulatorLife/AutoDev"
+      "promptRepository": "SimulatorLife/AutoDev",
+      "sourceWorkflow": "agent-30-organization"
     },
     {
       "name": "bug-fix",
       "path": ".agents/prompts/bug-fix.md",
       "title": "Agent: Fix one real defect",
-      "weight": 1,
+      "weight": 0.2,
       "category": "code",
       "complexity": 3,
-      "promptRepository": "SimulatorLife/AutoDev"
+      "promptRepository": "SimulatorLife/AutoDev",
+      "sourceWorkflow": "agent-22-bugfix"
+    },
+    {
+      "name": "style-consistency",
+      "path": ".agents/prompts/style-consistency.md",
+      "title": "Agent: Style Consistency",
+      "weight": 0.2,
+      "category": "code",
+      "complexity": 1,
+      "promptRepository": "SimulatorLife/AutoDev",
+      "sourceWorkflow": "agent-04-style"
+    },
+    {
+      "name": "consolidate-files",
+      "path": ".agents/prompts/consolidate-files.md",
+      "title": "Agent: Consolidate Files",
+      "weight": 0.5,
+      "category": "code",
+      "complexity": 2,
+      "promptRepository": "SimulatorLife/AutoDev",
+      "sourceWorkflow": "agent-05-consolidate-files"
+    },
+    {
+      "name": "decouple-architecture",
+      "path": ".agents/prompts/decouple-architecture.md",
+      "title": "Agent: Decouple Architecture",
+      "weight": 0.2,
+      "category": "code",
+      "complexity": 2,
+      "promptRepository": "SimulatorLife/AutoDev",
+      "sourceWorkflow": "agent-06-decouple"
+    },
+    {
+      "name": "dependency-hygiene",
+      "path": ".agents/prompts/dependency-hygiene.md",
+      "title": "Agent: Dependency Hygiene",
+      "weight": 0.1,
+      "category": "code",
+      "complexity": 2,
+      "promptRepository": "SimulatorLife/AutoDev",
+      "sourceWorkflow": "agent-09-dependencies"
+    },
+    {
+      "name": "documentation-refresh",
+      "path": ".agents/prompts/documentation-refresh.md",
+      "title": "Agent: Documentation Refresh",
+      "weight": 0.1,
+      "category": "code",
+      "complexity": 1,
+      "promptRepository": "SimulatorLife/AutoDev",
+      "sourceWorkflow": "agent-10-documentation"
+    },
+    {
+      "name": "parameter-flexibility",
+      "path": ".agents/prompts/parameter-flexibility.md",
+      "title": "Agent: Parameter Flexibility",
+      "weight": 0.1,
+      "category": "code",
+      "complexity": 2,
+      "promptRepository": "SimulatorLife/AutoDev",
+      "sourceWorkflow": "agent-15-parameters"
+    },
+    {
+      "name": "dead-code-audit",
+      "path": ".agents/prompts/dead-code-audit.md",
+      "title": "Agent: Dead Code Audit",
+      "weight": 0.33,
+      "category": "code",
+      "complexity": 2,
+      "promptRepository": "SimulatorLife/AutoDev",
+      "sourceWorkflow": "agent-16-dead-code"
+    },
+    {
+      "name": "error-handling",
+      "path": ".agents/prompts/error-handling.md",
+      "title": "Agent: Error Handling",
+      "weight": 0.1,
+      "category": "code",
+      "complexity": 2,
+      "promptRepository": "SimulatorLife/AutoDev",
+      "sourceWorkflow": "agent-17-error-handling"
+    },
+    {
+      "name": "control-flow-clarity",
+      "path": ".agents/prompts/control-flow-clarity.md",
+      "title": "Agent: Control Flow Clarity",
+      "weight": 0.25,
+      "category": "code",
+      "complexity": 2,
+      "promptRepository": "SimulatorLife/AutoDev",
+      "sourceWorkflow": "agent-18-clarity"
+    },
+    {
+      "name": "micro-optimization",
+      "path": ".agents/prompts/micro-optimization.md",
+      "title": "Agent: Micro Optimization",
+      "weight": 0.334,
+      "category": "code",
+      "complexity": 1,
+      "promptRepository": "SimulatorLife/AutoDev",
+      "sourceWorkflow": "agent-20-micro-optimization"
+    },
+    {
+      "name": "extensibility",
+      "path": ".agents/prompts/extensibility.md",
+      "title": "Agent: Extensibility",
+      "weight": 0.1,
+      "category": "code",
+      "complexity": 3,
+      "promptRepository": "SimulatorLife/AutoDev",
+      "sourceWorkflow": "agent-21-extensibility"
+    },
+    {
+      "name": "lint-fix",
+      "path": ".agents/prompts/lint-fix.md",
+      "title": "Agent: Lint Fix",
+      "weight": 0.33,
+      "category": "code",
+      "complexity": 2,
+      "promptRepository": "SimulatorLife/AutoDev",
+      "sourceWorkflow": "agent-23-lint"
+    },
+    {
+      "name": "duplicate-report",
+      "path": ".agents/prompts/duplicate-report.md",
+      "title": "Agent: Duplicate Report",
+      "weight": 0.3,
+      "category": "code",
+      "complexity": 2,
+      "promptRepository": "SimulatorLife/AutoDev",
+      "sourceWorkflow": "agent-25-duplicates"
+    },
+    {
+      "name": "docstrings-comments",
+      "path": ".agents/prompts/docstrings-comments.md",
+      "title": "Agent: Docstrings Comments",
+      "weight": 0.1,
+      "category": "code",
+      "complexity": 1,
+      "promptRepository": "SimulatorLife/AutoDev",
+      "sourceWorkflow": "agent-36-docstrings"
+    },
+    {
+      "name": "helper-substitution",
+      "path": ".agents/prompts/helper-substitution.md",
+      "title": "Agent: Helper Substitution",
+      "weight": 0.3,
+      "category": "code",
+      "complexity": 2,
+      "promptRepository": "SimulatorLife/AutoDev",
+      "sourceWorkflow": "agent-37-helper-substitution"
+    },
+    {
+      "name": "logic-deduplication",
+      "path": ".agents/prompts/logic-deduplication.md",
+      "title": "Agent: Logic Deduplication",
+      "weight": 0.5,
+      "category": "code",
+      "complexity": 2,
+      "promptRepository": "SimulatorLife/AutoDev",
+      "sourceWorkflow": "agent-38-logic-deduplicate"
+    },
+    {
+      "name": "memory-footprint",
+      "path": ".agents/prompts/memory-footprint.md",
+      "title": "Agent: Memory Footprint",
+      "weight": 0.2,
+      "category": "code",
+      "complexity": 3,
+      "promptRepository": "SimulatorLife/AutoDev",
+      "sourceWorkflow": "agent-40-memory-footprint"
+    },
+    {
+      "name": "validation-failure-recovery",
+      "path": ".agents/prompts/validation-failure-recovery.md",
+      "title": "Agent: Validation Failure Recovery",
+      "weight": 0.3,
+      "category": "regressions",
+      "complexity": 3,
+      "promptRepository": "SimulatorLife/AutoDev",
+      "sourceWorkflow": "agent-41-test-failure"
+    },
+    {
+      "name": "todo-implementation",
+      "path": ".agents/prompts/todo-implementation.md",
+      "title": "Agent: Todo Implementation",
+      "weight": 0.1,
+      "category": "code",
+      "complexity": 2,
+      "promptRepository": "SimulatorLife/AutoDev",
+      "sourceWorkflow": "agent-42-todo-implementation"
+    },
+    {
+      "name": "nullability-guardrails",
+      "path": ".agents/prompts/nullability-guardrails.md",
+      "title": "Agent: Nullability Guardrails",
+      "weight": 0.1,
+      "category": "code",
+      "complexity": 2,
+      "promptRepository": "SimulatorLife/AutoDev",
+      "sourceWorkflow": "agent-70-null-undefined-guardrails"
+    },
+    {
+      "name": "loop-mutation",
+      "path": ".agents/prompts/loop-mutation.md",
+      "title": "Agent: Loop Mutation",
+      "weight": 0.1,
+      "category": "code",
+      "complexity": 2,
+      "promptRepository": "SimulatorLife/AutoDev",
+      "sourceWorkflow": "agent-71-loop-mutability-hazards"
+    },
+    {
+      "name": "resource-leak",
+      "path": ".agents/prompts/resource-leak.md",
+      "title": "Agent: Resource Leak",
+      "weight": 0.2,
+      "category": "code",
+      "complexity": 2,
+      "promptRepository": "SimulatorLife/AutoDev",
+      "sourceWorkflow": "agent-72-resource-leak-patrol"
+    },
+    {
+      "name": "typed-flags",
+      "path": ".agents/prompts/typed-flags.md",
+      "title": "Agent: Typed Flags",
+      "weight": 0.1,
+      "category": "code",
+      "complexity": 2,
+      "promptRepository": "SimulatorLife/AutoDev",
+      "sourceWorkflow": "agent-73-stringly-typed-flags"
+    },
+    {
+      "name": "floating-point-safety",
+      "path": ".agents/prompts/floating-point-safety.md",
+      "title": "Agent: Floating Point Safety",
+      "weight": 0.1,
+      "category": "code",
+      "complexity": 2,
+      "promptRepository": "SimulatorLife/AutoDev",
+      "sourceWorkflow": "agent-74-floating-point-equality"
+    },
+    {
+      "name": "test-isolation",
+      "path": ".agents/prompts/test-isolation.md",
+      "title": "Agent: Test Isolation",
+      "weight": 0.4,
+      "category": "code",
+      "complexity": 2,
+      "promptRepository": "SimulatorLife/AutoDev",
+      "sourceWorkflow": "agent-75-racey-test-isolation"
+    },
+    {
+      "name": "legacy-api-migration",
+      "path": ".agents/prompts/legacy-api-migration.md",
+      "title": "Agent: Legacy Api Migration",
+      "weight": 0.1,
+      "category": "code",
+      "complexity": 2,
+      "promptRepository": "SimulatorLife/AutoDev",
+      "sourceWorkflow": "agent-76-legacy-api-usage"
+    },
+    {
+      "name": "usability",
+      "path": ".agents/prompts/usability.md",
+      "title": "Agent: Usability",
+      "weight": 0.2,
+      "category": "code",
+      "complexity": 2,
+      "promptRepository": "SimulatorLife/AutoDev",
+      "sourceWorkflow": "agent-77-usability"
+    },
+    {
+      "name": "architectural-audit",
+      "path": ".agents/prompts/architectural-audit.md",
+      "title": "Agent: Architectural Audit",
+      "weight": 0.15,
+      "category": "code",
+      "complexity": 3,
+      "promptRepository": "SimulatorLife/AutoDev",
+      "sourceWorkflow": "agent-78-architectural-audit"
+    },
+    {
+      "name": "cohesion-refactor",
+      "path": ".agents/prompts/cohesion-refactor.md",
+      "title": "Agent: Cohesion Refactor",
+      "weight": 0.3,
+      "category": "code",
+      "complexity": 3,
+      "promptRepository": "SimulatorLife/AutoDev",
+      "sourceWorkflow": "agent-79-cohesion-refactor"
+    },
+    {
+      "name": "composition-over-inheritance",
+      "path": ".agents/prompts/composition-over-inheritance.md",
+      "title": "Agent: Composition Over Inheritance",
+      "weight": 0.1,
+      "category": "code",
+      "complexity": 2,
+      "promptRepository": "SimulatorLife/AutoDev",
+      "sourceWorkflow": "agent-80-composition"
+    },
+    {
+      "name": "defensive-input",
+      "path": ".agents/prompts/defensive-input.md",
+      "title": "Agent: Defensive Input",
+      "weight": 0.1,
+      "category": "code",
+      "complexity": 2,
+      "promptRepository": "SimulatorLife/AutoDev",
+      "sourceWorkflow": "agent-81-defensive"
+    },
+    {
+      "name": "demeter",
+      "path": ".agents/prompts/demeter.md",
+      "title": "Agent: Demeter",
+      "weight": 0.1,
+      "category": "code",
+      "complexity": 2,
+      "promptRepository": "SimulatorLife/AutoDev",
+      "sourceWorkflow": "agent-82-demeter"
+    },
+    {
+      "name": "document-intent",
+      "path": ".agents/prompts/document-intent.md",
+      "title": "Agent: Document Intent",
+      "weight": 0.1,
+      "category": "code",
+      "complexity": 1,
+      "promptRepository": "SimulatorLife/AutoDev",
+      "sourceWorkflow": "agent-84-document-intent"
+    },
+    {
+      "name": "interface-segregation",
+      "path": ".agents/prompts/interface-segregation.md",
+      "title": "Agent: Interface Segregation",
+      "weight": 0.1,
+      "category": "code",
+      "complexity": 2,
+      "promptRepository": "SimulatorLife/AutoDev",
+      "sourceWorkflow": "agent-85-isp"
+    },
+    {
+      "name": "low-coupling",
+      "path": ".agents/prompts/low-coupling.md",
+      "title": "Agent: Low Coupling",
+      "weight": 0.2,
+      "category": "code",
+      "complexity": 2,
+      "promptRepository": "SimulatorLife/AutoDev",
+      "sourceWorkflow": "agent-87-coupling"
+    },
+    {
+      "name": "polymorphic-collaborators",
+      "path": ".agents/prompts/polymorphic-collaborators.md",
+      "title": "Agent: Polymorphic Collaborators",
+      "weight": 0.1,
+      "category": "code",
+      "complexity": 2,
+      "promptRepository": "SimulatorLife/AutoDev",
+      "sourceWorkflow": "agent-88-lsp"
+    },
+    {
+      "name": "pola",
+      "path": ".agents/prompts/pola.md",
+      "title": "Agent: Pola",
+      "weight": 0.1,
+      "category": "code",
+      "complexity": 2,
+      "promptRepository": "SimulatorLife/AutoDev",
+      "sourceWorkflow": "agent-89-pola"
+    },
+    {
+      "name": "policy-mechanism",
+      "path": ".agents/prompts/policy-mechanism.md",
+      "title": "Agent: Policy Mechanism",
+      "weight": 0.1,
+      "category": "code",
+      "complexity": 2,
+      "promptRepository": "SimulatorLife/AutoDev",
+      "sourceWorkflow": "agent-90-policy-mechanism"
+    },
+    {
+      "name": "abstraction-layer",
+      "path": ".agents/prompts/abstraction-layer.md",
+      "title": "Agent: Abstraction Layer",
+      "weight": 0.15,
+      "category": "code",
+      "complexity": 2,
+      "promptRepository": "SimulatorLife/AutoDev",
+      "sourceWorkflow": "agent-91-sla"
+    },
+    {
+      "name": "single-responsibility",
+      "path": ".agents/prompts/single-responsibility.md",
+      "title": "Agent: Single Responsibility",
+      "weight": 0.1,
+      "category": "code",
+      "complexity": 2,
+      "promptRepository": "SimulatorLife/AutoDev",
+      "sourceWorkflow": "agent-92-srp"
+    },
+    {
+      "name": "test-duration",
+      "path": ".agents/prompts/test-duration.md",
+      "title": "Agent: Test Duration",
+      "weight": 1,
+      "category": "code",
+      "complexity": 2,
+      "promptRepository": "SimulatorLife/AutoDev",
+      "sourceWorkflow": "agent-99-test-duration"
+    },
+    {
+      "name": "generalization",
+      "path": ".agents/prompts/generalization.md",
+      "title": "Agent: Generalization",
+      "weight": 0.1,
+      "category": "code",
+      "complexity": 2,
+      "promptRepository": "SimulatorLife/AutoDev",
+      "sourceWorkflow": "agent-100-generalization"
+    },
+    {
+      "name": "bloat-trimming",
+      "path": ".agents/prompts/bloat-trimming.md",
+      "title": "Agent: Bloat Trimming",
+      "weight": 0.25,
+      "category": "code",
+      "complexity": 2,
+      "promptRepository": "SimulatorLife/AutoDev",
+      "sourceWorkflow": "agent-101-bloat-removal"
+    },
+    {
+      "name": "split-long-file",
+      "path": ".agents/prompts/split-long-file.md",
+      "title": "Agent: Split Long File",
+      "weight": 0.125,
+      "category": "code",
+      "complexity": 2,
+      "promptRepository": "SimulatorLife/AutoDev",
+      "sourceWorkflow": "agent-102-split-long-file"
+    },
+    {
+      "name": "legacy-shim-removal",
+      "path": ".agents/prompts/legacy-shim-removal.md",
+      "title": "Agent: Legacy Shim Removal",
+      "weight": 0.2,
+      "category": "code",
+      "complexity": 2,
+      "promptRepository": "SimulatorLife/AutoDev",
+      "sourceWorkflow": "agent-103-legacy-shim-removal"
+    },
+    {
+      "name": "test-deduplication",
+      "path": ".agents/prompts/test-deduplication.md",
+      "title": "Agent: Test Deduplication",
+      "weight": 0.5,
+      "category": "code",
+      "complexity": 2,
+      "promptRepository": "SimulatorLife/AutoDev",
+      "sourceWorkflow": "agent-104-test-deduplication"
+    },
+    {
+      "name": "bad-test-remediation",
+      "path": ".agents/prompts/bad-test-remediation.md",
+      "title": "Agent: Bad Test Remediation",
+      "weight": 0.15,
+      "category": "code",
+      "complexity": 2,
+      "promptRepository": "SimulatorLife/AutoDev",
+      "sourceWorkflow": "agent-106-bad-test-remediation"
     }
   ]
 }

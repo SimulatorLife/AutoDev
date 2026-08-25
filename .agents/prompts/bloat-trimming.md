@@ -1,0 +1,3 @@
+# Trim one local bloat hotspot
+
+Investigate one active implementation hotspot that carries avoidable local complexity: unchanged parameter plumbing, redundant branches, temporary state, or a wrapper that adds no domain value. Confirm the behavior and ownership first, then make one focused refactor that reduces local surface area without changing supported behavior. Update all affected callers and focused tests, preserve the repository's documented architecture, and avoid unrelated cleanup. Explain why the change is local simplification rather than broad deduplication or dead-code removal. Discover and run the target repository's documented validation commands before finishing.
