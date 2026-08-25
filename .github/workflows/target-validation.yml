@@ -45,7 +45,7 @@ jobs:
         uses: actions/github-script@v8
         env:
           TARGET_REPOSITORY: ${{ inputs.target_repository }}
-          TARGET_SHA: ${{ needs.resolve_target.outputs.target_sha }}
+          TARGET_SHA: ${{ inputs.target_sha }}
           PR_NUMBER: ${{ inputs.pr_number }}
         with:
           github-token: ${{ secrets.GH_USER_TOKEN }}
@@ -67,7 +67,7 @@ jobs:
     timeout-minutes: 45
     env:
       TARGET_REPOSITORY: ${{ inputs.target_repository }}
-      TARGET_SHA: ${{ inputs.target_sha }}
+      TARGET_SHA: ${{ needs.resolve_target.outputs.target_sha }}
       PR_NUMBER: ${{ inputs.pr_number }}
       RUN_BROWSER: ${{ inputs.run_browser }}
     steps:
