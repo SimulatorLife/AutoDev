@@ -124,6 +124,10 @@ test('manual repository selectors keep each choice as a distinct option', async 
   const optionBlock = expected.map((repository) => `          - ${repository}`).join('\n');
   for (const name of ['run-prompt.yml', 'agent-01-custom-prompt.yml', 'target-validation.yml', 'target-automerge.yml', 'minimax-invoke.yml', 'claude-invoke.yml', 'gemini-invoke.yml', 'minimax-codex-invoke.yml', 'qwen-invoke.yml', 'private-qwen-minimax-swarm.yml']) {
     const source = await readWorkflow(name);
+    if (source.includes('options: *simulator_life_repositories')) {
+      assert.match(source, new RegExp(`options: &simulator_life_repositories\n${optionBlock.replaceAll('\n', '\\n')}`), name);
+      continue;
+    }
     assert.match(source, new RegExp(`options:\n(?:          - all\n)?${optionBlock.replaceAll('\n', '\\n')}`), name);
   }
 });
