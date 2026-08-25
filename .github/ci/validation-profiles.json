@@ -1,7 +1,6 @@
 {
   "SimulatorLife/AutoDev": {
     "packageManager": "pnpm",
-    "pnpmVersion": "10.32.1",
     "install": "pnpm install --frozen-lockfile",
     "commands": [
       {
@@ -38,7 +37,6 @@
   },
   "SimulatorLife/GMLoop": {
     "packageManager": "pnpm",
-    "pnpmVersion": "11.7.0",
     "install": "pnpm install --frozen-lockfile --recursive",
     "commands": [
       {
@@ -58,7 +56,6 @@
   },
   "SimulatorLife/RacingGame": {
     "packageManager": "pnpm",
-    "pnpmVersion": "10.32.1",
     "install": "pnpm install --frozen-lockfile",
     "commands": [
       {

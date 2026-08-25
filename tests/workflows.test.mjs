@@ -86,9 +86,13 @@ test('AutoDev CI is repository-native and pnpm-native', async () => {
   const packageJson = JSON.parse(await readFile(path.join(root, 'package.json'), 'utf8'));
   assert.equal(packageJson.packageManager, 'pnpm@10.32.1');
   assert.ok((await readFile(path.join(root, 'pnpm-lock.yaml'), 'utf8')).startsWith('lockfileVersion:'));
-  const profile = JSON.parse(await readFile(path.join(root, '.github', 'ci', 'validation-profiles.json'), 'utf8'))['SimulatorLife/AutoDev'];
+  const profiles = JSON.parse(await readFile(path.join(root, '.github', 'ci', 'validation-profiles.json'), 'utf8'));
+  const profile = profiles['SimulatorLife/AutoDev'];
   assert.equal(profile.packageManager, 'pnpm');
-  assert.equal(profile.pnpmVersion, '10.32.1');
+  assert.equal(profile.pnpmVersion, undefined);
+  for (const [key, item] of Object.entries(profiles)) {
+    assert.equal(item.pnpmVersion, undefined, `pnpmVersion present in profile ${key}`);
+  }
   assert.deepEqual(profile.commands.map(({ run }) => run), ['pnpm test', 'pnpm run test:python']);
   const source = await readWorkflow('copilot-setup-steps.yml');
   assert.match(source, /uses: pnpm\/action-setup@v6/);
@@ -130,6 +134,10 @@ test('local provider tooling uses pnpm dlx', async () => {
 test('private target validation clones through AutoDev and reports target status', async () => {
   const source = await readWorkflow('target-validation.yml');
   assert.match(source, /Checkout private target through AutoDev PAT/);
+  assert.match(source, /Detect target package manager version/);
+  assert.match(source, /if: \$\{\{ steps\.profile\.outputs\.package_manager == 'pnpm' \}\}/);
+  assert.match(source, /packageManager as pnpm@<version>/);
+  assert.match(source, /version: \$\{\{ steps\.toolchain\.outputs\.pnpm_version \}\}/);
   assert.match(source, /repository: \$\{\{ inputs\.target_repository \}\}/);
   assert.match(source, /token: \$\{\{ secrets\.GH_USER_TOKEN \}\}/);
   assert.match(source, /autodev\/validation/);
