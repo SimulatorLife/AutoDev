@@ -87,3 +87,12 @@ test('MiniMax invocation configures headless OpenAI-compatible authentication', 
   assert.match(source, /--openai-base-url/);
   assert.match(source, /npx --yes @qwen-code\/qwen-code/);
 });
+
+test('private target validation clones through AutoDev and reports target status', async () => {
+  const source = await readWorkflow('target-validation.yml');
+  assert.match(source, /Checkout private target through AutoDev PAT/);
+  assert.match(source, /repository: \$\{\{ inputs\.target_repository \}\}/);
+  assert.match(source, /token: \$\{\{ secrets\.GH_USER_TOKEN \}\}/);
+  assert.match(source, /autodev\/racinggame-validate/);
+  assert.match(source, /run_browser/);
+});
