@@ -289,9 +289,15 @@ jobs:
         run: |
           set -euo pipefail
           if [ "${PACKAGE_MANAGER}" = "pnpm" ]; then
-            pnpm install --frozen-lockfile --recursive
-          else
+            if [ -f pnpm-lock.yaml ]; then
+              pnpm install --frozen-lockfile --recursive
+            else
+              pnpm install --recursive
+            fi
+          elif [ -f package-lock.json ] || [ -f npm-shrinkwrap.json ]; then
             npm ci
+          else
+            npm install --no-package-lock
           fi
 
       - name: Build target TypeScript (best effort)

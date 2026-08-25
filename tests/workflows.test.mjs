@@ -60,6 +60,7 @@ test('target-aware reusable workflows use the PAT checkout', async () => {
   assert.match(invoke, /REPOSITORY: \$\{\{ inputs\.target_repository \}\}/);
   assert.match(invoke, /Detect target repository toolchain/);
   assert.ok(invoke.includes('node-version-file: ../../_temp/autodev.nvmrc'));
+  assert.match(invoke, /npm install --no-package-lock/);
   assert.match(await readWorkflow('target-validation.yml'), /node-version-file: \.\.\/\.\.\/_temp\/autodev\.nvmrc/);
 });
 
