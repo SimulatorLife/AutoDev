@@ -149,6 +149,12 @@ async function collectMetrics({ github, owner, autoDevRepo, repositories, lookba
   };
 }
 
+function formatTimestampToMinute(value) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return 'unknown time';
+  return `${date.toISOString().slice(0, 16).replace('T', ' ')} UTC`;
+}
+
 function renderDashboard(metrics) {
   const generated = metrics.generatedAt.replace('T', ' ').replace(/\.\d{3}Z$/, ' UTC');
   const lines = [
@@ -182,7 +188,7 @@ function renderDashboard(metrics) {
   for (const [agent, item] of Object.entries(metrics.perAgent)) lines.push(`| ${agent} | ${item.total} | ${item.succeeded} | ${item.failed} | ${item.other} |`);
   lines.push('', '## Last 10 agent PRs', '');
   if (!metrics.recentPrs.length) lines.push('_No agent PRs found._');
-  else for (const pr of metrics.recentPrs) lines.push(`- [${pr.repository}#${pr.number}: ${pr.title}](${pr.url}) — ${pr.agent}, ${pr.state}${pr.mergedAt ? ', merged' : ''}`);
+  else for (const pr of metrics.recentPrs) lines.push(`- [${pr.repository}#${pr.number}: ${pr.title}](${pr.url}) — created ${formatTimestampToMinute(pr.createdAt)}, ${pr.agent}, ${pr.state}${pr.mergedAt ? ', merged' : ''}`);
   return `${lines.join('\n')}\n`;
 }
 
