@@ -2,6 +2,7 @@
 
 import { createServer } from "node:http";
 import { readFile } from "node:fs/promises";
+import { existsSync, readFileSync } from "node:fs";
 import { brotliDecompressSync, gunzipSync, inflateSync } from "node:zlib";
 import { pathToFileURL } from "node:url";
 
@@ -13,15 +14,64 @@ const CATALOG_FILE = process.env.CODEX_ROUTER_CATALOG_FILE ?? `${CODEX_HOME}/cod
 const GPT_BASE_URL = process.env.CODEX_ROUTER_GPT_BASE_URL ?? "https://chatgpt.com/backend-api/codex";
 
 const ROUTES = Object.freeze([
-  { provider: "claude", pattern: /^(sonnet|opus|haiku|claude-[A-Za-z0-9][A-Za-z0-9.-]*)$/, baseUrl: "http://127.0.0.1:4000/v1", envKey: "LITELLM_API_KEY" },
-  { provider: "minimax", pattern: /^MiniMax-[A-Za-z0-9][A-Za-z0-9.-]*$/, baseUrl: "http://127.0.0.1:18765", envKey: "MINIMAX_API_KEY" },
-  { provider: "antigravity", pattern: /^gemini-[A-Za-z0-9][A-Za-z0-9.-]*$/, baseUrl: "http://127.0.0.1:4001/v1", envKey: "LITELLM_API_KEY" },
+  { provider: "claude", pattern: /^(sonnet|opus|haiku|claude-[A-Za-z0-9][A-Za-z0-9.-]*)$/, baseUrl: "http://127.0.0.1:4000/v1", healthUrl: "http://127.0.0.1:4000/health/liveliness", envKey: "LITELLM_API_KEY" },
+  { provider: "minimax", pattern: /^MiniMax-[A-Za-z0-9][A-Za-z0-9.-]*$/, baseUrl: "http://127.0.0.1:18765", healthUrl: "http://127.0.0.1:18765/health", envKey: "MINIMAX_API_KEY" },
+  { provider: "antigravity", pattern: /^gemini-[A-Za-z0-9][A-Za-z0-9.-]*$/, baseUrl: "http://127.0.0.1:4001/v1", healthUrl: "http://127.0.0.1:4001/health/liveliness", envKey: "LITELLM_API_KEY" },
   { provider: "codex", pattern: /^(gpt-[A-Za-z0-9][A-Za-z0-9.-]*|o[1-9][A-Za-z0-9.-]*|codex-[A-Za-z0-9][A-Za-z0-9.-]*)$/, baseUrl: GPT_BASE_URL, envKey: null },
+  { provider: "copilot", pattern: /^copilot$/, baseUrl: "http://127.0.0.1:4003/v1", healthUrl: "http://127.0.0.1:4003/health/liveliness", envKey: "CODEX_ROUTER_COPILOT_API_KEY" },
 ]);
+const ROUTING_CONFIG_FILE = process.env.CODEX_ROUTER_CONFIG_FILE
+  ?? (existsSync(`${CODEX_HOME}/codex-model-routing.json`)
+    ? `${CODEX_HOME}/codex-model-routing.json`
+    : new URL('./codex/model-routing.json', import.meta.url).pathname);
+const ROLE_NAMES = ['default', 'docs-researcher', 'browser-tester', 'explorer', 'worker', 'validator'];
+const ROUTING_CONFIG = JSON.parse(readFileSync(ROUTING_CONFIG_FILE, 'utf8'));
+
+function validateRoutingConfig(config) {
+  if (!Array.isArray(config.providerPriority) || config.providerPriority.length === 0) throw new Error(`Routing config requires providerPriority: ${ROUTING_CONFIG_FILE}`);
+  if (!config.providers || typeof config.providers !== 'object') throw new Error(`Routing config requires providers: ${ROUTING_CONFIG_FILE}`);
+  if (!config.roles || typeof config.roles !== 'object') throw new Error(`Routing config requires roles: ${ROUTING_CONFIG_FILE}`);
+  for (const role of ROLE_NAMES) {
+    const tier = config.roles[role]?.tier;
+    if (typeof tier !== 'string' || !tier) throw new Error(`Routing config role ${role} must define a tier.`);
+  }
+  return config;
+}
+
+const ROUTING = validateRoutingConfig(ROUTING_CONFIG);
+
+function providerPriority() {
+  const configured = String(process.env.CODEX_ROUTER_PROVIDER_PRIORITY ?? '').split(',').map((value) => value.trim().toLowerCase()).filter(Boolean);
+  const priority = configured.length ? configured : ROUTING.providerPriority;
+  return [...new Set(priority)];
+}
+
+function roleForModel(model) {
+  if (typeof model !== "string") return null;
+  const match = model.trim().match(/^autodev\/([a-z0-9-]+)$/i);
+  return match && ROUTING.roles[match[1].toLowerCase()] ? match[1].toLowerCase() : null;
+}
+
+function copilotRoute() {
+  return ROUTES.find((route) => route.provider === "copilot") ?? null;
+}
 
 function routeForModel(model) {
   if (typeof model !== "string") return null;
-  return ROUTES.find((route) => route.pattern.test(model.trim())) ?? null;
+  const trimmed = model.trim();
+  if (trimmed === "copilot") return copilotRoute();
+  return ROUTES.find((route) => route.pattern.test(trimmed)) ?? null;
+}
+
+function roleCandidates(role) {
+  const tier = ROUTING.roles[role]?.tier;
+  if (!tier) return [];
+  return providerPriority().map((provider) => {
+    const model = ROUTING.providers[provider]?.models?.[tier];
+    if (typeof model !== 'string' || !model) return null;
+    const route = routeForModel(model);
+    return route ? { ...route, model } : null;
+  }).filter(Boolean);
 }
 
 function providerModelMetadata(model) {
@@ -32,7 +82,8 @@ function providerModelMetadata(model) {
 async function loadCatalog() {
   const parsed = JSON.parse(await readFile(CATALOG_FILE, "utf8"));
   const models = Array.isArray(parsed.models) ? parsed.models : [];
-  return { models, data: models.map((model) => providerModelMetadata(model.slug)) };
+  const roles = ROLE_NAMES.map((role) => `autodev/${role}`);
+  return { models: [...models.map((model) => model.slug), ...roles], data: [...models.map((model) => providerModelMetadata(model.slug)), ...roles.map(providerModelMetadata)] };
 }
 
 async function loadCodexAuth() {
@@ -108,22 +159,20 @@ function responseTextFromSse(body) {
   };
 }
 
-async function proxyResponse(response, route, payload, wantsStream) {
+async function fetchUpstream(route, payload, wantsStream) {
   const auth = route.provider === "codex" ? await loadCodexAuth() : null;
-  const upstreamPayload = route.provider === "codex"
-    ? { ...payload, stream: true, store: false }
-    : { ...payload, stream: wantsStream };
+  const upstreamPayload = route.provider === "codex" ? { ...payload, stream: true, store: false } : { ...payload, stream: wantsStream };
   const upstream = await fetch(`${route.baseUrl}/responses`, {
     method: "POST",
     headers: downstreamHeaders(route, auth),
     body: JSON.stringify(upstreamPayload),
   });
-  if (!upstream.ok) {
-    const body = await upstream.text();
-    response.writeHead(upstream.status, { "content-type": upstream.headers.get("content-type") ?? "application/json" });
-    response.end(body);
-    return;
-  }
+  if (!upstream.ok) return { ok: false, status: upstream.status, body: await upstream.text() };
+  return { ok: true, upstream };
+}
+
+async function writeSuccessfulResponse(response, route, result, wantsStream) {
+  const upstream = result.upstream;
   if (wantsStream) {
     response.writeHead(upstream.status, { "content-type": upstream.headers.get("content-type") ?? "text/event-stream", "cache-control": "no-cache", connection: "close" });
     for await (const chunk of upstream.body) response.write(chunk);
@@ -137,6 +186,66 @@ async function proxyResponse(response, route, payload, wantsStream) {
   }
   response.writeHead(upstream.status, { "content-type": upstream.headers.get("content-type") ?? "application/json" });
   response.end(body);
+}
+
+function fallbackable(status, body) {
+  if ([401, 408, 429, 500, 502, 503, 504].includes(status)) return true;
+  return /(quota|rate.?limit|session|high.?demand|credit|timeout|timed.?out|overloaded|temporarily unavailable|unavailable)/i.test(String(body ?? ""));
+}
+
+async function providerAvailable(route) {
+  if (route.provider === "copilot") return Boolean(route.baseUrl);
+  if (route.provider === "codex") {
+    try { await loadCodexAuth(); return true; } catch { return false; }
+  }
+  if (!route.healthUrl) return true;
+  try {
+    const result = await fetch(route.healthUrl, { signal: AbortSignal.timeout(700) });
+    return result.ok;
+  } catch {
+    return false;
+  }
+}
+
+async function proxyConcreteResponse(response, route, payload, wantsStream) {
+  try {
+    const result = await fetchUpstream(route, payload, wantsStream);
+    if (!result.ok) {
+      response.writeHead(result.status, { "content-type": "application/json" });
+      response.end(result.body);
+      return;
+    }
+    await writeSuccessfulResponse(response, route, result, wantsStream);
+  } catch (error) {
+    if (!response.writableEnded) sendJson(response, 502, errorBody(error instanceof Error ? error.message : String(error), "router_upstream_error"));
+  }
+}
+
+async function proxyRoleResponse(response, role, payload, wantsStream) {
+  const failures = [];
+  for (const route of roleCandidates(role)) {
+    if (!(await providerAvailable(route))) {
+      failures.push(`${route.provider}: unavailable`);
+      continue;
+    }
+    console.error(`codex-model-router role=${role} provider=${route.provider} model=${route.model}`);
+    try {
+      const result = await fetchUpstream(route, { ...payload, model: route.model }, wantsStream);
+      if (result.ok) {
+        await writeSuccessfulResponse(response, route, result, wantsStream);
+        return;
+      }
+      failures.push(`${route.provider}: HTTP ${result.status}`);
+      if (!fallbackable(result.status, result.body)) {
+        response.writeHead(result.status, { "content-type": "application/json" });
+        response.end(result.body);
+        return;
+      }
+    } catch (error) {
+      failures.push(`${route.provider}: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+  sendJson(response, 503, errorBody(`No available provider completed role ${role}. ${failures.join("; ")}`, "router_provider_exhausted"));
 }
 
 async function handle(request, response) {
@@ -154,10 +263,11 @@ async function handle(request, response) {
     return;
   }
   let payload;
-  try {
-    payload = JSON.parse(await requestBody(request));
-  } catch {
-    sendJson(response, 400, errorBody("request body must be valid JSON"));
+  try { payload = JSON.parse(await requestBody(request)); } catch { sendJson(response, 400, errorBody("request body must be valid JSON")); return; }
+  const role = roleForModel(payload.model);
+  const wantsStream = payload.stream !== false;
+  if (role) {
+    await proxyRoleResponse(response, role, payload, wantsStream);
     return;
   }
   const route = routeForModel(payload.model);
@@ -165,16 +275,11 @@ async function handle(request, response) {
     sendJson(response, 400, errorBody(`No local route is configured for model ${String(payload.model)}`));
     return;
   }
-  const wantsStream = payload.stream !== false;
   console.error(`codex-model-router model=${payload.model} provider=${route.provider} stream=${wantsStream}`);
-  try {
-    await proxyResponse(response, route, payload, wantsStream);
-  } catch (error) {
-    if (!response.writableEnded) sendJson(response, 502, errorBody(error instanceof Error ? error.message : String(error), "router_upstream_error"));
-  }
+  await proxyConcreteResponse(response, route, payload, wantsStream);
 }
 
-export { providerModelMetadata, responseTextFromSse, routeForModel };
+export { fallbackable, providerModelMetadata, responseTextFromSse, roleCandidates, roleForModel, routeForModel };
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   createServer((request, response) => { void handle(request, response); }).listen(PORT, HOST, () => {

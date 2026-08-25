@@ -2,8 +2,8 @@ name = "explorer"
 description = "Read-only codebase explorer."
 nickname_candidates = ["ArchitectureScout", "CodebaseFinder", "CodebaseSurveyor"]
 
-model_provider = "claude_code_subscription"
-model = "sonnet"
+model_provider = "local_model_router"
+model = "autodev/explorer"
 model_reasoning_effort = "medium"
 model_reasoning_summary = "none"
 sandbox_mode = "read-only"

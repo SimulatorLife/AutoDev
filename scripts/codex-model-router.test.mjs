@@ -1,7 +1,16 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import test from "node:test";
 
-import { responseTextFromSse, routeForModel } from "./codex-model-router.mjs";
+import { fallbackable, responseTextFromSse, roleCandidates, roleForModel, routeForModel } from "./codex-model-router.mjs";
+
+test("loads editable provider and role models from JSON routing config", async () => {
+  const config = JSON.parse(await readFile(new URL("./codex/model-routing.json", import.meta.url), "utf8"));
+  assert.equal(config.providers.claude.models.smart, "claude-opus-4-8");
+  assert.equal(config.providers.codex.models.smart, "gpt-5.6-sol");
+  assert.deepEqual(config.providerPriority, ["antigravity", "claude", "minimax", "copilot", "codex"]);
+  assert.equal(config.roles.worker.tier, "smart");
+});
 
 test("routes supported model families without provider aliases", () => {
   assert.equal(routeForModel("gpt-5.6-luna")?.provider, "codex");
@@ -9,6 +18,18 @@ test("routes supported model families without provider aliases", () => {
   assert.equal(routeForModel("MiniMax-M3")?.provider, "minimax");
   assert.equal(routeForModel("gemini-3.6-flash-medium")?.provider, "antigravity");
   assert.equal(routeForModel("unknown-model"), null);
+});
+
+test("resolves role aliases through the provider priority order", () => {
+  assert.equal(roleForModel("autodev/explorer"), "explorer");
+  const providers = roleCandidates("explorer").map((route) => route.provider);
+  assert.deepEqual(providers, ["antigravity", "claude", "minimax", "copilot", "codex"]);
+});
+
+test("classifies provider exhaustion and transient responses for fallback", () => {
+  assert.equal(fallbackable(429, "session limit reached"), true);
+  assert.equal(fallbackable(503, "unavailable"), true);
+  assert.equal(fallbackable(400, "malformed request"), false);
 });
 
 test("extracts text from a Responses SSE completion", () => {

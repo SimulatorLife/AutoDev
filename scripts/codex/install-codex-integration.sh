@@ -10,16 +10,19 @@ litellm_dir="$HOME/.config/litellm"
 hook_names=(
   codex-antigravity-cli-responses-proxy.mjs
   codex-claude-cli-responses-proxy.py
+  codex-copilot-cli-responses-proxy.mjs
   codex-model-router.mjs
   enforce-root-delegation.sh
   ensure-codex-antigravity-proxy.sh
   ensure-codex-claude-bridge.sh
+  ensure-codex-copilot-proxy.sh
   ensure-codex-model-router.sh
   ensure-codex-minimax-proxy.sh
   log-subagent-model.sh
   run-codex-antigravity-litellm.sh
   run-codex-antigravity-proxy.sh
   run-codex-claude-bridge.sh
+  run-codex-copilot-cli-responses-proxy.sh
   run-codex-model-router.sh
 )
 
@@ -108,6 +111,10 @@ check_versioned_sources() {
       failed=1
     fi
   done
+  source="$repo_root/scripts/codex/model-routing.json"
+  if ! check_versioned_source "$source"; then
+    failed=1
+  fi
   for role in "${agent_role_names[@]}"; do
     source="$repo_root/scripts/codex/agents/$role.toml"
     if ! check_versioned_source "$source"; then
@@ -258,6 +265,14 @@ check_links() {
     printf 'missing-or-drifted %s -> %s\n' "$target" "$source"
     failed=1
   fi
+  source="$repo_root/scripts/codex/model-routing.json"
+  target="$codex_home/codex-model-routing.json"
+  if check_one "$source" "$target"; then
+    printf 'ok %s -> %s\n' "$target" "$source"
+  else
+    printf 'missing-or-drifted %s -> %s\n' "$target" "$source"
+    failed=1
+  fi
   source="$repo_root/scripts/codex/litellm/antigravity.yaml"
   target="$litellm_dir/antigravity.yaml"
   if [[ -f "$target" && ! -L "$target" ]] && cmp -s "$source" "$target"; then
@@ -301,6 +316,7 @@ for role in "${agent_role_names[@]}"; do
   copy_agent_role "$repo_root/scripts/codex/agents/$role.toml" "$agents_dir/$role.toml"
 done
 link_one "$repo_root/scripts/codex/config.toml" "$codex_home/config.toml"
+link_one "$repo_root/scripts/codex/model-routing.json" "$codex_home/codex-model-routing.json"
 mkdir -p -- "$litellm_dir"
 if [[ -L "$litellm_dir/antigravity.yaml" ]]; then
   rm -f -- "$litellm_dir/antigravity.yaml"

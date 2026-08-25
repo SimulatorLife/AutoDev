@@ -8,25 +8,38 @@ versioned local integration safely.
 
 ## Available roles
 
-| Roles | Provider | Use |
+Callers select a capability role, never a provider or model:
+
+| Role | Capability | Sandbox |
 | --- | --- | --- |
-| `default`, `docs-researcher`, `browser-tester` | OpenAI/Codex through the local router | Orchestration, focused research, and browser evidence. |
-| `explorer` | Claude | Read-only architecture, ownership, and dependency investigation. |
-| `worker` | MiniMax | Bounded implementation work. |
-| `validator` | Google/Antigravity | Independent build, test, and validation work. |
+| `default` | General-purpose development | workspace-write |
+| `docs-researcher` | Targeted documentation research | read-only |
+| `browser-tester` | Browser/runtime evidence | read-only |
+| `explorer` | Architecture and dependency exploration | read-only |
+| `worker` | Bounded implementation | workspace-write |
+| `validator` | Independent validation | workspace-write |
 
-Bare `codex` starts with `gpt-5.6-luna` through the explicit
-`local_model_router` provider, which forwards GPT/Codex models to the Codex
-OAuth endpoint. Claude, MiniMax, and Antigravity are selected by model name
-through the same route or by their named profiles.
+Every role uses the `local_model_router` with an `autodev/<role>` model alias.
+The editable provider/model choices live in
+`scripts/codex/model-routing.json`: `providerPriority` controls fallback order,
+`providers.<name>.models` contains named tiers such as `fast` and `smart`, and
+`roles.<role>.tier` selects the tier for each capability role. For example, set
+Claude's smart model to `claude-opus-4-8` or Codex's to `gpt-5.6-sol` there; the
+router does not need a code change. The installer materializes this file as
+`$CODEX_HOME/codex-model-routing.json`.
+The router chooses the first available provider in this order:
 
-The local Codex app-server now discovers all of these roles and can start a
-thread with an explicit custom `modelProvider`. The separate desktop
-multi-agent dispatcher (`spawn_agent`/fanout) still validates a child model
-against the ChatGPT account before it reaches the local app-server. It currently
-rejects `sonnet`, `MiniMax-M3`, and `gemini-3.6-flash-medium` with an account
-model error. This is a dispatcher limitation, not a missing gateway or role
-definition.
+1. Gemini/Antigravity, then Claude
+2. MiniMax
+3. GitHub Copilot CLI (when its local adapter is available)
+4. OpenAI/Codex
+
+Provider availability is checked through local health endpoints and credential
+checks. HTTP 429/5xx, quota, session-limit, high-demand, timeout, and
+unavailable responses cause the router to try the next provider. A malformed
+request is returned immediately rather than hidden by fallback. Streaming
+fallback happens before response headers are sent; a provider that fails after
+streaming has begun cannot be safely replayed.
 
 ## External-provider execution
 
@@ -35,12 +48,12 @@ starts the selected provider hook and local CLI profile:
 
 ```sh
 /Users/henrykirk/AutoDev/scripts/codex/run-provider-agent.sh \
-  --provider claude --role explorer --prompt 'Bounded task; report evidence.'
+  --role explorer --prompt 'Bounded task; report evidence.'
 ```
 
-Use `--provider minimax` or `--provider antigravity` as appropriate. Direct
-terminal sessions can instead use `codex --profile claude`,
-`codex --profile minimax`, or `codex --profile antigravity` from the repository.
+The caller specifies only the role. Direct terminal sessions use the tracked
+`autodev/<role>` aliases through `local_model_router`; provider selection and
+fallback remain inside the router.
 The native app-server path is also configured and verified, but the desktop
 high-level fanout service does not currently delegate through it.
 

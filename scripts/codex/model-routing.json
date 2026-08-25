@@ -1,0 +1,49 @@
+{
+  "providerPriority": [
+    "antigravity",
+    "claude",
+    "minimax",
+    "copilot",
+    "codex"
+  ],
+  "providers": {
+    "antigravity": {
+      "models": {
+        "fast": "gemini-3.6-flash-medium",
+        "smart": "gemini-3.6-pro"
+      }
+    },
+    "claude": {
+      "models": {
+        "fast": "sonnet",
+        "smart": "claude-opus-4-8"
+      }
+    },
+    "minimax": {
+      "models": {
+        "fast": "MiniMax-M3",
+        "smart": "MiniMax-M3"
+      }
+    },
+    "copilot": {
+      "models": {
+        "fast": "copilot",
+        "smart": "copilot"
+      }
+    },
+    "codex": {
+      "models": {
+        "fast": "gpt-5.6-luna",
+        "smart": "gpt-5.6-sol"
+      }
+    }
+  },
+  "roles": {
+    "default": { "tier": "smart" },
+    "docs-researcher": { "tier": "fast" },
+    "browser-tester": { "tier": "smart" },
+    "explorer": { "tier": "smart" },
+    "worker": { "tier": "smart" },
+    "validator": { "tier": "fast" }
+  }
+}

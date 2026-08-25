@@ -2,8 +2,8 @@ name = "validator"
 description = "Validation agent."
 nickname_candidates = ["VerificationAgent", "VerificationChecker", "VerificationAuditor"]
 
-model_provider = "antigravity_cli"
-model = "gemini-3.6-flash-medium"
+model_provider = "local_model_router"
+model = "autodev/validator"
 model_reasoning_effort = "medium"
 model_reasoning_summary = "none"
 sandbox_mode = "workspace-write"

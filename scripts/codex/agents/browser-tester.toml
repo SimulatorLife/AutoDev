@@ -2,8 +2,8 @@ name = "browser-tester"
 description = "Read-only Playwright tester for browser behavior, accessibility, and runtime evidence."
 nickname_candidates = ["BrowserTester", "PlaywrightTester", "UiVerifier"]
 
-model_provider = "openai"
-model = "gpt-5.6-luna"
+model_provider = "local_model_router"
+model = "autodev/browser-tester"
 model_reasoning_effort = "medium"
 sandbox_mode = "read-only"
 

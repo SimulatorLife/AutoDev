@@ -2,8 +2,8 @@ name = "worker"
 description = "Bounded implementation worker."
 nickname_candidates = ["ImplementationBuilder", "ImplementationCoder", "ImplementationWorker"]
 
-model_provider = "minimax"
-model = "MiniMax-M3"
+model_provider = "local_model_router"
+model = "autodev/worker"
 model_reasoning_effort = "high"
 model_reasoning_summary = "none"
 sandbox_mode = "workspace-write"
