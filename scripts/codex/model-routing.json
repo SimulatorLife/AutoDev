@@ -9,53 +9,56 @@
   "providers": {
     "antigravity": {
       "models": {
-        "fast": "gemini-3.6-flash-medium",
-        "smart": "gemini-3.7-flash-high"
+        "smart": "gemini-3.7-flash-high",
+        "default": "gemini-3.6-flash-medium"
       }
     },
     "claude": {
       "models": {
-        "fast": "sonnet",
-        "smart": "claude-opus-4-8"
+        "smart": "claude-opus-4-8",
+        "default": "sonnet"
       }
     },
     "minimax": {
       "models": {
-        "fast": "MiniMax-M3",
-        "smart": "MiniMax-M3"
+        "smart": "MiniMax-M3",
+        "default": "MiniMax-M3"
       }
     },
     "copilot": {
       "models": {
-        "fast": "copilot",
-        "smart": "copilot"
+        "smart": "copilot",
+        "default": "copilot"
       }
     },
     "codex": {
       "models": {
-        "fast": "gpt-5.6-luna",
-        "smart": "gpt-5.6-sol"
+        "smart": "gpt-5.6-sol",
+        "default": "gpt-5.6-luna"
       }
     }
   },
   "roles": {
     "default": {
-      "tier": "smart"
+      "tier": "default"
     },
     "docs-researcher": {
-      "tier": "fast"
+      "tier": "default"
     },
     "browser-tester": {
-      "tier": "smart"
+      "tier": "default"
     },
     "explorer": {
-      "tier": "smart"
+      "tier": "default"
     },
     "worker": {
-      "tier": "smart"
+      "tier": "default"
     },
     "validator": {
-      "tier": "fast"
+      "tier": "default"
+    },
+    "smart": {
+      "tier": "smart"
     }
   }
 }

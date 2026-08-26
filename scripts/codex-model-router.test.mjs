@@ -9,7 +9,8 @@ test("loads editable provider and role models from JSON routing config", async (
   assert.equal(config.providers.claude.models.smart, "claude-opus-4-8");
   assert.equal(config.providers.codex.models.smart, "gpt-5.6-sol");
   assert.deepEqual(config.providerPriority, ["antigravity", "claude", "minimax", "copilot", "codex"]);
-  assert.equal(config.roles.worker.tier, "smart");
+  assert.equal(config.roles.worker.tier, "default");
+  assert.equal(config.roles.smart.tier, "smart");
 });
 
 test("routes supported model families without provider aliases", () => {
@@ -24,6 +25,8 @@ test("resolves role aliases through the provider priority order", () => {
   assert.equal(roleForModel("autodev/explorer"), "explorer");
   const providers = roleCandidates("explorer").map((route) => route.provider);
   assert.deepEqual(providers, ["antigravity", "claude", "minimax", "copilot", "codex"]);
+  assert.equal(roleCandidates("explorer")[0].model, "gemini-3.6-flash-medium");
+  assert.equal(roleCandidates("smart")[0].model, "gemini-3.7-flash-high");
 });
 
 test("classifies provider exhaustion and transient responses for fallback", () => {

@@ -28,7 +28,7 @@ hook_names=(
 
 profile_names=(claude minimax antigravity)
 catalog_names=(claude minimax antigravity codex)
-agent_role_names=(browser-tester default docs-researcher explorer validator worker)
+agent_role_names=(browser-tester default docs-researcher explorer smart validator worker)
 custom_provider_names=(local_model_router claude_code_subscription minimax antigravity_cli)
 tracked_sources=""
 

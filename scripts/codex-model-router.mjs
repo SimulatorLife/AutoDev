@@ -24,7 +24,7 @@ const ROUTING_CONFIG_FILE = process.env.CODEX_ROUTER_CONFIG_FILE
   ?? (existsSync(`${CODEX_HOME}/codex-model-routing.json`)
     ? `${CODEX_HOME}/codex-model-routing.json`
     : new URL('./codex/model-routing.json', import.meta.url).pathname);
-const ROLE_NAMES = ['default', 'docs-researcher', 'browser-tester', 'explorer', 'worker', 'validator'];
+const ROLE_NAMES = ['default', 'docs-researcher', 'browser-tester', 'explorer', 'worker', 'validator', 'smart'];
 const ROUTING_CONFIG = JSON.parse(readFileSync(ROUTING_CONFIG_FILE, 'utf8'));
 
 function validateRoutingConfig(config) {

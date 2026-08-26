@@ -78,6 +78,9 @@ config_file = "./agents/worker.toml"
 [agents.validator]
 description = "Validation agent."
 config_file = "./agents/validator.toml"
+[agents.smart]
+description = "Full-capability smart agent with browser, documentation, and workspace-write access."
+config_file = "./agents/smart.toml"
 [agents.default]
 description = "General-purpose developer."
 config_file = "./agents/default.toml"

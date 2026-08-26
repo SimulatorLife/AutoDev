@@ -18,11 +18,12 @@ Callers select a capability role, never a provider or model:
 | `explorer` | Architecture and dependency exploration | read-only |
 | `worker` | Bounded implementation | workspace-write |
 | `validator` | Independent validation | workspace-write |
+| `smart` | Full-capability browser/docs/implementation agent | workspace-write |
 
-Every role uses the `local_model_router` with an `autodev/<role>` model alias.
+All roles except `smart` use the configured `default` model tier. Only `smart` uses the configured `smart` tier. Every role uses the `local_model_router` with an `autodev/<role>` model alias.
 The editable provider/model choices live in
 `scripts/codex/model-routing.json`: `providerPriority` controls fallback order,
-`providers.<name>.models` contains named tiers such as `fast` and `smart`, and
+`providers.<name>.models` contains named tiers such as `default` and `smart`, and
 `roles.<role>.tier` selects the tier for each capability role. For example, set
 Claude's smart model to `claude-opus-4-8` or Codex's to `gpt-5.6-sol` there; the
 router does not need a code change. The installer materializes this file as
