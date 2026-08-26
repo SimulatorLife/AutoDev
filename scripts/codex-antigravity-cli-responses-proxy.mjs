@@ -5,6 +5,7 @@ import { spawn } from "node:child_process";
 import { createServer } from "node:http";
 import { randomBytes } from "node:crypto";
 import { createInterface } from "node:readline";
+import { statSync } from "node:fs";
 
 const HOST = process.env.AGY_PROXY_HOST ?? "127.0.0.1";
 const PORT = Number.parseInt(process.env.AGY_PROXY_PORT ?? "4002", 10);
@@ -19,6 +20,28 @@ const PROJECT_ROOT = process.env.AGY_PROJECT_ROOT ?? "/Users/henrykirk/Desktop/R
 const MODEL_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 const EFFORTS = new Set([ "low", "medium", "high" ]);
 const BRIDGE_INSTRUCTIONS = "You are the leaf implementation agent for a parent Codex task. Use Antigravity's native tools and follow the repository's AGENTS.md. Do not spawn child agents, commit, or push unless the task explicitly requires it.";
+
+function isDirectory(path) {
+  try { return typeof path === "string" && Boolean(path) && statSync(path).isDirectory(); } catch { return false; }
+}
+
+function resolveCwd(payload, prompt) {
+  for (const key of ["cwd", "project_root", "working_directory"]) {
+    if (isDirectory(payload?.[key])) return payload[key];
+  }
+  const meta = payload?.metadata;
+  if (meta && typeof meta === "object") {
+    for (const key of ["cwd", "project_root", "working_directory"]) {
+      if (isDirectory(meta[key])) return meta[key];
+    }
+  }
+  const match = typeof prompt === "string" ? prompt.match(/(?:Working directory:|cwd:|in directory:?)\s*([/\w.-]+)/i) : null;
+  if (match && isDirectory(match[1].trim())) {
+    return match[1].trim();
+  }
+  if (isDirectory(PROJECT_ROOT)) return PROJECT_ROOT;
+  return process.cwd();
+}
 
 function modelMetadata() {
   return {
@@ -201,11 +224,15 @@ function failedStream(response, responseId, itemId, error) {
   response.end("data: [DONE]\n\n");
 }
 
-function runAgy(prompt, model, effort, onEvent) {
+function runAgy(prompt, model, effort, cwd = PROJECT_ROOT, onEvent) {
+  if (typeof cwd === "function") {
+    onEvent = cwd;
+    cwd = PROJECT_ROOT;
+  }
   return new Promise((resolve, reject) => {
     const permissionArgs = AGY_SKIP_PERMISSIONS === "true" ? [ "--dangerously-skip-permissions" ] : [];
     const args = [ "-p", prompt, "--model", model, "--effort", effort, "--mode", AGY_MODE, ...permissionArgs, "--output-format", "stream-json", "--print-timeout", PRINT_TIMEOUT ];
-    const child = spawn(CLI, args, { cwd: PROJECT_ROOT, env: process.env, stdio: [ "ignore", "pipe", "pipe" ] });
+    const child = spawn(CLI, args, { cwd: cwd || PROJECT_ROOT, env: process.env, stdio: [ "ignore", "pipe", "pipe" ] });
     let stderr = "";
     let terminalResult = null;
     let emitted = "";
@@ -278,11 +305,12 @@ async function handle(request, response) {
   const model = resolveModel(payload.model);
   const effort = resolveEffort(payload);
   const prompt = promptFromInput(payload.input ?? "");
-  console.error(`agy request model=${model} effort=${effort}`);
+  const cwd = resolveCwd(payload, prompt);
+  console.error(`agy request model=${model} effort=${effort} cwd=${cwd}`);
 
   if (!payload.stream) {
     try {
-      const result = await runAgy(prompt, model, effort);
+      const result = await runAgy(prompt, model, effort, cwd);
       sendJson(response, 200, responsePayload(payload.model ?? model, result.text, result.result));
     } catch (error) {
       sendJson(response, 502, { error: { type: "upstream_error", message: error.message ?? String(error) } });
@@ -334,7 +362,7 @@ async function handle(request, response) {
   let child;
   response.on("close", () => { clearInterval(keepAlive); if (child && !child.killed) child.kill("SIGTERM"); });
   try {
-    const result = await runAgy(prompt, model, effort, (event) => {
+    const result = await runAgy(prompt, model, effort, cwd, (event) => {
       if (event.type === "process") { child = event.child; return; }
       if (event.type === "text_delta") {
         startStream();

@@ -220,11 +220,33 @@ def claude_cli_args(prompt: str, model: str, effort: str) -> list[str]:
     ]
 
 
-def run_claude_stream(prompt: str, model: str = DEFAULT_CLAUDE_MODEL, effort: str = DEFAULT_CLAUDE_EFFORT):
+def resolve_cwd(request: dict[str, Any], prompt: str) -> str:
+    for key in ("cwd", "project_root", "working_directory"):
+        val = request.get(key)
+        if isinstance(val, str) and os.path.isdir(val):
+            return val
+    meta = request.get("metadata")
+    if isinstance(meta, dict):
+        for key in ("cwd", "project_root", "working_directory"):
+            val = meta.get(key)
+            if isinstance(val, str) and os.path.isdir(val):
+                return val
+    match = re.search(r"(?:Working directory:|cwd:|in directory:?)\s*([/\w.-]+)", prompt, re.IGNORECASE)
+    if match:
+        candidate = match.group(1).strip()
+        if os.path.isdir(candidate):
+            return candidate
+    if os.path.isdir(PROJECT_ROOT):
+        return PROJECT_ROOT
+    return os.getcwd()
+
+
+def run_claude_stream(prompt: str, model: str = DEFAULT_CLAUDE_MODEL, effort: str = DEFAULT_CLAUDE_EFFORT, cwd: str = PROJECT_ROOT):
     process = subprocess.Popen(
         claude_cli_args(prompt, model, effort),
-        cwd=PROJECT_ROOT,
+        cwd=cwd,
         env=claude_environment(),
+        stdin=subprocess.DEVNULL,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
@@ -253,6 +275,11 @@ def run_claude_stream(prompt: str, model: str = DEFAULT_CLAUDE_MODEL, effort: st
                 continue
             if kind == "json" and isinstance(value, dict):
                 event_type = value.get("type")
+                if event_type == "rate_limit_event":
+                    raise RuntimeError("You've hit your weekly limit · resets 6pm (America/New_York)")
+                if value.get("is_api_error_message") or value.get("error") in ("rate_limit", "overloaded_error"):
+                    err_msg = text_from_content(value.get("message", {}).get("content", [])) or value.get("error") or "Claude API rate limit"
+                    raise RuntimeError(str(err_msg))
                 delta = nested_text(value) if event_type == "stream_event" else ""
                 if event_type == "assistant":
                     full_text = text_from_content(value.get("message", {}).get("content", []))
@@ -262,6 +289,8 @@ def run_claude_stream(prompt: str, model: str = DEFAULT_CLAUDE_MODEL, effort: st
                     yield ("delta", delta, value)
                 if event_type == "result":
                     result = value
+                    if result.get("is_error"):
+                        raise RuntimeError(str(result.get("result", "Claude CLI returned an error")))
                 continue
             if kind == "stderr" and value:
                 stderr_lines.append(str(value))
@@ -350,11 +379,13 @@ class Handler(BaseHTTPRequestHandler):
             request = json.loads(self.rfile.read(length))
             claude_model = resolve_claude_model(request.get("model"))
             claude_effort = resolve_claude_effort(requested_effort(request))
-            print(f"claude request model={claude_model} effort={claude_effort}", flush=True)
+            prompt = prompt_from_input(request.get("input", ""))
+            cwd = resolve_cwd(request, prompt)
+            print(f"claude request model={claude_model} effort={claude_effort} cwd={cwd}", flush=True)
             if not request.get("stream"):
                 text = ""
                 metadata: dict[str, Any] = {}
-                for kind, value, _ in run_claude_stream(prompt_from_input(request.get("input", "")), claude_model, claude_effort):
+                for kind, value, _ in run_claude_stream(prompt, claude_model, claude_effort, cwd=cwd):
                     if kind == "delta":
                         text += value
                     elif kind == "complete":
@@ -367,29 +398,36 @@ class Handler(BaseHTTPRequestHandler):
             response_id = f"resp_{secrets.token_hex(12)}"
             item_id = f"msg_{secrets.token_hex(10)}"
             initial = {"id": response_id, "object": "response", "created_at": int(time.time()), "model": request.get("model", MODEL), "status": "in_progress", "output": []}
-            self.send_response(200)
-            self.send_header("Content-Type", "text/event-stream")
-            self.send_header("Cache-Control", "no-cache")
-            # The Responses stream is one request per connection.  Explicitly
-            # close after [DONE]; some clients wait for EOF in addition to the
-            # terminal SSE event.
-            self.send_header("Connection", "close")
-            self.end_headers()
-            stream_headers_sent = True
-            self.close_connection = True
-            self.send_sse("response.created", {"type": "response.created", "response": initial})
-            self.send_sse("response.output_item.added", {"type": "response.output_item.added", "output_index": 0, "item": {"id": item_id, "type": "message", "role": "assistant", "status": "in_progress", "content": []}})
-            self.send_sse("response.content_part.added", {"type": "response.content_part.added", "item_id": item_id, "output_index": 0, "content_index": 0, "part": {"type": "output_text", "text": "", "annotations": []}})
             text = ""
             metadata: dict[str, Any] = {}
-            for kind, value, _ in run_claude_stream(prompt_from_input(request.get("input", "")), claude_model, claude_effort):
+
+            def start_stream() -> None:
+                nonlocal stream_headers_sent
+                if stream_headers_sent:
+                    return
+                self.send_response(200)
+                self.send_header("Content-Type", "text/event-stream")
+                self.send_header("Cache-Control", "no-cache")
+                self.send_header("Connection", "close")
+                self.end_headers()
+                stream_headers_sent = True
+                self.close_connection = True
+                self.send_sse("response.created", {"type": "response.created", "response": initial})
+                self.send_sse("response.output_item.added", {"type": "response.output_item.added", "output_index": 0, "item": {"id": item_id, "type": "message", "role": "assistant", "status": "in_progress", "content": []}})
+                self.send_sse("response.content_part.added", {"type": "response.content_part.added", "item_id": item_id, "output_index": 0, "content_index": 0, "part": {"type": "output_text", "text": "", "annotations": []}})
+
+            for kind, value, _ in run_claude_stream(prompt, claude_model, claude_effort, cwd=cwd):
                 if kind == "delta":
+                    start_stream()
                     text += value
                     self.send_sse("response.output_text.delta", {"type": "response.output_text.delta", "item_id": item_id, "delta": value, "content_index": 0, "output_index": 0})
                 elif kind == "heartbeat":
-                    self.send_heartbeat()
-                else:
+                    if stream_headers_sent:
+                        self.send_heartbeat()
+                elif kind == "complete":
                     text, metadata = value
+
+            start_stream()
             payload = response_payload(request.get("model", MODEL), text, metadata, response_id)
             self.send_sse("response.output_text.done", {"type": "response.output_text.done", "item_id": item_id, "text": text, "content_index": 0, "output_index": 0})
             self.send_sse("response.content_part.done", {"type": "response.content_part.done", "item_id": item_id, "output_index": 0, "content_index": 0, "part": {"type": "output_text", "text": text, "annotations": []}})
@@ -421,3 +459,4 @@ class Handler(BaseHTTPRequestHandler):
 
 if __name__ == "__main__":
     ThreadingHTTPServer((HOST, PORT), Handler).serve_forever()
+

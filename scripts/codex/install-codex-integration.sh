@@ -375,12 +375,11 @@ if [[ "${1:-}" == "--restart" ]]; then
   else
     printf '%s\n' 'launchctl unavailable (sandbox?); starting bridges through the direct ensure-hook path.' >&2
   fi
-  # Idempotent fallback: each ensure-hook exits early when its port is already
-  # healthy, so this is a no-op under launchd and a real start under the sandbox.
   bash "$repo_root/scripts/ensure-codex-model-router.sh"
   printf '{"model":"sonnet"}\n' | bash "$repo_root/scripts/ensure-codex-claude-bridge.sh"
-  bash "$repo_root/scripts/ensure-codex-minimax-proxy.sh" --daemon
+  printf '{"model":"MiniMax-M3"}\n' | bash "$repo_root/scripts/ensure-codex-minimax-proxy.sh"
   printf '{"model":"gemini-3.6-flash-medium"}\n' | bash "$repo_root/scripts/ensure-codex-antigravity-proxy.sh"
+
 fi
 
 check_links

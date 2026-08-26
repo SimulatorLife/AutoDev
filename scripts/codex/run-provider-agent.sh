@@ -130,4 +130,4 @@ codex_args=(--strict-config -C "$repo_root" -c "model_reasoning_effort=$role_eff
 [[ -n "$role_summary" ]] && codex_args+=(-c "model_reasoning_summary=$role_summary")
 [[ -n "$role_sandbox" ]] && codex_args+=(-c "sandbox_mode=$role_sandbox")
 exec "$codex_bin" "${codex_args[@]}" exec --model "autodev/$role" \
-  --ephemeral --json --skip-git-repo-check "$prompt"
+  --ephemeral --json --skip-git-repo-check "$prompt" </dev/null

@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
-import { catalogModelIds, clearProviderCooldown, cooldownProvider, fallbackable, isProviderCoolingDown, replaceModelFields, responseTextFromSse, roleCandidates, roleForModel, routeForModel, transformSseEvent, validateRoutingConfig } from "./codex-model-router.mjs";
+import { activeProviderRequests, catalogModelIds, clearProviderCooldown, cooldownProvider, decrementActiveRequests, fallbackable, getActiveRequests, incrementActiveRequests, isProviderCoolingDown, replaceModelFields, responseTextFromSse, roleCandidates, roleForModel, routeForModel, transformSseEvent, validateRoutingConfig } from "./codex-model-router.mjs";
 
 test("loads editable provider and role models from JSON routing config", async () => {
   const config = JSON.parse(await readFile(new URL("./codex/model-routing.json", import.meta.url), "utf8"));
@@ -125,3 +125,30 @@ test("rewrites the routed provider model back to the public role alias", () => {
   assert.match(event, /autodev\/explorer/);
   assert.equal((event.match(/autodev\/explorer/g) ?? []).length, 2);
 });
+
+test("balances candidate provider priority across active in-flight requests", () => {
+  activeProviderRequests.clear();
+  assert.equal(getActiveRequests("claude"), 0);
+
+  incrementActiveRequests("claude");
+  incrementActiveRequests("claude");
+  incrementActiveRequests("antigravity");
+  assert.equal(getActiveRequests("claude"), 2);
+  assert.equal(getActiveRequests("antigravity"), 1);
+  assert.equal(getActiveRequests("minimax"), 0);
+
+  const candidates = roleCandidates("default", () => 0.5);
+  const providers = candidates.map((c) => c.provider);
+  // minimax (0 active) should come first, then antigravity (1 active), then claude (2 active)
+  assert.equal(providers[0], "minimax");
+  assert.equal(providers[1], "antigravity");
+  assert.equal(providers[2], "claude");
+
+  decrementActiveRequests("claude");
+  decrementActiveRequests("claude");
+  decrementActiveRequests("antigravity");
+  assert.equal(getActiveRequests("claude"), 0);
+  assert.equal(getActiveRequests("antigravity"), 0);
+  activeProviderRequests.clear();
+});
+

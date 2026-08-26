@@ -59,6 +59,24 @@ function validateRoutingConfig(config) {
 const ROUTING = validateRoutingConfig(ROUTING_CONFIG);
 const PROVIDER_COOLDOWN_MS = 30_000;
 const providerCooldowns = new Map();
+const activeProviderRequests = new Map();
+
+function getActiveRequests(provider) {
+  return activeProviderRequests.get(provider) ?? 0;
+}
+
+function incrementActiveRequests(provider) {
+  activeProviderRequests.set(provider, getActiveRequests(provider) + 1);
+}
+
+function decrementActiveRequests(provider) {
+  const current = getActiveRequests(provider);
+  if (current <= 1) {
+    activeProviderRequests.delete(provider);
+  } else {
+    activeProviderRequests.set(provider, current - 1);
+  }
+}
 
 function shuffleGroup(group, random = Math.random) {
   const items = [...group];
@@ -66,6 +84,7 @@ function shuffleGroup(group, random = Math.random) {
     const j = Math.floor(random() * (i + 1));
     [items[i], items[j]] = [items[j], items[i]];
   }
+  items.sort((a, b) => getActiveRequests(a) - getActiveRequests(b));
   return items;
 }
 
@@ -317,6 +336,7 @@ async function providerAvailable(route) {
 }
 
 async function proxyConcreteResponse(response, route, payload, wantsStream) {
+  incrementActiveRequests(route.provider);
   try {
     const result = await fetchUpstream(route, payload, wantsStream);
     if (!result.ok) {
@@ -327,6 +347,8 @@ async function proxyConcreteResponse(response, route, payload, wantsStream) {
     await writeSuccessfulResponse(response, route, result, wantsStream, payload.model);
   } catch (error) {
     if (!response.writableEnded) sendJson(response, 502, errorBody(error instanceof Error ? error.message : String(error), "router_upstream_error"));
+  } finally {
+    decrementActiveRequests(route.provider);
   }
 }
 
@@ -343,11 +365,17 @@ async function proxyRoleResponse(response, role, payload, wantsStream) {
       continue;
     }
     console.error(`codex-model-router role=${role} provider=${route.provider} model=${route.model}`);
+    incrementActiveRequests(route.provider);
     try {
       const result = await fetchUpstream(route, { ...payload, model: route.model }, wantsStream);
       if (result.ok) {
         clearProviderCooldown(route.provider);
-        await writeSuccessfulResponse(response, route, result, wantsStream, payload.model);
+        try {
+          await writeSuccessfulResponse(response, route, result, wantsStream, payload.model);
+        } catch (streamError) {
+          cooldownProvider(route.provider);
+          throw streamError;
+        }
         return;
       }
       failures.push(`${route.provider}: HTTP ${result.status}`);
@@ -360,6 +388,8 @@ async function proxyRoleResponse(response, role, payload, wantsStream) {
     } catch (error) {
       failures.push(`${route.provider}: ${error instanceof Error ? error.message : String(error)}`);
       cooldownProvider(route.provider);
+    } finally {
+      decrementActiveRequests(route.provider);
     }
   }
   sendJson(response, 503, errorBody(`No available provider completed role ${role}. ${failures.join("; ")}`, "router_provider_exhausted"));
@@ -396,7 +426,7 @@ async function handle(request, response) {
   await proxyConcreteResponse(response, route, payload, wantsStream);
 }
 
-export { catalogModelIds, clearProviderCooldown, cooldownProvider, fallbackable, isProviderCoolingDown, providerModelMetadata, replaceModelFields, responseTextFromSse, roleCandidates, roleForModel, routeForModel, transformSseEvent, validateRoutingConfig };
+export { activeProviderRequests, catalogModelIds, clearProviderCooldown, cooldownProvider, decrementActiveRequests, fallbackable, getActiveRequests, incrementActiveRequests, isProviderCoolingDown, providerModelMetadata, replaceModelFields, responseTextFromSse, roleCandidates, roleForModel, routeForModel, transformSseEvent, validateRoutingConfig };
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   createServer((request, response) => { void handle(request, response); }).listen(PORT, HOST, () => {
