@@ -9,7 +9,7 @@
   "providers": {
     "antigravity": {
       "models": {
-        "smart": "gemini-3.7-flash-high",
+        "smart": "gemini-3.6-flash-high",
         "default": "gemini-3.6-flash-medium"
       }
     },

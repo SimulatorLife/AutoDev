@@ -282,6 +282,384 @@
       "input_modalities": [
         "text"
       ]
+    },
+    {
+      "slug": "autodev/default",
+      "display_name": "AutoDev default role",
+      "description": "Provider-neutral AutoDev default role routed by the local model router.",
+      "base_instructions": "You are a bounded provider-neutral AutoDev agent.",
+      "model_messages": {
+        "instructions_template": "You are a bounded provider-neutral AutoDev agent."
+      },
+      "default_reasoning_level": "medium",
+      "supported_reasoning_levels": [
+        {
+          "effort": "low",
+          "description": "Low reasoning"
+        },
+        {
+          "effort": "medium",
+          "description": "Balanced reasoning"
+        },
+        {
+          "effort": "high",
+          "description": "High reasoning"
+        },
+        {
+          "effort": "xhigh",
+          "description": "Extra-high reasoning"
+        },
+        {
+          "effort": "max",
+          "description": "Maximum reasoning"
+        }
+      ],
+      "shell_type": "shell_command",
+      "visibility": "list",
+      "supported_in_api": true,
+      "priority": 0,
+      "context_window": 1000000,
+      "max_context_window": 1000000,
+      "supports_parallel_tool_calls": true,
+      "supports_reasoning_summaries": true,
+      "support_verbosity": true,
+      "supports_search_tool": true,
+      "tool_mode": "code_mode_only",
+      "truncation_policy": {
+        "mode": "tokens",
+        "limit": 10000
+      },
+      "experimental_supported_tools": [],
+      "use_responses_lite": true,
+      "multi_agent_version": "v1",
+      "input_modalities": [
+        "text",
+        "image"
+      ]
+    },
+    {
+      "slug": "autodev/docs-researcher",
+      "display_name": "AutoDev docs-researcher role",
+      "description": "Provider-neutral AutoDev docs-researcher role routed by the local model router.",
+      "base_instructions": "You are a bounded provider-neutral AutoDev agent.",
+      "model_messages": {
+        "instructions_template": "You are a bounded provider-neutral AutoDev agent."
+      },
+      "default_reasoning_level": "medium",
+      "supported_reasoning_levels": [
+        {
+          "effort": "low",
+          "description": "Low reasoning"
+        },
+        {
+          "effort": "medium",
+          "description": "Balanced reasoning"
+        },
+        {
+          "effort": "high",
+          "description": "High reasoning"
+        },
+        {
+          "effort": "xhigh",
+          "description": "Extra-high reasoning"
+        },
+        {
+          "effort": "max",
+          "description": "Maximum reasoning"
+        }
+      ],
+      "shell_type": "shell_command",
+      "visibility": "list",
+      "supported_in_api": true,
+      "priority": 0,
+      "context_window": 1000000,
+      "max_context_window": 1000000,
+      "supports_parallel_tool_calls": true,
+      "supports_reasoning_summaries": true,
+      "support_verbosity": true,
+      "supports_search_tool": true,
+      "tool_mode": "code_mode_only",
+      "truncation_policy": {
+        "mode": "tokens",
+        "limit": 10000
+      },
+      "experimental_supported_tools": [],
+      "use_responses_lite": true,
+      "multi_agent_version": "v1",
+      "input_modalities": [
+        "text",
+        "image"
+      ]
+    },
+    {
+      "slug": "autodev/browser-tester",
+      "display_name": "AutoDev browser-tester role",
+      "description": "Provider-neutral AutoDev browser-tester role routed by the local model router.",
+      "base_instructions": "You are a bounded provider-neutral AutoDev agent.",
+      "model_messages": {
+        "instructions_template": "You are a bounded provider-neutral AutoDev agent."
+      },
+      "default_reasoning_level": "medium",
+      "supported_reasoning_levels": [
+        {
+          "effort": "low",
+          "description": "Low reasoning"
+        },
+        {
+          "effort": "medium",
+          "description": "Balanced reasoning"
+        },
+        {
+          "effort": "high",
+          "description": "High reasoning"
+        },
+        {
+          "effort": "xhigh",
+          "description": "Extra-high reasoning"
+        },
+        {
+          "effort": "max",
+          "description": "Maximum reasoning"
+        }
+      ],
+      "shell_type": "shell_command",
+      "visibility": "list",
+      "supported_in_api": true,
+      "priority": 0,
+      "context_window": 1000000,
+      "max_context_window": 1000000,
+      "supports_parallel_tool_calls": true,
+      "supports_reasoning_summaries": true,
+      "support_verbosity": true,
+      "supports_search_tool": true,
+      "tool_mode": "code_mode_only",
+      "truncation_policy": {
+        "mode": "tokens",
+        "limit": 10000
+      },
+      "experimental_supported_tools": [],
+      "use_responses_lite": true,
+      "multi_agent_version": "v1",
+      "input_modalities": [
+        "text",
+        "image"
+      ]
+    },
+    {
+      "slug": "autodev/explorer",
+      "display_name": "AutoDev explorer role",
+      "description": "Provider-neutral AutoDev explorer role routed by the local model router.",
+      "base_instructions": "You are a bounded provider-neutral AutoDev agent.",
+      "model_messages": {
+        "instructions_template": "You are a bounded provider-neutral AutoDev agent."
+      },
+      "default_reasoning_level": "medium",
+      "supported_reasoning_levels": [
+        {
+          "effort": "low",
+          "description": "Low reasoning"
+        },
+        {
+          "effort": "medium",
+          "description": "Balanced reasoning"
+        },
+        {
+          "effort": "high",
+          "description": "High reasoning"
+        },
+        {
+          "effort": "xhigh",
+          "description": "Extra-high reasoning"
+        },
+        {
+          "effort": "max",
+          "description": "Maximum reasoning"
+        }
+      ],
+      "shell_type": "shell_command",
+      "visibility": "list",
+      "supported_in_api": true,
+      "priority": 0,
+      "context_window": 1000000,
+      "max_context_window": 1000000,
+      "supports_parallel_tool_calls": true,
+      "supports_reasoning_summaries": true,
+      "support_verbosity": true,
+      "supports_search_tool": true,
+      "tool_mode": "code_mode_only",
+      "truncation_policy": {
+        "mode": "tokens",
+        "limit": 10000
+      },
+      "experimental_supported_tools": [],
+      "use_responses_lite": true,
+      "multi_agent_version": "v1",
+      "input_modalities": [
+        "text",
+        "image"
+      ]
+    },
+    {
+      "slug": "autodev/worker",
+      "display_name": "AutoDev worker role",
+      "description": "Provider-neutral AutoDev worker role routed by the local model router.",
+      "base_instructions": "You are a bounded provider-neutral AutoDev agent.",
+      "model_messages": {
+        "instructions_template": "You are a bounded provider-neutral AutoDev agent."
+      },
+      "default_reasoning_level": "medium",
+      "supported_reasoning_levels": [
+        {
+          "effort": "low",
+          "description": "Low reasoning"
+        },
+        {
+          "effort": "medium",
+          "description": "Balanced reasoning"
+        },
+        {
+          "effort": "high",
+          "description": "High reasoning"
+        },
+        {
+          "effort": "xhigh",
+          "description": "Extra-high reasoning"
+        },
+        {
+          "effort": "max",
+          "description": "Maximum reasoning"
+        }
+      ],
+      "shell_type": "shell_command",
+      "visibility": "list",
+      "supported_in_api": true,
+      "priority": 0,
+      "context_window": 1000000,
+      "max_context_window": 1000000,
+      "supports_parallel_tool_calls": true,
+      "supports_reasoning_summaries": true,
+      "support_verbosity": true,
+      "supports_search_tool": true,
+      "tool_mode": "code_mode_only",
+      "truncation_policy": {
+        "mode": "tokens",
+        "limit": 10000
+      },
+      "experimental_supported_tools": [],
+      "use_responses_lite": true,
+      "multi_agent_version": "v1",
+      "input_modalities": [
+        "text",
+        "image"
+      ]
+    },
+    {
+      "slug": "autodev/validator",
+      "display_name": "AutoDev validator role",
+      "description": "Provider-neutral AutoDev validator role routed by the local model router.",
+      "base_instructions": "You are a bounded provider-neutral AutoDev agent.",
+      "model_messages": {
+        "instructions_template": "You are a bounded provider-neutral AutoDev agent."
+      },
+      "default_reasoning_level": "medium",
+      "supported_reasoning_levels": [
+        {
+          "effort": "low",
+          "description": "Low reasoning"
+        },
+        {
+          "effort": "medium",
+          "description": "Balanced reasoning"
+        },
+        {
+          "effort": "high",
+          "description": "High reasoning"
+        },
+        {
+          "effort": "xhigh",
+          "description": "Extra-high reasoning"
+        },
+        {
+          "effort": "max",
+          "description": "Maximum reasoning"
+        }
+      ],
+      "shell_type": "shell_command",
+      "visibility": "list",
+      "supported_in_api": true,
+      "priority": 0,
+      "context_window": 1000000,
+      "max_context_window": 1000000,
+      "supports_parallel_tool_calls": true,
+      "supports_reasoning_summaries": true,
+      "support_verbosity": true,
+      "supports_search_tool": true,
+      "tool_mode": "code_mode_only",
+      "truncation_policy": {
+        "mode": "tokens",
+        "limit": 10000
+      },
+      "experimental_supported_tools": [],
+      "use_responses_lite": true,
+      "multi_agent_version": "v1",
+      "input_modalities": [
+        "text",
+        "image"
+      ]
+    },
+    {
+      "slug": "autodev/smart",
+      "display_name": "AutoDev smart role",
+      "description": "Provider-neutral AutoDev smart role routed by the local model router.",
+      "base_instructions": "You are a bounded provider-neutral AutoDev agent.",
+      "model_messages": {
+        "instructions_template": "You are a bounded provider-neutral AutoDev agent."
+      },
+      "default_reasoning_level": "medium",
+      "supported_reasoning_levels": [
+        {
+          "effort": "low",
+          "description": "Low reasoning"
+        },
+        {
+          "effort": "medium",
+          "description": "Balanced reasoning"
+        },
+        {
+          "effort": "high",
+          "description": "High reasoning"
+        },
+        {
+          "effort": "xhigh",
+          "description": "Extra-high reasoning"
+        },
+        {
+          "effort": "max",
+          "description": "Maximum reasoning"
+        }
+      ],
+      "shell_type": "shell_command",
+      "visibility": "list",
+      "supported_in_api": true,
+      "priority": 0,
+      "context_window": 1000000,
+      "max_context_window": 1000000,
+      "supports_parallel_tool_calls": true,
+      "supports_reasoning_summaries": true,
+      "support_verbosity": true,
+      "supports_search_tool": true,
+      "tool_mode": "code_mode_only",
+      "truncation_policy": {
+        "mode": "tokens",
+        "limit": 10000
+      },
+      "experimental_supported_tools": [],
+      "use_responses_lite": true,
+      "multi_agent_version": "v1",
+      "input_modalities": [
+        "text",
+        "image"
+      ]
     }
   ]
 }

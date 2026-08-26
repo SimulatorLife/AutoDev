@@ -26,12 +26,13 @@ test("resolves role aliases through the provider priority order", () => {
   const providers = roleCandidates("explorer").map((route) => route.provider);
   assert.deepEqual(providers, ["antigravity", "claude", "minimax", "copilot", "codex"]);
   assert.equal(roleCandidates("explorer")[0].model, "gemini-3.6-flash-medium");
-  assert.equal(roleCandidates("smart")[0].model, "gemini-3.7-flash-high");
+  assert.equal(roleCandidates("smart")[0].model, "gemini-3.6-flash-high");
 });
 
 test("classifies provider exhaustion and transient responses for fallback", () => {
   assert.equal(fallbackable(429, "session limit reached"), true);
   assert.equal(fallbackable(503, "unavailable"), true);
+  assert.equal(fallbackable(400, "Invalid model name passed in model=gemini-3.6-flash-high"), true);
   assert.equal(fallbackable(400, "malformed request"), false);
 });
 

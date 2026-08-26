@@ -23,6 +23,7 @@ multi_agent = true
 multi_agent_v2 = false
 js_repl = false
 memories = true
+respect_system_proxy = true
 
 [model_providers.claude_code_subscription]
 name = "Claude Code OAuth subscription bridge"
@@ -216,6 +217,9 @@ trust_level = "trusted"
 trust_level = "trusted"
 
 [projects."/Users/henrykirk/AutoDev"]
+trust_level = "trusted"
+
+[projects."/Users/henrykirk/Colourful-Life"]
 trust_level = "trusted"
 
 [mcp_servers.playwright]
