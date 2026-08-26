@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
-import { catalogModelIds, fallbackable, replaceModelFields, responseTextFromSse, roleCandidates, roleForModel, routeForModel, transformSseEvent, validateRoutingConfig } from "./codex-model-router.mjs";
+import { catalogModelIds, clearProviderCooldown, cooldownProvider, fallbackable, isProviderCoolingDown, replaceModelFields, responseTextFromSse, roleCandidates, roleForModel, routeForModel, transformSseEvent, validateRoutingConfig } from "./codex-model-router.mjs";
 
 test("loads editable provider and role models from JSON routing config", async () => {
   const config = JSON.parse(await readFile(new URL("./codex/model-routing.json", import.meta.url), "utf8"));
@@ -10,15 +10,22 @@ test("loads editable provider and role models from JSON routing config", async (
   assert.equal(config.providers.codex.models.smart, "gpt-5.6-sol");
   assert.equal(config.providers.minimax.models.smart, undefined);
   assert.equal(config.providers.copilot.models.smart, undefined);
-  assert.deepEqual(config.providerPriority, ["antigravity", "claude", "minimax", "copilot", "codex"]);
+  assert.deepEqual(config.providerGroups.default, [["claude", "antigravity", "minimax"], ["copilot"], ["codex"]]);
+  assert.deepEqual(config.providerGroups.smart, [["claude", "antigravity"], ["codex"]]);
   assert.equal(config.roles.worker.tier, "default");
   assert.equal(config.roles.smart.tier, "smart");
 });
 
 test("validates routing config and requires default model for providers", () => {
   const validConfig = {
-    providerPriority: ["testProvider"],
-    providers: { testProvider: { models: { default: "test-model" } } },
+    providerGroups: {
+      default: [["testProvider"], ["fallbackProvider"]],
+      smart: [["testProvider"], ["fallbackProvider"]],
+    },
+    providers: {
+      testProvider: { models: { default: "test-model" } },
+      fallbackProvider: { models: { default: "fallback-model" } },
+    },
     roles: {
       default: { tier: "default" },
       "docs-researcher": { tier: "default" },
@@ -35,6 +42,11 @@ test("validates routing config and requires default model for providers", () => 
     () => validateRoutingConfig({ ...validConfig, providers: { testProvider: { models: {} } } }),
     /Routing config provider testProvider must define a default model/
   );
+
+  assert.throws(
+    () => validateRoutingConfig({ ...validConfig, providerGroups: { default: [[]], smart: [["testProvider"]] } }),
+    /Routing config tier default contains an invalid provider group/
+  );
 });
 
 test("routes supported model families without provider aliases", () => {
@@ -45,27 +57,28 @@ test("routes supported model families without provider aliases", () => {
   assert.equal(routeForModel("unknown-model"), null);
 });
 
-test("resolves role aliases through the provider priority order with smart model fallback", () => {
+test("resolves role aliases through tier-specific randomized provider groups with smart model fallback", () => {
   assert.equal(roleForModel("autodev/explorer"), "explorer");
-  const providers = roleCandidates("explorer").map((route) => route.provider);
-  assert.deepEqual(providers, ["antigravity", "claude", "minimax", "copilot", "codex"]);
-  assert.equal(roleCandidates("explorer")[0].model, "gemini-3.6-flash-medium");
-  assert.equal(roleCandidates("smart")[0].model, "gemini-3.6-flash-high");
 
-  const smartCandidates = roleCandidates("smart");
-  const minimaxCandidate = smartCandidates.find((c) => c.provider === "minimax");
-  const copilotCandidate = smartCandidates.find((c) => c.provider === "copilot");
-  assert.equal(minimaxCandidate?.model, "MiniMax-M3");
-  assert.equal(copilotCandidate?.model, "copilot");
+  const explorerCandidates = roleCandidates("explorer", () => 0.5);
+  const explorerProviders = explorerCandidates.map((c) => c.provider);
+  assert.deepEqual(explorerProviders.slice(0, 3).sort(), ["antigravity", "claude", "minimax"]);
+  assert.deepEqual(explorerProviders.slice(3), ["copilot", "codex"]);
 
-  const smartModels = roleCandidates("smart").map((candidate) => `${candidate.provider}:${candidate.model}`);
-  assert.deepEqual(smartModels, [
-    "antigravity:gemini-3.6-flash-high",
-    "claude:claude-opus-4-8",
-    "minimax:MiniMax-M3",
-    "copilot:copilot",
-    "codex:gpt-5.6-sol",
-  ]);
+  const smartCandidates = roleCandidates("smart", () => 0.5);
+  const smartProviders = smartCandidates.map((c) => c.provider);
+  assert.deepEqual(smartProviders.slice(0, 2).sort(), ["antigravity", "claude"]);
+  assert.deepEqual(smartProviders.slice(2), ["codex"]);
+
+  const smartModelMap = Object.fromEntries(smartCandidates.map((c) => [c.provider, c.model]));
+  assert.equal(smartModelMap.antigravity, "gemini-3.6-flash-high");
+  assert.equal(smartModelMap.claude, "claude-opus-4-8");
+  assert.equal(smartModelMap.codex, "gpt-5.6-sol");
+
+  assert.notDeepEqual(
+    roleCandidates("smart", () => 0).slice(0, 2).map((candidate) => candidate.provider),
+    roleCandidates("smart", () => 0.999).slice(0, 2).map((candidate) => candidate.provider),
+  );
 });
 
 test("classifies provider exhaustion and transient responses for fallback", () => {
@@ -73,6 +86,15 @@ test("classifies provider exhaustion and transient responses for fallback", () =
   assert.equal(fallbackable(503, "unavailable"), true);
   assert.equal(fallbackable(400, "Invalid model name passed in model=gemini-3.6-flash-high"), true);
   assert.equal(fallbackable(400, "malformed request"), false);
+});
+
+test("temporarily omits providers after a fallbackable limit or outage", () => {
+  const now = 1000;
+  cooldownProvider("minimax", now);
+  assert.equal(isProviderCoolingDown("minimax", now + 1), true);
+  assert.equal(isProviderCoolingDown("minimax", now + 30_000), false);
+  clearProviderCooldown("minimax");
+  assert.equal(isProviderCoolingDown("minimax", now), false);
 });
 
 test("extracts text from a Responses SSE completion", () => {

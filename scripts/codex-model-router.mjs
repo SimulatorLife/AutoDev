@@ -28,7 +28,7 @@ const ROLE_NAMES = ['default', 'docs-researcher', 'browser-tester', 'explorer', 
 const ROUTING_CONFIG = JSON.parse(readFileSync(ROUTING_CONFIG_FILE, 'utf8'));
 
 function validateRoutingConfig(config) {
-  if (!Array.isArray(config.providerPriority) || config.providerPriority.length === 0) throw new Error(`Routing config requires providerPriority: ${ROUTING_CONFIG_FILE}`);
+  if (!config.providerGroups || typeof config.providerGroups !== 'object') throw new Error(`Routing config requires providerGroups: ${ROUTING_CONFIG_FILE}`);
   if (!config.providers || typeof config.providers !== 'object') throw new Error(`Routing config requires providers: ${ROUTING_CONFIG_FILE}`);
   if (!config.roles || typeof config.roles !== 'object') throw new Error(`Routing config requires roles: ${ROUTING_CONFIG_FILE}`);
   for (const [provider, info] of Object.entries(config.providers)) {
@@ -42,16 +42,63 @@ function validateRoutingConfig(config) {
   for (const role of ROLE_NAMES) {
     const tier = config.roles[role]?.tier;
     if (typeof tier !== 'string' || !tier) throw new Error(`Routing config role ${role} must define a tier.`);
+    const groups = config.providerGroups[tier];
+    if (!Array.isArray(groups) || groups.length === 0) throw new Error(`Routing config tier ${tier} must define provider groups.`);
+    for (const group of groups) {
+      if (!Array.isArray(group) || group.length === 0 || !group.every((provider) => typeof provider === 'string' && provider.trim())) {
+        throw new Error(`Routing config tier ${tier} contains an invalid provider group.`);
+      }
+      for (const provider of group) {
+        if (!config.providers[provider]) throw new Error(`Routing config tier ${tier} references unknown provider ${provider}.`);
+      }
+    }
   }
   return config;
 }
 
 const ROUTING = validateRoutingConfig(ROUTING_CONFIG);
+const PROVIDER_COOLDOWN_MS = 30_000;
+const providerCooldowns = new Map();
 
-function providerPriority() {
-  const configured = String(process.env.CODEX_ROUTER_PROVIDER_PRIORITY ?? '').split(',').map((value) => value.trim().toLowerCase()).filter(Boolean);
-  const priority = configured.length ? configured : ROUTING.providerPriority;
-  return [...new Set(priority)];
+function shuffleGroup(group, random = Math.random) {
+  const items = [...group];
+  for (let i = items.length - 1; i > 0; i--) {
+    const j = Math.floor(random() * (i + 1));
+    [items[i], items[j]] = [items[j], items[i]];
+  }
+  return items;
+}
+
+function providerPriority(tier, random = Math.random) {
+  const rawGroups = ROUTING.providerGroups[tier] ?? [];
+  const providers = [];
+  const seen = new Set();
+  for (const rawGroup of rawGroups) {
+    const group = rawGroup.map((provider) => provider.trim().toLowerCase());
+    const shuffled = shuffleGroup(group, random);
+    for (const provider of shuffled) {
+      if (!seen.has(provider)) {
+        seen.add(provider);
+        providers.push(provider);
+      }
+    }
+  }
+  return providers;
+}
+
+function isProviderCoolingDown(provider, now = Date.now()) {
+  const cooldownUntil = providerCooldowns.get(provider) ?? 0;
+  if (cooldownUntil > now) return true;
+  providerCooldowns.delete(provider);
+  return false;
+}
+
+function cooldownProvider(provider, now = Date.now()) {
+  providerCooldowns.set(provider, now + PROVIDER_COOLDOWN_MS);
+}
+
+function clearProviderCooldown(provider) {
+  providerCooldowns.delete(provider);
 }
 
 function roleForModel(model) {
@@ -71,10 +118,10 @@ function routeForModel(model) {
   return ROUTES.find((route) => route.pattern.test(trimmed)) ?? null;
 }
 
-function roleCandidates(role) {
+function roleCandidates(role, random = Math.random) {
   const tier = ROUTING.roles[role]?.tier;
   if (!tier) return [];
-  return providerPriority().map((provider) => {
+  return providerPriority(tier, random).map((provider) => {
     const providerModels = ROUTING.providers[provider]?.models;
     const model = providerModels?.[tier] || providerModels?.default;
     if (typeof model !== 'string' || !model) return null;
@@ -286,14 +333,20 @@ async function proxyConcreteResponse(response, route, payload, wantsStream) {
 async function proxyRoleResponse(response, role, payload, wantsStream) {
   const failures = [];
   for (const route of roleCandidates(role)) {
+    if (isProviderCoolingDown(route.provider)) {
+      failures.push(`${route.provider}: cooldown active`);
+      continue;
+    }
     if (!(await providerAvailable(route))) {
       failures.push(`${route.provider}: unavailable`);
+      cooldownProvider(route.provider);
       continue;
     }
     console.error(`codex-model-router role=${role} provider=${route.provider} model=${route.model}`);
     try {
       const result = await fetchUpstream(route, { ...payload, model: route.model }, wantsStream);
       if (result.ok) {
+        clearProviderCooldown(route.provider);
         await writeSuccessfulResponse(response, route, result, wantsStream, payload.model);
         return;
       }
@@ -303,8 +356,10 @@ async function proxyRoleResponse(response, role, payload, wantsStream) {
         response.end(result.body);
         return;
       }
+      cooldownProvider(route.provider);
     } catch (error) {
       failures.push(`${route.provider}: ${error instanceof Error ? error.message : String(error)}`);
+      cooldownProvider(route.provider);
     }
   }
   sendJson(response, 503, errorBody(`No available provider completed role ${role}. ${failures.join("; ")}`, "router_provider_exhausted"));
@@ -341,7 +396,7 @@ async function handle(request, response) {
   await proxyConcreteResponse(response, route, payload, wantsStream);
 }
 
-export { catalogModelIds, fallbackable, providerModelMetadata, replaceModelFields, responseTextFromSse, roleCandidates, roleForModel, routeForModel, transformSseEvent, validateRoutingConfig };
+export { catalogModelIds, clearProviderCooldown, cooldownProvider, fallbackable, isProviderCoolingDown, providerModelMetadata, replaceModelFields, responseTextFromSse, roleCandidates, roleForModel, routeForModel, transformSseEvent, validateRoutingConfig };
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   createServer((request, response) => { void handle(request, response); }).listen(PORT, HOST, () => {

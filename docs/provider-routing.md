@@ -22,17 +22,15 @@ Callers select a capability role, never a provider or model:
 
 All roles except `smart` use the configured `default` model tier. Only `smart` uses the configured `smart` tier. Every role uses the `local_model_router` with an `autodev/<role>` model alias.
 The editable provider/model choices live in
-`scripts/codex/model-routing.json`: `providerPriority` controls fallback order,
+`scripts/codex/model-routing.json`: `providerGroups` defines ordered fallback groups per capability tier,
 `providers.<name>.models` contains named tiers such as `default` and `smart` (specific tiers like `smart` are optional and fall back to that provider's `default` model if omitted), and
 `roles.<role>.tier` selects the tier for each capability role. For example, set
 Claude's smart model to `claude-opus-4-8` or Codex's to `gpt-5.6-sol` there; providers like MiniMax or Copilot that use the same model across tiers only need to define `default`. The installer materializes this file as
 `$CODEX_HOME/codex-model-routing.json`.
-The router chooses the first available provider in this order:
+For the `default` capability tier, the router randomizes Claude, Gemini/Antigravity, and MiniMax, then falls back to Copilot and OpenAI/Codex. For `smart`, it randomizes Claude and Gemini/Antigravity, then falls back directly to OpenAI/Codex Sol. Providers that are unavailable or return fallbackable limit errors are skipped and the next provider in the current group is tried before progressing to the next group:
 
-1. Gemini/Antigravity, then Claude
-2. MiniMax
-3. GitHub Copilot CLI (when its local adapter is available)
-4. OpenAI/Codex
+1. `default`: Claude, Gemini/Antigravity, MiniMax (randomized), then Copilot, then OpenAI/Codex Luna
+2. `smart`: Claude, Gemini/Antigravity (randomized), then OpenAI/Codex Sol
 
 Provider availability is checked through local health endpoints and credential
 checks. HTTP 429/5xx, quota, session-limit, high-demand, timeout, and

@@ -1,11 +1,15 @@
 {
-  "providerPriority": [
-    "antigravity",
-    "claude",
-    "minimax",
-    "copilot",
-    "codex"
-  ],
+  "providerGroups": {
+    "default": [
+      ["claude", "antigravity", "minimax"],
+      ["copilot"],
+      ["codex"]
+    ],
+    "smart": [
+      ["claude", "antigravity"],
+      ["codex"]
+    ]
+  },
   "providers": {
     "antigravity": {
       "models": {
