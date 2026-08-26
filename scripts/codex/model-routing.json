@@ -21,13 +21,11 @@
     },
     "minimax": {
       "models": {
-        "smart": "MiniMax-M3",
         "default": "MiniMax-M3"
       }
     },
     "copilot": {
       "models": {
-        "smart": "copilot",
         "default": "copilot"
       }
     },

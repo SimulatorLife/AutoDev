@@ -31,6 +31,14 @@ function validateRoutingConfig(config) {
   if (!Array.isArray(config.providerPriority) || config.providerPriority.length === 0) throw new Error(`Routing config requires providerPriority: ${ROUTING_CONFIG_FILE}`);
   if (!config.providers || typeof config.providers !== 'object') throw new Error(`Routing config requires providers: ${ROUTING_CONFIG_FILE}`);
   if (!config.roles || typeof config.roles !== 'object') throw new Error(`Routing config requires roles: ${ROUTING_CONFIG_FILE}`);
+  for (const [provider, info] of Object.entries(config.providers)) {
+    if (!info || typeof info !== 'object' || !info.models || typeof info.models !== 'object') {
+      throw new Error(`Routing config provider ${provider} must define a models object.`);
+    }
+    if (typeof info.models.default !== 'string' || !info.models.default.trim()) {
+      throw new Error(`Routing config provider ${provider} must define a default model.`);
+    }
+  }
   for (const role of ROLE_NAMES) {
     const tier = config.roles[role]?.tier;
     if (typeof tier !== 'string' || !tier) throw new Error(`Routing config role ${role} must define a tier.`);
@@ -67,7 +75,8 @@ function roleCandidates(role) {
   const tier = ROUTING.roles[role]?.tier;
   if (!tier) return [];
   return providerPriority().map((provider) => {
-    const model = ROUTING.providers[provider]?.models?.[tier];
+    const providerModels = ROUTING.providers[provider]?.models;
+    const model = providerModels?.[tier] || providerModels?.default;
     if (typeof model !== 'string' || !model) return null;
     const route = routeForModel(model);
     return route ? { ...route, model } : null;
@@ -332,7 +341,7 @@ async function handle(request, response) {
   await proxyConcreteResponse(response, route, payload, wantsStream);
 }
 
-export { catalogModelIds, fallbackable, providerModelMetadata, replaceModelFields, responseTextFromSse, roleCandidates, roleForModel, routeForModel, transformSseEvent };
+export { catalogModelIds, fallbackable, providerModelMetadata, replaceModelFields, responseTextFromSse, roleCandidates, roleForModel, routeForModel, transformSseEvent, validateRoutingConfig };
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   createServer((request, response) => { void handle(request, response); }).listen(PORT, HOST, () => {

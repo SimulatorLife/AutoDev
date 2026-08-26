@@ -23,10 +23,9 @@ Callers select a capability role, never a provider or model:
 All roles except `smart` use the configured `default` model tier. Only `smart` uses the configured `smart` tier. Every role uses the `local_model_router` with an `autodev/<role>` model alias.
 The editable provider/model choices live in
 `scripts/codex/model-routing.json`: `providerPriority` controls fallback order,
-`providers.<name>.models` contains named tiers such as `default` and `smart`, and
+`providers.<name>.models` contains named tiers such as `default` and `smart` (specific tiers like `smart` are optional and fall back to that provider's `default` model if omitted), and
 `roles.<role>.tier` selects the tier for each capability role. For example, set
-Claude's smart model to `claude-opus-4-8` or Codex's to `gpt-5.6-sol` there; the
-router does not need a code change. The installer materializes this file as
+Claude's smart model to `claude-opus-4-8` or Codex's to `gpt-5.6-sol` there; providers like MiniMax or Copilot that use the same model across tiers only need to define `default`. The installer materializes this file as
 `$CODEX_HOME/codex-model-routing.json`.
 The router chooses the first available provider in this order:
 
