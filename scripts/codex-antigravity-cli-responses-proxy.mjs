@@ -136,9 +136,13 @@ function sendJson(response, status, body) {
   response.end(encoded);
 }
 
-function sse(response, eventName, body, sequenceNumber) {
+function sseLine(eventName, body, sequenceNumber) {
   const payload = sequenceNumber === undefined ? body : { ...body, sequence_number: sequenceNumber };
-  response.write(`event: ${eventName}\ndata: ${JSON.stringify(payload)}\n\n`);
+  return `event: ${eventName}\ndata: ${JSON.stringify(payload)}\n\n`;
+}
+
+function sse(response, eventName, body, sequenceNumber) {
+  response.write(sseLine(eventName, body, sequenceNumber));
 }
 
 function activityText(event) {
@@ -292,7 +296,21 @@ async function handle(request, response) {
   const activityParts = [];
   const seenActivities = new Set();
   let sequenceNumber = 0;
-  const emit = (eventName, body) => sse(response, eventName, body, ++sequenceNumber);
+  let streamStarted = false;
+  const pendingEvents = [];
+  const emit = (eventName, body) => {
+    const event = sseLine(eventName, { ...body, sequence_number: ++sequenceNumber });
+    if (streamStarted) response.write(event);
+    else pendingEvents.push(event);
+  };
+  const startStream = () => {
+    if (streamStarted) return;
+    streamStarted = true;
+    response.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-cache", connection: "close" });
+    response.flushHeaders();
+    response.shouldKeepAlive = false;
+    for (const event of pendingEvents.splice(0)) response.write(event);
+  };
   const emitActivity = (text, key = text) => {
     if (!text || seenActivities.has(key) || response.writableEnded) return;
     seenActivities.add(key);
@@ -305,9 +323,6 @@ async function handle(request, response) {
       delta: `${text}\n`
     });
   };
-  response.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-cache", connection: "close" });
-  response.flushHeaders();
-  response.shouldKeepAlive = false;
   emit("response.created", { type: "response.created", response: { id: responseId, object: "response", created_at: Math.floor(Date.now() / 1000), model: payload.model ?? model, status: "in_progress", output: [] } });
   emit("response.output_item.added", { type: "response.output_item.added", output_index: 0, item: { id: reasoningId, type: "reasoning", status: "in_progress", summary: [], content: [] } });
   emit("response.reasoning_summary_part.added", { type: "response.reasoning_summary_part.added", item_id: reasoningId, output_index: 0, summary_index: 0, part: { type: "summary_text", text: "" } });
@@ -315,22 +330,26 @@ async function handle(request, response) {
   emit("response.content_part.added", { type: "response.content_part.added", item_id: itemId, output_index: 1, content_index: 0, part: { type: "output_text", text: "", annotations: [] } });
   emitActivity("Antigravity started processing.", "initial");
 
-  const keepAlive = setInterval(() => { if (!response.writableEnded) response.write(": agy-bridge keep-alive\n\n"); }, 2000);
+  const keepAlive = setInterval(() => { if (streamStarted && !response.writableEnded) response.write(": agy-bridge keep-alive\n\n"); }, 2000);
   let child;
   response.on("close", () => { clearInterval(keepAlive); if (child && !child.killed) child.kill("SIGTERM"); });
   try {
     const result = await runAgy(prompt, model, effort, (event) => {
       if (event.type === "process") { child = event.child; return; }
-      if (event.type === "text_delta") emit("response.output_text.delta", { type: "response.output_text.delta", item_id: itemId, delta: event.text, content_index: 0, output_index: 1 });
+      if (event.type === "text_delta") {
+        startStream();
+        emit("response.output_text.delta", { type: "response.output_text.delta", item_id: itemId, delta: event.text, content_index: 0, output_index: 1 });
+      }
       if (event.event === "step_update") {
         const update = event.step_update ?? {};
         const activity = activityText(event);
         const key = `${update.step_index ?? "?"}:${update.state ?? "?"}:${update.step_type ?? "?"}:${update.tool_name ?? ""}`;
-        emitActivity(activity, key);
+        if (activity) emitActivity(activity, key);
         if (update.step_type === "tool") console.error(`agy tool=${update.tool_name ?? "unknown"}`);
       }
     });
     clearInterval(keepAlive);
+    startStream();
     const reasoningText = activityParts.join("\n");
     const completedReasoning = { id: reasoningId, type: "reasoning", status: "completed", summary: [ { type: "summary_text", text: reasoningText } ], content: [] };
     const completedMessage = responseMessageItem(result.text, itemId);
@@ -345,7 +364,12 @@ async function handle(request, response) {
     response.end("data: [DONE]\n\n");
   } catch (error) {
     clearInterval(keepAlive);
-    if (!response.writableEnded) failedStream(response, responseId, itemId, error);
+    if (response.writableEnded) return;
+    if (!streamStarted) {
+      sendJson(response, 503, { error: { type: "upstream_error", message: error.message ?? String(error) } });
+      return;
+    }
+    failedStream(response, responseId, itemId, error);
   }
 }
 

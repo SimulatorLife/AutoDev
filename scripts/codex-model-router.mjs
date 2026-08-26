@@ -79,11 +79,59 @@ function providerModelMetadata(model) {
   return { id: model, object: "model", owned_by: route?.provider ?? "local-router" };
 }
 
+function catalogModelIds(models, roles = ROLE_NAMES.map((role) => `autodev/${role}`)) {
+  return [...new Set([...models.map((model) => model.slug), ...roles])];
+}
+
 async function loadCatalog() {
   const parsed = JSON.parse(await readFile(CATALOG_FILE, "utf8"));
   const models = Array.isArray(parsed.models) ? parsed.models : [];
-  const roles = ROLE_NAMES.map((role) => `autodev/${role}`);
-  return { models: [...models.map((model) => model.slug), ...roles], data: [...models.map((model) => providerModelMetadata(model.slug)), ...roles.map(providerModelMetadata)] };
+  const ids = catalogModelIds(models);
+  return { models: ids, data: ids.map(providerModelMetadata) };
+}
+
+function replaceModelFields(value, publicModel) {
+  if (Array.isArray(value)) return value.map((item) => replaceModelFields(item, publicModel));
+  if (!value || typeof value !== "object") return value;
+  return Object.fromEntries(Object.entries(value).map(([key, item]) => [
+    key,
+    key === "model" && typeof item === "string" ? publicModel : replaceModelFields(item, publicModel),
+  ]));
+}
+
+function transformSseEvent(event, publicModel) {
+  return event.split(/(\r?\n)/).map((line) => {
+    if (!line.startsWith("data: ") || line.slice(6) === "[DONE]") return line;
+    try {
+      return `data: ${JSON.stringify(replaceModelFields(JSON.parse(line.slice(6)), publicModel))}`;
+    } catch {
+      return line;
+    }
+  }).join("");
+}
+
+async function writeResponseStream(response, upstream, publicModel) {
+  const decoder = new TextDecoder();
+  let buffer = "";
+  const flushEvents = (flush = false) => {
+    while (true) {
+      const boundary = buffer.match(/\r?\n\r?\n/);
+      if (!boundary) break;
+      const end = boundary.index + boundary[0].length;
+      response.write(transformSseEvent(buffer.slice(0, end), publicModel));
+      buffer = buffer.slice(end);
+    }
+    if (flush && buffer) {
+      response.write(transformSseEvent(buffer, publicModel));
+      buffer = "";
+    }
+  };
+  for await (const chunk of upstream.body) {
+    buffer += decoder.decode(chunk, { stream: true });
+    flushEvents();
+  }
+  buffer += decoder.decode();
+  flushEvents(true);
 }
 
 async function loadCodexAuth() {
@@ -171,21 +219,26 @@ async function fetchUpstream(route, payload, wantsStream) {
   return { ok: true, upstream };
 }
 
-async function writeSuccessfulResponse(response, route, result, wantsStream) {
+async function writeSuccessfulResponse(response, route, result, wantsStream, publicModel) {
   const upstream = result.upstream;
   if (wantsStream) {
     response.writeHead(upstream.status, { "content-type": upstream.headers.get("content-type") ?? "text/event-stream", "cache-control": "no-cache", connection: "close" });
-    for await (const chunk of upstream.body) response.write(chunk);
+    await writeResponseStream(response, upstream, publicModel);
     response.end();
     return;
   }
   const body = await upstream.text();
   if (route.provider === "codex") {
-    sendJson(response, upstream.status, responseTextFromSse(body));
+    sendJson(response, upstream.status, replaceModelFields(responseTextFromSse(body), publicModel));
     return;
   }
-  response.writeHead(upstream.status, { "content-type": upstream.headers.get("content-type") ?? "application/json" });
-  response.end(body);
+  try {
+    const rewritten = replaceModelFields(JSON.parse(body), publicModel);
+    sendJson(response, upstream.status, rewritten);
+  } catch {
+    response.writeHead(upstream.status, { "content-type": upstream.headers.get("content-type") ?? "application/json" });
+    response.end(body);
+  }
 }
 
 function fallbackable(status, body) {
@@ -215,7 +268,7 @@ async function proxyConcreteResponse(response, route, payload, wantsStream) {
       response.end(result.body);
       return;
     }
-    await writeSuccessfulResponse(response, route, result, wantsStream);
+    await writeSuccessfulResponse(response, route, result, wantsStream, payload.model);
   } catch (error) {
     if (!response.writableEnded) sendJson(response, 502, errorBody(error instanceof Error ? error.message : String(error), "router_upstream_error"));
   }
@@ -232,7 +285,7 @@ async function proxyRoleResponse(response, role, payload, wantsStream) {
     try {
       const result = await fetchUpstream(route, { ...payload, model: route.model }, wantsStream);
       if (result.ok) {
-        await writeSuccessfulResponse(response, route, result, wantsStream);
+        await writeSuccessfulResponse(response, route, result, wantsStream, payload.model);
         return;
       }
       failures.push(`${route.provider}: HTTP ${result.status}`);
@@ -279,7 +332,7 @@ async function handle(request, response) {
   await proxyConcreteResponse(response, route, payload, wantsStream);
 }
 
-export { fallbackable, providerModelMetadata, responseTextFromSse, roleCandidates, roleForModel, routeForModel };
+export { catalogModelIds, fallbackable, providerModelMetadata, replaceModelFields, responseTextFromSse, roleCandidates, roleForModel, routeForModel, transformSseEvent };
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   createServer((request, response) => { void handle(request, response); }).listen(PORT, HOST, () => {

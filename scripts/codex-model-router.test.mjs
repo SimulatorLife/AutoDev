@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
-import { fallbackable, responseTextFromSse, roleCandidates, roleForModel, routeForModel } from "./codex-model-router.mjs";
+import { catalogModelIds, fallbackable, replaceModelFields, responseTextFromSse, roleCandidates, roleForModel, routeForModel, transformSseEvent } from "./codex-model-router.mjs";
 
 test("loads editable provider and role models from JSON routing config", async () => {
   const config = JSON.parse(await readFile(new URL("./codex/model-routing.json", import.meta.url), "utf8"));
@@ -48,4 +48,19 @@ test("extracts text from a Responses SSE completion", () => {
   assert.equal(response.status, "completed");
   assert.equal(response.output_text, "router-ok");
   assert.equal(response.output[0].content[0].text, "router-ok");
+});
+
+
+test("deduplicates catalog models and keeps role aliases visible", () => {
+  const ids = catalogModelIds([{ slug: "gpt-5.6-luna" }, { slug: "gpt-5.6-luna" }], ["autodev/explorer"]);
+  assert.deepEqual(ids, ["gpt-5.6-luna", "autodev/explorer"]);
+});
+
+test("rewrites the routed provider model back to the public role alias", () => {
+  const value = replaceModelFields({ model: "gemini-3.6-flash-medium", nested: [{ model: "gemini-3.6-flash-medium" }] }, "autodev/explorer");
+  assert.deepEqual(value, { model: "autodev/explorer", nested: [{ model: "autodev/explorer" }] });
+
+  const event = transformSseEvent('data: {"type":"response.completed","response":{"model":"gemini-3.6-flash-medium"},"model":"gemini-3.6-flash-medium"}\n\n', "autodev/explorer");
+  assert.match(event, /autodev\/explorer/);
+  assert.equal((event.match(/autodev\/explorer/g) ?? []).length, 2);
 });

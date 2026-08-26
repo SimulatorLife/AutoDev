@@ -101,6 +101,33 @@ with open(sys.argv[1], "rb") as stream:
 print(config.get("developer_instructions", ""))
 PY
 )"
+role_effort="$(python3 - "$role_file" <<'PY'
+import sys
+import tomllib
+with open(sys.argv[1], "rb") as stream:
+    config = tomllib.load(stream)
+print(config.get("model_reasoning_effort", "medium"))
+PY
+)"
+role_summary="$(python3 - "$role_file" <<'PY'
+import sys
+import tomllib
+with open(sys.argv[1], "rb") as stream:
+    config = tomllib.load(stream)
+print(config.get("model_reasoning_summary", ""))
+PY
+)"
+role_sandbox="$(python3 - "$role_file" <<'PY'
+import sys
+import tomllib
+with open(sys.argv[1], "rb") as stream:
+    config = tomllib.load(stream)
+print(config.get("sandbox_mode", ""))
+PY
+)"
 prompt=$'Provider-neutral role instructions:\n'"$role_context"$'\n\nBounded task:\n'"$prompt"
-exec "$codex_bin" --strict-config -C "$repo_root" exec --model "autodev/$role" \
+codex_args=(--strict-config -C "$repo_root" -c "model_reasoning_effort=$role_effort")
+[[ -n "$role_summary" ]] && codex_args+=(-c "model_reasoning_summary=$role_summary")
+[[ -n "$role_sandbox" ]] && codex_args+=(-c "sandbox_mode=$role_sandbox")
+exec "$codex_bin" "${codex_args[@]}" exec --model "autodev/$role" \
   --ephemeral --json --skip-git-repo-check "$prompt"

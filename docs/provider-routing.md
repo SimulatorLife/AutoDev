@@ -54,7 +54,9 @@ starts the selected provider hook and local CLI profile:
 
 The caller specifies only the role. Direct terminal sessions use the tracked
 `autodev/<role>` aliases through `local_model_router`; provider selection and
-fallback remain inside the router.
+fallback remain inside the router. The launcher also applies the selected role's
+reasoning effort, summary mode, and sandbox settings so a global parent config
+cannot accidentally send a read-only role at the wrong provider effort.
 The native app-server path is also configured and verified, but the desktop
 high-level fanout service does not currently delegate through it.
 

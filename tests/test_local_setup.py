@@ -39,6 +39,20 @@ class LocalSetupTests(unittest.TestCase):
             )
         self.assertEqual(result.stdout, "")
 
+    def test_provider_role_runner_applies_role_execution_settings(self):
+        runner = (REPO_ROOT / "scripts/codex/run-provider-agent.sh").read_text()
+        self.assertIn('role_effort=', runner)
+        self.assertIn('role_summary=', runner)
+        self.assertIn('model_reasoning_effort=$role_effort', runner)
+        self.assertIn('model_reasoning_summary=$role_summary', runner)
+        self.assertIn('sandbox_mode=$role_sandbox', runner)
+
+    def test_antigravity_stream_reports_early_provider_errors_as_retryable(self):
+        proxy = (REPO_ROOT / "scripts/codex-antigravity-cli-responses-proxy.mjs").read_text()
+        self.assertIn('if (!streamStarted)', proxy)
+        self.assertIn('sendJson(response, 503', proxy)
+        self.assertIn('if (activity) emitActivity(activity, key);', proxy)
+
     def test_root_delegation_hook_injects_for_parent_models(self):
         hook = REPO_ROOT / "scripts/enforce-root-delegation.sh"
         with tempfile.TemporaryDirectory() as home:
