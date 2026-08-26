@@ -71,7 +71,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 case "$role" in
-  default|docs-researcher|browser-tester|explorer|worker|validator) ;;
+  default|docs-researcher|browser-tester|explorer|worker|validator|smart) ;;
   *) echo "Unsupported role: $role" >&2; usage; exit 2 ;;
 esac
 
