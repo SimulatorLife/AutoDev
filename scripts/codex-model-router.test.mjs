@@ -152,3 +152,55 @@ test("balances candidate provider priority across active in-flight requests", ()
   activeProviderRequests.clear();
 });
 
+test("handles safe decrement on inactive providers without going negative", () => {
+  activeProviderRequests.clear();
+  decrementActiveRequests("nonexistent_provider");
+  assert.equal(getActiveRequests("nonexistent_provider"), 0);
+  assert.equal(activeProviderRequests.has("nonexistent_provider"), false);
+
+  incrementActiveRequests("test_provider");
+  assert.equal(getActiveRequests("test_provider"), 1);
+  decrementActiveRequests("test_provider");
+  assert.equal(getActiveRequests("test_provider"), 0);
+  assert.equal(activeProviderRequests.has("test_provider"), false);
+});
+
+test("rejects invalid role model patterns and unknown models", () => {
+  assert.equal(roleForModel(null), null);
+  assert.equal(roleForModel(undefined), null);
+  assert.equal(roleForModel(""), null);
+  assert.equal(roleForModel("autodev/"), null);
+  assert.equal(roleForModel("autodev/nonexistent-role"), null);
+  assert.equal(roleForModel("not-autodev/default"), null);
+
+  assert.equal(routeForModel(null), null);
+  assert.equal(routeForModel(undefined), null);
+  assert.equal(routeForModel(""), null);
+  assert.equal(routeForModel("custom-unsupported-model-name"), null);
+});
+
+test("handles malformed SSE lines and comments gracefully without throwing", () => {
+  const malformed = 'data: not a valid json line\n: keep-alive comment\ndata: [DONE]\n\n';
+  const result = transformSseEvent(malformed, "autodev/worker");
+  assert.equal(result, malformed);
+});
+
+test("extracts text from SSE stream with empty lines and keep-alive comments", () => {
+  const rawStream = [
+    ': claude-bridge keep-alive',
+    'event: response.output_text.delta',
+    'data: {"type":"response.output_text.delta","delta":"part1 "}',
+    '',
+    ': agy-bridge keep-alive',
+    'event: response.output_text.delta',
+    'data: {"type":"response.output_text.delta","delta":"part2"}',
+    'data: [DONE]',
+    '',
+  ].join('\n');
+  const response = responseTextFromSse(rawStream);
+  assert.equal(response.status, "completed");
+  assert.equal(response.output_text, "part1 part2");
+  assert.equal(response.output[0].content[0].text, "part1 part2");
+});
+
+

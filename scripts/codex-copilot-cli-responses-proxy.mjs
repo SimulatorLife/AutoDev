@@ -2,10 +2,34 @@
 
 import { spawn } from "node:child_process";
 import { createServer } from "node:http";
+import { statSync } from "node:fs";
 
 const HOST = process.env.COPILOT_PROXY_HOST ?? "127.0.0.1";
 const PORT = Number.parseInt(process.env.COPILOT_PROXY_PORT ?? "4003", 10);
 const TIMEOUT_MS = Number.parseInt(process.env.COPILOT_PROXY_TIMEOUT_MS ?? "300000", 10);
+const PROJECT_ROOT = process.env.COPILOT_PROJECT_ROOT ?? "/Users/henrykirk/Desktop/RacingGame";
+
+function isDirectory(path) {
+  try { return typeof path === "string" && Boolean(path) && statSync(path).isDirectory(); } catch { return false; }
+}
+
+function resolveCwd(payload, prompt) {
+  for (const key of ["cwd", "project_root", "working_directory"]) {
+    if (isDirectory(payload?.[key])) return payload[key];
+  }
+  const meta = payload?.metadata;
+  if (meta && typeof meta === "object") {
+    for (const key of ["cwd", "project_root", "working_directory"]) {
+      if (isDirectory(meta[key])) return meta[key];
+    }
+  }
+  const match = typeof prompt === "string" ? prompt.match(/(?:Working directory:|cwd:|in directory:?)\s*([/\w.-]+)/i) : null;
+  if (match && isDirectory(match[1].trim())) {
+    return match[1].trim();
+  }
+  if (isDirectory(PROJECT_ROOT)) return PROJECT_ROOT;
+  return process.cwd();
+}
 
 function sendJson(response, status, body) {
   const encoded = Buffer.from(JSON.stringify(body));
@@ -31,11 +55,11 @@ function inputText(input) {
   return String(input ?? "");
 }
 
-function invokeCopilot(prompt, model) {
+function invokeCopilot(prompt, model, cwd = PROJECT_ROOT) {
   return new Promise((resolve) => {
     const args = ["--no-auto-update", "--no-color", "--output-format", "text", "--allow-all-tools", "--allow-all-paths", "--allow-all-urls", "--no-ask-user", "--prompt", prompt];
     if (model && model !== "copilot" && model !== "auto") args.push("--model", model);
-    const child = spawn(process.env.COPILOT_BIN ?? "copilot", args, { stdio: ["ignore", "pipe", "pipe"] });
+    const child = spawn(process.env.COPILOT_BIN ?? "copilot", args, { cwd: cwd || PROJECT_ROOT, stdio: ["ignore", "pipe", "pipe"] });
     let stdout = "";
     let stderr = "";
     const timer = setTimeout(() => child.kill("SIGTERM"), TIMEOUT_MS);
@@ -62,7 +86,9 @@ async function handle(request, response) {
   if (pathname !== "/v1/responses" || request.method !== "POST") { sendJson(response, 404, { error: { message: "not found", type: "invalid_request_error" } }); return; }
   let payload;
   try { payload = JSON.parse(await bodyOf(request)); } catch { sendJson(response, 400, { error: { message: "invalid JSON", type: "invalid_request_error" } }); return; }
-  const result = await invokeCopilot(inputText(payload.input), payload.model);
+  const prompt = inputText(payload.input);
+  const cwd = resolveCwd(payload, prompt);
+  const result = await invokeCopilot(prompt, payload.model, cwd);
   if (!result.ok) { sendJson(response, result.status, { error: { message: result.message, type: "copilot_proxy_error" } }); return; }
   const body = responsePayload(payload.model, result.text);
   if (payload.stream !== false) {
