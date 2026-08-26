@@ -1,7 +1,7 @@
 # Codex agent and provider routing
 
 This is the canonical repository guide for choosing and invoking agents across
-the OpenAI, Claude, MiniMax, and Antigravity providers. Role files and scripts
+the OpenAI, Claude, MiniMax, Antigravity, and GitHub Copilot providers. Role files and scripts
 remain the source of truth for exact model settings; this document owns the
 routing policy, execution boundaries, and the setup needed to use the
 versioned local integration safely.
@@ -75,6 +75,7 @@ relying only on role prompt text.
 | Claude      | Codex -> Claude Responses bridge on `127.0.0.1:4000` -> Claude CLI   | Uses `CLAUDE_CODE_OAUTH_TOKEN`; the selected role model and reasoning effort are forwarded.                                                          |
 | MiniMax     | Codex -> MiniMax Responses proxy on `127.0.0.1:18765`                | Provider quota/rate limits are upstream conditions; inspect the proxy log when diagnosing them.                                                      |
 | Antigravity | Codex -> LiteLLM `:4001` -> Antigravity adapter `:4002` -> `agy` CLI | `useAiCredits=false` and `useG1Credits=false` keep AI-credit overages disabled. Headless runs require the configured noninteractive permission mode. |
+| GitHub Copilot | Codex -> local Copilot Responses adapter `:4003` -> `copilot` CLI | Requires an authenticated local Copilot CLI; unavailable adapters are skipped by fallback. |
 | Local router | Codex Responses -> `127.0.0.1:4100` -> model-based provider dispatch | GPT/Codex models use the stored Codex OAuth; external model names use the existing local bridges. |
 
 The Claude Responses adapter is not the GPT passthrough: it launches the
