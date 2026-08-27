@@ -18,12 +18,12 @@ notify = ["/Users/henrykirk/.codex/computer-use/Codex Computer Use.app/Contents/
 shell_snapshot = true
 unified_exec = true
 steer = true
-enable_fanout = true
 multi_agent = true
 multi_agent_v2 = false
 js_repl = false
-memories = true
+memories = false
 respect_system_proxy = true
+chronicle = false
 
 [model_providers.claude_code_subscription]
 name = "Claude Code OAuth subscription bridge"
@@ -65,7 +65,8 @@ stream_max_retries = 2
 stream_idle_timeout_ms = 300000
 
 [agents]
-max_threads = 4
+enabled = true
+max_concurrent_threads_per_session = 1
 max_depth = 1
 default_subagent_model = "gpt-5.6-luna"
 default_subagent_reasoning_effort = "medium"
@@ -190,6 +191,9 @@ enabled = true
 [plugins."spreadsheets@openai-primary-runtime"]
 enabled = true
 
+[plugins."computer-use@openai-bundled"]
+enabled = true
+
 [marketplaces.openai-bundled]
 source_type = "local"
 source = "/Users/henrykirk/.codex/.tmp/bundled-marketplaces/openai-bundled"
@@ -243,8 +247,9 @@ NODE_REPL_INSTRUCTIONS_USE_CASE_BROWSER = "Control the in-app browser in conjunc
 NODE_REPL_INSTRUCTIONS_USE_CASE_CHROME = "Control the Chrome browser in conjunction with the Chrome Plugin. Prefer this method of controlling Chrome over alternatives (such as Computer Use) unless the user explicitly mentions an alternative."
 NODE_REPL_INSTRUCTIONS_USE_CASE_COMPUTER_USE = "Control desktop apps on macOS through Computer Use."
 BROWSER_USE_CODEX_APP_BUILD_FLAVOR = "prod"
-BROWSER_USE_CODEX_APP_VERSION = "26.818.61809"
-NODE_REPL_TRUSTED_SERVICES = '{"browser":"/Users/henrykirk/.codex/plugins/cache/openai-bundled/browser/26.818.61809/scripts/browser-service.mjs","sky":"@oai/sky/service"}'
+BROWSER_USE_CODEX_APP_VERSION = "26.820.60940"
+NODE_REPL_TRUSTED_SERVICES = '{"browser":"/Users/henrykirk/.codex/plugins/cache/openai-bundled/browser/26.820.60940/scripts/browser-service.mjs","sky":"@oai/sky/service"}'
+SKY_CUA_SERVICE_PATH = "/Users/henrykirk/.codex/computer-use/Codex Computer Use.app"
 CODEX_CLI_PATH = "/Applications/ChatGPT.app/Contents/Resources/codex"
 
 [mcp_servers.computer-use]
@@ -267,6 +272,15 @@ dock-icon-preference = "codex-system"
 enabled-reasoning-efforts = ["low", "medium", "high", "xhigh", "ultra", "max"]
 show-context-window-usage = true
 open-link-in-target-preference = "in-app-browser"
+git-create-pull-request-as-draft = false
+git-pull-request-merge-method = "squash"
 
 [shell_environment_policy.set]
 NODE_OPTIONS = "--disable-warning=ExperimentalWarning"
+
+[apps.connector_openai_codex_document_control]
+enabled = false
+
+[memories]
+generate_memories = false
+use_memories = false
