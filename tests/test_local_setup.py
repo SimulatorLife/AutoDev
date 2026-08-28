@@ -119,7 +119,7 @@ class LocalSetupTests(unittest.TestCase):
 
     def test_antigravity_ensure_does_not_double_supervise_launchd_services(self):
         ensure = (REPO_ROOT / "scripts/ensure-codex-antigravity-proxy.sh").read_text()
-        self.assertIn('launchctl print "$domain/$proxy_label"', ensure)
+        self.assertIn('launchctl print "$domain/$label"', ensure)
         self.assertIn('launchctl bootstrap "$domain" "$plist"', ensure)
         self.assertIn('only when no healthy process already owns the port', ensure)
         self.assertNotIn('launchctl bootout "$domain/$label"', ensure)
