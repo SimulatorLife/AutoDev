@@ -91,7 +91,7 @@ function emptyUsageBucket() {
 
 const usageTelemetry = {
   totals: emptyUsageBucket(),
-  byRole: {},
+  byRole: Object.fromEntries(ROLE_NAMES.map((role) => [role, emptyUsageBucket()])),
   byModel: {},
   byOrigin: {},
 };
@@ -149,7 +149,7 @@ function recordUsageEvent({ phase, requestId, role, provider, model, outcome, fa
 
 function resetUsageTelemetry() {
   usageTelemetry.totals = emptyUsageBucket();
-  usageTelemetry.byRole = {};
+  usageTelemetry.byRole = Object.fromEntries(ROLE_NAMES.map((role) => [role, emptyUsageBucket()]));
   usageTelemetry.byModel = {};
   usageTelemetry.byOrigin = {};
   inFlightUsage.clear();

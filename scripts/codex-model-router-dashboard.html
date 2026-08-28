@@ -59,10 +59,7 @@
   <table><thead><tr><th>Origin</th><th>Active</th><th>Attempts</th><th>Successes</th><th>Failures</th><th>Avg turn</th><th>Tool calls</th></tr></thead><tbody id="by-origin"><tr><td colspan="7">Loading…</td></tr></tbody></table>
 
   <h2>By role</h2>
-  <table><thead><tr><th>Role</th><th>Attempts</th><th>Successes</th><th>Failures</th><th>Avg turn</th><th>Tool calls</th></tr></thead><tbody id="by-role"><tr><td colspan="6">Loading…</td></tr></tbody></table>
-
-  <h2>By resolved model</h2>
-  <table><thead><tr><th>Provider/model</th><th>Attempts</th><th>Successes</th><th>Failures</th><th>Avg turn</th><th>Tool calls</th></tr></thead><tbody id="by-model"><tr><td colspan="6">Loading…</td></tr></tbody></table>
+  <table><thead><tr><th>Role</th><th>Active</th><th>Attempts</th><th>Successes</th><th>Failures</th><th>Avg turn</th><th>Tool calls</th></tr></thead><tbody id="by-role"><tr><td colspan="7">Loading…</td></tr></tbody></table>
 
   <h2>Codex telemetry</h2>
   <div id="codex-telemetry">Loading…</div>
@@ -173,8 +170,7 @@
       document.querySelector("#summary-duration").textContent = durationText(totals.averageDurationMs);
       document.querySelector("#summary-skips").textContent = totals.skipped ?? 0;
       document.querySelector("#by-origin").innerHTML = usageRows(usage.byOrigin, true);
-      document.querySelector("#by-role").innerHTML = usageRows(usage.byRole);
-      document.querySelector("#by-model").innerHTML = usageRows(usage.byModel);
+      document.querySelector("#by-role").innerHTML = usageRows(usage.byRole, true);
       const codexTelemetry = status.codexTelemetry ?? {};
       const receiver = codexTelemetry.receiver ?? {};
       const turns = codexTelemetry.turns ?? {};

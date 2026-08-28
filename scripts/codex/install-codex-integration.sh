@@ -22,13 +22,13 @@ hook_names=(
   ensure-codex-copilot-proxy.sh
   ensure-codex-model-router.sh
   ensure-codex-minimax-proxy.sh
-  log-subagent-model.sh
   run-codex-antigravity-litellm.sh
   run-codex-antigravity-proxy.sh
   run-codex-claude-bridge.sh
   run-codex-copilot-cli-responses-proxy.sh
   run-codex-model-router.sh
 )
+obsolete_runtime_hook_names=(log-subagent-model.sh)
 
 dashboard_asset_names=(codex-model-router-dashboard.html)
 
@@ -272,6 +272,19 @@ check_legacy_skill_links() {
   return "$failed"
 }
 
+check_removed_runtime_hooks() {
+  local failed=0
+  local name target
+  for name in "${obsolete_runtime_hook_names[@]}"; do
+    target="$hooks_dir/$name"
+    if [[ -e "$target" || -L "$target" ]]; then
+      printf 'obsolete-runtime-hook %s\n' "$target"
+      failed=1
+    fi
+  done
+  return "$failed"
+}
+
 check_links() {
   local failed=0
   local name source target
@@ -371,6 +384,9 @@ check_links() {
   if ! check_legacy_skill_links; then
     failed=1
   fi
+  if ! check_removed_runtime_hooks; then
+    failed=1
+  fi
   if ! check_versioned_sources; then
     failed=1
   fi
@@ -381,6 +397,14 @@ if [[ "${1:-}" == "--check" ]]; then
   check_links
   exit $?
 fi
+
+for name in "${obsolete_runtime_hook_names[@]}"; do
+  target="$hooks_dir/$name"
+  if [[ -e "$target" || -L "$target" ]]; then
+    rm -f -- "$target"
+    printf 'removed obsolete runtime hook %s\n' "$target"
+  fi
+done
 
 for name in "${hook_names[@]}"; do
   chmod +x "$repo_root/scripts/$name"

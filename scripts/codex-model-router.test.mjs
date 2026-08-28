@@ -252,7 +252,8 @@ test("serves a lightweight dashboard to browsers and JSON to API clients", async
     assert.match(dashboardBody, /setInterval\(refresh, 3000\)/);
     assert.match(dashboardBody, /id="by-origin"/);
     assert.match(dashboardBody, /id="by-role"/);
-    assert.match(dashboardBody, /id="by-model"/);
+    assert.doesNotMatch(dashboardBody, /id="by-model"/);
+    assert.match(dashboardBody, /<th>Role<\/th><th>Active<\/th><th>Attempts<\/th>/);
     assert.match(dashboardBody, /id="codex-telemetry"/);
     assert.match(dashboardBody, /id="mcp-telemetry"/);
     assert.match(dashboardBody, /MCP ready/);
@@ -354,6 +355,19 @@ test("counts tool calls without double-counting streamed output items", () => {
 
 test("aggregates usage by role, resolved model, origin, duration, and tool calls", () => {
   resetRouterTelemetry();
+  assert.deepEqual(getRouterStatus().usage.byRole.smart, {
+    attempts: 0,
+    successes: 0,
+    failures: 0,
+    skipped: 0,
+    active: 0,
+    durationMs: 0,
+    maxDurationMs: 0,
+    toolCalls: 0,
+    lastUsedAt: null,
+    lastFailure: null,
+    averageDurationMs: 0,
+  });
   recordRouterEvent({ phase: "selected", requestId: "req-usage-role", role: "explorer", requestedModel: "autodev/explorer", provider: "claude", model: "sonnet" });
   assert.equal(getRouterStatus().usage.byOrigin.subagent.active, 1);
   assert.equal(getRouterStatus().usage.byRole.explorer.active, 1);
@@ -538,5 +552,3 @@ test("extracts text from SSE stream with empty lines and keep-alive comments", (
   assert.equal(response.output_text, "part1 part2");
   assert.equal(response.output[0].content[0].text, "part1 part2");
 });
-
-

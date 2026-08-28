@@ -138,13 +138,6 @@ type = "command"
 command = "bash ~/.codex/hooks/ensure-codex-antigravity-proxy.sh"
 prevent_idle_sleep = true
 
-[[hooks.SubagentStart]]
-matcher = ".*"
-
-[[hooks.SubagentStart.hooks]]
-type = "command"
-command = "bash ~/.codex/hooks/log-subagent-model.sh"
-
 [[hooks.UserPromptSubmit]]
 [[hooks.UserPromptSubmit.hooks]]
 type = "command"
@@ -164,9 +157,6 @@ trusted_hash = "sha256:fb8fc3e8382b976741f0b49a7056ad392b5b3b7d618ba16a3da4797fd
 
 [hooks.state."/Users/henrykirk/.codex/config.toml:subagent_start:2:0"]
 trusted_hash = "sha256:07139ded17bd6a0567b6131e2c98f2d570c5d5fca5888261a467d7d52470eb5b"
-
-[hooks.state."/Users/henrykirk/.codex/config.toml:subagent_start:3:0"]
-trusted_hash = "sha256:57b9f929a4985ea2251af3cc9a30f38baa23a800e294bcedf2bf49f4bb2c8c80"
 
 [hooks.state."/Users/henrykirk/Desktop/RacingGame/.codex/config.toml:pre_tool_use:0:0"]
 trusted_hash = "sha256:c7500657d0863c1e63181d61245e5872b0eb75ea886307f7c7c5876f433d60c9"

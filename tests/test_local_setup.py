@@ -261,22 +261,13 @@ class LocalSetupTests(unittest.TestCase):
         self.assertIn('sendJson(response, 503', proxy)
         self.assertIn('if (activity) emitActivity(activity, key);', proxy)
 
-    def test_subagent_start_hook_rejects_empty_model_with_actionable_error(self):
-        hook = REPO_ROOT / "scripts/log-subagent-model.sh"
-        with tempfile.TemporaryDirectory() as home:
-            (Path(home) / ".codex/hooks").mkdir(parents=True)
-            environment = os.environ.copy()
-            environment["HOME"] = home
-            result = subprocess.run(
-                ["bash", str(hook)],
-                input=json.dumps({"agent_type": "worker", "model": "  "}),
-                text=True,
-                capture_output=True,
-                env=environment,
-            )
-            self.assertEqual(result.returncode, 2)
-            self.assertIn("model must be a non-empty configured alias", result.stderr)
-            self.assertIn('"model":null', (Path(home) / ".codex/hooks/subagents.log").read_text())
+    def test_obsolete_subagent_start_logging_hook_is_removed(self):
+        config = (REPO_ROOT / "scripts/codex/config.toml").read_text()
+        installer = (REPO_ROOT / "scripts/codex/install-codex-integration.sh").read_text()
+        self.assertFalse((REPO_ROOT / "scripts/log-subagent-model.sh").exists())
+        self.assertNotIn('command = "bash ~/.codex/hooks/log-subagent-model.sh"', config)
+        self.assertIn("obsolete_runtime_hook_names=(log-subagent-model.sh)", installer)
+        self.assertIn('rm -f -- "$target"', installer)
 
     def test_root_delegation_hook_handles_malformed_model_safely(self):
         hook = REPO_ROOT / "scripts/enforce-root-delegation.sh"
