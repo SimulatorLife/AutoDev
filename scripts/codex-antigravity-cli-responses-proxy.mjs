@@ -16,7 +16,7 @@ const AGY_MODE = process.env.AGY_MODE ?? "accept-edits";
 const AGY_SKIP_PERMISSIONS = process.env.AGY_SKIP_PERMISSIONS ?? "true";
 const PRINT_TIMEOUT = process.env.AGY_PRINT_TIMEOUT ?? "15m";
 const AUTH_TOKEN = process.env.LITELLM_API_KEY ?? "";
-const PROJECT_ROOT = process.env.AGY_PROJECT_ROOT ?? "/Users/henrykirk/Desktop/RacingGame";
+const PROJECT_ROOT = process.env.CODEX_PROJECT_ROOT ?? process.env.AGY_PROJECT_ROOT ?? "/Users/henrykirk/AutoDev";
 const MODEL_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 const EFFORTS = new Set([ "low", "medium", "high" ]);
 const BRIDGE_INSTRUCTIONS = "You are the leaf implementation agent for a parent Codex task. Use Antigravity's native tools and follow the repository's AGENTS.md. Do not spawn child agents, commit, or push unless the task explicitly requires it.";
@@ -25,7 +25,7 @@ function isDirectory(path) {
   try { return typeof path === "string" && Boolean(path) && statSync(path).isDirectory(); } catch { return false; }
 }
 
-function resolveCwd(payload, prompt) {
+function resolveCwd(payload) {
   for (const key of ["cwd", "project_root", "working_directory"]) {
     if (isDirectory(payload?.[key])) return payload[key];
   }
@@ -34,10 +34,6 @@ function resolveCwd(payload, prompt) {
     for (const key of ["cwd", "project_root", "working_directory"]) {
       if (isDirectory(meta[key])) return meta[key];
     }
-  }
-  const match = typeof prompt === "string" ? prompt.match(/(?:Working directory:|cwd:|in directory:?)\s*([/\w.-]+)/i) : null;
-  if (match && isDirectory(match[1].trim())) {
-    return match[1].trim();
   }
   if (isDirectory(PROJECT_ROOT)) return PROJECT_ROOT;
   return process.cwd();
@@ -305,7 +301,7 @@ async function handle(request, response) {
   const model = resolveModel(payload.model);
   const effort = resolveEffort(payload);
   const prompt = promptFromInput(payload.input ?? "");
-  const cwd = resolveCwd(payload, prompt);
+  const cwd = resolveCwd(payload);
   console.error(`agy request model=${model} effort=${effort} cwd=${cwd}`);
 
   if (!payload.stream) {

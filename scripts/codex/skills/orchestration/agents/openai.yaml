@@ -1,0 +1,4 @@
+interface:
+  display_name: "Agent Orchestration"
+  short_description: "Route work across complementary AI agents"
+  default_prompt: "Use $orchestration to choose complementary agents and cross-validate this task."

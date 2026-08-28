@@ -5,6 +5,7 @@ repo_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
 codex_home="${CODEX_HOME:-$HOME/.codex}"
 hooks_dir="$codex_home/hooks"
 agents_dir="$codex_home/agents"
+skills_dir="$codex_home/skills"
 litellm_dir="$HOME/.config/litellm"
 
 hook_names=(
@@ -32,6 +33,7 @@ dashboard_asset_names=(codex-model-router-dashboard.html)
 profile_names=(claude minimax antigravity)
 catalog_names=(claude minimax antigravity codex)
 agent_role_names=(browser-tester default docs-researcher explorer smart validator worker)
+skill_names=(lsp-mcp-server orchestration remove-legacy-shims)
 custom_provider_names=(local_model_router claude_code_subscription minimax antigravity_cli)
 tracked_sources=""
 
@@ -80,7 +82,11 @@ check_one() {
 check_versioned_source() {
   local source="$1"
   local relative="${source#"$repo_root/"}"
-  if printf '%s\n' "$tracked_sources" | grep -Fqx -- "$relative"; then
+  if [[ -d "$source" && ! -L "$source" ]]; then
+    if printf '%s\n' "$tracked_sources" | awk -v prefix="$relative/" 'index($0, prefix) == 1 { found = 1 } END { exit found ? 0 : 1 }'; then
+      return 0
+    fi
+  elif printf '%s\n' "$tracked_sources" | grep -Fqx -- "$relative"; then
     return 0
   fi
   printf 'untracked-provider-source %s\n' "$source"
@@ -126,6 +132,12 @@ check_versioned_sources() {
   fi
   for role in "${agent_role_names[@]}"; do
     source="$repo_root/scripts/codex/agents/$role.toml"
+    if ! check_versioned_source "$source"; then
+      failed=1
+    fi
+  done
+  for name in "${skill_names[@]}"; do
+    source="$repo_root/scripts/codex/skills/$name"
     if ! check_versioned_source "$source"; then
       failed=1
     fi
@@ -236,6 +248,16 @@ check_custom_provider_config() {
 check_links() {
   local failed=0
   local name source target
+  for name in "${skill_names[@]}"; do
+    source="$repo_root/scripts/codex/skills/$name"
+    target="$skills_dir/$name"
+    if check_one "$source" "$target"; then
+      printf 'ok %s -> %s\n' "$target" "$source"
+    else
+      printf 'missing-or-drifted %s -> %s\n' "$target" "$source"
+      failed=1
+    fi
+  done
   for name in "${hook_names[@]}"; do
     source="$repo_root/scripts/$name"
     target="$hooks_dir/$name"
@@ -332,6 +354,9 @@ for name in "${profile_names[@]}"; do
 done
 for name in "${catalog_names[@]}"; do
   link_one "$repo_root/scripts/codex/catalogs/$name-model-catalog.json" "$codex_home/$name-model-catalog.json"
+done
+for name in "${skill_names[@]}"; do
+  link_one "$repo_root/scripts/codex/skills/$name" "$skills_dir/$name"
 done
 mkdir -p -- "$agents_dir"
 for role in "${agent_role_names[@]}"; do

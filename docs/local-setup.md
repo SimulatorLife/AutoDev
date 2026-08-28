@@ -14,6 +14,17 @@ Provider-specific `ensure-*` and `run-*` scripts are intentionally separate so a
 
 The tracked Codex role files under `scripts/codex/agents/` are regular configuration files. Provider identity is configured in the provider profiles/catalogs, while role names remain stable and codebase-agnostic.
 
+The three shared skills under `scripts/codex/skills/` are tracked AutoDev-owned
+skill directories. The installer exposes those versioned directories in
+`$CODEX_HOME/skills/` through symlinks:
+
+- `lsp-mcp-server`
+- `orchestration`
+- `remove-legacy-shims`
+
+Keep the canonical skill content in AutoDev; update the directories there and
+rerun the installer when changing this user-level skill setup.
+
 ## Safety
 
 - Inspect launch-agent plists before loading them with `launchctl`.
