@@ -159,6 +159,10 @@ def claude_environment() -> dict[str, str]:
     for key in (
         "ANTHROPIC_API_KEY",
         "ANTHROPIC_AUTH_TOKEN",
+        # These authenticate only the local router-to-bridge hop; never pass
+        # them through to the OAuth-authenticated Claude CLI subprocess.
+        "LITELLM_API_KEY",
+        "LITELLM_MASTER_KEY",
         "CLAUDE_CODE_USE_BEDROCK",
         "CLAUDE_CODE_USE_VERTEX",
         "CLAUDE_CODE_USE_FOUNDRY",
@@ -250,6 +254,21 @@ def resolve_cwd(request: dict[str, Any], prompt: str) -> str:
     return os.getcwd()
 
 
+def rate_limit_event_error(event: dict[str, Any]) -> ClaudeRateLimitError | None:
+    rate_info = event.get("rate_limit_info", {})
+    if not isinstance(rate_info, dict):
+        return None
+    status = rate_info.get("status")
+    if not status or status == "allowed":
+        return None
+    limit_type = rate_info.get("rateLimitType", "session")
+    message = f"Claude rate limit ({limit_type}): status is {status}"
+    resets_at = rate_info.get("resetsAt")
+    if resets_at:
+        message += f" (resets at {resets_at})"
+    return ClaudeRateLimitError(message)
+
+
 def classify_claude_error(message: Any, error_code: Any = None) -> type[RuntimeError] | None:
     text = str(message or "")
     if error_code == "rate_limit" or re.search(r"rate.?limit|weekly.?limit|quota|credit|session.?limit|too many requests", text, re.IGNORECASE):
@@ -300,7 +319,10 @@ def run_claude_stream(prompt: str, model: str = DEFAULT_CLAUDE_MODEL, effort: st
             if kind == "json" and isinstance(value, dict):
                 event_type = value.get("type")
                 if event_type == "rate_limit_event":
-                    raise ClaudeRateLimitError("You've hit your weekly limit · resets 6pm (America/New_York)")
+                    rate_limit_error = rate_limit_event_error(value)
+                    if rate_limit_error is not None:
+                        raise rate_limit_error
+                    continue
                 if value.get("is_api_error_message") or value.get("error") in ("rate_limit", "overloaded_error"):
                     err_msg = text_from_content(value.get("message", {}).get("content", [])) or value.get("error") or "Claude API error"
                     raise_classified_claude_error(err_msg, value.get("error"))

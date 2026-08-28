@@ -28,12 +28,29 @@ if curl --silent --fail --max-time 1 http://127.0.0.1:4001/health/liveliness >/d
 fi
 
 domain="gui/$(id -u)"
-# The repository lives under Desktop, where launchd can be denied access by
-# macOS privacy controls. Start both canonical versioned launchers directly
-# from the Codex lifecycle process instead.
-for label in com.codex.antigravity-proxy com.codex.antigravity-litellm; do
-  launchctl bootout "$domain/$label" >/dev/null 2>&1 || true
-done
+proxy_label="com.codex.antigravity-proxy"
+litellm_label="com.codex.antigravity-litellm"
+proxy_probe="http://127.0.0.1:4002/health/liveliness"
+litellm_probe="http://127.0.0.1:4001/health/liveliness"
+
+# launchd is the canonical supervisor when its jobs are loaded. Never boot out
+# a loaded KeepAlive job and then start an unmanaged copy: that creates two
+# owners for each port and produces an endless EADDRINUSE loop. Direct launch
+# below is only the fallback for hosts where launchd is unavailable/unloaded.
+if launchctl print "$domain/$proxy_label" >/dev/null 2>&1 || launchctl print "$domain/$litellm_label" >/dev/null 2>&1; then
+  launchctl kickstart -k "$domain/$proxy_label" >/dev/null 2>&1 || true
+  launchctl kickstart -k "$domain/$litellm_label" >/dev/null 2>&1 || true
+  for _ in {1..50}; do
+    if curl --silent --fail --max-time 1 "$litellm_probe" >/dev/null 2>&1 && \
+       curl --silent --fail --max-time 1 "$proxy_probe" >/dev/null 2>&1; then
+      exit 0
+    fi
+    sleep 0.1
+  done
+  echo "Antigravity launchd services did not become ready; refusing to start duplicate unmanaged processes." >&2
+  exit 1
+fi
+
 proxy_launcher="$HOME/.codex/hooks/run-codex-antigravity-proxy.sh"
 litellm_launcher="$HOME/.codex/hooks/run-codex-antigravity-litellm.sh"
 if [[ -L "$proxy_launcher" ]]; then proxy_launcher="$(readlink "$proxy_launcher")"; fi
@@ -43,8 +60,8 @@ nohup /bin/bash "$proxy_launcher" \
 nohup /bin/bash "$litellm_launcher" \
   >"${TMPDIR:-/tmp}/codex-antigravity-litellm-4001.log" 2>&1 </dev/null &
 for _ in {1..50}; do
-  if curl --silent --fail --max-time 1 http://127.0.0.1:4001/health/liveliness >/dev/null 2>&1 && \
-     curl --silent --fail --max-time 1 http://127.0.0.1:4002/health/liveliness >/dev/null 2>&1; then
+  if curl --silent --fail --max-time 1 "$litellm_probe" >/dev/null 2>&1 && \
+     curl --silent --fail --max-time 1 "$proxy_probe" >/dev/null 2>&1; then
     exit 0
   fi
   sleep 0.1

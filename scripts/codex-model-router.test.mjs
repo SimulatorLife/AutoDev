@@ -1,9 +1,11 @@
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
-import { readFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import test from "node:test";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
 
-import { activeProviderRequests, catalogModelIds, classifyProviderFailure, clearProviderCooldown, cooldownProvider, decrementActiveRequests, fallbackable, getActiveRequests, getRouterStatus, handle, incrementActiveRequests, isProviderCoolingDown, recordRouterEvent, replaceModelFields, resetRouterTelemetry, responseTextFromSse, roleCandidates, roleForModel, routeCredentialAvailable, routeForModel, transformSseEvent, validateRoutingConfig } from "./codex-model-router.mjs";
+import { activeProviderRequests, catalogModelIds, classifyProviderFailure, clearProviderCooldown, cooldownProvider, decrementActiveRequests, fallbackable, getActiveRequests, concurrencyStatus, countToolCallsFromSse, countToolCallsInResponse, getRouterStatus, handle, incrementActiveRequests, isProviderCoolingDown, loadRouterState, parseConcurrencyConfig, persistRouterStateNow, recordConcurrencyDenial, recordRouterEvent, releaseSubagentSlot, replaceModelFields, resetConcurrencyTelemetry, resetRouterTelemetry, serializeRouterState, responseTextFromSse, roleCandidates, roleForModel, routeCredentialAvailable, routeForModel, transformSseEvent, tryAcquireSubagentSlot, validateRoutingConfig } from "./codex-model-router.mjs";
 
 test("loads editable provider and role models from JSON routing config", async () => {
   const config = JSON.parse(await readFile(new URL("./codex/model-routing.json", import.meta.url), "utf8"));
@@ -154,7 +156,11 @@ test("serves a lightweight dashboard to browsers and JSON to API clients", async
     const dashboard = await fetch(`http://127.0.0.1:${address.port}/status`, { headers: { Accept: "text/html" } });
     assert.equal(dashboard.status, 200);
     assert.match(dashboard.headers.get("content-type"), /text\/html/);
-    assert.match(await dashboard.text(), /setInterval\(refresh, 3000\)/);
+    const dashboardBody = await dashboard.text();
+    assert.match(dashboardBody, /setInterval\(refresh, 3000\)/);
+    assert.match(dashboardBody, /id="by-origin"/);
+    assert.match(dashboardBody, /id="by-role"/);
+    assert.match(dashboardBody, /id="by-model"/);
 
     const api = await fetch(`http://127.0.0.1:${address.port}/status`, { headers: { Accept: "application/json" } });
     assert.equal(api.status, 200);
@@ -180,6 +186,99 @@ test("serves status snapshots without exposing request content", async () => {
   } finally {
     await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
   }
+});
+
+test("persists provider telemetry and recent events across router restarts", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "autodev-router-state-"));
+  const stateFile = join(directory, "router-state.json");
+  try {
+    resetRouterTelemetry();
+    recordRouterEvent({ phase: "selected", requestId: "req-persist", role: "worker", requestedModel: "autodev/worker", provider: "minimax", model: "MiniMax-M3" });
+    recordRouterEvent({ phase: "result", requestId: "req-persist", role: "worker", requestedModel: "autodev/worker", provider: "minimax", model: "MiniMax-M3", outcome: "failure", status: 429, failureClass: "throttled", elapsedMs: 11 });
+    await persistRouterStateNow(stateFile);
+    resetRouterTelemetry();
+    assert.equal(getRouterStatus().providers.minimax.failures, 0);
+
+    assert.equal(loadRouterState(stateFile), true);
+    const restored = getRouterStatus();
+    assert.equal(restored.providers.minimax.failures, 1);
+    assert.equal(restored.providers.minimax.lastFailure.class, "throttled");
+    assert.equal(restored.usage.byRole.worker.attempts, 1);
+    assert.equal(restored.usage.byModel["minimax/MiniMax-M3"].failures, 1);
+    assert.equal(restored.usage.byOrigin.subagent.failures, 1);
+    assert.equal(restored.recentEvents[0].requestId, "req-persist");
+    assert.equal(restored.recentEvents[0].toolCalls, 0);
+    assert.doesNotMatch(serializeRouterState(), /prompt|api[_-]?key|authorization/i);
+  } finally {
+    resetRouterTelemetry();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("ignores a corrupt persisted router state file", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "autodev-router-state-"));
+  const stateFile = join(directory, "router-state.json");
+  try {
+    await writeFile(stateFile, "{not-json");
+    assert.equal(loadRouterState(stateFile), false);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("counts tool calls without double-counting streamed output items", () => {
+  const toolResponse = { output: [{ id: "call-1", type: "function_call" }, { id: "message-1", type: "message" }] };
+  assert.equal(countToolCallsInResponse(toolResponse), 1);
+  const stream = [
+    'data: {"type":"response.output_item.added","item":{"id":"call-1","type":"function_call"}}',
+    `data: ${JSON.stringify({ type: "response.completed", response: toolResponse })}`,
+    "data: [DONE]",
+    "",
+  ].join("\n");
+  assert.equal(countToolCallsFromSse(stream), 1);
+});
+
+test("aggregates usage by role, resolved model, origin, duration, and tool calls", () => {
+  resetRouterTelemetry();
+  recordRouterEvent({ phase: "selected", requestId: "req-usage-role", role: "explorer", requestedModel: "autodev/explorer", provider: "claude", model: "sonnet" });
+  recordRouterEvent({ phase: "result", requestId: "req-usage-role", role: "explorer", requestedModel: "autodev/explorer", provider: "claude", model: "sonnet", outcome: "success", status: 200, elapsedMs: 120, toolCalls: 2 });
+  recordRouterEvent({ phase: "selected", requestId: "req-usage-parent", requestedModel: "gpt-5.6-luna", provider: "codex", model: "gpt-5.6-luna" });
+  recordRouterEvent({ phase: "result", requestId: "req-usage-parent", requestedModel: "gpt-5.6-luna", provider: "codex", model: "gpt-5.6-luna", outcome: "success", status: 200, elapsedMs: 80, toolCalls: 1 });
+
+  const usage = getRouterStatus().usage;
+  assert.equal(usage.byRole.explorer.attempts, 1);
+  assert.equal(usage.byRole.explorer.successes, 1);
+  assert.equal(usage.byRole.explorer.averageDurationMs, 120);
+  assert.equal(usage.byRole.explorer.toolCalls, 2);
+  assert.equal(usage.byModel["claude/sonnet"].successes, 1);
+  assert.equal(usage.byOrigin.subagent.successes, 1);
+  assert.equal(usage.byOrigin.orchestrator.successes, 1);
+  assert.equal(usage.totals.toolCalls, 3);
+  resetRouterTelemetry();
+});
+
+test("reads and enforces Codex per-session and global thread limits", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "autodev-concurrency-"));
+  const configFile = join(directory, "config.toml");
+  try {
+    await writeFile(configFile, "[agents]\nmax_concurrent_threads_per_session = 2\nmax_threads = 3\n");
+    assert.deepEqual(parseConcurrencyConfig(configFile), { file: configFile, maxConcurrentThreadsPerSession: 2, maxThreads: 3 });
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+
+  resetConcurrencyTelemetry();
+  assert.equal(tryAcquireSubagentSlot("test-session"), null);
+  assert.equal(tryAcquireSubagentSlot("test-session"), "max_concurrent_threads_per_session");
+  recordConcurrencyDenial({ requestId: "req-denied", role: "worker", requestedModel: "autodev/worker", sessionScope: "identified", reason: "max_concurrent_threads_per_session" });
+  const status = concurrencyStatus();
+  assert.equal(status.maxConcurrentThreadsPerSession, 1);
+  assert.equal(status.effectivePerSessionLimit, 1);
+  assert.equal(status.activeSubagentThreads, 1);
+  assert.equal(status.denials, 1);
+  assert.equal(status.lastDenial.reason, "max_concurrent_threads_per_session");
+  releaseSubagentSlot("test-session");
+  resetConcurrencyTelemetry();
 });
 
 test("status snapshot exposes configured models, active work, cooldowns, and recent events", () => {
@@ -234,6 +333,16 @@ test("rewrites the routed provider model back to the public role alias", () => {
   const event = transformSseEvent('data: {"type":"response.completed","response":{"model":"gemini-3.6-flash-medium"},"model":"gemini-3.6-flash-medium"}\n\n', "autodev/explorer");
   assert.match(event, /autodev\/explorer/);
   assert.equal((event.match(/autodev\/explorer/g) ?? []).length, 2);
+});
+
+test("uses the least-busy provider before starting another provider request", () => {
+  activeProviderRequests.clear();
+  incrementActiveRequests("claude");
+  incrementActiveRequests("minimax");
+  const candidates = roleCandidates("default", () => 0.5).map((candidate) => candidate.provider);
+  assert.equal(candidates[0], "antigravity");
+  assert.deepEqual(candidates.slice(3), ["copilot", "codex"]);
+  activeProviderRequests.clear();
 });
 
 test("balances candidate provider priority across active in-flight requests", () => {

@@ -37,7 +37,9 @@ checks. HTTP 429/5xx, quota, session-limit, high-demand, timeout, and
 unavailable responses cause the router to try the next provider. A malformed
 request is returned immediately rather than hidden by fallback. Streaming
 fallback happens before response headers are sent; a provider that fails after
-streaming has begun cannot be safely replayed.
+streaming has begun cannot be safely replayed. Claude's `rate_limit_event` is
+informational when `rate_limit_info.status` is `allowed`; only a non-allowed
+status is treated as a Claude limit.
 
 ## Observability
 
@@ -47,6 +49,20 @@ The router makes its effective choice visible in two ways:
   `x-autodev-request-id`. For a role request such as `autodev/explorer`, these
   identify the concrete provider/model selected after shuffling, load balancing,
   health checks, and fallback.
+- The status payload and dashboard report the active Codex concurrency limits
+  (`max_concurrent_threads_per_session` and `max_threads`), effective limit,
+  active role-based subagent slots, and denials caused by those limits. Role
+  requests are gated before provider selection; direct concrete model requests
+  are not counted as subagent slots. If a session ID is not supplied by the
+  client, the router uses a process-wide fallback scope and reports that scope.
+- They also aggregate usage by origin (`orchestrator`,
+  `subagent`, or `direct`), role, and resolved provider/model. Each bucket
+  includes attempts, outcomes, average/max turn duration, and tool-call counts
+  inferred from Responses output items. A `role` request is classified as a
+  subagent; a direct Codex model request is classified as orchestrator-originated.
+  This is an operational inference: the router sees HTTP turns, not the full
+  lifetime of a Codex session, and tool-call counts cover calls represented in
+  Responses events only.
 - Open `http://127.0.0.1:4100/status` in a browser for the bare-bones dashboard;
   it polls the JSON status every 3 seconds. `/dashboard` is an explicit HTML
   alias. API clients that send `Accept: application/json` to `/status` receive
@@ -61,12 +77,16 @@ The router makes its effective choice visible in two ways:
 
 Router stderr is structured JSON (`autodev-router-event-v1`) and is retained by
 launchd in `~/.codex/hooks/model-router.launchd.log` (the direct ensure path
-uses `/tmp/codex-model-router.log`). Failure classes include `session_limit`,
+uses `/tmp/codex-model-router.log`). Provider counters and recent events are
+also persisted atomically in `$CODEX_HOME/codex-router-state.json`, so they
+survive router restarts. Only active requests and short cooldown timers reset.
+Failure classes include `session_limit`,
 `throttled`, `quota_exhausted`, `capacity`, `timeout`, `unavailable`,
 `authentication`, and `invalid_model`. These are observations from upstream
 responses and local health checks, not a provider's authoritative quota API;
-status counters reset when the router process restarts. Use the router instance
-ID and request ID to correlate a turn with its fallback history.
+the persisted counters remain available after the router process restarts. Use
+the router instance ID and request ID to correlate a turn with its fallback
+history.
 
 ## External-provider execution
 
@@ -107,7 +127,10 @@ relying only on role prompt text.
 | Local router | Codex Responses -> `127.0.0.1:4100` -> model-based provider dispatch | GPT/Codex models use the stored Codex OAuth; external model names use the existing local bridges. |
 
 The Claude Responses adapter is not the GPT passthrough: it launches the
-authenticated Claude CLI and translates Claude's stream into Responses events.
+OAuth-authenticated Claude CLI and translates Claude's stream into Responses events. The
+`LITELLM_API_KEY` used between the local router and local bridge is only a
+localhost gateway credential; it is removed, along with Anthropic API-key
+variables, before the Claude CLI subprocess starts.
 The local router owns the GPT branch separately and forwards it to
 `https://chatgpt.com/backend-api/codex/responses` with the existing Codex OAuth
 token and account ID from `auth.json`.

@@ -20,12 +20,17 @@ The tracked Codex role files under `scripts/codex/agents/` are regular configura
 - Keep OAuth/PAT/API credentials outside the repository. Background services
   load provider credentials from `~/.codex/.env`; for MiniMax this means a
   private `MINIMAX_API_KEY=...` entry with restrictive file permissions.
-- Treat proxy and router logs as local-only operational data.
+- Treat proxy and router logs as local-only operational data. Antigravity's
+  launchd services are the canonical supervisors when loaded; the ensure hook
+  refuses to start duplicate unmanaged processes on ports 4001/4002.
 - Prefer `ensure-*` scripts for idempotent setup and the `diagnose-*` scripts for evidence before changing provider routing.
 - Open `http://127.0.0.1:4100/status` in a browser for the lightweight live
   dashboard, or inspect the same state with
   `node scripts/codex-model-router-status.mjs` (use `--json` for automation).
   It reports observed session-limit, throttling, quota, capacity, timeout, and
   availability failures; it cannot query an upstream provider's private quota
-  dashboard. Response headers and structured router events provide per-request
+  dashboard. Antigravity CLI turns allow up to 15 minutes by default (override
+  with `AGY_PRINT_TIMEOUT` when needed). Router counters and recent events are
+  persisted in `$CODEX_HOME/codex-router-state.json`; response headers and
+  structured router events provide per-request
   correlation without logging prompts or credentials.

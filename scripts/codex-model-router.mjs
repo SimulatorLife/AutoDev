@@ -2,7 +2,7 @@
 
 import { randomUUID } from "node:crypto";
 import { createServer } from "node:http";
-import { readFile } from "node:fs/promises";
+import { readFile, rename, writeFile } from "node:fs/promises";
 import { existsSync, readFileSync } from "node:fs";
 import { brotliDecompressSync, gunzipSync, inflateSync } from "node:zlib";
 import { pathToFileURL } from "node:url";
@@ -14,6 +14,8 @@ const AUTH_FILE = process.env.CODEX_ROUTER_AUTH_FILE ?? `${CODEX_HOME}/auth.json
 const CATALOG_FILE = process.env.CODEX_ROUTER_CATALOG_FILE ?? `${CODEX_HOME}/codex-model-catalog.json`;
 const GPT_BASE_URL = process.env.CODEX_ROUTER_GPT_BASE_URL ?? "https://chatgpt.com/backend-api/codex";
 const DASHBOARD_FILE = new URL("./codex-model-router-dashboard.html", import.meta.url);
+const IS_MAIN = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
+const STATE_FILE = process.env.CODEX_ROUTER_STATE_FILE ?? `${CODEX_HOME}/codex-router-state.json`;
 
 const ROUTES = Object.freeze([
   { provider: "claude", pattern: /^(sonnet|opus|haiku|claude-[A-Za-z0-9][A-Za-z0-9.-]*)$/, baseUrl: "http://127.0.0.1:4000/v1", healthUrl: "http://127.0.0.1:4000/health/liveliness", envKey: "LITELLM_API_KEY" },
@@ -66,6 +68,9 @@ const ROUTER_STARTED_AT = new Date().toISOString();
 const ROUTER_INSTANCE_ID = randomUUID();
 const MAX_RECENT_EVENTS = Number.parseInt(process.env.CODEX_ROUTER_MAX_RECENT_EVENTS ?? "100", 10);
 const recentRouterEvents = [];
+let persistedStateUpdatedAt = null;
+let persistTimeout = null;
+let persistChain = Promise.resolve();
 const providerTelemetry = new Map(ROUTES.map(({ provider }) => [provider, {
   attempts: 0,
   successes: 0,
@@ -77,6 +82,158 @@ const providerTelemetry = new Map(ROUTES.map(({ provider }) => [provider, {
   lastFailureClass: null,
   lastFailure: null,
 }]));
+
+
+function emptyUsageBucket() {
+  return { attempts: 0, successes: 0, failures: 0, durationMs: 0, maxDurationMs: 0, toolCalls: 0, lastUsedAt: null };
+}
+
+const usageTelemetry = {
+  totals: emptyUsageBucket(),
+  byRole: {},
+  byModel: {},
+  byOrigin: {},
+};
+const inFlightUsage = new Map();
+
+function usageBucket(collection, key) {
+  if (!collection[key]) collection[key] = emptyUsageBucket();
+  return collection[key];
+}
+
+function usageOrigin(role, provider) {
+  if (role) return "subagent";
+  if (provider === "codex") return "orchestrator";
+  return "direct";
+}
+
+function usageKey(requestId, provider, model) {
+  return `${requestId}\0${provider}\0${model}`;
+}
+
+function recordUsageEvent({ phase, requestId, role, provider, model, outcome, elapsedMs, toolCalls = 0, timestamp }) {
+  const origin = usageOrigin(role, provider);
+  const roleKey = role ?? "unattributed";
+  const modelKey = `${provider}/${model}`;
+  const buckets = [usageTelemetry.totals, usageBucket(usageTelemetry.byRole, roleKey), usageBucket(usageTelemetry.byModel, modelKey), usageBucket(usageTelemetry.byOrigin, origin)];
+  const key = usageKey(requestId, provider, model);
+  if (phase === "selected") {
+    inFlightUsage.set(key, { startedAt: Date.now(), buckets });
+    for (const bucket of buckets) {
+      bucket.attempts += 1;
+      bucket.lastUsedAt = timestamp;
+    }
+    return;
+  }
+  if (phase !== "result") return;
+  const active = inFlightUsage.get(key);
+  const duration = Number.isFinite(elapsedMs) ? Math.max(0, elapsedMs) : active ? Math.max(0, Date.now() - active.startedAt) : 0;
+  const resultBuckets = active?.buckets ?? buckets;
+  for (const bucket of resultBuckets) {
+    if (outcome === "success") bucket.successes += 1;
+    else bucket.failures += 1;
+    bucket.durationMs += duration;
+    bucket.maxDurationMs = Math.max(bucket.maxDurationMs, duration);
+    bucket.toolCalls += Number.isInteger(toolCalls) && toolCalls > 0 ? toolCalls : 0;
+  }
+  inFlightUsage.delete(key);
+}
+
+function resetUsageTelemetry() {
+  usageTelemetry.totals = emptyUsageBucket();
+  usageTelemetry.byRole = {};
+  usageTelemetry.byModel = {};
+  usageTelemetry.byOrigin = {};
+  inFlightUsage.clear();
+}
+
+function usageSnapshot(collection) {
+  return Object.fromEntries(Object.entries(collection).map(([key, bucket]) => [key, {
+    ...bucket,
+    averageDurationMs: bucket.successes + bucket.failures > 0 ? Math.round(bucket.durationMs / (bucket.successes + bucket.failures)) : 0,
+  }]));
+}
+
+function usageStatus() {
+  return {
+    totals: { ...usageTelemetry.totals, averageDurationMs: usageTelemetry.totals.successes + usageTelemetry.totals.failures > 0 ? Math.round(usageTelemetry.totals.durationMs / (usageTelemetry.totals.successes + usageTelemetry.totals.failures)) : 0 },
+    byRole: usageSnapshot(usageTelemetry.byRole),
+    byModel: usageSnapshot(usageTelemetry.byModel),
+    byOrigin: usageSnapshot(usageTelemetry.byOrigin),
+  };
+}
+
+function parseConcurrencyConfig(file = CODEX_CONFIG_FILE) {
+  const result = { file, maxConcurrentThreadsPerSession: null, maxThreads: null };
+  if (!existsSync(file)) return result;
+  try {
+    const source = readFileSync(file, "utf8");
+    for (const match of source.matchAll(/^\s*(max_concurrent_threads_per_session|max_threads)\s*=\s*(\d+)\s*$/gm)) {
+      const value = Number.parseInt(match[2], 10);
+      if (match[1] === "max_concurrent_threads_per_session") result.maxConcurrentThreadsPerSession = value;
+      if (match[1] === "max_threads") result.maxThreads = value;
+    }
+  } catch (error) {
+    console.error(`Warning: could not read Codex concurrency config from ${file}: ${error instanceof Error ? error.message : String(error)}`);
+  }
+  return result;
+}
+
+const CODEX_CONFIG_FILE = process.env.CODEX_ROUTER_CODEX_CONFIG_FILE ?? `${CODEX_HOME}/config.toml`;
+const CONCURRENCY_CONFIG = parseConcurrencyConfig();
+const activeSubagentSessions = new Map();
+const concurrencyTelemetry = { denials: 0, denialsByReason: {}, lastDenial: null };
+
+function effectivePerSessionLimit() {
+  return CONCURRENCY_CONFIG.maxConcurrentThreadsPerSession ?? CONCURRENCY_CONFIG.maxThreads;
+}
+
+function activeSubagentThreads() {
+  return [...activeSubagentSessions.values()].reduce((sum, value) => sum + value, 0);
+}
+
+function tryAcquireSubagentSlot(sessionKey) {
+  const sessionActive = activeSubagentSessions.get(sessionKey) ?? 0;
+  const perSessionLimit = effectivePerSessionLimit();
+  if (perSessionLimit !== null && sessionActive >= perSessionLimit) return "max_concurrent_threads_per_session";
+  if (CONCURRENCY_CONFIG.maxThreads !== null && activeSubagentThreads() >= CONCURRENCY_CONFIG.maxThreads) return "max_threads";
+  activeSubagentSessions.set(sessionKey, sessionActive + 1);
+  return null;
+}
+
+function releaseSubagentSlot(sessionKey) {
+  const current = activeSubagentSessions.get(sessionKey) ?? 0;
+  if (current <= 1) activeSubagentSessions.delete(sessionKey);
+  else activeSubagentSessions.set(sessionKey, current - 1);
+}
+
+function resetConcurrencyTelemetry() {
+  activeSubagentSessions.clear();
+  concurrencyTelemetry.denials = 0;
+  concurrencyTelemetry.denialsByReason = {};
+  concurrencyTelemetry.lastDenial = null;
+}
+
+function concurrencyStatus() {
+  return {
+    configFile: CONCURRENCY_CONFIG.file,
+    maxConcurrentThreadsPerSession: CONCURRENCY_CONFIG.maxConcurrentThreadsPerSession,
+    maxThreads: CONCURRENCY_CONFIG.maxThreads,
+    effectivePerSessionLimit: effectivePerSessionLimit(),
+    activeSubagentThreads: activeSubagentThreads(),
+    activeSessions: activeSubagentSessions.size,
+    denials: concurrencyTelemetry.denials,
+    denialsByReason: { ...concurrencyTelemetry.denialsByReason },
+    lastDenial: concurrencyTelemetry.lastDenial,
+  };
+}
+
+function recordConcurrencyDenial({ requestId, role, requestedModel, sessionScope, reason }) {
+  concurrencyTelemetry.denials += 1;
+  concurrencyTelemetry.denialsByReason[reason] = (concurrencyTelemetry.denialsByReason[reason] ?? 0) + 1;
+  concurrencyTelemetry.lastDenial = { timestamp: new Date().toISOString(), requestId, role, requestedModel, sessionScope, reason };
+  recordRouterEvent({ phase: "denied", requestId, role, requestedModel, provider: null, model: null, failureClass: "concurrency_limit", denialReason: reason });
+}
 
 function providerState(provider) {
   if (!providerTelemetry.has(provider)) {
@@ -113,7 +270,7 @@ function classifyProviderFailure(status, body = "") {
   return "request_error";
 }
 
-function recordRouterEvent({ phase, requestId, role = null, requestedModel, provider, model, outcome = null, status = null, failureClass = null, elapsedMs = null }) {
+function recordRouterEvent({ phase, requestId, role = null, requestedModel, provider, model, outcome = null, status = null, failureClass = null, denialReason = null, elapsedMs = null, toolCalls = 0 }) {
   const timestamp = new Date().toISOString();
   const event = {
     schema: "autodev-router-event-v1",
@@ -128,19 +285,22 @@ function recordRouterEvent({ phase, requestId, role = null, requestedModel, prov
     outcome,
     status,
     failureClass,
+    denialReason,
     elapsedMs,
+    toolCalls,
   };
   recentRouterEvents.push(event);
   while (recentRouterEvents.length > Math.max(1, MAX_RECENT_EVENTS)) recentRouterEvents.shift();
 
-  const state = providerState(provider);
-  if (phase === "selected") {
+  if (provider && model) recordUsageEvent({ phase, requestId, role, provider, model, outcome, elapsedMs, toolCalls, timestamp });
+  const state = provider ? providerState(provider) : null;
+  if (state && phase === "selected") {
     state.attempts += 1;
     state.lastAttemptAt = timestamp;
-  } else if (phase === "skipped") {
+  } else if (state && phase === "skipped") {
     state.skipped += 1;
     state.lastFailureClass = failureClass;
-  } else if (phase === "result") {
+  } else if (state && phase === "result") {
     if (outcome === "success") {
       state.successes += 1;
       state.lastSuccessAt = timestamp;
@@ -154,6 +314,7 @@ function recordRouterEvent({ phase, requestId, role = null, requestedModel, prov
     }
   }
   console.error(JSON.stringify(event));
+  scheduleRouterStatePersist();
   return event;
 }
 
@@ -170,6 +331,9 @@ function resetRouterTelemetry() {
     state.lastFailureClass = null;
     state.lastFailure = null;
   }
+  resetUsageTelemetry();
+  resetConcurrencyTelemetry();
+  scheduleRouterStatePersist();
 }
 
 function getRouterStatus(now = Date.now()) {
@@ -201,10 +365,114 @@ function getRouterStatus(now = Date.now()) {
     routerInstanceId: ROUTER_INSTANCE_ID,
     startedAt: ROUTER_STARTED_AT,
     pid: process.pid,
+    telemetryPersistence: { enabled: IS_MAIN, file: STATE_FILE, updatedAt: persistedStateUpdatedAt },
+    usage: usageStatus(),
+    concurrency: concurrencyStatus(),
     activeRequests: Object.fromEntries(activeProviderRequests),
     providers,
     recentEvents: [...recentRouterEvents].reverse(),
   };
+}
+
+function serializeRouterState() {
+  return JSON.stringify({
+    schema: "autodev-router-persisted-state-v1",
+    updatedAt: new Date().toISOString(),
+    providerTelemetry: Object.fromEntries(providerTelemetry),
+    usage: usageTelemetry,
+    concurrency: concurrencyTelemetry,
+    recentEvents: [...recentRouterEvents],
+  }, null, 2);
+}
+
+function loadRouterState(file = STATE_FILE) {
+  if (!existsSync(file)) return false;
+  try {
+    const parsed = JSON.parse(readFileSync(file, "utf8"));
+    if (parsed?.schema !== "autodev-router-persisted-state-v1") return false;
+    for (const [provider, saved] of Object.entries(parsed.providerTelemetry ?? {})) {
+      if (!providerTelemetry.has(provider) || !saved || typeof saved !== "object") continue;
+      const current = providerState(provider);
+      for (const field of ["attempts", "successes", "failures", "skipped"]) {
+        if (Number.isInteger(saved[field]) && saved[field] >= 0) current[field] = saved[field];
+      }
+      for (const field of ["lastAttemptAt", "lastSuccessAt", "lastFailureAt", "lastFailureClass"]) {
+        if (saved[field] === null || typeof saved[field] === "string") current[field] = saved[field];
+      }
+      if (saved.lastFailure === null || (saved.lastFailure && typeof saved.lastFailure === "object")) current.lastFailure = saved.lastFailure;
+    }
+    if (parsed.usage && typeof parsed.usage === "object") {
+      for (const section of ["byRole", "byModel", "byOrigin"]) {
+        if (!parsed.usage[section] || typeof parsed.usage[section] !== "object") continue;
+        for (const [key, saved] of Object.entries(parsed.usage[section])) {
+          if (!saved || typeof saved !== "object") continue;
+          const current = usageBucket(usageTelemetry[section], key);
+          for (const field of ["attempts", "successes", "failures", "durationMs", "maxDurationMs", "toolCalls"]) {
+            if (Number.isInteger(saved[field]) && saved[field] >= 0) current[field] = saved[field];
+          }
+          if (saved.lastUsedAt === null || typeof saved.lastUsedAt === "string") current.lastUsedAt = saved.lastUsedAt;
+        }
+      }
+      const savedTotals = parsed.usage.totals;
+      if (savedTotals && typeof savedTotals === "object") {
+        for (const field of ["attempts", "successes", "failures", "durationMs", "maxDurationMs", "toolCalls"]) {
+          if (Number.isInteger(savedTotals[field]) && savedTotals[field] >= 0) usageTelemetry.totals[field] = savedTotals[field];
+        }
+        if (savedTotals.lastUsedAt === null || typeof savedTotals.lastUsedAt === "string") usageTelemetry.totals.lastUsedAt = savedTotals.lastUsedAt;
+      }
+    }
+    if (parsed.concurrency && typeof parsed.concurrency === "object") {
+      if (Number.isInteger(parsed.concurrency.denials) && parsed.concurrency.denials >= 0) concurrencyTelemetry.denials = parsed.concurrency.denials;
+      if (parsed.concurrency.denialsByReason && typeof parsed.concurrency.denialsByReason === "object") concurrencyTelemetry.denialsByReason = { ...parsed.concurrency.denialsByReason };
+      if (parsed.concurrency.lastDenial === null || (parsed.concurrency.lastDenial && typeof parsed.concurrency.lastDenial === "object")) concurrencyTelemetry.lastDenial = parsed.concurrency.lastDenial;
+    }
+    if (Array.isArray(parsed.recentEvents)) {
+      recentRouterEvents.length = 0;
+      recentRouterEvents.push(...parsed.recentEvents.filter((event) => event && typeof event === "object").slice(-Math.max(1, MAX_RECENT_EVENTS)));
+      if (!parsed.usage) {
+        resetUsageTelemetry();
+        for (const event of recentRouterEvents) {
+          if (event.provider && event.model && event.phase) recordUsageEvent(event);
+        }
+        inFlightUsage.clear();
+      }
+    }
+    persistedStateUpdatedAt = typeof parsed.updatedAt === "string" ? parsed.updatedAt : null;
+    return true;
+  } catch (error) {
+    console.error(`Warning: could not load router state from ${file}: ${error instanceof Error ? error.message : String(error)}`);
+    return false;
+  }
+}
+
+function persistRouterStateNow(file = STATE_FILE) {
+  if (persistTimeout) {
+    clearTimeout(persistTimeout);
+    persistTimeout = null;
+  }
+  const temporaryFile = `${file}.${process.pid}.${Date.now()}.tmp`;
+  persistChain = persistChain.catch(() => {}).then(async () => {
+    await writeFile(temporaryFile, serializeRouterState(), { encoding: "utf8", mode: 0o600 });
+    await rename(temporaryFile, file);
+    persistedStateUpdatedAt = new Date().toISOString();
+  }).catch((error) => {
+    console.error(`Warning: could not persist router state to ${file}: ${error instanceof Error ? error.message : String(error)}`);
+  });
+  return persistChain;
+}
+
+function scheduleRouterStatePersist() {
+  if (!IS_MAIN || persistTimeout) return;
+  persistTimeout = setTimeout(() => {
+    persistTimeout = null;
+    void persistRouterStateNow();
+  }, 500);
+}
+
+if (IS_MAIN) {
+  loadRouterState();
+  process.on("SIGINT", () => { void persistRouterStateNow().finally(() => process.exit(0)); });
+  process.on("SIGTERM", () => { void persistRouterStateNow().finally(() => process.exit(0)); });
 }
 
 function getActiveRequests(provider) {
@@ -320,6 +588,39 @@ function replaceModelFields(value, publicModel) {
   ]));
 }
 
+const TOOL_OUTPUT_TYPES = new Set(["function_call", "computer_call", "custom_tool_call", "code_interpreter_call"]);
+
+function countToolCallsInResponse(response, seen = new Set()) {
+  if (!response || typeof response !== "object" || !Array.isArray(response.output)) return 0;
+  let count = 0;
+  for (const item of response.output) {
+    if (item && TOOL_OUTPUT_TYPES.has(item.type) && !seen.has(item.id)) {
+      if (item.id) seen.add(item.id);
+      count += 1;
+    }
+  }
+  return count;
+}
+
+function countToolCallsFromSse(body, seen = new Set()) {
+  let count = 0;
+  for (const line of String(body).split(/\r?\n/)) {
+    if (!line.startsWith("data: ") || line.slice(6) === "[DONE]") continue;
+    try {
+      const event = JSON.parse(line.slice(6));
+      if (event.type === "response.output_item.added" && event.item && TOOL_OUTPUT_TYPES.has(event.item.type) && !seen.has(event.item.id)) {
+        if (event.item.id) seen.add(event.item.id);
+        count += 1;
+      } else if (event.type === "response.completed") {
+        count += countToolCallsInResponse(event.response, seen);
+      }
+    } catch {
+      // Ignore malformed/non-JSON SSE lines.
+    }
+  }
+  return count;
+}
+
 function transformSseEvent(event, publicModel) {
   return event.split(/(\r?\n)/).map((line) => {
     if (!line.startsWith("data: ") || line.slice(6) === "[DONE]") return line;
@@ -333,16 +634,21 @@ function transformSseEvent(event, publicModel) {
 
 async function writeResponseStream(response, upstream, publicModel) {
   const decoder = new TextDecoder();
+  const seenToolCalls = new Set();
+  let toolCalls = 0;
   let buffer = "";
   const flushEvents = (flush = false) => {
     while (true) {
       const boundary = buffer.match(/\r?\n\r?\n/);
       if (!boundary) break;
       const end = boundary.index + boundary[0].length;
-      response.write(transformSseEvent(buffer.slice(0, end), publicModel));
+      const event = buffer.slice(0, end);
+      toolCalls += countToolCallsFromSse(event, seenToolCalls);
+      response.write(transformSseEvent(event, publicModel));
       buffer = buffer.slice(end);
     }
     if (flush && buffer) {
+      toolCalls += countToolCallsFromSse(buffer, seenToolCalls);
       response.write(transformSseEvent(buffer, publicModel));
       buffer = "";
     }
@@ -353,6 +659,7 @@ async function writeResponseStream(response, upstream, publicModel) {
   }
   buffer += decoder.decode();
   flushEvents(true);
+  return toolCalls;
 }
 
 async function loadCodexAuth() {
@@ -451,18 +758,22 @@ async function writeSuccessfulResponse(response, route, result, wantsStream, pub
   const upstream = result.upstream;
   if (wantsStream) {
     response.writeHead(upstream.status, { ...responseHeaders, "content-type": upstream.headers.get("content-type") ?? "text/event-stream", "cache-control": "no-cache", connection: "close" });
-    await writeResponseStream(response, upstream, publicModel);
+    const toolCalls = await writeResponseStream(response, upstream, publicModel);
     response.end();
-    return;
+    return toolCalls;
   }
   const body = await upstream.text();
   if (route.provider === "codex") {
+    const toolCalls = countToolCallsFromSse(body);
     sendJson(response, upstream.status, replaceModelFields(responseTextFromSse(body), publicModel), responseHeaders);
-    return;
+    return toolCalls;
   }
   try {
-    const rewritten = replaceModelFields(JSON.parse(body), publicModel);
+    const parsed = JSON.parse(body);
+    const toolCalls = countToolCallsInResponse(parsed);
+    const rewritten = replaceModelFields(parsed, publicModel);
     sendJson(response, upstream.status, rewritten, responseHeaders);
+    return toolCalls;
   } catch {
     response.writeHead(upstream.status, { ...responseHeaders, "content-type": upstream.headers.get("content-type") ?? "application/json" });
     response.end(body);
@@ -502,8 +813,8 @@ async function proxyConcreteResponse(response, route, payload, wantsStream, requ
       response.end(result.body);
       return;
     }
-    await writeSuccessfulResponse(response, route, result, wantsStream, payload.model, requestId, payload.model);
-    recordRouterEvent({ phase: "result", requestId, requestedModel: payload.model, provider: route.provider, model: payload.model, outcome: "success", status: result.upstream.status, elapsedMs: Date.now() - startedAt });
+    const toolCalls = await writeSuccessfulResponse(response, route, result, wantsStream, payload.model, requestId, payload.model);
+    recordRouterEvent({ phase: "result", requestId, requestedModel: payload.model, provider: route.provider, model: payload.model, outcome: "success", status: result.upstream.status, elapsedMs: Date.now() - startedAt, toolCalls });
   } catch (error) {
     const failureClass = classifyProviderFailure(502, error instanceof Error ? error.message : String(error));
     recordRouterEvent({ phase: "result", requestId, requestedModel: payload.model, provider: route.provider, model: payload.model, outcome: "failure", status: 502, failureClass, elapsedMs: Date.now() - startedAt });
@@ -538,8 +849,8 @@ async function proxyRoleResponse(response, role, payload, wantsStream, requestId
       if (result.ok) {
         clearProviderCooldown(route.provider);
         try {
-          await writeSuccessfulResponse(response, route, result, wantsStream, payload.model, requestId, route.model);
-          recordRouterEvent({ phase: "result", requestId, role, requestedModel: payload.model, provider: route.provider, model: route.model, outcome: "success", status: result.upstream.status, elapsedMs: Date.now() - attemptStartedAt });
+          const toolCalls = await writeSuccessfulResponse(response, route, result, wantsStream, payload.model, requestId, route.model);
+          recordRouterEvent({ phase: "result", requestId, role, requestedModel: payload.model, provider: route.provider, model: route.model, outcome: "success", status: result.upstream.status, elapsedMs: Date.now() - attemptStartedAt, toolCalls });
         } catch (streamError) {
           cooldownProvider(route.provider);
           throw streamError;
@@ -571,6 +882,14 @@ async function proxyRoleResponse(response, role, payload, wantsStream, requestId
   sendJson(response, 503, errorBody(`No available provider completed role ${role}. ${failures.join("; ")}`, "router_provider_exhausted"), { "x-autodev-request-id": requestId });
 }
 
+function requestSession(request, payload) {
+  const header = request.headers["x-codex-session-id"] ?? request.headers["x-session-id"] ?? request.headers["x-conversation-id"];
+  const metadata = payload?.metadata;
+  const value = header ?? payload?.session_id ?? payload?.conversation_id ?? metadata?.session_id ?? metadata?.conversation_id;
+  if (typeof value === "string" && value.trim()) return { key: value.trim(), scope: "identified" };
+  return { key: "process-scope", scope: "process-fallback" };
+}
+
 async function handle(request, response) {
   const pathname = new URL(request.url ?? "/", `http://${HOST}:${PORT}`).pathname;
   if (pathname === "/health" || pathname === "/health/liveliness") {
@@ -600,7 +919,18 @@ async function handle(request, response) {
   const requestId = String(request.headers["x-request-id"] ?? randomUUID());
   const wantsStream = payload.stream !== false;
   if (role) {
-    await proxyRoleResponse(response, role, payload, wantsStream, requestId);
+    const session = requestSession(request, payload);
+    const denialReason = tryAcquireSubagentSlot(session.key);
+    if (denialReason) {
+      recordConcurrencyDenial({ requestId, role, requestedModel: payload.model, sessionScope: session.scope, reason: denialReason });
+      sendJson(response, 429, errorBody(`Subagent denied by configured ${denialReason} limit.`, "router_concurrency_limit"), { "retry-after": "1", "x-autodev-request-id": requestId });
+      return;
+    }
+    try {
+      await proxyRoleResponse(response, role, payload, wantsStream, requestId);
+    } finally {
+      releaseSubagentSlot(session.key);
+    }
     return;
   }
   const route = routeForModel(payload.model);
@@ -611,9 +941,9 @@ async function handle(request, response) {
   await proxyConcreteResponse(response, route, payload, wantsStream, requestId);
 }
 
-export { activeProviderRequests, catalogModelIds, classifyProviderFailure, clearProviderCooldown, cooldownProvider, decrementActiveRequests, fallbackable, getActiveRequests, getRouterStatus, incrementActiveRequests, isProviderCoolingDown, providerModelMetadata, recordRouterEvent, routeCredentialAvailable, replaceModelFields, resetRouterTelemetry, responseTextFromSse, roleCandidates, roleForModel, routeForModel, transformSseEvent, validateRoutingConfig, handle };
+export { activeProviderRequests, catalogModelIds, classifyProviderFailure, clearProviderCooldown, concurrencyStatus, cooldownProvider, countToolCallsFromSse, countToolCallsInResponse, decrementActiveRequests, fallbackable, getActiveRequests, getRouterStatus, handle, incrementActiveRequests, isProviderCoolingDown, loadRouterState, parseConcurrencyConfig, persistRouterStateNow, providerModelMetadata, recordConcurrencyDenial, recordRouterEvent, releaseSubagentSlot, replaceModelFields, resetConcurrencyTelemetry, resetRouterTelemetry, routeCredentialAvailable, roleCandidates, roleForModel, routeForModel, serializeRouterState, tryAcquireSubagentSlot, responseTextFromSse, transformSseEvent, validateRoutingConfig };
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (IS_MAIN) {
   createServer((request, response) => { void handle(request, response); }).listen(PORT, HOST, () => {
     console.error(`Codex model router listening at http://${HOST}:${PORT}`);
   });

@@ -3,6 +3,7 @@ import json
 import os
 import subprocess
 import threading
+from unittest.mock import patch
 import urllib.error
 import urllib.request
 import tempfile
@@ -21,6 +22,36 @@ spec.loader.exec_module(claude_bridge)
 
 
 class LocalSetupTests(unittest.TestCase):
+    def test_claude_subprocess_environment_is_oauth_only(self):
+        with patch.dict(
+            claude_bridge.os.environ,
+            {
+                "CLAUDE_CODE_OAUTH_TOKEN": "oauth-placeholder",
+                "ANTHROPIC_API_KEY": "api-key-placeholder",
+                "ANTHROPIC_AUTH_TOKEN": "auth-token-placeholder",
+                "LITELLM_API_KEY": "local-gateway-placeholder",
+                "LITELLM_MASTER_KEY": "local-master-placeholder",
+            },
+            clear=False,
+        ):
+            environment = claude_bridge.claude_environment()
+        self.assertEqual(environment["CLAUDE_CODE_OAUTH_TOKEN"], "oauth-placeholder")
+        self.assertNotIn("ANTHROPIC_API_KEY", environment)
+        self.assertNotIn("ANTHROPIC_AUTH_TOKEN", environment)
+        self.assertNotIn("LITELLM_API_KEY", environment)
+        self.assertNotIn("LITELLM_MASTER_KEY", environment)
+
+    def test_claude_allowed_rate_limit_event_is_informational(self):
+        event = {"type": "rate_limit_event", "rate_limit_info": {"status": "allowed", "rateLimitType": "five_hour"}}
+        self.assertIsNone(claude_bridge.rate_limit_event_error(event))
+
+    def test_claude_rejected_rate_limit_event_is_classified(self):
+        event = {"type": "rate_limit_event", "rate_limit_info": {"status": "rejected", "rateLimitType": "weekly", "resetsAt": 123}}
+        error = claude_bridge.rate_limit_event_error(event)
+        self.assertIsInstance(error, claude_bridge.ClaudeRateLimitError)
+        self.assertIn("weekly", str(error))
+        self.assertIn("123", str(error))
+
     def test_claude_rate_limit_is_reported_as_retryable_http_429(self):
         original_runner = claude_bridge.run_claude_stream
 
@@ -86,9 +117,19 @@ class LocalSetupTests(unittest.TestCase):
         self.assertIn('model_reasoning_summary=$role_summary', runner)
         self.assertIn('sandbox_mode=$role_sandbox', runner)
 
+    def test_antigravity_ensure_does_not_double_supervise_launchd_services(self):
+        ensure = (REPO_ROOT / "scripts/ensure-codex-antigravity-proxy.sh").read_text()
+        self.assertIn('launchctl print "$domain/$proxy_label"', ensure)
+        self.assertIn('refusing to start duplicate unmanaged processes', ensure)
+        self.assertNotIn('launchctl bootout "$domain/$label"', ensure)
+
     def test_minimax_proxy_loads_background_environment_credentials(self):
         proxy = (REPO_ROOT / "scripts/ensure-codex-minimax-proxy.sh").read_text()
         self.assertIn('source "${CODEX_ENV_FILE:-$HOME/.codex/.env}"', proxy)
+
+    def test_antigravity_allows_long_running_cli_turns_by_default(self):
+        proxy = (REPO_ROOT / "scripts/codex-antigravity-cli-responses-proxy.mjs").read_text()
+        self.assertIn('process.env.AGY_PRINT_TIMEOUT ?? "15m"', proxy)
 
     def test_antigravity_stream_reports_early_provider_errors_as_retryable(self):
         proxy = (REPO_ROOT / "scripts/codex-antigravity-cli-responses-proxy.mjs").read_text()

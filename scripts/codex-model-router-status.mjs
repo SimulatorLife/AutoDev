@@ -28,6 +28,28 @@ for (const [provider, state] of Object.entries(body.providers ?? {})) {
   console.log(`${provider.padEnd(19)} ${(state.status + cooldown).padEnd(18)} ${String(state.activeRequests).padStart(6)}  ${String(state.attempts).padStart(8)}  ${String(state.successes).padStart(9)}  ${String(state.failures).padStart(8)}  ${lastFailure}`);
 }
 
+const usage = body.usage ?? {};
+console.log("");
+const concurrency = body.concurrency ?? {};
+const limit = (value) => value == null ? "unlimited" : value;
+const lastDenial = concurrency.lastDenial ? `${concurrency.lastDenial.reason} (${concurrency.lastDenial.sessionScope})` : "-";
+const denialsByReason = Object.entries(concurrency.denialsByReason ?? {}).map(([reason, count]) => `${reason}: ${count}`).join(", ") || "-";
+console.log("");
+console.log(`Concurrency: per-session ${limit(concurrency.maxConcurrentThreadsPerSession)}, global ${limit(concurrency.maxThreads)}, effective per-session ${limit(concurrency.effectivePerSessionLimit)}, active subagents ${concurrency.activeSubagentThreads ?? 0}, denials ${concurrency.denials ?? 0} (${denialsByReason}), last denial ${lastDenial}`);
+
+console.log("Usage by origin:");
+for (const [origin, state] of Object.entries(usage.byOrigin ?? {})) {
+  console.log(`  ${origin}: ${state.attempts} attempts, ${state.successes} successes, ${state.failures} failures, avg ${Math.round((state.averageDurationMs ?? 0) / 1000)}s, ${state.toolCalls} tool calls`);
+}
+console.log("Usage by role:");
+for (const [role, state] of Object.entries(usage.byRole ?? {})) {
+  console.log(`  ${role}: ${state.attempts} attempts, ${state.successes} successes, ${state.failures} failures, avg ${Math.round((state.averageDurationMs ?? 0) / 1000)}s, ${state.toolCalls} tool calls`);
+}
+console.log("Usage by resolved model:");
+for (const [model, state] of Object.entries(usage.byModel ?? {})) {
+  console.log(`  ${model}: ${state.attempts} attempts, ${state.successes} successes, ${state.failures} failures, avg ${Math.round((state.averageDurationMs ?? 0) / 1000)}s, ${state.toolCalls} tool calls`);
+}
+
 const events = body.recentEvents ?? [];
 if (events.length) {
   console.log("");

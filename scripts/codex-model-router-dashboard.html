@@ -27,9 +27,24 @@
 
   <h2>Providers</h2>
   <table>
-    <thead><tr><th>Provider</th><th>Configured model(s)</th><th>Status</th><th>Active</th><th>Attempts</th><th>Successes</th><th>Failures</th><th>Last failure</th></tr></thead>
-    <tbody id="providers"><tr><td colspan="8">Loading…</td></tr></tbody>
+    <thead><tr><th>Provider</th><th>Configured model(s)</th><th>Status</th><th>Active</th><th>Attempts</th><th>Successes</th><th>Failures</th><th>Skipped</th><th>Last failure</th></tr></thead>
+    <tbody id="providers"><tr><td colspan="9">Loading…</td></tr></tbody>
   </table>
+
+  <h2>Usage overview</h2>
+  <div id="usage-totals">Loading…</div>
+
+  <h2>By origin</h2>
+  <table><thead><tr><th>Origin</th><th>Attempts</th><th>Successes</th><th>Failures</th><th>Avg turn</th><th>Tool calls</th></tr></thead><tbody id="by-origin"><tr><td colspan="6">Loading…</td></tr></tbody></table>
+
+  <h2>By role</h2>
+  <table><thead><tr><th>Role</th><th>Attempts</th><th>Successes</th><th>Failures</th><th>Avg turn</th><th>Tool calls</th></tr></thead><tbody id="by-role"><tr><td colspan="6">Loading…</td></tr></tbody></table>
+
+  <h2>By resolved model</h2>
+  <table><thead><tr><th>Provider/model</th><th>Attempts</th><th>Successes</th><th>Failures</th><th>Avg turn</th><th>Tool calls</th></tr></thead><tbody id="by-model"><tr><td colspan="6">Loading…</td></tr></tbody></table>
+
+  <h2>Concurrency</h2>
+  <div id="concurrency">Loading…</div>
 
   <h2>Recent routing events</h2>
   <pre id="events">Loading…</pre>
@@ -50,6 +65,8 @@
     };
     const modelList = (models) => Object.entries(models ?? {}).map(([tier, model]) => `${tier}: ${model}`).join(", ") || "-";
     const failureText = (failure) => failure ? `${failure.class}${failure.status ? ` (HTTP ${failure.status})` : ""}` : "-";
+    const durationText = (milliseconds) => `${(Number(milliseconds ?? 0) / 1000).toFixed(1)}s`;
+    const usageRows = (usage) => Object.entries(usage ?? {}).map(([key, state]) => `<tr><td><code>${text(key)}</code></td><td>${state.attempts}</td><td>${state.successes}</td><td>${state.failures}</td><td>${durationText(state.averageDurationMs)}</td><td>${state.toolCalls}</td></tr>`).join("") || '<tr><td colspan="6">No usage recorded yet.</td></tr>';
 
     function render(status) {
       document.title = `${status.router} · status`;
@@ -58,8 +75,19 @@
       document.querySelector("#providers").innerHTML = Object.entries(status.providers ?? {}).map(([provider, state]) => {
         const limited = state.status !== "ready";
         const cooldown = state.cooldownRemainingMs > 0 ? ` (${Math.ceil(state.cooldownRemainingMs / 1000)}s)` : "";
-        return `<tr><td><code>${text(provider)}</code></td><td><code>${text(modelList(state.configuredModels))}</code></td><td class="${limited ? "limited" : "ok"}">${text(state.status)}${cooldown}</td><td>${state.activeRequests}</td><td>${state.attempts}</td><td>${state.successes}</td><td>${state.failures}</td><td>${text(failureText(state.lastFailure))}</td></tr>`;
-      }).join("") || '<tr><td colspan="8">No providers configured.</td></tr>';
+        return `<tr><td><code>${text(provider)}</code></td><td><code>${text(modelList(state.configuredModels))}</code></td><td class="${limited ? "limited" : "ok"}">${text(state.status)}${cooldown}</td><td>${state.activeRequests}</td><td>${state.attempts}</td><td>${state.successes}</td><td>${state.failures}</td><td>${state.skipped}</td><td>${text(failureText(state.lastFailure))}</td></tr>`;
+      }).join("") || '<tr><td colspan="9">No providers configured.</td></tr>';
+      const concurrency = status.concurrency ?? {};
+      const limit = (value) => value == null ? "unlimited" : value;
+      const denial = concurrency.lastDenial ? `${concurrency.lastDenial.reason} (${concurrency.lastDenial.sessionScope})` : "-";
+      const denialsByReason = Object.entries(concurrency.denialsByReason ?? {}).map(([reason, count]) => `${reason}: ${count}`).join(", ") || "-";
+      document.querySelector("#concurrency").textContent = `Per-session limit: ${limit(concurrency.maxConcurrentThreadsPerSession)} · global limit: ${limit(concurrency.maxThreads)} · effective per-session: ${limit(concurrency.effectivePerSessionLimit)} · active subagents: ${concurrency.activeSubagentThreads ?? 0} · denials: ${concurrency.denials ?? 0} (${denialsByReason}) · last denial: ${denial}`;
+      const usage = status.usage ?? {};
+      const totals = usage.totals ?? {};
+      document.querySelector("#usage-totals").textContent = `Attempts: ${totals.attempts ?? 0} · successes: ${totals.successes ?? 0} · failures: ${totals.failures ?? 0} · average completed turn: ${durationText(totals.averageDurationMs)} · tool calls: ${totals.toolCalls ?? 0}`;
+      document.querySelector("#by-origin").innerHTML = usageRows(usage.byOrigin);
+      document.querySelector("#by-role").innerHTML = usageRows(usage.byRole);
+      document.querySelector("#by-model").innerHTML = usageRows(usage.byModel);
       document.querySelector("#events").textContent = (status.recentEvents ?? []).slice(0, 25).map((event) => {
         const target = `${event.provider}/${event.model}`;
         const outcome = event.outcome ?? event.failureClass ?? "-";
