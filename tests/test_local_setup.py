@@ -39,6 +39,45 @@ class LocalSetupTests(unittest.TestCase):
         names = sorted(path.name for path in (REPO_ROOT / "scripts/codex/skills").iterdir())
         self.assertEqual(names, sorted(SKILL_NAMES))
 
+    def test_native_codex_rules_are_tracked_and_deny_destructive_git_commands(self):
+        rules = REPO_ROOT / "scripts/codex/rules/default.rules"
+        installer = (REPO_ROOT / "scripts/codex/install-codex-integration.sh").read_text()
+        config = (REPO_ROOT / "scripts/codex/config.toml").read_text()
+        self.assertTrue(rules.is_file())
+        rule_text = rules.read_text()
+        self.assertIn('decision = "forbidden"', rule_text)
+        self.assertNotRegex(rule_text, r"(?i)cannonfather|racinggame|gmlooop")
+        self.assertIn('rule_names=(default.rules)', installer)
+        self.assertIn('link_one "$repo_root/scripts/codex/rules/$name" "$rules_dir/$name"', installer)
+        self.assertNotIn("deny-git-history-rewrite", config)
+        self.assertFalse((REPO_ROOT / "scripts/deny-git-history-rewrite.mjs").exists())
+
+        codex = Path("/Applications/ChatGPT.app/Contents/Resources/codex")
+        if not codex.exists():
+            self.skipTest("Codex CLI is not installed at the local validation path")
+        for command in (
+            ("git", "checkout", "main"),
+            ("git", "reset", "--hard", "HEAD"),
+            ("git", "stash", "push"),
+            ("git-checkout", "main"),
+        ):
+            with self.subTest(command=command):
+                result = subprocess.run(
+                    [str(codex), "execpolicy", "check", "--rules", str(rules), "--", *command],
+                    text=True,
+                    capture_output=True,
+                    check=True,
+                )
+                self.assertEqual(json.loads(result.stdout)["decision"], "forbidden")
+
+        safe = subprocess.run(
+            [str(codex), "execpolicy", "check", "--rules", str(rules), "--", "git", "status"],
+            text=True,
+            capture_output=True,
+            check=True,
+        )
+        self.assertNotEqual(json.loads(safe.stdout).get("decision"), "forbidden")
+
     def test_claude_subprocess_environment_is_oauth_only(self):
         with patch.dict(
             claude_bridge.os.environ,

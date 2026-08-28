@@ -1,0 +1,34 @@
+# Protect uncommitted work from destructive or history-rewriting Git commands.
+# Codex evaluates these prefixes before dispatching the command.
+prefix_rule(
+    pattern = ["git", ["checkout", "reset", "stash"]],
+    decision = "forbidden",
+    justification = "These Git operations can discard, rewrite, or hide uncommitted work. Ask the user or use a non-destructive alternative such as git switch -c, git restore --staged, or git worktree.",
+    match = [
+        "git checkout main",
+        "git reset --hard HEAD",
+        "git stash push",
+    ],
+    not_match = [
+        "git status",
+        "git switch -c feature",
+        "git restore --staged file",
+    ],
+)
+
+# Also cover Git's dashed executable forms.
+prefix_rule(
+    pattern = ["git-checkout"],
+    decision = "forbidden",
+    justification = "Use a non-destructive alternative or ask the user to run this command.",
+)
+prefix_rule(
+    pattern = ["git-reset"],
+    decision = "forbidden",
+    justification = "Use a non-destructive alternative or ask the user to run this command.",
+)
+prefix_rule(
+    pattern = ["git-stash"],
+    decision = "forbidden",
+    justification = "Use a non-destructive alternative or ask the user to run this command.",
+)

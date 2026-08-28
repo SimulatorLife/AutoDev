@@ -193,6 +193,13 @@ installer is the only supported materialization path into
   are versioned directories owned by AutoDev. The installer creates symlinks
   under `$HOME/.agents/skills/`, so Codex reads the canonical skill files without
   a second copied source of truth.
+- Native command rules: `scripts/codex/rules/default.rules` is the versioned
+  source for restrictive Codex `prefix_rule` entries. The installer symlinks it
+  to `$CODEX_HOME/rules/default.rules`; it replaces the old custom Git hook and
+  is testable with `codex execpolicy check` before restart. These prefix rules
+  cover direct command tokens and the native engine's supported shell parsing;
+  they are not a general-purpose parser for arbitrary environment wrappers or
+  global-option placement.
 - User-level role definitions: `scripts/codex/agents/*.toml`, materialized as
   managed regular-file copies under `$CODEX_HOME/agents/`. The role loader must
   receive regular files rather than symlinks; the installer replaces symlinks and

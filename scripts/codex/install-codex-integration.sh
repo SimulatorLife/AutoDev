@@ -5,6 +5,7 @@ repo_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
 codex_home="${CODEX_HOME:-$HOME/.codex}"
 hooks_dir="$codex_home/hooks"
 agents_dir="$codex_home/agents"
+rules_dir="$codex_home/rules"
 user_skills_dir="$HOME/.agents/skills"
 legacy_skills_dirs=("$codex_home/skills" "$codex_home/agents/skills")
 litellm_dir="$HOME/.config/litellm"
@@ -35,6 +36,7 @@ profile_names=(claude minimax antigravity)
 catalog_names=(claude minimax antigravity codex)
 agent_role_names=(browser-tester default docs-researcher explorer smart validator worker)
 skill_names=(lsp-mcp-server orchestration remove-legacy-shims)
+rule_names=(default.rules)
 custom_provider_names=(local_model_router claude_code_subscription minimax antigravity_cli)
 tracked_sources=""
 
@@ -139,6 +141,12 @@ check_versioned_sources() {
   done
   for name in "${skill_names[@]}"; do
     source="$repo_root/scripts/codex/skills/$name"
+    if ! check_versioned_source "$source"; then
+      failed=1
+    fi
+  done
+  for name in "${rule_names[@]}"; do
+    source="$repo_root/scripts/codex/rules/$name"
     if ! check_versioned_source "$source"; then
       failed=1
     fi
@@ -267,6 +275,16 @@ check_legacy_skill_links() {
 check_links() {
   local failed=0
   local name source target
+  for name in "${rule_names[@]}"; do
+    source="$repo_root/scripts/codex/rules/$name"
+    target="$rules_dir/$name"
+    if check_one "$source" "$target"; then
+      printf 'ok %s -> %s\n' "$target" "$source"
+    else
+      printf 'missing-or-drifted %s -> %s\n' "$target" "$source"
+      failed=1
+    fi
+  done
   for name in "${skill_names[@]}"; do
     source="$repo_root/scripts/codex/skills/$name"
     target="$user_skills_dir/$name"
@@ -376,6 +394,9 @@ for name in "${profile_names[@]}"; do
 done
 for name in "${catalog_names[@]}"; do
   link_one "$repo_root/scripts/codex/catalogs/$name-model-catalog.json" "$codex_home/$name-model-catalog.json"
+done
+for name in "${rule_names[@]}"; do
+  link_one "$repo_root/scripts/codex/rules/$name" "$rules_dir/$name"
 done
 for name in "${skill_names[@]}"; do
   for legacy_dir in "${legacy_skills_dirs[@]}"; do

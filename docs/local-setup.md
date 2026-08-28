@@ -26,6 +26,17 @@ Keep the canonical skill content in AutoDev; update the directories there and
 rerun the installer when changing this user-level skill setup. Restart Codex or
 start a new task after installation so user-level skill discovery refreshes.
 
+Destructive Git commands are enforced by Codex's native rules engine. The
+tracked rules live in `scripts/codex/rules/default.rules` and are symlinked by
+the installer to `$CODEX_HOME/rules/default.rules`. Validate a rule without
+running the command:
+
+```bash
+codex execpolicy check --pretty \
+  --rules /Users/henrykirk/AutoDev/scripts/codex/rules/default.rules \
+  -- git reset --hard HEAD
+```
+
 ## Safety
 
 - Inspect launch-agent plists before loading them with `launchctl`.
