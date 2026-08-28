@@ -258,10 +258,22 @@ test("serves a lightweight dashboard to browsers and JSON to API clients", async
     assert.match(dashboard.headers.get("content-type"), /text\/html/);
     const dashboardBody = await dashboard.text();
     assert.match(dashboardBody, /setInterval\(refresh, 3000\)/);
-    assert.match(dashboardBody, /id="by-origin"/);
-    assert.match(dashboardBody, /id="by-role"/);
+    assert.match(dashboardBody, /id="usage-breakdown"/);
+    assert.doesNotMatch(dashboardBody, /id="by-origin"/);
+    assert.doesNotMatch(dashboardBody, /id="by-role"/);
     assert.doesNotMatch(dashboardBody, /id="by-model"/);
-    assert.match(dashboardBody, /<th>Role<\/th><th>Active<\/th><th>Attempts<\/th>/);
+    assert.match(dashboardBody, /<th>Category<\/th><th>Active<\/th><th>Attempts<\/th>/);
+    assert.match(dashboardBody, /const usageBreakdownRows = \(usage\)/);
+    assert.match(dashboardBody, /byRole\.unattributed \?\? \{\}/);
+    assert.match(dashboardBody, /class="toggle-usage" data-usage-group="subagents"/);
+    assert.match(dashboardBody, /class="usage-child" data-usage-child="subagents"\$\{expanded \? "" : " hidden"\}/);
+    assert.match(dashboardBody, /const expandedUsageGroups = new Set\(\);/);
+    assert.match(dashboardBody, /role !== "unattributed"/);
+    assert.match(dashboardBody, /usageRow\("Orchestrator", orchestrator\)/);
+    assert.match(dashboardBody, /<code>Subagents<\/code>/);
+    assert.match(dashboardBody, /<h2>Orchestrator &amp; subagents<\/h2>/);
+    assert.doesNotMatch(dashboardBody, /<h2>By origin<\/h2>/);
+    assert.doesNotMatch(dashboardBody, /<h2>By role<\/h2>/);
     assert.match(dashboardBody, /id="codex-telemetry"/);
     assert.match(dashboardBody, /id="mcp-telemetry"/);
     assert.match(dashboardBody, /MCP ready/);
@@ -397,6 +409,45 @@ test("aggregates usage by role, resolved model, origin, duration, and tool calls
   assert.equal(usage.byOrigin.subagent.successes, 1);
   assert.equal(usage.byOrigin.orchestrator.successes, 1);
   assert.equal(usage.totals.toolCalls, 3);
+  resetRouterTelemetry();
+});
+
+test("folds roleless orchestrator and direct traffic into a single unattributed bucket that sums to the Subagents role totals", () => {
+  resetRouterTelemetry();
+  // Orchestrator-origin: a direct Codex model request (no role).
+  recordRouterEvent({ phase: "selected", requestId: "req-orchestrator", requestedModel: "gpt-5.6-sol", provider: "codex", model: "gpt-5.6-sol" });
+  recordRouterEvent({ phase: "result", requestId: "req-orchestrator", requestedModel: "gpt-5.6-sol", provider: "codex", model: "gpt-5.6-sol", outcome: "success", status: 200, elapsedMs: 50 });
+  // Direct-origin: a non-Codex concrete model request (no role).
+  recordRouterEvent({ phase: "selected", requestId: "req-direct", requestedModel: "sonnet", provider: "claude", model: "sonnet" });
+  recordRouterEvent({ phase: "result", requestId: "req-direct", requestedModel: "sonnet", provider: "claude", model: "sonnet", outcome: "success", status: 200, elapsedMs: 30 });
+  // Subagent-origin: two distinct role requests.
+  recordRouterEvent({ phase: "selected", requestId: "req-worker", role: "worker", requestedModel: "autodev/worker", provider: "minimax", model: "MiniMax-M3" });
+  recordRouterEvent({ phase: "result", requestId: "req-worker", role: "worker", requestedModel: "autodev/worker", provider: "minimax", model: "MiniMax-M3", outcome: "success", status: 200, elapsedMs: 20, toolCalls: 2 });
+  recordRouterEvent({ phase: "selected", requestId: "req-explorer", role: "explorer", requestedModel: "autodev/explorer", provider: "claude", model: "sonnet" });
+  recordRouterEvent({ phase: "result", requestId: "req-explorer", role: "explorer", requestedModel: "autodev/explorer", provider: "claude", model: "sonnet", outcome: "failure", status: 429, failureClass: "throttled", elapsedMs: 10 });
+
+  const usage = getRouterStatus().usage;
+  // byOrigin keeps orchestrator and direct distinct (unchanged JSON API contract).
+  assert.equal(usage.byOrigin.orchestrator.successes, 1);
+  assert.equal(usage.byOrigin.direct.successes, 1);
+  assert.equal(usage.byOrigin.subagent.successes, 1);
+  assert.equal(usage.byOrigin.subagent.failures, 1);
+  // The dashboard's Orchestrator row folds both roleless origins into byRole.unattributed.
+  assert.equal(usage.byRole.unattributed.attempts, 2);
+  assert.equal(usage.byRole.unattributed.successes, 2);
+
+  const roleEntries = Object.entries(usage.byRole).filter(([role]) => role !== "unattributed");
+  const subagentTotal = roleEntries.reduce((total, [, bucket]) => ({
+    attempts: total.attempts + bucket.attempts,
+    successes: total.successes + bucket.successes,
+    failures: total.failures + bucket.failures,
+    toolCalls: total.toolCalls + bucket.toolCalls,
+  }), { attempts: 0, successes: 0, failures: 0, toolCalls: 0 });
+  // Child role-bucket rows (excluding unattributed) must aggregate to the Subagents parent totals.
+  assert.equal(subagentTotal.attempts, usage.byOrigin.subagent.attempts);
+  assert.equal(subagentTotal.successes, usage.byOrigin.subagent.successes);
+  assert.equal(subagentTotal.failures, usage.byOrigin.subagent.failures);
+  assert.equal(subagentTotal.toolCalls, usage.byOrigin.subagent.toolCalls);
   resetRouterTelemetry();
 });
 

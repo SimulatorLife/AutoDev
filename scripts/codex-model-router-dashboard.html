@@ -16,8 +16,8 @@
     th, td { border-bottom: 1px solid #8885; padding: .45rem .55rem; text-align: left; vertical-align: top; }
     #providers-table th, #providers-table td { white-space: normal; overflow-wrap: anywhere; }
     th { white-space: nowrap; }
-    .toggle-provider, .toggle-section { background: none; border: 0; color: inherit; cursor: pointer; font: inherit; padding: 0; }
-    .toggle-provider:hover, .toggle-section:hover { text-decoration: underline; }
+    .toggle-provider, .toggle-usage, .toggle-section { background: none; border: 0; color: inherit; cursor: pointer; font: inherit; padding: 0; }
+    .toggle-provider:hover, .toggle-usage:hover, .toggle-section:hover { text-decoration: underline; }
     #providers-table { table-layout: fixed; min-width: 0; width: 100%; }
     #providers-table th:nth-child(1), #providers-table td:nth-child(1) { width: 14%; }
     #providers-table th:nth-child(2), #providers-table td:nth-child(2) { width: 20%; overflow-wrap: anywhere; white-space: normal; }
@@ -31,8 +31,8 @@
     #providers-table th:nth-child(10), #providers-table td:nth-child(10) { width: 7%; }
     #providers-table th:nth-child(11), #providers-table td:nth-child(11) { width: 10%; }
     .caret { display: inline-flex; width: 1em; height: 1em; align-items: center; justify-content: center; vertical-align: -0.1em; }
-    .provider-model { background: #8881; }
-    .provider-model td:first-child { padding-left: 1.5rem; }
+    .provider-model, .usage-child { background: #8881; }
+    .provider-model td:first-child, .usage-child td:first-child { padding-left: 1.5rem; }
     .provider-summary { border-top: 2px solid #888; font-weight: 700; }
     .provider-summary th, .provider-summary td { padding-top: .7rem; }
     code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
@@ -55,11 +55,8 @@
   </table>
   </div>
 
-  <h2>By origin</h2>
-  <table><thead><tr><th>Origin</th><th>Active</th><th>Attempts</th><th>Successes</th><th>Failures</th><th>Avg turn</th><th>Tool calls</th></tr></thead><tbody id="by-origin"><tr><td colspan="7">Loading…</td></tr></tbody></table>
-
-  <h2>By role</h2>
-  <table><thead><tr><th>Role</th><th>Active</th><th>Attempts</th><th>Successes</th><th>Failures</th><th>Avg turn</th><th>Tool calls</th></tr></thead><tbody id="by-role"><tr><td colspan="7">Loading…</td></tr></tbody></table>
+  <h2>Orchestrator &amp; subagents</h2>
+  <table id="usage-table"><thead><tr><th>Category</th><th>Active</th><th>Attempts</th><th>Successes</th><th>Failures</th><th>Avg turn</th><th>Tool calls</th></tr></thead><tbody id="usage-breakdown"><tr><td colspan="7">Loading…</td></tr></tbody></table>
 
   <h2>Codex telemetry</h2>
   <div id="codex-telemetry">Loading…</div>
@@ -99,8 +96,33 @@
     const modelList = (models) => Object.entries(models ?? {}).map(([tier, model]) => `${tier}: ${model}`).join(", ") || "-";
     const failureText = (failure) => failure ? `${failure.class}${failure.status ? ` (HTTP ${failure.status})` : ""}` : "";
     const durationText = (milliseconds) => `${(Number(milliseconds ?? 0) / 1000).toFixed(1)}s`;
-    const usageRows = (usage, includeActive = false) => Object.entries(usage ?? {}).map(([key, state]) => `<tr><td><code>${text(key)}</code></td>${includeActive ? `<td>${state.active ?? 0}</td>` : ""}<td>${state.attempts}</td><td>${state.successes}</td><td>${state.failures}</td><td>${durationText(state.averageDurationMs)}</td><td>${state.toolCalls}</td></tr>`).join("") || `<tr><td colspan="${includeActive ? 7 : 6}">No usage recorded yet.</td></tr>`;
+    const usageRow = (label, state, cellPrefix = `<code>${text(label)}</code>`) => `<tr><td>${cellPrefix}</td><td>${state.active ?? 0}</td><td>${state.attempts ?? 0}</td><td>${state.successes ?? 0}</td><td>${state.failures ?? 0}</td><td>${durationText(state.averageDurationMs)}</td><td>${state.toolCalls ?? 0}</td></tr>`;
+    // byRole.unattributed folds roleless traffic from both the "orchestrator" and "direct"
+    // origins into a single Orchestrator row; see docs/provider-routing.md for the caveat.
+    const usageBreakdownRows = (usage) => {
+      const byRole = usage?.byRole ?? {};
+      const orchestrator = byRole.unattributed ?? {};
+      const roleEntries = Object.entries(byRole).filter(([role]) => role !== "unattributed");
+      const subagentTotal = roleEntries.reduce((total, [, bucket]) => {
+        total.active += bucket.active ?? 0;
+        total.attempts += bucket.attempts ?? 0;
+        total.successes += bucket.successes ?? 0;
+        total.failures += bucket.failures ?? 0;
+        total.toolCalls += bucket.toolCalls ?? 0;
+        total.durationMs += bucket.durationMs ?? 0;
+        return total;
+      }, { active: 0, attempts: 0, successes: 0, failures: 0, toolCalls: 0, durationMs: 0 });
+      const subagentTurns = subagentTotal.successes + subagentTotal.failures;
+      subagentTotal.averageDurationMs = subagentTurns > 0 ? Math.round(subagentTotal.durationMs / subagentTurns) : 0;
+      const expanded = expandedUsageGroups.has("subagents");
+      const orchestratorRow = usageRow("Orchestrator", orchestrator);
+      const subagentsCell = `<button type="button" class="toggle-usage" data-usage-group="subagents" aria-expanded="${expanded}"><span class="caret">${expanded ? "▾" : "▸"}</span> <code>Subagents</code></button>`;
+      const subagentsRow = usageRow(null, subagentTotal, subagentsCell);
+      const childRows = roleEntries.map(([role, bucket]) => `<tr class="usage-child" data-usage-child="subagents"${expanded ? "" : " hidden"}><td>↳ <code>${text(role)}</code></td><td>${bucket.active ?? 0}</td><td>${bucket.attempts ?? 0}</td><td>${bucket.successes ?? 0}</td><td>${bucket.failures ?? 0}</td><td>${durationText(bucket.averageDurationMs)}</td><td>${bucket.toolCalls ?? 0}</td></tr>`).join("");
+      return orchestratorRow + subagentsRow + childRows;
+    };
     const expandedProviders = new Set();
+    const expandedUsageGroups = new Set();
 
     function render(status) {
       document.title = `${status.router} · status`;
@@ -115,6 +137,7 @@
         const expanded = collapsible && expandedProviders.has(group);
         const modelStats = uniqueModels.reduce((total, [, model]) => {
           const stats = modelUsage[`${provider}/${model}`] ?? {};
+          total.active += stats.active ?? 0;
           total.attempts += stats.attempts ?? 0;
           total.successes += stats.successes ?? 0;
           total.failures += stats.failures ?? 0;
@@ -122,7 +145,7 @@
           total.durationMs += stats.durationMs ?? 0;
           total.toolCalls += stats.toolCalls ?? 0;
           return total;
-        }, { attempts: 0, successes: 0, failures: 0, skipped: 0, durationMs: 0, toolCalls: 0 });
+        }, { active: 0, attempts: 0, successes: 0, failures: 0, skipped: 0, durationMs: 0, toolCalls: 0 });
         modelStats.averageDurationMs = modelStats.successes + modelStats.failures > 0
           ? Math.round(modelStats.durationMs / (modelStats.successes + modelStats.failures))
           : 0;
@@ -132,12 +155,15 @@
           ? `<button type="button" class="toggle-provider" data-provider-group="${group}" aria-expanded="${expanded}"><span class="caret">${expanded ? "▾" : "▸"}</span> <code>${text(provider)}</code></button>`
           : `<code>${text(provider)}</code>`;
         const configuredCell = collapsible ? "" : `<code>${text(models[0]?.[1] ?? "")}</code>`;
-        const parent = `<tr class="provider-parent"><td>${providerCell}</td><td>${configuredCell}</td><td class="${limited ? "limited" : "ok"}">${text(state.status)}${cooldown}</td><td>${state.activeRequests}</td><td>${modelStats.attempts}</td><td>${modelStats.successes}</td><td>${modelStats.failures}</td><td>${modelStats.toolCalls}</td><td>${durationText(modelStats.averageDurationMs)}</td><td>${modelStats.skipped}</td><td>${text(failureText(state.lastFailure))}</td></tr>`;
+        const parent = `<tr class="provider-parent"><td>${providerCell}</td><td>${configuredCell}</td><td class="${limited ? "limited" : "ok"}">${text(state.status)}${cooldown}</td><td>${modelStats.active}</td><td>${modelStats.attempts}</td><td>${modelStats.successes}</td><td>${modelStats.failures}</td><td>${modelStats.toolCalls}</td><td>${durationText(modelStats.averageDurationMs)}</td><td>${modelStats.skipped}</td><td>${text(failureText(state.lastFailure))}</td></tr>`;
         const children = collapsible ? uniqueModels.map(([, model]) => {
           const stats = modelUsage[`${provider}/${model}`] ?? {};
-          const modelLimited = (stats.failures ?? 0) > 0 && stats.lastFailure;
+          // A model's own lastFailure never clears on a later success (server-side usage
+          // bucket), so once the provider itself has recovered (limited=false), treat every
+          // child as ready rather than showing a stale failure indefinitely.
+          const modelLimited = limited && (stats.failures ?? 0) > 0 && stats.lastFailure;
           const modelStatus = modelLimited ? (stats.lastFailure.class ?? "failed") : state.status;
-          return `<tr class="provider-model" data-provider-child="${group}"${expanded ? "" : " hidden"}><td>↳</td><td><code>${text(model)}</code></td><td class="${modelStatus === "ready" ? "ok" : "limited"}">${text(modelStatus)}</td><td>0</td><td>${stats.attempts ?? 0}</td><td>${stats.successes ?? 0}</td><td>${stats.failures ?? 0}</td><td>${stats.toolCalls ?? 0}</td><td>${durationText(stats.averageDurationMs)}</td><td>${stats.skipped ?? 0}</td><td>${text(failureText(stats.lastFailure))}</td></tr>`;
+          return `<tr class="provider-model" data-provider-child="${group}"${expanded ? "" : " hidden"}><td>↳</td><td><code>${text(model)}</code></td><td class="${modelStatus === "ready" ? "ok" : "limited"}">${text(modelStatus)}</td><td>${stats.active ?? 0}</td><td>${stats.attempts ?? 0}</td><td>${stats.successes ?? 0}</td><td>${stats.failures ?? 0}</td><td>${stats.toolCalls ?? 0}</td><td>${durationText(stats.averageDurationMs)}</td><td>${stats.skipped ?? 0}</td><td>${text(failureText(stats.lastFailure))}</td></tr>`;
         }).join("") : "";
         return parent + children;
       }).join("") || '<tr><td colspan="11">No providers configured.</td></tr>';
@@ -173,8 +199,15 @@
       document.querySelector("#summary-tools").textContent = totals.toolCalls ?? 0;
       document.querySelector("#summary-duration").textContent = durationText(totals.averageDurationMs);
       document.querySelector("#summary-skips").textContent = totals.skipped ?? 0;
-      document.querySelector("#by-origin").innerHTML = usageRows(usage.byOrigin, true);
-      document.querySelector("#by-role").innerHTML = usageRows(usage.byRole, true);
+      document.querySelector("#usage-breakdown").innerHTML = usageBreakdownRows(usage);
+      document.querySelectorAll(".toggle-usage").forEach((button) => button.addEventListener("click", () => {
+        const group = button.dataset.usageGroup;
+        const expanded = button.getAttribute("aria-expanded") === "true";
+        if (expanded) expandedUsageGroups.delete(group); else expandedUsageGroups.add(group);
+        button.setAttribute("aria-expanded", String(!expanded));
+        button.querySelector(".caret").textContent = expanded ? "▸" : "▾";
+        document.querySelectorAll(`[data-usage-child="${group}"]`).forEach((row) => { row.hidden = expanded; });
+      }));
       const codexTelemetry = status.codexTelemetry ?? {};
       const receiver = codexTelemetry.receiver ?? {};
       const turns = codexTelemetry.turns ?? {};

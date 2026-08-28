@@ -65,7 +65,20 @@ The router makes its effective choice visible in two ways:
   subagent; a direct Codex model request is classified as orchestrator-originated.
   This is an operational inference: the router sees HTTP turns, not the full
   lifetime of a Codex session, and tool-call counts cover calls represented in
-  Responses events only.
+  Responses events only. The JSON `/status` payload keeps `usage.byOrigin` and
+  `usage.byRole` as separate, unmodified buckets.
+- The dashboard's usage table collapses this into exactly two top-level rows,
+  Orchestrator and Subagents, because roleless requests only carry an origin
+  and role-attributed requests only carry a role: origin and role are not two
+  independent dimensions to cross-tabulate. The Subagents row is the only one
+  with a caret; expanding it reveals one child row per explicit role bucket
+  (`usage.byRole`, excluding `unattributed`), and those child rows always sum
+  to the Subagents parent totals because every subagent request is
+  role-attributed. The Orchestrator row is `usage.byRole.unattributed`, which
+  folds together *both* roleless origins (`orchestrator` and `direct`) so that
+  no traffic is dropped from the table; it is not a strict proxy for
+  Codex-origin traffic, since roleless non-Codex ("direct") requests land in
+  the same bucket.
 - Open `http://127.0.0.1:4100/status` in a browser for the bare-bones dashboard;
   it polls the JSON status every 3 seconds. `/dashboard` is an explicit HTML
   alias. API clients that send `Accept: application/json` to `/status` receive
