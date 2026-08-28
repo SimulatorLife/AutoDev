@@ -117,14 +117,18 @@ cannot accidentally send a read-only role at the wrong provider effort.
 The native app-server path is also configured and verified, but the desktop
 high-level fanout service does not currently delegate through it.
 
+All spawned roles are leaf agents. Native role aliases (`autodev/<role>`) and
+external-provider model aliases are therefore excluded from the root
+delegation hook; only the configured parent model receives that instruction.
 The Claude bridge is intentionally a leaf-provider gateway: when it launches
 the real Claude Code CLI, it passes `--disallowed-tools Agent,Task`. `Agent` is
 the current Claude Code subagent tool and `Task` is the legacy name. The same
 boundary is declared in `.claude/settings.json` with both tools in
 `permissions.deny`, so a direct Claude Code session from this repository has
 the same behavior. The root-delegation hook also exempts Claude model aliases,
-so leaf providers do not receive the parent-only instruction to spawn more
-agents. Keep these restrictions at the CLI/gateway boundary rather than
+while native `autodev/*` roles are excluded by their role alias, so leaf
+providers do not receive the parent-only instruction to spawn more agents.
+Keep these restrictions at the CLI/gateway boundary rather than
 relying only on role prompt text.
 
 ## Provider paths and constraints

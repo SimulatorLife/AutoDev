@@ -105,6 +105,31 @@ class LocalSetupTests(unittest.TestCase):
             )
         self.assertEqual(result.stdout, "")
 
+    def test_root_delegation_hook_skips_native_role_aliases(self):
+        hook = REPO_ROOT / "scripts/enforce-root-delegation.sh"
+        for model in (
+            "autodev/default",
+            "autodev/docs-researcher",
+            "autodev/browser-tester",
+            "autodev/explorer",
+            "autodev/worker",
+            "autodev/validator",
+            "autodev/smart",
+        ):
+            with self.subTest(model=model), tempfile.TemporaryDirectory() as home:
+                (Path(home) / ".codex/hooks").mkdir(parents=True)
+                environment = os.environ.copy()
+                environment["HOME"] = home
+                result = subprocess.run(
+                    ["bash", str(hook)],
+                    input=json.dumps({"model": model}),
+                    text=True,
+                    capture_output=True,
+                    check=True,
+                    env=environment,
+                )
+            self.assertEqual(result.stdout, "")
+
     def test_default_native_subagents_use_router_role_alias(self):
         config = (REPO_ROOT / "scripts/codex/config.toml").read_text()
         self.assertIn('default_subagent_model = "autodev/default"', config)
