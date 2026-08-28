@@ -282,6 +282,8 @@ test("counts tool calls without double-counting streamed output items", () => {
 test("aggregates usage by role, resolved model, origin, duration, and tool calls", () => {
   resetRouterTelemetry();
   recordRouterEvent({ phase: "selected", requestId: "req-usage-role", role: "explorer", requestedModel: "autodev/explorer", provider: "claude", model: "sonnet" });
+  assert.equal(getRouterStatus().usage.byOrigin.subagent.active, 1);
+  assert.equal(getRouterStatus().usage.byRole.explorer.active, 1);
   recordRouterEvent({ phase: "result", requestId: "req-usage-role", role: "explorer", requestedModel: "autodev/explorer", provider: "claude", model: "sonnet", outcome: "success", status: 200, elapsedMs: 120, toolCalls: 2 });
   recordRouterEvent({ phase: "selected", requestId: "req-usage-parent", requestedModel: "gpt-5.6-luna", provider: "codex", model: "gpt-5.6-luna" });
   recordRouterEvent({ phase: "result", requestId: "req-usage-parent", requestedModel: "gpt-5.6-luna", provider: "codex", model: "gpt-5.6-luna", outcome: "success", status: 200, elapsedMs: 80, toolCalls: 1 });
@@ -314,6 +316,9 @@ test("reads and enforces Codex per-session and global thread limits", async () =
   recordConcurrencyDenial({ requestId: "req-denied", role: "worker", requestedModel: "autodev/worker", sessionScope: "identified", reason: "max_concurrent_threads_per_session" });
   const status = concurrencyStatus();
   assert.equal(status.maxConcurrentThreadsPerSession, 1);
+  assert.equal(status.maxThreads, null);
+  assert.equal(status.globalLimit, null);
+  assert.equal(status.limitSource, "max_concurrent_threads_per_session");
   assert.equal(status.effectivePerSessionLimit, 1);
   assert.equal(status.activeSubagentThreads, 1);
   assert.equal(status.denials, 1);

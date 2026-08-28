@@ -51,7 +51,7 @@ console.log(`Concurrency: per-session ${limit(concurrency.maxConcurrentThreadsPe
 
 console.log("Usage by origin:");
 for (const [origin, state] of Object.entries(usage.byOrigin ?? {})) {
-  console.log(`  ${origin}: ${state.attempts} attempts, ${state.successes} successes, ${state.failures} failures, avg ${Math.round((state.averageDurationMs ?? 0) / 1000)}s, ${state.toolCalls} tool calls`);
+  console.log(`  ${origin}: ${state.active ?? 0} active, ${state.attempts} attempts, ${state.successes} successes, ${state.failures} failures, avg ${Math.round((state.averageDurationMs ?? 0) / 1000)}s, ${state.toolCalls} tool calls`);
 }
 console.log("Usage by role:");
 for (const [role, state] of Object.entries(usage.byRole ?? {})) {

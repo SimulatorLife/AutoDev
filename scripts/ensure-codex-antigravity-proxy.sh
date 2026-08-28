@@ -22,50 +22,57 @@ settings_ok="$(node -e '
 [[ "$settings_ok" == "1" ]] || { echo "Antigravity AI Credit Overages must be Never (useAiCredits=false and useG1Credits=false)." >&2; exit 1; }
 [[ -x "$HOME/.local/bin/agy" ]] || { echo "Antigravity CLI not installed at $HOME/.local/bin/agy." >&2; exit 1; }
 
-if curl --silent --fail --max-time 1 http://127.0.0.1:4001/health/liveliness >/dev/null 2>&1 && \
-   curl --silent --fail --max-time 1 http://127.0.0.1:4002/health/liveliness >/dev/null 2>&1; then
-  exit 0
-fi
-
 domain="gui/$(id -u)"
 proxy_label="com.codex.antigravity-proxy"
 litellm_label="com.codex.antigravity-litellm"
 proxy_probe="http://127.0.0.1:4002/health/liveliness"
 litellm_probe="http://127.0.0.1:4001/health/liveliness"
-
-# launchd is the canonical supervisor when its jobs are loaded. Never boot out
-# a loaded KeepAlive job and then start an unmanaged copy: that creates two
-# owners for each port and produces an endless EADDRINUSE loop. Direct launch
-# below is only the fallback for hosts where launchd is unavailable/unloaded.
-if launchctl print "$domain/$proxy_label" >/dev/null 2>&1 || launchctl print "$domain/$litellm_label" >/dev/null 2>&1; then
-  launchctl kickstart -k "$domain/$proxy_label" >/dev/null 2>&1 || true
-  launchctl kickstart -k "$domain/$litellm_label" >/dev/null 2>&1 || true
-  for _ in {1..50}; do
-    if curl --silent --fail --max-time 1 "$litellm_probe" >/dev/null 2>&1 && \
-       curl --silent --fail --max-time 1 "$proxy_probe" >/dev/null 2>&1; then
-      exit 0
-    fi
-    sleep 0.1
-  done
-  echo "Antigravity launchd services did not become ready; refusing to start duplicate unmanaged processes." >&2
-  exit 1
-fi
-
+proxy_plist="$HOME/Library/LaunchAgents/$proxy_label.plist"
+litellm_plist="$HOME/Library/LaunchAgents/$litellm_label.plist"
 proxy_launcher="$HOME/.codex/hooks/run-codex-antigravity-proxy.sh"
 litellm_launcher="$HOME/.codex/hooks/run-codex-antigravity-litellm.sh"
 if [[ -L "$proxy_launcher" ]]; then proxy_launcher="$(readlink "$proxy_launcher")"; fi
 if [[ -L "$litellm_launcher" ]]; then litellm_launcher="$(readlink "$litellm_launcher")"; fi
-nohup /bin/bash "$proxy_launcher" \
-  >"${TMPDIR:-/tmp}/codex-antigravity-proxy-4002.log" 2>&1 </dev/null &
-nohup /bin/bash "$litellm_launcher" \
-  >"${TMPDIR:-/tmp}/codex-antigravity-litellm-4001.log" 2>&1 </dev/null &
-for _ in {1..50}; do
-  if curl --silent --fail --max-time 1 "$litellm_probe" >/dev/null 2>&1 && \
-     curl --silent --fail --max-time 1 "$proxy_probe" >/dev/null 2>&1; then
-    exit 0
-  fi
-  sleep 0.1
-done
 
-echo "Antigravity Responses proxy failed to start." >&2
-exit 1
+wait_for_probe() {
+  local probe="$1"
+  for _ in {1..50}; do
+    curl --silent --fail --max-time 1 "$probe" >/dev/null 2>&1 && return 0
+    sleep 0.1
+  done
+  return 1
+}
+
+start_service() {
+  local label="$1" plist="$2" probe="$3" launcher="$4"
+
+  if launchctl print "$domain/$label" >/dev/null 2>&1; then
+    # A loaded launchd service owns this port. Restart it only when its probe
+    # is unhealthy; never start a second unmanaged copy beside it.
+    if wait_for_probe "$probe"; then return 0; fi
+    launchctl kickstart -k "$domain/$label" >/dev/null 2>&1 || true
+    wait_for_probe "$probe" && return 0
+    echo "Antigravity launchd service $label did not become ready." >&2
+    return 1
+  fi
+
+  # Prefer to bootstrap a missing service so launchd remains the supervisor.
+  # This also handles a partially loaded installation (one provider service
+  # present while its paired service is absent).
+  if [[ -f "$plist" ]] && launchctl bootstrap "$domain" "$plist" >/dev/null 2>&1; then
+    wait_for_probe "$probe" && return 0
+  fi
+
+  # If launchd is unavailable (for example, from a sandboxed invocation), use
+  # the direct fallback only when no healthy process already owns the port.
+  if wait_for_probe "$probe"; then return 0; fi
+  nohup /bin/bash "$launcher" \
+    >"${TMPDIR:-/tmp}/codex-antigravity-${label}.log" 2>&1 </dev/null &
+  wait_for_probe "$probe"
+}
+
+if ! start_service "$proxy_label" "$proxy_plist" "$proxy_probe" "$proxy_launcher" || \
+   ! start_service "$litellm_label" "$litellm_plist" "$litellm_probe" "$litellm_launcher"; then
+  echo "Antigravity Responses proxy failed to start." >&2
+  exit 1
+fi

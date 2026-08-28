@@ -86,7 +86,7 @@ const providerTelemetry = new Map(ROUTES.map(({ provider }) => [provider, {
 
 
 function emptyUsageBucket() {
-  return { attempts: 0, successes: 0, failures: 0, skipped: 0, durationMs: 0, maxDurationMs: 0, toolCalls: 0, lastUsedAt: null, lastFailure: null };
+  return { attempts: 0, successes: 0, failures: 0, skipped: 0, active: 0, durationMs: 0, maxDurationMs: 0, toolCalls: 0, lastUsedAt: null, lastFailure: null };
 }
 
 const usageTelemetry = {
@@ -122,6 +122,7 @@ function recordUsageEvent({ phase, requestId, role, provider, model, outcome, fa
     inFlightUsage.set(key, { startedAt: Date.now(), buckets });
     for (const bucket of buckets) {
       bucket.attempts += 1;
+      bucket.active += 1;
       bucket.lastUsedAt = timestamp;
     }
     return;
@@ -135,6 +136,7 @@ function recordUsageEvent({ phase, requestId, role, provider, model, outcome, fa
   const duration = Number.isFinite(elapsedMs) ? Math.max(0, elapsedMs) : active ? Math.max(0, Date.now() - active.startedAt) : 0;
   const resultBuckets = active?.buckets ?? buckets;
   for (const bucket of resultBuckets) {
+    bucket.active = Math.max(0, bucket.active - 1);
     if (outcome === "success") bucket.successes += 1;
     else bucket.failures += 1;
     bucket.durationMs += duration;
@@ -498,12 +500,27 @@ function getRouterStatus(now = Date.now()) {
   };
 }
 
+function usagePersistenceSnapshot() {
+  const withoutActive = (bucket) => {
+    const copy = { ...bucket };
+    delete copy.active;
+    return copy;
+  };
+  return {
+    schemaVersion: 3,
+    totals: withoutActive(usageTelemetry.totals),
+    byRole: Object.fromEntries(Object.entries(usageTelemetry.byRole).map(([key, bucket]) => [key, withoutActive(bucket)])),
+    byModel: Object.fromEntries(Object.entries(usageTelemetry.byModel).map(([key, bucket]) => [key, withoutActive(bucket)])),
+    byOrigin: Object.fromEntries(Object.entries(usageTelemetry.byOrigin).map(([key, bucket]) => [key, withoutActive(bucket)])),
+  };
+}
+
 function serializeRouterState() {
   return JSON.stringify({
     schema: "autodev-router-persisted-state-v1",
     updatedAt: new Date().toISOString(),
     providerTelemetry: Object.fromEntries(providerTelemetry),
-    usage: { schemaVersion: 3, ...usageTelemetry },
+    usage: usagePersistenceSnapshot(),
     concurrency: concurrencyTelemetry,
     spawnFailures: spawnFailureTelemetry,
     recentEvents: [...recentRouterEvents],

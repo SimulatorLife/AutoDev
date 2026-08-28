@@ -56,7 +56,7 @@
   </div>
 
   <h2>By origin</h2>
-  <table><thead><tr><th>Origin</th><th>Attempts</th><th>Successes</th><th>Failures</th><th>Avg turn</th><th>Tool calls</th></tr></thead><tbody id="by-origin"><tr><td colspan="6">Loading…</td></tr></tbody></table>
+  <table><thead><tr><th>Origin</th><th>Active</th><th>Attempts</th><th>Successes</th><th>Failures</th><th>Avg turn</th><th>Tool calls</th></tr></thead><tbody id="by-origin"><tr><td colspan="7">Loading…</td></tr></tbody></table>
 
   <h2>By role</h2>
   <table><thead><tr><th>Role</th><th>Attempts</th><th>Successes</th><th>Failures</th><th>Avg turn</th><th>Tool calls</th></tr></thead><tbody id="by-role"><tr><td colspan="6">Loading…</td></tr></tbody></table>
@@ -94,7 +94,7 @@
     const modelList = (models) => Object.entries(models ?? {}).map(([tier, model]) => `${tier}: ${model}`).join(", ") || "-";
     const failureText = (failure) => failure ? `${failure.class}${failure.status ? ` (HTTP ${failure.status})` : ""}` : "";
     const durationText = (milliseconds) => `${(Number(milliseconds ?? 0) / 1000).toFixed(1)}s`;
-    const usageRows = (usage) => Object.entries(usage ?? {}).map(([key, state]) => `<tr><td><code>${text(key)}</code></td><td>${state.attempts}</td><td>${state.successes}</td><td>${state.failures}</td><td>${durationText(state.averageDurationMs)}</td><td>${state.toolCalls}</td></tr>`).join("") || '<tr><td colspan="6">No usage recorded yet.</td></tr>';
+    const usageRows = (usage, includeActive = false) => Object.entries(usage ?? {}).map(([key, state]) => `<tr><td><code>${text(key)}</code></td>${includeActive ? `<td>${state.active ?? 0}</td>` : ""}<td>${state.attempts}</td><td>${state.successes}</td><td>${state.failures}</td><td>${durationText(state.averageDurationMs)}</td><td>${state.toolCalls}</td></tr>`).join("") || `<tr><td colspan="${includeActive ? 7 : 6}">No usage recorded yet.</td></tr>`;
     const expandedProviders = new Set();
 
     function render(status) {
@@ -168,7 +168,7 @@
       document.querySelector("#summary-tools").textContent = totals.toolCalls ?? 0;
       document.querySelector("#summary-duration").textContent = durationText(totals.averageDurationMs);
       document.querySelector("#summary-skips").textContent = totals.skipped ?? 0;
-      document.querySelector("#by-origin").innerHTML = usageRows(usage.byOrigin);
+      document.querySelector("#by-origin").innerHTML = usageRows(usage.byOrigin, true);
       document.querySelector("#by-role").innerHTML = usageRows(usage.byRole);
       document.querySelector("#by-model").innerHTML = usageRows(usage.byModel);
       document.querySelector("#events").textContent = (status.recentEvents ?? []).slice(0, 25).map((event) => {
