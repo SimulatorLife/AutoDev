@@ -432,6 +432,24 @@ function recordConcurrencyDenial({ requestId, role, requestedModel, sessionScope
   recordRouterEvent({ phase: "denied", requestId, role, requestedModel, provider: null, model: null, failureClass: "concurrency_limit", denialReason: reason });
 }
 
+function normalizeCodexTimestamp(value) {
+  if (value == null) return null;
+  const numeric = typeof value === "number"
+    ? value
+    : typeof value === "string" && value.trim() !== "" ? Number(value) : Number.NaN;
+  if (Number.isFinite(numeric)) {
+    // Codex app-server thread/list timestamps are Unix seconds, while browser
+    // Date values are milliseconds. Keep this tolerant of millisecond values
+    // from other clients or future protocol revisions.
+    const milliseconds = Math.abs(numeric) < 100_000_000_000 ? numeric * 1000 : numeric;
+    const date = new Date(milliseconds);
+    return Number.isNaN(date.getTime()) ? null : date.toISOString();
+  }
+  if (typeof value !== "string") return null;
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date.toISOString();
+}
+
 function normalizeCodexTask(task) {
   const rawStatus = task?.status;
   const status = typeof rawStatus === "string" ? rawStatus : rawStatus?.type;
@@ -440,8 +458,8 @@ function normalizeCodexTask(task) {
     status: status ?? "unknown",
     name: task?.name ?? null,
     cwd: task?.cwd ?? null,
-    createdAt: task?.createdAt ?? null,
-    updatedAt: task?.updatedAt ?? null,
+    createdAt: normalizeCodexTimestamp(task?.createdAt),
+    updatedAt: normalizeCodexTimestamp(task?.updatedAt),
     modelProvider: task?.modelProvider ?? null,
     model: task?.model ?? null,
     agentRole: task?.agentRole ?? null,

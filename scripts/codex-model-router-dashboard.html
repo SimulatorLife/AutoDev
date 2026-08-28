@@ -16,8 +16,8 @@
     th, td { border-bottom: 1px solid #8885; padding: .45rem .55rem; text-align: left; vertical-align: top; }
     #providers-table th, #providers-table td { white-space: normal; overflow-wrap: anywhere; }
     th { white-space: nowrap; }
-    .toggle-provider { background: none; border: 0; color: inherit; cursor: pointer; font: inherit; padding: 0; }
-    .toggle-provider:hover { text-decoration: underline; }
+    .toggle-provider, .toggle-section { background: none; border: 0; color: inherit; cursor: pointer; font: inherit; padding: 0; }
+    .toggle-provider:hover, .toggle-section:hover { text-decoration: underline; }
     #providers-table { table-layout: fixed; min-width: 0; width: 100%; }
     #providers-table th:nth-child(1), #providers-table td:nth-child(1) { width: 14%; }
     #providers-table th:nth-child(2), #providers-table td:nth-child(2) { width: 20%; overflow-wrap: anywhere; white-space: normal; }
@@ -71,12 +71,16 @@
   <h2>Subagent spawn failures</h2>
   <div id="spawn-failures">Loading…</div>
 
-  <h2>Codex tasks</h2>
-  <div id="task-summary">Loading…</div>
-  <table><thead><tr><th>ID</th><th>Status</th><th>Name</th><th>Project/CWD</th><th>Provider</th><th>Role</th><th>Updated</th></tr></thead><tbody id="codex-tasks"><tr><td colspan="7">Loading…</td></tr></tbody></table>
+  <h2><button type="button" class="toggle-section" aria-controls="codex-tasks-section" aria-expanded="false"><span class="caret">▸</span> Codex tasks</button></h2>
+  <div id="codex-tasks-section" hidden>
+    <div id="task-summary">Loading…</div>
+    <table><thead><tr><th>ID</th><th>Status</th><th>Name</th><th>Project/CWD</th><th>Provider</th><th>Role</th><th>Updated</th></tr></thead><tbody id="codex-tasks"><tr><td colspan="7">Loading…</td></tr></tbody></table>
+  </div>
 
-  <h2>Recent routing events</h2>
-  <pre id="events">Loading…</pre>
+  <h2><button type="button" class="toggle-section" aria-controls="recent-routing-events-section" aria-expanded="false"><span class="caret">▸</span> Recent routing events</button></h2>
+  <div id="recent-routing-events-section" hidden>
+    <pre id="events">Loading…</pre>
+  </div>
 
   <script>
     const text = (value) => String(value ?? "").replace(/[&<>"']/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[character]));
@@ -187,6 +191,14 @@
         return `${formatTimestamp(event.timestamp)}  ${event.requestId}  ${event.phase}  ${target}  ${outcome}`;
       }).join("\n") || "No routing events yet.";
     }
+
+    document.querySelectorAll(".toggle-section").forEach((button) => button.addEventListener("click", () => {
+      const target = document.getElementById(button.getAttribute("aria-controls"));
+      const expanded = button.getAttribute("aria-expanded") === "true";
+      button.setAttribute("aria-expanded", String(!expanded));
+      button.querySelector(".caret").textContent = expanded ? "▸" : "▾";
+      target.hidden = expanded;
+    }));
 
     async function refresh() {
       try {

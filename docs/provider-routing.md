@@ -78,11 +78,13 @@ Failures raised by the Codex app-server before a role request reaches the router
 are not inferable from router traffic alone.
 
 The status payload also includes a `codexTasks` snapshot from the local Codex
-app-server `thread/list` method. It reports counts and raw task metadata for
+app-server `thread/list` method. It reports counts and task metadata for
 statuses such as `active`, `idle`, and `notLoaded` (up to the configured page
-window); it is deliberately not interpreted as an orphan detector. The router
-refreshes it periodically and retains the last snapshot if the app-server is
-unavailable. The local CLI view is:
+window); it is deliberately not interpreted as an orphan detector. Codex
+returns task timestamps as Unix seconds, so the router normalizes `createdAt`
+and `updatedAt` to ISO 8601 strings before exposing them to API and dashboard
+consumers. The router refreshes the snapshot periodically and retains the last
+snapshot if the app-server is unavailable. The local CLI view is:
 
   ```sh
   node /Users/henrykirk/AutoDev/scripts/codex-model-router-status.mjs

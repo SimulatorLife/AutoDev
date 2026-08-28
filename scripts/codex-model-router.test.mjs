@@ -230,14 +230,22 @@ test("tracks router-visible subagent spawn failure reasons", () => {
 
 test("normalizes and summarizes Codex task statuses for status reporting", () => {
   const summary = summarizeCodexTasks([
-    { id: "task-active", status: { type: "active" }, name: "Active task", cwd: "/tmp", modelProvider: "local_model_router" },
+    { id: "task-active", status: { type: "active" }, name: "Active task", cwd: "/tmp", modelProvider: "local_model_router", createdAt: 1787940648, updatedAt: 1787954665 },
     { id: "task-idle", status: "idle", name: "Idle task" },
     { sessionId: "task-not-loaded", status: { type: "notLoaded" }, name: "Saved task" },
   ]);
   assert.deepEqual(summary.countsByStatus, { active: 1, idle: 1, notLoaded: 1 });
   assert.equal(summary.tasks[0].status, "active");
+  assert.equal(summary.tasks[0].createdAt, "2026-08-28T18:10:48.000Z");
+  assert.equal(summary.tasks[0].updatedAt, "2026-08-28T22:04:25.000Z");
   assert.equal(summary.tasks[2].id, "task-not-loaded");
   assert.equal(normalizeCodexTask({ id: "task", status: { type: "notLoaded" } }).status, "notLoaded");
+});
+
+test("keeps Codex task timestamp normalization compatible with millisecond and ISO inputs", () => {
+  assert.equal(normalizeCodexTask({ id: "task", updatedAt: 1787954665000 }).updatedAt, "2026-08-28T22:04:25.000Z");
+  assert.equal(normalizeCodexTask({ id: "task", updatedAt: "2026-08-28T22:04:25Z" }).updatedAt, "2026-08-28T22:04:25.000Z");
+  assert.equal(normalizeCodexTask({ id: "task", updatedAt: "not-a-timestamp" }).updatedAt, null);
 });
 
 test("serves a lightweight dashboard to browsers and JSON to API clients", async () => {
@@ -258,6 +266,11 @@ test("serves a lightweight dashboard to browsers and JSON to API clients", async
     assert.match(dashboardBody, /id="mcp-telemetry"/);
     assert.match(dashboardBody, /MCP ready/);
     assert.match(dashboardBody, /id="codex-tasks"/);
+    assert.match(dashboardBody, /aria-controls="codex-tasks-section" aria-expanded="false"/);
+    assert.match(dashboardBody, /id="codex-tasks-section" hidden/);
+    assert.match(dashboardBody, /aria-controls="recent-routing-events-section" aria-expanded="false"/);
+    assert.match(dashboardBody, /id="recent-routing-events-section" hidden/);
+    assert.match(dashboardBody, /document\.querySelectorAll\("\.toggle-section"\)/);
     assert.match(dashboardBody, /id="spawn-failures"/);
     assert.match(dashboardBody, /<tfoot>/);
     assert.match(dashboardBody, /class="provider-summary"/);
