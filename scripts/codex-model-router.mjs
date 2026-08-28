@@ -233,13 +233,8 @@ function resetConcurrencyTelemetry() {
 function concurrencyStatus() {
   return {
     configFile: CONCURRENCY_CONFIG.file,
-    maxConcurrentThreadsPerSession: CONCURRENCY_CONFIG.maxConcurrentThreadsPerSession,
-    maxThreads: CONCURRENCY_CONFIG.maxThreads,
+    maxConcurrentThreadsPerSession: effectivePerSessionLimit(),
     effectivePerSessionLimit: effectivePerSessionLimit(),
-    globalLimit: null,
-    limitSource: CONCURRENCY_CONFIG.maxConcurrentThreadsPerSession !== null
-      ? "max_concurrent_threads_per_session"
-      : CONCURRENCY_CONFIG.maxThreads !== null ? "max_threads (legacy alias)" : "unlimited",
     activeSubagentThreads: activeSubagentThreads(),
     activeSessions: activeSubagentSessions.size,
     denials: concurrencyTelemetry.denials,

@@ -316,10 +316,8 @@ test("reads and enforces Codex per-session and global thread limits", async () =
   recordConcurrencyDenial({ requestId: "req-denied", role: "worker", requestedModel: "autodev/worker", sessionScope: "identified", reason: "max_concurrent_threads_per_session" });
   const status = concurrencyStatus();
   assert.equal(status.maxConcurrentThreadsPerSession, 1);
-  assert.equal(status.maxThreads, null);
-  assert.equal(status.globalLimit, null);
-  assert.equal(status.limitSource, "max_concurrent_threads_per_session");
   assert.equal(status.effectivePerSessionLimit, 1);
+  assert.equal(Object.hasOwn(status, "maxThreads"), false);
   assert.equal(status.activeSubagentThreads, 1);
   assert.equal(status.denials, 1);
   assert.equal(status.lastDenial.reason, "max_concurrent_threads_per_session");

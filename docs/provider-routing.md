@@ -49,11 +49,9 @@ The router makes its effective choice visible in two ways:
   `x-autodev-request-id`. For a role request such as `autodev/explorer`, these
   identify the concrete provider/model selected after shuffling, load balancing,
   health checks, and fallback.
-- The status payload and dashboard report the active Codex concurrency limits
-  (`max_concurrent_threads_per_session` and the legacy `max_threads` alias),
-  effective limit, active role-based subagent slots, and denials caused by
-  those limits. Configure the canonical setting rather than treating
-  `max_threads` as a separate global cap. Role
+- The status payload and dashboard report the effective Codex per-session
+  concurrency limit, active role-based subagent slots, and denials caused by
+  that limit. The deprecated `max_threads` alias is not surfaced. Role
   requests are gated before provider selection; direct concrete model requests
   are not counted as subagent slots. If a session ID is not supplied by the
   client, the router uses a process-wide fallback scope and reports that scope.
