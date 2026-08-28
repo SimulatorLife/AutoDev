@@ -62,6 +62,10 @@
   <div id="codex-telemetry">Loading…</div>
   <table><thead><tr><th>MCP server</th><th>Health</th><th>Last observed</th><th>Initializations</th><th>Tool discovery</th><th>Failures</th><th>Avg. duration</th></tr></thead><tbody id="mcp-telemetry"><tr><td colspan="7">Loading…</td></tr></tbody></table>
 
+  <h2>Skills</h2>
+  <div id="skills-summary">Loading…</div>
+  <table><thead><tr><th>Skill</th><th>Injected</th><th>By status</th></tr></thead><tbody id="skills-table"><tr><td colspan="3">Loading…</td></tr></tbody></table>
+
   <h2>Concurrency</h2>
   <div id="concurrency">Loading…</div>
 
@@ -218,6 +222,15 @@
         : "No Codex OTEL telemetry received yet.";
       const mcpRows = (codexTelemetry.mcpServers ?? []).map((server) => `<tr><td><code>${text(server.name)}</code></td><td class="${server.health === "ready" ? "ok" : server.health === "error" ? "limited" : ""}">${text(server.health)}</td><td>${server.lastSeenAt ? formatTimestamp(server.lastSeenAt) : "-"}</td><td>${server.initAttempts ?? 0}</td><td>${server.toolDiscoveryAttempts ?? 0}</td><td>${server.failures ?? 0}</td><td>${durationText(server.averageDurationMs)}</td></tr>`).join("") || '<tr><td colspan="7">No MCP lifecycle telemetry received yet.</td></tr>';
       document.querySelector("#mcp-telemetry").innerHTML = mcpRows;
+      const countsText = (counts) => Object.entries(counts ?? {}).map(([key, value]) => `${key}: ${value}`).join(", ") || "-";
+      const histogramText = (label, histogram) => `${label} avg ${(histogram?.average ?? 0).toFixed(1)} (n=${histogram?.count ?? 0}, sum=${histogram?.sum ?? 0})`;
+      const skills = codexTelemetry.skills ?? {};
+      const skillsInjected = skills.injected ?? {};
+      const skillsThreads = skills.threads ?? {};
+      document.querySelector("#skills-summary").textContent = skillsInjected.total
+        ? `Injected ${skillsInjected.total} (${countsText(skillsInjected.byStatus)}) · invoke_type: ${countsText(skillsInjected.byInvokeType)} · ${histogramText("enabled", skillsThreads.enabledTotal)} · ${histogramText("kept", skillsThreads.keptTotal)} · ${histogramText("truncated", skillsThreads.truncated)}${skillsThreads.truncated?.count ? ` (avg trimmed ${(skillsThreads.truncated.averageDescriptionTruncatedChars ?? 0).toFixed(0)} chars)` : ""}`
+        : "No skill telemetry received yet.";
+      document.querySelector("#skills-table").innerHTML = (skillsInjected.bySkill ?? []).map((entry) => `<tr><td><code>${text(entry.skill)}</code></td><td>${entry.total}</td><td>${countsText(entry.byStatus)}</td></tr>`).join("") || '<tr><td colspan="3">No skill invocations observed yet.</td></tr>';
       document.querySelector("#events").textContent = (status.recentEvents ?? []).slice(0, 25).map((event) => {
         const target = `${event.provider}/${event.model}`;
         const outcome = event.outcome ?? event.failureClass ?? "-";

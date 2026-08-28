@@ -6,7 +6,7 @@ model_provider = "local_model_router"
 model = "autodev/smart"
 model_reasoning_effort = "high"
 model_reasoning_summary = "none"
-sandbox_mode = "workspace-write"
+sandbox_mode = "danger-full-access"
 
 developer_instructions = """
 You are the full-capability smart agent. Complete the bounded task assigned by the parent in the active repository. You may inspect and edit repository files, use the browser tools for runtime evidence, and consult authoritative developer documentation through the configured documentation MCP. Preserve unrelated work, follow AGENTS.md and canonical ownership boundaries, make root-cause changes, and add focused tests and documentation when required.

@@ -218,6 +218,82 @@ test("ingests Codex OTEL turn and MCP lifecycle telemetry without prompt content
   resetOtelTelemetry();
 });
 
+test("ingests Codex OTEL skill metrics with cumulative dedupe and tolerates invoke_type", () => {
+  resetOtelTelemetry();
+  const start = BigInt(Date.now()) * 1_000_000n;
+  const attributes = (entries) => entries.map(([key, value]) => ({ key, value: { stringValue: String(value) } }));
+  const skillSum = (skill, status, value, timeOffsetNs, extraAttributes = []) => ({
+    name: "codex.skill.injected",
+    sum: {
+      aggregationTemporality: 2,
+      isMonotonic: true,
+      dataPoints: [{
+        attributes: attributes([["skill", skill], ["status", status], ...extraAttributes]),
+        startTimeUnixNano: String(start),
+        timeUnixNano: String(start + timeOffsetNs),
+        asInt: String(value),
+      }],
+    },
+  });
+  const threadHistogram = (name, count, sum, timeOffsetNs, extraAttributes = []) => ({
+    name,
+    histogram: {
+      aggregationTemporality: 2,
+      dataPoints: [{
+        attributes: attributes(extraAttributes),
+        startTimeUnixNano: String(start),
+        timeUnixNano: String(start + timeOffsetNs),
+        count: String(count),
+        sum,
+      }],
+    },
+  });
+  const resourceMetrics = (metrics) => ({ resourceMetrics: [{ resource: { attributes: [] }, scopeMetrics: [{ metrics }] }] });
+
+  // First export: injected=3, skipped(invoke_type=auto)=1, one thread reporting 3 enabled/2 kept, 1 truncated with 120 chars trimmed.
+  ingestOtelSignal("metrics", resourceMetrics([
+    skillSum("lsp-mcp-server", "injected", 3, 1_000_000n),
+    skillSum("lsp-mcp-server", "skipped", 1, 1_000_000n, [["invoke_type", "auto"]]),
+    threadHistogram("thread.skills.enabled_total", 1, 3, 1_000_000n),
+    threadHistogram("thread.skills.kept_total", 1, 2, 1_000_000n),
+    threadHistogram("thread.skills.truncated", 1, 1, 1_000_000n, [["description_truncated_chars", 120]]),
+  ]));
+  // Exporter retry resending the identical cumulative point must not double count.
+  ingestOtelSignal("metrics", resourceMetrics([
+    skillSum("lsp-mcp-server", "injected", 3, 1_000_000n),
+    skillSum("lsp-mcp-server", "skipped", 1, 1_000_000n, [["invoke_type", "auto"]]),
+    threadHistogram("thread.skills.enabled_total", 1, 3, 1_000_000n),
+    threadHistogram("thread.skills.kept_total", 1, 2, 1_000_000n),
+    threadHistogram("thread.skills.truncated", 1, 1, 1_000_000n, [["description_truncated_chars", 120]]),
+  ]));
+  // Later export with cumulative growth: only the deltas should be applied.
+  ingestOtelSignal("metrics", resourceMetrics([
+    skillSum("lsp-mcp-server", "injected", 5, 2_000_000n),
+    skillSum("lsp-mcp-server", "skipped", 2, 2_000_000n, [["invoke_type", "auto"]]),
+    threadHistogram("thread.skills.enabled_total", 2, 7, 2_000_000n),
+    threadHistogram("thread.skills.kept_total", 2, 4, 2_000_000n),
+    threadHistogram("thread.skills.truncated", 2, 2, 2_000_000n, [["description_truncated_chars", 190]]),
+  ]));
+
+  const telemetry = codexTelemetryStatus(Date.now());
+  assert.equal(telemetry.receiver.metrics, 3);
+  assert.equal(telemetry.skills.injected.total, 7);
+  assert.deepEqual(telemetry.skills.injected.byStatus, { injected: 5, skipped: 2 });
+  assert.deepEqual(telemetry.skills.injected.byInvokeType, { auto: 2 });
+  const skill = telemetry.skills.injected.bySkill.find((entry) => entry.skill === "lsp-mcp-server");
+  assert.equal(skill.total, 7);
+  assert.deepEqual(skill.byStatus, { injected: 5, skipped: 2 });
+
+  assert.deepEqual(telemetry.skills.threads.enabledTotal, { count: 2, sum: 7, average: 3.5 });
+  assert.deepEqual(telemetry.skills.threads.keptTotal, { count: 2, sum: 4, average: 2 });
+  assert.equal(telemetry.skills.threads.truncated.count, 2);
+  assert.equal(telemetry.skills.threads.truncated.sum, 2);
+  assert.equal(telemetry.skills.threads.truncated.descriptionTruncatedCharsTotal, 190);
+  assert.equal(telemetry.skills.threads.truncated.averageDescriptionTruncatedChars, 95);
+  assert.equal(JSON.stringify(telemetry).includes("do-not-store-this"), false);
+  resetOtelTelemetry();
+});
+
 test("tracks router-visible subagent spawn failure reasons", () => {
   resetRouterTelemetry();
   recordSpawnFailure({ requestId: "req-provider-failed", role: "worker", requestedModel: "autodev/worker", reason: "provider_exhausted" });

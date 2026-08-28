@@ -104,6 +104,11 @@ snapshot if the app-server is unavailable. The local CLI view is:
   # Add --json for machine-readable output.
   ```
 
+The same status payload's `codexTelemetry` includes Codex OTEL lifecycle and
+skill-injection telemetry (`codex.skill.injected`, `thread.skills.*`); see
+[docs/metrics-dashboard.md](metrics-dashboard.md) for the receiver and
+aggregation details.
+
 Router stderr is structured JSON (`autodev-router-event-v1`) and is retained by
 launchd in `~/.codex/hooks/model-router.launchd.log` (the direct ensure path
 uses `/tmp/codex-model-router.log`). Provider counters and recent events are

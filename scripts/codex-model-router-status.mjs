@@ -69,6 +69,18 @@ for (const server of (codexTelemetry.mcpServers ?? [])) {
   console.log(`  ${server.name}: ${server.health}, last ${server.lastSeenAt ?? "-"}, init ${server.initAttempts ?? 0}, discovery ${server.toolDiscoveryAttempts ?? 0}, failures ${server.failures ?? 0}, avg ${Math.round(server.averageDurationMs ?? 0)}ms`);
 }
 
+const skills = codexTelemetry.skills ?? {};
+const skillsInjected = skills.injected ?? {};
+const skillsThreads = skills.threads ?? {};
+const countsText = (counts) => Object.entries(counts ?? {}).map(([key, value]) => `${key}: ${value}`).join(", ") || "-";
+const histogramText = (histogram) => `avg ${(histogram?.average ?? 0).toFixed(1)} (n=${histogram?.count ?? 0}, sum=${histogram?.sum ?? 0})`;
+console.log("");
+console.log(`Skills injected: ${skillsInjected.total ?? 0} (${countsText(skillsInjected.byStatus)}), invoke_type: ${countsText(skillsInjected.byInvokeType)}`);
+console.log(`Thread skills: enabled ${histogramText(skillsThreads.enabledTotal)}, kept ${histogramText(skillsThreads.keptTotal)}, truncated ${histogramText(skillsThreads.truncated)}${skillsThreads.truncated?.count ? `, avg trimmed ${(skillsThreads.truncated.averageDescriptionTruncatedChars ?? 0).toFixed(0)} chars` : ""}`);
+for (const skill of (skillsInjected.bySkill ?? [])) {
+  console.log(`  ${skill.skill}: ${skill.total} (${countsText(skill.byStatus)})`);
+}
+
 console.log("Usage by resolved model:");
 for (const [model, state] of Object.entries(usage.byModel ?? {})) {
   console.log(`  ${model}: ${state.attempts} attempts, ${state.successes} successes, ${state.failures} failures, avg ${Math.round((state.averageDurationMs ?? 0) / 1000)}s, ${state.toolCalls} tool calls`);

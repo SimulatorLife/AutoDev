@@ -178,7 +178,19 @@ const otelTelemetry = {
   mcpServers: new Map(),
   turns: { prompts: 0, completed: 0, promptLength: 0, ttftMs: 0, ttftCount: 0 },
   tokens: { input: 0, output: 0, cached: 0, reasoning: 0, tool: 0 },
+  skills: {
+    injected: { total: 0, byStatus: {}, byInvokeType: {}, bySkill: new Map() },
+    threads: {
+      enabled: { count: 0, sum: 0 },
+      kept: { count: 0, sum: 0 },
+      truncated: { count: 0, sum: 0, descriptionTruncatedCharsTotal: 0 },
+    },
+  },
 };
+// Cumulative OTLP metric points resend the running total on every export, so
+// each series (metric + attributes + startTimeUnixNano) is tracked here and
+// only the delta since the last observed point/timestamp is applied.
+const otelMetricSeries = new Map();
 
 function otelAttributeValue(value) {
   if (!value || typeof value !== "object") return value;
@@ -312,11 +324,102 @@ function ingestOtelTraces(payload) {
   }
 }
 
+function otelSeriesKey(seriesName, attributes, startTimeUnixNano) {
+  const sortedAttributes = Object.entries(attributes).sort(([a], [b]) => a.localeCompare(b)).map(([key, value]) => `${key}=${value}`).join("|");
+  return `${seriesName}::${sortedAttributes}::${startTimeUnixNano ?? ""}`;
+}
+
+function otelNanoTimestamp(value) {
+  try {
+    return BigInt(String(value));
+  } catch {
+    return 0n;
+  }
+}
+
+// Applies a cumulative OTLP data point to `otelMetricSeries`, returning only
+// the delta since the last observed point for that series. Duplicate resends
+// of the same timestamp yield a zero delta; a value lower than the last
+// observed one is treated as a counter reset and reported in full.
+function otelCumulativeDelta(seriesKey, timeUnixNano, value) {
+  const timestamp = otelNanoTimestamp(timeUnixNano);
+  const previous = otelMetricSeries.get(seriesKey);
+  if (previous && timestamp > 0n && timestamp <= previous.timestamp) return 0;
+  const delta = previous && value >= previous.value ? value - previous.value : value;
+  otelMetricSeries.set(seriesKey, { timestamp, value });
+  return Math.max(0, delta);
+}
+
+function otelSumDataPointValue(dataPoint) {
+  if (dataPoint.asInt !== undefined) return numberAttribute({ value: dataPoint.asInt }, "value");
+  if (dataPoint.asDouble !== undefined) return numberAttribute({ value: dataPoint.asDouble }, "value");
+  return 0;
+}
+
+function skillBucket(name) {
+  if (!otelTelemetry.skills.injected.bySkill.has(name)) {
+    otelTelemetry.skills.injected.bySkill.set(name, { skill: name, total: 0, byStatus: {} });
+  }
+  return otelTelemetry.skills.injected.bySkill.get(name);
+}
+
+function noteSkillInjected(metricName, attributes, dataPoint) {
+  const delta = otelCumulativeDelta(otelSeriesKey(metricName, attributes, dataPoint.startTimeUnixNano), dataPoint.timeUnixNano, otelSumDataPointValue(dataPoint));
+  if (delta === 0) return;
+  const skill = typeof attributes.skill === "string" && attributes.skill ? attributes.skill : "unknown";
+  const status = typeof attributes.status === "string" && attributes.status ? attributes.status : "unknown";
+  // Some Codex versions attach `invoke_type` instead of, or alongside,
+  // `status`; tolerate its absence and aggregate it separately when present.
+  const invokeType = typeof attributes.invoke_type === "string" && attributes.invoke_type ? attributes.invoke_type : null;
+  const injected = otelTelemetry.skills.injected;
+  injected.total += delta;
+  injected.byStatus[status] = (injected.byStatus[status] ?? 0) + delta;
+  if (invokeType) injected.byInvokeType[invokeType] = (injected.byInvokeType[invokeType] ?? 0) + delta;
+  const bucket = skillBucket(skill);
+  bucket.total += delta;
+  bucket.byStatus[status] = (bucket.byStatus[status] ?? 0) + delta;
+}
+
+function noteThreadSkillsHistogram(metricName, bucketKey, attributes, dataPoint) {
+  const bucket = otelTelemetry.skills.threads[bucketKey];
+  // description_truncated_chars is a cumulative value, not a dimension: keep it out of the
+  // series identity so a growing value doesn't get misread as a brand-new series each export.
+  const { description_truncated_chars: truncatedChars, ...identityAttributes } = attributes;
+  const countDelta = otelCumulativeDelta(otelSeriesKey(`${metricName}#count`, identityAttributes, dataPoint.startTimeUnixNano), dataPoint.timeUnixNano, numberAttribute({ count: dataPoint.count }, "count"));
+  const sumDelta = otelCumulativeDelta(otelSeriesKey(`${metricName}#sum`, identityAttributes, dataPoint.startTimeUnixNano), dataPoint.timeUnixNano, numberAttribute({ sum: dataPoint.sum }, "sum"));
+  bucket.count += countDelta;
+  bucket.sum += sumDelta;
+  if (bucketKey !== "truncated" || truncatedChars === undefined) return;
+  const charsDelta = otelCumulativeDelta(otelSeriesKey(`${metricName}#description_truncated_chars`, identityAttributes, dataPoint.startTimeUnixNano), dataPoint.timeUnixNano, numberAttribute(attributes, "description_truncated_chars"));
+  bucket.descriptionTruncatedCharsTotal += charsDelta;
+}
+
+const THREAD_SKILLS_HISTOGRAMS = { "thread.skills.enabled_total": "enabled", "thread.skills.kept_total": "kept", "thread.skills.truncated": "truncated" };
+
+function ingestOtelMetrics(payload) {
+  for (const resourceMetric of payload.resourceMetrics ?? []) {
+    for (const scopeMetric of resourceMetric.scopeMetrics ?? []) {
+      for (const metric of scopeMetric.metrics ?? []) {
+        if (metric.name === "codex.skill.injected") {
+          for (const dataPoint of metric.sum?.dataPoints ?? []) {
+            noteSkillInjected(metric.name, otelAttributes(dataPoint.attributes), dataPoint);
+          }
+        } else if (THREAD_SKILLS_HISTOGRAMS[metric.name]) {
+          for (const dataPoint of metric.histogram?.dataPoints ?? []) {
+            noteThreadSkillsHistogram(metric.name, THREAD_SKILLS_HISTOGRAMS[metric.name], otelAttributes(dataPoint.attributes), dataPoint);
+          }
+        }
+      }
+    }
+  }
+}
+
 function ingestOtelSignal(signal, payload) {
   otelTelemetry.receiver[signal] += 1;
   otelTelemetry.receiver.lastReceivedAt = new Date().toISOString();
   if (signal === "logs") ingestOtelLogs(payload);
   if (signal === "traces") ingestOtelTraces(payload);
+  if (signal === "metrics") ingestOtelMetrics(payload);
 }
 
 function resetOtelTelemetry() {
@@ -325,6 +428,13 @@ function resetOtelTelemetry() {
   otelTelemetry.mcpServers.clear();
   otelTelemetry.turns = { prompts: 0, completed: 0, promptLength: 0, ttftMs: 0, ttftCount: 0 };
   otelTelemetry.tokens = { input: 0, output: 0, cached: 0, reasoning: 0, tool: 0 };
+  otelTelemetry.skills.injected = { total: 0, byStatus: {}, byInvokeType: {}, bySkill: new Map() };
+  otelTelemetry.skills.threads = {
+    enabled: { count: 0, sum: 0 },
+    kept: { count: 0, sum: 0 },
+    truncated: { count: 0, sum: 0, descriptionTruncatedCharsTotal: 0 },
+  };
+  otelMetricSeries.clear();
 }
 
 function codexTelemetryStatus(now = Date.now()) {
@@ -341,6 +451,9 @@ function codexTelemetryStatus(now = Date.now()) {
     if (server.health === "stale") summary.stale += 1;
     return summary;
   }, { observed: 0, ready: 0, error: 0, stale: 0 });
+  const skillsInjected = otelTelemetry.skills.injected;
+  const threadHistogram = (bucket) => ({ ...bucket, average: bucket.count ? bucket.sum / bucket.count : 0 });
+  const truncated = otelTelemetry.skills.threads.truncated;
   return {
     receiver: { ...otelTelemetry.receiver },
     sessionsObserved: sessions.length,
@@ -349,6 +462,19 @@ function codexTelemetryStatus(now = Date.now()) {
     tokens: { ...otelTelemetry.tokens, total: Object.values(otelTelemetry.tokens).reduce((sum, value) => sum + value, 0) },
     mcpSummary,
     mcpServers,
+    skills: {
+      injected: {
+        total: skillsInjected.total,
+        byStatus: { ...skillsInjected.byStatus },
+        byInvokeType: { ...skillsInjected.byInvokeType },
+        bySkill: [...skillsInjected.bySkill.values()].map((bucket) => ({ ...bucket, byStatus: { ...bucket.byStatus } })).sort((a, b) => a.skill.localeCompare(b.skill)),
+      },
+      threads: {
+        enabledTotal: threadHistogram(otelTelemetry.skills.threads.enabled),
+        keptTotal: threadHistogram(otelTelemetry.skills.threads.kept),
+        truncated: { ...threadHistogram(truncated), averageDescriptionTruncatedChars: truncated.count ? truncated.descriptionTruncatedCharsTotal / truncated.count : 0 },
+      },
+    },
   };
 }
 
@@ -1311,7 +1437,7 @@ async function handle(request, response) {
   await proxyConcreteResponse(response, route, payload, wantsStream, requestId);
 }
 
-export { activeProviderRequests, codexTelemetryStatus, ingestOtelSignal, ingestOtelLogs, ingestOtelTraces, resetOtelTelemetry, catalogModelIds, classifyProviderFailure, clearProviderCooldown, concurrencyStatus, normalizeCodexTask, summarizeCodexTasks, cooldownProvider, countToolCallsFromSse, countToolCallsInResponse, decrementActiveRequests, fallbackable, getActiveRequests, getRouterStatus, handle, incrementActiveRequests, isProviderCoolingDown, loadRouterState, parseConcurrencyConfig, persistRouterStateNow, providerModelMetadata, recordConcurrencyDenial, recordRouterEvent, recordSpawnFailure, releaseSubagentSlot, replaceModelFields, resetConcurrencyTelemetry, resetRouterTelemetry, spawnFailureStatus, routeCredentialAvailable, roleCandidates, roleForModel, routeForModel, serializeRouterState, tryAcquireSubagentSlot, responseTextFromSse, transformSseEvent, validateRoutingConfig };
+export { activeProviderRequests, codexTelemetryStatus, ingestOtelSignal, ingestOtelLogs, ingestOtelMetrics, ingestOtelTraces, resetOtelTelemetry, catalogModelIds, classifyProviderFailure, clearProviderCooldown, concurrencyStatus, normalizeCodexTask, summarizeCodexTasks, cooldownProvider, countToolCallsFromSse, countToolCallsInResponse, decrementActiveRequests, fallbackable, getActiveRequests, getRouterStatus, handle, incrementActiveRequests, isProviderCoolingDown, loadRouterState, parseConcurrencyConfig, persistRouterStateNow, providerModelMetadata, recordConcurrencyDenial, recordRouterEvent, recordSpawnFailure, releaseSubagentSlot, replaceModelFields, resetConcurrencyTelemetry, resetRouterTelemetry, spawnFailureStatus, routeCredentialAvailable, roleCandidates, roleForModel, routeForModel, serializeRouterState, tryAcquireSubagentSlot, responseTextFromSse, transformSseEvent, validateRoutingConfig };
 
 if (IS_MAIN) {
   createServer((request, response) => { void handle(request, response); }).listen(PORT, HOST, () => {

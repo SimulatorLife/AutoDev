@@ -33,11 +33,26 @@ timing, token counts, MCP server lifecycle observations,
 initialization/tool-discovery latency, and recent failures.
 
 The OTLP receiver accepts all three signal paths (`/v1/logs`, `/v1/traces`, and
-`/v1/metrics`). Codex currently emits useful lifecycle logs and MCP traces but
-does not emit a `ResourceMetrics` batch during the validated CLI turn, so the
-metrics receiver may correctly remain at zero. The receiver counter confirms
-that the endpoint is available if Codex begins emitting metrics in a later
-version.
+`/v1/metrics`). Codex currently emits useful lifecycle logs and MCP traces; the
+metrics receiver may correctly remain at zero outside of skill telemetry until
+Codex emits other `ResourceMetrics` batches during a validated CLI turn. When
+Codex does emit `codex.skill.injected` (a counter) and `thread.skills.enabled_total`,
+`thread.skills.kept_total`, and `thread.skills.truncated` (histograms), the
+router aggregates them into `codexTelemetry.skills`, surfaced in `/status`, the
+dashboard's Skills section, and `codex-model-router-status.mjs`. The receiver
+counter confirms that the endpoint is available if Codex begins emitting other
+metrics in a later version.
+
+Skill metrics are cumulative OTLP sums/histograms: Codex resends the running
+total on every export, so the router tracks the last observed point per series
+(metric name, attributes, and `startTimeUnixNano`) and only applies the delta,
+tolerating duplicate resends and counter resets. `codex.skill.injected` carries
+a `skill` and `status` attribute; some Codex versions attach `invoke_type`
+instead of, or alongside, `status`, which the router tolerates and aggregates
+separately. `thread.skills.truncated` may carry a source-backed
+`description_truncated_chars` value, which the router totals and averages
+separately from the histogram's own count/sum. No prompt or skill content is
+exported or stored; only counts and durations are aggregated.
 
 The dashboard labels MCP state as an observation (`ready`, `error`, or `stale`),
 not as an authoritative process-health guarantee. Codex currently emits MCP

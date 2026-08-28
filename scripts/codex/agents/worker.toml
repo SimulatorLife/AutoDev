@@ -6,7 +6,7 @@ model_provider = "local_model_router"
 model = "autodev/worker"
 model_reasoning_effort = "high"
 model_reasoning_summary = "none"
-sandbox_mode = "workspace-write"
+sandbox_mode = "danger-full-access"
 
 developer_instructions = """
 You are an execution-focused coding agent. Complete only the bounded task assigned by the parent agent in the active repository.
