@@ -193,6 +193,9 @@ test("serves a lightweight dashboard to browsers and JSON to API clients", async
     assert.match(dashboardBody, /const modelStats = uniqueModels.reduce/);
     assert.match(dashboardBody, /const configuredCell = collapsible \? ""/);
     assert.match(dashboardBody, /<th>Provider<\/th><th>Model<\/th>/);
+    assert.match(dashboardBody, /id="providers-table"/);
+    assert.match(dashboardBody, /#providers-table \{ table-layout: fixed; min-width: 0; width: 100%; \}/);
+    assert.match(dashboardBody, /class="table-scroll"/);
     assert.match(dashboardBody, /<th>Tool calls<\/th><th>Avg\. turn<\/th>/);
     assert.match(dashboardBody, /const configuredCell = collapsible \? ""/);
     assert.match(dashboardBody, /Provider skips/);

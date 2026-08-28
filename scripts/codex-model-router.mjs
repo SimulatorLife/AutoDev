@@ -211,7 +211,6 @@ function tryAcquireSubagentSlot(sessionKey) {
   const sessionActive = activeSubagentSessions.get(sessionKey) ?? 0;
   const perSessionLimit = effectivePerSessionLimit();
   if (perSessionLimit !== null && sessionActive >= perSessionLimit) return "max_concurrent_threads_per_session";
-  if (CONCURRENCY_CONFIG.maxThreads !== null && activeSubagentThreads() >= CONCURRENCY_CONFIG.maxThreads) return "max_threads";
   activeSubagentSessions.set(sessionKey, sessionActive + 1);
   return null;
 }
@@ -235,6 +234,10 @@ function concurrencyStatus() {
     maxConcurrentThreadsPerSession: CONCURRENCY_CONFIG.maxConcurrentThreadsPerSession,
     maxThreads: CONCURRENCY_CONFIG.maxThreads,
     effectivePerSessionLimit: effectivePerSessionLimit(),
+    globalLimit: null,
+    limitSource: CONCURRENCY_CONFIG.maxConcurrentThreadsPerSession !== null
+      ? "max_concurrent_threads_per_session"
+      : CONCURRENCY_CONFIG.maxThreads !== null ? "max_threads (legacy alias)" : "unlimited",
     activeSubagentThreads: activeSubagentThreads(),
     activeSessions: activeSubagentSessions.size,
     denials: concurrencyTelemetry.denials,

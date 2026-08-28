@@ -6,17 +6,31 @@
   <title>Codex model router</title>
   <style>
     :root { color-scheme: light dark; font: 14px system-ui, sans-serif; }
-    body { margin: 1.5rem; max-width: 1100px; }
+    body { margin: 1.5rem; max-width: none; }
     h1 { font-size: 1.35rem; margin-bottom: .25rem; }
     h2 { font-size: 1rem; margin: 1.5rem 0 .5rem; }
     #meta, #error { color: #666; }
     #error { color: #b42318; }
     table { border-collapse: collapse; width: 100%; }
+    .table-scroll { overflow-x: visible; }
     th, td { border-bottom: 1px solid #8885; padding: .45rem .55rem; text-align: left; vertical-align: top; }
+    #providers-table th, #providers-table td { white-space: normal; overflow-wrap: anywhere; }
     th { white-space: nowrap; }
     .toggle-provider { background: none; border: 0; color: inherit; cursor: pointer; font: inherit; padding: 0; }
     .toggle-provider:hover { text-decoration: underline; }
-    .caret { display: inline-block; width: 1em; text-align: center; }
+    #providers-table { table-layout: fixed; min-width: 0; width: 100%; }
+    #providers-table th:nth-child(1), #providers-table td:nth-child(1) { width: 14%; }
+    #providers-table th:nth-child(2), #providers-table td:nth-child(2) { width: 20%; overflow-wrap: anywhere; white-space: normal; }
+    #providers-table th:nth-child(3), #providers-table td:nth-child(3) { width: 10%; }
+    #providers-table th:nth-child(4), #providers-table td:nth-child(4) { width: 5%; }
+    #providers-table th:nth-child(5), #providers-table td:nth-child(5) { width: 7%; }
+    #providers-table th:nth-child(6), #providers-table td:nth-child(6) { width: 7%; }
+    #providers-table th:nth-child(7), #providers-table td:nth-child(7) { width: 7%; }
+    #providers-table th:nth-child(8), #providers-table td:nth-child(8) { width: 6%; }
+    #providers-table th:nth-child(9), #providers-table td:nth-child(9) { width: 7%; }
+    #providers-table th:nth-child(10), #providers-table td:nth-child(10) { width: 7%; }
+    #providers-table th:nth-child(11), #providers-table td:nth-child(11) { width: 10%; }
+    .caret { display: inline-flex; width: 1em; height: 1em; align-items: center; justify-content: center; vertical-align: -0.1em; }
     .provider-model { background: #8881; }
     .provider-model td:first-child { padding-left: 1.5rem; }
     .provider-summary { border-top: 2px solid #888; font-weight: 700; }
@@ -33,11 +47,13 @@
   <div id="error" role="alert"></div>
 
   <h2>Providers</h2>
-  <table>
+  <div class="table-scroll">
+  <table id="providers-table">
     <thead><tr><th>Provider</th><th>Model</th><th>Status</th><th>Active</th><th>Attempts</th><th>Successes</th><th>Failures</th><th>Tool calls</th><th>Avg. turn</th><th>Provider skips</th><th>Last failure</th></tr></thead>
     <tbody id="providers"><tr><td colspan="11">Loading…</td></tr></tbody>
     <tfoot><tr class="provider-summary"><th colspan="2">Usage totals</th><td>all</td><td id="summary-active">0</td><td id="summary-attempts">0</td><td id="summary-successes">0</td><td id="summary-failures">0</td><td id="summary-tools">0</td><td id="summary-duration">0.0s</td><td id="summary-skips">0</td><td></td></tr></tfoot>
   </table>
+  </div>
 
   <h2>By origin</h2>
   <table><thead><tr><th>Origin</th><th>Attempts</th><th>Successes</th><th>Failures</th><th>Avg turn</th><th>Tool calls</th></tr></thead><tbody id="by-origin"><tr><td colspan="6">Loading…</td></tr></tbody></table>
@@ -141,7 +157,7 @@
       const limit = (value) => value == null ? "unlimited" : value;
       const denial = concurrency.lastDenial ? `${concurrency.lastDenial.reason} (${concurrency.lastDenial.sessionScope})` : "-";
       const denialsByReason = Object.entries(concurrency.denialsByReason ?? {}).map(([reason, count]) => `${reason}: ${count}`).join(", ") || "-";
-      document.querySelector("#concurrency").textContent = `Per-session limit: ${limit(concurrency.maxConcurrentThreadsPerSession)} · global limit: ${limit(concurrency.maxThreads)} · effective per-session: ${limit(concurrency.effectivePerSessionLimit)} · active subagents: ${concurrency.activeSubagentThreads ?? 0} · denials: ${concurrency.denials ?? 0} (${denialsByReason}) · last denial: ${denial}`;
+      document.querySelector("#concurrency").textContent = `Per-session limit: ${limit(concurrency.maxConcurrentThreadsPerSession)} · max_threads: ${limit(concurrency.maxThreads)} (${concurrency.limitSource ?? "unknown"}) · active subagents: ${concurrency.activeSubagentThreads ?? 0} · denials: ${concurrency.denials ?? 0} (${denialsByReason}) · last denial: ${denial}`;
       const usage = status.usage ?? {};
       const totals = usage.totals ?? {};
       const active = Object.values(status.providers ?? {}).reduce((sum, provider) => sum + Number(provider.activeRequests ?? 0), 0);

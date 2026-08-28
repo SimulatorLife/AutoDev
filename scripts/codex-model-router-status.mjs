@@ -47,7 +47,7 @@ const limit = (value) => value == null ? "unlimited" : value;
 const lastDenial = concurrency.lastDenial ? `${concurrency.lastDenial.reason} (${concurrency.lastDenial.sessionScope})` : "-";
 const denialsByReason = Object.entries(concurrency.denialsByReason ?? {}).map(([reason, count]) => `${reason}: ${count}`).join(", ") || "-";
 console.log("");
-console.log(`Concurrency: per-session ${limit(concurrency.maxConcurrentThreadsPerSession)}, global ${limit(concurrency.maxThreads)}, effective per-session ${limit(concurrency.effectivePerSessionLimit)}, active subagents ${concurrency.activeSubagentThreads ?? 0}, denials ${concurrency.denials ?? 0} (${denialsByReason}), last denial ${lastDenial}`);
+console.log(`Concurrency: per-session ${limit(concurrency.maxConcurrentThreadsPerSession)}, max_threads ${limit(concurrency.maxThreads)} (${concurrency.limitSource ?? "unknown"}), active subagents ${concurrency.activeSubagentThreads ?? 0}, denials ${concurrency.denials ?? 0} (${denialsByReason}), last denial ${lastDenial}`);
 
 console.log("Usage by origin:");
 for (const [origin, state] of Object.entries(usage.byOrigin ?? {})) {

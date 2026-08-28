@@ -50,8 +50,10 @@ The router makes its effective choice visible in two ways:
   identify the concrete provider/model selected after shuffling, load balancing,
   health checks, and fallback.
 - The status payload and dashboard report the active Codex concurrency limits
-  (`max_concurrent_threads_per_session` and `max_threads`), effective limit,
-  active role-based subagent slots, and denials caused by those limits. Role
+  (`max_concurrent_threads_per_session` and the legacy `max_threads` alias),
+  effective limit, active role-based subagent slots, and denials caused by
+  those limits. Configure the canonical setting rather than treating
+  `max_threads` as a separate global cap. Role
   requests are gated before provider selection; direct concrete model requests
   are not counted as subagent slots. If a session ID is not supplied by the
   client, the router uses a process-wide fallback scope and reports that scope.
