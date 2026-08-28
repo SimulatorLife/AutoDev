@@ -25,3 +25,11 @@ url = "https://developers.openai.com/mcp"
 [[skills.config]]
 name = "orchestration"
 enabled = false
+
+[[skills.config]]
+name = "lsp-mcp-server"
+enabled = false
+
+[[skills.config]]
+name = "remove-legacy-shims"
+enabled = false
