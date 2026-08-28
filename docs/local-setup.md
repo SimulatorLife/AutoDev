@@ -25,7 +25,9 @@ The tracked Codex role files under `scripts/codex/agents/` are regular configura
   refuses to start duplicate unmanaged processes on ports 4001/4002.
 - Prefer `ensure-*` scripts for idempotent setup and the `diagnose-*` scripts for evidence before changing provider routing.
 - Open `http://127.0.0.1:4100/status` in a browser for the lightweight live
-  dashboard, or inspect the same state with
+  dashboard. The dashboard also periodically queries the local Codex
+  app-server for `thread/list` task status and shows the returned task IDs and
+  metadata. Inspect the same state with
   `node scripts/codex-model-router-status.mjs` (use `--json` for automation).
   It reports observed session-limit, throttling, quota, capacity, timeout, and
   availability failures; it cannot query an upstream provider's private quota

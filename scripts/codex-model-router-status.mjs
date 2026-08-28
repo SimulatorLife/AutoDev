@@ -28,6 +28,18 @@ for (const [provider, state] of Object.entries(body.providers ?? {})) {
   console.log(`${provider.padEnd(19)} ${(state.status + cooldown).padEnd(18)} ${String(state.activeRequests).padStart(6)}  ${String(state.attempts).padStart(8)}  ${String(state.successes).padStart(9)}  ${String(state.failures).padStart(8)}  ${lastFailure}`);
 }
 
+const spawnFailures = body.spawnFailures ?? {};
+const spawnReasons = Object.entries(spawnFailures.byReason ?? {}).map(([reason, count]) => `${reason}: ${count}`).join(", ") || "-";
+console.log("");
+console.log(`Subagent spawn failures: ${spawnFailures.total ?? 0} (${spawnReasons})`);
+
+const tasks = body.codexTasks ?? {};
+console.log("");
+console.log(`Codex tasks: ${tasks.status ?? "unknown"} · ${Object.entries(tasks.countsByStatus ?? {}).map(([state, count]) => `${state}: ${count}`).join(", ") || "-"}`);
+for (const task of (tasks.tasks ?? []).slice(0, 20)) {
+  console.log(`  ${task.status} ${task.id} ${task.name ?? ""}`.trim());
+}
+
 const usage = body.usage ?? {};
 console.log("");
 const concurrency = body.concurrency ?? {};

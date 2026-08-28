@@ -16,8 +16,11 @@
     th { white-space: nowrap; }
     .toggle-provider { background: none; border: 0; color: inherit; cursor: pointer; font: inherit; padding: 0; }
     .toggle-provider:hover { text-decoration: underline; }
+    .caret { display: inline-block; width: 1em; text-align: center; }
     .provider-model { background: #8881; }
     .provider-model td:first-child { padding-left: 1.5rem; }
+    .provider-summary { border-top: 2px solid #888; font-weight: 700; }
+    .provider-summary th, .provider-summary td { padding-top: .7rem; }
     code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
     pre { white-space: pre-wrap; line-height: 1.45; }
     .ok { color: #16803c; }
@@ -31,12 +34,10 @@
 
   <h2>Providers</h2>
   <table>
-    <thead><tr><th>Provider / model</th><th>Tier / configured model</th><th>Status</th><th>Active</th><th>Attempts</th><th>Successes</th><th>Failures</th><th>Provider skips</th><th>Last failure</th></tr></thead>
-    <tbody id="providers"><tr><td colspan="9">Loading…</td></tr></tbody>
+    <thead><tr><th>Provider</th><th>Model</th><th>Status</th><th>Active</th><th>Attempts</th><th>Successes</th><th>Failures</th><th>Tool calls</th><th>Avg. turn</th><th>Provider skips</th><th>Last failure</th></tr></thead>
+    <tbody id="providers"><tr><td colspan="11">Loading…</td></tr></tbody>
+    <tfoot><tr class="provider-summary"><th colspan="2">Usage totals</th><td>all</td><td id="summary-active">0</td><td id="summary-attempts">0</td><td id="summary-successes">0</td><td id="summary-failures">0</td><td id="summary-tools">0</td><td id="summary-duration">0.0s</td><td id="summary-skips">0</td><td></td></tr></tfoot>
   </table>
-
-  <h2>Usage overview</h2>
-  <div id="usage-totals">Loading…</div>
 
   <h2>By origin</h2>
   <table><thead><tr><th>Origin</th><th>Attempts</th><th>Successes</th><th>Failures</th><th>Avg turn</th><th>Tool calls</th></tr></thead><tbody id="by-origin"><tr><td colspan="6">Loading…</td></tr></tbody></table>
@@ -49,6 +50,13 @@
 
   <h2>Concurrency</h2>
   <div id="concurrency">Loading…</div>
+
+  <h2>Subagent spawn failures</h2>
+  <div id="spawn-failures">Loading…</div>
+
+  <h2>Codex tasks</h2>
+  <div id="task-summary">Loading…</div>
+  <table><thead><tr><th>ID</th><th>Status</th><th>Name</th><th>Project/CWD</th><th>Provider</th><th>Role</th><th>Updated</th></tr></thead><tbody id="codex-tasks"><tr><td colspan="7">Loading…</td></tr></tbody></table>
 
   <h2>Recent routing events</h2>
   <pre id="events">Loading…</pre>
@@ -89,23 +97,29 @@
           total.attempts += stats.attempts ?? 0;
           total.successes += stats.successes ?? 0;
           total.failures += stats.failures ?? 0;
+          total.skipped += stats.skipped ?? 0;
+          total.durationMs += stats.durationMs ?? 0;
+          total.toolCalls += stats.toolCalls ?? 0;
           return total;
-        }, { attempts: 0, successes: 0, failures: 0 });
+        }, { attempts: 0, successes: 0, failures: 0, skipped: 0, durationMs: 0, toolCalls: 0 });
+        modelStats.averageDurationMs = modelStats.successes + modelStats.failures > 0
+          ? Math.round(modelStats.durationMs / (modelStats.successes + modelStats.failures))
+          : 0;
         const limited = state.status !== "ready";
         const cooldown = state.cooldownRemainingMs > 0 ? ` (${Math.ceil(state.cooldownRemainingMs / 1000)}s)` : "";
         const providerCell = collapsible
           ? `<button type="button" class="toggle-provider" data-provider-group="${group}" aria-expanded="${expanded}"><span class="caret">${expanded ? "▾" : "▸"}</span> <code>${text(provider)}</code></button>`
           : `<code>${text(provider)}</code>`;
-        const configuredCell = collapsible ? "" : `<code>${text(modelList(state.configuredModels))}</code>`;
-        const parent = `<tr class="provider-parent"><td>${providerCell}</td><td>${configuredCell}</td><td class="${limited ? "limited" : "ok"}">${text(state.status)}${cooldown}</td><td>${state.activeRequests}</td><td>${modelStats.attempts}</td><td>${modelStats.successes}</td><td>${modelStats.failures}</td><td>${state.skipped}</td><td>${text(failureText(state.lastFailure))}</td></tr>`;
-        const children = collapsible ? models.map(([tier, model]) => {
+        const configuredCell = collapsible ? "" : `<code>${text(models[0]?.[1] ?? "")}</code>`;
+        const parent = `<tr class="provider-parent"><td>${providerCell}</td><td>${configuredCell}</td><td class="${limited ? "limited" : "ok"}">${text(state.status)}${cooldown}</td><td>${state.activeRequests}</td><td>${modelStats.attempts}</td><td>${modelStats.successes}</td><td>${modelStats.failures}</td><td>${modelStats.toolCalls}</td><td>${durationText(modelStats.averageDurationMs)}</td><td>${modelStats.skipped}</td><td>${text(failureText(state.lastFailure))}</td></tr>`;
+        const children = collapsible ? uniqueModels.map(([, model]) => {
           const stats = modelUsage[`${provider}/${model}`] ?? {};
           const modelLimited = (stats.failures ?? 0) > 0 && stats.lastFailure;
           const modelStatus = modelLimited ? (stats.lastFailure.class ?? "failed") : state.status;
-          return `<tr class="provider-model" data-provider-child="${group}"${expanded ? "" : " hidden"}><td>↳ <code>${text(tier)}</code></td><td><code>${text(model)}</code></td><td class="${modelStatus === "ready" ? "ok" : "limited"}">${text(modelStatus)}</td><td>0</td><td>${stats.attempts ?? 0}</td><td>${stats.successes ?? 0}</td><td>${stats.failures ?? 0}</td><td>0</td><td>${text(failureText(stats.lastFailure))}</td></tr>`;
+          return `<tr class="provider-model" data-provider-child="${group}"${expanded ? "" : " hidden"}><td>↳</td><td><code>${text(model)}</code></td><td class="${modelStatus === "ready" ? "ok" : "limited"}">${text(modelStatus)}</td><td>0</td><td>${stats.attempts ?? 0}</td><td>${stats.successes ?? 0}</td><td>${stats.failures ?? 0}</td><td>${stats.toolCalls ?? 0}</td><td>${durationText(stats.averageDurationMs)}</td><td>${stats.skipped ?? 0}</td><td>${text(failureText(stats.lastFailure))}</td></tr>`;
         }).join("") : "";
         return parent + children;
-      }).join("") || '<tr><td colspan="9">No providers configured.</td></tr>';
+      }).join("") || '<tr><td colspan="11">No providers configured.</td></tr>';
       document.querySelector("#providers").innerHTML = providerRows;
       document.querySelectorAll(".toggle-provider").forEach((button) => button.addEventListener("click", () => {
         const group = button.dataset.providerGroup;
@@ -115,6 +129,14 @@
         button.querySelector(".caret").textContent = expanded ? "▸" : "▾";
         document.querySelectorAll(`[data-provider-child="${group}"]`).forEach((row) => { row.hidden = expanded; });
       }));
+      const spawnFailures = status.spawnFailures ?? {};
+      const spawnReasons = Object.entries(spawnFailures.byReason ?? {}).map(([reason, count]) => `${reason}: ${count}`).join(", ") || "-";
+      const lastSpawnFailure = spawnFailures.recent?.[0];
+      document.querySelector("#spawn-failures").textContent = `Total: ${spawnFailures.total ?? 0} · by reason: ${spawnReasons} · last: ${lastSpawnFailure ? `${lastSpawnFailure.reason} (${formatTimestamp(lastSpawnFailure.timestamp)})` : "-"}`;
+      const taskStatus = status.codexTasks ?? {};
+      const taskCounts = Object.entries(taskStatus.countsByStatus ?? {}).map(([state, count]) => `${state}: ${count}`).join(", ") || "-";
+      document.querySelector("#task-summary").textContent = `Status: ${taskStatus.status ?? "unknown"} · fetched: ${taskStatus.fetchedAt ? formatTimestamp(taskStatus.fetchedAt) : "-"} · ${taskCounts}${taskStatus.error ? ` · ${taskStatus.error}` : ""}`;
+      document.querySelector("#codex-tasks").innerHTML = (taskStatus.tasks ?? []).map((task) => `<tr><td><code>${text(task.id)}</code></td><td>${text(task.status)}</td><td>${text(task.name)}</td><td><code>${text(task.cwd)}</code></td><td>${text(task.modelProvider)}</td><td>${text(task.agentRole)}</td><td>${task.updatedAt ? formatTimestamp(task.updatedAt) : ""}</td></tr>`).join("") || '<tr><td colspan="7">No tasks returned.</td></tr>';
       const concurrency = status.concurrency ?? {};
       const limit = (value) => value == null ? "unlimited" : value;
       const denial = concurrency.lastDenial ? `${concurrency.lastDenial.reason} (${concurrency.lastDenial.sessionScope})` : "-";
@@ -122,7 +144,14 @@
       document.querySelector("#concurrency").textContent = `Per-session limit: ${limit(concurrency.maxConcurrentThreadsPerSession)} · global limit: ${limit(concurrency.maxThreads)} · effective per-session: ${limit(concurrency.effectivePerSessionLimit)} · active subagents: ${concurrency.activeSubagentThreads ?? 0} · denials: ${concurrency.denials ?? 0} (${denialsByReason}) · last denial: ${denial}`;
       const usage = status.usage ?? {};
       const totals = usage.totals ?? {};
-      document.querySelector("#usage-totals").textContent = `Attempts: ${totals.attempts ?? 0} · successes: ${totals.successes ?? 0} · failures: ${totals.failures ?? 0} · average completed turn: ${durationText(totals.averageDurationMs)} · tool calls: ${totals.toolCalls ?? 0}`;
+      const active = Object.values(status.providers ?? {}).reduce((sum, provider) => sum + Number(provider.activeRequests ?? 0), 0);
+      document.querySelector("#summary-active").textContent = active;
+      document.querySelector("#summary-attempts").textContent = totals.attempts ?? 0;
+      document.querySelector("#summary-successes").textContent = totals.successes ?? 0;
+      document.querySelector("#summary-failures").textContent = totals.failures ?? 0;
+      document.querySelector("#summary-tools").textContent = totals.toolCalls ?? 0;
+      document.querySelector("#summary-duration").textContent = durationText(totals.averageDurationMs);
+      document.querySelector("#summary-skips").textContent = totals.skipped ?? 0;
       document.querySelector("#by-origin").innerHTML = usageRows(usage.byOrigin);
       document.querySelector("#by-role").innerHTML = usageRows(usage.byRole);
       document.querySelector("#by-model").innerHTML = usageRows(usage.byModel);

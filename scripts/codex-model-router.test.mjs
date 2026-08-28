@@ -5,7 +5,7 @@ import test from "node:test";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
-import { activeProviderRequests, catalogModelIds, classifyProviderFailure, clearProviderCooldown, cooldownProvider, decrementActiveRequests, fallbackable, getActiveRequests, concurrencyStatus, countToolCallsFromSse, countToolCallsInResponse, getRouterStatus, handle, incrementActiveRequests, isProviderCoolingDown, loadRouterState, parseConcurrencyConfig, persistRouterStateNow, recordConcurrencyDenial, recordRouterEvent, releaseSubagentSlot, replaceModelFields, resetConcurrencyTelemetry, resetRouterTelemetry, serializeRouterState, responseTextFromSse, roleCandidates, roleForModel, routeCredentialAvailable, routeForModel, transformSseEvent, tryAcquireSubagentSlot, validateRoutingConfig } from "./codex-model-router.mjs";
+import { activeProviderRequests, catalogModelIds, classifyProviderFailure, clearProviderCooldown, cooldownProvider, decrementActiveRequests, fallbackable, getActiveRequests, concurrencyStatus, countToolCallsFromSse, countToolCallsInResponse, getRouterStatus, handle, incrementActiveRequests, isProviderCoolingDown, loadRouterState, normalizeCodexTask, parseConcurrencyConfig, persistRouterStateNow, recordConcurrencyDenial, recordRouterEvent, recordSpawnFailure, releaseSubagentSlot, replaceModelFields, resetConcurrencyTelemetry, resetRouterTelemetry, serializeRouterState, spawnFailureStatus, summarizeCodexTasks, responseTextFromSse, roleCandidates, roleForModel, routeCredentialAvailable, routeForModel, transformSseEvent, tryAcquireSubagentSlot, validateRoutingConfig } from "./codex-model-router.mjs";
 
 test("loads editable provider and role models from JSON routing config", async () => {
   const config = JSON.parse(await readFile(new URL("./codex/model-routing.json", import.meta.url), "utf8"));
@@ -148,6 +148,28 @@ test("successful responses identify the resolved provider, model, and request", 
   }
 });
 
+test("tracks router-visible subagent spawn failure reasons", () => {
+  resetRouterTelemetry();
+  recordSpawnFailure({ requestId: "req-provider-failed", role: "worker", requestedModel: "autodev/worker", reason: "provider_exhausted" });
+  const failures = spawnFailureStatus();
+  assert.equal(failures.total, 1);
+  assert.equal(failures.byReason.provider_exhausted, 1);
+  assert.equal(failures.recent[0].requestId, "req-provider-failed");
+  resetRouterTelemetry();
+});
+
+test("normalizes and summarizes Codex task statuses for status reporting", () => {
+  const summary = summarizeCodexTasks([
+    { id: "task-active", status: { type: "active" }, name: "Active task", cwd: "/tmp", modelProvider: "local_model_router" },
+    { id: "task-idle", status: "idle", name: "Idle task" },
+    { sessionId: "task-not-loaded", status: { type: "notLoaded" }, name: "Saved task" },
+  ]);
+  assert.deepEqual(summary.countsByStatus, { active: 1, idle: 1, notLoaded: 1 });
+  assert.equal(summary.tasks[0].status, "active");
+  assert.equal(summary.tasks[2].id, "task-not-loaded");
+  assert.equal(normalizeCodexTask({ id: "task", status: { type: "notLoaded" } }).status, "notLoaded");
+});
+
 test("serves a lightweight dashboard to browsers and JSON to API clients", async () => {
   const server = createServer((request, response) => { void handle(request, response); });
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
@@ -161,8 +183,17 @@ test("serves a lightweight dashboard to browsers and JSON to API clients", async
     assert.match(dashboardBody, /id="by-origin"/);
     assert.match(dashboardBody, /id="by-role"/);
     assert.match(dashboardBody, /id="by-model"/);
+    assert.match(dashboardBody, /id="codex-tasks"/);
+    assert.match(dashboardBody, /id="spawn-failures"/);
+    assert.match(dashboardBody, /<tfoot>/);
+    assert.match(dashboardBody, /class="provider-summary"/);
+    assert.match(dashboardBody, /id="summary-attempts"/);
+    assert.match(dashboardBody, /Status: \$\{taskStatus.status/);
     assert.match(dashboardBody, /const collapsible = models.length > 1/);
     assert.match(dashboardBody, /const modelStats = uniqueModels.reduce/);
+    assert.match(dashboardBody, /const configuredCell = collapsible \? ""/);
+    assert.match(dashboardBody, /<th>Provider<\/th><th>Model<\/th>/);
+    assert.match(dashboardBody, /<th>Tool calls<\/th><th>Avg\. turn<\/th>/);
     assert.match(dashboardBody, /const configuredCell = collapsible \? ""/);
     assert.match(dashboardBody, /Provider skips/);
     assert.match(dashboardBody, /: "";/);
@@ -186,6 +217,7 @@ test("serves status snapshots without exposing request content", async () => {
     assert.equal(response.status, 200);
     const status = await response.json();
     assert.equal(status.schema, "autodev-router-status-v1");
+    assert.equal(status.codexTasks.status, "pending");
     assert.equal(status.providers.claude.configuredModels.default, "sonnet");
     assert.equal(Object.hasOwn(status, "prompt"), false);
     assert.equal(Object.hasOwn(status.providers.claude, "apiKey"), false);

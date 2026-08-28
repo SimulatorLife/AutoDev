@@ -68,7 +68,18 @@ The router makes its effective choice visible in two ways:
   alias. API clients that send `Accept: application/json` to `/status` receive
   the current router instance, active requests, configured models, cooldown
   countdowns, per-provider attempt and success/failure counters, the last
-  classified failure, and recent routing events. The local CLI view is:
+  classified failure, and recent routing events. The status payload includes `spawnFailures` for failures visible at the router
+boundary: concurrency denials and role requests exhausted by provider failures.
+These records include counts by reason, recent request IDs, and the last reason.
+Failures raised by the Codex app-server before a role request reaches the router
+are not inferable from router traffic alone.
+
+The status payload also includes a `codexTasks` snapshot from the local Codex
+app-server `thread/list` method. It reports counts and raw task metadata for
+statuses such as `active`, `idle`, and `notLoaded` (up to the configured page
+window); it is deliberately not interpreted as an orphan detector. The router
+refreshes it periodically and retains the last snapshot if the app-server is
+unavailable. The local CLI view is:
 
   ```sh
   node /Users/henrykirk/AutoDev/scripts/codex-model-router-status.mjs

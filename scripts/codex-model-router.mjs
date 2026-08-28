@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import { randomUUID } from "node:crypto";
+import { spawn } from "node:child_process";
 import { createServer } from "node:http";
 import { readFile, rename, writeFile } from "node:fs/promises";
 import { existsSync, readFileSync } from "node:fs";
@@ -85,7 +86,7 @@ const providerTelemetry = new Map(ROUTES.map(({ provider }) => [provider, {
 
 
 function emptyUsageBucket() {
-  return { attempts: 0, successes: 0, failures: 0, durationMs: 0, maxDurationMs: 0, toolCalls: 0, lastUsedAt: null, lastFailure: null };
+  return { attempts: 0, successes: 0, failures: 0, skipped: 0, durationMs: 0, maxDurationMs: 0, toolCalls: 0, lastUsedAt: null, lastFailure: null };
 }
 
 const usageTelemetry = {
@@ -123,6 +124,10 @@ function recordUsageEvent({ phase, requestId, role, provider, model, outcome, fa
       bucket.attempts += 1;
       bucket.lastUsedAt = timestamp;
     }
+    return;
+  }
+  if (phase === "skipped") {
+    for (const bucket of buckets) bucket.skipped += 1;
     return;
   }
   if (phase !== "result") return;
@@ -184,6 +189,15 @@ const CODEX_CONFIG_FILE = process.env.CODEX_ROUTER_CODEX_CONFIG_FILE ?? `${CODEX
 const CONCURRENCY_CONFIG = parseConcurrencyConfig();
 const activeSubagentSessions = new Map();
 const concurrencyTelemetry = { denials: 0, denialsByReason: {}, lastDenial: null };
+const spawnFailureTelemetry = { total: 0, byReason: {}, recent: [] };
+const DEFAULT_CODEX_BIN = existsSync(`${CODEX_HOME}/packages/standalone/current/bin/codex`)
+  ? `${CODEX_HOME}/packages/standalone/current/bin/codex`
+  : "codex";
+const CODEX_BIN = process.env.CODEX_ROUTER_CODEX_BIN ?? process.env.CODEX_BIN ?? DEFAULT_CODEX_BIN;
+const CODEX_TASK_REFRESH_MS = Number.parseInt(process.env.CODEX_ROUTER_TASK_REFRESH_MS ?? "5000", 10);
+const CODEX_TASK_MAX_PAGES = Number.parseInt(process.env.CODEX_ROUTER_TASK_MAX_PAGES ?? "5", 10);
+let codexTaskSnapshot = { status: "pending", fetchedAt: null, error: null, pages: 0, countsByStatus: {}, tasks: [] };
+let codexTaskRefreshPromise = null;
 
 function effectivePerSessionLimit() {
   return CONCURRENCY_CONFIG.maxConcurrentThreadsPerSession ?? CONCURRENCY_CONFIG.maxThreads;
@@ -233,7 +247,107 @@ function recordConcurrencyDenial({ requestId, role, requestedModel, sessionScope
   concurrencyTelemetry.denials += 1;
   concurrencyTelemetry.denialsByReason[reason] = (concurrencyTelemetry.denialsByReason[reason] ?? 0) + 1;
   concurrencyTelemetry.lastDenial = { timestamp: new Date().toISOString(), requestId, role, requestedModel, sessionScope, reason };
+  recordSpawnFailure({ requestId, role, requestedModel, reason });
   recordRouterEvent({ phase: "denied", requestId, role, requestedModel, provider: null, model: null, failureClass: "concurrency_limit", denialReason: reason });
+}
+
+function normalizeCodexTask(task) {
+  const rawStatus = task?.status;
+  const status = typeof rawStatus === "string" ? rawStatus : rawStatus?.type;
+  return {
+    id: task?.id ?? task?.sessionId ?? null,
+    status: status ?? "unknown",
+    name: task?.name ?? null,
+    cwd: task?.cwd ?? null,
+    createdAt: task?.createdAt ?? null,
+    updatedAt: task?.updatedAt ?? null,
+    modelProvider: task?.modelProvider ?? null,
+    model: task?.model ?? null,
+    agentRole: task?.agentRole ?? null,
+    source: task?.source ?? null,
+    parentThreadId: task?.parentThreadId ?? null,
+    threadSource: task?.threadSource ?? null,
+  };
+}
+
+function summarizeCodexTasks(tasks) {
+  const normalized = Array.isArray(tasks) ? tasks.map(normalizeCodexTask).filter((task) => task.id) : [];
+  const countsByStatus = {};
+  for (const task of normalized) countsByStatus[task.status] = (countsByStatus[task.status] ?? 0) + 1;
+  return { countsByStatus, tasks: normalized };
+}
+
+function refreshCodexTaskSnapshot() {
+  if (!IS_MAIN || codexTaskRefreshPromise || (codexTaskSnapshot.fetchedAt && Date.now() - Date.parse(codexTaskSnapshot.fetchedAt) < CODEX_TASK_REFRESH_MS)) return;
+  codexTaskRefreshPromise = new Promise((resolve) => {
+    const child = spawn(CODEX_BIN, ["app-server", "--listen", "stdio://"], { stdio: ["pipe", "pipe", "ignore"] });
+    let buffer = "";
+    let settled = false;
+    let listRequestId = 2;
+    let pageCount = 0;
+    const tasks = [];
+    const finish = (nextSnapshot) => {
+      if (settled) return;
+      settled = true;
+      codexTaskSnapshot = nextSnapshot;
+      child.kill();
+      resolve();
+    };
+    const timer = setTimeout(() => finish({ ...codexTaskSnapshot, status: "unavailable", fetchedAt: new Date().toISOString(), error: "Codex app-server task listing timed out." }), 8000);
+    child.stdout.on("data", (chunk) => {
+      buffer += chunk.toString();
+      const lines = buffer.split(/\r?\n/);
+      buffer = lines.pop() ?? "";
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        let message;
+        try { message = JSON.parse(line); } catch { continue; }
+        if (message.id === 1) {
+          child.stdin.write(JSON.stringify({ method: "initialized", params: {} }) + "\n");
+          child.stdin.write(JSON.stringify({ id: 2, method: "thread/list", params: { limit: 100, archived: false, sourceKinds: ["cli", "vscode", "exec", "appServer", "subAgent", "subAgentReview", "subAgentCompact", "subAgentThreadSpawn", "subAgentOther", "unknown"], useStateDbOnly: true } }) + "\n");
+        } else if (message.id === listRequestId) {
+          const result = message.result;
+          tasks.push(...(result?.data ?? []));
+          pageCount += 1;
+          if (result?.nextCursor && pageCount < Math.max(1, CODEX_TASK_MAX_PAGES)) {
+            listRequestId += 1;
+            child.stdin.write(JSON.stringify({ id: listRequestId, method: "thread/list", params: { limit: 100, cursor: result.nextCursor, archived: false, sourceKinds: ["cli", "vscode", "exec", "appServer", "subAgent", "subAgentReview", "subAgentCompact", "subAgentThreadSpawn", "subAgentOther", "unknown"], useStateDbOnly: true } }) + "\n");
+          } else {
+            clearTimeout(timer);
+            const summary = summarizeCodexTasks(tasks);
+            finish({ status: "ready", fetchedAt: new Date().toISOString(), error: null, pages: pageCount, ...summary });
+          }
+        }
+      }
+    });
+    child.on("error", (error) => {
+      clearTimeout(timer);
+      finish({ ...codexTaskSnapshot, status: "unavailable", fetchedAt: new Date().toISOString(), error: error.message });
+    });
+    child.stdin.write(JSON.stringify({ id: 1, method: "initialize", params: { clientInfo: { name: "autodev-router", title: "AutoDev router status", version: "1" }, capabilities: {} } }) + "\n");
+  }).finally(() => { codexTaskRefreshPromise = null; });
+}
+
+function codexTaskStatus() {
+  refreshCodexTaskSnapshot();
+  return codexTaskSnapshot;
+}
+
+function recordSpawnFailure({ requestId, role, requestedModel, reason }) {
+  const failure = { timestamp: new Date().toISOString(), requestId, role, requestedModel, reason };
+  spawnFailureTelemetry.total += 1;
+  spawnFailureTelemetry.byReason[reason] = (spawnFailureTelemetry.byReason[reason] ?? 0) + 1;
+  spawnFailureTelemetry.recent.push(failure);
+  while (spawnFailureTelemetry.recent.length > 50) spawnFailureTelemetry.recent.shift();
+  recordRouterEvent({ phase: "spawn_failed", requestId, role, requestedModel, provider: null, model: null, failureClass: "spawn_failure", spawnFailureReason: reason });
+}
+
+function spawnFailureStatus() {
+  return {
+    total: spawnFailureTelemetry.total,
+    byReason: { ...spawnFailureTelemetry.byReason },
+    recent: [...spawnFailureTelemetry.recent].reverse(),
+  };
 }
 
 function providerState(provider) {
@@ -271,7 +385,7 @@ function classifyProviderFailure(status, body = "") {
   return "request_error";
 }
 
-function recordRouterEvent({ phase, requestId, role = null, requestedModel, provider, model, outcome = null, status = null, failureClass = null, denialReason = null, elapsedMs = null, toolCalls = 0 }) {
+function recordRouterEvent({ phase, requestId, role = null, requestedModel, provider, model, outcome = null, status = null, failureClass = null, denialReason = null, spawnFailureReason = null, elapsedMs = null, toolCalls = 0 }) {
   const timestamp = new Date().toISOString();
   const event = {
     schema: "autodev-router-event-v1",
@@ -287,6 +401,7 @@ function recordRouterEvent({ phase, requestId, role = null, requestedModel, prov
     status,
     failureClass,
     denialReason,
+    spawnFailureReason,
     elapsedMs,
     toolCalls,
   };
@@ -334,6 +449,9 @@ function resetRouterTelemetry() {
   }
   resetUsageTelemetry();
   resetConcurrencyTelemetry();
+  spawnFailureTelemetry.total = 0;
+  spawnFailureTelemetry.byReason = {};
+  spawnFailureTelemetry.recent = [];
   scheduleRouterStatePersist();
 }
 
@@ -369,6 +487,8 @@ function getRouterStatus(now = Date.now()) {
     telemetryPersistence: { enabled: IS_MAIN, file: STATE_FILE, updatedAt: persistedStateUpdatedAt },
     usage: usageStatus(),
     concurrency: concurrencyStatus(),
+    spawnFailures: spawnFailureStatus(),
+    codexTasks: codexTaskStatus(),
     activeRequests: Object.fromEntries(activeProviderRequests),
     providers,
     recentEvents: [...recentRouterEvents].reverse(),
@@ -380,8 +500,9 @@ function serializeRouterState() {
     schema: "autodev-router-persisted-state-v1",
     updatedAt: new Date().toISOString(),
     providerTelemetry: Object.fromEntries(providerTelemetry),
-    usage: usageTelemetry,
+    usage: { schemaVersion: 3, ...usageTelemetry },
     concurrency: concurrencyTelemetry,
+    spawnFailures: spawnFailureTelemetry,
     recentEvents: [...recentRouterEvents],
   }, null, 2);
 }
@@ -408,7 +529,7 @@ function loadRouterState(file = STATE_FILE) {
         for (const [key, saved] of Object.entries(parsed.usage[section])) {
           if (!saved || typeof saved !== "object") continue;
           const current = usageBucket(usageTelemetry[section], key);
-          for (const field of ["attempts", "successes", "failures", "durationMs", "maxDurationMs", "toolCalls"]) {
+          for (const field of ["attempts", "successes", "failures", "skipped", "durationMs", "maxDurationMs", "toolCalls"]) {
             if (Number.isInteger(saved[field]) && saved[field] >= 0) current[field] = saved[field];
           }
           if (saved.lastUsedAt === null || typeof saved.lastUsedAt === "string") current.lastUsedAt = saved.lastUsedAt;
@@ -417,7 +538,7 @@ function loadRouterState(file = STATE_FILE) {
       }
       const savedTotals = parsed.usage.totals;
       if (savedTotals && typeof savedTotals === "object") {
-        for (const field of ["attempts", "successes", "failures", "durationMs", "maxDurationMs", "toolCalls"]) {
+        for (const field of ["attempts", "successes", "failures", "skipped", "durationMs", "maxDurationMs", "toolCalls"]) {
           if (Number.isInteger(savedTotals[field]) && savedTotals[field] >= 0) usageTelemetry.totals[field] = savedTotals[field];
         }
         if (savedTotals.lastUsedAt === null || typeof savedTotals.lastUsedAt === "string") usageTelemetry.totals.lastUsedAt = savedTotals.lastUsedAt;
@@ -428,6 +549,11 @@ function loadRouterState(file = STATE_FILE) {
       if (parsed.concurrency.denialsByReason && typeof parsed.concurrency.denialsByReason === "object") concurrencyTelemetry.denialsByReason = { ...parsed.concurrency.denialsByReason };
       if (parsed.concurrency.lastDenial === null || (parsed.concurrency.lastDenial && typeof parsed.concurrency.lastDenial === "object")) concurrencyTelemetry.lastDenial = parsed.concurrency.lastDenial;
     }
+    if (parsed.spawnFailures && typeof parsed.spawnFailures === "object") {
+      if (Number.isInteger(parsed.spawnFailures.total) && parsed.spawnFailures.total >= 0) spawnFailureTelemetry.total = parsed.spawnFailures.total;
+      if (parsed.spawnFailures.byReason && typeof parsed.spawnFailures.byReason === "object") spawnFailureTelemetry.byReason = { ...parsed.spawnFailures.byReason };
+      if (Array.isArray(parsed.spawnFailures.recent)) spawnFailureTelemetry.recent = parsed.spawnFailures.recent.filter((item) => item && typeof item === "object").slice(-50);
+    }
     if (Array.isArray(parsed.recentEvents)) {
       recentRouterEvents.length = 0;
       recentRouterEvents.push(...parsed.recentEvents.filter((event) => event && typeof event === "object").slice(-Math.max(1, MAX_RECENT_EVENTS)));
@@ -437,6 +563,10 @@ function loadRouterState(file = STATE_FILE) {
           if (event.provider && event.model && event.phase) recordUsageEvent(event);
         }
         inFlightUsage.clear();
+      } else if ((parsed.usage.schemaVersion ?? 1) < 3) {
+        for (const event of recentRouterEvents) {
+          if (event.provider && event.model && event.phase === "skipped") recordUsageEvent(event);
+        }
       }
     }
     persistedStateUpdatedAt = typeof parsed.updatedAt === "string" ? parsed.updatedAt : null;
@@ -881,6 +1011,7 @@ async function proxyRoleResponse(response, role, payload, wantsStream, requestId
       decrementActiveRequests(route.provider);
     }
   }
+  recordSpawnFailure({ requestId, role, requestedModel: payload.model, reason: "provider_exhausted" });
   sendJson(response, 503, errorBody(`No available provider completed role ${role}. ${failures.join("; ")}`, "router_provider_exhausted"), { "x-autodev-request-id": requestId });
 }
 
@@ -943,7 +1074,7 @@ async function handle(request, response) {
   await proxyConcreteResponse(response, route, payload, wantsStream, requestId);
 }
 
-export { activeProviderRequests, catalogModelIds, classifyProviderFailure, clearProviderCooldown, concurrencyStatus, cooldownProvider, countToolCallsFromSse, countToolCallsInResponse, decrementActiveRequests, fallbackable, getActiveRequests, getRouterStatus, handle, incrementActiveRequests, isProviderCoolingDown, loadRouterState, parseConcurrencyConfig, persistRouterStateNow, providerModelMetadata, recordConcurrencyDenial, recordRouterEvent, releaseSubagentSlot, replaceModelFields, resetConcurrencyTelemetry, resetRouterTelemetry, routeCredentialAvailable, roleCandidates, roleForModel, routeForModel, serializeRouterState, tryAcquireSubagentSlot, responseTextFromSse, transformSseEvent, validateRoutingConfig };
+export { activeProviderRequests, catalogModelIds, classifyProviderFailure, clearProviderCooldown, concurrencyStatus, normalizeCodexTask, summarizeCodexTasks, cooldownProvider, countToolCallsFromSse, countToolCallsInResponse, decrementActiveRequests, fallbackable, getActiveRequests, getRouterStatus, handle, incrementActiveRequests, isProviderCoolingDown, loadRouterState, parseConcurrencyConfig, persistRouterStateNow, providerModelMetadata, recordConcurrencyDenial, recordRouterEvent, recordSpawnFailure, releaseSubagentSlot, replaceModelFields, resetConcurrencyTelemetry, resetRouterTelemetry, spawnFailureStatus, routeCredentialAvailable, roleCandidates, roleForModel, routeForModel, serializeRouterState, tryAcquireSubagentSlot, responseTextFromSse, transformSseEvent, validateRoutingConfig };
 
 if (IS_MAIN) {
   createServer((request, response) => { void handle(request, response); }).listen(PORT, HOST, () => {
