@@ -179,8 +179,9 @@
       const receiver = codexTelemetry.receiver ?? {};
       const turns = codexTelemetry.turns ?? {};
       const tokens = codexTelemetry.tokens ?? {};
+      const mcpSummary = codexTelemetry.mcpSummary ?? {};
       document.querySelector("#codex-telemetry").textContent = receiver.lastReceivedAt
-        ? `OTLP logs ${receiver.logs ?? 0} · traces ${receiver.traces ?? 0} · metrics ${receiver.metrics ?? 0} · invalid ${receiver.invalid ?? 0} · recent sessions ${codexTelemetry.sessionsRecent ?? 0}/${codexTelemetry.sessionsObserved ?? 0} · turns ${turns.completed ?? 0}/${turns.prompts ?? 0} · avg TTFT ${durationText(turns.averageTtftMs)} · tokens ${tokens.total ?? 0} · last ${formatTimestamp(receiver.lastReceivedAt)}`
+        ? `OTLP logs ${receiver.logs ?? 0} · traces ${receiver.traces ?? 0} · metrics ${receiver.metrics ?? 0} · invalid ${receiver.invalid ?? 0} · recent sessions ${codexTelemetry.sessionsRecent ?? 0}/${codexTelemetry.sessionsObserved ?? 0} · turns ${turns.completed ?? 0}/${turns.prompts ?? 0} · avg TTFT ${durationText(turns.averageTtftMs)} · tokens ${tokens.total ?? 0} · MCP ready ${mcpSummary.ready ?? 0}/${mcpSummary.observed ?? 0} · last ${formatTimestamp(receiver.lastReceivedAt)}`
         : "No Codex OTEL telemetry received yet.";
       const mcpRows = (codexTelemetry.mcpServers ?? []).map((server) => `<tr><td><code>${text(server.name)}</code></td><td class="${server.health === "ready" ? "ok" : server.health === "error" ? "limited" : ""}">${text(server.health)}</td><td>${server.lastSeenAt ? formatTimestamp(server.lastSeenAt) : "-"}</td><td>${server.initAttempts ?? 0}</td><td>${server.toolDiscoveryAttempts ?? 0}</td><td>${server.failures ?? 0}</td><td>${durationText(server.averageDurationMs)}</td></tr>`).join("") || '<tr><td colspan="7">No MCP lifecycle telemetry received yet.</td></tr>';
       document.querySelector("#mcp-telemetry").innerHTML = mcpRows;

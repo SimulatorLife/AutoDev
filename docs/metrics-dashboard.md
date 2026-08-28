@@ -25,18 +25,30 @@ artifacts for recent raw snapshots.
 
 ## Codex OpenTelemetry
 
-The local Codex configuration exports privacy-safe OTLP logs and traces to the
-model router at `127.0.0.1:4100`. `otel.log_user_prompt = false` prevents raw
-prompt text from being exported. The router ingests Codex lifecycle events and
-exposes them in `/status` and the local dashboard, including turn timing,
- token counts, MCP server lifecycle observations, initialization/tool-discovery
-latency, and recent failures.
+The local Codex configuration exports privacy-safe OTLP logs, traces, and
+metrics to the model router at `127.0.0.1:4100`. `otel.log_user_prompt = false`
+prevents raw prompt text from being exported. The router ingests Codex lifecycle
+events and exposes them in `/status` and the local dashboard, including turn
+timing, token counts, MCP server lifecycle observations,
+initialization/tool-discovery latency, and recent failures.
+
+The OTLP receiver accepts all three signal paths (`/v1/logs`, `/v1/traces`, and
+`/v1/metrics`). Codex currently emits useful lifecycle logs and MCP traces but
+does not emit a `ResourceMetrics` batch during the validated CLI turn, so the
+metrics receiver may correctly remain at zero. The receiver counter confirms
+that the endpoint is available if Codex begins emitting metrics in a later
+version.
 
 The dashboard labels MCP state as an observation (`ready`, `error`, or `stale`),
 not as an authoritative process-health guarantee. Codex currently emits MCP
 lifecycle spans rather than a persistent MCP health gauge. The router continues
 to own provider selection, fallback, cooldown, concurrency, and origin
-telemetry because Codex does not emit those AutoDev-specific semantics.
+telemetry because Codex does not emit those AutoDev-specific semantics. The
+dashboard's `MCP ready` count is the number of servers with a recent successful
+lifecycle observation, not a count of statically enabled servers or a guarantee
+that every server is currently connected. The per-origin and per-role tables
+remain router-owned request telemetry; OTEL does not provide a reliable
+conversation-to-origin/role join for those rows.
 
 Validate the active rules and telemetry receiver without running a model turn:
 

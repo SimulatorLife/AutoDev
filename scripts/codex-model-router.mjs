@@ -331,15 +331,23 @@ function codexTelemetryStatus(now = Date.now()) {
   const mcpServers = [...otelTelemetry.mcpServers.values()].map((server) => {
     const lastSeenMs = server.lastSeenAt ? Date.parse(server.lastSeenAt) : NaN;
     const fresh = Number.isFinite(lastSeenMs) && now - lastSeenMs <= OTEL_HEALTH_TTL_MS;
-    return { ...server, health: fresh ? server.lastStatus : server.lastStatus === "error" ? "error" : "stale", averageDurationMs: server.durationCount ? Math.round(server.durationMs / server.durationCount) : 0 };
+    return { ...server, health: fresh ? server.lastStatus : "stale", averageDurationMs: server.durationCount ? Math.round(server.durationMs / server.durationCount) : 0 };
   }).sort((a, b) => a.name.localeCompare(b.name));
   const sessions = [...otelTelemetry.sessions.values()];
+  const mcpSummary = mcpServers.reduce((summary, server) => {
+    summary.observed += 1;
+    if (server.health === "ready") summary.ready += 1;
+    if (server.health === "error") summary.error += 1;
+    if (server.health === "stale") summary.stale += 1;
+    return summary;
+  }, { observed: 0, ready: 0, error: 0, stale: 0 });
   return {
     receiver: { ...otelTelemetry.receiver },
     sessionsObserved: sessions.length,
     sessionsRecent: sessions.filter((session) => session.lastSeenAt && now - Date.parse(session.lastSeenAt) <= OTEL_HEALTH_TTL_MS).length,
     turns: { ...otelTelemetry.turns, averageTtftMs: otelTelemetry.turns.ttftCount ? Math.round(otelTelemetry.turns.ttftMs / otelTelemetry.turns.ttftCount) : 0 },
     tokens: { ...otelTelemetry.tokens, total: Object.values(otelTelemetry.tokens).reduce((sum, value) => sum + value, 0) },
+    mcpSummary,
     mcpServers,
   };
 }

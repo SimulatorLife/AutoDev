@@ -207,12 +207,14 @@ test("ingests Codex OTEL turn and MCP lifecycle telemetry without prompt content
   assert.equal(telemetry.turns.completed, 1);
   assert.equal(telemetry.turns.averageTtftMs, 321);
   assert.deepEqual(telemetry.tokens, { input: 100, output: 25, cached: 5, reasoning: 10, tool: 3, total: 143 });
+  assert.deepEqual(telemetry.mcpSummary, { observed: 3, ready: 1, error: 0, stale: 1 });
   const playwright = telemetry.mcpServers.find((server) => server.name === "playwright");
   assert.equal(playwright.health, "ready");
   assert.equal(playwright.initAttempts, 1);
   assert.equal(playwright.toolDiscoveryAttempts, 1);
   assert.equal(playwright.averageDurationMs, 6);
   assert.equal(JSON.stringify(telemetry).includes("do-not-store-this"), false);
+  assert.equal(codexTelemetryStatus(Date.now() + 121_000).mcpServers.find((server) => server.name === "playwright").health, "stale");
   resetOtelTelemetry();
 });
 
@@ -253,6 +255,7 @@ test("serves a lightweight dashboard to browsers and JSON to API clients", async
     assert.match(dashboardBody, /id="by-model"/);
     assert.match(dashboardBody, /id="codex-telemetry"/);
     assert.match(dashboardBody, /id="mcp-telemetry"/);
+    assert.match(dashboardBody, /MCP ready/);
     assert.match(dashboardBody, /id="codex-tasks"/);
     assert.match(dashboardBody, /id="spawn-failures"/);
     assert.match(dashboardBody, /<tfoot>/);
