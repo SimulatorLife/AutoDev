@@ -133,14 +133,14 @@ while native `autodev/*` roles are excluded by their role alias, so leaf
 providers do not receive the parent-only instruction to spawn more agents.
 Keep these restrictions at the CLI/gateway boundary rather than
 relying only on role prompt text. Provider bridges must treat the active
-working directory as transport metadata: role requests must carry `cwd`,
+working directory as transport metadata: role requests should carry `cwd`,
 `project_root`, or `working_directory` in the structured request (or its
-metadata), and must never infer it from arbitrary task prose. The router rejects
-a role request without that parent workspace context before provider selection.
-For direct provider requests that bypass the role router, the last-resort
-process default is `/Users/henrykirk/AutoDev`, overridable with
-`CODEX_PROJECT_ROOT`; it is never a substitute for a subagent's parent
-workspace.
+metadata), and must never infer it from arbitrary task prose. The provider
+bridges use that parent workspace whenever it is present. If the app-server
+omits it, AutoDev cannot safely infer the parent from a long-running daemon's
+process directory; the last-resort default is `/Users/henrykirk/AutoDev`,
+overridable with `CODEX_PROJECT_ROOT`. That fallback is not a substitute for
+fixing the orchestrator to forward its workspace.
 
 Provider bridges also forward only delegated user-task content and add their
 leaf boundary as provider-controlled instructions. Parent system/developer
@@ -191,7 +191,7 @@ installer is the only supported materialization path into
 
 - User-level skills: `scripts/codex/skills/{lsp-mcp-server,orchestration,remove-legacy-shims}`
   are versioned directories owned by AutoDev. The installer creates symlinks
-  under `$CODEX_HOME/skills/`, so Codex reads the canonical skill files without
+  under `$HOME/.agents/skills/`, so Codex reads the canonical skill files without
   a second copied source of truth.
 - User-level role definitions: `scripts/codex/agents/*.toml`, materialized as
   managed regular-file copies under `$CODEX_HOME/agents/`. The role loader must
@@ -286,7 +286,7 @@ Target state and current verification:
 | Requirement | State |
 | --- | --- |
 | OpenAI/Codex orchestrator and tracked user-level cross-provider TOMLs | Configured under `scripts/codex/agents/` and materialized as verified regular-file copies under `~/.codex/agents/`. |
-| Shared user-level skills | Configured under `scripts/codex/skills/` as AutoDev-owned versioned directories and materialized under `~/.codex/skills/`; `install-codex-integration.sh --check` verifies all three links. |
+| Shared user-level skills | Configured under `scripts/codex/skills/` as AutoDev-owned versioned directories and materialized under `~/.agents/skills/`; `install-codex-integration.sh --check` verifies all three links. |
 | Versioned scripts/hooks/config installed into `~/.codex` | Configured; profiles/catalogs/config are symlinked and app-executed hooks are checksum-checked runtime copies; `install-codex-integration.sh --check` passes. |
 | Native app-server custom-provider routing | Verified: `thread/start` selects the custom provider; Claude reached its upstream session-limit response. |
 | Direct CLI provider turns | Transport paths verified; Claude was session-limited, MiniMax was upstream high-demand limited, and Antigravity was quota-limited. |

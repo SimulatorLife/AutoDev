@@ -5,7 +5,8 @@ repo_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
 codex_home="${CODEX_HOME:-$HOME/.codex}"
 hooks_dir="$codex_home/hooks"
 agents_dir="$codex_home/agents"
-skills_dir="$codex_home/skills"
+user_skills_dir="$HOME/.agents/skills"
+legacy_skills_dirs=("$codex_home/skills" "$codex_home/agents/skills")
 litellm_dir="$HOME/.config/litellm"
 
 hook_names=(
@@ -245,12 +246,30 @@ check_custom_provider_config() {
   return "$failed"
 }
 
+check_legacy_skill_links() {
+  local failed=0
+  local name legacy_dir target
+  for legacy_dir in "${legacy_skills_dirs[@]}"; do
+    for name in "${skill_names[@]}"; do
+      target="$legacy_dir/$name"
+      if [[ -L "$target" ]]; then
+        printf 'obsolete-user-skill-link %s\n' "$target"
+        failed=1
+      elif [[ -e "$target" ]]; then
+        printf 'obsolete-user-skill-path %s\n' "$target"
+        failed=1
+      fi
+    done
+  done
+  return "$failed"
+}
+
 check_links() {
   local failed=0
   local name source target
   for name in "${skill_names[@]}"; do
     source="$repo_root/scripts/codex/skills/$name"
-    target="$skills_dir/$name"
+    target="$user_skills_dir/$name"
     if check_one "$source" "$target"; then
       printf 'ok %s -> %s\n' "$target" "$source"
     else
@@ -331,6 +350,9 @@ check_links() {
   if ! check_custom_provider_config; then
     failed=1
   fi
+  if ! check_legacy_skill_links; then
+    failed=1
+  fi
   if ! check_versioned_sources; then
     failed=1
   fi
@@ -356,7 +378,16 @@ for name in "${catalog_names[@]}"; do
   link_one "$repo_root/scripts/codex/catalogs/$name-model-catalog.json" "$codex_home/$name-model-catalog.json"
 done
 for name in "${skill_names[@]}"; do
-  link_one "$repo_root/scripts/codex/skills/$name" "$skills_dir/$name"
+  for legacy_dir in "${legacy_skills_dirs[@]}"; do
+    legacy_target="$legacy_dir/$name"
+    if [[ -L "$legacy_target" ]]; then
+      rm -f -- "$legacy_target"
+    elif [[ -e "$legacy_target" ]]; then
+      printf 'refusing to replace obsolete non-symlink skill path: %s\n' "$legacy_target" >&2
+      exit 1
+    fi
+  done
+  link_one "$repo_root/scripts/codex/skills/$name" "$user_skills_dir/$name"
 done
 mkdir -p -- "$agents_dir"
 for role in "${agent_role_names[@]}"; do

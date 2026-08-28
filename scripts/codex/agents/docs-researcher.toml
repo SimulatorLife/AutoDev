@@ -21,3 +21,7 @@ that scope; report a workspace mismatch instead of guessing."""
 
 [mcp_servers.openaiDeveloperDocs]
 url = "https://developers.openai.com/mcp"
+
+[[skills.config]]
+name = "orchestration"
+enabled = false

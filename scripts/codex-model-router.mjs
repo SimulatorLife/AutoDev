@@ -1030,19 +1030,6 @@ async function proxyRoleResponse(response, role, payload, wantsStream, requestId
   sendJson(response, 503, errorBody(`No available provider completed role ${role}. ${failures.join("; ")}`, "router_provider_exhausted"), { "x-autodev-request-id": requestId });
 }
 
-function structuredWorkspace(payload) {
-  const values = [
-    payload?.cwd,
-    payload?.project_root,
-    payload?.working_directory,
-    payload?.metadata?.cwd,
-    payload?.metadata?.project_root,
-    payload?.metadata?.working_directory,
-  ];
-  const value = values.find((candidate) => typeof candidate === "string" && candidate.trim());
-  return value ? value.trim() : null;
-}
-
 function requestSession(request, payload) {
   const header = request.headers["x-codex-session-id"] ?? request.headers["x-session-id"] ?? request.headers["x-conversation-id"];
   const metadata = payload?.metadata;
@@ -1090,11 +1077,6 @@ async function handle(request, response) {
   const requestId = String(request.headers["x-request-id"] ?? randomUUID());
   const wantsStream = payload.stream !== false;
   if (role) {
-    if (!structuredWorkspace(payload)) {
-      recordSpawnFailure({ requestId, role, requestedModel: model, reason: "workspace_context_required" });
-      sendJson(response, 400, errorBody("subagent requests require the parent workspace in cwd, project_root, working_directory, or request metadata", "workspace_context_required"), { "x-autodev-request-id": requestId });
-      return;
-    }
     const session = requestSession(request, payload);
     const denialReason = tryAcquireSubagentSlot(session.key);
     if (denialReason) {
@@ -1117,7 +1099,7 @@ async function handle(request, response) {
   await proxyConcreteResponse(response, route, payload, wantsStream, requestId);
 }
 
-export { activeProviderRequests, structuredWorkspace, catalogModelIds, classifyProviderFailure, clearProviderCooldown, concurrencyStatus, normalizeCodexTask, summarizeCodexTasks, cooldownProvider, countToolCallsFromSse, countToolCallsInResponse, decrementActiveRequests, fallbackable, getActiveRequests, getRouterStatus, handle, incrementActiveRequests, isProviderCoolingDown, loadRouterState, parseConcurrencyConfig, persistRouterStateNow, providerModelMetadata, recordConcurrencyDenial, recordRouterEvent, recordSpawnFailure, releaseSubagentSlot, replaceModelFields, resetConcurrencyTelemetry, resetRouterTelemetry, spawnFailureStatus, routeCredentialAvailable, roleCandidates, roleForModel, routeForModel, serializeRouterState, tryAcquireSubagentSlot, responseTextFromSse, transformSseEvent, validateRoutingConfig };
+export { activeProviderRequests, catalogModelIds, classifyProviderFailure, clearProviderCooldown, concurrencyStatus, normalizeCodexTask, summarizeCodexTasks, cooldownProvider, countToolCallsFromSse, countToolCallsInResponse, decrementActiveRequests, fallbackable, getActiveRequests, getRouterStatus, handle, incrementActiveRequests, isProviderCoolingDown, loadRouterState, parseConcurrencyConfig, persistRouterStateNow, providerModelMetadata, recordConcurrencyDenial, recordRouterEvent, recordSpawnFailure, releaseSubagentSlot, replaceModelFields, resetConcurrencyTelemetry, resetRouterTelemetry, spawnFailureStatus, routeCredentialAvailable, roleCandidates, roleForModel, routeForModel, serializeRouterState, tryAcquireSubagentSlot, responseTextFromSse, transformSseEvent, validateRoutingConfig };
 
 if (IS_MAIN) {
   createServer((request, response) => { void handle(request, response); }).listen(PORT, HOST, () => {

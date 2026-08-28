@@ -16,14 +16,15 @@ The tracked Codex role files under `scripts/codex/agents/` are regular configura
 
 The three shared skills under `scripts/codex/skills/` are tracked AutoDev-owned
 skill directories. The installer exposes those versioned directories in
-`$CODEX_HOME/skills/` through symlinks:
+`$HOME/.agents/skills/` through symlinks:
 
 - `lsp-mcp-server`
 - `orchestration`
 - `remove-legacy-shims`
 
 Keep the canonical skill content in AutoDev; update the directories there and
-rerun the installer when changing this user-level skill setup.
+rerun the installer when changing this user-level skill setup. Restart Codex or
+start a new task after installation so user-level skill discovery refreshes.
 
 ## Safety
 

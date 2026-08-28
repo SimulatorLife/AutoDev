@@ -5,7 +5,7 @@ import test from "node:test";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
-import { activeProviderRequests, catalogModelIds, classifyProviderFailure, clearProviderCooldown, cooldownProvider, decrementActiveRequests, fallbackable, getActiveRequests, concurrencyStatus, countToolCallsFromSse, countToolCallsInResponse, getRouterStatus, handle, structuredWorkspace, incrementActiveRequests, isProviderCoolingDown, loadRouterState, normalizeCodexTask, parseConcurrencyConfig, persistRouterStateNow, recordConcurrencyDenial, recordRouterEvent, recordSpawnFailure, releaseSubagentSlot, replaceModelFields, resetConcurrencyTelemetry, resetRouterTelemetry, serializeRouterState, spawnFailureStatus, summarizeCodexTasks, responseTextFromSse, roleCandidates, roleForModel, routeCredentialAvailable, routeForModel, transformSseEvent, tryAcquireSubagentSlot, validateRoutingConfig } from "./codex-model-router.mjs";
+import { activeProviderRequests, catalogModelIds, classifyProviderFailure, clearProviderCooldown, cooldownProvider, decrementActiveRequests, fallbackable, getActiveRequests, concurrencyStatus, countToolCallsFromSse, countToolCallsInResponse, getRouterStatus, handle, incrementActiveRequests, isProviderCoolingDown, loadRouterState, normalizeCodexTask, parseConcurrencyConfig, persistRouterStateNow, recordConcurrencyDenial, recordRouterEvent, recordSpawnFailure, releaseSubagentSlot, replaceModelFields, resetConcurrencyTelemetry, resetRouterTelemetry, serializeRouterState, spawnFailureStatus, summarizeCodexTasks, responseTextFromSse, roleCandidates, roleForModel, routeCredentialAvailable, routeForModel, transformSseEvent, tryAcquireSubagentSlot, validateRoutingConfig } from "./codex-model-router.mjs";
 
 test("loads editable provider and role models from JSON routing config", async () => {
   const config = JSON.parse(await readFile(new URL("./codex/model-routing.json", import.meta.url), "utf8"));
@@ -164,28 +164,6 @@ test("rejects missing or malformed models before provider routing", async () => 
       assert.equal(payload.error.type, "invalid_request_error");
       assert.match(payload.error.message, /JSON object|non-empty string model/);
     }
-  } finally {
-    await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
-  }
-});
-
-test("requires parent workspace metadata for role requests", async () => {
-  assert.equal(structuredWorkspace({ metadata: { working_directory: " /tmp/project " } }), "/tmp/project");
-  assert.equal(structuredWorkspace({ input: "task" }), null);
-
-  const server = createServer((request, response) => { void handle(request, response); });
-  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
-  try {
-    const address = server.address();
-    const response = await fetch(`http://127.0.0.1:${address.port}/v1/responses`, {
-      method: "POST",
-      headers: { "content-type": "application/json", "x-request-id": "req-workspace-required" },
-      body: JSON.stringify({ model: "autodev/worker", input: "task", stream: false }),
-    });
-    assert.equal(response.status, 400);
-    const payload = await response.json();
-    assert.equal(payload.error.type, "workspace_context_required");
-    assert.match(payload.error.message, /parent workspace/);
   } finally {
     await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
   }

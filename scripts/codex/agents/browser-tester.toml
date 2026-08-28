@@ -45,3 +45,17 @@ enabled_tools = [
   "browser_resize",
   "browser_close",
 ]
+
+[skills]
+include_instructions = false
+
+[skills.bundled]
+enabled = false
+
+[[skills.config]]
+name = "orchestration"
+enabled = false
+
+[[skills.config]]
+name = "orchestration"
+enabled = false

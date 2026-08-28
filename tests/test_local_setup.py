@@ -32,7 +32,8 @@ class LocalSetupTests(unittest.TestCase):
                 self.assertFalse(source.is_symlink())
                 self.assertTrue((source / "SKILL.md").is_file())
                 self.assertIn(f'source="$repo_root/scripts/codex/skills/$name"', installer)
-                self.assertIn(f'link_one "$repo_root/scripts/codex/skills/$name" "$skills_dir/$name"', installer)
+                self.assertIn(f'link_one "$repo_root/scripts/codex/skills/$name" "$user_skills_dir/$name"', installer)
+                self.assertIn('legacy_skills_dirs=("$codex_home/skills" "$codex_home/agents/skills")', installer)
 
     def test_user_level_skill_registry_uses_only_the_requested_skill_names(self):
         names = sorted(path.name for path in (REPO_ROOT / "scripts/codex/skills").iterdir())
