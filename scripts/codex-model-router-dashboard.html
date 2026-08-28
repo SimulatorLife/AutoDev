@@ -14,6 +14,10 @@
     table { border-collapse: collapse; width: 100%; }
     th, td { border-bottom: 1px solid #8885; padding: .45rem .55rem; text-align: left; vertical-align: top; }
     th { white-space: nowrap; }
+    .toggle-provider { background: none; border: 0; color: inherit; cursor: pointer; font: inherit; padding: 0; }
+    .toggle-provider:hover { text-decoration: underline; }
+    .provider-model { background: #8881; }
+    .provider-model td:first-child { padding-left: 1.5rem; }
     code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
     pre { white-space: pre-wrap; line-height: 1.45; }
     .ok { color: #16803c; }
@@ -27,7 +31,7 @@
 
   <h2>Providers</h2>
   <table>
-    <thead><tr><th>Provider</th><th>Configured model(s)</th><th>Status</th><th>Active</th><th>Attempts</th><th>Successes</th><th>Failures</th><th>Skipped</th><th>Last failure</th></tr></thead>
+    <thead><tr><th>Provider / model</th><th>Tier / configured model</th><th>Status</th><th>Active</th><th>Attempts</th><th>Successes</th><th>Failures</th><th>Provider skips</th><th>Last failure</th></tr></thead>
     <tbody id="providers"><tr><td colspan="9">Loading…</td></tr></tbody>
   </table>
 
@@ -64,19 +68,53 @@
       return `${parts.year}-${parts.month}-${parts.day} ${hour}:${parts.minute}:${parts.second}.${parts.fractionalSecond} ${parts.timeZoneName}`;
     };
     const modelList = (models) => Object.entries(models ?? {}).map(([tier, model]) => `${tier}: ${model}`).join(", ") || "-";
-    const failureText = (failure) => failure ? `${failure.class}${failure.status ? ` (HTTP ${failure.status})` : ""}` : "-";
+    const failureText = (failure) => failure ? `${failure.class}${failure.status ? ` (HTTP ${failure.status})` : ""}` : "";
     const durationText = (milliseconds) => `${(Number(milliseconds ?? 0) / 1000).toFixed(1)}s`;
     const usageRows = (usage) => Object.entries(usage ?? {}).map(([key, state]) => `<tr><td><code>${text(key)}</code></td><td>${state.attempts}</td><td>${state.successes}</td><td>${state.failures}</td><td>${durationText(state.averageDurationMs)}</td><td>${state.toolCalls}</td></tr>`).join("") || '<tr><td colspan="6">No usage recorded yet.</td></tr>';
+    const expandedProviders = new Set();
 
     function render(status) {
       document.title = `${status.router} · status`;
       document.querySelector("#meta").textContent = `Instance ${status.routerInstanceId} · PID ${status.pid} · started ${formatTimestamp(status.startedAt)} · updates every 3 seconds`;
       document.querySelector("#error").textContent = "";
-      document.querySelector("#providers").innerHTML = Object.entries(status.providers ?? {}).map(([provider, state]) => {
+      const modelUsage = status.usage?.byModel ?? {};
+      const providerRows = Object.entries(status.providers ?? {}).map(([provider, state], index) => {
+        const group = `provider-${index}`;
+        const models = Object.entries(state.configuredModels ?? {});
+        const uniqueModels = [...new Map(models.map(([tier, model]) => [model, [tier, model]])).values()];
+        const collapsible = models.length > 1;
+        const expanded = collapsible && expandedProviders.has(group);
+        const modelStats = uniqueModels.reduce((total, [, model]) => {
+          const stats = modelUsage[`${provider}/${model}`] ?? {};
+          total.attempts += stats.attempts ?? 0;
+          total.successes += stats.successes ?? 0;
+          total.failures += stats.failures ?? 0;
+          return total;
+        }, { attempts: 0, successes: 0, failures: 0 });
         const limited = state.status !== "ready";
         const cooldown = state.cooldownRemainingMs > 0 ? ` (${Math.ceil(state.cooldownRemainingMs / 1000)}s)` : "";
-        return `<tr><td><code>${text(provider)}</code></td><td><code>${text(modelList(state.configuredModels))}</code></td><td class="${limited ? "limited" : "ok"}">${text(state.status)}${cooldown}</td><td>${state.activeRequests}</td><td>${state.attempts}</td><td>${state.successes}</td><td>${state.failures}</td><td>${state.skipped}</td><td>${text(failureText(state.lastFailure))}</td></tr>`;
+        const providerCell = collapsible
+          ? `<button type="button" class="toggle-provider" data-provider-group="${group}" aria-expanded="${expanded}"><span class="caret">${expanded ? "▾" : "▸"}</span> <code>${text(provider)}</code></button>`
+          : `<code>${text(provider)}</code>`;
+        const configuredCell = collapsible ? "" : `<code>${text(modelList(state.configuredModels))}</code>`;
+        const parent = `<tr class="provider-parent"><td>${providerCell}</td><td>${configuredCell}</td><td class="${limited ? "limited" : "ok"}">${text(state.status)}${cooldown}</td><td>${state.activeRequests}</td><td>${modelStats.attempts}</td><td>${modelStats.successes}</td><td>${modelStats.failures}</td><td>${state.skipped}</td><td>${text(failureText(state.lastFailure))}</td></tr>`;
+        const children = collapsible ? models.map(([tier, model]) => {
+          const stats = modelUsage[`${provider}/${model}`] ?? {};
+          const modelLimited = (stats.failures ?? 0) > 0 && stats.lastFailure;
+          const modelStatus = modelLimited ? (stats.lastFailure.class ?? "failed") : state.status;
+          return `<tr class="provider-model" data-provider-child="${group}"${expanded ? "" : " hidden"}><td>↳ <code>${text(tier)}</code></td><td><code>${text(model)}</code></td><td class="${modelStatus === "ready" ? "ok" : "limited"}">${text(modelStatus)}</td><td>0</td><td>${stats.attempts ?? 0}</td><td>${stats.successes ?? 0}</td><td>${stats.failures ?? 0}</td><td>0</td><td>${text(failureText(stats.lastFailure))}</td></tr>`;
+        }).join("") : "";
+        return parent + children;
       }).join("") || '<tr><td colspan="9">No providers configured.</td></tr>';
+      document.querySelector("#providers").innerHTML = providerRows;
+      document.querySelectorAll(".toggle-provider").forEach((button) => button.addEventListener("click", () => {
+        const group = button.dataset.providerGroup;
+        const expanded = button.getAttribute("aria-expanded") === "true";
+        if (expanded) expandedProviders.delete(group); else expandedProviders.add(group);
+        button.setAttribute("aria-expanded", String(!expanded));
+        button.querySelector(".caret").textContent = expanded ? "▸" : "▾";
+        document.querySelectorAll(`[data-provider-child="${group}"]`).forEach((row) => { row.hidden = expanded; });
+      }));
       const concurrency = status.concurrency ?? {};
       const limit = (value) => value == null ? "unlimited" : value;
       const denial = concurrency.lastDenial ? `${concurrency.lastDenial.reason} (${concurrency.lastDenial.sessionScope})` : "-";

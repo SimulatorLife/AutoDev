@@ -85,7 +85,7 @@ const providerTelemetry = new Map(ROUTES.map(({ provider }) => [provider, {
 
 
 function emptyUsageBucket() {
-  return { attempts: 0, successes: 0, failures: 0, durationMs: 0, maxDurationMs: 0, toolCalls: 0, lastUsedAt: null };
+  return { attempts: 0, successes: 0, failures: 0, durationMs: 0, maxDurationMs: 0, toolCalls: 0, lastUsedAt: null, lastFailure: null };
 }
 
 const usageTelemetry = {
@@ -111,7 +111,7 @@ function usageKey(requestId, provider, model) {
   return `${requestId}\0${provider}\0${model}`;
 }
 
-function recordUsageEvent({ phase, requestId, role, provider, model, outcome, elapsedMs, toolCalls = 0, timestamp }) {
+function recordUsageEvent({ phase, requestId, role, provider, model, outcome, failureClass = null, status = null, elapsedMs, toolCalls = 0, timestamp }) {
   const origin = usageOrigin(role, provider);
   const roleKey = role ?? "unattributed";
   const modelKey = `${provider}/${model}`;
@@ -135,6 +135,7 @@ function recordUsageEvent({ phase, requestId, role, provider, model, outcome, el
     bucket.durationMs += duration;
     bucket.maxDurationMs = Math.max(bucket.maxDurationMs, duration);
     bucket.toolCalls += Number.isInteger(toolCalls) && toolCalls > 0 ? toolCalls : 0;
+    if (outcome !== "success") bucket.lastFailure = { timestamp, class: failureClass, status };
   }
   inFlightUsage.delete(key);
 }
@@ -292,7 +293,7 @@ function recordRouterEvent({ phase, requestId, role = null, requestedModel, prov
   recentRouterEvents.push(event);
   while (recentRouterEvents.length > Math.max(1, MAX_RECENT_EVENTS)) recentRouterEvents.shift();
 
-  if (provider && model) recordUsageEvent({ phase, requestId, role, provider, model, outcome, elapsedMs, toolCalls, timestamp });
+  if (provider && model) recordUsageEvent({ phase, requestId, role, provider, model, outcome, failureClass, status, elapsedMs, toolCalls, timestamp });
   const state = provider ? providerState(provider) : null;
   if (state && phase === "selected") {
     state.attempts += 1;
@@ -411,6 +412,7 @@ function loadRouterState(file = STATE_FILE) {
             if (Number.isInteger(saved[field]) && saved[field] >= 0) current[field] = saved[field];
           }
           if (saved.lastUsedAt === null || typeof saved.lastUsedAt === "string") current.lastUsedAt = saved.lastUsedAt;
+          if (saved.lastFailure === null || (saved.lastFailure && typeof saved.lastFailure === "object")) current.lastFailure = saved.lastFailure;
         }
       }
       const savedTotals = parsed.usage.totals;

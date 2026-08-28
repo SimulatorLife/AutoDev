@@ -161,6 +161,12 @@ test("serves a lightweight dashboard to browsers and JSON to API clients", async
     assert.match(dashboardBody, /id="by-origin"/);
     assert.match(dashboardBody, /id="by-role"/);
     assert.match(dashboardBody, /id="by-model"/);
+    assert.match(dashboardBody, /const collapsible = models.length > 1/);
+    assert.match(dashboardBody, /const modelStats = uniqueModels.reduce/);
+    assert.match(dashboardBody, /const configuredCell = collapsible \? ""/);
+    assert.match(dashboardBody, /Provider skips/);
+    assert.match(dashboardBody, /: "";/);
+    assert.doesNotMatch(dashboardBody, />—</);
 
     const api = await fetch(`http://127.0.0.1:${address.port}/status`, { headers: { Accept: "application/json" } });
     assert.equal(api.status, 200);
