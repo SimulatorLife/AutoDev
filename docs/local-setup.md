@@ -17,7 +17,9 @@ The tracked Codex role files under `scripts/codex/agents/` are regular configura
 ## Safety
 
 - Inspect launch-agent plists before loading them with `launchctl`.
-- Keep OAuth/PAT/API credentials outside the repository.
+- Keep OAuth/PAT/API credentials outside the repository. Background services
+  load provider credentials from `~/.codex/.env`; for MiniMax this means a
+  private `MINIMAX_API_KEY=...` entry with restrictive file permissions.
 - Treat proxy and router logs as local-only operational data.
 - Prefer `ensure-*` scripts for idempotent setup and the `diagnose-*` scripts for evidence before changing provider routing.
 - Open `http://127.0.0.1:4100/status` in a browser for the lightweight live

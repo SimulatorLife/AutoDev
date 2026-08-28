@@ -68,7 +68,7 @@ stream_idle_timeout_ms = 300000
 enabled = true
 max_concurrent_threads_per_session = 1
 max_depth = 1
-default_subagent_model = "gpt-5.6-luna"
+default_subagent_model = "autodev/default"
 default_subagent_reasoning_effort = "medium"
 
 [agents.explorer]

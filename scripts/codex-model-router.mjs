@@ -95,6 +95,10 @@ function providerState(provider) {
   return providerTelemetry.get(provider);
 }
 
+function routeCredentialAvailable(route, environment = process.env) {
+  return !route.envKey || Boolean(String(environment[route.envKey] ?? "").trim());
+}
+
 function classifyProviderFailure(status, body = "") {
   const text = String(body ?? "");
   if (/session.?limit|session.*(?:exhaust|capacity)|concurrent session/i.test(text)) return "session_limit";
@@ -472,6 +476,7 @@ function fallbackable(status, body) {
 }
 
 async function providerAvailable(route) {
+  if (!routeCredentialAvailable(route)) return false;
   if (route.provider === "codex") {
     try { await loadCodexAuth(); return true; } catch { return false; }
   }
@@ -606,7 +611,7 @@ async function handle(request, response) {
   await proxyConcreteResponse(response, route, payload, wantsStream, requestId);
 }
 
-export { activeProviderRequests, catalogModelIds, classifyProviderFailure, clearProviderCooldown, cooldownProvider, decrementActiveRequests, fallbackable, getActiveRequests, getRouterStatus, incrementActiveRequests, isProviderCoolingDown, providerModelMetadata, recordRouterEvent, replaceModelFields, resetRouterTelemetry, responseTextFromSse, roleCandidates, roleForModel, routeForModel, transformSseEvent, validateRoutingConfig, handle };
+export { activeProviderRequests, catalogModelIds, classifyProviderFailure, clearProviderCooldown, cooldownProvider, decrementActiveRequests, fallbackable, getActiveRequests, getRouterStatus, incrementActiveRequests, isProviderCoolingDown, providerModelMetadata, recordRouterEvent, routeCredentialAvailable, replaceModelFields, resetRouterTelemetry, responseTextFromSse, roleCandidates, roleForModel, routeForModel, transformSseEvent, validateRoutingConfig, handle };
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   createServer((request, response) => { void handle(request, response); }).listen(PORT, HOST, () => {

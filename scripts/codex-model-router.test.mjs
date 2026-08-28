@@ -3,7 +3,7 @@ import { createServer } from "node:http";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
-import { activeProviderRequests, catalogModelIds, classifyProviderFailure, clearProviderCooldown, cooldownProvider, decrementActiveRequests, fallbackable, getActiveRequests, getRouterStatus, handle, incrementActiveRequests, isProviderCoolingDown, recordRouterEvent, replaceModelFields, resetRouterTelemetry, responseTextFromSse, roleCandidates, roleForModel, routeForModel, transformSseEvent, validateRoutingConfig } from "./codex-model-router.mjs";
+import { activeProviderRequests, catalogModelIds, classifyProviderFailure, clearProviderCooldown, cooldownProvider, decrementActiveRequests, fallbackable, getActiveRequests, getRouterStatus, handle, incrementActiveRequests, isProviderCoolingDown, recordRouterEvent, replaceModelFields, resetRouterTelemetry, responseTextFromSse, roleCandidates, roleForModel, routeCredentialAvailable, routeForModel, transformSseEvent, validateRoutingConfig } from "./codex-model-router.mjs";
 
 test("loads editable provider and role models from JSON routing config", async () => {
   const config = JSON.parse(await readFile(new URL("./codex/model-routing.json", import.meta.url), "utf8"));
@@ -96,6 +96,13 @@ test("temporarily omits providers after a fallbackable limit or outage", () => {
   assert.equal(isProviderCoolingDown("minimax", now + 30_000), false);
   clearProviderCooldown("minimax");
   assert.equal(isProviderCoolingDown("minimax", now), false);
+});
+
+test("requires configured credentials before treating keyed providers as available", () => {
+  assert.equal(routeCredentialAvailable(routeForModel("MiniMax-M3"), {}), false);
+  assert.equal(routeCredentialAvailable(routeForModel("MiniMax-M3"), { MINIMAX_API_KEY: "  " }), false);
+  assert.equal(routeCredentialAvailable(routeForModel("MiniMax-M3"), { MINIMAX_API_KEY: "key-present" }), true);
+  assert.equal(routeCredentialAvailable(routeForModel("gpt-5.6-luna"), {}), true);
 });
 
 test("classifies provider failures into operator-visible limit states", () => {

@@ -4,6 +4,15 @@
 
 set -euo pipefail
 
+# launchd and other background hooks do not inherit interactive-shell
+# credentials. Load the local credential file without printing its contents.
+if [[ -f "${CODEX_ENV_FILE:-$HOME/.codex/.env}" ]]; then
+  set -a
+  # shellcheck disable=SC1090
+  source "${CODEX_ENV_FILE:-$HOME/.codex/.env}"
+  set +a
+fi
+
 daemon_mode=0
 if [[ "${1:-}" == "--daemon" ]]; then
   daemon_mode=1

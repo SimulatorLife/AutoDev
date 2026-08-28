@@ -188,8 +188,11 @@ versioned.
 - The active parent provider is the tracked `local_model_router` at
   `http://127.0.0.1:4100/v1`. It dispatches by `model`: GPT/Codex models go to
   the Codex OAuth Responses endpoint, while `sonnet`, MiniMax, and Gemini
-  models go to the existing provider bridges. This preserves the OpenAI/Codex
-  parent model while making dropped child provider bindings harmless.
+  models go to the existing provider bridges. The parent remains on its
+  configured Codex model, while `default_subagent_model = "autodev/default"`
+  ensures native default child work enters the multi-provider priority groups
+  instead of bypassing them with a concrete Codex model. This keeps parent
+  orchestration on Codex while making child-provider fallback effective.
 - `[agents].max_depth = 1` in the Codex config limits native Codex child
   creation; it does not remove tools from the separate Claude Code process
   launched by the Claude bridge. `--disallowed-tools Agent,Task` and the
