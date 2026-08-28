@@ -14,13 +14,11 @@ model_catalog_json = "./codex-model-catalog.json"
 approvals_reviewer = "user"
 background_terminal_max_timeout = 600000
 
-notify = ["/Users/henrykirk/.codex/computer-use/Codex Computer Use.app/Contents/SharedSupport/SkyComputerUseClient.app/Contents/MacOS/SkyComputerUseClient", "turn-ended"]
-
 [otel]
 environment = "autodev"
 exporter = { otlp-http = { endpoint = "http://127.0.0.1:4100/v1/logs", protocol = "json" } }
 trace_exporter = { otlp-http = { endpoint = "http://127.0.0.1:4100/v1/traces", protocol = "json" } }
-metrics_exporter = "none"
+metrics_exporter = { otlp-http = { endpoint = "http://127.0.0.1:4100/v1/metrics", protocol = "json" } }
 log_user_prompt = false
 
 [features]

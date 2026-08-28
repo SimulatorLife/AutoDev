@@ -43,12 +43,13 @@ class LocalSetupTests(unittest.TestCase):
         config = (REPO_ROOT / "scripts/codex/config.toml").read_text()
         self.assertIn("[otel]", config)
         self.assertIn('environment = "autodev"', config)
-        self.assertIn('exporter = "otlp-http"', config)
-        self.assertIn('trace_exporter = "otlp-http"', config)
-        self.assertIn('metrics_exporter = "none"', config)
+        self.assertIn('exporter = { otlp-http = {', config)
+        self.assertIn('trace_exporter = { otlp-http = {', config)
+        self.assertIn('metrics_exporter = { otlp-http = {', config)
         self.assertIn('log_user_prompt = false', config)
         self.assertIn('endpoint = "http://127.0.0.1:4100/v1/logs"', config)
         self.assertIn('endpoint = "http://127.0.0.1:4100/v1/traces"', config)
+        self.assertIn('endpoint = "http://127.0.0.1:4100/v1/metrics"', config)
 
     def test_native_codex_rules_are_tracked_and_deny_destructive_git_commands(self):
         rules = REPO_ROOT / "scripts/codex/rules/default.rules"
