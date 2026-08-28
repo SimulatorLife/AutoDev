@@ -183,7 +183,8 @@ const otelTelemetry = {
     threads: {
       enabled: { count: 0, sum: 0 },
       kept: { count: 0, sum: 0 },
-      truncated: { count: 0, sum: 0, descriptionTruncatedCharsTotal: 0 },
+      truncated: { count: 0, sum: 0 },
+      descriptionTruncatedChars: { count: 0, sum: 0 },
     },
   },
 };
@@ -337,15 +338,27 @@ function otelNanoTimestamp(value) {
   }
 }
 
-// Applies a cumulative OTLP data point to `otelMetricSeries`, returning only
-// the delta since the last observed point for that series. Duplicate resends
-// of the same timestamp yield a zero delta; a value lower than the last
-// observed one is treated as a counter reset and reported in full.
-function otelCumulativeDelta(seriesKey, timeUnixNano, value) {
+// OTLP represents DELTA temporality as enum value 1, either as the raw
+// number or (in some protojson encodings) the enum name; anything else is
+// treated as CUMULATIVE, which is the Codex exporter's default.
+const OTEL_DELTA_TEMPORALITY_VALUES = new Set([1, "1", "AGGREGATION_TEMPORALITY_DELTA"]);
+
+function isDeltaTemporality(temporality) {
+  return OTEL_DELTA_TEMPORALITY_VALUES.has(temporality);
+}
+
+// Applies an OTLP data point to `otelMetricSeries`, returning only the value
+// to add to a running aggregate for that series. Cumulative points resend
+// the running total on every export, so the delta since the last observed
+// point/timestamp is applied; a value lower than the last observed one is
+// treated as a counter reset and reported in full. Delta points already
+// report the increment for their window, so the value is applied as-is.
+// Either way, duplicate resends of the same timestamp yield a zero delta.
+function otelSeriesDelta(seriesKey, timeUnixNano, value, temporality) {
   const timestamp = otelNanoTimestamp(timeUnixNano);
   const previous = otelMetricSeries.get(seriesKey);
   if (previous && timestamp > 0n && timestamp <= previous.timestamp) return 0;
-  const delta = previous && value >= previous.value ? value - previous.value : value;
+  const delta = !isDeltaTemporality(temporality) && previous && value >= previous.value ? value - previous.value : value;
   otelMetricSeries.set(seriesKey, { timestamp, value });
   return Math.max(0, delta);
 }
@@ -363,8 +376,8 @@ function skillBucket(name) {
   return otelTelemetry.skills.injected.bySkill.get(name);
 }
 
-function noteSkillInjected(metricName, attributes, dataPoint) {
-  const delta = otelCumulativeDelta(otelSeriesKey(metricName, attributes, dataPoint.startTimeUnixNano), dataPoint.timeUnixNano, otelSumDataPointValue(dataPoint));
+function noteSkillInjected(metricName, attributes, dataPoint, temporality) {
+  const delta = otelSeriesDelta(otelSeriesKey(metricName, attributes, dataPoint.startTimeUnixNano), dataPoint.timeUnixNano, otelSumDataPointValue(dataPoint), temporality);
   if (delta === 0) return;
   const skill = typeof attributes.skill === "string" && attributes.skill ? attributes.skill : "unknown";
   const status = typeof attributes.status === "string" && attributes.status ? attributes.status : "unknown";
@@ -380,33 +393,37 @@ function noteSkillInjected(metricName, attributes, dataPoint) {
   bucket.byStatus[status] = (bucket.byStatus[status] ?? 0) + delta;
 }
 
-function noteThreadSkillsHistogram(metricName, bucketKey, attributes, dataPoint) {
-  const bucket = otelTelemetry.skills.threads[bucketKey];
-  // description_truncated_chars is a cumulative value, not a dimension: keep it out of the
-  // series identity so a growing value doesn't get misread as a brand-new series each export.
-  const { description_truncated_chars: truncatedChars, ...identityAttributes } = attributes;
-  const countDelta = otelCumulativeDelta(otelSeriesKey(`${metricName}#count`, identityAttributes, dataPoint.startTimeUnixNano), dataPoint.timeUnixNano, numberAttribute({ count: dataPoint.count }, "count"));
-  const sumDelta = otelCumulativeDelta(otelSeriesKey(`${metricName}#sum`, identityAttributes, dataPoint.startTimeUnixNano), dataPoint.timeUnixNano, numberAttribute({ sum: dataPoint.sum }, "sum"));
+function noteThreadSkillsHistogram(bucket, metricName, attributes, dataPoint, temporality) {
+  const countDelta = otelSeriesDelta(otelSeriesKey(`${metricName}#count`, attributes, dataPoint.startTimeUnixNano), dataPoint.timeUnixNano, numberAttribute({ count: dataPoint.count }, "count"), temporality);
+  const sumDelta = otelSeriesDelta(otelSeriesKey(`${metricName}#sum`, attributes, dataPoint.startTimeUnixNano), dataPoint.timeUnixNano, numberAttribute({ sum: dataPoint.sum }, "sum"), temporality);
   bucket.count += countDelta;
   bucket.sum += sumDelta;
-  if (bucketKey !== "truncated" || truncatedChars === undefined) return;
-  const charsDelta = otelCumulativeDelta(otelSeriesKey(`${metricName}#description_truncated_chars`, identityAttributes, dataPoint.startTimeUnixNano), dataPoint.timeUnixNano, numberAttribute(attributes, "description_truncated_chars"));
-  bucket.descriptionTruncatedCharsTotal += charsDelta;
 }
 
-const THREAD_SKILLS_HISTOGRAMS = { "thread.skills.enabled_total": "enabled", "thread.skills.kept_total": "kept", "thread.skills.truncated": "truncated" };
+// Canonical full OTLP metric names for thread-level skill histograms. Codex
+// reports `description_truncated_chars` as its own histogram (distribution
+// of trimmed-description sizes across truncated skills), not an attribute.
+const THREAD_SKILLS_HISTOGRAMS = {
+  "codex.thread.skills.enabled_total": "enabled",
+  "codex.thread.skills.kept_total": "kept",
+  "codex.thread.skills.truncated": "truncated",
+  "codex.thread.skills.description_truncated_chars": "descriptionTruncatedChars",
+};
 
 function ingestOtelMetrics(payload) {
   for (const resourceMetric of payload.resourceMetrics ?? []) {
     for (const scopeMetric of resourceMetric.scopeMetrics ?? []) {
       for (const metric of scopeMetric.metrics ?? []) {
         if (metric.name === "codex.skill.injected") {
+          const temporality = metric.sum?.aggregationTemporality;
           for (const dataPoint of metric.sum?.dataPoints ?? []) {
-            noteSkillInjected(metric.name, otelAttributes(dataPoint.attributes), dataPoint);
+            noteSkillInjected(metric.name, otelAttributes(dataPoint.attributes), dataPoint, temporality);
           }
         } else if (THREAD_SKILLS_HISTOGRAMS[metric.name]) {
+          const bucket = otelTelemetry.skills.threads[THREAD_SKILLS_HISTOGRAMS[metric.name]];
+          const temporality = metric.histogram?.aggregationTemporality;
           for (const dataPoint of metric.histogram?.dataPoints ?? []) {
-            noteThreadSkillsHistogram(metric.name, THREAD_SKILLS_HISTOGRAMS[metric.name], otelAttributes(dataPoint.attributes), dataPoint);
+            noteThreadSkillsHistogram(bucket, metric.name, otelAttributes(dataPoint.attributes), dataPoint, temporality);
           }
         }
       }
@@ -432,7 +449,8 @@ function resetOtelTelemetry() {
   otelTelemetry.skills.threads = {
     enabled: { count: 0, sum: 0 },
     kept: { count: 0, sum: 0 },
-    truncated: { count: 0, sum: 0, descriptionTruncatedCharsTotal: 0 },
+    truncated: { count: 0, sum: 0 },
+    descriptionTruncatedChars: { count: 0, sum: 0 },
   };
   otelMetricSeries.clear();
 }
@@ -453,7 +471,6 @@ function codexTelemetryStatus(now = Date.now()) {
   }, { observed: 0, ready: 0, error: 0, stale: 0 });
   const skillsInjected = otelTelemetry.skills.injected;
   const threadHistogram = (bucket) => ({ ...bucket, average: bucket.count ? bucket.sum / bucket.count : 0 });
-  const truncated = otelTelemetry.skills.threads.truncated;
   return {
     receiver: { ...otelTelemetry.receiver },
     sessionsObserved: sessions.length,
@@ -472,7 +489,10 @@ function codexTelemetryStatus(now = Date.now()) {
       threads: {
         enabledTotal: threadHistogram(otelTelemetry.skills.threads.enabled),
         keptTotal: threadHistogram(otelTelemetry.skills.threads.kept),
-        truncated: { ...threadHistogram(truncated), averageDescriptionTruncatedChars: truncated.count ? truncated.descriptionTruncatedCharsTotal / truncated.count : 0 },
+        truncated: threadHistogram(otelTelemetry.skills.threads.truncated),
+        // Only reported by Codex when at least one skill description was
+        // trimmed for a thread; count stays 0 when the metric is absent.
+        descriptionTruncatedChars: threadHistogram(otelTelemetry.skills.threads.descriptionTruncatedChars),
       },
     },
   };

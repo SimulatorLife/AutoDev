@@ -254,25 +254,28 @@ test("ingests Codex OTEL skill metrics with cumulative dedupe and tolerates invo
   ingestOtelSignal("metrics", resourceMetrics([
     skillSum("lsp-mcp-server", "injected", 3, 1_000_000n),
     skillSum("lsp-mcp-server", "skipped", 1, 1_000_000n, [["invoke_type", "auto"]]),
-    threadHistogram("thread.skills.enabled_total", 1, 3, 1_000_000n),
-    threadHistogram("thread.skills.kept_total", 1, 2, 1_000_000n),
-    threadHistogram("thread.skills.truncated", 1, 1, 1_000_000n, [["description_truncated_chars", 120]]),
+    threadHistogram("codex.thread.skills.enabled_total", 1, 3, 1_000_000n),
+    threadHistogram("codex.thread.skills.kept_total", 1, 2, 1_000_000n),
+    threadHistogram("codex.thread.skills.truncated", 1, 1, 1_000_000n),
+    threadHistogram("codex.thread.skills.description_truncated_chars", 1, 120, 1_000_000n),
   ]));
   // Exporter retry resending the identical cumulative point must not double count.
   ingestOtelSignal("metrics", resourceMetrics([
     skillSum("lsp-mcp-server", "injected", 3, 1_000_000n),
     skillSum("lsp-mcp-server", "skipped", 1, 1_000_000n, [["invoke_type", "auto"]]),
-    threadHistogram("thread.skills.enabled_total", 1, 3, 1_000_000n),
-    threadHistogram("thread.skills.kept_total", 1, 2, 1_000_000n),
-    threadHistogram("thread.skills.truncated", 1, 1, 1_000_000n, [["description_truncated_chars", 120]]),
+    threadHistogram("codex.thread.skills.enabled_total", 1, 3, 1_000_000n),
+    threadHistogram("codex.thread.skills.kept_total", 1, 2, 1_000_000n),
+    threadHistogram("codex.thread.skills.truncated", 1, 1, 1_000_000n),
+    threadHistogram("codex.thread.skills.description_truncated_chars", 1, 120, 1_000_000n),
   ]));
   // Later export with cumulative growth: only the deltas should be applied.
   ingestOtelSignal("metrics", resourceMetrics([
     skillSum("lsp-mcp-server", "injected", 5, 2_000_000n),
     skillSum("lsp-mcp-server", "skipped", 2, 2_000_000n, [["invoke_type", "auto"]]),
-    threadHistogram("thread.skills.enabled_total", 2, 7, 2_000_000n),
-    threadHistogram("thread.skills.kept_total", 2, 4, 2_000_000n),
-    threadHistogram("thread.skills.truncated", 2, 2, 2_000_000n, [["description_truncated_chars", 190]]),
+    threadHistogram("codex.thread.skills.enabled_total", 2, 7, 2_000_000n),
+    threadHistogram("codex.thread.skills.kept_total", 2, 4, 2_000_000n),
+    threadHistogram("codex.thread.skills.truncated", 2, 2, 2_000_000n),
+    threadHistogram("codex.thread.skills.description_truncated_chars", 2, 190, 2_000_000n),
   ]));
 
   const telemetry = codexTelemetryStatus(Date.now());
@@ -288,9 +291,29 @@ test("ingests Codex OTEL skill metrics with cumulative dedupe and tolerates invo
   assert.deepEqual(telemetry.skills.threads.keptTotal, { count: 2, sum: 4, average: 2 });
   assert.equal(telemetry.skills.threads.truncated.count, 2);
   assert.equal(telemetry.skills.threads.truncated.sum, 2);
-  assert.equal(telemetry.skills.threads.truncated.descriptionTruncatedCharsTotal, 190);
-  assert.equal(telemetry.skills.threads.truncated.averageDescriptionTruncatedChars, 95);
+  assert.deepEqual(telemetry.skills.threads.descriptionTruncatedChars, { count: 2, sum: 190, average: 95 });
   assert.equal(JSON.stringify(telemetry).includes("do-not-store-this"), false);
+  resetOtelTelemetry();
+});
+
+test("counts delta-temporality skill metrics once per export", () => {
+  resetOtelTelemetry();
+  const attributes = (entries) => entries.map(([key, value]) => ({ key, value: { stringValue: String(value) } }));
+  const metric = (name, value, timeUnixNano, kind = "sum") => ({
+    name,
+    [kind]: {
+      aggregationTemporality: 1,
+      ...(kind === "sum" ? { isMonotonic: true } : {}),
+      dataPoints: [{ attributes: attributes([["skill", "orchestration"], ["status", "ok"]]), timeUnixNano: String(timeUnixNano), ...(kind === "sum" ? { asInt: String(value) } : { count: "1", sum: value }) }],
+    },
+  });
+  const ingest = (metrics) => ingestOtelSignal("metrics", { resourceMetrics: [{ scopeMetrics: [{ metrics }] }] });
+  ingest([metric("codex.skill.injected", 2, 10), metric("codex.thread.skills.enabled_total", 1, 10, "histogram")]);
+  ingest([metric("codex.skill.injected", 3, 20), metric("codex.thread.skills.enabled_total", 1, 20, "histogram")]);
+  const telemetry = codexTelemetryStatus();
+  assert.equal(telemetry.skills.injected.total, 5);
+  assert.equal(telemetry.skills.threads.enabledTotal.count, 2);
+  assert.equal(telemetry.skills.threads.enabledTotal.sum, 2);
   resetOtelTelemetry();
 });
 
@@ -352,6 +375,10 @@ test("serves a lightweight dashboard to browsers and JSON to API clients", async
     assert.doesNotMatch(dashboardBody, /<h2>By role<\/h2>/);
     assert.match(dashboardBody, /id="codex-telemetry"/);
     assert.match(dashboardBody, /id="mcp-telemetry"/);
+    assert.match(dashboardBody, /id="skills-summary"/);
+    assert.match(dashboardBody, /id="skills-table"/);
+    assert.match(dashboardBody, /codex\.skill\.injected/);
+    assert.match(dashboardBody, /codex\.thread\.skills\.enabled_total/);
     assert.match(dashboardBody, /MCP ready/);
     assert.match(dashboardBody, /id="codex-tasks"/);
     assert.match(dashboardBody, /aria-controls="codex-tasks-section" aria-expanded="false"/);

@@ -36,23 +36,26 @@ The OTLP receiver accepts all three signal paths (`/v1/logs`, `/v1/traces`, and
 `/v1/metrics`). Codex currently emits useful lifecycle logs and MCP traces; the
 metrics receiver may correctly remain at zero outside of skill telemetry until
 Codex emits other `ResourceMetrics` batches during a validated CLI turn. When
-Codex does emit `codex.skill.injected` (a counter) and `thread.skills.enabled_total`,
-`thread.skills.kept_total`, and `thread.skills.truncated` (histograms), the
+Codex does emit `codex.skill.injected` (a counter) and
+`codex.thread.skills.enabled_total`, `codex.thread.skills.kept_total`, and
+`codex.thread.skills.truncated` (histograms), the
 router aggregates them into `codexTelemetry.skills`, surfaced in `/status`, the
 dashboard's Skills section, and `codex-model-router-status.mjs`. The receiver
 counter confirms that the endpoint is available if Codex begins emitting other
 metrics in a later version.
 
-Skill metrics are cumulative OTLP sums/histograms: Codex resends the running
-total on every export, so the router tracks the last observed point per series
-(metric name, attributes, and `startTimeUnixNano`) and only applies the delta,
-tolerating duplicate resends and counter resets. `codex.skill.injected` carries
-a `skill` and `status` attribute; some Codex versions attach `invoke_type`
-instead of, or alongside, `status`, which the router tolerates and aggregates
-separately. `thread.skills.truncated` may carry a source-backed
-`description_truncated_chars` value, which the router totals and averages
-separately from the histogram's own count/sum. No prompt or skill content is
-exported or stored; only counts and durations are aggregated.
+Skill metrics may use cumulative or delta OTLP temporality. For cumulative
+points, Codex resends the running total on every export, so the router tracks
+the last observed point per series (metric name, attributes, and
+`startTimeUnixNano`) and only applies the delta; delta points are applied once
+per export timestamp. Both forms tolerate duplicate resends and counter
+resets. `codex.skill.injected` carries a `skill` and `status` attribute; some
+Codex versions attach `invoke_type` instead of, or alongside, `status`, which
+the router tolerates and aggregates separately. The source-backed
+`codex.thread.skills.description_truncated_chars` metric is not currently in
+the official catalog; when present, the router totals and averages it
+separately. No prompt or skill content is exported or stored; only metric
+attributes and numeric aggregates are retained.
 
 The dashboard labels MCP state as an observation (`ready`, `error`, or `stale`),
 not as an authoritative process-health guarantee. Codex currently emits MCP

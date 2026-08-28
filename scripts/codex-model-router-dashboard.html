@@ -64,6 +64,7 @@
 
   <h2>Skills</h2>
   <div id="skills-summary">Loading…</div>
+  <div><small>Native Codex metrics: <code>codex.skill.injected</code>, <code>codex.thread.skills.enabled_total</code>, <code>codex.thread.skills.kept_total</code>, <code>codex.thread.skills.truncated</code>.</small></div>
   <table><thead><tr><th>Skill</th><th>Injected</th><th>By status</th></tr></thead><tbody id="skills-table"><tr><td colspan="3">Loading…</td></tr></tbody></table>
 
   <h2>Concurrency</h2>
@@ -223,12 +224,13 @@
       const mcpRows = (codexTelemetry.mcpServers ?? []).map((server) => `<tr><td><code>${text(server.name)}</code></td><td class="${server.health === "ready" ? "ok" : server.health === "error" ? "limited" : ""}">${text(server.health)}</td><td>${server.lastSeenAt ? formatTimestamp(server.lastSeenAt) : "-"}</td><td>${server.initAttempts ?? 0}</td><td>${server.toolDiscoveryAttempts ?? 0}</td><td>${server.failures ?? 0}</td><td>${durationText(server.averageDurationMs)}</td></tr>`).join("") || '<tr><td colspan="7">No MCP lifecycle telemetry received yet.</td></tr>';
       document.querySelector("#mcp-telemetry").innerHTML = mcpRows;
       const countsText = (counts) => Object.entries(counts ?? {}).map(([key, value]) => `${key}: ${value}`).join(", ") || "-";
-      const histogramText = (label, histogram) => `${label} avg ${(histogram?.average ?? 0).toFixed(1)} (n=${histogram?.count ?? 0}, sum=${histogram?.sum ?? 0})`;
+      const histogramText = (label, histogram) => `${label} avg ${Number(histogram?.average ?? 0).toFixed(1)} (n=${histogram?.count ?? 0}, sum=${histogram?.sum ?? 0})`;
       const skills = codexTelemetry.skills ?? {};
       const skillsInjected = skills.injected ?? {};
       const skillsThreads = skills.threads ?? {};
-      document.querySelector("#skills-summary").textContent = skillsInjected.total
-        ? `Injected ${skillsInjected.total} (${countsText(skillsInjected.byStatus)}) · invoke_type: ${countsText(skillsInjected.byInvokeType)} · ${histogramText("enabled", skillsThreads.enabledTotal)} · ${histogramText("kept", skillsThreads.keptTotal)} · ${histogramText("truncated", skillsThreads.truncated)}${skillsThreads.truncated?.count ? ` (avg trimmed ${(skillsThreads.truncated.averageDescriptionTruncatedChars ?? 0).toFixed(0)} chars)` : ""}`
+      const hasThreadMetrics = Object.values(skillsThreads).some((metric) => (metric?.count ?? 0) > 0);
+      document.querySelector("#skills-summary").textContent = skillsInjected.total || hasThreadMetrics
+        ? `Injected ${skillsInjected.total ?? 0} (${countsText(skillsInjected.byStatus)}) · invoke_type: ${countsText(skillsInjected.byInvokeType)} · ${histogramText("enabled", skillsThreads.enabledTotal)} · ${histogramText("kept", skillsThreads.keptTotal)} · ${histogramText("truncated", skillsThreads.truncated)} · ${histogramText("description chars", skillsThreads.descriptionTruncatedChars)}`
         : "No skill telemetry received yet.";
       document.querySelector("#skills-table").innerHTML = (skillsInjected.bySkill ?? []).map((entry) => `<tr><td><code>${text(entry.skill)}</code></td><td>${entry.total}</td><td>${countsText(entry.byStatus)}</td></tr>`).join("") || '<tr><td colspan="3">No skill invocations observed yet.</td></tr>';
       document.querySelector("#events").textContent = (status.recentEvents ?? []).slice(0, 25).map((event) => {

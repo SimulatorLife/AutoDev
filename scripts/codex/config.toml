@@ -90,7 +90,7 @@ default_subagent_reasoning_effort = "medium"
 description = "Read-only codebase explorer."
 config_file = "./agents/explorer.toml"
 [agents.worker]
-description = "Bounded implementation worker."
+description = "General-purpose worker/coder."
 config_file = "./agents/worker.toml"
 [agents.validator]
 description = "Validation agent."
@@ -102,10 +102,10 @@ config_file = "./agents/smart.toml"
 description = "General-purpose developer."
 config_file = "./agents/default.toml"
 [agents."docs-researcher"]
-description = "Targeted documentation researcher."
+description = "OpenAI documentation researcher."
 config_file = "./agents/docs-researcher.toml"
 [agents."browser-tester"]
-description = "Read-only RacingGame browser tester."
+description = "Read-only browser tester."
 config_file = "./agents/browser-tester.toml"
 
 [[hooks.SessionStart]]

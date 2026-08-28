@@ -105,7 +105,8 @@ snapshot if the app-server is unavailable. The local CLI view is:
   ```
 
 The same status payload's `codexTelemetry` includes Codex OTEL lifecycle and
-skill-injection telemetry (`codex.skill.injected`, `thread.skills.*`); see
+skill-injection telemetry (`codex.skill.injected` and
+`codex.thread.skills.*`); see
 [docs/metrics-dashboard.md](metrics-dashboard.md) for the receiver and
 aggregation details.
 

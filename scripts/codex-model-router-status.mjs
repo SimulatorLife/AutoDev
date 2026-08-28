@@ -73,10 +73,10 @@ const skills = codexTelemetry.skills ?? {};
 const skillsInjected = skills.injected ?? {};
 const skillsThreads = skills.threads ?? {};
 const countsText = (counts) => Object.entries(counts ?? {}).map(([key, value]) => `${key}: ${value}`).join(", ") || "-";
-const histogramText = (histogram) => `avg ${(histogram?.average ?? 0).toFixed(1)} (n=${histogram?.count ?? 0}, sum=${histogram?.sum ?? 0})`;
+const histogramText = (histogram) => `avg ${Number(histogram?.average ?? 0).toFixed(1)} (n=${histogram?.count ?? 0}, sum=${histogram?.sum ?? 0})`;
 console.log("");
 console.log(`Skills injected: ${skillsInjected.total ?? 0} (${countsText(skillsInjected.byStatus)}), invoke_type: ${countsText(skillsInjected.byInvokeType)}`);
-console.log(`Thread skills: enabled ${histogramText(skillsThreads.enabledTotal)}, kept ${histogramText(skillsThreads.keptTotal)}, truncated ${histogramText(skillsThreads.truncated)}${skillsThreads.truncated?.count ? `, avg trimmed ${(skillsThreads.truncated.averageDescriptionTruncatedChars ?? 0).toFixed(0)} chars` : ""}`);
+console.log(`Thread skills: enabled ${histogramText(skillsThreads.enabledTotal)}, kept ${histogramText(skillsThreads.keptTotal)}, truncated ${histogramText(skillsThreads.truncated)}, description chars ${histogramText(skillsThreads.descriptionTruncatedChars)}`);
 for (const skill of (skillsInjected.bySkill ?? [])) {
   console.log(`  ${skill.skill}: ${skill.total} (${countsText(skill.byStatus)})`);
 }
