@@ -171,6 +171,179 @@ function usageStatus() {
   };
 }
 
+const OTEL_HEALTH_TTL_MS = Number.parseInt(process.env.CODEX_ROUTER_OTEL_HEALTH_TTL_MS ?? "120000", 10);
+const otelTelemetry = {
+  receiver: { logs: 0, traces: 0, metrics: 0, invalid: 0, lastReceivedAt: null },
+  sessions: new Map(),
+  mcpServers: new Map(),
+  turns: { prompts: 0, completed: 0, promptLength: 0, ttftMs: 0, ttftCount: 0 },
+  tokens: { input: 0, output: 0, cached: 0, reasoning: 0, tool: 0 },
+};
+
+function otelAttributeValue(value) {
+  if (!value || typeof value !== "object") return value;
+  if (Object.hasOwn(value, "stringValue")) return value.stringValue;
+  if (Object.hasOwn(value, "intValue")) return Number(value.intValue);
+  if (Object.hasOwn(value, "doubleValue")) return value.doubleValue;
+  if (Object.hasOwn(value, "boolValue")) return value.boolValue;
+  if (value.arrayValue?.values) return value.arrayValue.values.map(otelAttributeValue);
+  return undefined;
+}
+
+function otelAttributes(attributes = []) {
+  return Object.fromEntries((Array.isArray(attributes) ? attributes : []).map((item) => [item.key, otelAttributeValue(item.value)]).filter(([key, value]) => typeof key === "string" && value !== undefined));
+}
+
+function otelTimestamp(value) {
+  if (value === undefined || value === null) return null;
+  try {
+    const nanos = BigInt(String(value));
+    return new Date(Number(nanos / 1_000_000n)).toISOString();
+  } catch {
+    return null;
+  }
+}
+
+function otelDurationMs(span) {
+  try {
+    const start = BigInt(String(span.startTimeUnixNano));
+    const end = BigInt(String(span.endTimeUnixNano));
+    return Math.max(0, Number(end - start) / 1_000_000);
+  } catch {
+    return 0;
+  }
+}
+
+function numberAttribute(attributes, ...keys) {
+  for (const key of keys) {
+    const value = Number(attributes[key]);
+    if (Number.isFinite(value)) return value;
+  }
+  return 0;
+}
+
+function mcpServer(name) {
+  if (!otelTelemetry.mcpServers.has(name)) {
+    otelTelemetry.mcpServers.set(name, { name, lastSeenAt: null, initAttempts: 0, toolDiscoveryAttempts: 0, failures: 0, durationMs: 0, durationCount: 0, lastStatus: "unknown" });
+  }
+  return otelTelemetry.mcpServers.get(name);
+}
+
+function noteMcpServer(name, span, attributes) {
+  if (typeof name !== "string" || !name.trim()) return;
+  const server = mcpServer(name.trim());
+  const durationMs = otelDurationMs(span);
+  const timestamp = otelTimestamp(span.endTimeUnixNano) ?? otelTimestamp(span.startTimeUnixNano) ?? new Date().toISOString();
+  const statusCode = span.status?.code;
+  server.lastSeenAt = timestamp;
+  server.durationMs += durationMs;
+  server.durationCount += 1;
+  if (span.name === "make_rmcp_client" || span.name === "start_server_task" || span.name === "new") server.initAttempts += 1;
+  if (span.name === "list_tools_for_client_uncached" || span.name === "list_tools_with_connector_ids") server.toolDiscoveryAttempts += 1;
+  if (statusCode === 2 || statusCode === "ERROR") {
+    server.failures += 1;
+    server.lastStatus = "error";
+  } else if (span.name === "list_tools_for_client_uncached" || span.name === "list_tools_with_connector_ids" || span.name === "initialize") {
+    server.lastStatus = "ready";
+  } else if (server.lastStatus === "unknown") {
+    server.lastStatus = "observed";
+  }
+  if (attributes["error.type"] || attributes["error.message"]) server.lastStatus = "error";
+}
+
+function noteConversation(attributes, resourceAttributes = {}) {
+  const id = attributes["conversation.id"] ?? resourceAttributes["conversation.id"];
+  if (typeof id !== "string" || !id) return null;
+  const session = otelTelemetry.sessions.get(id) ?? { id, model: null, mcpServers: new Set(), lastSeenAt: null };
+  session.model = attributes.model ?? resourceAttributes.model ?? session.model;
+  session.lastSeenAt = attributes["event.timestamp"] ?? new Date().toISOString();
+  const names = resourceAttributes.mcp_servers;
+  if (typeof names === "string") {
+    for (const name of names.split(",").map((item) => item.trim()).filter(Boolean)) {
+      session.mcpServers.add(name);
+      const server = mcpServer(name);
+      if (server.lastStatus === "unknown") server.lastStatus = "configured";
+    }
+  }
+  otelTelemetry.sessions.set(id, session);
+  return session;
+}
+
+function ingestOtelLogs(payload) {
+  for (const resourceLog of payload.resourceLogs ?? []) {
+    const resource = otelAttributes(resourceLog.resource?.attributes);
+    for (const scopeLog of resourceLog.scopeLogs ?? []) {
+      for (const record of scopeLog.logRecords ?? []) {
+        const attributes = otelAttributes(record.attributes);
+        const eventName = attributes["event.name"];
+        noteConversation(attributes, resource);
+        if (eventName === "codex.conversation_starts") {
+          noteConversation(attributes, resource);
+        } else if (eventName === "codex.user_prompt") {
+          otelTelemetry.turns.prompts += 1;
+          otelTelemetry.turns.promptLength += numberAttribute(attributes, "prompt_length");
+        } else if (eventName === "codex.turn_ttft") {
+          const duration = numberAttribute(attributes, "duration_ms");
+          otelTelemetry.turns.ttftMs += duration;
+          otelTelemetry.turns.ttftCount += duration > 0 ? 1 : 0;
+        } else if (eventName === "codex.sse_event" && attributes["event.kind"] === "response.completed") {
+          otelTelemetry.turns.completed += 1;
+          otelTelemetry.tokens.input += numberAttribute(attributes, "input_token_count");
+          otelTelemetry.tokens.output += numberAttribute(attributes, "output_token_count");
+          otelTelemetry.tokens.cached += numberAttribute(attributes, "cached_token_count");
+          otelTelemetry.tokens.reasoning += numberAttribute(attributes, "reasoning_token_count");
+          otelTelemetry.tokens.tool += numberAttribute(attributes, "tool_token_count");
+        }
+      }
+    }
+  }
+}
+
+function ingestOtelTraces(payload) {
+  for (const resourceSpan of payload.resourceSpans ?? []) {
+    const resource = otelAttributes(resourceSpan.resource?.attributes);
+    for (const scopeSpan of resourceSpan.scopeSpans ?? []) {
+      for (const span of scopeSpan.spans ?? []) {
+        const attributes = otelAttributes(span.attributes);
+        noteConversation(attributes, resource);
+        noteMcpServer(attributes.server_name, span, attributes);
+      }
+    }
+  }
+}
+
+function ingestOtelSignal(signal, payload) {
+  otelTelemetry.receiver[signal] += 1;
+  otelTelemetry.receiver.lastReceivedAt = new Date().toISOString();
+  if (signal === "logs") ingestOtelLogs(payload);
+  if (signal === "traces") ingestOtelTraces(payload);
+}
+
+function resetOtelTelemetry() {
+  otelTelemetry.receiver = { logs: 0, traces: 0, metrics: 0, invalid: 0, lastReceivedAt: null };
+  otelTelemetry.sessions.clear();
+  otelTelemetry.mcpServers.clear();
+  otelTelemetry.turns = { prompts: 0, completed: 0, promptLength: 0, ttftMs: 0, ttftCount: 0 };
+  otelTelemetry.tokens = { input: 0, output: 0, cached: 0, reasoning: 0, tool: 0 };
+}
+
+function codexTelemetryStatus(now = Date.now()) {
+  const mcpServers = [...otelTelemetry.mcpServers.values()].map((server) => {
+    const lastSeenMs = server.lastSeenAt ? Date.parse(server.lastSeenAt) : NaN;
+    const fresh = Number.isFinite(lastSeenMs) && now - lastSeenMs <= OTEL_HEALTH_TTL_MS;
+    return { ...server, health: fresh ? server.lastStatus : server.lastStatus === "error" ? "error" : "stale", averageDurationMs: server.durationCount ? Math.round(server.durationMs / server.durationCount) : 0 };
+  }).sort((a, b) => a.name.localeCompare(b.name));
+  const sessions = [...otelTelemetry.sessions.values()];
+  return {
+    receiver: { ...otelTelemetry.receiver },
+    sessionsObserved: sessions.length,
+    sessionsRecent: sessions.filter((session) => session.lastSeenAt && now - Date.parse(session.lastSeenAt) <= OTEL_HEALTH_TTL_MS).length,
+    turns: { ...otelTelemetry.turns, averageTtftMs: otelTelemetry.turns.ttftCount ? Math.round(otelTelemetry.turns.ttftMs / otelTelemetry.turns.ttftCount) : 0 },
+    tokens: { ...otelTelemetry.tokens, total: Object.values(otelTelemetry.tokens).reduce((sum, value) => sum + value, 0) },
+    mcpServers,
+  };
+}
+
 function parseConcurrencyConfig(file = CODEX_CONFIG_FILE) {
   const result = { file, maxConcurrentThreadsPerSession: null, maxThreads: null };
   if (!existsSync(file)) return result;
@@ -486,6 +659,7 @@ function getRouterStatus(now = Date.now()) {
     pid: process.pid,
     telemetryPersistence: { enabled: IS_MAIN, file: STATE_FILE, updatedAt: persistedStateUpdatedAt },
     usage: usageStatus(),
+    codexTelemetry: codexTelemetryStatus(),
     concurrency: concurrencyStatus(),
     spawnFailures: spawnFailureStatus(),
     codexTasks: codexTaskStatus(),
@@ -1057,6 +1231,18 @@ async function handle(request, response) {
     sendJson(response, 200, await loadCatalog());
     return;
   }
+  const otelSignals = { "/v1/logs": "logs", "/v1/traces": "traces", "/v1/metrics": "metrics" };
+  if (request.method === "POST" && otelSignals[pathname]) {
+    try {
+      const payload = JSON.parse(await requestBody(request));
+      ingestOtelSignal(otelSignals[pathname], payload);
+      sendJson(response, 200, {});
+    } catch {
+      otelTelemetry.receiver.invalid += 1;
+      sendJson(response, 400, errorBody("OTLP request must be valid JSON"));
+    }
+    return;
+  }
   if (pathname !== "/v1/responses" || request.method !== "POST") {
     sendJson(response, 404, errorBody("not found"));
     return;
@@ -1099,7 +1285,7 @@ async function handle(request, response) {
   await proxyConcreteResponse(response, route, payload, wantsStream, requestId);
 }
 
-export { activeProviderRequests, catalogModelIds, classifyProviderFailure, clearProviderCooldown, concurrencyStatus, normalizeCodexTask, summarizeCodexTasks, cooldownProvider, countToolCallsFromSse, countToolCallsInResponse, decrementActiveRequests, fallbackable, getActiveRequests, getRouterStatus, handle, incrementActiveRequests, isProviderCoolingDown, loadRouterState, parseConcurrencyConfig, persistRouterStateNow, providerModelMetadata, recordConcurrencyDenial, recordRouterEvent, recordSpawnFailure, releaseSubagentSlot, replaceModelFields, resetConcurrencyTelemetry, resetRouterTelemetry, spawnFailureStatus, routeCredentialAvailable, roleCandidates, roleForModel, routeForModel, serializeRouterState, tryAcquireSubagentSlot, responseTextFromSse, transformSseEvent, validateRoutingConfig };
+export { activeProviderRequests, codexTelemetryStatus, ingestOtelSignal, ingestOtelLogs, ingestOtelTraces, resetOtelTelemetry, catalogModelIds, classifyProviderFailure, clearProviderCooldown, concurrencyStatus, normalizeCodexTask, summarizeCodexTasks, cooldownProvider, countToolCallsFromSse, countToolCallsInResponse, decrementActiveRequests, fallbackable, getActiveRequests, getRouterStatus, handle, incrementActiveRequests, isProviderCoolingDown, loadRouterState, parseConcurrencyConfig, persistRouterStateNow, providerModelMetadata, recordConcurrencyDenial, recordRouterEvent, recordSpawnFailure, releaseSubagentSlot, replaceModelFields, resetConcurrencyTelemetry, resetRouterTelemetry, spawnFailureStatus, routeCredentialAvailable, roleCandidates, roleForModel, routeForModel, serializeRouterState, tryAcquireSubagentSlot, responseTextFromSse, transformSseEvent, validateRoutingConfig };
 
 if (IS_MAIN) {
   createServer((request, response) => { void handle(request, response); }).listen(PORT, HOST, () => {

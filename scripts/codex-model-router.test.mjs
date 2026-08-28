@@ -5,7 +5,7 @@ import test from "node:test";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
-import { activeProviderRequests, catalogModelIds, classifyProviderFailure, clearProviderCooldown, cooldownProvider, decrementActiveRequests, fallbackable, getActiveRequests, concurrencyStatus, countToolCallsFromSse, countToolCallsInResponse, getRouterStatus, handle, incrementActiveRequests, isProviderCoolingDown, loadRouterState, normalizeCodexTask, parseConcurrencyConfig, persistRouterStateNow, recordConcurrencyDenial, recordRouterEvent, recordSpawnFailure, releaseSubagentSlot, replaceModelFields, resetConcurrencyTelemetry, resetRouterTelemetry, serializeRouterState, spawnFailureStatus, summarizeCodexTasks, responseTextFromSse, roleCandidates, roleForModel, routeCredentialAvailable, routeForModel, transformSseEvent, tryAcquireSubagentSlot, validateRoutingConfig } from "./codex-model-router.mjs";
+import { activeProviderRequests, catalogModelIds, classifyProviderFailure, clearProviderCooldown, cooldownProvider, decrementActiveRequests, fallbackable, getActiveRequests, concurrencyStatus, countToolCallsFromSse, countToolCallsInResponse, getRouterStatus, handle, codexTelemetryStatus, ingestOtelSignal, incrementActiveRequests, isProviderCoolingDown, loadRouterState, normalizeCodexTask, parseConcurrencyConfig, persistRouterStateNow, recordConcurrencyDenial, recordRouterEvent, recordSpawnFailure, releaseSubagentSlot, replaceModelFields, resetConcurrencyTelemetry, resetRouterTelemetry, resetOtelTelemetry, serializeRouterState, spawnFailureStatus, summarizeCodexTasks, responseTextFromSse, roleCandidates, roleForModel, routeCredentialAvailable, routeForModel, transformSseEvent, tryAcquireSubagentSlot, validateRoutingConfig } from "./codex-model-router.mjs";
 
 test("loads editable provider and role models from JSON routing config", async () => {
   const config = JSON.parse(await readFile(new URL("./codex/model-routing.json", import.meta.url), "utf8"));
@@ -169,6 +169,53 @@ test("rejects missing or malformed models before provider routing", async () => 
   }
 });
 
+test("ingests Codex OTEL turn and MCP lifecycle telemetry without prompt content", () => {
+  resetOtelTelemetry();
+  const start = BigInt(Date.now()) * 1_000_000n;
+  const attributes = (entries) => entries.map(([key, value]) => ({ key, value: { stringValue: String(value) } }));
+  ingestOtelSignal("logs", {
+    resourceLogs: [{
+      resource: { attributes: attributes([["mcp_servers", "playwright, codex_apps, node_repl"]]) },
+      scopeLogs: [{ logRecords: [
+        { attributes: attributes([["event.name", "codex.conversation_starts"], ["conversation.id", "conversation-otel"], ["model", "gpt-5.6-luna"]]) },
+        { attributes: attributes([["event.name", "codex.user_prompt"], ["conversation.id", "conversation-otel"], ["prompt_length", 42], ["prompt_text", "do-not-store-this"]]) },
+        { attributes: attributes([["event.name", "codex.turn_ttft"], ["conversation.id", "conversation-otel"], ["duration_ms", 321]]) },
+        { attributes: attributes([["event.name", "codex.sse_event"], ["event.kind", "response.completed"], ["conversation.id", "conversation-otel"], ["input_token_count", 100], ["output_token_count", 25], ["cached_token_count", 5], ["reasoning_token_count", 10], ["tool_token_count", 3]]) },
+      ] }],
+    }],
+  });
+  const span = (name, serverName, durationNs = 5_000_000n) => ({
+    name,
+    startTimeUnixNano: String(start),
+    endTimeUnixNano: String(start + durationNs),
+    attributes: attributes([["server_name", serverName]]),
+    status: { code: 1 },
+  });
+  ingestOtelSignal("traces", {
+    resourceSpans: [{ scopeSpans: [{ spans: [
+      span("make_rmcp_client", "playwright"),
+      span("list_tools_for_client_uncached", "playwright", 7_000_000n),
+      span("make_rmcp_client", "node_repl", 2_000_000n),
+    ] }] }],
+  });
+  ingestOtelSignal("metrics", { resourceMetrics: [] });
+
+  const telemetry = codexTelemetryStatus(Date.now());
+  assert.deepEqual(telemetry.receiver, { logs: 1, traces: 1, metrics: 1, invalid: 0, lastReceivedAt: telemetry.receiver.lastReceivedAt });
+  assert.equal(telemetry.sessionsObserved, 1);
+  assert.equal(telemetry.turns.prompts, 1);
+  assert.equal(telemetry.turns.completed, 1);
+  assert.equal(telemetry.turns.averageTtftMs, 321);
+  assert.deepEqual(telemetry.tokens, { input: 100, output: 25, cached: 5, reasoning: 10, tool: 3, total: 143 });
+  const playwright = telemetry.mcpServers.find((server) => server.name === "playwright");
+  assert.equal(playwright.health, "ready");
+  assert.equal(playwright.initAttempts, 1);
+  assert.equal(playwright.toolDiscoveryAttempts, 1);
+  assert.equal(playwright.averageDurationMs, 6);
+  assert.equal(JSON.stringify(telemetry).includes("do-not-store-this"), false);
+  resetOtelTelemetry();
+});
+
 test("tracks router-visible subagent spawn failure reasons", () => {
   resetRouterTelemetry();
   recordSpawnFailure({ requestId: "req-provider-failed", role: "worker", requestedModel: "autodev/worker", reason: "provider_exhausted" });
@@ -204,6 +251,8 @@ test("serves a lightweight dashboard to browsers and JSON to API clients", async
     assert.match(dashboardBody, /id="by-origin"/);
     assert.match(dashboardBody, /id="by-role"/);
     assert.match(dashboardBody, /id="by-model"/);
+    assert.match(dashboardBody, /id="codex-telemetry"/);
+    assert.match(dashboardBody, /id="mcp-telemetry"/);
     assert.match(dashboardBody, /id="codex-tasks"/);
     assert.match(dashboardBody, /id="spawn-failures"/);
     assert.match(dashboardBody, /<tfoot>/);

@@ -21,3 +21,28 @@ before that instrumentation are retained in the provider totals but appear in
 the `unattributed` bucket when a target cannot be recovered. The dashboard is a
 rolling operational view rather than a permanent audit ledger; use the retained
 artifacts for recent raw snapshots.
+
+
+## Codex OpenTelemetry
+
+The local Codex configuration exports privacy-safe OTLP logs and traces to the
+model router at `127.0.0.1:4100`. `otel.log_user_prompt = false` prevents raw
+prompt text from being exported. The router ingests Codex lifecycle events and
+exposes them in `/status` and the local dashboard, including turn timing,
+ token counts, MCP server lifecycle observations, initialization/tool-discovery
+latency, and recent failures.
+
+The dashboard labels MCP state as an observation (`ready`, `error`, or `stale`),
+not as an authoritative process-health guarantee. Codex currently emits MCP
+lifecycle spans rather than a persistent MCP health gauge. The router continues
+to own provider selection, fallback, cooldown, concurrency, and origin
+telemetry because Codex does not emit those AutoDev-specific semantics.
+
+Validate the active rules and telemetry receiver without running a model turn:
+
+```bash
+codex execpolicy check --pretty \
+  --rules /Users/henrykirk/AutoDev/scripts/codex/rules/default.rules \
+  -- git status
+curl --silent http://127.0.0.1:4100/status | jq '.codexTelemetry'
+```

@@ -57,6 +57,17 @@ console.log("Usage by role:");
 for (const [role, state] of Object.entries(usage.byRole ?? {})) {
   console.log(`  ${role}: ${state.attempts} attempts, ${state.successes} successes, ${state.failures} failures, avg ${Math.round((state.averageDurationMs ?? 0) / 1000)}s, ${state.toolCalls} tool calls`);
 }
+const codexTelemetry = body.codexTelemetry ?? {};
+const otelReceiver = codexTelemetry.receiver ?? {};
+const otelTurns = codexTelemetry.turns ?? {};
+const otelTokens = codexTelemetry.tokens ?? {};
+console.log("");
+console.log(`Codex OTEL: logs ${otelReceiver.logs ?? 0}, traces ${otelReceiver.traces ?? 0}, metrics ${otelReceiver.metrics ?? 0}, recent sessions ${codexTelemetry.sessionsRecent ?? 0}/${codexTelemetry.sessionsObserved ?? 0}, completed turns ${otelTurns.completed ?? 0}, avg TTFT ${Math.round(otelTurns.averageTtftMs ?? 0)}ms, tokens ${otelTokens.total ?? 0}`);
+console.log("MCP runtime observations:");
+for (const server of (codexTelemetry.mcpServers ?? [])) {
+  console.log(`  ${server.name}: ${server.health}, last ${server.lastSeenAt ?? "-"}, init ${server.initAttempts ?? 0}, discovery ${server.toolDiscoveryAttempts ?? 0}, failures ${server.failures ?? 0}, avg ${Math.round(server.averageDurationMs ?? 0)}ms`);
+}
+
 console.log("Usage by resolved model:");
 for (const [model, state] of Object.entries(usage.byModel ?? {})) {
   console.log(`  ${model}: ${state.attempts} attempts, ${state.successes} successes, ${state.failures} failures, avg ${Math.round((state.averageDurationMs ?? 0) / 1000)}s, ${state.toolCalls} tool calls`);

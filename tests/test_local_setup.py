@@ -39,6 +39,17 @@ class LocalSetupTests(unittest.TestCase):
         names = sorted(path.name for path in (REPO_ROOT / "scripts/codex/skills").iterdir())
         self.assertEqual(names, sorted(SKILL_NAMES))
 
+    def test_codex_otel_is_configured_without_raw_prompt_export(self):
+        config = (REPO_ROOT / "scripts/codex/config.toml").read_text()
+        self.assertIn("[otel]", config)
+        self.assertIn('environment = "autodev"', config)
+        self.assertIn('exporter = "otlp-http"', config)
+        self.assertIn('trace_exporter = "otlp-http"', config)
+        self.assertIn('metrics_exporter = "none"', config)
+        self.assertIn('log_user_prompt = false', config)
+        self.assertIn('endpoint = "http://127.0.0.1:4100/v1/logs"', config)
+        self.assertIn('endpoint = "http://127.0.0.1:4100/v1/traces"', config)
+
     def test_native_codex_rules_are_tracked_and_deny_destructive_git_commands(self):
         rules = REPO_ROOT / "scripts/codex/rules/default.rules"
         installer = (REPO_ROOT / "scripts/codex/install-codex-integration.sh").read_text()

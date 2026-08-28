@@ -64,6 +64,10 @@
   <h2>By resolved model</h2>
   <table><thead><tr><th>Provider/model</th><th>Attempts</th><th>Successes</th><th>Failures</th><th>Avg turn</th><th>Tool calls</th></tr></thead><tbody id="by-model"><tr><td colspan="6">Loading…</td></tr></tbody></table>
 
+  <h2>Codex telemetry</h2>
+  <div id="codex-telemetry">Loading…</div>
+  <table><thead><tr><th>MCP server</th><th>Health</th><th>Last observed</th><th>Initializations</th><th>Tool discovery</th><th>Failures</th><th>Avg. duration</th></tr></thead><tbody id="mcp-telemetry"><tr><td colspan="7">Loading…</td></tr></tbody></table>
+
   <h2>Concurrency</h2>
   <div id="concurrency">Loading…</div>
 
@@ -171,6 +175,15 @@
       document.querySelector("#by-origin").innerHTML = usageRows(usage.byOrigin, true);
       document.querySelector("#by-role").innerHTML = usageRows(usage.byRole);
       document.querySelector("#by-model").innerHTML = usageRows(usage.byModel);
+      const codexTelemetry = status.codexTelemetry ?? {};
+      const receiver = codexTelemetry.receiver ?? {};
+      const turns = codexTelemetry.turns ?? {};
+      const tokens = codexTelemetry.tokens ?? {};
+      document.querySelector("#codex-telemetry").textContent = receiver.lastReceivedAt
+        ? `OTLP logs ${receiver.logs ?? 0} · traces ${receiver.traces ?? 0} · metrics ${receiver.metrics ?? 0} · invalid ${receiver.invalid ?? 0} · recent sessions ${codexTelemetry.sessionsRecent ?? 0}/${codexTelemetry.sessionsObserved ?? 0} · turns ${turns.completed ?? 0}/${turns.prompts ?? 0} · avg TTFT ${durationText(turns.averageTtftMs)} · tokens ${tokens.total ?? 0} · last ${formatTimestamp(receiver.lastReceivedAt)}`
+        : "No Codex OTEL telemetry received yet.";
+      const mcpRows = (codexTelemetry.mcpServers ?? []).map((server) => `<tr><td><code>${text(server.name)}</code></td><td class="${server.health === "ready" ? "ok" : server.health === "error" ? "limited" : ""}">${text(server.health)}</td><td>${server.lastSeenAt ? formatTimestamp(server.lastSeenAt) : "-"}</td><td>${server.initAttempts ?? 0}</td><td>${server.toolDiscoveryAttempts ?? 0}</td><td>${server.failures ?? 0}</td><td>${durationText(server.averageDurationMs)}</td></tr>`).join("") || '<tr><td colspan="7">No MCP lifecycle telemetry received yet.</td></tr>';
+      document.querySelector("#mcp-telemetry").innerHTML = mcpRows;
       document.querySelector("#events").textContent = (status.recentEvents ?? []).slice(0, 25).map((event) => {
         const target = `${event.provider}/${event.model}`;
         const outcome = event.outcome ?? event.failureClass ?? "-";

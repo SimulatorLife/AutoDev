@@ -13,7 +13,15 @@ service_tier = "default"
 model_catalog_json = "./codex-model-catalog.json"
 approvals_reviewer = "user"
 background_terminal_max_timeout = 600000
+
 notify = ["/Users/henrykirk/.codex/computer-use/Codex Computer Use.app/Contents/SharedSupport/SkyComputerUseClient.app/Contents/MacOS/SkyComputerUseClient", "turn-ended"]
+
+[otel]
+environment = "autodev"
+exporter = { otlp-http = { endpoint = "http://127.0.0.1:4100/v1/logs", protocol = "json" } }
+trace_exporter = { otlp-http = { endpoint = "http://127.0.0.1:4100/v1/traces", protocol = "json" } }
+metrics_exporter = "none"
+log_user_prompt = false
 
 [features]
 shell_snapshot = true
@@ -255,9 +263,8 @@ NODE_REPL_NODE_MODULE_DIRS = "/Applications/ChatGPT.app/Contents/Resources/cua_n
 NODE_REPL_NODE_PATH = "/Applications/ChatGPT.app/Contents/Resources/cua_node/bin/node"
 NODE_REPL_TRUSTED_CODE_PATHS = "/Users/henrykirk/.codex:/Applications/ChatGPT.app/Contents/Resources/cua_node/lib/node_modules"
 CODEX_HOME = "/Users/henrykirk/.codex"
-BROWSER_USE_AVAILABLE_BACKENDS = "chrome,iab"
+BROWSER_USE_AVAILABLE_BACKENDS = "chrome"
 BROWSER_USE_TINYSKY_ENABLED = "0"
-NODE_REPL_INSTRUCTIONS_USE_CASE_BROWSER = "Control the in-app browser in conjunction with the Browser Plugin."
 NODE_REPL_INSTRUCTIONS_USE_CASE_CHROME = "Control the Chrome browser in conjunction with the Chrome Plugin. Prefer this method of controlling Chrome over alternatives (such as Computer Use) unless the user explicitly mentions an alternative."
 NODE_REPL_INSTRUCTIONS_USE_CASE_COMPUTER_USE = "Control desktop apps on macOS through Computer Use."
 BROWSER_USE_CODEX_APP_BUILD_FLAVOR = "prod"
