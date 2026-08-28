@@ -290,6 +290,11 @@ test("serves a lightweight dashboard to browsers and JSON to API clients", async
     assert.match(dashboardBody, /Status: \$\{taskStatus.status/);
     assert.match(dashboardBody, /const collapsible = models.length > 1/);
     assert.match(dashboardBody, /const modelStats = uniqueModels.reduce/);
+    assert.match(dashboardBody, /total\.active \+= stats\.active \?\? 0;/);
+    assert.match(dashboardBody, /\$\{cooldown\}<\/td><td>\$\{modelStats\.active\}<\/td><td>\$\{modelStats\.attempts\}<\/td>/);
+    assert.match(dashboardBody, /const modelLimited = limited && \(stats\.failures \?\? 0\) > 0 && stats\.lastFailure;/);
+    assert.match(dashboardBody, /\$\{text\(modelStatus\)\}<\/td><td>\$\{stats\.active \?\? 0\}<\/td><td>\$\{stats\.attempts \?\? 0\}<\/td>/);
+    assert.doesNotMatch(dashboardBody, /<\/td><td>0<\/td><td>\$\{stats\.attempts \?\? 0\}<\/td>/);
     assert.match(dashboardBody, /const configuredCell = collapsible \? ""/);
     assert.match(dashboardBody, /<th>Provider<\/th><th>Model<\/th>/);
     assert.match(dashboardBody, /id="providers-table"/);
@@ -448,6 +453,54 @@ test("folds roleless orchestrator and direct traffic into a single unattributed 
   assert.equal(subagentTotal.successes, usage.byOrigin.subagent.successes);
   assert.equal(subagentTotal.failures, usage.byOrigin.subagent.failures);
   assert.equal(subagentTotal.toolCalls, usage.byOrigin.subagent.toolCalls);
+  resetRouterTelemetry();
+});
+
+test("byModel active count tracks in-flight requests per model so the dashboard can sum child active into the provider parent", () => {
+  resetRouterTelemetry();
+  recordRouterEvent({ phase: "selected", requestId: "req-active-1", requestedModel: "sonnet", provider: "claude", model: "sonnet" });
+  recordRouterEvent({ phase: "selected", requestId: "req-active-2", requestedModel: "claude-opus-4-8", provider: "claude", model: "claude-opus-4-8" });
+  let usage = getRouterStatus().usage;
+  assert.equal(usage.byModel["claude/sonnet"].active, 1);
+  assert.equal(usage.byModel["claude/claude-opus-4-8"].active, 1);
+  // Parent Active = sum of visible children, per model, for this provider.
+  const parentActive = usage.byModel["claude/sonnet"].active + usage.byModel["claude/claude-opus-4-8"].active;
+  assert.equal(parentActive, 2);
+
+  recordRouterEvent({ phase: "result", requestId: "req-active-1", requestedModel: "sonnet", provider: "claude", model: "sonnet", outcome: "success", status: 200, elapsedMs: 5 });
+  usage = getRouterStatus().usage;
+  assert.equal(usage.byModel["claude/sonnet"].active, 0);
+  assert.equal(usage.byModel["claude/claude-opus-4-8"].active, 1);
+
+  recordRouterEvent({ phase: "result", requestId: "req-active-2", requestedModel: "claude-opus-4-8", provider: "claude", model: "claude-opus-4-8", outcome: "success", status: 200, elapsedMs: 5 });
+  assert.equal(getRouterStatus().usage.byModel["claude/claude-opus-4-8"].active, 0);
+  resetRouterTelemetry();
+});
+
+test("keeps a stale byModel lastFailure after a later success, which the dashboard must not treat as an ongoing outage once the provider recovers", () => {
+  resetRouterTelemetry();
+  clearProviderCooldown("claude");
+  recordRouterEvent({ phase: "selected", requestId: "req-model-fail", requestedModel: "sonnet", provider: "claude", model: "sonnet" });
+  cooldownProvider("claude");
+  recordRouterEvent({ phase: "result", requestId: "req-model-fail", requestedModel: "sonnet", provider: "claude", model: "sonnet", outcome: "failure", status: 429, failureClass: "throttled", elapsedMs: 5 });
+  assert.equal(getRouterStatus().providers.claude.status, "throttled");
+
+  // Provider recovers: cooldown clears and a later request on the same model succeeds.
+  clearProviderCooldown("claude");
+  recordRouterEvent({ phase: "selected", requestId: "req-model-recover", requestedModel: "sonnet", provider: "claude", model: "sonnet" });
+  recordRouterEvent({ phase: "result", requestId: "req-model-recover", requestedModel: "sonnet", provider: "claude", model: "sonnet", outcome: "success", status: 200, elapsedMs: 8 });
+
+  const status = getRouterStatus();
+  // The provider itself fully recovers: no active cooldown means "ready", and the
+  // provider-level lastFailure is cleared by the following success.
+  assert.equal(status.providers.claude.status, "ready");
+  assert.equal(status.providers.claude.lastFailure, null);
+  // The per-model usage bucket has no success-path reset for lastFailure, so it keeps
+  // the earlier failure forever. The dashboard's child-row status must gate on the
+  // provider's current limited state rather than this stale per-model failure, or a
+  // recovered model would render "limited" indefinitely.
+  assert.equal(status.usage.byModel["claude/sonnet"].failures, 1);
+  assert.ok(status.usage.byModel["claude/sonnet"].lastFailure);
   resetRouterTelemetry();
 });
 
