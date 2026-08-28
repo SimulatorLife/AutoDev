@@ -103,7 +103,7 @@ function classifyProviderFailure(status, body = "") {
   const text = String(body ?? "");
   if (/session.?limit|session.*(?:exhaust|capacity)|concurrent session/i.test(text)) return "session_limit";
   if (/quota|credit|billing|insufficient.*(?:fund|quota)/i.test(text)) return "quota_exhausted";
-  if (status === 429 || /rate.?limit|throttl|too many requests/i.test(text)) return "throttled";
+  if (status === 429 || /rate.?limit|weekly.?limit|throttl|too many requests/i.test(text)) return "throttled";
   if (/high.?demand|overloaded|capacity/i.test(text)) return "capacity";
   if (status === 408 || /timeout|timed.?out/i.test(text)) return "timeout";
   if ([502, 503, 504].includes(status) || /temporarily unavailable|unavailable/i.test(text)) return "unavailable";

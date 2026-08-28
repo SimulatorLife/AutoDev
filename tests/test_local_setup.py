@@ -2,6 +2,9 @@ import importlib.util
 import json
 import os
 import subprocess
+import threading
+import urllib.error
+import urllib.request
 import tempfile
 import unittest
 from pathlib import Path
@@ -18,6 +21,38 @@ spec.loader.exec_module(claude_bridge)
 
 
 class LocalSetupTests(unittest.TestCase):
+    def test_claude_rate_limit_is_reported_as_retryable_http_429(self):
+        original_runner = claude_bridge.run_claude_stream
+
+        def rate_limited_runner(*args, **kwargs):
+            raise claude_bridge.ClaudeRateLimitError("weekly limit reached")
+            yield  # Make this a generator with the same interface as the real runner.
+
+        claude_bridge.run_claude_stream = rate_limited_runner
+        server = claude_bridge.ThreadingHTTPServer(("127.0.0.1", 0), claude_bridge.Handler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            request = urllib.request.Request(
+                f"http://127.0.0.1:{server.server_address[1]}/v1/responses",
+                data=json.dumps({"model": "sonnet", "input": "hello", "stream": False}).encode(),
+                headers={
+                    "Content-Type": "application/json",
+                    **({"Authorization": f"Bearer {claude_bridge.AUTH_TOKEN}"} if claude_bridge.AUTH_TOKEN else {}),
+                },
+                method="POST",
+            )
+            with self.assertRaises(urllib.error.HTTPError) as context:
+                urllib.request.urlopen(request, timeout=5)
+            self.assertEqual(context.exception.code, 429)
+            payload = json.loads(context.exception.read())
+            self.assertEqual(payload["error"]["type"], "rate_limit_error")
+        finally:
+            claude_bridge.run_claude_stream = original_runner
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=5)
+
     def test_claude_cli_disables_subagent_tools(self):
         args = claude_bridge.claude_cli_args("prompt", "sonnet", "medium")
         deny_index = args.index("--disallowed-tools")

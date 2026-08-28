@@ -109,6 +109,7 @@ test("classifies provider failures into operator-visible limit states", () => {
   assert.equal(classifyProviderFailure(429, "too many requests"), "throttled");
   assert.equal(classifyProviderFailure(429, "session limit reached"), "session_limit");
   assert.equal(classifyProviderFailure(429, "quota exhausted"), "quota_exhausted");
+  assert.equal(classifyProviderFailure(502, "You've hit your weekly limit"), "throttled");
   assert.equal(classifyProviderFailure(503, "high demand"), "capacity");
   assert.equal(classifyProviderFailure(400, "quota exhausted"), "quota_exhausted");
   assert.equal(classifyProviderFailure(401, "unauthorized"), "authentication");

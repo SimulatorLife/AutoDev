@@ -34,6 +34,15 @@ DEFAULT_CLAUDE_EFFORT = "medium"
 # Codex process remains responsible for orchestration.
 DISALLOWED_CLAUDE_TOOLS = ("Agent", "Task")
 
+
+class ClaudeRateLimitError(RuntimeError):
+    """Claude rejected the request because an account/session limit applies."""
+
+
+class ClaudeOverloadedError(RuntimeError):
+    """Claude temporarily reported capacity pressure."""
+
+
 # Recognized Claude identifier shapes (the CLI accepts these). Anything
 # that does not match a Claude-shaped identifier or a known family alias
 # collapses to DEFAULT_CLAUDE_MODEL so the CLI never receives an
@@ -241,6 +250,21 @@ def resolve_cwd(request: dict[str, Any], prompt: str) -> str:
     return os.getcwd()
 
 
+def classify_claude_error(message: Any, error_code: Any = None) -> type[RuntimeError] | None:
+    text = str(message or "")
+    if error_code == "rate_limit" or re.search(r"rate.?limit|weekly.?limit|quota|credit|session.?limit|too many requests", text, re.IGNORECASE):
+        return ClaudeRateLimitError
+    if error_code == "overloaded_error" or re.search(r"overload|high.?demand|capacity", text, re.IGNORECASE):
+        return ClaudeOverloadedError
+    return None
+
+
+def raise_classified_claude_error(message: Any, error_code: Any = None) -> None:
+    error_type = classify_claude_error(message, error_code)
+    if error_type is not None:
+        raise error_type(str(message))
+
+
 def run_claude_stream(prompt: str, model: str = DEFAULT_CLAUDE_MODEL, effort: str = DEFAULT_CLAUDE_EFFORT, cwd: str = PROJECT_ROOT):
     process = subprocess.Popen(
         claude_cli_args(prompt, model, effort),
@@ -276,10 +300,10 @@ def run_claude_stream(prompt: str, model: str = DEFAULT_CLAUDE_MODEL, effort: st
             if kind == "json" and isinstance(value, dict):
                 event_type = value.get("type")
                 if event_type == "rate_limit_event":
-                    raise RuntimeError("You've hit your weekly limit · resets 6pm (America/New_York)")
+                    raise ClaudeRateLimitError("You've hit your weekly limit · resets 6pm (America/New_York)")
                 if value.get("is_api_error_message") or value.get("error") in ("rate_limit", "overloaded_error"):
-                    err_msg = text_from_content(value.get("message", {}).get("content", [])) or value.get("error") or "Claude API rate limit"
-                    raise RuntimeError(str(err_msg))
+                    err_msg = text_from_content(value.get("message", {}).get("content", [])) or value.get("error") or "Claude API error"
+                    raise_classified_claude_error(err_msg, value.get("error"))
                 delta = nested_text(value) if event_type == "stream_event" else ""
                 if event_type == "assistant":
                     full_text = text_from_content(value.get("message", {}).get("content", []))
@@ -290,14 +314,18 @@ def run_claude_stream(prompt: str, model: str = DEFAULT_CLAUDE_MODEL, effort: st
                 if event_type == "result":
                     result = value
                     if result.get("is_error"):
-                        raise RuntimeError(str(result.get("result", "Claude CLI returned an error")))
+                        message = str(result.get("result", "Claude CLI returned an error"))
+                        raise_classified_claude_error(message)
+                        raise RuntimeError(message)
                 continue
             if kind == "stderr" and value:
                 stderr_lines.append(str(value))
             if kind == "stdout_done":
                 return_code = process.wait()
                 if result.get("is_error"):
-                    raise RuntimeError(str(result.get("result", "Claude CLI returned an error")))
+                    message = str(result.get("result", "Claude CLI returned an error"))
+                    raise_classified_claude_error(message)
+                    raise RuntimeError(message)
                 if return_code != 0:
                     detail = "\n".join(stderr_lines)[-4000:]
                     raise RuntimeError(f"Claude CLI exited {return_code}: {detail}")
@@ -437,6 +465,28 @@ class Handler(BaseHTTPRequestHandler):
             self.wfile.flush()
         except (BrokenPipeError, ConnectionResetError, OSError):
             print("client disconnected; Claude request cancelled", flush=True)
+        except ClaudeRateLimitError as exc:
+            print(f"Claude rate limit: {exc}", flush=True)
+            try:
+                if stream_headers_sent:
+                    self.send_sse("response.failed", {"type": "response.failed", "response": {"id": response_id, "status": "failed", "error": {"message": str(exc), "type": "rate_limit_error"}}})
+                    self.wfile.write(b"data: [DONE]\n\n")
+                    self.wfile.flush()
+                else:
+                    self.send_json(429, {"error": {"message": str(exc), "type": "rate_limit_error"}})
+            except (BrokenPipeError, ConnectionResetError, OSError):
+                pass
+        except ClaudeOverloadedError as exc:
+            print(f"Claude overloaded: {exc}", flush=True)
+            try:
+                if stream_headers_sent:
+                    self.send_sse("response.failed", {"type": "response.failed", "response": {"id": response_id, "status": "failed", "error": {"message": str(exc), "type": "overloaded_error"}}})
+                    self.wfile.write(b"data: [DONE]\n\n")
+                    self.wfile.flush()
+                else:
+                    self.send_json(503, {"error": {"message": str(exc), "type": "overloaded_error"}})
+            except (BrokenPipeError, ConnectionResetError, OSError):
+                pass
         except subprocess.TimeoutExpired:
             if stream_headers_sent:
                 self.send_sse("response.failed", {"type": "response.failed", "response": {"id": response_id, "status": "failed", "error": {"message": "Claude CLI timed out", "type": "timeout_error"}}})
