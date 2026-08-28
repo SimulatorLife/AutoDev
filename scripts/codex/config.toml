@@ -12,6 +12,7 @@ suppress_unstable_features_warning = true
 service_tier = "default"
 model_catalog_json = "./codex-model-catalog.json"
 approvals_reviewer = "user"
+background_terminal_max_timeout = 600000
 notify = ["/Users/henrykirk/.codex/computer-use/Codex Computer Use.app/Contents/SharedSupport/SkyComputerUseClient.app/Contents/MacOS/SkyComputerUseClient", "turn-ended"]
 
 [features]
@@ -29,6 +30,7 @@ hooks = true
 fast_mode = false
 prevent_idle_sleep = true
 personality = true
+image_generation = false
 
 [model_providers.claude_code_subscription]
 name = "Claude Code OAuth subscription bridge"
@@ -335,3 +337,17 @@ enabled = false
 [shell_environment_policy.filters]
 "PATH" = "include"
 "HOME" = "include"
+
+# Block agents from running destructive/history-rewriting git commands
+# (git checkout / reset / stash), which can silently discard uncommitted work.
+# The shared guard reads the PreToolUse payload on stdin and returns a
+# `permissionDecision: "deny"` for any matching command; it matches all tools
+# and filters on command content, so it covers shell/exec_command/unified_exec.
+# NOTE: Codex requires hooks to be trusted on first run (or launched with
+# --dangerously-bypass-hook-trust) before they take effect.
+[[hooks.PreToolUse]]
+[[hooks.PreToolUse.hooks]]
+type = "command"
+command = "node"
+args = ["scripts/deny-git-history-rewrite.mjs"]
+timeout_ms = 5000
