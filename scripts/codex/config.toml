@@ -5,7 +5,7 @@ model_provider = "local_model_router"
 openai_base_url = "http://127.0.0.1:4100/v1"
 model_verbosity = "low"
 approval_policy = "never"
-model_reasoning_effort = "high"
+model_reasoning_effort = "xhigh"
 personality = "pragmatic"
 sandbox_mode = "workspace-write"
 suppress_unstable_features_warning = true
@@ -226,6 +226,9 @@ trust_level = "trusted"
 [projects."/Users/henrykirk/Colourful-Life"]
 trust_level = "trusted"
 
+[projects."/Users/henrykirk/Documents"]
+trust_level = "trusted"
+
 [mcp_servers.playwright]
 enabled = true
 command = "pnpm"
@@ -247,8 +250,8 @@ NODE_REPL_INSTRUCTIONS_USE_CASE_BROWSER = "Control the in-app browser in conjunc
 NODE_REPL_INSTRUCTIONS_USE_CASE_CHROME = "Control the Chrome browser in conjunction with the Chrome Plugin. Prefer this method of controlling Chrome over alternatives (such as Computer Use) unless the user explicitly mentions an alternative."
 NODE_REPL_INSTRUCTIONS_USE_CASE_COMPUTER_USE = "Control desktop apps on macOS through Computer Use."
 BROWSER_USE_CODEX_APP_BUILD_FLAVOR = "prod"
-BROWSER_USE_CODEX_APP_VERSION = "26.820.60940"
-NODE_REPL_TRUSTED_SERVICES = '{"browser":"/Users/henrykirk/.codex/plugins/cache/openai-bundled/browser/26.820.60940/scripts/browser-service.mjs","sky":"@oai/sky/service"}'
+BROWSER_USE_CODEX_APP_VERSION = "26.825.32147"
+NODE_REPL_TRUSTED_SERVICES = '{"browser":"/Users/henrykirk/.codex/plugins/cache/openai-bundled/browser/26.825.32147/scripts/browser-service.mjs","sky":"@oai/sky/service"}'
 SKY_CUA_SERVICE_PATH = "/Users/henrykirk/.codex/computer-use/Codex Computer Use.app"
 CODEX_CLI_PATH = "/Applications/ChatGPT.app/Contents/Resources/codex"
 
@@ -256,6 +259,10 @@ CODEX_CLI_PATH = "/Applications/ChatGPT.app/Contents/Resources/codex"
 command = "./Codex Computer Use.app/Contents/SharedSupport/SkyComputerUseClient.app/Contents/MacOS/SkyComputerUseClient"
 args = ["mcp"]
 cwd = "."
+enabled = false
+
+[mcp_servers.cua_repl]
+command = "/Applications/ChatGPT.app/Contents/MacOS/ChatGPT"
 enabled = false
 
 [desktop]

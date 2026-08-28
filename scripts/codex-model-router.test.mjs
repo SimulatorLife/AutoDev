@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
+import { createServer } from "node:http";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
-import { activeProviderRequests, catalogModelIds, clearProviderCooldown, cooldownProvider, decrementActiveRequests, fallbackable, getActiveRequests, incrementActiveRequests, isProviderCoolingDown, replaceModelFields, responseTextFromSse, roleCandidates, roleForModel, routeForModel, transformSseEvent, validateRoutingConfig } from "./codex-model-router.mjs";
+import { activeProviderRequests, catalogModelIds, classifyProviderFailure, clearProviderCooldown, cooldownProvider, decrementActiveRequests, fallbackable, getActiveRequests, getRouterStatus, handle, incrementActiveRequests, isProviderCoolingDown, recordRouterEvent, replaceModelFields, resetRouterTelemetry, responseTextFromSse, roleCandidates, roleForModel, routeForModel, transformSseEvent, validateRoutingConfig } from "./codex-model-router.mjs";
 
 test("loads editable provider and role models from JSON routing config", async () => {
   const config = JSON.parse(await readFile(new URL("./codex/model-routing.json", import.meta.url), "utf8"));
@@ -95,6 +96,107 @@ test("temporarily omits providers after a fallbackable limit or outage", () => {
   assert.equal(isProviderCoolingDown("minimax", now + 30_000), false);
   clearProviderCooldown("minimax");
   assert.equal(isProviderCoolingDown("minimax", now), false);
+});
+
+test("classifies provider failures into operator-visible limit states", () => {
+  assert.equal(classifyProviderFailure(429, "too many requests"), "throttled");
+  assert.equal(classifyProviderFailure(429, "session limit reached"), "session_limit");
+  assert.equal(classifyProviderFailure(429, "quota exhausted"), "quota_exhausted");
+  assert.equal(classifyProviderFailure(503, "high demand"), "capacity");
+  assert.equal(classifyProviderFailure(400, "quota exhausted"), "quota_exhausted");
+  assert.equal(classifyProviderFailure(401, "unauthorized"), "authentication");
+  assert.equal(classifyProviderFailure(400, "malformed request"), "request_error");
+});
+
+test("successful responses identify the resolved provider, model, and request", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (url, options) => {
+    if (String(url) === "http://127.0.0.1:4000/v1/responses") {
+      return new Response(JSON.stringify({ id: "upstream-response", model: "sonnet", output_text: "ok" }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }
+    return originalFetch(url, options);
+  };
+  const server = createServer((request, response) => { void handle(request, response); });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  try {
+    const address = server.address();
+    const response = await originalFetch(`http://127.0.0.1:${address.port}/v1/responses`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-request-id": "req-header" },
+      body: JSON.stringify({ model: "sonnet", stream: false }),
+    });
+    assert.equal(response.status, 200);
+    assert.equal(response.headers.get("x-autodev-provider"), "claude");
+    assert.equal(response.headers.get("x-autodev-model"), "sonnet");
+    assert.equal(response.headers.get("x-autodev-request-id"), "req-header");
+  } finally {
+    await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("serves a lightweight dashboard to browsers and JSON to API clients", async () => {
+  const server = createServer((request, response) => { void handle(request, response); });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  try {
+    const address = server.address();
+    const dashboard = await fetch(`http://127.0.0.1:${address.port}/status`, { headers: { Accept: "text/html" } });
+    assert.equal(dashboard.status, 200);
+    assert.match(dashboard.headers.get("content-type"), /text\/html/);
+    assert.match(await dashboard.text(), /setInterval\(refresh, 3000\)/);
+
+    const api = await fetch(`http://127.0.0.1:${address.port}/status`, { headers: { Accept: "application/json" } });
+    assert.equal(api.status, 200);
+    assert.match(api.headers.get("content-type"), /application\/json/);
+    assert.equal((await api.json()).schema, "autodev-router-status-v1");
+  } finally {
+    await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+  }
+});
+
+test("serves status snapshots without exposing request content", async () => {
+  const server = createServer((request, response) => { void handle(request, response); });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  try {
+    const address = server.address();
+    const response = await fetch(`http://127.0.0.1:${address.port}/status`);
+    assert.equal(response.status, 200);
+    const status = await response.json();
+    assert.equal(status.schema, "autodev-router-status-v1");
+    assert.equal(status.providers.claude.configuredModels.default, "sonnet");
+    assert.equal(Object.hasOwn(status, "prompt"), false);
+    assert.equal(Object.hasOwn(status.providers.claude, "apiKey"), false);
+  } finally {
+    await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+  }
+});
+
+test("status snapshot exposes configured models, active work, cooldowns, and recent events", () => {
+  resetRouterTelemetry();
+  activeProviderRequests.clear();
+  clearProviderCooldown("claude");
+  recordRouterEvent({ phase: "selected", requestId: "req-status", role: "explorer", requestedModel: "autodev/explorer", provider: "claude", model: "sonnet" });
+  incrementActiveRequests("claude");
+  const selected = getRouterStatus();
+  assert.equal(selected.providers.claude.status, "ready");
+  assert.equal(selected.providers.claude.configuredModels.default, "sonnet");
+  assert.equal(selected.providers.claude.attempts, 1);
+  assert.equal(selected.providers.claude.activeRequests, 1);
+
+  cooldownProvider("claude");
+  recordRouterEvent({ phase: "result", requestId: "req-status", role: "explorer", requestedModel: "autodev/explorer", provider: "claude", model: "sonnet", outcome: "failure", status: 429, failureClass: "throttled", elapsedMs: 12 });
+  const limited = getRouterStatus();
+  assert.equal(limited.providers.claude.status, "throttled");
+  assert.equal(limited.providers.claude.failures, 1);
+  assert.equal(limited.providers.claude.lastFailure.class, "throttled");
+  assert.equal(limited.recentEvents[0].phase, "result");
+  assert.equal(limited.recentEvents[0].requestId, "req-status");
+  decrementActiveRequests("claude");
+  clearProviderCooldown("claude");
+  resetRouterTelemetry();
 });
 
 test("extracts text from a Responses SSE completion", () => {

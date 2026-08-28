@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Codex model router</title>
+  <style>
+    :root { color-scheme: light dark; font: 14px system-ui, sans-serif; }
+    body { margin: 1.5rem; max-width: 1100px; }
+    h1 { font-size: 1.35rem; margin-bottom: .25rem; }
+    h2 { font-size: 1rem; margin: 1.5rem 0 .5rem; }
+    #meta, #error { color: #666; }
+    #error { color: #b42318; }
+    table { border-collapse: collapse; width: 100%; }
+    th, td { border-bottom: 1px solid #8885; padding: .45rem .55rem; text-align: left; vertical-align: top; }
+    th { white-space: nowrap; }
+    code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+    pre { white-space: pre-wrap; line-height: 1.45; }
+    .ok { color: #16803c; }
+    .limited { color: #b54708; font-weight: 600; }
+  </style>
+</head>
+<body>
+  <h1>Codex model router</h1>
+  <div id="meta">Loading…</div>
+  <div id="error" role="alert"></div>
+
+  <h2>Providers</h2>
+  <table>
+    <thead><tr><th>Provider</th><th>Configured model(s)</th><th>Status</th><th>Active</th><th>Attempts</th><th>Successes</th><th>Failures</th><th>Last failure</th></tr></thead>
+    <tbody id="providers"><tr><td colspan="8">Loading…</td></tr></tbody>
+  </table>
+
+  <h2>Recent routing events</h2>
+  <pre id="events">Loading…</pre>
+
+  <script>
+    const text = (value) => String(value ?? "").replace(/[&<>"']/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[character]));
+    const formatTimestamp = (value) => {
+      const date = new Date(value);
+      if (Number.isNaN(date.getTime())) return text(value);
+      const parts = Object.fromEntries(new Intl.DateTimeFormat("en-US", {
+        timeZone: "America/New_York",
+        year: "numeric", month: "2-digit", day: "2-digit",
+        hour: "2-digit", minute: "2-digit", second: "2-digit",
+        fractionalSecondDigits: 3, hour12: false, timeZoneName: "short"
+      }).formatToParts(date).map(({ type, value: part }) => [type, part]));
+      const hour = parts.hour === "24" ? "00" : parts.hour;
+      return `${parts.year}-${parts.month}-${parts.day} ${hour}:${parts.minute}:${parts.second}.${parts.fractionalSecond} ${parts.timeZoneName}`;
+    };
+    const modelList = (models) => Object.entries(models ?? {}).map(([tier, model]) => `${tier}: ${model}`).join(", ") || "-";
+    const failureText = (failure) => failure ? `${failure.class}${failure.status ? ` (HTTP ${failure.status})` : ""}` : "-";
+
+    function render(status) {
+      document.title = `${status.router} · status`;
+      document.querySelector("#meta").textContent = `Instance ${status.routerInstanceId} · PID ${status.pid} · started ${formatTimestamp(status.startedAt)} · updates every 3 seconds`;
+      document.querySelector("#error").textContent = "";
+      document.querySelector("#providers").innerHTML = Object.entries(status.providers ?? {}).map(([provider, state]) => {
+        const limited = state.status !== "ready";
+        const cooldown = state.cooldownRemainingMs > 0 ? ` (${Math.ceil(state.cooldownRemainingMs / 1000)}s)` : "";
+        return `<tr><td><code>${text(provider)}</code></td><td><code>${text(modelList(state.configuredModels))}</code></td><td class="${limited ? "limited" : "ok"}">${text(state.status)}${cooldown}</td><td>${state.activeRequests}</td><td>${state.attempts}</td><td>${state.successes}</td><td>${state.failures}</td><td>${text(failureText(state.lastFailure))}</td></tr>`;
+      }).join("") || '<tr><td colspan="8">No providers configured.</td></tr>';
+      document.querySelector("#events").textContent = (status.recentEvents ?? []).slice(0, 25).map((event) => {
+        const target = `${event.provider}/${event.model}`;
+        const outcome = event.outcome ?? event.failureClass ?? "-";
+        return `${formatTimestamp(event.timestamp)}  ${event.requestId}  ${event.phase}  ${target}  ${outcome}`;
+      }).join("\n") || "No routing events yet.";
+    }
+
+    async function refresh() {
+      try {
+        const response = await fetch("/status", { cache: "no-store", headers: { Accept: "application/json" } });
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        render(await response.json());
+      } catch (error) {
+        document.querySelector("#error").textContent = `Unable to read router status: ${error.message}`;
+      }
+    }
+    refresh();
+    setInterval(refresh, 3000);
+  </script>
+</body>
+</html>

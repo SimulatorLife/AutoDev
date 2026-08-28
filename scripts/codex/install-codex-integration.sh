@@ -12,6 +12,7 @@ hook_names=(
   codex-claude-cli-responses-proxy.py
   codex-copilot-cli-responses-proxy.mjs
   codex-model-router.mjs
+  codex-model-router-status.mjs
   enforce-root-delegation.sh
   ensure-codex-antigravity-proxy.sh
   ensure-codex-claude-bridge.sh
@@ -25,6 +26,8 @@ hook_names=(
   run-codex-copilot-cli-responses-proxy.sh
   run-codex-model-router.sh
 )
+
+dashboard_asset_names=(codex-model-router-dashboard.html)
 
 profile_names=(claude minimax antigravity)
 catalog_names=(claude minimax antigravity codex)
@@ -94,6 +97,12 @@ check_versioned_sources() {
   fi
 
   for name in "${hook_names[@]}"; do
+    source="$repo_root/scripts/$name"
+    if ! check_versioned_source "$source"; then
+      failed=1
+    fi
+  done
+  for name in "${dashboard_asset_names[@]}"; do
     source="$repo_root/scripts/$name"
     if ! check_versioned_source "$source"; then
       failed=1
@@ -237,6 +246,16 @@ check_links() {
       failed=1
     fi
   done
+  for name in "${dashboard_asset_names[@]}"; do
+    source="$repo_root/scripts/$name"
+    target="$hooks_dir/$name"
+    if [[ -f "$target" && ! -L "$target" ]] && cmp -s "$source" "$target"; then
+      printf 'ok %s (runtime copy of %s)\n' "$target" "$source"
+    else
+      printf 'missing-or-drifted %s -> %s\n' "$target" "$source"
+      failed=1
+    fi
+  done
   for name in "${profile_names[@]}"; do
     source="$repo_root/scripts/codex/profiles/$name.config.toml"
     target="$codex_home/$name.config.toml"
@@ -304,6 +323,9 @@ fi
 for name in "${hook_names[@]}"; do
   chmod +x "$repo_root/scripts/$name"
   copy_runtime_one "$repo_root/scripts/$name" "$hooks_dir/$name"
+done
+for name in "${dashboard_asset_names[@]}"; do
+  install -m 0644 "$repo_root/scripts/$name" "$hooks_dir/$name"
 done
 for name in "${profile_names[@]}"; do
   link_one "$repo_root/scripts/codex/profiles/$name.config.toml" "$codex_home/$name.config.toml"

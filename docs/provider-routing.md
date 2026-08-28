@@ -39,6 +39,35 @@ request is returned immediately rather than hidden by fallback. Streaming
 fallback happens before response headers are sent; a provider that fails after
 streaming has begun cannot be safely replayed.
 
+## Observability
+
+The router makes its effective choice visible in two ways:
+
+- Every response includes `x-autodev-provider`, `x-autodev-model`, and
+  `x-autodev-request-id`. For a role request such as `autodev/explorer`, these
+  identify the concrete provider/model selected after shuffling, load balancing,
+  health checks, and fallback.
+- Open `http://127.0.0.1:4100/status` in a browser for the bare-bones dashboard;
+  it polls the JSON status every 3 seconds. `/dashboard` is an explicit HTML
+  alias. API clients that send `Accept: application/json` to `/status` receive
+  the current router instance, active requests, configured models, cooldown
+  countdowns, per-provider attempt and success/failure counters, the last
+  classified failure, and recent routing events. The local CLI view is:
+
+  ```sh
+  node /Users/henrykirk/AutoDev/scripts/codex-model-router-status.mjs
+  # Add --json for machine-readable output.
+  ```
+
+Router stderr is structured JSON (`autodev-router-event-v1`) and is retained by
+launchd in `~/.codex/hooks/model-router.launchd.log` (the direct ensure path
+uses `/tmp/codex-model-router.log`). Failure classes include `session_limit`,
+`throttled`, `quota_exhausted`, `capacity`, `timeout`, `unavailable`,
+`authentication`, and `invalid_model`. These are observations from upstream
+responses and local health checks, not a provider's authoritative quota API;
+status counters reset when the router process restarts. Use the router instance
+ID and request ID to correlate a turn with its fallback history.
+
 ## External-provider execution
 
 The normal CLI path for an external role remains the repository launcher. It
