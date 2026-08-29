@@ -853,6 +853,7 @@ class LocalSetupTests(unittest.TestCase):
             with self.subTest(path=relative_path):
                 source = (REPO_ROOT / relative_path).read_text()
                 self.assertIn("CODEX_PROJECT_ROOT", source)
+                self.assertNotIn('"/Users/henrykirk/AutoDev"', source)
                 self.assertNotIn("prompt.match(/(?:Working directory:", source)
 
     def test_all_provider_bridges_support_canonical_turn_metadata_workspaces(self):
