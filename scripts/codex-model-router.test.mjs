@@ -717,9 +717,11 @@ test("reads and enforces Codex per-session and global thread limits", async () =
   assert.equal(status.effectivePerSessionLimit, 1);
   assert.equal(Object.hasOwn(status, "maxThreads"), false);
   assert.equal(status.activeSubagentThreads, 1);
+  assert.equal(status.activeSessions, 1);
   assert.equal(status.denials, 1);
   assert.equal(status.lastDenial.reason, "max_concurrent_threads_per_session");
   releaseSubagentSlot("test-session");
+  assert.equal(concurrencyStatus().activeSessions, 0);
   resetConcurrencyTelemetry();
 });
 
