@@ -131,9 +131,10 @@ scope any external inspection.
 
 Router stderr is structured JSON (`autodev-router-event-v1`) and is retained by
 launchd in `~/.codex/hooks/model-router.launchd.log` (the direct ensure path
-uses `/tmp/codex-model-router.log`). Provider counters and recent events are
-also persisted atomically in `$CODEX_HOME/codex-router-state.json`, so they
-survive router restarts. Only active requests and short cooldown timers reset.
+uses `/tmp/codex-model-router.log`). Provider counters, recent events, and the
+versioned privacy-safe OTEL aggregate section are also persisted atomically in
+`$CODEX_HOME/codex-router-state.json`, so they survive router restarts. Only
+active requests, in-flight sessions, and short cooldown timers reset.
 Failure classes include `session_limit`,
 `throttled`, `quota_exhausted`, `capacity`, `timeout`, `unavailable`,
 `authentication`, and `invalid_model`. These are observations from upstream

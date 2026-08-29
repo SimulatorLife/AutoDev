@@ -59,6 +59,26 @@ dashboard's Skills section, and `codex-model-router-status.mjs`. The receiver
 counter confirms that the endpoint is available if Codex begins emitting other
 metrics in a later version.
 
+The router also keeps a privacy-safe inventory of every metric name received
+(`codexTelemetry.metrics.observed`) without retaining its attributes or values.
+It parses the low-cardinality SQLite health metrics into
+`codexTelemetry.sqlite` and native tool-call counts/durations into
+`codexTelemetry.tools`. These are intentionally separate from the existing
+log-derived turn/token counters to avoid double-counting.
+
+The dashboard and CLI expose the observed metric-name inventory, SQLite
+initialization/fallback totals and durations, and native tool calls grouped by
+sanitized tool/source/server labels. Unknown metric names remain visible in
+the inventory but are not interpreted until their schema and operational value
+are validated.
+
+The router persists these OTEL aggregates in a versioned `otelTelemetry` section
+of `$CODEX_HOME/codex-router-state.json`. It also persists hashed cumulative
+series cursors so a restart does not count the next cumulative export twice.
+Session IDs, raw attributes, prompts, tool arguments, paths, and queries are
+not written to the state file. Active sessions and in-flight requests remain
+process-local and are intentionally reset on restart.
+
 Skill metrics may use cumulative or delta OTLP temporality. For cumulative
 points, Codex resends the running total on every export, so the router tracks
 the last observed point per series (metric name, attributes, and
@@ -73,12 +93,10 @@ separately. No prompt or skill content is exported or stored; only metric
 attributes and numeric aggregates are retained.
 
 These are Codex-native metrics, not a generic audit stream for every provider
-behind the router. In particular, app-managed `multi_agent_v1` subagents can
-load and follow the installed skills while their execution path emits no
-`ResourceMetrics` request to this router. A zero `codexTelemetry.skills` value
-therefore means that no Codex skill metric was received; it does not prove that
-no skill was available or used. Provider-agnostic usage for that path requires
-telemetry support in the Codex app/server execution layer.
+behind the router. A zero `codexTelemetry.skills` value means that no Codex
+skill metric was received; it does not prove that no skill was available or
+used. Structured skill selections in normal Codex child threads are included
+when the child exporter sends the corresponding `ResourceMetrics` batch.
 
 The dashboard labels MCP state as an observation (`ready`, `error`, or `stale`),
 not as an authoritative process-health guarantee. Codex currently emits MCP

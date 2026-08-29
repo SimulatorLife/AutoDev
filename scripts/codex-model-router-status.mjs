@@ -84,6 +84,19 @@ for (const skill of (skillsInjected.bySkill ?? [])) {
   console.log(`  ${skill.skill}: ${skill.total} (${countsText(skill.byStatus)})`);
 }
 
+const nativeMetrics = codexTelemetry.metrics?.observed ?? [];
+console.log("");
+console.log(`Native metric names observed: ${nativeMetrics.length}`);
+for (const metric of nativeMetrics) console.log(`  ${metric.name}: ${metric.exports ?? 0} export(s), ${metric.dataPoints ?? 0} data point(s)`);
+
+const nativeTools = codexTelemetry.tools?.byTool ?? [];
+console.log("Native tool telemetry:");
+for (const tool of nativeTools) console.log(`  ${tool.tool} (${tool.source}${tool.server ? `/${tool.server}` : ""}): ${tool.count ?? 0} calls (${countsText(tool.byStatus)}), avg ${Math.round(tool.averageDurationMs ?? 0)}ms`);
+
+const sqlite = codexTelemetry.sqlite ?? {};
+const sqliteDuration = sqlite.initDurationMs ?? {};
+console.log(`SQLite telemetry: ${sqlite.init?.total ?? 0} initializations, ${sqlite.fallbacks?.total ?? 0} fallbacks, ${sqliteDuration.totalCount ?? 0} duration samples, avg ${sqliteDuration.totalCount ? Math.round(sqliteDuration.totalSum / sqliteDuration.totalCount) : 0}ms`);
+
 console.log("Usage by resolved model:");
 for (const [model, state] of Object.entries(usage.byModel ?? {})) {
   console.log(`  ${model}: ${state.attempts} attempts, ${state.successes} successes, ${state.failures} failures, avg ${Math.round((state.averageDurationMs ?? 0) / 1000)}s, ${state.toolCalls} tool calls`);

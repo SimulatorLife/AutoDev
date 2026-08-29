@@ -67,6 +67,16 @@
   <div><small>Native Codex metrics: <code>codex.skill.injected</code>, <code>codex.thread.skills.enabled_total</code>, <code>codex.thread.skills.kept_total</code>, <code>codex.thread.skills.truncated</code>.</small></div>
   <table><thead><tr><th>Skill</th><th>Injected</th><th>By status</th></tr></thead><tbody id="skills-table"><tr><td colspan="3">Loading…</td></tr></tbody></table>
 
+  <h2>Native metrics observed</h2>
+  <div id="native-metrics-summary">Loading…</div>
+  <table><thead><tr><th>Metric</th><th>Exports</th><th>Data points</th></tr></thead><tbody id="native-metrics"><tr><td colspan="3">Loading…</td></tr></tbody></table>
+
+  <h2>Native tool telemetry</h2>
+  <table><thead><tr><th>Tool</th><th>Source</th><th>Server</th><th>Calls</th><th>By status</th><th>Avg. duration</th></tr></thead><tbody id="native-tools"><tr><td colspan="6">Loading…</td></tr></tbody></table>
+
+  <h2>Codex state database</h2>
+  <div id="sqlite-telemetry">Loading…</div>
+
   <h2>Concurrency</h2>
   <div id="concurrency">Loading…</div>
 
@@ -101,6 +111,7 @@
     const modelList = (models) => Object.entries(models ?? {}).map(([tier, model]) => `${tier}: ${model}`).join(", ") || "-";
     const failureText = (failure) => failure ? `${failure.class}${failure.status ? ` (HTTP ${failure.status})` : ""}` : "";
     const durationText = (milliseconds) => `${(Number(milliseconds ?? 0) / 1000).toFixed(1)}s`;
+    const millisecondsText = (milliseconds) => `${Math.round(Number(milliseconds ?? 0))}ms`;
     const usageRow = (label, state, cellPrefix = `<code>${text(label)}</code>`) => `<tr><td>${cellPrefix}</td><td>${state.active ?? 0}</td><td>${state.attempts ?? 0}</td><td>${state.successes ?? 0}</td><td>${state.failures ?? 0}</td><td>${durationText(state.averageDurationMs)}</td><td>${state.toolCalls ?? 0}</td></tr>`;
     // byRole.unattributed folds roleless traffic from both the "orchestrator" and "direct"
     // origins into a single Orchestrator row; see docs/provider-routing.md for the caveat.
@@ -236,6 +247,15 @@
         ? `Injected ${skillsInjected.total ?? 0} (${countsText(skillsInjected.byStatus)}) · invoke_type: ${countsText(skillsInjected.byInvokeType)} · ${histogramText("enabled", skillsThreads.enabledTotal)} · ${histogramText("kept", skillsThreads.keptTotal)} · ${histogramText("truncated", skillsThreads.truncated)} · ${histogramText("description chars", skillsThreads.descriptionTruncatedChars)}`
         : "No skill telemetry received yet.";
       document.querySelector("#skills-table").innerHTML = (skillsInjected.bySkill ?? []).map((entry) => `<tr><td><code>${text(entry.skill)}</code></td><td>${entry.total}</td><td>${countsText(entry.byStatus)}</td></tr>`).join("") || '<tr><td colspan="3">No skill invocations observed yet.</td></tr>';
+      const observedMetrics = codexTelemetry.metrics?.observed ?? [];
+      document.querySelector("#native-metrics-summary").textContent = observedMetrics.length ? `${observedMetrics.length} metric name(s) observed across ${observedMetrics.reduce((sum, metric) => sum + (metric.exports ?? 0), 0)} export(s).` : "No native metric names observed yet.";
+      document.querySelector("#native-metrics").innerHTML = observedMetrics.map((metric) => `<tr><td><code>${text(metric.name)}</code></td><td>${metric.exports ?? 0}</td><td>${metric.dataPoints ?? 0}</td></tr>`).join("") || '<tr><td colspan="3">No native metric batches received yet.</td></tr>';
+      document.querySelector("#native-tools").innerHTML = (codexTelemetry.tools?.byTool ?? []).map((tool) => `<tr><td><code>${text(tool.tool)}</code></td><td>${text(tool.source)}</td><td>${text(tool.server || "-")}</td><td>${tool.count ?? 0}</td><td>${countsText(tool.byStatus)}</td><td>${millisecondsText(tool.averageDurationMs)}</td></tr>`).join("") || '<tr><td colspan="6">No native tool metrics observed yet.</td></tr>';
+      const sqlite = codexTelemetry.sqlite ?? {};
+      const sqliteInit = sqlite.init?.total ?? 0;
+      const sqliteFallbacks = sqlite.fallbacks?.total ?? 0;
+      const sqliteDuration = sqlite.initDurationMs ?? {};
+      document.querySelector("#sqlite-telemetry").textContent = `Initializations ${sqliteInit} · fallbacks ${sqliteFallbacks} · init duration samples ${sqliteDuration.totalCount ?? 0} · average ${sqliteDuration.totalCount ? millisecondsText(sqliteDuration.totalSum / sqliteDuration.totalCount) : "0ms"}`;
       document.querySelector("#events").textContent = (status.recentEvents ?? []).slice(0, 25).map((event) => {
         const target = `${event.provider}/${event.model}`;
         const outcome = event.outcome ?? event.failureClass ?? "-";

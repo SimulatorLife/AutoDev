@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
 import { createServer } from "node:http";
 import { readFile, rename, writeFile } from "node:fs/promises";
@@ -178,6 +178,13 @@ const otelTelemetry = {
   mcpServers: new Map(),
   turns: { prompts: 0, completed: 0, promptLength: 0, ttftMs: 0, ttftCount: 0 },
   tokens: { input: 0, output: 0, cached: 0, reasoning: 0, tool: 0 },
+  metricInventory: new Map(),
+  tools: new Map(),
+  sqlite: {
+    init: new Map(),
+    initDurationMs: new Map(),
+    fallbacks: new Map(),
+  },
   skills: {
     injected: { total: 0, byStatus: {}, byInvokeType: {}, bySkill: new Map() },
     threads: {
@@ -326,8 +333,11 @@ function ingestOtelTraces(payload) {
 }
 
 function otelSeriesKey(seriesName, attributes, startTimeUnixNano) {
-  const sortedAttributes = Object.entries(attributes).sort(([a], [b]) => a.localeCompare(b)).map(([key, value]) => `${key}=${value}`).join("|");
-  return `${seriesName}::${sortedAttributes}::${startTimeUnixNano ?? ""}`;
+  // Keep raw OTLP attributes out of the in-memory/persisted series key. Some
+  // exporters attach high-cardinality IDs or paths to data points.
+  const identity = JSON.stringify(Object.fromEntries(Object.entries(attributes).sort(([a], [b]) => a.localeCompare(b))));
+  const digest = createHash("sha256").update(identity).digest("hex");
+  return `${seriesName}::${digest}::${startTimeUnixNano ?? ""}`;
 }
 
 function otelNanoTimestamp(value) {
@@ -379,11 +389,11 @@ function skillBucket(name) {
 function noteSkillInjected(metricName, attributes, dataPoint, temporality) {
   const delta = otelSeriesDelta(otelSeriesKey(metricName, attributes, dataPoint.startTimeUnixNano), dataPoint.timeUnixNano, otelSumDataPointValue(dataPoint), temporality);
   if (delta === 0) return;
-  const skill = typeof attributes.skill === "string" && attributes.skill ? attributes.skill : "unknown";
-  const status = typeof attributes.status === "string" && attributes.status ? attributes.status : "unknown";
+  const skill = safeMetricLabel(attributes.skill);
+  const status = safeMetricLabel(attributes.status);
   // Some Codex versions attach `invoke_type` instead of, or alongside,
   // `status`; tolerate its absence and aggregate it separately when present.
-  const invokeType = typeof attributes.invoke_type === "string" && attributes.invoke_type ? attributes.invoke_type : null;
+  const invokeType = typeof attributes.invoke_type === "string" && attributes.invoke_type ? safeMetricLabel(attributes.invoke_type) : null;
   const injected = otelTelemetry.skills.injected;
   injected.total += delta;
   injected.byStatus[status] = (injected.byStatus[status] ?? 0) + delta;
@@ -400,6 +410,81 @@ function noteThreadSkillsHistogram(bucket, metricName, attributes, dataPoint, te
   bucket.sum += sumDelta;
 }
 
+function metricDataPointCount(metric) {
+  return (metric.sum?.dataPoints?.length ?? 0)
+    + (metric.histogram?.dataPoints?.length ?? 0)
+    + (metric.gauge?.dataPoints?.length ?? 0)
+    + (metric.exponentialHistogram?.dataPoints?.length ?? 0);
+}
+
+function noteMetricInventory(metric) {
+  if (typeof metric.name !== "string" || !metric.name) return;
+  const entry = otelTelemetry.metricInventory.get(metric.name) ?? { name: metric.name, exports: 0, dataPoints: 0 };
+  entry.exports += 1;
+  entry.dataPoints += metricDataPointCount(metric);
+  otelTelemetry.metricInventory.set(metric.name, entry);
+}
+
+function safeMetricLabel(value, fallback = "unknown") {
+  if (typeof value !== "string" || !value.trim()) return fallback;
+  return value.trim().replace(/[\u0000-\u001f\u007f]/g, "").slice(0, 100) || fallback;
+}
+
+function sqliteKey(attributes) {
+  return `${safeMetricLabel(attributes.db)}::${safeMetricLabel(attributes.status)}`;
+}
+
+function sqliteBucket(collection, attributes) {
+  const key = sqliteKey(attributes);
+  if (!collection.has(key)) collection.set(key, { db: safeMetricLabel(attributes.db), status: safeMetricLabel(attributes.status), count: 0 });
+  return collection.get(key);
+}
+
+function sqliteDurationBucket(attributes) {
+  const key = sqliteKey(attributes);
+  if (!otelTelemetry.sqlite.initDurationMs.has(key)) {
+    otelTelemetry.sqlite.initDurationMs.set(key, { db: safeMetricLabel(attributes.db), status: safeMetricLabel(attributes.status), count: 0, sum: 0 });
+  }
+  return otelTelemetry.sqlite.initDurationMs.get(key);
+}
+
+function noteSqliteCounter(collection, metricName, attributes, dataPoint, temporality) {
+  const value = otelSumDataPointValue(dataPoint);
+  const delta = otelSeriesDelta(otelSeriesKey(metricName, { db: safeMetricLabel(attributes.db), status: safeMetricLabel(attributes.status) }, dataPoint.startTimeUnixNano), dataPoint.timeUnixNano, value, temporality);
+  sqliteBucket(collection, attributes).count += delta;
+}
+
+function toolKey(attributes) {
+  return [safeMetricLabel(attributes.tool_name, "unknown-tool"), safeMetricLabel(attributes.source), safeMetricLabel(attributes.server_name, "")].join("::");
+}
+
+function toolBucket(attributes) {
+  const tool = safeMetricLabel(attributes.tool_name, "unknown-tool");
+  const source = safeMetricLabel(attributes.source);
+  const server = safeMetricLabel(attributes.server_name, "");
+  const key = toolKey(attributes);
+  if (!otelTelemetry.tools.has(key)) otelTelemetry.tools.set(key, { tool, source, server, count: 0, byStatus: {}, durationCount: 0, durationMs: 0 });
+  return otelTelemetry.tools.get(key);
+}
+
+function noteToolCounter(metricName, attributes, dataPoint, temporality) {
+  const delta = otelSeriesDelta(otelSeriesKey(metricName, { tool_name: safeMetricLabel(attributes.tool_name, "unknown-tool"), source: safeMetricLabel(attributes.source), server_name: safeMetricLabel(attributes.server_name, "") }, dataPoint.startTimeUnixNano), dataPoint.timeUnixNano, otelSumDataPointValue(dataPoint), temporality);
+  if (delta === 0) return;
+  const bucket = toolBucket(attributes);
+  const status = safeMetricLabel(attributes.status);
+  bucket.count += delta;
+  bucket.byStatus[status] = (bucket.byStatus[status] ?? 0) + delta;
+}
+
+function noteToolDuration(metricName, attributes, dataPoint, temporality) {
+  const identity = { tool_name: safeMetricLabel(attributes.tool_name, "unknown-tool"), source: safeMetricLabel(attributes.source), server_name: safeMetricLabel(attributes.server_name, "") };
+  const count = otelSeriesDelta(otelSeriesKey(`${metricName}#count`, identity, dataPoint.startTimeUnixNano), dataPoint.timeUnixNano, numberAttribute({ count: dataPoint.count }, "count"), temporality);
+  const sum = otelSeriesDelta(otelSeriesKey(`${metricName}#sum`, identity, dataPoint.startTimeUnixNano), dataPoint.timeUnixNano, numberAttribute({ sum: dataPoint.sum }, "sum"), temporality);
+  const bucket = toolBucket(attributes);
+  bucket.durationCount += count;
+  bucket.durationMs += sum;
+}
+
 // Canonical full OTLP metric names for thread-level skill histograms. Codex
 // reports `description_truncated_chars` as its own histogram (distribution
 // of trimmed-description sizes across truncated skills), not an attribute.
@@ -414,6 +499,7 @@ function ingestOtelMetrics(payload) {
   for (const resourceMetric of payload.resourceMetrics ?? []) {
     for (const scopeMetric of resourceMetric.scopeMetrics ?? []) {
       for (const metric of scopeMetric.metrics ?? []) {
+        noteMetricInventory(metric);
         if (metric.name === "codex.skill.injected") {
           const temporality = metric.sum?.aggregationTemporality;
           for (const dataPoint of metric.sum?.dataPoints ?? []) {
@@ -425,6 +511,27 @@ function ingestOtelMetrics(payload) {
           for (const dataPoint of metric.histogram?.dataPoints ?? []) {
             noteThreadSkillsHistogram(bucket, metric.name, otelAttributes(dataPoint.attributes), dataPoint, temporality);
           }
+        } else if (metric.name === "codex.sqlite.init.count" || metric.name === "codex.sqlite.fallback.count") {
+          const collection = metric.name.endsWith("fallback.count") ? otelTelemetry.sqlite.fallbacks : otelTelemetry.sqlite.init;
+          const temporality = metric.sum?.aggregationTemporality;
+          for (const dataPoint of metric.sum?.dataPoints ?? []) noteSqliteCounter(collection, metric.name, otelAttributes(dataPoint.attributes), dataPoint, temporality);
+        } else if (metric.name === "codex.sqlite.init.duration_ms") {
+          const temporality = metric.histogram?.aggregationTemporality;
+          for (const dataPoint of metric.histogram?.dataPoints ?? []) {
+            const attributes = otelAttributes(dataPoint.attributes);
+            const identity = { db: safeMetricLabel(attributes.db), status: safeMetricLabel(attributes.status) };
+            const count = otelSeriesDelta(otelSeriesKey(`${metric.name}#count`, identity, dataPoint.startTimeUnixNano), dataPoint.timeUnixNano, numberAttribute({ count: dataPoint.count }, "count"), temporality);
+            const sum = otelSeriesDelta(otelSeriesKey(`${metric.name}#sum`, identity, dataPoint.startTimeUnixNano), dataPoint.timeUnixNano, numberAttribute({ sum: dataPoint.sum }, "sum"), temporality);
+            const bucket = sqliteDurationBucket(attributes);
+            bucket.count += count;
+            bucket.sum += sum;
+          }
+        } else if (metric.name === "codex.tool.call") {
+          const temporality = metric.sum?.aggregationTemporality;
+          for (const dataPoint of metric.sum?.dataPoints ?? []) noteToolCounter(metric.name, otelAttributes(dataPoint.attributes), dataPoint, temporality);
+        } else if (metric.name === "codex.tool.call.duration_ms") {
+          const temporality = metric.histogram?.aggregationTemporality;
+          for (const dataPoint of metric.histogram?.dataPoints ?? []) noteToolDuration(metric.name, otelAttributes(dataPoint.attributes), dataPoint, temporality);
         }
       }
     }
@@ -437,6 +544,7 @@ function ingestOtelSignal(signal, payload) {
   if (signal === "logs") ingestOtelLogs(payload);
   if (signal === "traces") ingestOtelTraces(payload);
   if (signal === "metrics") ingestOtelMetrics(payload);
+  scheduleRouterStatePersist();
 }
 
 function resetOtelTelemetry() {
@@ -445,6 +553,9 @@ function resetOtelTelemetry() {
   otelTelemetry.mcpServers.clear();
   otelTelemetry.turns = { prompts: 0, completed: 0, promptLength: 0, ttftMs: 0, ttftCount: 0 };
   otelTelemetry.tokens = { input: 0, output: 0, cached: 0, reasoning: 0, tool: 0 };
+  otelTelemetry.metricInventory.clear();
+  otelTelemetry.tools.clear();
+  otelTelemetry.sqlite = { init: new Map(), initDurationMs: new Map(), fallbacks: new Map() };
   otelTelemetry.skills.injected = { total: 0, byStatus: {}, byInvokeType: {}, bySkill: new Map() };
   otelTelemetry.skills.threads = {
     enabled: { count: 0, sum: 0 },
@@ -471,6 +582,7 @@ function codexTelemetryStatus(now = Date.now()) {
   }, { observed: 0, ready: 0, error: 0, stale: 0 });
   const skillsInjected = otelTelemetry.skills.injected;
   const threadHistogram = (bucket) => ({ ...bucket, average: bucket.count ? bucket.sum / bucket.count : 0 });
+  const sqliteBuckets = (collection) => [...collection.values()].map((bucket) => ({ ...bucket, ...(Object.hasOwn(bucket, "sum") ? { average: bucket.count ? bucket.sum / bucket.count : 0 } : {}) })).sort((a, b) => `${a.db}/${a.status}`.localeCompare(`${b.db}/${b.status}`));
   return {
     receiver: { ...otelTelemetry.receiver },
     sessionsObserved: sessions.length,
@@ -479,6 +591,17 @@ function codexTelemetryStatus(now = Date.now()) {
     tokens: { ...otelTelemetry.tokens, total: Object.values(otelTelemetry.tokens).reduce((sum, value) => sum + value, 0) },
     mcpSummary,
     mcpServers,
+    metrics: {
+      observed: [...otelTelemetry.metricInventory.values()].sort((a, b) => a.name.localeCompare(b.name)),
+    },
+    tools: {
+      byTool: [...otelTelemetry.tools.values()].map((tool) => ({ ...tool, averageDurationMs: tool.durationCount ? tool.durationMs / tool.durationCount : 0, byStatus: { ...tool.byStatus } })).sort((a, b) => `${a.tool}/${a.source}/${a.server}`.localeCompare(`${b.tool}/${b.source}/${b.server}`)),
+    },
+    sqlite: {
+      init: { byDbStatus: sqliteBuckets(otelTelemetry.sqlite.init), total: [...otelTelemetry.sqlite.init.values()].reduce((sum, bucket) => sum + bucket.count, 0) },
+      initDurationMs: { byDbStatus: sqliteBuckets(otelTelemetry.sqlite.initDurationMs), totalCount: [...otelTelemetry.sqlite.initDurationMs.values()].reduce((sum, bucket) => sum + bucket.count, 0), totalSum: [...otelTelemetry.sqlite.initDurationMs.values()].reduce((sum, bucket) => sum + bucket.sum, 0) },
+      fallbacks: { byDbStatus: sqliteBuckets(otelTelemetry.sqlite.fallbacks), total: [...otelTelemetry.sqlite.fallbacks.values()].reduce((sum, bucket) => sum + bucket.count, 0) },
+    },
     skills: {
       injected: {
         total: skillsInjected.total,
@@ -867,6 +990,86 @@ function usagePersistenceSnapshot() {
   };
 }
 
+const OTEL_PERSISTENCE_SCHEMA_VERSION = 1;
+
+function otelPersistenceSnapshot() {
+  const telemetry = codexTelemetryStatus();
+  return {
+    schemaVersion: OTEL_PERSISTENCE_SCHEMA_VERSION,
+    receiver: telemetry.receiver,
+    turns: telemetry.turns,
+    tokens: telemetry.tokens,
+    mcpServers: [...otelTelemetry.mcpServers.values()],
+    skills: telemetry.skills,
+    metrics: telemetry.metrics,
+    tools: telemetry.tools,
+    sqlite: telemetry.sqlite,
+    // Cumulative exports must resume from their previous point after a
+    // restart, otherwise the first post-restart batch would be counted twice.
+    series: [...otelMetricSeries.entries()].map(([key, value]) => ({ key, timestamp: value.timestamp.toString(), value: value.value })),
+  };
+}
+
+function restoreOtelTelemetry(snapshot) {
+  if (!snapshot || typeof snapshot !== "object" || snapshot.schemaVersion !== OTEL_PERSISTENCE_SCHEMA_VERSION) return;
+  const isFiniteNonnegative = (value) => typeof value === "number" && Number.isFinite(value) && value >= 0;
+  const restoreNumberFields = (target, source, fields) => {
+    for (const field of fields) if (isFiniteNonnegative(source?.[field])) target[field] = source[field];
+  };
+  restoreNumberFields(otelTelemetry.receiver, snapshot.receiver, ["logs", "traces", "metrics", "invalid"]);
+  if (snapshot.receiver?.lastReceivedAt === null || typeof snapshot.receiver?.lastReceivedAt === "string") otelTelemetry.receiver.lastReceivedAt = snapshot.receiver.lastReceivedAt;
+  restoreNumberFields(otelTelemetry.turns, snapshot.turns, ["prompts", "completed", "promptLength", "ttftMs", "ttftCount"]);
+  restoreNumberFields(otelTelemetry.tokens, snapshot.tokens, ["input", "output", "cached", "reasoning", "tool"]);
+  for (const server of Array.isArray(snapshot.mcpServers) ? snapshot.mcpServers : []) {
+    if (!server || typeof server !== "object" || typeof server.name !== "string" || !server.name) continue;
+    const restored = { name: safeMetricLabel(server.name), lastSeenAt: typeof server.lastSeenAt === "string" ? server.lastSeenAt : null, initAttempts: 0, toolDiscoveryAttempts: 0, failures: 0, durationMs: 0, durationCount: 0, lastStatus: safeMetricLabel(server.lastStatus) };
+    restoreNumberFields(restored, server, ["initAttempts", "toolDiscoveryAttempts", "failures", "durationMs", "durationCount"]);
+    otelTelemetry.mcpServers.set(restored.name, restored);
+  }
+  const skills = snapshot.skills;
+  if (skills?.injected && typeof skills.injected === "object") {
+    restoreNumberFields(otelTelemetry.skills.injected, skills.injected, ["total"]);
+    for (const [status, count] of Object.entries(skills.injected.byStatus ?? {})) if (isFiniteNonnegative(count)) otelTelemetry.skills.injected.byStatus[safeMetricLabel(status)] = count;
+    for (const [invokeType, count] of Object.entries(skills.injected.byInvokeType ?? {})) if (isFiniteNonnegative(count)) otelTelemetry.skills.injected.byInvokeType[safeMetricLabel(invokeType)] = count;
+    for (const entry of Array.isArray(skills.injected.bySkill) ? skills.injected.bySkill : []) {
+      if (!entry || typeof entry.skill !== "string") continue;
+      const bucket = skillBucket(safeMetricLabel(entry.skill));
+      restoreNumberFields(bucket, entry, ["total"]);
+      for (const [status, count] of Object.entries(entry.byStatus ?? {})) if (isFiniteNonnegative(count)) bucket.byStatus[safeMetricLabel(status)] = count;
+    }
+  }
+  for (const [targetKey, sourceKey] of [["enabled", "enabledTotal"], ["kept", "keptTotal"], ["truncated", "truncated"], ["descriptionTruncatedChars", "descriptionTruncatedChars"]]) {
+    restoreNumberFields(otelTelemetry.skills.threads[targetKey], skills?.threads?.[sourceKey], ["count", "sum"]);
+  }
+  for (const entry of Array.isArray(snapshot.metrics?.observed) ? snapshot.metrics.observed : []) {
+    if (!entry || typeof entry.name !== "string" || !entry.name) continue;
+    const restored = { name: safeMetricLabel(entry.name), exports: 0, dataPoints: 0 };
+    restoreNumberFields(restored, entry, ["exports", "dataPoints"]);
+    otelTelemetry.metricInventory.set(restored.name, restored);
+  }
+  for (const entry of Array.isArray(snapshot.tools?.byTool) ? snapshot.tools.byTool : []) {
+    if (!entry || typeof entry.tool !== "string") continue;
+    const restored = { tool: safeMetricLabel(entry.tool, "unknown-tool"), source: safeMetricLabel(entry.source), server: safeMetricLabel(entry.server, ""), count: 0, byStatus: {}, durationCount: 0, durationMs: 0 };
+    restoreNumberFields(restored, entry, ["count", "durationCount", "durationMs"]);
+    for (const [status, count] of Object.entries(entry.byStatus ?? {})) if (isFiniteNonnegative(count)) restored.byStatus[safeMetricLabel(status)] = count;
+    otelTelemetry.tools.set(toolKey(restored), restored);
+  }
+  const sqlite = snapshot.sqlite;
+  for (const [target, source] of [[otelTelemetry.sqlite.init, sqlite?.init?.byDbStatus], [otelTelemetry.sqlite.fallbacks, sqlite?.fallbacks?.byDbStatus], [otelTelemetry.sqlite.initDurationMs, sqlite?.initDurationMs?.byDbStatus]]) {
+    for (const entry of Array.isArray(source) ? source : []) {
+      if (!entry || typeof entry.db !== "string" || typeof entry.status !== "string") continue;
+      const restored = { db: safeMetricLabel(entry.db), status: safeMetricLabel(entry.status), count: 0 };
+      restoreNumberFields(restored, entry, ["count"]);
+      if (Object.hasOwn(entry, "sum")) { restored.sum = 0; restoreNumberFields(restored, entry, ["sum"]); }
+      target.set(sqliteKey(restored), restored);
+    }
+  }
+  for (const entry of Array.isArray(snapshot.series) ? snapshot.series : []) {
+    if (!entry || typeof entry.key !== "string" || typeof entry.timestamp !== "string" || !isFiniteNonnegative(entry.value)) continue;
+    try { otelMetricSeries.set(entry.key, { timestamp: BigInt(entry.timestamp), value: entry.value }); } catch { /* Ignore malformed cursors. */ }
+  }
+}
+
 function serializeRouterState() {
   return JSON.stringify({
     schema: "autodev-router-persisted-state-v1",
@@ -876,6 +1079,7 @@ function serializeRouterState() {
     concurrency: concurrencyTelemetry,
     spawnFailures: spawnFailureTelemetry,
     recentEvents: [...recentRouterEvents],
+    otelTelemetry: otelPersistenceSnapshot(),
   }, null, 2);
 }
 
@@ -926,6 +1130,7 @@ function loadRouterState(file = STATE_FILE) {
       if (parsed.spawnFailures.byReason && typeof parsed.spawnFailures.byReason === "object") spawnFailureTelemetry.byReason = { ...parsed.spawnFailures.byReason };
       if (Array.isArray(parsed.spawnFailures.recent)) spawnFailureTelemetry.recent = parsed.spawnFailures.recent.filter((item) => item && typeof item === "object").slice(-50);
     }
+    restoreOtelTelemetry(parsed.otelTelemetry);
     if (Array.isArray(parsed.recentEvents)) {
       recentRouterEvents.length = 0;
       recentRouterEvents.push(...parsed.recentEvents.filter((event) => event && typeof event === "object").slice(-Math.max(1, MAX_RECENT_EVENTS)));
