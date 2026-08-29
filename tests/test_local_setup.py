@@ -159,6 +159,46 @@ class LocalSetupTests(unittest.TestCase):
         system_prompt_index = args.index("--append-system-prompt")
         self.assertEqual(args[system_prompt_index + 1], claude_bridge.LEAF_BRIDGE_INSTRUCTIONS)
 
+    def test_claude_stream_does_not_forward_assistant_snapshots_after_text_deltas(self):
+        first = "I'll start by exploring the relevant files."
+        second = "Let's read the full section around OTLP handling for full context."
+        combined = first + second
+        lines = [
+            json.dumps({
+                "type": "stream_event",
+                "event": {"type": "content_block_delta", "delta": {"type": "text_delta", "text": first}},
+            }),
+            json.dumps({
+                "type": "stream_event",
+                "event": {"type": "content_block_delta", "delta": {"type": "text_delta", "text": second}},
+            }),
+            json.dumps({"type": "assistant", "message": {"content": [{"type": "text", "text": combined}]} }),
+            json.dumps({"type": "result", "result": combined}),
+        ]
+
+        class FakeProcess:
+            args = ["claude"]
+            stdout = lines
+            stderr = []
+
+            def poll(self):
+                return 0
+
+            def wait(self):
+                return 0
+
+            def kill(self):
+                return None
+
+        with patch.object(claude_bridge.subprocess, "Popen", return_value=FakeProcess()), patch.dict(
+            claude_bridge.os.environ, {"CLAUDE_CODE_OAUTH_TOKEN": "oauth-placeholder"}, clear=False
+        ):
+            events = list(claude_bridge.run_claude_stream("prompt"))
+
+        output = "".join(value for kind, value, _ in events if kind == "delta")
+        self.assertEqual(output, combined)
+        self.assertEqual([kind for kind, _, _ in events], ["delta", "delta", "complete"])
+
     def test_claude_bridge_forwards_only_user_task_content(self):
         prompt = claude_bridge.prompt_from_input([
             {"role": "system", "content": "[developer] parent-only orchestration context"},

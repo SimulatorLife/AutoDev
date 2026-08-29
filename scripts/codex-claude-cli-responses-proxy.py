@@ -313,6 +313,8 @@ def run_claude_stream(prompt: str, model: str = DEFAULT_CLAUDE_MODEL, effort: st
     threading.Thread(target=read_stream, args=(process, events), daemon=True).start()
     threading.Thread(target=read_stderr, args=(process, events), daemon=True).start()
     emitted = ""
+    assistant_snapshot = ""
+    saw_stream_text = False
     result: dict[str, Any] = {}
     stderr_lines: list[str] = []
     deadline = time.monotonic() + CLAUDE_TIMEOUT_SECONDS
@@ -341,9 +343,29 @@ def run_claude_stream(prompt: str, model: str = DEFAULT_CLAUDE_MODEL, effort: st
                     err_msg = text_from_content(value.get("message", {}).get("content", [])) or value.get("error") or "Claude API error"
                     raise_classified_claude_error(err_msg, value.get("error"))
                 delta = nested_text(value) if event_type == "stream_event" else ""
+                if delta:
+                    # With --include-partial-messages Claude emits both the
+                    # canonical stream_event text deltas and assistant events
+                    # containing a full message snapshot. The latter must not
+                    # be forwarded after a stream delta or the same text is
+                    # rendered twice by the downstream Responses client.
+                    if not saw_stream_text and assistant_snapshot:
+                        if emitted.endswith(delta):
+                            delta = ""
+                        elif delta.startswith(assistant_snapshot):
+                            delta = delta[len(assistant_snapshot):]
+                    saw_stream_text = True
                 if event_type == "assistant":
                     full_text = text_from_content(value.get("message", {}).get("content", []))
-                    delta = full_text[len(emitted):] if full_text.startswith(emitted) else full_text
+                    if saw_stream_text:
+                        delta = ""
+                    elif full_text.startswith(assistant_snapshot):
+                        delta = full_text[len(assistant_snapshot):]
+                    elif full_text == assistant_snapshot or emitted.endswith(full_text):
+                        delta = ""
+                    else:
+                        delta = full_text
+                    assistant_snapshot = full_text
                 if delta:
                     emitted += delta
                     yield ("delta", delta, value)
@@ -366,7 +388,7 @@ def run_claude_stream(prompt: str, model: str = DEFAULT_CLAUDE_MODEL, effort: st
                     detail = "\n".join(stderr_lines)[-4000:]
                     raise RuntimeError(f"Claude CLI exited {return_code}: {detail}")
                 final_text = str(result.get("result", emitted))
-                if final_text and final_text != emitted:
+                if final_text and final_text != emitted and not emitted.endswith(final_text):
                     suffix = final_text[len(emitted):] if final_text.startswith(emitted) else final_text
                     if suffix:
                         emitted += suffix
@@ -545,4 +567,3 @@ class Handler(BaseHTTPRequestHandler):
 
 if __name__ == "__main__":
     ThreadingHTTPServer((HOST, PORT), Handler).serve_forever()
-

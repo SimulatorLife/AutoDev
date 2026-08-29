@@ -58,6 +58,12 @@ The router makes its effective choice visible in two ways:
   direct concrete model requests
   are not counted as subagent slots. If a session ID is not supplied by the
   client, the router uses a process-wide fallback scope and reports that scope.
+  That fallback is a single shared bucket: unrelated sessions that omit an
+  identifier can deny one another. The router cannot infer a logical session
+  from an anonymous HTTP request, so callers must propagate
+  `x-codex-session-id` (or an equivalent supported field) for true independent
+  per-session capacity. `/status` exposes `processFallbackEnforcement` and
+  `processFallbackActiveThreads` to make this unsafe fallback visible.
 - They also aggregate usage by origin (`orchestrator`,
   `subagent`, or `direct`), role, and resolved provider/model. Each bucket
   includes attempts, outcomes, average/max turn duration, and tool-call counts
@@ -79,12 +85,12 @@ The router makes its effective choice visible in two ways:
   no traffic is dropped from the table; it is not a strict proxy for
   Codex-origin traffic, since roleless non-Codex ("direct") requests land in
   the same bucket.
-- Open `http://127.0.0.1:4100/status` in a browser for the bare-bones dashboard;
-  it polls the JSON status every 3 seconds. `/dashboard` is an explicit HTML
-  alias. API clients that send `Accept: application/json` to `/status` receive
-  the current router instance, active requests, configured models, cooldown
-  countdowns, per-provider attempt and success/failure counters, the last
-  classified failure, and recent routing events. The status payload includes `spawnFailures` for failures visible at the router
+- Open `http://127.0.0.1:4100/dashboard` in a browser for the live HTML
+  dashboard; it polls the JSON status every 3 seconds. `GET /status` always
+  returns raw JSON regardless of the `Accept` header, including the current
+  router instance, active requests, configured models, cooldown countdowns,
+  per-provider attempt and success/failure counters, the last classified
+  failure, and recent routing events. The status payload includes `spawnFailures` for failures visible at the router
 boundary: concurrency denials and role requests exhausted by provider failures.
 These records include counts by reason, recent request IDs, and the last reason.
 Failures raised by the Codex app-server before a role request reaches the router
@@ -103,6 +109,11 @@ snapshot if the app-server is unavailable. The local CLI view is:
   node /Users/henrykirk/AutoDev/scripts/codex-model-router-status.mjs
   # Add --json for machine-readable output.
   ```
+
+To verify the live router is receiving caller identities, inspect
+`.concurrency.lastDenial.sessionScope` in `/status`; `identified` means the
+per-session key was supplied, while `process-fallback` means anonymous callers
+are sharing one bucket.
 
 The same status payload's `codexTelemetry` includes Codex OTEL lifecycle and
 skill-injection telemetry (`codex.skill.injected` and
@@ -187,6 +198,9 @@ OAuth-authenticated Claude CLI and translates Claude's stream into Responses eve
 `LITELLM_API_KEY` used between the local router and local bridge is only a
 localhost gateway credential; it is removed, along with Anthropic API-key
 variables, before the Claude CLI subprocess starts.
+When Claude emits both `stream_event` text deltas and full `assistant` message
+snapshots, the bridge forwards only the canonical deltas so subagent
+commentary is not rendered twice; assistant-only streams remain supported.
 The local router owns the GPT branch separately and forwards it to
 `https://chatgpt.com/backend-api/codex/responses` with the existing Codex OAuth
 token and account ID from `auth.json`.

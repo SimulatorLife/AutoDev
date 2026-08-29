@@ -46,8 +46,11 @@ const concurrency = body.concurrency ?? {};
 const limit = (value) => value == null ? "unlimited" : value;
 const lastDenial = concurrency.lastDenial ? `${concurrency.lastDenial.reason} (${concurrency.lastDenial.sessionScope})` : "-";
 const denialsByReason = Object.entries(concurrency.denialsByReason ?? {}).map(([reason, count]) => `${reason}: ${count}`).join(", ") || "-";
+const fallbackWarning = concurrency.processFallbackEnforcement
+  ? ` [WARNING: ${concurrency.processFallbackActiveThreads} active thread(s) have no caller-supplied session id and are sharing one process-wide bucket instead of independent per-session slots -- over-denial risk]`
+  : "";
 console.log("");
-console.log(`Concurrency: per-session ${limit(concurrency.effectivePerSessionLimit)}, active subagents ${concurrency.activeSubagentThreads ?? 0}, denials ${concurrency.denials ?? 0} (${denialsByReason}), last denial ${lastDenial}`);
+console.log(`Concurrency: per-session ${limit(concurrency.effectivePerSessionLimit)}, active subagents ${concurrency.activeSubagentThreads ?? 0}, denials ${concurrency.denials ?? 0} (${denialsByReason}), last denial ${lastDenial}${fallbackWarning}`);
 
 console.log("Usage by origin:");
 for (const [origin, state] of Object.entries(usage.byOrigin ?? {})) {

@@ -5,7 +5,7 @@ import test from "node:test";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
-import { activeProviderRequests, catalogModelIds, classifyProviderFailure, clearProviderCooldown, cooldownProvider, decrementActiveRequests, fallbackable, getActiveRequests, concurrencyStatus, countToolCallsFromSse, countToolCallsInResponse, getRouterStatus, handle, codexTelemetryStatus, ingestOtelSignal, incrementActiveRequests, isProviderCoolingDown, loadRouterState, normalizeCodexTask, parseConcurrencyConfig, persistRouterStateNow, recordConcurrencyDenial, recordRouterEvent, recordSpawnFailure, releaseSubagentSlot, replaceModelFields, resetConcurrencyTelemetry, resetRouterTelemetry, resetOtelTelemetry, serializeRouterState, spawnFailureStatus, summarizeCodexTasks, responseTextFromSse, roleCandidates, roleForModel, routeCredentialAvailable, routeForModel, transformSseEvent, tryAcquireSubagentSlot, validateRoutingConfig } from "./codex-model-router.mjs";
+import { activeProviderRequests, catalogModelIds, classifyProviderFailure, clearProviderCooldown, cooldownProvider, decrementActiveRequests, fallbackable, getActiveRequests, concurrencyStatus, countToolCallsFromSse, countToolCallsInResponse, getRouterStatus, handle, codexTelemetryStatus, ingestOtelSignal, incrementActiveRequests, isProviderCoolingDown, loadRouterState, normalizeCodexTask, parseConcurrencyConfig, persistRouterStateNow, PROCESS_FALLBACK_SESSION_KEY, recordConcurrencyDenial, recordRouterEvent, recordSpawnFailure, releaseSubagentSlot, replaceModelFields, requestSession, resetConcurrencyTelemetry, resetRouterTelemetry, resetOtelTelemetry, serializeRouterState, spawnFailureStatus, summarizeCodexTasks, responseTextFromSse, roleCandidates, roleForModel, routeCredentialAvailable, routeForModel, transformSseEvent, tryAcquireSubagentSlot, validateRoutingConfig } from "./codex-model-router.mjs";
 
 test("loads editable provider and role models from JSON routing config", async () => {
   const config = JSON.parse(await readFile(new URL("./codex/model-routing.json", import.meta.url), "utf8"));
@@ -347,12 +347,12 @@ test("keeps Codex task timestamp normalization compatible with millisecond and I
   assert.equal(normalizeCodexTask({ id: "task", updatedAt: "not-a-timestamp" }).updatedAt, null);
 });
 
-test("serves a lightweight dashboard to browsers and JSON to API clients", async () => {
+test("serves HTML only from /dashboard and raw JSON from /status", async () => {
   const server = createServer((request, response) => { void handle(request, response); });
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
   try {
     const address = server.address();
-    const dashboard = await fetch(`http://127.0.0.1:${address.port}/status`, { headers: { Accept: "text/html" } });
+    const dashboard = await fetch(`http://127.0.0.1:${address.port}/dashboard`);
     assert.equal(dashboard.status, 200);
     assert.match(dashboard.headers.get("content-type"), /text\/html/);
     const dashboardBody = await dashboard.text();
@@ -387,6 +387,8 @@ test("serves a lightweight dashboard to browsers and JSON to API clients", async
     assert.match(dashboardBody, /id="recent-routing-events-section" hidden/);
     assert.match(dashboardBody, /document\.querySelectorAll\("\.toggle-section"\)/);
     assert.match(dashboardBody, /id="spawn-failures"/);
+    assert.match(dashboardBody, /processFallbackEnforcement/);
+    assert.match(dashboardBody, /process-wide bucket/);
     assert.match(dashboardBody, /<tfoot>/);
     assert.match(dashboardBody, /class="provider-summary"/);
     assert.match(dashboardBody, /id="summary-attempts"/);
@@ -408,6 +410,11 @@ test("serves a lightweight dashboard to browsers and JSON to API clients", async
     assert.match(dashboardBody, /Provider skips/);
     assert.match(dashboardBody, /: "";/);
     assert.doesNotMatch(dashboardBody, />—</);
+
+    const browserStatus = await fetch(`http://127.0.0.1:${address.port}/status`, { headers: { Accept: "text/html" } });
+    assert.equal(browserStatus.status, 200);
+    assert.match(browserStatus.headers.get("content-type"), /application\/json/);
+    assert.equal((await browserStatus.json()).schema, "autodev-router-status-v1");
 
     const api = await fetch(`http://127.0.0.1:${address.port}/status`, { headers: { Accept: "application/json" } });
     assert.equal(api.status, 200);
@@ -630,6 +637,60 @@ test("reads and enforces Codex per-session and global thread limits", async () =
   assert.equal(status.lastDenial.reason, "max_concurrent_threads_per_session");
   releaseSubagentSlot("test-session");
   resetConcurrencyTelemetry();
+});
+
+test("requestSession derives identity from caller-supplied headers and payload fields, never invents it", () => {
+  const noSignal = requestSession({ headers: {} }, {});
+  assert.deepEqual(noSignal, { key: PROCESS_FALLBACK_SESSION_KEY, scope: "process-fallback" });
+
+  assert.deepEqual(requestSession({ headers: { "x-codex-session-id": "sess-header-1" } }, {}), { key: "sess-header-1", scope: "identified" });
+  assert.deepEqual(requestSession({ headers: { "x-session-id": "sess-header-2" } }, {}), { key: "sess-header-2", scope: "identified" });
+  assert.deepEqual(requestSession({ headers: { "x-conversation-id": "sess-header-3" } }, {}), { key: "sess-header-3", scope: "identified" });
+  assert.deepEqual(requestSession({ headers: {} }, { session_id: "sess-body-1" }), { key: "sess-body-1", scope: "identified" });
+  assert.deepEqual(requestSession({ headers: {} }, { conversation_id: "sess-body-2" }), { key: "sess-body-2", scope: "identified" });
+  assert.deepEqual(requestSession({ headers: {} }, { metadata: { session_id: "sess-meta-1" } }), { key: "sess-meta-1", scope: "identified" });
+  assert.deepEqual(requestSession({ headers: {} }, { metadata: { conversation_id: "sess-meta-2" } }), { key: "sess-meta-2", scope: "identified" });
+
+  // Whitespace-only or non-string identity is treated as absent rather than trusted as-is.
+  assert.deepEqual(requestSession({ headers: { "x-codex-session-id": "   " } }, {}), { key: PROCESS_FALLBACK_SESSION_KEY, scope: "process-fallback" });
+  assert.deepEqual(requestSession({ headers: {} }, { session_id: 12345 }), { key: PROCESS_FALLBACK_SESSION_KEY, scope: "process-fallback" });
+
+  // A header takes priority over payload fields when both are present.
+  assert.deepEqual(requestSession({ headers: { "x-codex-session-id": "sess-header" } }, { session_id: "sess-body" }), { key: "sess-header", scope: "identified" });
+});
+
+test("per-session slot limit gives distinct identified sessions independent capacity while capping a shared or missing identity", () => {
+  resetConcurrencyTelemetry();
+  try {
+    // Two distinct identified sessions each get their own slot at the same limit.
+    assert.equal(tryAcquireSubagentSlot("session-a"), null);
+    assert.equal(tryAcquireSubagentSlot("session-b"), null);
+    assert.equal(concurrencyStatus().activeSubagentThreads, 2);
+    assert.equal(concurrencyStatus().activeSessions, 2);
+
+    // The same identified session is capped by the configured per-session limit.
+    assert.equal(tryAcquireSubagentSlot("session-a"), "max_concurrent_threads_per_session");
+    releaseSubagentSlot("session-a");
+    releaseSubagentSlot("session-b");
+
+    // Two requests that both fail to supply any session identity share the documented
+    // process-wide fallback bucket and are capped together, even though nothing proves
+    // they belong to the same logical Codex session -- this is the fail-safe behavior
+    // called out in docs/provider-routing.md, not true per-session enforcement.
+    const first = requestSession({ headers: {} }, {});
+    const second = requestSession({ headers: {} }, {});
+    assert.equal(first.key, PROCESS_FALLBACK_SESSION_KEY);
+    assert.equal(second.key, PROCESS_FALLBACK_SESSION_KEY);
+    assert.equal(tryAcquireSubagentSlot(first.key), null);
+    assert.equal(concurrencyStatus().processFallbackActiveThreads, 1);
+    assert.equal(concurrencyStatus().processFallbackEnforcement, true);
+    assert.equal(tryAcquireSubagentSlot(second.key), "max_concurrent_threads_per_session");
+    releaseSubagentSlot(first.key);
+    assert.equal(concurrencyStatus().processFallbackActiveThreads, 0);
+    assert.equal(concurrencyStatus().processFallbackEnforcement, false);
+  } finally {
+    resetConcurrencyTelemetry();
+  }
 });
 
 test("status snapshot exposes configured models, active work, cooldowns, and recent events", () => {

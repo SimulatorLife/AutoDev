@@ -32,6 +32,16 @@ events and exposes them in `/status` and the local dashboard, including turn
 timing, token counts, MCP server lifecycle observations,
 initialization/tool-discovery latency, and recent failures.
 
+The installed router and dashboard hooks under `$CODEX_HOME/hooks/` are runtime
+copies, not symlinks. After changing the tracked implementation, synchronize
+and restart the local services before checking live telemetry:
+
+```bash
+bash /Users/henrykirk/AutoDev/scripts/codex/install-codex-integration.sh --restart
+bash /Users/henrykirk/AutoDev/scripts/codex/install-codex-integration.sh --check
+curl --silent http://127.0.0.1:4100/status | jq '.codexTelemetry.skills'
+```
+
 The OTLP receiver accepts all three signal paths (`/v1/logs`, `/v1/traces`, and
 `/v1/metrics`). Codex currently emits useful lifecycle logs and MCP traces; the
 metrics receiver may correctly remain at zero outside of skill telemetry until

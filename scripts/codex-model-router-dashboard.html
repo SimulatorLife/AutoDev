@@ -193,7 +193,10 @@
       const limit = (value) => value == null ? "unlimited" : value;
       const denial = concurrency.lastDenial ? `${concurrency.lastDenial.reason} (${concurrency.lastDenial.sessionScope})` : "-";
       const denialsByReason = Object.entries(concurrency.denialsByReason ?? {}).map(([reason, count]) => `${reason}: ${count}`).join(", ") || "-";
-      document.querySelector("#concurrency").textContent = `Per-session limit: ${limit(concurrency.effectivePerSessionLimit)} · active subagents: ${concurrency.activeSubagentThreads ?? 0} · denials: ${concurrency.denials ?? 0} (${denialsByReason}) · last denial: ${denial}`;
+      const fallbackWarning = concurrency.processFallbackEnforcement
+        ? ` · <span class="limited">${text(String(concurrency.processFallbackActiveThreads))} active thread(s) unidentified, sharing one process-wide bucket (over-denial risk)</span>`
+        : "";
+      document.querySelector("#concurrency").innerHTML = `Per-session limit: ${limit(concurrency.effectivePerSessionLimit)} · active subagents: ${concurrency.activeSubagentThreads ?? 0} · denials: ${concurrency.denials ?? 0} (${denialsByReason}) · last denial: ${denial}${fallbackWarning}`;
       const usage = status.usage ?? {};
       const totals = usage.totals ?? {};
       const active = Object.values(status.providers ?? {}).reduce((sum, provider) => sum + Number(provider.activeRequests ?? 0), 0);

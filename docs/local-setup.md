@@ -47,8 +47,9 @@ codex execpolicy check --pretty \
   launchd services are the canonical supervisors when loaded; the ensure hook
   refuses to start duplicate unmanaged processes on ports 4001/4002.
 - Prefer `ensure-*` scripts for idempotent setup and the `diagnose-*` scripts for evidence before changing provider routing.
-- Open `http://127.0.0.1:4100/status` in a browser for the lightweight live
-  dashboard. The dashboard also periodically queries the local Codex
+- Open `http://127.0.0.1:4100/dashboard` in a browser for the lightweight live
+  dashboard. Raw JSON status is available at `http://127.0.0.1:4100/status`.
+  The dashboard also periodically queries the local Codex
   app-server for `thread/list` task status and shows the returned task IDs and
   metadata. Inspect the same state with
   `node scripts/codex-model-router-status.mjs` (use `--json` for automation).

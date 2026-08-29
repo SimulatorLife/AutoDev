@@ -516,6 +516,11 @@ function parseConcurrencyConfig(file = CODEX_CONFIG_FILE) {
 
 const CODEX_CONFIG_FILE = process.env.CODEX_ROUTER_CODEX_CONFIG_FILE ?? `${CODEX_HOME}/config.toml`;
 const CONCURRENCY_CONFIG = parseConcurrencyConfig();
+// Shared bucket key for requests that carry no caller-identified session. All such
+// requests are throttled together (see requestSession()), which trades an over-denial
+// risk (unrelated unidentified callers can cap each other) for never silently granting
+// unbounded concurrency when the router cannot tell sessions apart.
+const PROCESS_FALLBACK_SESSION_KEY = "process-scope";
 const activeSubagentSessions = new Map();
 const concurrencyTelemetry = { denials: 0, denialsByReason: {}, lastDenial: null };
 const spawnFailureTelemetry = { total: 0, byReason: {}, recent: [] };
@@ -558,12 +563,18 @@ function resetConcurrencyTelemetry() {
 }
 
 function concurrencyStatus() {
+  // Exposed unconditionally (not only after a denial) so an operator can see the
+  // per-session limit is currently being enforced as a single process-wide bucket
+  // for any unidentified caller, rather than discovering it only once denials occur.
+  const processFallbackActiveThreads = activeSubagentSessions.get(PROCESS_FALLBACK_SESSION_KEY) ?? 0;
   return {
     configFile: CONCURRENCY_CONFIG.file,
     maxConcurrentThreadsPerSession: effectivePerSessionLimit(),
     effectivePerSessionLimit: effectivePerSessionLimit(),
     activeSubagentThreads: activeSubagentThreads(),
     activeSessions: activeSubagentSessions.size,
+    processFallbackActiveThreads,
+    processFallbackEnforcement: processFallbackActiveThreads > 0,
     denials: concurrencyTelemetry.denials,
     denialsByReason: { ...concurrencyTelemetry.denialsByReason },
     lastDenial: concurrencyTelemetry.lastDenial,
@@ -1381,7 +1392,7 @@ function requestSession(request, payload) {
   const metadata = payload?.metadata;
   const value = header ?? payload?.session_id ?? payload?.conversation_id ?? metadata?.session_id ?? metadata?.conversation_id;
   if (typeof value === "string" && value.trim()) return { key: value.trim(), scope: "identified" };
-  return { key: "process-scope", scope: "process-fallback" };
+  return { key: PROCESS_FALLBACK_SESSION_KEY, scope: "process-fallback" };
 }
 
 async function handle(request, response) {
@@ -1395,8 +1406,7 @@ async function handle(request, response) {
     return;
   }
   if (pathname === "/status" && request.method === "GET") {
-    if (String(request.headers.accept ?? "").includes("text/html")) await sendDashboard(response);
-    else sendJson(response, 200, getRouterStatus(), { "cache-control": "no-store" });
+    sendJson(response, 200, getRouterStatus(), { "cache-control": "no-store" });
     return;
   }
   if (pathname === "/v1/models" && request.method === "GET") {
@@ -1457,7 +1467,7 @@ async function handle(request, response) {
   await proxyConcreteResponse(response, route, payload, wantsStream, requestId);
 }
 
-export { activeProviderRequests, codexTelemetryStatus, ingestOtelSignal, ingestOtelLogs, ingestOtelMetrics, ingestOtelTraces, resetOtelTelemetry, catalogModelIds, classifyProviderFailure, clearProviderCooldown, concurrencyStatus, normalizeCodexTask, summarizeCodexTasks, cooldownProvider, countToolCallsFromSse, countToolCallsInResponse, decrementActiveRequests, fallbackable, getActiveRequests, getRouterStatus, handle, incrementActiveRequests, isProviderCoolingDown, loadRouterState, parseConcurrencyConfig, persistRouterStateNow, providerModelMetadata, recordConcurrencyDenial, recordRouterEvent, recordSpawnFailure, releaseSubagentSlot, replaceModelFields, resetConcurrencyTelemetry, resetRouterTelemetry, spawnFailureStatus, routeCredentialAvailable, roleCandidates, roleForModel, routeForModel, serializeRouterState, tryAcquireSubagentSlot, responseTextFromSse, transformSseEvent, validateRoutingConfig };
+export { activeProviderRequests, codexTelemetryStatus, ingestOtelSignal, ingestOtelLogs, ingestOtelMetrics, ingestOtelTraces, resetOtelTelemetry, catalogModelIds, classifyProviderFailure, clearProviderCooldown, concurrencyStatus, normalizeCodexTask, summarizeCodexTasks, cooldownProvider, countToolCallsFromSse, countToolCallsInResponse, decrementActiveRequests, fallbackable, getActiveRequests, getRouterStatus, handle, incrementActiveRequests, isProviderCoolingDown, loadRouterState, parseConcurrencyConfig, persistRouterStateNow, PROCESS_FALLBACK_SESSION_KEY, providerModelMetadata, recordConcurrencyDenial, recordRouterEvent, recordSpawnFailure, releaseSubagentSlot, replaceModelFields, requestSession, resetConcurrencyTelemetry, resetRouterTelemetry, spawnFailureStatus, routeCredentialAvailable, roleCandidates, roleForModel, routeForModel, serializeRouterState, tryAcquireSubagentSlot, responseTextFromSse, transformSseEvent, validateRoutingConfig };
 
 if (IS_MAIN) {
   createServer((request, response) => { void handle(request, response); }).listen(PORT, HOST, () => {
