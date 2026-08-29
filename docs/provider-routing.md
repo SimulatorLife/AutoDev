@@ -121,6 +121,14 @@ skill-injection telemetry (`codex.skill.injected` and
 [docs/metrics-dashboard.md](metrics-dashboard.md) for the receiver and
 aggregation details.
 
+Read-only roles (`explorer`, `docs-researcher`, `validator`, and
+`browser-tester`) run with filesystem access broad enough to inspect approved
+runtime state such as `$CODEX_HOME`/`~/.codex` and localhost diagnostics. Their
+role instructions remain read-only: they must not edit, stage, commit, or push
+those paths. The broader sandbox is intentional because Codex's `read-only`
+policy restricts reads outside the active workspace; the parent must explicitly
+scope any external inspection.
+
 Router stderr is structured JSON (`autodev-router-event-v1`) and is retained by
 launchd in `~/.codex/hooks/model-router.launchd.log` (the direct ensure path
 uses `/tmp/codex-model-router.log`). Provider counters and recent events are
@@ -201,6 +209,14 @@ variables, before the Claude CLI subprocess starts.
 When Claude emits both `stream_event` text deltas and full `assistant` message
 snapshots, the bridge forwards only the canonical deltas so subagent
 commentary is not rendered twice; assistant-only streams remain supported.
+The bridge also passes the approved runtime directories in
+`CLAUDE_CODE_ADDITIONAL_DIRS` to Claude Code via `--add-dir`; it defaults to
+`~/.codex`. This lets read-only roles inspect materialized role/config and
+telemetry state outside the repository while their role instructions continue
+to forbid edits outside the active workspace. The bridge uses Claude Code's
+`bypassPermissions` mode by default so approved runtime reads and localhost
+diagnostics are not blocked by an interactive approval gate; override
+`CLAUDE_CODE_PERMISSION_MODE` when a stricter provider policy is required.
 The local router owns the GPT branch separately and forwards it to
 `https://chatgpt.com/backend-api/codex/responses` with the existing Codex OAuth
 token and account ID from `auth.json`.

@@ -67,6 +67,14 @@ the official catalog; when present, the router totals and averages it
 separately. No prompt or skill content is exported or stored; only metric
 attributes and numeric aggregates are retained.
 
+These are Codex-native metrics, not a generic audit stream for every provider
+behind the router. In particular, app-managed `multi_agent_v1` subagents can
+load and follow the installed skills while their execution path emits no
+`ResourceMetrics` request to this router. A zero `codexTelemetry.skills` value
+therefore means that no Codex skill metric was received; it does not prove that
+no skill was available or used. Provider-agnostic usage for that path requires
+telemetry support in the Codex app/server execution layer.
+
 The dashboard labels MCP state as an observation (`ready`, `error`, or `stale`),
 not as an authoritative process-health guarantee. Codex currently emits MCP
 lifecycle spans rather than a persistent MCP health gauge. The router continues

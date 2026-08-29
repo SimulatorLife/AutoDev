@@ -230,6 +230,12 @@ def read_stderr(process: subprocess.Popen[str], events: queue.Queue[tuple[str, A
 
 
 def claude_cli_args(prompt: str, model: str, effort: str) -> list[str]:
+    codex_home = os.environ.get("CODEX_HOME", os.path.expanduser("~/.codex"))
+    additional_dirs = tuple(
+        directory
+        for directory in os.environ.get("CLAUDE_CODE_ADDITIONAL_DIRS", codex_home).split(os.pathsep)
+        if directory
+    )
     return [
         CLI,
         "-p",
@@ -241,9 +247,15 @@ def claude_cli_args(prompt: str, model: str, effort: str) -> list[str]:
         "--disallowed-tools",
         ",".join(DISALLOWED_CLAUDE_TOOLS),
         "--permission-mode",
-        os.environ.get("CLAUDE_CODE_PERMISSION_MODE", "acceptEdits"),
+        # The parent explicitly authorizes runtime diagnostics outside the
+        # workspace. Role instructions remain read-only; this mode prevents
+        # Claude Code's interactive approval gate from hiding those reads or
+        # localhost checks behind an approval request the parent cannot answer.
+        os.environ.get("CLAUDE_CODE_PERMISSION_MODE", "bypassPermissions"),
         "--append-system-prompt",
         LEAF_BRIDGE_INSTRUCTIONS,
+        "--add-dir",
+        *additional_dirs,
         "--output-format",
         "stream-json",
         "--include-partial-messages",

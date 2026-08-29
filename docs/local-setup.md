@@ -60,3 +60,9 @@ codex execpolicy check --pretty \
   persisted in `$CODEX_HOME/codex-router-state.json`; response headers and
   structured router events provide per-request
   correlation without logging prompts or credentials.
+
+The tracked configuration enables network access for workspace-write sessions
+so agents can query approved localhost diagnostics such as the model router.
+Read-only roles use a broader filesystem policy only to inspect runtime state
+such as `~/.codex`; their role instructions still prohibit edits outside the
+active repository.

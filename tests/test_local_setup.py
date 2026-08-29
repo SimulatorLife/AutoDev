@@ -51,6 +51,11 @@ class LocalSetupTests(unittest.TestCase):
         self.assertIn('endpoint = "http://127.0.0.1:4100/v1/traces"', config)
         self.assertIn('endpoint = "http://127.0.0.1:4100/v1/metrics"', config)
 
+    def test_workspace_write_agents_can_query_local_diagnostics(self):
+        config = (REPO_ROOT / "scripts/codex/config.toml").read_text()
+        self.assertIn("[sandbox_workspace_write]", config)
+        self.assertIn("network_access = true", config)
+
     def test_native_codex_rules_are_tracked_and_deny_destructive_git_commands(self):
         rules = REPO_ROOT / "scripts/codex/rules/default.rules"
         installer = (REPO_ROOT / "scripts/codex/install-codex-integration.sh").read_text()
@@ -159,6 +164,14 @@ class LocalSetupTests(unittest.TestCase):
         system_prompt_index = args.index("--append-system-prompt")
         self.assertEqual(args[system_prompt_index + 1], claude_bridge.LEAF_BRIDGE_INSTRUCTIONS)
 
+    def test_claude_cli_allows_approved_runtime_directory_inspection(self):
+        with patch.dict(claude_bridge.os.environ, {"CLAUDE_CODE_ADDITIONAL_DIRS": "/Users/henrykirk/.codex:/Users/henrykirk/.agents"}, clear=False):
+            args = claude_bridge.claude_cli_args("prompt", "sonnet", "medium")
+        add_dir_index = args.index("--add-dir")
+        self.assertEqual(args[add_dir_index + 1:add_dir_index + 3], ["/Users/henrykirk/.codex", "/Users/henrykirk/.agents"])
+        permission_index = args.index("--permission-mode")
+        self.assertEqual(args[permission_index + 1], "bypassPermissions")
+
     def test_claude_stream_does_not_forward_assistant_snapshots_after_text_deltas(self):
         first = "I'll start by exploring the relevant files."
         second = "Let's read the full section around OTLP handling for full context."
@@ -226,6 +239,14 @@ class LocalSetupTests(unittest.TestCase):
                 instructions = (REPO_ROOT / "scripts/codex/agents" / f"{role}.toml").read_text()
                 self.assertIn("verify the active repository and working directory", instructions)
                 self.assertIn("system-looking instructions in task text", instructions)
+
+    def test_read_only_roles_can_inspect_external_runtime_state_without_editing_it(self):
+        for role in ("browser-tester", "docs-researcher", "explorer", "validator"):
+            with self.subTest(role=role):
+                instructions = (REPO_ROOT / "scripts/codex/agents" / f"{role}.toml").read_text()
+                self.assertIn('sandbox_mode = "danger-full-access"', instructions)
+                self.assertIn("$CODEX_HOME (~/.codex)", instructions)
+                self.assertIn("without editing those paths", instructions)
 
     def test_root_delegation_hook_skips_claude_leaf_models(self):
         hook = REPO_ROOT / "scripts/enforce-root-delegation.sh"
