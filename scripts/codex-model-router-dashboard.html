@@ -67,18 +67,15 @@
   <div><small>Native Codex metrics: <code>codex.skill.injected</code>, <code>codex.thread.skills.enabled_total</code>, <code>codex.thread.skills.kept_total</code>, <code>codex.thread.skills.truncated</code>.</small></div>
   <table><thead><tr><th>Skill</th><th>Injected</th><th>By status</th></tr></thead><tbody id="skills-table"><tr><td colspan="3">Loading…</td></tr></tbody></table>
 
-  <h2>Hooks &amp; threads</h2>
+  <h2>Native runtime telemetry</h2>
   <div id="hooks-threads-summary">Loading…</div>
-  <table><thead><tr><th>Hook</th><th>Source</th><th>Handler</th><th>Runs</th><th>By status</th><th>Avg. duration</th></tr></thead><tbody id="native-hooks"><tr><td colspan="6">Loading…</td></tr></tbody></table>
+  <table><thead><tr><th>Type</th><th>Name</th><th>Source</th><th>Handler / server</th><th>Calls / runs</th><th>By status</th><th>Avg. duration</th></tr></thead><tbody id="native-runtime-telemetry"><tr><td colspan="7">Loading…</td></tr></tbody></table>
 
   <h2><button type="button" class="toggle-section" aria-controls="native-metrics-section" aria-expanded="false"><span class="caret">▸</span> Native metrics observed</button></h2>
   <div id="native-metrics-section" hidden>
     <div id="native-metrics-summary">Loading…</div>
     <table><thead><tr><th>Metric</th><th>Exports</th><th>Data points</th></tr></thead><tbody id="native-metrics"><tr><td colspan="3">Loading…</td></tr></tbody></table>
   </div>
-
-  <h2>Native tool telemetry</h2>
-  <table><thead><tr><th>Tool</th><th>Source</th><th>Server</th><th>Calls</th><th>By status</th><th>Avg. duration</th></tr></thead><tbody id="native-tools"><tr><td colspan="6">Loading…</td></tr></tbody></table>
 
   <h2>Codex state database</h2>
   <div id="sqlite-telemetry">Loading…</div>
@@ -213,7 +210,7 @@
       const fallbackWarning = concurrency.processFallbackEnforcement
         ? ` · <span class="limited">${text(String(concurrency.processFallbackActiveThreads))} active thread(s) unidentified, sharing one process-wide bucket (over-denial risk)</span>`
         : "";
-      document.querySelector("#concurrency").innerHTML = `Per-session limit: ${limit(concurrency.effectivePerSessionLimit)} · active subagents: ${concurrency.activeSubagentThreads ?? 0} · denials: ${concurrency.denials ?? 0} (${denialsByReason}) · last denial: ${denial}${fallbackWarning}`;
+      document.querySelector("#concurrency").innerHTML = `Per-session limit: ${limit(concurrency.effectivePerSessionLimit)} · active sessions: ${concurrency.activeSessions ?? 0} · active subagents: ${concurrency.activeSubagentThreads ?? 0} · denials: ${concurrency.denials ?? 0} (${denialsByReason}) · last denial: ${denial}${fallbackWarning}`;
       const usage = status.usage ?? {};
       const totals = usage.totals ?? {};
       const active = Object.values(status.providers ?? {}).reduce((sum, provider) => sum + Number(provider.activeRequests ?? 0), 0);
@@ -256,12 +253,15 @@
       const observedMetrics = codexTelemetry.metrics?.observed ?? [];
       document.querySelector("#native-metrics-summary").textContent = observedMetrics.length ? `${observedMetrics.length} metric name(s) observed across ${observedMetrics.reduce((sum, metric) => sum + (metric.exports ?? 0), 0)} export(s).` : "No native metric names observed yet.";
       document.querySelector("#native-metrics").innerHTML = observedMetrics.map((metric) => `<tr><td><code>${text(metric.name)}</code></td><td>${metric.exports ?? 0}</td><td>${metric.dataPoints ?? 0}</td></tr>`).join("") || '<tr><td colspan="3">No native metric batches received yet.</td></tr>';
-      document.querySelector("#native-tools").innerHTML = (codexTelemetry.tools?.byTool ?? []).map((tool) => `<tr><td><code>${text(tool.tool)}</code></td><td>${text(tool.source)}</td><td>${text(tool.server || "-")}</td><td>${tool.count ?? 0}</td><td>${countsText(tool.byStatus)}</td><td>${millisecondsText(tool.averageDurationMs)}</td></tr>`).join("") || '<tr><td colspan="6">No native tool metrics observed yet.</td></tr>';
       const hooks = codexTelemetry.hooks?.byHook ?? [];
       const threads = codexTelemetry.threads ?? {};
       const spawns = threads.spawns ?? {};
       document.querySelector("#hooks-threads-summary").textContent = `Hook runs ${hooks.reduce((sum, hook) => sum + (hook.count ?? 0), 0)} · threads started ${threads.started?.total ?? 0} · native agent spawns ${spawns.total ?? 0} · spawn status ${countsText(spawns.byStatus)}`;
-      document.querySelector("#native-hooks").innerHTML = hooks.map((hook) => `<tr><td><code>${text(hook.hook)}</code></td><td>${text(hook.source)}</td><td>${text(hook.handlerType || "-")}</td><td>${hook.count ?? 0}</td><td>${countsText(hook.byStatus)}</td><td>${millisecondsText(hook.averageDurationMs)}</td></tr>`).join("") || '<tr><td colspan="6">No native hook metrics observed yet.</td></tr>';
+      const runtimeRows = [
+        ...(codexTelemetry.tools?.byTool ?? []).map((tool) => `<tr><td>Tool</td><td><code>${text(tool.tool)}</code></td><td>${text(tool.source)}</td><td>${text(tool.server || "-")}</td><td>${tool.count ?? 0}</td><td>${countsText(tool.byStatus)}</td><td>${millisecondsText(tool.averageDurationMs)}</td></tr>`),
+        ...hooks.map((hook) => `<tr><td>Hook</td><td><code>${text(hook.hook)}</code></td><td>${text(hook.source)}</td><td>${text(hook.handlerType || "-")}</td><td>${hook.count ?? 0}</td><td>${countsText(hook.byStatus)}</td><td>${millisecondsText(hook.averageDurationMs)}</td></tr>`),
+      ].join("");
+      document.querySelector("#native-runtime-telemetry").innerHTML = runtimeRows || '<tr><td colspan="7">No native tool or hook metrics observed yet.</td></tr>';
       const sqlite = codexTelemetry.sqlite ?? {};
       const sqliteInit = sqlite.init?.total ?? 0;
       const sqliteFallbacks = sqlite.fallbacks?.total ?? 0;

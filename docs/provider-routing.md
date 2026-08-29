@@ -50,9 +50,12 @@ The router makes its effective choice visible in two ways:
   identify the concrete provider/model selected after shuffling, load balancing,
   health checks, and fallback.
 - The status payload and dashboard report the effective Codex per-session
-  concurrency limit, active role-based subagent slots, and denials caused by
-  that limit. The default local configuration permits one active subagent per
-  session; callers must serialize additional work or deliberately raise the
+  concurrency limit, the number of active session buckets, active role-based
+  subagent slots, and denials caused by that limit. An active session is a
+  session currently holding at least one role-based subagent slot; it is not a
+  count of every Codex task or process connected to the router. The default
+  local configuration permits one active subagent per session; callers must
+  serialize additional work or deliberately raise the
   configured limit after checking provider capacity. The deprecated `max_threads`
   alias is not surfaced. Role requests are gated before provider selection;
   direct concrete model requests
@@ -253,7 +256,11 @@ installer is the only supported materialization path into
   is testable with `codex execpolicy check` before restart. These prefix rules
   cover direct command tokens and the native engine's supported shell parsing;
   they are not a general-purpose parser for arbitrary environment wrappers or
-  global-option placement.
+  global-option placement. Explicit localhost diagnostic URLs are allowed for
+  `curl`; remote curl commands remain subject to the normal approval policy.
+  Destructive `git clean`, `git rebase`, whole-tree `git restore`, force branch
+  deletion, force push, superuser/raw-disk formatting, and root/home wildcard
+  deletion commands are forbidden.
 - User-level role definitions: `scripts/codex/agents/*.toml`, materialized as
   managed regular-file copies under `$CODEX_HOME/agents/`. The role loader must
   receive regular files rather than symlinks; the installer replaces symlinks and

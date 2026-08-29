@@ -435,13 +435,12 @@ test("serves HTML only from /dashboard and raw JSON from /status", async () => {
     assert.match(dashboardBody, /id="skills-summary"/);
     assert.match(dashboardBody, /id="skills-table"/);
     assert.match(dashboardBody, /id="native-metrics"/);
-    assert.match(dashboardBody, /id="native-tools"/);
     assert.match(dashboardBody, /id="sqlite-telemetry"/);
     assert.match(dashboardBody, /id="native-metrics-summary"/);
     assert.match(dashboardBody, /aria-controls="native-metrics-section" aria-expanded="false"/);
     assert.match(dashboardBody, /id="native-metrics-section" hidden/);
     assert.match(dashboardBody, /millisecondsText/);
-    assert.match(dashboardBody, /id="native-hooks"/);
+    assert.match(dashboardBody, /id="native-runtime-telemetry"/);
     assert.match(dashboardBody, /id="hooks-threads-summary"/);
     assert.match(dashboardBody, /codex\.skill\.injected/);
     assert.match(dashboardBody, /codex\.thread\.skills\.enabled_total/);
@@ -455,6 +454,7 @@ test("serves HTML only from /dashboard and raw JSON from /status", async () => {
     assert.match(dashboardBody, /id="spawn-failures"/);
     assert.match(dashboardBody, /processFallbackEnforcement/);
     assert.match(dashboardBody, /process-wide bucket/);
+    assert.match(dashboardBody, /active sessions: \$\{concurrency\.activeSessions \?\? 0\}/);
     assert.match(dashboardBody, /<tfoot>/);
     assert.match(dashboardBody, /class="provider-summary"/);
     assert.match(dashboardBody, /id="summary-attempts"/);

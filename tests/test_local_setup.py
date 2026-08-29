@@ -356,6 +356,13 @@ class LocalSetupTests(unittest.TestCase):
             ("git", "reset", "--hard", "HEAD"),
             ("git", "stash", "push"),
             ("git-checkout", "main"),
+            ("git", "clean", "-fdx"),
+            ("git", "rebase", "main"),
+            ("git", "restore", "."),
+            ("git", "branch", "-D", "feature"),
+            ("git", "push", "--force", "origin", "main"),
+            ("sudo", "rm", "-rf", "/"),
+            ("rm", "-rf", "/"),
         ):
             with self.subTest(command=command):
                 result = subprocess.run(
@@ -365,6 +372,22 @@ class LocalSetupTests(unittest.TestCase):
                     check=True,
                 )
                 self.assertEqual(json.loads(result.stdout)["decision"], "forbidden")
+
+        local_curl = subprocess.run(
+            [str(codex), "execpolicy", "check", "--rules", str(rules), "--", "curl", "http://127.0.0.1:4100/status"],
+            text=True,
+            capture_output=True,
+            check=True,
+        )
+        self.assertEqual(json.loads(local_curl.stdout).get("decision"), "allow")
+
+        remote_curl = subprocess.run(
+            [str(codex), "execpolicy", "check", "--rules", str(rules), "--", "curl", "https://example.com"],
+            text=True,
+            capture_output=True,
+            check=True,
+        )
+        self.assertNotEqual(json.loads(remote_curl.stdout).get("decision"), "allow")
 
         safe = subprocess.run(
             [str(codex), "execpolicy", "check", "--rules", str(rules), "--", "git", "status"],

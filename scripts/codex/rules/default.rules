@@ -32,3 +32,94 @@ prefix_rule(
     decision = "forbidden",
     justification = "Use a non-destructive alternative or ask the user to run this command.",
 )
+
+# Local service diagnostics are read-only probes. Network policy still governs
+# whether the destination is reachable. Keep the URL list explicit so remote
+# curl/download commands remain subject to the normal approval policy.
+local_diagnostic_urls = [
+    "http://127.0.0.1:4100/status",
+    "http://127.0.0.1:4100/dashboard",
+    "http://127.0.0.1:4100/health",
+    "http://127.0.0.1:4100/health/liveliness",
+    "http://127.0.0.1:4100/v1/models",
+    "http://localhost:4100/status",
+    "http://localhost:4100/dashboard",
+    "http://localhost:4100/health",
+    "http://localhost:4100/health/liveliness",
+    "http://localhost:4100/v1/models",
+    "http://127.0.0.1:4000/health",
+    "http://127.0.0.1:4000/health/liveliness",
+    "http://127.0.0.1:4000/v1/models",
+    "http://127.0.0.1:4001/health",
+    "http://127.0.0.1:4001/health/liveliness",
+    "http://127.0.0.1:4002/health",
+    "http://127.0.0.1:4002/health/liveliness",
+    "http://127.0.0.1:4003/health",
+    "http://127.0.0.1:4003/health/liveliness",
+    "http://127.0.0.1:18765/health",
+    "http://localhost:4000/health",
+    "http://localhost:4000/health/liveliness",
+    "http://localhost:4000/v1/models",
+    "http://localhost:4001/health",
+    "http://localhost:4001/health/liveliness",
+    "http://localhost:4002/health",
+    "http://localhost:4002/health/liveliness",
+    "http://localhost:4003/health",
+    "http://localhost:4003/health/liveliness",
+    "http://localhost:18765/health",
+]
+local_curl_prefixes = [
+    [],
+    ["--silent"],
+    ["--fail"],
+    ["--silent", "--fail", "--max-time", "1"],
+    ["-fsS", "--max-time", "3"],
+]
+for local_url in local_diagnostic_urls:
+    for local_prefix in local_curl_prefixes:
+        prefix_rule(
+            pattern = ["curl"] + local_prefix + [local_url],
+            decision = "allow",
+            justification = "Allow read-only localhost diagnostics; remote curl commands still require approval.",
+        )
+
+# Protect uncommitted work from additional history/filesystem destructive Git
+# operations. Prefer git switch, git diff, and git restore --staged instead.
+prefix_rule(
+    pattern = ["git", ["clean", "rebase"]],
+    decision = "forbidden",
+    justification = "These Git operations can delete untracked work or rewrite history. Ask the user or use a non-destructive alternative.",
+)
+prefix_rule(
+    pattern = ["git", "restore", "."],
+    decision = "forbidden",
+    justification = "Restoring the whole working tree can discard uncommitted changes. Restore a specific path only after user confirmation.",
+)
+prefix_rule(
+    pattern = ["git", "branch", ["-D", "--delete-force"]],
+    decision = "forbidden",
+    justification = "Force-deleting a branch can discard commits. Ask the user before removing it.",
+)
+prefix_rule(
+    pattern = ["git", "push", ["-f", "--force", "--force-with-lease"]],
+    decision = "forbidden",
+    justification = "Force pushing can overwrite remote history. Ask the user before force pushing.",
+)
+
+# Protect the host from raw-disk and superuser destruction. Targeted, tracked
+# cleanup remains available through the installer and normal project tooling.
+prefix_rule(
+    pattern = [["sudo", "su", "doas", "dd", "mkfs", "fdisk"]],
+    decision = "forbidden",
+    justification = "Superuser, raw-disk, and filesystem-formatting commands can cause irreversible system-wide damage.",
+)
+prefix_rule(
+    pattern = ["rm", ["-rf", "-fr"], ["/", "~", "*"]],
+    decision = "forbidden",
+    justification = "Recursive forced deletion of a root, home, or wildcard path can destroy the host or workspace.",
+)
+prefix_rule(
+    pattern = ["rm", ["-rf", "-fr"], [".", "..", ".git"]],
+    decision = "forbidden",
+    justification = "Recursive forced deletion of the current directory, parent, or Git metadata can destroy the workspace.",
+)

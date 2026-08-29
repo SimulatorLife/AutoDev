@@ -73,7 +73,8 @@ the inventory but are not interpreted until their schema and operational value
 are validated.
 
 Hook runs (`codex.hooks.run` and its duration histogram) are shown in the
-Hooks & threads section, grouped by sanitized hook/source/handler labels.
+Native runtime telemetry section alongside native tool calls, grouped by
+sanitized hook/source/handler labels.
 Native thread starts and multi-agent spawn counters are shown there with
 low-cardinality source, role, and model breakdowns where Codex supplies them.
 `codex.turn.token_usage` and native turn counters remain inventory-only because

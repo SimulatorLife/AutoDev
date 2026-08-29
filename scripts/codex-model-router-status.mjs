@@ -50,7 +50,7 @@ const fallbackWarning = concurrency.processFallbackEnforcement
   ? ` [WARNING: ${concurrency.processFallbackActiveThreads} active thread(s) have no caller-supplied session id and are sharing one process-wide bucket instead of independent per-session slots -- over-denial risk]`
   : "";
 console.log("");
-console.log(`Concurrency: per-session ${limit(concurrency.effectivePerSessionLimit)}, active subagents ${concurrency.activeSubagentThreads ?? 0}, denials ${concurrency.denials ?? 0} (${denialsByReason}), last denial ${lastDenial}${fallbackWarning}`);
+console.log(`Concurrency: per-session ${limit(concurrency.effectivePerSessionLimit)}, active sessions ${concurrency.activeSessions ?? 0}, active subagents ${concurrency.activeSubagentThreads ?? 0}, denials ${concurrency.denials ?? 0} (${denialsByReason}), last denial ${lastDenial}${fallbackWarning}`);
 
 console.log("Usage by origin:");
 for (const [origin, state] of Object.entries(usage.byOrigin ?? {})) {
@@ -90,12 +90,10 @@ console.log(`Native metric names observed: ${nativeMetrics.length}`);
 for (const metric of nativeMetrics) console.log(`  ${metric.name}: ${metric.exports ?? 0} export(s), ${metric.dataPoints ?? 0} data point(s)`);
 
 const nativeTools = codexTelemetry.tools?.byTool ?? [];
-console.log("Native tool telemetry:");
-for (const tool of nativeTools) console.log(`  ${tool.tool} (${tool.source}${tool.server ? `/${tool.server}` : ""}): ${tool.count ?? 0} calls (${countsText(tool.byStatus)}), avg ${Math.round(tool.averageDurationMs ?? 0)}ms`);
-
 const nativeHooks = codexTelemetry.hooks?.byHook ?? [];
 const nativeThreads = codexTelemetry.threads ?? {};
-console.log(`Native hooks/threads: ${nativeHooks.reduce((sum, hook) => sum + (hook.count ?? 0), 0)} hook runs, ${nativeThreads.started?.total ?? 0} threads started, ${nativeThreads.spawns?.total ?? 0} agent spawns`);
+console.log(`Native runtime telemetry: ${nativeTools.length} tool groups, ${nativeHooks.length} hook groups, ${nativeThreads.started?.total ?? 0} threads started, ${nativeThreads.spawns?.total ?? 0} agent spawns`);
+for (const tool of nativeTools) console.log(`  [tool] ${tool.tool} (${tool.source}${tool.server ? `/${tool.server}` : ""}): ${tool.count ?? 0} calls (${countsText(tool.byStatus)}), avg ${Math.round(tool.averageDurationMs ?? 0)}ms`);
 for (const hook of nativeHooks) console.log(`  hook ${hook.hook} (${hook.source}${hook.handlerType ? `/${hook.handlerType}` : ""}): ${hook.count ?? 0} runs (${countsText(hook.byStatus)}), avg ${Math.round(hook.averageDurationMs ?? 0)}ms`);
 
 const sqlite = codexTelemetry.sqlite ?? {};

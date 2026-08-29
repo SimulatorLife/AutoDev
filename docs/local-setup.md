@@ -50,6 +50,12 @@ codex execpolicy check --pretty \
   -- git reset --hard HEAD
 ```
 
+The same rules allow explicit localhost diagnostics such as
+`curl http://127.0.0.1:4100/status`, while remote curl commands remain gated.
+They also deny destructive Git history/worktree operations, force pushes and
+branch deletion, superuser/raw-disk commands, and catastrophic root/home
+recursive deletion.
+
 ## Safety
 
 - Inspect launch-agent plists before loading them with `launchctl`.
