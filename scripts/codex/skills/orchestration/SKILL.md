@@ -23,6 +23,14 @@ Use the smallest set of agents that gives useful independence:
    weaken requirements or tests to satisfy it.
 5. Keep prompts bounded: state the exact outcome, allowed files, validation
    expected, and whether edits are allowed.
-6. Close every child handle after its terminal result, before spawning more
-   work or ending the task. Report rate limits, stalls, and skipped paths
-   explicitly.
+6. Use the configured subagent tools for delegation; do not use
+   `create_thread`, `fork_thread`, or `handoff_thread` for that purpose.
+7. Treat each child handle as a two-phase resource. A `wait_agent` notification
+   and a terminal status (`completed`, `errored`, `interrupted`, or `shutdown`)
+   report state but do not release the handle. After consuming a finished
+   child's result, the parent must call `close_agent` immediately, before
+   spawning another child or ending the task. If a turn is interrupted, close
+   every child handle whose final status is known at the start of the next turn
+   before attempting new delegation; stale handles can retain thread-pool
+   capacity even when their work is no longer running. Report rate limits,
+   stalls, and skipped paths explicitly.

@@ -43,6 +43,10 @@ tracked_sources=""
 link_one() {
   local source="$1"
   local target="$2"
+  if [[ "$source" != /* ]]; then
+    printf 'refusing-relative-symlink-source %s\n' "$source" >&2
+    return 1
+  fi
   mkdir -p -- "$(dirname -- "$target")"
   if [[ -L "$target" && "$(readlink "$target")" == "$source" ]]; then
     return
@@ -51,6 +55,29 @@ link_one() {
     rm -f -- "$target"
   fi
   ln -s -- "$source" "$target"
+}
+
+validate_skill_source() {
+  local source="$1"
+  if [[ "$source" != /* ]]; then
+    printf 'refusing-relative-skill-source %s\n' "$source" >&2
+    return 1
+  fi
+  if [[ ! -d "$source" || -L "$source" ]]; then
+    printf 'invalid-skill-directory %s\n' "$source" >&2
+    return 1
+  fi
+  if [[ ! -f "$source/SKILL.md" || -L "$source/SKILL.md" ]]; then
+    printf 'invalid-skill-document %s/SKILL.md\n' "$source" >&2
+    return 1
+  fi
+}
+
+link_skill() {
+  local source="$1"
+  local target="$2"
+  validate_skill_source "$source" || return 1
+  link_one "$source" "$target"
 }
 
 copy_runtime_one() {
@@ -79,7 +106,15 @@ copy_agent_role() {
 check_one() {
   local source="$1"
   local target="$2"
-  [[ -L "$target" && "$(readlink "$target")" == "$source" ]]
+  [[ "$source" == /* && -L "$target" && "$(readlink "$target")" == "$source" ]]
+}
+
+check_skill_one() {
+  local source="$1"
+  local target="$2"
+  validate_skill_source "$source" || return 1
+  [[ -L "$target" && -d "$target" && "$(readlink "$target")" == "$source" ]] &&
+    [[ -f "$target/SKILL.md" && ! -L "$target/SKILL.md" ]]
 }
 
 check_versioned_source() {
@@ -301,7 +336,7 @@ check_links() {
   for name in "${skill_names[@]}"; do
     source="$repo_root/scripts/codex/skills/$name"
     target="$user_skills_dir/$name"
-    if check_one "$source" "$target"; then
+    if check_skill_one "$source" "$target"; then
       printf 'ok %s -> %s\n' "$target" "$source"
     else
       printf 'missing-or-drifted %s -> %s\n' "$target" "$source"
@@ -432,7 +467,7 @@ for name in "${skill_names[@]}"; do
       exit 1
     fi
   done
-  link_one "$repo_root/scripts/codex/skills/$name" "$user_skills_dir/$name"
+  link_skill "$repo_root/scripts/codex/skills/$name" "$user_skills_dir/$name"
 done
 mkdir -p -- "$agents_dir"
 for role in "${agent_role_names[@]}"; do

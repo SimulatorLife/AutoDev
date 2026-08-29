@@ -23,8 +23,12 @@ skill directories. The installer exposes those versioned directories in
 - `remove-legacy-shims`
 
 Keep the canonical skill content in AutoDev; update the directories there and
-rerun the installer when changing this user-level skill setup. Restart Codex or
-start a new task after installation so user-level skill discovery refreshes.
+rerun the installer when changing this user-level skill setup. The installer
+links each complete skill directory with an absolute target; do not link an
+individual `SKILL.md` file because Codex currently skips file-level symlinks.
+Its `--check` mode rejects missing or relative skill-directory links and
+symlinked `SKILL.md` files. Restart Codex or start a new task after installation
+so user-level skill discovery refreshes.
 
 Destructive Git commands are enforced by Codex's native rules engine. The
 tracked rules live in `scripts/codex/rules/default.rules` and are symlinked by

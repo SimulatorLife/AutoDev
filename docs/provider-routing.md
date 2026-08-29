@@ -242,9 +242,11 @@ installer is the only supported materialization path into
 `.env` credentials remain machine-local and are not versioned.
 
 - User-level skills: `scripts/codex/skills/{lsp-mcp-server,orchestration,remove-legacy-shims}`
-  are versioned directories owned by AutoDev. The installer creates symlinks
-  under `$HOME/.agents/skills/`, so Codex reads the canonical skill files without
-  a second copied source of truth.
+  are versioned directories owned by AutoDev. The installer creates absolute,
+  directory-level symlinks under `$HOME/.agents/skills/`, so Codex reads the
+  canonical skill files without a second copied source of truth. Keep each
+  source `SKILL.md` as a regular file; `--check` rejects file-level or relative
+  skill links because Codex currently skips symlinked `SKILL.md` files.
 - Native command rules: `scripts/codex/rules/default.rules` is the versioned
   source for restrictive Codex `prefix_rule` entries. The installer symlinks it
   to `$CODEX_HOME/rules/default.rules`; it replaces the old custom Git hook and

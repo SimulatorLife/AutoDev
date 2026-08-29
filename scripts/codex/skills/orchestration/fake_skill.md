@@ -1,0 +1,1 @@
+/var/folders/tw/cl5h4b6s15j2zlcfl2xfdsh80000gn/T/tmp.DXCe0iLlzR/fake_skill.md

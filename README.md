@@ -19,6 +19,12 @@ Configure these organization/repository secrets and variables on AutoDev:
 
 Keep tokens in GitHub Secrets or the local credential store. Never commit them to this repository.
 
+## Repository guidance
+
+`AGENTS.md` at the repository root is the canonical, version-controlled source for
+this workspace's agent instructions. The local `~/.codex/AGENTS.md` path should
+remain a symlink to this file so local and repository guidance stay in sync.
+
 ## Local validation toolchain
 
 AutoDev itself is managed with pnpm `10.32.1`, declared by `packageManager` in

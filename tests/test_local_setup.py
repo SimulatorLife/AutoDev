@@ -13,6 +13,7 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 BRIDGE_PATH = REPO_ROOT / "scripts/codex-claude-cli-responses-proxy.py"
+INSTALLER_PATH = REPO_ROOT / "scripts/codex/install-codex-integration.sh"
 SKILL_NAMES = ("lsp-mcp-server", "orchestration", "remove-legacy-shims")
 
 spec = importlib.util.spec_from_file_location("claude_bridge", BRIDGE_PATH)
@@ -31,9 +32,152 @@ class LocalSetupTests(unittest.TestCase):
                 self.assertTrue(source.is_dir())
                 self.assertFalse(source.is_symlink())
                 self.assertTrue((source / "SKILL.md").is_file())
+                self.assertFalse(
+                    (source / "SKILL.md").is_symlink(),
+                    msg=f"skill source {name!r} must expose a regular (non-symlink) SKILL.md",
+                )
                 self.assertIn(f'source="$repo_root/scripts/codex/skills/$name"', installer)
-                self.assertIn(f'link_one "$repo_root/scripts/codex/skills/$name" "$user_skills_dir/$name"', installer)
+                self.assertIn(f'link_skill "$repo_root/scripts/codex/skills/$name" "$user_skills_dir/$name"', installer)
                 self.assertIn('legacy_skills_dirs=("$codex_home/skills" "$codex_home/agents/skills")', installer)
+
+    @staticmethod
+    def _run_installer(home_dir, codex_home_dir, *args):
+        """Run scripts/codex/install-codex-integration.sh with isolated HOME/CODEX_HOME.
+
+        Returns the completed subprocess.CompletedProcess so callers can
+        assert exit codes and inspect stdout/stderr. No state outside of the
+        caller-provided temporary directories is touched.
+        """
+        environment = os.environ.copy()
+        environment["HOME"] = str(home_dir)
+        environment["CODEX_HOME"] = str(codex_home_dir)
+        return subprocess.run(
+            ["bash", str(INSTALLER_PATH), *args],
+            text=True,
+            capture_output=True,
+            env=environment,
+        )
+
+    def test_skill_installer_links_each_target_as_absolute_directory_symlink_with_regular_skill_doc(self):
+        """The installer must expose every AutoDev-owned skill under
+        ``$HOME/.agents/skills`` as an absolute directory-level symlink
+        whose ``SKILL.md`` is a regular (non-symlink) file owned by the
+        versioned source directory."""
+        with tempfile.TemporaryDirectory() as home, tempfile.TemporaryDirectory() as codex_home:
+            run = self._run_installer(home, codex_home)
+            self.assertEqual(
+                run.returncode,
+                0,
+                msg="baseline installer run failed: STDOUT=" + run.stdout + " STDERR=" + run.stderr,
+            )
+            skills_dir = Path(home) / ".agents/skills"
+            self.assertTrue(
+                skills_dir.is_dir(),
+                msg=f"installer did not create the user skills directory at {skills_dir}",
+            )
+            for name in SKILL_NAMES:
+                with self.subTest(skill=name):
+                    target = skills_dir / name
+                    self.assertTrue(
+                        target.is_symlink(),
+                        msg=f"skill {name!r} target {target} must be a symlink",
+                    )
+                    link_target = os.readlink(str(target))
+                    self.assertTrue(
+                        os.path.isabs(link_target),
+                        msg=f"skill {name!r} symlink target {link_target!r} under {target} must be an absolute path",
+                    )
+                    self.assertEqual(
+                        Path(link_target),
+                        REPO_ROOT / "scripts/codex/skills" / name,
+                        msg=f"skill {name!r} symlink must point at the AutoDev-owned source directory, got {link_target!r}",
+                    )
+                    self.assertTrue(
+                        target.resolve().is_dir(),
+                        msg=f"skill {name!r} symlink does not resolve to a directory",
+                    )
+                    skill_doc = target / "SKILL.md"
+                    self.assertTrue(
+                        skill_doc.is_file(),
+                        msg=f"skill {name!r} must expose a SKILL.md file",
+                    )
+                    self.assertFalse(
+                        skill_doc.is_symlink(),
+                        msg=f"skill {name!r} must expose a regular (non-symlink) SKILL.md; got symlink at {skill_doc}",
+                    )
+
+    def test_skill_installer_check_rejects_file_level_skill_md_symlink_target(self):
+        """``--check`` must reject a user-skill link whose target is a
+        single ``SKILL.md`` file instead of the skill directory."""
+        with tempfile.TemporaryDirectory() as home, tempfile.TemporaryDirectory() as codex_home:
+            run = self._run_installer(home, codex_home)
+            self.assertEqual(
+                run.returncode,
+                0,
+                msg="baseline install failed: STDOUT=" + run.stdout + " STDERR=" + run.stderr,
+            )
+            skills_dir = Path(home) / ".agents/skills"
+            for name in SKILL_NAMES:
+                with self.subTest(skill=name):
+                    target = skills_dir / name
+                    fake_doc = Path(home) / f"fake-{name}-SKILL.md"
+                    fake_doc.write_text("# not a real skill\n", encoding="utf-8")
+                    target.unlink()
+                    target.symlink_to(fake_doc)
+                    self.assertTrue(
+                        target.is_symlink(),
+                        msg="test setup: target should be a file-level symlink",
+                    )
+                    self.assertFalse(
+                        target.is_dir(),
+                        msg="test setup: file-level symlink must not resolve to a directory",
+                    )
+                    check = self._run_installer(home, codex_home, "--check")
+                    self.assertNotEqual(
+                        check.returncode,
+                        0,
+                        msg=f"--check accepted a file-level SKILL.md symlink target for {name!r}:\n{check.stdout}",
+                    )
+                    self.assertIn("missing-or-drifted", check.stdout)
+                    self.assertIn(f".agents/skills/{name}", check.stdout)
+
+    def test_skill_installer_check_rejects_relative_skill_directory_target(self):
+        """``--check`` must reject a user-skill link whose target is a
+        relative path (even if it points at a directory containing a
+        regular ``SKILL.md``)."""
+        with tempfile.TemporaryDirectory() as home, tempfile.TemporaryDirectory() as codex_home:
+            run = self._run_installer(home, codex_home)
+            self.assertEqual(
+                run.returncode,
+                0,
+                msg="baseline install failed: STDOUT=" + run.stdout + " STDERR=" + run.stderr,
+            )
+            skills_dir = Path(home) / ".agents/skills"
+            for name in SKILL_NAMES:
+                with self.subTest(skill=name):
+                    target = skills_dir / name
+                    fake_dir = Path(home) / f"fake-{name}-skill"
+                    fake_dir.mkdir()
+                    (fake_dir / "SKILL.md").write_text("# fake\n", encoding="utf-8")
+                    target.unlink()
+                    target.symlink_to(Path("..", "..", f"fake-{name}-skill"))
+                    link_target = os.readlink(str(target))
+                    self.assertFalse(
+                        os.path.isabs(link_target),
+                        msg=f"test setup: relative symlink target should not be absolute; got {link_target!r}",
+                    )
+                    self.assertTrue(
+                        target.is_dir(),
+                        msg=f"test setup: relative symlink should resolve to the fake skill directory; got {link_target!r}",
+                    )
+                    check = self._run_installer(home, codex_home, "--check")
+                    self.assertNotEqual(
+                        check.returncode,
+                        0,
+                        msg=f"--check accepted a relative skill-directory symlink target for {name!r}:\n{check.stdout}",
+                    )
+                    self.assertIn("missing-or-drifted", check.stdout)
+                    self.assertIn(f".agents/skills/{name}", check.stdout)
 
     def test_user_level_skill_registry_uses_only_the_requested_skill_names(self):
         names = sorted(path.name for path in (REPO_ROOT / "scripts/codex/skills").iterdir())
