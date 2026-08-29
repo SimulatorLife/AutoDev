@@ -297,6 +297,39 @@ test("ingests Codex OTEL skill metrics with cumulative dedupe and tolerates invo
   resetOtelTelemetry();
 });
 
+test("groups skill injections by agent kind, model, and plugin metadata", () => {
+  resetOtelTelemetry();
+  const attributes = (entries) => entries.map(([key, value]) => ({ key, value: { stringValue: String(value) } }));
+  const skillPoint = (skill, invokeType, value) => ({
+    attributes: attributes([["skill", skill], ["status", "ok"], ["invoke_type", invokeType]]),
+    startTimeUnixNano: "1",
+    timeUnixNano: "2",
+    asInt: String(value),
+  });
+  const resourceMetric = (resourceEntries, point) => ({
+    resource: { attributes: attributes(resourceEntries) },
+    scopeMetrics: [{ metrics: [{ name: "codex.skill.injected", sum: { aggregationTemporality: 1, isMonotonic: true, dataPoints: [point] } }] }],
+  });
+
+  ingestOtelSignal("metrics", {
+    resourceMetrics: [
+      resourceMetric([["session_source", "cli"], ["model_slug", "gpt-root"], ["plugin_id", "plugin-root"]], skillPoint("orchestration", "explicit", 2)),
+      resourceMetric([["session_source", "subagent_thread_spawn_parent_d1"], ["model_slug", "gpt-child"], ["plugin_id", "plugin-child"]], skillPoint("orchestration", "implicit", 3)),
+    ],
+  });
+
+  const skill = codexTelemetryStatus().skills.injected;
+  assert.deepEqual(skill.byInvokeType, { explicit: 2, implicit: 3 });
+  assert.deepEqual(skill.byAgentKind, { root: 2, subagent: 3 });
+  assert.deepEqual(skill.byModel, { "gpt-root": 2, "gpt-child": 3 });
+  assert.deepEqual(skill.byPlugin, { "plugin-root": 2, "plugin-child": 3 });
+  const orchestration = skill.bySkill[0];
+  assert.deepEqual(orchestration.byAgentKind, { root: 2, subagent: 3 });
+  assert.deepEqual(orchestration.byModel, { "gpt-root": 2, "gpt-child": 3 });
+  assert.deepEqual(orchestration.byPlugin, { "plugin-root": 2, "plugin-child": 3 });
+  resetOtelTelemetry();
+});
+
 test("counts delta-temporality skill metrics once per export", () => {
   resetOtelTelemetry();
   const attributes = (entries) => entries.map(([key, value]) => ({ key, value: { stringValue: String(value) } }));
@@ -428,28 +461,51 @@ test("serves HTML only from /dashboard and raw JSON from /status", async () => {
     assert.match(dashboardBody, /role !== "unattributed"/);
     assert.match(dashboardBody, /usageRow\("Orchestrator", orchestrator\)/);
     assert.match(dashboardBody, /<code>Subagents<\/code>/);
-    assert.match(dashboardBody, /<h2>Orchestrator &amp; subagents<\/h2>/);
+    assert.match(dashboardBody, /<h2>Usage by orchestrator and subagents<\/h2>/);
     assert.doesNotMatch(dashboardBody, /<h2>By origin<\/h2>/);
     assert.doesNotMatch(dashboardBody, /<h2>By role<\/h2>/);
-    assert.match(dashboardBody, /id="codex-telemetry"/);
+    assert.match(dashboardBody, /id="operational-summaries"/);
+    assert.match(dashboardBody, /aria-controls="operational-summaries-section" aria-expanded="false"/);
+    assert.match(dashboardBody, /id="operational-summaries-section" hidden/);
+    assert.match(dashboardBody, /summaryRow/);
+    assert.match(dashboardBody, /Codex telemetry/);
+    assert.match(dashboardBody, /State database/);
+    assert.match(dashboardBody, /Concurrency/);
+    assert.match(dashboardBody, /Category<\/th><th>Metric<\/th><th>Value<\/th>/);
+    assert.match(dashboardBody, /id="codex-telemetry-section"/);
+    assert.match(dashboardBody, /aria-controls="codex-telemetry-section" aria-expanded="false"/);
     assert.match(dashboardBody, /id="mcp-telemetry"/);
-    assert.match(dashboardBody, /id="skills-summary"/);
+    assert.match(dashboardBody, /id="mcp-total-init"/);
+    assert.match(dashboardBody, /id="mcp-total-duration"/);
+    assert.match(dashboardBody, /id="skills-section"/);
+    assert.match(dashboardBody, /aria-controls="skills-section" aria-expanded="false"/);
     assert.match(dashboardBody, /id="skills-table"/);
-    assert.match(dashboardBody, /<th>Skill<\/th><th>Injected<\/th><th>Share<\/th><th>By status<\/th><th>By invoke type<\/th>/);
+    assert.match(dashboardBody, /<th>Totals<\/th>/);
+    assert.match(dashboardBody, /id="skills-total"/);
+    assert.match(dashboardBody, /<th>Skill<\/th><th>Injected<\/th><th>Share<\/th><th>By status<\/th><th>By invoke type<\/th><th>Agent kind<\/th><th>Models<\/th><th>Plugins<\/th>/);
     assert.match(dashboardBody, /id="skills-histograms"/);
+    assert.match(dashboardBody, /aria-controls="skills-histograms-section" aria-expanded="false"/);
+    assert.match(dashboardBody, /id="skills-histograms-section" hidden/);
     assert.match(dashboardBody, /skillShare/);
     assert.match(dashboardBody, /histogramRow/);
     assert.match(dashboardBody, /description_truncated_chars/);
     assert.match(dashboardBody, /text\(key\)/);
+    assert.match(dashboardBody, /byAgentKind/);
+    assert.match(dashboardBody, /byModel/);
+    assert.match(dashboardBody, /byPlugin/);
     assert.match(dashboardBody, /id="native-metrics"/);
-    assert.match(dashboardBody, /id="sqlite-telemetry"/);
     assert.match(dashboardBody, /id="native-metrics-summary"/);
+    assert.match(dashboardBody, /id="native-metrics-total-exports"/);
     assert.match(dashboardBody, /aria-controls="native-metrics-section" aria-expanded="false"/);
     assert.match(dashboardBody, /id="native-metrics-section" hidden/);
     assert.match(dashboardBody, /millisecondsText/);
+    assert.match(dashboardBody, /id="native-runtime-section"/);
+    assert.match(dashboardBody, /aria-controls="native-runtime-section" aria-expanded="false"/);
+    assert.match(dashboardBody, /id="native-runtime-section" hidden/);
     assert.match(dashboardBody, /id="native-runtime-telemetry"/);
+    assert.match(dashboardBody, /id="native-runtime-total-calls"/);
     assert.match(dashboardBody, /id="hooks-threads-summary"/);
-    assert.match(dashboardBody, /codex\.skill\.injected/);
+    assert.doesNotMatch(dashboardBody, /codex\.skill\.injected/);
     assert.match(dashboardBody, /codex\.thread\.skills\.enabled_total/);
     assert.match(dashboardBody, /MCP ready/);
     assert.match(dashboardBody, /id="codex-tasks"/);
@@ -461,11 +517,15 @@ test("serves HTML only from /dashboard and raw JSON from /status", async () => {
     assert.match(dashboardBody, /id="spawn-failures"/);
     assert.match(dashboardBody, /<th>Reason \/ type<\/th><th>Count<\/th><th>Last observed<\/th>/);
     assert.match(dashboardBody, /id="spawn-failures-by-reason"/);
+    assert.match(dashboardBody, /aria-controls="spawn-failures-section" aria-expanded="false"/);
+    assert.match(dashboardBody, /id="spawn-failures-section" hidden/);
+    assert.match(dashboardBody, /id="spawn-failures-total"/);
     assert.match(dashboardBody, /spawnFailureRows/);
     assert.match(dashboardBody, /latestByReason/);
     assert.match(dashboardBody, /processFallbackEnforcement/);
     assert.match(dashboardBody, /process-wide bucket/);
-    assert.match(dashboardBody, /active sessions: \$\{concurrency\.activeSessions \?\? 0\}/);
+    assert.match(dashboardBody, /\["Concurrency", "Active sessions", concurrency\.activeSessions \?\? 0\]/);
+    assert.doesNotMatch(dashboardBody, /id="skills-summary"|id="sqlite-telemetry"|id="concurrency"/);
     assert.match(dashboardBody, /<tfoot>/);
     assert.match(dashboardBody, /class="provider-summary"/);
     assert.match(dashboardBody, /id="summary-attempts"/);
@@ -555,6 +615,9 @@ test("persists provider telemetry and recent events across router restarts", asy
     assert.equal(restored.codexTelemetry.skills.injected.total, 2);
     assert.equal(restored.codexTelemetry.skills.injected.bySkill[0].skill, "orchestration");
     assert.deepEqual(restored.codexTelemetry.skills.injected.bySkill[0].byInvokeType, { implicit: 2 });
+    assert.deepEqual(restored.codexTelemetry.skills.injected.byAgentKind, { unknown: 2 });
+    assert.deepEqual(restored.codexTelemetry.skills.injected.byModel, { unknown: 2 });
+    assert.deepEqual(restored.codexTelemetry.skills.injected.byPlugin, { none: 2 });
     assert.equal(restored.codexTelemetry.receiver.metrics, 1);
     assert.equal(restored.codexTelemetry.hooks.byHook[0].count, 1);
     assert.deepEqual(restored.codexTelemetry.threads.started, { total: 1, bySource: { subagent: 1 } });

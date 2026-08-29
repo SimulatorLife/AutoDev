@@ -78,10 +78,10 @@ const skillsThreads = skills.threads ?? {};
 const countsText = (counts) => Object.entries(counts ?? {}).map(([key, value]) => `${key}: ${value}`).join(", ") || "-";
 const histogramText = (histogram) => `avg ${Number(histogram?.average ?? 0).toFixed(1)} (n=${histogram?.count ?? 0}, sum=${histogram?.sum ?? 0})`;
 console.log("");
-console.log(`Skills injected: ${skillsInjected.total ?? 0} (${countsText(skillsInjected.byStatus)}), invoke_type: ${countsText(skillsInjected.byInvokeType)}`);
+console.log(`Skills injected: ${skillsInjected.total ?? 0} (${countsText(skillsInjected.byStatus)}), invoke_type: ${countsText(skillsInjected.byInvokeType)}, agent kind: ${countsText(skillsInjected.byAgentKind)}`);
 console.log(`Thread skills: enabled ${histogramText(skillsThreads.enabledTotal)}, kept ${histogramText(skillsThreads.keptTotal)}, truncated ${histogramText(skillsThreads.truncated)}, description chars ${histogramText(skillsThreads.descriptionTruncatedChars)}`);
 for (const skill of (skillsInjected.bySkill ?? [])) {
-  console.log(`  ${skill.skill}: ${skill.total} (${countsText(skill.byStatus)}), invoke_type: ${countsText(skill.byInvokeType)}`);
+  console.log(`  ${skill.skill}: ${skill.total} (${countsText(skill.byStatus)}), invoke_type: ${countsText(skill.byInvokeType)}, agent kind: ${countsText(skill.byAgentKind)}, models: ${countsText(skill.byModel)}, plugins: ${countsText(skill.byPlugin)}`);
 }
 
 const nativeMetrics = codexTelemetry.metrics?.observed ?? [];

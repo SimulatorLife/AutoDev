@@ -72,6 +72,22 @@ sanitized tool/source/server labels. Unknown metric names remain visible in
 the inventory but are not interpreted until their schema and operational value
 are validated.
 
+The dashboard's visible Operational summaries table groups Codex receiver,
+state-database, and concurrency values as category/metric/value rows instead of
+embedding those values in prose. The detailed Codex telemetry, Skills, Skill
+catalog/context, and Native runtime telemetry sections are collapsed by default
+and can be expanded independently; the observed metric inventory, Codex tasks,
+and recent routing events retain the same collapsible behavior.
+
+Totals footers are shown for homogeneous roll-up tables: provider/usage,
+MCP lifecycle, Skills injections, native runtime calls, observed metric counts,
+and spawn-failure reasons. The Operational summary and Skill catalog/context
+tables intentionally do not have totals because their rows mix incompatible
+units; the Codex task snapshot and recent-event list are entity/event views
+rather than additive measurements.
+
+
+
 Hook runs (`codex.hooks.run` and its duration histogram) are shown in the
 Native runtime telemetry section alongside native tool calls, grouped by
 sanitized hook/source/handler labels.
@@ -100,14 +116,19 @@ the official catalog; when present, the router totals and averages it
 separately.
 
 The Skills table breaks injected totals down by skill, share of all injections,
-outcome status, and invocation type. A separate Skill catalog & context
-histograms table shows the thread-level sample count, total, and average for
-enabled, kept, truncated, and description-truncation metrics; these histograms
-are intentionally not attributed to individual skills because Codex does not
-provide a reliable skill dimension on them. The shadow-selection metrics remain
-in the observed inventory until their schema and dimensions are validated for
-safe aggregation. No prompt or skill content is exported or stored; only metric
-attributes and numeric aggregates are retained.
+outcome status, invocation type, root-vs-subagent agent kind, model, and
+plugin. Agent kind is derived from the native `session_source` metadata: a
+`subagent_thread_spawn_*` source is classified as `subagent`, other non-empty
+sources as `root`, and missing metadata as `unknown`. This does not identify the
+human who selected a skill or recover the exact child role/thread. A separate
+Skill catalog & context histograms table shows the thread-level sample count,
+total, and average for enabled, kept, truncated, and description-truncation
+metrics; these histograms are intentionally not attributed to individual skills
+because Codex does not provide a reliable skill dimension on them. The
+shadow-selection metrics remain in the observed inventory until their schema
+and dimensions are validated for safe aggregation. No prompt or skill content
+is exported or stored; only metric attributes and numeric aggregates are
+retained.
 
 These are Codex-native metrics, not a generic audit stream for every provider
 behind the router. A zero `codexTelemetry.skills` value means that no Codex
