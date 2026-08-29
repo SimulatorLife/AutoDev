@@ -26,8 +26,13 @@ artifacts for recent raw snapshots.
 ## Codex OpenTelemetry
 
 The local Codex configuration exports privacy-safe OTLP logs, traces, and
-metrics to the model router at `127.0.0.1:4100`. `otel.log_user_prompt = false`
-prevents raw prompt text from being exported. The router ingests Codex lifecycle
+metrics to the model router at `127.0.0.1:4100`. `analytics.enabled = true` is
+required alongside the OTLP `metrics_exporter` for Codex to initialize its
+native metrics provider; without it, the configured `metrics_exporter` is
+never wired up and no metrics are emitted. `analytics.enabled` only gates
+metrics initialization and does not affect prompt export: `otel.log_user_prompt
+= false` independently prevents raw prompt text from being exported. The
+router ingests Codex lifecycle
 events and exposes them in `/status` and the local dashboard, including turn
 timing, token counts, MCP server lifecycle observations,
 initialization/tool-discovery latency, and recent failures.

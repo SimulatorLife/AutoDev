@@ -50,6 +50,9 @@ class LocalSetupTests(unittest.TestCase):
         self.assertIn('endpoint = "http://127.0.0.1:4100/v1/logs"', config)
         self.assertIn('endpoint = "http://127.0.0.1:4100/v1/traces"', config)
         self.assertIn('endpoint = "http://127.0.0.1:4100/v1/metrics"', config)
+        # Codex's native metrics provider only initializes when [analytics] is
+        # enabled; the OTLP metrics_exporter above is otherwise never wired up.
+        self.assertIn("[analytics]\nenabled = true", config)
 
     def test_workspace_write_agents_can_query_local_diagnostics(self):
         config = (REPO_ROOT / "scripts/codex/config.toml").read_text()

@@ -174,7 +174,7 @@ enabled = true
 trusted_hash = "sha256:73544f44bcd549b209b5f53b231741c87b856430ebf555eb7f7d69f92d13c36b"
 
 [analytics]
-enabled = false
+enabled = true
 
 [feedback]
 enabled = false
