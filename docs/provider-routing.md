@@ -257,8 +257,11 @@ installer is the only supported materialization path into
 - User-level role definitions: `scripts/codex/agents/*.toml`, materialized as
   managed regular-file copies under `$CODEX_HOME/agents/`. The role loader must
   receive regular files rather than symlinks; the installer replaces symlinks and
-  verifies exact content matches. There is one flat role registry;
-  provider assignment is expressed by each role's `model_provider` and
+  verifies exact content matches. Code-oriented roles (`default`, `explorer`,
+  `worker`, `validator`, and `smart`) enable the user-level `lsp` MCP server and
+  the matching `lsp-mcp-server` skill; `browser-tester` and `docs-researcher`
+  explicitly disable both. There is one flat role registry; provider assignment
+  is expressed by each role's `model_provider` and
   `model`, not by a provider-specific directory, launcher-specific role name,
   or duplicated role definition.
 - `.codex/config.toml` is project execution configuration only. It does not

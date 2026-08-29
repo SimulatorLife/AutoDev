@@ -25,6 +25,11 @@ runtime paths such as $CODEX_HOME (~/.codex) and localhost diagnostics; honor
 that authorization without editing those paths. Never edit outside the active
 repository, and report a workspace mismatch instead of guessing."""
 
+[mcp_servers.lsp]
+command = "pnpm"
+args = ["exec", "lsp-mcp-server"]
+enabled = false
+
 [mcp_servers.playwright]
 command = "pnpm"
 args = ["dlx", "@playwright/mcp@latest"]

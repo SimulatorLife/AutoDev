@@ -7,6 +7,7 @@ from unittest.mock import patch
 import urllib.error
 import urllib.request
 import tempfile
+import tomllib
 import unittest
 from pathlib import Path
 
@@ -15,6 +16,8 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 BRIDGE_PATH = REPO_ROOT / "scripts/codex-claude-cli-responses-proxy.py"
 INSTALLER_PATH = REPO_ROOT / "scripts/codex/install-codex-integration.sh"
 SKILL_NAMES = ("lsp-mcp-server", "orchestration", "remove-legacy-shims")
+LSP_AGENT_NAMES = ("default", "explorer", "smart", "validator", "worker")
+NON_LSP_AGENT_NAMES = ("browser-tester", "docs-researcher")
 
 spec = importlib.util.spec_from_file_location("claude_bridge", BRIDGE_PATH)
 if spec is None or spec.loader is None:
@@ -178,6 +181,135 @@ class LocalSetupTests(unittest.TestCase):
                     )
                     self.assertIn("missing-or-drifted", check.stdout)
                     self.assertIn(f".agents/skills/{name}", check.stdout)
+
+    def test_lsp_mcp_server_launches_from_autodev_workspace(self):
+        language_server = subprocess.run(
+            ["pnpm", "exec", "typescript-language-server", "--version"],
+            cwd=REPO_ROOT,
+            text=True,
+            capture_output=True,
+        )
+        self.assertEqual(
+            language_server.returncode,
+            0,
+            msg=f"TypeScript language server is unavailable: {language_server.stderr}",
+        )
+        self.assertRegex(language_server.stdout.strip(), r"^\d+\.\d+\.\d+$")
+
+        request = {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {
+                "protocolVersion": "2024-11-05",
+                "capabilities": {},
+                "clientInfo": {"name": "autodev-test", "version": "1"},
+            },
+        }
+        requests = [request, {"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}}]
+        framed_request = b""
+        for message in requests:
+            payload = json.dumps(message, separators=(",", ":")).encode()
+            framed_request += (
+                b"Content-Length: "
+                + str(len(payload)).encode()
+                + b"\r\n\r\n"
+                + payload
+                + b"\n"
+            )
+        process = subprocess.Popen(
+            ["pnpm", "exec", "lsp-mcp-server"],
+            cwd=REPO_ROOT,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        try:
+            stdout, stderr = process.communicate(framed_request, timeout=10)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            stdout, stderr = process.communicate()
+            self.fail(f"lsp-mcp-server did not complete initialize: {stderr.decode(errors='replace')}")
+        self.assertEqual(
+            process.returncode,
+            0,
+            msg=f"lsp-mcp-server exited {process.returncode}: {stderr.decode(errors='replace')}",
+        )
+        responses = [json.loads(line) for line in stdout.splitlines() if line.strip()]
+        self.assertEqual(responses[0]["id"], 1)
+        self.assertEqual(responses[0]["result"]["serverInfo"]["name"], "lsp-mcp-server")
+        self.assertEqual(responses[0]["result"]["serverInfo"]["version"], "1.1.20")
+        self.assertEqual(responses[1]["id"], 2)
+        advertised_tools = {tool["name"] for tool in responses[1]["result"]["tools"]}
+        self.assertGreaterEqual(len(advertised_tools), 29)
+        self.assertTrue({"lsp_find_symbol", "lsp_diagnostics", "lsp_rename"} <= advertised_tools)
+
+    def test_user_level_lsp_server_and_role_skill_contract(self):
+        config_path = REPO_ROOT / "scripts/codex/config.toml"
+        config = tomllib.loads(config_path.read_text())
+        lsp_server = config["mcp_servers"]["lsp"]
+        self.assertEqual(lsp_server["command"], "pnpm")
+        self.assertEqual(lsp_server["args"], ["exec", "lsp-mcp-server"])
+        self.assertTrue(lsp_server["enabled"])
+        user_skill_config = {
+            entry["name"]: entry["enabled"]
+            for entry in config["skills"]["config"]
+        }
+        self.assertTrue(user_skill_config["lsp-mcp-server"])
+
+        role_dir = REPO_ROOT / "scripts/codex/agents"
+        expected_roles = set(LSP_AGENT_NAMES) | set(NON_LSP_AGENT_NAMES)
+        self.assertEqual(
+            {path.stem for path in role_dir.glob("*.toml")},
+            expected_roles,
+        )
+        for role in LSP_AGENT_NAMES:
+            with self.subTest(role=role):
+                role_config = tomllib.loads((role_dir / f"{role}.toml").read_text())
+                self.assertTrue(role_config["mcp_servers"]["lsp"]["enabled"])
+                skill_config = {
+                    entry["name"]: entry["enabled"]
+                    for entry in role_config["skills"]["config"]
+                }
+                self.assertTrue(skill_config["lsp-mcp-server"])
+
+        for role in NON_LSP_AGENT_NAMES:
+            with self.subTest(role=role):
+                role_config = tomllib.loads((role_dir / f"{role}.toml").read_text())
+                self.assertFalse(role_config["mcp_servers"]["lsp"]["enabled"])
+                skill_config = {
+                    entry["name"]: entry["enabled"]
+                    for entry in role_config["skills"]["config"]
+                }
+                self.assertFalse(skill_config["lsp-mcp-server"])
+
+    def test_installer_materializes_user_lsp_config_and_role_files(self):
+        with tempfile.TemporaryDirectory() as home, tempfile.TemporaryDirectory() as codex_home:
+            run = self._run_installer(home, codex_home)
+            self.assertEqual(
+                run.returncode,
+                0,
+                msg="installer run failed: STDOUT=" + run.stdout + " STDERR=" + run.stderr,
+            )
+            installed_config = Path(codex_home) / "config.toml"
+            self.assertTrue(installed_config.is_symlink())
+            self.assertTrue(os.path.isabs(os.readlink(installed_config)))
+            self.assertEqual(
+                Path(os.readlink(installed_config)),
+                REPO_ROOT / "scripts/codex/config.toml",
+            )
+            self.assertTrue(tomllib.loads(installed_config.read_text())["mcp_servers"]["lsp"]["enabled"])
+
+            installed_agents = Path(codex_home) / "agents"
+            for role in LSP_AGENT_NAMES + NON_LSP_AGENT_NAMES:
+                with self.subTest(role=role):
+                    role_file = installed_agents / f"{role}.toml"
+                    self.assertTrue(role_file.is_file())
+                    self.assertFalse(role_file.is_symlink())
+                    self.assertEqual(
+                        role_file.read_bytes(),
+                        (REPO_ROOT / "scripts/codex/agents" / f"{role}.toml").read_bytes(),
+                    )
 
     def test_user_level_skill_registry_uses_only_the_requested_skill_names(self):
         names = sorted(path.name for path in (REPO_ROOT / "scripts/codex/skills").iterdir())

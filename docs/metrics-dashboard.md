@@ -72,6 +72,13 @@ sanitized tool/source/server labels. Unknown metric names remain visible in
 the inventory but are not interpreted until their schema and operational value
 are validated.
 
+Hook runs (`codex.hooks.run` and its duration histogram) are shown in the
+Hooks & threads section, grouped by sanitized hook/source/handler labels.
+Native thread starts and multi-agent spawn counters are shown there with
+low-cardinality source, role, and model breakdowns where Codex supplies them.
+`codex.turn.token_usage` and native turn counters remain inventory-only because
+the router already derives token and turn totals from lifecycle logs.
+
 The router persists these OTEL aggregates in a versioned `otelTelemetry` section
 of `$CODEX_HOME/codex-router-state.json`. It also persists hashed cumulative
 series cursors so a restart does not count the next cumulative export twice.

@@ -180,6 +180,11 @@ const otelTelemetry = {
   tokens: { input: 0, output: 0, cached: 0, reasoning: 0, tool: 0 },
   metricInventory: new Map(),
   tools: new Map(),
+  hooks: new Map(),
+  threads: {
+    started: { total: 0, bySource: {} },
+    spawns: { total: 0, byStatus: {}, byRole: {}, byModel: {} },
+  },
   sqlite: {
     init: new Map(),
     initDurationMs: new Map(),
@@ -485,6 +490,76 @@ function noteToolDuration(metricName, attributes, dataPoint, temporality) {
   bucket.durationMs += sum;
 }
 
+function hookKey(attributes) {
+  return [safeMetricLabel(attributes.hook_name, "unknown-hook"), safeMetricLabel(attributes.hook_source), safeMetricLabel(attributes.handler_type, "")].join("::");
+}
+
+function hookBucket(attributes) {
+  const hook = safeMetricLabel(attributes.hook_name, "unknown-hook");
+  const source = safeMetricLabel(attributes.hook_source);
+  const handlerType = safeMetricLabel(attributes.handler_type, "");
+  const key = hookKey(attributes);
+  if (!otelTelemetry.hooks.has(key)) otelTelemetry.hooks.set(key, { hook, source, handlerType, count: 0, byStatus: {}, durationCount: 0, durationMs: 0 });
+  return otelTelemetry.hooks.get(key);
+}
+
+function noteHookCounter(metricName, attributes, dataPoint, temporality) {
+  const identity = { hook_name: safeMetricLabel(attributes.hook_name, "unknown-hook"), hook_source: safeMetricLabel(attributes.hook_source), handler_type: safeMetricLabel(attributes.handler_type, "") };
+  const delta = otelSeriesDelta(otelSeriesKey(metricName, identity, dataPoint.startTimeUnixNano), dataPoint.timeUnixNano, otelSumDataPointValue(dataPoint), temporality);
+  if (delta === 0) return;
+  const bucket = hookBucket(attributes);
+  const status = safeMetricLabel(attributes.status);
+  bucket.count += delta;
+  bucket.byStatus[status] = (bucket.byStatus[status] ?? 0) + delta;
+}
+
+function noteHookDuration(metricName, attributes, dataPoint, temporality) {
+  const identity = { hook_name: safeMetricLabel(attributes.hook_name, "unknown-hook"), hook_source: safeMetricLabel(attributes.hook_source), handler_type: safeMetricLabel(attributes.handler_type, "") };
+  const count = otelSeriesDelta(otelSeriesKey(`${metricName}#count`, identity, dataPoint.startTimeUnixNano), dataPoint.timeUnixNano, numberAttribute({ count: dataPoint.count }, "count"), temporality);
+  const sum = otelSeriesDelta(otelSeriesKey(`${metricName}#sum`, identity, dataPoint.startTimeUnixNano), dataPoint.timeUnixNano, numberAttribute({ sum: dataPoint.sum }, "sum"), temporality);
+  const bucket = hookBucket(attributes);
+  bucket.durationCount += count;
+  bucket.durationMs += sum;
+}
+
+function noteHookHistogramCount(metricName, attributes, dataPoint, temporality) {
+  const identity = { hook_name: safeMetricLabel(attributes.hook_name, "unknown-hook"), hook_source: safeMetricLabel(attributes.hook_source), handler_type: safeMetricLabel(attributes.handler_type, "") };
+  const delta = otelSeriesDelta(otelSeriesKey(`${metricName}#count`, identity, dataPoint.startTimeUnixNano), dataPoint.timeUnixNano, numberAttribute({ count: dataPoint.count }, "count"), temporality);
+  if (delta === 0) return;
+  const bucket = hookBucket(attributes);
+  const status = safeMetricLabel(attributes.status);
+  bucket.count += delta;
+  bucket.byStatus[status] = (bucket.byStatus[status] ?? 0) + delta;
+}
+
+function noteThreadStarted(metricName, attributes, dataPoint, temporality) {
+  const source = safeMetricLabel(attributes.source ?? attributes.thread_source ?? attributes.origin);
+  const delta = otelSeriesDelta(otelSeriesKey(metricName, { source }, dataPoint.startTimeUnixNano), dataPoint.timeUnixNano, otelSumDataPointValue(dataPoint), temporality);
+  otelTelemetry.threads.started.total += delta;
+  otelTelemetry.threads.started.bySource[source] = (otelTelemetry.threads.started.bySource[source] ?? 0) + delta;
+}
+
+function noteHistogramCount(target, metricName, attributes, dataPoint, temporality) {
+  const source = safeMetricLabel(attributes.source ?? attributes.thread_source ?? attributes.origin);
+  const delta = otelSeriesDelta(otelSeriesKey(`${metricName}#count`, { source }, dataPoint.startTimeUnixNano), dataPoint.timeUnixNano, numberAttribute({ count: dataPoint.count }, "count"), temporality);
+  target.total += delta;
+  target.bySource[source] = (target.bySource[source] ?? 0) + delta;
+}
+
+function noteThreadSpawn(metricName, attributes, dataPoint, temporality) {
+  const role = safeMetricLabel(attributes.agent_role ?? attributes.role);
+  const model = safeMetricLabel(attributes.requested_model ?? attributes.model);
+  const identity = { agent_role: role, requested_model: model };
+  const delta = otelSeriesDelta(otelSeriesKey(metricName, identity, dataPoint.startTimeUnixNano), dataPoint.timeUnixNano, otelSumDataPointValue(dataPoint), temporality);
+  if (delta === 0) return;
+  const status = safeMetricLabel(attributes.status ?? attributes.spawned);
+  const spawns = otelTelemetry.threads.spawns;
+  spawns.total += delta;
+  spawns.byStatus[status] = (spawns.byStatus[status] ?? 0) + delta;
+  spawns.byRole[role] = (spawns.byRole[role] ?? 0) + delta;
+  spawns.byModel[model] = (spawns.byModel[model] ?? 0) + delta;
+}
+
 // Canonical full OTLP metric names for thread-level skill histograms. Codex
 // reports `description_truncated_chars` as its own histogram (distribution
 // of trimmed-description sizes across truncated skills), not an attribute.
@@ -532,6 +607,24 @@ function ingestOtelMetrics(payload) {
         } else if (metric.name === "codex.tool.call.duration_ms") {
           const temporality = metric.histogram?.aggregationTemporality;
           for (const dataPoint of metric.histogram?.dataPoints ?? []) noteToolDuration(metric.name, otelAttributes(dataPoint.attributes), dataPoint, temporality);
+        } else if (metric.name === "codex.hooks.run") {
+          const temporality = metric.sum?.aggregationTemporality;
+          for (const dataPoint of metric.sum?.dataPoints ?? []) noteHookCounter(metric.name, otelAttributes(dataPoint.attributes), dataPoint, temporality);
+          const histogramTemporality = metric.histogram?.aggregationTemporality;
+          for (const dataPoint of metric.histogram?.dataPoints ?? []) noteHookHistogramCount(metric.name, otelAttributes(dataPoint.attributes), dataPoint, histogramTemporality);
+        } else if (metric.name === "codex.hooks.run.duration_ms") {
+          const temporality = metric.histogram?.aggregationTemporality;
+          for (const dataPoint of metric.histogram?.dataPoints ?? []) noteHookDuration(metric.name, otelAttributes(dataPoint.attributes), dataPoint, temporality);
+        } else if (metric.name === "codex.thread.started") {
+          const temporality = metric.sum?.aggregationTemporality;
+          for (const dataPoint of metric.sum?.dataPoints ?? []) noteThreadStarted(metric.name, otelAttributes(dataPoint.attributes), dataPoint, temporality);
+          const histogramTemporality = metric.histogram?.aggregationTemporality;
+          for (const dataPoint of metric.histogram?.dataPoints ?? []) noteHistogramCount(otelTelemetry.threads.started, metric.name, otelAttributes(dataPoint.attributes), dataPoint, histogramTemporality);
+        } else if (metric.name === "codex.multi_agent.spawn") {
+          const temporality = metric.sum?.aggregationTemporality;
+          for (const dataPoint of metric.sum?.dataPoints ?? []) noteThreadSpawn(metric.name, otelAttributes(dataPoint.attributes), dataPoint, temporality);
+          const histogramTemporality = metric.histogram?.aggregationTemporality;
+          for (const dataPoint of metric.histogram?.dataPoints ?? []) noteThreadSpawn(metric.name, otelAttributes(dataPoint.attributes), { ...dataPoint, asInt: dataPoint.count }, histogramTemporality);
         }
       }
     }
@@ -555,6 +648,8 @@ function resetOtelTelemetry() {
   otelTelemetry.tokens = { input: 0, output: 0, cached: 0, reasoning: 0, tool: 0 };
   otelTelemetry.metricInventory.clear();
   otelTelemetry.tools.clear();
+  otelTelemetry.hooks.clear();
+  otelTelemetry.threads = { started: { total: 0, bySource: {} }, spawns: { total: 0, byStatus: {}, byRole: {}, byModel: {} } };
   otelTelemetry.sqlite = { init: new Map(), initDurationMs: new Map(), fallbacks: new Map() };
   otelTelemetry.skills.injected = { total: 0, byStatus: {}, byInvokeType: {}, bySkill: new Map() };
   otelTelemetry.skills.threads = {
@@ -596,6 +691,13 @@ function codexTelemetryStatus(now = Date.now()) {
     },
     tools: {
       byTool: [...otelTelemetry.tools.values()].map((tool) => ({ ...tool, averageDurationMs: tool.durationCount ? tool.durationMs / tool.durationCount : 0, byStatus: { ...tool.byStatus } })).sort((a, b) => `${a.tool}/${a.source}/${a.server}`.localeCompare(`${b.tool}/${b.source}/${b.server}`)),
+    },
+    hooks: {
+      byHook: [...otelTelemetry.hooks.values()].map((hook) => ({ ...hook, averageDurationMs: hook.durationCount ? hook.durationMs / hook.durationCount : 0, byStatus: { ...hook.byStatus } })).sort((a, b) => `${a.hook}/${a.source}/${a.handlerType}`.localeCompare(`${b.hook}/${b.source}/${b.handlerType}`)),
+    },
+    threads: {
+      started: { total: otelTelemetry.threads.started.total, bySource: { ...otelTelemetry.threads.started.bySource } },
+      spawns: { ...otelTelemetry.threads.spawns, byStatus: { ...otelTelemetry.threads.spawns.byStatus }, byRole: { ...otelTelemetry.threads.spawns.byRole }, byModel: { ...otelTelemetry.threads.spawns.byModel } },
     },
     sqlite: {
       init: { byDbStatus: sqliteBuckets(otelTelemetry.sqlite.init), total: [...otelTelemetry.sqlite.init.values()].reduce((sum, bucket) => sum + bucket.count, 0) },
@@ -1003,6 +1105,8 @@ function otelPersistenceSnapshot() {
     skills: telemetry.skills,
     metrics: telemetry.metrics,
     tools: telemetry.tools,
+    hooks: telemetry.hooks,
+    threads: telemetry.threads,
     sqlite: telemetry.sqlite,
     // Cumulative exports must resume from their previous point after a
     // restart, otherwise the first post-restart batch would be counted twice.
@@ -1054,6 +1158,17 @@ function restoreOtelTelemetry(snapshot) {
     for (const [status, count] of Object.entries(entry.byStatus ?? {})) if (isFiniteNonnegative(count)) restored.byStatus[safeMetricLabel(status)] = count;
     otelTelemetry.tools.set(toolKey(restored), restored);
   }
+  for (const entry of Array.isArray(snapshot.hooks?.byHook) ? snapshot.hooks.byHook : []) {
+    if (!entry || typeof entry.hook !== "string") continue;
+    const restored = { hook: safeMetricLabel(entry.hook, "unknown-hook"), source: safeMetricLabel(entry.source), handlerType: safeMetricLabel(entry.handlerType, ""), count: 0, byStatus: {}, durationCount: 0, durationMs: 0 };
+    restoreNumberFields(restored, entry, ["count", "durationCount", "durationMs"]);
+    for (const [status, count] of Object.entries(entry.byStatus ?? {})) if (isFiniteNonnegative(count)) restored.byStatus[safeMetricLabel(status)] = count;
+    otelTelemetry.hooks.set(hookKey({ hook_name: restored.hook, hook_source: restored.source, handler_type: restored.handlerType }), restored);
+  }
+  restoreNumberFields(otelTelemetry.threads.started, snapshot.threads?.started, ["total"]);
+  for (const [source, count] of Object.entries(snapshot.threads?.started?.bySource ?? {})) if (isFiniteNonnegative(count)) otelTelemetry.threads.started.bySource[safeMetricLabel(source)] = count;
+  restoreNumberFields(otelTelemetry.threads.spawns, snapshot.threads?.spawns, ["total"]);
+  for (const target of ["byStatus", "byRole", "byModel"]) for (const [key, count] of Object.entries(snapshot.threads?.spawns?.[target] ?? {})) if (isFiniteNonnegative(count)) otelTelemetry.threads.spawns[target][safeMetricLabel(key)] = count;
   const sqlite = snapshot.sqlite;
   for (const [target, source] of [[otelTelemetry.sqlite.init, sqlite?.init?.byDbStatus], [otelTelemetry.sqlite.fallbacks, sqlite?.fallbacks?.byDbStatus], [otelTelemetry.sqlite.initDurationMs, sqlite?.initDurationMs?.byDbStatus]]) {
     for (const entry of Array.isArray(source) ? source : []) {

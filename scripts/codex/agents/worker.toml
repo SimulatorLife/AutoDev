@@ -28,6 +28,15 @@ workspace. A task may name an external path as a read-only source, but do not
 edit outside the active repository unless the parent explicitly establishes
 that scope; report a workspace mismatch instead of guessing."""
 
+[mcp_servers.lsp]
+command = "pnpm"
+args = ["exec", "lsp-mcp-server"]
+enabled = true
+
 [[skills.config]]
 name = "orchestration"
 enabled = false
+
+[[skills.config]]
+name = "lsp-mcp-server"
+enabled = true

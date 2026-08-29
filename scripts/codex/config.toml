@@ -243,6 +243,11 @@ trust_level = "trusted"
 [projects."/Users/henrykirk/Documents"]
 trust_level = "untrusted"
 
+[mcp_servers.lsp]
+enabled = true
+command = "pnpm"
+args = ["exec", "lsp-mcp-server"]
+
 [mcp_servers.playwright]
 enabled = true
 command = "pnpm"
@@ -334,6 +339,10 @@ enabled = false
 [[skills.config]]
 name = "openai-templates:artifact-template-analytics-dashboard"
 enabled = false
+
+[[skills.config]]
+name = "lsp-mcp-server"
+enabled = true
 
 [shell_environment_policy.filters]
 "PATH" = "include"

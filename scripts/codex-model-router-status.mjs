@@ -93,6 +93,11 @@ const nativeTools = codexTelemetry.tools?.byTool ?? [];
 console.log("Native tool telemetry:");
 for (const tool of nativeTools) console.log(`  ${tool.tool} (${tool.source}${tool.server ? `/${tool.server}` : ""}): ${tool.count ?? 0} calls (${countsText(tool.byStatus)}), avg ${Math.round(tool.averageDurationMs ?? 0)}ms`);
 
+const nativeHooks = codexTelemetry.hooks?.byHook ?? [];
+const nativeThreads = codexTelemetry.threads ?? {};
+console.log(`Native hooks/threads: ${nativeHooks.reduce((sum, hook) => sum + (hook.count ?? 0), 0)} hook runs, ${nativeThreads.started?.total ?? 0} threads started, ${nativeThreads.spawns?.total ?? 0} agent spawns`);
+for (const hook of nativeHooks) console.log(`  hook ${hook.hook} (${hook.source}${hook.handlerType ? `/${hook.handlerType}` : ""}): ${hook.count ?? 0} runs (${countsText(hook.byStatus)}), avg ${Math.round(hook.averageDurationMs ?? 0)}ms`);
+
 const sqlite = codexTelemetry.sqlite ?? {};
 const sqliteDuration = sqlite.initDurationMs ?? {};
 console.log(`SQLite telemetry: ${sqlite.init?.total ?? 0} initializations, ${sqlite.fallbacks?.total ?? 0} fallbacks, ${sqliteDuration.totalCount ?? 0} duration samples, avg ${sqliteDuration.totalCount ? Math.round(sqliteDuration.totalSum / sqliteDuration.totalCount) : 0}ms`);

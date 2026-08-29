@@ -14,6 +14,15 @@ Provider-specific `ensure-*` and `run-*` scripts are intentionally separate so a
 
 The tracked Codex role files under `scripts/codex/agents/` are regular configuration files. Provider identity is configured in the provider profiles/catalogs, while role names remain stable and codebase-agnostic.
 
+The user-level config registers the `lsp` MCP server as `pnpm exec lsp-mcp-server`. Code-oriented roles (`default`, `explorer`, `worker`, `validator`,
+and `smart`) enable both that server and the `lsp-mcp-server` skill. The
+`browser-tester` and `docs-researcher` roles explicitly disable both because
+their bounded work does not require code navigation. AutoDev declares the MCP
+bridge and TypeScript language-server dependencies so this repository can launch
+and use them with `pnpm exec`. Other active repositories need to expose the same
+`lsp-mcp-server` command through their package manager for the user-level MCP
+entry to work there.
+
 The three shared skills under `scripts/codex/skills/` are tracked AutoDev-owned
 skill directories. The installer exposes those versioned directories in
 `$HOME/.agents/skills/` through symlinks:

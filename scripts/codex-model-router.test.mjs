@@ -328,6 +328,10 @@ test("inventories native metrics and aggregates safe SQLite and tool telemetry",
     { name: "codex.sqlite.fallback.count", sum: { aggregationTemporality: 1, dataPoints: [dataPoint([["db", "memories"], ["status", "locked"]], 1)] } },
     { name: "codex.tool.call", sum: { aggregationTemporality: 1, dataPoints: [dataPoint([["tool_name", "exec"], ["source", "builtin"], ["status", "ok"], ["arguments", "/private/path"]], 3)] } },
     { name: "codex.tool.call.duration_ms", histogram: { aggregationTemporality: 1, dataPoints: [histogramPoint([["tool_name", "exec"], ["source", "builtin"]], 3, 90)] } },
+    { name: "codex.hooks.run", sum: { aggregationTemporality: 1, dataPoints: [dataPoint([["hook_name", "SessionStart"], ["hook_source", "user"], ["handler_type", "command"], ["status", "ok"]], 2)] } },
+    { name: "codex.hooks.run.duration_ms", histogram: { aggregationTemporality: 1, dataPoints: [histogramPoint([["hook_name", "SessionStart"], ["hook_source", "user"], ["handler_type", "command"]], 2, 20)] } },
+    { name: "codex.thread.started", sum: { aggregationTemporality: 1, dataPoints: [dataPoint([["source", "subagent"]], 4)] } },
+    { name: "codex.multi_agent.spawn", sum: { aggregationTemporality: 1, dataPoints: [dataPoint([["agent_role", "worker"], ["requested_model", "autodev/worker"], ["status", "ok"]], 1)] } },
   ] }] }] });
 
   const telemetry = codexTelemetryStatus();
@@ -337,14 +341,36 @@ test("inventories native metrics and aggregates safe SQLite and tool telemetry",
   assert.equal(telemetry.sqlite.fallbacks.total, 1);
   const tool = telemetry.tools.byTool.find((entry) => entry.tool === "exec");
   assert.deepEqual(tool, { tool: "exec", source: "builtin", server: "", count: 3, byStatus: { ok: 3 }, durationCount: 3, durationMs: 90, averageDurationMs: 30 });
+  assert.deepEqual(telemetry.hooks.byHook, [{ hook: "SessionStart", source: "user", handlerType: "command", count: 2, byStatus: { ok: 2 }, durationCount: 2, durationMs: 20, averageDurationMs: 10 }]);
+  assert.deepEqual(telemetry.threads, { started: { total: 4, bySource: { subagent: 4 } }, spawns: { total: 1, byStatus: { ok: 1 }, byRole: { worker: 1 }, byModel: { "autodev/worker": 1 } } });
   assert.equal(JSON.stringify(telemetry).includes("/private/path"), false);
   assert.deepEqual(telemetry.metrics.observed.map(({ name, exports, dataPoints }) => ({ name, exports, dataPoints })), [
+    { name: "codex.hooks.run", exports: 1, dataPoints: 1 },
+    { name: "codex.hooks.run.duration_ms", exports: 1, dataPoints: 1 },
+    { name: "codex.multi_agent.spawn", exports: 1, dataPoints: 1 },
     { name: "codex.sqlite.fallback.count", exports: 1, dataPoints: 1 },
     { name: "codex.sqlite.init.count", exports: 1, dataPoints: 1 },
     { name: "codex.sqlite.init.duration_ms", exports: 1, dataPoints: 1 },
+    { name: "codex.thread.started", exports: 1, dataPoints: 1 },
     { name: "codex.tool.call", exports: 1, dataPoints: 1 },
     { name: "codex.tool.call.duration_ms", exports: 1, dataPoints: 1 },
   ]);
+  resetOtelTelemetry();
+});
+
+test("accepts histogram-shaped lifecycle metrics when Codex reports them as distributions", () => {
+  resetOtelTelemetry();
+  const attributes = (entries) => entries.map(([key, value]) => ({ key, value: { stringValue: String(value) } }));
+  const point = (entries, count) => ({ attributes: attributes(entries), startTimeUnixNano: "1", timeUnixNano: "2", count: String(count), sum: 0 });
+  ingestOtelSignal("metrics", { resourceMetrics: [{ scopeMetrics: [{ metrics: [
+    { name: "codex.hooks.run", histogram: { aggregationTemporality: 1, dataPoints: [point([["hook_name", "SessionEnd"], ["hook_source", "user"], ["handler_type", "command"], ["status", "ok"]], 2)] } },
+    { name: "codex.thread.started", histogram: { aggregationTemporality: 1, dataPoints: [point([["source", "subagent"]], 3)] } },
+    { name: "codex.multi_agent.spawn", histogram: { aggregationTemporality: 1, dataPoints: [point([["agent_role", "worker"], ["requested_model", "autodev/worker"], ["status", "ok"]], 1)] } },
+  ] }] }] });
+  const telemetry = codexTelemetryStatus();
+  assert.equal(telemetry.hooks.byHook[0].count, 2);
+  assert.deepEqual(telemetry.threads.started, { total: 3, bySource: { subagent: 3 } });
+  assert.deepEqual(telemetry.threads.spawns, { total: 1, byStatus: { ok: 1 }, byRole: { worker: 1 }, byModel: { "autodev/worker": 1 } });
   resetOtelTelemetry();
 });
 
@@ -412,7 +438,11 @@ test("serves HTML only from /dashboard and raw JSON from /status", async () => {
     assert.match(dashboardBody, /id="native-tools"/);
     assert.match(dashboardBody, /id="sqlite-telemetry"/);
     assert.match(dashboardBody, /id="native-metrics-summary"/);
+    assert.match(dashboardBody, /aria-controls="native-metrics-section" aria-expanded="false"/);
+    assert.match(dashboardBody, /id="native-metrics-section" hidden/);
     assert.match(dashboardBody, /millisecondsText/);
+    assert.match(dashboardBody, /id="native-hooks"/);
+    assert.match(dashboardBody, /id="hooks-threads-summary"/);
     assert.match(dashboardBody, /codex\.skill\.injected/);
     assert.match(dashboardBody, /codex\.thread\.skills\.enabled_total/);
     assert.match(dashboardBody, /MCP ready/);
@@ -490,6 +520,12 @@ test("persists provider telemetry and recent events across router restarts", asy
     ingestOtelSignal("metrics", { resourceMetrics: [{ scopeMetrics: [{ metrics: [{
       name: "codex.skill.injected",
       sum: { aggregationTemporality: 1, dataPoints: [{ attributes: [{ key: "skill", value: { stringValue: "orchestration" } }, { key: "status", value: { stringValue: "ok" } }], startTimeUnixNano: "1", timeUnixNano: "2", asInt: "2" }] },
+    }, {
+      name: "codex.hooks.run",
+      sum: { aggregationTemporality: 1, dataPoints: [{ attributes: [{ key: "hook_name", value: { stringValue: "SessionStart" } }, { key: "hook_source", value: { stringValue: "user" } }, { key: "handler_type", value: { stringValue: "command" } }, { key: "status", value: { stringValue: "ok" } }], startTimeUnixNano: "1", timeUnixNano: "2", asInt: "1" }] },
+    }, {
+      name: "codex.thread.started",
+      sum: { aggregationTemporality: 1, dataPoints: [{ attributes: [{ key: "source", value: { stringValue: "subagent" } }], startTimeUnixNano: "1", timeUnixNano: "2", asInt: "1" }] },
     }] }] }] });
     await persistRouterStateNow(stateFile);
     resetRouterTelemetry();
@@ -508,6 +544,8 @@ test("persists provider telemetry and recent events across router restarts", asy
     assert.equal(restored.codexTelemetry.skills.injected.total, 2);
     assert.equal(restored.codexTelemetry.skills.injected.bySkill[0].skill, "orchestration");
     assert.equal(restored.codexTelemetry.receiver.metrics, 1);
+    assert.equal(restored.codexTelemetry.hooks.byHook[0].count, 1);
+    assert.deepEqual(restored.codexTelemetry.threads.started, { total: 1, bySource: { subagent: 1 } });
     assert.match(serializeRouterState(), /"otelTelemetry"/);
     assert.doesNotMatch(serializeRouterState(), /prompt_text|api[_-]?key|authorization/i);
   } finally {
