@@ -16,6 +16,13 @@ test('metrics identify agent PRs and provider invocation comments', () => {
   assert.deepEqual(metrics.parseInvocationComment('**[🤖 mini-max]** Hi, I\'ve received your request. https://github.com/SimulatorLife/AutoDev/actions/runs/123'), { agent: 'mini-max', runId: 123 });
 });
 
+test('router dashboard gives the skills subsection the same heading treatment', async () => {
+  const dashboard = await readFile(path.join(root, 'scripts', 'codex-model-router-dashboard.html'), 'utf8');
+  assert.match(dashboard, /h2, h3 \{ font-size: 1rem; margin: 1\.5rem 0 \.5rem; \}/);
+  assert.match(dashboard, /<h3><button type="button" class="toggle-section" aria-controls="skills-selection-section"/);
+  assert.match(dashboard, /Skill selection &amp; context telemetry<\/button><\/h3>/);
+});
+
 test('metrics dashboard renders requested counters and recent links', () => {
   const body = metrics.renderDashboard({
     generatedAt: '2026-01-01T00:00:00.000Z',
