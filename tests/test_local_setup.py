@@ -311,6 +311,20 @@ class LocalSetupTests(unittest.TestCase):
                         (REPO_ROOT / "scripts/codex/agents" / f"{role}.toml").read_bytes(),
                     )
 
+    def test_installer_materializes_the_current_dashboard_copy(self):
+        with tempfile.TemporaryDirectory() as home, tempfile.TemporaryDirectory() as codex_home:
+            run = self._run_installer(home, codex_home)
+            self.assertEqual(
+                run.returncode,
+                0,
+                msg="installer run failed: STDOUT=" + run.stdout + " STDERR=" + run.stderr,
+            )
+            installed_dashboard = Path(codex_home) / "hooks/codex-model-router-dashboard.html"
+            self.assertEqual(
+                installed_dashboard.read_bytes(),
+                (REPO_ROOT / "scripts/codex-model-router-dashboard.html").read_bytes(),
+            )
+
     def test_user_level_skill_registry_uses_only_the_requested_skill_names(self):
         names = sorted(path.name for path in (REPO_ROOT / "scripts/codex/skills").iterdir())
         self.assertEqual(names, sorted(SKILL_NAMES))
