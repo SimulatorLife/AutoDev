@@ -1,122 +1,521 @@
 <!doctype html>
 <html lang="en">
+
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Codex model router</title>
   <style>
-    :root { color-scheme: light dark; font: 14px system-ui, sans-serif; }
-    body { margin: 1.5rem; max-width: none; }
-    h1 { font-size: 1.35rem; margin-bottom: .25rem; }
-    h2, h3 { font-size: 1rem; margin: 1.5rem 0 .5rem; }
-    #meta, #error { color: #666; }
-    #error { color: #b42318; }
-    table { border-collapse: collapse; width: 100%; }
-    .table-scroll { overflow-x: visible; }
-    th, td { border-bottom: 1px solid #8885; padding: .45rem .55rem; text-align: left; vertical-align: top; }
-    #providers-table th, #providers-table td { white-space: normal; overflow-wrap: anywhere; }
-    th { white-space: nowrap; }
-    .toggle-provider, .toggle-usage, .toggle-section { background: none; border: 0; color: inherit; cursor: pointer; font: inherit; padding: 0; }
-    .toggle-provider:hover, .toggle-usage:hover, .toggle-section:hover { text-decoration: underline; }
-    #providers-table { table-layout: fixed; min-width: 0; width: 100%; }
-    #providers-table th:nth-child(1), #providers-table td:nth-child(1) { width: 14%; }
-    #providers-table th:nth-child(2), #providers-table td:nth-child(2) { width: 20%; overflow-wrap: anywhere; white-space: normal; }
-    #providers-table th:nth-child(3), #providers-table td:nth-child(3) { width: 10%; }
-    #providers-table th:nth-child(4), #providers-table td:nth-child(4) { width: 5%; }
-    #providers-table th:nth-child(5), #providers-table td:nth-child(5) { width: 7%; }
-    #providers-table th:nth-child(6), #providers-table td:nth-child(6) { width: 7%; }
-    #providers-table th:nth-child(7), #providers-table td:nth-child(7) { width: 7%; }
-    #providers-table th:nth-child(8), #providers-table td:nth-child(8) { width: 6%; }
-    #providers-table th:nth-child(9), #providers-table td:nth-child(9) { width: 7%; }
-    #providers-table th:nth-child(10), #providers-table td:nth-child(10) { width: 7%; }
-    #providers-table th:nth-child(11), #providers-table td:nth-child(11) { width: 10%; }
-    .caret { display: inline-flex; width: 1em; height: 1em; align-items: center; justify-content: center; vertical-align: -0.1em; }
-    .provider-model, .usage-child { background: #8881; }
-    .provider-model td:first-child, .usage-child td:first-child { padding-left: 1.5rem; }
-    .provider-summary { border-top: 2px solid #888; font-weight: 700; }
-    .provider-summary th, .provider-summary td { padding-top: .7rem; }
-    code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
-    pre { white-space: pre-wrap; line-height: 1.45; }
-    .ok { color: #16803c; }
-    .limited { color: #b54708; font-weight: 600; }
+    :root {
+      color-scheme: light dark;
+      font: 14px system-ui, sans-serif;
+    }
+
+    body {
+      margin: 1.5rem;
+      max-width: none;
+    }
+
+    h1 {
+      font-size: 1.35rem;
+      margin-bottom: .25rem;
+    }
+
+    h2 {
+      font-size: 1rem;
+      margin: 1.5rem 0 .5rem;
+    }
+
+    #meta,
+    #error {
+      color: #666;
+    }
+
+    #error {
+      color: #b42318;
+    }
+
+    table {
+      border-collapse: collapse;
+      width: 100%;
+    }
+
+    .table-scroll {
+      overflow-x: visible;
+    }
+
+    th,
+    td {
+      border-bottom: 1px solid #8885;
+      padding: .45rem .55rem;
+      text-align: left;
+      vertical-align: top;
+    }
+
+    #providers-table th,
+    #providers-table td {
+      white-space: normal;
+      overflow-wrap: anywhere;
+    }
+
+    th {
+      white-space: nowrap;
+    }
+
+    .toggle-provider,
+    .toggle-usage,
+    .toggle-section {
+      background: none;
+      border: 0;
+      color: inherit;
+      cursor: pointer;
+      font: inherit;
+      padding: 0;
+    }
+
+    .toggle-provider:hover,
+    .toggle-usage:hover,
+    .toggle-section:hover {
+      text-decoration: underline;
+    }
+
+    #providers-table {
+      table-layout: fixed;
+      min-width: 0;
+      width: 100%;
+    }
+
+    #providers-table th:nth-child(1),
+    #providers-table td:nth-child(1) {
+      width: 14%;
+    }
+
+    #providers-table th:nth-child(2),
+    #providers-table td:nth-child(2) {
+      width: 20%;
+      overflow-wrap: anywhere;
+      white-space: normal;
+    }
+
+    #providers-table th:nth-child(3),
+    #providers-table td:nth-child(3) {
+      width: 10%;
+    }
+
+    #providers-table th:nth-child(4),
+    #providers-table td:nth-child(4) {
+      width: 5%;
+    }
+
+    #providers-table th:nth-child(5),
+    #providers-table td:nth-child(5) {
+      width: 7%;
+    }
+
+    #providers-table th:nth-child(6),
+    #providers-table td:nth-child(6) {
+      width: 7%;
+    }
+
+    #providers-table th:nth-child(7),
+    #providers-table td:nth-child(7) {
+      width: 7%;
+    }
+
+    #providers-table th:nth-child(8),
+    #providers-table td:nth-child(8) {
+      width: 6%;
+    }
+
+    #providers-table th:nth-child(9),
+    #providers-table td:nth-child(9) {
+      width: 7%;
+    }
+
+    #providers-table th:nth-child(10),
+    #providers-table td:nth-child(10) {
+      width: 7%;
+    }
+
+    #providers-table th:nth-child(11),
+    #providers-table td:nth-child(11) {
+      width: 10%;
+    }
+
+    .caret {
+      display: inline-flex;
+      width: 1em;
+      height: 1em;
+      align-items: center;
+      justify-content: center;
+      vertical-align: -0.1em;
+    }
+
+    .provider-model,
+    .usage-child {
+      background: #8881;
+    }
+
+    .provider-model td:first-child,
+    .usage-child td:first-child {
+      padding-left: 1.5rem;
+    }
+
+    .provider-summary {
+      border-top: 2px solid #888;
+      font-weight: 700;
+    }
+
+    .provider-summary th,
+    .provider-summary td {
+      padding-top: .7rem;
+    }
+
+    code,
+    pre {
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    }
+
+    pre {
+      white-space: pre-wrap;
+      line-height: 1.45;
+    }
+
+    .ok {
+      color: #16803c;
+    }
+
+    .limited {
+      color: #b54708;
+      font-weight: 600;
+    }
   </style>
 </head>
+
 <body>
   <h1>Codex model router</h1>
   <div id="meta">Loading…</div>
   <div id="error" role="alert"></div>
 
-  <h2><button type="button" class="toggle-section" aria-controls="provider-health-section" aria-expanded="true"><span class="caret">▾</span> Provider health and usage</button></h2>
+  <h2><button type="button" class="toggle-section" aria-controls="provider-health-section" aria-expanded="true"><span
+        class="caret">▾</span> Provider health and usage</button></h2>
   <div id="provider-health-section">
-  <div class="table-scroll">
-  <table id="providers-table">
-    <thead><tr><th>Provider</th><th>Model</th><th>Status</th><th>Active</th><th>Attempts</th><th>Successes</th><th>Failures</th><th>Tool calls</th><th>Avg. turn</th><th>Provider skips</th><th>Last failure</th></tr></thead>
-    <tbody id="providers"><tr><td colspan="11">Loading…</td></tr></tbody>
-    <tfoot><tr class="provider-summary"><th colspan="2">Totals</th><td>all</td><td id="summary-active">0</td><td id="summary-attempts">0</td><td id="summary-successes">0</td><td id="summary-failures">0</td><td id="summary-tools">0</td><td id="summary-duration">0.0s</td><td id="summary-skips">0</td><td></td></tr></tfoot>
-  </table>
-  </div>
-  </div>
-
-  <h2><button type="button" class="toggle-section" aria-controls="usage-section" aria-expanded="true"><span class="caret">▾</span> Usage by orchestrator and subagents</button></h2>
-  <div id="usage-section">
-  <table id="usage-table"><thead><tr><th>Category</th><th>Active</th><th>Attempts</th><th>Successes</th><th>Failures</th><th>Avg turn</th><th>Tool calls</th></tr></thead><tbody id="usage-breakdown"><tr><td colspan="7">Loading…</td></tr></tbody><tfoot><tr class="provider-summary"><th>Totals</th><td id="usage-total-active">0</td><td id="usage-total-attempts">0</td><td id="usage-total-successes">0</td><td id="usage-total-failures">0</td><td id="usage-total-duration">0.0s</td><td id="usage-total-tools">0</td></tr></tfoot></table>
-  </div>
-
-  <h2><button type="button" class="toggle-section" aria-controls="mcp-telemetry-section" aria-expanded="true"><span class="caret">▾</span> MCP server telemetry</button></h2>
-  <div id="mcp-telemetry-section">
-    <table><thead><tr><th>MCP server</th><th>Health</th><th>Last observed</th><th>Initializations</th><th>Tool discovery</th><th>Failures</th><th>Avg. duration</th></tr></thead><tbody id="mcp-telemetry"><tr><td colspan="7">Loading…</td></tr></tbody><tfoot><tr class="provider-summary"><th>Totals</th><td id="mcp-total-health">0/0 ready</td><td id="mcp-total-last">-</td><td id="mcp-total-init">0</td><td id="mcp-total-discovery">0</td><td id="mcp-total-failures">0</td><td id="mcp-total-duration">0.0s</td></tr></tfoot></table>
-  </div>
-
-  <h2><button type="button" class="toggle-section" aria-controls="skills-section" aria-expanded="true"><span class="caret">▾</span> Skills</button></h2>
-  <div id="skills-section">
-    <table><thead><tr><th>Skill</th><th>Injected</th><th>Invocations</th><th>Injection share</th><th>Invocation share</th><th>By status</th><th>Injected by invoke type</th><th>Invoked by invoke type</th><th>Agent kind</th><th>Models</th><th>Plugins</th></tr></thead><tbody id="skills-table"><tr><td colspan="11">Loading…</td></tr></tbody><tfoot><tr class="provider-summary"><th>Totals</th><th id="skills-total">0</th><th id="skills-total-usage">0</th><th id="skills-total-share">0.0%</th><th id="skills-total-usage-share">0.0%</th><td id="skills-total-status">-</td><td id="skills-total-invoke-type">-</td><td id="skills-total-usage-invoke-type">-</td><td id="skills-total-agent-kind">-</td><td id="skills-total-model">-</td><td id="skills-total-plugin">-</td></tr></tfoot></table>
-
-    <h3><button type="button" class="toggle-section" aria-controls="skills-selection-section" aria-expanded="true"><span class="caret">▾</span> Skill selection &amp; context telemetry</button></h3>
-    <div id="skills-selection-section">
-      <div><small>Selection telemetry plus per-thread aggregate context histograms — samples (count), total (sum), and average. Histogram rows are thread aggregates, not per-skill.</small></div>
-      <table>
-        <thead><tr><th>Metric</th><th>Samples</th><th>Total</th><th>Average</th></tr></thead>
-        <tbody id="skills-selection"><tr><td colspan="4">Loading…</td></tr></tbody>
-        <tbody id="skills-histograms"><tr><td colspan="4">Loading…</td></tr></tbody>
+    <div class="table-scroll">
+      <table id="providers-table">
+        <thead>
+          <tr>
+            <th>Provider</th>
+            <th>Model</th>
+            <th>Status</th>
+            <th>Active</th>
+            <th>Attempts</th>
+            <th>Successes</th>
+            <th>Failures</th>
+            <th>Tool calls</th>
+            <th>Avg. turn</th>
+            <th>Provider skips</th>
+            <th>Last failure</th>
+          </tr>
+        </thead>
+        <tbody id="providers">
+          <tr>
+            <td colspan="11">Loading…</td>
+          </tr>
+        </tbody>
+        <tfoot>
+          <tr class="provider-summary">
+            <th colspan="2">Totals</th>
+            <td>all</td>
+            <td id="summary-active">0</td>
+            <td id="summary-attempts">0</td>
+            <td id="summary-successes">0</td>
+            <td id="summary-failures">0</td>
+            <td id="summary-tools">0</td>
+            <td id="summary-duration">0.0s</td>
+            <td id="summary-skips">0</td>
+            <td></td>
+          </tr>
+        </tfoot>
       </table>
     </div>
   </div>
 
-  <h2><button type="button" class="toggle-section" aria-controls="hooks-section" aria-expanded="true"><span class="caret">▾</span> Hooks</button></h2>
+  <h2><button type="button" class="toggle-section" aria-controls="usage-section" aria-expanded="true"><span
+        class="caret">▾</span> Usage by orchestrator and subagents</button></h2>
+  <div id="usage-section">
+    <table id="usage-table">
+      <thead>
+        <tr>
+          <th>Category</th>
+          <th>Active</th>
+          <th>Attempts</th>
+          <th>Successes</th>
+          <th>Failures</th>
+          <th>Avg turn</th>
+          <th>Tool calls</th>
+        </tr>
+      </thead>
+      <tbody id="usage-breakdown">
+        <tr>
+          <td colspan="7">Loading…</td>
+        </tr>
+      </tbody>
+      <tfoot>
+        <tr class="provider-summary">
+          <th>Totals</th>
+          <td id="usage-total-active">0</td>
+          <td id="usage-total-attempts">0</td>
+          <td id="usage-total-successes">0</td>
+          <td id="usage-total-failures">0</td>
+          <td id="usage-total-duration">0.0s</td>
+          <td id="usage-total-tools">0</td>
+        </tr>
+      </tfoot>
+    </table>
+  </div>
+
+  <h2><button type="button" class="toggle-section" aria-controls="mcp-telemetry-section" aria-expanded="true"><span
+        class="caret">▾</span> MCP server telemetry</button></h2>
+  <div id="mcp-telemetry-section">
+    <table>
+      <thead>
+        <tr>
+          <th>MCP server</th>
+          <th>Health</th>
+          <th>Last observed</th>
+          <th>Initializations</th>
+          <th>Tool discovery</th>
+          <th>Failures</th>
+          <th>Avg. duration</th>
+        </tr>
+      </thead>
+      <tbody id="mcp-telemetry">
+        <tr>
+          <td colspan="7">Loading…</td>
+        </tr>
+      </tbody>
+      <tfoot>
+        <tr class="provider-summary">
+          <th>Totals</th>
+          <td id="mcp-total-health">0/0 ready</td>
+          <td id="mcp-total-last">-</td>
+          <td id="mcp-total-init">0</td>
+          <td id="mcp-total-discovery">0</td>
+          <td id="mcp-total-failures">0</td>
+          <td id="mcp-total-duration">0.0s</td>
+        </tr>
+      </tfoot>
+    </table>
+  </div>
+
+  <h2><button type="button" class="toggle-section" aria-controls="skills-section" aria-expanded="true"><span
+        class="caret">▾</span> Skills</button></h2>
+  <div id="skills-section">
+    <table>
+      <thead>
+        <tr>
+          <th>Skill</th>
+          <th>Injected</th>
+          <th>Invocations</th>
+          <th>Injection share</th>
+          <th>Invocation share</th>
+          <th>By status</th>
+          <th>Injected by invoke type</th>
+          <th>Invoked by invoke type</th>
+          <th>Agent kind</th>
+          <th>Models</th>
+          <th>Plugins</th>
+        </tr>
+      </thead>
+      <tbody id="skills-table">
+        <tr>
+          <td colspan="11">Loading…</td>
+        </tr>
+      </tbody>
+      <tfoot>
+        <tr class="provider-summary">
+          <th>Totals</th>
+          <th id="skills-total">0</th>
+          <th id="skills-total-usage">0</th>
+          <th id="skills-total-share">0.0%</th>
+          <th id="skills-total-usage-share">0.0%</th>
+          <td id="skills-total-status">-</td>
+          <td id="skills-total-invoke-type">-</td>
+          <td id="skills-total-usage-invoke-type">-</td>
+          <td id="skills-total-agent-kind">-</td>
+          <td id="skills-total-model">-</td>
+          <td id="skills-total-plugin">-</td>
+        </tr>
+      </tfoot>
+    </table>
+
+    <h2><button type="button" class="toggle-section" aria-controls="skills-selection-section" aria-expanded="true"><span
+          class="caret">▾</span> Skill selection &amp; context telemetry</button></h2>
+    <div id="skills-selection-section">
+      <div><small>Selection telemetry plus per-thread aggregate context histograms — samples (count), total (sum), and
+          average. Histogram rows are thread aggregates, not per-skill.</small></div>
+      <table>
+        <thead>
+          <tr>
+            <th>Metric</th>
+            <th>Samples</th>
+            <th>Total</th>
+            <th>Average</th>
+          </tr>
+        </thead>
+        <tbody id="skills-selection">
+          <tr>
+            <td colspan="4">Loading…</td>
+          </tr>
+        </tbody>
+        <tbody id="skills-histograms">
+          <tr>
+            <td colspan="4">Loading…</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <h2><button type="button" class="toggle-section" aria-controls="hooks-section" aria-expanded="true"><span
+        class="caret">▾</span> Hooks</button></h2>
   <div id="hooks-section">
-    <table><thead><tr><th>Type</th><th>Name</th><th>Source</th><th>Handler / server</th><th>Count</th><th>By status</th><th>Avg. duration</th></tr></thead><tbody id="native-runtime-telemetry"><tr><td colspan="7">Loading…</td></tr></tbody><tfoot><tr class="provider-summary"><th>Totals</th><td>-</td><td>-</td><td>-</td><td id="native-runtime-total-calls">0</td><td id="native-runtime-total-status">-</td><td id="native-runtime-total-duration">0.0s</td></tr></tfoot></table>
+    <table>
+      <thead>
+        <tr>
+          <th>Type</th>
+          <th>Name</th>
+          <th>Source</th>
+          <th>Handler / server</th>
+          <th>Count</th>
+          <th>By status</th>
+          <th>Avg. duration</th>
+        </tr>
+      </thead>
+      <tbody id="native-runtime-telemetry">
+        <tr>
+          <td colspan="7">Loading…</td>
+        </tr>
+      </tbody>
+      <tfoot>
+        <tr class="provider-summary">
+          <th>Totals</th>
+          <td>-</td>
+          <td>-</td>
+          <td>-</td>
+          <td id="native-runtime-total-calls">0</td>
+          <td id="native-runtime-total-status">-</td>
+          <td id="native-runtime-total-duration">0.0s</td>
+        </tr>
+      </tfoot>
+    </table>
   </div>
 
-  <h2><button type="button" class="toggle-section" aria-controls="operational-summaries-section" aria-expanded="false"><span class="caret">▸</span> Operational summary</button></h2>
+  <h2><button type="button" class="toggle-section" aria-controls="operational-summaries-section"
+      aria-expanded="false"><span class="caret">▸</span> Operational summary</button></h2>
   <div id="operational-summaries-section" hidden>
-    <table><thead><tr><th>Category</th><th>Metric</th><th>Value</th></tr></thead><tbody id="operational-summaries"><tr><td colspan="3">Loading…</td></tr></tbody></table>
+    <table>
+      <thead>
+        <tr>
+          <th>Category</th>
+          <th>Metric</th>
+          <th>Value</th>
+        </tr>
+      </thead>
+      <tbody id="operational-summaries">
+        <tr>
+          <td colspan="3">Loading…</td>
+        </tr>
+      </tbody>
+    </table>
   </div>
 
-  <h2><button type="button" class="toggle-section" aria-controls="native-metrics-section" aria-expanded="false"><span class="caret">▸</span> Native metrics observed</button></h2>
+  <h2><button type="button" class="toggle-section" aria-controls="native-metrics-section" aria-expanded="false"><span
+        class="caret">▸</span> Native metrics observed</button></h2>
   <div id="native-metrics-section" hidden>
     <div id="native-metrics-summary">Loading…</div>
-    <table><thead><tr><th>Metric</th><th>Exports</th><th>Data points</th></tr></thead><tbody id="native-metrics"><tr><td colspan="3">Loading…</td></tr></tbody><tfoot><tr class="provider-summary"><th>Totals</th><td id="native-metrics-total-exports">0</td><td id="native-metrics-total-points">0</td></tr></tfoot></table>
+    <table>
+      <thead>
+        <tr>
+          <th>Metric</th>
+          <th>Exports</th>
+          <th>Data points</th>
+        </tr>
+      </thead>
+      <tbody id="native-metrics">
+        <tr>
+          <td colspan="3">Loading…</td>
+        </tr>
+      </tbody>
+      <tfoot>
+        <tr class="provider-summary">
+          <th>Totals</th>
+          <td id="native-metrics-total-exports">0</td>
+          <td id="native-metrics-total-points">0</td>
+        </tr>
+      </tfoot>
+    </table>
   </div>
 
 
-  <h2><button type="button" class="toggle-section" aria-controls="spawn-failures-section" aria-expanded="false"><span class="caret">▸</span> Subagent spawn failure telemetry</button></h2>
+  <h2><button type="button" class="toggle-section" aria-controls="spawn-failures-section" aria-expanded="false"><span
+        class="caret">▸</span> Subagent spawn failure telemetry</button></h2>
   <div id="spawn-failures-section" hidden>
-    <table><thead><tr><th>Reason / type</th><th>Count</th><th>Last observed</th></tr></thead><tbody id="spawn-failures-by-reason"><tr><td colspan="3">Loading…</td></tr></tbody><tfoot><tr class="provider-summary"><th>Totals</th><td id="spawn-failures-total">0</td><td id="spawn-failures-last">-</td></tr></tfoot></table>
+    <table>
+      <thead>
+        <tr>
+          <th>Reason / type</th>
+          <th>Count</th>
+          <th>Last observed</th>
+        </tr>
+      </thead>
+      <tbody id="spawn-failures-by-reason">
+        <tr>
+          <td colspan="3">Loading…</td>
+        </tr>
+      </tbody>
+      <tfoot>
+        <tr class="provider-summary">
+          <th>Totals</th>
+          <td id="spawn-failures-total">0</td>
+          <td id="spawn-failures-last">-</td>
+        </tr>
+      </tfoot>
+    </table>
   </div>
 
-  <h2><button type="button" class="toggle-section" aria-controls="codex-tasks-section" aria-expanded="false"><span class="caret">▸</span> Codex task snapshot</button></h2>
+  <h2><button type="button" class="toggle-section" aria-controls="codex-tasks-section" aria-expanded="false"><span
+        class="caret">▸</span> Codex task snapshot</button></h2>
   <div id="codex-tasks-section" hidden>
     <div id="task-summary">Loading…</div>
-    <table><thead><tr><th>ID</th><th>Status</th><th>Name</th><th>Project/CWD</th><th>Provider</th><th>Role</th><th>Updated</th></tr></thead><tbody id="codex-tasks"><tr><td colspan="7">Loading…</td></tr></tbody></table>
+    <table>
+      <thead>
+        <tr>
+          <th>ID</th>
+          <th>Status</th>
+          <th>Name</th>
+          <th>Project/CWD</th>
+          <th>Provider</th>
+          <th>Role</th>
+          <th>Updated</th>
+        </tr>
+      </thead>
+      <tbody id="codex-tasks">
+        <tr>
+          <td colspan="7">Loading…</td>
+        </tr>
+      </tbody>
+    </table>
   </div>
 
-  <h2><button type="button" class="toggle-section" aria-controls="recent-routing-events-section" aria-expanded="false"><span class="caret">▸</span> Recent routing events</button></h2>
+  <h2><button type="button" class="toggle-section" aria-controls="recent-routing-events-section"
+      aria-expanded="false"><span class="caret">▸</span> Recent routing events</button></h2>
   <div id="recent-routing-events-section" hidden>
     <pre id="events">Loading…</pre>
   </div>
 
   <script>
-    const text = (value) => String(value ?? "").replace(/[&<>"']/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[character]));
+    const text = (value) => String(value ?? "").replace(/[&<>"']/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[ character ]));
     const formatTimestamp = (value) => {
       const date = new Date(value);
       if (Number.isNaN(date.getTime())) return text(value);
@@ -125,11 +524,11 @@
         year: "numeric", month: "2-digit", day: "2-digit",
         hour: "2-digit", minute: "2-digit", second: "2-digit",
         fractionalSecondDigits: 3, hour12: false, timeZoneName: "short"
-      }).formatToParts(date).map(({ type, value: part }) => [type, part]));
+      }).formatToParts(date).map(({ type, value: part }) => [ type, part ]));
       const hour = parts.hour === "24" ? "00" : parts.hour;
       return `${parts.year}-${parts.month}-${parts.day} ${hour}:${parts.minute}:${parts.second}.${parts.fractionalSecond} ${parts.timeZoneName}`;
     };
-    const modelList = (models) => Object.entries(models ?? {}).map(([tier, model]) => `${tier}: ${model}`).join(", ") || "-";
+    const modelList = (models) => Object.entries(models ?? {}).map(([ tier, model ]) => `${tier}: ${model}`).join(", ") || "-";
     const failureText = (failure) => failure ? `${failure.class}${failure.status ? ` (HTTP ${failure.status})` : ""}` : "";
     const durationText = (milliseconds) => `${(Number(milliseconds ?? 0) / 1000).toFixed(1)}s`;
     const millisecondsText = (milliseconds) => `${Math.round(Number(milliseconds ?? 0))}ms`;
@@ -139,8 +538,8 @@
     const usageBreakdownRows = (usage) => {
       const byRole = usage?.byRole ?? {};
       const orchestrator = byRole.unattributed ?? {};
-      const roleEntries = Object.entries(byRole).filter(([role]) => role !== "unattributed");
-      const subagentTotal = roleEntries.reduce((total, [, bucket]) => {
+      const roleEntries = Object.entries(byRole).filter(([ role ]) => role !== "unattributed");
+      const subagentTotal = roleEntries.reduce((total, [ , bucket ]) => {
         total.active += bucket.active ?? 0;
         total.attempts += bucket.attempts ?? 0;
         total.successes += bucket.successes ?? 0;
@@ -155,7 +554,7 @@
       const orchestratorRow = usageRow("Orchestrator", orchestrator);
       const subagentsCell = `<button type="button" class="toggle-usage" data-usage-group="subagents" aria-expanded="${expanded}"><span class="caret">${expanded ? "▾" : "▸"}</span> <code>Subagents</code></button>`;
       const subagentsRow = usageRow(null, subagentTotal, subagentsCell);
-      const childRows = roleEntries.map(([role, bucket]) => `<tr class="usage-child" data-usage-child="subagents"${expanded ? "" : " hidden"}><td>↳ <code>${text(role)}</code></td><td>${bucket.active ?? 0}</td><td>${bucket.attempts ?? 0}</td><td>${bucket.successes ?? 0}</td><td>${bucket.failures ?? 0}</td><td>${durationText(bucket.averageDurationMs)}</td><td>${bucket.toolCalls ?? 0}</td></tr>`).join("");
+      const childRows = roleEntries.map(([ role, bucket ]) => `<tr class="usage-child" data-usage-child="subagents"${expanded ? "" : " hidden"}><td>↳ <code>${text(role)}</code></td><td>${bucket.active ?? 0}</td><td>${bucket.attempts ?? 0}</td><td>${bucket.successes ?? 0}</td><td>${bucket.failures ?? 0}</td><td>${durationText(bucket.averageDurationMs)}</td><td>${bucket.toolCalls ?? 0}</td></tr>`).join("");
       return orchestratorRow + subagentsRow + childRows;
     };
     const expandedProviders = new Set();
@@ -166,14 +565,14 @@
       document.querySelector("#meta").textContent = `Instance ${status.routerInstanceId} · PID ${status.pid} · started ${formatTimestamp(status.startedAt)} · updates every 3 seconds`;
       document.querySelector("#error").textContent = "";
       const modelUsage = status.usage?.byModel ?? {};
-      const providerRows = Object.entries(status.providers ?? {}).map(([provider, state], index) => {
+      const providerRows = Object.entries(status.providers ?? {}).map(([ provider, state ], index) => {
         const group = `provider-${index}`;
         const models = Object.entries(state.configuredModels ?? {});
-        const uniqueModels = [...new Map(models.map(([tier, model]) => [model, [tier, model]])).values()];
+        const uniqueModels = [ ...new Map(models.map(([ tier, model ]) => [ model, [ tier, model ] ])).values() ];
         const collapsible = models.length > 1;
         const expanded = collapsible && expandedProviders.has(group);
-        const modelStats = uniqueModels.reduce((total, [, model]) => {
-          const stats = modelUsage[`${provider}/${model}`] ?? {};
+        const modelStats = uniqueModels.reduce((total, [ , model ]) => {
+          const stats = modelUsage[ `${provider}/${model}` ] ?? {};
           total.active += stats.active ?? 0;
           total.attempts += stats.attempts ?? 0;
           total.successes += stats.successes ?? 0;
@@ -191,10 +590,10 @@
         const providerCell = collapsible
           ? `<button type="button" class="toggle-provider" data-provider-group="${group}" aria-expanded="${expanded}"><span class="caret">${expanded ? "▾" : "▸"}</span> <code>${text(provider)}</code></button>`
           : `<code>${text(provider)}</code>`;
-        const configuredCell = collapsible ? "" : `<code>${text(models[0]?.[1] ?? "")}</code>`;
+        const configuredCell = collapsible ? "" : `<code>${text(models[ 0 ]?.[ 1 ] ?? "")}</code>`;
         const parent = `<tr class="provider-parent"><td>${providerCell}</td><td>${configuredCell}</td><td class="${limited ? "limited" : "ok"}">${text(state.status)}${cooldown}</td><td>${modelStats.active}</td><td>${modelStats.attempts}</td><td>${modelStats.successes}</td><td>${modelStats.failures}</td><td>${modelStats.toolCalls}</td><td>${durationText(modelStats.averageDurationMs)}</td><td>${modelStats.skipped}</td><td>${text(failureText(state.lastFailure))}</td></tr>`;
-        const children = collapsible ? uniqueModels.map(([, model]) => {
-          const stats = modelUsage[`${provider}/${model}`] ?? {};
+        const children = collapsible ? uniqueModels.map(([ , model ]) => {
+          const stats = modelUsage[ `${provider}/${model}` ] ?? {};
           // A model's own lastFailure never clears on a later success (server-side usage
           // bucket), so once the provider itself has recovered (limited=false), treat every
           // child as ready rather than showing a stale failure indefinitely.
@@ -223,23 +622,23 @@
         if (!current || String(failure.timestamp ?? "") > String(current.timestamp ?? "")) latestByReason.set(reason, failure);
       }
       const spawnFailureRows = Object.entries(spawnFailures.byReason ?? {})
-        .sort(([reasonA, countA], [reasonB, countB]) => Number(countB) - Number(countA) || reasonA.localeCompare(reasonB))
-        .map(([reason, count]) => {
+        .sort(([ reasonA, countA ], [ reasonB, countB ]) => Number(countB) - Number(countA) || reasonA.localeCompare(reasonB))
+        .map(([ reason, count ]) => {
           const latest = latestByReason.get(reason);
           return `<tr><td><code>${text(reason)}</code></td><td>${count}</td><td>${latest ? formatTimestamp(latest.timestamp) : "-"}</td></tr>`;
         }).join("");
       document.querySelector("#spawn-failures-by-reason").innerHTML = spawnFailureRows || '<tr><td colspan="3">No subagent spawn failures observed.</td></tr>';
-      const overallLastSpawnFailure = [...latestByReason.values()].sort((a, b) => String(a.timestamp ?? "").localeCompare(String(b.timestamp ?? ""))).at(-1);
+      const overallLastSpawnFailure = [ ...latestByReason.values() ].sort((a, b) => String(a.timestamp ?? "").localeCompare(String(b.timestamp ?? ""))).at(-1);
       document.querySelector("#spawn-failures-total").textContent = spawnFailures.total ?? 0;
       document.querySelector("#spawn-failures-last").textContent = overallLastSpawnFailure ? formatTimestamp(overallLastSpawnFailure.timestamp) : "-";
       const taskStatus = status.codexTasks ?? {};
-      const taskCounts = Object.entries(taskStatus.countsByStatus ?? {}).map(([state, count]) => `${state}: ${count}`).join(", ") || "-";
+      const taskCounts = Object.entries(taskStatus.countsByStatus ?? {}).map(([ state, count ]) => `${state}: ${count}`).join(", ") || "-";
       document.querySelector("#task-summary").textContent = `Status: ${taskStatus.status ?? "unknown"} · fetched: ${taskStatus.fetchedAt ? formatTimestamp(taskStatus.fetchedAt) : "-"} · ${taskCounts}${taskStatus.error ? ` · ${taskStatus.error}` : ""}`;
       document.querySelector("#codex-tasks").innerHTML = (taskStatus.tasks ?? []).map((task) => `<tr><td><code>${text(task.id)}</code></td><td>${text(task.status)}</td><td>${text(task.name)}</td><td><code>${text(task.cwd)}</code></td><td>${text(task.modelProvider)}</td><td>${text(task.agentRole)}</td><td>${task.updatedAt ? formatTimestamp(task.updatedAt) : ""}</td></tr>`).join("") || '<tr><td colspan="7">No tasks returned.</td></tr>';
       const concurrency = status.concurrency ?? {};
       const limit = (value) => value == null ? "unlimited" : value;
       const denial = concurrency.lastDenial ? `${concurrency.lastDenial.reason} (${concurrency.lastDenial.sessionScope})` : "-";
-      const denialsByReason = Object.entries(concurrency.denialsByReason ?? {}).map(([reason, count]) => `${text(reason)}: ${count}`).join(", ") || "-";
+      const denialsByReason = Object.entries(concurrency.denialsByReason ?? {}).map(([ reason, count ]) => `${text(reason)}: ${count}`).join(", ") || "-";
       const usage = status.usage ?? {};
       const totals = usage.totals ?? {};
       const active = Object.values(status.providers ?? {}).reduce((sum, provider) => sum + Number(provider.activeRequests ?? 0), 0);
@@ -282,8 +681,8 @@
       document.querySelector("#mcp-total-discovery").textContent = mcpServers.reduce((sum, server) => sum + Number(server.toolDiscoveryAttempts ?? 0), 0);
       document.querySelector("#mcp-total-failures").textContent = mcpServers.reduce((sum, server) => sum + Number(server.failures ?? 0), 0);
       document.querySelector("#mcp-total-duration").textContent = durationText(mcpTotalDurationCount ? mcpTotalDurationMs / mcpTotalDurationCount : 0);
-      const countsText = (counts) => Object.entries(counts ?? {}).map(([key, value]) => `${text(key)}: ${value}`).join(", ") || "-";
-      const summaryCountsText = (counts) => Object.entries(counts ?? {}).map(([key, value]) => `${key}: ${value}`).join(", ") || "-";
+      const countsText = (counts) => Object.entries(counts ?? {}).map(([ key, value ]) => `${text(key)}: ${value}`).join(", ") || "-";
+      const summaryCountsText = (counts) => Object.entries(counts ?? {}).map(([ key, value ]) => `${key}: ${value}`).join(", ") || "-";
       const skills = codexTelemetry.skills ?? {};
       const skillsInjected = skills.injected ?? {};
       const skillsUsage = skills.usage ?? {};
@@ -292,9 +691,9 @@
       const skillInjectTotal = Number(skillsInjected.total ?? 0);
       const skillUsageTotal = Number(skillsUsage.total ?? 0);
       const skillShare = (value, total) => total > 0 ? `${((Number(value ?? 0) / total) * 100).toFixed(1)}%` : "-";
-      const injectedBySkill = new Map((skillsInjected.bySkill ?? []).map((entry) => [entry.skill, entry]));
-      const usageBySkill = new Map((skillsUsage.bySkill ?? []).map((entry) => [entry.skill, entry]));
-      const skillNames = [...new Set([...injectedBySkill.keys(), ...usageBySkill.keys()])].sort((a, b) => a.localeCompare(b));
+      const injectedBySkill = new Map((skillsInjected.bySkill ?? []).map((entry) => [ entry.skill, entry ]));
+      const usageBySkill = new Map((skillsUsage.bySkill ?? []).map((entry) => [ entry.skill, entry ]));
+      const skillNames = [ ...new Set([ ...injectedBySkill.keys(), ...usageBySkill.keys() ]) ].sort((a, b) => a.localeCompare(b));
       document.querySelector("#skills-table").innerHTML = skillNames.map((skillName) => {
         const injected = injectedBySkill.get(skillName) ?? {};
         const usage = usageBySkill.get(skillName) ?? {};
@@ -356,9 +755,9 @@
         `<tr><td>Spawn</td><td><code>native agent</code></td><td>-</td><td>-</td><td>${spawnSource.count}</td><td>${countsText(spawnSource.byStatus)}</td><td>-</td></tr>`,
       ].join("");
       document.querySelector("#native-runtime-telemetry").innerHTML = runtimeRows;
-      const runtimeSources = [...(codexTelemetry.tools?.byTool ?? []), ...hooks, threadSource, spawnSource];
+      const runtimeSources = [ ...(codexTelemetry.tools?.byTool ?? []), ...hooks, threadSource, spawnSource ];
       const runtimeStatusTotals = runtimeSources.reduce((totalsByStatus, item) => {
-        for (const [status, count] of Object.entries(item.byStatus ?? {})) totalsByStatus[status] = (totalsByStatus[status] ?? 0) + Number(count ?? 0);
+        for (const [ status, count ] of Object.entries(item.byStatus ?? {})) totalsByStatus[ status ] = (totalsByStatus[ status ] ?? 0) + Number(count ?? 0);
         return totalsByStatus;
       }, {});
       const runtimeDurationMs = runtimeSources.reduce((sum, item) => sum + Number(item.durationMs ?? 0), 0);
@@ -372,28 +771,28 @@
       const sqliteDuration = sqlite.initDurationMs ?? {};
       const summaryRow = (category, metric, value) => `<tr><td>${text(category)}</td><td>${text(metric)}</td><td>${text(value)}</td></tr>`;
       const operationalRows = [
-        ["Codex telemetry", "OTLP logs", receiver.logs ?? 0],
-        ["Codex telemetry", "OTLP traces", receiver.traces ?? 0],
-        ["Codex telemetry", "OTLP metrics", receiver.metrics ?? 0],
-        ["Codex telemetry", "Invalid signals", receiver.invalid ?? 0],
-        ["Codex telemetry", "Recent sessions", `${codexTelemetry.sessionsRecent ?? 0}/${codexTelemetry.sessionsObserved ?? 0}`],
-        ["Codex telemetry", "Completed turns / prompts", `${turns.completed ?? 0}/${turns.prompts ?? 0}`],
-        ["Codex telemetry", "Average TTFT", durationText(turns.averageTtftMs)],
-        ["Codex telemetry", "Tokens", tokens.total ?? 0],
-        ["Codex telemetry", "MCP ready / observed", `${mcpSummary.ready ?? 0}/${mcpSummary.observed ?? 0}`],
-        ["Codex telemetry", "Last received", receiver.lastReceivedAt ? formatTimestamp(receiver.lastReceivedAt) : "-"],
-        ["State database", "Initializations", sqliteInit],
-        ["State database", "Fallbacks", sqliteFallbacks],
-        ["State database", "Init duration samples", sqliteDuration.totalCount ?? 0],
-        ["State database", "Average init duration", sqliteDuration.totalCount ? millisecondsText(sqliteDuration.totalSum / sqliteDuration.totalCount) : "0ms"],
-        ["Concurrency", "Per-session limit", limit(concurrency.effectivePerSessionLimit)],
-        ["Concurrency", "Active sessions", concurrency.activeSessions ?? 0],
-        ["Concurrency", "Active subagents", concurrency.activeSubagentThreads ?? 0],
-        ["Concurrency", "Denials", concurrency.denials ?? 0],
-        ["Concurrency", "Denials by reason", summaryCountsText(concurrency.denialsByReason)],
-        ["Concurrency", "Last denial", denial],
-        ...(concurrency.processFallbackEnforcement ? [["Concurrency", "Fallback warning", `${concurrency.processFallbackActiveThreads ?? 0} unidentified active thread(s) share one process-wide bucket`]] : []),
-      ].map(([category, metric, value]) => summaryRow(category, metric, value)).join("");
+        [ "Codex telemetry", "OTLP logs", receiver.logs ?? 0 ],
+        [ "Codex telemetry", "OTLP traces", receiver.traces ?? 0 ],
+        [ "Codex telemetry", "OTLP metrics", receiver.metrics ?? 0 ],
+        [ "Codex telemetry", "Invalid signals", receiver.invalid ?? 0 ],
+        [ "Codex telemetry", "Recent sessions", `${codexTelemetry.sessionsRecent ?? 0}/${codexTelemetry.sessionsObserved ?? 0}` ],
+        [ "Codex telemetry", "Completed turns / prompts", `${turns.completed ?? 0}/${turns.prompts ?? 0}` ],
+        [ "Codex telemetry", "Average TTFT", durationText(turns.averageTtftMs) ],
+        [ "Codex telemetry", "Tokens", tokens.total ?? 0 ],
+        [ "Codex telemetry", "MCP ready / observed", `${mcpSummary.ready ?? 0}/${mcpSummary.observed ?? 0}` ],
+        [ "Codex telemetry", "Last received", receiver.lastReceivedAt ? formatTimestamp(receiver.lastReceivedAt) : "-" ],
+        [ "State database", "Initializations", sqliteInit ],
+        [ "State database", "Fallbacks", sqliteFallbacks ],
+        [ "State database", "Init duration samples", sqliteDuration.totalCount ?? 0 ],
+        [ "State database", "Average init duration", sqliteDuration.totalCount ? millisecondsText(sqliteDuration.totalSum / sqliteDuration.totalCount) : "0ms" ],
+        [ "Concurrency", "Per-session limit", limit(concurrency.effectivePerSessionLimit) ],
+        [ "Concurrency", "Active sessions", concurrency.activeSessions ?? 0 ],
+        [ "Concurrency", "Active subagents", concurrency.activeSubagentThreads ?? 0 ],
+        [ "Concurrency", "Denials", concurrency.denials ?? 0 ],
+        [ "Concurrency", "Denials by reason", summaryCountsText(concurrency.denialsByReason) ],
+        [ "Concurrency", "Last denial", denial ],
+        ...(concurrency.processFallbackEnforcement ? [ [ "Concurrency", "Fallback warning", `${concurrency.processFallbackActiveThreads ?? 0} unidentified active thread(s) share one process-wide bucket` ] ] : []),
+      ].map(([ category, metric, value ]) => summaryRow(category, metric, value)).join("");
       document.querySelector("#operational-summaries").innerHTML = operationalRows;
       document.querySelector("#events").textContent = (status.recentEvents ?? []).slice(0, 25).map((event) => {
         const target = `${event.provider}/${event.model}`;
@@ -423,4 +822,5 @@
     setInterval(refresh, 3000);
   </script>
 </body>
+
 </html>
