@@ -77,15 +77,16 @@ state-database, and concurrency values as category/metric/value rows instead of
 embedding those values in prose. Each table section has one heading that also
 owns its collapse toggle. The primary Provider health and usage, Usage by
 orchestrator and subagents, MCP server telemetry, Skills, and Hooks tables are
-expanded by default; secondary metric inventory, catalog/context, task,
-spawn-failure, and recent-event sections can be expanded independently.
+expanded by default; the combined Skill selection/context table is visible
+inside Skills, while secondary metric inventory, spawn-failure, task, and
+recent-event sections can be expanded independently.
 
 Totals footers are shown for homogeneous roll-up tables: provider/usage,
 MCP lifecycle, Skills injections, hook/runtime calls, observed metric counts,
-and spawn-failure reasons. The Operational summary and Skill catalog/context
-tables intentionally do not have totals because their rows mix incompatible
-units; the Codex task snapshot and recent-event list are entity/event views
-rather than additive measurements.
+and spawn-failure reasons. The Operational summary and combined Skill
+selection/context table intentionally do not have totals because their rows
+mix incompatible units; the Codex task snapshot and recent-event list are entity/event views rather than additive
+measurements.
 
 
 
@@ -116,20 +117,25 @@ the router tolerates and aggregates separately. The source-backed
 the official catalog; when present, the router totals and averages it
 separately.
 
-The Skills table breaks injected totals down by skill, share of all injections,
-outcome status, invocation type, root-vs-subagent agent kind, model, and
-plugin. Agent kind is derived from the native `session_source` metadata: a
-`subagent_thread_spawn_*` source is classified as `subagent`, other non-empty
-sources as `root`, and missing metadata as `unknown`. This does not identify the
-human who selected a skill or recover the exact child role/thread. A separate
-Skill catalog & context histograms table shows the thread-level sample count,
-total, and average for enabled, kept, truncated, and description-truncation
-metrics; these histograms are intentionally not attributed to individual skills
-because Codex does not provide a reliable skill dimension on them. The
-shadow-selection metrics remain in the observed inventory until their schema
-and dimensions are validated for safe aggregation. No prompt or skill content
-is exported or stored; only metric attributes and numeric aggregates are
-retained.
+The Skills table separates context injections from invocation counts. The
+`codex.skill.injected` totals show recognized skill injection outcomes and may
+be de-duplicated by Codex within a turn; they are not a count of every operation
+performed under a skill. The `Invocations` column uses the separate
+`codex.skills.shadow_selection.invocation` signal when available, which is the
+closer native measure for repeated skill selection/use. Injection and invocation
+shares, statuses, and invoke types are kept distinct.
+
+The table also shows root-vs-subagent agent kind, model, and plugin where native
+metadata is present. Agent kind is derived from `session_source`: a
+`subagent_thread_spawn_*` source is `subagent`, other non-empty sources are
+`root`, and missing metadata is `unknown`. This does not identify the human who
+selected a skill or recover the exact child role/thread. The combined Skill
+selection & context telemetry table exposes aggregate catalog/selection
+diagnostics, turn duration, and enabled/kept/truncated/description-truncation
+aggregates. None of these thread-level histograms provides a reliable skill-name dimension, so the
+router does not invent per-skill availability counts. No prompt or skill
+content is exported or stored; only metric attributes and numeric aggregates
+are retained.
 
 These are Codex-native metrics, not a generic audit stream for every provider
 behind the router. A zero `codexTelemetry.skills` value means that no Codex

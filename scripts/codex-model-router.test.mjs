@@ -330,6 +330,31 @@ test("groups skill injections by agent kind, model, and plugin metadata", () => 
   resetOtelTelemetry();
 });
 
+test("tracks shadow selection invocations separately from context injections", () => {
+  resetOtelTelemetry();
+  const attributes = (entries) => entries.map(([key, value]) => ({ key, value: { stringValue: String(value) } }));
+  const invocation = (value, time) => ({
+    name: "codex.skills.shadow_selection.invocation",
+    sum: { aggregationTemporality: 2, isMonotonic: true, dataPoints: [{ attributes: attributes([["skill", "orchestration"], ["status", "ok"], ["invoke_type", "implicit"]]), startTimeUnixNano: "1", timeUnixNano: String(time), asInt: String(value) }] },
+  });
+  const histogram = (name, count, sum, time) => ({
+    name,
+    histogram: { aggregationTemporality: 2, dataPoints: [{ attributes: [], startTimeUnixNano: "1", timeUnixNano: String(time), count: String(count), sum }] },
+  });
+  const ingest = (metrics) => ingestOtelSignal("metrics", { resourceMetrics: [{ scopeMetrics: [{ metrics }] }] });
+
+  ingest([invocation(1, 10), histogram("codex.skills.shadow_selection.catalog_entries", 1, 8, 10)]);
+  ingest([invocation(3, 20), histogram("codex.skills.shadow_selection.catalog_entries", 2, 15, 20)]);
+
+  const skills = codexTelemetryStatus().skills;
+  assert.equal(skills.injected.total, 0);
+  assert.equal(skills.usage.total, 3);
+  assert.deepEqual(skills.usage.byInvokeType, { implicit: 3 });
+  assert.deepEqual(skills.usage.bySkill[0], { skill: "orchestration", total: 3, byStatus: { ok: 3 }, byInvokeType: { implicit: 3 }, byAgentKind: { unknown: 3 }, byModel: { unknown: 3 }, byPlugin: { none: 3 } });
+  assert.deepEqual(skills.selection.catalogEntries, { count: 2, sum: 15, average: 7.5 });
+  resetOtelTelemetry();
+});
+
 test("counts delta-temporality skill metrics once per export", () => {
   resetOtelTelemetry();
   const attributes = (entries) => entries.map(([key, value]) => ({ key, value: { stringValue: String(value) } }));
@@ -486,10 +511,18 @@ test("serves HTML only from /dashboard and raw JSON from /status", async () => {
     assert.match(dashboardBody, /id="skills-table"/);
     assert.match(dashboardBody, /<th>Totals<\/th>/);
     assert.match(dashboardBody, /id="skills-total"/);
-    assert.match(dashboardBody, /<th>Skill<\/th><th>Injected<\/th><th>Share<\/th><th>By status<\/th><th>By invoke type<\/th><th>Agent kind<\/th><th>Models<\/th><th>Plugins<\/th>/);
+    assert.match(dashboardBody, /id="skills-total-usage"/);
+    assert.match(dashboardBody, /id="skills-total-usage-invoke-type"/);
+    assert.match(dashboardBody, /id="skills-selection"/);
+    assert.match(dashboardBody, /skillsUsage/);
+    assert.match(dashboardBody, /shadow_selection\.invocation/);
+    assert.match(dashboardBody, /id="skills-selection"/);
+    assert.match(dashboardBody, /aria-controls="skills-selection-section" aria-expanded="true"/);
+    assert.match(dashboardBody, /<th>Skill<\/th><th>Injected<\/th><th>Invocations<\/th><th>Injection share<\/th><th>Invocation share<\/th><th>By status<\/th><th>Injected by invoke type<\/th><th>Invoked by invoke type<\/th>/);
     assert.match(dashboardBody, /id="skills-histograms"/);
-    assert.match(dashboardBody, /aria-controls="skills-histograms-section" aria-expanded="false"/);
-    assert.match(dashboardBody, /id="skills-histograms-section" hidden/);
+    assert.match(dashboardBody, /aria-controls="skills-selection-section" aria-expanded="true"/);
+    assert.match(dashboardBody, /id="skills-selection-section"/);
+    assert.match(dashboardBody, /id="skills-selection"/);
     assert.match(dashboardBody, /skillShare/);
     assert.match(dashboardBody, /histogramRow/);
     assert.match(dashboardBody, /description_truncated_chars/);
@@ -509,6 +542,8 @@ test("serves HTML only from /dashboard and raw JSON from /status", async () => {
     assert.match(dashboardBody, /<span class="caret">▾<\/span> Hooks<\/button>/);
     assert.match(dashboardBody, /id="native-runtime-telemetry"/);
     assert.match(dashboardBody, /id="native-runtime-total-calls"/);
+    assert.match(dashboardBody, /<td>Thread<\/td>/);
+    assert.match(dashboardBody, /<td>Spawn<\/td>/);
     assert.match(dashboardBody, /threadSource/);
     assert.match(dashboardBody, /spawnSource/);
     assert.doesNotMatch(dashboardBody, /id="hooks-threads-summary"/);
@@ -599,6 +634,9 @@ test("persists provider telemetry and recent events across router restarts", asy
       name: "codex.skill.injected",
       sum: { aggregationTemporality: 1, dataPoints: [{ attributes: [{ key: "skill", value: { stringValue: "orchestration" } }, { key: "status", value: { stringValue: "ok" } }, { key: "invoke_type", value: { stringValue: "implicit" } }], startTimeUnixNano: "1", timeUnixNano: "2", asInt: "2" }] },
     }, {
+      name: "codex.skills.shadow_selection.invocation",
+      sum: { aggregationTemporality: 1, dataPoints: [{ attributes: [{ key: "skill", value: { stringValue: "orchestration" } }, { key: "status", value: { stringValue: "ok" } }, { key: "invoke_type", value: { stringValue: "implicit" } }], startTimeUnixNano: "1", timeUnixNano: "2", asInt: "2" }] },
+    }, {
       name: "codex.hooks.run",
       sum: { aggregationTemporality: 1, dataPoints: [{ attributes: [{ key: "hook_name", value: { stringValue: "SessionStart" } }, { key: "hook_source", value: { stringValue: "user" } }, { key: "handler_type", value: { stringValue: "command" } }, { key: "status", value: { stringValue: "ok" } }], startTimeUnixNano: "1", timeUnixNano: "2", asInt: "1" }] },
     }, {
@@ -620,6 +658,8 @@ test("persists provider telemetry and recent events across router restarts", asy
     assert.equal(restored.recentEvents[0].requestId, "req-persist");
     assert.equal(restored.recentEvents[0].toolCalls, 0);
     assert.equal(restored.codexTelemetry.skills.injected.total, 2);
+    assert.equal(restored.codexTelemetry.skills.usage.total, 2);
+    assert.equal(restored.codexTelemetry.skills.usage.bySkill[0].skill, "orchestration");
     assert.equal(restored.codexTelemetry.skills.injected.bySkill[0].skill, "orchestration");
     assert.deepEqual(restored.codexTelemetry.skills.injected.bySkill[0].byInvokeType, { implicit: 2 });
     assert.deepEqual(restored.codexTelemetry.skills.injected.byAgentKind, { unknown: 2 });

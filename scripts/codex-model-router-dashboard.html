@@ -69,12 +69,16 @@
 
   <h2><button type="button" class="toggle-section" aria-controls="skills-section" aria-expanded="true"><span class="caret">▾</span> Skills</button></h2>
   <div id="skills-section">
-    <table><thead><tr><th>Skill</th><th>Injected</th><th>Share</th><th>By status</th><th>By invoke type</th><th>Agent kind</th><th>Models</th><th>Plugins</th></tr></thead><tbody id="skills-table"><tr><td colspan="8">Loading…</td></tr></tbody><tfoot><tr class="provider-summary"><th>Totals</th><th id="skills-total">0</th><th id="skills-total-share">0.0%</th><td id="skills-total-status">-</td><td id="skills-total-invoke-type">-</td><td id="skills-total-agent-kind">-</td><td id="skills-total-model">-</td><td id="skills-total-plugin">-</td></tr></tfoot></table>
+    <table><thead><tr><th>Skill</th><th>Injected</th><th>Invocations</th><th>Injection share</th><th>Invocation share</th><th>By status</th><th>Injected by invoke type</th><th>Invoked by invoke type</th><th>Agent kind</th><th>Models</th><th>Plugins</th></tr></thead><tbody id="skills-table"><tr><td colspan="11">Loading…</td></tr></tbody><tfoot><tr class="provider-summary"><th>Totals</th><th id="skills-total">0</th><th id="skills-total-usage">0</th><th id="skills-total-share">0.0%</th><th id="skills-total-usage-share">0.0%</th><td id="skills-total-status">-</td><td id="skills-total-invoke-type">-</td><td id="skills-total-usage-invoke-type">-</td><td id="skills-total-agent-kind">-</td><td id="skills-total-model">-</td><td id="skills-total-plugin">-</td></tr></tfoot></table>
 
-    <h3><button type="button" class="toggle-section" aria-controls="skills-histograms-section" aria-expanded="false"><span class="caret">▸</span> Skill catalog &amp; context histograms</button></h3>
-    <div id="skills-histograms-section" hidden>
-      <div><small>Per-thread aggregate histograms — samples (count), total (sum), and average. Not per-skill.</small></div>
-      <table><thead><tr><th>Metric</th><th>Samples</th><th>Total</th><th>Average</th></tr></thead><tbody id="skills-histograms"><tr><td colspan="4">Loading…</td></tr></tbody></table>
+    <h3><button type="button" class="toggle-section" aria-controls="skills-selection-section" aria-expanded="true"><span class="caret">▾</span> Skill selection &amp; context telemetry</button></h3>
+    <div id="skills-selection-section">
+      <div><small>Selection telemetry plus per-thread aggregate context histograms — samples (count), total (sum), and average. Histogram rows are thread aggregates, not per-skill.</small></div>
+      <table>
+        <thead><tr><th>Metric</th><th>Samples</th><th>Total</th><th>Average</th></tr></thead>
+        <tbody id="skills-selection"><tr><td colspan="4">Loading…</td></tr></tbody>
+        <tbody id="skills-histograms"><tr><td colspan="4">Loading…</td></tr></tbody>
+      </table>
     </div>
   </div>
 
@@ -282,27 +286,50 @@
       const summaryCountsText = (counts) => Object.entries(counts ?? {}).map(([key, value]) => `${key}: ${value}`).join(", ") || "-";
       const skills = codexTelemetry.skills ?? {};
       const skillsInjected = skills.injected ?? {};
+      const skillsUsage = skills.usage ?? {};
       const skillsThreads = skills.threads ?? {};
       const hasThreadMetrics = Object.values(skillsThreads).some((metric) => (metric?.count ?? 0) > 0);
       const skillInjectTotal = Number(skillsInjected.total ?? 0);
-      const skillShare = (value) => skillInjectTotal > 0 ? `${((Number(value ?? 0) / skillInjectTotal) * 100).toFixed(1)}%` : "-";
-      document.querySelector("#skills-table").innerHTML = (skillsInjected.bySkill ?? []).map((entry) => {
-        const total = entry.total ?? 0;
-        return `<tr><td><code>${text(entry.skill)}</code></td><td>${total}</td><td>${skillShare(total)}</td><td>${countsText(entry.byStatus)}</td><td>${countsText(entry.byInvokeType)}</td><td>${countsText(entry.byAgentKind)}</td><td>${countsText(entry.byModel)}</td><td>${countsText(entry.byPlugin)}</td></tr>`;
-      }).join("") || '<tr><td colspan="8">No skill invocations observed yet.</td></tr>';
+      const skillUsageTotal = Number(skillsUsage.total ?? 0);
+      const skillShare = (value, total) => total > 0 ? `${((Number(value ?? 0) / total) * 100).toFixed(1)}%` : "-";
+      const injectedBySkill = new Map((skillsInjected.bySkill ?? []).map((entry) => [entry.skill, entry]));
+      const usageBySkill = new Map((skillsUsage.bySkill ?? []).map((entry) => [entry.skill, entry]));
+      const skillNames = [...new Set([...injectedBySkill.keys(), ...usageBySkill.keys()])].sort((a, b) => a.localeCompare(b));
+      document.querySelector("#skills-table").innerHTML = skillNames.map((skillName) => {
+        const injected = injectedBySkill.get(skillName) ?? {};
+        const usage = usageBySkill.get(skillName) ?? {};
+        const injectedTotal = injected.total ?? 0;
+        const usageTotal = usage.total ?? 0;
+        return `<tr><td><code>${text(skillName)}</code></td><td>${injectedTotal}</td><td>${usageTotal}</td><td>${skillShare(injectedTotal, skillInjectTotal)}</td><td>${skillShare(usageTotal, skillUsageTotal)}</td><td>${countsText(injected.byStatus)}</td><td>${countsText(injected.byInvokeType)}</td><td>${countsText(usage.byInvokeType)}</td><td>${countsText(usage.byAgentKind ?? injected.byAgentKind)}</td><td>${countsText(usage.byModel ?? injected.byModel)}</td><td>${countsText(usage.byPlugin ?? injected.byPlugin)}</td></tr>`;
+      }).join("") || '<tr><td colspan="11">No skill metrics observed yet.</td></tr>';
       document.querySelector("#skills-total").textContent = skillInjectTotal;
+      document.querySelector("#skills-total-usage").textContent = skillUsageTotal;
       document.querySelector("#skills-total-share").textContent = skillInjectTotal > 0 ? "100.0%" : "0.0%";
+      document.querySelector("#skills-total-usage-share").textContent = skillUsageTotal > 0 ? "100.0%" : "0.0%";
       document.querySelector("#skills-total-status").textContent = countsText(skillsInjected.byStatus);
       document.querySelector("#skills-total-invoke-type").textContent = countsText(skillsInjected.byInvokeType);
-      document.querySelector("#skills-total-agent-kind").textContent = countsText(skillsInjected.byAgentKind);
-      document.querySelector("#skills-total-model").textContent = countsText(skillsInjected.byModel);
-      document.querySelector("#skills-total-plugin").textContent = countsText(skillsInjected.byPlugin);
+      document.querySelector("#skills-total-usage-invoke-type").textContent = countsText(skillsUsage.byInvokeType);
+      document.querySelector("#skills-total-agent-kind").textContent = countsText(skillsUsage.byAgentKind ?? skillsInjected.byAgentKind);
+      document.querySelector("#skills-total-model").textContent = countsText(skillsUsage.byModel ?? skillsInjected.byModel);
+      document.querySelector("#skills-total-plugin").textContent = countsText(skillsUsage.byPlugin ?? skillsInjected.byPlugin);
       const histogramRow = (label, histogram) => {
         const count = histogram?.count ?? 0;
         const sum = histogram?.sum ?? 0;
         const average = Number(histogram?.average ?? 0);
         return `<tr><td><code>${text(label)}</code></td><td>${count}</td><td>${count > 0 ? sum : 0}</td><td>${count > 0 ? average.toFixed(1) : "0.0"}</td></tr>`;
       };
+      const selection = skills.selection ?? {};
+      const selectionRow = (label, histogram) => histogramRow(label, histogram);
+      const selectionRows = [
+        `<tr><td><code>codex.skills.shadow_selection.invocation</code></td><td>${skillsUsage.total ?? 0}</td><td>${skillsUsage.total ?? 0}</td><td>-</td></tr>`,
+        selectionRow("codex.skills.shadow_selection.catalog_entries", selection.catalogEntries),
+        selectionRow("codex.skills.shadow_selection.selected_entries", selection.selectedEntries),
+        selectionRow("codex.skills.shadow_selection.query_terms", selection.queryTerms),
+        selectionRow("codex.skills.shadow_selection.reduction_bps", selection.reductionBps),
+        selectionRow("codex.skills.shadow_selection.duration_ms", selection.durationMs),
+        selectionRow("codex.skill.turn.duration_seconds", selection.durationSeconds),
+      ].join("");
+      document.querySelector("#skills-selection").innerHTML = selectionRows;
       const histogramRows = [
         histogramRow("codex.thread.skills.enabled_total", skillsThreads.enabledTotal),
         histogramRow("codex.thread.skills.kept_total", skillsThreads.keptTotal),

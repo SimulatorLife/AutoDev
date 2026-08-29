@@ -192,6 +192,15 @@ const otelTelemetry = {
   },
   skills: {
     injected: { total: 0, byStatus: {}, byInvokeType: {}, byAgentKind: {}, byModel: {}, byPlugin: {}, bySkill: new Map() },
+    usage: { total: 0, byStatus: {}, byInvokeType: {}, byAgentKind: {}, byModel: {}, byPlugin: {}, bySkill: new Map() },
+    selection: {
+      catalogEntries: { count: 0, sum: 0 },
+      selectedEntries: { count: 0, sum: 0 },
+      queryTerms: { count: 0, sum: 0 },
+      reductionBps: { count: 0, sum: 0 },
+      durationMs: { count: 0, sum: 0 },
+      durationSeconds: { count: 0, sum: 0 },
+    },
     threads: {
       enabled: { count: 0, sum: 0 },
       kept: { count: 0, sum: 0 },
@@ -424,6 +433,41 @@ function noteSkillInjected(metricName, attributes, dataPoint, temporality) {
   bucket.byPlugin[plugin] = (bucket.byPlugin[plugin] ?? 0) + delta;
 }
 
+function skillUsageBucket(name) {
+  if (!otelTelemetry.skills.usage.bySkill.has(name)) {
+    otelTelemetry.skills.usage.bySkill.set(name, { skill: name, total: 0, byStatus: {}, byInvokeType: {}, byAgentKind: {}, byModel: {}, byPlugin: {} });
+  }
+  return otelTelemetry.skills.usage.bySkill.get(name);
+}
+
+function noteSkillUsage(target, bucketForSkill, metricName, attributes, dataPoint, temporality, value = otelSumDataPointValue(dataPoint)) {
+  const delta = otelSeriesDelta(otelSeriesKey(metricName, attributes, dataPoint.startTimeUnixNano), dataPoint.timeUnixNano, value, temporality);
+  if (delta === 0) return;
+  const skill = safeMetricLabel(attributes.skill ?? attributes.skill_name, "unknown-skill");
+  const status = safeMetricLabel(attributes.status);
+  const invokeType = typeof attributes.invoke_type === "string" && attributes.invoke_type ? safeMetricLabel(attributes.invoke_type) : null;
+  const agentKind = skillAgentKind(attributes);
+  const model = safeMetricLabel(attributes.model_slug ?? attributes.model, "unknown");
+  const plugin = safeMetricLabel(attributes.plugin_id, "none");
+  target.total += delta;
+  target.byStatus[status] = (target.byStatus[status] ?? 0) + delta;
+  if (invokeType) target.byInvokeType[invokeType] = (target.byInvokeType[invokeType] ?? 0) + delta;
+  target.byAgentKind[agentKind] = (target.byAgentKind[agentKind] ?? 0) + delta;
+  target.byModel[model] = (target.byModel[model] ?? 0) + delta;
+  target.byPlugin[plugin] = (target.byPlugin[plugin] ?? 0) + delta;
+  const bucket = bucketForSkill(skill);
+  bucket.total += delta;
+  bucket.byStatus[status] = (bucket.byStatus[status] ?? 0) + delta;
+  if (invokeType) bucket.byInvokeType[invokeType] = (bucket.byInvokeType[invokeType] ?? 0) + delta;
+  bucket.byAgentKind[agentKind] = (bucket.byAgentKind[agentKind] ?? 0) + delta;
+  bucket.byModel[model] = (bucket.byModel[model] ?? 0) + delta;
+  bucket.byPlugin[plugin] = (bucket.byPlugin[plugin] ?? 0) + delta;
+}
+
+function noteSkillSelectionHistogram(bucket, metricName, attributes, dataPoint, temporality) {
+  noteThreadSkillsHistogram(bucket, metricName, attributes, dataPoint, temporality);
+}
+
 function noteThreadSkillsHistogram(bucket, metricName, attributes, dataPoint, temporality) {
   const countDelta = otelSeriesDelta(otelSeriesKey(`${metricName}#count`, attributes, dataPoint.startTimeUnixNano), dataPoint.timeUnixNano, numberAttribute({ count: dataPoint.count }, "count"), temporality);
   const sumDelta = otelSeriesDelta(otelSeriesKey(`${metricName}#sum`, attributes, dataPoint.startTimeUnixNano), dataPoint.timeUnixNano, numberAttribute({ sum: dataPoint.sum }, "sum"), temporality);
@@ -579,6 +623,15 @@ function noteThreadSpawn(metricName, attributes, dataPoint, temporality) {
 // Canonical full OTLP metric names for thread-level skill histograms. Codex
 // reports `description_truncated_chars` as its own histogram (distribution
 // of trimmed-description sizes across truncated skills), not an attribute.
+const SKILL_SELECTION_HISTOGRAMS = {
+  "codex.skills.shadow_selection.catalog_entries": "catalogEntries",
+  "codex.skills.shadow_selection.selected_entries": "selectedEntries",
+  "codex.skills.shadow_selection.query_terms": "queryTerms",
+  "codex.skills.shadow_selection.reduction_bps": "reductionBps",
+  "codex.skills.shadow_selection.duration_ms": "durationMs",
+  "codex.skill.turn.duration_seconds": "durationSeconds",
+};
+
 const THREAD_SKILLS_HISTOGRAMS = {
   "codex.thread.skills.enabled_total": "enabled",
   "codex.thread.skills.kept_total": "kept",
@@ -597,6 +650,18 @@ function ingestOtelMetrics(payload) {
           for (const dataPoint of metric.sum?.dataPoints ?? []) {
             noteSkillInjected(metric.name, { ...resourceAttributes, ...otelAttributes(dataPoint.attributes) }, dataPoint, temporality);
           }
+        } else if (metric.name === "codex.skills.shadow_selection.invocation") {
+          const resourceAttributes = otelAttributes(resourceMetric.resource?.attributes);
+          const attributesForMetric = (dataPoint) => ({ ...resourceAttributes, ...otelAttributes(dataPoint.attributes) });
+          const temporality = metric.sum?.aggregationTemporality;
+          for (const dataPoint of metric.sum?.dataPoints ?? []) noteSkillUsage(otelTelemetry.skills.usage, skillUsageBucket, metric.name, attributesForMetric(dataPoint), dataPoint, temporality);
+          const histogramTemporality = metric.histogram?.aggregationTemporality;
+          for (const dataPoint of metric.histogram?.dataPoints ?? []) noteSkillUsage(otelTelemetry.skills.usage, skillUsageBucket, metric.name, attributesForMetric(dataPoint), dataPoint, histogramTemporality, numberAttribute({ count: dataPoint.count }, "count"));
+        } else if (SKILL_SELECTION_HISTOGRAMS[metric.name]) {
+          const bucket = otelTelemetry.skills.selection[SKILL_SELECTION_HISTOGRAMS[metric.name]];
+          const temporality = metric.histogram?.aggregationTemporality;
+          const resourceAttributes = otelAttributes(resourceMetric.resource?.attributes);
+          for (const dataPoint of metric.histogram?.dataPoints ?? []) noteSkillSelectionHistogram(bucket, metric.name, { ...resourceAttributes, ...otelAttributes(dataPoint.attributes) }, dataPoint, temporality);
         } else if (THREAD_SKILLS_HISTOGRAMS[metric.name]) {
           const bucket = otelTelemetry.skills.threads[THREAD_SKILLS_HISTOGRAMS[metric.name]];
           const temporality = metric.histogram?.aggregationTemporality;
@@ -669,6 +734,11 @@ function resetOtelTelemetry() {
   otelTelemetry.threads = { started: { total: 0, bySource: {} }, spawns: { total: 0, byStatus: {}, byRole: {}, byModel: {} } };
   otelTelemetry.sqlite = { init: new Map(), initDurationMs: new Map(), fallbacks: new Map() };
   otelTelemetry.skills.injected = { total: 0, byStatus: {}, byInvokeType: {}, byAgentKind: {}, byModel: {}, byPlugin: {}, bySkill: new Map() };
+  otelTelemetry.skills.usage = { total: 0, byStatus: {}, byInvokeType: {}, byAgentKind: {}, byModel: {}, byPlugin: {}, bySkill: new Map() };
+  otelTelemetry.skills.selection = {
+    catalogEntries: { count: 0, sum: 0 }, selectedEntries: { count: 0, sum: 0 }, queryTerms: { count: 0, sum: 0 },
+    reductionBps: { count: 0, sum: 0 }, durationMs: { count: 0, sum: 0 }, durationSeconds: { count: 0, sum: 0 },
+  };
   otelTelemetry.skills.threads = {
     enabled: { count: 0, sum: 0 },
     kept: { count: 0, sum: 0 },
@@ -705,6 +775,8 @@ function codexTelemetryStatus(now = Date.now()) {
     }
     return { ...bucket, byStatus: { ...bucket.byStatus }, byInvokeType, byAgentKind: { ...bucket.byAgentKind }, byModel: { ...bucket.byModel }, byPlugin: { ...bucket.byPlugin } };
   });
+  const skillsUsage = otelTelemetry.skills.usage;
+  const usageRows = [...skillsUsage.bySkill.values()].map((bucket) => ({ ...bucket, byStatus: { ...bucket.byStatus }, byInvokeType: { ...bucket.byInvokeType }, byAgentKind: { ...bucket.byAgentKind }, byModel: { ...bucket.byModel }, byPlugin: { ...bucket.byPlugin } })).sort((a, b) => a.skill.localeCompare(b.skill));
   const threadHistogram = (bucket) => ({ ...bucket, average: bucket.count ? bucket.sum / bucket.count : 0 });
   const sqliteBuckets = (collection) => [...collection.values()].map((bucket) => ({ ...bucket, ...(Object.hasOwn(bucket, "sum") ? { average: bucket.count ? bucket.sum / bucket.count : 0 } : {}) })).sort((a, b) => `${a.db}/${a.status}`.localeCompare(`${b.db}/${b.status}`));
   return {
@@ -742,6 +814,23 @@ function codexTelemetryStatus(now = Date.now()) {
         byModel: { ...skillsInjected.byModel },
         byPlugin: { ...skillsInjected.byPlugin },
         bySkill: skillRows.sort((a, b) => a.skill.localeCompare(b.skill)),
+      },
+      usage: {
+        total: skillsUsage.total,
+        byStatus: { ...skillsUsage.byStatus },
+        byInvokeType: { ...skillsUsage.byInvokeType },
+        byAgentKind: { ...skillsUsage.byAgentKind },
+        byModel: { ...skillsUsage.byModel },
+        byPlugin: { ...skillsUsage.byPlugin },
+        bySkill: usageRows,
+      },
+      selection: {
+        catalogEntries: threadHistogram(otelTelemetry.skills.selection.catalogEntries),
+        selectedEntries: threadHistogram(otelTelemetry.skills.selection.selectedEntries),
+        queryTerms: threadHistogram(otelTelemetry.skills.selection.queryTerms),
+        reductionBps: threadHistogram(otelTelemetry.skills.selection.reductionBps),
+        durationMs: threadHistogram(otelTelemetry.skills.selection.durationMs),
+        durationSeconds: threadHistogram(otelTelemetry.skills.selection.durationSeconds),
       },
       threads: {
         enabledTotal: threadHistogram(otelTelemetry.skills.threads.enabled),
@@ -1180,6 +1269,25 @@ function restoreOtelTelemetry(snapshot) {
       for (const [model, count] of Object.entries(entry.byModel ?? {})) if (isFiniteNonnegative(count)) bucket.byModel[safeMetricLabel(model)] = count;
       for (const [plugin, count] of Object.entries(entry.byPlugin ?? {})) if (isFiniteNonnegative(count)) bucket.byPlugin[safeMetricLabel(plugin)] = count;
     }
+  }
+  if (skills?.usage && typeof skills.usage === "object") {
+    const usage = otelTelemetry.skills.usage;
+    restoreNumberFields(usage, skills.usage, ["total"]);
+    for (const [field, target] of [["byStatus", usage.byStatus], ["byInvokeType", usage.byInvokeType], ["byAgentKind", usage.byAgentKind], ["byModel", usage.byModel], ["byPlugin", usage.byPlugin]]) {
+      for (const [key, count] of Object.entries(skills.usage[field] ?? {})) if (isFiniteNonnegative(count)) target[safeMetricLabel(key)] = count;
+    }
+    for (const entry of Array.isArray(skills.usage.bySkill) ? skills.usage.bySkill : []) {
+      if (!entry || typeof entry.skill !== "string") continue;
+      const bucket = skillUsageBucket(safeMetricLabel(entry.skill));
+      restoreNumberFields(bucket, entry, ["total"]);
+      for (const [field, target] of [["byStatus", bucket.byStatus], ["byInvokeType", bucket.byInvokeType], ["byAgentKind", bucket.byAgentKind], ["byModel", bucket.byModel], ["byPlugin", bucket.byPlugin]]) {
+        for (const [key, count] of Object.entries(entry[field] ?? {})) if (isFiniteNonnegative(count)) target[safeMetricLabel(key)] = count;
+      }
+    }
+  }
+  if (skills?.selection && typeof skills.selection === "object") {
+    const selection = otelTelemetry.skills.selection;
+    for (const [field, source] of [["catalogEntries", skills.selection.catalogEntries], ["selectedEntries", skills.selection.selectedEntries], ["queryTerms", skills.selection.queryTerms], ["reductionBps", skills.selection.reductionBps], ["durationMs", skills.selection.durationMs], ["durationSeconds", skills.selection.durationSeconds]]) restoreNumberFields(selection[field], source, ["count", "sum"]);
   }
   for (const [targetKey, sourceKey] of [["enabled", "enabledTotal"], ["kept", "keptTotal"], ["truncated", "truncated"], ["descriptionTruncatedChars", "descriptionTruncatedChars"]]) {
     restoreNumberFields(otelTelemetry.skills.threads[targetKey], skills?.threads?.[sourceKey], ["count", "sum"]);
