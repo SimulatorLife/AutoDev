@@ -72,15 +72,16 @@ sanitized tool/source/server labels. Unknown metric names remain visible in
 the inventory but are not interpreted until their schema and operational value
 are validated.
 
-The dashboard's visible Operational summaries table groups Codex receiver,
+The dashboard's Operational summary table groups Codex receiver,
 state-database, and concurrency values as category/metric/value rows instead of
-embedding those values in prose. The detailed Codex telemetry, Skills, Skill
-catalog/context, and Native runtime telemetry sections are collapsed by default
-and can be expanded independently; the observed metric inventory, Codex tasks,
-and recent routing events retain the same collapsible behavior.
+embedding those values in prose. Each table section has one heading that also
+owns its collapse toggle. The primary Provider health and usage, Usage by
+orchestrator and subagents, MCP server telemetry, Skills, and Hooks tables are
+expanded by default; secondary metric inventory, catalog/context, task,
+spawn-failure, and recent-event sections can be expanded independently.
 
 Totals footers are shown for homogeneous roll-up tables: provider/usage,
-MCP lifecycle, Skills injections, native runtime calls, observed metric counts,
+MCP lifecycle, Skills injections, hook/runtime calls, observed metric counts,
 and spawn-failure reasons. The Operational summary and Skill catalog/context
 tables intentionally do not have totals because their rows mix incompatible
 units; the Codex task snapshot and recent-event list are entity/event views
@@ -88,11 +89,11 @@ rather than additive measurements.
 
 
 
-Hook runs (`codex.hooks.run` and its duration histogram) are shown in the
-Native runtime telemetry section alongside native tool calls, grouped by
-sanitized hook/source/handler labels.
-Native thread starts and multi-agent spawn counters are shown there with
-low-cardinality source, role, and model breakdowns where Codex supplies them.
+The Hooks table combines native tool calls, hook runs (`codex.hooks.run` and
+its duration histogram), thread starts, and multi-agent spawns. The Type and
+Name columns distinguish these event families, while rows are grouped by
+sanitized hook/source/handler labels where available; thread and spawn totals
+are shown as rows rather than duplicated in a subtitle.
 `codex.turn.token_usage` and native turn counters remain inventory-only because
 the router already derives token and turn totals from lifecycle logs.
 

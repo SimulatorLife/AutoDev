@@ -46,7 +46,8 @@
   <div id="meta">Loading…</div>
   <div id="error" role="alert"></div>
 
-  <h2>Provider health and usage</h2>
+  <h2><button type="button" class="toggle-section" aria-controls="provider-health-section" aria-expanded="true"><span class="caret">▾</span> Provider health and usage</button></h2>
+  <div id="provider-health-section">
   <div class="table-scroll">
   <table id="providers-table">
     <thead><tr><th>Provider</th><th>Model</th><th>Status</th><th>Active</th><th>Attempts</th><th>Successes</th><th>Failures</th><th>Tool calls</th><th>Avg. turn</th><th>Provider skips</th><th>Last failure</th></tr></thead>
@@ -54,23 +55,20 @@
     <tfoot><tr class="provider-summary"><th colspan="2">Totals</th><td>all</td><td id="summary-active">0</td><td id="summary-attempts">0</td><td id="summary-successes">0</td><td id="summary-failures">0</td><td id="summary-tools">0</td><td id="summary-duration">0.0s</td><td id="summary-skips">0</td><td></td></tr></tfoot>
   </table>
   </div>
-
-  <h2>Usage by orchestrator and subagents</h2>
-  <table id="usage-table"><thead><tr><th>Category</th><th>Active</th><th>Attempts</th><th>Successes</th><th>Failures</th><th>Avg turn</th><th>Tool calls</th></tr></thead><tbody id="usage-breakdown"><tr><td colspan="7">Loading…</td></tr></tbody><tfoot><tr class="provider-summary"><th>Totals</th><td id="usage-total-active">0</td><td id="usage-total-attempts">0</td><td id="usage-total-successes">0</td><td id="usage-total-failures">0</td><td id="usage-total-duration">0.0s</td><td id="usage-total-tools">0</td></tr></tfoot></table>
-
-  <h2><button type="button" class="toggle-section" aria-controls="operational-summaries-section" aria-expanded="false"><span class="caret">▸</span> Operational summary</button></h2>
-  <div id="operational-summaries-section" hidden>
-    <table><thead><tr><th>Category</th><th>Metric</th><th>Value</th></tr></thead><tbody id="operational-summaries"><tr><td colspan="3">Loading…</td></tr></tbody></table>
   </div>
 
-  <h2><button type="button" class="toggle-section" aria-controls="codex-telemetry-section" aria-expanded="false"><span class="caret">▸</span> Codex telemetry</button></h2>
-  <div id="codex-telemetry-section" hidden>
-    <h3>MCP server telemetry</h3>
+  <h2><button type="button" class="toggle-section" aria-controls="usage-section" aria-expanded="true"><span class="caret">▾</span> Usage by orchestrator and subagents</button></h2>
+  <div id="usage-section">
+  <table id="usage-table"><thead><tr><th>Category</th><th>Active</th><th>Attempts</th><th>Successes</th><th>Failures</th><th>Avg turn</th><th>Tool calls</th></tr></thead><tbody id="usage-breakdown"><tr><td colspan="7">Loading…</td></tr></tbody><tfoot><tr class="provider-summary"><th>Totals</th><td id="usage-total-active">0</td><td id="usage-total-attempts">0</td><td id="usage-total-successes">0</td><td id="usage-total-failures">0</td><td id="usage-total-duration">0.0s</td><td id="usage-total-tools">0</td></tr></tfoot></table>
+  </div>
+
+  <h2><button type="button" class="toggle-section" aria-controls="mcp-telemetry-section" aria-expanded="true"><span class="caret">▾</span> MCP server telemetry</button></h2>
+  <div id="mcp-telemetry-section">
     <table><thead><tr><th>MCP server</th><th>Health</th><th>Last observed</th><th>Initializations</th><th>Tool discovery</th><th>Failures</th><th>Avg. duration</th></tr></thead><tbody id="mcp-telemetry"><tr><td colspan="7">Loading…</td></tr></tbody><tfoot><tr class="provider-summary"><th>Totals</th><td id="mcp-total-health">0/0 ready</td><td id="mcp-total-last">-</td><td id="mcp-total-init">0</td><td id="mcp-total-discovery">0</td><td id="mcp-total-failures">0</td><td id="mcp-total-duration">0.0s</td></tr></tfoot></table>
   </div>
 
-  <h2><button type="button" class="toggle-section" aria-controls="skills-section" aria-expanded="false"><span class="caret">▸</span> Skills</button></h2>
-  <div id="skills-section" hidden>
+  <h2><button type="button" class="toggle-section" aria-controls="skills-section" aria-expanded="true"><span class="caret">▾</span> Skills</button></h2>
+  <div id="skills-section">
     <table><thead><tr><th>Skill</th><th>Injected</th><th>Share</th><th>By status</th><th>By invoke type</th><th>Agent kind</th><th>Models</th><th>Plugins</th></tr></thead><tbody id="skills-table"><tr><td colspan="8">Loading…</td></tr></tbody><tfoot><tr class="provider-summary"><th>Totals</th><th id="skills-total">0</th><th id="skills-total-share">0.0%</th><td id="skills-total-status">-</td><td id="skills-total-invoke-type">-</td><td id="skills-total-agent-kind">-</td><td id="skills-total-model">-</td><td id="skills-total-plugin">-</td></tr></tfoot></table>
 
     <h3><button type="button" class="toggle-section" aria-controls="skills-histograms-section" aria-expanded="false"><span class="caret">▸</span> Skill catalog &amp; context histograms</button></h3>
@@ -80,10 +78,14 @@
     </div>
   </div>
 
-  <h2><button type="button" class="toggle-section" aria-controls="native-runtime-section" aria-expanded="false"><span class="caret">▸</span> Native runtime telemetry</button></h2>
-  <div id="native-runtime-section" hidden>
-    <div id="hooks-threads-summary">Loading…</div>
-    <table><thead><tr><th>Type</th><th>Name</th><th>Source</th><th>Handler / server</th><th>Calls / runs</th><th>By status</th><th>Avg. duration</th></tr></thead><tbody id="native-runtime-telemetry"><tr><td colspan="7">Loading…</td></tr></tbody><tfoot><tr class="provider-summary"><th>Totals</th><td>-</td><td>-</td><td>-</td><td id="native-runtime-total-calls">0</td><td id="native-runtime-total-status">-</td><td id="native-runtime-total-duration">0.0s</td></tr></tfoot></table>
+  <h2><button type="button" class="toggle-section" aria-controls="hooks-section" aria-expanded="true"><span class="caret">▾</span> Hooks</button></h2>
+  <div id="hooks-section">
+    <table><thead><tr><th>Type</th><th>Name</th><th>Source</th><th>Handler / server</th><th>Count</th><th>By status</th><th>Avg. duration</th></tr></thead><tbody id="native-runtime-telemetry"><tr><td colspan="7">Loading…</td></tr></tbody><tfoot><tr class="provider-summary"><th>Totals</th><td>-</td><td>-</td><td>-</td><td id="native-runtime-total-calls">0</td><td id="native-runtime-total-status">-</td><td id="native-runtime-total-duration">0.0s</td></tr></tfoot></table>
+  </div>
+
+  <h2><button type="button" class="toggle-section" aria-controls="operational-summaries-section" aria-expanded="false"><span class="caret">▸</span> Operational summary</button></h2>
+  <div id="operational-summaries-section" hidden>
+    <table><thead><tr><th>Category</th><th>Metric</th><th>Value</th></tr></thead><tbody id="operational-summaries"><tr><td colspan="3">Loading…</td></tr></tbody></table>
   </div>
 
   <h2><button type="button" class="toggle-section" aria-controls="native-metrics-section" aria-expanded="false"><span class="caret">▸</span> Native metrics observed</button></h2>
@@ -95,7 +97,6 @@
 
   <h2><button type="button" class="toggle-section" aria-controls="spawn-failures-section" aria-expanded="false"><span class="caret">▸</span> Subagent spawn failure telemetry</button></h2>
   <div id="spawn-failures-section" hidden>
-    <div id="spawn-failures">Loading…</div>
     <table><thead><tr><th>Reason / type</th><th>Count</th><th>Last observed</th></tr></thead><tbody id="spawn-failures-by-reason"><tr><td colspan="3">Loading…</td></tr></tbody><tfoot><tr class="provider-summary"><th>Totals</th><td id="spawn-failures-total">0</td><td id="spawn-failures-last">-</td></tr></tfoot></table>
   </div>
 
@@ -210,8 +211,6 @@
       }));
       const spawnFailures = status.spawnFailures ?? {};
       const recentSpawnFailures = Array.isArray(spawnFailures.recent) ? spawnFailures.recent : [];
-      const latestSpawnFailure = recentSpawnFailures[0];
-      document.querySelector("#spawn-failures").textContent = `Total: ${spawnFailures.total ?? 0} · last: ${latestSpawnFailure ? `${text(latestSpawnFailure.reason)} (${formatTimestamp(latestSpawnFailure.timestamp)})` : "-"}`;
       const latestByReason = new Map();
       for (const failure of recentSpawnFailures) {
         const reason = failure?.reason;
@@ -321,13 +320,16 @@
       const hooks = codexTelemetry.hooks?.byHook ?? [];
       const threads = codexTelemetry.threads ?? {};
       const spawns = threads.spawns ?? {};
-      document.querySelector("#hooks-threads-summary").textContent = `Hook runs ${hooks.reduce((sum, hook) => sum + (hook.count ?? 0), 0)} · threads started ${threads.started?.total ?? 0} · native agent spawns ${spawns.total ?? 0} · spawn status ${countsText(spawns.byStatus)}`;
+      const threadSource = { count: threads.started?.total ?? 0, byStatus: {} };
+      const spawnSource = { count: spawns.total ?? 0, byStatus: spawns.byStatus ?? {} };
       const runtimeRows = [
         ...(codexTelemetry.tools?.byTool ?? []).map((tool) => `<tr><td>Tool</td><td><code>${text(tool.tool)}</code></td><td>${text(tool.source)}</td><td>${text(tool.server || "-")}</td><td>${tool.count ?? 0}</td><td>${countsText(tool.byStatus)}</td><td>${millisecondsText(tool.averageDurationMs)}</td></tr>`),
         ...hooks.map((hook) => `<tr><td>Hook</td><td><code>${text(hook.hook)}</code></td><td>${text(hook.source)}</td><td>${text(hook.handlerType || "-")}</td><td>${hook.count ?? 0}</td><td>${countsText(hook.byStatus)}</td><td>${millisecondsText(hook.averageDurationMs)}</td></tr>`),
+        `<tr><td>Thread</td><td><code>started</code></td><td>-</td><td>-</td><td>${threadSource.count}</td><td>-</td><td>-</td></tr>`,
+        `<tr><td>Spawn</td><td><code>native agent</code></td><td>-</td><td>-</td><td>${spawnSource.count}</td><td>${countsText(spawnSource.byStatus)}</td><td>-</td></tr>`,
       ].join("");
-      document.querySelector("#native-runtime-telemetry").innerHTML = runtimeRows || '<tr><td colspan="7">No native tool or hook metrics observed yet.</td></tr>';
-      const runtimeSources = [...(codexTelemetry.tools?.byTool ?? []), ...hooks];
+      document.querySelector("#native-runtime-telemetry").innerHTML = runtimeRows;
+      const runtimeSources = [...(codexTelemetry.tools?.byTool ?? []), ...hooks, threadSource, spawnSource];
       const runtimeStatusTotals = runtimeSources.reduce((totalsByStatus, item) => {
         for (const [status, count] of Object.entries(item.byStatus ?? {})) totalsByStatus[status] = (totalsByStatus[status] ?? 0) + Number(count ?? 0);
         return totalsByStatus;
