@@ -81,7 +81,7 @@ console.log("");
 console.log(`Skills injected: ${skillsInjected.total ?? 0} (${countsText(skillsInjected.byStatus)}), invoke_type: ${countsText(skillsInjected.byInvokeType)}`);
 console.log(`Thread skills: enabled ${histogramText(skillsThreads.enabledTotal)}, kept ${histogramText(skillsThreads.keptTotal)}, truncated ${histogramText(skillsThreads.truncated)}, description chars ${histogramText(skillsThreads.descriptionTruncatedChars)}`);
 for (const skill of (skillsInjected.bySkill ?? [])) {
-  console.log(`  ${skill.skill}: ${skill.total} (${countsText(skill.byStatus)})`);
+  console.log(`  ${skill.skill}: ${skill.total} (${countsText(skill.byStatus)}), invoke_type: ${countsText(skill.byInvokeType)}`);
 }
 
 const nativeMetrics = codexTelemetry.metrics?.observed ?? [];

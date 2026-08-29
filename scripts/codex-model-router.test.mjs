@@ -286,6 +286,7 @@ test("ingests Codex OTEL skill metrics with cumulative dedupe and tolerates invo
   const skill = telemetry.skills.injected.bySkill.find((entry) => entry.skill === "lsp-mcp-server");
   assert.equal(skill.total, 7);
   assert.deepEqual(skill.byStatus, { injected: 5, skipped: 2 });
+  assert.deepEqual(skill.byInvokeType, { auto: 2 });
 
   assert.deepEqual(telemetry.skills.threads.enabledTotal, { count: 2, sum: 7, average: 3.5 });
   assert.deepEqual(telemetry.skills.threads.keptTotal, { count: 2, sum: 4, average: 2 });
@@ -434,6 +435,12 @@ test("serves HTML only from /dashboard and raw JSON from /status", async () => {
     assert.match(dashboardBody, /id="mcp-telemetry"/);
     assert.match(dashboardBody, /id="skills-summary"/);
     assert.match(dashboardBody, /id="skills-table"/);
+    assert.match(dashboardBody, /<th>Skill<\/th><th>Injected<\/th><th>Share<\/th><th>By status<\/th><th>By invoke type<\/th>/);
+    assert.match(dashboardBody, /id="skills-histograms"/);
+    assert.match(dashboardBody, /skillShare/);
+    assert.match(dashboardBody, /histogramRow/);
+    assert.match(dashboardBody, /description_truncated_chars/);
+    assert.match(dashboardBody, /text\(key\)/);
     assert.match(dashboardBody, /id="native-metrics"/);
     assert.match(dashboardBody, /id="sqlite-telemetry"/);
     assert.match(dashboardBody, /id="native-metrics-summary"/);
@@ -452,6 +459,10 @@ test("serves HTML only from /dashboard and raw JSON from /status", async () => {
     assert.match(dashboardBody, /id="recent-routing-events-section" hidden/);
     assert.match(dashboardBody, /document\.querySelectorAll\("\.toggle-section"\)/);
     assert.match(dashboardBody, /id="spawn-failures"/);
+    assert.match(dashboardBody, /<th>Reason \/ type<\/th><th>Count<\/th><th>Last observed<\/th>/);
+    assert.match(dashboardBody, /id="spawn-failures-by-reason"/);
+    assert.match(dashboardBody, /spawnFailureRows/);
+    assert.match(dashboardBody, /latestByReason/);
     assert.match(dashboardBody, /processFallbackEnforcement/);
     assert.match(dashboardBody, /process-wide bucket/);
     assert.match(dashboardBody, /active sessions: \$\{concurrency\.activeSessions \?\? 0\}/);
@@ -519,7 +530,7 @@ test("persists provider telemetry and recent events across router restarts", asy
     resetOtelTelemetry();
     ingestOtelSignal("metrics", { resourceMetrics: [{ scopeMetrics: [{ metrics: [{
       name: "codex.skill.injected",
-      sum: { aggregationTemporality: 1, dataPoints: [{ attributes: [{ key: "skill", value: { stringValue: "orchestration" } }, { key: "status", value: { stringValue: "ok" } }], startTimeUnixNano: "1", timeUnixNano: "2", asInt: "2" }] },
+      sum: { aggregationTemporality: 1, dataPoints: [{ attributes: [{ key: "skill", value: { stringValue: "orchestration" } }, { key: "status", value: { stringValue: "ok" } }, { key: "invoke_type", value: { stringValue: "implicit" } }], startTimeUnixNano: "1", timeUnixNano: "2", asInt: "2" }] },
     }, {
       name: "codex.hooks.run",
       sum: { aggregationTemporality: 1, dataPoints: [{ attributes: [{ key: "hook_name", value: { stringValue: "SessionStart" } }, { key: "hook_source", value: { stringValue: "user" } }, { key: "handler_type", value: { stringValue: "command" } }, { key: "status", value: { stringValue: "ok" } }], startTimeUnixNano: "1", timeUnixNano: "2", asInt: "1" }] },
@@ -543,6 +554,7 @@ test("persists provider telemetry and recent events across router restarts", asy
     assert.equal(restored.recentEvents[0].toolCalls, 0);
     assert.equal(restored.codexTelemetry.skills.injected.total, 2);
     assert.equal(restored.codexTelemetry.skills.injected.bySkill[0].skill, "orchestration");
+    assert.deepEqual(restored.codexTelemetry.skills.injected.bySkill[0].byInvokeType, { implicit: 2 });
     assert.equal(restored.codexTelemetry.receiver.metrics, 1);
     assert.equal(restored.codexTelemetry.hooks.byHook[0].count, 1);
     assert.deepEqual(restored.codexTelemetry.threads.started, { total: 1, bySource: { subagent: 1 } });
@@ -709,18 +721,20 @@ test("reads and enforces Codex per-session and global thread limits", async () =
   }
 
   resetConcurrencyTelemetry();
-  assert.equal(tryAcquireSubagentSlot("test-session"), null);
+  const configuredLimit = concurrencyStatus().effectivePerSessionLimit;
+  assert.ok(Number.isInteger(configuredLimit) && configuredLimit > 0);
+  for (let slot = 0; slot < configuredLimit; slot += 1) assert.equal(tryAcquireSubagentSlot("test-session"), null);
   assert.equal(tryAcquireSubagentSlot("test-session"), "max_concurrent_threads_per_session");
   recordConcurrencyDenial({ requestId: "req-denied", role: "worker", requestedModel: "autodev/worker", sessionScope: "identified", reason: "max_concurrent_threads_per_session" });
   const status = concurrencyStatus();
-  assert.equal(status.maxConcurrentThreadsPerSession, 1);
-  assert.equal(status.effectivePerSessionLimit, 1);
+  assert.equal(status.maxConcurrentThreadsPerSession, configuredLimit);
+  assert.equal(status.effectivePerSessionLimit, configuredLimit);
   assert.equal(Object.hasOwn(status, "maxThreads"), false);
-  assert.equal(status.activeSubagentThreads, 1);
+  assert.equal(status.activeSubagentThreads, configuredLimit);
   assert.equal(status.activeSessions, 1);
   assert.equal(status.denials, 1);
   assert.equal(status.lastDenial.reason, "max_concurrent_threads_per_session");
-  releaseSubagentSlot("test-session");
+  for (let slot = 0; slot < configuredLimit; slot += 1) releaseSubagentSlot("test-session");
   assert.equal(concurrencyStatus().activeSessions, 0);
   resetConcurrencyTelemetry();
 });
@@ -755,8 +769,10 @@ test("per-session slot limit gives distinct identified sessions independent capa
     assert.equal(concurrencyStatus().activeSessions, 2);
 
     // The same identified session is capped by the configured per-session limit.
+    const configuredLimit = concurrencyStatus().effectivePerSessionLimit;
+    for (let slot = 1; slot < configuredLimit; slot += 1) assert.equal(tryAcquireSubagentSlot("session-a"), null);
     assert.equal(tryAcquireSubagentSlot("session-a"), "max_concurrent_threads_per_session");
-    releaseSubagentSlot("session-a");
+    for (let slot = 0; slot < configuredLimit; slot += 1) releaseSubagentSlot("session-a");
     releaseSubagentSlot("session-b");
 
     // Two requests that both fail to supply any session identity share the documented
@@ -767,11 +783,12 @@ test("per-session slot limit gives distinct identified sessions independent capa
     const second = requestSession({ headers: {} }, {});
     assert.equal(first.key, PROCESS_FALLBACK_SESSION_KEY);
     assert.equal(second.key, PROCESS_FALLBACK_SESSION_KEY);
-    assert.equal(tryAcquireSubagentSlot(first.key), null);
-    assert.equal(concurrencyStatus().processFallbackActiveThreads, 1);
+    const fallbackLimit = concurrencyStatus().effectivePerSessionLimit;
+    for (let slot = 0; slot < fallbackLimit; slot += 1) assert.equal(tryAcquireSubagentSlot(first.key), null);
+    assert.equal(concurrencyStatus().processFallbackActiveThreads, fallbackLimit);
     assert.equal(concurrencyStatus().processFallbackEnforcement, true);
     assert.equal(tryAcquireSubagentSlot(second.key), "max_concurrent_threads_per_session");
-    releaseSubagentSlot(first.key);
+    for (let slot = 0; slot < fallbackLimit; slot += 1) releaseSubagentSlot(first.key);
     assert.equal(concurrencyStatus().processFallbackActiveThreads, 0);
     assert.equal(concurrencyStatus().processFallbackEnforcement, false);
   } finally {

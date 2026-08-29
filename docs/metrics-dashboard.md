@@ -97,7 +97,16 @@ Codex versions attach `invoke_type` instead of, or alongside, `status`, which
 the router tolerates and aggregates separately. The source-backed
 `codex.thread.skills.description_truncated_chars` metric is not currently in
 the official catalog; when present, the router totals and averages it
-separately. No prompt or skill content is exported or stored; only metric
+separately.
+
+The Skills table breaks injected totals down by skill, share of all injections,
+outcome status, and invocation type. A separate Skill catalog & context
+histograms table shows the thread-level sample count, total, and average for
+enabled, kept, truncated, and description-truncation metrics; these histograms
+are intentionally not attributed to individual skills because Codex does not
+provide a reliable skill dimension on them. The shadow-selection metrics remain
+in the observed inventory until their schema and dimensions are validated for
+safe aggregation. No prompt or skill content is exported or stored; only metric
 attributes and numeric aggregates are retained.
 
 These are Codex-native metrics, not a generic audit stream for every provider

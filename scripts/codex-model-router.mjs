@@ -386,7 +386,7 @@ function otelSumDataPointValue(dataPoint) {
 
 function skillBucket(name) {
   if (!otelTelemetry.skills.injected.bySkill.has(name)) {
-    otelTelemetry.skills.injected.bySkill.set(name, { skill: name, total: 0, byStatus: {} });
+    otelTelemetry.skills.injected.bySkill.set(name, { skill: name, total: 0, byStatus: {}, byInvokeType: {} });
   }
   return otelTelemetry.skills.injected.bySkill.get(name);
 }
@@ -406,6 +406,7 @@ function noteSkillInjected(metricName, attributes, dataPoint, temporality) {
   const bucket = skillBucket(skill);
   bucket.total += delta;
   bucket.byStatus[status] = (bucket.byStatus[status] ?? 0) + delta;
+  if (invokeType) bucket.byInvokeType[invokeType] = (bucket.byInvokeType[invokeType] ?? 0) + delta;
 }
 
 function noteThreadSkillsHistogram(bucket, metricName, attributes, dataPoint, temporality) {
@@ -676,6 +677,18 @@ function codexTelemetryStatus(now = Date.now()) {
     return summary;
   }, { observed: 0, ready: 0, error: 0, stale: 0 });
   const skillsInjected = otelTelemetry.skills.injected;
+  const globalSkillInvokeTypes = Object.entries(skillsInjected.byInvokeType);
+  const skillRows = [...skillsInjected.bySkill.values()].map((bucket) => {
+    const byInvokeType = { ...bucket.byInvokeType };
+    // Older persisted OTEL state recorded invoke_type only at the global
+    // level. If that aggregate contains exactly one type for every injection,
+    // applying it to each skill row is lossless; mixed aggregates remain
+    // un-attributed rather than being guessed.
+    if (!Object.keys(byInvokeType).length && globalSkillInvokeTypes.length === 1 && globalSkillInvokeTypes[0][1] === skillsInjected.total) {
+      byInvokeType[globalSkillInvokeTypes[0][0]] = bucket.total;
+    }
+    return { ...bucket, byStatus: { ...bucket.byStatus }, byInvokeType };
+  });
   const threadHistogram = (bucket) => ({ ...bucket, average: bucket.count ? bucket.sum / bucket.count : 0 });
   const sqliteBuckets = (collection) => [...collection.values()].map((bucket) => ({ ...bucket, ...(Object.hasOwn(bucket, "sum") ? { average: bucket.count ? bucket.sum / bucket.count : 0 } : {}) })).sort((a, b) => `${a.db}/${a.status}`.localeCompare(`${b.db}/${b.status}`));
   return {
@@ -709,7 +722,7 @@ function codexTelemetryStatus(now = Date.now()) {
         total: skillsInjected.total,
         byStatus: { ...skillsInjected.byStatus },
         byInvokeType: { ...skillsInjected.byInvokeType },
-        bySkill: [...skillsInjected.bySkill.values()].map((bucket) => ({ ...bucket, byStatus: { ...bucket.byStatus } })).sort((a, b) => a.skill.localeCompare(b.skill)),
+        bySkill: skillRows.sort((a, b) => a.skill.localeCompare(b.skill)),
       },
       threads: {
         enabledTotal: threadHistogram(otelTelemetry.skills.threads.enabled),
@@ -1140,6 +1153,7 @@ function restoreOtelTelemetry(snapshot) {
       const bucket = skillBucket(safeMetricLabel(entry.skill));
       restoreNumberFields(bucket, entry, ["total"]);
       for (const [status, count] of Object.entries(entry.byStatus ?? {})) if (isFiniteNonnegative(count)) bucket.byStatus[safeMetricLabel(status)] = count;
+      for (const [invokeType, count] of Object.entries(entry.byInvokeType ?? {})) if (isFiniteNonnegative(count)) bucket.byInvokeType[safeMetricLabel(invokeType)] = count;
     }
   }
   for (const [targetKey, sourceKey] of [["enabled", "enabledTotal"], ["kept", "keptTotal"], ["truncated", "truncated"], ["descriptionTruncatedChars", "descriptionTruncatedChars"]]) {

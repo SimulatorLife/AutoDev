@@ -64,8 +64,12 @@
 
   <h2>Skills</h2>
   <div id="skills-summary">Loading…</div>
-  <div><small>Native Codex metrics: <code>codex.skill.injected</code>, <code>codex.thread.skills.enabled_total</code>, <code>codex.thread.skills.kept_total</code>, <code>codex.thread.skills.truncated</code>.</small></div>
-  <table><thead><tr><th>Skill</th><th>Injected</th><th>By status</th></tr></thead><tbody id="skills-table"><tr><td colspan="3">Loading…</td></tr></tbody></table>
+  <div><small>Native Codex metrics: <code>codex.skill.injected</code>, <code>codex.thread.skills.enabled_total</code>, <code>codex.thread.skills.kept_total</code>, <code>codex.thread.skills.truncated</code>, <code>codex.thread.skills.description_truncated_chars</code>.</small></div>
+  <table><thead><tr><th>Skill</th><th>Injected</th><th>Share</th><th>By status</th><th>By invoke type</th></tr></thead><tbody id="skills-table"><tr><td colspan="5">Loading…</td></tr></tbody></table>
+
+  <h3>Skill catalog &amp; context histograms</h3>
+  <div><small>Per-thread aggregate histograms from <code>codex.thread.skills.*</code> — samples (count), total (sum), and average. Not per-skill.</small></div>
+  <table><thead><tr><th>Metric</th><th>Samples</th><th>Total</th><th>Average</th></tr></thead><tbody id="skills-histograms"><tr><td colspan="4">Loading…</td></tr></tbody></table>
 
   <h2>Native runtime telemetry</h2>
   <div id="hooks-threads-summary">Loading…</div>
@@ -85,6 +89,7 @@
 
   <h2>Subagent spawn failures</h2>
   <div id="spawn-failures">Loading…</div>
+  <table><thead><tr><th>Reason / type</th><th>Count</th><th>Last observed</th></tr></thead><tbody id="spawn-failures-by-reason"><tr><td colspan="3">Loading…</td></tr></tbody></table>
 
   <h2><button type="button" class="toggle-section" aria-controls="codex-tasks-section" aria-expanded="false"><span class="caret">▸</span> Codex tasks</button></h2>
   <div id="codex-tasks-section" hidden>
@@ -196,9 +201,23 @@
         document.querySelectorAll(`[data-provider-child="${group}"]`).forEach((row) => { row.hidden = expanded; });
       }));
       const spawnFailures = status.spawnFailures ?? {};
-      const spawnReasons = Object.entries(spawnFailures.byReason ?? {}).map(([reason, count]) => `${reason}: ${count}`).join(", ") || "-";
-      const lastSpawnFailure = spawnFailures.recent?.[0];
-      document.querySelector("#spawn-failures").textContent = `Total: ${spawnFailures.total ?? 0} · by reason: ${spawnReasons} · last: ${lastSpawnFailure ? `${lastSpawnFailure.reason} (${formatTimestamp(lastSpawnFailure.timestamp)})` : "-"}`;
+      const recentSpawnFailures = Array.isArray(spawnFailures.recent) ? spawnFailures.recent : [];
+      const latestSpawnFailure = recentSpawnFailures[0];
+      document.querySelector("#spawn-failures").textContent = `Total: ${spawnFailures.total ?? 0} · last: ${latestSpawnFailure ? `${text(latestSpawnFailure.reason)} (${formatTimestamp(latestSpawnFailure.timestamp)})` : "-"}`;
+      const latestByReason = new Map();
+      for (const failure of recentSpawnFailures) {
+        const reason = failure?.reason;
+        if (typeof reason !== "string" || !reason) continue;
+        const current = latestByReason.get(reason);
+        if (!current || String(failure.timestamp ?? "") > String(current.timestamp ?? "")) latestByReason.set(reason, failure);
+      }
+      const spawnFailureRows = Object.entries(spawnFailures.byReason ?? {})
+        .sort(([reasonA, countA], [reasonB, countB]) => Number(countB) - Number(countA) || reasonA.localeCompare(reasonB))
+        .map(([reason, count]) => {
+          const latest = latestByReason.get(reason);
+          return `<tr><td><code>${text(reason)}</code></td><td>${count}</td><td>${latest ? formatTimestamp(latest.timestamp) : "-"}</td></tr>`;
+        }).join("");
+      document.querySelector("#spawn-failures-by-reason").innerHTML = spawnFailureRows || '<tr><td colspan="3">No subagent spawn failures observed.</td></tr>';
       const taskStatus = status.codexTasks ?? {};
       const taskCounts = Object.entries(taskStatus.countsByStatus ?? {}).map(([state, count]) => `${state}: ${count}`).join(", ") || "-";
       document.querySelector("#task-summary").textContent = `Status: ${taskStatus.status ?? "unknown"} · fetched: ${taskStatus.fetchedAt ? formatTimestamp(taskStatus.fetchedAt) : "-"} · ${taskCounts}${taskStatus.error ? ` · ${taskStatus.error}` : ""}`;
@@ -240,7 +259,7 @@
         : "No Codex OTEL telemetry received yet.";
       const mcpRows = (codexTelemetry.mcpServers ?? []).map((server) => `<tr><td><code>${text(server.name)}</code></td><td class="${server.health === "ready" ? "ok" : server.health === "error" ? "limited" : ""}">${text(server.health)}</td><td>${server.lastSeenAt ? formatTimestamp(server.lastSeenAt) : "-"}</td><td>${server.initAttempts ?? 0}</td><td>${server.toolDiscoveryAttempts ?? 0}</td><td>${server.failures ?? 0}</td><td>${durationText(server.averageDurationMs)}</td></tr>`).join("") || '<tr><td colspan="7">No MCP lifecycle telemetry received yet.</td></tr>';
       document.querySelector("#mcp-telemetry").innerHTML = mcpRows;
-      const countsText = (counts) => Object.entries(counts ?? {}).map(([key, value]) => `${key}: ${value}`).join(", ") || "-";
+      const countsText = (counts) => Object.entries(counts ?? {}).map(([key, value]) => `${text(key)}: ${value}`).join(", ") || "-";
       const histogramText = (label, histogram) => `${label} avg ${Number(histogram?.average ?? 0).toFixed(1)} (n=${histogram?.count ?? 0}, sum=${histogram?.sum ?? 0})`;
       const skills = codexTelemetry.skills ?? {};
       const skillsInjected = skills.injected ?? {};
@@ -249,7 +268,27 @@
       document.querySelector("#skills-summary").textContent = skillsInjected.total || hasThreadMetrics
         ? `Injected ${skillsInjected.total ?? 0} (${countsText(skillsInjected.byStatus)}) · invoke_type: ${countsText(skillsInjected.byInvokeType)} · ${histogramText("enabled", skillsThreads.enabledTotal)} · ${histogramText("kept", skillsThreads.keptTotal)} · ${histogramText("truncated", skillsThreads.truncated)} · ${histogramText("description chars", skillsThreads.descriptionTruncatedChars)}`
         : "No skill telemetry received yet.";
-      document.querySelector("#skills-table").innerHTML = (skillsInjected.bySkill ?? []).map((entry) => `<tr><td><code>${text(entry.skill)}</code></td><td>${entry.total}</td><td>${countsText(entry.byStatus)}</td></tr>`).join("") || '<tr><td colspan="3">No skill invocations observed yet.</td></tr>';
+      const skillInjectTotal = Number(skillsInjected.total ?? 0);
+      const skillShare = (value) => skillInjectTotal > 0 ? `${((Number(value ?? 0) / skillInjectTotal) * 100).toFixed(1)}%` : "-";
+      document.querySelector("#skills-table").innerHTML = (skillsInjected.bySkill ?? []).map((entry) => {
+        const total = entry.total ?? 0;
+        return `<tr><td><code>${text(entry.skill)}</code></td><td>${total}</td><td>${skillShare(total)}</td><td>${countsText(entry.byStatus)}</td><td>${countsText(entry.byInvokeType)}</td></tr>`;
+      }).join("") || '<tr><td colspan="5">No skill invocations observed yet.</td></tr>';
+      const histogramRow = (label, histogram) => {
+        const count = histogram?.count ?? 0;
+        const sum = histogram?.sum ?? 0;
+        const average = Number(histogram?.average ?? 0);
+        return `<tr><td><code>${text(label)}</code></td><td>${count}</td><td>${count > 0 ? sum : 0}</td><td>${count > 0 ? average.toFixed(1) : "0.0"}</td></tr>`;
+      };
+      const histogramRows = [
+        histogramRow("codex.thread.skills.enabled_total", skillsThreads.enabledTotal),
+        histogramRow("codex.thread.skills.kept_total", skillsThreads.keptTotal),
+        histogramRow("codex.thread.skills.truncated", skillsThreads.truncated),
+        histogramRow("codex.thread.skills.description_truncated_chars", skillsThreads.descriptionTruncatedChars),
+      ].join("");
+      document.querySelector("#skills-histograms").innerHTML = hasThreadMetrics
+        ? histogramRows
+        : '<tr><td colspan="4">No skill context histogram telemetry received yet.</td></tr>';
       const observedMetrics = codexTelemetry.metrics?.observed ?? [];
       document.querySelector("#native-metrics-summary").textContent = observedMetrics.length ? `${observedMetrics.length} metric name(s) observed across ${observedMetrics.reduce((sum, metric) => sum + (metric.exports ?? 0), 0)} export(s).` : "No native metric names observed yet.";
       document.querySelector("#native-metrics").innerHTML = observedMetrics.map((metric) => `<tr><td><code>${text(metric.name)}</code></td><td>${metric.exports ?? 0}</td><td>${metric.dataPoints ?? 0}</td></tr>`).join("") || '<tr><td colspan="3">No native metric batches received yet.</td></tr>';

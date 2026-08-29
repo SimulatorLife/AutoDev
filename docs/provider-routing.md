@@ -96,6 +96,8 @@ The router makes its effective choice visible in two ways:
   failure, and recent routing events. The status payload includes `spawnFailures` for failures visible at the router
 boundary: concurrency denials and role requests exhausted by provider failures.
 These records include counts by reason, recent request IDs, and the last reason.
+The dashboard renders the spawn-failure counts by reason/type in a table with
+last-observed timestamps rather than only a combined text summary.
 Failures raised by the Codex app-server before a role request reaches the router
 are not inferable from router traffic alone.
 
