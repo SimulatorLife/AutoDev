@@ -24,7 +24,7 @@ HOST = "127.0.0.1"
 PORT = 4000
 MODEL = "claude-subscription"
 AUTH_TOKEN = os.environ.get("LITELLM_API_KEY", "")
-PROJECT_ROOT = os.environ.get("CODEX_PROJECT_ROOT", "/Users/henrykirk/AutoDev")
+PROJECT_ROOT = os.environ.get("CODEX_PROJECT_ROOT")
 CLAUDE_TIMEOUT_SECONDS = float(os.environ.get("CLAUDE_CODE_BRIDGE_TIMEOUT_SECONDS", "300"))
 CLI = "/Users/henrykirk/.local/bin/claude"
 DEFAULT_CLAUDE_MODEL = "sonnet"
@@ -41,6 +41,10 @@ class ClaudeRateLimitError(RuntimeError):
 
 class ClaudeOverloadedError(RuntimeError):
     """Claude temporarily reported capacity pressure."""
+
+
+class WorkspaceResolutionError(RuntimeError):
+    """The request had no usable structured workspace and no explicit operator override."""
 
 
 # Recognized Claude identifier shapes (the CLI accepts these). Anything
@@ -264,20 +268,125 @@ def claude_cli_args(prompt: str, model: str, effort: str) -> list[str]:
     ]
 
 
-def resolve_cwd(request: dict[str, Any], _prompt: str = "") -> str:
-    for key in ("cwd", "project_root", "working_directory"):
+_WORKSPACE_KEYS = ("cwd", "project_root", "working_directory")
+
+
+def _parse_turn_metadata_json(value: Any) -> dict[str, Any] | None:
+    if not isinstance(value, str) or not value.strip():
+        return None
+    try:
+        parsed = json.loads(value)
+    except json.JSONDecodeError:
+        return None
+    return parsed if isinstance(parsed, dict) else None
+
+
+def _turn_metadata_from(header_value: Any, client_metadata: Any) -> dict[str, Any] | None:
+    """Canonical Codex transport carries turn metadata as the
+    `x-codex-turn-metadata` request header (forwarded by the model router);
+    callers that cannot set custom headers may instead embed the same JSON at
+    `client_metadata["x-codex-turn-metadata"]` in the body.
+    """
+    from_header = _parse_turn_metadata_json(header_value)
+    if from_header is not None:
+        return from_header
+    if isinstance(client_metadata, dict):
+        embedded = client_metadata.get("x-codex-turn-metadata")
+        if isinstance(embedded, dict):
+            return embedded
+        return _parse_turn_metadata_json(embedded)
+    return None
+
+
+def _turn_metadata_header(headers: Any) -> Any:
+    if headers is None or not hasattr(headers, "get"):
+        return None
+    return headers.get("X-Codex-Turn-Metadata") or headers.get("x-codex-turn-metadata")
+
+
+def _workspace_path_from_entry(entry: Any) -> str | None:
+    if isinstance(entry, str):
+        return entry
+    if isinstance(entry, dict):
+        for key in (*_WORKSPACE_KEYS, "path"):
+            value = entry.get(key)
+            if isinstance(value, str):
+                return value
+    return None
+
+
+def _resolve_workspace_from_turn_metadata(turn_metadata: Any) -> str | None:
+    """Resolve the workspace from the canonical ``workspaces`` map in turn
+    metadata.
+
+    Codex's canonical transport keys the ``workspaces`` map by the absolute
+    repo/workspace path (the source inserts ``repo_root`` as the map key);
+    each value carries only git metadata. We therefore try each map key as
+    an absolute path candidate first, and only fall back to inspecting the
+    value's structured path fields (``cwd``/``project_root``/``working_directory``/``path``)
+    when no key is a directory that exists on this host. The caller does not
+    tell us which workspace is "active", so the first valid candidate wins.
+    """
+    workspaces = turn_metadata.get("workspaces") if isinstance(turn_metadata, dict) else None
+    if not isinstance(workspaces, dict):
+        return None
+    for key in workspaces:
+        if isinstance(key, str) and os.path.isdir(key):
+            return key
+    for entry in workspaces.values():
+        candidate = _workspace_path_from_entry(entry)
+        if isinstance(candidate, str) and os.path.isdir(candidate):
+            return candidate
+    return None
+
+
+def resolve_cwd(request: dict[str, Any], headers: Any = None) -> str:
+    """Resolve the workspace directory from structured request fields only.
+
+    Task prose is never consulted. If the request omits a valid structured
+    `cwd`/`project_root`/`working_directory` (top-level, in `metadata`, or in
+    `x-codex-turn-metadata` workspaces), this fails closed instead of
+    silently defaulting to an unrelated repository: it falls back to an
+    explicit `CODEX_PROJECT_ROOT` operator override if one is configured, and
+    otherwise raises.
+    """
+    meta = request.get("metadata")
+    for key in _WORKSPACE_KEYS:
         val = request.get(key)
         if isinstance(val, str) and os.path.isdir(val):
             return val
-    meta = request.get("metadata")
     if isinstance(meta, dict):
-        for key in ("cwd", "project_root", "working_directory"):
+        for key in _WORKSPACE_KEYS:
             val = meta.get(key)
             if isinstance(val, str) and os.path.isdir(val):
                 return val
-    if os.path.isdir(PROJECT_ROOT):
-        return PROJECT_ROOT
-    return os.getcwd()
+    turn_metadata = _turn_metadata_from(
+        _turn_metadata_header(headers),
+        request.get("client_metadata"),
+    )
+    workspace_path = _resolve_workspace_from_turn_metadata(turn_metadata)
+    if workspace_path:
+        return workspace_path
+    if PROJECT_ROOT:
+        if os.path.isdir(PROJECT_ROOT):
+            return PROJECT_ROOT
+        raise WorkspaceResolutionError(
+            f"CODEX_PROJECT_ROOT={PROJECT_ROOT!r} is set but is not a directory"
+        )
+    present = sorted(
+        key
+        for key in _WORKSPACE_KEYS
+        if key in request or (isinstance(meta, dict) and key in meta)
+    )
+    if turn_metadata is not None:
+        present.append("x-codex-turn-metadata")
+    raise WorkspaceResolutionError(
+        "request omitted a valid structured cwd/project_root/working_directory "
+        "(top-level, metadata, or x-codex-turn-metadata workspaces) and "
+        "CODEX_PROJECT_ROOT is not set; refusing to guess a workspace instead "
+        "of silently landing an unrelated parent in this repository "
+        f"(present but invalid keys: {present or 'none'})"
+    )
 
 
 def rate_limit_event_error(event: dict[str, Any]) -> ClaudeRateLimitError | None:
@@ -310,7 +419,7 @@ def raise_classified_claude_error(message: Any, error_code: Any = None) -> None:
         raise error_type(str(message))
 
 
-def run_claude_stream(prompt: str, model: str = DEFAULT_CLAUDE_MODEL, effort: str = DEFAULT_CLAUDE_EFFORT, cwd: str = PROJECT_ROOT):
+def run_claude_stream(prompt: str, model: str = DEFAULT_CLAUDE_MODEL, effort: str = DEFAULT_CLAUDE_EFFORT, cwd: str = "."):
     process = subprocess.Popen(
         claude_cli_args(prompt, model, effort),
         cwd=cwd,
@@ -478,7 +587,7 @@ class Handler(BaseHTTPRequestHandler):
             claude_model = resolve_claude_model(request.get("model"))
             claude_effort = resolve_claude_effort(requested_effort(request))
             prompt = prompt_from_input(request.get("input", ""))
-            cwd = resolve_cwd(request, prompt)
+            cwd = resolve_cwd(request, self.headers)
             print(f"claude request model={claude_model} effort={claude_effort} cwd={cwd}", flush=True)
             if not request.get("stream"):
                 text = ""
@@ -535,6 +644,12 @@ class Handler(BaseHTTPRequestHandler):
             self.wfile.flush()
         except (BrokenPipeError, ConnectionResetError, OSError):
             print("client disconnected; Claude request cancelled", flush=True)
+        except WorkspaceResolutionError as exc:
+            print(f"Claude workspace resolution failed: {exc}", flush=True)
+            try:
+                self.send_json(400, {"error": {"message": str(exc), "type": "invalid_request_error"}})
+            except (BrokenPipeError, ConnectionResetError, OSError):
+                pass
         except ClaudeRateLimitError as exc:
             print(f"Claude rate limit: {exc}", flush=True)
             try:

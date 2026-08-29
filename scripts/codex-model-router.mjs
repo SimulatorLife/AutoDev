@@ -1668,7 +1668,7 @@ async function requestBody(request) {
   return body.toString("utf8");
 }
 
-function downstreamHeaders(route, auth) {
+function downstreamHeaders(route, auth, turnMetadataHeader) {
   const headers = { "content-type": "application/json", accept: "text/event-stream" };
   if (route.envKey) {
     const key = process.env[route.envKey];
@@ -1677,6 +1677,10 @@ function downstreamHeaders(route, auth) {
     headers.authorization = `Bearer ${auth.token}`;
     headers["chatgpt-account-id"] = auth.accountId;
   }
+  // Allowlisted forward: only FORWARDED_REQUEST_HEADERS ever crosses from the
+  // inbound client request to the outbound provider request. The provider
+  // credential above is always sourced independently, never from the client.
+  if (turnMetadataHeader) headers[FORWARDED_REQUEST_HEADERS[0]] = turnMetadataHeader;
   return headers;
 }
 
@@ -1712,12 +1716,12 @@ function responseTextFromSse(body) {
   };
 }
 
-async function fetchUpstream(route, payload, wantsStream) {
+async function fetchUpstream(route, payload, wantsStream, turnMetadataHeader) {
   const auth = route.provider === "codex" ? await loadCodexAuth() : null;
   const upstreamPayload = route.provider === "codex" ? { ...payload, stream: true, store: false } : { ...payload, stream: wantsStream };
   const upstream = await fetch(`${route.baseUrl}/responses`, {
     method: "POST",
-    headers: downstreamHeaders(route, auth),
+    headers: downstreamHeaders(route, auth, turnMetadataHeader),
     body: JSON.stringify(upstreamPayload),
   });
   if (!upstream.ok) return { ok: false, status: upstream.status, body: await upstream.text() };
@@ -1771,12 +1775,12 @@ async function providerAvailable(route) {
   }
 }
 
-async function proxyConcreteResponse(response, route, payload, wantsStream, requestId) {
+async function proxyConcreteResponse(response, route, payload, wantsStream, requestId, turnMetadataHeader) {
   const startedAt = Date.now();
   recordRouterEvent({ phase: "selected", requestId, requestedModel: payload.model, provider: route.provider, model: payload.model });
   incrementActiveRequests(route.provider);
   try {
-    const result = await fetchUpstream(route, payload, wantsStream);
+    const result = await fetchUpstream(route, payload, wantsStream, turnMetadataHeader);
     if (!result.ok) {
       const failureClass = classifyProviderFailure(result.status, result.body);
       recordRouterEvent({ phase: "result", requestId, requestedModel: payload.model, provider: route.provider, model: payload.model, outcome: "failure", status: result.status, failureClass, elapsedMs: Date.now() - startedAt });
@@ -1798,7 +1802,7 @@ async function proxyConcreteResponse(response, route, payload, wantsStream, requ
   }
 }
 
-async function proxyRoleResponse(response, role, payload, wantsStream, requestId) {
+async function proxyRoleResponse(response, role, payload, wantsStream, requestId, turnMetadataHeader) {
   const failures = [];
   for (const route of roleCandidates(role)) {
     if (isProviderCoolingDown(route.provider)) {
@@ -1816,7 +1820,7 @@ async function proxyRoleResponse(response, role, payload, wantsStream, requestId
     recordRouterEvent({ phase: "selected", requestId, role, requestedModel: payload.model, provider: route.provider, model: route.model });
     incrementActiveRequests(route.provider);
     try {
-      const result = await fetchUpstream(route, { ...payload, model: route.model }, wantsStream);
+      const result = await fetchUpstream(route, { ...payload, model: route.model }, wantsStream, turnMetadataHeader);
       if (result.ok) {
         clearProviderCooldown(route.provider);
         try {
@@ -1860,6 +1864,41 @@ function requestSession(request, payload) {
   const value = header ?? payload?.session_id ?? payload?.conversation_id ?? metadata?.session_id ?? metadata?.conversation_id;
   if (typeof value === "string" && value.trim()) return { key: value.trim(), scope: "identified" };
   return { key: PROCESS_FALLBACK_SESSION_KEY, scope: "process-fallback" };
+}
+
+// The only request header the router ever re-emits toward a provider bridge.
+// Provider bridges resolve their own workspace `cwd` from this JSON turn
+// metadata; the router itself never inspects `workspaces`, it only validates
+// and relays. Everything else about the inbound request (in particular any
+// client-supplied Authorization) is never forwarded: downstreamHeaders()
+// always sets the outbound provider credential independently.
+const FORWARDED_REQUEST_HEADERS = Object.freeze(["x-codex-turn-metadata"]);
+
+function parseTurnMetadataJson(value) {
+  if (typeof value !== "string" || !value.trim()) return null;
+  try {
+    const parsed = JSON.parse(value);
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+// Canonical Codex transport carries turn metadata (including the caller's
+// `workspaces` map) as the `x-codex-turn-metadata` request header. Callers
+// that cannot set custom headers may instead embed the same JSON under
+// `client_metadata["x-codex-turn-metadata"]` in the body; that is normalized
+// back into the canonical header shape so provider bridges only ever have to
+// parse one form.
+function resolveTurnMetadataHeader(request, payload) {
+  const rawHeader = request.headers["x-codex-turn-metadata"];
+  const headerValue = Array.isArray(rawHeader) ? rawHeader[0] : rawHeader;
+  if (parseTurnMetadataJson(headerValue)) return headerValue;
+  const clientMetadata = payload?.client_metadata;
+  const embedded = clientMetadata && typeof clientMetadata === "object" ? clientMetadata["x-codex-turn-metadata"] : undefined;
+  if (typeof embedded === "string" && parseTurnMetadataJson(embedded)) return embedded;
+  if (embedded && typeof embedded === "object" && !Array.isArray(embedded)) return JSON.stringify(embedded);
+  return null;
 }
 
 async function handle(request, response) {
@@ -1911,6 +1950,7 @@ async function handle(request, response) {
   const role = roleForModel(model);
   const requestId = String(request.headers["x-request-id"] ?? randomUUID());
   const wantsStream = payload.stream !== false;
+  const turnMetadataHeader = resolveTurnMetadataHeader(request, payload);
   if (role) {
     const session = requestSession(request, payload);
     const denialReason = tryAcquireSubagentSlot(session.key);
@@ -1920,7 +1960,7 @@ async function handle(request, response) {
       return;
     }
     try {
-      await proxyRoleResponse(response, role, payload, wantsStream, requestId);
+      await proxyRoleResponse(response, role, payload, wantsStream, requestId, turnMetadataHeader);
     } finally {
       releaseSubagentSlot(session.key);
     }
@@ -1931,10 +1971,10 @@ async function handle(request, response) {
     sendJson(response, 400, errorBody(`No local route is configured for model ${String(payload.model)}`));
     return;
   }
-  await proxyConcreteResponse(response, route, payload, wantsStream, requestId);
+  await proxyConcreteResponse(response, route, payload, wantsStream, requestId, turnMetadataHeader);
 }
 
-export { activeProviderRequests, codexTelemetryStatus, ingestOtelSignal, ingestOtelLogs, ingestOtelMetrics, ingestOtelTraces, resetOtelTelemetry, catalogModelIds, classifyProviderFailure, clearProviderCooldown, concurrencyStatus, normalizeCodexTask, summarizeCodexTasks, cooldownProvider, countToolCallsFromSse, countToolCallsInResponse, decrementActiveRequests, fallbackable, getActiveRequests, getRouterStatus, handle, incrementActiveRequests, isProviderCoolingDown, loadRouterState, parseConcurrencyConfig, persistRouterStateNow, PROCESS_FALLBACK_SESSION_KEY, providerModelMetadata, recordConcurrencyDenial, recordRouterEvent, recordSpawnFailure, releaseSubagentSlot, replaceModelFields, requestSession, resetConcurrencyTelemetry, resetRouterTelemetry, spawnFailureStatus, routeCredentialAvailable, roleCandidates, roleForModel, routeForModel, serializeRouterState, tryAcquireSubagentSlot, responseTextFromSse, transformSseEvent, validateRoutingConfig };
+export { activeProviderRequests, codexTelemetryStatus, ingestOtelSignal, ingestOtelLogs, ingestOtelMetrics, ingestOtelTraces, resetOtelTelemetry, catalogModelIds, classifyProviderFailure, clearProviderCooldown, concurrencyStatus, normalizeCodexTask, summarizeCodexTasks, cooldownProvider, countToolCallsFromSse, countToolCallsInResponse, decrementActiveRequests, downstreamHeaders, fallbackable, FORWARDED_REQUEST_HEADERS, getActiveRequests, getRouterStatus, handle, incrementActiveRequests, isProviderCoolingDown, loadRouterState, parseConcurrencyConfig, parseTurnMetadataJson, persistRouterStateNow, PROCESS_FALLBACK_SESSION_KEY, providerModelMetadata, recordConcurrencyDenial, recordRouterEvent, recordSpawnFailure, releaseSubagentSlot, replaceModelFields, requestSession, resetConcurrencyTelemetry, resetRouterTelemetry, resolveTurnMetadataHeader, spawnFailureStatus, routeCredentialAvailable, roleCandidates, roleForModel, routeForModel, serializeRouterState, tryAcquireSubagentSlot, responseTextFromSse, transformSseEvent, validateRoutingConfig };
 
 if (IS_MAIN) {
   createServer((request, response) => { void handle(request, response); }).listen(PORT, HOST, () => {

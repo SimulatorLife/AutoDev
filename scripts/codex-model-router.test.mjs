@@ -5,7 +5,7 @@ import test from "node:test";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
-import { activeProviderRequests, catalogModelIds, classifyProviderFailure, clearProviderCooldown, cooldownProvider, decrementActiveRequests, fallbackable, getActiveRequests, concurrencyStatus, countToolCallsFromSse, countToolCallsInResponse, getRouterStatus, handle, codexTelemetryStatus, ingestOtelSignal, incrementActiveRequests, isProviderCoolingDown, loadRouterState, normalizeCodexTask, parseConcurrencyConfig, persistRouterStateNow, PROCESS_FALLBACK_SESSION_KEY, recordConcurrencyDenial, recordRouterEvent, recordSpawnFailure, releaseSubagentSlot, replaceModelFields, requestSession, resetConcurrencyTelemetry, resetRouterTelemetry, resetOtelTelemetry, serializeRouterState, spawnFailureStatus, summarizeCodexTasks, responseTextFromSse, roleCandidates, roleForModel, routeCredentialAvailable, routeForModel, transformSseEvent, tryAcquireSubagentSlot, validateRoutingConfig } from "./codex-model-router.mjs";
+import { activeProviderRequests, catalogModelIds, classifyProviderFailure, clearProviderCooldown, cooldownProvider, decrementActiveRequests, downstreamHeaders, fallbackable, FORWARDED_REQUEST_HEADERS, getActiveRequests, concurrencyStatus, countToolCallsFromSse, countToolCallsInResponse, getRouterStatus, handle, codexTelemetryStatus, ingestOtelSignal, incrementActiveRequests, isProviderCoolingDown, loadRouterState, normalizeCodexTask, parseConcurrencyConfig, parseTurnMetadataJson, persistRouterStateNow, PROCESS_FALLBACK_SESSION_KEY, recordConcurrencyDenial, recordRouterEvent, recordSpawnFailure, releaseSubagentSlot, replaceModelFields, requestSession, resetConcurrencyTelemetry, resetRouterTelemetry, resetOtelTelemetry, resolveTurnMetadataHeader, serializeRouterState, spawnFailureStatus, summarizeCodexTasks, responseTextFromSse, roleCandidates, roleForModel, routeCredentialAvailable, routeForModel, transformSseEvent, tryAcquireSubagentSlot, validateRoutingConfig } from "./codex-model-router.mjs";
 
 test("loads editable provider and role models from JSON routing config", async () => {
   const config = JSON.parse(await readFile(new URL("./codex/model-routing.json", import.meta.url), "utf8"));
@@ -142,6 +142,117 @@ test("successful responses identify the resolved provider, model, and request", 
     assert.equal(response.headers.get("x-autodev-provider"), "claude");
     assert.equal(response.headers.get("x-autodev-model"), "sonnet");
     assert.equal(response.headers.get("x-autodev-request-id"), "req-header");
+  } finally {
+    await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("resolveTurnMetadataHeader prefers the canonical header and falls back to embedded client_metadata", () => {
+  const rawJson = JSON.stringify({ workspaces: { main: "/tmp/ws" } });
+  assert.equal(
+    resolveTurnMetadataHeader({ headers: { "x-codex-turn-metadata": rawJson } }, {}),
+    rawJson
+  );
+  assert.equal(
+    resolveTurnMetadataHeader({ headers: { "x-codex-turn-metadata": [rawJson] } }, {}),
+    rawJson
+  );
+  assert.equal(
+    resolveTurnMetadataHeader({ headers: {} }, { client_metadata: { "x-codex-turn-metadata": rawJson } }),
+    rawJson
+  );
+  assert.equal(
+    resolveTurnMetadataHeader({ headers: {} }, { client_metadata: { "x-codex-turn-metadata": { workspaces: { main: "/tmp/ws" } } } }),
+    JSON.stringify({ workspaces: { main: "/tmp/ws" } })
+  );
+  assert.equal(resolveTurnMetadataHeader({ headers: { "x-codex-turn-metadata": "not json" } }, {}), null);
+  assert.equal(resolveTurnMetadataHeader({ headers: {} }, {}), null);
+  assert.equal(parseTurnMetadataJson("[]"), null);
+  assert.equal(parseTurnMetadataJson(rawJson).workspaces.main, "/tmp/ws");
+});
+
+test("downstreamHeaders forwards only the allowlisted turn-metadata header and never a client-supplied credential", () => {
+  assert.deepEqual([...FORWARDED_REQUEST_HEADERS], ["x-codex-turn-metadata"]);
+  const route = { provider: "claude", envKey: "LITELLM_API_KEY" };
+  const withoutTurnMetadata = downstreamHeaders(route, null, null);
+  assert.equal(withoutTurnMetadata["x-codex-turn-metadata"], undefined);
+  const withTurnMetadata = downstreamHeaders(route, null, "{\"workspaces\":{}}");
+  assert.equal(withTurnMetadata["x-codex-turn-metadata"], "{\"workspaces\":{}}");
+  assert.notEqual(withTurnMetadata.authorization, "Bearer client-supplied-secret");
+});
+
+test("forwards x-codex-turn-metadata to the upstream provider bridge without leaking the caller's own authorization", async () => {
+  const originalFetch = globalThis.fetch;
+  let upstreamHeaders = null;
+  globalThis.fetch = async (url, options) => {
+    if (String(url) === "http://127.0.0.1:4000/v1/responses") {
+      upstreamHeaders = options.headers;
+      return new Response(JSON.stringify({ id: "upstream-response", model: "sonnet", output_text: "ok" }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }
+    return originalFetch(url, options);
+  };
+  const server = createServer((request, response) => { void handle(request, response); });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  try {
+    const address = server.address();
+    // Codex's canonical turn metadata keys the workspaces map by absolute
+    // repo/workspace path; values carry only git metadata. The router must
+    // forward that exact JSON shape verbatim, with no reformatting.
+    const turnMetadata = JSON.stringify({
+      workspaces: { "/Users/henrykirk/AutoDev": { git: { branch: "main", sha: "abc123" } } },
+    });
+    const response = await originalFetch(`http://127.0.0.1:${address.port}/v1/responses`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: "Bearer client-supplied-secret",
+        "x-codex-turn-metadata": turnMetadata,
+      },
+      body: JSON.stringify({ model: "sonnet", stream: false }),
+    });
+    assert.equal(response.status, 200);
+    assert.equal(upstreamHeaders["x-codex-turn-metadata"], turnMetadata);
+    assert.notEqual(upstreamHeaders.authorization, "Bearer client-supplied-secret");
+  } finally {
+    await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("relays the canonical workspaces-map-keyed turn metadata even when it arrives only as embedded client_metadata", async () => {
+  const originalFetch = globalThis.fetch;
+  let upstreamHeaders = null;
+  globalThis.fetch = async (url, options) => {
+    if (String(url) === "http://127.0.0.1:4000/v1/responses") {
+      upstreamHeaders = options.headers;
+      return new Response(JSON.stringify({ id: "upstream-response", model: "sonnet", output_text: "ok" }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }
+    return originalFetch(url, options);
+  };
+  const server = createServer((request, response) => { void handle(request, response); });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  try {
+    const address = server.address();
+    // Callers that cannot set custom headers embed the same canonical shape
+    // under client_metadata["x-codex-turn-metadata"]; the router must
+    // normalize that back into the canonical header before forwarding.
+    const canonical = {
+      workspaces: { "/Users/henrykirk/AutoDev": { git: { branch: "main" } } },
+    };
+    const response = await originalFetch(`http://127.0.0.1:${address.port}/v1/responses`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ model: "sonnet", stream: false, client_metadata: { "x-codex-turn-metadata": canonical } }),
+    });
+    assert.equal(response.status, 200);
+    assert.equal(upstreamHeaders["x-codex-turn-metadata"], JSON.stringify(canonical));
   } finally {
     await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
     globalThis.fetch = originalFetch;

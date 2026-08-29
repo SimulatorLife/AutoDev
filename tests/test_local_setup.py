@@ -453,20 +453,21 @@ class LocalSetupTests(unittest.TestCase):
         thread = threading.Thread(target=server.serve_forever, daemon=True)
         thread.start()
         try:
-            request = urllib.request.Request(
-                f"http://127.0.0.1:{server.server_address[1]}/v1/responses",
-                data=json.dumps({"model": "sonnet", "input": "hello", "stream": False}).encode(),
-                headers={
-                    "Content-Type": "application/json",
-                    **({"Authorization": f"Bearer {claude_bridge.AUTH_TOKEN}"} if claude_bridge.AUTH_TOKEN else {}),
-                },
-                method="POST",
-            )
-            with self.assertRaises(urllib.error.HTTPError) as context:
-                urllib.request.urlopen(request, timeout=5)
-            self.assertEqual(context.exception.code, 429)
-            payload = json.loads(context.exception.read())
-            self.assertEqual(payload["error"]["type"], "rate_limit_error")
+            with tempfile.TemporaryDirectory() as workspace:
+                request = urllib.request.Request(
+                    f"http://127.0.0.1:{server.server_address[1]}/v1/responses",
+                    data=json.dumps({"model": "sonnet", "input": "hello", "stream": False, "cwd": workspace}).encode(),
+                    headers={
+                        "Content-Type": "application/json",
+                        **({"Authorization": f"Bearer {claude_bridge.AUTH_TOKEN}"} if claude_bridge.AUTH_TOKEN else {}),
+                    },
+                    method="POST",
+                )
+                with self.assertRaises(urllib.error.HTTPError) as context:
+                    urllib.request.urlopen(request, timeout=5)
+                self.assertEqual(context.exception.code, 429)
+                payload = json.loads(context.exception.read())
+                self.assertEqual(payload["error"]["type"], "rate_limit_error")
         finally:
             claude_bridge.run_claude_stream = original_runner
             server.shutdown()
@@ -540,14 +541,194 @@ class LocalSetupTests(unittest.TestCase):
         self.assertNotIn("[developer]", prompt)
 
     def test_claude_bridge_uses_structured_cwd_not_task_prose(self):
-        self.assertEqual(
-            claude_bridge.resolve_cwd({}, "cwd: /Users/henrykirk/Desktop/RacingGame"),
-            claude_bridge.PROJECT_ROOT,
-        )
-        self.assertEqual(
-            claude_bridge.resolve_cwd({"cwd": "/Users/henrykirk/Desktop/RacingGame"}),
-            "/Users/henrykirk/Desktop/RacingGame",
-        )
+        with tempfile.TemporaryDirectory() as workspace:
+            self.assertEqual(claude_bridge.resolve_cwd({"cwd": workspace}), workspace)
+            self.assertEqual(claude_bridge.resolve_cwd({"metadata": {"project_root": workspace}}), workspace)
+        with patch.object(claude_bridge, "PROJECT_ROOT", None):
+            with self.assertRaises(claude_bridge.WorkspaceResolutionError):
+                claude_bridge.resolve_cwd({"input": "cwd: /Users/henrykirk/Desktop/RacingGame"})
+
+    @staticmethod
+    def _nonexistent_dir():
+        """An absolute path guaranteed not to exist, unlike a hardcoded guess."""
+        placeholder = tempfile.mkdtemp()
+        os.rmdir(placeholder)
+        return placeholder
+
+    def test_claude_bridge_fails_closed_when_workspace_is_missing_or_invalid(self):
+        with patch.object(claude_bridge, "PROJECT_ROOT", None):
+            with self.assertRaises(claude_bridge.WorkspaceResolutionError):
+                claude_bridge.resolve_cwd({})
+            with self.assertRaises(claude_bridge.WorkspaceResolutionError):
+                claude_bridge.resolve_cwd({"cwd": self._nonexistent_dir()})
+            with self.assertRaises(claude_bridge.WorkspaceResolutionError):
+                claude_bridge.resolve_cwd({"metadata": {"working_directory": 123}})
+
+    def test_claude_bridge_allows_explicit_project_root_override(self):
+        with tempfile.TemporaryDirectory() as override_dir:
+            with patch.object(claude_bridge, "PROJECT_ROOT", override_dir):
+                self.assertEqual(claude_bridge.resolve_cwd({}), override_dir)
+        with patch.object(claude_bridge, "PROJECT_ROOT", self._nonexistent_dir()):
+            with self.assertRaises(claude_bridge.WorkspaceResolutionError):
+                claude_bridge.resolve_cwd({})
+
+    def test_claude_bridge_rejects_missing_workspace_over_http_with_diagnostics(self):
+        with patch.object(claude_bridge, "PROJECT_ROOT", None):
+            server = claude_bridge.ThreadingHTTPServer(("127.0.0.1", 0), claude_bridge.Handler)
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            try:
+                request = urllib.request.Request(
+                    f"http://127.0.0.1:{server.server_address[1]}/v1/responses",
+                    data=json.dumps({"model": "sonnet", "input": "hello", "stream": False}).encode(),
+                    headers={
+                        "Content-Type": "application/json",
+                        **({"Authorization": f"Bearer {claude_bridge.AUTH_TOKEN}"} if claude_bridge.AUTH_TOKEN else {}),
+                    },
+                    method="POST",
+                )
+                with self.assertRaises(urllib.error.HTTPError) as context:
+                    urllib.request.urlopen(request, timeout=5)
+                self.assertEqual(context.exception.code, 400)
+                payload = json.loads(context.exception.read())
+                self.assertEqual(payload["error"]["type"], "invalid_request_error")
+                self.assertIn("cwd/project_root/working_directory", payload["error"]["message"])
+                self.assertIn("CODEX_PROJECT_ROOT", payload["error"]["message"])
+            finally:
+                server.shutdown()
+                server.server_close()
+                thread.join(timeout=5)
+
+    def test_claude_bridge_resolves_workspace_from_turn_metadata_header(self):
+        with tempfile.TemporaryDirectory() as workspace:
+            turn_metadata = json.dumps({"workspaces": {"main": {"cwd": workspace}}})
+            with patch.object(claude_bridge, "PROJECT_ROOT", None):
+                self.assertEqual(
+                    claude_bridge.resolve_cwd({}, {"X-Codex-Turn-Metadata": turn_metadata}),
+                    workspace,
+                )
+
+    def test_claude_bridge_resolves_workspace_from_embedded_client_metadata(self):
+        with tempfile.TemporaryDirectory() as workspace:
+            with patch.object(claude_bridge, "PROJECT_ROOT", None):
+                self.assertEqual(
+                    claude_bridge.resolve_cwd(
+                        {"client_metadata": {"x-codex-turn-metadata": {"workspaces": {"main": workspace}}}},
+                        {},
+                    ),
+                    workspace,
+                )
+                embedded_json = json.dumps({"workspaces": {"main": workspace}})
+                self.assertEqual(
+                    claude_bridge.resolve_cwd(
+                        {"client_metadata": {"x-codex-turn-metadata": embedded_json}},
+                        {},
+                    ),
+                    workspace,
+                )
+
+    def test_claude_bridge_turn_metadata_workspaces_skip_invalid_entries(self):
+        with tempfile.TemporaryDirectory() as workspace:
+            turn_metadata = json.dumps({
+                "workspaces": {
+                    "stale": {"cwd": self._nonexistent_dir()},
+                    "main": {"path": workspace},
+                }
+            })
+            with patch.object(claude_bridge, "PROJECT_ROOT", None):
+                self.assertEqual(
+                    claude_bridge.resolve_cwd({}, {"X-Codex-Turn-Metadata": turn_metadata}),
+                    workspace,
+                )
+
+    def test_claude_bridge_ignores_malformed_turn_metadata_and_still_fails_closed(self):
+        with patch.object(claude_bridge, "PROJECT_ROOT", None):
+            with self.assertRaises(claude_bridge.WorkspaceResolutionError):
+                claude_bridge.resolve_cwd({}, {"X-Codex-Turn-Metadata": "not json"})
+            with self.assertRaises(claude_bridge.WorkspaceResolutionError):
+                claude_bridge.resolve_cwd({}, {"X-Codex-Turn-Metadata": json.dumps({"workspaces": []})})
+
+    def test_claude_bridge_resolves_workspace_from_workspaces_map_key(self):
+        """Codex's canonical turn metadata keys the ``workspaces`` map by the
+        absolute repo/workspace path; values carry only git metadata. The
+        bridge must treat each map key as a workspace candidate and prefer it
+        over the legacy value-field form when both are present.
+        """
+        with tempfile.TemporaryDirectory() as workspace:
+            with patch.object(claude_bridge, "PROJECT_ROOT", None):
+                # Canonical form: key is the absolute path, value is git-only metadata.
+                self.assertEqual(
+                    claude_bridge.resolve_cwd(
+                        {},
+                        {"X-Codex-Turn-Metadata": json.dumps({
+                            "workspaces": {workspace: {"git": {"branch": "main"}}}
+                        })},
+                    ),
+                    workspace,
+                )
+                # Embedded form: same canonical structure under client_metadata.
+                self.assertEqual(
+                    claude_bridge.resolve_cwd(
+                        {"client_metadata": {"x-codex-turn-metadata": {
+                            "workspaces": {workspace: {"git": {"branch": "main"}}}
+                        }}},
+                        {},
+                    ),
+                    workspace,
+                )
+
+    def test_claude_bridge_workspaces_map_key_wins_over_value_fields(self):
+        """When both an absolute-path key and a structured value path exist,
+        the key (the canonical Codex contract) is preferred. The bridge must
+        never silently fall back to a stale value-field path when the key is
+        a valid directory on this host.
+        """
+        with tempfile.TemporaryDirectory() as key_workspace, tempfile.TemporaryDirectory() as value_workspace:
+            turn_metadata = json.dumps({
+                "workspaces": {
+                    key_workspace: {"git": {"branch": "main"}},
+                    "stale": {"cwd": value_workspace},
+                }
+            })
+            with patch.object(claude_bridge, "PROJECT_ROOT", None):
+                self.assertEqual(
+                    claude_bridge.resolve_cwd({}, {"X-Codex-Turn-Metadata": turn_metadata}),
+                    key_workspace,
+                )
+
+    def test_claude_bridge_falls_back_to_value_fields_when_no_key_is_a_directory(self):
+        """If no workspaces map key is a directory on this host, the bridge
+        still honours the legacy structured ``cwd``/``project_root``/``working_directory``
+        /``path`` fields inside each value, so callers that emit a non-path
+        identifier (e.g. a UUID) keep working.
+        """
+        with tempfile.TemporaryDirectory() as workspace:
+            turn_metadata = json.dumps({
+                "workspaces": {
+                    "stale-uuid-1": {"git": {"branch": "main"}},
+                    "main": {"cwd": workspace},
+                }
+            })
+            with patch.object(claude_bridge, "PROJECT_ROOT", None):
+                self.assertEqual(
+                    claude_bridge.resolve_cwd({}, {"X-Codex-Turn-Metadata": turn_metadata}),
+                    workspace,
+                )
+
+    def test_claude_bridge_skips_workspace_keys_that_are_not_directories(self):
+        """Non-path map keys (UUIDs, ids) must not be treated as workspace
+        candidates even if their value happens to carry a structured path.
+        """
+        with tempfile.TemporaryDirectory() as workspace:
+            turn_metadata = json.dumps({
+                "workspaces": {
+                    "stale-uuid": {"git": {"branch": "main"}},
+                    "another-id": {"cwd": self._nonexistent_dir()},
+                }
+            })
+            with patch.object(claude_bridge, "PROJECT_ROOT", None):
+                with self.assertRaises(claude_bridge.WorkspaceResolutionError):
+                    claude_bridge.resolve_cwd({}, {"X-Codex-Turn-Metadata": turn_metadata})
 
     def test_leaf_role_instructions_define_workspace_trust_boundary(self):
         for role in ("browser-tester", "default", "docs-researcher", "explorer", "smart", "validator", "worker"):
@@ -663,7 +844,7 @@ class LocalSetupTests(unittest.TestCase):
                 )
             self.assertIn("ROOT DELEGATION REQUIREMENT", result.stdout)
 
-    def test_provider_bridges_default_to_autodev_and_ignore_prompt_cwd(self):
+    def test_provider_bridges_never_infer_workspace_from_prompt_text(self):
         for relative_path in (
             "scripts/codex-claude-cli-responses-proxy.py",
             "scripts/codex-antigravity-cli-responses-proxy.mjs",
@@ -673,6 +854,61 @@ class LocalSetupTests(unittest.TestCase):
                 source = (REPO_ROOT / relative_path).read_text()
                 self.assertIn("CODEX_PROJECT_ROOT", source)
                 self.assertNotIn("prompt.match(/(?:Working directory:", source)
+
+    def test_all_provider_bridges_support_canonical_turn_metadata_workspaces(self):
+        cases = {
+            "scripts/codex-claude-cli-responses-proxy.py": {
+                "x-codex-turn-metadata",
+                "workspaces",
+                "for key in workspaces",
+                "WorkspaceResolutionError",
+            },
+            "scripts/codex-antigravity-cli-responses-proxy.mjs": {
+                "x-codex-turn-metadata",
+                "workspaces",
+                "Object.keys(workspaces)",
+                "WorkspaceResolutionError",
+            },
+            "scripts/codex-copilot-cli-responses-proxy.mjs": {
+                "x-codex-turn-metadata",
+                "workspaces",
+                "Object.keys(workspaces)",
+                "WorkspaceResolutionError",
+            },
+        }
+        for relative_path, required_fragments in cases.items():
+            with self.subTest(path=relative_path):
+                source = (REPO_ROOT / relative_path).read_text()
+                for fragment in required_fragments:
+                    self.assertIn(fragment, source, msg=f"{relative_path} missing required fragment {fragment!r}")
+
+    def test_all_provider_bridges_consider_workspaces_map_keys_before_value_fields(self):
+        """Codex's canonical turn metadata keys the ``workspaces`` map by the
+        absolute repo/workspace path; values carry only git metadata. Every
+        provider bridge must therefore iterate ``Object.keys(workspaces)``
+        (or the Python equivalent) and check whether each key is a real
+        directory on this host *before* it inspects the value's structured
+        path fields.
+        """
+        cases = {
+            "scripts/codex-claude-cli-responses-proxy.py": (
+                "    for key in workspaces:",
+                "        if isinstance(key, str) and os.path.isdir(key):",
+            ),
+            "scripts/codex-antigravity-cli-responses-proxy.mjs": (
+                "  for (const key of Object.keys(workspaces)) {",
+                "    if (isDirectory(key)) return key;",
+            ),
+            "scripts/codex-copilot-cli-responses-proxy.mjs": (
+                "  for (const key of Object.keys(workspaces)) {",
+                "    if (isDirectory(key)) return key;",
+            ),
+        }
+        for relative_path, required_fragments in cases.items():
+            with self.subTest(path=relative_path):
+                source = (REPO_ROOT / relative_path).read_text()
+                for fragment in required_fragments:
+                    self.assertIn(fragment, source, msg=f"{relative_path} missing required fragment {fragment!r}")
 
     def test_root_delegation_hook_injects_spawn_safety_policy_for_parent_models(self):
         hook = REPO_ROOT / "scripts/enforce-root-delegation.sh"

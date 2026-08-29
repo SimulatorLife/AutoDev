@@ -179,14 +179,39 @@ while native `autodev/*` roles are excluded by their role alias, so leaf
 providers do not receive the parent-only instruction to spawn more agents.
 Keep these restrictions at the CLI/gateway boundary rather than
 relying only on role prompt text. Provider bridges must treat the active
-working directory as transport metadata: role requests should carry `cwd`,
-`project_root`, or `working_directory` in the structured request (or its
-metadata), and must never infer it from arbitrary task prose. The provider
-bridges use that parent workspace whenever it is present. If the app-server
-omits it, AutoDev cannot safely infer the parent from a long-running daemon's
-process directory; the last-resort default is `/Users/henrykirk/AutoDev`,
-overridable with `CODEX_PROJECT_ROOT`. That fallback is not a substitute for
-fixing the orchestrator to forward its workspace.
+working directory as transport metadata and must never infer it from arbitrary
+task prose. If no valid structured workspace is present, the bridge fails
+closed with a diagnostic instead of silently selecting AutoDev; an explicit
+`CODEX_PROJECT_ROOT` remains available only as an operator-controlled fallback
+for intentionally pinned, single-repository service deployments.
+
+### Canonical turn metadata and `workspaces` map contract
+
+Codex's canonical transport carries turn metadata as the
+`x-codex-turn-metadata` request header (the local model router forwards this
+verbatim to the chosen provider bridge). The metadata contains a
+`workspaces` map whose key is the absolute repo/workspace path (the
+Codex source inserts `repo_root` as the map key); each value carries
+only git metadata. Provider bridges therefore consult each `workspaces`
+map key as an absolute-path candidate first, and only fall back to the
+legacy structured `cwd`/`project_root`/`working_directory`/`path` fields
+inside each value when no key is a directory that exists on this host.
+This matches the upstream Codex contract: values do not carry the path.
+
+Callers that cannot set custom headers may instead embed the same JSON
+under `client_metadata["x-codex-turn-metadata"]` in the request body;
+the local router normalizes that back into the canonical header shape
+so provider bridges only ever have to parse one form. The resolution
+order inside `resolve_cwd` / `resolveCwd` is therefore:
+
+1. Top-level `cwd`, `project_root`, or `working_directory` on the request.
+2. The same fields inside `metadata`.
+3. The canonical `workspaces` map keys (absolute paths).
+4. The structured path fields inside each `workspaces` value.
+5. The explicit `CODEX_PROJECT_ROOT` operator override.
+6. Fail closed with a `400 invalid_request_error` (and a `WorkspaceResolutionError`
+   in the bridge) listing the fields the request did carry, instead of
+   silently defaulting to an unrelated parent in this repository.
 
 Provider bridges also forward only delegated user-task content and add their
 leaf boundary as provider-controlled instructions. Parent system/developer

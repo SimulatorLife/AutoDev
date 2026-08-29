@@ -16,27 +16,98 @@ const AGY_MODE = process.env.AGY_MODE ?? "accept-edits";
 const AGY_SKIP_PERMISSIONS = process.env.AGY_SKIP_PERMISSIONS ?? "true";
 const PRINT_TIMEOUT = process.env.AGY_PRINT_TIMEOUT ?? "15m";
 const AUTH_TOKEN = process.env.LITELLM_API_KEY ?? "";
-const PROJECT_ROOT = process.env.CODEX_PROJECT_ROOT ?? process.env.AGY_PROJECT_ROOT ?? "/Users/henrykirk/AutoDev";
+const PROJECT_ROOT = process.env.CODEX_PROJECT_ROOT ?? process.env.AGY_PROJECT_ROOT ?? null;
 const MODEL_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 const EFFORTS = new Set([ "low", "medium", "high" ]);
 const BRIDGE_INSTRUCTIONS = "You are the leaf implementation agent for a parent Codex task. Use Antigravity's native tools and follow the repository's AGENTS.md. Do not spawn child agents, commit, or push unless the task explicitly requires it.";
+const WORKSPACE_KEYS = [ "cwd", "project_root", "working_directory" ];
 
 function isDirectory(path) {
   try { return typeof path === "string" && Boolean(path) && statSync(path).isDirectory(); } catch { return false; }
 }
 
-function resolveCwd(payload) {
-  for (const key of ["cwd", "project_root", "working_directory"]) {
+class WorkspaceResolutionError extends Error {}
+
+function parseTurnMetadataJson(value) {
+  if (typeof value !== "string" || !value.trim()) return null;
+  try {
+    const parsed = JSON.parse(value);
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+// Canonical Codex transport carries turn metadata as the `x-codex-turn-metadata`
+// request header (forwarded by the model router); callers that cannot set
+// custom headers may instead embed the same JSON at
+// `client_metadata["x-codex-turn-metadata"]` in the body.
+function turnMetadataFrom(headerValue, clientMetadata) {
+  const fromHeader = parseTurnMetadataJson(Array.isArray(headerValue) ? headerValue[0] : headerValue);
+  if (fromHeader) return fromHeader;
+  const embedded = clientMetadata && typeof clientMetadata === "object" ? clientMetadata["x-codex-turn-metadata"] : undefined;
+  if (embedded && typeof embedded === "object" && !Array.isArray(embedded)) return embedded;
+  return parseTurnMetadataJson(embedded);
+}
+
+function workspacePathFromEntry(entry) {
+  if (typeof entry === "string") return entry;
+  if (entry && typeof entry === "object") {
+    for (const key of [ ...WORKSPACE_KEYS, "path" ]) {
+      if (typeof entry[key] === "string") return entry[key];
+    }
+  }
+  return null;
+}
+
+// Codex's canonical transport keys the `workspaces` map by the absolute
+// repo/workspace path (the source inserts `repo_root` as the map key); each
+// value carries only git metadata. Try each map key as an absolute path
+// candidate first, and only fall back to inspecting the value's structured
+// path fields when no key is a directory that exists on this host. The
+// caller does not tell us which workspace is "active", so the first valid
+// candidate wins.
+function resolveWorkspaceFromTurnMetadata(turnMetadata) {
+  const workspaces = turnMetadata && typeof turnMetadata === "object" ? turnMetadata.workspaces : null;
+  if (!workspaces || typeof workspaces !== "object") return null;
+  for (const key of Object.keys(workspaces)) {
+    if (isDirectory(key)) return key;
+  }
+  for (const entry of Object.values(workspaces)) {
+    const candidate = workspacePathFromEntry(entry);
+    if (isDirectory(candidate)) return candidate;
+  }
+  return null;
+}
+
+/**
+ * Resolve the workspace directory from structured request fields only; task
+ * prose is never consulted. Fails closed instead of silently defaulting to
+ * an unrelated repository: falls back to an explicit `CODEX_PROJECT_ROOT`
+ * operator override if configured, and otherwise throws.
+ */
+function resolveCwd(payload, headers) {
+  for (const key of WORKSPACE_KEYS) {
     if (isDirectory(payload?.[key])) return payload[key];
   }
   const meta = payload?.metadata;
   if (meta && typeof meta === "object") {
-    for (const key of ["cwd", "project_root", "working_directory"]) {
+    for (const key of WORKSPACE_KEYS) {
       if (isDirectory(meta[key])) return meta[key];
     }
   }
-  if (isDirectory(PROJECT_ROOT)) return PROJECT_ROOT;
-  return process.cwd();
+  const turnMetadata = turnMetadataFrom(headers?.["x-codex-turn-metadata"], payload?.client_metadata);
+  const workspacePath = resolveWorkspaceFromTurnMetadata(turnMetadata);
+  if (workspacePath) return workspacePath;
+  if (PROJECT_ROOT) {
+    if (isDirectory(PROJECT_ROOT)) return PROJECT_ROOT;
+    throw new WorkspaceResolutionError(`CODEX_PROJECT_ROOT=${JSON.stringify(PROJECT_ROOT)} is set but is not a directory`);
+  }
+  throw new WorkspaceResolutionError(
+    "request omitted a valid structured cwd/project_root/working_directory (top-level, metadata, or " +
+    "x-codex-turn-metadata workspaces) and CODEX_PROJECT_ROOT is not set; refusing to guess a workspace " +
+    "instead of silently landing an unrelated parent in this repository"
+  );
 }
 
 function modelMetadata() {
@@ -220,15 +291,11 @@ function failedStream(response, responseId, itemId, error) {
   response.end("data: [DONE]\n\n");
 }
 
-function runAgy(prompt, model, effort, cwd = PROJECT_ROOT, onEvent) {
-  if (typeof cwd === "function") {
-    onEvent = cwd;
-    cwd = PROJECT_ROOT;
-  }
+function runAgy(prompt, model, effort, cwd, onEvent) {
   return new Promise((resolve, reject) => {
     const permissionArgs = AGY_SKIP_PERMISSIONS === "true" ? [ "--dangerously-skip-permissions" ] : [];
     const args = [ "-p", prompt, "--model", model, "--effort", effort, "--mode", AGY_MODE, ...permissionArgs, "--output-format", "stream-json", "--print-timeout", PRINT_TIMEOUT ];
-    const child = spawn(CLI, args, { cwd: cwd || PROJECT_ROOT, env: process.env, stdio: [ "ignore", "pipe", "pipe" ] });
+    const child = spawn(CLI, args, { cwd, env: process.env, stdio: [ "ignore", "pipe", "pipe" ] });
     let stderr = "";
     let terminalResult = null;
     let emitted = "";
@@ -301,7 +368,15 @@ async function handle(request, response) {
   const model = resolveModel(payload.model);
   const effort = resolveEffort(payload);
   const prompt = promptFromInput(payload.input ?? "");
-  const cwd = resolveCwd(payload);
+  let cwd;
+  try {
+    cwd = resolveCwd(payload, request.headers);
+  } catch (error) {
+    if (!(error instanceof WorkspaceResolutionError)) throw error;
+    console.error(`agy workspace resolution failed: ${error.message}`);
+    sendJson(response, 400, { error: { type: "invalid_request_error", message: error.message } });
+    return;
+  }
   console.error(`agy request model=${model} effort=${effort} cwd=${cwd}`);
 
   if (!payload.stream) {
