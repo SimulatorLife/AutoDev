@@ -41,6 +41,17 @@ streaming has begun cannot be safely replayed. Claude's `rate_limit_event` is
 informational when `rate_limit_info.status` is `allowed`; only a non-allowed
 status is treated as a Claude limit.
 
+Provider failures use exponential backoff: the default cooldown is 30 seconds,
+then 60 seconds, 120 seconds, and so on up to 10 minutes for repeated failures.
+The cooldown and failure streak are provider-wide, so a failing provider moves
+behind healthy peers for later role requests. When every candidate is cooling
+down, the router returns `503 router_provider_exhausted` with a `Retry-After`
+header indicating the earliest retry time rather than immediately hammering the
+same provider. Override the defaults with the positive millisecond environment
+variables `CODEX_ROUTER_PROVIDER_COOLDOWN_MS` and
+`CODEX_ROUTER_PROVIDER_COOLDOWN_MAX_MS` when operating a deliberately different
+retry policy.
+
 ## Observability
 
 The router makes its effective choice visible in two ways:
@@ -76,6 +87,13 @@ The router makes its effective choice visible in two ways:
   lifetime of a Codex session, and tool-call counts cover calls represented in
   Responses events only. The JSON `/status` payload keeps `usage.byOrigin` and
   `usage.byRole` as separate, unmodified buckets.
+- Usage is also aggregated under `status.usage.byWorkspace`. Each workspace
+  bucket contains a privacy-safe repository label (remote `owner/repository`
+  when available, otherwise the cwd basename), the cwd basename, totals, and
+  nested `byRole`, `byModel`, and `byProvider` dimensions. Full absolute paths,
+  prompts, credentials, and remote URLs are not stored. The dashboard renders
+  this as **Usage by workspace**; missing workspace metadata is attributed to
+  `unknown` rather than guessed from the router daemon's cwd.
 - The dashboard's usage table collapses this into exactly two top-level rows,
   Orchestrator and Subagents, because roleless requests only carry an origin
   and role-attributed requests only carry a role: origin and role are not two
@@ -165,6 +183,15 @@ reasoning effort, summary mode, and sandbox settings so a global parent config
 cannot accidentally send a read-only role at the wrong provider effort.
 The native app-server path is also configured and verified, but the desktop
 high-level fanout service does not currently delegate through it.
+
+The router can reroute a role request only after the Codex process has reached
+the configured `local_model_router` and sent a request for an `autodev/<role>`
+alias. It can retry another provider when that provider returns a fallbackable
+response or becomes unavailable. A failure in the app-server before its model
+request is emitted (for example, failure to create the child thread or resolve
+its environment) never reaches AutoDev and cannot be redirected by this
+router. Concrete provider model requests are intentionally not rerouted because
+they represent an explicit provider choice; use a role alias for fallback.
 
 All spawned roles are leaf agents. Native role aliases (`autodev/<role>`) and
 external-provider model aliases are therefore excluded from the root

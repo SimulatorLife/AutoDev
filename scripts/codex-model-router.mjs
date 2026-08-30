@@ -6,6 +6,7 @@ import { createServer } from "node:http";
 import { readFile, rename, writeFile } from "node:fs/promises";
 import { existsSync, readFileSync } from "node:fs";
 import { brotliDecompressSync, gunzipSync, inflateSync } from "node:zlib";
+import { basename } from "node:path";
 import { pathToFileURL } from "node:url";
 
 const HOST = process.env.CODEX_MODEL_ROUTER_HOST ?? "127.0.0.1";
@@ -62,8 +63,15 @@ function validateRoutingConfig(config) {
 }
 
 const ROUTING = validateRoutingConfig(ROUTING_CONFIG);
-const PROVIDER_COOLDOWN_MS = 30_000;
+function positiveDuration(value, fallback) {
+  const parsed = Number.parseInt(value ?? "", 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+const PROVIDER_COOLDOWN_MS = positiveDuration(process.env.CODEX_ROUTER_PROVIDER_COOLDOWN_MS, 30_000);
+const PROVIDER_COOLDOWN_MAX_MS = Math.max(PROVIDER_COOLDOWN_MS, positiveDuration(process.env.CODEX_ROUTER_PROVIDER_COOLDOWN_MAX_MS, 600_000));
 const providerCooldowns = new Map();
+const providerFailureStreaks = new Map();
 const activeProviderRequests = new Map();
 const ROUTER_STARTED_AT = new Date().toISOString();
 const ROUTER_INSTANCE_ID = randomUUID();
@@ -94,6 +102,7 @@ const usageTelemetry = {
   byRole: Object.fromEntries(ROLE_NAMES.map((role) => [role, emptyUsageBucket()])),
   byModel: {},
   byOrigin: {},
+  byWorkspace: {},
 };
 const inFlightUsage = new Map();
 
@@ -112,11 +121,30 @@ function usageKey(requestId, provider, model) {
   return `${requestId}\0${provider}\0${model}`;
 }
 
-function recordUsageEvent({ phase, requestId, role, provider, model, outcome, failureClass = null, status = null, elapsedMs, toolCalls = 0, timestamp }) {
+function workspaceBucket(collection, key, cwd = null) {
+  if (!collection[key]) collection[key] = { ...emptyUsageBucket(), cwd, byRole: {}, byModel: {}, byProvider: {} };
+  if (cwd && !collection[key].cwd) collection[key].cwd = cwd;
+  return collection[key];
+}
+
+function workspaceDimensionBuckets(bucket, { role, provider, model }) {
+  return [
+    role ? usageBucket(bucket.byRole, role) : usageBucket(bucket.byRole, "unattributed"),
+    usageBucket(bucket.byModel, `${provider}/${model}`),
+    usageBucket(bucket.byProvider, provider),
+  ];
+}
+
+function recordUsageEvent({ phase, requestId, role, provider, model, workspace = null, outcome, failureClass = null, status = null, elapsedMs, toolCalls = 0, timestamp }) {
+  const workspaceContext = typeof workspace === "string" ? { key: workspace, cwd: null } : workspace;
   const origin = usageOrigin(role, provider);
   const roleKey = role ?? "unattributed";
   const modelKey = `${provider}/${model}`;
   const buckets = [usageTelemetry.totals, usageBucket(usageTelemetry.byRole, roleKey), usageBucket(usageTelemetry.byModel, modelKey), usageBucket(usageTelemetry.byOrigin, origin)];
+  if (workspaceContext?.key) {
+    const workspaceUsage = workspaceBucket(usageTelemetry.byWorkspace, workspaceContext.key, workspaceContext.cwd);
+    buckets.push(workspaceUsage, ...workspaceDimensionBuckets(workspaceUsage, { role, provider, model }));
+  }
   const key = usageKey(requestId, provider, model);
   if (phase === "selected") {
     inFlightUsage.set(key, { startedAt: Date.now(), buckets });
@@ -152,6 +180,7 @@ function resetUsageTelemetry() {
   usageTelemetry.byRole = Object.fromEntries(ROLE_NAMES.map((role) => [role, emptyUsageBucket()]));
   usageTelemetry.byModel = {};
   usageTelemetry.byOrigin = {};
+  usageTelemetry.byWorkspace = {};
   inFlightUsage.clear();
 }
 
@@ -168,7 +197,23 @@ function usageStatus() {
     byRole: usageSnapshot(usageTelemetry.byRole),
     byModel: usageSnapshot(usageTelemetry.byModel),
     byOrigin: usageSnapshot(usageTelemetry.byOrigin),
+    byWorkspace: Object.fromEntries(Object.entries(usageTelemetry.byWorkspace).map(([key, bucket]) => [key, {
+      ...bucket,
+      averageDurationMs: bucket.successes + bucket.failures > 0 ? Math.round(bucket.durationMs / (bucket.successes + bucket.failures)) : 0,
+      byRole: usageSnapshot(bucket.byRole),
+      byModel: usageSnapshot(bucket.byModel),
+      byProvider: usageSnapshot(bucket.byProvider),
+    }])),
   };
+}
+
+function restoreUsageBucket(target, saved) {
+  if (!saved || typeof saved !== "object") return;
+  for (const field of ["attempts", "successes", "failures", "skipped", "durationMs", "maxDurationMs", "toolCalls"]) {
+    if (Number.isInteger(saved[field]) && saved[field] >= 0) target[field] = saved[field];
+  }
+  if (saved.lastUsedAt === null || typeof saved.lastUsedAt === "string") target.lastUsedAt = saved.lastUsedAt;
+  if (saved.lastFailure === null || (saved.lastFailure && typeof saved.lastFailure === "object")) target.lastFailure = saved.lastFailure;
 }
 
 const OTEL_HEALTH_TTL_MS = Number.parseInt(process.env.CODEX_ROUTER_OTEL_HEALTH_TTL_MS ?? "120000", 10);
@@ -1076,7 +1121,7 @@ function routeCredentialAvailable(route, environment = process.env) {
 function classifyProviderFailure(status, body = "") {
   const text = String(body ?? "");
   if (/session.?limit|session.*(?:exhaust|capacity)|concurrent session/i.test(text)) return "session_limit";
-  if (/quota|credit|billing|insufficient.*(?:fund|quota)/i.test(text)) return "quota_exhausted";
+  if (/quota|credit|billing|usage.?limit|usage exhausted|insufficient.*(?:fund|quota)/i.test(text)) return "quota_exhausted";
   if (status === 429 || /rate.?limit|weekly.?limit|throttl|too many requests/i.test(text)) return "throttled";
   if (/high.?demand|overloaded|capacity/i.test(text)) return "capacity";
   if (status === 408 || /timeout|timed.?out/i.test(text)) return "timeout";
@@ -1087,8 +1132,9 @@ function classifyProviderFailure(status, body = "") {
   return "request_error";
 }
 
-function recordRouterEvent({ phase, requestId, role = null, requestedModel, provider, model, outcome = null, status = null, failureClass = null, denialReason = null, spawnFailureReason = null, elapsedMs = null, toolCalls = 0 }) {
+function recordRouterEvent({ phase, requestId, role = null, requestedModel, provider, model, workspace = null, outcome = null, status = null, failureClass = null, denialReason = null, spawnFailureReason = null, elapsedMs = null, toolCalls = 0 }) {
   const timestamp = new Date().toISOString();
+  const workspaceContext = typeof workspace === "string" ? { key: workspace, cwd: null } : workspace;
   const event = {
     schema: "autodev-router-event-v1",
     timestamp,
@@ -1099,6 +1145,8 @@ function recordRouterEvent({ phase, requestId, role = null, requestedModel, prov
     requestedModel,
     provider,
     model,
+    workspace: workspaceContext?.key ?? null,
+    cwd: workspaceContext?.cwd ?? null,
     outcome,
     status,
     failureClass,
@@ -1110,7 +1158,7 @@ function recordRouterEvent({ phase, requestId, role = null, requestedModel, prov
   recentRouterEvents.push(event);
   while (recentRouterEvents.length > Math.max(1, MAX_RECENT_EVENTS)) recentRouterEvents.shift();
 
-  if (provider && model) recordUsageEvent({ phase, requestId, role, provider, model, outcome, failureClass, status, elapsedMs, toolCalls, timestamp });
+  if (provider && model) recordUsageEvent({ phase, requestId, role, provider, model, workspace: workspaceContext, outcome, failureClass, status, elapsedMs, toolCalls, timestamp });
   const state = provider ? providerState(provider) : null;
   if (state && phase === "selected") {
     state.attempts += 1;
@@ -1154,6 +1202,8 @@ function resetRouterTelemetry() {
   spawnFailureTelemetry.total = 0;
   spawnFailureTelemetry.byReason = {};
   spawnFailureTelemetry.recent = [];
+  providerCooldowns.clear();
+  providerFailureStreaks.clear();
   scheduleRouterStatePersist();
 }
 
@@ -1169,6 +1219,7 @@ function getRouterStatus(now = Date.now()) {
       activeRequests,
       cooldownUntil: coolingDown ? new Date(cooldownUntil).toISOString() : null,
       cooldownRemainingMs: coolingDown ? cooldownUntil - now : 0,
+      failureStreak: providerFailureStreaks.get(route.provider) ?? 0,
       configuredModels: ROUTING.providers[route.provider]?.models ?? {},
       attempts: state.attempts,
       successes: state.successes,
@@ -1205,11 +1256,17 @@ function usagePersistenceSnapshot() {
     return copy;
   };
   return {
-    schemaVersion: 3,
+    schemaVersion: 4,
     totals: withoutActive(usageTelemetry.totals),
     byRole: Object.fromEntries(Object.entries(usageTelemetry.byRole).map(([key, bucket]) => [key, withoutActive(bucket)])),
     byModel: Object.fromEntries(Object.entries(usageTelemetry.byModel).map(([key, bucket]) => [key, withoutActive(bucket)])),
     byOrigin: Object.fromEntries(Object.entries(usageTelemetry.byOrigin).map(([key, bucket]) => [key, withoutActive(bucket)])),
+    byWorkspace: Object.fromEntries(Object.entries(usageTelemetry.byWorkspace).map(([key, bucket]) => [key, {
+      ...withoutActive(bucket),
+      byRole: Object.fromEntries(Object.entries(bucket.byRole).map(([name, value]) => [name, withoutActive(value)])),
+      byModel: Object.fromEntries(Object.entries(bucket.byModel).map(([name, value]) => [name, withoutActive(value)])),
+      byProvider: Object.fromEntries(Object.entries(bucket.byProvider).map(([name, value]) => [name, withoutActive(value)])),
+    }])),
   };
 }
 
@@ -1367,19 +1424,23 @@ function loadRouterState(file = STATE_FILE) {
         for (const [key, saved] of Object.entries(parsed.usage[section])) {
           if (!saved || typeof saved !== "object") continue;
           const current = usageBucket(usageTelemetry[section], key);
-          for (const field of ["attempts", "successes", "failures", "skipped", "durationMs", "maxDurationMs", "toolCalls"]) {
-            if (Number.isInteger(saved[field]) && saved[field] >= 0) current[field] = saved[field];
+          restoreUsageBucket(current, saved);
+        }
+      }
+      if (parsed.usage.byWorkspace && typeof parsed.usage.byWorkspace === "object") {
+        for (const [key, saved] of Object.entries(parsed.usage.byWorkspace)) {
+          if (!saved || typeof saved !== "object") continue;
+          const current = workspaceBucket(usageTelemetry.byWorkspace, key, typeof saved.cwd === "string" ? saved.cwd : null);
+          restoreUsageBucket(current, saved);
+          for (const section of ["byRole", "byModel", "byProvider"]) {
+            if (!saved[section] || typeof saved[section] !== "object") continue;
+            for (const [name, value] of Object.entries(saved[section])) restoreUsageBucket(usageBucket(current[section], name), value);
           }
-          if (saved.lastUsedAt === null || typeof saved.lastUsedAt === "string") current.lastUsedAt = saved.lastUsedAt;
-          if (saved.lastFailure === null || (saved.lastFailure && typeof saved.lastFailure === "object")) current.lastFailure = saved.lastFailure;
         }
       }
       const savedTotals = parsed.usage.totals;
       if (savedTotals && typeof savedTotals === "object") {
-        for (const field of ["attempts", "successes", "failures", "skipped", "durationMs", "maxDurationMs", "toolCalls"]) {
-          if (Number.isInteger(savedTotals[field]) && savedTotals[field] >= 0) usageTelemetry.totals[field] = savedTotals[field];
-        }
-        if (savedTotals.lastUsedAt === null || typeof savedTotals.lastUsedAt === "string") usageTelemetry.totals.lastUsedAt = savedTotals.lastUsedAt;
+        restoreUsageBucket(usageTelemetry.totals, savedTotals);
       }
     }
     if (parsed.concurrency && typeof parsed.concurrency === "object") {
@@ -1469,7 +1530,10 @@ function shuffleGroup(group, random = Math.random) {
     const j = Math.floor(random() * (i + 1));
     [items[i], items[j]] = [items[j], items[i]];
   }
-  items.sort((a, b) => getActiveRequests(a) - getActiveRequests(b));
+  items.sort((a, b) => {
+    const failureDifference = (providerFailureStreaks.get(a) ?? 0) - (providerFailureStreaks.get(b) ?? 0);
+    return failureDifference || getActiveRequests(a) - getActiveRequests(b);
+  });
   return items;
 }
 
@@ -1498,11 +1562,25 @@ function isProviderCoolingDown(provider, now = Date.now()) {
 }
 
 function cooldownProvider(provider, now = Date.now()) {
-  providerCooldowns.set(provider, now + PROVIDER_COOLDOWN_MS);
+  const streak = (providerFailureStreaks.get(provider) ?? 0) + 1;
+  providerFailureStreaks.set(provider, streak);
+  const durationMs = Math.min(PROVIDER_COOLDOWN_MAX_MS, PROVIDER_COOLDOWN_MS * (2 ** (streak - 1)));
+  providerCooldowns.set(provider, now + durationMs);
+  return { provider, streak, durationMs, cooldownUntil: now + durationMs };
 }
 
 function clearProviderCooldown(provider) {
   providerCooldowns.delete(provider);
+  providerFailureStreaks.delete(provider);
+}
+
+function nextProviderRetryMs(providers, now = Date.now()) {
+  let earliest = null;
+  for (const provider of providers) {
+    const cooldownUntil = providerCooldowns.get(provider);
+    if (cooldownUntil > now && (earliest === null || cooldownUntil < earliest)) earliest = cooldownUntil;
+  }
+  return earliest === null ? 0 : earliest - now;
 }
 
 function roleForModel(model) {
@@ -1758,7 +1836,7 @@ async function writeSuccessfulResponse(response, route, result, wantsStream, pub
 function fallbackable(status, body) {
   if ([401, 408, 429, 500, 502, 503, 504].includes(status)) return true;
   if (status === 400 && /invalid model|model name.*(invalid|not found)|unknown model/i.test(String(body ?? ""))) return true;
-  return /(quota|rate.?limit|session|high.?demand|credit|timeout|timed.?out|overloaded|temporarily unavailable|unavailable)/i.test(String(body ?? ""));
+  return /(quota|rate.?limit|weekly.?limit|usage.?limit|usage exhausted|session|high.?demand|credit|timeout|timed.?out|overloaded|temporarily unavailable|unavailable)/i.test(String(body ?? ""));
 }
 
 async function providerAvailable(route) {
@@ -1775,24 +1853,24 @@ async function providerAvailable(route) {
   }
 }
 
-async function proxyConcreteResponse(response, route, payload, wantsStream, requestId, turnMetadataHeader) {
+async function proxyConcreteResponse(response, route, payload, wantsStream, requestId, turnMetadataHeader, workspace) {
   const startedAt = Date.now();
-  recordRouterEvent({ phase: "selected", requestId, requestedModel: payload.model, provider: route.provider, model: payload.model });
+  recordRouterEvent({ phase: "selected", requestId, requestedModel: payload.model, provider: route.provider, model: payload.model, workspace });
   incrementActiveRequests(route.provider);
   try {
     const result = await fetchUpstream(route, payload, wantsStream, turnMetadataHeader);
     if (!result.ok) {
       const failureClass = classifyProviderFailure(result.status, result.body);
-      recordRouterEvent({ phase: "result", requestId, requestedModel: payload.model, provider: route.provider, model: payload.model, outcome: "failure", status: result.status, failureClass, elapsedMs: Date.now() - startedAt });
+      recordRouterEvent({ phase: "result", requestId, requestedModel: payload.model, provider: route.provider, model: payload.model, workspace, outcome: "failure", status: result.status, failureClass, elapsedMs: Date.now() - startedAt });
       response.writeHead(result.status, { "content-type": "application/json", "x-autodev-provider": route.provider, "x-autodev-model": payload.model, "x-autodev-request-id": requestId });
       response.end(result.body);
       return;
     }
     const toolCalls = await writeSuccessfulResponse(response, route, result, wantsStream, payload.model, requestId, payload.model);
-    recordRouterEvent({ phase: "result", requestId, requestedModel: payload.model, provider: route.provider, model: payload.model, outcome: "success", status: result.upstream.status, elapsedMs: Date.now() - startedAt, toolCalls });
+    recordRouterEvent({ phase: "result", requestId, requestedModel: payload.model, provider: route.provider, model: payload.model, workspace, outcome: "success", status: result.upstream.status, elapsedMs: Date.now() - startedAt, toolCalls });
   } catch (error) {
     const failureClass = classifyProviderFailure(502, error instanceof Error ? error.message : String(error));
-    recordRouterEvent({ phase: "result", requestId, requestedModel: payload.model, provider: route.provider, model: payload.model, outcome: "failure", status: 502, failureClass, elapsedMs: Date.now() - startedAt });
+    recordRouterEvent({ phase: "result", requestId, requestedModel: payload.model, provider: route.provider, model: payload.model, workspace, outcome: "failure", status: 502, failureClass, elapsedMs: Date.now() - startedAt });
     if (!response.writableEnded) {
       if (response.headersSent) response.end();
       else sendJson(response, 502, errorBody(error instanceof Error ? error.message : String(error), "router_upstream_error"), { "x-autodev-provider": route.provider, "x-autodev-model": payload.model, "x-autodev-request-id": requestId });
@@ -1802,22 +1880,23 @@ async function proxyConcreteResponse(response, route, payload, wantsStream, requ
   }
 }
 
-async function proxyRoleResponse(response, role, payload, wantsStream, requestId, turnMetadataHeader) {
+async function proxyRoleResponse(response, role, payload, wantsStream, requestId, turnMetadataHeader, workspace) {
   const failures = [];
-  for (const route of roleCandidates(role)) {
+  const candidates = roleCandidates(role);
+  for (const route of candidates) {
     if (isProviderCoolingDown(route.provider)) {
       failures.push(`${route.provider}: cooldown active`);
-      recordRouterEvent({ phase: "skipped", requestId, role, requestedModel: payload.model, provider: route.provider, model: route.model, failureClass: providerState(route.provider).lastFailureClass ?? "cooldown" });
+      recordRouterEvent({ phase: "skipped", requestId, role, requestedModel: payload.model, provider: route.provider, model: route.model, workspace, failureClass: providerState(route.provider).lastFailureClass ?? "cooldown" });
       continue;
     }
     if (!(await providerAvailable(route))) {
       failures.push(`${route.provider}: unavailable`);
       cooldownProvider(route.provider);
-      recordRouterEvent({ phase: "skipped", requestId, role, requestedModel: payload.model, provider: route.provider, model: route.model, failureClass: "unavailable" });
+      recordRouterEvent({ phase: "skipped", requestId, role, requestedModel: payload.model, provider: route.provider, model: route.model, workspace, failureClass: "unavailable" });
       continue;
     }
     const attemptStartedAt = Date.now();
-    recordRouterEvent({ phase: "selected", requestId, role, requestedModel: payload.model, provider: route.provider, model: route.model });
+    recordRouterEvent({ phase: "selected", requestId, role, requestedModel: payload.model, provider: route.provider, model: route.model, workspace });
     incrementActiveRequests(route.provider);
     try {
       const result = await fetchUpstream(route, { ...payload, model: route.model }, wantsStream, turnMetadataHeader);
@@ -1825,7 +1904,7 @@ async function proxyRoleResponse(response, role, payload, wantsStream, requestId
         clearProviderCooldown(route.provider);
         try {
           const toolCalls = await writeSuccessfulResponse(response, route, result, wantsStream, payload.model, requestId, route.model);
-          recordRouterEvent({ phase: "result", requestId, role, requestedModel: payload.model, provider: route.provider, model: route.model, outcome: "success", status: result.upstream.status, elapsedMs: Date.now() - attemptStartedAt, toolCalls });
+          recordRouterEvent({ phase: "result", requestId, role, requestedModel: payload.model, provider: route.provider, model: route.model, workspace, outcome: "success", status: result.upstream.status, elapsedMs: Date.now() - attemptStartedAt, toolCalls });
         } catch (streamError) {
           cooldownProvider(route.provider);
           throw streamError;
@@ -1834,7 +1913,7 @@ async function proxyRoleResponse(response, role, payload, wantsStream, requestId
       }
       const failureClass = classifyProviderFailure(result.status, result.body);
       failures.push(`${route.provider}: HTTP ${result.status}`);
-      recordRouterEvent({ phase: "result", requestId, role, requestedModel: payload.model, provider: route.provider, model: route.model, outcome: "failure", status: result.status, failureClass, elapsedMs: Date.now() - attemptStartedAt });
+      recordRouterEvent({ phase: "result", requestId, role, requestedModel: payload.model, provider: route.provider, model: route.model, workspace, outcome: "failure", status: result.status, failureClass, elapsedMs: Date.now() - attemptStartedAt });
       if (!fallbackable(result.status, result.body)) {
         response.writeHead(result.status, { "content-type": "application/json", "x-autodev-provider": route.provider, "x-autodev-model": route.model, "x-autodev-request-id": requestId });
         response.end(result.body);
@@ -1844,7 +1923,7 @@ async function proxyRoleResponse(response, role, payload, wantsStream, requestId
     } catch (error) {
       const failureClass = classifyProviderFailure(502, error instanceof Error ? error.message : String(error));
       failures.push(`${route.provider}: ${error instanceof Error ? error.message : String(error)}`);
-      recordRouterEvent({ phase: "result", requestId, role, requestedModel: payload.model, provider: route.provider, model: route.model, outcome: "failure", status: 502, failureClass, elapsedMs: Date.now() - attemptStartedAt });
+      recordRouterEvent({ phase: "result", requestId, role, requestedModel: payload.model, provider: route.provider, model: route.model, workspace, outcome: "failure", status: 502, failureClass, elapsedMs: Date.now() - attemptStartedAt });
       cooldownProvider(route.provider);
       if (response.headersSent) {
         if (!response.writableEnded) response.end();
@@ -1855,7 +1934,15 @@ async function proxyRoleResponse(response, role, payload, wantsStream, requestId
     }
   }
   recordSpawnFailure({ requestId, role, requestedModel: payload.model, reason: "provider_exhausted" });
-  sendJson(response, 503, errorBody(`No available provider completed role ${role}. ${failures.join("; ")}`, "router_provider_exhausted"), { "x-autodev-request-id": requestId });
+  const retryAfterMs = nextProviderRetryMs(candidates.map(({ provider }) => provider));
+  const retryAfterSeconds = Math.max(1, Math.ceil(retryAfterMs / 1000));
+  const retryMessage = retryAfterMs > 0 ? ` Retry after approximately ${retryAfterSeconds}s.` : "";
+  sendJson(
+    response,
+    503,
+    errorBody(`No available provider completed role ${role}.${retryMessage} ${failures.join("; ")}`, "router_provider_exhausted"),
+    { "x-autodev-request-id": requestId, "retry-after": String(retryAfterSeconds) },
+  );
 }
 
 function requestSession(request, payload) {
@@ -1899,6 +1986,53 @@ function resolveTurnMetadataHeader(request, payload) {
   if (typeof embedded === "string" && parseTurnMetadataJson(embedded)) return embedded;
   if (embedded && typeof embedded === "object" && !Array.isArray(embedded)) return JSON.stringify(embedded);
   return null;
+}
+
+const WORKSPACE_KEYS = ["cwd", "project_root", "working_directory"];
+
+function workspacePathLabel(value) {
+  if (typeof value !== "string" || !value.trim()) return null;
+  const label = basename(value.trim());
+  return label && label !== "." && label !== "/" ? label : null;
+}
+
+function repositoryIdentity(remote) {
+  if (typeof remote !== "string" || !remote.trim()) return null;
+  const normalized = remote.trim().replace(/^git@([^:]+):/, "https://$1/");
+  let pathname;
+  try {
+    pathname = new URL(normalized).pathname;
+  } catch {
+    pathname = normalized.split(/[?#]/, 1)[0];
+  }
+  const parts = pathname.split("/").filter(Boolean).map((part) => part.replace(/\.git$/i, ""));
+  if (parts.length < 2) return null;
+  const owner = parts.at(-2).replace(/[^A-Za-z0-9._-]/g, "");
+  const repo = parts.at(-1).replace(/[^A-Za-z0-9._-]/g, "");
+  return owner && repo ? `${owner}/${repo}` : null;
+}
+
+function workspaceContextFromRequest(request, payload, turnMetadataHeader) {
+  const turnMetadata = parseTurnMetadataJson(turnMetadataHeader);
+  const workspaces = turnMetadata?.workspaces && typeof turnMetadata.workspaces === "object" && !Array.isArray(turnMetadata.workspaces)
+    ? turnMetadata.workspaces
+    : {};
+  const explicitPaths = [
+    ...WORKSPACE_KEYS.map((key) => payload?.[key]),
+    ...(payload?.metadata && typeof payload.metadata === "object" ? WORKSPACE_KEYS.map((key) => payload.metadata[key]) : []),
+  ];
+  const path = explicitPaths.find((value) => typeof value === "string" && value.trim())
+    ?? Object.keys(workspaces).find((value) => typeof value === "string" && value.trim())
+    ?? null;
+  const matchingEntry = path && workspaces[path] ? workspaces[path] : Object.values(workspaces)[0];
+  const remotes = matchingEntry?.associated_remote_urls;
+  const repository = remotes && typeof remotes === "object"
+    ? Object.values(remotes).map(repositoryIdentity).find(Boolean) ?? null
+    : null;
+  return {
+    key: repository ?? workspacePathLabel(path) ?? "unknown",
+    cwd: workspacePathLabel(path),
+  };
 }
 
 async function handle(request, response) {
@@ -1951,6 +2085,7 @@ async function handle(request, response) {
   const requestId = String(request.headers["x-request-id"] ?? randomUUID());
   const wantsStream = payload.stream !== false;
   const turnMetadataHeader = resolveTurnMetadataHeader(request, payload);
+  const workspace = workspaceContextFromRequest(request, payload, turnMetadataHeader);
   if (role) {
     const session = requestSession(request, payload);
     const denialReason = tryAcquireSubagentSlot(session.key);
@@ -1960,7 +2095,7 @@ async function handle(request, response) {
       return;
     }
     try {
-      await proxyRoleResponse(response, role, payload, wantsStream, requestId, turnMetadataHeader);
+      await proxyRoleResponse(response, role, payload, wantsStream, requestId, turnMetadataHeader, workspace);
     } finally {
       releaseSubagentSlot(session.key);
     }
@@ -1971,10 +2106,10 @@ async function handle(request, response) {
     sendJson(response, 400, errorBody(`No local route is configured for model ${String(payload.model)}`));
     return;
   }
-  await proxyConcreteResponse(response, route, payload, wantsStream, requestId, turnMetadataHeader);
+  await proxyConcreteResponse(response, route, payload, wantsStream, requestId, turnMetadataHeader, workspace);
 }
 
-export { activeProviderRequests, codexTelemetryStatus, ingestOtelSignal, ingestOtelLogs, ingestOtelMetrics, ingestOtelTraces, resetOtelTelemetry, catalogModelIds, classifyProviderFailure, clearProviderCooldown, concurrencyStatus, normalizeCodexTask, summarizeCodexTasks, cooldownProvider, countToolCallsFromSse, countToolCallsInResponse, decrementActiveRequests, downstreamHeaders, fallbackable, FORWARDED_REQUEST_HEADERS, getActiveRequests, getRouterStatus, handle, incrementActiveRequests, isProviderCoolingDown, loadRouterState, parseConcurrencyConfig, parseTurnMetadataJson, persistRouterStateNow, PROCESS_FALLBACK_SESSION_KEY, providerModelMetadata, recordConcurrencyDenial, recordRouterEvent, recordSpawnFailure, releaseSubagentSlot, replaceModelFields, requestSession, resetConcurrencyTelemetry, resetRouterTelemetry, resolveTurnMetadataHeader, spawnFailureStatus, routeCredentialAvailable, roleCandidates, roleForModel, routeForModel, serializeRouterState, tryAcquireSubagentSlot, responseTextFromSse, transformSseEvent, validateRoutingConfig };
+export { activeProviderRequests, catalogModelIds, classifyProviderFailure, clearProviderCooldown, codexTelemetryStatus, cooldownProvider, countToolCallsFromSse, countToolCallsInResponse, concurrencyStatus, decrementActiveRequests, downstreamHeaders, fallbackable, FORWARDED_REQUEST_HEADERS, getActiveRequests, getRouterStatus, handle, incrementActiveRequests, ingestOtelLogs, ingestOtelMetrics, ingestOtelSignal, ingestOtelTraces, isProviderCoolingDown, loadRouterState, nextProviderRetryMs, normalizeCodexTask, parseConcurrencyConfig, parseTurnMetadataJson, persistRouterStateNow, PROCESS_FALLBACK_SESSION_KEY, providerModelMetadata, recordConcurrencyDenial, recordRouterEvent, recordSpawnFailure, releaseSubagentSlot, replaceModelFields, requestSession, resetConcurrencyTelemetry, resetOtelTelemetry, resetRouterTelemetry, resolveTurnMetadataHeader, spawnFailureStatus, routeCredentialAvailable, roleCandidates, roleForModel, routeForModel, serializeRouterState, summarizeCodexTasks, tryAcquireSubagentSlot, responseTextFromSse, transformSseEvent, validateRoutingConfig, workspaceContextFromRequest };
 
 if (IS_MAIN) {
   createServer((request, response) => { void handle(request, response); }).listen(PORT, HOST, () => {

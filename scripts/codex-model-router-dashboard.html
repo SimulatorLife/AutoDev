@@ -274,6 +274,31 @@
     </table>
   </div>
 
+  <h2><button type="button" class="toggle-section" aria-controls="workspace-usage-section" aria-expanded="true"><span
+        class="caret">▾</span> Usage by workspace</button></h2>
+  <div id="workspace-usage-section">
+    <table id="workspace-usage-table">
+      <thead>
+        <tr>
+          <th>Repository / workspace</th>
+          <th>CWD</th>
+          <th>Active</th>
+          <th>Attempts</th>
+          <th>Successes</th>
+          <th>Failures</th>
+          <th>Avg turn</th>
+          <th>Tool calls</th>
+          <th>Roles</th>
+          <th>Models</th>
+          <th>Providers</th>
+        </tr>
+      </thead>
+      <tbody id="workspace-usage">
+        <tr><td colspan="11">No workspace usage observed yet.</td></tr>
+      </tbody>
+    </table>
+  </div>
+
   <h2><button type="button" class="toggle-section" aria-controls="mcp-telemetry-section" aria-expanded="true"><span
         class="caret">▾</span> MCP server telemetry</button></h2>
   <div id="mcp-telemetry-section">
@@ -557,6 +582,9 @@
       const childRows = roleEntries.map(([ role, bucket ]) => `<tr class="usage-child" data-usage-child="subagents"${expanded ? "" : " hidden"}><td>↳ <code>${text(role)}</code></td><td>${bucket.active ?? 0}</td><td>${bucket.attempts ?? 0}</td><td>${bucket.successes ?? 0}</td><td>${bucket.failures ?? 0}</td><td>${durationText(bucket.averageDurationMs)}</td><td>${bucket.toolCalls ?? 0}</td></tr>`).join("");
       return orchestratorRow + subagentsRow + childRows;
     };
+    const workspaceUsageRows = (usage) => Object.entries(usage?.byWorkspace ?? {})
+      .sort(([ nameA, a ], [ nameB, b ]) => Number(b.attempts ?? 0) - Number(a.attempts ?? 0) || nameA.localeCompare(nameB))
+      .map(([ name, bucket ]) => `<tr><td><code>${text(name)}</code></td><td><code>${text(bucket.cwd ?? "-")}</code></td><td>${bucket.active ?? 0}</td><td>${bucket.attempts ?? 0}</td><td>${bucket.successes ?? 0}</td><td>${bucket.failures ?? 0}</td><td>${durationText(bucket.averageDurationMs)}</td><td>${bucket.toolCalls ?? 0}</td><td>${Object.entries(bucket.byRole ?? {}).map(([ key, value ]) => `${text(key)}: ${value.attempts ?? 0}`).join(", ") || "-"}</td><td>${Object.entries(bucket.byModel ?? {}).map(([ key, value ]) => `${text(key)}: ${value.attempts ?? 0}`).join(", ") || "-"}</td><td>${Object.entries(bucket.byProvider ?? {}).map(([ key, value ]) => `${text(key)}: ${value.attempts ?? 0}`).join(", ") || "-"}</td></tr>`).join("") || '<tr><td colspan="11">No workspace usage observed yet.</td></tr>';
     const expandedProviders = new Set();
     const expandedUsageGroups = new Set();
 
@@ -650,6 +678,7 @@
       document.querySelector("#summary-duration").textContent = durationText(totals.averageDurationMs);
       document.querySelector("#summary-skips").textContent = totals.skipped ?? 0;
       document.querySelector("#usage-breakdown").innerHTML = usageBreakdownRows(usage);
+      document.querySelector("#workspace-usage").innerHTML = workspaceUsageRows(usage);
       document.querySelector("#usage-total-active").textContent = totals.active ?? 0;
       document.querySelector("#usage-total-attempts").textContent = totals.attempts ?? 0;
       document.querySelector("#usage-total-successes").textContent = totals.successes ?? 0;

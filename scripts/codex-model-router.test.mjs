@@ -5,7 +5,7 @@ import test from "node:test";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
-import { activeProviderRequests, catalogModelIds, classifyProviderFailure, clearProviderCooldown, cooldownProvider, decrementActiveRequests, downstreamHeaders, fallbackable, FORWARDED_REQUEST_HEADERS, getActiveRequests, concurrencyStatus, countToolCallsFromSse, countToolCallsInResponse, getRouterStatus, handle, codexTelemetryStatus, ingestOtelSignal, incrementActiveRequests, isProviderCoolingDown, loadRouterState, normalizeCodexTask, parseConcurrencyConfig, parseTurnMetadataJson, persistRouterStateNow, PROCESS_FALLBACK_SESSION_KEY, recordConcurrencyDenial, recordRouterEvent, recordSpawnFailure, releaseSubagentSlot, replaceModelFields, requestSession, resetConcurrencyTelemetry, resetRouterTelemetry, resetOtelTelemetry, resolveTurnMetadataHeader, serializeRouterState, spawnFailureStatus, summarizeCodexTasks, responseTextFromSse, roleCandidates, roleForModel, routeCredentialAvailable, routeForModel, transformSseEvent, tryAcquireSubagentSlot, validateRoutingConfig } from "./codex-model-router.mjs";
+import { activeProviderRequests, catalogModelIds, classifyProviderFailure, clearProviderCooldown, cooldownProvider, decrementActiveRequests, downstreamHeaders, fallbackable, FORWARDED_REQUEST_HEADERS, getActiveRequests, concurrencyStatus, countToolCallsFromSse, countToolCallsInResponse, getRouterStatus, handle, codexTelemetryStatus, ingestOtelSignal, incrementActiveRequests, isProviderCoolingDown, loadRouterState, nextProviderRetryMs, normalizeCodexTask, parseConcurrencyConfig, parseTurnMetadataJson, persistRouterStateNow, PROCESS_FALLBACK_SESSION_KEY, recordConcurrencyDenial, recordRouterEvent, recordSpawnFailure, releaseSubagentSlot, replaceModelFields, requestSession, resetConcurrencyTelemetry, resetRouterTelemetry, resetOtelTelemetry, resolveTurnMetadataHeader, serializeRouterState, spawnFailureStatus, summarizeCodexTasks, responseTextFromSse, roleCandidates, roleForModel, routeCredentialAvailable, routeForModel, transformSseEvent, tryAcquireSubagentSlot, validateRoutingConfig, workspaceContextFromRequest } from "./codex-model-router.mjs";
 
 test("loads editable provider and role models from JSON routing config", async () => {
   const config = JSON.parse(await readFile(new URL("./codex/model-routing.json", import.meta.url), "utf8"));
@@ -87,6 +87,7 @@ test("resolves role aliases through tier-specific randomized provider groups wit
 test("classifies provider exhaustion and transient responses for fallback", () => {
   assert.equal(fallbackable(429, "session limit reached"), true);
   assert.equal(fallbackable(503, "unavailable"), true);
+  assert.equal(fallbackable(400, "provider usage limit reached"), true);
   assert.equal(fallbackable(400, "Invalid model name passed in model=gemini-3.6-flash-high"), true);
   assert.equal(fallbackable(400, "malformed request"), false);
 });
@@ -98,6 +99,103 @@ test("temporarily omits providers after a fallbackable limit or outage", () => {
   assert.equal(isProviderCoolingDown("minimax", now + 30_000), false);
   clearProviderCooldown("minimax");
   assert.equal(isProviderCoolingDown("minimax", now), false);
+});
+
+test("backs off repeatedly failing providers and moves them behind healthy peers", () => {
+  resetRouterTelemetry();
+  activeProviderRequests.clear();
+  try {
+    const first = cooldownProvider("claude", 1_000);
+    const second = cooldownProvider("claude", 1_000);
+    assert.equal(first.durationMs, 30_000);
+    assert.equal(second.durationMs, 60_000);
+    assert.equal(nextProviderRetryMs(["claude", "minimax"], 1_000), 60_000);
+
+    const providers = roleCandidates("default", () => 0.5).map(({ provider }) => provider);
+    assert.ok(providers.indexOf("claude") > providers.indexOf("antigravity"));
+    assert.ok(providers.indexOf("claude") > providers.indexOf("minimax"));
+  } finally {
+    activeProviderRequests.clear();
+    resetRouterTelemetry();
+  }
+});
+
+test("reroutes a role request after a provider returns a fallbackable failure", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalCredentials = {
+    LITELLM_API_KEY: process.env.LITELLM_API_KEY,
+    MINIMAX_API_KEY: process.env.MINIMAX_API_KEY,
+    CODEX_ROUTER_COPILOT_API_KEY: process.env.CODEX_ROUTER_COPILOT_API_KEY,
+  };
+  let responseCalls = 0;
+  process.env.LITELLM_API_KEY = "test-provider-key";
+  process.env.MINIMAX_API_KEY = "test-provider-key";
+  process.env.CODEX_ROUTER_COPILOT_API_KEY = "test-provider-key";
+  activeProviderRequests.clear();
+  clearProviderCooldown("claude");
+  clearProviderCooldown("antigravity");
+  clearProviderCooldown("minimax");
+  activeProviderRequests.set("antigravity", 1);
+  activeProviderRequests.set("minimax", 2);
+  globalThis.fetch = async (url) => {
+    const target = String(url);
+    if (target.endsWith("/health") || target.endsWith("/health/liveliness")) {
+      return new Response("ok", { status: 200 });
+    }
+    if (target.endsWith("/responses")) {
+      responseCalls += 1;
+      if (responseCalls === 1) return new Response(JSON.stringify({ error: "provider throttled" }), { status: 429 });
+      return new Response(JSON.stringify({ id: "fallback-response", model: "gemini-3.6-flash-medium", output_text: "fallback ok" }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }
+    return originalFetch(url);
+  };
+  const server = createServer((request, response) => { void handle(request, response); });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  try {
+    const address = server.address();
+    const response = await originalFetch(`http://127.0.0.1:${address.port}/v1/responses`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-codex-session-id": "fallback-test" },
+      body: JSON.stringify({ model: "autodev/default", stream: false }),
+    });
+    assert.equal(response.status, 200);
+    assert.equal(response.headers.get("x-autodev-provider"), "antigravity");
+    assert.equal(responseCalls, 2);
+  } finally {
+    await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    globalThis.fetch = originalFetch;
+    for (const [key, value] of Object.entries(originalCredentials)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+    activeProviderRequests.clear();
+    resetRouterTelemetry();
+  }
+});
+
+test("reports the earliest provider retry time when every role candidate is cooling down", async () => {
+  resetRouterTelemetry();
+  const cooldownStartedAt = Date.now();
+  for (const provider of ["claude", "antigravity", "minimax", "copilot", "codex"]) cooldownProvider(provider, cooldownStartedAt);
+  const server = createServer((request, response) => { void handle(request, response); });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  try {
+    const address = server.address();
+    const response = await fetch(`http://127.0.0.1:${address.port}/v1/responses`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-codex-session-id": "cooldown-test" },
+      body: JSON.stringify({ model: "autodev/default", stream: false }),
+    });
+    assert.equal(response.status, 503);
+    assert.equal(response.headers.get("retry-after"), "30");
+    assert.match((await response.json()).error.message, /Retry after approximately 30s/);
+  } finally {
+    await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    resetRouterTelemetry();
+  }
 });
 
 test("requires configured credentials before treating keyed providers as available", () => {
@@ -114,6 +212,7 @@ test("classifies provider failures into operator-visible limit states", () => {
   assert.equal(classifyProviderFailure(502, "You've hit your weekly limit"), "throttled");
   assert.equal(classifyProviderFailure(503, "high demand"), "capacity");
   assert.equal(classifyProviderFailure(400, "quota exhausted"), "quota_exhausted");
+  assert.equal(classifyProviderFailure(400, "provider usage limit reached"), "quota_exhausted");
   assert.equal(classifyProviderFailure(401, "unauthorized"), "authentication");
   assert.equal(classifyProviderFailure(400, "malformed request"), "request_error");
 });
@@ -170,6 +269,77 @@ test("resolveTurnMetadataHeader prefers the canonical header and falls back to e
   assert.equal(resolveTurnMetadataHeader({ headers: {} }, {}), null);
   assert.equal(parseTurnMetadataJson("[]"), null);
   assert.equal(parseTurnMetadataJson(rawJson).workspaces.main, "/tmp/ws");
+});
+
+test("derives a privacy-safe repository and cwd label from turn metadata", () => {
+  const context = workspaceContextFromRequest(
+    { headers: {} },
+    {},
+    JSON.stringify({
+      workspaces: {
+        "/Users/henrykirk/Desktop/RacingGame": {
+          associated_remote_urls: { origin: "https://github.com/SimulatorLife/RacingGame.git" },
+        },
+      },
+    }),
+  );
+  assert.deepEqual(context, { key: "SimulatorLife/RacingGame", cwd: "RacingGame" });
+  assert.equal(JSON.stringify(context).includes("/Users/henrykirk"), false);
+});
+
+test("records workspace usage with role, provider, and model dimensions", () => {
+  resetRouterTelemetry();
+  recordRouterEvent({
+    phase: "selected",
+    requestId: "workspace-metric",
+    role: "worker",
+    requestedModel: "autodev/worker",
+    provider: "claude",
+    model: "sonnet",
+    workspace: { key: "SimulatorLife/RacingGame", cwd: "RacingGame" },
+  });
+  recordRouterEvent({
+    phase: "result",
+    requestId: "workspace-metric",
+    role: "worker",
+    requestedModel: "autodev/worker",
+    provider: "claude",
+    model: "sonnet",
+    workspace: { key: "SimulatorLife/RacingGame", cwd: "RacingGame" },
+    outcome: "success",
+    status: 200,
+    elapsedMs: 12,
+    toolCalls: 2,
+  });
+  const workspace = getRouterStatus().usage.byWorkspace["SimulatorLife/RacingGame"];
+  assert.equal(workspace.cwd, "RacingGame");
+  assert.equal(workspace.attempts, 1);
+  assert.equal(workspace.successes, 1);
+  assert.equal(workspace.byRole.worker.successes, 1);
+  assert.equal(workspace.byModel["claude/sonnet"].toolCalls, 2);
+  assert.equal(workspace.byProvider.claude.successes, 1);
+  resetRouterTelemetry();
+});
+
+test("persists workspace usage dimensions across router restarts", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "autodev-workspace-usage-"));
+  const stateFile = join(directory, "router-state.json");
+  try {
+    resetRouterTelemetry();
+    const workspace = { key: "SimulatorLife/RacingGame", cwd: "RacingGame" };
+    recordRouterEvent({ phase: "selected", requestId: "workspace-persist", role: "worker", requestedModel: "autodev/worker", provider: "minimax", model: "MiniMax-M3", workspace });
+    recordRouterEvent({ phase: "result", requestId: "workspace-persist", role: "worker", requestedModel: "autodev/worker", provider: "minimax", model: "MiniMax-M3", workspace, outcome: "success", status: 200, elapsedMs: 7 });
+    await persistRouterStateNow(stateFile);
+    resetRouterTelemetry();
+    assert.equal(loadRouterState(stateFile), true);
+    const restored = getRouterStatus().usage.byWorkspace["SimulatorLife/RacingGame"];
+    assert.equal(restored.cwd, "RacingGame");
+    assert.equal(restored.byModel["minimax/MiniMax-M3"].successes, 1);
+    assert.equal(restored.byProvider.minimax.successes, 1);
+  } finally {
+    resetRouterTelemetry();
+    await rm(directory, { recursive: true, force: true });
+  }
 });
 
 test("downstreamHeaders forwards only the allowlisted turn-metadata header and never a client-supplied credential", () => {
@@ -585,6 +755,8 @@ test("serves HTML only from /dashboard and raw JSON from /status", async () => {
     const dashboardBody = await dashboard.text();
     assert.match(dashboardBody, /setInterval\(refresh, 3000\)/);
     assert.match(dashboardBody, /id="usage-breakdown"/);
+    assert.match(dashboardBody, /id="workspace-usage"/);
+    assert.match(dashboardBody, /Usage by workspace/);
     assert.match(dashboardBody, /id="usage-total-attempts"/);
     assert.doesNotMatch(dashboardBody, /id="by-origin"/);
     assert.doesNotMatch(dashboardBody, /id="by-role"/);
@@ -926,7 +1098,7 @@ test("keeps a stale byModel lastFailure after a later success, which the dashboa
   // the earlier failure forever. The dashboard's child-row status must gate on the
   // provider's current limited state rather than this stale per-model failure, or a
   // recovered model would render "limited" indefinitely.
-  assert.equal(status.usage.byModel["claude/sonnet"].failures, 1);
+    assert.equal(status.usage.byModel["claude/sonnet"].failures, 1);
   assert.ok(status.usage.byModel["claude/sonnet"].lastFailure);
   resetRouterTelemetry();
 });
