@@ -31,6 +31,7 @@ hook_names=(
 obsolete_runtime_hook_names=(log-subagent-model.sh)
 
 dashboard_asset_names=(codex-model-router-dashboard.html)
+runtime_module_names=(scripts/codex/lib/resolve-workspace.mjs)
 
 profile_names=(claude minimax antigravity)
 catalog_names=(claude minimax antigravity codex)
@@ -182,6 +183,12 @@ check_versioned_sources() {
   done
   for name in "${rule_names[@]}"; do
     source="$repo_root/scripts/codex/rules/$name"
+    if ! check_versioned_source "$source"; then
+      failed=1
+    fi
+  done
+  for name in "${runtime_module_names[@]}"; do
+    source="$repo_root/$name"
     if ! check_versioned_source "$source"; then
       failed=1
     fi
@@ -343,6 +350,16 @@ check_links() {
       failed=1
     fi
   done
+  for name in "${runtime_module_names[@]}"; do
+    source="$repo_root/$name"
+    target="$hooks_dir/$name"
+    if [[ -f "$target" && ! -L "$target" ]] && cmp -s "$source" "$target"; then
+      printf 'ok %s (runtime copy of %s)\n' "$target" "$source"
+    else
+      printf 'missing-or-drifted %s -> %s\n' "$target" "$source"
+      failed=1
+    fi
+  done
   for name in "${hook_names[@]}"; do
     source="$repo_root/scripts/$name"
     target="$hooks_dir/$name"
@@ -441,6 +458,12 @@ for name in "${obsolete_runtime_hook_names[@]}"; do
   fi
 done
 
+for name in "${runtime_module_names[@]}"; do
+  source="$repo_root/$name"
+  target="$hooks_dir/$name"
+  mkdir -p -- "$(dirname -- "$target")"
+  install -m 0644 "$source" "$target"
+done
 for name in "${hook_names[@]}"; do
   chmod +x "$repo_root/scripts/$name"
   copy_runtime_one "$repo_root/scripts/$name" "$hooks_dir/$name"

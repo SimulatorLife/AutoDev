@@ -240,6 +240,14 @@ order inside `resolve_cwd` / `resolveCwd` is therefore:
    in the bridge) listing the fields the request did carry, instead of
    silently defaulting to an unrelated parent in this repository.
 
+The JavaScript CLI adapters share this resolver in
+`scripts/codex/lib/resolve-workspace.mjs`; the installer deploys that module
+alongside the runtime adapter copies. The Claude bridge remains a separate
+Python implementation, but it follows the same contract and is covered by the
+same workspace-resolution tests. Provider-specific code should pass its
+operator override into the shared resolver rather than reimplementing request
+metadata parsing or workspace selection.
+
 Provider bridges also forward only delegated user-task content and add their
 leaf boundary as provider-controlled instructions. Parent system/developer
 messages are not serialized as fake `[system]` or `[developer]` turns, which
@@ -255,7 +263,7 @@ intended repository, and inspect the app task/log event for those failures.
 | ----------- | -------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Claude      | Codex -> Claude Responses bridge on `127.0.0.1:4000` -> Claude CLI   | Uses `CLAUDE_CODE_OAUTH_TOKEN`; the selected role model and reasoning effort are forwarded.                                                          |
 | MiniMax     | Codex -> MiniMax Responses proxy on `127.0.0.1:18765`                | Provider quota/rate limits are upstream conditions; inspect the proxy log when diagnosing them.                                                      |
-| Antigravity | Codex -> LiteLLM `:4001` -> Antigravity adapter `:4002` -> `agy` CLI | `useAiCredits=false` and `useG1Credits=false` keep AI-credit overages disabled. Headless runs require the configured noninteractive permission mode. |
+| Antigravity | Codex -> LiteLLM `:4001` -> Antigravity adapter `:4002` -> `agy` CLI | `forward_client_headers_to_llm_api: true` must remain enabled so the structured workspace metadata reaches the adapter; `useAiCredits=false` and `useG1Credits=false` keep AI-credit overages disabled. Headless runs require the configured noninteractive permission mode. |
 | GitHub Copilot | Codex -> local Copilot Responses adapter `:4003` -> `copilot` CLI | Requires an authenticated local Copilot CLI; unavailable adapters are skipped by fallback. |
 | Local router | Codex Responses -> `127.0.0.1:4100` -> model-based provider dispatch | GPT/Codex models use the stored Codex OAuth; external model names use the existing local bridges. |
 

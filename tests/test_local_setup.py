@@ -324,6 +324,11 @@ class LocalSetupTests(unittest.TestCase):
                 installed_dashboard.read_bytes(),
                 (REPO_ROOT / "scripts/codex-model-router-dashboard.html").read_bytes(),
             )
+            installed_resolver = Path(codex_home) / "hooks/scripts/codex/lib/resolve-workspace.mjs"
+            self.assertEqual(
+                installed_resolver.read_bytes(),
+                (REPO_ROOT / "scripts/codex/lib/resolve-workspace.mjs").read_bytes(),
+            )
 
     def test_user_level_skill_registry_uses_only_the_requested_skill_names(self):
         names = sorted(path.name for path in (REPO_ROOT / "scripts/codex/skills").iterdir())
@@ -857,23 +862,15 @@ class LocalSetupTests(unittest.TestCase):
                 self.assertNotIn("prompt.match(/(?:Working directory:", source)
 
     def test_all_provider_bridges_support_canonical_turn_metadata_workspaces(self):
+        shared_source = (REPO_ROOT / "scripts/codex/lib/resolve-workspace.mjs").read_text()
+        for fragment in ("x-codex-turn-metadata", "workspaces", "Object.keys(workspaces)", "WorkspaceResolutionError"):
+            self.assertIn(fragment, shared_source, msg=f"shared resolver missing required fragment {fragment!r}")
+
         cases = {
             "scripts/codex-claude-cli-responses-proxy.py": {
                 "x-codex-turn-metadata",
                 "workspaces",
                 "for key in workspaces",
-                "WorkspaceResolutionError",
-            },
-            "scripts/codex-antigravity-cli-responses-proxy.mjs": {
-                "x-codex-turn-metadata",
-                "workspaces",
-                "Object.keys(workspaces)",
-                "WorkspaceResolutionError",
-            },
-            "scripts/codex-copilot-cli-responses-proxy.mjs": {
-                "x-codex-turn-metadata",
-                "workspaces",
-                "Object.keys(workspaces)",
                 "WorkspaceResolutionError",
             },
         }
@@ -882,6 +879,19 @@ class LocalSetupTests(unittest.TestCase):
                 source = (REPO_ROOT / relative_path).read_text()
                 for fragment in required_fragments:
                     self.assertIn(fragment, source, msg=f"{relative_path} missing required fragment {fragment!r}")
+
+    def test_javascript_provider_bridges_use_the_shared_workspace_resolver(self):
+        import_line = 'from "./scripts/codex/lib/resolve-workspace.mjs"'
+        for relative_path in (
+            "scripts/codex-antigravity-cli-responses-proxy.mjs",
+            "scripts/codex-copilot-cli-responses-proxy.mjs",
+        ):
+            with self.subTest(path=relative_path):
+                source = (REPO_ROOT / relative_path).read_text()
+                self.assertIn(import_line, source)
+                self.assertIn("resolveCwd(payload, request.headers, PROJECT_ROOT)", source)
+                self.assertNotIn("function resolveCwd(", source)
+                self.assertNotIn("function resolveWorkspaceFromTurnMetadata(", source)
 
     def test_all_provider_bridges_consider_workspaces_map_keys_before_value_fields(self):
         """Codex's canonical turn metadata keys the ``workspaces`` map by the
@@ -896,11 +906,7 @@ class LocalSetupTests(unittest.TestCase):
                 "    for key in workspaces:",
                 "        if isinstance(key, str) and os.path.isdir(key):",
             ),
-            "scripts/codex-antigravity-cli-responses-proxy.mjs": (
-                "  for (const key of Object.keys(workspaces)) {",
-                "    if (isDirectory(key)) return key;",
-            ),
-            "scripts/codex-copilot-cli-responses-proxy.mjs": (
+            "scripts/codex/lib/resolve-workspace.mjs": (
                 "  for (const key of Object.keys(workspaces)) {",
                 "    if (isDirectory(key)) return key;",
             ),
