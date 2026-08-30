@@ -7,6 +7,28 @@ import { tmpdir } from "node:os";
 
 import { activeProviderRequests, catalogModelIds, classifyProviderFailure, clearProviderCooldown, cooldownProvider, decrementActiveRequests, downstreamHeaders, fallbackable, FORWARDED_REQUEST_HEADERS, getActiveRequests, concurrencyStatus, countToolCallsFromSse, countToolCallsInResponse, getRouterStatus, handle, codexTelemetryStatus, ingestOtelSignal, incrementActiveRequests, isProviderCoolingDown, loadRouterState, nextProviderRetryMs, normalizeCodexTask, parseConcurrencyConfig, parseTurnMetadataJson, persistRouterStateNow, PROCESS_FALLBACK_SESSION_KEY, recordConcurrencyDenial, recordRouterEvent, recordSpawnFailure, releaseSubagentSlot, replaceModelFields, requestSession, resetConcurrencyTelemetry, resetRouterTelemetry, resetOtelTelemetry, resolveTurnMetadataHeader, serializeRouterState, spawnFailureStatus, summarizeCodexTasks, responseTextFromSse, roleCandidates, roleForModel, routeCredentialAvailable, routeForModel, transformSseEvent, tryAcquireSubagentSlot, validateRoutingConfig, workspaceContextFromRequest } from "./codex-model-router.mjs";
 
+test("antigravity LiteLLM config forwards the allowlisted turn-metadata header to the local adapter", async () => {
+  const config = await readFile(new URL("./codex/litellm/antigravity.yaml", import.meta.url), "utf8");
+  const generalSettingsMatch = config.match(/^general_settings:\n((?:[ \t]+.*\n?)*)/m);
+  assert.ok(generalSettingsMatch, "antigravity.yaml must have a general_settings block");
+  assert.match(
+    generalSettingsMatch[1],
+    /^\s*forward_client_headers_to_llm_api:\s*true\s*$/m,
+    "general_settings must set forward_client_headers_to_llm_api: true so LiteLLM forwards " +
+      `x-* headers (including the allowlisted ${FORWARDED_REQUEST_HEADERS[0]}) to the local adapter`,
+  );
+  assert.ok(
+    FORWARDED_REQUEST_HEADERS[0].startsWith("x-"),
+    "forward_client_headers_to_llm_api only forwards x-*/anthropic-beta headers, so the allowlisted header must match",
+  );
+  // The local Antigravity adapter (agy CLI Responses bridge) must remain the api_base for every routed model.
+  const apiBases = [...config.matchAll(/^\s*api_base:\s*(\S+)\s*$/gm)].map((m) => m[1]);
+  assert.ok(apiBases.length > 0, "antigravity.yaml must route at least one model");
+  for (const apiBase of apiBases) {
+    assert.equal(apiBase, "http://127.0.0.1:4002/v1");
+  }
+});
+
 test("loads editable provider and role models from JSON routing config", async () => {
   const config = JSON.parse(await readFile(new URL("./codex/model-routing.json", import.meta.url), "utf8"));
   assert.equal(config.providers.claude.models.smart, "claude-opus-4-8");

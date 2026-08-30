@@ -64,3 +64,10 @@ litellm_settings:
 
 general_settings:
   master_key: os.environ/LITELLM_MASTER_KEY
+  # Forwards the allowlisted `x-codex-turn-metadata` header (see
+  # FORWARDED_REQUEST_HEADERS in scripts/codex-model-router.mjs) from the
+  # local router through to the Antigravity adapter at :4002 so it can
+  # resolve the caller's workspace. LiteLLM only forwards `x-*`/`anthropic-beta`
+  # headers under this setting, so no other client header (e.g. Authorization)
+  # is leaked to the local adapter.
+  forward_client_headers_to_llm_api: true
