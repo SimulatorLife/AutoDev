@@ -1012,6 +1012,30 @@ class LocalSetupTests(unittest.TestCase):
                 for fragment in required_fragments:
                     self.assertIn(fragment, source, msg=f"{relative_path} missing required fragment {fragment!r}")
 
+    def test_orchestration_skill_is_self_contained_and_orchestrator_focused(self):
+        skill = (REPO_ROOT / "scripts/codex/skills/orchestration/SKILL.md").read_text()
+        for forbidden in (
+            "provider-routing",
+            "github.com/SimulatorLife/AutoDev",
+            "https://",
+            "x-autodev-provider",
+            "router_provider_exhausted",
+            "LiteLLM",
+            "LaunchAgents",
+            "codex-router-state",
+            "127.0.0.1",
+        ):
+            self.assertNotIn(forbidden, skill)
+        for required in (
+            "## Capability roles",
+            "`autodev/<role>`",
+            "## Concurrency and child-handle lifecycle",
+            "close_agent",
+            "## Validation and integration",
+            "independent `validator`",
+        ):
+            self.assertIn(required, skill)
+
     def test_root_delegation_hook_injects_spawn_safety_policy_for_parent_models(self):
         hook = REPO_ROOT / "scripts/enforce-root-delegation.sh"
         with tempfile.TemporaryDirectory() as home:
