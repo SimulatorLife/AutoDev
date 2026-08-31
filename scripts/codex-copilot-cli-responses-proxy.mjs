@@ -57,7 +57,8 @@ function invokeCopilot(prompt, model, cwd) {
     child.stderr.on("data", (chunk) => { stderr += chunk; });
     child.on("close", (code, signal) => {
       clearTimeout(timer);
-      if (code === 0) resolve({ ok: true, text: stdout.trim() });
+      if (code === 0 && stdout.trim()) resolve({ ok: true, text: stdout.trim() });
+      else if (code === 0) resolve({ ok: false, status: 502, message: "Copilot exited successfully without a response" });
       else resolve({ ok: false, status: 503, message: (stderr || stdout || `Copilot exited with ${signal || code}`).trim() });
     });
     child.on("error", (error) => { clearTimeout(timer); resolve({ ok: false, status: 503, message: error.message }); });

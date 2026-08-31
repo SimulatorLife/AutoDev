@@ -228,7 +228,12 @@ This matches the upstream Codex contract: values do not carry the path.
 Callers that cannot set custom headers may instead embed the same JSON
 under `client_metadata["x-codex-turn-metadata"]` in the request body;
 the local router normalizes that back into the canonical header shape
-so provider bridges only ever have to parse one form. The resolution
+so provider bridges only ever have to parse one form. For Antigravity, the
+router also puts this same allowlisted header in the Responses
+`extra_headers` field: LiteLLM's Responses transformation can discard the
+raw request header and unknown top-level workspace fields before calling the
+local adapter. No caller-supplied credential or other arbitrary header is
+copied into that field. The resolution
 order inside `resolve_cwd` / `resolveCwd` is therefore:
 
 1. Top-level `cwd`, `project_root`, or `working_directory` on the request.
@@ -291,6 +296,24 @@ The five LaunchAgents under `scripts/codex/launchagents/` are the supported
 persistence path for this Desktop host. The installer loads them with `KeepAlive`
 and also retains idempotent direct-start hooks as a fallback when `launchctl` is
 inaccessible.
+
+`scripts/ensure-codex-antigravity-proxy.sh` also self-heals config drift for the
+Antigravity LiteLLM process: LiteLLM only reads `antigravity.yaml` at process
+start, so a healthy, already-running process can keep serving a stale config
+after that file changes. The script fingerprints the resolved config content
+against a stamp recorded on the last successful start and restarts LiteLLM
+(via `launchctl kickstart`, or by recycling the locally tracked `nohup` PID
+when running outside launchd) only when the fingerprint has changed; a missing
+stamp (first run) or an unreadable config is never treated as drift, so
+healthy, up-to-date processes are never restarted unnecessarily.
+
+The router applies a 900-second total upstream response timeout by default,
+including streaming response bodies; override it with the positive
+`CODEX_ROUTER_UPSTREAM_TIMEOUT_MS` environment variable when the provider's
+turn budget is intentionally different. Client disconnects abort the
+upstream request and release the subagent slot, while an upstream stream that
+ends without `response.completed` is surfaced as `response.failed` instead of
+being reported as a successful early turn.
 
 ## Versioned integration, source of truth, and setup
 

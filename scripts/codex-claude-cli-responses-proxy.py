@@ -25,7 +25,11 @@ PORT = 4000
 MODEL = "claude-subscription"
 AUTH_TOKEN = os.environ.get("LITELLM_API_KEY", "")
 PROJECT_ROOT = os.environ.get("CODEX_PROJECT_ROOT")
-CLAUDE_TIMEOUT_SECONDS = float(os.environ.get("CLAUDE_CODE_BRIDGE_TIMEOUT_SECONDS", "300"))
+# Match the router and Antigravity bridge's long-running turn budget. Operators
+# can still choose a shorter/longer limit through the environment, but a
+# default five-minute ceiling made legitimate tool-heavy subagent turns look
+# like premature transport failures.
+CLAUDE_TIMEOUT_SECONDS = float(os.environ.get("CLAUDE_CODE_BRIDGE_TIMEOUT_SECONDS", "900"))
 CLI = "/Users/henrykirk/.local/bin/claude"
 DEFAULT_CLAUDE_MODEL = "sonnet"
 DEFAULT_CLAUDE_EFFORT = "medium"
@@ -501,6 +505,8 @@ def run_claude_stream(prompt: str, model: str = DEFAULT_CLAUDE_MODEL, effort: st
                 stderr_lines.append(str(value))
             if kind == "stdout_done":
                 return_code = process.wait()
+                if "result" not in result:
+                    raise RuntimeError("Claude CLI exited without a terminal result event")
                 if result.get("is_error"):
                     message = str(result.get("result", "Claude CLI returned an error"))
                     raise_classified_claude_error(message)

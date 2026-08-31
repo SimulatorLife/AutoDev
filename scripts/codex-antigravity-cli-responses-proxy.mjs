@@ -235,6 +235,10 @@ function runAgy(prompt, model, effort, cwd, onEvent) {
     child.on("error", (error) => finish(reject, error));
     child.on("close", (code) => {
       const result = terminalResult ?? {};
+      if (!terminalResult) {
+        finish(reject, new Error("agy exited without a terminal result event"));
+        return;
+      }
       if (result.status && result.status !== "SUCCESS") {
         finish(reject, new Error(result.error ?? `agy ended with status ${result.status}`));
         return;
@@ -247,6 +251,10 @@ function runAgy(prompt, model, effort, cwd, onEvent) {
       if (finalText && finalText !== emitted) {
         const suffix = finalText.startsWith(emitted) ? finalText.slice(emitted.length) : finalText;
         if (suffix) onEvent?.({ type: "text_delta", text: suffix });
+      }
+      if (!finalText.trim()) {
+        finish(reject, new Error("agy completed without a response message"));
+        return;
       }
       finish(resolve, { text: finalText || emitted, result });
     });
@@ -309,13 +317,15 @@ async function handle(request, response) {
   let sequenceNumber = 0;
   let streamStarted = false;
   const pendingEvents = [];
+  let clientClosed = false;
   const emit = (eventName, body) => {
     const event = sseLine(eventName, { ...body, sequence_number: ++sequenceNumber });
+    if (clientClosed || response.writableEnded || response.destroyed) return;
     if (streamStarted) response.write(event);
     else pendingEvents.push(event);
   };
   const startStream = () => {
-    if (streamStarted) return;
+    if (streamStarted || clientClosed || response.writableEnded || response.destroyed) return;
     streamStarted = true;
     response.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-cache", connection: "close" });
     response.flushHeaders();
@@ -343,7 +353,7 @@ async function handle(request, response) {
 
   const keepAlive = setInterval(() => { if (streamStarted && !response.writableEnded) response.write(": agy-bridge keep-alive\n\n"); }, 2000);
   let child;
-  response.on("close", () => { clearInterval(keepAlive); if (child && !child.killed) child.kill("SIGTERM"); });
+  response.on("close", () => { clientClosed = true; clearInterval(keepAlive); if (child && !child.killed) child.kill("SIGTERM"); });
   try {
     const result = await runAgy(prompt, model, effort, cwd, (event) => {
       if (event.type === "process") { child = event.child; return; }
@@ -375,7 +385,7 @@ async function handle(request, response) {
     response.end("data: [DONE]\n\n");
   } catch (error) {
     clearInterval(keepAlive);
-    if (response.writableEnded) return;
+    if (clientClosed || response.writableEnded || response.destroyed) return;
     if (!streamStarted) {
       sendJson(response, 503, { error: { type: "upstream_error", message: error.message ?? String(error) } });
       return;

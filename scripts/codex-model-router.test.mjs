@@ -451,6 +451,81 @@ test("relays the canonical workspaces-map-keyed turn metadata even when it arriv
   }
 });
 
+test("carries only the approved workspace header through LiteLLM's Responses extra_headers field", async () => {
+  const originalFetch = globalThis.fetch;
+  let upstreamHeaders = null;
+  let upstreamPayload = null;
+  globalThis.fetch = async (url, options) => {
+    if (String(url) === "http://127.0.0.1:4001/v1/responses") {
+      upstreamHeaders = options.headers;
+      upstreamPayload = JSON.parse(options.body);
+      return new Response(JSON.stringify({ id: "antigravity-response", model: "gemini-3.6-flash-medium", output_text: "ok" }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }
+    return originalFetch(url, options);
+  };
+  const server = createServer((request, response) => { void handle(request, response); });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  try {
+    const address = server.address();
+    const turnMetadata = JSON.stringify({
+      workspaces: { "/Users/henrykirk/AutoDev": { git: { branch: "main" } } },
+    });
+    const response = await originalFetch(`http://127.0.0.1:${address.port}/v1/responses`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-codex-turn-metadata": turnMetadata },
+      body: JSON.stringify({
+        model: "gemini-3.6-flash-medium",
+        stream: false,
+        extra_headers: { authorization: "Bearer caller-secret", "x-untrusted": "should-not-forward" },
+      }),
+    });
+    assert.equal(response.status, 200);
+    assert.equal(upstreamHeaders["x-codex-turn-metadata"], turnMetadata);
+    assert.deepEqual(upstreamPayload.extra_headers, { "x-codex-turn-metadata": turnMetadata });
+    assert.equal(upstreamPayload.extra_headers.authorization, undefined);
+    assert.equal(upstreamPayload.extra_headers["x-untrusted"], undefined);
+  } finally {
+    await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("turns a provider stream that ends before completion into an explicit failure", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (url) => {
+    if (String(url) === "http://127.0.0.1:4000/v1/responses") {
+      return new Response('event: response.output_text.delta\\ndata: {"type":"response.output_text.delta","delta":"partial"}\\n\\n', {
+        status: 200,
+        headers: { "content-type": "text/event-stream" },
+      });
+    }
+    return originalFetch(url);
+  };
+  const server = createServer((request, response) => { void handle(request, response); });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  try {
+    const address = server.address();
+    const response = await originalFetch(`http://127.0.0.1:${address.port}/v1/responses`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ model: "sonnet" }),
+    });
+    const body = await response.text();
+    assert.equal(response.status, 200);
+    assert.match(body, /partial/);
+    assert.match(body, /response\.failed/);
+    assert.match(body, /closed the stream before response\.completed/);
+    assert.equal(getRouterStatus().providers.claude.failures > 0, true);
+  } finally {
+    await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    globalThis.fetch = originalFetch;
+    resetRouterTelemetry();
+  }
+});
+
 test("rejects missing or malformed models before provider routing", async () => {
   const server = createServer((request, response) => { void handle(request, response); });
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
@@ -774,7 +849,7 @@ test("serves HTML only from /dashboard and raw JSON from /status", async () => {
     const dashboard = await fetch(`http://127.0.0.1:${address.port}/dashboard`);
     assert.equal(dashboard.status, 200);
     assert.match(dashboard.headers.get("content-type"), /text\/html/);
-    const dashboardBody = await dashboard.text();
+    const dashboardBody = (await dashboard.text()).replace(/\s+/g, " ").replace(/>\s+</g, "><");
     assert.match(dashboardBody, /setInterval\(refresh, 3000\)/);
     assert.match(dashboardBody, /id="usage-breakdown"/);
     assert.match(dashboardBody, /id="workspace-usage"/);
@@ -783,7 +858,7 @@ test("serves HTML only from /dashboard and raw JSON from /status", async () => {
     assert.doesNotMatch(dashboardBody, /id="by-origin"/);
     assert.doesNotMatch(dashboardBody, /id="by-role"/);
     assert.doesNotMatch(dashboardBody, /id="by-model"/);
-    assert.match(dashboardBody, /<th>Category<\/th><th>Active<\/th><th>Attempts<\/th>/);
+    assert.match(dashboardBody, /<th>Category<\/th>\s*<th>Active<\/th>\s*<th>Attempts<\/th>/);
     assert.match(dashboardBody, /const usageBreakdownRows = \(usage\)/);
     assert.match(dashboardBody, /byRole\.unattributed \?\? \{\}/);
     assert.match(dashboardBody, /class="toggle-usage" data-usage-group="subagents"/);
@@ -798,13 +873,13 @@ test("serves HTML only from /dashboard and raw JSON from /status", async () => {
     assert.doesNotMatch(dashboardBody, /<h2>By origin<\/h2>/);
     assert.doesNotMatch(dashboardBody, /<h2>By role<\/h2>/);
     assert.match(dashboardBody, /id="operational-summaries"/);
-    assert.match(dashboardBody, /aria-controls="operational-summaries-section" aria-expanded="false"/);
+    assert.match(dashboardBody, /aria-controls="operational-summaries-section"\s*aria-expanded="false"/);
     assert.match(dashboardBody, /id="operational-summaries-section" hidden/);
     assert.match(dashboardBody, /summaryRow/);
     assert.match(dashboardBody, /Codex telemetry/);
     assert.match(dashboardBody, /State database/);
     assert.match(dashboardBody, /Concurrency/);
-    assert.match(dashboardBody, /Category<\/th><th>Metric<\/th><th>Value<\/th>/);
+    assert.match(dashboardBody, /Category<\/th>\s*<th>Metric<\/th>\s*<th>Value<\/th>/);
     assert.match(dashboardBody, /id="mcp-telemetry-section"/);
     assert.match(dashboardBody, /aria-controls="mcp-telemetry-section" aria-expanded="true"/);
     assert.doesNotMatch(dashboardBody, /Codex telemetry<\/button>/);
@@ -823,7 +898,7 @@ test("serves HTML only from /dashboard and raw JSON from /status", async () => {
     assert.match(dashboardBody, /shadow_selection\.invocation/);
     assert.match(dashboardBody, /id="skills-selection"/);
     assert.match(dashboardBody, /aria-controls="skills-selection-section" aria-expanded="true"/);
-    assert.match(dashboardBody, /<th>Skill<\/th><th>Injected<\/th><th>Invocations<\/th><th>Injection share<\/th><th>Invocation share<\/th><th>By status<\/th><th>Injected by invoke type<\/th><th>Invoked by invoke type<\/th>/);
+    assert.match(dashboardBody, /<th>Skill<\/th>\s*<th>Injected<\/th>\s*<th>Invocations<\/th>\s*<th>Injection share<\/th>\s*<th>Invocation share<\/th>\s*<th>By status<\/th>\s*<th>Injected by invoke type<\/th>\s*<th>Invoked by invoke type<\/th>/);
     assert.match(dashboardBody, /id="skills-histograms"/);
     assert.match(dashboardBody, /aria-controls="skills-selection-section" aria-expanded="true"/);
     assert.match(dashboardBody, /id="skills-selection-section"/);
@@ -862,7 +937,7 @@ test("serves HTML only from /dashboard and raw JSON from /status", async () => {
     assert.match(dashboardBody, /id="recent-routing-events-section" hidden/);
     assert.match(dashboardBody, /document\.querySelectorAll\("\.toggle-section"\)/);
     assert.doesNotMatch(dashboardBody, /id="spawn-failures"/);
-    assert.match(dashboardBody, /<th>Reason \/ type<\/th><th>Count<\/th><th>Last observed<\/th>/);
+    assert.match(dashboardBody, /<th>Reason \/ type<\/th>\s*<th>Count<\/th>\s*<th>Last observed<\/th>/);
     assert.match(dashboardBody, /id="spawn-failures-by-reason"/);
     assert.match(dashboardBody, /aria-controls="spawn-failures-section" aria-expanded="false"/);
     assert.match(dashboardBody, /id="spawn-failures-section" hidden/);
@@ -871,7 +946,7 @@ test("serves HTML only from /dashboard and raw JSON from /status", async () => {
     assert.match(dashboardBody, /latestByReason/);
     assert.match(dashboardBody, /processFallbackEnforcement/);
     assert.match(dashboardBody, /process-wide bucket/);
-    assert.match(dashboardBody, /\["Concurrency", "Active sessions", concurrency\.activeSessions \?\? 0\]/);
+    assert.match(dashboardBody, /\[\s*"Concurrency", "Active sessions", concurrency\.activeSessions \?\? 0\s*\]/);
     assert.doesNotMatch(dashboardBody, /id="skills-summary"|id="sqlite-telemetry"|id="concurrency"/);
     assert.match(dashboardBody, /<tfoot>/);
     assert.match(dashboardBody, /class="provider-summary"/);

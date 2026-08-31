@@ -70,6 +70,10 @@ function positiveDuration(value, fallback) {
 
 const PROVIDER_COOLDOWN_MS = positiveDuration(process.env.CODEX_ROUTER_PROVIDER_COOLDOWN_MS, 30_000);
 const PROVIDER_COOLDOWN_MAX_MS = Math.max(PROVIDER_COOLDOWN_MS, positiveDuration(process.env.CODEX_ROUTER_PROVIDER_COOLDOWN_MAX_MS, 600_000));
+// Keep the router's total upstream lifetime longer than the provider bridge
+// defaults. The caller still owns cancellation, and the timeout aborts an
+// in-flight response body as well as a connection that never produces headers.
+const UPSTREAM_TIMEOUT_MS = positiveDuration(process.env.CODEX_ROUTER_UPSTREAM_TIMEOUT_MS, 900_000);
 const providerCooldowns = new Map();
 const providerFailureStreaks = new Map();
 const activeProviderRequests = new Map();
@@ -1681,34 +1685,84 @@ function transformSseEvent(event, publicModel) {
   }).join("");
 }
 
-async function writeResponseStream(response, upstream, publicModel) {
+async function writeResponseStream(response, upstream, publicModel, signal = null) {
   const decoder = new TextDecoder();
   const seenToolCalls = new Set();
   let toolCalls = 0;
   let buffer = "";
+  let terminal = null;
+  const inspectTerminal = (event) => {
+    for (const line of event.split(/\r?\n/)) {
+      if (!line.startsWith("data: ") || line.slice(6) === "[DONE]") continue;
+      try {
+        const parsed = JSON.parse(line.slice(6));
+        if (parsed.type === "response.failed") {
+          terminal = "failed";
+        } else if (parsed.type === "response.completed") {
+          terminal = parsed.response?.status === "failed" || parsed.response?.metadata?.provider_error ? "failed" : "completed";
+        }
+      } catch {
+        // Preserve the existing tolerant behavior for malformed provider lines.
+      }
+    }
+  };
   const flushEvents = (flush = false) => {
     while (true) {
       const boundary = buffer.match(/\r?\n\r?\n/);
       if (!boundary) break;
       const end = boundary.index + boundary[0].length;
       const event = buffer.slice(0, end);
+      inspectTerminal(event);
       toolCalls += countToolCallsFromSse(event, seenToolCalls);
       response.write(transformSseEvent(event, publicModel));
       buffer = buffer.slice(end);
     }
     if (flush && buffer) {
+      inspectTerminal(buffer);
       toolCalls += countToolCallsFromSse(buffer, seenToolCalls);
       response.write(transformSseEvent(buffer, publicModel));
       buffer = "";
     }
   };
-  for await (const chunk of upstream.body) {
-    buffer += decoder.decode(chunk, { stream: true });
-    flushEvents();
+  if (!upstream.body) {
+    response.write(responseFailureEvent("Upstream provider returned no response body."));
+    return { toolCalls, failed: true };
   }
-  buffer += decoder.decode();
-  flushEvents(true);
-  return toolCalls;
+  try {
+    for await (const chunk of upstream.body) {
+      buffer += decoder.decode(chunk, { stream: true });
+      flushEvents();
+    }
+    buffer += decoder.decode();
+    flushEvents(true);
+  } catch (error) {
+    if (!response.writableEnded) {
+      const message = signal?.aborted && signal.reason?.name === "TimeoutError"
+        ? `Upstream provider exceeded the ${Math.ceil(UPSTREAM_TIMEOUT_MS / 1000)}s response timeout.`
+        : error instanceof Error ? error.message : String(error);
+      response.write(responseFailureEvent(message));
+      return { toolCalls, failed: true };
+    }
+    throw error;
+  }
+  if (terminal === "failed") return { toolCalls, failed: true };
+  if (terminal !== "completed") {
+    response.write(responseFailureEvent("Upstream provider closed the stream before response.completed."));
+    return { toolCalls, failed: true };
+  }
+  return { toolCalls, failed: false };
+}
+
+function responseFailureEvent(message) {
+  return `event: response.failed\ndata: ${JSON.stringify({
+    type: "response.failed",
+    response: {
+      id: `router_${Date.now()}`,
+      object: "response",
+      status: "failed",
+      error: { type: "upstream_error", message },
+    },
+  })}\n\n`;
 }
 
 async function loadCodexAuth() {
@@ -1794,16 +1848,34 @@ function responseTextFromSse(body) {
   };
 }
 
-async function fetchUpstream(route, payload, wantsStream, turnMetadataHeader) {
+function upstreamPayload(route, payload, wantsStream, turnMetadataHeader) {
+  // `extra_headers` is an SDK escape hatch that LiteLLM consumes as outbound
+  // HTTP headers. Never pass the caller's value through the router: doing so
+  // would bypass the router's credential and header allowlist. Antigravity is
+  // routed through LiteLLM, whose Responses API currently drops arbitrary
+  // request fields and can also drop forwarded client headers. Carry the one
+  // approved workspace header through its supported `extra_headers` field so
+  // the local adapter can resolve the workspace without guessing.
+  const { extra_headers: _discardedExtraHeaders, ...safePayload } = payload;
+  if (route.provider === "antigravity" && turnMetadataHeader) {
+    safePayload.extra_headers = { [FORWARDED_REQUEST_HEADERS[0]]: turnMetadataHeader };
+  }
+  return route.provider === "codex" ? { ...safePayload, stream: true, store: false } : { ...safePayload, stream: wantsStream };
+}
+
+async function fetchUpstream(route, payload, wantsStream, turnMetadataHeader, clientSignal = null) {
   const auth = route.provider === "codex" ? await loadCodexAuth() : null;
-  const upstreamPayload = route.provider === "codex" ? { ...payload, stream: true, store: false } : { ...payload, stream: wantsStream };
+  const requestPayload = upstreamPayload(route, payload, wantsStream, turnMetadataHeader);
+  const timeoutSignal = AbortSignal.timeout(UPSTREAM_TIMEOUT_MS);
+  const signal = clientSignal ? AbortSignal.any([clientSignal, timeoutSignal]) : timeoutSignal;
   const upstream = await fetch(`${route.baseUrl}/responses`, {
     method: "POST",
     headers: downstreamHeaders(route, auth, turnMetadataHeader),
-    body: JSON.stringify(upstreamPayload),
+    signal,
+    body: JSON.stringify(requestPayload),
   });
   if (!upstream.ok) return { ok: false, status: upstream.status, body: await upstream.text() };
-  return { ok: true, upstream };
+  return { ok: true, upstream, signal };
 }
 
 async function writeSuccessfulResponse(response, route, result, wantsStream, publicModel, requestId, resolvedModel) {
@@ -1811,25 +1883,27 @@ async function writeSuccessfulResponse(response, route, result, wantsStream, pub
   const upstream = result.upstream;
   if (wantsStream) {
     response.writeHead(upstream.status, { ...responseHeaders, "content-type": upstream.headers.get("content-type") ?? "text/event-stream", "cache-control": "no-cache", connection: "close" });
-    const toolCalls = await writeResponseStream(response, upstream, publicModel);
+    const streamResult = await writeResponseStream(response, upstream, publicModel, result.signal);
     response.end();
-    return toolCalls;
+    return streamResult;
   }
   const body = await upstream.text();
   if (route.provider === "codex") {
     const toolCalls = countToolCallsFromSse(body);
-    sendJson(response, upstream.status, replaceModelFields(responseTextFromSse(body), publicModel), responseHeaders);
-    return toolCalls;
+    const parsed = replaceModelFields(responseTextFromSse(body), publicModel);
+    sendJson(response, upstream.status, parsed, responseHeaders);
+    return { toolCalls, failed: parsed.status === "failed" };
   }
   try {
     const parsed = JSON.parse(body);
     const toolCalls = countToolCallsInResponse(parsed);
     const rewritten = replaceModelFields(parsed, publicModel);
     sendJson(response, upstream.status, rewritten, responseHeaders);
-    return toolCalls;
+    return { toolCalls, failed: rewritten.status === "failed" };
   } catch {
     response.writeHead(upstream.status, { ...responseHeaders, "content-type": upstream.headers.get("content-type") ?? "application/json" });
     response.end(body);
+    return { toolCalls: 0, failed: false };
   }
 }
 
@@ -1853,12 +1927,12 @@ async function providerAvailable(route) {
   }
 }
 
-async function proxyConcreteResponse(response, route, payload, wantsStream, requestId, turnMetadataHeader, workspace) {
+async function proxyConcreteResponse(response, route, payload, wantsStream, requestId, turnMetadataHeader, workspace, clientSignal = null) {
   const startedAt = Date.now();
   recordRouterEvent({ phase: "selected", requestId, requestedModel: payload.model, provider: route.provider, model: payload.model, workspace });
   incrementActiveRequests(route.provider);
   try {
-    const result = await fetchUpstream(route, payload, wantsStream, turnMetadataHeader);
+    const result = await fetchUpstream(route, payload, wantsStream, turnMetadataHeader, clientSignal);
     if (!result.ok) {
       const failureClass = classifyProviderFailure(result.status, result.body);
       recordRouterEvent({ phase: "result", requestId, requestedModel: payload.model, provider: route.provider, model: payload.model, workspace, outcome: "failure", status: result.status, failureClass, elapsedMs: Date.now() - startedAt });
@@ -1866,8 +1940,8 @@ async function proxyConcreteResponse(response, route, payload, wantsStream, requ
       response.end(result.body);
       return;
     }
-    const toolCalls = await writeSuccessfulResponse(response, route, result, wantsStream, payload.model, requestId, payload.model);
-    recordRouterEvent({ phase: "result", requestId, requestedModel: payload.model, provider: route.provider, model: payload.model, workspace, outcome: "success", status: result.upstream.status, elapsedMs: Date.now() - startedAt, toolCalls });
+    const responseResult = await writeSuccessfulResponse(response, route, result, wantsStream, payload.model, requestId, payload.model);
+    recordRouterEvent({ phase: "result", requestId, requestedModel: payload.model, provider: route.provider, model: payload.model, workspace, outcome: responseResult.failed ? "failure" : "success", status: result.upstream.status, failureClass: responseResult.failed ? "upstream_error" : null, elapsedMs: Date.now() - startedAt, toolCalls: responseResult.toolCalls });
   } catch (error) {
     const failureClass = classifyProviderFailure(502, error instanceof Error ? error.message : String(error));
     recordRouterEvent({ phase: "result", requestId, requestedModel: payload.model, provider: route.provider, model: payload.model, workspace, outcome: "failure", status: 502, failureClass, elapsedMs: Date.now() - startedAt });
@@ -1880,7 +1954,7 @@ async function proxyConcreteResponse(response, route, payload, wantsStream, requ
   }
 }
 
-async function proxyRoleResponse(response, role, payload, wantsStream, requestId, turnMetadataHeader, workspace) {
+async function proxyRoleResponse(response, role, payload, wantsStream, requestId, turnMetadataHeader, workspace, clientSignal = null) {
   const failures = [];
   const candidates = roleCandidates(role);
   for (const route of candidates) {
@@ -1899,12 +1973,17 @@ async function proxyRoleResponse(response, role, payload, wantsStream, requestId
     recordRouterEvent({ phase: "selected", requestId, role, requestedModel: payload.model, provider: route.provider, model: route.model, workspace });
     incrementActiveRequests(route.provider);
     try {
-      const result = await fetchUpstream(route, { ...payload, model: route.model }, wantsStream, turnMetadataHeader);
+      const result = await fetchUpstream(route, { ...payload, model: route.model }, wantsStream, turnMetadataHeader, clientSignal);
       if (result.ok) {
-        clearProviderCooldown(route.provider);
         try {
-          const toolCalls = await writeSuccessfulResponse(response, route, result, wantsStream, payload.model, requestId, route.model);
-          recordRouterEvent({ phase: "result", requestId, role, requestedModel: payload.model, provider: route.provider, model: route.model, workspace, outcome: "success", status: result.upstream.status, elapsedMs: Date.now() - attemptStartedAt, toolCalls });
+          const responseResult = await writeSuccessfulResponse(response, route, result, wantsStream, payload.model, requestId, route.model);
+          if (responseResult.failed) {
+            cooldownProvider(route.provider);
+            recordRouterEvent({ phase: "result", requestId, role, requestedModel: payload.model, provider: route.provider, model: route.model, workspace, outcome: "failure", status: result.upstream.status, failureClass: "upstream_error", elapsedMs: Date.now() - attemptStartedAt, toolCalls: responseResult.toolCalls });
+            return;
+          }
+          clearProviderCooldown(route.provider);
+          recordRouterEvent({ phase: "result", requestId, role, requestedModel: payload.model, provider: route.provider, model: route.model, workspace, outcome: "success", status: result.upstream.status, elapsedMs: Date.now() - attemptStartedAt, toolCalls: responseResult.toolCalls });
         } catch (streamError) {
           cooldownProvider(route.provider);
           throw streamError;
@@ -2035,7 +2114,7 @@ function workspaceContextFromRequest(request, payload, turnMetadataHeader) {
   };
 }
 
-async function handle(request, response) {
+async function handleRequest(request, response) {
   const pathname = new URL(request.url ?? "/", `http://${HOST}:${PORT}`).pathname;
   if (pathname === "/health" || pathname === "/health/liveliness") {
     sendJson(response, 200, { status: "ok", router: "codex-model-router" });
@@ -2086,27 +2165,55 @@ async function handle(request, response) {
   const wantsStream = payload.stream !== false;
   const turnMetadataHeader = resolveTurnMetadataHeader(request, payload);
   const workspace = workspaceContextFromRequest(request, payload, turnMetadataHeader);
-  if (role) {
-    const session = requestSession(request, payload);
-    const denialReason = tryAcquireSubagentSlot(session.key);
-    if (denialReason) {
-      recordConcurrencyDenial({ requestId, role, requestedModel: payload.model, sessionScope: session.scope, reason: denialReason });
-      sendJson(response, 429, errorBody(`Subagent denied by configured ${denialReason} limit.`, "router_concurrency_limit"), { "retry-after": "1", "x-autodev-request-id": requestId });
+  const clientAbort = new AbortController();
+  const abortForRequest = () => clientAbort.abort();
+  const abortForRequestClose = () => { if (!request.complete) clientAbort.abort(); };
+  const abortForResponseClose = () => { if (!response.writableEnded && !response.destroyed) clientAbort.abort(); };
+  request.once("aborted", abortForRequest);
+  request.once("close", abortForRequestClose);
+  response.once("close", abortForResponseClose);
+  try {
+    if (role) {
+      const session = requestSession(request, payload);
+      const denialReason = tryAcquireSubagentSlot(session.key);
+      if (denialReason) {
+        recordConcurrencyDenial({ requestId, role, requestedModel: payload.model, sessionScope: session.scope, reason: denialReason });
+        sendJson(response, 429, errorBody(`Subagent denied by configured ${denialReason} limit.`, "router_concurrency_limit"), { "retry-after": "1", "x-autodev-request-id": requestId });
+        return;
+      }
+      try {
+        await proxyRoleResponse(response, role, payload, wantsStream, requestId, turnMetadataHeader, workspace, clientAbort.signal);
+      } finally {
+        releaseSubagentSlot(session.key);
+      }
       return;
     }
-    try {
-      await proxyRoleResponse(response, role, payload, wantsStream, requestId, turnMetadataHeader, workspace);
-    } finally {
-      releaseSubagentSlot(session.key);
+    const route = routeForModel(payload.model);
+    if (!route) {
+      sendJson(response, 400, errorBody(`No local route is configured for model ${String(payload.model)}`));
+      return;
     }
-    return;
+    await proxyConcreteResponse(response, route, payload, wantsStream, requestId, turnMetadataHeader, workspace, clientAbort.signal);
+  } finally {
+    request.removeListener("aborted", abortForRequest);
+    request.removeListener("close", abortForRequestClose);
+    response.removeListener("close", abortForResponseClose);
   }
-  const route = routeForModel(payload.model);
-  if (!route) {
-    sendJson(response, 400, errorBody(`No local route is configured for model ${String(payload.model)}`));
-    return;
+}
+
+async function handle(request, response) {
+  try {
+    return await handleRequest(request, response);
+  } catch (error) {
+    console.error(`Router request failed: ${error instanceof Error ? error.stack ?? error.message : String(error)}`);
+    if (response.writableEnded || response.destroyed) return;
+    try {
+      if (response.headersSent) response.end();
+      else sendJson(response, 502, errorBody("The router could not complete the request.", "router_internal_error"));
+    } catch {
+      // The client may have disconnected between the state check and the write.
+    }
   }
-  await proxyConcreteResponse(response, route, payload, wantsStream, requestId, turnMetadataHeader, workspace);
 }
 
 export { activeProviderRequests, catalogModelIds, classifyProviderFailure, clearProviderCooldown, codexTelemetryStatus, cooldownProvider, countToolCallsFromSse, countToolCallsInResponse, concurrencyStatus, decrementActiveRequests, downstreamHeaders, fallbackable, FORWARDED_REQUEST_HEADERS, getActiveRequests, getRouterStatus, handle, incrementActiveRequests, ingestOtelLogs, ingestOtelMetrics, ingestOtelSignal, ingestOtelTraces, isProviderCoolingDown, loadRouterState, nextProviderRetryMs, normalizeCodexTask, parseConcurrencyConfig, parseTurnMetadataJson, persistRouterStateNow, PROCESS_FALLBACK_SESSION_KEY, providerModelMetadata, recordConcurrencyDenial, recordRouterEvent, recordSpawnFailure, releaseSubagentSlot, replaceModelFields, requestSession, resetConcurrencyTelemetry, resetOtelTelemetry, resetRouterTelemetry, resolveTurnMetadataHeader, spawnFailureStatus, routeCredentialAvailable, roleCandidates, roleForModel, routeForModel, serializeRouterState, summarizeCodexTasks, tryAcquireSubagentSlot, responseTextFromSse, transformSseEvent, validateRoutingConfig, workspaceContextFromRequest };

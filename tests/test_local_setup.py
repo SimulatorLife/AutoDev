@@ -534,6 +534,27 @@ class LocalSetupTests(unittest.TestCase):
         self.assertEqual(output, combined)
         self.assertEqual([kind for kind, _, _ in events], ["delta", "delta", "complete"])
 
+    def test_claude_stream_rejects_a_clean_exit_without_a_terminal_result(self):
+        class FakeProcess:
+            args = ["claude"]
+            stdout = []
+            stderr = []
+
+            def poll(self):
+                return 0
+
+            def wait(self):
+                return 0
+
+            def kill(self):
+                return None
+
+        with patch.object(claude_bridge.subprocess, "Popen", return_value=FakeProcess()), patch.dict(
+            claude_bridge.os.environ, {"CLAUDE_CODE_OAUTH_TOKEN": "oauth-placeholder"}, clear=False
+        ):
+            with self.assertRaisesRegex(RuntimeError, "without a terminal result event"):
+                list(claude_bridge.run_claude_stream("prompt"))
+
     def test_claude_bridge_forwards_only_user_task_content(self):
         prompt = claude_bridge.prompt_from_input([
             {"role": "system", "content": "[developer] parent-only orchestration context"},
@@ -810,6 +831,69 @@ class LocalSetupTests(unittest.TestCase):
         self.assertIn('only when no healthy process already owns the port', ensure)
         self.assertNotIn('launchctl bootout "$domain/$label"', ensure)
 
+    def test_antigravity_ensure_detects_and_restarts_a_stale_but_healthy_litellm_process(self):
+        """A healthy LiteLLM process only reloads antigravity.yaml at start, so
+        content drift must be fingerprinted and force a restart even though
+        the liveliness probe stays green; a missing stamp (first run) or an
+        unreadable config must never itself trigger a restart."""
+        ensure = (REPO_ROOT / "scripts/ensure-codex-antigravity-proxy.sh").read_text()
+        self.assertIn('litellm_config="$HOME/.config/litellm/antigravity.yaml"', ensure)
+        self.assertIn(
+            'litellm_config_stamp="${CODEX_ANTIGRAVITY_LITELLM_CONFIG_STAMP:-$HOME/.codex/codex-antigravity-litellm-config.sha256}"',
+            ensure,
+        )
+        self.assertIn('shasum -a 256 "$path"', ensure)
+        self.assertIn('launchd_pid() {', ensure)
+        self.assertIn('"$current_pid" != "$previous_pid"', ensure)
+        self.assertIn(
+            'if [[ -L "$path" ]]; then path="$(readlink "$path")"; fi',
+            ensure,
+            msg="fingerprinting must resolve the deployed config the same way run-codex-antigravity-litellm.sh does",
+        )
+        self.assertIn('[[ -s "$litellm_config_stamp" ]] || return 1', ensure)
+        self.assertIn('[[ "$current" != "$previous" ]]', ensure)
+
+        sync_start = ensure.index("sync_litellm_config_drift() {")
+        sync_body = ensure[sync_start:ensure.index("\n}\n", sync_start)]
+        self.assertIn('probe_ok "$litellm_probe" || return 0', sync_body)
+        self.assertIn('litellm_config_is_stale || return 0', sync_body)
+        self.assertIn('launchctl kickstart -k "$domain/$litellm_label"', sync_body)
+
+        # The drift check must run, and the stamp must be recorded, around
+        # the same pair of start_service calls the double-supervision test
+        # above exercises -- never in place of them.
+        self.assertLess(ensure.index("sync_litellm_config_drift"), ensure.rindex('start_service "$proxy_label"'))
+        self.assertLess(ensure.rindex('start_service "$litellm_label"'), ensure.rindex("record_litellm_config_stamp"))
+
+    def test_antigravity_ensure_never_restarts_an_unmanaged_direct_litellm_process(self):
+        """The direct-fallback (non-launchd) restart path must only ever
+        recycle a process this script itself started with nohup, and the
+        nohup launch path must record that PID so a later invocation can
+        find it again."""
+        ensure = (REPO_ROOT / "scripts/ensure-codex-antigravity-proxy.sh").read_text()
+        self.assertIn(
+            'litellm_pid_file="${TMPDIR:-/tmp}/codex-antigravity-${litellm_label}.pid"',
+            ensure,
+        )
+
+        restart_start = ensure.index("restart_direct_litellm_if_owned() {")
+        restart_body = ensure[restart_start:ensure.index("\n}\n", restart_start)]
+        self.assertIn('[[ -z "$pid" ]] || ! kill -0 "$pid" 2>/dev/null', restart_body)
+        self.assertIn(
+            "leaving the current process running",
+            restart_body,
+            msg="an untracked/unmanaged process must be left running, not killed",
+        )
+        self.assertIn('nohup /bin/bash "$litellm_launcher"', restart_body)
+        self.assertIn('printf \'%s\' "$!" >"$litellm_pid_file"', restart_body)
+
+        start_service = ensure[ensure.index("start_service() {"):ensure.index("\nif ! sync_litellm_config_drift")]
+        self.assertIn(
+            'if [[ "$label" == "$litellm_label" ]]; then\n    printf \'%s\' "$!" >"$litellm_pid_file"\n  fi',
+            start_service,
+            msg="every direct nohup launch of LiteLLM must record its PID for a future config-drift restart",
+        )
+
     def test_minimax_proxy_loads_background_environment_credentials(self):
         proxy = (REPO_ROOT / "scripts/ensure-codex-minimax-proxy.sh").read_text()
         self.assertIn('source "${CODEX_ENV_FILE:-$HOME/.codex/.env}"', proxy)
@@ -818,11 +902,22 @@ class LocalSetupTests(unittest.TestCase):
         proxy = (REPO_ROOT / "scripts/codex-antigravity-cli-responses-proxy.mjs").read_text()
         self.assertIn('process.env.AGY_PRINT_TIMEOUT ?? "15m"', proxy)
 
+    def test_claude_bridge_allows_long_running_cli_turns_by_default(self):
+        proxy = (REPO_ROOT / "scripts/codex-claude-cli-responses-proxy.py").read_text()
+        self.assertIn('CLAUDE_CODE_BRIDGE_TIMEOUT_SECONDS", "900"', proxy)
+
     def test_antigravity_stream_reports_early_provider_errors_as_retryable(self):
         proxy = (REPO_ROOT / "scripts/codex-antigravity-cli-responses-proxy.mjs").read_text()
         self.assertIn('if (!streamStarted)', proxy)
         self.assertIn('sendJson(response, 503', proxy)
         self.assertIn('if (activity) emitActivity(activity, key);', proxy)
+        self.assertIn('agy exited without a terminal result event', proxy)
+        self.assertIn('clientClosed || response.writableEnded || response.destroyed', proxy)
+
+    def test_copilot_proxy_does_not_report_an_empty_clean_exit_as_success(self):
+        proxy = (REPO_ROOT / "scripts/codex-copilot-cli-responses-proxy.mjs").read_text()
+        self.assertIn('stdout.trim()', proxy)
+        self.assertIn('Copilot exited successfully without a response', proxy)
 
     def test_obsolete_subagent_start_logging_hook_is_removed(self):
         config = (REPO_ROOT / "scripts/codex/config.toml").read_text()
