@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import test from 'node:test';
@@ -8,6 +9,34 @@ const workflows = path.join(root, '.github', 'workflows');
 const prompts = path.join(root, '.agents', 'prompts');
 const readWorkflow = (name) => readFile(path.join(workflows, name), 'utf8');
 const readPrompt = (name) => readFile(path.join(prompts, name), 'utf8');
+
+// Extracts each `run: |` block's body lines, keyed by the indentation of the
+// `run:` key itself, so a malformed quote inside one block (which would
+// otherwise swallow the rest of the file as an unterminated string) is
+// caught by bash's own parser rather than by string matching.
+const extractRunBlocks = (source) => {
+  const lines = source.split('\n');
+  const blocks = [];
+  for (let i = 0; i < lines.length; i++) {
+    const runMatch = lines[i].match(/^(\s*)run: \|-?\s*$/);
+    if (!runMatch) continue;
+    const runIndent = runMatch[1].length;
+    const body = [];
+    let j = i + 1;
+    for (; j < lines.length; j++) {
+      const line = lines[j];
+      if (line.trim() === '') {
+        body.push('');
+        continue;
+      }
+      if ((line.match(/^ */)[0]).length <= runIndent) break;
+      body.push(line);
+    }
+    blocks.push({ startLine: i + 1, body: body.join('\n') });
+    i = j - 1;
+  }
+  return blocks;
+};
 
 const config = JSON.parse(await readFile(path.join(workflows, 'weights.json'), 'utf8'));
 
@@ -211,6 +240,20 @@ test('agent invocation interface omits unused compatibility inputs', async () =>
   const source = await readWorkflow('agent-invoke.yml');
   assert.doesNotMatch(source, /\n      target_sha:/);
   assert.doesNotMatch(source, /\n      working_branch:/);
+});
+
+test('agent-invoke.yml run: blocks are syntactically valid bash', async () => {
+  const source = await readWorkflow('agent-invoke.yml');
+  const blocks = extractRunBlocks(source);
+  assert.ok(blocks.length > 10, 'expected many run: blocks to be extracted from agent-invoke.yml');
+  for (const block of blocks) {
+    const result = spawnSync('bash', ['-n'], { input: block.body, encoding: 'utf8' });
+    assert.equal(
+      result.status,
+      0,
+      `run: block starting near source line ${block.startLine} failed \`bash -n\`:\n${result.stderr}`
+    );
+  }
 });
 
 test('Node actions use the AutoDev root .nvmrc', async () => {

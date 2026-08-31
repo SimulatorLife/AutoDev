@@ -636,7 +636,7 @@ jobs:
               printf '%s\n' 'Make one focused, minimal code change set for the user request.'
               printf '%s\n' 'Do not survey the entire repository exhaustively. Narrow to one candidate area first using targeted searches, then read only the files needed for that area.'
               printf '%s\n' 'Start from real command output and repository files you read; do not speculate.'
-              printf '%s\n' 'Keep command and tool output small. If lint is requested: discover the repository's documented lint command, fix exactly one deterministic issue, then rerun the relevant lint, build, and test checks.'
+              printf '%s\n' 'Keep command and tool output small. If lint is requested: discover the repository'\''s documented lint command, fix exactly one deterministic issue, then rerun the relevant lint, build, and test checks.'
               printf '%s\n' 'Do not finish with only analysis or a plan. Leave a concrete repository diff in the worktree.'
               printf '%s\n' 'When executing user-requested tasks, do not edit golden .gml fixtures, generated files, dist files, workflow files, or configuration files unless explicitly requested.'
               printf '\n'
