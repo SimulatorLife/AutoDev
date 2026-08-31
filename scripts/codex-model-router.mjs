@@ -1685,6 +1685,10 @@ function transformSseEvent(event, publicModel) {
   }).join("");
 }
 
+function responseWasNotCompleted(response) {
+  return response?.status != null && response.status !== "completed";
+}
+
 async function writeResponseStream(response, upstream, publicModel, signal = null) {
   const decoder = new TextDecoder();
   const seenToolCalls = new Set();
@@ -1699,7 +1703,7 @@ async function writeResponseStream(response, upstream, publicModel, signal = nul
         if (parsed.type === "response.failed") {
           terminal = "failed";
         } else if (parsed.type === "response.completed") {
-          terminal = parsed.response?.status === "failed" || parsed.response?.metadata?.provider_error ? "failed" : "completed";
+          terminal = responseWasNotCompleted(parsed.response) || parsed.response?.metadata?.provider_error ? "failed" : "completed";
         }
       } catch {
         // Preserve the existing tolerant behavior for malformed provider lines.
@@ -1892,14 +1896,14 @@ async function writeSuccessfulResponse(response, route, result, wantsStream, pub
     const toolCalls = countToolCallsFromSse(body);
     const parsed = replaceModelFields(responseTextFromSse(body), publicModel);
     sendJson(response, upstream.status, parsed, responseHeaders);
-    return { toolCalls, failed: parsed.status === "failed" };
+    return { toolCalls, failed: responseWasNotCompleted(parsed) };
   }
   try {
     const parsed = JSON.parse(body);
     const toolCalls = countToolCallsInResponse(parsed);
     const rewritten = replaceModelFields(parsed, publicModel);
     sendJson(response, upstream.status, rewritten, responseHeaders);
-    return { toolCalls, failed: rewritten.status === "failed" };
+    return { toolCalls, failed: responseWasNotCompleted(rewritten) };
   } catch {
     response.writeHead(upstream.status, { ...responseHeaders, "content-type": upstream.headers.get("content-type") ?? "application/json" });
     response.end(body);
@@ -2024,10 +2028,17 @@ async function proxyRoleResponse(response, role, payload, wantsStream, requestId
   );
 }
 
-function requestSession(request, payload) {
+function requestSession(request, payload, turnMetadataHeader = null) {
   const header = request.headers["x-codex-session-id"] ?? request.headers["x-session-id"] ?? request.headers["x-conversation-id"];
   const metadata = payload?.metadata;
-  const value = header ?? payload?.session_id ?? payload?.conversation_id ?? metadata?.session_id ?? metadata?.conversation_id;
+  const turnMetadata = parseTurnMetadataJson(turnMetadataHeader);
+  const value = header
+    ?? payload?.session_id
+    ?? payload?.conversation_id
+    ?? metadata?.session_id
+    ?? metadata?.conversation_id
+    ?? turnMetadata?.session_id
+    ?? turnMetadata?.conversation_id;
   if (typeof value === "string" && value.trim()) return { key: value.trim(), scope: "identified" };
   return { key: PROCESS_FALLBACK_SESSION_KEY, scope: "process-fallback" };
 }
@@ -2174,7 +2185,7 @@ async function handleRequest(request, response) {
   response.once("close", abortForResponseClose);
   try {
     if (role) {
-      const session = requestSession(request, payload);
+      const session = requestSession(request, payload, turnMetadataHeader);
       const denialReason = tryAcquireSubagentSlot(session.key);
       if (denialReason) {
         recordConcurrencyDenial({ requestId, role, requestedModel: payload.model, sessionScope: session.scope, reason: denialReason });

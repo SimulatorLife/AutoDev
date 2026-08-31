@@ -526,6 +526,36 @@ test("turns a provider stream that ends before completion into an explicit failu
   }
 });
 
+test("does not classify an explicitly incomplete response as a successful turn", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (url) => {
+    if (String(url) === "http://127.0.0.1:4000/v1/responses") {
+      return new Response('event: response.completed\\ndata: {"type":"response.completed","response":{"status":"incomplete","output_text":"partial"}}\\n\\ndata: [DONE]\\n\\n', {
+        status: 200,
+        headers: { "content-type": "text/event-stream" },
+      });
+    }
+    return originalFetch(url);
+  };
+  const server = createServer((request, response) => { void handle(request, response); });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  try {
+    const address = server.address();
+    const response = await originalFetch(`http://127.0.0.1:${address.port}/v1/responses`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ model: "sonnet" }),
+    });
+    assert.equal(response.status, 200);
+    assert.match(await response.text(), /response\.completed/);
+    assert.equal(getRouterStatus().providers.claude.failures > 0, true);
+  } finally {
+    await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    globalThis.fetch = originalFetch;
+    resetRouterTelemetry();
+  }
+});
+
 test("rejects missing or malformed models before provider routing", async () => {
   const server = createServer((request, response) => { void handle(request, response); });
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
@@ -1240,6 +1270,10 @@ test("requestSession derives identity from caller-supplied headers and payload f
   assert.deepEqual(requestSession({ headers: {} }, { conversation_id: "sess-body-2" }), { key: "sess-body-2", scope: "identified" });
   assert.deepEqual(requestSession({ headers: {} }, { metadata: { session_id: "sess-meta-1" } }), { key: "sess-meta-1", scope: "identified" });
   assert.deepEqual(requestSession({ headers: {} }, { metadata: { conversation_id: "sess-meta-2" } }), { key: "sess-meta-2", scope: "identified" });
+  assert.deepEqual(
+    requestSession({ headers: {} }, {}, JSON.stringify({ conversation_id: "sess-turn-metadata" })),
+    { key: "sess-turn-metadata", scope: "identified" },
+  );
 
   // Whitespace-only or non-string identity is treated as absent rather than trusted as-is.
   assert.deepEqual(requestSession({ headers: { "x-codex-session-id": "   " } }, {}), { key: PROCESS_FALLBACK_SESSION_KEY, scope: "process-fallback" });

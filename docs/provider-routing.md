@@ -138,6 +138,11 @@ To verify the live router is receiving caller identities, inspect
 per-session key was supplied, while `process-fallback` means anonymous callers
 are sharing one bucket.
 
+The router accepts the session/conversation identity from the explicit session
+headers and body metadata, and also from `session_id` or `conversation_id` in
+the structured `x-codex-turn-metadata` JSON. It never derives a session key
+from a workspace path or task text.
+
 The same status payload's `codexTelemetry` includes Codex OTEL lifecycle and
 skill-injection telemetry (`codex.skill.injected` and
 `codex.thread.skills.*`); see
