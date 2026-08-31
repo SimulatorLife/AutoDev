@@ -1,5 +1,6 @@
 import importlib.util
 import json
+import re
 import os
 import subprocess
 import threading
@@ -1069,6 +1070,196 @@ class LocalSetupTests(unittest.TestCase):
                 env=environment,
             )
         self.assertIn("ROOT DELEGATION REQUIREMENT", result.stdout)
+
+
+
+    def test_model_router_ensure_prefers_launchd_over_direct_nohup(self):
+        """The ensure hook must prefer the installed launchd job (bootstrap
+        then kickstart, or kickstart when already loaded) and only fall back
+        to a direct nohup process when launchd genuinely cannot talk to us.
+        Never start an unmanaged duplicate next to a healthy launchd job."""
+        ensure = (REPO_ROOT / "scripts/ensure-codex-model-router.sh").read_text()
+        launchd_print = "launchctl print \"" + chr(0x24) + "domain/" + chr(0x24) + "label\""
+        self.assertIn(launchd_print, ensure)
+        launchd_enable = "launchctl enable \"" + chr(0x24) + "domain/" + chr(0x24) + "label\""
+        self.assertIn(launchd_enable, ensure)
+        launchd_kickstart = "launchctl kickstart -k \"" + chr(0x24) + "domain/" + chr(0x24) + "label\""
+        self.assertIn(launchd_kickstart, ensure)
+        launchd_bootstrap = "launchctl bootstrap \"" + chr(0x24) + "domain\" \"" + chr(0x24) + "plist_link\""
+        self.assertIn(
+            launchd_bootstrap,
+            ensure,
+            msg="a missing launchd label must be bootstrapped, not replaced by a direct nohup",
+        )
+        self.assertNotIn(
+            "nohup /bin/bash \"" + chr(0x24) + "launcher\" &",
+            ensure,
+            msg="the legacy bare nohup form must be gone; the fallback lives inside ensure_via_fallback",
+        )
+        self.assertNotIn(
+            '"${TMPDIR:-/tmp}/codex-model-router.log"',
+            ensure,
+            msg="the world-writable /tmp fallback log is replaced by a user-private path under $CODEX_HOME",
+        )
+
+    def test_model_router_ensure_serializes_concurrent_invocations(self):
+        """Concurrent ensure calls must not race the bootstrap/nohup path.
+        The lock is an atomic private directory held for the lifetime of the
+        script. The lock and the fallback pid/log files all live under
+        $CODEX_HOME/run and use restrictive permissions so an unprivileged
+        user on the same host cannot read PID/log or interject a fake lock."""
+        ensure = (REPO_ROOT / "scripts/ensure-codex-model-router.sh").read_text()
+        self.assertIn("ensure_lock=\"${CODEX_MODEL_ROUTER_ENSURE_LOCK:-" + chr(0x24) + "run_dir/codex-model-router.ensure.lock}\"", ensure)
+        self.assertIn("chmod 0700 \"" + chr(0x24) + "run_dir\"", ensure)
+        self.assertIn('lock_dir="${ensure_lock}.d"', ensure)
+        self.assertIn('mkdir "$lock_dir"', ensure)
+        self.assertIn("trap cleanup_lock EXIT", ensure)
+        self.assertNotIn("flock --wait", ensure)
+        self.assertIn("launchd_job_loaded", ensure)
+        self.assertIn("launchd_owns_listener", ensure)
+        self.assertIn("secure_launchd_logs", ensure)
+        self.assertIn('lsof -nP -a -iTCP:', ensure)
+        self.assertIn(
+            "another ensure invocation is in progress",
+            ensure,
+            msg="a contended lock must produce a clear, actionable error",
+        )
+
+    def test_model_router_ensure_uses_durable_user_private_state_paths(self):
+        """The fallback pid/log paths must live under CODEX_HOME (not /tmp)
+        and use mode 0600. Both paths must be overridable for tests, and
+        the launchd logs must also live under codex_home/run so they
+        survive reboot and tmpfs clears."""
+        ensure = (REPO_ROOT / "scripts/ensure-codex-model-router.sh").read_text()
+        self.assertIn("fallback_pid_file=\"${CODEX_MODEL_ROUTER_FALLBACK_PID_FILE:-" + chr(0x24) + "run_dir/codex-model-router.fallback.pid}\"", ensure)
+        self.assertIn("fallback_log=\"${CODEX_MODEL_ROUTER_FALLBACK_LOG:-" + chr(0x24) + "run_dir/codex-model-router.fallback.log}\"", ensure)
+        self.assertIn("chmod 0600 \"" + chr(0x24) + "fallback_log\"", ensure)
+        self.assertIn("chmod 0600 \"" + chr(0x24) + "fallback_pid_file\"", ensure)
+
+    def test_model_router_ensure_reuses_or_cleans_stale_fallback_pid(self):
+        """If the recorded fallback PID is still alive and healthy, do
+        nothing; if it is alive but unhealthy, send SIGTERM (router drains
+        via CODEX_ROUTER_SHUTDOWN_DRAIN_MS) and recycle; if it is dead,
+        clear the stale pid file before starting a new one. Never start a
+        duplicate nohup beside an untracked process that owns the port."""
+        ensure = (REPO_ROOT / "scripts/ensure-codex-model-router.sh").read_text()
+        body_start = ensure.index("ensure_via_fallback() {")
+        body = ensure[body_start:ensure.index("\n}\n", body_start)]
+        self.assertIn("existing_pid=\"$(<\"" + chr(0x24) + "fallback_pid_file\"", body)
+        self.assertIn("kill -0 \"" + chr(0x24) + "existing_pid\"", body)
+        self.assertIn("kill \"" + chr(0x24) + "existing_pid\"", body)
+        self.assertIn("kill -KILL \"" + chr(0x24) + "existing_pid\"", body)
+        self.assertIn("rm -f \"" + chr(0x24) + "fallback_pid_file\"", body)
+        self.assertIn(
+            "refusing to start a duplicate",
+            body,
+            msg="when an untracked process already owns the port, refuse to start a duplicate nohup beside it",
+        )
+        self.assertIn('started_pid\" >\"' + chr(0x24) + 'fallback_pid_file', body)
+
+    def test_model_router_ensure_uses_bounded_exponential_readiness_polling(self):
+        """Readiness polling must be bounded (default 5s total) and use
+        exponential backoff capped at 1s, so a slow bind surfaces fast and
+        we never spin forever burning CPU."""
+        ensure = (REPO_ROOT / "scripts/ensure-codex-model-router.sh").read_text()
+        self.assertIn('budget_ms="${CODEX_MODEL_ROUTER_READY_TIMEOUT_MS:-5000}"', ensure)
+        self.assertIn("sleep_ms=50", ensure)
+        self.assertIn("cap_ms=1000", ensure)
+        self.assertIn("sleep_ms=$(( sleep_ms * 2 ))", ensure)
+        self.assertIn("if (( sleep_ms > cap_ms )); then sleep_ms=$cap_ms; fi", ensure)
+        self.assertIn("date +%s", ensure)
+        self.assertNotIn("date +%s%3N", ensure, msg="BSD date does not support %N on macOS")
+
+    def test_model_router_ensure_does_not_silently_mask_launchd_failure(self):
+        """When launchd is the supervisor and the job is loaded but the
+        router never becomes ready, the ensure hook must fail loudly rather
+        than silently starting a duplicate unmanaged process."""
+        ensure = (REPO_ROOT / "scripts/ensure-codex-model-router.sh").read_text()
+        self.assertIn(
+            "failed to start under launchd",
+            ensure,
+            msg="a loaded launchd job that never bound must not be masked by the direct fallback",
+        )
+        self.assertIn("Codex model router failed to start under launchd", ensure)
+        self.assertIn("return 2", ensure, msg="fallback startup failure must propagate as a non-zero exit")
+        self.assertIn("case \"$(ensure_via_fallback; echo $?)\"", ensure)
+
+    def test_model_router_plist_uses_unversioned_node_path(self):
+        """The plist must not pin a version-specific nvm node path, because
+        the launcher resolves node itself (nvm/homebrew) and we do not want
+        to churn the plist every time nvm installs a new major."""
+        plist_path = REPO_ROOT / "scripts/codex/launchagents/com.codex.model-router.plist"
+        text = plist_path.read_text()
+        self.assertNotRegex(
+            text,
+            r"\.nvm/versions/node/v\d",
+            msg=str(plist_path) + " must not hard-code a node version (the launcher resolves node itself)",
+        )
+        self.assertIn("<key>PATH</key>", text)
+        self.assertIn("/usr/bin", text)
+
+    def test_model_router_plist_keeps_keepalive_and_separates_streams(self):
+        """KeepAlive and RunAtLoad must remain on so the router survives
+        crashes/sleep, and stdout/stderr must be separate files so structured
+        router events on stderr are not interleaved with incidental stdout."""
+        plist_path = REPO_ROOT / "scripts/codex/launchagents/com.codex.model-router.plist"
+        text = plist_path.read_text()
+        self.assertIn("<key>KeepAlive</key>", text)
+        self.assertRegex(text, r"<key>KeepAlive</key>\s*<true/>")
+        self.assertIn("<key>RunAtLoad</key>", text)
+        self.assertRegex(text, r"<key>RunAtLoad</key>\s*<true/>")
+        self.assertIn("<key>StandardOutPath</key>", text)
+        self.assertIn("<key>StandardErrorPath</key>", text)
+        out_match = re.search(r"<key>StandardOutPath</key>\s*<string>([^<]+)</string>", text)
+        err_match = re.search(r"<key>StandardErrorPath</key>\s*<string>([^<]+)</string>", text)
+        self.assertIsNotNone(out_match)
+        self.assertIsNotNone(err_match)
+        self.assertNotEqual(
+            out_match.group(1),
+            err_match.group(1),
+            msg="stdout and stderr must point at distinct files so structured events are easy to correlate",
+        )
+
+    def test_model_router_plist_sets_drain_exit_timeout_without_breaking_desktop(self):
+        """ExitTimeOut must give the router enough time to drain in-flight
+        /v1/responses requests before launchd SIGKILLs it, and
+        ProcessType=Background keeps the launchd job out of the Dock so
+        the desktop session is untouched."""
+        plist_path = REPO_ROOT / "scripts/codex/launchagents/com.codex.model-router.plist"
+        text = plist_path.read_text()
+        exit_match = re.search(r"<key>ExitTimeOut</key>\s*<integer>(\d+)</integer>", text)
+        self.assertIsNotNone(exit_match, msg="planner must bound the launchd-killed exit window via ExitTimeOut")
+        exit_seconds = int(exit_match.group(1))
+        self.assertGreaterEqual(exit_seconds, 30)
+        self.assertLessEqual(exit_seconds, 120)
+        self.assertIn("<key>ProcessType</key>", text)
+        self.assertRegex(text, r"<key>ProcessType</key>\s*<string>Background</string>")
+
+    def test_model_router_plist_lints_as_valid_plist(self):
+        """The plist must round-trip through plutil so a typo never silently
+        disables the launchd job at install time."""
+        plist_path = REPO_ROOT / "scripts/codex/launchagents/com.codex.model-router.plist"
+        result = subprocess.run(
+            ["plutil", "-lint", str(plist_path)],
+            text=True,
+            capture_output=True,
+        )
+        self.assertEqual(
+            result.returncode,
+            0,
+            msg="plutil -lint failed for " + str(plist_path) + ": " + result.stderr,
+        )
+
+    def test_installer_materializes_user_private_run_directory(self):
+        """The installer must create $CODEX_HOME/run with mode 0700 so the
+        router launchd job and the ensure fallback can write their pid and
+        log files there without leaking them to other local users."""
+        installer = (REPO_ROOT / "scripts/codex/install-codex-integration.sh").read_text()
+        self.assertIn("mkdir -p -- \"" + chr(0x24) + "codex_home/run\"", installer)
+        self.assertIn("chmod 0700 \"" + chr(0x24) + "codex_home/run\"", installer)
+        self.assertIn("chmod 0600 \"" + chr(0x24) + "router_log\"", installer)
+        self.assertIn("http://127.0.0.1:4100/health/readiness", installer)
+
 
 
 if __name__ == "__main__":

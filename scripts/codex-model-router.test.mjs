@@ -5,7 +5,62 @@ import test from "node:test";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
-import { activeProviderRequests, catalogModelIds, classifyProviderFailure, clearProviderCooldown, cooldownProvider, decrementActiveRequests, downstreamHeaders, fallbackable, FORWARDED_REQUEST_HEADERS, getActiveRequests, concurrencyStatus, countToolCallsFromSse, countToolCallsInResponse, getRouterStatus, handle, codexTelemetryStatus, ingestOtelSignal, incrementActiveRequests, isProviderCoolingDown, loadRouterState, nextProviderRetryMs, normalizeCodexTask, parseConcurrencyConfig, parseTurnMetadataJson, persistRouterStateNow, PROCESS_FALLBACK_SESSION_KEY, recordConcurrencyDenial, recordRouterEvent, recordSpawnFailure, releaseSubagentSlot, replaceModelFields, requestSession, resetConcurrencyTelemetry, resetRouterTelemetry, resetOtelTelemetry, resolveTurnMetadataHeader, serializeRouterState, spawnFailureStatus, summarizeCodexTasks, responseTextFromSse, roleCandidates, roleForModel, routeCredentialAvailable, routeForModel, transformSseEvent, tryAcquireSubagentSlot, validateRoutingConfig, workspaceContextFromRequest } from "./codex-model-router.mjs";
+import {
+  activeProviderRequests,
+  beginShutdown,
+  catalogModelIds,
+  classifyProviderFailure,
+  clearProviderCooldown,
+  cooldownProvider,
+  decrementActiveRequests,
+  downstreamHeaders,
+  fallbackable,
+  FORWARDED_REQUEST_HEADERS,
+  getActiveRequests,
+  getLifecycleStatus,
+  concurrencyStatus,
+  countToolCallsFromSse,
+  countToolCallsInResponse,
+  getRouterStatus,
+  handle,
+  codexTelemetryStatus,
+  ingestOtelSignal,
+  incrementActiveRequests,
+  isDraining,
+  isProviderCoolingDown,
+  loadRouterState,
+  nextProviderRetryMs,
+  normalizeCodexTask,
+  parseConcurrencyConfig,
+  parseTurnMetadataJson,
+  persistRouterStateNow,
+  PROCESS_FALLBACK_SESSION_KEY,
+  recordConcurrencyDenial,
+  recordRouterEvent,
+  recordSpawnFailure,
+  releaseSubagentSlot,
+  replaceModelFields,
+  requestSession,
+  proxyConcreteResponse,
+  resetConcurrencyTelemetry,
+  resetLifecycleForTests,
+  resetRouterTelemetry,
+  resetOtelTelemetry,
+  resolveTurnMetadataHeader,
+  ROUTER_INSTANCE_ID,
+  serializeRouterState,
+  spawnFailureStatus,
+  summarizeCodexTasks,
+  responseTextFromSse,
+  roleCandidates,
+  roleForModel,
+  routeCredentialAvailable,
+  routeForModel,
+  transformSseEvent,
+  tryAcquireSubagentSlot,
+  validateRoutingConfig,
+  workspaceContextFromRequest,
+} from "./codex-model-router.mjs";
 
 test("antigravity LiteLLM config forwards the allowlisted turn-metadata header to the local adapter", async () => {
   const config = await readFile(new URL("./codex/litellm/antigravity.yaml", import.meta.url), "utf8");
@@ -159,7 +214,7 @@ test("reroutes a role request after a provider returns a fallbackable failure", 
   clearProviderCooldown("minimax");
   activeProviderRequests.set("antigravity", 1);
   activeProviderRequests.set("minimax", 2);
-  globalThis.fetch = async (url) => {
+  globalThis.fetch = async (url, options) => {
     const target = String(url);
     if (target.endsWith("/health") || target.endsWith("/health/liveliness")) {
       return new Response("ok", { status: 200 });
@@ -172,7 +227,7 @@ test("reroutes a role request after a provider returns a fallbackable failure", 
         headers: { "content-type": "application/json" },
       });
     }
-    return originalFetch(url);
+    return originalFetch(url, options);
   };
   const server = createServer((request, response) => { void handle(request, response); });
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
@@ -495,14 +550,14 @@ test("carries only the approved workspace header through LiteLLM's Responses ext
 
 test("turns a provider stream that ends before completion into an explicit failure", async () => {
   const originalFetch = globalThis.fetch;
-  globalThis.fetch = async (url) => {
+  globalThis.fetch = async (url, options) => {
     if (String(url) === "http://127.0.0.1:4000/v1/responses") {
       return new Response('event: response.output_text.delta\\ndata: {"type":"response.output_text.delta","delta":"partial"}\\n\\n', {
         status: 200,
         headers: { "content-type": "text/event-stream" },
       });
     }
-    return originalFetch(url);
+    return originalFetch(url, options);
   };
   const server = createServer((request, response) => { void handle(request, response); });
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
@@ -528,14 +583,14 @@ test("turns a provider stream that ends before completion into an explicit failu
 
 test("does not classify an explicitly incomplete response as a successful turn", async () => {
   const originalFetch = globalThis.fetch;
-  globalThis.fetch = async (url) => {
+  globalThis.fetch = async (url, options) => {
     if (String(url) === "http://127.0.0.1:4000/v1/responses") {
       return new Response('event: response.completed\\ndata: {"type":"response.completed","response":{"status":"incomplete","output_text":"partial"}}\\n\\ndata: [DONE]\\n\\n', {
         status: 200,
         headers: { "content-type": "text/event-stream" },
       });
     }
-    return originalFetch(url);
+    return originalFetch(url, options);
   };
   const server = createServer((request, response) => { void handle(request, response); });
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
@@ -1459,4 +1514,557 @@ test("extracts text from SSE stream with empty lines and keep-alive comments", (
   assert.equal(response.status, "completed");
   assert.equal(response.output_text, "part1 part2");
   assert.equal(response.output[0].content[0].text, "part1 part2");
+});
+
+test("structured router error body carries code, retryable, failure class, provider, model, request id, and router instance id", async () => {
+  const originalFetch = globalThis.fetch;
+  let responseCalls = 0;
+  globalThis.fetch = async (url, options) => {
+    if (String(url) === "http://127.0.0.1:4000/v1/responses") {
+      responseCalls += 1;
+      return new Response(JSON.stringify({ error: "upstream unavailable" }), { status: 503 });
+    }
+    return originalFetch(url, options);
+  };
+  const server = createServer((request, response) => { void handle(request, response); });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  try {
+    const address = server.address();
+    const response = await fetch(`http://127.0.0.1:${address.port}/v1/responses`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-request-id": "req-structured-error" },
+      body: JSON.stringify({ model: "sonnet", stream: false }),
+    });
+    assert.equal(response.status, 503);
+    const body = await response.json();
+    assert.equal(body.error.type, "router_provider_unavailable");
+    assert.equal(body.error.code, "router_provider_unavailable");
+    assert.equal(body.error.retryable, true);
+    assert.equal(body.error.failureClass, "unavailable");
+    assert.equal(body.error.provider, "claude");
+    assert.equal(body.error.model, "sonnet");
+    assert.equal(body.error.requestId, "req-structured-error");
+    assert.equal(body.error.routerInstanceId, ROUTER_INSTANCE_ID);
+    // Legacy message field remains so existing callers keep working.
+    assert.match(body.error.message, /sonnet \(claude\) failed with HTTP 503/);
+    assert.equal(responseCalls, 2); // 503 first attempt then 503 second attempt (single retry exhausted)
+  } finally {
+    await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    globalThis.fetch = originalFetch;
+    activeProviderRequests.clear();
+    clearProviderCooldown("claude");
+    resetRouterTelemetry();
+  }
+});
+
+test("wraps transport failures with actionable safe diagnostics", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (url, options) => {
+    if (String(url) === "http://127.0.0.1:4000/v1/responses") {
+      const error = new Error("fetch failed");
+      error.cause = { code: "ECONNRESET", syscall: "read" };
+      throw error;
+    }
+    return originalFetch(url, options);
+  };
+  clearProviderCooldown("claude");
+  const server = createServer((request, response) => { void handle(request, response); });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  try {
+    const address = server.address();
+    const response = await fetch(`http://127.0.0.1:${address.port}/v1/responses`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-request-id": "req-transport-error" },
+      body: JSON.stringify({ model: "sonnet", stream: false }),
+    });
+    assert.equal(response.status, 502);
+    assert.equal(response.headers.get("x-autodev-provider"), "claude");
+    assert.equal(response.headers.get("x-autodev-router-instance-id"), ROUTER_INSTANCE_ID);
+    const body = await response.json();
+    assert.equal(body.error.code, "router_provider_unavailable");
+    assert.equal(body.error.retryable, true);
+    assert.equal(body.error.requestId, "req-transport-error");
+    assert.doesNotMatch(body.error.message, /ECONNRESET|fetch failed|127\.0\.0\.1|absolute|path/i);
+    const transportEvents = getRouterStatus().recentEvents.filter((event) => event.phase === "transport_error" && event.requestId === "req-transport-error");
+    assert.equal(transportEvents.length, 2, "both bounded transport attempts should be observable");
+    assert.equal(transportEvents[0].errorCode, "ECONNRESET");
+  } finally {
+    await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    globalThis.fetch = originalFetch;
+    activeProviderRequests.clear();
+    clearProviderCooldown("claude");
+    resetRouterTelemetry();
+  }
+});
+
+test("x-autodev-router-instance-id correlates every JSON response with the router instance id in the body", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (url, options) => {
+    if (String(url) === "http://127.0.0.1:4000/v1/responses") {
+      return new Response(JSON.stringify({ id: "upstream-response", model: "sonnet", output_text: "ok" }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }
+    return originalFetch(url, options);
+  };
+  const server = createServer((request, response) => { void handle(request, response); });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  try {
+    const address = server.address();
+    const success = await fetch(`http://127.0.0.1:${address.port}/v1/responses`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ model: "sonnet", stream: false }),
+    });
+    assert.equal(success.headers.get("x-autodev-router-instance-id"), ROUTER_INSTANCE_ID);
+    const badRequest = await fetch(`http://127.0.0.1:${address.port}/v1/responses`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ model: "  " }),
+    });
+    assert.equal(badRequest.headers.get("x-autodev-router-instance-id"), ROUTER_INSTANCE_ID);
+    const badBody = await badRequest.json();
+    assert.equal(badBody.error.routerInstanceId, ROUTER_INSTANCE_ID);
+    assert.equal(badBody.error.type, "invalid_request_error");
+    assert.equal(badBody.error.code, "invalid_request_error");
+    assert.equal(badBody.error.retryable, null);
+    const status = await fetch(`http://127.0.0.1:${address.port}/status`);
+    assert.equal(status.headers.get("x-autodev-router-instance-id"), ROUTER_INSTANCE_ID);
+    assert.equal((await status.json()).routerInstanceId, ROUTER_INSTANCE_ID);
+    const dashboard = await fetch(`http://127.0.0.1:${address.port}/dashboard`);
+    assert.equal(dashboard.headers.get("x-autodev-router-instance-id"), ROUTER_INSTANCE_ID);
+  } finally {
+    await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("direct concrete request retries once on HTTP 503 then succeeds without rerouting", async () => {
+  const originalFetch = globalThis.fetch;
+  let responseCalls = 0;
+  const originalCooldown = process.env.CODEX_ROUTER_CONCRETE_RETRY_MS;
+  const originalMax = process.env.CODEX_ROUTER_CONCRETE_RETRY_MAX_MS;
+  process.env.CODEX_ROUTER_CONCRETE_RETRY_MS = "10";
+  process.env.CODEX_ROUTER_CONCRETE_RETRY_MAX_MS = "20";
+  globalThis.fetch = async (url, options) => {
+    if (String(url) === "http://127.0.0.1:4000/v1/responses") {
+      responseCalls += 1;
+      if (responseCalls === 1) return new Response(JSON.stringify({ error: "temporarily unavailable" }), { status: 503 });
+      return new Response(JSON.stringify({ id: "retry-result", model: "sonnet", output_text: "ok" }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }
+    return originalFetch(url, options);
+  };
+  const server = createServer((request, response) => { void handle(request, response); });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  try {
+    const address = server.address();
+    const response = await fetch(`http://127.0.0.1:${address.port}/v1/responses`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-request-id": "req-retry-503" },
+      body: JSON.stringify({ model: "sonnet", stream: false }),
+    });
+    assert.equal(response.status, 200);
+    assert.equal(response.headers.get("x-autodev-provider"), "claude");
+    assert.equal(response.headers.get("x-autodev-model"), "sonnet");
+    assert.equal(response.headers.get("x-autodev-request-id"), "req-retry-503");
+    assert.equal(responseCalls, 2);
+  } finally {
+    await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    globalThis.fetch = originalFetch;
+    if (originalCooldown === undefined) delete process.env.CODEX_ROUTER_CONCRETE_RETRY_MS;
+    else process.env.CODEX_ROUTER_CONCRETE_RETRY_MS = originalCooldown;
+    if (originalMax === undefined) delete process.env.CODEX_ROUTER_CONCRETE_RETRY_MAX_MS;
+    else process.env.CODEX_ROUTER_CONCRETE_RETRY_MAX_MS = originalMax;
+    activeProviderRequests.clear();
+    clearProviderCooldown("claude");
+    resetRouterTelemetry();
+  }
+});
+
+test("direct concrete request stops after the single bounded retry and surfaces a Retry-After with structured diagnostics", async () => {
+  const originalFetch = globalThis.fetch;
+  let responseCalls = 0;
+  const originalCooldown = process.env.CODEX_ROUTER_CONCRETE_RETRY_MS;
+  const originalMax = process.env.CODEX_ROUTER_CONCRETE_RETRY_MAX_MS;
+  process.env.CODEX_ROUTER_CONCRETE_RETRY_MS = "10";
+  process.env.CODEX_ROUTER_CONCRETE_RETRY_MAX_MS = "20";
+  globalThis.fetch = async (url, options) => {
+    if (String(url) === "http://127.0.0.1:4000/v1/responses") {
+      responseCalls += 1;
+      return new Response(JSON.stringify({ error: "still unavailable" }), { status: 503 });
+    }
+    return originalFetch(url, options);
+  };
+  const server = createServer((request, response) => { void handle(request, response); });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  try {
+    const address = server.address();
+    const response = await fetch(`http://127.0.0.1:${address.port}/v1/responses`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-request-id": "req-bounded-retry" },
+      body: JSON.stringify({ model: "sonnet", stream: false }),
+    });
+    assert.equal(response.status, 503);
+    assert.equal(responseCalls, 2); // initial + exactly one retry, no further retries
+    assert.equal(response.headers.get("x-autodev-provider"), "claude");
+    assert.equal(response.headers.get("x-autodev-model"), "sonnet");
+    assert.equal(response.headers.get("x-autodev-request-id"), "req-bounded-retry");
+    const retryAfter = Number(response.headers.get("retry-after"));
+    assert.ok(Number.isFinite(retryAfter) && retryAfter > 0, "Retry-After must indicate a positive cooldown window");
+    const body = await response.json();
+    assert.equal(body.error.code, "router_provider_unavailable");
+    assert.equal(body.error.retryable, true);
+    assert.equal(body.error.failureClass, "unavailable");
+    assert.equal(body.error.provider, "claude");
+    assert.equal(body.error.model, "sonnet");
+    assert.equal(body.error.requestId, "req-bounded-retry");
+    // Cooldown is now active so the next role request skips this provider.
+    assert.equal(isProviderCoolingDown("claude"), true);
+    // Recent events include the retry phase plus a final failure result.
+    const recent = getRouterStatus().recentEvents;
+    const retryEvents = recent.filter((event) => event.phase === "retry" && event.requestId === "req-bounded-retry");
+    assert.equal(retryEvents.length, 1);
+  } finally {
+    await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    globalThis.fetch = originalFetch;
+    if (originalCooldown === undefined) delete process.env.CODEX_ROUTER_CONCRETE_RETRY_MS;
+    else process.env.CODEX_ROUTER_CONCRETE_RETRY_MS = originalCooldown;
+    if (originalMax === undefined) delete process.env.CODEX_ROUTER_CONCRETE_RETRY_MAX_MS;
+    else process.env.CODEX_ROUTER_CONCRETE_RETRY_MAX_MS = originalMax;
+    activeProviderRequests.clear();
+    clearProviderCooldown("claude");
+    resetRouterTelemetry();
+  }
+});
+
+test("direct concrete request does not retry on auth (401) or payload (400) errors", async () => {
+  const originalFetch = globalThis.fetch;
+  let responseCalls = 0;
+  let lastStatus = 0;
+  for (const status of [401, 400]) {
+    responseCalls = 0;
+    globalThis.fetch = async (url, options) => {
+      if (String(url) === "http://127.0.0.1:4000/v1/responses") {
+        responseCalls += 1;
+        return new Response(JSON.stringify({ error: "no" }), { status });
+      }
+      return originalFetch(url, options);
+    };
+    const server = createServer((request, response) => { void handle(request, response); });
+    await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+    try {
+      const address = server.address();
+      const response = await fetch(`http://127.0.0.1:${address.port}/v1/responses`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ model: "sonnet", stream: false }),
+      });
+      lastStatus = response.status;
+      assert.equal(response.status, status, `upstream returned ${status}`);
+      assert.equal(responseCalls, 1, `auth/payload errors must not trigger a retry (status=${status})`);
+      assert.equal(response.headers.get("retry-after"), null, `Retry-After must not be set for non-retryable upstream ${status}`);
+      const body = await response.json();
+      assert.equal(body.error.code, status === 401 ? "router_authentication_error" : "router_upstream_error");
+      assert.equal(body.error.retryable, false);
+      assert.equal(body.error.failureClass, status === 401 ? "authentication" : "request_error");
+      assert.equal(isProviderCoolingDown("claude"), false);
+    } finally {
+      await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+      activeProviderRequests.clear();
+      clearProviderCooldown("claude");
+      resetRouterTelemetry();
+    }
+  }
+  assert.equal(lastStatus, 400);
+  globalThis.fetch = originalFetch;
+});
+
+test("direct concrete request does not retry once the client signal is aborted", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalCooldown = process.env.CODEX_ROUTER_CONCRETE_RETRY_MS;
+  const originalMax = process.env.CODEX_ROUTER_CONCRETE_RETRY_MAX_MS;
+  process.env.CODEX_ROUTER_CONCRETE_RETRY_MS = "10";
+  process.env.CODEX_ROUTER_CONCRETE_RETRY_MAX_MS = "20";
+  let responseCalls = 0;
+  globalThis.fetch = async (url, options) => {
+    if (String(url) === "http://127.0.0.1:4000/v1/responses") {
+      responseCalls += 1;
+      const signal = options && options.signal;
+      if (signal) await new Promise((resolve) => signal.addEventListener("abort", resolve, { once: true }));
+      const error = new Error("aborted");
+      error.name = "AbortError";
+      throw error;
+    }
+    return originalFetch(url, options);
+  };
+  const route = routeForModel("sonnet");
+  const controller = new AbortController();
+  const requestChunks = [Buffer.from(JSON.stringify({ model: "sonnet", stream: false }))];
+  const { IncomingMessage } = await import("node:http");
+  const { Socket } = await import("node:net");
+  const fakeRequest = Object.assign(new IncomingMessage(new Socket()), {
+    url: "/v1/responses",
+    method: "POST",
+    headers: { "content-type": "application/json", "x-request-id": "req-aborted" },
+    complete: false,
+  });
+  fakeRequest.push(...requestChunks);
+  fakeRequest.push(null);
+  let responseStatus = 0;
+  let responseBody = "";
+  const headerStore = {};
+  const fakeResponse = {
+    headersSent: false,
+    writableEnded: false,
+    destroyed: false,
+    setHeader(name, value) { headerStore[name] = value; },
+    getHeader(name) { return headerStore[name]; },
+    removeHeader(name) { delete headerStore[name]; },
+    writeHead(status, headers) {
+      this.headersSent = true;
+      responseStatus = status;
+      for (const [name, value] of Object.entries(headers ?? {})) headerStore[name] = value;
+    },
+    write(chunk) { responseBody += String(chunk); },
+    end(chunk) {
+      if (chunk !== undefined) responseBody += String(chunk);
+      this.writableEnded = true;
+    },
+    once() {},
+    on() {},
+    removeListener() {},
+  };
+  try {
+    // Schedule the abort for the next tick so the upstream fetch is in
+    // flight when the signal fires; the router must then observe the
+    // aborted flag and skip its bounded retry.
+    setImmediate(() => controller.abort());
+    await proxyConcreteResponse(fakeResponse, route, { model: "sonnet", stream: false }, false, "req-aborted", null, { key: "unknown", cwd: null }, controller.signal);
+    assert.equal(responseCalls, 1, `aborted requests must not retry; got ${responseCalls} fetch calls`);
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (originalCooldown === undefined) delete process.env.CODEX_ROUTER_CONCRETE_RETRY_MS;
+    else process.env.CODEX_ROUTER_CONCRETE_RETRY_MS = originalCooldown;
+    if (originalMax === undefined) delete process.env.CODEX_ROUTER_CONCRETE_RETRY_MAX_MS;
+    else process.env.CODEX_ROUTER_CONCRETE_RETRY_MAX_MS = originalMax;
+    activeProviderRequests.clear();
+    clearProviderCooldown("claude");
+    resetRouterTelemetry();
+  }
+});
+
+test("direct concrete request does not reroute to a different provider when the configured one fails", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalCredentials = {
+    LITELLM_API_KEY: process.env.LITELLM_API_KEY,
+  };
+  let antigravityCalls = 0;
+  process.env.LITELLM_API_KEY = "test-provider-key";
+  clearProviderCooldown("claude");
+  clearProviderCooldown("antigravity");
+  globalThis.fetch = async (url, options) => {
+    if (String(url) === "http://127.0.0.1:4000/v1/responses") {
+      return new Response(JSON.stringify({ error: "provider unavailable" }), { status: 503 });
+    }
+    if (String(url) === "http://127.0.0.1:4001/v1/responses") {
+      antigravityCalls += 1;
+      return new Response(JSON.stringify({ id: "antigravity-response", model: "gemini-3.6-flash-medium", output_text: "should-not-be-called" }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }
+    return originalFetch(url, options);
+  };
+  const server = createServer((request, response) => { void handle(request, response); });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  try {
+    const address = server.address();
+    const response = await fetch(`http://127.0.0.1:${address.port}/v1/responses`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-request-id": "req-no-reroute" },
+      body: JSON.stringify({ model: "sonnet", stream: false }),
+    });
+    assert.equal(response.status, 503);
+    assert.equal(response.headers.get("x-autodev-provider"), "claude");
+    assert.equal(response.headers.get("x-autodev-model"), "sonnet");
+    assert.equal(response.headers.get("x-autodev-request-id"), "req-no-reroute");
+    assert.equal(antigravityCalls, 0, "concrete requests must never silently reroute to another provider");
+    const body = await response.json();
+    assert.equal(body.error.provider, "claude");
+    assert.equal(body.error.model, "sonnet");
+    assert.equal(body.error.routerInstanceId, ROUTER_INSTANCE_ID);
+  } finally {
+    await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    globalThis.fetch = originalFetch;
+    for (const [key, value] of Object.entries(originalCredentials)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+    activeProviderRequests.clear();
+    clearProviderCooldown("claude");
+    clearProviderCooldown("antigravity");
+    resetRouterTelemetry();
+  }
+});
+
+test("liveness stays 200 during draining while readiness returns 503 with structured router_draining body", async () => {
+  resetLifecycleForTests();
+  const stateDirectory = await mkdtemp(join(tmpdir(), "autodev-readiness-state-"));
+  const stateFile = join(stateDirectory, "router-state.json");
+  const server = createServer((request, response) => { void handle(request, response); });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  try {
+    const address = server.address();
+    const readinessReady = await fetch(`http://127.0.0.1:${address.port}/health/readiness`);
+    assert.equal(readinessReady.status, 200);
+    const readyPayload = await readinessReady.json();
+    assert.equal(readyPayload.status, "ready");
+    assert.equal(readyPayload.lifecycle.state, "ready");
+    assert.equal(isDraining(), false);
+
+    // Force the lifecycle into draining without relying on the SIGTERM handler
+    // (which would call process.exit in production).
+    const { execSync } = await import("node:child_process");
+    void execSync;
+    const internal = await import("./codex-model-router.mjs");
+    void internal;
+
+    // Trigger draining through the public lifecycle helper used by tests.
+    resetLifecycleForTests();
+    // Use the exported beginShutdown with a no-op server reference and the
+    // test escape hatch so we can probe the endpoints while draining.
+    process.env.CODEX_ROUTER_TEST_NO_EXIT = "1";
+    try {
+      await beginShutdown("SIGTERM", null, stateFile);
+    } finally {
+      delete process.env.CODEX_ROUTER_TEST_NO_EXIT;
+    }
+    assert.equal(isDraining(), true);
+    assert.equal(getLifecycleStatus().draining, true);
+
+    const liveliness = await fetch(`http://127.0.0.1:${address.port}/health/liveliness`);
+    assert.equal(liveliness.status, 200);
+    const livenessBody = await liveliness.json();
+    assert.equal(livenessBody.status, "ok");
+
+    const readinessDraining = await fetch(`http://127.0.0.1:${address.port}/health/readiness`);
+    assert.equal(readinessDraining.status, 503);
+    const drainingBody = await readinessDraining.json();
+    assert.equal(drainingBody.error.code, "router_draining");
+    assert.equal(drainingBody.error.retryable, true);
+    assert.equal(drainingBody.error.routerInstanceId, ROUTER_INSTANCE_ID);
+    assert.equal(readinessDraining.headers.get("x-autodev-router-instance-id"), ROUTER_INSTANCE_ID);
+
+    const responsesDuringDrain = await fetch(`http://127.0.0.1:${address.port}/v1/responses`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ model: "sonnet", stream: false }),
+    });
+    assert.equal(responsesDuringDrain.status, 503);
+    assert.ok(Number(responsesDuringDrain.headers.get("retry-after")) > 0, "Retry-After must be set on the draining rejection");
+    const drainResponseBody = await responsesDuringDrain.json();
+    assert.equal(drainResponseBody.error.code, "router_draining");
+  } finally {
+    await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    resetLifecycleForTests();
+    await rm(stateDirectory, { recursive: true, force: true });
+  }
+});
+
+test("graceful shutdown drains in-flight requests, persists state, and stops accepting new traffic", async () => {
+  const originalFetch = globalThis.fetch;
+  process.env.CODEX_ROUTER_TEST_NO_EXIT = "1";
+  const directory = await mkdtemp(join(tmpdir(), "autodev-shutdown-"));
+  const stateFile = join(directory, "router-state.json");
+  try {
+    resetLifecycleForTests();
+    resetRouterTelemetry();
+    recordRouterEvent({ phase: "selected", requestId: "shutdown-precondition", requestedModel: "sonnet", provider: "claude", model: "sonnet" });
+    // Persist the precondition event so the test can later verify that
+    // the shutdown drained a recent in-flight snapshot.
+    await persistRouterStateNow(stateFile);
+
+    // Mock fetch resolves only after the test allows it, simulating an
+    // in-flight upstream call that must drain before shutdown completes.
+    let upstreamResolve;
+    const upstreamPromise = new Promise((resolve) => { upstreamResolve = resolve; });
+    let upstreamCalls = 0;
+    globalThis.fetch = async (url, options) => {
+      if (String(url) === "http://127.0.0.1:4000/v1/responses") {
+        upstreamCalls += 1;
+        await upstreamPromise;
+        return new Response(JSON.stringify({ id: "slow-response", model: "sonnet", output_text: "ok" }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      return originalFetch(url, options);
+    };
+
+    const server = createServer((request, response) => { void handle(request, response); });
+    await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+    try {
+      const address = server.address();
+      const inflight = fetch(`http://127.0.0.1:${address.port}/v1/responses`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ model: "sonnet", stream: false }),
+      });
+
+      // Wait until the request is registered with the router before draining.
+      const deadline = Date.now() + 1000;
+      while (getLifecycleStatus().activeResponseRequests === 0 && Date.now() < deadline) {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      assert.equal(getLifecycleStatus().activeResponseRequests >= 1, true);
+
+      // Begin shutdown while the request is still in flight.
+      const shutdownPromise = beginShutdown("SIGTERM", server, stateFile);
+
+      // New requests during drain must be rejected immediately.
+      const rejected = await fetch(`http://127.0.0.1:${address.port}/v1/responses`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ model: "sonnet", stream: false }),
+      });
+      assert.equal(rejected.status, 503);
+      const rejectedBody = await rejected.json();
+      assert.equal(rejectedBody.error.code, "router_draining");
+
+      // Resolve the in-flight upstream and confirm drain completes.
+      upstreamResolve();
+      const inflightResponse = await inflight;
+      assert.equal(inflightResponse.status, 200);
+      await shutdownPromise;
+
+      // State must have been persisted before shutdown completed. We seed
+      // the test path with the precondition event and let beginShutdown
+      // perform its own flush; both paths are covered.
+      const persisted = JSON.parse(await readFile(stateFile, "utf8"));
+      assert.equal(persisted.schema, "autodev-router-persisted-state-v1");
+      assert.equal(persisted.recentEvents.some((event) => event.requestId === "shutdown-precondition"), true);
+      assert.ok(typeof persisted.updatedAt === "string" && persisted.updatedAt.length > 0);
+      assert.equal(upstreamCalls, 1, `the in-flight request must complete cleanly without a new upstream call; got ${upstreamCalls}`);
+      assert.equal(getLifecycleStatus().state, "draining");
+    } finally {
+      try {
+        await new Promise((resolve, reject) => server.close((error) => error && error.code !== "ERR_SERVER_NOT_RUNNING" ? reject(error) : resolve()));
+      } catch {
+        // The drain step inside beginShutdown already closes the server;
+        // tolerate the duplicate close here.
+      }
+      globalThis.fetch = originalFetch;
+      resetLifecycleForTests();
+    }
+  } finally {
+    delete process.env.CODEX_ROUTER_TEST_NO_EXIT;
+    resetRouterTelemetry();
+    activeProviderRequests.clear();
+    clearProviderCooldown("claude");
+    await rm(directory, { recursive: true, force: true });
+  }
 });

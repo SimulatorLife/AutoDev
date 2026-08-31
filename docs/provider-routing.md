@@ -158,8 +158,23 @@ policy restricts reads outside the active workspace; the parent must explicitly
 scope any external inspection.
 
 Router stderr is structured JSON (`autodev-router-event-v1`) and is retained by
-launchd in `~/.codex/hooks/model-router.launchd.log` (the direct ensure path
-uses `/tmp/codex-model-router.log`). Provider counters, recent events, and the
+launchd in `$CODEX_HOME/run/codex-model-router.launchd.err.log` (stdout uses
+the sibling `*.out.log` so structured events are never interleaved with
+incidental output). The direct ensure fallback writes its own log at
+`$CODEX_HOME/run/codex-model-router.fallback.log` and records its tracked
+PID at `$CODEX_HOME/run/codex-model-router.fallback.pid`; both files are
+created with mode 0600 inside a mode 0700 directory so the local user keeps
+sole read/write access. Override the fallback paths with
+`CODEX_MODEL_ROUTER_FALLBACK_LOG` / `CODEX_MODEL_ROUTER_FALLBACK_PID_FILE`
+when sandboxing requires a different writable location. The legacy world-
+writable `/tmp/codex-model-router.log` path is gone.
+
+`$CODEX_HOME/run/` is the canonical home for router run-time state. The
+installer creates it with mode 0700 during both baseline install and
+`--restart`, and the launchd plist writes its logs there too, so all router
+operational data survives reboot, tmpfs clears, and `/tmp` rotation.
+
+Provider counters, recent events, and the
 versioned privacy-safe OTEL aggregate section are also persisted atomically in
 `$CODEX_HOME/codex-router-state.json`, so they survive router restarts. Only
 active requests, in-flight sessions, and short cooldown timers reset.
@@ -169,7 +184,106 @@ Failure classes include `session_limit`,
 responses and local health checks, not a provider's authoritative quota API;
 the persisted counters remain available after the router process restarts. Use
 the router instance ID and request ID to correlate a turn with its fallback
-history.
+history. Rotate logs by restarting the router: launchd closes and reopens the
+log file handles, and the ensure hook reuses the same fallback PID file
+without leaking a stale tracker.
+
+
+## Supervision, liveness, and graceful drain
+
+The router is supervised by a `KeepAlive` launchd job
+(`com.codex.model-router`) so it survives app restarts, crashes, and sleep. The launchd plist lives at
+`scripts/codex/launchagents/com.codex.model-router.plist` and is materialized
+under `~/Library/LaunchAgents/` by the installer. Three contracts separate
+"the process is alive" from "the process can serve":
+
+- **Liveness** — `GET /health/liveliness` (or `/health`) returns
+  `{"status":"ok","router":"codex-model-router"}` with HTTP 200 whenever the
+  router's HTTP server is bound to `127.0.0.1:4100`. It does *not* reflect
+  upstream provider health; it only certifies that the router itself is
+  alive enough to answer HTTP. Use it for `launchctl`-style "did the bind
+  succeed" checks and for the ensure hook's readiness probe.
+- **Readiness** — `GET /health/readiness` returns HTTP 200 while the router
+  accepts work and HTTP 503 with `router_draining` while it is shutting down.
+  It describes router lifecycle readiness, not the health of every upstream.
+  Use `GET /status` for the detailed per-provider health, cooldown countdowns,
+  active request counts, and `usage`/`codexTasks` snapshots needed to decide
+  whether an upstream is usable.
+- **In-flight drain** — on `SIGTERM`/`SIGINT` the router stops accepting new
+  `/v1/responses` work and gives in-flight requests up to
+  `CODEX_ROUTER_SHUTDOWN_DRAIN_MS` (30s by default) to finish before
+  forcefully aborting them and exiting. The plist sets `ExitTimeOut` to 45s
+  so launchd's SIGKILL lands after the drain window completes, not in the
+  middle of it. `ProcessType=Background` keeps the job out of the Dock so
+  the desktop session is never disturbed by a router lifecycle event.
+
+The `scripts/ensure-codex-model-router.sh` hook prefers the installed launchd
+job and falls back to a direct `nohup` process only when launchd is genuinely
+unavailable (for example, from inside the Codex sandbox where `gui/$UID` is
+not reachable). It acquires an atomic private lock directory at
+`$CODEX_HOME/run/codex-model-router.ensure.lock.d` so concurrent invocations
+cannot race the bootstrap/nohup path. When launchd owns the job, the hook
+`launchctl kickstart -k`s it on cold start and leaves a healthy process
+alone; the direct fallback is never allowed to start a duplicate `nohup`
+next to a launchd job that is bound to the port. When launchd is the
+supervisor but the router never becomes ready, the hook fails loudly
+instead of masking the failure with a duplicate unmanaged process.
+
+The fallback path records its PID in `codex-model-router.fallback.pid`
+(mode 0600). A later ensure call reuses the recorded PID when it is still
+alive and healthy, recycles it via `SIGTERM` (so the router can drain)
+when it is alive but the port is unhealthy, and clears a stale PID file
+before starting a new one when the previous process is gone. When an
+untracked process already owns the port, the hook refuses to start a
+duplicate and surfaces the conflict in the log; an operator must stop
+the foreign owner (or hand the job to launchd) before the ensure hook
+will bind. Readiness polling is bounded (default 5s total budget,
+exponential backoff capped at 1s) so a slow bind surfaces quickly and the
+hook never burns CPU waiting.
+
+The router's `--restart` installer flow respects the same preference: the
+installer links every launchd plist, then `bootout`/`bootstrap`/`kickstart`
+cycles each label on the `gui/$UID` domain. The readiness probe loop in
+the installer waits for the router (and each provider bridge) to bind
+before the ensure hooks run, so the hooks observe healthy ports and
+no-op instead of racing the agents.
+
+## Retry and error correlation
+
+Every proxied router response carries correlation headers:
+
+- `x-autodev-provider` — the concrete provider selected after shuffling,
+  load balancing, health checks, and fallback.
+- `x-autodev-model` — the concrete model dispatched to that provider.
+- `x-autodev-request-id` — the per-router-request UUID. It remains stable
+  across provider fallback within one request; caller-side retries may have
+  a new ID. Pair it with `x-autodev-router-instance-id` and
+  `routerInstanceId` from `/status` to correlate a turn across restarts and
+  the structured stderr event stream.
+- `x-autodev-router-instance-id` — the router process instance that handled
+  the request, useful for detecting a restart during an incident.
+
+Transient direct concrete provider failures receive one bounded pre-response
+retry before the router returns a structured HTTP 502/503/504 error. The
+retry uses a jittered 200–400ms delay by default and can be tuned with
+`CODEX_ROUTER_CONCRETE_RETRY_MS` and
+`CODEX_ROUTER_CONCRETE_RETRY_MAX_MS`; it never retries after response headers
+or client cancellation. The response includes
+`router_provider_unavailable`, the provider/model/request and router-instance
+correlation fields, and a `retry-after` header after the provider is cooled
+down. Concrete model requests are never silently rerouted.
+Router-generated provider errors include stable `code`, `retryable`,
+`failureClass`, `provider`, `model`, `requestId`, and `routerInstanceId`
+fields in the JSON error object. Transport failures are logged as structured
+`transport_error` events with only sanitized error name/code/syscall fields;
+raw exception text, credentials, prompts, and upstream bodies are not exposed.
+When no provider can complete a role request, the router returns HTTP 503
+with a `router_provider_exhausted` error code, the same
+`x-autodev-request-id` header, and a `retry-after` header sized to the
+provider cooldown window. Concurrency denials return HTTP 429 with
+`retry-after: 1` and the same `x-autodev-request-id`. The dashboard's
+`Spawn failures` table renders the recent request IDs by reason so the
+same header can be traced from the API call through the router's event log.
 
 ## External-provider execution
 

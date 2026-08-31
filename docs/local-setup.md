@@ -58,13 +58,36 @@ recursive deletion.
 
 ## Safety
 
-- Inspect launch-agent plists before loading them with `launchctl`.
+- Inspect launch-agent plists before loading them with `launchctl`. The model
+  router plist keeps `KeepAlive` and `RunAtLoad`, separates stdout/stderr
+  under `$CODEX_HOME/run/`, uses `ProcessType=Background`, and sets an
+  `ExitTimeOut` large enough for the router's drain timeout before launchd
+  SIGKILLs it. Inspect the other provider plists independently; they may have
+  different lifecycle and log-path contracts.
 - Keep OAuth/PAT/API credentials outside the repository. Background services
   load provider credentials from `~/.codex/.env`; for MiniMax this means a
   private `MINIMAX_API_KEY=...` entry with restrictive file permissions.
 - Treat proxy and router logs as local-only operational data. Antigravity's
   launchd services are the canonical supervisors when loaded; the ensure hook
-  refuses to start duplicate unmanaged processes on ports 4001/4002.
+  refuses to start duplicate unmanaged processes on ports 4001/4002. The
+  router ensure hook owns the same property for port 4100 and additionally
+  serializes concurrent invocations through an atomic private lock directory
+  at `$CODEX_HOME/run/codex-model-router.ensure.lock.d`.
+- All router operational state (launchd stdout/stderr logs, the fallback
+  pid/log files, the ensure lock) lives under `$CODEX_HOME/run/` which the
+  installer creates with mode 0700. Override individual paths with
+  `CODEX_MODEL_ROUTER_FALLBACK_LOG`,
+  `CODEX_MODEL_ROUTER_FALLBACK_PID_FILE`, and
+  `CODEX_MODEL_ROUTER_ENSURE_LOCK` when sandboxing requires a different
+  writable location.
+- Liveness vs readiness: `GET /health/liveliness` (or `/health`) returns
+  HTTP 200 when the router's HTTP server is bound; use it only as a liveness
+  probe. `GET /health/readiness` returns HTTP 200 while the router accepts
+  work and HTTP 503 while it is draining. `GET /status` remains the detailed
+  diagnostic surface for per-provider health, cooldown countdowns, active
+  request counts, and the router instance ID — use it to decide whether an
+  upstream is usable and to correlate a turn's request header across
+  restarts.
 - Prefer `ensure-*` scripts for idempotent setup and the `diagnose-*` scripts for evidence before changing provider routing.
 - Open `http://127.0.0.1:4100/dashboard` in a browser for the lightweight live
   dashboard. Raw JSON status is available at `http://127.0.0.1:4100/status`.

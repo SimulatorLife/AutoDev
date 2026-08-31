@@ -7,7 +7,13 @@
 
   <!-- Model-aware Codex Responses router on 127.0.0.1:4100. This is the
        parent transport for Codex Desktop (openai_base_url), so it must stay
-       up across app restarts, crashes, and sleep. KeepAlive owns that. -->
+       up across app restarts, crashes, and sleep. KeepAlive owns that.
+       The launcher resolves the node binary itself (nvm/homebrew) so this
+       plist does not pin a brittle version-specific PATH. The installer
+       ensures $CODEX_HOME/run exists with mode 0700 so launchd can write
+       to the separate stdout/stderr logs there. ExitTimeOut is sized so the
+       router can finish its graceful drain (30s + buffer) without the
+       desktop session tearing the launchd job away mid-shutdown. -->
   <key>ProgramArguments</key>
   <array>
     <string>/bin/bash</string>
@@ -22,17 +28,40 @@
   <key>ThrottleInterval</key>
   <integer>5</integer>
 
+  <!-- Bound the launchd-killed exit window: the router drains in-flight
+       /v1/responses requests for CODEX_ROUTER_SHUTDOWN_DRAIN_MS (30s by
+       default) and then closes the HTTP server. 45s gives the process a
+       few extra seconds to persist state and exit cleanly. -->
+  <key>ExitTimeOut</key>
+  <integer>45</integer>
+
+  <!-- PATH is intentionally not pinned here: the launcher (run-codex-model-router.sh)
+       resolves node from nvm/homebrew itself, so this plist survives nvm
+       upgrades without re-syncing. CODEX_HOME is set so the router reads the
+       user-level config; HOME so launcher credential files are found. -->
   <key>EnvironmentVariables</key>
   <dict>
     <key>PATH</key>
-    <string>/Users/henrykirk/.nvm/versions/node/v25.0.0/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
     <key>CODEX_HOME</key>
     <string>/Users/henrykirk/.codex</string>
+    <key>HOME</key>
+    <string>/Users/henrykirk</string>
   </dict>
 
+  <!-- Separate stdout/stderr so structured router events (autodev-router-event-v1
+       on stderr) and incidental stdout output never interleave and are easy
+       to correlate by timestamp when triaging. The installer's ensure hook
+       tails the stderr log on startup failure; keep the .err.log suffix. -->
   <key>StandardOutPath</key>
-  <string>/Users/henrykirk/.codex/hooks/model-router.launchd.log</string>
+  <string>/Users/henrykirk/.codex/run/codex-model-router.launchd.out.log</string>
   <key>StandardErrorPath</key>
-  <string>/Users/henrykirk/.codex/hooks/model-router.launchd.log</string>
+  <string>/Users/henrykirk/.codex/run/codex-model-router.launchd.err.log</string>
+
+  <!-- process-type=Background keeps launchd from surfacing the router as an
+       app in the Dock/foreground during boot, so the desktop session stays
+       untouched. -->
+  <key>ProcessType</key>
+  <string>Background</string>
 </dict>
 </plist>

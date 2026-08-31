@@ -74,11 +74,30 @@ const PROVIDER_COOLDOWN_MAX_MS = Math.max(PROVIDER_COOLDOWN_MS, positiveDuration
 // defaults. The caller still owns cancellation, and the timeout aborts an
 // in-flight response body as well as a connection that never produces headers.
 const UPSTREAM_TIMEOUT_MS = positiveDuration(process.env.CODEX_ROUTER_UPSTREAM_TIMEOUT_MS, 900_000);
+// Bounded retry budget for direct concrete provider requests: a single total
+// retry per inbound HTTP request, only on pre-response transport failures or
+// HTTP 502/503/504 from the upstream provider. Never retries after the
+// response stream has started or when the client signal is aborted.
+const CONCRETE_RETRY_BASE_MS = positiveDuration(process.env.CODEX_ROUTER_CONCRETE_RETRY_MS, 200);
+const CONCRETE_RETRY_MAX_MS = Math.max(CONCRETE_RETRY_BASE_MS, positiveDuration(process.env.CODEX_ROUTER_CONCRETE_RETRY_MAX_MS, 2_000));
+// Time the router will wait for in-flight response requests to drain after a
+// shutdown signal before forcibly aborting them and exiting.
+const SHUTDOWN_DRAIN_TIMEOUT_MS = positiveDuration(process.env.CODEX_ROUTER_SHUTDOWN_DRAIN_MS, 30_000);
 const providerCooldowns = new Map();
 const providerFailureStreaks = new Map();
 const activeProviderRequests = new Map();
 const ROUTER_STARTED_AT = new Date().toISOString();
 const ROUTER_INSTANCE_ID = randomUUID();
+// Router lifecycle: "ready" accepts new response requests; "draining" rejects
+// them with a structured 503 while existing requests get a bounded time to
+// finish. Liveness probes remain unconditional 200 regardless of state.
+let lifecycleState = "ready";
+let lifecycleStateChangedAt = ROUTER_STARTED_AT;
+// Active /v1/responses request aborters, so SIGTERM can cancel every
+// in-flight upstream call when the drain timeout elapses. A Set avoids losing
+// one request when callers reuse the same x-request-id concurrently.
+const activeRequestAborters = new Set();
+let shutdownPromise = null;
 const MAX_RECENT_EVENTS = Number.parseInt(process.env.CODEX_ROUTER_MAX_RECENT_EVENTS ?? "100", 10);
 const recentRouterEvents = [];
 let persistedStateUpdatedAt = null;
@@ -1136,7 +1155,7 @@ function classifyProviderFailure(status, body = "") {
   return "request_error";
 }
 
-function recordRouterEvent({ phase, requestId, role = null, requestedModel, provider, model, workspace = null, outcome = null, status = null, failureClass = null, denialReason = null, spawnFailureReason = null, elapsedMs = null, toolCalls = 0 }) {
+function recordRouterEvent({ phase, requestId, role = null, requestedModel, provider, model, workspace = null, outcome = null, status = null, failureClass = null, denialReason = null, spawnFailureReason = null, elapsedMs = null, toolCalls = 0, errorName = null, errorCode = null, syscall = null }) {
   const timestamp = new Date().toISOString();
   const workspaceContext = typeof workspace === "string" ? { key: workspace, cwd: null } : workspace;
   const event = {
@@ -1158,11 +1177,16 @@ function recordRouterEvent({ phase, requestId, role = null, requestedModel, prov
     spawnFailureReason,
     elapsedMs,
     toolCalls,
+    errorName,
+    errorCode,
+    syscall,
   };
   recentRouterEvents.push(event);
   while (recentRouterEvents.length > Math.max(1, MAX_RECENT_EVENTS)) recentRouterEvents.shift();
 
-  if (provider && model) recordUsageEvent({ phase, requestId, role, provider, model, workspace: workspaceContext, outcome, failureClass, status, elapsedMs, toolCalls, timestamp });
+  if (provider && model && ["selected", "skipped", "result"].includes(phase)) {
+    recordUsageEvent({ phase, requestId, role, provider, model, workspace: workspaceContext, outcome, failureClass, status, elapsedMs, toolCalls, timestamp });
+  }
   const state = provider ? providerState(provider) : null;
   if (state && phase === "selected") {
     state.attempts += 1;
@@ -1505,10 +1529,35 @@ function scheduleRouterStatePersist() {
   }, 500);
 }
 
+let fatalExitPromise = null;
+
+function handleFatalProcessError(phase, reason) {
+  if (fatalExitPromise) return;
+  const info = transportErrorInfo(reason);
+  console.error(JSON.stringify({
+    schema: "autodev-router-event-v1",
+    timestamp: new Date().toISOString(),
+    routerInstanceId: ROUTER_INSTANCE_ID,
+    requestId: null,
+    phase,
+    errorName: info.name,
+    errorCode: info.code,
+    syscall: info.syscall,
+  }));
+  // An uncaught exception or unhandled rejection leaves the process state
+  // undefined. Log once, flush durable telemetry, and let launchd restart it;
+  // continuing to serve requests would be less safe than a supervised exit.
+  fatalExitPromise = persistRouterStateNow()
+    .catch(() => undefined)
+    .finally(() => process.exit(1));
+}
+
 if (IS_MAIN) {
   loadRouterState();
-  process.on("SIGINT", () => { void persistRouterStateNow().finally(() => process.exit(0)); });
-  process.on("SIGTERM", () => { void persistRouterStateNow().finally(() => process.exit(0)); });
+  // Only register these handlers for the executable entrypoint. Imports (for
+  // tests and status tooling) must not install process-wide handlers.
+  process.on("uncaughtException", (error) => handleFatalProcessError("uncaught_exception", error));
+  process.on("unhandledRejection", (reason) => handleFatalProcessError("unhandled_rejection", reason));
 }
 
 function getActiveRequests(provider) {
@@ -1526,6 +1575,121 @@ function decrementActiveRequests(provider) {
   } else {
     activeProviderRequests.set(provider, current - 1);
   }
+}
+
+function isDraining() {
+  return lifecycleState !== "ready";
+}
+
+function getLifecycleStatus() {
+  return {
+    state: lifecycleState,
+    draining: isDraining(),
+    changedAt: lifecycleStateChangedAt,
+    activeResponseRequests: activeRequestAborters.size,
+  };
+}
+
+function registerActiveRequest(abortController) {
+  if (!abortController) return;
+  activeRequestAborters.add(abortController);
+}
+
+function unregisterActiveRequest(abortController) {
+  if (!abortController) return;
+  activeRequestAborters.delete(abortController);
+}
+
+function abortActiveResponseRequests() {
+  for (const controller of activeRequestAborters.values()) {
+    try { controller.abort(); } catch { /* best effort during shutdown */ }
+  }
+}
+
+async function jitteredBackoff() {
+  const ceiling = Math.min(CONCRETE_RETRY_MAX_MS, CONCRETE_RETRY_BASE_MS * 2);
+  const delayMs = 1 + Math.floor(Math.random() * ceiling);
+  await new Promise((resolve) => setTimeout(resolve, delayMs));
+  return delayMs;
+}
+
+function transportErrorInfo(error) {
+  const cause = error && typeof error === "object" ? error.cause : null;
+  return {
+    name: error && typeof error.name === "string" ? error.name : "Error",
+    code: error && typeof error.code === "string"
+      ? error.code
+      : cause && typeof cause.code === "string" ? cause.code : null,
+    syscall: cause && typeof cause.syscall === "string" ? cause.syscall : null,
+  };
+}
+
+function logTransportError({ requestId, role = null, provider, model, requestedModel = model, error, workspace }) {
+  // Avoid leaking credentials, prompts, absolute paths, or raw upstream bodies
+  // through stderr. Only the transport diagnostic code/name is captured here.
+  const info = transportErrorInfo(error);
+  return recordRouterEvent({
+    phase: "transport_error",
+    requestId,
+    role,
+    requestedModel,
+    provider,
+    model,
+    workspace,
+    errorName: info.name,
+    errorCode: info.code,
+    syscall: info.syscall,
+  });
+}
+
+function setLifecycleState(next) {
+  lifecycleState = next;
+  lifecycleStateChangedAt = new Date().toISOString();
+}
+
+async function beginShutdown(signal, server, stateFile = STATE_FILE) {
+  if (shutdownPromise) return shutdownPromise;
+  setLifecycleState("draining");
+  const drainingStartedAt = Date.now();
+  const activeAtStart = activeRequestAborters.size;
+  console.error(JSON.stringify({
+    schema: "autodev-router-event-v1",
+    timestamp: new Date().toISOString(),
+    routerInstanceId: ROUTER_INSTANCE_ID,
+    requestId: null,
+    phase: "shutdown_started",
+    signal,
+    activeRequests: activeAtStart,
+    drainTimeoutMs: SHUTDOWN_DRAIN_TIMEOUT_MS,
+  }));
+  shutdownPromise = (async () => {
+    while (activeRequestAborters.size > 0 && Date.now() - drainingStartedAt < SHUTDOWN_DRAIN_TIMEOUT_MS) {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    if (activeRequestAborters.size > 0) abortActiveResponseRequests();
+    try { await persistRouterStateNow(stateFile); } catch { /* already logged inside */ }
+    if (server && typeof server.close === "function") {
+      await new Promise((resolve) => server.close(() => resolve()));
+    }
+    console.error(JSON.stringify({
+      schema: "autodev-router-event-v1",
+      timestamp: new Date().toISOString(),
+      routerInstanceId: ROUTER_INSTANCE_ID,
+      requestId: null,
+      phase: "shutdown_complete",
+      durationMs: Date.now() - drainingStartedAt,
+      abortedInFlight: activeRequestAborters.size > 0,
+    }));
+    if (process.env.CODEX_ROUTER_TEST_NO_EXIT === "1") return;
+    process.exit(0);
+  })();
+  return shutdownPromise;
+}
+
+function resetLifecycleForTests() {
+  setLifecycleState("ready");
+  activeRequestAborters.clear();
+  shutdownPromise = null;
 }
 
 function shuffleGroup(group, random = Math.random) {
@@ -1779,18 +1943,44 @@ async function loadCodexAuth() {
 
 function sendJson(response, status, body, extraHeaders = {}) {
   const encoded = Buffer.from(JSON.stringify(body));
-  response.writeHead(status, { "content-type": "application/json", "content-length": encoded.length, connection: "close", ...extraHeaders });
+  response.writeHead(status, {
+    "content-type": "application/json",
+    "content-length": encoded.length,
+    connection: "close",
+    "x-autodev-router-instance-id": ROUTER_INSTANCE_ID,
+    ...extraHeaders,
+  });
   response.end(encoded);
 }
 
 async function sendDashboard(response) {
   const body = await readFile(DASHBOARD_FILE);
-  response.writeHead(200, { "content-type": "text/html; charset=utf-8", "content-length": body.length, "cache-control": "no-store", connection: "close" });
+  response.writeHead(200, {
+    "content-type": "text/html; charset=utf-8",
+    "content-length": body.length,
+    "cache-control": "no-store",
+    connection: "close",
+    "x-autodev-router-instance-id": ROUTER_INSTANCE_ID,
+  });
   response.end(body);
 }
 
-function errorBody(message, type = "invalid_request_error") {
-  return { error: { message, type } };
+function errorBody(message, type = "invalid_request_error", context = {}) {
+  const pickString = (value) => typeof value === "string" && value ? value : null;
+  const pickBool = (value) => typeof value === "boolean" ? value : null;
+  return {
+    error: {
+      message,
+      type,
+      code: pickString(context.code) ?? (typeof type === "string" && type ? type : null),
+      retryable: pickBool(context.retryable),
+      failureClass: pickString(context.failureClass),
+      provider: pickString(context.provider),
+      model: pickString(context.model),
+      requestId: pickString(context.requestId),
+      routerInstanceId: ROUTER_INSTANCE_ID,
+    },
+  };
 }
 
 async function requestBody(request) {
@@ -1868,7 +2058,19 @@ function upstreamPayload(route, payload, wantsStream, turnMetadataHeader) {
 }
 
 async function fetchUpstream(route, payload, wantsStream, turnMetadataHeader, clientSignal = null) {
-  const auth = route.provider === "codex" ? await loadCodexAuth() : null;
+  let auth = null;
+  if (route.provider === "codex") {
+    try {
+      auth = await loadCodexAuth();
+    } catch (error) {
+      // Authentication/configuration failures are deterministic and must not
+      // be mistaken for retryable network failures or cool down Codex.
+      const authError = new Error("Codex authentication is unavailable.");
+      authError.code = "router_auth_unavailable";
+      authError.cause = error;
+      throw authError;
+    }
+  }
   const requestPayload = upstreamPayload(route, payload, wantsStream, turnMetadataHeader);
   const timeoutSignal = AbortSignal.timeout(UPSTREAM_TIMEOUT_MS);
   const signal = clientSignal ? AbortSignal.any([clientSignal, timeoutSignal]) : timeoutSignal;
@@ -1878,12 +2080,26 @@ async function fetchUpstream(route, payload, wantsStream, turnMetadataHeader, cl
     signal,
     body: JSON.stringify(requestPayload),
   });
-  if (!upstream.ok) return { ok: false, status: upstream.status, body: await upstream.text() };
+  if (!upstream.ok) {
+    return {
+      ok: false,
+      status: upstream.status,
+      body: await upstream.text(),
+      // Only transient upstream statuses are eligible for a bounded retry on
+      // the direct concrete path; auth/payload errors must not be retried.
+      retryable: [502, 503, 504].includes(upstream.status),
+    };
+  }
   return { ok: true, upstream, signal };
 }
 
 async function writeSuccessfulResponse(response, route, result, wantsStream, publicModel, requestId, resolvedModel) {
-  const responseHeaders = { "x-autodev-provider": route.provider, "x-autodev-model": resolvedModel, "x-autodev-request-id": requestId };
+  const responseHeaders = {
+    "x-autodev-provider": route.provider,
+    "x-autodev-model": resolvedModel,
+    "x-autodev-request-id": requestId,
+    "x-autodev-router-instance-id": ROUTER_INSTANCE_ID,
+  };
   const upstream = result.upstream;
   if (wantsStream) {
     response.writeHead(upstream.status, { ...responseHeaders, "content-type": upstream.headers.get("content-type") ?? "text/event-stream", "cache-control": "no-cache", connection: "close" });
@@ -1935,23 +2151,103 @@ async function proxyConcreteResponse(response, route, payload, wantsStream, requ
   const startedAt = Date.now();
   recordRouterEvent({ phase: "selected", requestId, requestedModel: payload.model, provider: route.provider, model: payload.model, workspace });
   incrementActiveRequests(route.provider);
+  // Direct concrete requests must not silently reroute to another provider.
+  // A single bounded retry is permitted for pre-response transport failures
+  // and HTTP 502/503/504 from the upstream provider; never after the
+  // response stream has begun or when the client signal is aborted, and
+  // never on auth/payload errors.
+  let attempts = 0;
+  const maxAttempts = 2;
+  const sendFailureResponse = (status, failureClass) => {
+    if (response.writableEnded) return;
+    if (response.headersSent) { response.end(); return; }
+    const errorType = status === 401
+      ? "router_authentication_error"
+      : status === 502 || status === 503 || status === 504 ? "router_provider_unavailable" : "router_upstream_error";
+    const retryable = status === 502 || status === 503 || status === 504;
+    const retryAfterMs = retryable ? nextProviderRetryMs([route.provider]) : 0;
+    const retryAfterSeconds = retryAfterMs > 0 ? Math.max(1, Math.ceil(retryAfterMs / 1000)) : null;
+    sendJson(
+      response,
+      status,
+      errorBody(
+        status === 401
+          ? `Direct concrete request to ${payload.model} (${route.provider}) could not authenticate.`
+          : `Direct concrete request to ${payload.model} (${route.provider}) failed with HTTP ${status}.`,
+        errorType,
+        { code: errorType, retryable, failureClass, provider: route.provider, model: payload.model, requestId },
+      ),
+      {
+        "x-autodev-provider": route.provider,
+        "x-autodev-model": payload.model,
+        "x-autodev-request-id": requestId,
+        ...(retryAfterSeconds ? { "retry-after": String(retryAfterSeconds) } : {}),
+      },
+    );
+  };
   try {
-    const result = await fetchUpstream(route, payload, wantsStream, turnMetadataHeader, clientSignal);
-    if (!result.ok) {
-      const failureClass = classifyProviderFailure(result.status, result.body);
-      recordRouterEvent({ phase: "result", requestId, requestedModel: payload.model, provider: route.provider, model: payload.model, workspace, outcome: "failure", status: result.status, failureClass, elapsedMs: Date.now() - startedAt });
-      response.writeHead(result.status, { "content-type": "application/json", "x-autodev-provider": route.provider, "x-autodev-model": payload.model, "x-autodev-request-id": requestId });
-      response.end(result.body);
-      return;
+    while (attempts < maxAttempts) {
+      try {
+        const result = await fetchUpstream(route, payload, wantsStream, turnMetadataHeader, clientSignal);
+        if (!result.ok) {
+          const failureClass = classifyProviderFailure(result.status, result.body);
+          const canRetry = result.retryable && attempts === 0 && !clientSignal?.aborted && !response.headersSent;
+          if (canRetry) {
+            recordRouterEvent({ phase: "retry", requestId, requestedModel: payload.model, provider: route.provider, model: payload.model, workspace, status: result.status, failureClass, elapsedMs: Date.now() - startedAt });
+            attempts += 1;
+            await jitteredBackoff();
+            if (clientSignal?.aborted) {
+              recordRouterEvent({ phase: "result", requestId, requestedModel: payload.model, provider: route.provider, model: payload.model, workspace, outcome: "failure", status: 499, failureClass: "client_aborted", elapsedMs: Date.now() - startedAt });
+              return;
+            }
+            continue;
+          }
+          recordRouterEvent({ phase: "result", requestId, requestedModel: payload.model, provider: route.provider, model: payload.model, workspace, outcome: "failure", status: result.status, failureClass, elapsedMs: Date.now() - startedAt });
+          if (result.retryable) cooldownProvider(route.provider, Date.now());
+          sendFailureResponse(result.status, failureClass);
+          return;
+        }
+        const responseResult = await writeSuccessfulResponse(response, route, result, wantsStream, payload.model, requestId, payload.model);
+        recordRouterEvent({ phase: "result", requestId, requestedModel: payload.model, provider: route.provider, model: payload.model, workspace, outcome: responseResult.failed ? "failure" : "success", status: result.upstream.status, failureClass: responseResult.failed ? "upstream_error" : null, elapsedMs: Date.now() - startedAt, toolCalls: responseResult.toolCalls });
+        return;
+      } catch (error) {
+        logTransportError({ requestId, provider: route.provider, model: payload.model, error, workspace });
+        if (error && typeof error === "object" && error.code === "router_auth_unavailable") {
+          recordRouterEvent({ phase: "result", requestId, requestedModel: payload.model, provider: route.provider, model: payload.model, workspace, outcome: "failure", status: 401, failureClass: "authentication", elapsedMs: Date.now() - startedAt });
+          sendFailureResponse(401, "authentication");
+          return;
+        }
+        if (clientSignal?.aborted) {
+          recordRouterEvent({ phase: "result", requestId, requestedModel: payload.model, provider: route.provider, model: payload.model, workspace, outcome: "failure", status: 499, failureClass: "client_aborted", elapsedMs: Date.now() - startedAt });
+          return;
+        }
+        if (attempts === 0 && !response.headersSent) {
+          const failureClass = classifyProviderFailure(502, error instanceof Error ? error.message : String(error));
+          recordRouterEvent({ phase: "retry", requestId, requestedModel: payload.model, provider: route.provider, model: payload.model, workspace, status: 502, failureClass, elapsedMs: Date.now() - startedAt });
+          attempts += 1;
+          await jitteredBackoff();
+          if (clientSignal?.aborted) {
+            recordRouterEvent({ phase: "result", requestId, requestedModel: payload.model, provider: route.provider, model: payload.model, workspace, outcome: "failure", status: 499, failureClass: "client_aborted", elapsedMs: Date.now() - startedAt });
+            return;
+          }
+          continue;
+        }
+        const failureClass = classifyProviderFailure(502, error instanceof Error ? error.message : String(error));
+        recordRouterEvent({ phase: "result", requestId, requestedModel: payload.model, provider: route.provider, model: payload.model, workspace, outcome: "failure", status: 502, failureClass, elapsedMs: Date.now() - startedAt });
+        cooldownProvider(route.provider, Date.now());
+        sendFailureResponse(502, failureClass);
+        return;
+      }
     }
-    const responseResult = await writeSuccessfulResponse(response, route, result, wantsStream, payload.model, requestId, payload.model);
-    recordRouterEvent({ phase: "result", requestId, requestedModel: payload.model, provider: route.provider, model: payload.model, workspace, outcome: responseResult.failed ? "failure" : "success", status: result.upstream.status, failureClass: responseResult.failed ? "upstream_error" : null, elapsedMs: Date.now() - startedAt, toolCalls: responseResult.toolCalls });
   } catch (error) {
+    // Defensive: anything thrown outside the retry loop (e.g. while writing
+    // the failure response) still produces a clean 502 with structured
+    // diagnostics rather than a half-written body.
     const failureClass = classifyProviderFailure(502, error instanceof Error ? error.message : String(error));
     recordRouterEvent({ phase: "result", requestId, requestedModel: payload.model, provider: route.provider, model: payload.model, workspace, outcome: "failure", status: 502, failureClass, elapsedMs: Date.now() - startedAt });
     if (!response.writableEnded) {
       if (response.headersSent) response.end();
-      else sendJson(response, 502, errorBody(error instanceof Error ? error.message : String(error), "router_upstream_error"), { "x-autodev-provider": route.provider, "x-autodev-model": payload.model, "x-autodev-request-id": requestId });
+      else sendJson(response, 502, errorBody(`Direct concrete request to ${payload.model} (${route.provider}) could not be completed.`, "router_upstream_error", { code: "router_upstream_error", retryable: true, failureClass, provider: route.provider, model: payload.model, requestId }), { "x-autodev-provider": route.provider, "x-autodev-model": payload.model, "x-autodev-request-id": requestId });
     }
   } finally {
     decrementActiveRequests(route.provider);
@@ -1998,14 +2294,18 @@ async function proxyRoleResponse(response, role, payload, wantsStream, requestId
       failures.push(`${route.provider}: HTTP ${result.status}`);
       recordRouterEvent({ phase: "result", requestId, role, requestedModel: payload.model, provider: route.provider, model: route.model, workspace, outcome: "failure", status: result.status, failureClass, elapsedMs: Date.now() - attemptStartedAt });
       if (!fallbackable(result.status, result.body)) {
-        response.writeHead(result.status, { "content-type": "application/json", "x-autodev-provider": route.provider, "x-autodev-model": route.model, "x-autodev-request-id": requestId });
+        response.writeHead(result.status, { "content-type": "application/json", "x-autodev-provider": route.provider, "x-autodev-model": route.model, "x-autodev-request-id": requestId, "x-autodev-router-instance-id": ROUTER_INSTANCE_ID });
         response.end(result.body);
         return;
       }
       cooldownProvider(route.provider);
     } catch (error) {
       const failureClass = classifyProviderFailure(502, error instanceof Error ? error.message : String(error));
-      failures.push(`${route.provider}: ${error instanceof Error ? error.message : String(error)}`);
+      logTransportError({ requestId, role, requestedModel: payload.model, provider: route.provider, model: route.model, error, workspace });
+      // Keep provider-specific exception text private; the structured event
+      // carries the safe failure class and the response needs only a stable
+      // provider summary for fallback diagnostics.
+      failures.push(`${route.provider}: ${failureClass}`);
       recordRouterEvent({ phase: "result", requestId, role, requestedModel: payload.model, provider: route.provider, model: route.model, workspace, outcome: "failure", status: 502, failureClass, elapsedMs: Date.now() - attemptStartedAt });
       cooldownProvider(route.provider);
       if (response.headersSent) {
@@ -2023,7 +2323,13 @@ async function proxyRoleResponse(response, role, payload, wantsStream, requestId
   sendJson(
     response,
     503,
-    errorBody(`No available provider completed role ${role}.${retryMessage} ${failures.join("; ")}`, "router_provider_exhausted"),
+    errorBody(`No available provider completed role ${role}.${retryMessage} ${failures.join("; ")}`, "router_provider_exhausted", {
+      code: "router_provider_exhausted",
+      retryable: true,
+      failureClass: "unavailable",
+      model: payload.model,
+      requestId,
+    }),
     { "x-autodev-request-id": requestId, "retry-after": String(retryAfterSeconds) },
   );
 }
@@ -2127,8 +2433,21 @@ function workspaceContextFromRequest(request, payload, turnMetadataHeader) {
 
 async function handleRequest(request, response) {
   const pathname = new URL(request.url ?? "/", `http://${HOST}:${PORT}`).pathname;
+  // Liveness is unconditional: a draining process is still alive and must
+  // continue responding to liveness probes until the OS reaps it.
   if (pathname === "/health" || pathname === "/health/liveliness") {
     sendJson(response, 200, { status: "ok", router: "codex-model-router" });
+    return;
+  }
+  // Readiness reports router lifecycle readiness (not provider health). It
+  // returns 503 once SIGINT/SIGTERM has put the process into drain mode so
+  // orchestrators can stop routing new requests to it.
+  if (pathname === "/health/readiness") {
+    if (isDraining()) {
+      sendJson(response, 503, errorBody("Router is draining for shutdown.", "router_draining", { code: "router_draining", retryable: true }));
+      return;
+    }
+    sendJson(response, 200, { status: "ready", router: "codex-model-router", lifecycle: getLifecycleStatus() });
     return;
   }
   if (pathname === "/dashboard" && request.method === "GET") {
@@ -2159,6 +2478,10 @@ async function handleRequest(request, response) {
     sendJson(response, 404, errorBody("not found"));
     return;
   }
+  if (isDraining()) {
+    sendJson(response, 503, errorBody("Router is draining for shutdown; please retry against another instance.", "router_draining", { code: "router_draining", retryable: true }), { "retry-after": "5" });
+    return;
+  }
   let payload;
   try { payload = JSON.parse(await requestBody(request)); } catch { sendJson(response, 400, errorBody("request body must be valid JSON")); return; }
   if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
@@ -2180,6 +2503,9 @@ async function handleRequest(request, response) {
   const abortForRequest = () => clientAbort.abort();
   const abortForRequestClose = () => { if (!request.complete) clientAbort.abort(); };
   const abortForResponseClose = () => { if (!response.writableEnded && !response.destroyed) clientAbort.abort(); };
+  // Register this request's aborter so a shutdown signal can cancel any
+  // in-flight upstream call when the drain timeout elapses.
+  registerActiveRequest(clientAbort);
   request.once("aborted", abortForRequest);
   request.once("close", abortForRequestClose);
   response.once("close", abortForResponseClose);
@@ -2189,7 +2515,13 @@ async function handleRequest(request, response) {
       const denialReason = tryAcquireSubagentSlot(session.key);
       if (denialReason) {
         recordConcurrencyDenial({ requestId, role, requestedModel: payload.model, sessionScope: session.scope, reason: denialReason });
-        sendJson(response, 429, errorBody(`Subagent denied by configured ${denialReason} limit.`, "router_concurrency_limit"), { "retry-after": "1", "x-autodev-request-id": requestId });
+        sendJson(response, 429, errorBody(`Subagent denied by configured ${denialReason} limit.`, "router_concurrency_limit", {
+          code: "router_concurrency_limit",
+          retryable: true,
+          failureClass: "concurrency_limit",
+          model: payload.model,
+          requestId,
+        }), { "retry-after": "1", "x-autodev-request-id": requestId });
         return;
       }
       try {
@@ -2206,6 +2538,7 @@ async function handleRequest(request, response) {
     }
     await proxyConcreteResponse(response, route, payload, wantsStream, requestId, turnMetadataHeader, workspace, clientAbort.signal);
   } finally {
+    unregisterActiveRequest(clientAbort);
     request.removeListener("aborted", abortForRequest);
     request.removeListener("close", abortForRequestClose);
     response.removeListener("close", abortForResponseClose);
@@ -2216,21 +2549,97 @@ async function handle(request, response) {
   try {
     return await handleRequest(request, response);
   } catch (error) {
-    console.error(`Router request failed: ${error instanceof Error ? error.stack ?? error.message : String(error)}`);
+    // Keep internal messages and stacks out of both client responses and the
+    // router log. The request ID and sanitized transport fields are enough to
+    // correlate the failure without leaking credentials, paths, or payloads.
+    const info = transportErrorInfo(error);
+    console.error(JSON.stringify({
+      schema: "autodev-router-event-v1",
+      timestamp: new Date().toISOString(),
+      routerInstanceId: ROUTER_INSTANCE_ID,
+      requestId: null,
+      phase: "router_error",
+      errorName: info.name,
+      errorCode: info.code,
+      syscall: info.syscall,
+    }));
     if (response.writableEnded || response.destroyed) return;
     try {
       if (response.headersSent) response.end();
-      else sendJson(response, 502, errorBody("The router could not complete the request.", "router_internal_error"));
+      else sendJson(response, 502, errorBody("The router could not complete the request.", "router_internal_error", { code: "router_internal_error", retryable: true }));
     } catch {
       // The client may have disconnected between the state check and the write.
     }
   }
 }
 
-export { activeProviderRequests, catalogModelIds, classifyProviderFailure, clearProviderCooldown, codexTelemetryStatus, cooldownProvider, countToolCallsFromSse, countToolCallsInResponse, concurrencyStatus, decrementActiveRequests, downstreamHeaders, fallbackable, FORWARDED_REQUEST_HEADERS, getActiveRequests, getRouterStatus, handle, incrementActiveRequests, ingestOtelLogs, ingestOtelMetrics, ingestOtelSignal, ingestOtelTraces, isProviderCoolingDown, loadRouterState, nextProviderRetryMs, normalizeCodexTask, parseConcurrencyConfig, parseTurnMetadataJson, persistRouterStateNow, PROCESS_FALLBACK_SESSION_KEY, providerModelMetadata, recordConcurrencyDenial, recordRouterEvent, recordSpawnFailure, releaseSubagentSlot, replaceModelFields, requestSession, resetConcurrencyTelemetry, resetOtelTelemetry, resetRouterTelemetry, resolveTurnMetadataHeader, spawnFailureStatus, routeCredentialAvailable, roleCandidates, roleForModel, routeForModel, serializeRouterState, summarizeCodexTasks, tryAcquireSubagentSlot, responseTextFromSse, transformSseEvent, validateRoutingConfig, workspaceContextFromRequest };
+export {
+  activeProviderRequests,
+  beginShutdown,
+  catalogModelIds,
+  proxyConcreteResponse,
+  classifyProviderFailure,
+  clearProviderCooldown,
+  codexTelemetryStatus,
+  cooldownProvider,
+  countToolCallsFromSse,
+  countToolCallsInResponse,
+  concurrencyStatus,
+  decrementActiveRequests,
+  downstreamHeaders,
+  fallbackable,
+  FORWARDED_REQUEST_HEADERS,
+  getActiveRequests,
+  getLifecycleStatus,
+  getRouterStatus,
+  handle,
+  incrementActiveRequests,
+  ingestOtelLogs,
+  ingestOtelMetrics,
+  ingestOtelSignal,
+  ingestOtelTraces,
+  isDraining,
+  isProviderCoolingDown,
+  loadRouterState,
+  nextProviderRetryMs,
+  normalizeCodexTask,
+  parseConcurrencyConfig,
+  parseTurnMetadataJson,
+  persistRouterStateNow,
+  PROCESS_FALLBACK_SESSION_KEY,
+  providerModelMetadata,
+  recordConcurrencyDenial,
+  recordRouterEvent,
+  recordSpawnFailure,
+  releaseSubagentSlot,
+  replaceModelFields,
+  requestSession,
+  resetConcurrencyTelemetry,
+  resetLifecycleForTests,
+  resetOtelTelemetry,
+  resetRouterTelemetry,
+  resolveTurnMetadataHeader,
+  ROUTER_INSTANCE_ID,
+  spawnFailureStatus,
+  routeCredentialAvailable,
+  roleCandidates,
+  roleForModel,
+  routeForModel,
+  serializeRouterState,
+  summarizeCodexTasks,
+  tryAcquireSubagentSlot,
+  responseTextFromSse,
+  transformSseEvent,
+  validateRoutingConfig,
+  workspaceContextFromRequest,
+};
 
 if (IS_MAIN) {
-  createServer((request, response) => { void handle(request, response); }).listen(PORT, HOST, () => {
+  const server = createServer((request, response) => { void handle(request, response); });
+  const sigtermHandler = (signal) => { void beginShutdown(signal, server); };
+  process.on("SIGINT", () => sigtermHandler("SIGINT"));
+  process.on("SIGTERM", () => sigtermHandler("SIGTERM"));
+  server.listen(PORT, HOST, () => {
     console.error(`Codex model router listening at http://${HOST}:${PORT}`);
   });
 }

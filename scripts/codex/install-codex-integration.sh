@@ -510,6 +510,25 @@ install -m 0644 "$repo_root/scripts/codex/litellm/antigravity.yaml" "$litellm_di
 # so macOS privacy controls on the AutoDev repo do not block launchd). When the
 # installer runs from inside the Codex sandbox launchctl may be unreachable;
 # that is tolerated, and the ensure-hooks below start the bridges directly.
+#
+# The router plist writes separate stdout/stderr logs to $CODEX_HOME/run with
+# the launchd label as a suffix, and the ensure hook writes its fallback
+# pid/log there too. Create the directory user-private up front so launchd
+# (which runs as the user) can create files in it without permission errors.
+mkdir -p -- "$codex_home/run"
+chmod 0700 "$codex_home/run"
+for router_log in \
+  "$codex_home/run/codex-model-router.launchd.out.log" \
+  "$codex_home/run/codex-model-router.launchd.err.log"; do
+  if [[ -L "$router_log" ]]; then
+    printf 'refusing symlinked router log path: %s\n' "$router_log" >&2
+    exit 1
+  fi
+  if [[ ! -e "$router_log" ]]; then
+    (umask 077; : >"$router_log")
+  fi
+  chmod 0600 "$router_log"
+done
 launchagent_labels=(
   com.codex.model-router
   com.codex.claude-bridge
@@ -543,7 +562,7 @@ if [[ "${1:-}" == "--restart" ]]; then
     # Let services bind before the idempotent ensure-hooks run, so those hooks
     # observe healthy ports and no-op instead of racing/replacing the agents.
     for probe in \
-      http://127.0.0.1:4100/health/liveliness \
+      http://127.0.0.1:4100/health/readiness \
       http://127.0.0.1:4000/health/liveliness \
       http://127.0.0.1:4001/health/liveliness \
       http://127.0.0.1:4002/health/liveliness \
