@@ -23,7 +23,7 @@ and use them with `pnpm exec`. Other active repositories need to expose the same
 `lsp-mcp-server` command through their package manager for the user-level MCP
 entry to work there.
 
-The installer exposes these AutoDev-owned shared skill directories in
+The installer exposes these four AutoDev-owned shared skill directories in
 `$HOME/.agents/skills/` through symlinks:
 
 - `diagnosing-bugs`
@@ -31,6 +31,12 @@ The installer exposes these AutoDev-owned shared skill directories in
 - `lsp-mcp-server`
 - `orchestration`
 - `remove-legacy-shims`
+
+`code-simplification` is repository-agnostic and is intended to be available to
+local Codex work in any repository. It defines a behavior-preserving workflow
+for DRY, KISS, cohesion, coupling, ownership, fragmentation, and abstraction
+cleanup while deferring to each target repository's own architecture and
+validation rules.
 
 `diagnosing-bugs` and `improve-codebase-architecture` are repository-agnostic
 engineering workflows intended to apply across local Codex development. The

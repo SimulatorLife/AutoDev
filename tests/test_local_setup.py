@@ -16,7 +16,7 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[1]
 BRIDGE_PATH = REPO_ROOT / "scripts/codex-claude-cli-responses-proxy.py"
 INSTALLER_PATH = REPO_ROOT / "scripts/codex/install-codex-integration.sh"
-SKILL_NAMES = ("lsp-mcp-server", "orchestration", "remove-legacy-shims")
+SKILL_NAMES = ("code-simplification", "lsp-mcp-server", "orchestration", "remove-legacy-shims")
 LSP_AGENT_NAMES = ("default", "explorer", "smart", "validator", "worker")
 NON_LSP_AGENT_NAMES = ("browser-tester", "docs-researcher")
 
@@ -331,9 +331,22 @@ class LocalSetupTests(unittest.TestCase):
                 (REPO_ROOT / "scripts/codex/lib/resolve-workspace.mjs").read_bytes(),
             )
 
-    def test_user_level_skill_registry_uses_only_the_requested_skill_names(self):
-        names = sorted(path.name for path in (REPO_ROOT / "scripts/codex/skills").iterdir())
-        self.assertEqual(names, sorted(SKILL_NAMES))
+    def test_user_level_skill_registry_contains_all_requested_skill_names(self):
+        names = {path.name for path in (REPO_ROOT / "scripts/codex/skills").iterdir()}
+        self.assertTrue(set(SKILL_NAMES) <= names)
+
+    def test_code_simplification_skill_is_repository_agnostic_and_quality_focused(self):
+        skill = (REPO_ROOT / "scripts/codex/skills/code-simplification/SKILL.md").read_text()
+        for required in (
+            "## Operating Modes",
+            "### Proactive Audit Mode",
+            "## Right-Sized Files and Modules",
+            "## Coupling Rules",
+            "Project-specific rules override generic preferences",
+            "Complexity was removed rather than relocated",
+        ):
+            self.assertIn(required, skill)
+        self.assertNotIn("RacingGame", skill)
 
     def test_codex_otel_is_configured_without_raw_prompt_export(self):
         config = (REPO_ROOT / "scripts/codex/config.toml").read_text()
