@@ -28,7 +28,7 @@ test("merge conflict skill uses the compact extractor before full-file inspectio
 });
 
 test("bundled conflict helper extracts index and marker context without resolving files", () => {
-  assert.match(helper, /git", "-C", str\(repo_root\), "ls-files", "-u", "-z"/);
+  assert.match(helper, /run_git\(repo_root, "ls-files", "-u", "-z"\)/);
   assert.match(helper, /def parse_conflict_hunks/);
   assert.match(helper, /def build_index_preview/);
   assert.match(helper, /--repo/);
