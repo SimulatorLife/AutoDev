@@ -23,21 +23,30 @@ and use them with `pnpm exec`. Other active repositories need to expose the same
 `lsp-mcp-server` command through their package manager for the user-level MCP
 entry to work there.
 
-The three shared skills under `scripts/codex/skills/` are tracked AutoDev-owned
-skill directories. The installer exposes those versioned directories in
+The installer exposes these AutoDev-owned shared skill directories in
 `$HOME/.agents/skills/` through symlinks:
 
+- `diagnosing-bugs`
+- `improve-codebase-architecture`
 - `lsp-mcp-server`
 - `orchestration`
 - `remove-legacy-shims`
 
-Keep the canonical skill content in AutoDev; update the directories there and
-rerun the installer when changing this user-level skill setup. The installer
-links each complete skill directory with an absolute target; do not link an
-individual `SKILL.md` file because Codex currently skips file-level symlinks.
-Its `--check` mode rejects missing or relative skill-directory links and
-symlinked `SKILL.md` files. Restart Codex or start a new task after installation
-so user-level skill discovery refreshes.
+`diagnosing-bugs` and `improve-codebase-architecture` are repository-agnostic
+engineering workflows intended to apply across local Codex development. The
+architecture skill focuses on ownership, module depth, seams, dependency
+direction, locality, test surfaces, and structural change amplification. The
+bug-diagnosis skill focuses on reproducible failure signals, root-cause tracing,
+falsifiable hypotheses, evidence-safe instrumentation, regression guards, and
+verification against the original symptom.
+
+Keep the canonical registered user-level skill content in AutoDev; update the
+skill directories there and rerun the installer when changing this setup. The
+installer links each complete skill directory with an absolute target; do not
+link an individual `SKILL.md` file because Codex currently skips file-level
+symlinks. Its `--check` mode rejects missing or relative skill-directory links
+and symlinked `SKILL.md` files. Restart Codex or start a new task after
+installation so user-level skill discovery refreshes.
 
 Destructive Git commands are enforced by Codex's native rules engine. The
 tracked rules live in `scripts/codex/rules/default.rules` and are symlinked by
