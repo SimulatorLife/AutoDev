@@ -277,12 +277,8 @@ check_custom_provider_config() {
   done
 
   for profile in "${profile_names[@]}"; do
-    if [[ ! -f "$repo_root/scripts/codex/profiles/$profile.config.toml" ]]; then
-      printf 'missing-custom-provider-profile %s\n' "$profile"
-      failed=1
-      continue
-    fi
-    if ! grep -Fq 'wire_api = "responses"' "$repo_root/scripts/codex/profiles/$profile.config.toml" || \
+    if ! grep -Fq 'model_provider =' "$repo_root/scripts/codex/profiles/$profile.config.toml" || \
+      ! grep -Fq 'wire_api = "responses"' "$repo_root/scripts/codex/profiles/$profile.config.toml" || \
       ! grep -Fq 'requires_openai_auth = false' "$repo_root/scripts/codex/profiles/$profile.config.toml"; then
       printf 'invalid-custom-provider-profile %s\n' "$repo_root/scripts/codex/profiles/$profile.config.toml"
       failed=1
