@@ -36,7 +36,7 @@ runtime_module_names=(scripts/codex/lib/resolve-workspace.mjs)
 profile_names=(claude minimax antigravity)
 catalog_names=(claude minimax antigravity codex)
 agent_role_names=(browser-tester default docs-researcher explorer smart validator worker)
-skill_names=(lsp-mcp-server orchestration remove-legacy-shims)
+skill_names=(diagnosing-bugs improve-codebase-architecture lsp-mcp-server orchestration remove-legacy-shims)
 rule_names=(default.rules)
 custom_provider_names=(local_model_router claude_code_subscription minimax antigravity_cli)
 tracked_sources=""
@@ -277,8 +277,12 @@ check_custom_provider_config() {
   done
 
   for profile in "${profile_names[@]}"; do
-    if ! grep -Fq 'model_provider =' "$repo_root/scripts/codex/profiles/$profile.config.toml" || \
-      ! grep -Fq 'wire_api = "responses"' "$repo_root/scripts/codex/profiles/$profile.config.toml" || \
+    if [[ ! -f "$repo_root/scripts/codex/profiles/$profile.config.toml" ]]; then
+      printf 'missing-custom-provider-profile %s\n' "$profile"
+      failed=1
+      continue
+    fi
+    if ! grep -Fq 'wire_api = "responses"' "$repo_root/scripts/codex/profiles/$profile.config.toml" || \
       ! grep -Fq 'requires_openai_auth = false' "$repo_root/scripts/codex/profiles/$profile.config.toml"; then
       printf 'invalid-custom-provider-profile %s\n' "$repo_root/scripts/codex/profiles/$profile.config.toml"
       failed=1
