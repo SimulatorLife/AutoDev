@@ -429,6 +429,19 @@ test("downstreamHeaders forwards only the allowlisted turn-metadata header and n
   assert.notEqual(withTurnMetadata.authorization, "Bearer client-supplied-secret");
 });
 
+test("downstreamHeaders forces a fresh connection per request to the codex route to avoid reusing a stale pooled keep-alive socket", () => {
+  const codexHeaders = downstreamHeaders({ provider: "codex", envKey: null }, { token: "t", accountId: "a" }, null);
+  assert.equal(codexHeaders.connection, "close", "codex requests must never be served from a pooled keep-alive connection");
+});
+
+test("downstreamHeaders leaves keep-alive pooling untouched for other providers", () => {
+  for (const route of [{ provider: "claude", envKey: "LITELLM_API_KEY" }, { provider: "minimax", envKey: "MINIMAX_API_KEY" }, { provider: "antigravity", envKey: "LITELLM_API_KEY" }, { provider: "copilot", envKey: "CODEX_ROUTER_COPILOT_API_KEY" }]) {
+    const headers = downstreamHeaders(route, null, null);
+    assert.equal(headers.connection, undefined, `${route.provider} should keep reusing pooled connections`);
+  }
+});
+
+
 test("forwards x-codex-turn-metadata to the upstream provider bridge without leaking the caller's own authorization", async () => {
   const originalFetch = globalThis.fetch;
   let upstreamHeaders = null;
@@ -1586,8 +1599,52 @@ test("wraps transport failures with actionable safe diagnostics", async () => {
     assert.equal(body.error.requestId, "req-transport-error");
     assert.doesNotMatch(body.error.message, /ECONNRESET|fetch failed|127\.0\.0\.1|absolute|path/i);
     const transportEvents = getRouterStatus().recentEvents.filter((event) => event.phase === "transport_error" && event.requestId === "req-transport-error");
-    assert.equal(transportEvents.length, 2, "both bounded transport attempts should be observable");
+    assert.equal(transportEvents.length, 3, "all bounded transport attempts should be observable");
     assert.equal(transportEvents[0].errorCode, "ECONNRESET");
+  } finally {
+    await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    globalThis.fetch = originalFetch;
+    activeProviderRequests.clear();
+    clearProviderCooldown("claude");
+    resetRouterTelemetry();
+  }
+});
+
+test("direct concrete request survives two pre-response transport failures in a row before succeeding", async () => {
+  const originalFetch = globalThis.fetch;
+  let responseCalls = 0;
+  globalThis.fetch = async (url, options) => {
+    if (String(url) === "http://127.0.0.1:4000/v1/responses") {
+      responseCalls += 1;
+      if (responseCalls <= 2) {
+        // Mirrors the pooled keep-alive connection getting recycled out from
+        // under a reuse attempt: the write fails before any response exists.
+        const error = new TypeError("fetch failed");
+        error.cause = { code: responseCalls === 1 ? "UND_ERR_SOCKET" : "EPIPE", syscall: "write" };
+        throw error;
+      }
+      return new Response(JSON.stringify({ id: "recovered", model: "sonnet", output_text: "ok" }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }
+    return originalFetch(url, options);
+  };
+  clearProviderCooldown("claude");
+  const server = createServer((request, response) => { void handle(request, response); });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  try {
+    const address = server.address();
+    const response = await fetch(`http://127.0.0.1:${address.port}/v1/responses`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-request-id": "req-transport-recovers" },
+      body: JSON.stringify({ model: "sonnet", stream: false }),
+    });
+    assert.equal(response.status, 200, "a request that only ever fails pre-response should recover within its retry budget");
+    assert.equal(responseCalls, 3);
+    const transportEvents = getRouterStatus().recentEvents.filter((event) => event.phase === "transport_error" && event.requestId === "req-transport-recovers");
+    assert.equal(transportEvents.length, 2);
+    assert.deepEqual(transportEvents.map((event) => event.errorCode).sort(), ["EPIPE", "UND_ERR_SOCKET"]);
   } finally {
     await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
     globalThis.fetch = originalFetch;
@@ -1851,6 +1908,79 @@ test("direct concrete request does not retry once the client signal is aborted",
     else process.env.CODEX_ROUTER_CONCRETE_RETRY_MS = originalCooldown;
     if (originalMax === undefined) delete process.env.CODEX_ROUTER_CONCRETE_RETRY_MAX_MS;
     else process.env.CODEX_ROUTER_CONCRETE_RETRY_MAX_MS = originalMax;
+    activeProviderRequests.clear();
+    clearProviderCooldown("claude");
+    resetRouterTelemetry();
+  }
+});
+
+test("direct concrete request stops retrying once the client aborts mid-way through the extended transport retry budget", async () => {
+  const originalFetch = globalThis.fetch;
+  let responseCalls = 0;
+  const controller = new AbortController();
+  globalThis.fetch = async (url, options) => {
+    if (String(url) === "http://127.0.0.1:4000/v1/responses") {
+      responseCalls += 1;
+      if (responseCalls === 1) {
+        // Mirrors the pooled keep-alive connection getting recycled out from
+        // under the first reuse attempt; the bounded transport budget still
+        // has a second retry (of 3 total attempts) available at this point.
+        const error = new TypeError("fetch failed");
+        error.cause = { code: "UND_ERR_SOCKET", syscall: "write" };
+        throw error;
+      }
+      // The client cancels while its second attempt is in flight, i.e.
+      // before the extended transport budget (3 attempts) is exhausted.
+      // Cancellation must win over the remaining budget instead of the
+      // router spending the last attempt anyway.
+      controller.abort();
+      const error = new Error("aborted");
+      error.name = "AbortError";
+      throw error;
+    }
+    return originalFetch(url, options);
+  };
+  const route = routeForModel("sonnet");
+  const requestChunks = [Buffer.from(JSON.stringify({ model: "sonnet", stream: false }))];
+  const { IncomingMessage } = await import("node:http");
+  const { Socket } = await import("node:net");
+  const fakeRequest = Object.assign(new IncomingMessage(new Socket()), {
+    url: "/v1/responses",
+    method: "POST",
+    headers: { "content-type": "application/json", "x-request-id": "req-mid-budget-abort" },
+    complete: false,
+  });
+  fakeRequest.push(...requestChunks);
+  fakeRequest.push(null);
+  const headerStore = {};
+  const fakeResponse = {
+    headersSent: false,
+    writableEnded: false,
+    destroyed: false,
+    setHeader(name, value) { headerStore[name] = value; },
+    getHeader(name) { return headerStore[name]; },
+    removeHeader(name) { delete headerStore[name]; },
+    writeHead(status, headers) {
+      this.headersSent = true;
+      for (const [name, value] of Object.entries(headers ?? {})) headerStore[name] = value;
+    },
+    write() {},
+    end() { this.writableEnded = true; },
+    once() {},
+    on() {},
+    removeListener() {},
+  };
+  try {
+    clearProviderCooldown("claude");
+    await proxyConcreteResponse(fakeResponse, route, { model: "sonnet", stream: false }, false, "req-mid-budget-abort", null, { key: "unknown", cwd: null }, controller.signal);
+    assert.equal(responseCalls, 2, `cancellation must stop retries before the 3-attempt transport budget is exhausted; got ${responseCalls} fetch calls`);
+    const events = getRouterStatus().recentEvents.filter((event) => event.requestId === "req-mid-budget-abort");
+    const result = events.find((event) => event.phase === "result");
+    assert.equal(result?.status, 499, "an in-flight cancellation must report client_aborted, not spend the remaining retry budget");
+    assert.equal(result?.failureClass, "client_aborted");
+    assert.equal(events.filter((event) => event.phase === "retry").length, 1, "only the first attempt's retry should be scheduled; the second must be cut short by cancellation");
+  } finally {
+    globalThis.fetch = originalFetch;
     activeProviderRequests.clear();
     clearProviderCooldown("claude");
     resetRouterTelemetry();

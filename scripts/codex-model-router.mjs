@@ -74,12 +74,27 @@ const PROVIDER_COOLDOWN_MAX_MS = Math.max(PROVIDER_COOLDOWN_MS, positiveDuration
 // defaults. The caller still owns cancellation, and the timeout aborts an
 // in-flight response body as well as a connection that never produces headers.
 const UPSTREAM_TIMEOUT_MS = positiveDuration(process.env.CODEX_ROUTER_UPSTREAM_TIMEOUT_MS, 900_000);
-// Bounded retry budget for direct concrete provider requests: a single total
-// retry per inbound HTTP request, only on pre-response transport failures or
-// HTTP 502/503/504 from the upstream provider. Never retries after the
+// Bounded retry budget for direct concrete provider requests. A completed
+// upstream HTTP 502/503/504 response is real signal from the provider, so it
+// gets a single bounded retry to avoid hammering something that is already
+// struggling. A pre-response transport failure has no usable response signal,
+// so it gets a slightly larger but still bounded budget. The request may have
+// reached the provider before the connection failed, so this is deliberately
+// not an unbounded or generally idempotent retry policy.
+// chatgpt.com's Codex backend has been observed recycling the pooled
+// keep-alive connection out from under an in-flight reuse attempt (ECONNRESET/
+// EPIPE/UND_ERR_SOCKET writing the *next* request), including immediately
+// after a prior request on that same connection completed; a single retry
+// can still land on another connection from the same batch that is equally
+// stale, so transport failures get one extra attempt. Never retries after the
 // response stream has started or when the client signal is aborted.
 const CONCRETE_RETRY_BASE_MS = positiveDuration(process.env.CODEX_ROUTER_CONCRETE_RETRY_MS, 200);
 const CONCRETE_RETRY_MAX_MS = Math.max(CONCRETE_RETRY_BASE_MS, positiveDuration(process.env.CODEX_ROUTER_CONCRETE_RETRY_MAX_MS, 2_000));
+const CONCRETE_STATUS_MAX_ATTEMPTS = 2;
+const CONCRETE_TRANSPORT_MAX_ATTEMPTS = Math.max(
+  CONCRETE_STATUS_MAX_ATTEMPTS,
+  positiveDuration(process.env.CODEX_ROUTER_CONCRETE_TRANSPORT_RETRY_LIMIT, 3),
+);
 // Time the router will wait for in-flight response requests to drain after a
 // shutdown signal before forcibly aborting them and exiting.
 const SHUTDOWN_DRAIN_TIMEOUT_MS = positiveDuration(process.env.CODEX_ROUTER_SHUTDOWN_DRAIN_MS, 30_000);
@@ -1607,8 +1622,9 @@ function abortActiveResponseRequests() {
 }
 
 async function jitteredBackoff() {
-  const ceiling = Math.min(CONCRETE_RETRY_MAX_MS, CONCRETE_RETRY_BASE_MS * 2);
-  const delayMs = 1 + Math.floor(Math.random() * ceiling);
+  const floor = Math.min(CONCRETE_RETRY_BASE_MS, CONCRETE_RETRY_MAX_MS);
+  const ceiling = Math.max(floor, Math.min(CONCRETE_RETRY_MAX_MS, CONCRETE_RETRY_BASE_MS * 2));
+  const delayMs = floor + Math.floor(Math.random() * (ceiling - floor + 1));
   await new Promise((resolve) => setTimeout(resolve, delayMs));
   return delayMs;
 }
@@ -2003,6 +2019,15 @@ function downstreamHeaders(route, auth, turnMetadataHeader) {
     headers.authorization = `Bearer ${auth.token}`;
     headers["chatgpt-account-id"] = auth.accountId;
   }
+  // chatgpt.com's Codex backend recycles pooled keep-alive connections out
+  // from under an in-flight reuse attempt -- see the transport-retry note
+  // near CONCRETE_TRANSPORT_MAX_ATTEMPTS -- which surfaces as ECONNRESET/
+  // EPIPE/UND_ERR_SOCKET while writing the *next* request on a now-stale
+  // socket. Every codex request therefore opens its own connection instead
+  // of drawing from Node's global keep-alive pool, removing the race at its
+  // source rather than retrying around it. Other providers run on the local
+  // loopback and are unaffected, so they keep reusing pooled connections.
+  if (route.provider === "codex") headers.connection = "close";
   // Allowlisted forward: only FORWARDED_REQUEST_HEADERS ever crosses from the
   // inbound client request to the outbound provider request. The provider
   // credential above is always sourced independently, never from the client.
@@ -2152,12 +2177,16 @@ async function proxyConcreteResponse(response, route, payload, wantsStream, requ
   recordRouterEvent({ phase: "selected", requestId, requestedModel: payload.model, provider: route.provider, model: payload.model, workspace });
   incrementActiveRequests(route.provider);
   // Direct concrete requests must not silently reroute to another provider.
-  // A single bounded retry is permitted for pre-response transport failures
-  // and HTTP 502/503/504 from the upstream provider; never after the
-  // response stream has begun or when the client signal is aborted, and
-  // never on auth/payload errors.
+  // A single bounded retry is permitted for HTTP 502/503/504 from the
+  // upstream provider (real signal from a completed response); pre-response
+  // transport failures get one additional attempt since they carry no usable
+  // response signal -- see CONCRETE_TRANSPORT_MAX_ATTEMPTS. The request may
+  // have reached the provider before the connection failed, so keep this
+  // budget deliberately small.
+  // Never retries after the response stream has begun or when the client
+  // signal is aborted, and never on auth/payload errors.
   let attempts = 0;
-  const maxAttempts = 2;
+  const maxAttempts = Math.max(CONCRETE_STATUS_MAX_ATTEMPTS, CONCRETE_TRANSPORT_MAX_ATTEMPTS);
   const sendFailureResponse = (status, failureClass) => {
     if (response.writableEnded) return;
     if (response.headersSent) { response.end(); return; }
@@ -2191,7 +2220,7 @@ async function proxyConcreteResponse(response, route, payload, wantsStream, requ
         const result = await fetchUpstream(route, payload, wantsStream, turnMetadataHeader, clientSignal);
         if (!result.ok) {
           const failureClass = classifyProviderFailure(result.status, result.body);
-          const canRetry = result.retryable && attempts === 0 && !clientSignal?.aborted && !response.headersSent;
+          const canRetry = result.retryable && attempts < CONCRETE_STATUS_MAX_ATTEMPTS - 1 && !clientSignal?.aborted && !response.headersSent;
           if (canRetry) {
             recordRouterEvent({ phase: "retry", requestId, requestedModel: payload.model, provider: route.provider, model: payload.model, workspace, status: result.status, failureClass, elapsedMs: Date.now() - startedAt });
             attempts += 1;
@@ -2221,7 +2250,7 @@ async function proxyConcreteResponse(response, route, payload, wantsStream, requ
           recordRouterEvent({ phase: "result", requestId, requestedModel: payload.model, provider: route.provider, model: payload.model, workspace, outcome: "failure", status: 499, failureClass: "client_aborted", elapsedMs: Date.now() - startedAt });
           return;
         }
-        if (attempts === 0 && !response.headersSent) {
+        if (attempts < CONCRETE_TRANSPORT_MAX_ATTEMPTS - 1 && !response.headersSent) {
           const failureClass = classifyProviderFailure(502, error instanceof Error ? error.message : String(error));
           recordRouterEvent({ phase: "retry", requestId, requestedModel: payload.model, provider: route.provider, model: payload.model, workspace, status: 502, failureClass, elapsedMs: Date.now() - startedAt });
           attempts += 1;

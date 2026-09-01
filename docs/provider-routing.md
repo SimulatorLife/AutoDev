@@ -263,12 +263,30 @@ Every proxied router response carries correlation headers:
 - `x-autodev-router-instance-id` — the router process instance that handled
   the request, useful for detecting a restart during an incident.
 
-Transient direct concrete provider failures receive one bounded pre-response
-retry before the router returns a structured HTTP 502/503/504 error. The
-retry uses a jittered 200–400ms delay by default and can be tuned with
-`CODEX_ROUTER_CONCRETE_RETRY_MS` and
-`CODEX_ROUTER_CONCRETE_RETRY_MAX_MS`; it never retries after response headers
-or client cancellation. The response includes
+chatgpt.com's Codex backend has been observed recycling a pooled keep-alive
+connection without warning, including immediately after a prior request on
+that connection completed, which surfaces as an
+ECONNRESET/EPIPE/UND_ERR_SOCKET write failure while the router tries to reuse
+it for the next request. Rather than only retrying around this, every `codex`
+route request sets `Connection: close` on the outbound request so it always
+opens a fresh connection and is never drawn from Node's pooled keep-alive
+connections -- removing the race at its source instead of catching it
+downstream. Other routes run on the local loopback, are unaffected by this
+failure mode, and keep reusing pooled connections.
+
+Transient direct concrete provider failures also receive a bounded
+pre-response retry before the router returns a structured HTTP 502/503/504
+error, as defense in depth for transport failures unrelated to connection
+reuse. A completed HTTP 502/503/504 response from the provider is real
+signal, so it gets exactly one retry. A connection reset, broken pipe, or
+other pre-response transport failure carries no usable response signal; the
+provider may still have received the request before the connection failed, so
+the router uses only one extra bounded attempt (3 total, tunable with
+`CODEX_ROUTER_CONCRETE_TRANSPORT_RETRY_LIMIT`). Retries use a jittered
+200–400ms delay by default and can be tuned with
+`CODEX_ROUTER_CONCRETE_RETRY_MS` and `CODEX_ROUTER_CONCRETE_RETRY_MAX_MS`; the
+router never retries after response headers or client cancellation. The
+response includes
 `router_provider_unavailable`, the provider/model/request and router-instance
 correlation fields, and a `retry-after` header after the provider is cooled
 down. Concrete model requests are never silently rerouted.

@@ -109,8 +109,8 @@
       ]
     },
     {
-      "slug": "gpt-5.6-luna",
-      "display_name": "GPT-5.6 Luna",
+      "slug": "gpt-5.6-sol",
+      "display_name": "GPT-5.6 Sol",
       "description": "OpenAI Codex model for targeted research.",
       "base_instructions": "You are a bounded Codex agent.",
       "model_messages": {
