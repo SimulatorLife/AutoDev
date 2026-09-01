@@ -26,7 +26,8 @@ entry to work there.
 The installer exposes these four AutoDev-owned shared skill directories in
 `$HOME/.agents/skills/` through symlinks:
 
-- `code-simplification`
+- `diagnosing-bugs`
+- `improve-codebase-architecture`
 - `lsp-mcp-server`
 - `orchestration`
 - `remove-legacy-shims`
@@ -37,7 +38,15 @@ for DRY, KISS, cohesion, coupling, ownership, fragmentation, and abstraction
 cleanup while deferring to each target repository's own architecture and
 validation rules.
 
-Keep the canonical user-level skill content in AutoDev; update the registered
+`diagnosing-bugs` and `improve-codebase-architecture` are repository-agnostic
+engineering workflows intended to apply across local Codex development. The
+architecture skill focuses on ownership, module depth, seams, dependency
+direction, locality, test surfaces, and structural change amplification. The
+bug-diagnosis skill focuses on reproducible failure signals, root-cause tracing,
+falsifiable hypotheses, evidence-safe instrumentation, regression guards, and
+verification against the original symptom.
+
+Keep the canonical registered user-level skill content in AutoDev; update the
 skill directories there and rerun the installer when changing this setup. The
 installer links each complete skill directory with an absolute target; do not
 link an individual `SKILL.md` file because Codex currently skips file-level
