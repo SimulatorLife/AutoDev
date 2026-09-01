@@ -15,7 +15,7 @@ test("new engineering skills are registered as user-level skills", () => {
   for (const skill of registeredSkills) {
     assert.match(installer, new RegExp(`skill_names=.*\\b${skill}\\b`));
     assert.match(installer, /user_skills_dir="\$HOME\/\.agents\/skills"/);
-    assert.match(localSetup, new RegExp(`- \\`${skill}\\``));
+    assert.match(localSetup, new RegExp("- `" + skill + "`"));
   }
 });
 
