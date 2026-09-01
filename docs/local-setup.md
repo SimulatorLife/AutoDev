@@ -23,28 +23,28 @@ and use them with `pnpm exec`. Other active repositories need to expose the same
 `lsp-mcp-server` command through their package manager for the user-level MCP
 entry to work there.
 
-The installer exposes these four AutoDev-owned shared skill directories in
+The installer exposes these AutoDev-owned shared skill directories in
 `$HOME/.agents/skills/` through symlinks:
 
+- `code-simplification`
 - `diagnosing-bugs`
 - `improve-codebase-architecture`
 - `lsp-mcp-server`
 - `orchestration`
 - `remove-legacy-shims`
+- `resolve-merge-conflicts`
 
-`code-simplification` is repository-agnostic and is intended to be available to
-local Codex work in any repository. It defines a behavior-preserving workflow
-for DRY, KISS, cohesion, coupling, ownership, fragmentation, and abstraction
-cleanup while deferring to each target repository's own architecture and
-validation rules.
-
-`diagnosing-bugs` and `improve-codebase-architecture` are repository-agnostic
-engineering workflows intended to apply across local Codex development. The
-architecture skill focuses on ownership, module depth, seams, dependency
-direction, locality, test surfaces, and structural change amplification. The
-bug-diagnosis skill focuses on reproducible failure signals, root-cause tracing,
+The shared engineering skills are repository-agnostic and intended to apply
+across local Codex development. `code-simplification` focuses on DRY, KISS,
+cohesion, coupling, ownership, fragmentation, and abstraction cleanup.
+`diagnosing-bugs` focuses on reproducible failure signals, root-cause tracing,
 falsifiable hypotheses, evidence-safe instrumentation, regression guards, and
-verification against the original symptom.
+verification against the original symptom. `improve-codebase-architecture`
+focuses on ownership, module depth, seams, dependency direction, locality, test
+surfaces, and structural change amplification. `resolve-merge-conflicts`
+provides an intent-preserving conflict-resolution workflow plus a bundled
+compact context extractor so agents can inspect unresolved paths and hunks
+without loading whole conflicted files by default.
 
 Keep the canonical registered user-level skill content in AutoDev; update the
 skill directories there and rerun the installer when changing this setup. The
