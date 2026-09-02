@@ -241,15 +241,22 @@ trust_level = "trusted"
 [projects."/Users/henrykirk/Documents"]
 trust_level = "untrusted"
 
+# Both servers resolve their binary from the active project's own node_modules
+# via `pnpm exec`, so every repository gets the version its lockfile pins. Never
+# use `pnpm dlx <pkg>@latest` here: that ignores the pinned devDependency and
+# refetches an unpinned build that can drift away from the repository's own
+# Playwright/LSP versions.
 [mcp_servers.lsp]
 enabled = true
 command = "pnpm"
 args = ["exec", "lsp-mcp-server"]
+default_tools_approval_mode = "approve"
 
 [mcp_servers.playwright]
 enabled = true
 command = "pnpm"
 args = ["exec", "playwright-mcp"]
+default_tools_approval_mode = "approve"
 
 [mcp_servers.node_repl]
 args = []

@@ -189,15 +189,33 @@ test('local provider tooling resolves the playwright MCP from a pinned devDepend
     const source = await readFile(configFile, 'utf8');
     assert.match(source, /command = "pnpm"/);
     assert.match(source, /args = \["exec", "playwright-mcp"\]/);
+    // Assert against configuration, not prose: a comment may name the forbidden
+    // runners in order to warn about them.
+    const settings = source.split('\n').filter((line) => !line.trimStart().startsWith('#')).join('\n');
     // No dlx @latest: it re-resolves on every cold start (network + startup latency),
     // grows the pnpm dlx cache, and drifts the version across hosts/agents.
-    assert.doesNotMatch(source, /\bdlx\b/);
-    assert.doesNotMatch(source, /@playwright\/mcp@latest/);
-    assert.doesNotMatch(source, /\bnpx\b/);
+    assert.doesNotMatch(settings, /\bdlx\b/);
+    assert.doesNotMatch(settings, /@playwright\/mcp@latest/);
+    assert.doesNotMatch(settings, /\bnpx\b/);
   }
 
   const manifest = JSON.parse(await readFile(path.join(root, 'package.json'), 'utf8'));
   assert.equal(manifest.devDependencies['@playwright/mcp'], '^0.0.80');
+});
+
+test('the user-level MCP servers are self-sufficient, so no repository needs to redeclare them', async () => {
+  const config = await readFile(path.join(root, 'scripts', 'codex', 'config.toml'), 'utf8');
+  // Each server must carry every setting a project would otherwise re-add
+  // locally. A project-local block shadows the user-level one by name, which is
+  // how an unpinned `dlx @latest` override silently replaced the pinned
+  // devDependency in a target repository.
+  for (const server of ['lsp', 'playwright']) {
+    const block = config.slice(config.indexOf(`[mcp_servers.${server}]`)).split('\n\n')[0];
+    assert.match(block, /command = "pnpm"/, server);
+    assert.match(block, /args = \["exec", "[a-z-]+"\]/, server);
+    assert.match(block, /default_tools_approval_mode = "approve"/, server);
+    assert.match(block, /enabled = true/, server);
+  }
 });
 
 test('private target validation clones through AutoDev and reports target status', async () => {
