@@ -166,10 +166,6 @@ trusted_hash = "sha256:fb8fc3e8382b976741f0b49a7056ad392b5b3b7d618ba16a3da4797fd
 [hooks.state."/Users/henrykirk/.codex/config.toml:subagent_start:2:0"]
 trusted_hash = "sha256:07139ded17bd6a0567b6131e2c98f2d570c5d5fca5888261a467d7d52470eb5b"
 
-[hooks.state."/Users/henrykirk/Desktop/RacingGame/.codex/config.toml:pre_tool_use:0:0"]
-trusted_hash = "sha256:c7500657d0863c1e63181d61245e5872b0eb75ea886307f7c7c5876f433d60c9"
-enabled = true
-
 [hooks.state."/Users/henrykirk/.codex/config.toml:session_start:0:0"]
 trusted_hash = "sha256:73544f44bcd549b209b5f53b231741c87b856430ebf555eb7f7d69f92d13c36b"
 
