@@ -1094,32 +1094,42 @@ function refreshCodexTaskSnapshot() {
     let listRequestId = 2;
     let pageCount = 0;
     const tasks = [];
+    const writeStdin = (text) => {
+      if (settled || !child.stdin || !child.stdin.writable || child.stdin.destroyed) return;
+      try {
+        child.stdin.write(text);
+      } catch {
+        // Child pipe closed or process exited concurrently.
+      }
+    };
     const finish = (nextSnapshot) => {
       if (settled) return;
       settled = true;
       codexTaskSnapshot = nextSnapshot;
-      child.kill();
+      try { child.stdin?.end(); } catch {}
+      try { child.kill(); } catch {}
       resolve();
     };
+    child.stdin?.on("error", () => {});
     const timer = setTimeout(() => finish({ ...codexTaskSnapshot, status: "unavailable", fetchedAt: new Date().toISOString(), error: "Codex app-server task listing timed out." }), 8000);
     child.stdout.on("data", (chunk) => {
       buffer += chunk.toString();
       const lines = buffer.split(/\r?\n/);
       buffer = lines.pop() ?? "";
       for (const line of lines) {
-        if (!line.trim()) continue;
+        if (!line.trim() || settled) continue;
         let message;
         try { message = JSON.parse(line); } catch { continue; }
         if (message.id === 1) {
-          child.stdin.write(JSON.stringify({ method: "initialized", params: {} }) + "\n");
-          child.stdin.write(JSON.stringify({ id: 2, method: "thread/list", params: { limit: 100, archived: false, sourceKinds: ["cli", "vscode", "exec", "appServer", "subAgent", "subAgentReview", "subAgentCompact", "subAgentThreadSpawn", "subAgentOther", "unknown"], useStateDbOnly: true } }) + "\n");
+          writeStdin(JSON.stringify({ method: "initialized", params: {} }) + "\n");
+          writeStdin(JSON.stringify({ id: 2, method: "thread/list", params: { limit: 100, archived: false, sourceKinds: ["cli", "vscode", "exec", "appServer", "subAgent", "subAgentReview", "subAgentCompact", "subAgentThreadSpawn", "subAgentOther", "unknown"], useStateDbOnly: true } }) + "\n");
         } else if (message.id === listRequestId) {
           const result = message.result;
           tasks.push(...(result?.data ?? []));
           pageCount += 1;
           if (result?.nextCursor && pageCount < Math.max(1, CODEX_TASK_MAX_PAGES)) {
             listRequestId += 1;
-            child.stdin.write(JSON.stringify({ id: listRequestId, method: "thread/list", params: { limit: 100, cursor: result.nextCursor, archived: false, sourceKinds: ["cli", "vscode", "exec", "appServer", "subAgent", "subAgentReview", "subAgentCompact", "subAgentThreadSpawn", "subAgentOther", "unknown"], useStateDbOnly: true } }) + "\n");
+            writeStdin(JSON.stringify({ id: listRequestId, method: "thread/list", params: { limit: 100, cursor: result.nextCursor, archived: false, sourceKinds: ["cli", "vscode", "exec", "appServer", "subAgent", "subAgentReview", "subAgentCompact", "subAgentThreadSpawn", "subAgentOther", "unknown"], useStateDbOnly: true } }) + "\n");
           } else {
             clearTimeout(timer);
             const summary = summarizeCodexTasks(tasks);
@@ -1132,7 +1142,7 @@ function refreshCodexTaskSnapshot() {
       clearTimeout(timer);
       finish({ ...codexTaskSnapshot, status: "unavailable", fetchedAt: new Date().toISOString(), error: error.message });
     });
-    child.stdin.write(JSON.stringify({ id: 1, method: "initialize", params: { clientInfo: { name: "autodev-router", title: "AutoDev router status", version: "1" }, capabilities: {} } }) + "\n");
+    writeStdin(JSON.stringify({ id: 1, method: "initialize", params: { clientInfo: { name: "autodev-router", title: "AutoDev router status", version: "1" }, capabilities: {} } }) + "\n");
   }).finally(() => { codexTaskRefreshPromise = null; });
 }
 
@@ -1567,11 +1577,39 @@ function scheduleRouterStatePersist() {
   }, 500);
 }
 
+const CLIENT_DISCONNECT_CODES = new Set([
+  "EPIPE",
+  "ECONNRESET",
+  "ERR_STREAM_DESTROYED",
+  "ERR_STREAM_WRITE_AFTER_END",
+]);
+
+function isClientDisconnectError(error) {
+  if (!error || typeof error !== "object") return false;
+  if (CLIENT_DISCONNECT_CODES.has(error.code)) return true;
+  const cause = error.cause;
+  if (cause && typeof cause === "object" && CLIENT_DISCONNECT_CODES.has(cause.code)) return true;
+  return false;
+}
+
 let fatalExitPromise = null;
 
 function handleFatalProcessError(phase, reason) {
   if (fatalExitPromise) return;
   const info = transportErrorInfo(reason);
+  if (phase === "uncaught_exception" && isClientDisconnectError(reason)) {
+    console.error(JSON.stringify({
+      schema: "autodev-router-event-v1",
+      timestamp: new Date().toISOString(),
+      routerInstanceId: ROUTER_INSTANCE_ID,
+      requestId: null,
+      phase: "client_disconnect_ignored",
+      errorName: info.name,
+      errorCode: info.code,
+      syscall: info.syscall,
+    }));
+    return;
+  }
   console.error(JSON.stringify({
     schema: "autodev-router-event-v1",
     timestamp: new Date().toISOString(),
@@ -1913,6 +1951,22 @@ async function writeResponseStream(response, upstream, publicModel, signal = nul
   let toolCalls = 0;
   let buffer = "";
   let terminal = null;
+  const onResponseError = () => {
+    // Absorb client disconnect socket errors (EPIPE, ECONNRESET, etc.)
+  };
+  response.on("error", onResponseError);
+  const isWritable = () => !response.writableEnded && !response.destroyed && !response.closed && !signal?.aborted;
+  const safeWrite = (chunk) => {
+    if (!isWritable()) return false;
+    try {
+      return response.write(chunk);
+    } catch {
+      return false;
+    }
+  };
+  const keepAlive = setInterval(() => {
+    safeWrite(": codex-router keep-alive\n\n");
+  }, 2000);
   const inspectTerminal = (event) => {
     for (const line of event.split(/\r?\n/)) {
       if (!line.startsWith("data: ") || line.slice(6) === "[DONE]") continue;
@@ -1929,47 +1983,57 @@ async function writeResponseStream(response, upstream, publicModel, signal = nul
     }
   };
   const flushEvents = (flush = false) => {
-    while (true) {
+    while (isWritable()) {
       const boundary = buffer.match(/\r?\n\r?\n/);
       if (!boundary) break;
       const end = boundary.index + boundary[0].length;
       const event = buffer.slice(0, end);
       inspectTerminal(event);
       toolCalls += countToolCallsFromSse(event, seenToolCalls);
-      response.write(transformSseEvent(event, publicModel));
+      safeWrite(transformSseEvent(event, publicModel));
       buffer = buffer.slice(end);
     }
-    if (flush && buffer) {
+    if (flush && buffer && isWritable()) {
       inspectTerminal(buffer);
       toolCalls += countToolCallsFromSse(buffer, seenToolCalls);
-      response.write(transformSseEvent(buffer, publicModel));
+      safeWrite(transformSseEvent(buffer, publicModel));
       buffer = "";
     }
   };
   if (!upstream.body) {
-    response.write(responseFailureEvent("Upstream provider returned no response body."));
+    clearInterval(keepAlive);
+    safeWrite(responseFailureEvent("Upstream provider returned no response body."));
+    response.removeListener("error", onResponseError);
     return { toolCalls, failed: true };
   }
   try {
     for await (const chunk of upstream.body) {
+      if (!isWritable()) break;
       buffer += decoder.decode(chunk, { stream: true });
       flushEvents();
     }
-    buffer += decoder.decode();
-    flushEvents(true);
+    if (isWritable()) {
+      buffer += decoder.decode();
+      flushEvents(true);
+    }
   } catch (error) {
-    if (!response.writableEnded) {
+    if (isWritable()) {
       const message = signal?.aborted && signal.reason?.name === "TimeoutError"
         ? `Upstream provider exceeded the ${Math.ceil(UPSTREAM_TIMEOUT_MS / 1000)}s response timeout.`
         : error instanceof Error ? error.message : String(error);
-      response.write(responseFailureEvent(message));
+      safeWrite(responseFailureEvent(message));
       return { toolCalls, failed: true };
     }
-    throw error;
+    return { toolCalls, failed: true };
+  } finally {
+    clearInterval(keepAlive);
+    response.removeListener("error", onResponseError);
   }
   if (terminal === "failed") return { toolCalls, failed: true };
   if (terminal !== "completed") {
-    response.write(responseFailureEvent("Upstream provider closed the stream before response.completed."));
+    if (isWritable()) {
+      safeWrite(responseFailureEvent("Upstream provider closed the stream before response.completed."));
+    }
     return { toolCalls, failed: true };
   }
   return { toolCalls, failed: false };
@@ -2174,7 +2238,9 @@ async function writeSuccessfulResponse(response, route, result, wantsStream, pub
   if (wantsStream) {
     response.writeHead(upstream.status, { ...responseHeaders, "content-type": upstream.headers.get("content-type") ?? "text/event-stream", "cache-control": "no-cache", connection: "close" });
     const streamResult = await writeResponseStream(response, upstream, publicModel, result.signal);
-    response.end();
+    if (!response.writableEnded && !response.destroyed && !response.closed) {
+      try { response.end(); } catch {}
+    }
     return streamResult;
   }
   const body = await upstream.text();
@@ -2719,6 +2785,7 @@ export {
   ingestOtelMetrics,
   ingestOtelSignal,
   ingestOtelTraces,
+  isClientDisconnectError,
   isDraining,
   isProviderCoolingDown,
   loadRouterState,

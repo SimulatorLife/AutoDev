@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
+import { connect } from "node:net";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import test from "node:test";
 import { join } from "node:path";
@@ -28,6 +29,7 @@ import {
   codexTelemetryStatus,
   ingestOtelSignal,
   incrementActiveRequests,
+  isClientDisconnectError,
   isDraining,
   isProviderCoolingDown,
   loadRouterState,
@@ -2441,3 +2443,142 @@ test("a delegated role is named as that role, and a client cannot claim to be th
     resetRouterTelemetry();
   }
 });
+
+test("isClientDisconnectError correctly classifies client socket and broken pipe errors", () => {
+  assert.equal(isClientDisconnectError(null), false);
+  assert.equal(isClientDisconnectError({}), false);
+  assert.equal(isClientDisconnectError(new TypeError("regular error")), false);
+  assert.equal(isClientDisconnectError(Object.assign(new Error("broken pipe"), { code: "EPIPE" })), true);
+  assert.equal(isClientDisconnectError(Object.assign(new Error("conn reset"), { code: "ECONNRESET" })), true);
+  assert.equal(isClientDisconnectError(Object.assign(new Error("stream destroyed"), { code: "ERR_STREAM_DESTROYED" })), true);
+  assert.equal(isClientDisconnectError(Object.assign(new Error("write after end"), { code: "ERR_STREAM_WRITE_AFTER_END" })), true);
+  // Nested cause
+  const nested = new Error("fetch failed");
+  nested.cause = { code: "EPIPE" };
+  assert.equal(isClientDisconnectError(nested), true);
+  const otherNested = new Error("fetch failed");
+  otherNested.cause = { code: "EINVAL" };
+  assert.equal(isClientDisconnectError(otherNested), false);
+});
+
+test("writeResponseStream emits active keep-alive comments down to the client during quiet streaming intervals", async () => {
+  const originalFetch = globalThis.fetch;
+  let streamClosed = false;
+  globalThis.fetch = async (url, options) => {
+    const target = String(url);
+    if (target.endsWith("/responses")) {
+      const stream = new ReadableStream({
+        async start(controller) {
+          // Send an initial event
+          controller.enqueue(new TextEncoder().encode('data: {"type":"response.output_text.delta","delta":"hello"}\n\n'));
+          // Delay to allow the router-level keep-alive to fire
+          await new Promise((resolve) => setTimeout(resolve, 2200));
+          controller.enqueue(new TextEncoder().encode('data: {"type":"response.completed","response":{"status":"completed","output":[]}}\n\n'));
+          controller.close();
+        },
+      });
+      return new Response(stream, {
+        status: 200,
+        headers: { "content-type": "text/event-stream" },
+      });
+    }
+    return originalFetch(url, options);
+  };
+  clearProviderCooldown("claude");
+  const server = createServer((request, response) => { void handle(request, response); });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  try {
+    const address = server.address();
+    const response = await originalFetch(`http://127.0.0.1:${address.port}/v1/responses`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ model: "sonnet", stream: true }),
+    });
+    assert.equal(response.status, 200);
+    const body = await response.text();
+    assert.match(body, /: codex-router keep-alive/, "the router should emit keep-alive comments during quiet intervals");
+    assert.match(body, /"type":"response\.completed"/, "the completed event should follow the keep-alive");
+  } finally {
+    await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    globalThis.fetch = originalFetch;
+    activeProviderRequests.clear();
+    clearProviderCooldown("claude");
+    resetRouterTelemetry();
+  }
+});
+
+test("abrupt client disconnect during SSE stream does not crash the router process", async () => {
+  const originalFetch = globalThis.fetch;
+  let upstreamEmitted = 0;
+  globalThis.fetch = async (url, options) => {
+    const target = String(url);
+    if (target.endsWith("/responses")) {
+      const stream = new ReadableStream({
+        async start(controller) {
+          controller.enqueue(new TextEncoder().encode('data: {"type":"response.output_text.delta","delta":"part1"}\n\n'));
+          upstreamEmitted += 1;
+          // Wait briefly, then emit more data after client has disconnected
+          await new Promise((resolve) => setTimeout(resolve, 150));
+          try {
+            controller.enqueue(new TextEncoder().encode('data: {"type":"response.output_text.delta","delta":"part2"}\n\n'));
+            upstreamEmitted += 1;
+            controller.enqueue(new TextEncoder().encode('data: {"type":"response.completed","response":{"status":"completed","output":[]}}\n\n'));
+            controller.close();
+          } catch {
+            // Upstream controller closed
+          }
+        },
+      });
+      return new Response(stream, {
+        status: 200,
+        headers: { "content-type": "text/event-stream" },
+      });
+    }
+    return originalFetch(url, options);
+  };
+  clearProviderCooldown("claude");
+  const server = createServer((request, response) => { void handle(request, response); });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const port = server.address().port;
+  try {
+    // Connect via raw TCP socket and abruptly destroy the socket after receiving initial data
+    await new Promise((resolve, reject) => {
+      const client = connect(port, "127.0.0.1", () => {
+        const payload = JSON.stringify({ model: "sonnet", stream: true });
+        client.write(
+          `POST /v1/responses HTTP/1.1\r\n` +
+          `Host: 127.0.0.1:${port}\r\n` +
+          `Content-Type: application/json\r\n` +
+          `Content-Length: ${Buffer.byteLength(payload)}\r\n` +
+          `Connection: close\r\n\r\n` +
+          payload
+        );
+      });
+      client.on("data", () => {
+        // Abruptly destroy client socket mid-stream (broken pipe simulation)
+        client.destroy();
+        resolve();
+      });
+      client.on("error", () => resolve());
+    });
+
+    // Allow time for upstream writes to fire against the dead socket
+    await new Promise((resolve) => setTimeout(resolve, 300));
+
+    // Verify the router is still fully alive and accepts subsequent requests
+    const followUpResponse = await originalFetch(`http://127.0.0.1:${port}/v1/responses`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ model: "sonnet", stream: false }),
+    });
+    assert.equal(followUpResponse.status, 200, "router must remain healthy and responsive after a client disconnected mid-stream");
+  } finally {
+    await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    globalThis.fetch = originalFetch;
+    activeProviderRequests.clear();
+    clearProviderCooldown("claude");
+    resetRouterTelemetry();
+  }
+});
+
+

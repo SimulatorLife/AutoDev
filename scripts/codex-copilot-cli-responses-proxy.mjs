@@ -199,26 +199,33 @@ async function handle(request, response) {
   let streamStarted = false;
   const pendingEvents = [];
   let clientClosed = false;
+  const isWritable = () => !clientClosed && !response.writableEnded && !response.destroyed && !response.closed;
   const emit = (eventName, body) => {
-    if (clientClosed || response.writableEnded || response.destroyed) return;
     const event = sseLine(eventName, { ...body, sequence_number: ++sequenceNumber });
-    if (streamStarted) response.write(event);
-    else pendingEvents.push(event);
+    if (!isWritable()) return;
+    if (streamStarted) {
+      try { response.write(event); } catch {}
+    } else {
+      pendingEvents.push(event);
+    }
   };
   // Hold the SSE headers back until the CLI has produced real output. Until
   // then a provider failure can still be reported as an HTTP status the router
   // is able to fall back on; after it, the turn is genuinely under way and the
   // parent should watch it live.
   const startStream = () => {
-    if (streamStarted || clientClosed || response.writableEnded || response.destroyed) return;
+    if (streamStarted || !isWritable()) return;
     streamStarted = true;
     response.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-cache", connection: "close" });
     response.flushHeaders();
     response.shouldKeepAlive = false;
-    for (const event of pendingEvents.splice(0)) response.write(event);
+    for (const event of pendingEvents.splice(0)) {
+      if (!isWritable()) break;
+      try { response.write(event); } catch {}
+    }
   };
   const emitActivity = (text, key = text) => {
-    if (!text || seenActivities.has(key) || response.writableEnded) return;
+    if (!text || seenActivities.has(key) || !isWritable()) return;
     seenActivities.add(key);
     activityParts.push(text);
     emit("response.reasoning_summary_text.delta", { type: "response.reasoning_summary_text.delta", item_id: reasoningId, output_index: 0, summary_index: 0, delta: `${text}\n` });
@@ -229,9 +236,25 @@ async function handle(request, response) {
   emit("response.output_item.added", { type: "response.output_item.added", output_index: 1, item: { id: itemId, type: "message", role: "assistant", status: "in_progress", content: [] } });
   emit("response.content_part.added", { type: "response.content_part.added", item_id: itemId, output_index: 1, content_index: 0, part: { type: "output_text", text: "", annotations: [] } });
 
-  const keepAlive = setInterval(() => { if (streamStarted && !response.writableEnded) response.write(": copilot-bridge keep-alive\n\n"); }, 2000);
+  const onResponseError = () => {
+    clientClosed = true;
+    clearInterval(keepAlive);
+    if (child && !child.killed) child.kill("SIGTERM");
+  };
+  response.on("error", onResponseError);
+
+  const keepAlive = setInterval(() => {
+    if (streamStarted && isWritable()) {
+      try { response.write(": copilot-bridge keep-alive\n\n"); } catch {}
+    }
+  }, 2000);
   let child;
-  response.on("close", () => { clientClosed = true; clearInterval(keepAlive); if (child && !child.killed) child.kill("SIGTERM"); });
+  response.on("close", () => {
+    clientClosed = true;
+    clearInterval(keepAlive);
+    response.removeListener("error", onResponseError);
+    if (child && !child.killed) child.kill("SIGTERM");
+  });
   try {
     const result = await runCopilot(prompt, payload.model, cwd, (event) => {
       if (event.type === "process") { child = event.child; return; }
@@ -244,7 +267,6 @@ async function handle(request, response) {
       // commentary token by token, so those parts are keyed by their text.
       emitActivity(event.text, event.key ?? `activity:${activityParts.length}:${event.text}`);
     });
-    clearInterval(keepAlive);
     startStream();
     const reasoningText = activityParts.join("");
     const completedReasoning = { id: reasoningId, type: "reasoning", status: "completed", summary: [ { type: "summary_text", text: reasoningText } ], content: [] };
@@ -257,17 +279,23 @@ async function handle(request, response) {
     emit("response.content_part.done", { type: "response.content_part.done", item_id: itemId, output_index: 1, content_index: 0, part: { type: "output_text", text: result.text, annotations: [] } });
     emit("response.output_item.done", { type: "response.output_item.done", output_index: 1, item: completedMessage });
     emit("response.completed", { type: "response.completed", response: completed });
-    response.end("data: [DONE]\n\n");
+    if (isWritable()) {
+      try { response.end("data: [DONE]\n\n"); } catch {}
+    }
   } catch (error) {
-    clearInterval(keepAlive);
-    if (clientClosed || response.writableEnded || response.destroyed) return;
+    if (!isWritable()) return;
     const message = error.message ?? String(error);
     if (!streamStarted) {
       sendJson(response, 503, { error: { type: "copilot_proxy_error", message } });
       return;
     }
     emit("response.failed", { type: "response.failed", response: { id: responseId, status: "failed", error: { message, type: "upstream_error" } } });
-    response.end("data: [DONE]\n\n");
+    if (isWritable()) {
+      try { response.end("data: [DONE]\n\n"); } catch {}
+    }
+  } finally {
+    clearInterval(keepAlive);
+    response.removeListener("error", onResponseError);
   }
 }
 
