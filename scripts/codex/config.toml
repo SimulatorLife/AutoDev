@@ -5,7 +5,7 @@ model_provider = "local_model_router"
 openai_base_url = "http://127.0.0.1:4100/v1"
 model_verbosity = "low"
 approval_policy = "never"
-model_reasoning_effort = "xhigh"
+model_reasoning_effort = "high"
 personality = "pragmatic"
 sandbox_mode = "workspace-write"
 suppress_unstable_features_warning = true
@@ -249,7 +249,7 @@ args = ["exec", "lsp-mcp-server"]
 [mcp_servers.playwright]
 enabled = true
 command = "pnpm"
-args = ["dlx", "@playwright/mcp@latest"]
+args = ["exec", "playwright-mcp"]
 
 [mcp_servers.node_repl]
 args = []

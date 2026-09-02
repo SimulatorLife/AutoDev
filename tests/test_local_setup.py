@@ -1,3 +1,4 @@
+import http.client
 import importlib.util
 import json
 import re
@@ -500,6 +501,116 @@ class LocalSetupTests(unittest.TestCase):
         system_prompt_index = args.index("--append-system-prompt")
         self.assertEqual(args[system_prompt_index + 1], claude_bridge.LEAF_BRIDGE_INSTRUCTIONS)
 
+    def test_orchestrator_turn_is_never_handed_the_leaf_prompt(self):
+        """The root orchestrator degrades onto this bridge when its primary
+        provider is unavailable. Handing it the leaf policy tells the parent it
+        is a bounded leaf that must not spawn child agents, which suppresses the
+        delegation the root turn exists to perform."""
+        orchestrator = claude_bridge.bridge_instructions("orchestrator")
+        self.assertEqual(orchestrator, claude_bridge.ORCHESTRATOR_BRIDGE_INSTRUCTIONS)
+        self.assertIn("ROOT ORCHESTRATOR POLICY", orchestrator)
+        self.assertNotIn("bounded leaf agent", orchestrator)
+        self.assertNotIn("Do not spawn", orchestrator)
+
+        prompt = claude_bridge.prompt_from_input("Implement the change.", orchestrator)
+        self.assertIn("ROOT ORCHESTRATOR POLICY", prompt)
+        self.assertNotIn("bounded leaf agent", prompt)
+
+        for role in (None, "", "explorer", "worker", "orchestrator-ish"):
+            with self.subTest(role=role):
+                self.assertEqual(
+                    claude_bridge.bridge_instructions(role),
+                    claude_bridge.LEAF_BRIDGE_INSTRUCTIONS,
+                    msg="anything that is not exactly the orchestrator is a leaf",
+                )
+        self.assertIn("bounded leaf agent", claude_bridge.LEAF_BRIDGE_INSTRUCTIONS)
+        self.assertIn("Do not spawn", claude_bridge.LEAF_BRIDGE_INSTRUCTIONS)
+
+    def test_agent_role_comes_only_from_the_router_generated_header(self):
+        headers = http.client.HTTPMessage()
+        headers["X-Autodev-Agent-Role"] = " Orchestrator "
+        self.assertEqual(claude_bridge.resolve_agent_role(headers), "orchestrator")
+        self.assertTrue(claude_bridge.is_orchestrator_role(claude_bridge.resolve_agent_role(headers)))
+        self.assertIsNone(claude_bridge.resolve_agent_role(http.client.HTTPMessage()))
+        self.assertIsNone(claude_bridge.resolve_agent_role(None))
+        self.assertEqual(claude_bridge.AGENT_ROLE_HEADER, "x-autodev-agent-role")
+
+    def test_orchestrator_keeps_the_delegation_tools_every_leaf_loses(self):
+        leaf = claude_bridge.claude_cli_args("prompt", "sonnet", "medium")
+        self.assertIn("--disallowed-tools", leaf)
+
+        orchestrator = claude_bridge.claude_cli_args("prompt", "sonnet", "medium", "orchestrator")
+        self.assertNotIn(
+            "--disallowed-tools",
+            orchestrator,
+            msg="the root orchestrator must keep the Agent tool it delegates with",
+        )
+        system_prompt_index = orchestrator.index("--append-system-prompt")
+        self.assertEqual(
+            orchestrator[system_prompt_index + 1],
+            claude_bridge.ORCHESTRATOR_BRIDGE_INSTRUCTIONS,
+        )
+
+    def test_claude_stream_reports_reasoning_and_tool_activity(self):
+        """Claude reports far more than its final answer. Without forwarding
+        the reasoning, tool calls, and task summaries, the parent sees a silent
+        gap between the delegation and the result."""
+        lines = [
+            json.dumps({
+                "type": "stream_event",
+                "event": {"type": "content_block_delta", "delta": {"type": "thinking_delta", "thinking": "Checking the router first."}},
+            }),
+            json.dumps({
+                "type": "stream_event",
+                "event": {"type": "content_block_start", "content_block": {"type": "tool_use", "id": "toolu_1", "name": "Bash"}},
+            }),
+            # A repeated start for the same tool call must not be reported twice.
+            json.dumps({
+                "type": "stream_event",
+                "event": {"type": "content_block_start", "content_block": {"type": "tool_use", "id": "toolu_1", "name": "Bash"}},
+            }),
+            json.dumps({"type": "system", "subtype": "task_summary", "detail": "Printing hello", "uuid": "u1"}),
+            json.dumps({"type": "system", "subtype": "status", "status": "requesting"}),
+            json.dumps({
+                "type": "stream_event",
+                "event": {"type": "content_block_delta", "delta": {"type": "text_delta", "text": "done"}},
+            }),
+            json.dumps({"type": "result", "result": "done"}),
+        ]
+
+        class FakeProcess:
+            args = ["claude"]
+            stdout = lines
+            stderr = []
+
+            def poll(self):
+                return 0
+
+            def wait(self):
+                return 0
+
+            def kill(self):
+                return None
+
+        with patch.object(claude_bridge.subprocess, "Popen", return_value=FakeProcess()), patch.dict(
+            claude_bridge.os.environ, {"CLAUDE_CODE_OAUTH_TOKEN": "oauth-placeholder"}, clear=False
+        ):
+            events = list(claude_bridge.run_claude_stream("prompt"))
+
+        activity = "".join(value for kind, value, _ in events if kind == "activity")
+        self.assertIn("Checking the router first.", activity)
+        self.assertEqual(activity.count("Claude is using Bash."), 1)
+        self.assertIn("Printing hello", activity)
+        self.assertNotIn("requesting", activity)
+        self.assertEqual("".join(value for kind, value, _ in events if kind == "delta"), "done")
+
+    def test_claude_stream_starts_the_sse_response_on_activity_not_only_on_text(self):
+        """Activity must open the stream too, or the parent still waits in
+        silence until the first answer token."""
+        bridge = (REPO_ROOT / "scripts/codex-claude-cli-responses-proxy.py").read_text()
+        self.assertIn('elif kind == "activity":\n                    start_stream()', bridge)
+        self.assertIn("response.reasoning_summary_text.delta", bridge)
+
     def test_claude_cli_allows_approved_runtime_directory_inspection(self):
         with patch.dict(claude_bridge.os.environ, {"CLAUDE_CODE_ADDITIONAL_DIRS": "/Users/henrykirk/.codex:/Users/henrykirk/.agents"}, clear=False):
             args = claude_bridge.claude_cli_args("prompt", "sonnet", "medium")
@@ -842,7 +953,7 @@ class LocalSetupTests(unittest.TestCase):
                 check=True,
                 env=environment,
             )
-        self.assertIn("ROOT DELEGATION REQUIREMENT", result.stdout)
+        self.assertIn("ROOT ORCHESTRATOR POLICY", result.stdout)
 
     def test_orchestrator_uses_router_fallback_alias(self):
         config = (REPO_ROOT / "scripts/codex/config.toml").read_text()
@@ -955,14 +1066,15 @@ class LocalSetupTests(unittest.TestCase):
         proxy = (REPO_ROOT / "scripts/codex-antigravity-cli-responses-proxy.mjs").read_text()
         self.assertIn('if (!streamStarted)', proxy)
         self.assertIn('sendJson(response, 503', proxy)
-        self.assertIn('if (activity) emitActivity(activity, key);', proxy)
         self.assertIn('agy exited without a terminal result event', proxy)
         self.assertIn('clientClosed || response.writableEnded || response.destroyed', proxy)
 
     def test_copilot_proxy_does_not_report_an_empty_clean_exit_as_success(self):
         proxy = (REPO_ROOT / "scripts/codex-copilot-cli-responses-proxy.mjs").read_text()
-        self.assertIn('stdout.trim()', proxy)
-        self.assertIn('Copilot exited successfully without a response', proxy)
+        self.assertIn('if (!answer.trim())', proxy)
+        self.assertIn('Copilot exited successfully without a final answer', proxy)
+        self.assertIn('if (!streamStarted)', proxy)
+        self.assertIn('sendJson(response, 503', proxy)
 
     def test_obsolete_subagent_start_logging_hook_is_removed(self):
         config = (REPO_ROOT / "scripts/codex/config.toml").read_text()
@@ -987,7 +1099,7 @@ class LocalSetupTests(unittest.TestCase):
                     check=True,
                     env=environment,
                 )
-            self.assertIn("ROOT DELEGATION REQUIREMENT", result.stdout)
+            self.assertIn("ROOT ORCHESTRATOR POLICY", result.stdout)
 
     def test_provider_bridges_never_infer_workspace_from_prompt_text(self):
         for relative_path in (
@@ -1113,7 +1225,7 @@ class LocalSetupTests(unittest.TestCase):
                 check=True,
                 env=environment,
             )
-        self.assertIn("ROOT DELEGATION REQUIREMENT", result.stdout)
+        self.assertIn("ROOT ORCHESTRATOR POLICY", result.stdout)
 
 
 

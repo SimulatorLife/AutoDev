@@ -32,7 +32,7 @@ enabled = false
 
 [mcp_servers.playwright]
 command = "pnpm"
-args = ["dlx", "@playwright/mcp@latest"]
+args = ["exec", "playwright-mcp"]
 enabled_tools = [
   "browser_navigate",
   "browser_tabs",

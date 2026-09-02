@@ -37,7 +37,15 @@ hook_names=(
 obsolete_runtime_hook_names=(log-subagent-model.sh)
 
 dashboard_asset_names=(codex-model-router-dashboard.html)
-runtime_module_names=(scripts/codex/lib/resolve-workspace.mjs)
+# Repo-relative assets the bridges load at runtime. They keep their AutoDev
+# `scripts/` path beneath the hooks directory so a bridge's relative lookups
+# resolve identically in a checkout and in the installed copy.
+runtime_module_names=(
+  scripts/codex/lib/resolve-workspace.mjs
+  scripts/codex/lib/bridge-role.mjs
+  scripts/codex/prompts/leaf.md
+  scripts/codex/prompts/orchestrator.md
+)
 
 profile_names=(claude minimax antigravity)
 catalog_names=(claude minimax antigravity codex)

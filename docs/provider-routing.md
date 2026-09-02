@@ -25,7 +25,7 @@ The editable provider/model choices live in
 `scripts/codex/model-routing.json`: `providerGroups` defines ordered fallback groups per capability tier,
 `providers.<name>.models` contains named tiers such as `default` and `smart` (specific tiers like `smart` are optional and fall back to that provider's `default` model if omitted), and
 `roles.<role>.tier` selects the tier for each capability role. For example, set
-Claude's smart model to `claude-opus-4-8` or Codex's to `gpt-5.6-sol` there; providers like MiniMax or Copilot that use the same model across tiers only need to define `default`. The installer materializes this file as
+Claude's smart model to `claude-opus-5` or Codex's to `gpt-5.6-sol` there; providers like MiniMax or Copilot that use the same model across tiers only need to define `default`. The installer materializes this file as
 `$CODEX_HOME/codex-model-routing.json`.
 For the `default` capability tier, the router randomizes Claude, Gemini/Antigravity, and MiniMax, then falls back to Copilot and OpenAI/Codex. For `smart`, it randomizes Claude and Gemini/Antigravity, then falls back directly to OpenAI/Codex Sol. Providers that are unavailable or return fallbackable limit errors are skipped and the next provider in the current group is tried before progressing to the next group:
 
@@ -63,6 +63,12 @@ Differences from a role request:
 - The root-delegation `UserPromptSubmit` hook matches `autodev/orchestrator`
   before its leaf-alias glob, so the parent still receives the delegation
   policy while `autodev/<role>` leaves do not.
+- Every outbound provider request carries an `x-autodev-agent-role` header the
+  router generates from its own alias dispatch (`orchestrator` for the
+  orchestrator alias, the role name for an `autodev/<role>` alias). Provider
+  bridges select their role instructions from it, so an orchestrator turn that
+  degrades onto a bridge-backed provider receives the orchestrator policy
+  rather than the leaf policy. See "Agent role across the bridge boundary".
 
 When every orchestrator candidate is unavailable or cooling down, the router
 returns `503 router_provider_exhausted` with a `Retry-After` header, exactly as
@@ -369,12 +375,12 @@ they represent an explicit provider choice; use a role alias for fallback.
 All spawned roles are leaf agents. Native role aliases (`autodev/<role>`) and
 external-provider model aliases are therefore excluded from the root
 delegation hook; only the configured parent model receives that instruction.
-The Claude bridge is intentionally a leaf-provider gateway: when it launches
-the real Claude Code CLI, it passes `--disallowed-tools Agent,Task`. `Agent` is
-the current Claude Code subagent tool and `Task` is the legacy name. The same
-boundary is declared in `.claude/settings.json` with both tools in
-`permissions.deny`, so a direct Claude Code session from this repository has
-the same behavior. The root-delegation hook also exempts Claude model aliases,
+For a delegated Claude turn the bridge is a leaf-provider gateway: it launches
+the real Claude Code CLI with `--disallowed-tools Agent,Task`. `Agent` is
+the current Claude Code subagent tool and `Task` is the legacy name. That CLI
+flag is the enforcement: this repository carries no `.claude/settings.json`, so
+a direct Claude Code session opened here is not bounded by it.
+The root-delegation hook also exempts Claude model aliases,
 while native `autodev/*` roles are excluded by their role alias, so leaf
 providers do not receive the parent-only instruction to spawn more agents.
 Keep these restrictions at the CLI/gateway boundary rather than
@@ -384,6 +390,65 @@ task prose. If no valid structured workspace is present, the bridge fails
 closed with a diagnostic instead of silently selecting AutoDev; an explicit
 `CODEX_PROJECT_ROOT` remains available only as an operator-controlled fallback
 for intentionally pinned, single-repository service deployments.
+
+### Agent role across the bridge boundary
+
+The orchestrator tier can land the root turn on Claude, MiniMax, or
+Antigravity. A bridge that assumes every request is a delegated leaf then tells
+the parent it is a bounded leaf agent that must not spawn child agents, which
+suppresses exactly the delegation the root turn exists to perform: the parent
+announces a delegation and then silently does the work itself.
+
+The router therefore names the role of every outbound request in the
+router-generated `x-autodev-agent-role` header. The value comes from the
+router's own alias dispatch, never from the inbound request: `downstreamHeaders`
+builds its header set from scratch, so a client claiming
+`x-autodev-agent-role: orchestrator` on a leaf request cannot escape the leaf
+policy. Antigravity additionally receives the header through the Responses
+`extra_headers` field, because LiteLLM can drop raw request headers.
+
+Bridges resolve the header and pick one of two shared prompts:
+
+| Role | Prompt | Claude CLI subagent tools |
+| --- | --- | --- |
+| `orchestrator` | `scripts/codex/prompts/orchestrator.md` | available |
+| anything else (including absent) | `scripts/codex/prompts/leaf.md` | `--disallowed-tools Agent,Task` |
+
+Anything that is not exactly `orchestrator` is treated as a leaf, so a missing
+or unrecognized header fails closed to the bounded policy. The same
+`orchestrator.md` is what the `enforce-root-delegation.sh` `UserPromptSubmit`
+hook injects, so the root agent gets one delegation policy no matter which
+provider serves it. The JavaScript bridges share
+`scripts/codex/lib/bridge-role.mjs`; the Claude bridge reads the same prompt
+files from Python. The installer deploys both the shared module and the prompt
+files beneath the hooks directory, keeping their `scripts/` path so the same
+relative lookups work in a checkout and in the installed copy.
+
+MiniMax is served by an external proxy that AutoDev does not own, so it cannot
+select role instructions. Keep it out of the orchestrator group if a
+prompt-accurate root turn matters more than an extra fallback provider.
+
+### Streaming provider progress back to the parent
+
+A bridge that reports only the final assistant message leaves the parent (and
+the operator watching it) with a silent gap for the whole turn. Every bridge
+therefore streams the provider's intermediate output as Responses reasoning
+summary events (`response.reasoning_summary_text.delta` on a `reasoning` item
+at output index 0) alongside the answer text at output index 1:
+
+- Claude: reasoning (`thinking_delta`), each tool it starts, and the CLI's own
+  `task_summary` details.
+- Antigravity: `step_update` tool and step activity.
+- Copilot: `commentary`-phase message deltas, `report_intent` narration, and
+  each `tool.execution_start`, parsed from the CLI's `--output-format json`
+  JSONL stream.
+
+Each bridge holds its SSE headers back until the provider produces real output
+(reasoning, a tool call, or answer text). Until that point a provider failure
+is still reported as an HTTP status the router can fall back on; after it, the
+turn is genuinely under way and the parent watches it live. Synthetic
+pre-run activity is buffered and flushed when the stream opens, so it never
+commits the response on its own.
 
 ### Canonical turn metadata and `workspaces` map contract
 
@@ -427,7 +492,7 @@ operator override into the shared resolver rather than reimplementing request
 metadata parsing or workspace selection.
 
 Provider bridges also forward only delegated user-task content and add their
-leaf boundary as provider-controlled instructions. Parent system/developer
+role boundary as provider-controlled instructions. Parent system/developer
 messages are not serialized as fake `[system]` or `[developer]` turns, which
 prevents a leaf model from mistaking orchestration context for a user prompt
 injection. Agent creation failures that occur in the Codex app-server before a

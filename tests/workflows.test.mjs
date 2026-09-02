@@ -179,11 +179,25 @@ test('MiniMax invocation configures headless OpenAI-compatible authentication', 
   assert.doesNotMatch(source, /\bnpx\b/);
 });
 
-test('local provider tooling uses pnpm dlx', async () => {
-  const source = await readFile(path.join(root, 'scripts', 'codex', 'config.toml'), 'utf8');
-  assert.match(source, /command = "pnpm"/);
-  assert.match(source, /args = \["dlx", "@playwright\/mcp@latest"\]/);
-  assert.doesNotMatch(source, /\bnpx\b/);
+test('local provider tooling resolves the playwright MCP from a pinned devDependency', async () => {
+  const configs = [
+    path.join(root, 'scripts', 'codex', 'config.toml'),
+    path.join(root, 'scripts', 'codex', 'agents', 'smart.toml'),
+    path.join(root, 'scripts', 'codex', 'agents', 'browser-tester.toml'),
+  ];
+  for (const configFile of configs) {
+    const source = await readFile(configFile, 'utf8');
+    assert.match(source, /command = "pnpm"/);
+    assert.match(source, /args = \["exec", "playwright-mcp"\]/);
+    // No dlx @latest: it re-resolves on every cold start (network + startup latency),
+    // grows the pnpm dlx cache, and drifts the version across hosts/agents.
+    assert.doesNotMatch(source, /\bdlx\b/);
+    assert.doesNotMatch(source, /@playwright\/mcp@latest/);
+    assert.doesNotMatch(source, /\bnpx\b/);
+  }
+
+  const manifest = JSON.parse(await readFile(path.join(root, 'package.json'), 'utf8'));
+  assert.equal(manifest.devDependencies['@playwright/mcp'], '^0.0.80');
 });
 
 test('private target validation clones through AutoDev and reports target status', async () => {

@@ -2048,7 +2048,7 @@ async function requestBody(request) {
   return body.toString("utf8");
 }
 
-function downstreamHeaders(route, auth, turnMetadataHeader) {
+function downstreamHeaders(route, auth, turnMetadataHeader, agentRole = null) {
   const headers = { "content-type": "application/json", accept: "text/event-stream" };
   if (route.envKey) {
     const key = process.env[route.envKey];
@@ -2070,6 +2070,9 @@ function downstreamHeaders(route, auth, turnMetadataHeader) {
   // inbound client request to the outbound provider request. The provider
   // credential above is always sourced independently, never from the client.
   if (turnMetadataHeader) headers[FORWARDED_REQUEST_HEADERS[0]] = turnMetadataHeader;
+  // Router-classified, not client-supplied: the value comes from this router's
+  // own alias dispatch, so a bridge can trust it to select role instructions.
+  if (agentRole) headers[AGENT_ROLE_HEADER] = agentRole;
   return headers;
 }
 
@@ -2105,7 +2108,7 @@ function responseTextFromSse(body) {
   };
 }
 
-function upstreamPayload(route, payload, wantsStream, turnMetadataHeader) {
+function upstreamPayload(route, payload, wantsStream, turnMetadataHeader, agentRole = null) {
   // `extra_headers` is an SDK escape hatch that LiteLLM consumes as outbound
   // HTTP headers. Never pass the caller's value through the router: doing so
   // would bypass the router's credential and header allowlist. Antigravity is
@@ -2114,13 +2117,17 @@ function upstreamPayload(route, payload, wantsStream, turnMetadataHeader) {
   // approved workspace header through its supported `extra_headers` field so
   // the local adapter can resolve the workspace without guessing.
   const { extra_headers: _discardedExtraHeaders, ...safePayload } = payload;
-  if (route.provider === "antigravity" && turnMetadataHeader) {
-    safePayload.extra_headers = { [FORWARDED_REQUEST_HEADERS[0]]: turnMetadataHeader };
+  if (route.provider === "antigravity") {
+    const forwarded = {
+      ...(turnMetadataHeader ? { [FORWARDED_REQUEST_HEADERS[0]]: turnMetadataHeader } : {}),
+      ...(agentRole ? { [AGENT_ROLE_HEADER]: agentRole } : {}),
+    };
+    if (Object.keys(forwarded).length > 0) safePayload.extra_headers = forwarded;
   }
   return route.provider === "codex" ? { ...safePayload, stream: true, store: false } : { ...safePayload, stream: wantsStream };
 }
 
-async function fetchUpstream(route, payload, wantsStream, turnMetadataHeader, clientSignal = null) {
+async function fetchUpstream(route, payload, wantsStream, turnMetadataHeader, clientSignal = null, agentRole = null) {
   let auth = null;
   if (route.provider === "codex") {
     try {
@@ -2134,12 +2141,12 @@ async function fetchUpstream(route, payload, wantsStream, turnMetadataHeader, cl
       throw authError;
     }
   }
-  const requestPayload = upstreamPayload(route, payload, wantsStream, turnMetadataHeader);
+  const requestPayload = upstreamPayload(route, payload, wantsStream, turnMetadataHeader, agentRole);
   const timeoutSignal = AbortSignal.timeout(UPSTREAM_TIMEOUT_MS);
   const signal = clientSignal ? AbortSignal.any([clientSignal, timeoutSignal]) : timeoutSignal;
   const upstream = await fetch(`${route.baseUrl}/responses`, {
     method: "POST",
-    headers: downstreamHeaders(route, auth, turnMetadataHeader),
+    headers: downstreamHeaders(route, auth, turnMetadataHeader, agentRole),
     signal,
     body: JSON.stringify(requestPayload),
   });
@@ -2340,7 +2347,7 @@ function payloadForCandidate(payload, candidate) {
 // fallback traffic on a non-Codex provider is still counted as orchestrator
 // rather than direct. `subject` is the human-readable label for the exhaustion
 // error.
-async function proxyFallbackChain(response, { candidates, role = null, origin = null, subject }, payload, wantsStream, requestId, turnMetadataHeader, workspace, clientSignal = null) {
+async function proxyFallbackChain(response, { candidates, role = null, origin = null, subject, agentRole = null }, payload, wantsStream, requestId, turnMetadataHeader, workspace, clientSignal = null) {
   const failures = [];
   for (const route of candidates) {
     if (isProviderCoolingDown(route.provider)) {
@@ -2358,7 +2365,7 @@ async function proxyFallbackChain(response, { candidates, role = null, origin = 
     recordRouterEvent({ phase: "selected", requestId, role, origin, requestedModel: payload.model, provider: route.provider, model: route.model, workspace });
     incrementActiveRequests(route.provider);
     try {
-      const result = await fetchUpstream(route, payloadForCandidate(payload, route), wantsStream, turnMetadataHeader, clientSignal);
+      const result = await fetchUpstream(route, payloadForCandidate(payload, route), wantsStream, turnMetadataHeader, clientSignal, agentRole);
       if (result.ok) {
         try {
           const responseResult = await writeSuccessfulResponse(response, route, result, wantsStream, payload.model, requestId, route.model);
@@ -2420,11 +2427,11 @@ async function proxyFallbackChain(response, { candidates, role = null, origin = 
 }
 
 async function proxyRoleResponse(response, role, payload, wantsStream, requestId, turnMetadataHeader, workspace, clientSignal = null) {
-  return proxyFallbackChain(response, { candidates: roleCandidates(role), role, subject: `role ${role}` }, payload, wantsStream, requestId, turnMetadataHeader, workspace, clientSignal);
+  return proxyFallbackChain(response, { candidates: roleCandidates(role), role, agentRole: role, subject: `role ${role}` }, payload, wantsStream, requestId, turnMetadataHeader, workspace, clientSignal);
 }
 
 async function proxyOrchestratorResponse(response, payload, wantsStream, requestId, turnMetadataHeader, workspace, clientSignal = null) {
-  return proxyFallbackChain(response, { candidates: orchestratorCandidates(), role: null, origin: "orchestrator", subject: "the orchestrator" }, payload, wantsStream, requestId, turnMetadataHeader, workspace, clientSignal);
+  return proxyFallbackChain(response, { candidates: orchestratorCandidates(), role: null, origin: "orchestrator", agentRole: ORCHESTRATOR_AGENT_ROLE, subject: "the orchestrator" }, payload, wantsStream, requestId, turnMetadataHeader, workspace, clientSignal);
 }
 
 function requestSession(request, payload, turnMetadataHeader = null) {
@@ -2449,6 +2456,13 @@ function requestSession(request, payload, turnMetadataHeader = null) {
 // client-supplied Authorization) is never forwarded: downstreamHeaders()
 // always sets the outbound provider credential independently.
 const FORWARDED_REQUEST_HEADERS = Object.freeze(["x-codex-turn-metadata"]);
+
+// Router-generated (never forwarded from the client) header naming the agent
+// role each outbound provider request is serving. Provider bridges use it to
+// pick their role instructions: the root orchestrator must receive the
+// orchestrator policy, not the leaf policy that forbids spawning subagents.
+const AGENT_ROLE_HEADER = "x-autodev-agent-role";
+const ORCHESTRATOR_AGENT_ROLE = "orchestrator";
 
 function parseTurnMetadataJson(value) {
   if (typeof value !== "string" || !value.trim()) return null;
@@ -2676,6 +2690,8 @@ async function handle(request, response) {
 
 export {
   activeProviderRequests,
+  AGENT_ROLE_HEADER,
+  ORCHESTRATOR_AGENT_ROLE,
   beginShutdown,
   catalogModelIds,
   proxyConcreteResponse,

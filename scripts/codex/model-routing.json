@@ -1,17 +1,36 @@
 {
   "providerGroups": {
     "default": [
-      ["claude", "antigravity", "minimax"],
-      ["copilot"],
-      ["codex"]
+      [
+        "claude",
+        "antigravity",
+        "minimax"
+      ],
+      [
+        "copilot"
+      ],
+      [
+        "codex"
+      ]
     ],
     "smart": [
-      ["claude", "antigravity"],
-      ["codex"]
+      [
+        "claude",
+        "antigravity"
+      ],
+      [
+        "codex"
+      ]
     ],
     "orchestrator": [
-      ["codex"],
-      ["claude", "minimax", "antigravity"]
+      [
+        "codex"
+      ],
+      [
+        "claude",
+        "minimax",
+        "antigravity"
+      ]
     ]
   },
   "providers": {
@@ -24,8 +43,8 @@
     },
     "claude": {
       "models": {
-        "smart": "claude-opus-4-8",
-        "orchestrator": "claude-opus-4-8",
+        "smart": "claude-opus-5",
+        "orchestrator": "claude-opus-5",
         "default": "sonnet"
       }
     },

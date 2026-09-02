@@ -7,6 +7,8 @@ import { tmpdir } from "node:os";
 
 import {
   activeProviderRequests,
+  AGENT_ROLE_HEADER,
+  ORCHESTRATOR_AGENT_ROLE,
   beginShutdown,
   catalogModelIds,
   classifyProviderFailure,
@@ -71,17 +73,17 @@ test("antigravity LiteLLM config forwards the allowlisted turn-metadata header t
   const generalSettingsMatch = config.match(/^general_settings:\n((?:[ \t]+.*\n?)*)/m);
   assert.ok(generalSettingsMatch, "antigravity.yaml must have a general_settings block");
   assert.match(
-    generalSettingsMatch[1],
+    generalSettingsMatch[ 1 ],
     /^\s*forward_client_headers_to_llm_api:\s*true\s*$/m,
     "general_settings must set forward_client_headers_to_llm_api: true so LiteLLM forwards " +
-      `x-* headers (including the allowlisted ${FORWARDED_REQUEST_HEADERS[0]}) to the local adapter`,
+    `x-* headers (including the allowlisted ${FORWARDED_REQUEST_HEADERS[ 0 ]}) to the local adapter`,
   );
   assert.ok(
-    FORWARDED_REQUEST_HEADERS[0].startsWith("x-"),
+    FORWARDED_REQUEST_HEADERS[ 0 ].startsWith("x-"),
     "forward_client_headers_to_llm_api only forwards x-*/anthropic-beta headers, so the allowlisted header must match",
   );
   // The local Antigravity adapter (agy CLI Responses bridge) must remain the api_base for every routed model.
-  const apiBases = [...config.matchAll(/^\s*api_base:\s*(\S+)\s*$/gm)].map((m) => m[1]);
+  const apiBases = [ ...config.matchAll(/^\s*api_base:\s*(\S+)\s*$/gm) ].map((m) => m[ 1 ]);
   assert.ok(apiBases.length > 0, "antigravity.yaml must route at least one model");
   for (const apiBase of apiBases) {
     assert.equal(apiBase, "http://127.0.0.1:4002/v1");
@@ -90,19 +92,19 @@ test("antigravity LiteLLM config forwards the allowlisted turn-metadata header t
 
 test("loads editable provider and role models from JSON routing config", async () => {
   const config = JSON.parse(await readFile(new URL("./codex/model-routing.json", import.meta.url), "utf8"));
-  assert.equal(config.providers.claude.models.smart, "claude-opus-4-8");
+  assert.equal(config.providers.claude.models.smart, "claude-opus-5");
   assert.equal(config.providers.codex.models.smart, "gpt-5.6-sol");
   assert.equal(config.providers.minimax.models.smart, undefined);
   assert.equal(config.providers.copilot.models.smart, undefined);
-  assert.deepEqual(config.providerGroups.default, [["claude", "antigravity", "minimax"], ["copilot"], ["codex"]]);
-  assert.deepEqual(config.providerGroups.smart, [["claude", "antigravity"], ["codex"]]);
-  assert.deepEqual(config.providerGroups.orchestrator, [["codex"], ["claude", "minimax", "antigravity"]]);
+  assert.deepEqual(config.providerGroups.default, [ [ "claude", "antigravity", "minimax" ], [ "copilot" ], [ "codex" ] ]);
+  assert.deepEqual(config.providerGroups.smart, [ [ "claude", "antigravity" ], [ "codex" ] ]);
+  assert.deepEqual(config.providerGroups.orchestrator, [ [ "codex" ], [ "claude", "minimax", "antigravity" ] ]);
   assert.equal(config.roles.worker.tier, "default");
   assert.equal(config.roles.smart.tier, "smart");
   assert.equal(config.orchestrator.alias, "autodev/orchestrator");
   assert.equal(config.orchestrator.tier, "orchestrator");
   assert.equal(config.providers.codex.models.orchestrator, "gpt-5.6-luna");
-  assert.equal(config.providers.claude.models.orchestrator, "claude-opus-4-8");
+  assert.equal(config.providers.claude.models.orchestrator, "claude-opus-5");
   assert.equal(config.providers.antigravity.models.orchestrator, "gemini-3.6-flash-high");
   assert.deepEqual(config.orchestrator.reasoningEffort, { claude: "medium", minimax: "high", antigravity: "high" });
 });
@@ -112,13 +114,13 @@ test("orchestrator alias degrades from the pinned primary provider to a load-bal
   assert.equal(roleForModel(ORCHESTRATOR_ALIAS), null);
 
   const candidates = orchestratorCandidates(() => 0.5);
-  assert.equal(candidates[0].provider, "codex", "the primary provider is always attempted first");
-  assert.equal(candidates[0].model, "gpt-5.6-luna");
-  assert.equal(candidates[0].reasoningEffort, null, "the primary provider keeps the caller's reasoning effort");
-  assert.deepEqual(candidates.slice(1).map((candidate) => candidate.provider).sort(), ["antigravity", "claude", "minimax"]);
+  assert.equal(candidates[ 0 ].provider, "codex", "the primary provider is always attempted first");
+  assert.equal(candidates[ 0 ].model, "gpt-5.6-luna");
+  assert.equal(candidates[ 0 ].reasoningEffort, null, "the primary provider keeps the caller's reasoning effort");
+  assert.deepEqual(candidates.slice(1).map((candidate) => candidate.provider).sort(), [ "antigravity", "claude", "minimax" ]);
 
-  const byProvider = Object.fromEntries(candidates.map((candidate) => [candidate.provider, candidate]));
-  assert.equal(byProvider.claude.model, "claude-opus-4-8");
+  const byProvider = Object.fromEntries(candidates.map((candidate) => [ candidate.provider, candidate ]));
+  assert.equal(byProvider.claude.model, "claude-opus-5");
   assert.equal(byProvider.claude.reasoningEffort, "medium");
   assert.equal(byProvider.minimax.model, "MiniMax-M3");
   assert.equal(byProvider.minimax.reasoningEffort, "high");
@@ -132,10 +134,10 @@ test("orchestrator alias degrades from the pinned primary provider to a load-bal
   );
 
   const swapped = payloadForCandidate({ model: "autodev/orchestrator", reasoning: { summary: "auto", effort: "xhigh" } }, byProvider.claude);
-  assert.equal(swapped.model, "claude-opus-4-8");
+  assert.equal(swapped.model, "claude-opus-5");
   assert.deepEqual(swapped.reasoning, { summary: "auto", effort: "medium" });
 
-  const primary = payloadForCandidate({ model: "autodev/orchestrator", reasoning: { effort: "xhigh" } }, candidates[0]);
+  const primary = payloadForCandidate({ model: "autodev/orchestrator", reasoning: { effort: "xhigh" } }, candidates[ 0 ]);
   assert.equal(primary.model, "gpt-5.6-luna");
   assert.deepEqual(primary.reasoning, { effort: "xhigh" }, "the pinned primary provider is dispatched with the caller's effort untouched");
 });
@@ -143,9 +145,9 @@ test("orchestrator alias degrades from the pinned primary provider to a load-bal
 test("validates routing config and requires default model for providers", () => {
   const validConfig = {
     providerGroups: {
-      default: [["testProvider"], ["fallbackProvider"]],
-      smart: [["testProvider"], ["fallbackProvider"]],
-      orchestrator: [["testProvider"], ["fallbackProvider"]],
+      default: [ [ "testProvider" ], [ "fallbackProvider" ] ],
+      smart: [ [ "testProvider" ], [ "fallbackProvider" ] ],
+      orchestrator: [ [ "testProvider" ], [ "fallbackProvider" ] ],
     },
     providers: {
       testProvider: { models: { default: "test-model" } },
@@ -174,7 +176,7 @@ test("validates routing config and requires default model for providers", () => 
   );
 
   assert.throws(
-    () => validateRoutingConfig({ ...validConfig, providerGroups: { default: [[]], smart: [["testProvider"]], orchestrator: [["testProvider"]] } }),
+    () => validateRoutingConfig({ ...validConfig, providerGroups: { default: [ [] ], smart: [ [ "testProvider" ] ], orchestrator: [ [ "testProvider" ] ] } }),
     /Routing config tier default contains an invalid provider group/
   );
 
@@ -207,17 +209,17 @@ test("resolves role aliases through tier-specific randomized provider groups wit
 
   const explorerCandidates = roleCandidates("explorer", () => 0.5);
   const explorerProviders = explorerCandidates.map((c) => c.provider);
-  assert.deepEqual(explorerProviders.slice(0, 3).sort(), ["antigravity", "claude", "minimax"]);
-  assert.deepEqual(explorerProviders.slice(3), ["copilot", "codex"]);
+  assert.deepEqual(explorerProviders.slice(0, 3).sort(), [ "antigravity", "claude", "minimax" ]);
+  assert.deepEqual(explorerProviders.slice(3), [ "copilot", "codex" ]);
 
   const smartCandidates = roleCandidates("smart", () => 0.5);
   const smartProviders = smartCandidates.map((c) => c.provider);
-  assert.deepEqual(smartProviders.slice(0, 2).sort(), ["antigravity", "claude"]);
-  assert.deepEqual(smartProviders.slice(2), ["codex"]);
+  assert.deepEqual(smartProviders.slice(0, 2).sort(), [ "antigravity", "claude" ]);
+  assert.deepEqual(smartProviders.slice(2), [ "codex" ]);
 
-  const smartModelMap = Object.fromEntries(smartCandidates.map((c) => [c.provider, c.model]));
+  const smartModelMap = Object.fromEntries(smartCandidates.map((c) => [ c.provider, c.model ]));
   assert.equal(smartModelMap.antigravity, "gemini-3.6-flash-high");
-  assert.equal(smartModelMap.claude, "claude-opus-4-8");
+  assert.equal(smartModelMap.claude, "claude-opus-5");
   assert.equal(smartModelMap.codex, "gpt-5.6-sol");
 
   assert.notDeepEqual(
@@ -251,7 +253,7 @@ test("backs off repeatedly failing providers and moves them behind healthy peers
     const second = cooldownProvider("claude", 1_000);
     assert.equal(first.durationMs, 30_000);
     assert.equal(second.durationMs, 60_000);
-    assert.equal(nextProviderRetryMs(["claude", "minimax"], 1_000), 60_000);
+    assert.equal(nextProviderRetryMs([ "claude", "minimax" ], 1_000), 60_000);
 
     const providers = roleCandidates("default", () => 0.5).map(({ provider }) => provider);
     assert.ok(providers.indexOf("claude") > providers.indexOf("antigravity"));
@@ -309,9 +311,9 @@ test("reroutes a role request after a provider returns a fallbackable failure", 
   } finally {
     await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
     globalThis.fetch = originalFetch;
-    for (const [key, value] of Object.entries(originalCredentials)) {
-      if (value === undefined) delete process.env[key];
-      else process.env[key] = value;
+    for (const [ key, value ] of Object.entries(originalCredentials)) {
+      if (value === undefined) delete process.env[ key ];
+      else process.env[ key ] = value;
     }
     activeProviderRequests.clear();
     resetRouterTelemetry();
@@ -328,7 +330,7 @@ test("orchestrator alias falls back to another provider when the primary is unav
   process.env.MINIMAX_API_KEY = "test-provider-key";
   resetRouterTelemetry();
   activeProviderRequests.clear();
-  for (const provider of ["codex", "claude", "antigravity", "minimax"]) clearProviderCooldown(provider);
+  for (const provider of [ "codex", "claude", "antigravity", "minimax" ]) clearProviderCooldown(provider);
   let orchestratorResponseProvider = null;
   globalThis.fetch = async (url, options) => {
     const target = String(url);
@@ -359,7 +361,7 @@ test("orchestrator alias falls back to another provider when the primary is unav
     });
     assert.equal(response.status, 200);
     const servingProvider = response.headers.get("x-autodev-provider");
-    assert.ok(["claude", "antigravity", "minimax"].includes(servingProvider), `expected a fallback-group provider, got ${servingProvider}`);
+    assert.ok([ "claude", "antigravity", "minimax" ].includes(servingProvider), `expected a fallback-group provider, got ${servingProvider}`);
     assert.notEqual(response.headers.get("x-autodev-model"), "autodev/orchestrator");
     assert.ok(orchestratorResponseProvider && !orchestratorResponseProvider.startsWith("https://chatgpt.com/"));
 
@@ -369,9 +371,9 @@ test("orchestrator alias falls back to another provider when the primary is unav
   } finally {
     await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
     globalThis.fetch = originalFetch;
-    for (const [key, value] of Object.entries(originalCredentials)) {
-      if (value === undefined) delete process.env[key];
-      else process.env[key] = value;
+    for (const [ key, value ] of Object.entries(originalCredentials)) {
+      if (value === undefined) delete process.env[ key ];
+      else process.env[ key ] = value;
     }
     activeProviderRequests.clear();
     resetRouterTelemetry();
@@ -381,7 +383,7 @@ test("orchestrator alias falls back to another provider when the primary is unav
 test("reports the earliest provider retry time when every role candidate is cooling down", async () => {
   resetRouterTelemetry();
   const cooldownStartedAt = Date.now();
-  for (const provider of ["claude", "antigravity", "minimax", "copilot", "codex"]) cooldownProvider(provider, cooldownStartedAt);
+  for (const provider of [ "claude", "antigravity", "minimax", "copilot", "codex" ]) cooldownProvider(provider, cooldownStartedAt);
   const server = createServer((request, response) => { void handle(request, response); });
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
   try {
@@ -456,7 +458,7 @@ test("resolveTurnMetadataHeader prefers the canonical header and falls back to e
     rawJson
   );
   assert.equal(
-    resolveTurnMetadataHeader({ headers: { "x-codex-turn-metadata": [rawJson] } }, {}),
+    resolveTurnMetadataHeader({ headers: { "x-codex-turn-metadata": [ rawJson ] } }, {}),
     rawJson
   );
   assert.equal(
@@ -513,12 +515,12 @@ test("records workspace usage with role, provider, and model dimensions", () => 
     elapsedMs: 12,
     toolCalls: 2,
   });
-  const workspace = getRouterStatus().usage.byWorkspace["SimulatorLife/RacingGame"];
+  const workspace = getRouterStatus().usage.byWorkspace[ "SimulatorLife/RacingGame" ];
   assert.equal(workspace.cwd, "RacingGame");
   assert.equal(workspace.attempts, 1);
   assert.equal(workspace.successes, 1);
   assert.equal(workspace.byRole.worker.successes, 1);
-  assert.equal(workspace.byModel["claude/sonnet"].toolCalls, 2);
+  assert.equal(workspace.byModel[ "claude/sonnet" ].toolCalls, 2);
   assert.equal(workspace.byProvider.claude.successes, 1);
   resetRouterTelemetry();
 });
@@ -534,9 +536,9 @@ test("persists workspace usage dimensions across router restarts", async () => {
     await persistRouterStateNow(stateFile);
     resetRouterTelemetry();
     assert.equal(loadRouterState(stateFile), true);
-    const restored = getRouterStatus().usage.byWorkspace["SimulatorLife/RacingGame"];
+    const restored = getRouterStatus().usage.byWorkspace[ "SimulatorLife/RacingGame" ];
     assert.equal(restored.cwd, "RacingGame");
-    assert.equal(restored.byModel["minimax/MiniMax-M3"].successes, 1);
+    assert.equal(restored.byModel[ "minimax/MiniMax-M3" ].successes, 1);
     assert.equal(restored.byProvider.minimax.successes, 1);
   } finally {
     resetRouterTelemetry();
@@ -545,13 +547,20 @@ test("persists workspace usage dimensions across router restarts", async () => {
 });
 
 test("downstreamHeaders forwards only the allowlisted turn-metadata header and never a client-supplied credential", () => {
-  assert.deepEqual([...FORWARDED_REQUEST_HEADERS], ["x-codex-turn-metadata"]);
+  assert.deepEqual([ ...FORWARDED_REQUEST_HEADERS ], [ "x-codex-turn-metadata" ]);
   const route = { provider: "claude", envKey: "LITELLM_API_KEY" };
   const withoutTurnMetadata = downstreamHeaders(route, null, null);
-  assert.equal(withoutTurnMetadata["x-codex-turn-metadata"], undefined);
+  assert.equal(withoutTurnMetadata[ "x-codex-turn-metadata" ], undefined);
   const withTurnMetadata = downstreamHeaders(route, null, "{\"workspaces\":{}}");
-  assert.equal(withTurnMetadata["x-codex-turn-metadata"], "{\"workspaces\":{}}");
+  assert.equal(withTurnMetadata[ "x-codex-turn-metadata" ], "{\"workspaces\":{}}");
   assert.notEqual(withTurnMetadata.authorization, "Bearer client-supplied-secret");
+});
+
+test("downstreamHeaders names the agent role the router assigned, and omits it when there is none", () => {
+  const route = { provider: "claude", envKey: "LITELLM_API_KEY" };
+  assert.equal(downstreamHeaders(route, null, null)[ AGENT_ROLE_HEADER ], undefined);
+  assert.equal(downstreamHeaders(route, null, null, ORCHESTRATOR_AGENT_ROLE)[ AGENT_ROLE_HEADER ], "orchestrator");
+  assert.equal(downstreamHeaders(route, null, null, "explorer")[ AGENT_ROLE_HEADER ], "explorer");
 });
 
 test("downstreamHeaders forces a fresh connection per request to the codex route to avoid reusing a stale pooled keep-alive socket", () => {
@@ -560,7 +569,7 @@ test("downstreamHeaders forces a fresh connection per request to the codex route
 });
 
 test("downstreamHeaders leaves keep-alive pooling untouched for other providers", () => {
-  for (const route of [{ provider: "claude", envKey: "LITELLM_API_KEY" }, { provider: "minimax", envKey: "MINIMAX_API_KEY" }, { provider: "antigravity", envKey: "LITELLM_API_KEY" }, { provider: "copilot", envKey: "CODEX_ROUTER_COPILOT_API_KEY" }]) {
+  for (const route of [ { provider: "claude", envKey: "LITELLM_API_KEY" }, { provider: "minimax", envKey: "MINIMAX_API_KEY" }, { provider: "antigravity", envKey: "LITELLM_API_KEY" }, { provider: "copilot", envKey: "CODEX_ROUTER_COPILOT_API_KEY" } ]) {
     const headers = downstreamHeaders(route, null, null);
     assert.equal(headers.connection, undefined, `${route.provider} should keep reusing pooled connections`);
   }
@@ -600,7 +609,7 @@ test("forwards x-codex-turn-metadata to the upstream provider bridge without lea
       body: JSON.stringify({ model: "sonnet", stream: false }),
     });
     assert.equal(response.status, 200);
-    assert.equal(upstreamHeaders["x-codex-turn-metadata"], turnMetadata);
+    assert.equal(upstreamHeaders[ "x-codex-turn-metadata" ], turnMetadata);
     assert.notEqual(upstreamHeaders.authorization, "Bearer client-supplied-secret");
   } finally {
     await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
@@ -637,7 +646,7 @@ test("relays the canonical workspaces-map-keyed turn metadata even when it arriv
       body: JSON.stringify({ model: "sonnet", stream: false, client_metadata: { "x-codex-turn-metadata": canonical } }),
     });
     assert.equal(response.status, 200);
-    assert.equal(upstreamHeaders["x-codex-turn-metadata"], JSON.stringify(canonical));
+    assert.equal(upstreamHeaders[ "x-codex-turn-metadata" ], JSON.stringify(canonical));
   } finally {
     await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
     globalThis.fetch = originalFetch;
@@ -676,10 +685,10 @@ test("carries only the approved workspace header through LiteLLM's Responses ext
       }),
     });
     assert.equal(response.status, 200);
-    assert.equal(upstreamHeaders["x-codex-turn-metadata"], turnMetadata);
+    assert.equal(upstreamHeaders[ "x-codex-turn-metadata" ], turnMetadata);
     assert.deepEqual(upstreamPayload.extra_headers, { "x-codex-turn-metadata": turnMetadata });
     assert.equal(upstreamPayload.extra_headers.authorization, undefined);
-    assert.equal(upstreamPayload.extra_headers["x-untrusted"], undefined);
+    assert.equal(upstreamPayload.extra_headers[ "x-untrusted" ], undefined);
   } finally {
     await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
     globalThis.fetch = originalFetch;
@@ -754,7 +763,7 @@ test("rejects missing or malformed models before provider routing", async () => 
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
   try {
     const address = server.address();
-    for (const body of [null, {}, { model: "" }, { model: "  " }, { model: 42 }]) {
+    for (const body of [ null, {}, { model: "" }, { model: "  " }, { model: 42 } ]) {
       const response = await fetch(`http://127.0.0.1:${address.port}/v1/responses`, {
         method: "POST",
         headers: { "content-type": "application/json" },
@@ -773,31 +782,37 @@ test("rejects missing or malformed models before provider routing", async () => 
 test("ingests Codex OTEL turn and MCP lifecycle telemetry without prompt content", () => {
   resetOtelTelemetry();
   const start = BigInt(Date.now()) * 1_000_000n;
-  const attributes = (entries) => entries.map(([key, value]) => ({ key, value: { stringValue: String(value) } }));
+  const attributes = (entries) => entries.map(([ key, value ]) => ({ key, value: { stringValue: String(value) } }));
   ingestOtelSignal("logs", {
-    resourceLogs: [{
-      resource: { attributes: attributes([["mcp_servers", "playwright, codex_apps, node_repl"]]) },
-      scopeLogs: [{ logRecords: [
-        { attributes: attributes([["event.name", "codex.conversation_starts"], ["conversation.id", "conversation-otel"], ["model", "gpt-5.6-luna"]]) },
-        { attributes: attributes([["event.name", "codex.user_prompt"], ["conversation.id", "conversation-otel"], ["prompt_length", 42], ["prompt_text", "do-not-store-this"]]) },
-        { attributes: attributes([["event.name", "codex.turn_ttft"], ["conversation.id", "conversation-otel"], ["duration_ms", 321]]) },
-        { attributes: attributes([["event.name", "codex.sse_event"], ["event.kind", "response.completed"], ["conversation.id", "conversation-otel"], ["input_token_count", 100], ["output_token_count", 25], ["cached_token_count", 5], ["reasoning_token_count", 10], ["tool_token_count", 3]]) },
-      ] }],
-    }],
+    resourceLogs: [ {
+      resource: { attributes: attributes([ [ "mcp_servers", "playwright, codex_apps, node_repl" ] ]) },
+      scopeLogs: [ {
+        logRecords: [
+          { attributes: attributes([ [ "event.name", "codex.conversation_starts" ], [ "conversation.id", "conversation-otel" ], [ "model", "gpt-5.6-luna" ] ]) },
+          { attributes: attributes([ [ "event.name", "codex.user_prompt" ], [ "conversation.id", "conversation-otel" ], [ "prompt_length", 42 ], [ "prompt_text", "do-not-store-this" ] ]) },
+          { attributes: attributes([ [ "event.name", "codex.turn_ttft" ], [ "conversation.id", "conversation-otel" ], [ "duration_ms", 321 ] ]) },
+          { attributes: attributes([ [ "event.name", "codex.sse_event" ], [ "event.kind", "response.completed" ], [ "conversation.id", "conversation-otel" ], [ "input_token_count", 100 ], [ "output_token_count", 25 ], [ "cached_token_count", 5 ], [ "reasoning_token_count", 10 ], [ "tool_token_count", 3 ] ]) },
+        ]
+      } ],
+    } ],
   });
   const span = (name, serverName, durationNs = 5_000_000n) => ({
     name,
     startTimeUnixNano: String(start),
     endTimeUnixNano: String(start + durationNs),
-    attributes: attributes([["server_name", serverName]]),
+    attributes: attributes([ [ "server_name", serverName ] ]),
     status: { code: 1 },
   });
   ingestOtelSignal("traces", {
-    resourceSpans: [{ scopeSpans: [{ spans: [
-      span("make_rmcp_client", "playwright"),
-      span("list_tools_for_client_uncached", "playwright", 7_000_000n),
-      span("make_rmcp_client", "node_repl", 2_000_000n),
-    ] }] }],
+    resourceSpans: [ {
+      scopeSpans: [ {
+        spans: [
+          span("make_rmcp_client", "playwright"),
+          span("list_tools_for_client_uncached", "playwright", 7_000_000n),
+          span("make_rmcp_client", "node_repl", 2_000_000n),
+        ]
+      } ]
+    } ],
   });
   ingestOtelSignal("metrics", { resourceMetrics: [] });
 
@@ -822,39 +837,39 @@ test("ingests Codex OTEL turn and MCP lifecycle telemetry without prompt content
 test("ingests Codex OTEL skill metrics with cumulative dedupe and tolerates invoke_type", () => {
   resetOtelTelemetry();
   const start = BigInt(Date.now()) * 1_000_000n;
-  const attributes = (entries) => entries.map(([key, value]) => ({ key, value: { stringValue: String(value) } }));
+  const attributes = (entries) => entries.map(([ key, value ]) => ({ key, value: { stringValue: String(value) } }));
   const skillSum = (skill, status, value, timeOffsetNs, extraAttributes = []) => ({
     name: "codex.skill.injected",
     sum: {
       aggregationTemporality: 2,
       isMonotonic: true,
-      dataPoints: [{
-        attributes: attributes([["skill", skill], ["status", status], ...extraAttributes]),
+      dataPoints: [ {
+        attributes: attributes([ [ "skill", skill ], [ "status", status ], ...extraAttributes ]),
         startTimeUnixNano: String(start),
         timeUnixNano: String(start + timeOffsetNs),
         asInt: String(value),
-      }],
+      } ],
     },
   });
   const threadHistogram = (name, count, sum, timeOffsetNs, extraAttributes = []) => ({
     name,
     histogram: {
       aggregationTemporality: 2,
-      dataPoints: [{
+      dataPoints: [ {
         attributes: attributes(extraAttributes),
         startTimeUnixNano: String(start),
         timeUnixNano: String(start + timeOffsetNs),
         count: String(count),
         sum,
-      }],
+      } ],
     },
   });
-  const resourceMetrics = (metrics) => ({ resourceMetrics: [{ resource: { attributes: [] }, scopeMetrics: [{ metrics }] }] });
+  const resourceMetrics = (metrics) => ({ resourceMetrics: [ { resource: { attributes: [] }, scopeMetrics: [ { metrics } ] } ] });
 
   // First export: injected=3, skipped(invoke_type=auto)=1, one thread reporting 3 enabled/2 kept, 1 truncated with 120 chars trimmed.
   ingestOtelSignal("metrics", resourceMetrics([
     skillSum("lsp-mcp-server", "injected", 3, 1_000_000n),
-    skillSum("lsp-mcp-server", "skipped", 1, 1_000_000n, [["invoke_type", "auto"]]),
+    skillSum("lsp-mcp-server", "skipped", 1, 1_000_000n, [ [ "invoke_type", "auto" ] ]),
     threadHistogram("codex.thread.skills.enabled_total", 1, 3, 1_000_000n),
     threadHistogram("codex.thread.skills.kept_total", 1, 2, 1_000_000n),
     threadHistogram("codex.thread.skills.truncated", 1, 1, 1_000_000n),
@@ -863,7 +878,7 @@ test("ingests Codex OTEL skill metrics with cumulative dedupe and tolerates invo
   // Exporter retry resending the identical cumulative point must not double count.
   ingestOtelSignal("metrics", resourceMetrics([
     skillSum("lsp-mcp-server", "injected", 3, 1_000_000n),
-    skillSum("lsp-mcp-server", "skipped", 1, 1_000_000n, [["invoke_type", "auto"]]),
+    skillSum("lsp-mcp-server", "skipped", 1, 1_000_000n, [ [ "invoke_type", "auto" ] ]),
     threadHistogram("codex.thread.skills.enabled_total", 1, 3, 1_000_000n),
     threadHistogram("codex.thread.skills.kept_total", 1, 2, 1_000_000n),
     threadHistogram("codex.thread.skills.truncated", 1, 1, 1_000_000n),
@@ -872,7 +887,7 @@ test("ingests Codex OTEL skill metrics with cumulative dedupe and tolerates invo
   // Later export with cumulative growth: only the deltas should be applied.
   ingestOtelSignal("metrics", resourceMetrics([
     skillSum("lsp-mcp-server", "injected", 5, 2_000_000n),
-    skillSum("lsp-mcp-server", "skipped", 2, 2_000_000n, [["invoke_type", "auto"]]),
+    skillSum("lsp-mcp-server", "skipped", 2, 2_000_000n, [ [ "invoke_type", "auto" ] ]),
     threadHistogram("codex.thread.skills.enabled_total", 2, 7, 2_000_000n),
     threadHistogram("codex.thread.skills.kept_total", 2, 4, 2_000_000n),
     threadHistogram("codex.thread.skills.truncated", 2, 2, 2_000_000n),
@@ -900,22 +915,22 @@ test("ingests Codex OTEL skill metrics with cumulative dedupe and tolerates invo
 
 test("groups skill injections by agent kind, model, and plugin metadata", () => {
   resetOtelTelemetry();
-  const attributes = (entries) => entries.map(([key, value]) => ({ key, value: { stringValue: String(value) } }));
+  const attributes = (entries) => entries.map(([ key, value ]) => ({ key, value: { stringValue: String(value) } }));
   const skillPoint = (skill, invokeType, value) => ({
-    attributes: attributes([["skill", skill], ["status", "ok"], ["invoke_type", invokeType]]),
+    attributes: attributes([ [ "skill", skill ], [ "status", "ok" ], [ "invoke_type", invokeType ] ]),
     startTimeUnixNano: "1",
     timeUnixNano: "2",
     asInt: String(value),
   });
   const resourceMetric = (resourceEntries, point) => ({
     resource: { attributes: attributes(resourceEntries) },
-    scopeMetrics: [{ metrics: [{ name: "codex.skill.injected", sum: { aggregationTemporality: 1, isMonotonic: true, dataPoints: [point] } }] }],
+    scopeMetrics: [ { metrics: [ { name: "codex.skill.injected", sum: { aggregationTemporality: 1, isMonotonic: true, dataPoints: [ point ] } } ] } ],
   });
 
   ingestOtelSignal("metrics", {
     resourceMetrics: [
-      resourceMetric([["session_source", "cli"], ["model_slug", "gpt-root"], ["plugin_id", "plugin-root"]], skillPoint("orchestration", "explicit", 2)),
-      resourceMetric([["session_source", "subagent_thread_spawn_parent_d1"], ["model_slug", "gpt-child"], ["plugin_id", "plugin-child"]], skillPoint("orchestration", "implicit", 3)),
+      resourceMetric([ [ "session_source", "cli" ], [ "model_slug", "gpt-root" ], [ "plugin_id", "plugin-root" ] ], skillPoint("orchestration", "explicit", 2)),
+      resourceMetric([ [ "session_source", "subagent_thread_spawn_parent_d1" ], [ "model_slug", "gpt-child" ], [ "plugin_id", "plugin-child" ] ], skillPoint("orchestration", "implicit", 3)),
     ],
   });
 
@@ -924,7 +939,7 @@ test("groups skill injections by agent kind, model, and plugin metadata", () => 
   assert.deepEqual(skill.byAgentKind, { root: 2, subagent: 3 });
   assert.deepEqual(skill.byModel, { "gpt-root": 2, "gpt-child": 3 });
   assert.deepEqual(skill.byPlugin, { "plugin-root": 2, "plugin-child": 3 });
-  const orchestration = skill.bySkill[0];
+  const orchestration = skill.bySkill[ 0 ];
   assert.deepEqual(orchestration.byAgentKind, { root: 2, subagent: 3 });
   assert.deepEqual(orchestration.byModel, { "gpt-root": 2, "gpt-child": 3 });
   assert.deepEqual(orchestration.byPlugin, { "plugin-root": 2, "plugin-child": 3 });
@@ -933,43 +948,43 @@ test("groups skill injections by agent kind, model, and plugin metadata", () => 
 
 test("tracks shadow selection invocations separately from context injections", () => {
   resetOtelTelemetry();
-  const attributes = (entries) => entries.map(([key, value]) => ({ key, value: { stringValue: String(value) } }));
+  const attributes = (entries) => entries.map(([ key, value ]) => ({ key, value: { stringValue: String(value) } }));
   const invocation = (value, time) => ({
     name: "codex.skills.shadow_selection.invocation",
-    sum: { aggregationTemporality: 2, isMonotonic: true, dataPoints: [{ attributes: attributes([["skill", "orchestration"], ["status", "ok"], ["invoke_type", "implicit"]]), startTimeUnixNano: "1", timeUnixNano: String(time), asInt: String(value) }] },
+    sum: { aggregationTemporality: 2, isMonotonic: true, dataPoints: [ { attributes: attributes([ [ "skill", "orchestration" ], [ "status", "ok" ], [ "invoke_type", "implicit" ] ]), startTimeUnixNano: "1", timeUnixNano: String(time), asInt: String(value) } ] },
   });
   const histogram = (name, count, sum, time) => ({
     name,
-    histogram: { aggregationTemporality: 2, dataPoints: [{ attributes: [], startTimeUnixNano: "1", timeUnixNano: String(time), count: String(count), sum }] },
+    histogram: { aggregationTemporality: 2, dataPoints: [ { attributes: [], startTimeUnixNano: "1", timeUnixNano: String(time), count: String(count), sum } ] },
   });
-  const ingest = (metrics) => ingestOtelSignal("metrics", { resourceMetrics: [{ scopeMetrics: [{ metrics }] }] });
+  const ingest = (metrics) => ingestOtelSignal("metrics", { resourceMetrics: [ { scopeMetrics: [ { metrics } ] } ] });
 
-  ingest([invocation(1, 10), histogram("codex.skills.shadow_selection.catalog_entries", 1, 8, 10)]);
-  ingest([invocation(3, 20), histogram("codex.skills.shadow_selection.catalog_entries", 2, 15, 20)]);
+  ingest([ invocation(1, 10), histogram("codex.skills.shadow_selection.catalog_entries", 1, 8, 10) ]);
+  ingest([ invocation(3, 20), histogram("codex.skills.shadow_selection.catalog_entries", 2, 15, 20) ]);
 
   const skills = codexTelemetryStatus().skills;
   assert.equal(skills.injected.total, 0);
   assert.equal(skills.usage.total, 3);
   assert.deepEqual(skills.usage.byInvokeType, { implicit: 3 });
-  assert.deepEqual(skills.usage.bySkill[0], { skill: "orchestration", total: 3, byStatus: { ok: 3 }, byInvokeType: { implicit: 3 }, byAgentKind: { unknown: 3 }, byModel: { unknown: 3 }, byPlugin: { none: 3 } });
+  assert.deepEqual(skills.usage.bySkill[ 0 ], { skill: "orchestration", total: 3, byStatus: { ok: 3 }, byInvokeType: { implicit: 3 }, byAgentKind: { unknown: 3 }, byModel: { unknown: 3 }, byPlugin: { none: 3 } });
   assert.deepEqual(skills.selection.catalogEntries, { count: 2, sum: 15, average: 7.5 });
   resetOtelTelemetry();
 });
 
 test("counts delta-temporality skill metrics once per export", () => {
   resetOtelTelemetry();
-  const attributes = (entries) => entries.map(([key, value]) => ({ key, value: { stringValue: String(value) } }));
+  const attributes = (entries) => entries.map(([ key, value ]) => ({ key, value: { stringValue: String(value) } }));
   const metric = (name, value, timeUnixNano, kind = "sum") => ({
     name,
-    [kind]: {
+    [ kind ]: {
       aggregationTemporality: 1,
       ...(kind === "sum" ? { isMonotonic: true } : {}),
-      dataPoints: [{ attributes: attributes([["skill", "orchestration"], ["status", "ok"]]), timeUnixNano: String(timeUnixNano), ...(kind === "sum" ? { asInt: String(value) } : { count: "1", sum: value }) }],
+      dataPoints: [ { attributes: attributes([ [ "skill", "orchestration" ], [ "status", "ok" ] ]), timeUnixNano: String(timeUnixNano), ...(kind === "sum" ? { asInt: String(value) } : { count: "1", sum: value }) } ],
     },
   });
-  const ingest = (metrics) => ingestOtelSignal("metrics", { resourceMetrics: [{ scopeMetrics: [{ metrics }] }] });
-  ingest([metric("codex.skill.injected", 2, 10), metric("codex.thread.skills.enabled_total", 1, 10, "histogram")]);
-  ingest([metric("codex.skill.injected", 3, 20), metric("codex.thread.skills.enabled_total", 1, 20, "histogram")]);
+  const ingest = (metrics) => ingestOtelSignal("metrics", { resourceMetrics: [ { scopeMetrics: [ { metrics } ] } ] });
+  ingest([ metric("codex.skill.injected", 2, 10), metric("codex.thread.skills.enabled_total", 1, 10, "histogram") ]);
+  ingest([ metric("codex.skill.injected", 3, 20), metric("codex.thread.skills.enabled_total", 1, 20, "histogram") ]);
   const telemetry = codexTelemetryStatus();
   assert.equal(telemetry.skills.injected.total, 5);
   assert.equal(telemetry.skills.threads.enabledTotal.count, 2);
@@ -979,29 +994,35 @@ test("counts delta-temporality skill metrics once per export", () => {
 
 test("inventories native metrics and aggregates safe SQLite and tool telemetry", () => {
   resetOtelTelemetry();
-  const attributes = (entries) => entries.map(([key, value]) => ({ key, value: { stringValue: String(value) } }));
+  const attributes = (entries) => entries.map(([ key, value ]) => ({ key, value: { stringValue: String(value) } }));
   const dataPoint = (entries, value, time = "100") => ({ attributes: attributes(entries), startTimeUnixNano: "1", timeUnixNano: time, asInt: String(value) });
   const histogramPoint = (entries, count, sum, time = "100") => ({ attributes: attributes(entries), startTimeUnixNano: "1", timeUnixNano: time, count: String(count), sum });
-  ingestOtelSignal("metrics", { resourceMetrics: [{ scopeMetrics: [{ metrics: [
-    { name: "codex.sqlite.init.count", sum: { aggregationTemporality: 1, dataPoints: [dataPoint([["db", "logs"], ["status", "success"]], 2)] } },
-    { name: "codex.sqlite.init.duration_ms", histogram: { aggregationTemporality: 1, dataPoints: [histogramPoint([["db", "logs"], ["status", "success"]], 2, 40)] } },
-    { name: "codex.sqlite.fallback.count", sum: { aggregationTemporality: 1, dataPoints: [dataPoint([["db", "memories"], ["status", "locked"]], 1)] } },
-    { name: "codex.tool.call", sum: { aggregationTemporality: 1, dataPoints: [dataPoint([["tool_name", "exec"], ["source", "builtin"], ["status", "ok"], ["arguments", "/private/path"]], 3)] } },
-    { name: "codex.tool.call.duration_ms", histogram: { aggregationTemporality: 1, dataPoints: [histogramPoint([["tool_name", "exec"], ["source", "builtin"]], 3, 90)] } },
-    { name: "codex.hooks.run", sum: { aggregationTemporality: 1, dataPoints: [dataPoint([["hook_name", "SessionStart"], ["hook_source", "user"], ["handler_type", "command"], ["status", "ok"]], 2)] } },
-    { name: "codex.hooks.run.duration_ms", histogram: { aggregationTemporality: 1, dataPoints: [histogramPoint([["hook_name", "SessionStart"], ["hook_source", "user"], ["handler_type", "command"]], 2, 20)] } },
-    { name: "codex.thread.started", sum: { aggregationTemporality: 1, dataPoints: [dataPoint([["source", "subagent"]], 4)] } },
-    { name: "codex.multi_agent.spawn", sum: { aggregationTemporality: 1, dataPoints: [dataPoint([["agent_role", "worker"], ["requested_model", "autodev/worker"], ["status", "ok"]], 1)] } },
-  ] }] }] });
+  ingestOtelSignal("metrics", {
+    resourceMetrics: [ {
+      scopeMetrics: [ {
+        metrics: [
+          { name: "codex.sqlite.init.count", sum: { aggregationTemporality: 1, dataPoints: [ dataPoint([ [ "db", "logs" ], [ "status", "success" ] ], 2) ] } },
+          { name: "codex.sqlite.init.duration_ms", histogram: { aggregationTemporality: 1, dataPoints: [ histogramPoint([ [ "db", "logs" ], [ "status", "success" ] ], 2, 40) ] } },
+          { name: "codex.sqlite.fallback.count", sum: { aggregationTemporality: 1, dataPoints: [ dataPoint([ [ "db", "memories" ], [ "status", "locked" ] ], 1) ] } },
+          { name: "codex.tool.call", sum: { aggregationTemporality: 1, dataPoints: [ dataPoint([ [ "tool_name", "exec" ], [ "source", "builtin" ], [ "status", "ok" ], [ "arguments", "/private/path" ] ], 3) ] } },
+          { name: "codex.tool.call.duration_ms", histogram: { aggregationTemporality: 1, dataPoints: [ histogramPoint([ [ "tool_name", "exec" ], [ "source", "builtin" ] ], 3, 90) ] } },
+          { name: "codex.hooks.run", sum: { aggregationTemporality: 1, dataPoints: [ dataPoint([ [ "hook_name", "SessionStart" ], [ "hook_source", "user" ], [ "handler_type", "command" ], [ "status", "ok" ] ], 2) ] } },
+          { name: "codex.hooks.run.duration_ms", histogram: { aggregationTemporality: 1, dataPoints: [ histogramPoint([ [ "hook_name", "SessionStart" ], [ "hook_source", "user" ], [ "handler_type", "command" ] ], 2, 20) ] } },
+          { name: "codex.thread.started", sum: { aggregationTemporality: 1, dataPoints: [ dataPoint([ [ "source", "subagent" ] ], 4) ] } },
+          { name: "codex.multi_agent.spawn", sum: { aggregationTemporality: 1, dataPoints: [ dataPoint([ [ "agent_role", "worker" ], [ "requested_model", "autodev/worker" ], [ "status", "ok" ] ], 1) ] } },
+        ]
+      } ]
+    } ]
+  });
 
   const telemetry = codexTelemetryStatus();
-  assert.deepEqual(telemetry.sqlite.init.byDbStatus, [{ db: "logs", status: "success", count: 2 }]);
+  assert.deepEqual(telemetry.sqlite.init.byDbStatus, [ { db: "logs", status: "success", count: 2 } ]);
   assert.equal(telemetry.sqlite.init.total, 2);
-  assert.deepEqual(telemetry.sqlite.initDurationMs.byDbStatus, [{ db: "logs", status: "success", count: 2, sum: 40, average: 20 }]);
+  assert.deepEqual(telemetry.sqlite.initDurationMs.byDbStatus, [ { db: "logs", status: "success", count: 2, sum: 40, average: 20 } ]);
   assert.equal(telemetry.sqlite.fallbacks.total, 1);
   const tool = telemetry.tools.byTool.find((entry) => entry.tool === "exec");
   assert.deepEqual(tool, { tool: "exec", source: "builtin", server: "", count: 3, byStatus: { ok: 3 }, durationCount: 3, durationMs: 90, averageDurationMs: 30 });
-  assert.deepEqual(telemetry.hooks.byHook, [{ hook: "SessionStart", source: "user", handlerType: "command", count: 2, byStatus: { ok: 2 }, durationCount: 2, durationMs: 20, averageDurationMs: 10 }]);
+  assert.deepEqual(telemetry.hooks.byHook, [ { hook: "SessionStart", source: "user", handlerType: "command", count: 2, byStatus: { ok: 2 }, durationCount: 2, durationMs: 20, averageDurationMs: 10 } ]);
   assert.deepEqual(telemetry.threads, { started: { total: 4, bySource: { subagent: 4 } }, spawns: { total: 1, byStatus: { ok: 1 }, byRole: { worker: 1 }, byModel: { "autodev/worker": 1 } } });
   assert.equal(JSON.stringify(telemetry).includes("/private/path"), false);
   assert.deepEqual(telemetry.metrics.observed.map(({ name, exports, dataPoints }) => ({ name, exports, dataPoints })), [
@@ -1020,15 +1041,21 @@ test("inventories native metrics and aggregates safe SQLite and tool telemetry",
 
 test("accepts histogram-shaped lifecycle metrics when Codex reports them as distributions", () => {
   resetOtelTelemetry();
-  const attributes = (entries) => entries.map(([key, value]) => ({ key, value: { stringValue: String(value) } }));
+  const attributes = (entries) => entries.map(([ key, value ]) => ({ key, value: { stringValue: String(value) } }));
   const point = (entries, count) => ({ attributes: attributes(entries), startTimeUnixNano: "1", timeUnixNano: "2", count: String(count), sum: 0 });
-  ingestOtelSignal("metrics", { resourceMetrics: [{ scopeMetrics: [{ metrics: [
-    { name: "codex.hooks.run", histogram: { aggregationTemporality: 1, dataPoints: [point([["hook_name", "SessionEnd"], ["hook_source", "user"], ["handler_type", "command"], ["status", "ok"]], 2)] } },
-    { name: "codex.thread.started", histogram: { aggregationTemporality: 1, dataPoints: [point([["source", "subagent"]], 3)] } },
-    { name: "codex.multi_agent.spawn", histogram: { aggregationTemporality: 1, dataPoints: [point([["agent_role", "worker"], ["requested_model", "autodev/worker"], ["status", "ok"]], 1)] } },
-  ] }] }] });
+  ingestOtelSignal("metrics", {
+    resourceMetrics: [ {
+      scopeMetrics: [ {
+        metrics: [
+          { name: "codex.hooks.run", histogram: { aggregationTemporality: 1, dataPoints: [ point([ [ "hook_name", "SessionEnd" ], [ "hook_source", "user" ], [ "handler_type", "command" ], [ "status", "ok" ] ], 2) ] } },
+          { name: "codex.thread.started", histogram: { aggregationTemporality: 1, dataPoints: [ point([ [ "source", "subagent" ] ], 3) ] } },
+          { name: "codex.multi_agent.spawn", histogram: { aggregationTemporality: 1, dataPoints: [ point([ [ "agent_role", "worker" ], [ "requested_model", "autodev/worker" ], [ "status", "ok" ] ], 1) ] } },
+        ]
+      } ]
+    } ]
+  });
   const telemetry = codexTelemetryStatus();
-  assert.equal(telemetry.hooks.byHook[0].count, 2);
+  assert.equal(telemetry.hooks.byHook[ 0 ].count, 2);
   assert.deepEqual(telemetry.threads.started, { total: 3, bySource: { subagent: 3 } });
   assert.deepEqual(telemetry.threads.spawns, { total: 1, byStatus: { ok: 1 }, byRole: { worker: 1 }, byModel: { "autodev/worker": 1 } });
   resetOtelTelemetry();
@@ -1040,7 +1067,7 @@ test("tracks router-visible subagent spawn failure reasons", () => {
   const failures = spawnFailureStatus();
   assert.equal(failures.total, 1);
   assert.equal(failures.byReason.provider_exhausted, 1);
-  assert.equal(failures.recent[0].requestId, "req-provider-failed");
+  assert.equal(failures.recent[ 0 ].requestId, "req-provider-failed");
   resetRouterTelemetry();
 });
 
@@ -1051,10 +1078,10 @@ test("normalizes and summarizes Codex task statuses for status reporting", () =>
     { sessionId: "task-not-loaded", status: { type: "notLoaded" }, name: "Saved task" },
   ]);
   assert.deepEqual(summary.countsByStatus, { active: 1, idle: 1, notLoaded: 1 });
-  assert.equal(summary.tasks[0].status, "active");
-  assert.equal(summary.tasks[0].createdAt, "2026-08-28T18:10:48.000Z");
-  assert.equal(summary.tasks[0].updatedAt, "2026-08-28T22:04:25.000Z");
-  assert.equal(summary.tasks[2].id, "task-not-loaded");
+  assert.equal(summary.tasks[ 0 ].status, "active");
+  assert.equal(summary.tasks[ 0 ].createdAt, "2026-08-28T18:10:48.000Z");
+  assert.equal(summary.tasks[ 0 ].updatedAt, "2026-08-28T22:04:25.000Z");
+  assert.equal(summary.tasks[ 2 ].id, "task-not-loaded");
   assert.equal(normalizeCodexTask({ id: "task", status: { type: "notLoaded" } }).status, "notLoaded");
 });
 
@@ -1233,19 +1260,25 @@ test("persists provider telemetry and recent events across router restarts", asy
     recordRouterEvent({ phase: "selected", requestId: "req-persist", role: "worker", requestedModel: "autodev/worker", provider: "minimax", model: "MiniMax-M3" });
     recordRouterEvent({ phase: "result", requestId: "req-persist", role: "worker", requestedModel: "autodev/worker", provider: "minimax", model: "MiniMax-M3", outcome: "failure", status: 429, failureClass: "throttled", elapsedMs: 11 });
     resetOtelTelemetry();
-    ingestOtelSignal("metrics", { resourceMetrics: [{ scopeMetrics: [{ metrics: [{
-      name: "codex.skill.injected",
-      sum: { aggregationTemporality: 1, dataPoints: [{ attributes: [{ key: "skill", value: { stringValue: "orchestration" } }, { key: "status", value: { stringValue: "ok" } }, { key: "invoke_type", value: { stringValue: "implicit" } }], startTimeUnixNano: "1", timeUnixNano: "2", asInt: "2" }] },
-    }, {
-      name: "codex.skills.shadow_selection.invocation",
-      sum: { aggregationTemporality: 1, dataPoints: [{ attributes: [{ key: "skill", value: { stringValue: "orchestration" } }, { key: "status", value: { stringValue: "ok" } }, { key: "invoke_type", value: { stringValue: "implicit" } }], startTimeUnixNano: "1", timeUnixNano: "2", asInt: "2" }] },
-    }, {
-      name: "codex.hooks.run",
-      sum: { aggregationTemporality: 1, dataPoints: [{ attributes: [{ key: "hook_name", value: { stringValue: "SessionStart" } }, { key: "hook_source", value: { stringValue: "user" } }, { key: "handler_type", value: { stringValue: "command" } }, { key: "status", value: { stringValue: "ok" } }], startTimeUnixNano: "1", timeUnixNano: "2", asInt: "1" }] },
-    }, {
-      name: "codex.thread.started",
-      sum: { aggregationTemporality: 1, dataPoints: [{ attributes: [{ key: "source", value: { stringValue: "subagent" } }], startTimeUnixNano: "1", timeUnixNano: "2", asInt: "1" }] },
-    }] }] }] });
+    ingestOtelSignal("metrics", {
+      resourceMetrics: [ {
+        scopeMetrics: [ {
+          metrics: [ {
+            name: "codex.skill.injected",
+            sum: { aggregationTemporality: 1, dataPoints: [ { attributes: [ { key: "skill", value: { stringValue: "orchestration" } }, { key: "status", value: { stringValue: "ok" } }, { key: "invoke_type", value: { stringValue: "implicit" } } ], startTimeUnixNano: "1", timeUnixNano: "2", asInt: "2" } ] },
+          }, {
+            name: "codex.skills.shadow_selection.invocation",
+            sum: { aggregationTemporality: 1, dataPoints: [ { attributes: [ { key: "skill", value: { stringValue: "orchestration" } }, { key: "status", value: { stringValue: "ok" } }, { key: "invoke_type", value: { stringValue: "implicit" } } ], startTimeUnixNano: "1", timeUnixNano: "2", asInt: "2" } ] },
+          }, {
+            name: "codex.hooks.run",
+            sum: { aggregationTemporality: 1, dataPoints: [ { attributes: [ { key: "hook_name", value: { stringValue: "SessionStart" } }, { key: "hook_source", value: { stringValue: "user" } }, { key: "handler_type", value: { stringValue: "command" } }, { key: "status", value: { stringValue: "ok" } } ], startTimeUnixNano: "1", timeUnixNano: "2", asInt: "1" } ] },
+          }, {
+            name: "codex.thread.started",
+            sum: { aggregationTemporality: 1, dataPoints: [ { attributes: [ { key: "source", value: { stringValue: "subagent" } } ], startTimeUnixNano: "1", timeUnixNano: "2", asInt: "1" } ] },
+          } ]
+        } ]
+      } ]
+    });
     await persistRouterStateNow(stateFile);
     resetRouterTelemetry();
     resetOtelTelemetry();
@@ -1256,20 +1289,20 @@ test("persists provider telemetry and recent events across router restarts", asy
     assert.equal(restored.providers.minimax.failures, 1);
     assert.equal(restored.providers.minimax.lastFailure.class, "throttled");
     assert.equal(restored.usage.byRole.worker.attempts, 1);
-    assert.equal(restored.usage.byModel["minimax/MiniMax-M3"].failures, 1);
+    assert.equal(restored.usage.byModel[ "minimax/MiniMax-M3" ].failures, 1);
     assert.equal(restored.usage.byOrigin.subagent.failures, 1);
-    assert.equal(restored.recentEvents[0].requestId, "req-persist");
-    assert.equal(restored.recentEvents[0].toolCalls, 0);
+    assert.equal(restored.recentEvents[ 0 ].requestId, "req-persist");
+    assert.equal(restored.recentEvents[ 0 ].toolCalls, 0);
     assert.equal(restored.codexTelemetry.skills.injected.total, 2);
     assert.equal(restored.codexTelemetry.skills.usage.total, 2);
-    assert.equal(restored.codexTelemetry.skills.usage.bySkill[0].skill, "orchestration");
-    assert.equal(restored.codexTelemetry.skills.injected.bySkill[0].skill, "orchestration");
-    assert.deepEqual(restored.codexTelemetry.skills.injected.bySkill[0].byInvokeType, { implicit: 2 });
+    assert.equal(restored.codexTelemetry.skills.usage.bySkill[ 0 ].skill, "orchestration");
+    assert.equal(restored.codexTelemetry.skills.injected.bySkill[ 0 ].skill, "orchestration");
+    assert.deepEqual(restored.codexTelemetry.skills.injected.bySkill[ 0 ].byInvokeType, { implicit: 2 });
     assert.deepEqual(restored.codexTelemetry.skills.injected.byAgentKind, { unknown: 2 });
     assert.deepEqual(restored.codexTelemetry.skills.injected.byModel, { unknown: 2 });
     assert.deepEqual(restored.codexTelemetry.skills.injected.byPlugin, { none: 2 });
     assert.equal(restored.codexTelemetry.receiver.metrics, 1);
-    assert.equal(restored.codexTelemetry.hooks.byHook[0].count, 1);
+    assert.equal(restored.codexTelemetry.hooks.byHook[ 0 ].count, 1);
     assert.deepEqual(restored.codexTelemetry.threads.started, { total: 1, bySource: { subagent: 1 } });
     assert.match(serializeRouterState(), /"otelTelemetry"/);
     assert.doesNotMatch(serializeRouterState(), /prompt_text|api[_-]?key|authorization/i);
@@ -1291,7 +1324,7 @@ test("ignores a corrupt persisted router state file", async () => {
 });
 
 test("counts tool calls without double-counting streamed output items", () => {
-  const toolResponse = { output: [{ id: "call-1", type: "function_call" }, { id: "message-1", type: "message" }] };
+  const toolResponse = { output: [ { id: "call-1", type: "function_call" }, { id: "message-1", type: "message" } ] };
   assert.equal(countToolCallsInResponse(toolResponse), 1);
   const stream = [
     'data: {"type":"response.output_item.added","item":{"id":"call-1","type":"function_call"}}',
@@ -1329,7 +1362,7 @@ test("aggregates usage by role, resolved model, origin, duration, and tool calls
   assert.equal(usage.byRole.explorer.successes, 1);
   assert.equal(usage.byRole.explorer.averageDurationMs, 120);
   assert.equal(usage.byRole.explorer.toolCalls, 2);
-  assert.equal(usage.byModel["claude/sonnet"].successes, 1);
+  assert.equal(usage.byModel[ "claude/sonnet" ].successes, 1);
   assert.equal(usage.byOrigin.subagent.successes, 1);
   assert.equal(usage.byOrigin.orchestrator.successes, 1);
   assert.equal(usage.totals.toolCalls, 3);
@@ -1360,8 +1393,8 @@ test("folds roleless orchestrator and direct traffic into a single unattributed 
   assert.equal(usage.byRole.unattributed.attempts, 2);
   assert.equal(usage.byRole.unattributed.successes, 2);
 
-  const roleEntries = Object.entries(usage.byRole).filter(([role]) => role !== "unattributed");
-  const subagentTotal = roleEntries.reduce((total, [, bucket]) => ({
+  const roleEntries = Object.entries(usage.byRole).filter(([ role ]) => role !== "unattributed");
+  const subagentTotal = roleEntries.reduce((total, [ , bucket ]) => ({
     attempts: total.attempts + bucket.attempts,
     successes: total.successes + bucket.successes,
     failures: total.failures + bucket.failures,
@@ -1378,21 +1411,21 @@ test("folds roleless orchestrator and direct traffic into a single unattributed 
 test("byModel active count tracks in-flight requests per model so the dashboard can sum child active into the provider parent", () => {
   resetRouterTelemetry();
   recordRouterEvent({ phase: "selected", requestId: "req-active-1", requestedModel: "sonnet", provider: "claude", model: "sonnet" });
-  recordRouterEvent({ phase: "selected", requestId: "req-active-2", requestedModel: "claude-opus-4-8", provider: "claude", model: "claude-opus-4-8" });
+  recordRouterEvent({ phase: "selected", requestId: "req-active-2", requestedModel: "claude-opus-5", provider: "claude", model: "claude-opus-5" });
   let usage = getRouterStatus().usage;
-  assert.equal(usage.byModel["claude/sonnet"].active, 1);
-  assert.equal(usage.byModel["claude/claude-opus-4-8"].active, 1);
+  assert.equal(usage.byModel[ "claude/sonnet" ].active, 1);
+  assert.equal(usage.byModel[ "claude/claude-opus-5" ].active, 1);
   // Parent Active = sum of visible children, per model, for this provider.
-  const parentActive = usage.byModel["claude/sonnet"].active + usage.byModel["claude/claude-opus-4-8"].active;
+  const parentActive = usage.byModel[ "claude/sonnet" ].active + usage.byModel[ "claude/claude-opus-5" ].active;
   assert.equal(parentActive, 2);
 
   recordRouterEvent({ phase: "result", requestId: "req-active-1", requestedModel: "sonnet", provider: "claude", model: "sonnet", outcome: "success", status: 200, elapsedMs: 5 });
   usage = getRouterStatus().usage;
-  assert.equal(usage.byModel["claude/sonnet"].active, 0);
-  assert.equal(usage.byModel["claude/claude-opus-4-8"].active, 1);
+  assert.equal(usage.byModel[ "claude/sonnet" ].active, 0);
+  assert.equal(usage.byModel[ "claude/claude-opus-5" ].active, 1);
 
-  recordRouterEvent({ phase: "result", requestId: "req-active-2", requestedModel: "claude-opus-4-8", provider: "claude", model: "claude-opus-4-8", outcome: "success", status: 200, elapsedMs: 5 });
-  assert.equal(getRouterStatus().usage.byModel["claude/claude-opus-4-8"].active, 0);
+  recordRouterEvent({ phase: "result", requestId: "req-active-2", requestedModel: "claude-opus-5", provider: "claude", model: "claude-opus-5", outcome: "success", status: 200, elapsedMs: 5 });
+  assert.equal(getRouterStatus().usage.byModel[ "claude/claude-opus-5" ].active, 0);
   resetRouterTelemetry();
 });
 
@@ -1418,8 +1451,8 @@ test("keeps a stale byModel lastFailure after a later success, which the dashboa
   // the earlier failure forever. The dashboard's child-row status must gate on the
   // provider's current limited state rather than this stale per-model failure, or a
   // recovered model would render "limited" indefinitely.
-    assert.equal(status.usage.byModel["claude/sonnet"].failures, 1);
-  assert.ok(status.usage.byModel["claude/sonnet"].lastFailure);
+  assert.equal(status.usage.byModel[ "claude/sonnet" ].failures, 1);
+  assert.ok(status.usage.byModel[ "claude/sonnet" ].lastFailure);
   resetRouterTelemetry();
 });
 
@@ -1531,8 +1564,8 @@ test("status snapshot exposes configured models, active work, cooldowns, and rec
   assert.equal(limited.providers.claude.status, "throttled");
   assert.equal(limited.providers.claude.failures, 1);
   assert.equal(limited.providers.claude.lastFailure.class, "throttled");
-  assert.equal(limited.recentEvents[0].phase, "result");
-  assert.equal(limited.recentEvents[0].requestId, "req-status");
+  assert.equal(limited.recentEvents[ 0 ].phase, "result");
+  assert.equal(limited.recentEvents[ 0 ].requestId, "req-status");
   decrementActiveRequests("claude");
   clearProviderCooldown("claude");
   resetRouterTelemetry();
@@ -1549,18 +1582,18 @@ test("extracts text from a Responses SSE completion", () => {
   const response = responseTextFromSse(body);
   assert.equal(response.status, "completed");
   assert.equal(response.output_text, "router-ok");
-  assert.equal(response.output[0].content[0].text, "router-ok");
+  assert.equal(response.output[ 0 ].content[ 0 ].text, "router-ok");
 });
 
 
 test("deduplicates catalog models and keeps role aliases visible", () => {
-  const ids = catalogModelIds([{ slug: "gpt-5.6-luna" }, { slug: "gpt-5.6-luna" }], ["autodev/explorer"]);
-  assert.deepEqual(ids, ["gpt-5.6-luna", "autodev/explorer"]);
+  const ids = catalogModelIds([ { slug: "gpt-5.6-luna" }, { slug: "gpt-5.6-luna" } ], [ "autodev/explorer" ]);
+  assert.deepEqual(ids, [ "gpt-5.6-luna", "autodev/explorer" ]);
 });
 
 test("rewrites the routed provider model back to the public role alias", () => {
-  const value = replaceModelFields({ model: "gemini-3.6-flash-medium", nested: [{ model: "gemini-3.6-flash-medium" }] }, "autodev/explorer");
-  assert.deepEqual(value, { model: "autodev/explorer", nested: [{ model: "autodev/explorer" }] });
+  const value = replaceModelFields({ model: "gemini-3.6-flash-medium", nested: [ { model: "gemini-3.6-flash-medium" } ] }, "autodev/explorer");
+  assert.deepEqual(value, { model: "autodev/explorer", nested: [ { model: "autodev/explorer" } ] });
 
   const event = transformSseEvent('data: {"type":"response.completed","response":{"model":"gemini-3.6-flash-medium"},"model":"gemini-3.6-flash-medium"}\n\n', "autodev/explorer");
   assert.match(event, /autodev\/explorer/);
@@ -1572,8 +1605,8 @@ test("uses the least-busy provider before starting another provider request", ()
   incrementActiveRequests("claude");
   incrementActiveRequests("minimax");
   const candidates = roleCandidates("default", () => 0.5).map((candidate) => candidate.provider);
-  assert.equal(candidates[0], "antigravity");
-  assert.deepEqual(candidates.slice(3), ["copilot", "codex"]);
+  assert.equal(candidates[ 0 ], "antigravity");
+  assert.deepEqual(candidates.slice(3), [ "copilot", "codex" ]);
   activeProviderRequests.clear();
 });
 
@@ -1591,9 +1624,9 @@ test("balances candidate provider priority across active in-flight requests", ()
   const candidates = roleCandidates("default", () => 0.5);
   const providers = candidates.map((c) => c.provider);
   // minimax (0 active) should come first, then antigravity (1 active), then claude (2 active)
-  assert.equal(providers[0], "minimax");
-  assert.equal(providers[1], "antigravity");
-  assert.equal(providers[2], "claude");
+  assert.equal(providers[ 0 ], "minimax");
+  assert.equal(providers[ 1 ], "antigravity");
+  assert.equal(providers[ 2 ], "claude");
 
   decrementActiveRequests("claude");
   decrementActiveRequests("claude");
@@ -1651,7 +1684,7 @@ test("extracts text from SSE stream with empty lines and keep-alive comments", (
   const response = responseTextFromSse(rawStream);
   assert.equal(response.status, "completed");
   assert.equal(response.output_text, "part1 part2");
-  assert.equal(response.output[0].content[0].text, "part1 part2");
+  assert.equal(response.output[ 0 ].content[ 0 ].text, "part1 part2");
 });
 
 test("structured router error body carries code, retryable, failure class, provider, model, request id, and router instance id", async () => {
@@ -1725,7 +1758,7 @@ test("wraps transport failures with actionable safe diagnostics", async () => {
     assert.doesNotMatch(body.error.message, /ECONNRESET|fetch failed|127\.0\.0\.1|absolute|path/i);
     const transportEvents = getRouterStatus().recentEvents.filter((event) => event.phase === "transport_error" && event.requestId === "req-transport-error");
     assert.equal(transportEvents.length, 3, "all bounded transport attempts should be observable");
-    assert.equal(transportEvents[0].errorCode, "ECONNRESET");
+    assert.equal(transportEvents[ 0 ].errorCode, "ECONNRESET");
   } finally {
     await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
     globalThis.fetch = originalFetch;
@@ -1769,7 +1802,7 @@ test("direct concrete request survives two pre-response transport failures in a 
     assert.equal(responseCalls, 3);
     const transportEvents = getRouterStatus().recentEvents.filter((event) => event.phase === "transport_error" && event.requestId === "req-transport-recovers");
     assert.equal(transportEvents.length, 2);
-    assert.deepEqual(transportEvents.map((event) => event.errorCode).sort(), ["EPIPE", "UND_ERR_SOCKET"]);
+    assert.deepEqual(transportEvents.map((event) => event.errorCode).sort(), [ "EPIPE", "UND_ERR_SOCKET" ]);
   } finally {
     await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
     globalThis.fetch = originalFetch;
@@ -1927,7 +1960,7 @@ test("direct concrete request does not retry on auth (401) or payload (400) erro
   const originalFetch = globalThis.fetch;
   let responseCalls = 0;
   let lastStatus = 0;
-  for (const status of [401, 400]) {
+  for (const status of [ 401, 400 ]) {
     responseCalls = 0;
     globalThis.fetch = async (url, options) => {
       if (String(url) === "http://127.0.0.1:4000/v1/responses") {
@@ -1985,7 +2018,7 @@ test("direct concrete request does not retry once the client signal is aborted",
   };
   const route = routeForModel("sonnet");
   const controller = new AbortController();
-  const requestChunks = [Buffer.from(JSON.stringify({ model: "sonnet", stream: false }))];
+  const requestChunks = [ Buffer.from(JSON.stringify({ model: "sonnet", stream: false })) ];
   const { IncomingMessage } = await import("node:http");
   const { Socket } = await import("node:net");
   const fakeRequest = Object.assign(new IncomingMessage(new Socket()), {
@@ -2003,22 +2036,22 @@ test("direct concrete request does not retry once the client signal is aborted",
     headersSent: false,
     writableEnded: false,
     destroyed: false,
-    setHeader(name, value) { headerStore[name] = value; },
-    getHeader(name) { return headerStore[name]; },
-    removeHeader(name) { delete headerStore[name]; },
+    setHeader(name, value) { headerStore[ name ] = value; },
+    getHeader(name) { return headerStore[ name ]; },
+    removeHeader(name) { delete headerStore[ name ]; },
     writeHead(status, headers) {
       this.headersSent = true;
       responseStatus = status;
-      for (const [name, value] of Object.entries(headers ?? {})) headerStore[name] = value;
+      for (const [ name, value ] of Object.entries(headers ?? {})) headerStore[ name ] = value;
     },
     write(chunk) { responseBody += String(chunk); },
     end(chunk) {
       if (chunk !== undefined) responseBody += String(chunk);
       this.writableEnded = true;
     },
-    once() {},
-    on() {},
-    removeListener() {},
+    once() { },
+    on() { },
+    removeListener() { },
   };
   try {
     // Schedule the abort for the next tick so the upstream fetch is in
@@ -2066,7 +2099,7 @@ test("direct concrete request stops retrying once the client aborts mid-way thro
     return originalFetch(url, options);
   };
   const route = routeForModel("sonnet");
-  const requestChunks = [Buffer.from(JSON.stringify({ model: "sonnet", stream: false }))];
+  const requestChunks = [ Buffer.from(JSON.stringify({ model: "sonnet", stream: false })) ];
   const { IncomingMessage } = await import("node:http");
   const { Socket } = await import("node:net");
   const fakeRequest = Object.assign(new IncomingMessage(new Socket()), {
@@ -2082,18 +2115,18 @@ test("direct concrete request stops retrying once the client aborts mid-way thro
     headersSent: false,
     writableEnded: false,
     destroyed: false,
-    setHeader(name, value) { headerStore[name] = value; },
-    getHeader(name) { return headerStore[name]; },
-    removeHeader(name) { delete headerStore[name]; },
+    setHeader(name, value) { headerStore[ name ] = value; },
+    getHeader(name) { return headerStore[ name ]; },
+    removeHeader(name) { delete headerStore[ name ]; },
     writeHead(status, headers) {
       this.headersSent = true;
-      for (const [name, value] of Object.entries(headers ?? {})) headerStore[name] = value;
+      for (const [ name, value ] of Object.entries(headers ?? {})) headerStore[ name ] = value;
     },
-    write() {},
+    write() { },
     end() { this.writableEnded = true; },
-    once() {},
-    on() {},
-    removeListener() {},
+    once() { },
+    on() { },
+    removeListener() { },
   };
   try {
     clearProviderCooldown("claude");
@@ -2155,9 +2188,9 @@ test("direct concrete request does not reroute to a different provider when the 
   } finally {
     await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
     globalThis.fetch = originalFetch;
-    for (const [key, value] of Object.entries(originalCredentials)) {
-      if (value === undefined) delete process.env[key];
-      else process.env[key] = value;
+    for (const [ key, value ] of Object.entries(originalCredentials)) {
+      if (value === undefined) delete process.env[ key ];
+      else process.env[ key ] = value;
     }
     activeProviderRequests.clear();
     clearProviderCooldown("claude");
@@ -2321,5 +2354,90 @@ test("graceful shutdown drains in-flight requests, persists state, and stops acc
     activeProviderRequests.clear();
     clearProviderCooldown("claude");
     await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("tells the provider bridge that an orchestrator turn is the orchestrator, so it is never handed the leaf prompt", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalKey = process.env.LITELLM_API_KEY;
+  process.env.LITELLM_API_KEY = "test-provider-key";
+  resetRouterTelemetry();
+  activeProviderRequests.clear();
+  for (const provider of [ "codex", "claude", "antigravity", "minimax" ]) clearProviderCooldown(provider);
+  let upstreamHeaders = null;
+  globalThis.fetch = async (url, options) => {
+    const target = String(url);
+    // Force the orchestrator off its pinned primary and onto a bridge-backed
+    // fallback provider, which is exactly where the leaf prompt used to leak in.
+    if (target.startsWith("https://chatgpt.com/")) return new Response(JSON.stringify({ error: "You have hit your usage limit" }), { status: 429 });
+    if (target.endsWith("/health") || target.endsWith("/health/liveliness")) return new Response("ok", { status: 200 });
+    if (target.endsWith("/responses")) {
+      upstreamHeaders = options.headers;
+      return new Response(JSON.stringify({ id: "orchestrator", model: "fallback", output_text: "ok" }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    return originalFetch(url, options);
+  };
+  const server = createServer((request, response) => { void handle(request, response); });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  try {
+    const address = server.address();
+    const response = await originalFetch(`http://127.0.0.1:${address.port}/v1/responses`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-codex-session-id": "orchestrator-role-header" },
+      body: JSON.stringify({ model: ORCHESTRATOR_ALIAS, stream: false }),
+    });
+    assert.equal(response.status, 200);
+    assert.equal(upstreamHeaders[ AGENT_ROLE_HEADER ], ORCHESTRATOR_AGENT_ROLE);
+  } finally {
+    await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    globalThis.fetch = originalFetch;
+    if (originalKey === undefined) delete process.env.LITELLM_API_KEY;
+    else process.env.LITELLM_API_KEY = originalKey;
+    activeProviderRequests.clear();
+    resetRouterTelemetry();
+  }
+});
+
+test("a delegated role is named as that role, and a client cannot claim to be the orchestrator", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalKey = process.env.LITELLM_API_KEY;
+  process.env.LITELLM_API_KEY = "test-provider-key";
+  resetRouterTelemetry();
+  activeProviderRequests.clear();
+  for (const provider of [ "codex", "claude", "antigravity", "minimax", "copilot" ]) clearProviderCooldown(provider);
+  let upstreamHeaders = null;
+  globalThis.fetch = async (url, options) => {
+    const target = String(url);
+    if (target.endsWith("/health") || target.endsWith("/health/liveliness")) return new Response("ok", { status: 200 });
+    if (target.endsWith("/responses")) {
+      upstreamHeaders = options.headers;
+      return new Response(JSON.stringify({ id: "role", model: "sonnet", output_text: "ok" }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    return originalFetch(url, options);
+  };
+  const server = createServer((request, response) => { void handle(request, response); });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  try {
+    const address = server.address();
+    const response = await originalFetch(`http://127.0.0.1:${address.port}/v1/responses`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-codex-session-id": "leaf-role-header",
+        // A leaf turn claiming to be the root: the router builds its outbound
+        // header set from its own alias dispatch, so the claim never survives.
+        [ AGENT_ROLE_HEADER ]: ORCHESTRATOR_AGENT_ROLE,
+      },
+      body: JSON.stringify({ model: "autodev/explorer", stream: false }),
+    });
+    assert.equal(response.status, 200);
+    assert.equal(upstreamHeaders[ AGENT_ROLE_HEADER ], "explorer");
+  } finally {
+    await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    globalThis.fetch = originalFetch;
+    if (originalKey === undefined) delete process.env.LITELLM_API_KEY;
+    else process.env.LITELLM_API_KEY = originalKey;
+    activeProviderRequests.clear();
+    resetRouterTelemetry();
   }
 });

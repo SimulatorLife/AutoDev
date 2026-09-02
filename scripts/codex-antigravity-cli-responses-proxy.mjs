@@ -18,9 +18,9 @@ const AUTH_TOKEN = process.env.LITELLM_API_KEY ?? "";
 const PROJECT_ROOT = process.env.CODEX_PROJECT_ROOT ?? process.env.AGY_PROJECT_ROOT ?? null;
 const MODEL_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 const EFFORTS = new Set([ "low", "medium", "high" ]);
-const BRIDGE_INSTRUCTIONS = "You are the leaf implementation agent for a parent Codex task. Use Antigravity's native tools and follow the repository's AGENTS.md. Do not spawn child agents, commit, or push unless the task explicitly requires it.";
 
 import { resolveCwd, WorkspaceResolutionError } from "./scripts/codex/lib/resolve-workspace.mjs";
+import { bridgeInstructions, isOrchestratorRole, resolveAgentRole } from "./scripts/codex/lib/bridge-role.mjs";
 
 function modelMetadata() {
   return {
@@ -88,9 +88,9 @@ function contentText(content) {
   return content.map((part) => typeof part === "object" ? (part.text ?? JSON.stringify(part)) : String(part)).join("\n");
 }
 
-function promptFromInput(value) {
-  if (typeof value === "string") return `${BRIDGE_INSTRUCTIONS}\n\n${value}`;
-  if (!Array.isArray(value)) return `${BRIDGE_INSTRUCTIONS}\n\n${JSON.stringify(value)}`;
+function promptFromInput(value, instructions) {
+  if (typeof value === "string") return `${instructions}\n\n${value}`;
+  if (!Array.isArray(value)) return `${instructions}\n\n${JSON.stringify(value)}`;
   const userItems = value.filter((item) => item && typeof item === "object" && (item.role === "user" || item.type === "message" && item.role === "user"));
   const items = userItems.length > 0 ? userItems : value.filter((item) => item && typeof item === "object" && ![ "developer", "system" ].includes(item.role));
   const task = items.map((item) => {
@@ -98,7 +98,7 @@ function promptFromInput(value) {
     if (!item || typeof item !== "object") return JSON.stringify(item);
     return contentText(item.content ?? item.text ?? "");
   }).join("\n\n");
-  return `${BRIDGE_INSTRUCTIONS}\n\n${task}`;
+  return `${instructions}\n\n${task}`;
 }
 
 function responseMessageItem(text, itemId) {
@@ -287,7 +287,10 @@ async function handle(request, response) {
   try { payload = JSON.parse(body); } catch { sendJson(response, 400, { error: { type: "invalid_request_error", message: "invalid JSON" } }); return; }
   const model = resolveModel(payload.model);
   const effort = resolveEffort(payload);
-  const prompt = promptFromInput(payload.input ?? "");
+  // The router classifies the turn; only it can tell this bridge that it is
+  // serving the root orchestrator rather than a delegated leaf.
+  const agentRole = resolveAgentRole(request.headers);
+  const prompt = promptFromInput(payload.input ?? "", bridgeInstructions(agentRole));
   let cwd;
   try {
     cwd = resolveCwd(payload, request.headers, PROJECT_ROOT);
@@ -297,7 +300,7 @@ async function handle(request, response) {
     sendJson(response, 400, { error: { type: "invalid_request_error", message: error.message } });
     return;
   }
-  console.error(`agy request model=${model} effort=${effort} cwd=${cwd}`);
+  console.error(`agy request model=${model} effort=${effort} role=${isOrchestratorRole(agentRole) ? "orchestrator" : "leaf"} cwd=${cwd}`);
 
   if (!payload.stream) {
     try {
@@ -365,7 +368,15 @@ async function handle(request, response) {
         const update = event.step_update ?? {};
         const activity = activityText(event);
         const key = `${update.step_index ?? "?"}:${update.state ?? "?"}:${update.step_type ?? "?"}:${update.tool_name ?? ""}`;
-        if (activity) emitActivity(activity, key);
+        if (activity) {
+          // A step_update is provider-produced work, so the turn is genuinely
+          // under way: commit to the SSE stream and let the parent watch the
+          // activity live. Synthetic pre-run activity stays buffered so a
+          // provider that fails before doing anything can still be reported
+          // as an HTTP status the router can fall back on.
+          startStream();
+          emitActivity(activity, key);
+        }
         if (update.step_type === "tool") console.error(`agy tool=${update.tool_name ?? "unknown"}`);
       }
     });

@@ -47,12 +47,33 @@ case "$active_model" in
     ;;
 esac
 
-cat <<'EOF'
-{
-  "systemMessage": "UserPromptSubmit hook fired: injecting root delegation policy",
-  "hookSpecificOutput": {
-    "hookEventName": "UserPromptSubmit",
-    "additionalContext": "ROOT DELEGATION REQUIREMENT:\n\nFor this turn, use subagents for all useful non-trivial work. Before doing\nsubstantial investigation or implementation directly, identify independent\nwork that can be delegated and spawn the appropriate configured subagents.\n\nFor a typical non-trivial task:\n- Spawn one or more explorer agents early for investigation and context gathering.\n- Run independent investigations in parallel where useful.\n- Delegate bounded implementation work to workers when scopes are independent.\n- Use a validator for significant changes or conclusions.\n\nAct primarily as the coordinator and integrator. Do not avoid delegation\nmerely because you could perform the work yourself.\n\nSkip subagents only when this turn is genuinely trivial or atomic and there\nis no useful investigation, parallel work, implementation, or validation\nthat can be delegated.\n\nUse explicit configured autodev/<role> model aliases when spawning. Check the\nlocal router's available concurrency before creating parallel agents; never\nexceed its configured limit, and wait for and close finished agents before\nretrying. Keep the parent workspace aligned with the target repository."
-  }
-}
-EOF
+# The injected policy is the same orchestrator prompt the provider bridges hand
+# a non-Codex root turn, so the root agent gets one delegation policy no matter
+# which provider serves it. The installed hook copy keeps the AutoDev `scripts/`
+# subtree beneath it; a checkout has the prompts beside this file.
+hook_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+prompt_file=""
+for candidate in \
+  "$hook_dir/scripts/codex/prompts/orchestrator.md" \
+  "$hook_dir/codex/prompts/orchestrator.md"; do
+  if [[ -f "$candidate" ]]; then
+    prompt_file="$candidate"
+    break
+  fi
+done
+if [[ -z "$prompt_file" ]]; then
+  echo "enforce-root-delegation: orchestrator prompt not found under $hook_dir" >&2
+  exit 0
+fi
+
+HOOK_PROMPT_FILE="$prompt_file" node -e '
+  const fs = require("node:fs");
+
+  process.stdout.write(JSON.stringify({
+    systemMessage: "UserPromptSubmit hook fired: injecting root delegation policy",
+    hookSpecificOutput: {
+      hookEventName: "UserPromptSubmit",
+      additionalContext: fs.readFileSync(process.env.HOOK_PROMPT_FILE, "utf8").trim()
+    }
+  }));
+'
