@@ -1,4 +1,10 @@
 #!/usr/bin/env bash
+
+# This should be the single entry point for installing/updating all local AI/agent/Codex/Claude/Antigravity/MiniMax/Copilot integration hooks, profiles, catalogs, and skills.
+# It is idempotent and can be run multiple times to update the integration.
+# It is intended to be run from the AutoDev repo.
+# Any and all symlinks, scheduled launchd processes, etc. are created/updated by this script, and the script will check for drift and report it.
+
 set -euo pipefail
 
 repo_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
