@@ -424,9 +424,15 @@ files from Python. The installer deploys both the shared module and the prompt
 files beneath the hooks directory, keeping their `scripts/` path so the same
 relative lookups work in a checkout and in the installed copy.
 
-MiniMax is served by an external proxy that AutoDev does not own, so it cannot
-select role instructions. Keep it out of the orchestrator group if a
-prompt-accurate root turn matters more than an extra fallback provider.
+MiniMax is the exception, and it needs no role prompt: its proxy
+(`scripts/codex-minimax-responses-proxy.mjs`) is a transparent pass-through to
+`https://api.minimax.io` rather than a local CLI gateway. It forwards the
+parent's own Responses payload, so the root turn arrives with the real Codex
+context and the delegation policy the `UserPromptSubmit` hook already injected;
+there is no bridge-authored prompt that could override it. That proxy therefore
+strips `x-autodev-agent-role` and `x-codex-turn-metadata` instead of honouring
+them: both are local routing metadata (the latter carries absolute workspace
+paths and git remote URLs) with no meaning to a remote API.
 
 ### Streaming provider progress back to the parent
 
@@ -505,7 +511,7 @@ intended repository, and inspect the app task/log event for those failures.
 | Provider    | Local path                                                           | Important constraint                                                                                                                                 |
 | ----------- | -------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Claude      | Codex -> Claude Responses bridge on `127.0.0.1:4000` -> Claude CLI   | Uses `CLAUDE_CODE_OAUTH_TOKEN`; the selected role model and reasoning effort are forwarded.                                                          |
-| MiniMax     | Codex -> MiniMax Responses proxy on `127.0.0.1:18765`                | Provider quota/rate limits are upstream conditions; inspect the proxy log when diagnosing them.                                                      |
+| MiniMax     | Codex -> MiniMax Responses proxy on `127.0.0.1:18765`                | Transparent pass-through to the remote API, not a CLI gateway; local routing headers are stripped. Provider quota/rate limits are upstream conditions; inspect the proxy log when diagnosing them.                                                      |
 | Antigravity | Codex -> LiteLLM `:4001` -> Antigravity adapter `:4002` -> `agy` CLI | `forward_client_headers_to_llm_api: true` must remain enabled so the structured workspace metadata reaches the adapter; `useAiCredits=false` and `useG1Credits=false` keep AI-credit overages disabled. Headless runs require the configured noninteractive permission mode. |
 | GitHub Copilot | Codex -> local Copilot Responses adapter `:4003` -> `copilot` CLI | Requires an authenticated local Copilot CLI; unavailable adapters are skipped by fallback. |
 | Local router | Codex Responses -> `127.0.0.1:4100` -> model-based provider dispatch | GPT/Codex models use the stored Codex OAuth; external model names use the existing local bridges. |

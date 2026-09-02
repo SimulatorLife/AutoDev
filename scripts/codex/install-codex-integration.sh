@@ -20,6 +20,7 @@ hook_names=(
   codex-antigravity-cli-responses-proxy.mjs
   codex-claude-cli-responses-proxy.py
   codex-copilot-cli-responses-proxy.mjs
+  codex-minimax-responses-proxy.mjs
   codex-model-router.mjs
   codex-model-router-status.mjs
   enforce-root-delegation.sh
