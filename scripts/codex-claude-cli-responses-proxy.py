@@ -14,6 +14,7 @@ import queue
 import re
 import secrets
 import subprocess
+import sys
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -165,6 +166,9 @@ def load_bridge_prompt(name: str) -> str:
 
 LEAF_BRIDGE_INSTRUCTIONS = load_bridge_prompt("leaf")
 ORCHESTRATOR_BRIDGE_INSTRUCTIONS = load_bridge_prompt("orchestrator")
+# Replaces the Claude CLI's own default system prompt rather than appending to
+# it, so bridge turns are governed only by AutoDev policy. See system_prompt().
+BASE_SYSTEM_PROMPT = load_bridge_prompt("base")
 
 
 def resolve_agent_role(headers: Any) -> str | None:
@@ -190,6 +194,25 @@ def bridge_instructions(role: Any) -> str:
     return ORCHESTRATOR_BRIDGE_INSTRUCTIONS if is_orchestrator_role(role) else LEAF_BRIDGE_INSTRUCTIONS
 
 
+def system_prompt(role: Any, cwd: str) -> str:
+    """The complete system prompt for one bridge turn.
+
+    `--system-prompt` replaces the Claude CLI's default prompt outright, which
+    also drops the per-machine sections it would otherwise inject (working
+    directory, platform, git status). The workspace the bridge resolved from
+    structured request metadata is therefore stated here: without it the agent
+    starts a turn not knowing which repository it is in. Role policy comes last
+    so it is the most recent instruction the model reads.
+    """
+    return (
+        f"{BASE_SYSTEM_PROMPT}\n\n"
+        "## Workspace\n\n"
+        f"Working directory: {cwd}\n"
+        f"Platform: {sys.platform}\n\n"
+        f"{bridge_instructions(role)}"
+    )
+
+
 def content_text(content: Any) -> str:
     if isinstance(content, str):
         return content
@@ -201,7 +224,13 @@ def content_text(content: Any) -> str:
     )
 
 
-def prompt_from_input(value: Any, instructions: str = LEAF_BRIDGE_INSTRUCTIONS) -> str:
+def prompt_from_input(value: Any) -> str:
+    """The delegated task text alone.
+
+    Role policy reaches the CLI through the system prompt, so repeating it here
+    would state the same instructions twice with the untrusted task text between
+    them.
+    """
     if isinstance(value, str):
         task = value
     elif not isinstance(value, list):
@@ -220,7 +249,7 @@ def prompt_from_input(value: Any, instructions: str = LEAF_BRIDGE_INSTRUCTIONS) 
             if isinstance(item, dict) else json.dumps(item, ensure_ascii=False)
             for item in items
         )
-    return f"{instructions}\n\nDelegated task:\n{task}"
+    return f"Delegated task:\n{task}"
 
 
 def claude_environment() -> dict[str, str]:
@@ -237,6 +266,11 @@ def claude_environment() -> dict[str, str]:
         "CLAUDE_CODE_USE_FOUNDRY",
     ):
         environment.pop(key, None)
+    # Claude Code ships its own skill catalogue, none of which is AutoDev
+    # policy. A bridge turn is governed by the role prompts and the target
+    # repository's own skills, so the bundled set is dead weight in the context
+    # window and a second, unversioned source of instructions.
+    environment["CLAUDE_CODE_DISABLE_BUNDLED_SKILLS"] = "1"
     if not environment.get("CLAUDE_CODE_OAUTH_TOKEN"):
         raise RuntimeError("CLAUDE_CODE_OAUTH_TOKEN is not available to the Claude bridge")
     return environment
@@ -319,7 +353,7 @@ def read_stderr(process: subprocess.Popen[str], events: queue.Queue[tuple[str, A
     events.put(("stderr_done", None))
 
 
-def claude_cli_args(prompt: str, model: str, effort: str, agent_role: Any = None) -> list[str]:
+def claude_cli_args(prompt: str, model: str, effort: str, agent_role: Any = None, cwd: str = ".") -> list[str]:
     codex_home = os.environ.get("CODEX_HOME", os.path.expanduser("~/.codex"))
     additional_dirs = tuple(
         directory
@@ -345,8 +379,12 @@ def claude_cli_args(prompt: str, model: str, effort: str, agent_role: Any = None
         # Claude Code's interactive approval gate from hiding those reads or
         # localhost checks behind an approval request the parent cannot answer.
         os.environ.get("CLAUDE_CODE_PERMISSION_MODE", "bypassPermissions"),
-        "--append-system-prompt",
-        bridge_instructions(agent_role),
+        # Replace rather than append: appending leaves Claude Code's own
+        # default prompt in force, which carries harness guidance (including a
+        # standing instruction not to spawn agents unless asked) that competes
+        # with the role policy this bridge is responsible for.
+        "--system-prompt",
+        system_prompt(agent_role, cwd),
         "--add-dir",
         *additional_dirs,
         "--output-format",
@@ -512,7 +550,7 @@ def raise_classified_claude_error(message: Any, error_code: Any = None) -> None:
 
 def run_claude_stream(prompt: str, model: str = DEFAULT_CLAUDE_MODEL, effort: str = DEFAULT_CLAUDE_EFFORT, cwd: str = ".", agent_role: Any = None):
     process = subprocess.Popen(
-        claude_cli_args(prompt, model, effort, agent_role),
+        claude_cli_args(prompt, model, effort, agent_role, cwd),
         cwd=cwd,
         env=claude_environment(),
         stdin=subprocess.DEVNULL,
@@ -702,7 +740,7 @@ class Handler(BaseHTTPRequestHandler):
             # The router classifies the turn; only it can tell this bridge that
             # it is serving the root orchestrator rather than a delegated leaf.
             agent_role = resolve_agent_role(self.headers)
-            prompt = prompt_from_input(request.get("input", ""), bridge_instructions(agent_role))
+            prompt = prompt_from_input(request.get("input", ""))
             cwd = resolve_cwd(request, self.headers)
             role_label = "orchestrator" if is_orchestrator_role(agent_role) else "leaf"
             print(f"claude request model={claude_model} effort={claude_effort} role={role_label} cwd={cwd}", flush=True)

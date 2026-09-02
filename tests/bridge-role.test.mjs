@@ -59,14 +59,30 @@ test("every provider bridge picks its instructions from the shared role prompts"
 
   const claude = read("scripts/codex-claude-cli-responses-proxy.py");
   assert.match(claude, /AGENT_ROLE_HEADER = "x-autodev-agent-role"/);
-  assert.match(claude, /bridge_instructions\(agent_role\)/);
+  assert.match(claude, /system_prompt\(agent_role, cwd\)/);
+  assert.match(claude, /bridge_instructions\(role\)/);
   assert.match(claude, /load_bridge_prompt\("orchestrator"\)/);
+});
+
+test("the Claude bridge replaces the CLI's own system prompt instead of appending to it", () => {
+  const claude = read("scripts/codex-claude-cli-responses-proxy.py");
+  // Appending leaves Claude Code's default prompt in force, whose harness
+  // guidance competes with the role policy the bridge is responsible for.
+  assert.doesNotMatch(claude, /--append-system-prompt/);
+  assert.match(claude, /"--system-prompt",/);
+  assert.match(claude, /load_bridge_prompt\("base"\)/);
+  // `--system-prompt` drops the CLI's per-machine sections, so the resolved
+  // workspace has to be stated in the prompt the bridge builds.
+  assert.match(claude, /Working directory: \{cwd\}/);
+  // The bundled skill catalogue is a second, unversioned source of policy.
+  assert.match(claude, /CLAUDE_CODE_DISABLE_BUNDLED_SKILLS"\] = "1"/);
 });
 
 test("the installer ships the shared role prompts beside the bridges that load them", () => {
   const installer = read("scripts/codex/install-codex-integration.sh");
   for (const asset of [
     "scripts/codex/lib/bridge-role.mjs",
+    "scripts/codex/prompts/base.md",
     "scripts/codex/prompts/leaf.md",
     "scripts/codex/prompts/orchestrator.md",
   ]) {

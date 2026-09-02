@@ -44,6 +44,7 @@ dashboard_asset_names=(codex-model-router-dashboard.html)
 runtime_module_names=(
   scripts/codex/lib/resolve-workspace.mjs
   scripts/codex/lib/bridge-role.mjs
+  scripts/codex/prompts/base.md
   scripts/codex/prompts/leaf.md
   scripts/codex/prompts/orchestrator.md
 )

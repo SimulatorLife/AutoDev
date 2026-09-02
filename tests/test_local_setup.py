@@ -498,8 +498,31 @@ class LocalSetupTests(unittest.TestCase):
         args = claude_bridge.claude_cli_args("prompt", "sonnet", "medium")
         deny_index = args.index("--disallowed-tools")
         self.assertEqual(args[deny_index + 1], "Agent,Task")
-        system_prompt_index = args.index("--append-system-prompt")
-        self.assertEqual(args[system_prompt_index + 1], claude_bridge.LEAF_BRIDGE_INSTRUCTIONS)
+        system_prompt_index = args.index("--system-prompt")
+        self.assertIn(claude_bridge.LEAF_BRIDGE_INSTRUCTIONS, args[system_prompt_index + 1])
+
+    def test_claude_cli_replaces_rather_than_appends_the_default_system_prompt(self):
+        """Appending leaves Claude Code's own default prompt in force. Its
+        harness guidance -- including a standing instruction not to spawn agents
+        unless asked -- then competes with the role policy this bridge owns."""
+        args = claude_bridge.claude_cli_args("prompt", "sonnet", "medium", "orchestrator", "/tmp/workspace")
+        self.assertNotIn("--append-system-prompt", args)
+        prompt = args[args.index("--system-prompt") + 1]
+        self.assertIn(claude_bridge.BASE_SYSTEM_PROMPT, prompt)
+        self.assertIn(claude_bridge.ORCHESTRATOR_BRIDGE_INSTRUCTIONS, prompt)
+        # Replacing the prompt drops the CLI's per-machine sections, so the
+        # workspace the bridge resolved has to be stated explicitly or the agent
+        # begins the turn not knowing which repository it is in.
+        self.assertIn("/tmp/workspace", prompt)
+        # Role policy is the most recent instruction the model reads.
+        self.assertTrue(prompt.rstrip().endswith(claude_bridge.ORCHESTRATOR_BRIDGE_INSTRUCTIONS))
+
+    def test_claude_bridge_disables_the_bundled_skill_catalogue(self):
+        """Claude Code's bundled skills are a second, unversioned source of
+        instructions that no AutoDev role prompt accounts for."""
+        with patch.dict(claude_bridge.os.environ, {"CLAUDE_CODE_OAUTH_TOKEN": "oauth-placeholder"}, clear=False):
+            environment = claude_bridge.claude_environment()
+        self.assertEqual(environment["CLAUDE_CODE_DISABLE_BUNDLED_SKILLS"], "1")
 
     def test_orchestrator_turn_is_never_handed_the_leaf_prompt(self):
         """The root orchestrator degrades onto this bridge when its primary
@@ -512,7 +535,7 @@ class LocalSetupTests(unittest.TestCase):
         self.assertNotIn("bounded leaf agent", orchestrator)
         self.assertNotIn("Do not spawn", orchestrator)
 
-        prompt = claude_bridge.prompt_from_input("Implement the change.", orchestrator)
+        prompt = claude_bridge.system_prompt("orchestrator", "/tmp/workspace")
         self.assertIn("ROOT ORCHESTRATOR POLICY", prompt)
         self.assertNotIn("bounded leaf agent", prompt)
 
@@ -545,10 +568,10 @@ class LocalSetupTests(unittest.TestCase):
             orchestrator,
             msg="the root orchestrator must keep the Agent tool it delegates with",
         )
-        system_prompt_index = orchestrator.index("--append-system-prompt")
-        self.assertEqual(
-            orchestrator[system_prompt_index + 1],
+        system_prompt_index = orchestrator.index("--system-prompt")
+        self.assertIn(
             claude_bridge.ORCHESTRATOR_BRIDGE_INSTRUCTIONS,
+            orchestrator[system_prompt_index + 1],
         )
 
     def test_claude_stream_reports_reasoning_and_tool_activity(self):

@@ -414,6 +414,42 @@ Bridges resolve the header and pick one of two shared prompts:
 | `orchestrator` | `scripts/codex/prompts/orchestrator.md` | available |
 | anything else (including absent) | `scripts/codex/prompts/leaf.md` | `--disallowed-tools Agent,Task` |
 
+### The Claude bridge owns the whole system prompt
+
+The Claude bridge passes `--system-prompt`, which *replaces* the Claude CLI's
+default prompt, rather than `--append-system-prompt`, which leaves it in force
+underneath. Appending puts AutoDev role policy in competition with Claude Code's
+own harness guidance — which includes a standing instruction not to spawn agents
+unless asked, directly at odds with `orchestrator.md`. Replacement makes the
+role prompts the only policy in the turn.
+
+`scripts/codex/prompts/base.md` holds what the default prompt otherwise supplied
+and the role prompts do not: tool-selection guidance, the destructive-action
+limits that matter because the bridge runs under `bypassPermissions`, and
+reporting-honesty rules. `system_prompt()` composes it as
+base + workspace + role policy, role last.
+
+Two consequences of replacement are load-bearing:
+
+- **The per-machine sections are gone.** A default-prompt session is told its
+  working directory, platform, and git status; a replaced prompt is told
+  nothing (`--exclude-dynamic-system-prompt-sections` is ignored with
+  `--system-prompt`). The bridge therefore states the workspace it resolved from
+  structured request metadata in the prompt itself. Without that block the agent
+  begins the turn not knowing which repository it is in, which is why the prompt
+  is built per request rather than read from one static file.
+- **`AGENTS.md` is not injected either way.** Claude Code auto-loads `CLAUDE.md`
+  (this survives prompt replacement) but not `AGENTS.md`, so a repository whose
+  guidance lives only in `AGENTS.md` — AutoDev included — never had it in
+  context. `base.md` tells the agent to read both from the workspace root.
+  Symlinking `CLAUDE.md` to `AGENTS.md` in a target repository restores
+  automatic injection.
+
+The bridge also exports `CLAUDE_CODE_DISABLE_BUNDLED_SKILLS=1`. Claude Code's
+bundled skill catalogue is a second, unversioned source of instructions that no
+role prompt accounts for; a bridge turn is governed by the role prompts and the
+target repository's own skills.
+
 Anything that is not exactly `orchestrator` is treated as a leaf, so a missing
 or unrecognized header fails closed to the bounded policy. The same
 `orchestrator.md` is what the `enforce-root-delegation.sh` `UserPromptSubmit`
@@ -423,6 +459,25 @@ provider serves it. The JavaScript bridges share
 files from Python. The installer deploys both the shared module and the prompt
 files beneath the hooks directory, keeping their `scripts/` path so the same
 relative lookups work in a checkout and in the installed copy.
+
+This role-aware boundary is the *only* place the recursion limit belongs. A
+target repository must not also list `Agent` (or `Task`) under
+`permissions.deny` in its `.claude/settings.json`: Claude Code resolves project
+settings from the bridge-selected workspace `cwd`, deny rules outrank both
+`--allowed-tools` and `--permission-mode bypassPermissions`, and no CLI flag can
+re-grant a denied tool. Such a rule is role-blind, so it silently strips `Agent`
+from the root turn as well, and the orchestrator then truthfully reports that it
+has no subagent tool and does the work itself — the exact failure the role header
+exists to prevent. Leaf turns stay bounded without it, because the bridge already
+passes `--disallowed-tools Agent,Task` for every non-orchestrator role. Denying
+the background-task tools (`TaskCreate`, `TaskOutput`, `TaskList`, `TaskUpdate`,
+`TaskGet`) is unrelated and safe; those are not the subagent tool.
+
+Excluding project settings from the bridge instead (`--setting-sources user`)
+does restore `Agent`, but it discards the target repository's whole deny list —
+including its `Bash(git push *)`, `Bash(rm -rf *)`, and `Read(./.env)` rules,
+which under `bypassPermissions` are the only remaining guardrail on an
+autonomous turn. Fix the deny list, not the setting sources.
 
 MiniMax is the exception, and it needs no role prompt: its proxy
 (`scripts/codex-minimax-responses-proxy.mjs`) is a transparent pass-through to
