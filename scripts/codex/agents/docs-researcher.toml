@@ -1,5 +1,6 @@
 name = "docs-researcher"
 description = "Targeted documentation researcher."
+nickname_candidates = ["DocsReader", "DocsInvestigator", "DocsResearcher"]
 
 model_provider = "local_model_router"
 model = "autodev/docs-researcher"

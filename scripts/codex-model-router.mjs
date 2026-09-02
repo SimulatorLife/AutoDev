@@ -33,10 +33,24 @@ const ROUTING_CONFIG_FILE = process.env.CODEX_ROUTER_CONFIG_FILE
 const ROLE_NAMES = ['default', 'docs-researcher', 'browser-tester', 'explorer', 'worker', 'validator', 'smart'];
 const ROUTING_CONFIG = JSON.parse(readFileSync(ROUTING_CONFIG_FILE, 'utf8'));
 
+function validateTierGroups(config, tier) {
+  const groups = config.providerGroups[tier];
+  if (!Array.isArray(groups) || groups.length === 0) throw new Error(`Routing config tier ${tier} must define provider groups.`);
+  for (const group of groups) {
+    if (!Array.isArray(group) || group.length === 0 || !group.every((provider) => typeof provider === 'string' && provider.trim())) {
+      throw new Error(`Routing config tier ${tier} contains an invalid provider group.`);
+    }
+    for (const provider of group) {
+      if (!config.providers[provider]) throw new Error(`Routing config tier ${tier} references unknown provider ${provider}.`);
+    }
+  }
+}
+
 function validateRoutingConfig(config) {
   if (!config.providerGroups || typeof config.providerGroups !== 'object') throw new Error(`Routing config requires providerGroups: ${ROUTING_CONFIG_FILE}`);
   if (!config.providers || typeof config.providers !== 'object') throw new Error(`Routing config requires providers: ${ROUTING_CONFIG_FILE}`);
   if (!config.roles || typeof config.roles !== 'object') throw new Error(`Routing config requires roles: ${ROUTING_CONFIG_FILE}`);
+  if (!config.orchestrator || typeof config.orchestrator !== 'object') throw new Error(`Routing config requires an orchestrator block: ${ROUTING_CONFIG_FILE}`);
   for (const [provider, info] of Object.entries(config.providers)) {
     if (!info || typeof info !== 'object' || !info.models || typeof info.models !== 'object') {
       throw new Error(`Routing config provider ${provider} must define a models object.`);
@@ -48,21 +62,30 @@ function validateRoutingConfig(config) {
   for (const role of ROLE_NAMES) {
     const tier = config.roles[role]?.tier;
     if (typeof tier !== 'string' || !tier) throw new Error(`Routing config role ${role} must define a tier.`);
-    const groups = config.providerGroups[tier];
-    if (!Array.isArray(groups) || groups.length === 0) throw new Error(`Routing config tier ${tier} must define provider groups.`);
-    for (const group of groups) {
-      if (!Array.isArray(group) || group.length === 0 || !group.every((provider) => typeof provider === 'string' && provider.trim())) {
-        throw new Error(`Routing config tier ${tier} contains an invalid provider group.`);
-      }
-      for (const provider of group) {
-        if (!config.providers[provider]) throw new Error(`Routing config tier ${tier} references unknown provider ${provider}.`);
-      }
+    validateTierGroups(config, tier);
+  }
+  const orchestrator = config.orchestrator;
+  if (typeof orchestrator.alias !== 'string' || !/^autodev\/[a-z0-9-]+$/.test(orchestrator.alias.trim())) {
+    throw new Error(`Routing config orchestrator.alias must be an autodev/<name> alias.`);
+  }
+  if (typeof orchestrator.tier !== 'string' || !orchestrator.tier) throw new Error(`Routing config orchestrator must define a tier.`);
+  validateTierGroups(config, orchestrator.tier);
+  if (orchestrator.reasoningEffort !== undefined) {
+    if (!orchestrator.reasoningEffort || typeof orchestrator.reasoningEffort !== 'object') {
+      throw new Error(`Routing config orchestrator.reasoningEffort must be an object mapping providers to effort strings.`);
+    }
+    for (const [provider, effort] of Object.entries(orchestrator.reasoningEffort)) {
+      if (!config.providers[provider]) throw new Error(`Routing config orchestrator.reasoningEffort references unknown provider ${provider}.`);
+      if (typeof effort !== 'string' || !effort.trim()) throw new Error(`Routing config orchestrator.reasoningEffort.${provider} must be a non-empty string.`);
     }
   }
   return config;
 }
 
 const ROUTING = validateRoutingConfig(ROUTING_CONFIG);
+const ORCHESTRATOR_ALIAS = ROUTING.orchestrator.alias.trim();
+const ORCHESTRATOR_TIER = ROUTING.orchestrator.tier;
+const ORCHESTRATOR_REASONING_EFFORT = Object.freeze({ ...(ROUTING.orchestrator.reasoningEffort ?? {}) });
 function positiveDuration(value, fallback) {
   const parsed = Number.parseInt(value ?? "", 10);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
@@ -173,9 +196,9 @@ function workspaceDimensionBuckets(bucket, { role, provider, model }) {
   ];
 }
 
-function recordUsageEvent({ phase, requestId, role, provider, model, workspace = null, outcome, failureClass = null, status = null, elapsedMs, toolCalls = 0, timestamp }) {
+function recordUsageEvent({ phase, requestId, role, provider, model, workspace = null, outcome, failureClass = null, status = null, elapsedMs, toolCalls = 0, timestamp, origin: originOverride = null }) {
   const workspaceContext = typeof workspace === "string" ? { key: workspace, cwd: null } : workspace;
-  const origin = usageOrigin(role, provider);
+  const origin = originOverride ?? usageOrigin(role, provider);
   const roleKey = role ?? "unattributed";
   const modelKey = `${provider}/${model}`;
   const buckets = [usageTelemetry.totals, usageBucket(usageTelemetry.byRole, roleKey), usageBucket(usageTelemetry.byModel, modelKey), usageBucket(usageTelemetry.byOrigin, origin)];
@@ -1170,7 +1193,7 @@ function classifyProviderFailure(status, body = "") {
   return "request_error";
 }
 
-function recordRouterEvent({ phase, requestId, role = null, requestedModel, provider, model, workspace = null, outcome = null, status = null, failureClass = null, denialReason = null, spawnFailureReason = null, elapsedMs = null, toolCalls = 0, errorName = null, errorCode = null, syscall = null }) {
+function recordRouterEvent({ phase, requestId, role = null, requestedModel, provider, model, workspace = null, outcome = null, status = null, failureClass = null, denialReason = null, spawnFailureReason = null, elapsedMs = null, toolCalls = 0, errorName = null, errorCode = null, syscall = null, origin = null }) {
   const timestamp = new Date().toISOString();
   const workspaceContext = typeof workspace === "string" ? { key: workspace, cwd: null } : workspace;
   const event = {
@@ -1200,7 +1223,7 @@ function recordRouterEvent({ phase, requestId, role = null, requestedModel, prov
   while (recentRouterEvents.length > Math.max(1, MAX_RECENT_EVENTS)) recentRouterEvents.shift();
 
   if (provider && model && ["selected", "skipped", "result"].includes(phase)) {
-    recordUsageEvent({ phase, requestId, role, provider, model, workspace: workspaceContext, outcome, failureClass, status, elapsedMs, toolCalls, timestamp });
+    recordUsageEvent({ phase, requestId, role, provider, model, workspace: workspaceContext, outcome, failureClass, status, elapsedMs, toolCalls, timestamp, origin });
   }
   const state = provider ? providerState(provider) : null;
   if (state && phase === "selected") {
@@ -1784,8 +1807,7 @@ function routeForModel(model) {
   return ROUTES.find((route) => route.pattern.test(trimmed)) ?? null;
 }
 
-function roleCandidates(role, random = Math.random) {
-  const tier = ROUTING.roles[role]?.tier;
+function tierCandidates(tier, random = Math.random) {
   if (!tier) return [];
   return providerPriority(tier, random).map((provider) => {
     const providerModels = ROUTING.providers[provider]?.models;
@@ -1796,12 +1818,28 @@ function roleCandidates(role, random = Math.random) {
   }).filter(Boolean);
 }
 
+function roleCandidates(role, random = Math.random) {
+  return tierCandidates(ROUTING.roles[role]?.tier, random);
+}
+
+// The root orchestrator degrades through the orchestrator tier the same way a
+// role does, but it is not a leaf subagent: it keeps the parent reasoning
+// effort for its primary provider and applies an explicit per-provider effort
+// for each fallback provider so a downgraded run still reasons at the intended
+// depth.
+function orchestratorCandidates(random = Math.random) {
+  return tierCandidates(ORCHESTRATOR_TIER, random).map((candidate) => ({
+    ...candidate,
+    reasoningEffort: ORCHESTRATOR_REASONING_EFFORT[candidate.provider] ?? null,
+  }));
+}
+
 function providerModelMetadata(model) {
   const route = routeForModel(model);
   return { id: model, object: "model", owned_by: route?.provider ?? "local-router" };
 }
 
-function catalogModelIds(models, roles = ROLE_NAMES.map((role) => `autodev/${role}`)) {
+function catalogModelIds(models, roles = [...ROLE_NAMES.map((role) => `autodev/${role}`), ORCHESTRATOR_ALIAS]) {
   return [...new Set([...models.map((model) => model.slug), ...roles])];
 }
 
@@ -2283,36 +2321,54 @@ async function proxyConcreteResponse(response, route, payload, wantsStream, requ
   }
 }
 
-async function proxyRoleResponse(response, role, payload, wantsStream, requestId, turnMetadataHeader, workspace, clientSignal = null) {
+// Applies a resolved fallback candidate to the outbound payload: always swaps
+// in the concrete provider model, and overrides the reasoning effort when the
+// candidate pins one (orchestrator fallback providers do; role candidates and
+// the primary provider do not, so the caller's effort is preserved).
+function payloadForCandidate(payload, candidate) {
+  const next = { ...payload, model: candidate.model };
+  if (candidate.reasoningEffort) {
+    const base = payload.reasoning && typeof payload.reasoning === "object" && !Array.isArray(payload.reasoning) ? payload.reasoning : {};
+    next.reasoning = { ...base, effort: candidate.reasoningEffort };
+  }
+  return next;
+}
+
+// Shared multi-provider fallback loop for role aliases and the root
+// orchestrator alias. `role` is used for event attribution (null for the
+// orchestrator); `origin` overrides usage-origin classification so orchestrator
+// fallback traffic on a non-Codex provider is still counted as orchestrator
+// rather than direct. `subject` is the human-readable label for the exhaustion
+// error.
+async function proxyFallbackChain(response, { candidates, role = null, origin = null, subject }, payload, wantsStream, requestId, turnMetadataHeader, workspace, clientSignal = null) {
   const failures = [];
-  const candidates = roleCandidates(role);
   for (const route of candidates) {
     if (isProviderCoolingDown(route.provider)) {
       failures.push(`${route.provider}: cooldown active`);
-      recordRouterEvent({ phase: "skipped", requestId, role, requestedModel: payload.model, provider: route.provider, model: route.model, workspace, failureClass: providerState(route.provider).lastFailureClass ?? "cooldown" });
+      recordRouterEvent({ phase: "skipped", requestId, role, origin, requestedModel: payload.model, provider: route.provider, model: route.model, workspace, failureClass: providerState(route.provider).lastFailureClass ?? "cooldown" });
       continue;
     }
     if (!(await providerAvailable(route))) {
       failures.push(`${route.provider}: unavailable`);
       cooldownProvider(route.provider);
-      recordRouterEvent({ phase: "skipped", requestId, role, requestedModel: payload.model, provider: route.provider, model: route.model, workspace, failureClass: "unavailable" });
+      recordRouterEvent({ phase: "skipped", requestId, role, origin, requestedModel: payload.model, provider: route.provider, model: route.model, workspace, failureClass: "unavailable" });
       continue;
     }
     const attemptStartedAt = Date.now();
-    recordRouterEvent({ phase: "selected", requestId, role, requestedModel: payload.model, provider: route.provider, model: route.model, workspace });
+    recordRouterEvent({ phase: "selected", requestId, role, origin, requestedModel: payload.model, provider: route.provider, model: route.model, workspace });
     incrementActiveRequests(route.provider);
     try {
-      const result = await fetchUpstream(route, { ...payload, model: route.model }, wantsStream, turnMetadataHeader, clientSignal);
+      const result = await fetchUpstream(route, payloadForCandidate(payload, route), wantsStream, turnMetadataHeader, clientSignal);
       if (result.ok) {
         try {
           const responseResult = await writeSuccessfulResponse(response, route, result, wantsStream, payload.model, requestId, route.model);
           if (responseResult.failed) {
             cooldownProvider(route.provider);
-            recordRouterEvent({ phase: "result", requestId, role, requestedModel: payload.model, provider: route.provider, model: route.model, workspace, outcome: "failure", status: result.upstream.status, failureClass: "upstream_error", elapsedMs: Date.now() - attemptStartedAt, toolCalls: responseResult.toolCalls });
+            recordRouterEvent({ phase: "result", requestId, role, origin, requestedModel: payload.model, provider: route.provider, model: route.model, workspace, outcome: "failure", status: result.upstream.status, failureClass: "upstream_error", elapsedMs: Date.now() - attemptStartedAt, toolCalls: responseResult.toolCalls });
             return;
           }
           clearProviderCooldown(route.provider);
-          recordRouterEvent({ phase: "result", requestId, role, requestedModel: payload.model, provider: route.provider, model: route.model, workspace, outcome: "success", status: result.upstream.status, elapsedMs: Date.now() - attemptStartedAt, toolCalls: responseResult.toolCalls });
+          recordRouterEvent({ phase: "result", requestId, role, origin, requestedModel: payload.model, provider: route.provider, model: route.model, workspace, outcome: "success", status: result.upstream.status, elapsedMs: Date.now() - attemptStartedAt, toolCalls: responseResult.toolCalls });
         } catch (streamError) {
           cooldownProvider(route.provider);
           throw streamError;
@@ -2321,7 +2377,7 @@ async function proxyRoleResponse(response, role, payload, wantsStream, requestId
       }
       const failureClass = classifyProviderFailure(result.status, result.body);
       failures.push(`${route.provider}: HTTP ${result.status}`);
-      recordRouterEvent({ phase: "result", requestId, role, requestedModel: payload.model, provider: route.provider, model: route.model, workspace, outcome: "failure", status: result.status, failureClass, elapsedMs: Date.now() - attemptStartedAt });
+      recordRouterEvent({ phase: "result", requestId, role, origin, requestedModel: payload.model, provider: route.provider, model: route.model, workspace, outcome: "failure", status: result.status, failureClass, elapsedMs: Date.now() - attemptStartedAt });
       if (!fallbackable(result.status, result.body)) {
         response.writeHead(result.status, { "content-type": "application/json", "x-autodev-provider": route.provider, "x-autodev-model": route.model, "x-autodev-request-id": requestId, "x-autodev-router-instance-id": ROUTER_INSTANCE_ID });
         response.end(result.body);
@@ -2335,7 +2391,7 @@ async function proxyRoleResponse(response, role, payload, wantsStream, requestId
       // carries the safe failure class and the response needs only a stable
       // provider summary for fallback diagnostics.
       failures.push(`${route.provider}: ${failureClass}`);
-      recordRouterEvent({ phase: "result", requestId, role, requestedModel: payload.model, provider: route.provider, model: route.model, workspace, outcome: "failure", status: 502, failureClass, elapsedMs: Date.now() - attemptStartedAt });
+      recordRouterEvent({ phase: "result", requestId, role, origin, requestedModel: payload.model, provider: route.provider, model: route.model, workspace, outcome: "failure", status: 502, failureClass, elapsedMs: Date.now() - attemptStartedAt });
       cooldownProvider(route.provider);
       if (response.headersSent) {
         if (!response.writableEnded) response.end();
@@ -2352,7 +2408,7 @@ async function proxyRoleResponse(response, role, payload, wantsStream, requestId
   sendJson(
     response,
     503,
-    errorBody(`No available provider completed role ${role}.${retryMessage} ${failures.join("; ")}`, "router_provider_exhausted", {
+    errorBody(`No available provider completed ${subject}.${retryMessage} ${failures.join("; ")}`, "router_provider_exhausted", {
       code: "router_provider_exhausted",
       retryable: true,
       failureClass: "unavailable",
@@ -2361,6 +2417,14 @@ async function proxyRoleResponse(response, role, payload, wantsStream, requestId
     }),
     { "x-autodev-request-id": requestId, "retry-after": String(retryAfterSeconds) },
   );
+}
+
+async function proxyRoleResponse(response, role, payload, wantsStream, requestId, turnMetadataHeader, workspace, clientSignal = null) {
+  return proxyFallbackChain(response, { candidates: roleCandidates(role), role, subject: `role ${role}` }, payload, wantsStream, requestId, turnMetadataHeader, workspace, clientSignal);
+}
+
+async function proxyOrchestratorResponse(response, payload, wantsStream, requestId, turnMetadataHeader, workspace, clientSignal = null) {
+  return proxyFallbackChain(response, { candidates: orchestratorCandidates(), role: null, origin: "orchestrator", subject: "the orchestrator" }, payload, wantsStream, requestId, turnMetadataHeader, workspace, clientSignal);
 }
 
 function requestSession(request, payload, turnMetadataHeader = null) {
@@ -2539,6 +2603,14 @@ async function handleRequest(request, response) {
   request.once("close", abortForRequestClose);
   response.once("close", abortForResponseClose);
   try {
+    if (model === ORCHESTRATOR_ALIAS) {
+      // The root orchestrator is not a leaf subagent: it does not consume a
+      // per-session subagent slot. It degrades through the orchestrator tier
+      // (primary provider pinned, remaining providers load-balanced) when its
+      // primary provider is out of usage or otherwise unavailable.
+      await proxyOrchestratorResponse(response, payload, wantsStream, requestId, turnMetadataHeader, workspace, clientAbort.signal);
+      return;
+    }
     if (role) {
       const session = requestSession(request, payload, turnMetadataHeader);
       const denialReason = tryAcquireSubagentSlot(session.key);
@@ -2607,6 +2679,10 @@ export {
   beginShutdown,
   catalogModelIds,
   proxyConcreteResponse,
+  proxyOrchestratorResponse,
+  orchestratorCandidates,
+  ORCHESTRATOR_ALIAS,
+  payloadForCandidate,
   classifyProviderFailure,
   clearProviderCooldown,
   codexTelemetryStatus,

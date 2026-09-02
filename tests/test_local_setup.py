@@ -826,6 +826,37 @@ class LocalSetupTests(unittest.TestCase):
                 )
             self.assertEqual(result.stdout, "")
 
+    def test_root_delegation_hook_injects_for_orchestrator_alias(self):
+        """autodev/orchestrator is the configured root, not a leaf role alias,
+        so it must still receive the root delegation policy."""
+        hook = REPO_ROOT / "scripts/enforce-root-delegation.sh"
+        with tempfile.TemporaryDirectory() as home:
+            (Path(home) / ".codex/hooks").mkdir(parents=True)
+            environment = os.environ.copy()
+            environment["HOME"] = home
+            result = subprocess.run(
+                ["bash", str(hook)],
+                input=json.dumps({"model": "autodev/orchestrator"}),
+                text=True,
+                capture_output=True,
+                check=True,
+                env=environment,
+            )
+        self.assertIn("ROOT DELEGATION REQUIREMENT", result.stdout)
+
+    def test_orchestrator_uses_router_fallback_alias(self):
+        config = (REPO_ROOT / "scripts/codex/config.toml").read_text()
+        self.assertIn('model = "autodev/orchestrator"', config)
+        routing = json.loads(
+            (REPO_ROOT / "scripts/codex/model-routing.json").read_text()
+        )
+        self.assertEqual(routing["orchestrator"]["alias"], "autodev/orchestrator")
+        self.assertEqual(
+            routing["providerGroups"]["orchestrator"][0],
+            ["codex"],
+            "the primary provider is pinned as the first orchestrator group",
+        )
+
     def test_default_native_subagents_use_router_role_alias(self):
         config = (REPO_ROOT / "scripts/codex/config.toml").read_text()
         self.assertIn('default_subagent_model = "autodev/default"', config)

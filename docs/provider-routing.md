@@ -32,6 +32,42 @@ For the `default` capability tier, the router randomizes Claude, Gemini/Antigrav
 1. `default`: Claude, Gemini/Antigravity, MiniMax (randomized), then Copilot, then OpenAI/Codex Luna
 2. `smart`: Claude, Gemini/Antigravity (randomized), then OpenAI/Codex Sol
 
+### Orchestrator routing and fallback
+
+The root Codex orchestrator is not a leaf role, but it uses the same
+`providerGroups` fallback machinery through a dedicated `autodev/orchestrator`
+alias. `scripts/codex/config.toml` sets the parent `model` to that alias, and
+`scripts/codex/model-routing.json` defines its chain under the top-level
+`orchestrator` block (`alias`, `tier`, and an optional per-provider
+`reasoningEffort` map) plus a `providerGroups.orchestrator` tier and an
+`orchestrator` entry in each provider's `models`.
+
+The default order pins the primary provider and load-balances the rest:
+
+3. `orchestrator`: OpenAI/Codex Luna (pinned first), then Claude Opus, MiniMax, and Gemini/Antigravity (randomized)
+
+Differences from a role request:
+
+- The orchestrator never consumes a per-session subagent slot; it is gated by
+  neither `max_concurrent_threads_per_session` nor the process-fallback bucket.
+- The primary provider is dispatched with the caller's own reasoning effort
+  (`model_reasoning_effort` in the parent config). Each fallback provider is
+  dispatched with the effort pinned in `orchestrator.reasoningEffort`
+  (`claude` medium, `minimax` high, `antigravity` high by default) so a
+  downgraded run still reasons at the intended depth.
+- Usage telemetry keeps orchestrator fallback traffic under the `orchestrator`
+  origin even when it lands on a non-Codex provider, rather than
+  reclassifying it as `direct`.
+- A direct concrete `gpt-5.6-luna` request is still never rerouted. Only the
+  `autodev/orchestrator` alias degrades across providers.
+- The root-delegation `UserPromptSubmit` hook matches `autodev/orchestrator`
+  before its leaf-alias glob, so the parent still receives the delegation
+  policy while `autodev/<role>` leaves do not.
+
+When every orchestrator candidate is unavailable or cooling down, the router
+returns `503 router_provider_exhausted` with a `Retry-After` header, exactly as
+it does for an exhausted role tier.
+
 Provider availability is checked through local health endpoints and credential
 checks. HTTP 429/5xx, quota, session-limit, high-demand, timeout, and
 unavailable responses cause the router to try the next provider. A malformed
@@ -543,11 +579,13 @@ installer is the only supported materialization path into
 - The active parent provider is the tracked `local_model_router` at
   `http://127.0.0.1:4100/v1`. It dispatches by `model`: GPT/Codex models go to
   the Codex OAuth Responses endpoint, while `sonnet`, MiniMax, and Gemini
-  models go to the existing provider bridges. The parent remains on its
-  configured Codex model, while `default_subagent_model = "autodev/default"`
-  ensures native default child work enters the multi-provider priority groups
-  instead of bypassing them with a concrete Codex model. This keeps parent
-  orchestration on Codex while making child-provider fallback effective.
+  models go to the existing provider bridges. The parent runs on the
+  `autodev/orchestrator` alias (see **Orchestrator routing and fallback**),
+  which keeps orchestration on the primary Codex model while allowing the
+  router to degrade to another provider when Codex is out of usage.
+  `default_subagent_model = "autodev/default"` likewise ensures native default
+  child work enters the multi-provider priority groups instead of bypassing
+  them with a concrete Codex model.
 - `[agents].max_depth = 1` in the Codex config limits native Codex child
   creation; it does not remove tools from the separate Claude Code process
   launched by the Claude bridge. `--disallowed-tools Agent,Task` and the
@@ -578,7 +616,7 @@ Target state and current verification:
 
 | Requirement | State |
 | --- | --- |
-| OpenAI/Codex orchestrator and tracked user-level cross-provider TOMLs | Configured under `scripts/codex/agents/` and materialized as verified regular-file copies under `~/.codex/agents/`. |
+| OpenAI/Codex orchestrator and tracked user-level cross-provider TOMLs | Configured under `scripts/codex/agents/` and materialized as verified regular-file copies under `~/.codex/agents/`. The orchestrator runs on the `autodev/orchestrator` alias so it degrades to Claude Opus, MiniMax, then Gemini when Codex is out of usage. |
 | Shared user-level skills | Configured under `scripts/codex/skills/` as AutoDev-owned versioned directories and materialized under `~/.agents/skills/`; `install-codex-integration.sh --check` verifies all three links. |
 | Versioned scripts/hooks/config installed into `~/.codex` | Configured; profiles/catalogs/config are symlinked and app-executed hooks are checksum-checked runtime copies; `install-codex-integration.sh --check` passes. |
 | Native app-server custom-provider routing | Verified: `thread/start` selects the custom provider; Claude reached its upstream session-limit response. |

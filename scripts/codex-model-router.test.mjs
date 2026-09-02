@@ -42,6 +42,10 @@ import {
   replaceModelFields,
   requestSession,
   proxyConcreteResponse,
+  proxyOrchestratorResponse,
+  orchestratorCandidates,
+  ORCHESTRATOR_ALIAS,
+  payloadForCandidate,
   resetConcurrencyTelemetry,
   resetLifecycleForTests,
   resetRouterTelemetry,
@@ -92,8 +96,48 @@ test("loads editable provider and role models from JSON routing config", async (
   assert.equal(config.providers.copilot.models.smart, undefined);
   assert.deepEqual(config.providerGroups.default, [["claude", "antigravity", "minimax"], ["copilot"], ["codex"]]);
   assert.deepEqual(config.providerGroups.smart, [["claude", "antigravity"], ["codex"]]);
+  assert.deepEqual(config.providerGroups.orchestrator, [["codex"], ["claude", "minimax", "antigravity"]]);
   assert.equal(config.roles.worker.tier, "default");
   assert.equal(config.roles.smart.tier, "smart");
+  assert.equal(config.orchestrator.alias, "autodev/orchestrator");
+  assert.equal(config.orchestrator.tier, "orchestrator");
+  assert.equal(config.providers.codex.models.orchestrator, "gpt-5.6-luna");
+  assert.equal(config.providers.claude.models.orchestrator, "claude-opus-4-8");
+  assert.equal(config.providers.antigravity.models.orchestrator, "gemini-3.6-flash-high");
+  assert.deepEqual(config.orchestrator.reasoningEffort, { claude: "medium", minimax: "high", antigravity: "high" });
+});
+
+test("orchestrator alias degrades from the pinned primary provider to a load-balanced fallback group with pinned reasoning effort", () => {
+  assert.equal(ORCHESTRATOR_ALIAS, "autodev/orchestrator");
+  assert.equal(roleForModel(ORCHESTRATOR_ALIAS), null);
+
+  const candidates = orchestratorCandidates(() => 0.5);
+  assert.equal(candidates[0].provider, "codex", "the primary provider is always attempted first");
+  assert.equal(candidates[0].model, "gpt-5.6-luna");
+  assert.equal(candidates[0].reasoningEffort, null, "the primary provider keeps the caller's reasoning effort");
+  assert.deepEqual(candidates.slice(1).map((candidate) => candidate.provider).sort(), ["antigravity", "claude", "minimax"]);
+
+  const byProvider = Object.fromEntries(candidates.map((candidate) => [candidate.provider, candidate]));
+  assert.equal(byProvider.claude.model, "claude-opus-4-8");
+  assert.equal(byProvider.claude.reasoningEffort, "medium");
+  assert.equal(byProvider.minimax.model, "MiniMax-M3");
+  assert.equal(byProvider.minimax.reasoningEffort, "high");
+  assert.equal(byProvider.antigravity.model, "gemini-3.6-flash-high");
+  assert.equal(byProvider.antigravity.reasoningEffort, "high");
+
+  // The fallback group is shuffled/least-loaded, never the pinned primary.
+  assert.notDeepEqual(
+    orchestratorCandidates(() => 0).slice(1).map((candidate) => candidate.provider),
+    orchestratorCandidates(() => 0.999).slice(1).map((candidate) => candidate.provider),
+  );
+
+  const swapped = payloadForCandidate({ model: "autodev/orchestrator", reasoning: { summary: "auto", effort: "xhigh" } }, byProvider.claude);
+  assert.equal(swapped.model, "claude-opus-4-8");
+  assert.deepEqual(swapped.reasoning, { summary: "auto", effort: "medium" });
+
+  const primary = payloadForCandidate({ model: "autodev/orchestrator", reasoning: { effort: "xhigh" } }, candidates[0]);
+  assert.equal(primary.model, "gpt-5.6-luna");
+  assert.deepEqual(primary.reasoning, { effort: "xhigh" }, "the pinned primary provider is dispatched with the caller's effort untouched");
 });
 
 test("validates routing config and requires default model for providers", () => {
@@ -101,6 +145,7 @@ test("validates routing config and requires default model for providers", () => 
     providerGroups: {
       default: [["testProvider"], ["fallbackProvider"]],
       smart: [["testProvider"], ["fallbackProvider"]],
+      orchestrator: [["testProvider"], ["fallbackProvider"]],
     },
     providers: {
       testProvider: { models: { default: "test-model" } },
@@ -115,6 +160,11 @@ test("validates routing config and requires default model for providers", () => 
       validator: { tier: "default" },
       smart: { tier: "smart" },
     },
+    orchestrator: {
+      alias: "autodev/orchestrator",
+      tier: "orchestrator",
+      reasoningEffort: { fallbackProvider: "high" },
+    },
   };
   assert.doesNotThrow(() => validateRoutingConfig(validConfig));
 
@@ -124,8 +174,23 @@ test("validates routing config and requires default model for providers", () => 
   );
 
   assert.throws(
-    () => validateRoutingConfig({ ...validConfig, providerGroups: { default: [[]], smart: [["testProvider"]] } }),
+    () => validateRoutingConfig({ ...validConfig, providerGroups: { default: [[]], smart: [["testProvider"]], orchestrator: [["testProvider"]] } }),
     /Routing config tier default contains an invalid provider group/
+  );
+
+  assert.throws(
+    () => validateRoutingConfig({ ...validConfig, orchestrator: undefined }),
+    /Routing config requires an orchestrator block/
+  );
+
+  assert.throws(
+    () => validateRoutingConfig({ ...validConfig, orchestrator: { ...validConfig.orchestrator, alias: "orchestrator" } }),
+    /orchestrator\.alias must be an autodev\/<name> alias/
+  );
+
+  assert.throws(
+    () => validateRoutingConfig({ ...validConfig, orchestrator: { ...validConfig.orchestrator, reasoningEffort: { unknownProvider: "high" } } }),
+    /orchestrator\.reasoningEffort references unknown provider unknownProvider/
   );
 });
 
@@ -241,6 +306,66 @@ test("reroutes a role request after a provider returns a fallbackable failure", 
     assert.equal(response.status, 200);
     assert.equal(response.headers.get("x-autodev-provider"), "antigravity");
     assert.equal(responseCalls, 2);
+  } finally {
+    await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    globalThis.fetch = originalFetch;
+    for (const [key, value] of Object.entries(originalCredentials)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+    activeProviderRequests.clear();
+    resetRouterTelemetry();
+  }
+});
+
+test("orchestrator alias falls back to another provider when the primary is unavailable and stays attributed to the orchestrator origin", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalCredentials = {
+    LITELLM_API_KEY: process.env.LITELLM_API_KEY,
+    MINIMAX_API_KEY: process.env.MINIMAX_API_KEY,
+  };
+  process.env.LITELLM_API_KEY = "test-provider-key";
+  process.env.MINIMAX_API_KEY = "test-provider-key";
+  resetRouterTelemetry();
+  activeProviderRequests.clear();
+  for (const provider of ["codex", "claude", "antigravity", "minimax"]) clearProviderCooldown(provider);
+  let orchestratorResponseProvider = null;
+  globalThis.fetch = async (url, options) => {
+    const target = String(url);
+    // The primary provider (chatgpt.com Codex backend) is out of usage.
+    if (target.startsWith("https://chatgpt.com/")) {
+      return new Response(JSON.stringify({ error: "You have hit your usage limit" }), { status: 429 });
+    }
+    if (target.endsWith("/health") || target.endsWith("/health/liveliness")) {
+      return new Response("ok", { status: 200 });
+    }
+    if (target.endsWith("/responses")) {
+      orchestratorResponseProvider = target;
+      return new Response(JSON.stringify({ id: "orchestrator-fallback", model: "fallback", output_text: "ok" }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }
+    return originalFetch(url, options);
+  };
+  const server = createServer((request, response) => { void handle(request, response); });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  try {
+    const address = server.address();
+    const response = await originalFetch(`http://127.0.0.1:${address.port}/v1/responses`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-codex-session-id": "orchestrator-test" },
+      body: JSON.stringify({ model: "autodev/orchestrator", stream: false, reasoning: { effort: "xhigh" } }),
+    });
+    assert.equal(response.status, 200);
+    const servingProvider = response.headers.get("x-autodev-provider");
+    assert.ok(["claude", "antigravity", "minimax"].includes(servingProvider), `expected a fallback-group provider, got ${servingProvider}`);
+    assert.notEqual(response.headers.get("x-autodev-model"), "autodev/orchestrator");
+    assert.ok(orchestratorResponseProvider && !orchestratorResponseProvider.startsWith("https://chatgpt.com/"));
+
+    const usage = getRouterStatus().usage;
+    assert.equal(usage.byOrigin.orchestrator.successes, 1, "fallback traffic is still attributed to the orchestrator origin");
+    assert.equal(usage.byOrigin.subagent?.successes ?? 0, 0, "the orchestrator must not consume a subagent slot");
   } finally {
     await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
     globalThis.fetch = originalFetch;

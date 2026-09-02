@@ -36,8 +36,12 @@ active_model="$(
 # Every spawned role is a leaf worker. Do not inject root orchestration
 # instructions that would encourage a child to create another delegation
 # layer. Native roles use the autodev/<role> aliases; external roles use their
-# concrete provider model names.
+# concrete provider model names. The autodev/orchestrator alias is the root
+# itself (it degrades across providers via the model router), so it still
+# receives the delegation policy and is matched before the leaf glob.
 case "$active_model" in
+  autodev/orchestrator)
+    ;;
   autodev/*|MiniMax-*|sonnet|opus|haiku|claude-*)
     exit 0
     ;;
