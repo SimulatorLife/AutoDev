@@ -28,7 +28,6 @@
       ],
       [
         "claude",
-        "minimax",
         "antigravity"
       ]
     ]
@@ -94,7 +93,6 @@
     "tier": "orchestrator",
     "reasoningEffort": {
       "claude": "medium",
-      "minimax": "high",
       "antigravity": "high"
     }
   }

@@ -100,7 +100,7 @@ test("loads editable provider and role models from JSON routing config", async (
   assert.equal(config.providers.copilot.models.smart, undefined);
   assert.deepEqual(config.providerGroups.default, [ [ "claude", "antigravity", "minimax" ], [ "copilot" ], [ "codex" ] ]);
   assert.deepEqual(config.providerGroups.smart, [ [ "claude", "antigravity" ], [ "codex" ] ]);
-  assert.deepEqual(config.providerGroups.orchestrator, [ [ "codex" ], [ "claude", "minimax", "antigravity" ] ]);
+  assert.deepEqual(config.providerGroups.orchestrator, [ [ "codex" ], [ "claude", "antigravity" ] ]);
   assert.equal(config.roles.worker.tier, "default");
   assert.equal(config.roles.smart.tier, "smart");
   assert.equal(config.orchestrator.alias, "autodev/orchestrator");
@@ -108,7 +108,7 @@ test("loads editable provider and role models from JSON routing config", async (
   assert.equal(config.providers.codex.models.orchestrator, "gpt-5.6-luna");
   assert.equal(config.providers.claude.models.orchestrator, "claude-opus-5");
   assert.equal(config.providers.antigravity.models.orchestrator, "gemini-3.6-flash-high");
-  assert.deepEqual(config.orchestrator.reasoningEffort, { claude: "medium", minimax: "high", antigravity: "high" });
+  assert.deepEqual(config.orchestrator.reasoningEffort, { claude: "medium", antigravity: "high" });
 });
 
 test("orchestrator alias degrades from the pinned primary provider to a load-balanced fallback group with pinned reasoning effort", () => {
@@ -119,13 +119,11 @@ test("orchestrator alias degrades from the pinned primary provider to a load-bal
   assert.equal(candidates[ 0 ].provider, "codex", "the primary provider is always attempted first");
   assert.equal(candidates[ 0 ].model, "gpt-5.6-luna");
   assert.equal(candidates[ 0 ].reasoningEffort, null, "the primary provider keeps the caller's reasoning effort");
-  assert.deepEqual(candidates.slice(1).map((candidate) => candidate.provider).sort(), [ "antigravity", "claude", "minimax" ]);
+  assert.deepEqual(candidates.slice(1).map((candidate) => candidate.provider).sort(), [ "antigravity", "claude" ]);
 
   const byProvider = Object.fromEntries(candidates.map((candidate) => [ candidate.provider, candidate ]));
   assert.equal(byProvider.claude.model, "claude-opus-5");
   assert.equal(byProvider.claude.reasoningEffort, "medium");
-  assert.equal(byProvider.minimax.model, "MiniMax-M3");
-  assert.equal(byProvider.minimax.reasoningEffort, "high");
   assert.equal(byProvider.antigravity.model, "gemini-3.6-flash-high");
   assert.equal(byProvider.antigravity.reasoningEffort, "high");
 
@@ -363,7 +361,7 @@ test("orchestrator alias falls back to another provider when the primary is unav
     });
     assert.equal(response.status, 200);
     const servingProvider = response.headers.get("x-autodev-provider");
-    assert.ok([ "claude", "antigravity", "minimax" ].includes(servingProvider), `expected a fallback-group provider, got ${servingProvider}`);
+    assert.ok([ "claude", "antigravity" ].includes(servingProvider), `expected a fallback-group provider, got ${servingProvider}`);
     assert.notEqual(response.headers.get("x-autodev-model"), "autodev/orchestrator");
     assert.ok(orchestratorResponseProvider && !orchestratorResponseProvider.startsWith("https://chatgpt.com/"));
 
