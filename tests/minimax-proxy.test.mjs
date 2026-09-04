@@ -89,3 +89,71 @@ test("the proxy forwards the caller's payload and credential upstream while with
     await new Promise((resolve) => upstream.close(resolve));
   }
 });
+
+test("the proxy flattens namespaced tools in outbound HTTP requests sent to MiniMax", async () => {
+  let upstreamRequestBody = null;
+  const upstream = createServer((request, response) => {
+    const chunks = [];
+    request.on("data", (chunk) => chunks.push(chunk));
+    request.on("end", () => {
+      upstreamRequestBody = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(JSON.stringify({ output: [] }));
+    });
+  });
+  await new Promise((resolve) => upstream.listen(0, "127.0.0.1", resolve));
+  const upstreamPort = upstream.address().port;
+
+  const proxyPort = 18750 + (process.pid % 500);
+  const child = spawn(process.execPath, [ PROXY ], {
+    env: {
+      ...process.env,
+      MINIMAX_PROXY_HOST: "127.0.0.1",
+      MINIMAX_PROXY_PORT: String(proxyPort),
+      MINIMAX_PROXY_UPSTREAM_BASE_URL: `http://127.0.0.1:${upstreamPort}`,
+    },
+    stdio: [ "ignore", "pipe", "pipe" ],
+  });
+  try {
+    await new Promise((resolve, reject) => {
+      child.stderr.on("data", (chunk) => { if (String(chunk).includes("listening")) resolve(); });
+      child.once("error", reject);
+      setTimeout(() => reject(new Error("MiniMax proxy did not start")), 10000).unref();
+    });
+
+    const response = await fetch(`http://127.0.0.1:${proxyPort}/v1/responses`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        model: "MiniMax-M3",
+        tools: [
+          {
+            type: "namespace",
+            name: "multi_agent_v1",
+            tools: [
+              { type: "function", name: "spawn_agent", description: "Spawn child agent" }
+            ]
+          },
+          {
+            type: "function",
+            namespace: "collaboration",
+            name: "send_message"
+          },
+          {
+            type: "function",
+            name: "read_file"
+          }
+        ]
+      }),
+    });
+    assert.equal(response.status, 200);
+    assert.deepEqual(upstreamRequestBody.tools, [
+      { type: "function", name: "multi_agent_v1__spawn_agent", description: "Spawn child agent" },
+      { type: "function", name: "collaboration__send_message" },
+      { type: "function", name: "read_file" }
+    ]);
+  } finally {
+    child.kill("SIGTERM");
+    await new Promise((resolve) => upstream.close(resolve));
+  }
+});

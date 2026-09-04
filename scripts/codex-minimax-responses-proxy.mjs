@@ -56,6 +56,72 @@ function rewrite(value) {
   return result;
 }
 
+function getNamespacePrefix(ns) {
+  const match = flattenedNamespaces.find(([namespace]) => namespace === ns);
+  return match ? match[1] : `${ns}__`;
+}
+
+function flattenOutboundTool(tool, defaultNamespace = null) {
+  const ns = tool.namespace ?? defaultNamespace;
+  const prefix = ns ? getNamespacePrefix(ns) : "";
+
+  const result = { ...tool };
+  delete result.namespace;
+
+  if (result.type === "namespace") {
+    result.type = "function";
+  }
+
+  if (prefix) {
+    if (typeof result.name === "string" && !result.name.startsWith(prefix)) {
+      result.name = `${prefix}${result.name}`;
+    }
+    if (result.function && typeof result.function.name === "string" && !result.function.name.startsWith(prefix)) {
+      result.function = {
+        ...result.function,
+        name: `${prefix}${result.function.name}`
+      };
+    }
+  }
+  return result;
+}
+
+function flattenOutboundTools(tools) {
+  if (!Array.isArray(tools)) return tools;
+  const flattened = [];
+
+  for (const item of tools) {
+    if (item === null || typeof item !== "object") {
+      flattened.push(item);
+      continue;
+    }
+
+    const ns = item.type === "namespace" ? (item.name ?? item.namespace) : item.namespace;
+
+    if (ns && Array.isArray(item.tools)) {
+      for (const innerTool of item.tools) {
+        if (innerTool && typeof innerTool === "object") {
+          flattened.push(flattenOutboundTool(innerTool, ns));
+        }
+      }
+    } else {
+      flattened.push(flattenOutboundTool(item));
+    }
+  }
+  return flattened;
+}
+
+function rewriteOutboundPayload(payload) {
+  if (payload === null || typeof payload !== "object") return payload;
+  const rewritten = { ...payload };
+
+  if (Array.isArray(rewritten.tools)) {
+    rewritten.tools = flattenOutboundTools(rewritten.tools);
+  }
+
+  return rewritten;
+}
+
 function rewriteSseLine(line) {
   const lineEnding = line.endsWith("\r") ? "\r" : "";
   const content = lineEnding ? line.slice(0, -1) : line;
@@ -159,8 +225,18 @@ async function forward(request, response) {
   });
 
   try {
+    const rawBody = request.method === "GET" || request.method === "HEAD" ? undefined : await requestBody(request);
+    let body = rawBody;
+    if (rawBody) {
+      try {
+        body = JSON.stringify(rewriteOutboundPayload(JSON.parse(rawBody)));
+      } catch {
+        // Preserve malformed JSON unchanged.
+      }
+    }
+
     const upstream = await fetch(new URL(request.url ?? "/", upstreamBaseUrl), {
-      body: request.method === "GET" || request.method === "HEAD" ? undefined : await requestBody(request),
+      body,
       headers: requestHeaders(request),
       method: request.method,
       signal: abortController.signal
