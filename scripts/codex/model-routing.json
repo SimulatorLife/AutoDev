@@ -35,8 +35,8 @@
   "providers": {
     "antigravity": {
       "models": {
-        "smart": "gemini-3.6-flash-high",
-        "orchestrator": "gemini-3.6-flash-high",
+        "smart": "gemini-3.8-flash-high",
+        "orchestrator": "gemini-3.8-flash-high",
         "default": "gemini-3.8-flash-medium"
       }
     },

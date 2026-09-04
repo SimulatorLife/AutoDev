@@ -107,7 +107,7 @@ test("loads editable provider and role models from JSON routing config", async (
   assert.equal(config.orchestrator.tier, "orchestrator");
   assert.equal(config.providers.codex.models.orchestrator, "gpt-5.6-luna");
   assert.equal(config.providers.claude.models.orchestrator, "claude-opus-5");
-  assert.equal(config.providers.antigravity.models.orchestrator, "gemini-3.6-flash-high");
+  assert.equal(config.providers.antigravity.models.orchestrator, "gemini-3.8-flash-high");
   assert.deepEqual(config.orchestrator.reasoningEffort, { claude: "medium", antigravity: "high" });
 });
 
@@ -124,7 +124,7 @@ test("orchestrator alias degrades from the pinned primary provider to a load-bal
   const byProvider = Object.fromEntries(candidates.map((candidate) => [ candidate.provider, candidate ]));
   assert.equal(byProvider.claude.model, "claude-opus-5");
   assert.equal(byProvider.claude.reasoningEffort, "medium");
-  assert.equal(byProvider.antigravity.model, "gemini-3.6-flash-high");
+  assert.equal(byProvider.antigravity.model, "gemini-3.8-flash-high");
   assert.equal(byProvider.antigravity.reasoningEffort, "high");
 
   // The fallback group is shuffled/least-loaded, never the pinned primary.
@@ -218,7 +218,7 @@ test("resolves role aliases through tier-specific randomized provider groups wit
   assert.deepEqual(smartProviders.slice(2), [ "codex" ]);
 
   const smartModelMap = Object.fromEntries(smartCandidates.map((c) => [ c.provider, c.model ]));
-  assert.equal(smartModelMap.antigravity, "gemini-3.6-flash-high");
+  assert.equal(smartModelMap.antigravity, "gemini-3.8-flash-high");
   assert.equal(smartModelMap.claude, "claude-opus-5");
   assert.equal(smartModelMap.codex, "gpt-5.6-sol");
 
@@ -232,7 +232,7 @@ test("classifies provider exhaustion and transient responses for fallback", () =
   assert.equal(fallbackable(429, "session limit reached"), true);
   assert.equal(fallbackable(503, "unavailable"), true);
   assert.equal(fallbackable(400, "provider usage limit reached"), true);
-  assert.equal(fallbackable(400, "Invalid model name passed in model=gemini-3.6-flash-high"), true);
+  assert.equal(fallbackable(400, "Invalid model name passed in model=gemini-3.8-flash-high"), true);
   assert.equal(fallbackable(400, "malformed request"), false);
 });
 

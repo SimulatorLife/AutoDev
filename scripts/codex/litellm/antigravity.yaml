@@ -1,9 +1,9 @@
 # Codex -> LiteLLM -> local agy CLI Responses adapter.
 # Authentication and quota remain owned by the Antigravity subscription.
 model_list:
-  - model_name: gemini-3.6-flash-high
+  - model_name: gemini-3.8-flash-high
     litellm_params:
-      model: openai/gemini-3.6-flash-high
+      model: openai/gemini-3.8-flash-high
       api_base: http://127.0.0.1:4002/v1
       api_key: os.environ/LITELLM_API_KEY
   - model_name: gemini-3.8-flash-medium
