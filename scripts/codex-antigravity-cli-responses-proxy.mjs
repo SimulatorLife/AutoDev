@@ -374,9 +374,9 @@ async function handle(request, response) {
   response.on("error", onResponseError);
 
   const keepAlive = setInterval(() => {
-    if (streamStarted && isWritable()) {
-      try { response.write(": agy-bridge keep-alive\n\n"); } catch {}
-    }
+    if (!isWritable()) return;
+    startStream();
+    try { response.write(": agy-bridge keep-alive\n\n"); } catch {}
   }, 2000);
   let child;
   response.on("close", () => {

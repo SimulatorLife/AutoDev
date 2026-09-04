@@ -1090,7 +1090,11 @@ class LocalSetupTests(unittest.TestCase):
         self.assertIn('if (!streamStarted)', proxy)
         self.assertIn('sendJson(response, 503', proxy)
         self.assertIn('agy exited without a terminal result event', proxy)
-        self.assertIn('clientClosed || response.writableEnded || response.destroyed', proxy)
+        # Closed-socket guard appears before the 503 send so the proxy does not
+        # raise on a client disconnect that lands between the upstream failure
+        # and the retryable error response.
+        self.assertIn('isWritable()', proxy)
+        self.assertIn('    if (!isWritable()) return;\n    if (!streamStarted) {\n      sendJson(response, 503', proxy)
 
     def test_copilot_proxy_does_not_report_an_empty_clean_exit_as_success(self):
         proxy = (REPO_ROOT / "scripts/codex-copilot-cli-responses-proxy.mjs").read_text()
