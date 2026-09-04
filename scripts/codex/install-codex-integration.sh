@@ -594,7 +594,7 @@ if [[ "${1:-}" == "--restart" ]]; then
   bash "$repo_root/scripts/ensure-codex-model-router.sh"
   printf '{"model":"sonnet"}\n' | bash "$repo_root/scripts/ensure-codex-claude-bridge.sh"
   printf '{"model":"MiniMax-M3"}\n' | bash "$repo_root/scripts/ensure-codex-minimax-proxy.sh"
-  printf '{"model":"gemini-3.6-flash-medium"}\n' | bash "$repo_root/scripts/ensure-codex-antigravity-proxy.sh"
+  printf '{"model":"gemini-3.8-flash-medium"}\n' | bash "$repo_root/scripts/ensure-codex-antigravity-proxy.sh"
 
 fi
 

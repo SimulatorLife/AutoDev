@@ -240,7 +240,7 @@
       ]
     },
     {
-      "slug": "gemini-3.6-flash-medium",
+      "slug": "gemini-3.8-flash-medium",
       "display_name": "Antigravity Gemini Flash subscription",
       "description": "Antigravity CLI Gemini subscription through the local Responses adapter.",
       "default_reasoning_level": "medium",

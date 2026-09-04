@@ -9,7 +9,7 @@ import { createInterface } from "node:readline";
 const HOST = process.env.AGY_PROXY_HOST ?? "127.0.0.1";
 const PORT = Number.parseInt(process.env.AGY_PROXY_PORT ?? "4002", 10);
 const CLI = process.env.AGY_CLI_PATH ?? "/Users/henrykirk/.local/bin/agy";
-const DEFAULT_MODEL = "gemini-3.6-flash-medium";
+const DEFAULT_MODEL = "gemini-3.8-flash-medium";
 const DEFAULT_EFFORT = "medium";
 const AGY_MODE = process.env.AGY_MODE ?? "accept-edits";
 const AGY_SKIP_PERMISSIONS = process.env.AGY_SKIP_PERMISSIONS ?? "true";
@@ -199,7 +199,7 @@ function failedStream(response, responseId, itemId, error) {
       id: responseId,
       object: "response",
       status: "completed",
-      output: [responseMessageItem(errorText, itemId)],
+      output: [ responseMessageItem(errorText, itemId) ],
       output_text: errorText,
       usage: { input_tokens: 0, output_tokens: 0, total_tokens: 0 },
       metadata: { provider_error: true, provider_error_type: "upstream_error" }
@@ -331,7 +331,7 @@ async function handle(request, response) {
     const event = sseLine(eventName, { ...body, sequence_number: ++sequenceNumber });
     if (!isWritable()) return;
     if (streamStarted) {
-      try { response.write(event); } catch {}
+      try { response.write(event); } catch { }
     } else {
       pendingEvents.push(event);
     }
@@ -344,7 +344,7 @@ async function handle(request, response) {
     response.shouldKeepAlive = false;
     for (const event of pendingEvents.splice(0)) {
       if (!isWritable()) break;
-      try { response.write(event); } catch {}
+      try { response.write(event); } catch { }
     }
   };
   const emitActivity = (text, key = text) => {
@@ -376,7 +376,7 @@ async function handle(request, response) {
   const keepAlive = setInterval(() => {
     if (!isWritable()) return;
     startStream();
-    try { response.write(": agy-bridge keep-alive\n\n"); } catch {}
+    try { response.write(": agy-bridge keep-alive\n\n"); } catch { }
   }, 2000);
   let child;
   response.on("close", () => {
@@ -422,7 +422,7 @@ async function handle(request, response) {
     emit("response.output_item.done", { type: "response.output_item.done", output_index: 1, item: completedMessage });
     emit("response.completed", { type: "response.completed", response: completed });
     if (isWritable()) {
-      try { response.end("data: [DONE]\n\n"); } catch {}
+      try { response.end("data: [DONE]\n\n"); } catch { }
     }
   } catch (error) {
     clearInterval(keepAlive);

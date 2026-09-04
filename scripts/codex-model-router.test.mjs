@@ -200,7 +200,7 @@ test("routes supported model families without provider aliases", () => {
   assert.equal(routeForModel("gpt-5.6-luna")?.provider, "codex");
   assert.equal(routeForModel("sonnet")?.provider, "claude");
   assert.equal(routeForModel("MiniMax-M3")?.provider, "minimax");
-  assert.equal(routeForModel("gemini-3.6-flash-medium")?.provider, "antigravity");
+  assert.equal(routeForModel("gemini-3.8-flash-medium")?.provider, "antigravity");
   assert.equal(routeForModel("unknown-model"), null);
 });
 
@@ -289,7 +289,7 @@ test("reroutes a role request after a provider returns a fallbackable failure", 
     if (target.endsWith("/responses")) {
       responseCalls += 1;
       if (responseCalls === 1) return new Response(JSON.stringify({ error: "provider throttled" }), { status: 429 });
-      return new Response(JSON.stringify({ id: "fallback-response", model: "gemini-3.6-flash-medium", output_text: "fallback ok" }), {
+      return new Response(JSON.stringify({ id: "fallback-response", model: "gemini-3.8-flash-medium", output_text: "fallback ok" }), {
         status: 200,
         headers: { "content-type": "application/json" },
       });
@@ -661,7 +661,7 @@ test("carries only the approved workspace header through LiteLLM's Responses ext
     if (String(url) === "http://127.0.0.1:4001/v1/responses") {
       upstreamHeaders = options.headers;
       upstreamPayload = JSON.parse(options.body);
-      return new Response(JSON.stringify({ id: "antigravity-response", model: "gemini-3.6-flash-medium", output_text: "ok" }), {
+      return new Response(JSON.stringify({ id: "antigravity-response", model: "gemini-3.8-flash-medium", output_text: "ok" }), {
         status: 200,
         headers: { "content-type": "application/json" },
       });
@@ -679,7 +679,7 @@ test("carries only the approved workspace header through LiteLLM's Responses ext
       method: "POST",
       headers: { "content-type": "application/json", "x-codex-turn-metadata": turnMetadata },
       body: JSON.stringify({
-        model: "gemini-3.6-flash-medium",
+        model: "gemini-3.8-flash-medium",
         stream: false,
         extra_headers: { authorization: "Bearer caller-secret", "x-untrusted": "should-not-forward" },
       }),
@@ -1592,10 +1592,10 @@ test("deduplicates catalog models and keeps role aliases visible", () => {
 });
 
 test("rewrites the routed provider model back to the public role alias", () => {
-  const value = replaceModelFields({ model: "gemini-3.6-flash-medium", nested: [ { model: "gemini-3.6-flash-medium" } ] }, "autodev/explorer");
+  const value = replaceModelFields({ model: "gemini-3.8-flash-medium", nested: [ { model: "gemini-3.8-flash-medium" } ] }, "autodev/explorer");
   assert.deepEqual(value, { model: "autodev/explorer", nested: [ { model: "autodev/explorer" } ] });
 
-  const event = transformSseEvent('data: {"type":"response.completed","response":{"model":"gemini-3.6-flash-medium"},"model":"gemini-3.6-flash-medium"}\n\n', "autodev/explorer");
+  const event = transformSseEvent('data: {"type":"response.completed","response":{"model":"gemini-3.8-flash-medium"},"model":"gemini-3.8-flash-medium"}\n\n', "autodev/explorer");
   assert.match(event, /autodev\/explorer/);
   assert.equal((event.match(/autodev\/explorer/g) ?? []).length, 2);
 });
@@ -2160,7 +2160,7 @@ test("direct concrete request does not reroute to a different provider when the 
     }
     if (String(url) === "http://127.0.0.1:4001/v1/responses") {
       antigravityCalls += 1;
-      return new Response(JSON.stringify({ id: "antigravity-response", model: "gemini-3.6-flash-medium", output_text: "should-not-be-called" }), {
+      return new Response(JSON.stringify({ id: "antigravity-response", model: "gemini-3.8-flash-medium", output_text: "should-not-be-called" }), {
         status: 200,
         headers: { "content-type": "application/json" },
       });

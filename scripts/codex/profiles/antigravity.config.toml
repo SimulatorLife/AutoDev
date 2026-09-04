@@ -1,4 +1,4 @@
-model = "gemini-3.6-flash-medium"
+model = "gemini-3.8-flash-medium"
 model_provider = "antigravity_cli"
 model_reasoning_effort = "medium"
 model_reasoning_summary = "none"
@@ -9,7 +9,7 @@ multi_agent = true
 enable_fanout = true
 
 [agents]
-default_subagent_model = "gemini-3.6-flash-medium"
+default_subagent_model = "gemini-3.8-flash-medium"
 default_subagent_reasoning_effort = "medium"
 
 [model_providers.antigravity_cli]

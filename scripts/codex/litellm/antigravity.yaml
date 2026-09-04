@@ -6,9 +6,9 @@ model_list:
       model: openai/gemini-3.6-flash-high
       api_base: http://127.0.0.1:4002/v1
       api_key: os.environ/LITELLM_API_KEY
-  - model_name: gemini-3.6-flash-medium
+  - model_name: gemini-3.8-flash-medium
     litellm_params:
-      model: openai/gemini-3.6-flash-medium
+      model: openai/gemini-3.8-flash-medium
       api_base: http://127.0.0.1:4002/v1
       api_key: os.environ/LITELLM_API_KEY
   - model_name: gemini-3.6-flash-low
