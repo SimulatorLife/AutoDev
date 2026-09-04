@@ -31,8 +31,6 @@ proxy_plist="$HOME/Library/LaunchAgents/$proxy_label.plist"
 litellm_plist="$HOME/Library/LaunchAgents/$litellm_label.plist"
 proxy_launcher="$HOME/.codex/hooks/run-codex-antigravity-proxy.sh"
 litellm_launcher="$HOME/.codex/hooks/run-codex-antigravity-litellm.sh"
-if [[ -L "$proxy_launcher" ]]; then proxy_launcher="$(readlink "$proxy_launcher")"; fi
-if [[ -L "$litellm_launcher" ]]; then litellm_launcher="$(readlink "$litellm_launcher")"; fi
 
 # LiteLLM only reads antigravity.yaml at process start, so a healthy process
 # can keep serving a stale deployed config after the file changes underneath
@@ -62,10 +60,8 @@ wait_for_probe() {
 }
 
 config_fingerprint() {
-  local path="$litellm_config"
-  if [[ -L "$path" ]]; then path="$(readlink "$path")"; fi
-  [[ -f "$path" ]] || return 1
-  shasum -a 256 "$path" | awk '{print $1}'
+  [[ -f "$litellm_config" ]] || return 1
+  shasum -a 256 "$litellm_config" | awk '{print $1}'
 }
 
 record_litellm_config_stamp() {

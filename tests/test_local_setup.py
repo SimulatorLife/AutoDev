@@ -1021,13 +1021,18 @@ class LocalSetupTests(unittest.TestCase):
             'litellm_config_stamp="${CODEX_ANTIGRAVITY_LITELLM_CONFIG_STAMP:-$HOME/.codex/codex-antigravity-litellm-config.sha256}"',
             ensure,
         )
-        self.assertIn('shasum -a 256 "$path"', ensure)
+        self.assertIn('shasum -a 256 "$litellm_config"', ensure)
         self.assertIn('launchd_pid() {', ensure)
         self.assertIn('"$current_pid" != "$previous_pid"', ensure)
+        # The fingerprint must hash the same file the LiteLLM process actually
+        # reads, or drift detection watches the wrong bytes. Both scripts name
+        # the deployed path directly: the installer writes a real file there
+        # (never a symlink), so neither resolves a link.
+        launcher = (REPO_ROOT / "scripts/run-codex-antigravity-litellm.sh").read_text()
         self.assertIn(
-            'if [[ -L "$path" ]]; then path="$(readlink "$path")"; fi',
-            ensure,
-            msg="fingerprinting must resolve the deployed config the same way run-codex-antigravity-litellm.sh does",
+            '--config "$HOME/.config/litellm/antigravity.yaml"',
+            launcher,
+            msg="the launcher must serve the same deployed config that config_fingerprint hashes",
         )
         self.assertIn('[[ -s "$litellm_config_stamp" ]] || return 1', ensure)
         self.assertIn('[[ "$current" != "$previous" ]]', ensure)

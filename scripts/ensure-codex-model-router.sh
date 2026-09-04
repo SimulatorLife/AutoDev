@@ -21,7 +21,6 @@ lock_dir="${ensure_lock}.d"
 lock_owner=""
 
 launcher="$codex_home/hooks/run-codex-model-router.sh"
-if [[ -L "$launcher" ]]; then launcher="$(readlink "$launcher")"; fi
 
 label="com.codex.model-router"
 domain="gui/$(id -u)"

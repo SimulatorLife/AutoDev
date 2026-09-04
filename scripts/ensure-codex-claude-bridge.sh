@@ -31,7 +31,6 @@ label="com.codex.claude-bridge"
 # the Codex lifecycle process instead.
 launchctl bootout "$domain/$label" >/dev/null 2>&1 || true
 direct_launcher="$HOME/.codex/hooks/run-codex-claude-bridge.sh"
-if [[ -L "$direct_launcher" ]]; then direct_launcher="$(readlink "$direct_launcher")"; fi
 nohup /bin/bash "$direct_launcher" \
   >"${TMPDIR:-/tmp}/codex-claude-bridge.log" 2>&1 </dev/null &
 for _ in {1..50}; do

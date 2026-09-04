@@ -65,7 +65,6 @@ if [[ "$daemon_mode" != 1 ]]; then
   # the Codex lifecycle process instead.
   launchctl bootout "$launch_domain/$launch_label" >/dev/null 2>&1 || true
   direct_launcher="$HOME/.codex/hooks/ensure-codex-minimax-proxy.sh"
-  if [[ -L "$direct_launcher" ]]; then direct_launcher="$(readlink "$direct_launcher")"; fi
   /bin/bash "$direct_launcher" --daemon
   for _ in {1..50}; do
     if proxy_is_ready; then
