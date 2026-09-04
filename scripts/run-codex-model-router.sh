@@ -36,7 +36,4 @@ if [[ -z "${NODE_BIN:-}" ]]; then
   exit 127
 fi
 
-router="$HOME/.codex/hooks/codex-model-router.mjs"
-if [[ -L "$router" ]]; then router="$(readlink "$router")"; fi
-
-exec "$NODE_BIN" "$router"
+exec "$NODE_BIN" "$HOME/.codex/hooks/codex-model-router.mjs"

@@ -501,8 +501,12 @@ hook injects, so the root agent gets one delegation policy no matter which
 provider serves it. The JavaScript bridges share
 `scripts/codex/lib/bridge-role.mjs`; the Claude bridge reads the same prompt
 files from Python. The installer deploys both the shared module and the prompt
-files beneath the hooks directory, keeping their `scripts/` path so the same
-relative lookups work in a checkout and in the installed copy.
+files into the hooks directory at their repo path minus the leading `scripts/`,
+so a bridge sits at the same depth above them there as it does in a checkout
+and one relative lookup -- `./codex/lib/…`, `./codex/prompts/…` -- resolves in
+both. That is what makes the bridges runnable and importable straight from a
+checkout, so their pure request-shaping helpers can be unit-tested rather than
+asserted against source text.
 
 This role-aware boundary is the *only* place the recursion limit belongs. A
 target repository must not also list `Agent` (or `Task`) under
@@ -662,7 +666,8 @@ order inside `resolve_cwd` / `resolveCwd` is therefore:
 
 The JavaScript CLI adapters share this resolver in
 `scripts/codex/lib/resolve-workspace.mjs`; the installer deploys that module
-alongside the runtime adapter copies. The Claude bridge remains a separate
+alongside the runtime adapter copies, at `codex/lib/` beneath the hooks
+directory so the same `./codex/lib/…` specifier resolves in a checkout too. The Claude bridge remains a separate
 Python implementation, but it follows the same contract and is covered by the
 same workspace-resolution tests. Provider-specific code should pass its
 operator override into the shared resolver rather than reimplementing request

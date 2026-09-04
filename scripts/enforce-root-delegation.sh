@@ -49,20 +49,13 @@ esac
 
 # The injected policy is the same orchestrator prompt the provider bridges hand
 # a non-Codex root turn, so the root agent gets one delegation policy no matter
-# which provider serves it. The installed hook copy keeps the AutoDev `scripts/`
-# subtree beneath it; a checkout has the prompts beside this file.
+# which provider serves it. One relative path covers both layouts: this hook
+# sits beside `codex/prompts/` in a checkout (`scripts/`) and again in the
+# installed copy (`$CODEX_HOME/hooks/`).
 hook_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-prompt_file=""
-for candidate in \
-  "$hook_dir/scripts/codex/prompts/orchestrator.md" \
-  "$hook_dir/codex/prompts/orchestrator.md"; do
-  if [[ -f "$candidate" ]]; then
-    prompt_file="$candidate"
-    break
-  fi
-done
-if [[ -z "$prompt_file" ]]; then
-  echo "enforce-root-delegation: orchestrator prompt not found under $hook_dir" >&2
+prompt_file="$hook_dir/codex/prompts/orchestrator.md"
+if [[ ! -f "$prompt_file" ]]; then
+  echo "enforce-root-delegation: orchestrator prompt not found at $prompt_file" >&2
   exit 0
 fi
 

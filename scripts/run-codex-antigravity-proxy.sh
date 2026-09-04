@@ -5,6 +5,4 @@ set -a
 source "$HOME/.codex/.env"
 set +a
 
-proxy="$HOME/.codex/hooks/codex-antigravity-cli-responses-proxy.mjs"
-if [[ -L "$proxy" ]]; then proxy="$(readlink "$proxy")"; fi
-exec /usr/bin/env node "$proxy"
+exec /usr/bin/env node "$HOME/.codex/hooks/codex-antigravity-cli-responses-proxy.mjs"

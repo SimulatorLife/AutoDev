@@ -149,21 +149,17 @@ AGENT_ROLE_HEADER = "x-autodev-agent-role"
 ORCHESTRATOR_AGENT_ROLE = "orchestrator"
 
 # Bridge role prompts are shared verbatim with the other provider bridges and
-# with the root delegation hook. The installed hook copy keeps the AutoDev
-# `scripts/` subtree beneath it; a checkout has the prompts beside this file.
-_PROMPT_DIRECTORIES = (
-    Path(__file__).resolve().parent / "scripts" / "codex" / "prompts",
-    Path(__file__).resolve().parent / "codex" / "prompts",
-)
+# with the root delegation hook. One relative path covers both layouts: this
+# file sits beside `codex/prompts/` in a checkout (`scripts/`) and again in the
+# installed copy (`$CODEX_HOME/hooks/`).
+_PROMPT_DIRECTORY = Path(__file__).resolve().parent / "codex" / "prompts"
 
 
 def load_bridge_prompt(name: str) -> str:
-    for directory in _PROMPT_DIRECTORIES:
-        prompt = directory / f"{name}.md"
-        if prompt.is_file():
-            return prompt.read_text(encoding="utf-8").strip()
-    searched = ", ".join(str(directory) for directory in _PROMPT_DIRECTORIES)
-    raise RuntimeError(f"Bridge prompt {name!r} was not found in any of: {searched}")
+    prompt = _PROMPT_DIRECTORY / f"{name}.md"
+    if not prompt.is_file():
+        raise RuntimeError(f"Bridge prompt {name!r} was not found at: {prompt}")
+    return prompt.read_text(encoding="utf-8").strip()
 
 
 LEAF_BRIDGE_INSTRUCTIONS = load_bridge_prompt("leaf")

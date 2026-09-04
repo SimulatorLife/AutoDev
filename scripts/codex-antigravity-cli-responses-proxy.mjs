@@ -5,6 +5,12 @@ import { spawn } from "node:child_process";
 import { createServer } from "node:http";
 import { randomBytes } from "node:crypto";
 import { createInterface } from "node:readline";
+import { pathToFileURL } from "node:url";
+
+// Bind the port only when run as a program. The shared request-shaping helpers
+// below are pure and worth testing directly; importing this file must not take
+// the port out from under the running bridge.
+const IS_MAIN = process.argv[ 1 ] && import.meta.url === pathToFileURL(process.argv[ 1 ]).href;
 
 const HOST = process.env.AGY_PROXY_HOST ?? "127.0.0.1";
 const PORT = Number.parseInt(process.env.AGY_PROXY_PORT ?? "4002", 10);
@@ -27,9 +33,9 @@ const EFFORTS = new Set([ "low", "medium", "high" ]);
 // wins and --effort is omitted for models that already carry one.
 const MODEL_EFFORT_SUFFIX = /-(low|medium|high)$/;
 
-import { resolveCwd, WorkspaceResolutionError } from "./scripts/codex/lib/resolve-workspace.mjs";
-import { bridgeInstructions, isOrchestratorRole, resolveAgentRole } from "./scripts/codex/lib/bridge-role.mjs";
-import { resolveAgentEventReporter } from "./scripts/codex/lib/agent-events.mjs";
+import { resolveCwd, WorkspaceResolutionError } from "./codex/lib/resolve-workspace.mjs";
+import { bridgeInstructions, isOrchestratorRole, resolveAgentRole } from "./codex/lib/bridge-role.mjs";
+import { resolveAgentEventReporter } from "./codex/lib/agent-events.mjs";
 
 function modelMetadata() {
   return {
@@ -477,6 +483,10 @@ async function handle(request, response) {
   }
 }
 
-createServer((request, response) => { void handle(request, response); }).listen(PORT, HOST, () => {
-  console.error(`Antigravity Responses proxy listening at http://${HOST}:${PORT}`);
-});
+if (IS_MAIN) {
+  createServer((request, response) => { void handle(request, response); }).listen(PORT, HOST, () => {
+    console.error(`Antigravity Responses proxy listening at http://${HOST}:${PORT}`);
+  });
+}
+
+export { agyArgs, modelEffort, resolveEffort, resolveModel };

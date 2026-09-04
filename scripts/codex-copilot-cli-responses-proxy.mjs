@@ -5,14 +5,19 @@ import { spawn } from "node:child_process";
 import { createServer } from "node:http";
 import { randomBytes } from "node:crypto";
 import { createInterface } from "node:readline";
+import { pathToFileURL } from "node:url";
+
+// Bind the port only when run as a program, so this file can be imported for
+// its pure helpers without taking the port from the running bridge.
+const IS_MAIN = process.argv[ 1 ] && import.meta.url === pathToFileURL(process.argv[ 1 ]).href;
 
 const HOST = process.env.COPILOT_PROXY_HOST ?? "127.0.0.1";
 const PORT = Number.parseInt(process.env.COPILOT_PROXY_PORT ?? "4003", 10);
 const TIMEOUT_MS = Number.parseInt(process.env.COPILOT_PROXY_TIMEOUT_MS ?? "900000", 10);
 const PROJECT_ROOT = process.env.CODEX_PROJECT_ROOT ?? process.env.COPILOT_PROJECT_ROOT ?? null;
 
-import { resolveCwd, WorkspaceResolutionError } from "./scripts/codex/lib/resolve-workspace.mjs";
-import { bridgeInstructions, isOrchestratorRole, resolveAgentRole } from "./scripts/codex/lib/bridge-role.mjs";
+import { resolveCwd, WorkspaceResolutionError } from "./codex/lib/resolve-workspace.mjs";
+import { bridgeInstructions, isOrchestratorRole, resolveAgentRole } from "./codex/lib/bridge-role.mjs";
 
 function sendJson(response, status, body) {
   const encoded = Buffer.from(JSON.stringify(body));
@@ -299,6 +304,8 @@ async function handle(request, response) {
   }
 }
 
-createServer((request, response) => { void handle(request, response); }).listen(PORT, HOST, () => {
-  console.error(`Copilot Responses proxy listening at http://${HOST}:${PORT}`);
-});
+if (IS_MAIN) {
+  createServer((request, response) => { void handle(request, response); }).listen(PORT, HOST, () => {
+    console.error(`Copilot Responses proxy listening at http://${HOST}:${PORT}`);
+  });
+}

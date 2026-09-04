@@ -326,7 +326,7 @@ class LocalSetupTests(unittest.TestCase):
                 installed_dashboard.read_bytes(),
                 (REPO_ROOT / "scripts/codex-model-router-dashboard.html").read_bytes(),
             )
-            installed_resolver = Path(codex_home) / "hooks/scripts/codex/lib/resolve-workspace.mjs"
+            installed_resolver = Path(codex_home) / "hooks/codex/lib/resolve-workspace.mjs"
             self.assertEqual(
                 installed_resolver.read_bytes(),
                 (REPO_ROOT / "scripts/codex/lib/resolve-workspace.mjs").read_bytes(),
@@ -1160,7 +1160,7 @@ class LocalSetupTests(unittest.TestCase):
                     self.assertIn(fragment, source, msg=f"{relative_path} missing required fragment {fragment!r}")
 
     def test_javascript_provider_bridges_use_the_shared_workspace_resolver(self):
-        import_line = 'from "./scripts/codex/lib/resolve-workspace.mjs"'
+        import_line = 'from "./codex/lib/resolve-workspace.mjs"'
         for relative_path in (
             "scripts/codex-antigravity-cli-responses-proxy.mjs",
             "scripts/codex-copilot-cli-responses-proxy.mjs",

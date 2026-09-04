@@ -36,11 +36,17 @@ hook_names=(
   run-codex-model-router.sh
 )
 obsolete_runtime_hook_names=(log-subagent-model.sh)
+# Directories under the hooks directory that earlier layouts created and no
+# longer belong there. Removed with `rm -rf`, so entries must stay fixed
+# literals that name a directory this installer itself once created.
+obsolete_runtime_directory_names=(scripts)
 
 dashboard_asset_names=(codex-model-router-dashboard.html)
-# Repo-relative assets the bridges load at runtime. They keep their AutoDev
-# `scripts/` path beneath the hooks directory so a bridge's relative lookups
-# resolve identically in a checkout and in the installed copy.
+# Repo-relative assets the bridges load at runtime. The hooks directory is
+# flat: each asset is installed at its repo path minus the leading `scripts/`
+# (see runtime_module_target), which puts it at the same depth below a bridge
+# as it sits in a checkout. One relative specifier -- `./codex/lib/x.mjs`,
+# `./codex/prompts/x.md` -- therefore resolves in both.
 runtime_module_names=(
   scripts/codex/lib/resolve-workspace.mjs
   scripts/codex/lib/bridge-role.mjs
@@ -57,6 +63,11 @@ skill_names=(code-simplification diagnosing-bugs improve-codebase-architecture l
 rule_names=(default.rules)
 custom_provider_names=(local_model_router claude_code_subscription minimax antigravity_cli)
 tracked_sources=""
+
+# The installed path for a runtime module: its repo path without the leading
+# `scripts/`, because the bridges are installed flat into the hooks directory
+# rather than under a mirrored `scripts/` subtree.
+runtime_module_target() { printf '%s\n' "$hooks_dir/${1#scripts/}"; }
 
 link_one() {
   local source="$1"
@@ -341,6 +352,13 @@ check_removed_runtime_hooks() {
       failed=1
     fi
   done
+  for name in "${obsolete_runtime_directory_names[@]}"; do
+    target="$hooks_dir/$name"
+    if [[ -e "$target" || -L "$target" ]]; then
+      printf 'obsolete-runtime-directory %s\n' "$target"
+      failed=1
+    fi
+  done
   return "$failed"
 }
 
@@ -369,7 +387,7 @@ check_links() {
   done
   for name in "${runtime_module_names[@]}"; do
     source="$repo_root/$name"
-    target="$hooks_dir/$name"
+    target="$(runtime_module_target "$name")"
     if [[ -f "$target" && ! -L "$target" ]] && cmp -s "$source" "$target"; then
       printf 'ok %s (runtime copy of %s)\n' "$target" "$source"
     else
@@ -475,9 +493,18 @@ for name in "${obsolete_runtime_hook_names[@]}"; do
   fi
 done
 
+[[ -n "$hooks_dir" ]] || { echo "hooks_dir is unset; refusing to remove obsolete directories" >&2; exit 1; }
+for name in "${obsolete_runtime_directory_names[@]}"; do
+  target="$hooks_dir/$name"
+  if [[ -e "$target" || -L "$target" ]]; then
+    rm -rf -- "$target"
+    printf 'removed obsolete runtime directory %s\n' "$target"
+  fi
+done
+
 for name in "${runtime_module_names[@]}"; do
   source="$repo_root/$name"
-  target="$hooks_dir/$name"
+  target="$(runtime_module_target "$name")"
   mkdir -p -- "$(dirname -- "$target")"
   install -m 0644 "$source" "$target"
 done

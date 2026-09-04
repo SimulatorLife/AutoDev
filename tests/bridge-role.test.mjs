@@ -50,7 +50,7 @@ test("every provider bridge picks its instructions from the shared role prompts"
     "scripts/codex-copilot-cli-responses-proxy.mjs",
   ]) {
     const source = read(path);
-    assert.match(source, /from "\.\/scripts\/codex\/lib\/bridge-role\.mjs"/, path);
+    assert.match(source, /from "\.\/codex\/lib\/bridge-role\.mjs"/, path);
     assert.match(source, /bridgeInstructions\(agentRole\)/, path);
     assert.match(source, /resolveAgentRole\(request\.headers\)/, path);
     // No bridge may keep a hard-coded leaf prompt that outranks the role.

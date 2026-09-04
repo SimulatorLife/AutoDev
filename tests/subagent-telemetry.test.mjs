@@ -9,6 +9,7 @@ import {
   SUBAGENT_SPAWN_TOOLS_HEADER,
   resolveAgentEventReporter,
 } from "../scripts/codex/lib/agent-events.mjs";
+import { agyArgs, modelEffort, resolveEffort, resolveModel } from "../scripts/codex-antigravity-cli-responses-proxy.mjs";
 
 const read = (path) => readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
 
@@ -80,15 +81,41 @@ test("a failed report costs a count, never the model turn", async () => {
   await reporter.reportSpawn({ tool: "invoke_subagent" });
 });
 
-test("the Antigravity bridge reports its own subagent spawns and never conflicts model with effort", () => {
+test("the Antigravity bridge never hands agy a model and effort that conflict", () => {
+  // agy encodes reasoning depth in the model id and rejects the whole
+  // invocation when a separate --effort disagrees with it:
+  //   invalid model selection (--model "gemini-3.8-flash-high" --effort "medium")
+  // The router picks the model per tier and the caller's effort independently,
+  // so the two routinely disagree. The model id wins and --effort is dropped.
+  assert.equal(modelEffort("gemini-3.8-flash-high"), "high");
+  assert.equal(modelEffort("gemini-3.8-flash-medium"), "medium");
+  assert.equal(modelEffort("gemini-3.8-flash-low"), "low");
+  assert.equal(modelEffort("claude-sonnet-4-6"), null, "a model id that fixes no effort");
+
+  for (const effort of [ "low", "medium", "high" ]) {
+    const args = agyArgs("task", "gemini-3.8-flash-high", effort);
+    assert.equal(args.includes("--effort"), false, `--effort ${effort} must not accompany a model that fixes one`);
+    assert.deepEqual(args.slice(0, 4), [ "-p", "task", "--model", "gemini-3.8-flash-high" ]);
+  }
+
+  // A model id that fixes no effort still receives the caller's.
+  const unsuffixed = agyArgs("task", "claude-sonnet-4-6", "high");
+  assert.equal(unsuffixed[ unsuffixed.indexOf("--effort") + 1 ], "high");
+
+  // Unknown/empty models and efforts collapse to the bridge defaults rather
+  // than reaching the CLI as arbitrary text.
+  assert.equal(resolveModel("antigravity-subscription"), "gemini-3.8-flash-medium");
+  assert.equal(resolveModel("not a model id"), "gemini-3.8-flash-medium");
+  assert.equal(resolveEffort({ reasoning: { effort: "xhigh" } }), "high");
+  assert.equal(resolveEffort({}), "medium");
+});
+
+test("the Antigravity bridge reports the subagents its own CLI spawns", () => {
   const source = read("scripts/codex-antigravity-cli-responses-proxy.mjs");
-  assert.match(source, /from "\.\/scripts\/codex\/lib\/agent-events\.mjs"/);
+  // Reached only from inside handle(), so this stays a source assertion.
+  assert.match(source, /from "\.\/codex\/lib\/agent-events\.mjs"/);
   assert.match(source, /resolveAgentEventReporter\(request\.headers\)/);
   assert.match(source, /agentEvents\.reportSpawn\(/);
-  // agy rejects the whole invocation when --effort disagrees with an effort
-  // the model id already encodes, so --effort is conditional on the model.
-  assert.match(source, /const effortArgs = modelEffort\(model\) \? \[ ?\] : \[ "--effort", effort ]/);
-  assert.doesNotMatch(source, /"--model", model, "--effort"/);
 });
 
 test("the Claude bridge reports the spawns its Agent tool makes in-process", () => {
