@@ -44,7 +44,7 @@ alias. `scripts/codex/config.toml` sets the parent `model` to that alias, and
 
 The default order pins the primary provider and load-balances the rest:
 
-3. `orchestrator`: OpenAI/Codex Luna (pinned first), then Claude Opus and Gemini/Antigravity (randomized)
+3. `orchestrator`: OpenAI/Codex Luna (pinned first), then Claude Opus, MiniMax, and Gemini/Antigravity (randomized)
 
 Differences from a role request:
 
@@ -53,7 +53,7 @@ Differences from a role request:
 - The primary provider is dispatched with the caller's own reasoning effort
   (`model_reasoning_effort` in the parent config). Each fallback provider is
   dispatched with the effort pinned in `orchestrator.reasoningEffort`
-  (`claude` medium, `antigravity` high by default) so a
+  (`claude` medium, `minimax` high, `antigravity` high by default) so a
   downgraded run still reasons at the intended depth.
 - Usage telemetry keeps orchestrator fallback traffic under the `orchestrator`
   origin even when it lands on a non-Codex provider, rather than
@@ -69,17 +69,14 @@ Differences from a role request:
   bridges select their role instructions from it, so an orchestrator turn that
   degrades onto a bridge-backed provider receives the orchestrator policy
   rather than the leaf policy. See "Agent role across the bridge boundary".
-- MiniMax is intentionally absent from the orchestrator fallback. The
-  orchestrator turn's only meaningful action is to delegate through
-  `multi_agent_v1__spawn_agent`; if the model returns a no-op text response
-  instead, the session produces visible "delegating / waiting" chatter, no
-  `SubagentStart` hook fires, and the orchestrator turn eventually stalls and
-  the stream is closed without `response.completed`. The MiniMax Responses
-  proxy is a transparent pass-through to the remote API, so the router has no
-  place to enforce tool-call presence. Excluding the provider makes that
-  failure mode visible as `503 router_provider_exhausted` instead of a
-  silently stalled turn; MiniMax remains a default-tier fallback for leaf
-  roles, where direct tool calls are the parent's responsibility.
+- MiniMax is restored in the orchestrator fallback chain. Codex CLI defines
+  subagent tools in a proprietary `type: "namespace"` structure (`multi_agent_v1`),
+  which generic Responses endpoints drop or reject. The MiniMax Responses
+  proxy (`scripts/codex-minimax-responses-proxy.mjs`) implements outbound
+  request rewriting to flatten namespaced tools into standard `type: "function"`
+  definitions (e.g., `multi_agent_v1__spawn_agent`) and re-expands them in
+  downstream SSE responses. This allows MiniMax to properly receive and invoke
+  `spawn_agent` during orchestrator turns rather than emitting plain text.
 
 When every orchestrator candidate is unavailable or cooling down, the router
 returns `503 router_provider_exhausted` with a `Retry-After` header, exactly as
@@ -412,7 +409,8 @@ for intentionally pinned, single-repository service deployments.
 
 ### Agent role across the bridge boundary
 
-The orchestrator tier can land the root turn on Claude or Antigravity. A bridge that assumes every request is a delegated leaf then tells
+The orchestrator tier can land the root turn on Claude, MiniMax, or
+Antigravity. A bridge that assumes every request is a delegated leaf then tells
 the parent it is a bounded leaf agent that must not spawn child agents, which
 suppresses exactly the delegation the root turn exists to perform: the parent
 announces a delegation and then silently does the work itself.
@@ -760,7 +758,7 @@ Target state and current verification:
 
 | Requirement | State |
 | --- | --- |
-| OpenAI/Codex orchestrator and tracked user-level cross-provider TOMLs | Configured under `scripts/codex/agents/` and materialized as verified regular-file copies under `~/.codex/agents/`. The orchestrator runs on the `autodev/orchestrator` alias so it degrades to Claude Opus, then Gemini when Codex is out of usage. |
+| OpenAI/Codex orchestrator and tracked user-level cross-provider TOMLs | Configured under `scripts/codex/agents/` and materialized as verified regular-file copies under `~/.codex/agents/`. The orchestrator runs on the `autodev/orchestrator` alias so it degrades to Claude Opus, MiniMax, then Gemini when Codex is out of usage. |
 | Shared user-level skills | Configured under `scripts/codex/skills/` as AutoDev-owned versioned directories and materialized under `~/.agents/skills/`; `install-codex-integration.sh --check` verifies all three links. |
 | Versioned scripts/hooks/config installed into `~/.codex` | Configured; profiles/catalogs/config are symlinked and app-executed hooks are checksum-checked runtime copies; `install-codex-integration.sh --check` passes. |
 | Native app-server custom-provider routing | Verified: `thread/start` selects the custom provider; Claude reached its upstream session-limit response. |
