@@ -20,7 +20,9 @@ import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
+from urllib.error import URLError
 from urllib.parse import urlsplit
+from urllib.request import Request, urlopen
 
 HOST = "127.0.0.1"
 PORT = 4000
@@ -171,6 +173,69 @@ ORCHESTRATOR_BRIDGE_INSTRUCTIONS = load_bridge_prompt("orchestrator")
 BASE_SYSTEM_PROMPT = load_bridge_prompt("base")
 
 
+# Router-generated headers that let this bridge report the subagents the Claude
+# CLI spawns inside its own runtime. Claude's `Agent` tool runs the child agent
+# in-process, so no request for it ever reaches the model router: without a
+# report, an orchestrator turn served here shows zero subagents in /status and
+# the dashboard, which is indistinguishable from a provider that refused to
+# delegate. The router supplies the watchlist, the endpoint, and the request id
+# that correlates the report; the request id is a router-generated UUID this
+# bridge only learns by serving the request, so presenting it is also what
+# authorizes the report. Mirrors scripts/codex/lib/agent-events.mjs.
+REQUEST_ID_HEADER = "x-autodev-request-id"
+SUBAGENT_SPAWN_TOOLS_HEADER = "x-autodev-subagent-spawn-tools"
+AGENT_EVENTS_URL_HEADER = "x-autodev-agent-events-url"
+AGENT_EVENTS_TIMEOUT_SECONDS = 5.0
+
+
+class AgentEventReporter:
+    """Posts subagent spawns observed in the Claude CLI stream to the router."""
+
+    def __init__(self, url: str, request_id: str, spawn_tools: frozenset[str]) -> None:
+        self.url = url
+        self.request_id = request_id
+        self.spawn_tools = spawn_tools
+
+    def is_spawn_tool(self, name: Any) -> bool:
+        return isinstance(name, str) and name in self.spawn_tools
+
+    def report_spawn_async(self, tool: str, role: str | None = None, status: str = "started") -> None:
+        """Report without blocking the stream loop on an HTTP round trip."""
+        threading.Thread(target=self.report_spawn, args=(tool, role, status), daemon=True).start()
+
+    def report_spawn(self, tool: str, role: str | None = None, status: str = "started") -> None:
+        """Best effort by design: telemetry must never fail a model turn, so a
+        transport error or non-2xx reply costs a count rather than the turn."""
+        body = json.dumps({
+            "requestId": self.request_id,
+            "events": [{"type": "subagent_spawn", "tool": tool, "role": role, "status": status, "count": 1}],
+        }).encode()
+        request = Request(self.url, data=body, headers={"Content-Type": "application/json"}, method="POST")
+        try:
+            with urlopen(request, timeout=AGENT_EVENTS_TIMEOUT_SECONDS):
+                pass
+        except (URLError, OSError, ValueError):
+            pass
+
+
+def resolve_agent_event_reporter(headers: Any) -> AgentEventReporter | None:
+    """A reporter for this request, or None when the router asked for none."""
+    if headers is None or not hasattr(headers, "get"):
+        return None
+
+    def value(name: str) -> str | None:
+        raw = headers.get(name)
+        return raw.strip() if isinstance(raw, str) and raw.strip() else None
+
+    url = value(AGENT_EVENTS_URL_HEADER)
+    request_id = value(REQUEST_ID_HEADER)
+    tools = value(SUBAGENT_SPAWN_TOOLS_HEADER)
+    if not url or not request_id or not tools:
+        return None
+    spawn_tools = frozenset(tool.strip() for tool in tools.split(",") if tool.strip())
+    return AgentEventReporter(url, request_id, spawn_tools) if spawn_tools else None
+
+
 def resolve_agent_role(headers: Any) -> str | None:
     """The agent role the router assigned to this request, or None if it sent none."""
     if headers is None or not hasattr(headers, "get"):
@@ -294,6 +359,60 @@ def nested_text(event: dict[str, Any]) -> str:
     if isinstance(delta, dict) and delta.get("type") == "text_delta":
         return str(delta.get("text", ""))
     return ""
+
+
+class ToolUseAccumulator:
+    """Reassembles streamed `tool_use` blocks into completed calls.
+
+    Claude opens a tool_use block with an empty `input` and streams the
+    arguments as `input_json_delta` fragments, so `content_block_start` carries
+    the tool name but never the arguments. A completed block is also the point
+    at which the tool actually runs -- a block the stream abandons was never
+    invoked -- so blocks are emitted on `content_block_stop`, with the
+    accumulated arguments parsed back into `input`.
+    """
+
+    def __init__(self) -> None:
+        self._open: dict[Any, tuple[dict[str, Any], list[str]]] = {}
+
+    def feed(self, event: dict[str, Any]) -> dict[str, Any] | None:
+        if event.get("type") != "stream_event":
+            return None
+        inner = event.get("event")
+        if not isinstance(inner, dict):
+            return None
+        index = inner.get("index")
+        inner_type = inner.get("type")
+        if inner_type == "content_block_start":
+            block = inner.get("content_block")
+            if isinstance(block, dict) and block.get("type") == "tool_use":
+                self._open[index] = (block, [])
+            return None
+        if inner_type == "content_block_delta":
+            delta = inner.get("delta")
+            if isinstance(delta, dict) and delta.get("type") == "input_json_delta" and index in self._open:
+                self._open[index][1].append(str(delta.get("partial_json", "")))
+            return None
+        if inner_type != "content_block_stop" or index not in self._open:
+            return None
+        block, fragments = self._open.pop(index)
+        try:
+            arguments = json.loads("".join(fragments))
+        except json.JSONDecodeError:
+            arguments = None
+        return {**block, "input": arguments if isinstance(arguments, dict) else block.get("input")}
+
+
+def subagent_role_from_input(block: dict[str, Any]) -> str | None:
+    """The child agent type an `Agent`/`Task` call names, when it names one."""
+    payload = block.get("input")
+    if not isinstance(payload, dict):
+        return None
+    for key in ("subagent_type", "agent_type", "agent"):
+        value = payload.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return None
 
 
 def emit_once(text: str, key: str, seen: set[str]) -> str:
@@ -567,6 +686,7 @@ def run_claude_stream(prompt: str, model: str = DEFAULT_CLAUDE_MODEL, effort: st
     saw_stream_text = False
     result: dict[str, Any] = {}
     activity_keys: set[str] = set()
+    tool_uses = ToolUseAccumulator()
     stderr_lines: list[str] = []
     deadline = time.monotonic() + CLAUDE_TIMEOUT_SECONDS
     try:
@@ -593,6 +713,9 @@ def run_claude_stream(prompt: str, model: str = DEFAULT_CLAUDE_MODEL, effort: st
                 if value.get("is_api_error_message") or value.get("error") in ("rate_limit", "overloaded_error"):
                     err_msg = text_from_content(value.get("message", {}).get("content", [])) or value.get("error") or "Claude API error"
                     raise_classified_claude_error(err_msg, value.get("error"))
+                block = tool_uses.feed(value)
+                if block is not None:
+                    yield ("tool_use", block, value)
                 activity = activity_from_event(value, activity_keys)
                 if activity:
                     yield ("activity", activity, value)
@@ -740,6 +863,13 @@ class Handler(BaseHTTPRequestHandler):
             # The router classifies the turn; only it can tell this bridge that
             # it is serving the root orchestrator rather than a delegated leaf.
             agent_role = resolve_agent_role(self.headers)
+            agent_events = resolve_agent_event_reporter(self.headers)
+
+            def note_tool_use(block: dict[str, Any]) -> None:
+                name = block.get("name")
+                if agent_events is not None and agent_events.is_spawn_tool(name):
+                    agent_events.report_spawn_async(str(name), subagent_role_from_input(block))
+
             prompt = prompt_from_input(request.get("input", ""))
             cwd = resolve_cwd(request, self.headers)
             role_label = "orchestrator" if is_orchestrator_role(agent_role) else "leaf"
@@ -750,6 +880,8 @@ class Handler(BaseHTTPRequestHandler):
                 for kind, value, _ in run_claude_stream(prompt, claude_model, claude_effort, cwd=cwd, agent_role=agent_role):
                     if kind == "delta":
                         text += value
+                    elif kind == "tool_use":
+                        note_tool_use(value)
                     elif kind == "complete":
                         text, metadata = value
                 payload = response_payload(request.get("model", MODEL), text, metadata)
@@ -794,6 +926,8 @@ class Handler(BaseHTTPRequestHandler):
                     start_stream()
                     text += value
                     self.send_sse("response.output_text.delta", {"type": "response.output_text.delta", "item_id": item_id, "delta": value, "content_index": 0, "output_index": 1})
+                elif kind == "tool_use":
+                    note_tool_use(value)
                 elif kind == "activity":
                     start_stream()
                     reasoning_text += value

@@ -65,6 +65,19 @@ import {
   routeCredentialAvailable,
   routeForModel,
   transformSseEvent,
+  flattenOutboundTools,
+  rewriteToolNamespaces,
+  bridgeTelemetryHeaders,
+  ingestAgentEvents,
+  noteBridgeRequest,
+  noteOrchestratorSession,
+  orchestratorProviderForSession,
+  recordSubagentSpawn,
+  resetSubagentTelemetry,
+  subagentStatus,
+  SUBAGENT_SPAWN_TOOLS_HEADER,
+  AGENT_EVENTS_URL_HEADER,
+  AGENT_EVENTS_PATH,
   tryAcquireSubagentSlot,
   validateRoutingConfig,
   workspaceContextFromRequest,
@@ -111,6 +124,39 @@ test("loads editable provider and role models from JSON routing config", async (
   assert.deepEqual(config.orchestrator.reasoningEffort, { claude: "medium", minimax: "high", antigravity: "high" });
 });
 
+test("only spawn-capable providers serve the orchestrator tier", async () => {
+  const config = JSON.parse(await readFile(new URL("./codex/model-routing.json", import.meta.url), "utf8"));
+  // Two delegation paths both count. Codex spawns native child threads, and
+  // MiniMax drives that same tool through the namespace-flattening proxy. The
+  // Claude and Antigravity CLI bridges delegate inside their own runtime and
+  // report those spawns over /v1/agent-events. Copilot's CLI has no subagent
+  // tool, so it stays out of the orchestrator tier.
+  assert.deepEqual(
+    Object.fromEntries(Object.entries(config.providers).map(([ provider, info ]) => [ provider, info.capabilities.subagentSpawn ])),
+    { antigravity: true, claude: true, minimax: true, copilot: false, codex: true },
+  );
+  for (const group of config.providerGroups.orchestrator) {
+    for (const provider of group) {
+      assert.equal(
+        config.providers[ provider ].capabilities.subagentSpawn,
+        true,
+        `${provider} serves the orchestrator tier, so it must be able to spawn subagents`,
+      );
+    }
+  }
+});
+
+test("router status surfaces each provider's subagent spawn capability and watched tools", () => {
+  const providers = getRouterStatus().providers;
+  // Only the CLI-delegation bridges name tools: their spawns are invisible to
+  // the router unless it tells them which tool names to report.
+  assert.deepEqual(providers.claude.capabilities, { subagentSpawn: true, subagentSpawnTools: [ "Agent", "Task" ] });
+  assert.deepEqual(providers.antigravity.capabilities, { subagentSpawn: true, subagentSpawnTools: [ "invoke_subagent" ] });
+  assert.deepEqual(providers.codex.capabilities, { subagentSpawn: true, subagentSpawnTools: [] });
+  assert.deepEqual(providers.minimax.capabilities, { subagentSpawn: true, subagentSpawnTools: [] });
+  assert.deepEqual(providers.copilot.capabilities, { subagentSpawn: false, subagentSpawnTools: [] });
+});
+
 test("orchestrator alias degrades from the pinned primary provider to a load-balanced fallback group with pinned reasoning effort", () => {
   assert.equal(ORCHESTRATOR_ALIAS, "autodev/orchestrator");
   assert.equal(roleForModel(ORCHESTRATOR_ALIAS), null);
@@ -152,8 +198,8 @@ test("validates routing config and requires default model for providers", () => 
       orchestrator: [ [ "testProvider" ], [ "fallbackProvider" ] ],
     },
     providers: {
-      testProvider: { models: { default: "test-model" } },
-      fallbackProvider: { models: { default: "fallback-model" } },
+      testProvider: { capabilities: { subagentSpawn: true }, models: { default: "test-model" } },
+      fallbackProvider: { capabilities: { subagentSpawn: true }, models: { default: "fallback-model" } },
     },
     roles: {
       default: { tier: "default" },
@@ -173,8 +219,27 @@ test("validates routing config and requires default model for providers", () => 
   assert.doesNotThrow(() => validateRoutingConfig(validConfig));
 
   assert.throws(
-    () => validateRoutingConfig({ ...validConfig, providers: { testProvider: { models: {} } } }),
+    () => validateRoutingConfig({ ...validConfig, providers: { testProvider: { capabilities: { subagentSpawn: true }, models: {} } } }),
     /Routing config provider testProvider must define a default model/
+  );
+
+  assert.throws(
+    () => validateRoutingConfig({
+      ...validConfig,
+      providers: { ...validConfig.providers, testProvider: { models: { default: "test-model" } } },
+    }),
+    /Routing config provider testProvider must declare capabilities\.subagentSpawn as a boolean/
+  );
+
+  assert.throws(
+    () => validateRoutingConfig({
+      ...validConfig,
+      providers: {
+        ...validConfig.providers,
+        fallbackProvider: { capabilities: { subagentSpawn: false }, models: { default: "fallback-model" } },
+      },
+    }),
+    /orchestrator tier orchestrator includes provider fallbackProvider, which declares capabilities\.subagentSpawn: false/
   );
 
   assert.throws(
@@ -421,6 +486,148 @@ test("classifies provider failures into operator-visible limit states", () => {
   assert.equal(classifyProviderFailure(400, "provider usage limit reached"), "quota_exhausted");
   assert.equal(classifyProviderFailure(401, "unauthorized"), "authentication");
   assert.equal(classifyProviderFailure(400, "malformed request"), "request_error");
+});
+
+test("router flattens outbound tools and rewrites inbound tool namespaces in SSE events", () => {
+  const tools = [
+    {
+      type: "namespace",
+      name: "multi_agent_v1",
+      tools: [
+        { type: "function", name: "spawn_agent", description: "Spawn child agent" }
+      ]
+    },
+    {
+      type: "function",
+      namespace: "collaboration",
+      name: "send_message"
+    },
+    {
+      type: "function",
+      name: "read_file"
+    }
+  ];
+  const flattened = flattenOutboundTools(tools);
+  assert.deepEqual(flattened, [
+    { type: "function", name: "multi_agent_v1__spawn_agent", description: "Spawn child agent" },
+    { type: "function", name: "collaboration__send_message" },
+    { type: "function", name: "read_file" }
+  ]);
+
+  const rewritten = rewriteToolNamespaces({
+    output: [
+      { name: "multi_agent_v1__spawn_agent", type: "function_call" },
+      { name: "collaboration__send_message", type: "function_call" },
+      { name: "read_file", type: "function_call" }
+    ]
+  });
+  assert.deepEqual(rewritten.output, [
+    { name: "spawn_agent", namespace: "multi_agent_v1", type: "function_call" },
+    { name: "send_message", namespace: "collaboration", type: "function_call" },
+    { name: "read_file", type: "function_call" }
+  ]);
+
+  const sseEvent = 'data: {"type":"response.output_item.added","output_index":1,"item":{"type":"function_call","name":"multi_agent_v1__spawn_agent"}}\n\n';
+  const transformed = transformSseEvent(sseEvent, "autodev/orchestrator");
+  assert.match(transformed, /"namespace":"multi_agent_v1"/);
+  assert.match(transformed, /"name":"spawn_agent"/);
+});
+
+test("only bridges that spawn inside their own runtime are told what to report", () => {
+  const forAntigravity = bridgeTelemetryHeaders({ provider: "antigravity" }, "request-1");
+  assert.deepEqual(forAntigravity, {
+    [ "x-autodev-request-id" ]: "request-1",
+    [ SUBAGENT_SPAWN_TOOLS_HEADER ]: "invoke_subagent",
+    [ AGENT_EVENTS_URL_HEADER ]: `http://127.0.0.1:4100${AGENT_EVENTS_PATH}`,
+  });
+  assert.equal(bridgeTelemetryHeaders({ provider: "claude" }, "request-1")[ SUBAGENT_SPAWN_TOOLS_HEADER ], "Agent,Task");
+  // Codex and MiniMax spawn through the router's own role aliases, so the
+  // router already sees those children and asks for no report. Copilot cannot
+  // spawn at all.
+  for (const provider of [ "codex", "minimax", "copilot" ]) {
+    assert.deepEqual(bridgeTelemetryHeaders({ provider }, "request-1"), {}, provider);
+  }
+  // Without a request id there is nothing to correlate a report against.
+  assert.deepEqual(bridgeTelemetryHeaders({ provider: "claude" }, null), {});
+});
+
+test("subagent telemetry counts both spawn mechanisms and attributes each to a provider", () => {
+  resetSubagentTelemetry();
+  try {
+    // A CLI bridge reports what its own runtime spawned; the router resolves
+    // the provider from the request the bridge was serving.
+    noteBridgeRequest("request-1", { provider: "claude", model: "claude-opus-5", role: null, workspace: "AutoDev" });
+    const accepted = ingestAgentEvents({
+      requestId: "request-1",
+      events: [
+        { type: "subagent_spawn", tool: "Agent", role: "explorer" },
+        { type: "subagent_spawn", tool: "Agent", role: "worker", count: 2 },
+        { type: "not_a_spawn" },
+      ],
+    });
+    assert.deepEqual(accepted, { accepted: 3, rejected: 0, reason: null });
+
+    // A router-routed spawn is attributed to whichever provider ran the parent
+    // orchestrator turn for that session.
+    noteOrchestratorSession("session-a", "minimax");
+    recordSubagentSpawn({ mechanism: "router_alias", provider: orchestratorProviderForSession("session-a"), role: "validator", tool: "multi_agent_v1.spawn" });
+    // Callers that supply no session id all share one bucket, so that key is
+    // never joined: it would credit an unrelated caller's parent turn.
+    noteOrchestratorSession("process-scope", "claude");
+    assert.equal(orchestratorProviderForSession("process-scope"), null);
+    assert.equal(orchestratorProviderForSession("session-never-seen"), null);
+
+    const status = subagentStatus();
+    assert.equal(status.total, 4);
+    assert.deepEqual(status.byMechanism, { router_alias: 1, bridge_native: 3 });
+    assert.deepEqual(status.byProvider, { claude: 3, minimax: 1 });
+    assert.deepEqual(status.byRole, { explorer: 1, worker: 2, validator: 1 });
+    assert.deepEqual(status.spawnCapableProviders, [ "antigravity", "claude", "minimax", "codex" ]);
+    assert.equal(status.recent[ 0 ].role, "validator", "the recent list is newest first");
+    assert.equal(status.recent.at(-1).provider, "claude");
+
+    // The request id is the only credential a report carries, so an unknown one
+    // is counted nowhere.
+    assert.deepEqual(
+      ingestAgentEvents({ requestId: "never-issued", events: [ { type: "subagent_spawn", tool: "Agent" } ] }),
+      { accepted: 0, rejected: 1, reason: "unknown_request_id" },
+    );
+    assert.equal(subagentStatus().total, 4);
+    assert.equal(recordSubagentSpawn({ mechanism: "made_up" }), null);
+    assert.equal(subagentStatus().total, 4);
+  } finally {
+    resetSubagentTelemetry();
+  }
+});
+
+test("the router accepts a bridge spawn report over /v1/agent-events", async () => {
+  resetSubagentTelemetry();
+  const server = createServer((request, response) => { void handle(request, response); });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  try {
+    const base = `http://127.0.0.1:${server.address().port}`;
+    noteBridgeRequest("request-live", { provider: "antigravity", model: "gemini-3.8-flash-high", role: null, workspace: "AutoDev" });
+    const post = (body) => fetch(`${base}${AGENT_EVENTS_PATH}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    });
+
+    const accepted = await post({ requestId: "request-live", events: [ { type: "subagent_spawn", tool: "invoke_subagent" } ] });
+    assert.equal(accepted.status, 200);
+    assert.deepEqual(await accepted.json(), { accepted: 1, rejected: 0, reason: null });
+
+    const unknown = await post({ requestId: "request-missing", events: [ { type: "subagent_spawn", tool: "invoke_subagent" } ] });
+    assert.equal(unknown.status, 404);
+
+    const status = await (await fetch(`${base}/status`)).json();
+    assert.equal(status.subagents.total, 1);
+    assert.deepEqual(status.subagents.byProvider, { antigravity: 1 });
+    assert.equal(status.subagents.recent[ 0 ].tool, "invoke_subagent");
+  } finally {
+    await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    resetSubagentTelemetry();
+  }
 });
 
 test("successful responses identify the resolved provider, model, and request", async () => {
@@ -688,7 +895,17 @@ test("carries only the approved workspace header through LiteLLM's Responses ext
     });
     assert.equal(response.status, 200);
     assert.equal(upstreamHeaders[ "x-codex-turn-metadata" ], turnMetadata);
-    assert.deepEqual(upstreamPayload.extra_headers, { "x-codex-turn-metadata": turnMetadata });
+    // LiteLLM can drop raw request headers, so the router's own headers ride
+    // along in extra_headers -- but only the router's: the caller's entries are
+    // discarded rather than forwarded.
+    assert.deepEqual(Object.keys(upstreamPayload.extra_headers).sort(), [
+      "x-autodev-agent-events-url",
+      "x-autodev-request-id",
+      "x-autodev-subagent-spawn-tools",
+      "x-codex-turn-metadata",
+    ]);
+    assert.equal(upstreamPayload.extra_headers[ "x-codex-turn-metadata" ], turnMetadata);
+    assert.equal(upstreamPayload.extra_headers[ "x-autodev-subagent-spawn-tools" ], "invoke_subagent");
     assert.equal(upstreamPayload.extra_headers.authorization, undefined);
     assert.equal(upstreamPayload.extra_headers[ "x-untrusted" ], undefined);
   } finally {

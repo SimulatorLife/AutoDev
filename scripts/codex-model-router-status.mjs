@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 
+const counts = (record) => Object.entries(record ?? {}).map(([ key, value ]) => `${key}: ${value}`).join(", ") || "-";
 const host = process.env.CODEX_MODEL_ROUTER_HOST ?? "127.0.0.1";
 const port = process.env.CODEX_MODEL_ROUTER_PORT ?? "4100";
 const endpoint = `http://${host}:${port}/status`;
@@ -28,14 +29,23 @@ for (const [provider, state] of Object.entries(body.providers ?? {})) {
   console.log(`${provider.padEnd(19)} ${(state.status + cooldown).padEnd(18)} ${String(state.activeRequests).padStart(6)}  ${String(state.attempts).padStart(8)}  ${String(state.successes).padStart(9)}  ${String(state.failures).padStart(8)}  ${lastFailure}`);
 }
 
-const spawnFailures = body.spawnFailures ?? {};
-const spawnReasons = Object.entries(spawnFailures.byReason ?? {}).map(([reason, count]) => `${reason}: ${count}`).join(", ") || "-";
+const subagents = body.subagents ?? {};
 console.log("");
-console.log(`Subagent spawn failures: ${spawnFailures.total ?? 0} (${spawnReasons})`);
+console.log(`Subagents spawned: ${subagents.total ?? 0} (${counts(subagents.byMechanism)})`);
+console.log(`  by provider: ${counts(subagents.byProvider)}`);
+console.log(`  by role: ${counts(subagents.byRole)}`);
+console.log(`  spawn-capable providers: ${(subagents.spawnCapableProviders ?? []).join(", ") || "-"}; Codex-native OTEL spawns: ${subagents.codexNativeSpawns ?? 0}`);
+for (const spawn of (subagents.recent ?? []).slice(0, 10)) {
+  console.log(`  ${spawn.timestamp} ${spawn.mechanism} ${spawn.provider}/${spawn.role} ${spawn.tool ?? "-"}`);
+}
+
+const spawnFailures = body.spawnFailures ?? {};
+console.log("");
+console.log(`Subagent spawn failures: ${spawnFailures.total ?? 0} (${counts(spawnFailures.byReason)})`);
 
 const tasks = body.codexTasks ?? {};
 console.log("");
-console.log(`Codex tasks: ${tasks.status ?? "unknown"} · ${Object.entries(tasks.countsByStatus ?? {}).map(([state, count]) => `${state}: ${count}`).join(", ") || "-"}`);
+console.log(`Codex tasks: ${tasks.status ?? "unknown"} · ${counts(tasks.countsByStatus)}`);
 for (const task of (tasks.tasks ?? []).slice(0, 20)) {
   console.log(`  ${task.status} ${task.id} ${task.name ?? ""}`.trim());
 }
@@ -45,7 +55,7 @@ console.log("");
 const concurrency = body.concurrency ?? {};
 const limit = (value) => value == null ? "unlimited" : value;
 const lastDenial = concurrency.lastDenial ? `${concurrency.lastDenial.reason} (${concurrency.lastDenial.sessionScope})` : "-";
-const denialsByReason = Object.entries(concurrency.denialsByReason ?? {}).map(([reason, count]) => `${reason}: ${count}`).join(", ") || "-";
+const denialsByReason = counts(concurrency.denialsByReason);
 const fallbackWarning = concurrency.processFallbackEnforcement
   ? ` [WARNING: ${concurrency.processFallbackActiveThreads} active thread(s) have no caller-supplied session id and are sharing one process-wide bucket instead of independent per-session slots -- over-denial risk]`
   : "";
@@ -77,19 +87,18 @@ const skillsInjected = skills.injected ?? {};
 const skillsUsage = skills.usage ?? {};
 const skillsSelection = skills.selection ?? {};
 const skillsThreads = skills.threads ?? {};
-const countsText = (counts) => Object.entries(counts ?? {}).map(([key, value]) => `${key}: ${value}`).join(", ") || "-";
 const histogramText = (histogram) => `avg ${Number(histogram?.average ?? 0).toFixed(1)} (n=${histogram?.count ?? 0}, sum=${histogram?.sum ?? 0})`;
 console.log("");
-console.log(`Skills injected: ${skillsInjected.total ?? 0} (${countsText(skillsInjected.byStatus)}), invoke_type: ${countsText(skillsInjected.byInvokeType)}, agent kind: ${countsText(skillsInjected.byAgentKind)}`);
-console.log(`Skill invocations: ${skillsUsage.total ?? 0} (${countsText(skillsUsage.byStatus)}), invoke_type: ${countsText(skillsUsage.byInvokeType)}, agent kind: ${countsText(skillsUsage.byAgentKind)}`);
+console.log(`Skills injected: ${skillsInjected.total ?? 0} (${counts(skillsInjected.byStatus)}), invoke_type: ${counts(skillsInjected.byInvokeType)}, agent kind: ${counts(skillsInjected.byAgentKind)}`);
+console.log(`Skill invocations: ${skillsUsage.total ?? 0} (${counts(skillsUsage.byStatus)}), invoke_type: ${counts(skillsUsage.byInvokeType)}, agent kind: ${counts(skillsUsage.byAgentKind)}`);
 console.log(`Skill selection: catalog avg ${histogramText(skillsSelection.catalogEntries)}, selected avg ${histogramText(skillsSelection.selectedEntries)}, duration ${histogramText(skillsSelection.durationMs)}`);
 console.log(`Thread skills: enabled ${histogramText(skillsThreads.enabledTotal)}, kept ${histogramText(skillsThreads.keptTotal)}, truncated ${histogramText(skillsThreads.truncated)}, description chars ${histogramText(skillsThreads.descriptionTruncatedChars)}`);
 for (const skill of (skillsInjected.bySkill ?? [])) {
   const usage = (skillsUsage.bySkill ?? []).find((entry) => entry.skill === skill.skill);
-  console.log(`  ${skill.skill}: injected ${skill.total} (${countsText(skill.byStatus)}), invocations ${usage?.total ?? 0} (${countsText(usage?.byStatus)}), invoke_type: ${countsText(usage?.byInvokeType ?? skill.byInvokeType)}, agent kind: ${countsText(usage?.byAgentKind ?? skill.byAgentKind)}, models: ${countsText(usage?.byModel ?? skill.byModel)}, plugins: ${countsText(usage?.byPlugin ?? skill.byPlugin)}`);
+  console.log(`  ${skill.skill}: injected ${skill.total} (${counts(skill.byStatus)}), invocations ${usage?.total ?? 0} (${counts(usage?.byStatus)}), invoke_type: ${counts(usage?.byInvokeType ?? skill.byInvokeType)}, agent kind: ${counts(usage?.byAgentKind ?? skill.byAgentKind)}, models: ${counts(usage?.byModel ?? skill.byModel)}, plugins: ${counts(usage?.byPlugin ?? skill.byPlugin)}`);
 }
 for (const skill of (skillsUsage.bySkill ?? []).filter((entry) => !(skillsInjected.bySkill ?? []).some((injected) => injected.skill === entry.skill))) {
-  console.log(`  ${skill.skill}: injected 0, invocations ${skill.total} (${countsText(skill.byStatus)}), invoke_type: ${countsText(skill.byInvokeType)}, agent kind: ${countsText(skill.byAgentKind)}, models: ${countsText(skill.byModel)}, plugins: ${countsText(skill.byPlugin)}`);
+  console.log(`  ${skill.skill}: injected 0, invocations ${skill.total} (${counts(skill.byStatus)}), invoke_type: ${counts(skill.byInvokeType)}, agent kind: ${counts(skill.byAgentKind)}, models: ${counts(skill.byModel)}, plugins: ${counts(skill.byPlugin)}`);
 }
 
 const nativeMetrics = codexTelemetry.metrics?.observed ?? [];
@@ -101,8 +110,8 @@ const nativeTools = codexTelemetry.tools?.byTool ?? [];
 const nativeHooks = codexTelemetry.hooks?.byHook ?? [];
 const nativeThreads = codexTelemetry.threads ?? {};
 console.log(`Native runtime telemetry: ${nativeTools.length} tool groups, ${nativeHooks.length} hook groups, ${nativeThreads.started?.total ?? 0} threads started, ${nativeThreads.spawns?.total ?? 0} agent spawns`);
-for (const tool of nativeTools) console.log(`  [tool] ${tool.tool} (${tool.source}${tool.server ? `/${tool.server}` : ""}): ${tool.count ?? 0} calls (${countsText(tool.byStatus)}), avg ${Math.round(tool.averageDurationMs ?? 0)}ms`);
-for (const hook of nativeHooks) console.log(`  hook ${hook.hook} (${hook.source}${hook.handlerType ? `/${hook.handlerType}` : ""}): ${hook.count ?? 0} runs (${countsText(hook.byStatus)}), avg ${Math.round(hook.averageDurationMs ?? 0)}ms`);
+for (const tool of nativeTools) console.log(`  [tool] ${tool.tool} (${tool.source}${tool.server ? `/${tool.server}` : ""}): ${tool.count ?? 0} calls (${counts(tool.byStatus)}), avg ${Math.round(tool.averageDurationMs ?? 0)}ms`);
+for (const hook of nativeHooks) console.log(`  hook ${hook.hook} (${hook.source}${hook.handlerType ? `/${hook.handlerType}` : ""}): ${hook.count ?? 0} runs (${counts(hook.byStatus)}), avg ${Math.round(hook.averageDurationMs ?? 0)}ms`);
 
 const sqlite = codexTelemetry.sqlite ?? {};
 const sqliteDuration = sqlite.initDurationMs ?? {};

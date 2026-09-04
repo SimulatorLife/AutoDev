@@ -35,6 +35,12 @@
   },
   "providers": {
     "antigravity": {
+      "capabilities": {
+        "subagentSpawn": true,
+        "subagentSpawnTools": [
+          "invoke_subagent"
+        ]
+      },
       "models": {
         "smart": "gemini-3.8-flash-high",
         "orchestrator": "gemini-3.8-flash-high",
@@ -42,6 +48,13 @@
       }
     },
     "claude": {
+      "capabilities": {
+        "subagentSpawn": true,
+        "subagentSpawnTools": [
+          "Agent",
+          "Task"
+        ]
+      },
       "models": {
         "smart": "claude-opus-5",
         "orchestrator": "claude-opus-5",
@@ -49,16 +62,25 @@
       }
     },
     "minimax": {
+      "capabilities": {
+        "subagentSpawn": true
+      },
       "models": {
         "default": "MiniMax-M3"
       }
     },
     "copilot": {
+      "capabilities": {
+        "subagentSpawn": false
+      },
       "models": {
         "default": "copilot"
       }
     },
     "codex": {
+      "capabilities": {
+        "subagentSpawn": true
+      },
       "models": {
         "smart": "gpt-5.6-sol",
         "orchestrator": "gpt-5.6-luna",

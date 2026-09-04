@@ -58,6 +58,22 @@ function validateRoutingConfig(config) {
     if (typeof info.models.default !== 'string' || !info.models.default.trim()) {
       throw new Error(`Routing config provider ${provider} must define a default model.`);
     }
+    if (!info.capabilities || typeof info.capabilities !== 'object' || typeof info.capabilities.subagentSpawn !== 'boolean') {
+      throw new Error(`Routing config provider ${provider} must declare capabilities.subagentSpawn as a boolean.`);
+    }
+    // A CLI-delegation bridge spawns inside its own runtime, so the router can
+    // only attribute those spawns if it knows which tool names to watch for.
+    // The list lives here rather than in each bridge so one config edit keeps
+    // the routing decision and the telemetry attribution in agreement.
+    const spawnTools = info.capabilities.subagentSpawnTools;
+    if (spawnTools !== undefined) {
+      if (!Array.isArray(spawnTools) || spawnTools.length === 0 || spawnTools.some((tool) => typeof tool !== 'string' || !tool.trim())) {
+        throw new Error(`Routing config provider ${provider} must declare capabilities.subagentSpawnTools as a non-empty array of tool names.`);
+      }
+      if (info.capabilities.subagentSpawn !== true) {
+        throw new Error(`Routing config provider ${provider} declares capabilities.subagentSpawnTools but is not spawn-capable.`);
+      }
+    }
   }
   for (const role of ROLE_NAMES) {
     const tier = config.roles[role]?.tier;
@@ -70,6 +86,26 @@ function validateRoutingConfig(config) {
   }
   if (typeof orchestrator.tier !== 'string' || !orchestrator.tier) throw new Error(`Routing config orchestrator must define a tier.`);
   validateTierGroups(config, orchestrator.tier);
+  // The orchestrator's entire job is delegating, so every provider it can
+  // degrade onto must have a delegation path. There are two, and both count:
+  // Codex and MiniMax drive Codex's own `multi_agent_v1` spawn tool, which
+  // reaches the router back as an `autodev/<role>` request; the Claude and
+  // Antigravity bridges delegate inside their own CLI runtime (Claude's `Agent`
+  // tool, Antigravity's `invoke_subagent`) and report those
+  // spawns over /v1/agent-events. A provider with neither path silently turns
+  // the root agent into a single-threaded chat model, so serving the
+  // orchestrator from one fails closed at config load.
+  for (const group of config.providerGroups[orchestrator.tier]) {
+    for (const provider of group) {
+      if (config.providers[provider].capabilities.subagentSpawn !== true) {
+        throw new Error(
+          `Routing config orchestrator tier ${orchestrator.tier} includes provider ${provider}, `
+          + `which declares capabilities.subagentSpawn: false. Only spawn-capable providers may serve the `
+          + `orchestrator; remove ${provider} from providerGroups.${orchestrator.tier} or make it spawn-capable.`,
+        );
+      }
+    }
+  }
   if (orchestrator.reasoningEffort !== undefined) {
     if (!orchestrator.reasoningEffort || typeof orchestrator.reasoningEffort !== 'object') {
       throw new Error(`Routing config orchestrator.reasoningEffort must be an object mapping providers to effort strings.`);
@@ -1168,6 +1204,190 @@ function spawnFailureStatus() {
   };
 }
 
+function providerCapabilities(provider) {
+  const capabilities = ROUTING.providers[provider]?.capabilities ?? {};
+  const spawnTools = Array.isArray(capabilities.subagentSpawnTools) ? [...capabilities.subagentSpawnTools] : [];
+  return { subagentSpawn: capabilities.subagentSpawn === true, subagentSpawnTools: spawnTools };
+}
+
+// Tool names whose invocation inside a provider bridge means "a subagent was
+// spawned". Sent to the bridge as a request header so a bridge never has to
+// know which provider it is or parse the routing config: it matches the tool
+// names its CLI reports against the list the router handed it.
+function subagentSpawnToolsFor(provider) {
+  return providerCapabilities(provider).subagentSpawnTools;
+}
+
+// Subagent spawn telemetry, unified across every provider.
+//
+// Subagents reach existence by two different mechanisms and, before this, the
+// router could only see one of them:
+//
+// - `router_alias`: Codex's native `multi_agent_v1` spawn tool (driven by the
+//   Codex provider itself, or by MiniMax through the namespace-flattening
+//   proxy) creates a child thread that asks this router for an
+//   `autodev/<role>` alias. The router observes that request directly.
+// - `bridge_native`: the Claude and Antigravity bridges delegate inside their
+//   own CLI runtime -- Claude's `Agent` tool, Antigravity's
+//   `invoke_subagent` -- and no router request is ever made
+//   for the child. Those bridges report the spawn to /v1/agent-events instead.
+//
+// Counting only `router_alias` made a Claude- or Antigravity-served
+// orchestrator look like it had never delegated at all, which is precisely the
+// signal an operator uses to decide whether a provider is orchestrating.
+const SUBAGENT_MECHANISMS = Object.freeze(["router_alias", "bridge_native"]);
+const MAX_RECENT_SUBAGENT_SPAWNS = 50;
+const subagentTelemetry = {
+  total: 0,
+  byMechanism: Object.fromEntries(SUBAGENT_MECHANISMS.map((mechanism) => [mechanism, 0])),
+  byProvider: {},
+  byRole: {},
+  byStatus: {},
+  recent: [],
+};
+
+// Which provider served the orchestrator turn for a session, so a later
+// `autodev/<role>` request from that same session can be attributed to the
+// parent that spawned it. Without this join every router-routed subagent is
+// unattributed, because the child thread's request carries no trace of which
+// provider ran the parent turn. Bounded so a long-lived router cannot grow it
+// without limit.
+const MAX_TRACKED_ORCHESTRATOR_SESSIONS = 256;
+const orchestratorProviderBySession = new Map();
+
+// Recorded when the attempt is dispatched, not when it succeeds: a parent
+// spawns children mid-turn and waits for them, so the child's request arrives
+// while the parent's response is still open. A chain that ends up failing over
+// therefore leaves the last provider attempted, which the next attempt
+// overwrites. Sessions the caller did not identify are excluded: they all
+// share one fallback key (see requestSession), so joining on it would
+// attribute an unrelated caller's subagent to whichever provider last ran an
+// unidentified orchestrator turn.
+function noteOrchestratorSession(sessionKey, provider) {
+  if (!sessionKey || sessionKey === PROCESS_FALLBACK_SESSION_KEY || !provider) return;
+  orchestratorProviderBySession.delete(sessionKey);
+  orchestratorProviderBySession.set(sessionKey, provider);
+  while (orchestratorProviderBySession.size > MAX_TRACKED_ORCHESTRATOR_SESSIONS) {
+    orchestratorProviderBySession.delete(orchestratorProviderBySession.keys().next().value);
+  }
+}
+
+function orchestratorProviderForSession(sessionKey) {
+  if (!sessionKey || sessionKey === PROCESS_FALLBACK_SESSION_KEY) return null;
+  return orchestratorProviderBySession.get(sessionKey) ?? null;
+}
+
+// Recent router requests, so an out-of-band bridge report naming a request id
+// can be attributed to the provider, model, and workspace that request ran on.
+// A bridge posts after its CLI has already invoked the spawn tool, which can
+// land just after the response completed, so entries are retained for a while
+// rather than deleted the moment the request finishes. The request id is a
+// router-generated UUID the bridge only learns by serving the request, so
+// matching against this map is also what authorizes the report.
+const MAX_TRACKED_BRIDGE_REQUESTS = 256;
+const bridgeRequestContext = new Map();
+
+function noteBridgeRequest(requestId, context) {
+  if (!requestId) return;
+  bridgeRequestContext.delete(requestId);
+  bridgeRequestContext.set(requestId, context);
+  while (bridgeRequestContext.size > MAX_TRACKED_BRIDGE_REQUESTS) {
+    bridgeRequestContext.delete(bridgeRequestContext.keys().next().value);
+  }
+}
+
+function bumpCount(collection, key, amount) {
+  collection[key] = (collection[key] ?? 0) + amount;
+}
+
+function recordSubagentSpawn({ mechanism, provider = null, role = null, status = "started", tool = null, requestId = null, workspace = null, count = 1 }) {
+  if (!SUBAGENT_MECHANISMS.includes(mechanism) || !Number.isInteger(count) || count < 1) return null;
+  const entry = {
+    timestamp: new Date().toISOString(),
+    mechanism,
+    provider: provider ?? "unattributed",
+    role: role ?? "unattributed",
+    status,
+    tool,
+    requestId,
+    workspace: workspace ?? null,
+    count,
+  };
+  subagentTelemetry.total += count;
+  bumpCount(subagentTelemetry.byMechanism, mechanism, count);
+  bumpCount(subagentTelemetry.byProvider, entry.provider, count);
+  bumpCount(subagentTelemetry.byRole, entry.role, count);
+  bumpCount(subagentTelemetry.byStatus, entry.status, count);
+  subagentTelemetry.recent.push(entry);
+  while (subagentTelemetry.recent.length > MAX_RECENT_SUBAGENT_SPAWNS) subagentTelemetry.recent.shift();
+  recordRouterEvent({
+    phase: "subagent_spawn",
+    requestId,
+    role,
+    requestedModel: null,
+    provider: entry.provider === "unattributed" ? null : entry.provider,
+    model: null,
+    workspace,
+    outcome: status,
+  });
+  scheduleRouterStatePersist();
+  return entry;
+}
+
+function resetSubagentTelemetry() {
+  subagentTelemetry.total = 0;
+  subagentTelemetry.byMechanism = Object.fromEntries(SUBAGENT_MECHANISMS.map((mechanism) => [mechanism, 0]));
+  subagentTelemetry.byProvider = {};
+  subagentTelemetry.byRole = {};
+  subagentTelemetry.byStatus = {};
+  subagentTelemetry.recent = [];
+  orchestratorProviderBySession.clear();
+  bridgeRequestContext.clear();
+}
+
+function subagentStatus() {
+  return {
+    total: subagentTelemetry.total,
+    byMechanism: { ...subagentTelemetry.byMechanism },
+    byProvider: { ...subagentTelemetry.byProvider },
+    byRole: { ...subagentTelemetry.byRole },
+    byStatus: { ...subagentTelemetry.byStatus },
+    // Codex's own OTLP spawn counter, kept beside the router's count rather
+    // than merged into it: it covers only Codex-exported threads, so adding
+    // the two would double-count every `router_alias` spawn.
+    codexNativeSpawns: otelTelemetry.threads.spawns.total,
+    spawnCapableProviders: Object.keys(ROUTING.providers).filter((provider) => providerCapabilities(provider).subagentSpawn),
+    recent: [...subagentTelemetry.recent].reverse(),
+  };
+}
+
+// Ingests a provider bridge's report that its CLI invoked a subagent spawn
+// tool. Only reports naming a request id this router actually issued are
+// counted; anything else is a caller that never served a router request.
+function ingestAgentEvents(payload) {
+  const requestId = typeof payload?.requestId === "string" ? payload.requestId.trim() : "";
+  const context = requestId ? bridgeRequestContext.get(requestId) : undefined;
+  if (!context) return { accepted: 0, rejected: Array.isArray(payload?.events) ? payload.events.length : 0, reason: "unknown_request_id" };
+  const events = Array.isArray(payload.events) ? payload.events : [];
+  let accepted = 0;
+  for (const event of events) {
+    if (!event || typeof event !== "object" || event.type !== "subagent_spawn") continue;
+    const count = Number.isInteger(event.count) && event.count > 0 ? event.count : 1;
+    recordSubagentSpawn({
+      mechanism: "bridge_native",
+      provider: context.provider,
+      role: typeof event.role === "string" && event.role.trim() ? safeMetricLabel(event.role) : null,
+      status: typeof event.status === "string" && event.status.trim() ? safeMetricLabel(event.status) : "started",
+      tool: typeof event.tool === "string" && event.tool.trim() ? safeMetricLabel(event.tool) : null,
+      requestId,
+      workspace: context.workspace ?? null,
+      count,
+    });
+    accepted += count;
+  }
+  return { accepted, rejected: events.length - accepted, reason: null };
+}
+
 function providerState(provider) {
   if (!providerTelemetry.has(provider)) {
     providerTelemetry.set(provider, {
@@ -1275,6 +1495,7 @@ function resetRouterTelemetry() {
   }
   resetUsageTelemetry();
   resetConcurrencyTelemetry();
+  resetSubagentTelemetry();
   spawnFailureTelemetry.total = 0;
   spawnFailureTelemetry.byReason = {};
   spawnFailureTelemetry.recent = [];
@@ -1297,6 +1518,7 @@ function getRouterStatus(now = Date.now()) {
       cooldownRemainingMs: coolingDown ? cooldownUntil - now : 0,
       failureStreak: providerFailureStreaks.get(route.provider) ?? 0,
       configuredModels: ROUTING.providers[route.provider]?.models ?? {},
+      capabilities: providerCapabilities(route.provider),
       attempts: state.attempts,
       successes: state.successes,
       failures: state.failures,
@@ -1317,6 +1539,7 @@ function getRouterStatus(now = Date.now()) {
     usage: usageStatus(),
     codexTelemetry: codexTelemetryStatus(),
     concurrency: concurrencyStatus(),
+    subagents: subagentStatus(),
     spawnFailures: spawnFailureStatus(),
     codexTasks: codexTaskStatus(),
     activeRequests: Object.fromEntries(activeProviderRequests),
@@ -1472,6 +1695,14 @@ function serializeRouterState() {
     providerTelemetry: Object.fromEntries(providerTelemetry),
     usage: usagePersistenceSnapshot(),
     concurrency: concurrencyTelemetry,
+    subagents: {
+      total: subagentTelemetry.total,
+      byMechanism: subagentTelemetry.byMechanism,
+      byProvider: subagentTelemetry.byProvider,
+      byRole: subagentTelemetry.byRole,
+      byStatus: subagentTelemetry.byStatus,
+      recent: subagentTelemetry.recent,
+    },
     spawnFailures: spawnFailureTelemetry,
     recentEvents: [...recentRouterEvents],
     otelTelemetry: otelPersistenceSnapshot(),
@@ -1530,6 +1761,19 @@ function loadRouterState(file = STATE_FILE) {
       if (Array.isArray(parsed.spawnFailures.recent)) spawnFailureTelemetry.recent = parsed.spawnFailures.recent.filter((item) => item && typeof item === "object").slice(-50);
     }
     restoreOtelTelemetry(parsed.otelTelemetry);
+    if (parsed.subagents && typeof parsed.subagents === "object") {
+      const saved = parsed.subagents;
+      if (Number.isInteger(saved.total) && saved.total >= 0) subagentTelemetry.total = saved.total;
+      for (const section of ["byMechanism", "byProvider", "byRole", "byStatus"]) {
+        if (!saved[section] || typeof saved[section] !== "object") continue;
+        for (const [key, count] of Object.entries(saved[section])) {
+          if (typeof count === "number" && Number.isFinite(count) && count >= 0) subagentTelemetry[section][safeMetricLabel(key)] = count;
+        }
+      }
+      if (Array.isArray(saved.recent)) {
+        subagentTelemetry.recent = saved.recent.filter((entry) => entry && typeof entry === "object").slice(-MAX_RECENT_SUBAGENT_SPAWNS);
+      }
+    }
     if (Array.isArray(parsed.recentEvents)) {
       recentRouterEvents.length = 0;
       recentRouterEvents.push(...parsed.recentEvents.filter((event) => event && typeof event === "object").slice(-Math.max(1, MAX_RECENT_EVENTS)));
@@ -1930,11 +2174,97 @@ function countToolCallsFromSse(body, seen = new Set()) {
   return count;
 }
 
+const FLATTENED_NAMESPACES = Object.freeze([
+  ["multi_agent_v1", "multi_agent_v1__"],
+  ["collaboration", "collaboration__"],
+  ["agents", "agents__"],
+]);
+
+function getNamespacePrefix(ns) {
+  const match = FLATTENED_NAMESPACES.find(([namespace]) => namespace === ns);
+  return match ? match[1] : `${ns}__`;
+}
+
+function flattenOutboundTool(tool, defaultNamespace = null) {
+  const ns = tool.namespace ?? defaultNamespace;
+  const prefix = ns ? getNamespacePrefix(ns) : "";
+
+  const result = { ...tool };
+  delete result.namespace;
+
+  if (result.type === "namespace") {
+    result.type = "function";
+  }
+
+  if (prefix) {
+    if (typeof result.name === "string" && !result.name.startsWith(prefix)) {
+      result.name = `${prefix}${result.name}`;
+    }
+    if (result.function && typeof result.function.name === "string" && !result.function.name.startsWith(prefix)) {
+      result.function = {
+        ...result.function,
+        name: `${prefix}${result.function.name}`
+      };
+    }
+  }
+  return result;
+}
+
+function flattenOutboundTools(tools) {
+  if (!Array.isArray(tools)) return tools;
+  const flattened = [];
+
+  for (const item of tools) {
+    if (item === null || typeof item !== "object") {
+      flattened.push(item);
+      continue;
+    }
+
+    const ns = item.type === "namespace" ? (item.name ?? item.namespace) : item.namespace;
+
+    if (ns && Array.isArray(item.tools)) {
+      for (const innerTool of item.tools) {
+        if (innerTool && typeof innerTool === "object") {
+          flattened.push(flattenOutboundTool(innerTool, ns));
+        }
+      }
+    } else {
+      flattened.push(flattenOutboundTool(item));
+    }
+  }
+  return flattened;
+}
+
+function rewriteToolNamespaces(value) {
+  if (Array.isArray(value)) {
+    return value.map(rewriteToolNamespaces);
+  }
+  if (value === null || typeof value !== "object") {
+    return value;
+  }
+
+  const result = {};
+  for (const [key, child] of Object.entries(value)) {
+    result[key] = rewriteToolNamespaces(child);
+  }
+
+  if (typeof result.name === "string" && (result.namespace === undefined || result.namespace === null)) {
+    const match = FLATTENED_NAMESPACES.find(([, prefix]) => result.name.startsWith(prefix));
+    if (match) {
+      result.namespace = match[0];
+      result.name = result.name.slice(match[1].length);
+    }
+  }
+  return result;
+}
+
 function transformSseEvent(event, publicModel) {
   return event.split(/(\r?\n)/).map((line) => {
     if (!line.startsWith("data: ") || line.slice(6) === "[DONE]") return line;
     try {
-      return `data: ${JSON.stringify(replaceModelFields(JSON.parse(line.slice(6)), publicModel))}`;
+      const parsed = JSON.parse(line.slice(6));
+      const rewritten = rewriteToolNamespaces(replaceModelFields(parsed, publicModel));
+      return `data: ${JSON.stringify(rewritten)}`;
     } catch {
       return line;
     }
@@ -2112,8 +2442,22 @@ async function requestBody(request) {
   return body.toString("utf8");
 }
 
-function downstreamHeaders(route, auth, turnMetadataHeader, agentRole = null) {
-  const headers = { "content-type": "application/json", accept: "text/event-stream" };
+function bridgeTelemetryHeaders(route, requestId) {
+  // Only a bridge that can spawn inside its own runtime has anything to
+  // report, and only the orchestrator-capable ones ever do. Sending the
+  // watchlist and the report endpoint per request means a bridge needs no
+  // routing config, no provider identity, and no router address of its own.
+  const spawnTools = subagentSpawnToolsFor(route.provider);
+  if (spawnTools.length === 0 || !requestId) return {};
+  return {
+    [REQUEST_ID_HEADER]: requestId,
+    [SUBAGENT_SPAWN_TOOLS_HEADER]: spawnTools.join(","),
+    [AGENT_EVENTS_URL_HEADER]: AGENT_EVENTS_URL,
+  };
+}
+
+function downstreamHeaders(route, auth, turnMetadataHeader, agentRole = null, requestId = null) {
+  const headers = { "content-type": "application/json", accept: "text/event-stream", ...bridgeTelemetryHeaders(route, requestId) };
   if (route.envKey) {
     const key = process.env[route.envKey];
     if (key) headers.authorization = `Bearer ${key}`;
@@ -2172,7 +2516,7 @@ function responseTextFromSse(body) {
   };
 }
 
-function upstreamPayload(route, payload, wantsStream, turnMetadataHeader, agentRole = null) {
+function upstreamPayload(route, payload, wantsStream, turnMetadataHeader, agentRole = null, requestId = null) {
   // `extra_headers` is an SDK escape hatch that LiteLLM consumes as outbound
   // HTTP headers. Never pass the caller's value through the router: doing so
   // would bypass the router's credential and header allowlist. Antigravity is
@@ -2185,13 +2529,17 @@ function upstreamPayload(route, payload, wantsStream, turnMetadataHeader, agentR
     const forwarded = {
       ...(turnMetadataHeader ? { [FORWARDED_REQUEST_HEADERS[0]]: turnMetadataHeader } : {}),
       ...(agentRole ? { [AGENT_ROLE_HEADER]: agentRole } : {}),
+      ...bridgeTelemetryHeaders(route, requestId),
     };
     if (Object.keys(forwarded).length > 0) safePayload.extra_headers = forwarded;
+  }
+  if (route.provider !== "codex" && Array.isArray(safePayload.tools)) {
+    safePayload.tools = flattenOutboundTools(safePayload.tools);
   }
   return route.provider === "codex" ? { ...safePayload, stream: true, store: false } : { ...safePayload, stream: wantsStream };
 }
 
-async function fetchUpstream(route, payload, wantsStream, turnMetadataHeader, clientSignal = null, agentRole = null) {
+async function fetchUpstream(route, payload, wantsStream, turnMetadataHeader, clientSignal = null, agentRole = null, requestId = null) {
   let auth = null;
   if (route.provider === "codex") {
     try {
@@ -2205,12 +2553,12 @@ async function fetchUpstream(route, payload, wantsStream, turnMetadataHeader, cl
       throw authError;
     }
   }
-  const requestPayload = upstreamPayload(route, payload, wantsStream, turnMetadataHeader, agentRole);
+  const requestPayload = upstreamPayload(route, payload, wantsStream, turnMetadataHeader, agentRole, requestId);
   const timeoutSignal = AbortSignal.timeout(UPSTREAM_TIMEOUT_MS);
   const signal = clientSignal ? AbortSignal.any([clientSignal, timeoutSignal]) : timeoutSignal;
   const upstream = await fetch(`${route.baseUrl}/responses`, {
     method: "POST",
-    headers: downstreamHeaders(route, auth, turnMetadataHeader, agentRole),
+    headers: downstreamHeaders(route, auth, turnMetadataHeader, agentRole, requestId),
     signal,
     body: JSON.stringify(requestPayload),
   });
@@ -2253,7 +2601,7 @@ async function writeSuccessfulResponse(response, route, result, wantsStream, pub
   try {
     const parsed = JSON.parse(body);
     const toolCalls = countToolCallsInResponse(parsed);
-    const rewritten = replaceModelFields(parsed, publicModel);
+    const rewritten = rewriteToolNamespaces(replaceModelFields(parsed, publicModel));
     sendJson(response, upstream.status, rewritten, responseHeaders);
     return { toolCalls, failed: responseWasNotCompleted(rewritten) };
   } catch {
@@ -2325,10 +2673,15 @@ async function proxyConcreteResponse(response, route, payload, wantsStream, requ
       },
     );
   };
+  // A pinned provider model is a bridge request like any other. The Antigravity
+  // CLI has no flag that removes its subagent tools, so even a leaf turn there
+  // can delegate; register the attribution context so such a spawn is counted
+  // rather than rejected as an unknown request.
+  noteBridgeRequest(requestId, { provider: route.provider, model: payload.model, role: null, workspace: workspace?.key ?? null });
   try {
     while (attempts < maxAttempts) {
       try {
-        const result = await fetchUpstream(route, payload, wantsStream, turnMetadataHeader, clientSignal);
+        const result = await fetchUpstream(route, payload, wantsStream, turnMetadataHeader, clientSignal, null, requestId);
         if (!result.ok) {
           const failureClass = classifyProviderFailure(result.status, result.body);
           const canRetry = result.retryable && attempts < CONCRETE_STATUS_MAX_ATTEMPTS - 1 && !clientSignal?.aborted && !response.headersSent;
@@ -2413,7 +2766,7 @@ function payloadForCandidate(payload, candidate) {
 // fallback traffic on a non-Codex provider is still counted as orchestrator
 // rather than direct. `subject` is the human-readable label for the exhaustion
 // error.
-async function proxyFallbackChain(response, { candidates, role = null, origin = null, subject, agentRole = null }, payload, wantsStream, requestId, turnMetadataHeader, workspace, clientSignal = null) {
+async function proxyFallbackChain(response, { candidates, role = null, origin = null, subject, agentRole = null, sessionKey = null }, payload, wantsStream, requestId, turnMetadataHeader, workspace, clientSignal = null) {
   const failures = [];
   for (const route of candidates) {
     if (isProviderCoolingDown(route.provider)) {
@@ -2429,9 +2782,13 @@ async function proxyFallbackChain(response, { candidates, role = null, origin = 
     }
     const attemptStartedAt = Date.now();
     recordRouterEvent({ phase: "selected", requestId, role, origin, requestedModel: payload.model, provider: route.provider, model: route.model, workspace });
+    // A bridge report names only the request id, so record which provider and
+    // workspace this attempt resolved to before the upstream call begins.
+    noteBridgeRequest(requestId, { provider: route.provider, model: route.model, role, workspace: workspace?.key ?? null });
+    if (agentRole === ORCHESTRATOR_AGENT_ROLE) noteOrchestratorSession(sessionKey, route.provider);
     incrementActiveRequests(route.provider);
     try {
-      const result = await fetchUpstream(route, payloadForCandidate(payload, route), wantsStream, turnMetadataHeader, clientSignal, agentRole);
+      const result = await fetchUpstream(route, payloadForCandidate(payload, route), wantsStream, turnMetadataHeader, clientSignal, agentRole, requestId);
       if (result.ok) {
         try {
           const responseResult = await writeSuccessfulResponse(response, route, result, wantsStream, payload.model, requestId, route.model);
@@ -2492,12 +2849,12 @@ async function proxyFallbackChain(response, { candidates, role = null, origin = 
   );
 }
 
-async function proxyRoleResponse(response, role, payload, wantsStream, requestId, turnMetadataHeader, workspace, clientSignal = null) {
-  return proxyFallbackChain(response, { candidates: roleCandidates(role), role, agentRole: role, subject: `role ${role}` }, payload, wantsStream, requestId, turnMetadataHeader, workspace, clientSignal);
+async function proxyRoleResponse(response, role, payload, wantsStream, requestId, turnMetadataHeader, workspace, clientSignal = null, sessionKey = null) {
+  return proxyFallbackChain(response, { candidates: roleCandidates(role), role, agentRole: role, subject: `role ${role}`, sessionKey }, payload, wantsStream, requestId, turnMetadataHeader, workspace, clientSignal);
 }
 
-async function proxyOrchestratorResponse(response, payload, wantsStream, requestId, turnMetadataHeader, workspace, clientSignal = null) {
-  return proxyFallbackChain(response, { candidates: orchestratorCandidates(), role: null, origin: "orchestrator", agentRole: ORCHESTRATOR_AGENT_ROLE, subject: "the orchestrator" }, payload, wantsStream, requestId, turnMetadataHeader, workspace, clientSignal);
+async function proxyOrchestratorResponse(response, payload, wantsStream, requestId, turnMetadataHeader, workspace, clientSignal = null, sessionKey = null) {
+  return proxyFallbackChain(response, { candidates: orchestratorCandidates(), role: null, origin: "orchestrator", agentRole: ORCHESTRATOR_AGENT_ROLE, subject: "the orchestrator", sessionKey }, payload, wantsStream, requestId, turnMetadataHeader, workspace, clientSignal);
 }
 
 function requestSession(request, payload, turnMetadataHeader = null) {
@@ -2529,6 +2886,19 @@ const FORWARDED_REQUEST_HEADERS = Object.freeze(["x-codex-turn-metadata"]);
 // orchestrator policy, not the leaf policy that forbids spawning subagents.
 const AGENT_ROLE_HEADER = "x-autodev-agent-role";
 const ORCHESTRATOR_AGENT_ROLE = "orchestrator";
+
+// Router-generated headers that let a CLI-delegation bridge report the
+// subagents it spawns inside its own runtime. The router owns all three
+// values, so a bridge needs no configuration of its own: the request id is the
+// correlation key (and, being an unguessable per-request UUID the bridge only
+// learns by serving the request, the thing that authorizes the report), the
+// tool list is the watchlist of tool names that mean "a subagent was spawned"
+// for the provider serving this request, and the URL is where to post them.
+const REQUEST_ID_HEADER = "x-autodev-request-id";
+const SUBAGENT_SPAWN_TOOLS_HEADER = "x-autodev-subagent-spawn-tools";
+const AGENT_EVENTS_URL_HEADER = "x-autodev-agent-events-url";
+const AGENT_EVENTS_PATH = "/v1/agent-events";
+const AGENT_EVENTS_URL = `http://${HOST}:${PORT}${AGENT_EVENTS_PATH}`;
 
 function parseTurnMetadataJson(value) {
   if (typeof value !== "string" || !value.trim()) return null;
@@ -2635,6 +3005,19 @@ async function handleRequest(request, response) {
     sendJson(response, 200, await loadCatalog());
     return;
   }
+  if (pathname === AGENT_EVENTS_PATH && request.method === "POST") {
+    try {
+      const result = ingestAgentEvents(JSON.parse(await requestBody(request)));
+      if (result.reason === "unknown_request_id") {
+        sendJson(response, 404, errorBody("No router request matches the reported request id.", "router_unknown_request", { code: "router_unknown_request" }));
+        return;
+      }
+      sendJson(response, 200, result);
+    } catch {
+      sendJson(response, 400, errorBody("Agent event request must be valid JSON"));
+    }
+    return;
+  }
   const otelSignals = { "/v1/logs": "logs", "/v1/traces": "traces", "/v1/metrics": "metrics" };
   if (request.method === "POST" && otelSignals[pathname]) {
     try {
@@ -2687,8 +3070,11 @@ async function handleRequest(request, response) {
       // The root orchestrator is not a leaf subagent: it does not consume a
       // per-session subagent slot. It degrades through the orchestrator tier
       // (primary provider pinned, remaining providers load-balanced) when its
-      // primary provider is out of usage or otherwise unavailable.
-      await proxyOrchestratorResponse(response, payload, wantsStream, requestId, turnMetadataHeader, workspace, clientAbort.signal);
+      // primary provider is out of usage or otherwise unavailable. Its session
+      // is still resolved so a later role request from the same session can be
+      // attributed to the provider that ran the parent turn.
+      const orchestratorSession = requestSession(request, payload, turnMetadataHeader);
+      await proxyOrchestratorResponse(response, payload, wantsStream, requestId, turnMetadataHeader, workspace, clientAbort.signal, orchestratorSession.key);
       return;
     }
     if (role) {
@@ -2705,8 +3091,20 @@ async function handleRequest(request, response) {
         }), { "retry-after": "1", "x-autodev-request-id": requestId });
         return;
       }
+      // An `autodev/<role>` request *is* a spawned subagent: the parent's own
+      // spawn tool created the child thread that sent it. Recorded here rather
+      // than in the fallback chain so one spawn counts once, not once per
+      // provider attempted.
+      recordSubagentSpawn({
+        mechanism: "router_alias",
+        provider: orchestratorProviderForSession(session.key),
+        role,
+        tool: "multi_agent_v1.spawn",
+        requestId,
+        workspace: workspace?.key ?? null,
+      });
       try {
-        await proxyRoleResponse(response, role, payload, wantsStream, requestId, turnMetadataHeader, workspace, clientAbort.signal);
+        await proxyRoleResponse(response, role, payload, wantsStream, requestId, turnMetadataHeader, workspace, clientAbort.signal, session.key);
       } finally {
         releaseSubagentSlot(session.key);
       }
@@ -2818,6 +3216,22 @@ export {
   tryAcquireSubagentSlot,
   responseTextFromSse,
   transformSseEvent,
+  flattenOutboundTools,
+  rewriteToolNamespaces,
+  FLATTENED_NAMESPACES,
+  providerCapabilities,
+  subagentSpawnToolsFor,
+  bridgeTelemetryHeaders,
+  recordSubagentSpawn,
+  resetSubagentTelemetry,
+  subagentStatus,
+  ingestAgentEvents,
+  noteBridgeRequest,
+  noteOrchestratorSession,
+  orchestratorProviderForSession,
+  SUBAGENT_SPAWN_TOOLS_HEADER,
+  AGENT_EVENTS_URL_HEADER,
+  AGENT_EVENTS_PATH,
   validateRoutingConfig,
   workspaceContextFromRequest,
 };

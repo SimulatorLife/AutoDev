@@ -72,6 +72,33 @@ sanitized tool/source/server labels. Unknown metric names remain visible in
 the inventory but are not interpreted until their schema and operational value
 are validated.
 
+## Subagents spawned
+
+The **Subagents spawned** table is the one place that counts every subagent
+behind the router, whichever provider spawned it. It is fed by
+`status.subagents`, not by OTEL: Codex's `codex.multi_agent.spawn` metric only
+covers Codex-exported threads, and `usage.byRole` only covers subagents that
+made a router request at all.
+
+Two mechanisms are distinguished. `router_alias` spawns are Codex child threads
+that asked the router for an `autodev/<role>` alias, driven by Codex itself or
+by MiniMax through the namespace-flattening proxy. `bridge_native` spawns
+happen inside a provider CLI -- Claude's `Agent` tool, Antigravity's
+`invoke_subagent` -- where no router request exists, and are
+reported by the bridge to `POST /v1/agent-events`. Before that channel existed,
+a Claude- or Antigravity-served orchestrator reported zero subagents, which is
+indistinguishable from a provider that refused to delegate.
+
+The totals row is the all-time count; the table rows roll up only the 50 most
+recent spawns retained in `subagents.recent`, which is what carries the
+provider/mechanism/role/tool combination. The summary line also reports
+Codex's own OTLP spawn counter separately, because adding it to the router's
+count would double-count every `router_alias` spawn. Attribution of a
+`router_alias` spawn to a provider is a session join -- which provider served
+that session's `autodev/orchestrator` turn -- and reads `unattributed` when the
+router never saw that session's parent turn. See
+`docs/provider-routing.md` -> "Counting subagents across providers".
+
 The dashboard's Operational summary table groups Codex receiver,
 state-database, and concurrency values as category/metric/value rows instead of
 embedding those values in prose. Each table section has one heading that also
@@ -79,7 +106,9 @@ owns its collapse toggle. The primary Provider health and usage, Usage by
 orchestrator and subagents, MCP server telemetry, Skills, and Hooks tables are
 expanded by default; the combined Skill selection/context table is visible
 inside Skills, while secondary metric inventory, spawn-failure, task, and
-recent-event sections can be expanded independently.
+recent-event sections can be expanded independently. The Subagents spawned
+table is also expanded by default and sits directly above the spawn-failure
+section, so observed spawns and the failures that prevented them read together.
 
 Totals footers are shown for homogeneous roll-up tables: provider/usage,
 MCP lifecycle, Skills injections, hook/runtime calls, observed metric counts,

@@ -483,6 +483,37 @@
   </div>
 
 
+  <h2><button type="button" class="toggle-section" aria-controls="subagents-section" aria-expanded="true"><span
+        class="caret">▾</span> Subagents spawned</button></h2>
+  <div id="subagents-section">
+    <div id="subagent-summary">Loading…</div>
+    <table>
+      <thead>
+        <tr>
+          <th>Spawned by</th>
+          <th>Mechanism</th>
+          <th>Role</th>
+          <th>Spawn tool</th>
+          <th>Count</th>
+        </tr>
+      </thead>
+      <tbody id="subagents-by-provider">
+        <tr>
+          <td colspan="5">Loading…</td>
+        </tr>
+      </tbody>
+      <tfoot>
+        <tr class="provider-summary">
+          <th>Totals</th>
+          <td>-</td>
+          <td>-</td>
+          <td>-</td>
+          <td id="subagents-total">0</td>
+        </tr>
+      </tfoot>
+    </table>
+  </div>
+
   <h2><button type="button" class="toggle-section" aria-controls="spawn-failures-section" aria-expanded="false"><span
         class="caret">▸</span> Subagent spawn failure telemetry</button></h2>
   <div id="spawn-failures-section" hidden>
@@ -640,6 +671,30 @@
         button.querySelector(".caret").textContent = expanded ? "▸" : "▾";
         document.querySelectorAll(`[data-provider-child="${group}"]`).forEach((row) => { row.hidden = expanded; });
       }));
+      // Subagent spawns, unified across providers. `router_alias` spawns are
+      // observed as `autodev/<role>` requests; `bridge_native` spawns happen
+      // inside a provider CLI and are reported to /v1/agent-events. The recent
+      // list is what carries the provider/role/tool combination, so rows are
+      // rolled up from it and the aggregate totals label the summary line.
+      const subagents = status.subagents ?? {};
+      const recentSpawns = Array.isArray(subagents.recent) ? subagents.recent : [];
+      const spawnGroups = new Map();
+      for (const spawn of recentSpawns) {
+        const key = [ spawn.provider, spawn.mechanism, spawn.role, spawn.tool ?? "-" ].join("\u0000");
+        spawnGroups.set(key, (spawnGroups.get(key) ?? 0) + (Number(spawn.count) || 1));
+      }
+      const subagentRows = [ ...spawnGroups.entries() ]
+        .sort(([ keyA, countA ], [ keyB, countB ]) => countB - countA || keyA.localeCompare(keyB))
+        .map(([ key, count ]) => {
+          const [ provider, mechanism, role, tool ] = key.split("\u0000");
+          return `<tr><td><code>${text(provider)}</code></td><td>${text(mechanism)}</td><td><code>${text(role)}</code></td><td><code>${text(tool)}</code></td><td>${count}</td></tr>`;
+        }).join("");
+      document.querySelector("#subagents-by-provider").innerHTML = subagentRows || '<tr><td colspan="5">No subagent spawns observed.</td></tr>';
+      document.querySelector("#subagents-total").textContent = subagents.total ?? 0;
+      const spawnMechanisms = Object.entries(subagents.byMechanism ?? {}).map(([ key, value ]) => `${text(key)}: ${value}`).join(", ") || "-";
+      const spawnProviders = Object.entries(subagents.byProvider ?? {}).map(([ key, value ]) => `${text(key)}: ${value}`).join(", ") || "-";
+      document.querySelector("#subagent-summary").textContent =
+        `Total ${subagents.total ?? 0} · ${spawnMechanisms} · by provider ${spawnProviders} · spawn-capable providers: ${(subagents.spawnCapableProviders ?? []).join(", ") || "-"} · Codex-native OTEL spawns: ${subagents.codexNativeSpawns ?? 0}. Rows cover the ${recentSpawns.length} most recent spawns; the totals row is the all-time count.`;
       const spawnFailures = status.spawnFailures ?? {};
       const recentSpawnFailures = Array.isArray(spawnFailures.recent) ? spawnFailures.recent : [];
       const latestByReason = new Map();

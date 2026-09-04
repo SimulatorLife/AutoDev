@@ -18,9 +18,18 @@ const AUTH_TOKEN = process.env.LITELLM_API_KEY ?? "";
 const PROJECT_ROOT = process.env.CODEX_PROJECT_ROOT ?? process.env.AGY_PROJECT_ROOT ?? null;
 const MODEL_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 const EFFORTS = new Set([ "low", "medium", "high" ]);
+// agy encodes reasoning depth in the model id itself (`gemini-3.8-flash-high`)
+// and rejects the whole invocation when a separate --effort disagrees with it:
+// "invalid model selection: --model gemini-3.8-flash-high conflicts with
+// --effort=medium". The router picks the model per tier and the caller's
+// effort is an independent value, so the two routinely disagree and the turn
+// fails before the CLI starts. The model id is the more specific choice, so it
+// wins and --effort is omitted for models that already carry one.
+const MODEL_EFFORT_SUFFIX = /-(low|medium|high)$/;
 
 import { resolveCwd, WorkspaceResolutionError } from "./scripts/codex/lib/resolve-workspace.mjs";
 import { bridgeInstructions, isOrchestratorRole, resolveAgentRole } from "./scripts/codex/lib/bridge-role.mjs";
+import { resolveAgentEventReporter } from "./scripts/codex/lib/agent-events.mjs";
 
 function modelMetadata() {
   return {
@@ -68,6 +77,11 @@ function resolveModel(value) {
   const model = value.trim();
   if (!model || model === "antigravity-subscription" || !MODEL_PATTERN.test(model)) return DEFAULT_MODEL;
   return model;
+}
+
+/** The effort a model id encodes, or null when it encodes none. */
+function modelEffort(model) {
+  return MODEL_EFFORT_SUFFIX.exec(model)?.[ 1 ] ?? null;
 }
 
 function resolveEffort(request) {
@@ -208,11 +222,17 @@ function failedStream(response, responseId, itemId, error) {
   response.end("data: [DONE]\n\n");
 }
 
+function agyArgs(prompt, model, effort) {
+  const permissionArgs = AGY_SKIP_PERMISSIONS === "true" ? [ "--dangerously-skip-permissions" ] : [];
+  // Only pass --effort when the model id does not already fix it; see
+  // MODEL_EFFORT_SUFFIX.
+  const effortArgs = modelEffort(model) ? [] : [ "--effort", effort ];
+  return [ "-p", prompt, "--model", model, ...effortArgs, "--mode", AGY_MODE, ...permissionArgs, "--output-format", "stream-json", "--print-timeout", PRINT_TIMEOUT ];
+}
+
 function runAgy(prompt, model, effort, cwd, onEvent) {
   return new Promise((resolve, reject) => {
-    const permissionArgs = AGY_SKIP_PERMISSIONS === "true" ? [ "--dangerously-skip-permissions" ] : [];
-    const args = [ "-p", prompt, "--model", model, "--effort", effort, "--mode", AGY_MODE, ...permissionArgs, "--output-format", "stream-json", "--print-timeout", PRINT_TIMEOUT ];
-    const child = spawn(CLI, args, { cwd, env: process.env, stdio: [ "ignore", "pipe", "pipe" ] });
+    const child = spawn(CLI, agyArgs(prompt, model, effort), { cwd, env: process.env, stdio: [ "ignore", "pipe", "pipe" ] });
     let stderr = "";
     let terminalResult = null;
     let emitted = "";
@@ -295,6 +315,22 @@ async function handle(request, response) {
   // The router classifies the turn; only it can tell this bridge that it is
   // serving the root orchestrator rather than a delegated leaf.
   const agentRole = resolveAgentRole(request.headers);
+  // agy delegates through its own `invoke_subagent` tool, so those children
+  // never reach the router as requests. Report them, or an orchestrator turn
+  // served here reads as "never delegated".
+  const agentEvents = resolveAgentEventReporter(request.headers);
+  const reportedSpawns = new Set();
+  // Count a spawn once, when the step opens. A tool step reports ACTIVE then
+  // DONE for the same step_index, and a run may end without a DONE at all, so
+  // the opening transition is the only one that appears exactly once per
+  // invocation.
+  const reportSpawns = (update) => {
+    const toolName = String(update?.tool_name ?? update?.tool_info?.name ?? "");
+    if (!agentEvents?.isSpawnTool(toolName)) return;
+    if (String(update.state ?? "").toUpperCase() !== "ACTIVE" || reportedSpawns.has(update.step_index)) return;
+    reportedSpawns.add(update.step_index);
+    void agentEvents.reportSpawn({ tool: toolName });
+  };
   const prompt = promptFromInput(payload.input ?? "", bridgeInstructions(agentRole));
   let cwd;
   try {
@@ -309,7 +345,9 @@ async function handle(request, response) {
 
   if (!payload.stream) {
     try {
-      const result = await runAgy(prompt, model, effort, cwd);
+      const result = await runAgy(prompt, model, effort, cwd, (event) => {
+        if (event.event === "step_update") reportSpawns(event.step_update ?? {});
+      });
       sendJson(response, 200, responsePayload(payload.model ?? model, result.text, result.result));
     } catch (error) {
       sendJson(response, 502, { error: { type: "upstream_error", message: error.message ?? String(error) } });
@@ -374,9 +412,9 @@ async function handle(request, response) {
   response.on("error", onResponseError);
 
   const keepAlive = setInterval(() => {
-    if (!isWritable()) return;
-    startStream();
-    try { response.write(": agy-bridge keep-alive\n\n"); } catch { }
+    if (streamStarted && isWritable()) {
+      try { response.write(": agy-bridge keep-alive\n\n"); } catch { }
+    }
   }, 2000);
   let child;
   response.on("close", () => {
@@ -394,6 +432,7 @@ async function handle(request, response) {
       }
       if (event.event === "step_update") {
         const update = event.step_update ?? {};
+        reportSpawns(update);
         const activity = activityText(event);
         const key = `${update.step_index ?? "?"}:${update.state ?? "?"}:${update.step_type ?? "?"}:${update.tool_name ?? ""}`;
         if (activity) {

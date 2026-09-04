@@ -69,6 +69,23 @@ Differences from a role request:
   bridges select their role instructions from it, so an orchestrator turn that
   degrades onto a bridge-backed provider receives the orchestrator policy
   rather than the leaf policy. See "Agent role across the bridge boundary".
+- Every provider in `providerGroups.orchestrator` must declare
+  `capabilities.subagentSpawn: true`, and the router refuses to start
+  otherwise. The orchestrator's entire job is delegating, so a provider with no
+  delegation path would silently turn the root agent into a single-threaded
+  chat model -- a failure that looks identical to a slow turn. There are two
+  delegation paths and both satisfy the requirement:
+  - **Native Codex spawn** (`codex`, `minimax`): the parent drives Codex's own
+    `multi_agent_v1` spawn tool, which creates a child thread that asks this
+    router for an `autodev/<role>` alias.
+  - **Bridge-native spawn** (`claude`, `antigravity`): the CLI behind the bridge
+    delegates inside its own runtime -- Claude's `Agent` tool, Antigravity's
+    `invoke_subagent` -- and no router request is made for
+    the child. Those providers additionally declare
+    `capabilities.subagentSpawnTools`, the tool names that mean "a subagent was
+    spawned"; see "Counting subagents across providers".
+
+  Copilot's CLI has no subagent tool, so it stays out of the orchestrator tier.
 - MiniMax is restored in the orchestrator fallback chain. Codex CLI defines
   subagent tools in a proprietary `type: "namespace"` structure (`multi_agent_v1`),
   which generic Responses endpoints drop or reject. The MiniMax Responses
@@ -156,6 +173,13 @@ The router makes its effective choice visible in two ways:
   no traffic is dropped from the table; it is not a strict proxy for
   Codex-origin traffic, since roleless non-Codex ("direct") requests land in
   the same bucket.
+- `status.subagents` counts every subagent spawned behind the router,
+  regardless of which provider spawned it and by which mechanism. This is
+  distinct from `usage.byRole`, which counts *router requests* made by
+  subagents: a bridge-native child makes no router request at all, so it
+  appears in `status.subagents` and nowhere else. The dashboard renders it as
+  **Subagents spawned** and `codex-model-router-status.mjs` prints it under
+  `Subagents spawned:`. See "Counting subagents across providers".
 - Open `http://127.0.0.1:4100/dashboard` in a browser for the live HTML
   dashboard; it polls the JSON status every 3 seconds. `GET /status` always
   returns raw JSON regardless of the `Accept` header, including the current
@@ -430,6 +454,10 @@ Bridges resolve the header and pick one of two shared prompts:
 | `orchestrator` | `scripts/codex/prompts/orchestrator.md` | available |
 | anything else (including absent) | `scripts/codex/prompts/leaf.md` | `--disallowed-tools Agent,Task` |
 
+The Antigravity bridge has no equivalent CLI flag: `agy` exposes its subagent
+tools unconditionally, so a leaf turn there is bounded by `leaf.md` prompt
+policy alone rather than at the CLI boundary.
+
 ### The Claude bridge owns the whole system prompt
 
 The Claude bridge passes `--system-prompt`, which *replaces* the Claude CLI's
@@ -504,6 +532,78 @@ there is no bridge-authored prompt that could override it. That proxy therefore
 strips `x-autodev-agent-role` and `x-codex-turn-metadata` instead of honouring
 them: both are local routing metadata (the latter carries absolute workspace
 paths and git remote URLs) with no meaning to a remote API.
+
+### Counting subagents across providers
+
+A native Codex spawn is visible to the router for free: the child thread's
+`autodev/<role>` request *is* the spawn. A bridge-native spawn is not visible at
+all -- the CLI runs the child in-process and no request is ever made -- so an
+orchestrator turn served by Claude or Antigravity reported zero subagents,
+which is indistinguishable from a provider that refused to delegate.
+
+The router therefore hands every spawn-capable bridge three generated headers
+per request:
+
+| Header | Value |
+| --- | --- |
+| `x-autodev-request-id` | the router's own request UUID |
+| `x-autodev-subagent-spawn-tools` | comma-separated tool names to watch, from `capabilities.subagentSpawnTools` |
+| `x-autodev-agent-events-url` | `http://127.0.0.1:4100/v1/agent-events` |
+
+A bridge matches the tool names its CLI reports against the watchlist and
+`POST`s `{ requestId, events: [ { type: "subagent_spawn", tool, role, status, count } ] }`.
+The bridge therefore needs no routing config, no provider identity, and no
+router address of its own; and because the request id is an unguessable UUID a
+bridge only learns by serving the request, presenting it is also what
+authorizes the report. A report naming an unknown request id is rejected with
+`404 router_unknown_request` and counted nowhere. Reporting is best effort in
+the bridge: a transport failure costs a count, never the model turn.
+
+Codex and MiniMax receive none of these headers -- the router already observes
+their children as role requests, so reporting them again would double-count.
+
+The watchlist names only tools that actually start a child. Antigravity's
+`manage_subagents` lists and stops existing children and `define_subagent`
+declares a type for later use; neither spawns, and `manage_subagents` in
+particular is called far more often than any delegation happens. One
+`invoke_subagent` call can dispatch a batch of children, so a `bridge_native`
+count for Antigravity is one per spawning call and therefore a lower bound on
+children; Claude's `Agent` tool is one call per child.
+
+Both mechanisms land in one `status.subagents` aggregate: `total`,
+`byMechanism` (`router_alias` / `bridge_native`), `byProvider`, `byRole`,
+`byStatus`, and the 50 most recent spawns. `router_alias` spawns are attributed
+to the provider that served the `autodev/orchestrator` turn for the same
+session, which is the only join available: a child thread's request carries no
+trace of which provider ran its parent. The join is skipped for callers that
+supply no session id, because they all share one fallback bucket and would
+otherwise be credited to an unrelated caller's parent turn. A role request with
+no joinable parent turn is attributed to `unattributed` rather than guessed. `codexNativeSpawns` reports Codex's own OTLP
+`codex.multi_agent.spawn` counter beside the router's count rather than merged
+into it, because it covers only Codex-exported threads and adding the two would
+double-count every `router_alias` spawn.
+
+The shared reporter is `scripts/codex/lib/agent-events.mjs`; the Claude bridge
+mirrors it in Python. The installer ships the module beside the bridges that
+import it.
+
+### Reasoning effort on the Antigravity bridge
+
+`agy` encodes reasoning depth in the model id itself (`gemini-3.8-flash-high`)
+and rejects the whole invocation when a separate `--effort` disagrees:
+
+```
+Error: invalid model selection (--model "gemini-3.8-flash-high" --effort "medium"):
+--model gemini-3.8-flash-high conflicts with --effort=medium
+```
+
+The router picks the model per tier and the caller's reasoning effort is an
+independent value, so the two routinely disagree and the turn fails before the
+CLI starts. The model id is the more specific choice, so it wins: the bridge
+omits `--effort` entirely for any model whose id already carries a
+`-low`/`-medium`/`-high` suffix, and passes it only for models that do not
+(`claude-sonnet-4-6`, for example). `orchestrator.reasoningEffort.antigravity`
+therefore has effect only through the model the orchestrator tier selects.
 
 ### Streaming provider progress back to the parent
 
