@@ -9,7 +9,7 @@ import {
   SUBAGENT_SPAWN_TOOLS_HEADER,
   resolveAgentEventReporter,
 } from "../scripts/codex/lib/agent-events.mjs";
-import { agyArgs, modelEffort, resolveEffort, resolveModel } from "../scripts/codex-antigravity-cli-responses-proxy.mjs";
+import { agyArgs, modelEffort, resolveEffort, resolveModel, spawnedChildren } from "../scripts/codex-antigravity-cli-responses-proxy.mjs";
 
 const read = (path) => readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
 
@@ -75,6 +75,93 @@ test("a reported spawn names the request that authorizes it", async () => {
   }
 });
 
+test("a batch of children is reported as a batch, grouped by role", async () => {
+  const received = [];
+  const server = createServer((request, response) => {
+    let body = "";
+    request.on("data", (chunk) => { body += chunk; });
+    request.on("end", () => {
+      received.push(JSON.parse(body));
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end("{}");
+    });
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  try {
+    const reporter = resolveAgentEventReporter({
+      ...routerHeaders,
+      [ AGENT_EVENTS_URL_HEADER ]: `http://127.0.0.1:${server.address().port}/v1/agent-events`,
+    });
+    // One `invoke_subagent` call, four children, two roles: the router must see
+    // four spawns, not one, and must be able to tell the roles apart.
+    await reporter.reportSpawns({
+      tool: "invoke_subagent",
+      children: [ { role: "explorer" }, { role: "explorer" }, { role: "validator" }, { role: null } ],
+    });
+    assert.deepEqual(received.at(-1), {
+      requestId: "request-1",
+      events: [
+        { type: "subagent_spawn", tool: "invoke_subagent", role: "explorer", status: "started", count: 2 },
+        { type: "subagent_spawn", tool: "invoke_subagent", role: "validator", status: "started", count: 1 },
+        { type: "subagent_spawn", tool: "invoke_subagent", role: null, status: "started", count: 1 },
+      ],
+    });
+
+    // No children at all still reports the call, so a CLI that stops exporting
+    // its tool arguments degrades to the old count rather than to silence.
+    await reporter.reportSpawns({ tool: "invoke_subagent", children: [] });
+    assert.deepEqual(received.at(-1).events, [ { type: "subagent_spawn", tool: "invoke_subagent", role: null, status: "started", count: 1 } ]);
+  } finally {
+    await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+  }
+});
+
+test("the Antigravity bridge counts every child in an invoke_subagent batch", () => {
+  // The shape agy recorded for the delegation that started this: the batch is
+  // an array under `Subagents`, one entry per child.
+  const batch = {
+    step_index: 3,
+    state: "ACTIVE",
+    step_type: "tool",
+    tool_name: "invoke_subagent",
+    tool_info: {
+      name: "invoke_subagent",
+      args: JSON.stringify({
+        Subagents: [
+          { TypeName: "explorer", Model: "inherit", Prompt: "You are an explorer agent investigating build issues" },
+          { TypeName: "explorer", Model: "inherit", Prompt: "Catalog the lint failures" },
+          { TypeName: "validator", Model: "inherit", Prompt: "Re-run the suites" },
+        ],
+      }),
+    },
+  };
+  assert.deepEqual(spawnedChildren(batch), [ { role: "explorer" }, { role: "explorer" }, { role: "validator" } ]);
+
+  // agy has carried the arguments as a nested object and at other paths across
+  // versions, so the batch is found by shape rather than by one pinned path.
+  assert.deepEqual(
+    spawnedChildren({ tool_name: "invoke_subagent", tool_info: { args: { Subagents: [ { TypeName: "worker" } ] } } }),
+    [ { role: "worker" } ],
+  );
+  assert.deepEqual(
+    spawnedChildren({ tool_name: "invoke_subagent", tool_input: '{"subagents":[{"name":"docs-researcher"},{}]}' }),
+    [ { role: "docs-researcher" }, { role: null } ],
+  );
+
+  // A child that names only a model names no role: `byRole` must not fill up
+  // with model ids.
+  assert.deepEqual(spawnedChildren({ tool_info: { args: { Subagents: [ { Model: "inherit" } ] } } }), [ { role: null } ]);
+
+  // A step that exports no arguments is still one spawn, never zero.
+  assert.deepEqual(spawnedChildren({ tool_name: "invoke_subagent", state: "ACTIVE" }), [ { role: null } ]);
+  assert.deepEqual(spawnedChildren({ tool_info: { args: "not json" } }), [ { role: null } ]);
+  assert.deepEqual(spawnedChildren({ tool_info: { args: { Subagents: [] } } }), [ { role: null } ]);
+  assert.deepEqual(spawnedChildren(undefined), [ { role: null } ]);
+
+  // Free text that happens to mention the tool is not a batch.
+  assert.deepEqual(spawnedChildren({ text_delta: "I will call invoke_subagent with Subagents" }), [ { role: null } ]);
+});
+
 test("a failed report costs a count, never the model turn", async () => {
   // Nothing is listening on this port; the reporter must resolve anyway.
   const reporter = resolveAgentEventReporter({ ...routerHeaders, [ AGENT_EVENTS_URL_HEADER ]: "http://127.0.0.1:1/v1/agent-events" });
@@ -115,7 +202,10 @@ test("the Antigravity bridge reports the subagents its own CLI spawns", () => {
   // Reached only from inside handle(), so this stays a source assertion.
   assert.match(source, /from "\.\/codex\/lib\/agent-events\.mjs"/);
   assert.match(source, /resolveAgentEventReporter\(request\.headers\)/);
-  assert.match(source, /agentEvents\.reportSpawn\(/);
+  assert.match(source, /agentEvents\.reportSpawns\(\{ tool: toolName, children \}\)/);
+  // Only the opening transition is counted, and a step with no index must not
+  // key every later spawn out of the count under a shared `undefined`.
+  assert.match(source, /Number\.isFinite\(update\.step_index\)/);
 });
 
 test("the Claude bridge reports the spawns its Agent tool makes in-process", () => {

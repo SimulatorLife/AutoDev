@@ -82,6 +82,8 @@ import {
   validateRoutingConfig,
   workspaceContextFromRequest,
 } from "./codex-model-router.mjs";
+import { resolveAgentEventReporter } from "./codex/lib/agent-events.mjs";
+import { spawnedChildren } from "./codex-antigravity-cli-responses-proxy.mjs";
 
 test("antigravity LiteLLM config forwards the allowlisted turn-metadata header to the local adapter", async () => {
   const config = await readFile(new URL("./codex/litellm/antigravity.yaml", import.meta.url), "utf8");
@@ -624,6 +626,55 @@ test("the router accepts a bridge spawn report over /v1/agent-events", async () 
     assert.equal(status.subagents.total, 1);
     assert.deepEqual(status.subagents.byProvider, { antigravity: 1 });
     assert.equal(status.subagents.recent[ 0 ].tool, "invoke_subagent");
+  } finally {
+    await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    resetSubagentTelemetry();
+  }
+});
+
+test("an Antigravity batch spawn reaches the router as one count per child", async () => {
+  // End to end over the real pieces: the reporter the bridge builds from the
+  // router's own headers, an agy step update shaped the way the CLI recorded
+  // the delegation that exposed this, and the router's live endpoint. A
+  // twelve-way fan-out used to arrive as a single roleless `antigravity/null`.
+  resetSubagentTelemetry();
+  const server = createServer((request, response) => { void handle(request, response); });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  try {
+    const base = `http://127.0.0.1:${server.address().port}`;
+    noteBridgeRequest("request-batch", { provider: "antigravity", model: "gemini-3.8-flash-high", role: null, workspace: "SimulatorLife/RacingGame" });
+    const reporter = resolveAgentEventReporter({
+      ...bridgeTelemetryHeaders({ provider: "antigravity" }, "request-batch"),
+      [ AGENT_EVENTS_URL_HEADER ]: `${base}${AGENT_EVENTS_PATH}`,
+    });
+    const stepUpdate = {
+      step_index: 3,
+      state: "ACTIVE",
+      step_type: "tool",
+      tool_name: "invoke_subagent",
+      tool_info: {
+        name: "invoke_subagent",
+        args: JSON.stringify({
+          Subagents: [
+            { TypeName: "explorer", Model: "inherit", Prompt: "Catalog every build error" },
+            { TypeName: "explorer", Model: "inherit", Prompt: "Catalog every lint error" },
+            { TypeName: "validator", Model: "inherit", Prompt: "Re-run the suites" },
+          ],
+        }),
+      },
+    };
+    assert.equal(reporter.isSpawnTool(stepUpdate.tool_name), true);
+    await reporter.reportSpawns({ tool: stepUpdate.tool_name, children: spawnedChildren(stepUpdate) });
+
+    const status = await (await fetch(`${base}/status`)).json();
+    assert.equal(status.subagents.total, 3);
+    assert.deepEqual(status.subagents.byProvider, { antigravity: 3 });
+    assert.deepEqual(status.subagents.byRole, { explorer: 2, validator: 1 });
+    assert.deepEqual(status.subagents.byMechanism, { router_alias: 0, bridge_native: 3 });
+    for (const spawn of status.subagents.recent) {
+      assert.equal(spawn.tool, "invoke_subagent");
+      assert.equal(spawn.workspace, "SimulatorLife/RacingGame");
+    }
   } finally {
     await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
     resetSubagentTelemetry();

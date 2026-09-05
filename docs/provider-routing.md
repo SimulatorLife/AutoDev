@@ -569,10 +569,30 @@ their children as role requests, so reporting them again would double-count.
 The watchlist names only tools that actually start a child. Antigravity's
 `manage_subagents` lists and stops existing children and `define_subagent`
 declares a type for later use; neither spawns, and `manage_subagents` in
-particular is called far more often than any delegation happens. One
-`invoke_subagent` call can dispatch a batch of children, so a `bridge_native`
-count for Antigravity is one per spawning call and therefore a lower bound on
-children; Claude's `Agent` tool is one call per child.
+particular is called far more often than any delegation happens -- in one
+sampled proxy log, 104 `manage_subagents` calls against 4 `invoke_subagent`
+calls. Adding it to the watchlist would turn every status poll into a spawn.
+
+One `invoke_subagent` call dispatches a *batch*: agy is instructed to send
+"subagents in batches of at most 16 per `invoke_subagent` call", and the tool
+arguments are `{"Subagents":[{"TypeName":...,"Model":...,"Prompt":...}, ...]}`.
+The bridge therefore reports one count per entry in that batch and takes each
+child's role from its `TypeName` (falling back to the `name` a
+`define_subagent` archetype registers), rather than reporting one roleless
+spawn per call. A model id is never used as a role: it is the model, not the
+role, and would fill `byRole` with model names.
+
+Where those arguments sit inside the CLI's stream-json step update is agy's
+business and has moved between versions, so the bridge finds the `Subagents`
+array by shape anywhere in the update instead of pinning one path. A step that
+exports no arguments still reports one roleless spawn -- the pre-batch
+behaviour -- so a CLI change costs role detail and batch width, never the
+spawn itself. Set `AGY_LOG_SPAWN_STEPS=1` on the Antigravity proxy to print the
+structure of each spawn step (keys kept, string values truncated, so delegation
+prompts stay out of the log) when confirming the shape against a new agy build.
+
+Claude's `Agent` tool is one call per child, and the Claude bridge reads the
+child's role from the call's `subagent_type`.
 
 Both mechanisms land in one `status.subagents` aggregate: `total`,
 `byMechanism` (`router_alias` / `bridge_native`), `byProvider`, `byRole`,

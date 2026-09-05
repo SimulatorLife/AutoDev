@@ -89,6 +89,17 @@ reported by the bridge to `POST /v1/agent-events`. Before that channel existed,
 a Claude- or Antigravity-served orchestrator reported zero subagents, which is
 indistinguishable from a provider that refused to delegate.
 
+A `bridge_native` count is per child, not per tool call: Antigravity's
+`invoke_subagent` dispatches a batch of up to sixteen subagents in one call, so
+the bridge reports one count per entry and takes each child's role from the
+batch. The Role column reading `unattributed` for an Antigravity row therefore
+means the CLI step exported no tool arguments, not that the delegation was
+anonymous. A `bridge_native` subagent never makes a router request of its own,
+so it appears here and in `subagents.byRole` but contributes no turns to
+**Usage by orchestrator and subagents** -- an orchestrator that delegated
+entirely inside its CLI still shows exactly one model's usage there. See
+`docs/provider-routing.md` -> "Counting subagents across providers".
+
 The totals row is the all-time count; the table rows roll up only the 50 most
 recent spawns retained in `subagents.recent`, which is what carries the
 provider/mechanism/role/tool combination. The summary line also reports

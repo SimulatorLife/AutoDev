@@ -37,6 +37,83 @@ import { resolveCwd, WorkspaceResolutionError } from "./codex/lib/resolve-worksp
 import { bridgeInstructions, isOrchestratorRole, resolveAgentRole } from "./codex/lib/bridge-role.mjs";
 import { resolveAgentEventReporter } from "./codex/lib/agent-events.mjs";
 
+// agy's spawn tool takes a batch, not one child: the orchestrator calls
+// `invoke_subagent` with `{"Subagents":[{"TypeName":...,"Model":...,"Prompt":...}, ...]}`
+// and agy's own guidance is to dispatch "subagents in batches of at most 16 per
+// invoke_subagent call". Reporting the tool call rather than its entries turned
+// a twelve-way fan-out into a count of one and named no role at all, which left
+// `antigravity/null` as the only trace of a delegation in `/status`.
+//
+// Where the batch sits inside the step update is agy's business, not this
+// bridge's: the stream-json step carries tool arguments under `tool_info`, and
+// nests or serializes them differently across CLI versions. Rather than pin one
+// path that a CLI update can silently break -- and silently is how this failure
+// mode always presents -- the walk below finds the first `Subagents` array
+// anywhere in the update, at any of the shapes agy has used. Finding none is not
+// an error: the step simply did not export its arguments, and the call is
+// reported as one roleless spawn exactly as it was before.
+const MAX_SPAWN_ARG_DEPTH = 6;
+
+/** A JSON-encoded object/array parsed, a plain object/array as-is, else null. */
+function structured(value) {
+  if (value && typeof value === "object") return value;
+  if (typeof value !== "string") return null;
+  const text = value.trim();
+  if (!text.startsWith("{") && !text.startsWith("[")) return null;
+  try { return JSON.parse(text); } catch { return null; }
+}
+
+/** The `Subagents` batch somewhere inside a step update, or null. */
+function subagentBatch(value, depth = 0) {
+  if (depth > MAX_SPAWN_ARG_DEPTH) return null;
+  const node = structured(value);
+  if (!node) return null;
+  if (!Array.isArray(node)) {
+    const key = Object.keys(node).find((candidate) => candidate.toLowerCase() === "subagents");
+    if (key !== undefined && Array.isArray(node[ key ]) && node[ key ].length > 0) return node[ key ];
+  }
+  for (const child of Array.isArray(node) ? node : Object.values(node)) {
+    const found = subagentBatch(child, depth + 1);
+    if (found) return found;
+  }
+  return null;
+}
+
+/** The role one batch entry names, or null when it names none. */
+function subagentRole(child) {
+  if (!child || typeof child !== "object") return null;
+  // agy identifies a child by its archetype -- "invoke_subagent with your
+  // archetype TypeName (or `self`)" -- and `define_subagent` registers that
+  // archetype under `name`. Model is deliberately not a fallback: it is the
+  // model, not the role, and would pollute `byRole` with model ids.
+  for (const key of [ "TypeName", "type_name", "typeName", "Name", "name", "Agent", "agent" ]) {
+    const value = child[ key ];
+    if (typeof value === "string" && value.trim()) return value.trim();
+  }
+  return null;
+}
+
+/** One `{ role }` per subagent a spawn step created; always at least one. */
+function spawnedChildren(update) {
+  const batch = subagentBatch(update);
+  if (!batch) return [ { role: null } ];
+  return batch.map((child) => ({ role: subagentRole(child) }));
+}
+
+// Confirming the shape agy actually emits needs a real spawn, and a spawn is
+// rare enough that guessing wrong would go unnoticed for weeks. This prints the
+// spawn step's structure -- keys kept, string values truncated, so a delegation
+// prompt is not written to the launchd log -- when AGY_LOG_SPAWN_STEPS=1.
+const LOG_SPAWN_STEPS = process.env.AGY_LOG_SPAWN_STEPS === "1";
+const SPAWN_STEP_LOG_STRING_LIMIT = 80;
+
+function shapeOnly(value, depth = 0) {
+  if (typeof value === "string") return value.length > SPAWN_STEP_LOG_STRING_LIMIT ? `${value.slice(0, SPAWN_STEP_LOG_STRING_LIMIT)}...<${value.length}>` : value;
+  if (!value || typeof value !== "object" || depth > MAX_SPAWN_ARG_DEPTH) return value;
+  if (Array.isArray(value)) return value.map((entry) => shapeOnly(entry, depth + 1));
+  return Object.fromEntries(Object.entries(value).map(([ key, entry ]) => [ key, shapeOnly(entry, depth + 1) ]));
+}
+
 function modelMetadata() {
   return {
     slug: DEFAULT_MODEL,
@@ -329,13 +406,21 @@ async function handle(request, response) {
   // Count a spawn once, when the step opens. A tool step reports ACTIVE then
   // DONE for the same step_index, and a run may end without a DONE at all, so
   // the opening transition is the only one that appears exactly once per
-  // invocation.
+  // invocation. A step that carries no index cannot be de-duplicated that way,
+  // and keying every such step under `undefined` would drop every spawn after
+  // the first; ACTIVE alone still keeps those from being counted twice.
   const reportSpawns = (update) => {
     const toolName = String(update?.tool_name ?? update?.tool_info?.name ?? "");
     if (!agentEvents?.isSpawnTool(toolName)) return;
-    if (String(update.state ?? "").toUpperCase() !== "ACTIVE" || reportedSpawns.has(update.step_index)) return;
-    reportedSpawns.add(update.step_index);
-    void agentEvents.reportSpawn({ tool: toolName });
+    if (String(update.state ?? "").toUpperCase() !== "ACTIVE") return;
+    if (Number.isFinite(update.step_index)) {
+      if (reportedSpawns.has(update.step_index)) return;
+      reportedSpawns.add(update.step_index);
+    }
+    if (LOG_SPAWN_STEPS) console.error(`agy spawn step ${JSON.stringify(shapeOnly(update))}`);
+    const children = spawnedChildren(update);
+    console.error(`agy spawn tool=${toolName} children=${children.length} roles=${children.map(({ role }) => role ?? "unattributed").join(",")}`);
+    void agentEvents.reportSpawns({ tool: toolName, children });
   };
   const prompt = promptFromInput(payload.input ?? "", bridgeInstructions(agentRole));
   let cwd;
@@ -489,4 +574,4 @@ if (IS_MAIN) {
   });
 }
 
-export { agyArgs, modelEffort, resolveEffort, resolveModel };
+export { agyArgs, modelEffort, resolveEffort, resolveModel, spawnedChildren };

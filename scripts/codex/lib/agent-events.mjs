@@ -49,17 +49,36 @@ class AgentEventReporter {
    * report costs a count, a thrown one would cost the turn.
    */
   async reportSpawn({ tool, role = null, status = "started", count = 1 }) {
+    await this.post([ { type: "subagent_spawn", tool, role, status, count } ]);
+  }
+
+  /**
+   * Post every child one spawning tool call created. A CLI whose spawn tool
+   * takes a batch -- agy dispatches up to sixteen subagents per
+   * `invoke_subagent` call -- makes one tool call worth N subagents, so
+   * reporting the call rather than its children turns a wide fan-out into a
+   * count of one. Children are grouped by role so the router's `byRole` keeps
+   * the shape of the delegation, and the whole batch travels as one request.
+   */
+  async reportSpawns({ tool, children, status = "started" }) {
+    const list = Array.isArray(children) && children.length > 0 ? children : [ { role: null } ];
+    const byRole = new Map();
+    for (const child of list) {
+      const role = typeof child?.role === "string" && child.role.trim() ? child.role.trim() : null;
+      byRole.set(role, (byRole.get(role) ?? 0) + 1);
+    }
+    await this.post([ ...byRole ].map(([ role, count ]) => ({ type: "subagent_spawn", tool, role, status, count })));
+  }
+
+  async post(events) {
     try {
       await fetch(this.url, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          requestId: this.requestId,
-          events: [ { type: "subagent_spawn", tool, role, status, count } ],
-        }),
+        body: JSON.stringify({ requestId: this.requestId, events }),
       });
     } catch {
-      // Best effort by design; see above.
+      // Best effort by design; see reportSpawn.
     }
   }
 }
