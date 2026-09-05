@@ -497,7 +497,7 @@ class LocalSetupTests(unittest.TestCase):
     def test_claude_cli_disables_subagent_tools(self):
         args = claude_bridge.claude_cli_args("prompt", "sonnet", "medium")
         deny_index = args.index("--disallowed-tools")
-        self.assertEqual(args[deny_index + 1], "Agent,Task")
+        self.assertEqual(args[deny_index + 1], "Agent,Task,SendMessage,ListAgents")
         system_prompt_index = args.index("--system-prompt")
         self.assertIn(claude_bridge.LEAF_BRIDGE_INSTRUCTIONS, args[system_prompt_index + 1])
 
@@ -560,19 +560,53 @@ class LocalSetupTests(unittest.TestCase):
 
     def test_orchestrator_keeps_the_delegation_tools_every_leaf_loses(self):
         leaf = claude_bridge.claude_cli_args("prompt", "sonnet", "medium")
-        self.assertIn("--disallowed-tools", leaf)
+        leaf_denied = leaf[leaf.index("--disallowed-tools") + 1].split(",")
+        self.assertEqual(leaf_denied, ["Agent", "Task", "SendMessage", "ListAgents"])
 
         orchestrator = claude_bridge.claude_cli_args("prompt", "sonnet", "medium", "orchestrator")
-        self.assertNotIn(
-            "--disallowed-tools",
-            orchestrator,
-            msg="the root orchestrator must keep the Agent tool it delegates with",
-        )
+        orchestrator_denied = orchestrator[orchestrator.index("--disallowed-tools") + 1].split(",")
+        for tool in claude_bridge.DISALLOWED_CLAUDE_TOOLS:
+            self.assertNotIn(tool, orchestrator_denied, msg="the root orchestrator delegates with the Agent tool")
         system_prompt_index = orchestrator.index("--system-prompt")
         self.assertIn(
             claude_bridge.ORCHESTRATOR_BRIDGE_INSTRUCTIONS,
             orchestrator[system_prompt_index + 1],
         )
+
+    def test_no_role_may_reach_another_orchestrators_agents(self):
+        """Several orchestrators run on this machine at once. An agent's reach
+        stops at its own tree, so the tools that cross to another Claude
+        session are denied to every role -- the orchestrator included, since
+        reaching a peer orchestrator is out of bounds whoever does it.
+
+        Print-mode Claude does not join the peer socket bus today, so this
+        denies nothing currently reachable; it is pinned because that isolation
+        otherwise rests on an undocumented property of `-p`.
+        """
+        self.assertEqual(claude_bridge.CROSS_SESSION_CLAUDE_TOOLS, ("SendMessage", "ListAgents"))
+        for role in (None, "explorer", "worker", "validator", "orchestrator"):
+            with self.subTest(role=role):
+                args = claude_bridge.claude_cli_args("prompt", "sonnet", "medium", role)
+                denied = args[args.index("--disallowed-tools") + 1].split(",")
+                for tool in claude_bridge.CROSS_SESSION_CLAUDE_TOOLS:
+                    self.assertIn(tool, denied)
+
+    def test_role_prompts_bound_each_agent_to_its_own_tree(self):
+        """agy exposes its messaging and subagent-management tools
+        unconditionally and offers no --disallowed-tools, so for that bridge the
+        prompt is the only boundary there is. Both role prompts must state it.
+        """
+        leaf = (REPO_ROOT / "scripts/codex/prompts/leaf.md").read_text()
+        orchestrator = (REPO_ROOT / "scripts/codex/prompts/orchestrator.md").read_text()
+        self.assertIn("Your agent tree is your parent and you", leaf)
+        self.assertIn("Your agent tree is you and the agents you spawn", orchestrator)
+        for prompt in (leaf, orchestrator):
+            self.assertIn("Other orchestrators", prompt)
+        # The dangerous move is acting on an id harvested from somewhere other
+        # than spawning it -- ~/.gemini/antigravity-cli/presence/ is a
+        # machine-wide registry of live conversation ids.
+        self.assertIn("never to an ID you discovered by reading the", leaf)
+        self.assertIn("never act on an agent ID you did not", orchestrator)
 
     def test_claude_stream_reports_reasoning_and_tool_activity(self):
         """Claude reports far more than its final answer. Without forwarding
@@ -781,6 +815,47 @@ class LocalSetupTests(unittest.TestCase):
                     claude_bridge.resolve_cwd({}, {"X-Codex-Turn-Metadata": turn_metadata}),
                     workspace,
                 )
+
+    def test_claude_bridge_refuses_to_let_key_order_pick_between_workspaces(self):
+        """Two workspaces that both exist, and nothing saying which is active.
+
+        Taking the first let JSON key order decide which repository the Claude
+        CLI edits, so a turn rooted in one repo could silently land in another.
+        Mirrors the JS resolver; kept in step by
+        tests/workspace-resolution.test.mjs.
+        """
+        with tempfile.TemporaryDirectory() as first, tempfile.TemporaryDirectory() as second:
+            def headers(a, b):
+                return {"X-Codex-Turn-Metadata": json.dumps({"workspaces": {a: {"git": {}}, b: {"git": {}}}})}
+
+            with patch.object(claude_bridge, "PROJECT_ROOT", None):
+                for pair in (headers(first, second), headers(second, first)):
+                    with self.assertRaises(claude_bridge.AmbiguousWorkspaceError):
+                        claude_bridge.resolve_cwd({}, pair)
+                    # Still a WorkspaceResolutionError, so the bridge's existing
+                    # handler turns it into the same 400 rather than a 500.
+                    with self.assertRaises(claude_bridge.WorkspaceResolutionError):
+                        claude_bridge.resolve_cwd({}, pair)
+
+                # Ambiguity among value path fields is refused the same way; one
+                # workspace named twice is not an ambiguity.
+                with self.assertRaises(claude_bridge.AmbiguousWorkspaceError):
+                    claude_bridge.resolve_cwd(
+                        {}, {"X-Codex-Turn-Metadata": json.dumps({"workspaces": {"a": {"cwd": first}, "b": {"cwd": second}}})}
+                    )
+                self.assertEqual(
+                    claude_bridge.resolve_cwd(
+                        {}, {"X-Codex-Turn-Metadata": json.dumps({"workspaces": {"a": {"cwd": first}, "b": {"path": first}}})}
+                    ),
+                    first,
+                )
+
+                # An explicit caller-supplied cwd still wins: the caller said which.
+                self.assertEqual(claude_bridge.resolve_cwd({"cwd": second}, headers(first, second)), second)
+
+            # The documented operator override settles the ambiguity.
+            with patch.object(claude_bridge, "PROJECT_ROOT", second):
+                self.assertEqual(claude_bridge.resolve_cwd({}, headers(first, second)), second)
 
     def test_claude_bridge_resolves_workspace_from_embedded_client_metadata(self):
         with tempfile.TemporaryDirectory() as workspace:
@@ -1156,29 +1231,56 @@ class LocalSetupTests(unittest.TestCase):
                 self.assertNotIn("function resolveCwd(", source)
                 self.assertNotIn("function resolveWorkspaceFromTurnMetadata(", source)
 
-    def test_all_provider_bridges_consider_workspaces_map_keys_before_value_fields(self):
+    def _resolve_cwd_via_node(self, payload: dict, headers: dict, project_root: str | None = None) -> str:
+        """Run the JS resolver on the same input, so parity is checked against
+        behaviour rather than against source text that any refactor breaks."""
+        script = (
+            'import { resolveCwd } from "%s";\n'
+            "const [payload, headers, root] = JSON.parse(process.argv[1]);\n"
+            "try { process.stdout.write(resolveCwd(payload, headers, root)); }\n"
+            "catch (error) { process.stdout.write(`ERROR:${error.constructor.name}`); }\n"
+        ) % (REPO_ROOT / "scripts/codex/lib/resolve-workspace.mjs").as_uri()
+        result = subprocess.run(
+            ["node", "--input-type=module", "-e", script, json.dumps([payload, headers, project_root])],
+            capture_output=True, text=True, check=True,
+        )
+        return result.stdout
+
+    def test_all_provider_bridges_resolve_a_workspace_identically(self):
         """Codex's canonical turn metadata keys the ``workspaces`` map by the
         absolute repo/workspace path; values carry only git metadata. Every
-        provider bridge must therefore iterate ``Object.keys(workspaces)``
-        (or the Python equivalent) and check whether each key is a real
-        directory on this host *before* it inspects the value's structured
-        path fields.
+        bridge must therefore try each map key as a directory on this host
+        *before* inspecting a value's structured path fields -- and, because
+        the Claude bridge is a separate Python implementation of the same
+        contract, the two must agree on every case. They are what decides which
+        repository a coding agent edits, so a divergence between them is a turn
+        landing in the wrong repo.
         """
-        cases = {
-            "scripts/codex-claude-cli-responses-proxy.py": (
-                "    for key in workspaces:",
-                "        if isinstance(key, str) and os.path.isdir(key):",
-            ),
-            "scripts/codex/lib/resolve-workspace.mjs": (
-                "  for (const key of Object.keys(workspaces)) {",
-                "    if (isDirectory(key)) return key;",
-            ),
-        }
-        for relative_path, required_fragments in cases.items():
-            with self.subTest(path=relative_path):
-                source = (REPO_ROOT / relative_path).read_text()
-                for fragment in required_fragments:
-                    self.assertIn(fragment, source, msg=f"{relative_path} missing required fragment {fragment!r}")
+        with tempfile.TemporaryDirectory() as keyed, tempfile.TemporaryDirectory() as valued:
+            missing = self._nonexistent_dir()
+            cases = [
+                # A real key wins over a value naming a different real directory.
+                {"workspaces": {keyed: {"cwd": valued}}},
+                # A key that does not exist here falls through to the values.
+                {"workspaces": {missing: {"cwd": valued}}},
+                # A key that does not exist here does not shadow a later real key.
+                {"workspaces": {missing: {"git": {}}, keyed: {"git": {}}}},
+                # Two real workspaces: neither may pick one by key order.
+                {"workspaces": {keyed: {"git": {}}, valued: {"git": {}}}},
+                {"workspaces": {valued: {"git": {}}, keyed: {"git": {}}}},
+                # Nothing resolvable at all.
+                {"workspaces": {missing: {"cwd": missing}}},
+            ]
+            for metadata in cases:
+                headers = {"X-Codex-Turn-Metadata": json.dumps(metadata)}
+                with self.subTest(workspaces=sorted(metadata["workspaces"])):
+                    with patch.object(claude_bridge, "PROJECT_ROOT", None):
+                        try:
+                            python_result = claude_bridge.resolve_cwd({}, headers)
+                        except claude_bridge.WorkspaceResolutionError as error:
+                            python_result = f"ERROR:{type(error).__name__}"
+                    node_result = self._resolve_cwd_via_node({}, {"x-codex-turn-metadata": headers["X-Codex-Turn-Metadata"]})
+                    self.assertEqual(python_result, node_result)
 
     def test_orchestration_skill_is_self_contained_and_orchestrator_focused(self):
         skill = (REPO_ROOT / "scripts/codex/skills/orchestration/SKILL.md").read_text()

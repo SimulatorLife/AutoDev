@@ -21,6 +21,13 @@ Skip subagents only when this turn is genuinely trivial or atomic and there is
 no useful investigation, parallel work, implementation, or validation that can
 be delegated.
 
+Your agent tree is you and the agents you spawn in this turn. Message, list,
+and terminate only those. Other orchestrators run concurrently on this machine
+and their agents are not yours to touch; never act on an agent ID you did not
+receive from spawning it. Where your runtime lets a subagent definition decide
+whether the child may spawn or message further agents, withhold that unless the
+delegated work genuinely requires its own children.
+
 Delegate through whatever subagent tooling your own runtime provides. Where agent role aliases are available, use explicit configured autodev/<role> model aliases.
 Check the local router's available concurrency before creating parallel agents;
 never exceed its configured limit, and wait for and close finished agents

@@ -4,6 +4,18 @@ export const WORKSPACE_KEYS = Object.freeze(["cwd", "project_root", "working_dir
 
 export class WorkspaceResolutionError extends Error {}
 
+/** More than one workspace in the turn metadata exists on this host. */
+export class AmbiguousWorkspaceError extends WorkspaceResolutionError {
+  constructor(candidates) {
+    super(
+      `turn metadata lists ${candidates.length} workspaces that exist on this host ` +
+      `(${candidates.join(", ")}) and does not say which is active; refusing to let key order ` +
+      "decide which repository this turn edits. Set CODEX_PROJECT_ROOT to pin one."
+    );
+    this.candidates = candidates;
+  }
+}
+
 export function isDirectory(path) {
   try {
     return typeof path === "string" && Boolean(path) && statSync(path).isDirectory();
@@ -46,19 +58,27 @@ function workspacePathFromEntry(entry) {
 
 // Codex's canonical transport keys the `workspaces` map by the absolute
 // repo/workspace path; each value normally carries only git metadata. Try
-// valid map keys first, then structured path fields in each value. The caller
-// does not identify the active workspace, so the first valid candidate wins.
+// valid map keys first, then structured path fields in each value.
+//
+// The caller does not identify which workspace is active, so two or more
+// resolvable workspaces is an ambiguity, not a choice. Picking the first --
+// which is what this used to do -- makes JSON key order decide which
+// repository a coding agent edits, and key order carries no meaning and is
+// not controlled by the caller. A turn from one repo could land in another,
+// silently, and the only trace would be a working tree that changed under
+// someone else's session. This resolver already refuses to guess when no
+// workspace is resolvable; guessing between several is the same failure with
+// worse consequences, so it refuses there too and the operator pins one with
+// CODEX_PROJECT_ROOT if a multi-root turn is ever legitimate.
 export function resolveWorkspaceFromTurnMetadata(turnMetadata) {
   const workspaces = turnMetadata && typeof turnMetadata === "object" ? turnMetadata.workspaces : null;
   if (!workspaces || typeof workspaces !== "object" || Array.isArray(workspaces)) return null;
-  for (const key of Object.keys(workspaces)) {
-    if (isDirectory(key)) return key;
-  }
-  for (const entry of Object.values(workspaces)) {
-    const candidate = workspacePathFromEntry(entry);
-    if (isDirectory(candidate)) return candidate;
-  }
-  return null;
+  const fromKeys = Object.keys(workspaces).filter(isDirectory);
+  if (fromKeys.length > 1) throw new AmbiguousWorkspaceError(fromKeys);
+  if (fromKeys.length === 1) return fromKeys[0];
+  const fromValues = [ ...new Set(Object.values(workspaces).map(workspacePathFromEntry).filter(isDirectory)) ];
+  if (fromValues.length > 1) throw new AmbiguousWorkspaceError(fromValues);
+  return fromValues[0] ?? null;
 }
 
 /**
@@ -77,7 +97,16 @@ export function resolveCwd(payload, headers, projectRoot = null) {
     }
   }
   const turnMetadata = turnMetadataFrom(headers?.["x-codex-turn-metadata"], payload?.client_metadata);
-  const workspacePath = resolveWorkspaceFromTurnMetadata(turnMetadata);
+  let workspacePath = null;
+  try {
+    workspacePath = resolveWorkspaceFromTurnMetadata(turnMetadata);
+  } catch (error) {
+    if (!(error instanceof AmbiguousWorkspaceError)) throw error;
+    // An explicit operator override is the documented way to pin one repo per
+    // bridge, so it settles an ambiguity rather than being shadowed by it.
+    if (projectRoot && isDirectory(projectRoot)) return projectRoot;
+    throw error;
+  }
   if (workspacePath) return workspacePath;
   if (projectRoot) {
     if (isDirectory(projectRoot)) return projectRoot;

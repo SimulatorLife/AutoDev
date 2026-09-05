@@ -229,7 +229,14 @@ test("the Claude bridge reports the spawns its Agent tool makes in-process", () 
   }
   // The orchestrator keeps the Agent tool; every leaf role still loses it.
   assert.match(source, /DISALLOWED_CLAUDE_TOOLS = \("Agent", "Task"\)/);
-  assert.match(source, /subagent_boundary = \[\] if orchestrator else \[ ?"--disallowed-tools"/);
+  // The orchestrator keeps the delegation tools; every leaf loses them. Both
+  // lose the tools that reach another orchestrator's agents, so the boundary is
+  // no longer "orchestrator gets no --disallowed-tools at all".
+  assert.match(source, /CROSS_SESSION_CLAUDE_TOOLS = \("SendMessage", "ListAgents"\)/);
+  assert.match(source, /denied = list\(CROSS_SESSION_CLAUDE_TOOLS\) if orchestrator else \[\*DISALLOWED_CLAUDE_TOOLS, \*CROSS_SESSION_CLAUDE_TOOLS\]/);
+  // The behavioural halves of this are pinned in tests/test_local_setup.py
+  // (test_no_role_may_reach_another_orchestrators_agents), which builds the
+  // real argv rather than reading the source.
 });
 
 test("the installer ships the reporting module the bridges import at runtime", () => {

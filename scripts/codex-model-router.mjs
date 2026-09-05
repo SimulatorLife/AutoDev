@@ -8,6 +8,12 @@ import { brotliDecompressSync, gunzipSync, inflateSync } from "node:zlib";
 import { basename } from "node:path";
 import { pathToFileURL } from "node:url";
 
+// The bridges resolve a turn's workspace with this module; the router labels
+// the same turn for telemetry. Sharing the primitives is what keeps the label
+// and the directory the agent actually runs in from drifting apart -- they
+// were separate implementations, and they disagreed.
+import { WORKSPACE_KEYS, isDirectory } from "./codex/lib/resolve-workspace.mjs";
+
 const HOST = process.env.CODEX_MODEL_ROUTER_HOST ?? "127.0.0.1";
 const PORT = Number.parseInt(process.env.CODEX_MODEL_ROUTER_PORT ?? "4100", 10);
 const CODEX_HOME = process.env.CODEX_HOME ?? "/Users/henrykirk/.codex";
@@ -2798,7 +2804,6 @@ function resolveTurnMetadataHeader(request, payload) {
   return null;
 }
 
-const WORKSPACE_KEYS = ["cwd", "project_root", "working_directory"];
 
 function workspacePathLabel(value) {
   if (typeof value !== "string" || !value.trim()) return null;
@@ -2831,8 +2836,15 @@ function workspaceContextFromRequest(request, payload, turnMetadataHeader) {
     ...WORKSPACE_KEYS.map((key) => payload?.[key]),
     ...(payload?.metadata && typeof payload.metadata === "object" ? WORKSPACE_KEYS.map((key) => payload.metadata[key]) : []),
   ];
+  // Must match how the bridges resolve the same map (resolveWorkspaceFromTurnMetadata):
+  // a key that is not a directory on this host is not the workspace the agent
+  // will run in, so labelling a turn with one made telemetry name a different
+  // repository than the one actually edited. Ambiguity is left unresolved here
+  // rather than guessed -- the bridge refuses such a turn anyway, and a label
+  // is not worth inventing an answer the executing side declined to give.
+  const resolvableKeys = Object.keys(workspaces).filter((value) => typeof value === "string" && value.trim() && isDirectory(value));
   const path = explicitPaths.find((value) => typeof value === "string" && value.trim())
-    ?? Object.keys(workspaces).find((value) => typeof value === "string" && value.trim())
+    ?? (resolvableKeys.length === 1 ? resolvableKeys[0] : null)
     ?? null;
   const matchingEntry = path && workspaces[path] ? workspaces[path] : Object.values(workspaces)[0];
   const remotes = matchingEntry?.associated_remote_urls;

@@ -42,6 +42,22 @@ DEFAULT_CLAUDE_EFFORT = "medium"
 # Codex process remains responsible for orchestration.
 DISALLOWED_CLAUDE_TOOLS = ("Agent", "Task")
 
+# Tools that reach *outside* this turn's own agent tree, to other Claude
+# sessions running on the same machine. Denied for every role, orchestrator
+# included: an AutoDev turn's blast radius is its own workspace and its own
+# children, and one orchestrator reaching another orchestrator's agents is
+# outside it in both directions.
+#
+# Measured on Claude Code 2.1.260, a `-p` print-mode process -- which is the
+# only way this bridge ever starts the CLI -- does not register on the peer
+# socket bus at all, so these tools are not available to it today and denying
+# them changes nothing now. That is exactly why it is worth pinning: the
+# isolation currently rests on an undocumented property of print mode, and a
+# future release that exposes peer messaging headlessly would silently widen
+# every bridged agent's reach. An unknown name in --disallowed-tools is inert,
+# so this costs nothing while that property holds.
+CROSS_SESSION_CLAUDE_TOOLS = ("SendMessage", "ListAgents")
+
 
 class ClaudeRateLimitError(RuntimeError):
     """Claude rejected the request because an account/session limit applies."""
@@ -53,6 +69,18 @@ class ClaudeOverloadedError(RuntimeError):
 
 class WorkspaceResolutionError(RuntimeError):
     """The request had no usable structured workspace and no explicit operator override."""
+
+
+class AmbiguousWorkspaceError(WorkspaceResolutionError):
+    """More than one workspace in the turn metadata exists on this host."""
+
+    def __init__(self, candidates: list[str]) -> None:
+        self.candidates = candidates
+        super().__init__(
+            f"turn metadata lists {len(candidates)} workspaces that exist on this host "
+            f"({', '.join(candidates)}) and does not say which is active; refusing to let key "
+            "order decide which repository this turn edits. Set CODEX_PROJECT_ROOT to pin one."
+        )
 
 
 # Recognized Claude identifier shapes (the CLI accepts these). Anything
@@ -477,8 +505,10 @@ def claude_cli_args(prompt: str, model: str, effort: str, agent_role: Any = None
     )
     orchestrator = is_orchestrator_role(agent_role)
     # Delegation is the root orchestrator's job, so it keeps the Agent tool the
-    # recursion boundary removes from every leaf role.
-    subagent_boundary = [] if orchestrator else ["--disallowed-tools", ",".join(DISALLOWED_CLAUDE_TOOLS)]
+    # recursion boundary removes from every leaf role. Cross-session reach is
+    # denied to both: see CROSS_SESSION_CLAUDE_TOOLS.
+    denied = list(CROSS_SESSION_CLAUDE_TOOLS) if orchestrator else [*DISALLOWED_CLAUDE_TOOLS, *CROSS_SESSION_CLAUDE_TOOLS]
+    subagent_boundary = ["--disallowed-tools", ",".join(denied)]
     return [
         CLI,
         "-p",
@@ -568,20 +598,30 @@ def _resolve_workspace_from_turn_metadata(turn_metadata: Any) -> str | None:
     each value carries only git metadata. We therefore try each map key as
     an absolute path candidate first, and only fall back to inspecting the
     value's structured path fields (``cwd``/``project_root``/``working_directory``/``path``)
-    when no key is a directory that exists on this host. The caller does not
-    tell us which workspace is "active", so the first valid candidate wins.
+    when no key is a directory that exists on this host.
+
+    The caller does not tell us which workspace is "active", so two or more
+    resolvable workspaces is an ambiguity, not a choice. Taking the first --
+    which is what this used to do -- lets JSON key order decide which
+    repository a coding agent edits, and key order carries no meaning. Mirrors
+    ``resolveWorkspaceFromTurnMetadata`` in scripts/codex/lib/resolve-workspace.mjs.
     """
     workspaces = turn_metadata.get("workspaces") if isinstance(turn_metadata, dict) else None
     if not isinstance(workspaces, dict):
         return None
-    for key in workspaces:
-        if isinstance(key, str) and os.path.isdir(key):
-            return key
+    from_keys = [key for key in workspaces if isinstance(key, str) and os.path.isdir(key)]
+    if len(from_keys) > 1:
+        raise AmbiguousWorkspaceError(from_keys)
+    if from_keys:
+        return from_keys[0]
+    from_values: list[str] = []
     for entry in workspaces.values():
         candidate = _workspace_path_from_entry(entry)
-        if isinstance(candidate, str) and os.path.isdir(candidate):
-            return candidate
-    return None
+        if isinstance(candidate, str) and os.path.isdir(candidate) and candidate not in from_values:
+            from_values.append(candidate)
+    if len(from_values) > 1:
+        raise AmbiguousWorkspaceError(from_values)
+    return from_values[0] if from_values else None
 
 
 def resolve_cwd(request: dict[str, Any], headers: Any = None) -> str:
@@ -608,7 +648,14 @@ def resolve_cwd(request: dict[str, Any], headers: Any = None) -> str:
         _turn_metadata_header(headers),
         request.get("client_metadata"),
     )
-    workspace_path = _resolve_workspace_from_turn_metadata(turn_metadata)
+    try:
+        workspace_path = _resolve_workspace_from_turn_metadata(turn_metadata)
+    except AmbiguousWorkspaceError:
+        # An explicit operator override is the documented way to pin one repo
+        # per bridge, so it settles an ambiguity rather than being shadowed.
+        if PROJECT_ROOT and os.path.isdir(PROJECT_ROOT):
+            return PROJECT_ROOT
+        raise
     if workspace_path:
         return workspace_path
     if PROJECT_ROOT:

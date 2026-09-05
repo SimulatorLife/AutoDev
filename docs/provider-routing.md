@@ -457,7 +457,36 @@ Bridges resolve the header and pick one of two shared prompts:
 
 The Antigravity bridge has no equivalent CLI flag: `agy` exposes its subagent
 tools unconditionally, so a leaf turn there is bounded by `leaf.md` prompt
-policy alone rather than at the CLI boundary.
+policy alone rather than at the CLI boundary. `agy`'s own subagent definitions
+do carry an `EnableSubagentTools` field ("Grant tools to define and invoke its
+own subagents"), but the model sets it when it spawns a child, so it bounds
+depth below the orchestrator rather than bounding the turn the bridge starts;
+`orchestrator.md` asks for it to be withheld by default.
+
+#### Isolation between concurrently running orchestrators
+
+Several orchestrators can run on this machine at once, each with its own agent
+tree. An agent's reach is meant to stop at that tree, in both directions.
+
+- **Claude.** `CROSS_SESSION_CLAUDE_TOOLS` (`SendMessage`, `ListAgents`) is
+  denied to *every* role, orchestrator included, since reaching another
+  orchestrator is out of bounds regardless of who does it. Measured on Claude
+  Code 2.1.260, a `-p` print-mode process does not join the peer socket bus
+  under `/tmp/cc-socks/` at all, so this denies nothing that is currently
+  reachable. It is pinned precisely because the isolation otherwise rests on an
+  undocumented property of print mode. Peer messaging between the user's own
+  *interactive* sessions is a separate, deliberate Claude Code feature that
+  AutoDev neither creates nor can disable.
+- **Antigravity.** `manage_subagents` is already scoped by `agy`: `list`
+  reports "active **direct** subagents", and `kill` refuses an id that "is not a
+  known active subagent". `send_message` takes an arbitrary "Conversation ID of
+  the agent to message" and resolves it at run time (`recipient %q not found`);
+  its documented use is parent/child within one run. No cross-run delivery has
+  been demonstrated, but `~/.gemini/antigravity-cli/presence/` is a
+  machine-wide registry of live conversation ids that an agent with shell
+  access could read, so `leaf.md` and `orchestrator.md` both forbid acting on
+  any agent id that did not come from spawning it or from the runtime-supplied
+  parent id.
 
 ### The Claude bridge owns the whole system prompt
 
@@ -682,6 +711,28 @@ order inside `resolve_cwd` / `resolveCwd` is therefore:
 6. Fail closed with a `400 invalid_request_error` (and a `WorkspaceResolutionError`
    in the bridge) listing the fields the request did carry, instead of
    silently defaulting to an unrelated parent in this repository.
+
+Steps 3 and 4 refuse an ambiguity rather than resolving one. If more than one
+listed workspace exists on this host and the request does not say which is
+active, the bridge raises `AmbiguousWorkspaceError` (a `WorkspaceResolutionError`,
+so it still surfaces as the same `400`). Taking the first would let JSON key
+order -- which carries no meaning and which the caller does not control --
+decide which repository a coding agent edits, so a turn rooted in one repo
+could land in another with nothing but a changed working tree to show for it.
+`CODEX_PROJECT_ROOT` is the documented tiebreak and settles the ambiguity when
+a multi-root turn is legitimate.
+
+The router's telemetry label reads the same map from the other end, and the two
+must agree: a label naming a different repository than the one the agent edited
+is worse than no label. The router therefore imports `WORKSPACE_KEYS` and
+`isDirectory` from the shared resolver rather than reimplementing them -- it
+previously took the first non-empty key while the bridges took the first key
+that is a directory here, so a stale first entry made telemetry and execution
+disagree silently. Where the bridge refuses an ambiguity, the router records no
+workspace instead of inventing one. `tests/workspace-resolution.test.mjs` and
+`test_all_provider_bridges_resolve_a_workspace_identically` pin both halves,
+the latter by running the Python and JavaScript resolvers over the same inputs
+and asserting identical answers.
 
 The JavaScript CLI adapters share this resolver in
 `scripts/codex/lib/resolve-workspace.mjs`; the installer deploys that module
