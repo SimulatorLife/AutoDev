@@ -240,15 +240,6 @@ function sseLine(eventName, body, sequenceNumber) {
   return `event: ${eventName}\ndata: ${JSON.stringify(payload)}\n\n`;
 }
 
-function sse(response, eventName, body, sequenceNumber) {
-  if (response.writableEnded || response.destroyed || response.closed) return;
-  try {
-    response.write(sseLine(eventName, body, sequenceNumber));
-  } catch {
-    // Socket closed or destroyed
-  }
-}
-
 function activityText(event) {
   if (event?.event !== "step_update" || !event.step_update) return "";
   const update = event.step_update;
@@ -267,42 +258,6 @@ function activityText(event) {
   }
   if (stepType === "checkpoint" && state === "DONE") return "Antigravity reached a checkpoint.";
   return "";
-}
-
-function failedStream(response, responseId, itemId, error) {
-  const message = error.message ?? String(error);
-  // LiteLLM's Responses adapter expects a completed response with a usage
-  // object and does not safely translate response.failed events from a custom
-  // upstream. Return a completed, explicit provider-error message so Codex
-  // stops without converting quota exhaustion into a reconnect loop.
-  const errorText = `Antigravity provider request failed: ${message}`;
-  sse(response, "response.output_text.delta", {
-    type: "response.output_text.delta",
-    item_id: itemId,
-    output_index: 1,
-    content_index: 0,
-    delta: errorText
-  });
-  sse(response, "response.output_text.done", {
-    type: "response.output_text.done",
-    item_id: itemId,
-    output_index: 1,
-    content_index: 0,
-    text: errorText
-  });
-  sse(response, "response.completed", {
-    type: "response.completed",
-    response: {
-      id: responseId,
-      object: "response",
-      status: "completed",
-      output: [ responseMessageItem(errorText, itemId) ],
-      output_text: errorText,
-      usage: { input_tokens: 0, output_tokens: 0, total_tokens: 0 },
-      metadata: { provider_error: true, provider_error_type: "upstream_error" }
-    }
-  });
-  response.end("data: [DONE]\n\n");
 }
 
 function agyArgs(prompt, model, effort) {
@@ -557,11 +512,20 @@ async function handle(request, response) {
   } catch (error) {
     clearInterval(keepAlive);
     if (!isWritable()) return;
+    const message = error.message ?? String(error);
     if (!streamStarted) {
-      sendJson(response, 503, { error: { type: "upstream_error", message: error.message ?? String(error) } });
+      sendJson(response, 503, { error: { type: "upstream_error", message } });
       return;
     }
-    failedStream(response, responseId, itemId, error);
+    // A failure after the stream opened is reported as a failure. The bridge
+    // used to fake a *completed* response carrying the error as assistant text,
+    // because the LiteLLM hop that once sat in front of this adapter could not
+    // translate `response.failed` from a custom upstream. The router calls this
+    // adapter directly now, so a quota exhaustion reads as one.
+    emit("response.failed", { type: "response.failed", response: { id: responseId, status: "failed", error: { message, type: "upstream_error" } } });
+    if (isWritable()) {
+      try { response.end("data: [DONE]\n\n"); } catch { }
+    }
   } finally {
     clearInterval(keepAlive);
     response.removeListener("error", onResponseError);

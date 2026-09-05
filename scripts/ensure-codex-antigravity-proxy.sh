@@ -24,30 +24,12 @@ settings_ok="$(node -e '
 
 domain="gui/$(id -u)"
 proxy_label="com.codex.antigravity-proxy"
-litellm_label="com.codex.antigravity-litellm"
 proxy_probe="http://127.0.0.1:4002/health/liveliness"
-litellm_probe="http://127.0.0.1:4001/health/liveliness"
 proxy_plist="$HOME/Library/LaunchAgents/$proxy_label.plist"
-litellm_plist="$HOME/Library/LaunchAgents/$litellm_label.plist"
 proxy_launcher="$HOME/.codex/hooks/run-codex-antigravity-proxy.sh"
-litellm_launcher="$HOME/.codex/hooks/run-codex-antigravity-litellm.sh"
-
-# LiteLLM only reads antigravity.yaml at process start, so a healthy process
-# can keep serving a stale deployed config after the file changes underneath
-# it. Fingerprint the resolved config content so drift is detected even
-# though the liveliness probe stays green, and track the local nohup PID so a
-# direct-fallback restart only ever recycles a process this script started.
-litellm_config="$HOME/.config/litellm/antigravity.yaml"
-litellm_config_stamp="${CODEX_ANTIGRAVITY_LITELLM_CONFIG_STAMP:-$HOME/.codex/codex-antigravity-litellm-config.sha256}"
-litellm_pid_file="${TMPDIR:-/tmp}/codex-antigravity-${litellm_label}.pid"
 
 probe_ok() {
   curl --silent --fail --max-time 1 "$1" >/dev/null 2>&1
-}
-
-launchd_pid() {
-  local label="$1"
-  launchctl print "$domain/$label" 2>/dev/null | awk '/^[[:space:]]*pid = [0-9]+$/ { print $3; exit }'
 }
 
 wait_for_probe() {
@@ -57,80 +39,6 @@ wait_for_probe() {
     sleep 0.1
   done
   return 1
-}
-
-config_fingerprint() {
-  [[ -f "$litellm_config" ]] || return 1
-  shasum -a 256 "$litellm_config" | awk '{print $1}'
-}
-
-record_litellm_config_stamp() {
-  local fingerprint
-  fingerprint="$(config_fingerprint)" || return 0
-  mkdir -p "$(dirname -- "$litellm_config_stamp")"
-  printf '%s\n' "$fingerprint" >"$litellm_config_stamp"
-}
-
-# Stale means: the config is fingerprintable, a prior stamp exists, and the
-# two differ. A missing config or a first-ever observation is "not stale" so
-# first run and an unreadable config never force an unnecessary restart.
-litellm_config_is_stale() {
-  local current
-  current="$(config_fingerprint)" || return 1
-  [[ -s "$litellm_config_stamp" ]] || return 1
-  local previous
-  previous="$(<"$litellm_config_stamp")"
-  [[ "$current" != "$previous" ]]
-}
-
-restart_direct_litellm_if_owned() {
-  # Only recycle a process this script itself started with nohup; an
-  # unmanaged process that happens to already own the port is left alone.
-  local pid=""
-  [[ -f "$litellm_pid_file" ]] && pid="$(<"$litellm_pid_file")"
-  if [[ -z "$pid" ]] || ! kill -0 "$pid" 2>/dev/null; then
-    rm -f -- "$litellm_pid_file"
-    echo "Antigravity LiteLLM config changed, but no locally supervised process is tracked to restart; leaving the current process running." >&2
-    return 0
-  fi
-
-  kill "$pid" 2>/dev/null || true
-  for _ in {1..50}; do
-    kill -0 "$pid" 2>/dev/null || break
-    sleep 0.1
-  done
-  if kill -0 "$pid" 2>/dev/null; then
-    kill -KILL "$pid" 2>/dev/null || true
-  fi
-  rm -f -- "$litellm_pid_file"
-
-  nohup /bin/bash "$litellm_launcher" \
-    >"${TMPDIR:-/tmp}/codex-antigravity-${litellm_label}.log" 2>&1 </dev/null &
-  printf '%s' "$!" >"$litellm_pid_file"
-  wait_for_probe "$litellm_probe"
-}
-
-# Detect and repair a healthy-but-stale LiteLLM process before the generic
-# start_service healthy-skip path below would otherwise leave it running.
-sync_litellm_config_drift() {
-  probe_ok "$litellm_probe" || return 0
-  litellm_config_is_stale || return 0
-
-  echo "Antigravity LiteLLM config changed since the running process started; restarting $litellm_label to pick it up." >&2
-  if launchctl print "$domain/$litellm_label" >/dev/null 2>&1; then
-    local previous_pid current_pid
-    previous_pid="$(launchd_pid "$litellm_label")"
-    launchctl kickstart -k "$domain/$litellm_label" >/dev/null 2>&1 || return 1
-    for _ in {1..50}; do
-      current_pid="$(launchd_pid "$litellm_label")"
-      if probe_ok "$litellm_probe" && [[ -n "$current_pid" && "$current_pid" != "$previous_pid" ]]; then return 0; fi
-      sleep 0.1
-    done
-    echo "Antigravity launchd service $litellm_label did not become ready after a config-drift restart." >&2
-    return 1
-  fi
-
-  restart_direct_litellm_if_owned
 }
 
 start_service() {
@@ -147,8 +55,6 @@ start_service() {
   fi
 
   # Prefer to bootstrap a missing service so launchd remains the supervisor.
-  # This also handles a partially loaded installation (one provider service
-  # present while its paired service is absent).
   if [[ -f "$plist" ]] && launchctl bootstrap "$domain" "$plist" >/dev/null 2>&1; then
     wait_for_probe "$probe" && return 0
   fi
@@ -158,21 +64,10 @@ start_service() {
   if wait_for_probe "$probe"; then return 0; fi
   nohup /bin/bash "$launcher" \
     >"${TMPDIR:-/tmp}/codex-antigravity-${label}.log" 2>&1 </dev/null &
-  if [[ "$label" == "$litellm_label" ]]; then
-    printf '%s' "$!" >"$litellm_pid_file"
-  fi
   wait_for_probe "$probe"
 }
 
-if ! sync_litellm_config_drift; then
+if ! start_service "$proxy_label" "$proxy_plist" "$proxy_probe" "$proxy_launcher"; then
   echo "Antigravity Responses proxy failed to start." >&2
   exit 1
 fi
-
-if ! start_service "$proxy_label" "$proxy_plist" "$proxy_probe" "$proxy_launcher" || \
-   ! start_service "$litellm_label" "$litellm_plist" "$litellm_probe" "$litellm_launcher"; then
-  echo "Antigravity Responses proxy failed to start." >&2
-  exit 1
-fi
-
-record_litellm_config_stamp

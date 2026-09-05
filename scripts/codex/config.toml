@@ -76,8 +76,8 @@ stream_max_retries = 10
 stream_idle_timeout_ms = 300000
 
 [model_providers.antigravity_cli]
-name = "Antigravity CLI subscription through local LiteLLM"
-base_url = "http://127.0.0.1:4001/v1"
+name = "Antigravity CLI subscription through the local Responses adapter"
+base_url = "http://127.0.0.1:4002/v1"
 env_key = "LITELLM_API_KEY"
 wire_api = "responses"
 requires_openai_auth = false

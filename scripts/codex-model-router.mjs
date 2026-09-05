@@ -1,7 +1,6 @@
 #!/usr/bin/env node
 
 import { createHash, randomUUID } from "node:crypto";
-import { spawn } from "node:child_process";
 import { createServer } from "node:http";
 import { readFile, rename, writeFile } from "node:fs/promises";
 import { existsSync, readFileSync } from "node:fs";
@@ -22,7 +21,7 @@ const STATE_FILE = process.env.CODEX_ROUTER_STATE_FILE ?? `${CODEX_HOME}/codex-r
 const ROUTES = Object.freeze([
   { provider: "claude", pattern: /^(sonnet|opus|haiku|claude-[A-Za-z0-9][A-Za-z0-9.-]*)$/, baseUrl: "http://127.0.0.1:4000/v1", healthUrl: "http://127.0.0.1:4000/health/liveliness", envKey: "LITELLM_API_KEY" },
   { provider: "minimax", pattern: /^MiniMax-[A-Za-z0-9][A-Za-z0-9.-]*$/, baseUrl: "http://127.0.0.1:18765/v1", healthUrl: "http://127.0.0.1:18765/health", envKey: "MINIMAX_API_KEY" },
-  { provider: "antigravity", pattern: /^gemini-[A-Za-z0-9][A-Za-z0-9.-]*$/, baseUrl: "http://127.0.0.1:4001/v1", healthUrl: "http://127.0.0.1:4001/health/liveliness", envKey: "LITELLM_API_KEY" },
+  { provider: "antigravity", pattern: /^gemini-[A-Za-z0-9][A-Za-z0-9.-]*$/, baseUrl: "http://127.0.0.1:4002/v1", healthUrl: "http://127.0.0.1:4002/health/liveliness", envKey: "LITELLM_API_KEY" },
   { provider: "codex", pattern: /^(gpt-[A-Za-z0-9][A-Za-z0-9.-]*|o[1-9][A-Za-z0-9.-]*|codex-[A-Za-z0-9][A-Za-z0-9.-]*)$/, baseUrl: GPT_BASE_URL, envKey: null },
   { provider: "copilot", pattern: /^copilot$/, baseUrl: "http://127.0.0.1:4003/v1", healthUrl: "http://127.0.0.1:4003/health/liveliness", envKey: "CODEX_ROUTER_COPILOT_API_KEY" },
 ]);
@@ -1012,14 +1011,6 @@ const PROCESS_FALLBACK_SESSION_KEY = "process-scope";
 const activeSubagentSessions = new Map();
 const concurrencyTelemetry = { denials: 0, denialsByReason: {}, lastDenial: null };
 const spawnFailureTelemetry = { total: 0, byReason: {}, recent: [] };
-const DEFAULT_CODEX_BIN = existsSync(`${CODEX_HOME}/packages/standalone/current/bin/codex`)
-  ? `${CODEX_HOME}/packages/standalone/current/bin/codex`
-  : "codex";
-const CODEX_BIN = process.env.CODEX_ROUTER_CODEX_BIN ?? process.env.CODEX_BIN ?? DEFAULT_CODEX_BIN;
-const CODEX_TASK_REFRESH_MS = Number.parseInt(process.env.CODEX_ROUTER_TASK_REFRESH_MS ?? "5000", 10);
-const CODEX_TASK_MAX_PAGES = Number.parseInt(process.env.CODEX_ROUTER_TASK_MAX_PAGES ?? "5", 10);
-let codexTaskSnapshot = { status: "pending", fetchedAt: null, error: null, pages: 0, countsByStatus: {}, tasks: [] };
-let codexTaskRefreshPromise = null;
 
 function effectivePerSessionLimit() {
   return CONCURRENCY_CONFIG.maxConcurrentThreadsPerSession ?? CONCURRENCY_CONFIG.maxThreads;
@@ -1075,116 +1066,6 @@ function recordConcurrencyDenial({ requestId, role, requestedModel, sessionScope
   concurrencyTelemetry.lastDenial = { timestamp: new Date().toISOString(), requestId, role, requestedModel, sessionScope, reason };
   recordSpawnFailure({ requestId, role, requestedModel, reason });
   recordRouterEvent({ phase: "denied", requestId, role, requestedModel, provider: null, model: null, failureClass: "concurrency_limit", denialReason: reason });
-}
-
-function normalizeCodexTimestamp(value) {
-  if (value == null) return null;
-  const numeric = typeof value === "number"
-    ? value
-    : typeof value === "string" && value.trim() !== "" ? Number(value) : Number.NaN;
-  if (Number.isFinite(numeric)) {
-    // Codex app-server thread/list timestamps are Unix seconds, while browser
-    // Date values are milliseconds. Keep this tolerant of millisecond values
-    // from other clients or future protocol revisions.
-    const milliseconds = Math.abs(numeric) < 100_000_000_000 ? numeric * 1000 : numeric;
-    const date = new Date(milliseconds);
-    return Number.isNaN(date.getTime()) ? null : date.toISOString();
-  }
-  if (typeof value !== "string") return null;
-  const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? null : date.toISOString();
-}
-
-function normalizeCodexTask(task) {
-  const rawStatus = task?.status;
-  const status = typeof rawStatus === "string" ? rawStatus : rawStatus?.type;
-  return {
-    id: task?.id ?? task?.sessionId ?? null,
-    status: status ?? "unknown",
-    name: task?.name ?? null,
-    cwd: task?.cwd ?? null,
-    createdAt: normalizeCodexTimestamp(task?.createdAt),
-    updatedAt: normalizeCodexTimestamp(task?.updatedAt),
-    modelProvider: task?.modelProvider ?? null,
-    model: task?.model ?? null,
-    agentRole: task?.agentRole ?? null,
-    source: task?.source ?? null,
-    parentThreadId: task?.parentThreadId ?? null,
-    threadSource: task?.threadSource ?? null,
-  };
-}
-
-function summarizeCodexTasks(tasks) {
-  const normalized = Array.isArray(tasks) ? tasks.map(normalizeCodexTask).filter((task) => task.id) : [];
-  const countsByStatus = {};
-  for (const task of normalized) countsByStatus[task.status] = (countsByStatus[task.status] ?? 0) + 1;
-  return { countsByStatus, tasks: normalized };
-}
-
-function refreshCodexTaskSnapshot() {
-  if (!IS_MAIN || codexTaskRefreshPromise || (codexTaskSnapshot.fetchedAt && Date.now() - Date.parse(codexTaskSnapshot.fetchedAt) < CODEX_TASK_REFRESH_MS)) return;
-  codexTaskRefreshPromise = new Promise((resolve) => {
-    const child = spawn(CODEX_BIN, ["app-server", "--listen", "stdio://"], { stdio: ["pipe", "pipe", "ignore"] });
-    let buffer = "";
-    let settled = false;
-    let listRequestId = 2;
-    let pageCount = 0;
-    const tasks = [];
-    const writeStdin = (text) => {
-      if (settled || !child.stdin || !child.stdin.writable || child.stdin.destroyed) return;
-      try {
-        child.stdin.write(text);
-      } catch {
-        // Child pipe closed or process exited concurrently.
-      }
-    };
-    const finish = (nextSnapshot) => {
-      if (settled) return;
-      settled = true;
-      codexTaskSnapshot = nextSnapshot;
-      try { child.stdin?.end(); } catch {}
-      try { child.kill(); } catch {}
-      resolve();
-    };
-    child.stdin?.on("error", () => {});
-    const timer = setTimeout(() => finish({ ...codexTaskSnapshot, status: "unavailable", fetchedAt: new Date().toISOString(), error: "Codex app-server task listing timed out." }), 8000);
-    child.stdout.on("data", (chunk) => {
-      buffer += chunk.toString();
-      const lines = buffer.split(/\r?\n/);
-      buffer = lines.pop() ?? "";
-      for (const line of lines) {
-        if (!line.trim() || settled) continue;
-        let message;
-        try { message = JSON.parse(line); } catch { continue; }
-        if (message.id === 1) {
-          writeStdin(JSON.stringify({ method: "initialized", params: {} }) + "\n");
-          writeStdin(JSON.stringify({ id: 2, method: "thread/list", params: { limit: 100, archived: false, sourceKinds: ["cli", "vscode", "exec", "appServer", "subAgent", "subAgentReview", "subAgentCompact", "subAgentThreadSpawn", "subAgentOther", "unknown"], useStateDbOnly: true } }) + "\n");
-        } else if (message.id === listRequestId) {
-          const result = message.result;
-          tasks.push(...(result?.data ?? []));
-          pageCount += 1;
-          if (result?.nextCursor && pageCount < Math.max(1, CODEX_TASK_MAX_PAGES)) {
-            listRequestId += 1;
-            writeStdin(JSON.stringify({ id: listRequestId, method: "thread/list", params: { limit: 100, cursor: result.nextCursor, archived: false, sourceKinds: ["cli", "vscode", "exec", "appServer", "subAgent", "subAgentReview", "subAgentCompact", "subAgentThreadSpawn", "subAgentOther", "unknown"], useStateDbOnly: true } }) + "\n");
-          } else {
-            clearTimeout(timer);
-            const summary = summarizeCodexTasks(tasks);
-            finish({ status: "ready", fetchedAt: new Date().toISOString(), error: null, pages: pageCount, ...summary });
-          }
-        }
-      }
-    });
-    child.on("error", (error) => {
-      clearTimeout(timer);
-      finish({ ...codexTaskSnapshot, status: "unavailable", fetchedAt: new Date().toISOString(), error: error.message });
-    });
-    writeStdin(JSON.stringify({ id: 1, method: "initialize", params: { clientInfo: { name: "autodev-router", title: "AutoDev router status", version: "1" }, capabilities: {} } }) + "\n");
-  }).finally(() => { codexTaskRefreshPromise = null; });
-}
-
-function codexTaskStatus() {
-  refreshCodexTaskSnapshot();
-  return codexTaskSnapshot;
 }
 
 function recordSpawnFailure({ requestId, role, requestedModel, reason }) {
@@ -1541,7 +1422,6 @@ function getRouterStatus(now = Date.now()) {
     concurrency: concurrencyStatus(),
     subagents: subagentStatus(),
     spawnFailures: spawnFailureStatus(),
-    codexTasks: codexTaskStatus(),
     activeRequests: Object.fromEntries(activeProviderRequests),
     providers,
     recentEvents: [...recentRouterEvents].reverse(),
@@ -2305,7 +2185,7 @@ async function writeResponseStream(response, upstream, publicModel, signal = nul
         if (parsed.type === "response.failed") {
           terminal = "failed";
         } else if (parsed.type === "response.completed") {
-          terminal = responseWasNotCompleted(parsed.response) || parsed.response?.metadata?.provider_error ? "failed" : "completed";
+          terminal = responseWasNotCompleted(parsed.response) ? "failed" : "completed";
         }
       } catch {
         // Preserve the existing tolerant behavior for malformed provider lines.
@@ -2516,23 +2396,14 @@ function responseTextFromSse(body) {
   };
 }
 
-function upstreamPayload(route, payload, wantsStream, turnMetadataHeader, agentRole = null, requestId = null) {
-  // `extra_headers` is an SDK escape hatch that LiteLLM consumes as outbound
-  // HTTP headers. Never pass the caller's value through the router: doing so
-  // would bypass the router's credential and header allowlist. Antigravity is
-  // routed through LiteLLM, whose Responses API currently drops arbitrary
-  // request fields and can also drop forwarded client headers. Carry the one
-  // approved workspace header through its supported `extra_headers` field so
-  // the local adapter can resolve the workspace without guessing.
+function upstreamPayload(route, payload, wantsStream) {
+  // `extra_headers` is an SDK escape hatch a proxy consumes as outbound HTTP
+  // headers. Never pass the caller's value through the router: doing so would
+  // bypass the router's credential and header allowlist. Every provider now
+  // sits behind a local adapter the router calls directly, so the router's own
+  // headers travel as real headers (see downstreamHeaders) and nothing needs to
+  // ride in the body.
   const { extra_headers: _discardedExtraHeaders, ...safePayload } = payload;
-  if (route.provider === "antigravity") {
-    const forwarded = {
-      ...(turnMetadataHeader ? { [FORWARDED_REQUEST_HEADERS[0]]: turnMetadataHeader } : {}),
-      ...(agentRole ? { [AGENT_ROLE_HEADER]: agentRole } : {}),
-      ...bridgeTelemetryHeaders(route, requestId),
-    };
-    if (Object.keys(forwarded).length > 0) safePayload.extra_headers = forwarded;
-  }
   if (route.provider !== "codex" && Array.isArray(safePayload.tools)) {
     safePayload.tools = flattenOutboundTools(safePayload.tools);
   }
@@ -2553,7 +2424,7 @@ async function fetchUpstream(route, payload, wantsStream, turnMetadataHeader, cl
       throw authError;
     }
   }
-  const requestPayload = upstreamPayload(route, payload, wantsStream, turnMetadataHeader, agentRole, requestId);
+  const requestPayload = upstreamPayload(route, payload, wantsStream);
   const timeoutSignal = AbortSignal.timeout(UPSTREAM_TIMEOUT_MS);
   const signal = clientSignal ? AbortSignal.any([clientSignal, timeoutSignal]) : timeoutSignal;
   const upstream = await fetch(`${route.baseUrl}/responses`, {
@@ -3188,7 +3059,6 @@ export {
   isProviderCoolingDown,
   loadRouterState,
   nextProviderRetryMs,
-  normalizeCodexTask,
   parseConcurrencyConfig,
   parseTurnMetadataJson,
   persistRouterStateNow,
@@ -3212,7 +3082,6 @@ export {
   roleForModel,
   routeForModel,
   serializeRouterState,
-  summarizeCodexTasks,
   tryAcquireSubagentSlot,
   responseTextFromSse,
   transformSseEvent,

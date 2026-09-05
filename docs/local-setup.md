@@ -89,8 +89,8 @@ recursive deletion.
   load provider credentials from `~/.codex/.env`; for MiniMax this means a
   private `MINIMAX_API_KEY=...` entry with restrictive file permissions.
 - Treat proxy and router logs as local-only operational data. Antigravity's
-  launchd services are the canonical supervisors when loaded; the ensure hook
-  refuses to start duplicate unmanaged processes on ports 4001/4002. The
+  launchd service is the canonical supervisor when loaded; the ensure hook
+  refuses to start a duplicate unmanaged process on port 4002. The
   router ensure hook owns the same property for port 4100 and additionally
   serializes concurrent invocations through an atomic private lock directory
   at `$CODEX_HOME/run/codex-model-router.ensure.lock.d`.

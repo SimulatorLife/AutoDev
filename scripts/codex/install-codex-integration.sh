@@ -14,7 +14,6 @@ agents_dir="$codex_home/agents"
 rules_dir="$codex_home/rules"
 user_skills_dir="$HOME/.agents/skills"
 legacy_skills_dirs=("$codex_home/skills" "$codex_home/agents/skills")
-litellm_dir="$HOME/.config/litellm"
 
 hook_names=(
   codex-antigravity-cli-responses-proxy.mjs
@@ -29,13 +28,18 @@ hook_names=(
   ensure-codex-copilot-proxy.sh
   ensure-codex-model-router.sh
   ensure-codex-minimax-proxy.sh
-  run-codex-antigravity-litellm.sh
   run-codex-antigravity-proxy.sh
   run-codex-claude-bridge.sh
   run-codex-copilot-cli-responses-proxy.sh
   run-codex-model-router.sh
 )
-obsolete_runtime_hook_names=(log-subagent-model.sh)
+obsolete_runtime_hook_names=(log-subagent-model.sh run-codex-antigravity-litellm.sh)
+# LaunchAgents earlier versions installed and this one no longer supervises.
+# Booted out and unlinked so a removed hop does not keep running from a stale
+# plist after the code that fronted it is gone.
+obsolete_launchagent_labels=(com.codex.antigravity-litellm)
+# Runtime files installed outside the hooks directory that no longer belong.
+obsolete_runtime_paths=("$HOME/.config/litellm/antigravity.yaml" "$HOME/.codex/codex-antigravity-litellm-config.sha256")
 # Directories under the hooks directory that earlier layouts created and no
 # longer belong there. Removed with `rm -rf`, so entries must stay fixed
 # literals that name a directory this installer itself once created.
@@ -221,11 +225,10 @@ check_versioned_sources() {
       failed=1
     fi
   done
-  for source in "$repo_root/scripts/codex/config.toml" "$repo_root/scripts/codex/install-codex-integration.sh" "$repo_root/scripts/codex/litellm/antigravity.yaml" \
+  for source in "$repo_root/scripts/codex/config.toml" "$repo_root/scripts/codex/install-codex-integration.sh" \
     "$repo_root/scripts/codex/launchagents/com.codex.model-router.plist" \
     "$repo_root/scripts/codex/launchagents/com.codex.claude-bridge.plist" \
     "$repo_root/scripts/codex/launchagents/com.codex.minimax-proxy.plist" \
-    "$repo_root/scripts/codex/launchagents/com.codex.antigravity-litellm.plist" \
     "$repo_root/scripts/codex/launchagents/com.codex.antigravity-proxy.plist"; do
     if ! check_versioned_source "$source"; then
       failed=1
@@ -345,6 +348,19 @@ check_legacy_skill_links() {
 check_removed_runtime_hooks() {
   local failed=0
   local name target
+  for name in "${obsolete_launchagent_labels[@]}"; do
+    target="$HOME/Library/LaunchAgents/$name.plist"
+    if [[ -e "$target" || -L "$target" ]]; then
+      printf 'obsolete-launchagent %s\n' "$target"
+      failed=1
+    fi
+  done
+  for target in "${obsolete_runtime_paths[@]}"; do
+    if [[ -e "$target" || -L "$target" ]]; then
+      printf 'obsolete-runtime-path %s\n' "$target"
+      failed=1
+    fi
+  done
   for name in "${obsolete_runtime_hook_names[@]}"; do
     target="$hooks_dir/$name"
     if [[ -e "$target" || -L "$target" ]]; then
@@ -451,14 +467,6 @@ check_links() {
     printf 'missing-or-drifted %s -> %s\n' "$target" "$source"
     failed=1
   fi
-  source="$repo_root/scripts/codex/litellm/antigravity.yaml"
-  target="$litellm_dir/antigravity.yaml"
-  if [[ -f "$target" && ! -L "$target" ]] && cmp -s "$source" "$target"; then
-    printf 'ok %s (runtime copy of %s)\n' "$target" "$source"
-  else
-    printf 'missing-or-drifted %s -> %s\n' "$target" "$source"
-    failed=1
-  fi
   if ! check_agent_registry; then
     failed=1
   fi
@@ -484,6 +492,22 @@ if [[ "${1:-}" == "--check" ]]; then
   check_links
   exit $?
 fi
+
+for name in "${obsolete_launchagent_labels[@]}"; do
+  target="$HOME/Library/LaunchAgents/$name.plist"
+  launchctl bootout "gui/$(id -u)/$name" >/dev/null 2>&1 || true
+  if [[ -e "$target" || -L "$target" ]]; then
+    rm -f -- "$target"
+    printf 'removed obsolete launchagent %s\n' "$target"
+  fi
+done
+
+for target in "${obsolete_runtime_paths[@]}"; do
+  if [[ -e "$target" || -L "$target" ]]; then
+    rm -f -- "$target"
+    printf 'removed obsolete runtime path %s\n' "$target"
+  fi
+done
 
 for name in "${obsolete_runtime_hook_names[@]}"; do
   target="$hooks_dir/$name"
@@ -542,12 +566,6 @@ for role in "${agent_role_names[@]}"; do
 done
 link_one "$repo_root/scripts/codex/config.toml" "$codex_home/config.toml"
 link_one "$repo_root/scripts/codex/model-routing.json" "$codex_home/codex-model-routing.json"
-mkdir -p -- "$litellm_dir"
-if [[ -L "$litellm_dir/antigravity.yaml" ]]; then
-  rm -f -- "$litellm_dir/antigravity.yaml"
-fi
-install -m 0644 "$repo_root/scripts/codex/litellm/antigravity.yaml" "$litellm_dir/antigravity.yaml"
-
 # The router (parent transport) and the four subagent bridges must survive app
 # restarts, crashes, and sleep. launchd KeepAlive agents provide that durability
 # (each plist invokes the installed hook copy under ~/.codex, outside Desktop,
@@ -577,7 +595,6 @@ launchagent_labels=(
   com.codex.model-router
   com.codex.claude-bridge
   com.codex.minimax-proxy
-  com.codex.antigravity-litellm
   com.codex.antigravity-proxy
 )
 for label in "${launchagent_labels[@]}"; do
@@ -608,7 +625,6 @@ if [[ "${1:-}" == "--restart" ]]; then
     for probe in \
       http://127.0.0.1:4100/health/readiness \
       http://127.0.0.1:4000/health/liveliness \
-      http://127.0.0.1:4001/health/liveliness \
       http://127.0.0.1:4002/health/liveliness \
       http://127.0.0.1:18765/health; do
       for _ in {1..80}; do

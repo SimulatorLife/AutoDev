@@ -540,30 +540,6 @@
     </table>
   </div>
 
-  <h2><button type="button" class="toggle-section" aria-controls="codex-tasks-section" aria-expanded="false"><span
-        class="caret">▸</span> Codex task snapshot</button></h2>
-  <div id="codex-tasks-section" hidden>
-    <div id="task-summary">Loading…</div>
-    <table>
-      <thead>
-        <tr>
-          <th>ID</th>
-          <th>Status</th>
-          <th>Name</th>
-          <th>Project/CWD</th>
-          <th>Provider</th>
-          <th>Role</th>
-          <th>Updated</th>
-        </tr>
-      </thead>
-      <tbody id="codex-tasks">
-        <tr>
-          <td colspan="7">Loading…</td>
-        </tr>
-      </tbody>
-    </table>
-  </div>
-
   <h2><button type="button" class="toggle-section" aria-controls="recent-routing-events-section"
       aria-expanded="false"><span class="caret">▸</span> Recent routing events</button></h2>
   <div id="recent-routing-events-section" hidden>
@@ -714,10 +690,6 @@
       const overallLastSpawnFailure = [ ...latestByReason.values() ].sort((a, b) => String(a.timestamp ?? "").localeCompare(String(b.timestamp ?? ""))).at(-1);
       document.querySelector("#spawn-failures-total").textContent = spawnFailures.total ?? 0;
       document.querySelector("#spawn-failures-last").textContent = overallLastSpawnFailure ? formatTimestamp(overallLastSpawnFailure.timestamp) : "-";
-      const taskStatus = status.codexTasks ?? {};
-      const taskCounts = Object.entries(taskStatus.countsByStatus ?? {}).map(([ state, count ]) => `${state}: ${count}`).join(", ") || "-";
-      document.querySelector("#task-summary").textContent = `Status: ${taskStatus.status ?? "unknown"} · fetched: ${taskStatus.fetchedAt ? formatTimestamp(taskStatus.fetchedAt) : "-"} · ${taskCounts}${taskStatus.error ? ` · ${taskStatus.error}` : ""}`;
-      document.querySelector("#codex-tasks").innerHTML = (taskStatus.tasks ?? []).map((task) => `<tr><td><code>${text(task.id)}</code></td><td>${text(task.status)}</td><td>${text(task.name)}</td><td><code>${text(task.cwd)}</code></td><td>${text(task.modelProvider)}</td><td>${text(task.agentRole)}</td><td>${task.updatedAt ? formatTimestamp(task.updatedAt) : ""}</td></tr>`).join("") || '<tr><td colspan="7">No tasks returned.</td></tr>';
       const concurrency = status.concurrency ?? {};
       const limit = (value) => value == null ? "unlimited" : value;
       const denial = concurrency.lastDenial ? `${concurrency.lastDenial.reason} (${concurrency.lastDenial.sessionScope})` : "-";

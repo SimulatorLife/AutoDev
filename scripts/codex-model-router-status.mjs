@@ -43,13 +43,6 @@ const spawnFailures = body.spawnFailures ?? {};
 console.log("");
 console.log(`Subagent spawn failures: ${spawnFailures.total ?? 0} (${counts(spawnFailures.byReason)})`);
 
-const tasks = body.codexTasks ?? {};
-console.log("");
-console.log(`Codex tasks: ${tasks.status ?? "unknown"} · ${counts(tasks.countsByStatus)}`);
-for (const task of (tasks.tasks ?? []).slice(0, 20)) {
-  console.log(`  ${task.status} ${task.id} ${task.name ?? ""}`.trim());
-}
-
 const usage = body.usage ?? {};
 console.log("");
 const concurrency = body.concurrency ?? {};

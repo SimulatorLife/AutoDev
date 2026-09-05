@@ -444,8 +444,9 @@ router-generated `x-autodev-agent-role` header. The value comes from the
 router's own alias dispatch, never from the inbound request: `downstreamHeaders`
 builds its header set from scratch, so a client claiming
 `x-autodev-agent-role: orchestrator` on a leaf request cannot escape the leaf
-policy. Antigravity additionally receives the header through the Responses
-`extra_headers` field, because LiteLLM can drop raw request headers.
+policy. Every bridge receives it as an ordinary request header; Antigravity
+once also received it in the Responses `extra_headers` body field because the
+LiteLLM hop that used to sit in front of that adapter dropped raw headers.
 
 Bridges resolve the header and pick one of two shared prompts:
 
@@ -667,12 +668,10 @@ This matches the upstream Codex contract: values do not carry the path.
 Callers that cannot set custom headers may instead embed the same JSON
 under `client_metadata["x-codex-turn-metadata"]` in the request body;
 the local router normalizes that back into the canonical header shape
-so provider bridges only ever have to parse one form. For Antigravity, the
-router also puts this same allowlisted header in the Responses
-`extra_headers` field: LiteLLM's Responses transformation can discard the
-raw request header and unknown top-level workspace fields before calling the
-local adapter. No caller-supplied credential or other arbitrary header is
-copied into that field. The resolution
+so provider bridges only ever have to parse one form. A caller-supplied
+`extra_headers` field is discarded outright rather than forwarded: it is an
+SDK escape hatch that would bypass the router's credential and header
+allowlist. The resolution
 order inside `resolve_cwd` / `resolveCwd` is therefore:
 
 1. Top-level `cwd`, `project_root`, or `working_directory` on the request.
@@ -708,7 +707,7 @@ intended repository, and inspect the app task/log event for those failures.
 | ----------- | -------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Claude      | Codex -> Claude Responses bridge on `127.0.0.1:4000` -> Claude CLI   | Uses `CLAUDE_CODE_OAUTH_TOKEN`; the selected role model and reasoning effort are forwarded.                                                          |
 | MiniMax     | Codex -> MiniMax Responses proxy on `127.0.0.1:18765`                | Transparent pass-through to the remote API, not a CLI gateway; local routing headers are stripped. Provider quota/rate limits are upstream conditions; inspect the proxy log when diagnosing them.                                                      |
-| Antigravity | Codex -> LiteLLM `:4001` -> Antigravity adapter `:4002` -> `agy` CLI | `forward_client_headers_to_llm_api: true` must remain enabled so the structured workspace metadata reaches the adapter; `useAiCredits=false` and `useG1Credits=false` keep AI-credit overages disabled. Headless runs require the configured noninteractive permission mode. |
+| Antigravity | Codex -> Antigravity adapter `:4002` -> `agy` CLI | `useAiCredits=false` and `useG1Credits=false` keep AI-credit overages disabled. Headless runs require the configured noninteractive permission mode. |
 | GitHub Copilot | Codex -> local Copilot Responses adapter `:4003` -> `copilot` CLI | Requires an authenticated local Copilot CLI; unavailable adapters are skipped by fallback. |
 | Local router | Codex Responses -> `127.0.0.1:4100` -> model-based provider dispatch | GPT/Codex models use the stored Codex OAuth; external model names use the existing local bridges. |
 
@@ -732,20 +731,10 @@ The local router owns the GPT branch separately and forwards it to
 `https://chatgpt.com/backend-api/codex/responses` with the existing Codex OAuth
 token and account ID from `auth.json`.
 
-The five LaunchAgents under `scripts/codex/launchagents/` are the supported
+The four LaunchAgents under `scripts/codex/launchagents/` are the supported
 persistence path for this Desktop host. The installer loads them with `KeepAlive`
 and also retains idempotent direct-start hooks as a fallback when `launchctl` is
 inaccessible.
-
-`scripts/ensure-codex-antigravity-proxy.sh` also self-heals config drift for the
-Antigravity LiteLLM process: LiteLLM only reads `antigravity.yaml` at process
-start, so a healthy, already-running process can keep serving a stale config
-after that file changes. The script fingerprints the resolved config content
-against a stamp recorded on the last successful start and restarts LiteLLM
-(via `launchctl kickstart`, or by recycling the locally tracked `nohup` PID
-when running outside launchd) only when the fingerprint has changed; a missing
-stamp (first run) or an unreadable config is never treated as drift, so
-healthy, up-to-date processes are never restarted unnecessarily.
 
 The router applies a 900-second total upstream response timeout by default,
 including streaming response bodies; override it with the positive
@@ -821,7 +810,6 @@ installer is the only supported materialization path into
   direct symlink would be denied by macOS Desktop privacy controls when the
   ChatGPT app launches it; the installer rematerializes the copy whenever the
   versioned source changes.
-- LiteLLM model mapping: `scripts/codex/litellm/antigravity.yaml`.
 
 ### Operational notes
 
@@ -868,6 +856,84 @@ Install or repair the managed machine integration with:
 bash /Users/henrykirk/AutoDev/scripts/codex/install-codex-integration.sh --restart
 bash /Users/henrykirk/AutoDev/scripts/codex/install-codex-integration.sh --check
 ```
+
+## Build vs. delegate
+
+This integration sits next to two off-the-shelf components that advertise
+overlapping capabilities -- LiteLLM (native Anthropic/OpenAI/Gemini providers,
+routing, fallbacks, cooldowns) and the Codex app-server. What is custom here is
+custom deliberately. This section records why, so the question does not have to
+be re-derived.
+
+### The provider bridges are not model gateways
+
+Three of the four bridges spawn a subscription-authenticated coding-agent CLI
+and return a *completed agent turn* -- file edits, tool calls, and for Claude
+and Antigravity their own subagents -- not a model completion:
+
+| Bridge | Authenticates as |
+| --- | --- |
+| `codex-claude-cli-responses-proxy.py` | the `claude` CLI's Claude Code OAuth subscription. `claude_environment()` **removes** `ANTHROPIC_API_KEY` and `ANTHROPIC_AUTH_TOKEN` from the child environment so the CLI cannot silently fall back to metered API billing. |
+| `codex-antigravity-cli-responses-proxy.mjs` | the `agy` CLI's Antigravity subscription. `ensure-codex-antigravity-proxy.sh` refuses to start unless `useAiCredits=false` and `useG1Credits=false`. |
+| `codex-copilot-cli-responses-proxy.mjs` | the `copilot` CLI's own login. |
+| `codex-minimax-responses-proxy.mjs` | a plain `MINIMAX_API_KEY`; no subprocess. |
+
+LiteLLM's `anthropic/*` and `gemini/*` providers speak HTTPS with an API key:
+a different account, a different meter, and per-token billing where these have
+a flat subscription. They would also return a completion where these return an
+agent turn, so `capabilities.subagentSpawn: true` -- which the router enforces
+at config load for every orchestrator-tier provider -- could not hold. MiniMax
+is the one bridge whose *auth* would suit a LiteLLM deployment, but most of it
+is the `multi_agent_v1` namespace flatten/re-expand round-trip that LiteLLM has
+no equivalent for; without that the orchestrator emits plain text instead of
+delegating.
+
+### The router owns routing, not LiteLLM
+
+LiteLLM genuinely implements fallbacks, cooldowns, retries, load balancing, and
+model aliases, so that part of the router overlaps it on paper. The router keeps
+the job because its fallback is entangled with semantics LiteLLM cannot express:
+
+- per-provider orchestrator `reasoningEffort`, applied per fallback candidate;
+- the spawn-capability validation that fails the process at config load;
+- the session-to-provider join that attributes `router_alias` subagents to the
+  provider that ran the parent turn;
+- namespaced-tool flattening for every non-Codex provider;
+- the `x-autodev-*` headers, which the router **generates** per request from its
+  own alias dispatch. LiteLLM can forward allowlisted client headers; it cannot
+  mint them, and a forwarded client value would be exactly the spoofable input
+  `downstreamHeaders` refuses to trust.
+
+LiteLLM was previously deployed in front of the Antigravity adapter. It routed
+nothing -- one upstream, an identity model map, `num_retries: 0`, no callbacks,
+budgets, caching, or provider translation -- and it cost a config-drift
+self-healer (LiteLLM reads its YAML once at start), a header workaround (it
+dropped raw headers, so the router smuggled its own through the Responses body),
+and a correctness bug (it mistranslated `response.failed`, so the adapter faked
+a *completed* response carrying the error as assistant text). The router calls
+the adapter directly now and all three are gone.
+
+### What the Codex app-server does and does not offer
+
+The app-server exposes thread, turn, `command/exec`, `model/list`, filesystem,
+and approval methods over JSON-RPC. It has no provider selection, fallback,
+retry, model aliasing, usage telemetry, OTLP export, or concurrency limiting;
+`thread/start` accepts a `model` but no provider orchestration. It therefore
+does not overlap the router's job. A `thread/list` snapshot was surfaced in
+`/status` for a while; nothing in routing, concurrency, or fallback ever read
+it, and it cold-spawned a `codex app-server` process on every refresh, so it
+was removed rather than reworked.
+
+### Why the OTLP receiver lives in the router
+
+Codex's exporter posts logs, traces, and metrics to one endpoint, and the
+router is the only always-on local service on the request path, so it receives
+them. Co-location also lets `/status` present router-owned request telemetry
+and Codex-native metrics together while keeping them separately sourced --
+`codexNativeSpawns` sits *beside* the router's subagent count rather than being
+summed into it, because adding the two would double-count every `router_alias`
+spawn. The router owns provider selection, fallback, cooldown, concurrency, and
+origin telemetry because Codex emits none of those semantics.
 
 ## Distribution and validation strategy
 

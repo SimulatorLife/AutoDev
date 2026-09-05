@@ -13,8 +13,8 @@ default_subagent_model = "gemini-3.8-flash-medium"
 default_subagent_reasoning_effort = "medium"
 
 [model_providers.antigravity_cli]
-name = "Antigravity CLI subscription through local LiteLLM"
-base_url = "http://127.0.0.1:4001/v1"
+name = "Antigravity CLI subscription through the local Responses adapter"
+base_url = "http://127.0.0.1:4002/v1"
 env_key = "LITELLM_API_KEY"
 wire_api = "responses"
 requires_openai_auth = false

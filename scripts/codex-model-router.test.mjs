@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import { connect } from "node:net";
+import { existsSync, readFileSync } from "node:fs";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import test from "node:test";
 import { join } from "node:path";
@@ -34,7 +35,6 @@ import {
   isProviderCoolingDown,
   loadRouterState,
   nextProviderRetryMs,
-  normalizeCodexTask,
   parseConcurrencyConfig,
   parseTurnMetadataJson,
   persistRouterStateNow,
@@ -58,7 +58,6 @@ import {
   ROUTER_INSTANCE_ID,
   serializeRouterState,
   spawnFailureStatus,
-  summarizeCodexTasks,
   responseTextFromSse,
   roleCandidates,
   roleForModel,
@@ -85,26 +84,40 @@ import {
 import { resolveAgentEventReporter } from "./codex/lib/agent-events.mjs";
 import { spawnedChildren } from "./codex-antigravity-cli-responses-proxy.mjs";
 
-test("antigravity LiteLLM config forwards the allowlisted turn-metadata header to the local adapter", async () => {
-  const config = await readFile(new URL("./codex/litellm/antigravity.yaml", import.meta.url), "utf8");
-  const generalSettingsMatch = config.match(/^general_settings:\n((?:[ \t]+.*\n?)*)/m);
-  assert.ok(generalSettingsMatch, "antigravity.yaml must have a general_settings block");
-  assert.match(
-    generalSettingsMatch[ 1 ],
-    /^\s*forward_client_headers_to_llm_api:\s*true\s*$/m,
-    "general_settings must set forward_client_headers_to_llm_api: true so LiteLLM forwards " +
-    `x-* headers (including the allowlisted ${FORWARDED_REQUEST_HEADERS[ 0 ]}) to the local adapter`,
-  );
-  assert.ok(
-    FORWARDED_REQUEST_HEADERS[ 0 ].startsWith("x-"),
-    "forward_client_headers_to_llm_api only forwards x-*/anthropic-beta headers, so the allowlisted header must match",
-  );
-  // The local Antigravity adapter (agy CLI Responses bridge) must remain the api_base for every routed model.
-  const apiBases = [ ...config.matchAll(/^\s*api_base:\s*(\S+)\s*$/gm) ].map((m) => m[ 1 ]);
-  assert.ok(apiBases.length > 0, "antigravity.yaml must route at least one model");
-  for (const apiBase of apiBases) {
-    assert.equal(apiBase, "http://127.0.0.1:4002/v1");
+const read = (path) => readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
+
+test("the router calls the Antigravity adapter directly, with no LiteLLM hop", async () => {
+  // LiteLLM used to sit between the router and the agy adapter as an identity
+  // pass-through. It routed nothing, but it dropped raw request headers -- which
+  // forced the router to smuggle its own headers through the Responses body --
+  // and it mistranslated `response.failed`, which forced the adapter to fake a
+  // completed response. Both workarounds are gone with it.
+  const route = routeForModel("gemini-3.8-flash-high");
+  assert.equal(route.provider, "antigravity");
+  assert.equal(route.baseUrl, "http://127.0.0.1:4002/v1");
+  assert.equal(route.healthUrl, "http://127.0.0.1:4002/health/liveliness");
+
+  const router = read("scripts/codex-model-router.mjs");
+  assert.doesNotMatch(router, /extra_headers = forwarded/, "router headers must travel as real headers");
+  assert.doesNotMatch(router, /metadata\?\.provider_error/, "the faked-completion detector is obsolete");
+
+  const bridge = read("scripts/codex-antigravity-cli-responses-proxy.mjs");
+  assert.match(bridge, /emit\("response\.failed"/, "a post-stream failure must be reported as a failure");
+  assert.doesNotMatch(bridge, /failedStream/);
+
+  for (const path of [
+    "scripts/codex/litellm/antigravity.yaml",
+    "scripts/run-codex-antigravity-litellm.sh",
+    "scripts/codex/launchagents/com.codex.antigravity-litellm.plist",
+  ]) {
+    assert.equal(existsSync(new URL(`../${path}`, import.meta.url)), false, `${path} must be gone`);
   }
+  assert.doesNotMatch(read("scripts/ensure-codex-antigravity-proxy.sh"), /litellm/i, "the ensure hook must not supervise LiteLLM");
+  // The installer still names the obsolete assets, because naming them is how
+  // it removes them from a host that has them; it must not install them.
+  const installer = read("scripts/codex/install-codex-integration.sh");
+  assert.match(installer, /obsolete_launchagent_labels=\(com\.codex\.antigravity-litellm\)/);
+  assert.doesNotMatch(installer, /litellm_dir/);
 });
 
 test("loads editable provider and role models from JSON routing config", async () => {
@@ -913,12 +926,12 @@ test("relays the canonical workspaces-map-keyed turn metadata even when it arriv
   }
 });
 
-test("carries only the approved workspace header through LiteLLM's Responses extra_headers field", async () => {
+test("sends the router's own headers to the Antigravity adapter and discards the caller's", async () => {
   const originalFetch = globalThis.fetch;
   let upstreamHeaders = null;
   let upstreamPayload = null;
   globalThis.fetch = async (url, options) => {
-    if (String(url) === "http://127.0.0.1:4001/v1/responses") {
+    if (String(url) === "http://127.0.0.1:4002/v1/responses") {
       upstreamHeaders = options.headers;
       upstreamPayload = JSON.parse(options.body);
       return new Response(JSON.stringify({ id: "antigravity-response", model: "gemini-3.8-flash-medium", output_text: "ok" }), {
@@ -945,20 +958,21 @@ test("carries only the approved workspace header through LiteLLM's Responses ext
       }),
     });
     assert.equal(response.status, 200);
+
+    // These used to ride in the Responses body because the LiteLLM hop dropped
+    // raw headers. The router calls the adapter directly now, so they are
+    // ordinary request headers.
     assert.equal(upstreamHeaders[ "x-codex-turn-metadata" ], turnMetadata);
-    // LiteLLM can drop raw request headers, so the router's own headers ride
-    // along in extra_headers -- but only the router's: the caller's entries are
-    // discarded rather than forwarded.
-    assert.deepEqual(Object.keys(upstreamPayload.extra_headers).sort(), [
-      "x-autodev-agent-events-url",
-      "x-autodev-request-id",
-      "x-autodev-subagent-spawn-tools",
-      "x-codex-turn-metadata",
-    ]);
-    assert.equal(upstreamPayload.extra_headers[ "x-codex-turn-metadata" ], turnMetadata);
-    assert.equal(upstreamPayload.extra_headers[ "x-autodev-subagent-spawn-tools" ], "invoke_subagent");
-    assert.equal(upstreamPayload.extra_headers.authorization, undefined);
-    assert.equal(upstreamPayload.extra_headers[ "x-untrusted" ], undefined);
+    assert.equal(upstreamHeaders[ "x-autodev-subagent-spawn-tools" ], "invoke_subagent");
+    assert.ok(upstreamHeaders[ "x-autodev-request-id" ]);
+    assert.ok(upstreamHeaders[ "x-autodev-agent-events-url" ]);
+
+    // `extra_headers` is a caller-supplied escape hatch that would bypass the
+    // router's credential and header allowlist, so it is dropped outright and
+    // never rebuilt.
+    assert.equal(Object.hasOwn(upstreamPayload, "extra_headers"), false);
+    assert.notEqual(upstreamHeaders.authorization, "Bearer caller-secret");
+    assert.equal(upstreamHeaders[ "x-untrusted" ], undefined);
   } finally {
     await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
     globalThis.fetch = originalFetch;
@@ -1341,26 +1355,6 @@ test("tracks router-visible subagent spawn failure reasons", () => {
   resetRouterTelemetry();
 });
 
-test("normalizes and summarizes Codex task statuses for status reporting", () => {
-  const summary = summarizeCodexTasks([
-    { id: "task-active", status: { type: "active" }, name: "Active task", cwd: "/tmp", modelProvider: "local_model_router", createdAt: 1787940648, updatedAt: 1787954665 },
-    { id: "task-idle", status: "idle", name: "Idle task" },
-    { sessionId: "task-not-loaded", status: { type: "notLoaded" }, name: "Saved task" },
-  ]);
-  assert.deepEqual(summary.countsByStatus, { active: 1, idle: 1, notLoaded: 1 });
-  assert.equal(summary.tasks[ 0 ].status, "active");
-  assert.equal(summary.tasks[ 0 ].createdAt, "2026-08-28T18:10:48.000Z");
-  assert.equal(summary.tasks[ 0 ].updatedAt, "2026-08-28T22:04:25.000Z");
-  assert.equal(summary.tasks[ 2 ].id, "task-not-loaded");
-  assert.equal(normalizeCodexTask({ id: "task", status: { type: "notLoaded" } }).status, "notLoaded");
-});
-
-test("keeps Codex task timestamp normalization compatible with millisecond and ISO inputs", () => {
-  assert.equal(normalizeCodexTask({ id: "task", updatedAt: 1787954665000 }).updatedAt, "2026-08-28T22:04:25.000Z");
-  assert.equal(normalizeCodexTask({ id: "task", updatedAt: "2026-08-28T22:04:25Z" }).updatedAt, "2026-08-28T22:04:25.000Z");
-  assert.equal(normalizeCodexTask({ id: "task", updatedAt: "not-a-timestamp" }).updatedAt, null);
-});
-
 test("serves HTML only from /dashboard and raw JSON from /status", async () => {
   const server = createServer((request, response) => { void handle(request, response); });
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
@@ -1450,9 +1444,6 @@ test("serves HTML only from /dashboard and raw JSON from /status", async () => {
     assert.doesNotMatch(dashboardBody, /codex\.skill\.injected/);
     assert.match(dashboardBody, /codex\.thread\.skills\.enabled_total/);
     assert.match(dashboardBody, /MCP ready/);
-    assert.match(dashboardBody, /id="codex-tasks"/);
-    assert.match(dashboardBody, /aria-controls="codex-tasks-section" aria-expanded="false"/);
-    assert.match(dashboardBody, /id="codex-tasks-section" hidden/);
     assert.match(dashboardBody, /aria-controls="recent-routing-events-section" aria-expanded="false"/);
     assert.match(dashboardBody, /id="recent-routing-events-section" hidden/);
     assert.match(dashboardBody, /document\.querySelectorAll\("\.toggle-section"\)/);
@@ -1471,7 +1462,6 @@ test("serves HTML only from /dashboard and raw JSON from /status", async () => {
     assert.match(dashboardBody, /<tfoot>/);
     assert.match(dashboardBody, /class="provider-summary"/);
     assert.match(dashboardBody, /id="summary-attempts"/);
-    assert.match(dashboardBody, /Status: \$\{taskStatus.status/);
     assert.match(dashboardBody, /const collapsible = models.length > 1/);
     assert.match(dashboardBody, /const modelStats = uniqueModels.reduce/);
     assert.match(dashboardBody, /total\.active \+= stats\.active \?\? 0;/);
@@ -1513,7 +1503,7 @@ test("serves status snapshots without exposing request content", async () => {
     assert.equal(response.status, 200);
     const status = await response.json();
     assert.equal(status.schema, "autodev-router-status-v1");
-    assert.equal(status.codexTasks.status, "pending");
+    assert.equal(Object.hasOwn(status, "codexTasks"), false);
     assert.equal(status.providers.claude.configuredModels.default, "sonnet");
     assert.equal(Object.hasOwn(status, "prompt"), false);
     assert.equal(Object.hasOwn(status.providers.claude, "apiKey"), false);
