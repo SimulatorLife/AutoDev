@@ -15,6 +15,21 @@
  * config, no provider identity, and no router address of its own; and because
  * the request id is a router-generated UUID a bridge only learns by serving
  * the request, presenting it is also what authorizes the report.
+ *
+ * Two event types travel this channel. `subagent_spawn` opens a child; the
+ * optional matching `subagent_result` closes it with the duration and outcome
+ * the CLI actually observed. Reporting the close is what lets a CLI-delegated
+ * child contribute a measured turn to the router's usage tables rather than
+ * only a spawn count. It is optional because a bridge that never sends one --
+ * or dies mid-turn -- must not strand an open child: the router closes any
+ * child still open when the parent request finishes, using the parent's
+ * outcome and the elapsed time since the spawn. Reporting the close only makes
+ * the measurement per child instead of per parent turn.
+ *
+ * Children carry an `id` that is unique within the request, so the close can
+ * name the same child the open did. A bridge that does not assign one gets a
+ * generated id, and a report that names no children at all is expanded into
+ * `count` anonymous children by the router.
  */
 
 export const REQUEST_ID_HEADER = "x-autodev-request-id";
@@ -36,6 +51,13 @@ class AgentEventReporter {
     this.url = url;
     this.requestId = requestId;
     this.spawnTools = spawnTools;
+    this.childSequence = 0;
+  }
+
+  /** An id unique within this request, for callers that have no id of their own. */
+  nextChildId() {
+    this.childSequence += 1;
+    return `c${this.childSequence}`;
   }
 
   /** True when this tool name means the CLI just spawned a subagent. */
@@ -49,7 +71,7 @@ class AgentEventReporter {
    * report costs a count, a thrown one would cost the turn.
    */
   async reportSpawn({ tool, role = null, status = "started", count = 1 }) {
-    await this.post([ { type: "subagent_spawn", tool, role, status, count } ]);
+    await this.reportSpawns({ tool, children: Array.from({ length: Math.max(1, count) }, () => ({ role })), status });
   }
 
   /**
@@ -61,13 +83,37 @@ class AgentEventReporter {
    * the shape of the delegation, and the whole batch travels as one request.
    */
   async reportSpawns({ tool, children, status = "started" }) {
+    await this.post(this.childEvents("subagent_spawn", { tool, children, status }));
+  }
+
+  /**
+   * Post the outcome of children a previous `reportSpawns` opened. The `id` on
+   * each child is what pairs it with its open; `durationMs` is how long the
+   * CLI ran the child, which is the only per-child turn measurement that
+   * exists -- the router never served a request for it.
+   */
+  async reportResults({ tool, children, outcome = "success", durationMs = null, status = null }) {
+    const extra = { outcome: outcome === "success" ? "success" : "failure", durationMs: Number.isFinite(durationMs) ? Math.max(0, Math.round(durationMs)) : null };
+    await this.post(this.childEvents("subagent_result", { tool, children, status: status ?? extra.outcome }, extra));
+  }
+
+  /**
+   * One event per role in a batch, carrying that role's children. Grouping by
+   * role keeps the router's spawn rows the shape of the delegation -- a
+   * twelve-way fan-out is not twelve rows -- while the per-child ids inside
+   * each group still address each child individually.
+   */
+  childEvents(type, { tool, children, status }, extra = {}) {
     const list = Array.isArray(children) && children.length > 0 ? children : [ { role: null } ];
     const byRole = new Map();
     for (const child of list) {
       const role = typeof child?.role === "string" && child.role.trim() ? child.role.trim() : null;
-      byRole.set(role, (byRole.get(role) ?? 0) + 1);
+      const model = typeof child?.model === "string" && child.model.trim() ? child.model.trim() : null;
+      const id = typeof child?.id === "string" && child.id.trim() ? child.id.trim() : this.nextChildId();
+      if (!byRole.has(role)) byRole.set(role, []);
+      byRole.get(role).push(model ? { id, model } : { id });
     }
-    await this.post([ ...byRole ].map(([ role, count ]) => ({ type: "subagent_spawn", tool, role, status, count })));
+    return [ ...byRole ].map(([ role, group ]) => ({ type, tool, role, status, count: group.length, children: group, ...extra }));
   }
 
   async post(events) {

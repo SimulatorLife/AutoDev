@@ -9,7 +9,7 @@ import {
   SUBAGENT_SPAWN_TOOLS_HEADER,
   resolveAgentEventReporter,
 } from "../scripts/codex/lib/agent-events.mjs";
-import { agyArgs, modelEffort, resolveEffort, resolveModel, spawnedChildren } from "../scripts/codex-antigravity-cli-responses-proxy.mjs";
+import { agyArgs, modelEffort, resolveEffort, resolveModel, spawnedChildren, subagentModel } from "../scripts/codex-antigravity-cli-responses-proxy.mjs";
 
 const read = (path) => readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
 
@@ -68,7 +68,7 @@ test("a reported spawn names the request that authorizes it", async () => {
     await reporter.reportSpawn({ tool: "invoke_subagent", role: "explorer" });
     assert.deepEqual(received, [ {
       requestId: "request-1",
-      events: [ { type: "subagent_spawn", tool: "invoke_subagent", role: "explorer", status: "started", count: 1 } ],
+      events: [ { type: "subagent_spawn", tool: "invoke_subagent", role: "explorer", status: "started", count: 1, children: [ { id: "c1" } ] } ],
     } ]);
   } finally {
     await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
@@ -96,21 +96,39 @@ test("a batch of children is reported as a batch, grouped by role", async () => 
     // four spawns, not one, and must be able to tell the roles apart.
     await reporter.reportSpawns({
       tool: "invoke_subagent",
-      children: [ { role: "explorer" }, { role: "explorer" }, { role: "validator" }, { role: null } ],
+      children: [ { id: "s3.0", role: "explorer" }, { id: "s3.1", role: "explorer", model: "gemini-3.8-flash-high" }, { id: "s3.2", role: "validator" }, { id: "s3.3", role: null } ],
     });
     assert.deepEqual(received.at(-1), {
       requestId: "request-1",
       events: [
-        { type: "subagent_spawn", tool: "invoke_subagent", role: "explorer", status: "started", count: 2 },
-        { type: "subagent_spawn", tool: "invoke_subagent", role: "validator", status: "started", count: 1 },
-        { type: "subagent_spawn", tool: "invoke_subagent", role: null, status: "started", count: 1 },
+        { type: "subagent_spawn", tool: "invoke_subagent", role: "explorer", status: "started", count: 2, children: [ { id: "s3.0" }, { id: "s3.1", model: "gemini-3.8-flash-high" } ] },
+        { type: "subagent_spawn", tool: "invoke_subagent", role: "validator", status: "started", count: 1, children: [ { id: "s3.2" } ] },
+        { type: "subagent_spawn", tool: "invoke_subagent", role: null, status: "started", count: 1, children: [ { id: "s3.3" } ] },
       ],
     });
 
+    // The close names the same children the open did, which is what lets the
+    // router measure each child's own turn instead of the whole parent turn.
+    await reporter.reportResults({
+      tool: "invoke_subagent",
+      children: [ { id: "s3.0", role: "explorer" }, { id: "s3.2", role: "validator" } ],
+      outcome: "success",
+      durationMs: 41230,
+    });
+    assert.deepEqual(received.at(-1).events, [
+      { type: "subagent_result", tool: "invoke_subagent", role: "explorer", status: "success", count: 1, children: [ { id: "s3.0" } ], outcome: "success", durationMs: 41230 },
+      { type: "subagent_result", tool: "invoke_subagent", role: "validator", status: "success", count: 1, children: [ { id: "s3.2" } ], outcome: "success", durationMs: 41230 },
+    ]);
+
     // No children at all still reports the call, so a CLI that stops exporting
-    // its tool arguments degrades to the old count rather than to silence.
+    // its tool arguments degrades to the old count rather than to silence. The
+    // router still gets an id, so even that child can be closed individually.
     await reporter.reportSpawns({ tool: "invoke_subagent", children: [] });
-    assert.deepEqual(received.at(-1).events, [ { type: "subagent_spawn", tool: "invoke_subagent", role: null, status: "started", count: 1 } ]);
+    const [ degraded ] = received.at(-1).events;
+    assert.equal(degraded.count, 1);
+    assert.equal(degraded.role, null);
+    assert.equal(degraded.children.length, 1);
+    assert.match(degraded.children[ 0 ].id, /^c\d+$/, "a caller with no id of its own is given one");
   } finally {
     await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
   }
@@ -135,31 +153,52 @@ test("the Antigravity bridge counts every child in an invoke_subagent batch", ()
       }),
     },
   };
-  assert.deepEqual(spawnedChildren(batch), [ { role: "explorer" }, { role: "explorer" }, { role: "validator" } ]);
+  // Each child is addressable, so its own turn can be opened and closed rather
+  // than measured against the whole parent turn.
+  assert.deepEqual(spawnedChildren(batch), [
+    { id: "s3.0", role: "explorer", model: "inherit" },
+    { id: "s3.1", role: "explorer", model: "inherit" },
+    { id: "s3.2", role: "validator", model: "inherit" },
+  ]);
+  // `inherit` is agy naming the parent's model, not choosing one; resolving
+  // that is the router's job, so the bridge reports what the step said.
+  assert.equal(subagentModel({ Model: "gemini-3.8-flash-high" }), "gemini-3.8-flash-high");
+  assert.equal(subagentModel({ TypeName: "explorer" }), null);
 
   // agy has carried the arguments as a nested object and at other paths across
   // versions, so the batch is found by shape rather than by one pinned path.
   assert.deepEqual(
-    spawnedChildren({ tool_name: "invoke_subagent", tool_info: { args: { Subagents: [ { TypeName: "worker" } ] } } }),
-    [ { role: "worker" } ],
+    spawnedChildren({ tool_name: "invoke_subagent", tool_info: { args: { Subagents: [ { TypeName: "worker" } ] } } }).map(({ role, model }) => ({ role, model })),
+    [ { role: "worker", model: null } ],
   );
   assert.deepEqual(
-    spawnedChildren({ tool_name: "invoke_subagent", tool_input: '{"subagents":[{"name":"docs-researcher"},{}]}' }),
+    spawnedChildren({ tool_name: "invoke_subagent", tool_input: '{"subagents":[{"name":"docs-researcher"},{}]}' }).map(({ role }) => ({ role })),
     [ { role: "docs-researcher" }, { role: null } ],
   );
 
   // A child that names only a model names no role: `byRole` must not fill up
   // with model ids.
-  assert.deepEqual(spawnedChildren({ tool_info: { args: { Subagents: [ { Model: "inherit" } ] } } }), [ { role: null } ]);
+  assert.deepEqual(spawnedChildren({ tool_info: { args: { Subagents: [ { Model: "inherit" } ] } } }).map(({ role }) => role), [ null ]);
 
   // A step that exports no arguments is still one spawn, never zero.
-  assert.deepEqual(spawnedChildren({ tool_name: "invoke_subagent", state: "ACTIVE" }), [ { role: null } ]);
-  assert.deepEqual(spawnedChildren({ tool_info: { args: "not json" } }), [ { role: null } ]);
-  assert.deepEqual(spawnedChildren({ tool_info: { args: { Subagents: [] } } }), [ { role: null } ]);
-  assert.deepEqual(spawnedChildren(undefined), [ { role: null } ]);
-
-  // Free text that happens to mention the tool is not a batch.
-  assert.deepEqual(spawnedChildren({ text_delta: "I will call invoke_subagent with Subagents" }), [ { role: null } ]);
+  const roleless = [
+    { tool_name: "invoke_subagent", state: "ACTIVE" },
+    { tool_info: { args: "not json" } },
+    { tool_info: { args: { Subagents: [] } } },
+    undefined,
+    // Free text that happens to mention the tool is not a batch.
+    { text_delta: "I will call invoke_subagent with Subagents" },
+  ];
+  const rolelessIds = new Set();
+  for (const update of roleless) {
+    const [ child, ...rest ] = spawnedChildren(update);
+    assert.equal(rest.length, 0);
+    assert.equal(child.role, null);
+    // A step with no index still gets a distinct id: keying every one of them
+    // the same would let one step's close settle another step's children.
+    assert.equal(rolelessIds.has(child.id), false, `duplicate child id ${child.id}`);
+    rolelessIds.add(child.id);
+  }
 });
 
 test("a failed report costs a count, never the model turn", async () => {
@@ -203,6 +242,11 @@ test("the Antigravity bridge reports the subagents its own CLI spawns", () => {
   assert.match(source, /from "\.\/codex\/lib\/agent-events\.mjs"/);
   assert.match(source, /resolveAgentEventReporter\(request\.headers\)/);
   assert.match(source, /agentEvents\.reportSpawns\(\{ tool: toolName, children \}\)/);
+  // A child's own turn is measured only if the step that opened it is closed,
+  // and a run that ends without closing every step must not strand any.
+  assert.match(source, /agentEvents\.reportResults\(\{ tool: open\.tool, children: open\.children/);
+  assert.match(source, /flushSpawns\("failure"\)/);
+  assert.match(source, /flushSpawns\("success"\)/);
   // Only the opening transition is counted, and a step with no index must not
   // key every later spawn out of the count under a shared `undefined`.
   assert.match(source, /Number\.isFinite\(update\.step_index\)/);

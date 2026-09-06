@@ -77,8 +77,9 @@ are validated.
 The **Subagents spawned** table is the one place that counts every subagent
 behind the router, whichever provider spawned it. It is fed by
 `status.subagents`, not by OTEL: Codex's `codex.multi_agent.spawn` metric only
-covers Codex-exported threads, and `usage.byRole` only covers subagents that
-made a router request at all.
+covers Codex-exported threads. It is also the only table that counts a spawn as
+a spawn -- `usage.byRole` counts the *turns* subagents ran, which is a different
+measurement, and one a child that spawned but never ran does not contribute to.
 
 Two mechanisms are distinguished. `router_alias` spawns are Codex child threads
 that asked the router for an `autodev/<role>` alias, driven by Codex itself or
@@ -95,9 +96,22 @@ the bridge reports one count per entry and takes each child's role from the
 batch. The Role column reading `unattributed` for an Antigravity row therefore
 means the CLI step exported no tool arguments, not that the delegation was
 anonymous. A `bridge_native` subagent never makes a router request of its own,
-so it appears here and in `subagents.byRole` but contributes no turns to
-**Usage by orchestrator and subagents** -- an orchestrator that delegated
-entirely inside its CLI still shows exactly one model's usage there. See
+so its turn reaches **Usage by orchestrator and subagents** and **Provider
+health and usage** only through the bridge's report. Those reports are now
+counted: each child opens a usage turn attributed to the provider, workspace,
+and model of the request the bridge was serving, and closes with the duration
+the CLI spent on it (or, when the bridge reports no close, with the time
+elapsed before the parent turn ended). An orchestrator that delegated entirely
+inside its CLI therefore shows its children's work rather than exactly one
+model's usage.
+
+Those turns are counted in the usage buckets only, never through the router's
+event path: provider health, cooldown, and the fallback chain describe routing
+decisions the router made, and a child it never routed must not move them. A
+child whose CLI exported no role is counted under `unattributed-subagent` in
+`usage.byRole` -- the bare `unattributed` key is roleless orchestrator traffic,
+which the dashboard renders as the Orchestrator row. The line above the usage
+table names how many CLI-delegated turns are included. See
 `docs/provider-routing.md` -> "Counting subagents across providers".
 
 The totals row is the all-time count; the table rows roll up only the 50 most
@@ -109,6 +123,12 @@ count would double-count every `router_alias` spawn. Attribution of a
 that session's `autodev/orchestrator` turn -- and reads `unattributed` when the
 router never saw that session's parent turn. See
 `docs/provider-routing.md` -> "Counting subagents across providers".
+
+A provider's row in **Provider health and usage** sums every model observed for
+that provider, not only the models its tiers configure. A directly pinned model
+and a CLI subagent's own model both appear in usage under a key no tier names;
+summing the configured list alone made the provider rows add up to less than
+the totals row beneath them.
 
 The dashboard's Operational summary table groups Codex receiver,
 state-database, and concurrency values as category/metric/value rows instead of

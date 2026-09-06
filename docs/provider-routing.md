@@ -585,7 +585,8 @@ per request:
 | `x-autodev-agent-events-url` | `http://127.0.0.1:4100/v1/agent-events` |
 
 A bridge matches the tool names its CLI reports against the watchlist and
-`POST`s `{ requestId, events: [ { type: "subagent_spawn", tool, role, status, count } ] }`.
+`POST`s `{ requestId, events: [ { type: "subagent_spawn", tool, role, status, count, children } ] }`,
+where `children` is one `{ id, model }` per subagent the call created.
 The bridge therefore needs no routing config, no provider identity, and no
 router address of its own; and because the request id is an unguessable UUID a
 bridge only learns by serving the request, presenting it is also what
@@ -637,9 +638,55 @@ no joinable parent turn is attributed to `unattributed` rather than guessed. `co
 into it, because it covers only Codex-exported threads and adding the two would
 double-count every `router_alias` spawn.
 
+#### CLI-delegated children as measured turns
+
+A spawn count says a child existed; it does not say the provider did the work.
+Counting only spawns left the provider that actually ran a twelve-way fan-out
+showing exactly one turn in **Provider health and usage**, and no subagent row
+at all in **Usage by orchestrator and subagents** -- both tables are built from
+router requests, and a CLI child never makes one.
+
+The bridge's report is the only evidence those turns happened, so it is also
+what opens a usage bucket for each child. A `subagent_spawn` opens one turn per
+child, attributed to the provider, workspace, and model of the request the
+bridge was serving; the matching `subagent_result`
+(`{ type: "subagent_result", tool, role, outcome, durationMs, children }`)
+closes it with the duration the CLI actually spent. The `id` on each child is
+what pairs the close with its open, and is unique within the request.
+
+Closing is an accuracy improvement, not a requirement. A CLI child cannot
+outlive the parent turn that spawned it, so the router closes any child still
+open when the parent request finishes, measured against the time elapsed since
+its spawn. A bridge that never reports a close -- or dies mid-turn -- therefore
+still has its children counted; only the per-child duration is lost. A report
+that lands after the parent turn already ended is opened and settled at once
+rather than dropped, because bridges post without awaiting.
+
+These turns are deliberately *not* fed through the router's event path.
+Provider health, cooldown, and the fallback chain describe routing decisions
+this router made, and a child it never routed must not move them. Only the
+usage buckets -- which measure work done behind the router, not routing --
+count them, tagged with the `subagent` origin.
+
+Two details follow from that:
+
+- A child whose spawn step exported no role is counted under
+  `unattributed-subagent`, never the bare `unattributed` role. That key is
+  roleless *orchestrator* traffic, which the dashboard renders as the
+  Orchestrator row, so folding children into it would credit a delegation to
+  its parent. `status.subagents.byRole` still says `unattributed` for the same
+  children; each key is unambiguous within its own table.
+- A child's model is its own only when the batch entry names a concrete one.
+  agy writes `inherit` when the child runs on whatever the parent was routed
+  to, which is not a model id, so the router resolves it to the parent's model.
+  A concrete child model that no tier configures still reaches the provider's
+  row: the dashboard sums every model observed for a provider, not only the
+  configured ones.
+
 The shared reporter is `scripts/codex/lib/agent-events.mjs`; the Claude bridge
 mirrors it in Python. The installer ships the module beside the bridges that
-import it.
+import it. The Claude bridge reports spawns but not closes, so its children are
+measured against the parent turn until it adopts `reportResults`.
 
 ### Reasoning effort on the Antigravity bridge
 

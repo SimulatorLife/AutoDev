@@ -1183,6 +1183,120 @@ function noteBridgeRequest(requestId, context) {
   }
 }
 
+// Usage accounting for `bridge_native` children.
+//
+// A CLI-delegated child never reaches the router as a request, so it used to
+// exist only as a spawn count: the provider that actually did the work showed
+// one turn in **Provider health and usage** no matter how wide it fanned out,
+// and **Usage by orchestrator and subagents** showed no subagent row at all.
+// The bridge's report is the only evidence those turns happened, so it is what
+// opens and closes a usage bucket for each child here.
+//
+// These are deliberately *not* routed through recordRouterEvent: provider
+// health, cooldown, and the fallback chain describe routing decisions this
+// router made, and a child it never routed must not move them. Only the usage
+// buckets -- which measure work done behind the router, not routing -- count
+// them, tagged with the `subagent` origin.
+const MAX_TRACKED_BRIDGE_SUBAGENTS = 512;
+const bridgeSubagentUsage = new Map();
+
+// A roleless CLI child cannot share the `unattributed` role bucket: that key is
+// the roleless *orchestrator* traffic the dashboard renders as the Orchestrator
+// row, and folding children into it would credit a delegation to its parent.
+const UNATTRIBUTED_SUBAGENT_ROLE = "unattributed-subagent";
+
+// A child model that names the parent's choice rather than one of its own.
+const INHERITED_CHILD_MODELS = new Set(["inherit", "self", "default", "parent"]);
+
+function bridgeSubagentKey(requestId, childId) {
+  return `${requestId}\u0000${childId}`;
+}
+
+function openBridgeSubagentUsage({ requestId, context, role, childId, model }) {
+  const key = bridgeSubagentKey(requestId, childId);
+  // Both name the bucket, so neither can be missing; the spawn itself is
+  // already counted whether or not a turn can be measured for it.
+  if (!context.provider || !context.model || bridgeSubagentUsage.has(key)) return;
+  // A bridge posts its report without awaiting it, so one can arrive after the
+  // parent turn already ended. Such a child is still real work: open it and
+  // settle it at once against the parent turn it ran inside.
+  const settled = context.finished ?? null;
+  // `inherit`/`self` is agy naming the parent's model rather than choosing one,
+  // and a child with no model named ran on whatever the parent was routed to.
+  const childModel = model && !INHERITED_CHILD_MODELS.has(model.toLowerCase()) ? model : context.model;
+  const entry = {
+    requestId,
+    provider: context.provider,
+    model: childModel,
+    role: role ?? UNATTRIBUTED_SUBAGENT_ROLE,
+    workspace: context.workspace ?? null,
+    startedAt: Date.now(),
+  };
+  bridgeSubagentUsage.set(key, entry);
+  recordUsageEvent({
+    phase: "selected",
+    requestId: key,
+    role: entry.role,
+    provider: entry.provider,
+    model: entry.model,
+    workspace: entry.workspace,
+    origin: "subagent",
+    timestamp: new Date().toISOString(),
+  });
+  if (settled) {
+    closeBridgeSubagentUsage(key, { outcome: settled.outcome, failureClass: settled.outcome === "success" ? null : "parent_turn_failed", elapsedMs: settled.elapsedMs });
+    return;
+  }
+  // A bridge that never closes its children must not grow this map without
+  // bound; the oldest is closed out as a failure rather than dropped, which
+  // would leave its `active` count raised forever.
+  while (bridgeSubagentUsage.size > MAX_TRACKED_BRIDGE_SUBAGENTS) {
+    closeBridgeSubagentUsage(bridgeSubagentUsage.keys().next().value, { outcome: "failure", failureClass: "subagent_result_missing" });
+  }
+}
+
+function closeBridgeSubagentUsage(key, { outcome = "success", failureClass = null, elapsedMs = null, toolCalls = 0 } = {}) {
+  const entry = bridgeSubagentUsage.get(key);
+  if (!entry) return false;
+  bridgeSubagentUsage.delete(key);
+  recordUsageEvent({
+    phase: "result",
+    requestId: key,
+    role: entry.role,
+    provider: entry.provider,
+    model: entry.model,
+    workspace: entry.workspace,
+    origin: "subagent",
+    outcome,
+    failureClass,
+    elapsedMs: Number.isFinite(elapsedMs) ? elapsedMs : Date.now() - entry.startedAt,
+    toolCalls,
+    timestamp: new Date().toISOString(),
+  });
+  return true;
+}
+
+// A CLI child cannot outlive the parent turn that spawned it, so the parent's
+// result is the deadline for every child still open under it. This is what
+// makes the bridge's `subagent_result` report an accuracy improvement rather
+// than a requirement: without one the child is still counted, measured against
+// the parent turn instead of its own.
+function closeBridgeSubagentsForRequest(requestId, outcome, elapsedMs = null) {
+  if (!requestId) return 0;
+  const settled = { outcome: outcome === "success" ? "success" : "failure", elapsedMs: Number.isFinite(elapsedMs) ? Math.max(0, elapsedMs) : null };
+  const context = bridgeRequestContext.get(requestId);
+  // Remembered so a report that arrives after this point can still be settled;
+  // a fallback chain re-registers the context per candidate, which clears it.
+  if (context) context.finished = settled;
+  let closed = 0;
+  for (const [key, entry] of [...bridgeSubagentUsage]) {
+    if (entry.requestId !== requestId) continue;
+    closeBridgeSubagentUsage(key, { outcome: settled.outcome, failureClass: settled.outcome === "success" ? null : "parent_turn_failed" });
+    closed += 1;
+  }
+  return closed;
+}
+
 function bumpCount(collection, key, amount) {
   collection[key] = (collection[key] ?? 0) + amount;
 }
@@ -1230,6 +1344,7 @@ function resetSubagentTelemetry() {
   subagentTelemetry.recent = [];
   orchestratorProviderBySession.clear();
   bridgeRequestContext.clear();
+  bridgeSubagentUsage.clear();
 }
 
 function subagentStatus() {
@@ -1251,28 +1366,72 @@ function subagentStatus() {
 // Ingests a provider bridge's report that its CLI invoked a subagent spawn
 // tool. Only reports naming a request id this router actually issued are
 // counted; anything else is a caller that never served a router request.
+let anonymousChildSequence = 0;
+
+// The children one report names, as `{ id, model }`. A bridge that assigns its
+// own ids gets them back on the matching `subagent_result`; one that names no
+// children at all still gets `count` distinct buckets rather than a single
+// shared one, so a fan-out is never collapsed into one turn.
+function reportedChildren(event) {
+  const listed = (Array.isArray(event.children) ? event.children : []).filter((child) => child && typeof child === "object");
+  const children = listed.map((child) => ({
+    id: typeof child.id === "string" && child.id.trim() ? safeMetricLabel(child.id) : null,
+    model: typeof child.model === "string" && child.model.trim() ? safeMetricLabel(child.model) : null,
+  }));
+  // `count` is the older, id-less form of the same statement, so a report that
+  // names fewer children than it counts is padded rather than truncated: the
+  // unnamed ones are real subagents that simply cannot be closed individually.
+  const count = Number.isInteger(event.count) && event.count > 0 ? event.count : 1;
+  while (children.length < count) children.push({ id: null, model: null });
+  return children.map((child) => child.id ? child : { ...child, id: `anon${(anonymousChildSequence += 1)}` });
+}
+
 function ingestAgentEvents(payload) {
   const requestId = typeof payload?.requestId === "string" ? payload.requestId.trim() : "";
   const context = requestId ? bridgeRequestContext.get(requestId) : undefined;
-  if (!context) return { accepted: 0, rejected: Array.isArray(payload?.events) ? payload.events.length : 0, reason: "unknown_request_id" };
+  if (!context) return { accepted: 0, closed: 0, rejected: Array.isArray(payload?.events) ? payload.events.length : 0, reason: "unknown_request_id" };
   const events = Array.isArray(payload.events) ? payload.events : [];
+  // `accepted` and `closed` count subagents; `rejected` counts events the
+  // router did not recognize. They measure different things -- one batch event
+  // is worth up to sixteen children -- so they are not each other's complement.
   let accepted = 0;
+  let closed = 0;
+  let rejected = 0;
   for (const event of events) {
-    if (!event || typeof event !== "object" || event.type !== "subagent_spawn") continue;
-    const count = Number.isInteger(event.count) && event.count > 0 ? event.count : 1;
+    if (!event || typeof event !== "object" || (event.type !== "subagent_spawn" && event.type !== "subagent_result")) {
+      rejected += 1;
+      continue;
+    }
+    const role = typeof event.role === "string" && event.role.trim() ? safeMetricLabel(event.role) : null;
+    const children = reportedChildren(event);
+    const count = children.length;
+    if (event.type === "subagent_result") {
+      // A close is not a new subagent: it only settles buckets an earlier
+      // spawn opened, so it adds nothing to the spawn counts.
+      const outcome = event.outcome === "failure" ? "failure" : "success";
+      const durationMs = Number.isFinite(event.durationMs) ? Math.max(0, event.durationMs) : null;
+      for (const child of children) {
+        if (closeBridgeSubagentUsage(bridgeSubagentKey(requestId, child.id), { outcome, elapsedMs: durationMs, failureClass: outcome === "failure" ? "subagent_failed" : null })) closed += 1;
+      }
+      continue;
+    }
     recordSubagentSpawn({
       mechanism: "bridge_native",
       provider: context.provider,
-      role: typeof event.role === "string" && event.role.trim() ? safeMetricLabel(event.role) : null,
+      role,
       status: typeof event.status === "string" && event.status.trim() ? safeMetricLabel(event.status) : "started",
       tool: typeof event.tool === "string" && event.tool.trim() ? safeMetricLabel(event.tool) : null,
       requestId,
       workspace: context.workspace ?? null,
       count,
     });
+    // Each child also becomes a turn in the usage tables, so the provider that
+    // ran the delegation is credited with the work rather than with the single
+    // request the router happened to see.
+    for (const child of children) openBridgeSubagentUsage({ requestId, context, role, childId: child.id, model: child.model });
     accepted += count;
   }
-  return { accepted, rejected: events.length - accepted, reason: null };
+  return { accepted, closed, rejected, reason: null };
 }
 
 function providerState(provider) {
@@ -1342,6 +1501,9 @@ function recordRouterEvent({ phase, requestId, role = null, requestedModel, prov
   if (provider && model && ["selected", "skipped", "result"].includes(phase)) {
     recordUsageEvent({ phase, requestId, role, provider, model, workspace: workspaceContext, outcome, failureClass, status, elapsedMs, toolCalls, timestamp, origin });
   }
+  // Any CLI child still open under this request ends with it; see
+  // closeBridgeSubagentsForRequest.
+  if (phase === "result") closeBridgeSubagentsForRequest(requestId, outcome, elapsedMs);
   const state = provider ? providerState(provider) : null;
   if (state && phase === "selected") {
     state.attempts += 1;
@@ -3108,6 +3270,8 @@ export {
   subagentStatus,
   ingestAgentEvents,
   noteBridgeRequest,
+  closeBridgeSubagentsForRequest,
+  UNATTRIBUTED_SUBAGENT_ROLE,
   noteOrchestratorSession,
   orchestratorProviderForSession,
   SUBAGENT_SPAWN_TOOLS_HEADER,

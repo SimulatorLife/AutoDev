@@ -69,6 +69,8 @@ import {
   bridgeTelemetryHeaders,
   ingestAgentEvents,
   noteBridgeRequest,
+  closeBridgeSubagentsForRequest,
+  UNATTRIBUTED_SUBAGENT_ROLE,
   noteOrchestratorSession,
   orchestratorProviderForSession,
   recordSubagentSpawn,
@@ -580,7 +582,10 @@ test("subagent telemetry counts both spawn mechanisms and attributes each to a p
         { type: "not_a_spawn" },
       ],
     });
-    assert.deepEqual(accepted, { accepted: 3, rejected: 0, reason: null });
+    // Three children from two spawn events, and the event that named no
+              // recognized type is the one rejected: the counts measure
+              // subagents and events respectively, not one minus the other.
+              assert.deepEqual(accepted, { accepted: 3, closed: 0, rejected: 1, reason: null });
 
     // A router-routed spawn is attributed to whichever provider ran the parent
     // orchestrator turn for that session.
@@ -605,7 +610,7 @@ test("subagent telemetry counts both spawn mechanisms and attributes each to a p
     // is counted nowhere.
     assert.deepEqual(
       ingestAgentEvents({ requestId: "never-issued", events: [ { type: "subagent_spawn", tool: "Agent" } ] }),
-      { accepted: 0, rejected: 1, reason: "unknown_request_id" },
+      { accepted: 0, closed: 0, rejected: 1, reason: "unknown_request_id" },
     );
     assert.equal(subagentStatus().total, 4);
     assert.equal(recordSubagentSpawn({ mechanism: "made_up" }), null);
@@ -630,7 +635,7 @@ test("the router accepts a bridge spawn report over /v1/agent-events", async () 
 
     const accepted = await post({ requestId: "request-live", events: [ { type: "subagent_spawn", tool: "invoke_subagent" } ] });
     assert.equal(accepted.status, 200);
-    assert.deepEqual(await accepted.json(), { accepted: 1, rejected: 0, reason: null });
+    assert.deepEqual(await accepted.json(), { accepted: 1, closed: 0, rejected: 0, reason: null });
 
     const unknown = await post({ requestId: "request-missing", events: [ { type: "subagent_spawn", tool: "invoke_subagent" } ] });
     assert.equal(unknown.status, 404);
@@ -690,6 +695,83 @@ test("an Antigravity batch spawn reaches the router as one count per child", asy
     }
   } finally {
     await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    resetSubagentTelemetry();
+  }
+});
+
+test("an Antigravity batch spawn contributes measured turns to the usage tables", async () => {
+  // The spawn count alone left the provider that actually ran a twelve-way
+  // fan-out showing exactly one turn in "Provider health and usage", and no
+  // subagent row at all in "Usage by orchestrator and subagents": a
+  // CLI-delegated child never reaches the router as a request. The bridge's
+  // report is the only evidence it ran, so it is what has to open the bucket.
+  const usageBefore = getRouterStatus().usage;
+  const roleAttempts = (usage, role) => Number(usage.byRole?.[ role ]?.attempts ?? 0);
+  const roleSuccesses = (usage, role) => Number(usage.byRole?.[ role ]?.successes ?? 0);
+  const modelAttempts = (usage, key) => Number(usage.byModel?.[ key ]?.attempts ?? 0);
+
+  resetSubagentTelemetry();
+  try {
+    noteBridgeRequest("request-usage", { provider: "antigravity", model: "gemini-3.8-flash-medium", role: null, workspace: "SimulatorLife/RacingGame" });
+    const stepUpdate = {
+      step_index: 7,
+      state: "ACTIVE",
+      step_type: "tool",
+      tool_name: "invoke_subagent",
+      tool_info: {
+        name: "invoke_subagent",
+        args: JSON.stringify({
+          Subagents: [
+            { TypeName: "explorer", Model: "inherit", Prompt: "Catalog every build error" },
+            { TypeName: "explorer", Model: "gemini-3.8-flash-high", Prompt: "Catalog every lint error" },
+            { Model: "inherit", Prompt: "A child whose step exported no archetype" },
+          ],
+        }),
+      },
+    };
+    const children = spawnedChildren(stepUpdate);
+    assert.deepEqual(children.map(({ id }) => id), [ "s7.0", "s7.1", "s7.2" ], "each child is addressable so its own turn can be closed");
+    const spawned = ingestAgentEvents({
+      requestId: "request-usage",
+      events: [
+        { type: "subagent_spawn", tool: "invoke_subagent", role: "explorer", count: 2, children: [ { id: "s7.0" }, { id: "s7.1", model: "gemini-3.8-flash-high" } ] },
+        { type: "subagent_spawn", tool: "invoke_subagent", role: null, count: 1, children: [ { id: "s7.2" } ] },
+      ],
+    });
+    assert.deepEqual(spawned, { accepted: 3, closed: 0, rejected: 0, reason: null });
+
+    const usageOpen = getRouterStatus().usage;
+    assert.equal(roleAttempts(usageOpen, "explorer") - roleAttempts(usageBefore, "explorer"), 2);
+    // A roleless child must not land in the `unattributed` bucket: that key is
+    // roleless orchestrator traffic, which the dashboard renders as the
+    // Orchestrator row, so a delegation would be credited to its parent.
+    assert.equal(roleAttempts(usageOpen, UNATTRIBUTED_SUBAGENT_ROLE) - roleAttempts(usageBefore, UNATTRIBUTED_SUBAGENT_ROLE), 1);
+    assert.equal(roleAttempts(usageOpen, "unattributed"), roleAttempts(usageBefore, "unattributed"));
+    // `inherit` is agy naming the parent's model rather than choosing one.
+    assert.equal(modelAttempts(usageOpen, "antigravity/gemini-3.8-flash-medium") - modelAttempts(usageBefore, "antigravity/gemini-3.8-flash-medium"), 2);
+    assert.equal(modelAttempts(usageOpen, "antigravity/gemini-3.8-flash-high") - modelAttempts(usageBefore, "antigravity/gemini-3.8-flash-high"), 1);
+    assert.equal(Number(usageOpen.byOrigin?.subagent?.active ?? 0) - Number(usageBefore.byOrigin?.subagent?.active ?? 0), 3, "children are in flight until they are closed");
+
+    // A close carries the duration the CLI spent on the child, which is the
+    // only per-child turn measurement that exists.
+    const closed = ingestAgentEvents({
+      requestId: "request-usage",
+      events: [ { type: "subagent_result", tool: "invoke_subagent", role: "explorer", outcome: "success", durationMs: 4000, children: [ { id: "s7.0" }, { id: "s7.1" } ] } ],
+    });
+    assert.deepEqual(closed, { accepted: 0, closed: 2, rejected: 0, reason: null }, "a close settles buckets rather than counting new subagents");
+    assert.equal(subagentStatus().total, 3, "closing a child does not spawn another one");
+
+    const usageClosed = getRouterStatus().usage;
+    assert.equal(roleSuccesses(usageClosed, "explorer") - roleSuccesses(usageBefore, "explorer"), 2);
+    assert.equal(Number(usageClosed.byRole.explorer.maxDurationMs) >= 4000, true, "the reported duration is the child's own");
+
+    // The child the bridge never closed still ends with the parent turn, so a
+    // bridge that dies mid-turn cannot strand it as permanently active.
+    assert.equal(closeBridgeSubagentsForRequest("request-usage", "success", 9000), 1);
+    const usageSwept = getRouterStatus().usage;
+    assert.equal(roleSuccesses(usageSwept, UNATTRIBUTED_SUBAGENT_ROLE) - roleSuccesses(usageBefore, UNATTRIBUTED_SUBAGENT_ROLE), 1);
+    assert.equal(Number(usageSwept.byOrigin?.subagent?.active ?? 0) - Number(usageBefore.byOrigin?.subagent?.active ?? 0), 0);
+  } finally {
     resetSubagentTelemetry();
   }
 });
@@ -1462,7 +1544,12 @@ test("serves HTML only from /dashboard and raw JSON from /status", async () => {
     assert.match(dashboardBody, /<tfoot>/);
     assert.match(dashboardBody, /class="provider-summary"/);
     assert.match(dashboardBody, /id="summary-attempts"/);
-    assert.match(dashboardBody, /const collapsible = models.length > 1/);
+    assert.match(dashboardBody, /const collapsible = uniqueModels.length > 1/);
+    // A model observed only in usage -- a pinned direct request, or a CLI
+    // subagent's own model -- still has to reach the provider's row.
+    assert.match(dashboardBody, /const observedModels = Object\.keys\(modelUsage\)\.filter/);
+    assert.match(dashboardBody, /id="usage-summary"/);
+    assert.match(dashboardBody, /CLI-delegated subagent turn/);
     assert.match(dashboardBody, /const modelStats = uniqueModels.reduce/);
     assert.match(dashboardBody, /total\.active \+= stats\.active \?\? 0;/);
     assert.match(dashboardBody, /\$\{cooldown\}<\/td><td>\$\{modelStats\.active\}<\/td><td>\$\{modelStats\.attempts\}<\/td>/);

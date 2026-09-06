@@ -27,6 +27,8 @@
     }
 
     #meta,
+    #subagent-summary,
+    #usage-summary,
     #error {
       color: #666;
     }
@@ -243,6 +245,7 @@
   <h2><button type="button" class="toggle-section" aria-controls="usage-section" aria-expanded="true"><span
         class="caret">▾</span> Usage by orchestrator and subagents</button></h2>
   <div id="usage-section">
+    <div id="usage-summary">Loading…</div>
     <table id="usage-table">
       <thead>
         <tr>
@@ -592,6 +595,10 @@
     const workspaceUsageRows = (usage) => Object.entries(usage?.byWorkspace ?? {})
       .sort(([ nameA, a ], [ nameB, b ]) => Number(b.attempts ?? 0) - Number(a.attempts ?? 0) || nameA.localeCompare(nameB))
       .map(([ name, bucket ]) => `<tr><td><code>${text(name)}</code></td><td><code>${text(bucket.cwd ?? "-")}</code></td><td>${bucket.active ?? 0}</td><td>${bucket.attempts ?? 0}</td><td>${bucket.successes ?? 0}</td><td>${bucket.failures ?? 0}</td><td>${durationText(bucket.averageDurationMs)}</td><td>${bucket.toolCalls ?? 0}</td><td>${Object.entries(bucket.byRole ?? {}).map(([ key, value ]) => `${text(key)}: ${value.attempts ?? 0}`).join(", ") || "-"}</td><td>${Object.entries(bucket.byModel ?? {}).map(([ key, value ]) => `${text(key)}: ${value.attempts ?? 0}`).join(", ") || "-"}</td><td>${Object.entries(bucket.byProvider ?? {}).map(([ key, value ]) => `${text(key)}: ${value.attempts ?? 0}`).join(", ") || "-"}</td></tr>`).join("") || '<tr><td colspan="11">No workspace usage observed yet.</td></tr>';
+    // Matches UNATTRIBUTED_SUBAGENT_ROLE in codex-model-router.mjs: a CLI child
+    // whose spawn step exported no role. It is deliberately not the bare
+    // `unattributed` key, which is roleless orchestrator traffic.
+    const UNATTRIBUTED_SUBAGENT_ROLE = "unattributed-subagent";
     const expandedProviders = new Set();
     const expandedUsageGroups = new Set();
 
@@ -603,8 +610,17 @@
       const providerRows = Object.entries(status.providers ?? {}).map(([ provider, state ], index) => {
         const group = `provider-${index}`;
         const models = Object.entries(state.configuredModels ?? {});
-        const uniqueModels = [ ...new Map(models.map(([ tier, model ]) => [ model, [ tier, model ] ])).values() ];
-        const collapsible = models.length > 1;
+        // Every model observed for this provider, not only the configured ones.
+        // A direct request can pin a model no tier names, and a CLI-delegated
+        // subagent can run on a model its parent was not routed to; summing the
+        // configured list alone silently dropped both, so the provider rows
+        // added up to less than the totals row below them.
+        const observedModels = Object.keys(modelUsage).filter((key) => key.startsWith(`${provider}/`)).map((key) => key.slice(provider.length + 1));
+        const uniqueModels = [ ...new Map([
+          ...models.map(([ tier, model ]) => [ model, [ tier, model ] ]),
+          ...observedModels.map((model) => [ model, [ "observed", model ] ]),
+        ]).values() ];
+        const collapsible = uniqueModels.length > 1;
         const expanded = collapsible && expandedProviders.has(group);
         const modelStats = uniqueModels.reduce((total, [ , model ]) => {
           const stats = modelUsage[ `${provider}/${model}` ] ?? {};
@@ -625,7 +641,7 @@
         const providerCell = collapsible
           ? `<button type="button" class="toggle-provider" data-provider-group="${group}" aria-expanded="${expanded}"><span class="caret">${expanded ? "▾" : "▸"}</span> <code>${text(provider)}</code></button>`
           : `<code>${text(provider)}</code>`;
-        const configuredCell = collapsible ? "" : `<code>${text(models[ 0 ]?.[ 1 ] ?? "")}</code>`;
+        const configuredCell = collapsible ? "" : `<code>${text(uniqueModels[ 0 ]?.[ 1 ] ?? models[ 0 ]?.[ 1 ] ?? "")}</code>`;
         const parent = `<tr class="provider-parent"><td>${providerCell}</td><td>${configuredCell}</td><td class="${limited ? "limited" : "ok"}">${text(state.status)}${cooldown}</td><td>${modelStats.active}</td><td>${modelStats.attempts}</td><td>${modelStats.successes}</td><td>${modelStats.failures}</td><td>${modelStats.toolCalls}</td><td>${durationText(modelStats.averageDurationMs)}</td><td>${modelStats.skipped}</td><td>${text(failureText(state.lastFailure))}</td></tr>`;
         const children = collapsible ? uniqueModels.map(([ , model ]) => {
           const stats = modelUsage[ `${provider}/${model}` ] ?? {};
@@ -705,6 +721,15 @@
       document.querySelector("#summary-duration").textContent = durationText(totals.averageDurationMs);
       document.querySelector("#summary-skips").textContent = totals.skipped ?? 0;
       document.querySelector("#usage-breakdown").innerHTML = usageBreakdownRows(usage);
+      // Turns done behind the router but never routed by it. A CLI-delegated
+      // child (Antigravity's `invoke_subagent`, Claude's `Agent`) makes no
+      // router request, so its turn reaches these tables only through the
+      // bridge's report; saying so keeps the rows from reading as routing
+      // decisions the router made.
+      const bridgeNative = Number(status.subagents?.byMechanism?.bridge_native ?? 0);
+      document.querySelector("#usage-summary").textContent = bridgeNative > 0
+        ? `Includes ${bridgeNative} CLI-delegated subagent turn(s) reported by a provider bridge rather than routed. A child whose CLI exported no role is counted under ${text(UNATTRIBUTED_SUBAGENT_ROLE)}.`
+        : "Every row is a turn this router routed. CLI-delegated subagents appear here once a provider bridge reports them.";
       document.querySelector("#workspace-usage").innerHTML = workspaceUsageRows(usage);
       document.querySelector("#usage-total-active").textContent = totals.active ?? 0;
       document.querySelector("#usage-total-attempts").textContent = totals.attempts ?? 0;

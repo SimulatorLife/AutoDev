@@ -93,11 +93,31 @@ function subagentRole(child) {
   return null;
 }
 
-/** One `{ role }` per subagent a spawn step created; always at least one. */
+/** The model one batch entry names, or null when it names none of its own. */
+function subagentModel(child) {
+  if (!child || typeof child !== "object") return null;
+  for (const key of [ "Model", "model", "ModelName", "model_name" ]) {
+    const value = child[ key ];
+    // agy writes `inherit` when the child runs on whatever the parent was
+    // routed to, which is not a model id; the router resolves that itself.
+    if (typeof value === "string" && value.trim()) return value.trim();
+  }
+  return null;
+}
+
+/**
+ * One `{ id, role, model }` per subagent a spawn step created; always at least
+ * one. The id is this bridge's handle on the child: it identifies the same
+ * child again when the step finishes, so the router can measure the child's own
+ * turn rather than the whole parent turn. It is unique per request because the
+ * step index is, and a step that carries no index falls back to a counter.
+ */
+let anonymousSpawnStep = 0;
 function spawnedChildren(update) {
+  const step = Number.isFinite(update?.step_index) ? update.step_index : `x${(anonymousSpawnStep += 1)}`;
   const batch = subagentBatch(update);
-  if (!batch) return [ { role: null } ];
-  return batch.map((child) => ({ role: subagentRole(child) }));
+  if (!batch) return [ { id: `s${step}.0`, role: null, model: null } ];
+  return batch.map((child, index) => ({ id: `s${step}.${index}`, role: subagentRole(child), model: subagentModel(child) }));
 }
 
 // Confirming the shape agy actually emits needs a real spawn, and a spawn is
@@ -358,6 +378,10 @@ async function handle(request, response) {
   // served here reads as "never delegated".
   const agentEvents = resolveAgentEventReporter(request.headers);
   const reportedSpawns = new Set();
+  // Spawn steps still running, so the children each one opened can be closed
+  // with the duration agy actually spent on them. Without a close the router
+  // still counts the child, but measures it against the whole parent turn.
+  const openSpawns = new Map();
   // Count a spawn once, when the step opens. A tool step reports ACTIVE then
   // DONE for the same step_index, and a run may end without a DONE at all, so
   // the opening transition is the only one that appears exactly once per
@@ -375,7 +399,34 @@ async function handle(request, response) {
     if (LOG_SPAWN_STEPS) console.error(`agy spawn step ${JSON.stringify(shapeOnly(update))}`);
     const children = spawnedChildren(update);
     console.error(`agy spawn tool=${toolName} children=${children.length} roles=${children.map(({ role }) => role ?? "unattributed").join(",")}`);
+    openSpawns.set(Number.isFinite(update.step_index) ? update.step_index : children[ 0 ].id, { tool: toolName, children, startedAt: Date.now() });
     void agentEvents.reportSpawns({ tool: toolName, children });
+  };
+  // The same step reaching a terminal state closes its children. Only DONE is
+  // a success; agy uses other terminal states for a step that errored or was
+  // cancelled, and a child that did not finish its work is not a completed turn.
+  const closeSpawn = (key, outcome) => {
+    const open = openSpawns.get(key);
+    if (!open) return;
+    openSpawns.delete(key);
+    void agentEvents.reportResults({ tool: open.tool, children: open.children, outcome, durationMs: Date.now() - open.startedAt });
+  };
+  const reportSpawnResults = (update) => {
+    const toolName = String(update?.tool_name ?? update?.tool_info?.name ?? "");
+    if (!agentEvents?.isSpawnTool(toolName)) return;
+    const state = String(update.state ?? "").toUpperCase();
+    if (!state || state === "ACTIVE" || !Number.isFinite(update.step_index)) return;
+    closeSpawn(update.step_index, state === "DONE" ? "success" : "failure");
+  };
+  // A run can end without a terminal state for every spawn step -- agy may stop
+  // mid-step, and a step with no index can never be matched to one. Those
+  // children still ran, so they end with the turn that contained them.
+  const flushSpawns = (outcome) => {
+    for (const key of [ ...openSpawns.keys() ]) closeSpawn(key, outcome);
+  };
+  const observeSpawnStep = (update) => {
+    reportSpawns(update);
+    reportSpawnResults(update);
   };
   const prompt = promptFromInput(payload.input ?? "", bridgeInstructions(agentRole));
   let cwd;
@@ -392,10 +443,12 @@ async function handle(request, response) {
   if (!payload.stream) {
     try {
       const result = await runAgy(prompt, model, effort, cwd, (event) => {
-        if (event.event === "step_update") reportSpawns(event.step_update ?? {});
+        if (event.event === "step_update") observeSpawnStep(event.step_update ?? {});
       });
+      flushSpawns("success");
       sendJson(response, 200, responsePayload(payload.model ?? model, result.text, result.result));
     } catch (error) {
+      flushSpawns("failure");
       sendJson(response, 502, { error: { type: "upstream_error", message: error.message ?? String(error) } });
     }
     return;
@@ -478,7 +531,7 @@ async function handle(request, response) {
       }
       if (event.event === "step_update") {
         const update = event.step_update ?? {};
-        reportSpawns(update);
+        observeSpawnStep(update);
         const activity = activityText(event);
         const key = `${update.step_index ?? "?"}:${update.state ?? "?"}:${update.step_type ?? "?"}:${update.tool_name ?? ""}`;
         if (activity) {
@@ -494,6 +547,7 @@ async function handle(request, response) {
       }
     });
     clearInterval(keepAlive);
+    flushSpawns("success");
     startStream();
     const reasoningText = activityParts.join("\n");
     const completedReasoning = { id: reasoningId, type: "reasoning", status: "completed", summary: [ { type: "summary_text", text: reasoningText } ], content: [] };
@@ -511,6 +565,7 @@ async function handle(request, response) {
     }
   } catch (error) {
     clearInterval(keepAlive);
+    flushSpawns("failure");
     if (!isWritable()) return;
     const message = error.message ?? String(error);
     if (!streamStarted) {
@@ -538,4 +593,4 @@ if (IS_MAIN) {
   });
 }
 
-export { agyArgs, modelEffort, resolveEffort, resolveModel, spawnedChildren };
+export { agyArgs, modelEffort, resolveEffort, resolveModel, spawnedChildren, subagentModel };
