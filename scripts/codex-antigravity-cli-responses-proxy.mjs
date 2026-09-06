@@ -81,15 +81,23 @@ function subagentBatch(value, depth = 0) {
 }
 
 /** The role one batch entry names, or null when it names none. */
+// `self` is agy's back-reference to the caller's own archetype -- "invoke_subagent
+// with your archetype TypeName (or `self`)" -- not the name of one. Recorded
+// verbatim it becomes a `self` row in the router's byRole breakdown, sitting
+// beside real roles as though it were one and collapsing every self-dispatched
+// child under a label that describes nothing. The child declared no archetype of
+// its own, which is exactly what the router's unattributed bucket is for.
+const SELF_ARCHETYPE = "self";
+
 function subagentRole(child) {
   if (!child || typeof child !== "object") return null;
-  // agy identifies a child by its archetype -- "invoke_subagent with your
-  // archetype TypeName (or `self`)" -- and `define_subagent` registers that
-  // archetype under `name`. Model is deliberately not a fallback: it is the
-  // model, not the role, and would pollute `byRole` with model ids.
+  // agy identifies a child by its archetype, and `define_subagent` registers
+  // that archetype under `name`. Model is deliberately not a fallback: it is
+  // the model, not the role, and would pollute `byRole` with model ids.
   for (const key of [ "TypeName", "type_name", "typeName", "Name", "name", "Agent", "agent" ]) {
     const value = child[ key ];
-    if (typeof value === "string" && value.trim()) return value.trim();
+    if (typeof value !== "string" || !value.trim()) continue;
+    return value.trim().toLowerCase() === SELF_ARCHETYPE ? null : value.trim();
   }
   return null;
 }

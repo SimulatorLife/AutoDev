@@ -1793,9 +1793,18 @@ function restoreOtelTelemetry(snapshot) {
   }
 }
 
+// The persisted-state file's envelope identity. The trailing version names the
+// envelope, not the sections inside it: a version stamp that changed whenever
+// any section was added used to invalidate the whole file, so adding one field
+// threw away every counter the router had accumulated -- provider telemetry,
+// usage, subagent spawns, spawn failures, the event log. Sections are restored
+// individually below and each validates its own shape, so a section whose
+// format really did change is the only thing dropped when it changes.
+const PERSISTED_STATE_SCHEMA = "autodev-router-persisted-state";
+
 function serializeRouterState() {
   return JSON.stringify({
-    schema: "autodev-router-persisted-state-v2",
+    schema: `${PERSISTED_STATE_SCHEMA}-v2`,
     updatedAt: new Date().toISOString(),
     providerTelemetry: Object.fromEntries(providerTelemetry),
     usage: usagePersistenceSnapshot(),
@@ -1827,7 +1836,11 @@ function loadRouterState(file = STATE_FILE) {
   if (!existsSync(file)) return false;
   try {
     const parsed = JSON.parse(readFileSync(file, "utf8"));
-    if (parsed?.schema !== "autodev-router-persisted-state-v2") return false;
+    // Envelope check only. Every section below restores itself and rejects a
+    // shape it does not recognise, which is what decides whether that section
+    // survives -- not a global stamp that discards the file over an unrelated
+    // addition.
+    if (typeof parsed?.schema !== "string" || !parsed.schema.startsWith(PERSISTED_STATE_SCHEMA)) return false;
     for (const [provider, saved] of Object.entries(parsed.providerTelemetry ?? {})) {
       if (!providerTelemetry.has(provider) || !saved || typeof saved !== "object") continue;
       const current = providerState(provider);

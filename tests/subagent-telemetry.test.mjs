@@ -180,6 +180,29 @@ test("the Antigravity bridge counts every child in an invoke_subagent batch", ()
   // with model ids.
   assert.deepEqual(spawnedChildren({ tool_info: { args: { Subagents: [ { Model: "inherit" } ] } } }).map(({ role }) => role), [ null ]);
 
+  // `self` is agy's back-reference to the caller's own archetype, not the name
+  // of one. Recorded verbatim it becomes a `self` row sitting beside real roles
+  // in `byRole` as though it were one, and every self-dispatched child collapses
+  // under a label that describes nothing. It declares no archetype, which is
+  // what the unattributed bucket is for.
+  for (const declared of [ "self", "Self", "SELF", " self " ]) {
+    assert.deepEqual(
+      spawnedChildren({ tool_info: { args: { Subagents: [ { TypeName: declared } ] } } }).map(({ role }) => role),
+      [ null ],
+      `TypeName ${JSON.stringify(declared)} must not become a role`,
+    );
+  }
+  // A batch mixing the two keeps the one that named an archetype.
+  assert.deepEqual(
+    spawnedChildren({ tool_info: { args: { Subagents: [ { TypeName: "self" }, { TypeName: "explorer" } ] } } }).map(({ role }) => role),
+    [ null, "explorer" ],
+  );
+  // Only the exact token: a real archetype whose name merely contains it stays.
+  assert.deepEqual(
+    spawnedChildren({ tool_info: { args: { Subagents: [ { TypeName: "self-review" } ] } } }).map(({ role }) => role),
+    [ "self-review" ],
+  );
+
   // A step that exports no arguments is still one spawn, never zero.
   const roleless = [
     { tool_name: "invoke_subagent", state: "ACTIVE" },

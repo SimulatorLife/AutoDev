@@ -3392,6 +3392,38 @@ test("only a provider-declared cooldown survives a router restart", async () => 
   }
 });
 
+test("an added section does not throw away the history already persisted", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "router-state-schema-"));
+  const file = join(directory, "state.json");
+  try {
+    resetRouterTelemetry();
+    // A file written before provider cooldowns were persisted at all. Adding a
+    // section used to bump a global schema stamp, which made the loader discard
+    // the whole file -- so one additive change silently wiped every counter the
+    // router had. Restoring is per-section now.
+    const older = JSON.parse(serializeRouterState());
+    older.schema = "autodev-router-persisted-state-v1";
+    delete older.providerCooldowns;
+    older.subagents = { total: 7, byMechanism: { bridge_native: 7 }, byProvider: { antigravity: 7 }, byRole: {}, byStatus: {}, recent: [] };
+    older.spawnFailures = { total: 2, byReason: { provider_exhausted: 2 }, recent: [] };
+    await writeFile(file, JSON.stringify(older), "utf8");
+
+    resetRouterTelemetry();
+    assert.equal(loadRouterState(file), true, "an envelope this router wrote must still load");
+    assert.equal(subagentStatus().total, 7, "subagent history survives an unrelated addition");
+    assert.equal(spawnFailureStatus().total, 2);
+
+    // A file that is not this router's state at all is still refused.
+    await writeFile(file, JSON.stringify({ schema: "something-else", subagents: { total: 99 } }), "utf8");
+    resetRouterTelemetry();
+    assert.equal(loadRouterState(file), false);
+    assert.equal(subagentStatus().total, 0);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+    resetRouterTelemetry();
+  }
+});
+
 test("reads a declared limit from headers or from the error body", () => {
   const resetsAt = "2026-09-06T15:40:00.000Z";
   const fromHeaders = declaredLimit(new Headers({ "x-autodev-limit-class": "session_limit", "x-autodev-limit-resets-at": resetsAt, "x-autodev-limit-source": "reported" }), "");
