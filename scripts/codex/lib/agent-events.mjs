@@ -116,6 +116,26 @@ class AgentEventReporter {
     return [ ...byRole ].map(([ role, group ]) => ({ type, tool, role, status, count: group.length, children: group, ...extra }));
   }
 
+  /**
+   * Report that the CLI never offered a delegation tool at all.
+   *
+   * A workspace can remove the tool from under an orchestrator turn -- a
+   * project `.claude/settings.json` that lists `Agent` under
+   * `permissions.deny` strips it regardless of what this bridge allows -- and
+   * the turn then does the work itself and says nothing. Zero spawns is the
+   * same reading as a provider that simply chose not to delegate, so the
+   * absence has to be reported as its own fact.
+   */
+  async reportSpawnToolsUnavailable({ available = [] } = {}) {
+    await this.post([ {
+      type: "subagent_tools_unavailable",
+      expected: [ ...this.spawnTools ],
+      // Bounded and name-only: a tool inventory is a fingerprint of the
+      // workspace, and the router needs only enough to name the gap.
+      available: available.filter((name) => typeof name === "string").slice(0, 100),
+    } ]);
+  }
+
   async post(events) {
     try {
       await fetch(this.url, {

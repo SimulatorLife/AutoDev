@@ -230,10 +230,31 @@ class AgentEventReporter:
     def report_spawn(self, tool: str, role: str | None = None, status: str = "started") -> None:
         """Best effort by design: telemetry must never fail a model turn, so a
         transport error or non-2xx reply costs a count rather than the turn."""
-        body = json.dumps({
-            "requestId": self.request_id,
-            "events": [{"type": "subagent_spawn", "tool": tool, "role": role, "status": status, "count": 1}],
-        }).encode()
+        self.post([{"type": "subagent_spawn", "tool": tool, "role": role, "status": status, "count": 1}])
+
+    def report_spawn_tools_unavailable_async(self, available: Any) -> None:
+        threading.Thread(target=self.report_spawn_tools_unavailable, args=(available,), daemon=True).start()
+
+    def report_spawn_tools_unavailable(self, available: Any) -> None:
+        """Report that the CLI offered no delegation tool at all.
+
+        A workspace can remove the tool from under an orchestrator turn: a
+        project `.claude/settings.json` listing `Agent` under
+        `permissions.deny` strips it whatever this bridge allows, and the turn
+        then quietly does the work itself. Zero spawns reads exactly like a
+        provider that chose not to delegate, so the absence is its own report.
+        """
+        names = [name for name in (available or []) if isinstance(name, str)]
+        self.post([{
+            "type": "subagent_tools_unavailable",
+            "expected": sorted(self.spawn_tools),
+            # Bounded and name-only: a tool inventory fingerprints the
+            # workspace, and the router needs only enough to name the gap.
+            "available": names[:100],
+        }])
+
+    def post(self, events: list[dict[str, Any]]) -> None:
+        body = json.dumps({"requestId": self.request_id, "events": events}).encode()
         request = Request(self.url, data=body, headers={"Content-Type": "application/json"}, method="POST")
         try:
             with urlopen(request, timeout=AGENT_EVENTS_TIMEOUT_SECONDS):
@@ -756,6 +777,12 @@ def run_claude_stream(prompt: str, model: str = DEFAULT_CLAUDE_MODEL, effort: st
                 if value.get("is_api_error_message") or value.get("error") in ("rate_limit", "overloaded_error"):
                     err_msg = text_from_content(value.get("message", {}).get("content", [])) or value.get("error") or "Claude API error"
                     raise_classified_claude_error(err_msg, value.get("error"))
+                # The init event is the CLI stating which tools this turn
+                # actually has. It is the only place the absence of the
+                # delegation tool is observable: a denied tool is simply not
+                # in the list, and nothing later mentions it.
+                if event_type == "system" and isinstance(value.get("tools"), list):
+                    yield ("tools", value["tools"], value)
                 block = tool_uses.feed(value)
                 if block is not None:
                     yield ("tool_use", block, value)
@@ -913,6 +940,29 @@ class Handler(BaseHTTPRequestHandler):
                 if agent_events is not None and agent_events.is_spawn_tool(name):
                     agent_events.report_spawn_async(str(name), subagent_role_from_input(block))
 
+            def note_available_tools(tools: Any) -> None:
+                """Report an orchestrator turn that was handed no way to delegate.
+
+                The bridge keeps the delegation tool for the orchestrator, but a
+                project `.claude/settings.json` listing `Agent` under
+                `permissions.deny` removes it anyway, and `bypassPermissions`
+                does not override a deny. The turn then does everything itself
+                and reports zero subagents, which is indistinguishable from a
+                provider that chose not to delegate.
+                """
+                if agent_events is None or not is_orchestrator_role(agent_role):
+                    return
+                names = [name for name in tools if isinstance(name, str)]
+                if any(agent_events.is_spawn_tool(name) for name in names):
+                    return
+                print(
+                    f"claude orchestrator has no delegation tool in {cwd}: expected one of "
+                    f"{sorted(agent_events.spawn_tools)}; check permissions.deny in that "
+                    "workspace's .claude/settings.json",
+                    flush=True,
+                )
+                agent_events.report_spawn_tools_unavailable_async(names)
+
             prompt = prompt_from_input(request.get("input", ""))
             cwd = resolve_cwd(request, self.headers)
             role_label = "orchestrator" if is_orchestrator_role(agent_role) else "leaf"
@@ -921,7 +971,9 @@ class Handler(BaseHTTPRequestHandler):
                 text = ""
                 metadata: dict[str, Any] = {}
                 for kind, value, _ in run_claude_stream(prompt, claude_model, claude_effort, cwd=cwd, agent_role=agent_role):
-                    if kind == "delta":
+                    if kind == "tools":
+                        note_available_tools(value)
+                    elif kind == "delta":
                         text += value
                     elif kind == "tool_use":
                         note_tool_use(value)
@@ -965,7 +1017,9 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_sse("response.content_part.added", {"type": "response.content_part.added", "item_id": item_id, "output_index": 1, "content_index": 0, "part": {"type": "output_text", "text": "", "annotations": []}})
 
             for kind, value, _ in run_claude_stream(prompt, claude_model, claude_effort, cwd=cwd, agent_role=agent_role):
-                if kind == "delta":
+                if kind == "tools":
+                    note_available_tools(value)
+                elif kind == "delta":
                     start_stream()
                     text += value
                     self.send_sse("response.output_text.delta", {"type": "response.output_text.delta", "item_id": item_id, "delta": value, "content_index": 0, "output_index": 1})

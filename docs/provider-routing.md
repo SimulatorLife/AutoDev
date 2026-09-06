@@ -625,6 +625,31 @@ prompts stay out of the log) when confirming the shape against a new agy build.
 Claude's `Agent` tool is one call per child, and the Claude bridge reads the
 child's role from the call's `subagent_type`.
 
+#### When the workspace removes the delegation tool
+
+The bridge keeps `Agent`/`Task` for the orchestrator and denies them to every
+leaf, but that is not the last word on which tools a turn gets. A project
+`.claude/settings.json` in the *target* workspace that lists `Agent` under
+`permissions.deny` strips it from the orchestrator too, and
+`--permission-mode bypassPermissions` does not override a deny. The turn then
+does all the work itself and reports zero subagents -- the exact reading as a
+provider that chose not to delegate.
+
+The CLI's `system` init event is the only place that absence is observable: a
+denied tool is simply missing from its `tools` list and nothing later mentions
+it. On an orchestrator turn the bridge compares that list against the router's
+watchlist and, when none of the spawn tools are present, logs the workspace and
+posts `{ type: "subagent_tools_unavailable", expected, available }`. The router
+records it as a `spawn_tool_unavailable` spawn failure -- with the model that
+was left unable to delegate -- so it appears in **Subagent spawn failure
+telemetry** rather than vanishing into a zero. It is not a spawn, so it moves no
+spawn counter.
+
+Only the tool names are sent, capped at 100: a full tool inventory fingerprints
+the workspace, and the router needs only enough to name the gap. The check runs
+for the orchestrator alone, since a leaf having no delegation tool is the
+policy working.
+
 Both mechanisms land in one `status.subagents` aggregate: `total`,
 `byMechanism` (`router_alias` / `bridge_native`), `byProvider`, `byRole`,
 `byStatus`, and the 50 most recent spawns. `router_alias` spawns are attributed

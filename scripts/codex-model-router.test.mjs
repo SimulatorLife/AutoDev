@@ -585,7 +585,7 @@ test("subagent telemetry counts both spawn mechanisms and attributes each to a p
     // Three children from two spawn events, and the event that named no
               // recognized type is the one rejected: the counts measure
               // subagents and events respectively, not one minus the other.
-              assert.deepEqual(accepted, { accepted: 3, closed: 0, rejected: 1, reason: null });
+              assert.deepEqual(accepted, { accepted: 3, closed: 0, unavailable: 0, rejected: 1, reason: null });
 
     // A router-routed spawn is attributed to whichever provider ran the parent
     // orchestrator turn for that session.
@@ -610,7 +610,7 @@ test("subagent telemetry counts both spawn mechanisms and attributes each to a p
     // is counted nowhere.
     assert.deepEqual(
       ingestAgentEvents({ requestId: "never-issued", events: [ { type: "subagent_spawn", tool: "Agent" } ] }),
-      { accepted: 0, closed: 0, rejected: 1, reason: "unknown_request_id" },
+      { accepted: 0, closed: 0, unavailable: 0, rejected: 1, reason: "unknown_request_id" },
     );
     assert.equal(subagentStatus().total, 4);
     assert.equal(recordSubagentSpawn({ mechanism: "made_up" }), null);
@@ -635,7 +635,7 @@ test("the router accepts a bridge spawn report over /v1/agent-events", async () 
 
     const accepted = await post({ requestId: "request-live", events: [ { type: "subagent_spawn", tool: "invoke_subagent" } ] });
     assert.equal(accepted.status, 200);
-    assert.deepEqual(await accepted.json(), { accepted: 1, closed: 0, rejected: 0, reason: null });
+    assert.deepEqual(await accepted.json(), { accepted: 1, closed: 0, unavailable: 0, rejected: 0, reason: null });
 
     const unknown = await post({ requestId: "request-missing", events: [ { type: "subagent_spawn", tool: "invoke_subagent" } ] });
     assert.equal(unknown.status, 404);
@@ -738,7 +738,7 @@ test("an Antigravity batch spawn contributes measured turns to the usage tables"
         { type: "subagent_spawn", tool: "invoke_subagent", role: null, count: 1, children: [ { id: "s7.2" } ] },
       ],
     });
-    assert.deepEqual(spawned, { accepted: 3, closed: 0, rejected: 0, reason: null });
+    assert.deepEqual(spawned, { accepted: 3, closed: 0, unavailable: 0, rejected: 0, reason: null });
 
     const usageOpen = getRouterStatus().usage;
     assert.equal(roleAttempts(usageOpen, "explorer") - roleAttempts(usageBefore, "explorer"), 2);
@@ -758,7 +758,7 @@ test("an Antigravity batch spawn contributes measured turns to the usage tables"
       requestId: "request-usage",
       events: [ { type: "subagent_result", tool: "invoke_subagent", role: "explorer", outcome: "success", durationMs: 4000, children: [ { id: "s7.0" }, { id: "s7.1" } ] } ],
     });
-    assert.deepEqual(closed, { accepted: 0, closed: 2, rejected: 0, reason: null }, "a close settles buckets rather than counting new subagents");
+    assert.deepEqual(closed, { accepted: 0, closed: 2, unavailable: 0, rejected: 0, reason: null }, "a close settles buckets rather than counting new subagents");
     assert.equal(subagentStatus().total, 3, "closing a child does not spawn another one");
 
     const usageClosed = getRouterStatus().usage;
@@ -771,6 +771,35 @@ test("an Antigravity batch spawn contributes measured turns to the usage tables"
     const usageSwept = getRouterStatus().usage;
     assert.equal(roleSuccesses(usageSwept, UNATTRIBUTED_SUBAGENT_ROLE) - roleSuccesses(usageBefore, UNATTRIBUTED_SUBAGENT_ROLE), 1);
     assert.equal(Number(usageSwept.byOrigin?.subagent?.active ?? 0) - Number(usageBefore.byOrigin?.subagent?.active ?? 0), 0);
+  } finally {
+    resetSubagentTelemetry();
+  }
+});
+
+test("an orchestrator handed no delegation tool is reported, not read as a refusal", async () => {
+  // A project `.claude/settings.json` listing `Agent` under `permissions.deny`
+  // strips the tool from an orchestrator turn whatever the bridge allows, and
+  // `bypassPermissions` does not override a deny. The turn then does the work
+  // itself and reports zero subagents -- which reads exactly like a provider
+  // that chose not to delegate. The absence has to arrive as its own fact.
+  resetSubagentTelemetry();
+  const before = getRouterStatus().spawnFailures;
+  const reasonCount = (snapshot) => Number(snapshot.byReason?.spawn_tool_unavailable ?? 0);
+  try {
+    noteBridgeRequest("request-denied", { provider: "claude", model: "claude-opus-5", role: null, workspace: "SimulatorLife/RacingGame" });
+    const result = ingestAgentEvents({
+      requestId: "request-denied",
+      events: [ { type: "subagent_tools_unavailable", expected: [ "Agent", "Task" ], available: [ "Read", "Bash", "Write" ] } ],
+    });
+    // It is not a spawn, so it moves no spawn counter.
+    assert.deepEqual(result, { accepted: 0, closed: 0, unavailable: 1, rejected: 0, reason: null });
+    assert.equal(subagentStatus().total, 0);
+
+    const after = getRouterStatus().spawnFailures;
+    assert.equal(reasonCount(after) - reasonCount(before), 1);
+    assert.equal(after.total - before.total, 1);
+    assert.equal(after.recent[ 0 ].reason, "spawn_tool_unavailable");
+    assert.equal(after.recent[ 0 ].requestedModel, "claude-opus-5", "the failure names the model that was left unable to delegate");
   } finally {
     resetSubagentTelemetry();
   }

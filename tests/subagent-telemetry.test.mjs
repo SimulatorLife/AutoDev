@@ -298,6 +298,15 @@ test("the Claude bridge reports the spawns its Agent tool makes in-process", () 
   assert.match(source, /class ToolUseAccumulator/);
   assert.match(source, /input_json_delta/);
   assert.match(source, /subagent_role_from_input\(block\)/);
+  // A workspace can remove the delegation tool from under an orchestrator turn,
+  // so the bridge checks the CLI's own init inventory and reports the absence.
+  assert.match(source, /def note_available_tools/);
+  assert.match(source, /report_spawn_tools_unavailable_async/);
+  assert.match(source, /if any\(agent_events\.is_spawn_tool\(name\) for name in names\)/);
+  assert.match(source, /yield \("tools", value\["tools"\], value\)/);
+  // Only the orchestrator: a leaf is *supposed* to have no delegation tool.
+  assert.match(source, /if agent_events is None or not is_orchestrator_role\(agent_role\):\n\s+return/);
+
   // The three header names must match the shared JS module byte for byte, or
   // the router's headers land in a bridge that ignores them.
   for (const [ name, value ] of [

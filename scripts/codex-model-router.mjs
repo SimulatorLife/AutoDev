@@ -1366,6 +1366,8 @@ function subagentStatus() {
 // Ingests a provider bridge's report that its CLI invoked a subagent spawn
 // tool. Only reports naming a request id this router actually issued are
 // counted; anything else is a caller that never served a router request.
+const INGESTED_AGENT_EVENTS = new Set(["subagent_spawn", "subagent_result", "subagent_tools_unavailable"]);
+
 let anonymousChildSequence = 0;
 
 // The children one report names, as `{ id, model }`. A bridge that assigns its
@@ -1389,17 +1391,27 @@ function reportedChildren(event) {
 function ingestAgentEvents(payload) {
   const requestId = typeof payload?.requestId === "string" ? payload.requestId.trim() : "";
   const context = requestId ? bridgeRequestContext.get(requestId) : undefined;
-  if (!context) return { accepted: 0, closed: 0, rejected: Array.isArray(payload?.events) ? payload.events.length : 0, reason: "unknown_request_id" };
+  if (!context) return { accepted: 0, closed: 0, unavailable: 0, rejected: Array.isArray(payload?.events) ? payload.events.length : 0, reason: "unknown_request_id" };
   const events = Array.isArray(payload.events) ? payload.events : [];
   // `accepted` and `closed` count subagents; `rejected` counts events the
   // router did not recognize. They measure different things -- one batch event
   // is worth up to sixteen children -- so they are not each other's complement.
   let accepted = 0;
   let closed = 0;
+  let unavailable = 0;
   let rejected = 0;
   for (const event of events) {
-    if (!event || typeof event !== "object" || (event.type !== "subagent_spawn" && event.type !== "subagent_result")) {
+    if (!event || typeof event !== "object" || !INGESTED_AGENT_EVENTS.has(event.type)) {
       rejected += 1;
+      continue;
+    }
+    if (event.type === "subagent_tools_unavailable") {
+      // Not a spawn that failed to start, but a spawn that could never have
+      // been attempted. It belongs with the other spawn failures so an
+      // orchestrator that delegated nothing is distinguishable from one that
+      // was never given the means to.
+      recordSpawnFailure({ requestId, role: null, requestedModel: context.model ?? null, reason: "spawn_tool_unavailable" });
+      unavailable += 1;
       continue;
     }
     const role = typeof event.role === "string" && event.role.trim() ? safeMetricLabel(event.role) : null;
@@ -1431,7 +1443,7 @@ function ingestAgentEvents(payload) {
     for (const child of children) openBridgeSubagentUsage({ requestId, context, role, childId: child.id, model: child.model });
     accepted += count;
   }
-  return { accepted, closed, rejected, reason: null };
+  return { accepted, closed, unavailable, rejected, reason: null };
 }
 
 function providerState(provider) {
