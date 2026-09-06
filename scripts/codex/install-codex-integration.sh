@@ -230,7 +230,8 @@ check_versioned_sources() {
     "$repo_root/scripts/codex/launchagents/com.codex.model-router.plist" \
     "$repo_root/scripts/codex/launchagents/com.codex.claude-bridge.plist" \
     "$repo_root/scripts/codex/launchagents/com.codex.minimax-proxy.plist" \
-    "$repo_root/scripts/codex/launchagents/com.codex.antigravity-proxy.plist"; do
+    "$repo_root/scripts/codex/launchagents/com.codex.antigravity-proxy.plist" \
+    "$repo_root/scripts/codex/launchagents/com.codex.copilot-proxy.plist"; do
     if ! check_versioned_source "$source"; then
       failed=1
     fi
@@ -489,10 +490,22 @@ check_links() {
   return "$failed"
 }
 
-if [[ "${1:-}" == "--check" ]]; then
-  check_links
-  exit $?
-fi
+# `--restart` is gone: installing now always restarts, so a flag asking for it
+# described a choice that no longer exists. It is rejected rather than accepted
+# as a no-op, because silently ignoring it would leave the caller believing they
+# had opted into something.
+case "${1:-}" in
+  "") ;;
+  --check)
+    check_links
+    exit $?
+    ;;
+  *)
+    printf 'usage: %s [--check]\n' "${BASH_SOURCE[0]##*/}" >&2
+    printf 'installing always restarts the services; there is no --restart.\n' >&2
+    exit 2
+    ;;
+esac
 
 for name in "${obsolete_launchagent_labels[@]}"; do
   target="$HOME/Library/LaunchAgents/$name.plist"
@@ -597,6 +610,7 @@ launchagent_labels=(
   com.codex.claude-bridge
   com.codex.minimax-proxy
   com.codex.antigravity-proxy
+  com.codex.copilot-proxy
 )
 for label in "${launchagent_labels[@]}"; do
   plist_src="$repo_root/scripts/codex/launchagents/$label.plist"
@@ -605,13 +619,100 @@ for label in "${launchagent_labels[@]}"; do
   fi
 done
 
-if [[ "${1:-}" == "--restart" ]]; then
+# The CODEX_HOME the installed launchagents point at. The plists carry one fixed
+# absolute path, so this is the only tree whose services this installer owns.
+plist_codex_home() {
+  local plist="$repo_root/scripts/codex/launchagents/com.codex.model-router.plist"
+  [[ -f "$plist" ]] || return 0
+  /usr/bin/plutil -extract EnvironmentVariables.CODEX_HOME raw -o - "$plist" 2>/dev/null || true
+}
+
+# The loopback port and the installed hook each supervised service owns. Used to
+# find processes squatting a port outside launchd, so a service can actually be
+# adopted rather than losing the bind to an orphan of itself.
+service_port() {
+  case "$1" in
+    com.codex.model-router) printf '4100\n' ;;
+    com.codex.claude-bridge) printf '4000\n' ;;
+    com.codex.antigravity-proxy) printf '4002\n' ;;
+    com.codex.copilot-proxy) printf '4003\n' ;;
+    com.codex.minimax-proxy) printf '18765\n' ;;
+  esac
+}
+
+service_hook() {
+  case "$1" in
+    com.codex.model-router) printf '%s/codex-model-router.mjs\n' "$hooks_dir" ;;
+    com.codex.claude-bridge) printf '%s/codex-claude-cli-responses-proxy.py\n' "$hooks_dir" ;;
+    com.codex.antigravity-proxy) printf '%s/codex-antigravity-cli-responses-proxy.mjs\n' "$hooks_dir" ;;
+    com.codex.copilot-proxy) printf '%s/codex-copilot-cli-responses-proxy.mjs\n' "$hooks_dir" ;;
+    com.codex.minimax-proxy) printf '%s/codex-minimax-responses-proxy.mjs\n' "$hooks_dir" ;;
+  esac
+}
+
+# Terminate any process holding this service's port that launchd is not
+# supervising. Such a process is unkillable-by-design from launchd's point of
+# view: it owns the bind, so `bootstrap` fails and the agent never starts, while
+# the port keeps answering health checks and everything downstream looks fine.
+# That is how a bridge ends up serving code that was replaced days earlier.
+#
+# Only ever terminates a process running this service's own installed hook. A
+# port held by something unrelated is a conflict to report, never something to
+# kill, so the guard is on the command line rather than on the port alone. Runs
+# after `bootout`, when nothing this service owns should still be listening.
+reap_unmanaged() {
+  local label="$1" port hook pid
+  port="$(service_port "$label")"
+  hook="$(service_hook "$label")"
+  [[ -n "$port" && -n "$hook" ]] || return 0
+  command -v lsof >/dev/null 2>&1 || return 0
+  for pid in $(lsof -nP -tiTCP:"$port" -sTCP:LISTEN 2>/dev/null || true); do
+    if ps -o command= -p "$pid" 2>/dev/null | grep -Fq -- "$hook"; then
+      printf 'reaping unmanaged %s on port %s (pid %s)\n' "$label" "$port" "$pid" >&2
+      kill "$pid" 2>/dev/null || true
+    else
+      printf 'port %s held by a process this installer does not own (pid %s); %s not started\n' "$port" "$pid" "$label" >&2
+    fi
+  done
+  for _ in {1..40}; do
+    lsof -nP -tiTCP:"$port" -sTCP:LISTEN >/dev/null 2>&1 || return 0
+    sleep 0.1
+  done
+}
+
+# Installing new code and leaving the old code running is not an install. This
+# used to sit behind an opt-in --restart flag, which meant the ordinary path
+# copied files into place and left every service executing whatever it had
+# already loaded. Nothing reports that: the ports stay healthy, the files on
+# disk look right, and a bridge can run for days on code that no longer exists.
+# Restarting unconditionally is what makes "ran the installer" and "is running
+# the installed code" the same statement.
+#
+# The router drains in-flight requests on SIGTERM, which is what launchctl
+# bootout sends, so an in-flight turn finishes rather than being cut off.
+restart_services() {
+  local domain
   domain="gui/$(id -u)"
-  launchd_ok=1
+
+  # The launchd labels are global to the user, but the plists point at one fixed
+  # absolute hooks directory. An install that materialized files somewhere else
+  # -- a test fixture, a staging tree, anything with CODEX_HOME overridden --
+  # must not cycle those services: it would bounce the live router while the
+  # code it was asked to deploy sits in another directory entirely. Deploying
+  # and materializing are different operations and only one of them owns the
+  # running services.
+  local plist_home
+  plist_home="$(plist_codex_home)"
+  if [[ -n "$plist_home" && "$hooks_dir" != "$plist_home/hooks" ]]; then
+    printf 'materialized into %s; leaving the services under %s alone.\n' "$hooks_dir" "$plist_home/hooks" >&2
+    return 0
+  fi
+  local launchd_ok=1 label plist_link probe
   for label in "${launchagent_labels[@]}"; do
-    plist_link="$HOME/Library/LaunchAgents/$label.plist"
+    local plist_link="$HOME/Library/LaunchAgents/$label.plist"
     [[ -f "$plist_link" ]] || { launchd_ok=0; continue; }
     launchctl bootout "$domain/$label" >/dev/null 2>&1 || true
+    reap_unmanaged "$label"
     if launchctl bootstrap "$domain" "$plist_link" >/dev/null 2>&1; then
       launchctl enable "$domain/$label" >/dev/null 2>&1 || true
       launchctl kickstart -k "$domain/$label" >/dev/null 2>&1 || true
@@ -627,6 +728,7 @@ if [[ "${1:-}" == "--restart" ]]; then
       http://127.0.0.1:4100/health/readiness \
       http://127.0.0.1:4000/health/liveliness \
       http://127.0.0.1:4002/health/liveliness \
+      http://127.0.0.1:4003/health/liveliness \
       http://127.0.0.1:18765/health; do
       for _ in {1..80}; do
         curl --silent --fail --max-time 1 "$probe" >/dev/null 2>&1 && break
@@ -637,10 +739,23 @@ if [[ "${1:-}" == "--restart" ]]; then
     printf '%s\n' 'launchctl unavailable (sandbox?); starting bridges through the direct ensure-hook path.' >&2
   fi
   bash "$repo_root/scripts/ensure-codex-model-router.sh"
-  printf '{"model":"sonnet"}\n' | bash "$repo_root/scripts/ensure-codex-claude-bridge.sh"
-  printf '{"model":"MiniMax-M3"}\n' | bash "$repo_root/scripts/ensure-codex-minimax-proxy.sh"
-  printf '{"model":"gemini-3.8-flash-medium"}\n' | bash "$repo_root/scripts/ensure-codex-antigravity-proxy.sh"
+  # A bridge that cannot start -- CLI not installed, credentials absent -- is a
+  # supported configuration: the router skips that provider and routes around
+  # it. Report it and carry on rather than failing the whole install over an
+  # optional fallback. The router above is not optional and stays fatal.
+  local bridge
+  for bridge in \
+    'sonnet:ensure-codex-claude-bridge.sh' \
+    'MiniMax-M3:ensure-codex-minimax-proxy.sh' \
+    'gemini-3.8-flash-medium:ensure-codex-antigravity-proxy.sh'; do
+    if ! printf '{"model":"%s"}\n' "${bridge%%:*}" | bash "$repo_root/scripts/${bridge#*:}"; then
+      printf 'bridge start failed: %s (router will route around it)\n' "${bridge#*:}" >&2
+    fi
+  done
+  bash "$repo_root/scripts/ensure-codex-copilot-proxy.sh" || \
+    printf 'bridge start failed: ensure-codex-copilot-proxy.sh (router will route around it)\n' >&2
+}
 
-fi
+restart_services
 
 check_links

@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.codex.copilot-proxy</string>
+
+  <!-- Copilot CLI Responses proxy on 127.0.0.1:4003, the router's `copilot`
+       route. Supervised like every other bridge: KeepAlive keeps it up across
+       restarts, crashes, and sleep, and the installer restarts it so a running
+       process never outlives the code it was started from. It previously ran
+       only as a detached `nohup` from the ensure hook, which meant nothing
+       replaced it once started -- it survived installs still executing the code
+       it had loaded days earlier. PATH includes nvm so `env node` resolves
+       under launchd. Invokes the installed hook copy under ~/.codex (outside
+       Desktop, so macOS privacy controls on the repo do not block launchd). -->
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>/Users/henrykirk/.codex/hooks/run-codex-copilot-cli-responses-proxy.sh</string>
+  </array>
+
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>ThrottleInterval</key>
+  <integer>5</integer>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>/Users/henrykirk/.nvm/versions/node/v25.0.0/bin:/Users/henrykirk/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    <key>CODEX_HOME</key>
+    <string>/Users/henrykirk/.codex</string>
+  </dict>
+
+  <key>StandardOutPath</key>
+  <string>/Users/henrykirk/.codex/hooks/copilot-proxy.launchd.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/henrykirk/.codex/hooks/copilot-proxy.launchd.log</string>
+</dict>
+</plist>

@@ -38,11 +38,12 @@ timing, token counts, MCP server lifecycle observations,
 initialization/tool-discovery latency, and recent failures.
 
 The installed router and dashboard hooks under `$CODEX_HOME/hooks/` are runtime
-copies, not symlinks. After changing the tracked implementation, synchronize
-and restart the local services before checking live telemetry:
+copies, not symlinks. After changing the tracked implementation, run the
+installer before checking live telemetry: it synchronizes those copies and
+restarts every service, so nothing is left running the code it replaced.
 
 ```bash
-bash /Users/henrykirk/AutoDev/scripts/codex/install-codex-integration.sh --restart
+bash /Users/henrykirk/AutoDev/scripts/codex/install-codex-integration.sh
 bash /Users/henrykirk/AutoDev/scripts/codex/install-codex-integration.sh --check
 curl --silent http://127.0.0.1:4100/status | jq '.codexTelemetry.skills'
 ```

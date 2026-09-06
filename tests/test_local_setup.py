@@ -1228,6 +1228,116 @@ class LocalSetupTests(unittest.TestCase):
             source = (REPO_ROOT / relative_path).read_text()
             self.assertIn('base_url = "http://127.0.0.1:4002/v1"', source)
 
+    def test_every_bridge_is_supervised_by_launchd(self):
+        # A bridge that is not a launchd agent is a bridge nothing restarts: it
+        # does not come back after a crash, and no install replaces it, so it
+        # keeps serving code that was overwritten days ago. The Copilot proxy
+        # ran that way and was found executing pre-change code long after the
+        # files under it had been replaced.
+        installer = INSTALLER_PATH.read_text()
+        labels = installer.split("\nlaunchagent_labels=(")[1].split(")")[0].split()
+        self.assertEqual(
+            sorted(labels),
+            sorted([
+                "com.codex.model-router",
+                "com.codex.claude-bridge",
+                "com.codex.minimax-proxy",
+                "com.codex.antigravity-proxy",
+                "com.codex.copilot-proxy",
+            ]),
+        )
+        for label in labels:
+            plist = REPO_ROOT / f"scripts/codex/launchagents/{label}.plist"
+            self.assertTrue(plist.exists(), msg=f"{label} must ship a launchagent")
+            body = plist.read_text()
+            # KeepAlive is what makes it survive a crash; RunAtLoad is what makes
+            # it survive a reboot. A plist without both is supervision in name.
+            self.assertIn("<key>KeepAlive</key>", body, msg=label)
+            self.assertIn("<key>RunAtLoad</key>", body, msg=label)
+            self.assertIn(f"<string>{label}</string>", body, msg=label)
+
+    def test_installing_always_restarts_the_services(self):
+        # Copying new code over old and leaving the old code running is not an
+        # install, and it fails silently: the ports stay healthy and the files on
+        # disk look correct. This used to sit behind an opt-in --restart.
+        installer = INSTALLER_PATH.read_text()
+        self.assertIn("restart_services()", installer)
+        self.assertIn("\nrestart_services\n", installer)
+        self.assertNotIn('== "--restart"', installer)
+        # Rejected, not silently accepted: ignoring the old flag would leave the
+        # caller believing they had opted into something.
+        self.assertIn("there is no --restart", installer)
+        for probe in (
+            "http://127.0.0.1:4100/health/readiness",
+            "http://127.0.0.1:4000/health/liveliness",
+            "http://127.0.0.1:4002/health/liveliness",
+            "http://127.0.0.1:4003/health/liveliness",
+            "http://127.0.0.1:18765/health",
+        ):
+            self.assertIn(probe, installer, msg=f"the restart must wait for {probe}")
+        for hook in (
+            "ensure-codex-model-router.sh",
+            "ensure-codex-claude-bridge.sh",
+            "ensure-codex-minimax-proxy.sh",
+            "ensure-codex-antigravity-proxy.sh",
+            "ensure-codex-copilot-proxy.sh",
+        ):
+            self.assertIn(hook, installer, msg=f"the restart must run {hook}")
+
+    def test_installer_clears_unmanaged_processes_before_adopting_a_service(self):
+        # A process squatting the port outside launchd cannot be replaced by
+        # launchd: it owns the bind, so bootstrap fails and the agent never
+        # starts, while the port keeps answering health checks. The Copilot
+        # bridge sat in exactly that state, serving days-old code behind a
+        # healthy /health.
+        installer = INSTALLER_PATH.read_text()
+        self.assertIn("reap_unmanaged()", installer)
+        # Must run after bootout (nothing this service owns should still be
+        # listening) and before bootstrap (which is what it unblocks).
+        bootout = installer.index('launchctl bootout "$domain/$label"')
+        reap = installer.index('reap_unmanaged "$label"')
+        bootstrap = installer.index('launchctl bootstrap "$domain" "$plist_link"')
+        self.assertLess(bootout, reap)
+        self.assertLess(reap, bootstrap)
+        # Every supervised label needs a port and a hook, or it cannot be
+        # cleared and silently keeps the stale process.
+        labels = installer.split("\nlaunchagent_labels=(")[1].split(")")[0].split()
+        ports = installer.split("service_port() {")[1].split("}")[0]
+        hooks = installer.split("service_hook() {")[1].split("}")[0]
+        for label in labels:
+            self.assertIn(label, ports, msg=f"{label} needs a port")
+            self.assertIn(label, hooks, msg=f"{label} needs a hook path")
+        # The guard is the command line, not the port: something unrelated
+        # holding the port is a conflict to report, never something to kill.
+        reap_body = installer.split("reap_unmanaged() {")[1].split("\n}")[0]
+        self.assertIn('ps -o command= -p "$pid"', reap_body)
+        self.assertIn("does not own", reap_body)
+
+    def test_installer_rejects_an_unknown_flag(self):
+        result = subprocess.run(
+            ["bash", str(INSTALLER_PATH), "--restart"],
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("there is no --restart", result.stderr)
+
+    def test_ensure_hooks_adopt_the_launchd_agent_rather_than_racing_it(self):
+        # An ensure hook that unconditionally backgrounds its own copy creates a
+        # process launchd does not own, beside the one it does.
+        for name, label in (
+            ("scripts/ensure-codex-copilot-proxy.sh", "com.codex.copilot-proxy"),
+            ("scripts/ensure-codex-antigravity-proxy.sh", "com.codex.antigravity-proxy"),
+        ):
+            hook = (REPO_ROOT / name).read_text()
+            self.assertIn(label, hook, msg=name)
+            self.assertIn("launchctl print", hook, msg=name)
+            self.assertIn("launchctl kickstart", hook, msg=name)
+            # The direct fallback survives for sandboxed runs, but only behind a
+            # check that nothing healthy already owns the port.
+            nohup_index = hook.index("nohup /bin/bash")
+            self.assertIn("probe_ok", hook[:nohup_index], msg=name)
+
     def test_antigravity_stream_reports_early_provider_errors_as_retryable(self):
         proxy = (REPO_ROOT / "scripts/codex-antigravity-cli-responses-proxy.mjs").read_text()
         self.assertIn('if (!streamStarted)', proxy)

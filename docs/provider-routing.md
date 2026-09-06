@@ -378,8 +378,8 @@ when sandboxing requires a different writable location. The legacy world-
 writable `/tmp/codex-model-router.log` path is gone.
 
 `$CODEX_HOME/run/` is the canonical home for router run-time state. The
-installer creates it with mode 0700 during both baseline install and
-`--restart`, and the launchd plist writes its logs there too, so all router
+installer creates it with mode 0700 on every run, and the launchd plist writes
+its logs there too, so all router
 operational data survives reboot, tmpfs clears, and `/tmp` rotation.
 
 Provider counters, recent events, and the
@@ -458,9 +458,13 @@ will bind. Readiness polling is bounded (default 5s total budget,
 exponential backoff capped at 1s) so a slow bind surfaces quickly and the
 hook never burns CPU waiting.
 
-The router's `--restart` installer flow respects the same preference: the
-installer links every launchd plist, then `bootout`/`bootstrap`/`kickstart`
-cycles each label on the `gui/$UID` domain. The readiness probe loop in
+The installer respects the same preference: it links every launchd plist, then
+`bootout`/`bootstrap`/`kickstart` cycles each label on the `gui/$UID` domain.
+It does this on every run, not behind a flag -- installing new code and leaving
+the old code running is not an install, and it fails silently, because the ports
+stay healthy and the files on disk look correct either way. The router drains
+in-flight requests on the `SIGTERM` that `bootout` sends, so a turn in progress
+finishes rather than being cut off. The readiness probe loop in
 the installer waits for the router (and each provider bridge) to bind
 before the ensure hooks run, so the hooks observe healthy ports and
 no-op instead of racing the agents.
@@ -1133,14 +1137,19 @@ installer is the only supported materialization path into
   launched by the Claude bridge. `--disallowed-tools Agent,Task` and the
   Claude settings deny list are the authoritative no-descendant controls for
   that process.
-- The five launchd plist sources are active and managed by the installer.
-  `launchctl bootout`/`bootstrap`/`kickstart` refresh them during `--restart`,
-  while direct-start hooks remain an idempotent fallback.
+- All five services -- the router and the four provider bridges -- are launchd
+  agents with `RunAtLoad` and `KeepAlive`, managed by the installer.
+  `launchctl bootout`/`bootstrap`/`kickstart` refresh every one of them on each
+  install, while direct-start hooks remain an idempotent fallback for a
+  sandboxed run where `launchctl` is unreachable. Those hooks adopt the agent
+  when one is loaded rather than backgrounding a rival copy beside it: a process
+  launchd does not own is one nothing restarts, so it survives installs still
+  running the code it loaded days earlier.
 
 Install or repair the managed machine integration with:
 
 ```sh
-bash /Users/henrykirk/AutoDev/scripts/codex/install-codex-integration.sh --restart
+bash /Users/henrykirk/AutoDev/scripts/codex/install-codex-integration.sh
 bash /Users/henrykirk/AutoDev/scripts/codex/install-codex-integration.sh --check
 ```
 
