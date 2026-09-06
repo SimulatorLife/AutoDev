@@ -55,6 +55,7 @@ runtime_module_names=(
   scripts/codex/lib/resolve-workspace.mjs
   scripts/codex/lib/bridge-role.mjs
   scripts/codex/lib/agent-events.mjs
+  scripts/codex/lib/provider-limits.mjs
   scripts/codex/prompts/base.md
   scripts/codex/prompts/leaf.md
   scripts/codex/prompts/orchestrator.md

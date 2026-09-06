@@ -78,14 +78,27 @@ test("the Claude bridge replaces the CLI's own system prompt instead of appendin
   assert.match(claude, /CLAUDE_CODE_DISABLE_BUNDLED_SKILLS"\] = "1"/);
 });
 
-test("the installer ships the shared role prompts beside the bridges that load them", () => {
+test("the installer ships every shared module the bridges import", () => {
+  // Derived from the sources rather than listed by hand. A shared module added
+  // to a bridge but not to the installer's manifest is not a test failure --
+  // it is the installed router crash-looping under launchd on
+  // ERR_MODULE_NOT_FOUND, which reaches the operator as nothing more
+  // informative than "Connection failed: error sending request".
   const installer = read("scripts/codex/install-codex-integration.sh");
-  for (const asset of [
-    "scripts/codex/lib/bridge-role.mjs",
-    "scripts/codex/prompts/base.md",
-    "scripts/codex/prompts/leaf.md",
-    "scripts/codex/prompts/orchestrator.md",
-  ]) {
+  const sources = [
+    "scripts/codex-model-router.mjs",
+    "scripts/codex-antigravity-cli-responses-proxy.mjs",
+    "scripts/codex-copilot-cli-responses-proxy.mjs",
+    "scripts/codex-minimax-responses-proxy.mjs",
+  ];
+  const imported = new Set();
+  for (const source of sources) {
+    for (const match of read(source).matchAll(/from "\.\/(codex\/lib\/[a-z-]+\.mjs)"/g)) {
+      imported.add(`scripts/${match[ 1 ]}`);
+    }
+  }
+  assert.ok(imported.size >= 3, "expected the bridges to share several modules");
+  for (const asset of [ ...imported, "scripts/codex/prompts/base.md", "scripts/codex/prompts/leaf.md", "scripts/codex/prompts/orchestrator.md" ]) {
     assert.ok(installer.includes(asset), `installer must deploy ${asset}`);
   }
 });
