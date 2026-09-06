@@ -1135,17 +1135,28 @@ class LocalSetupTests(unittest.TestCase):
         proxy = (REPO_ROOT / "scripts/codex-antigravity-cli-responses-proxy.mjs").read_text()
         self.assertIn('if (!streamStarted)', proxy)
         self.assertIn('sendJson(response, 503', proxy)
-        self.assertIn('agy exited without a terminal result event', proxy)
+        # agy stopping without a terminal result is the failure that ends long
+        # delegating turns, so the error carries the exit status and stderr
+        # rather than a bare sentence that says nothing about why.
+        self.assertIn('without a terminal result event', proxy)
+        self.assertIn('const how = signal ? `on ${signal}` : `with code ${code}`', proxy)
         # Closed-socket guard appears before the 503 send so the proxy does not
         # raise on a client disconnect that lands between the upstream failure
-        # and the retryable error response.
+        # and the retryable error response. It now sits *after* the failure is
+        # logged: a turn that failed because the client had already gone is the
+        # case most worth seeing, and it used to return here without a word.
         self.assertIn('isWritable()', proxy)
         self.assertIn(
             "    if (!isWritable()) return;\n"
-            "    const message = error.message ?? String(error);\n"
             "    if (!streamStarted) {\n"
             "      sendJson(response, 503",
             proxy,
+        )
+        catch_block = proxy[proxy.rindex("} catch (error) {"):]
+        self.assertLess(
+            catch_block.index("logTurnEnd("),
+            catch_block.index("if (!isWritable()) return;"),
+            "the failure must be logged before the writability check returns",
         )
         # A failure after the stream opened is a failure, not a completed
         # response carrying the error as assistant text. The old fake-completion

@@ -252,6 +252,42 @@ test("the Antigravity bridge reports the subagents its own CLI spawns", () => {
   assert.match(source, /Number\.isFinite\(update\.step_index\)/);
 });
 
+test("an Antigravity turn that dies names its own cause in the log", () => {
+  // 156 of 283 Antigravity turns had failed, every one of them reaching the
+  // router as `upstream_error` at HTTP 200 and leaving nothing in the bridge
+  // log but the step lines that happened to precede it. The turn logged its
+  // start and never its end, so the reason it died was written down nowhere.
+  const source = read("scripts/codex-antigravity-cli-responses-proxy.mjs");
+
+  // Every exit from a turn names itself and how long it took.
+  assert.match(source, /const logTurnEnd = \(outcome, detail = ""\) =>/);
+  assert.match(source, /logTurnEnd\("succeeded"\)/);
+  assert.match(source, /logTurnEnd\("failed"/);
+  assert.match(source, /logTurnEnd\("aborted"/);
+
+  // The failure that ends long delegating turns is agy stopping without a
+  // terminal result. Whether it was killed, exited, or died on a signal is
+  // only recoverable from the exit status and stderr, so both travel with the
+  // error rather than being discarded into a bare sentence.
+  assert.match(source, /agy exited \$\{how\} without a terminal result event/);
+  assert.match(source, /const how = signal \? `on \$\{signal\}` : `with code \$\{code\}`/);
+  assert.doesNotMatch(source, /new Error\("agy exited without a terminal result event"\)/);
+
+  // A turn that failed because the client had already gone is exactly the case
+  // worth seeing, and the streaming path used to return without a word.
+  assert.match(source, /if \(!turnSettled\) logTurnEnd\("failed", `\$\{message\}\$\{isWritable\(\) \? "" : " \(client already gone\)"\}`\)/);
+  const catchBlock = source.slice(source.lastIndexOf("} catch (error) {"));
+  assert.ok(
+    catchBlock.indexOf("logTurnEnd(") < catchBlock.indexOf("if (!isWritable()) return;"),
+    "the failure must be logged before the writability check returns",
+  );
+
+  // The close that always follows a completed stream is not the client hanging
+  // up, so only an unsettled turn reports an abort.
+  assert.match(source, /let turnSettled = false;/);
+  assert.match(source, /turnSettled = true;/);
+});
+
 test("the Claude bridge reports the spawns its Agent tool makes in-process", () => {
   const source = read("scripts/codex-claude-cli-responses-proxy.py");
   assert.match(source, /class AgentEventReporter/);

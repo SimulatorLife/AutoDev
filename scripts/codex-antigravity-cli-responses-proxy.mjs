@@ -316,14 +316,23 @@ function runAgy(prompt, model, effort, cwd, onEvent) {
     });
     child.stderr.on("data", (chunk) => { stderr += chunk.toString(); });
     child.on("error", (error) => finish(reject, error));
-    child.on("close", (code) => {
+    child.on("close", (code, signal) => {
       const result = terminalResult ?? {};
       if (!terminalResult) {
-        finish(reject, new Error("agy exited without a terminal result event"));
+        // The failure mode that ends long delegating turns: agy stops without
+        // ever emitting a terminal result. Which of the three it was -- killed
+        // because the client went away, exited on its own, or died on a signal
+        // -- is only recoverable from the exit status and whatever it last
+        // wrote to stderr, so all of it travels with the error instead of
+        // being discarded into a bare sentence.
+        const how = signal ? `on ${signal}` : `with code ${code}`;
+        const tail = stderr.trim().slice(-2000);
+        finish(reject, new Error(`agy exited ${how} without a terminal result event${tail ? `: ${tail}` : " and wrote nothing to stderr"}`));
         return;
       }
       if (result.status && result.status !== "SUCCESS") {
-        finish(reject, new Error(result.error ?? `agy ended with status ${result.status}`));
+        const tail = stderr.trim().slice(-2000);
+        finish(reject, new Error(result.error ?? `agy ended with status ${result.status}${tail ? `: ${tail}` : ""}`));
         return;
       }
       if (code !== 0) {
@@ -439,6 +448,13 @@ async function handle(request, response) {
     return;
   }
   console.error(`agy request model=${model} effort=${effort} role=${isOrchestratorRole(agentRole) ? "orchestrator" : "leaf"} cwd=${cwd}`);
+  // A turn logged its start and nothing else, so a failed one left only the
+  // step lines that happened to precede it -- the reason it died reached the
+  // router as an HTTP status and was never written down anywhere. Every exit
+  // from here on names itself and how long it took.
+  const turnStartedAt = Date.now();
+  const elapsed = () => `${((Date.now() - turnStartedAt) / 1000).toFixed(1)}s`;
+  const logTurnEnd = (outcome, detail = "") => console.error(`agy turn ${outcome} after ${elapsed()}${detail ? `: ${detail}` : ""}`);
 
   if (!payload.stream) {
     try {
@@ -446,9 +462,11 @@ async function handle(request, response) {
         if (event.event === "step_update") observeSpawnStep(event.step_update ?? {});
       });
       flushSpawns("success");
+      logTurnEnd("succeeded");
       sendJson(response, 200, responsePayload(payload.model ?? model, result.text, result.result));
     } catch (error) {
       flushSpawns("failure");
+      logTurnEnd("failed", error.message ?? String(error));
       sendJson(response, 502, { error: { type: "upstream_error", message: error.message ?? String(error) } });
     }
     return;
@@ -503,9 +521,13 @@ async function handle(request, response) {
   emit("response.content_part.added", { type: "response.content_part.added", item_id: itemId, output_index: 1, content_index: 0, part: { type: "output_text", text: "", annotations: [] } });
   emitActivity("Antigravity started processing.", "initial");
 
+  // Set once the turn has produced its final event, so the close that always
+  // follows a completed stream is not reported as the client hanging up.
+  let turnSettled = false;
   const onResponseError = () => {
     clientClosed = true;
     clearInterval(keepAlive);
+    if (!turnSettled) logTurnEnd("aborted", "the client connection errored; agy was killed mid-turn");
     if (child && !child.killed) child.kill("SIGTERM");
   };
   response.on("error", onResponseError);
@@ -520,6 +542,11 @@ async function handle(request, response) {
     clientClosed = true;
     clearInterval(keepAlive);
     response.removeListener("error", onResponseError);
+    // The router aborting its upstream fetch -- its 15-minute timeout, or its
+    // own client going away -- reaches this bridge as nothing but a closed
+    // socket. Naming it is the difference between "agy died" and "agy was
+    // killed because nobody was listening any more".
+    if (!turnSettled) logTurnEnd("aborted", "the client disconnected; agy was killed mid-turn");
     if (child && !child.killed) child.kill("SIGTERM");
   });
   try {
@@ -560,14 +587,21 @@ async function handle(request, response) {
     emit("response.content_part.done", { type: "response.content_part.done", item_id: itemId, output_index: 1, content_index: 0, part: { type: "output_text", text: result.text, annotations: [] } });
     emit("response.output_item.done", { type: "response.output_item.done", output_index: 1, item: completedMessage });
     emit("response.completed", { type: "response.completed", response: completed });
+    turnSettled = true;
+    logTurnEnd("succeeded");
     if (isWritable()) {
       try { response.end("data: [DONE]\n\n"); } catch { }
     }
   } catch (error) {
     clearInterval(keepAlive);
     flushSpawns("failure");
-    if (!isWritable()) return;
     const message = error.message ?? String(error);
+    // Logged before the writability check: a turn that failed *because* the
+    // client had already gone is exactly the case worth seeing, and it used to
+    // return here without a word.
+    if (!turnSettled) logTurnEnd("failed", `${message}${isWritable() ? "" : " (client already gone)"}`);
+    turnSettled = true;
+    if (!isWritable()) return;
     if (!streamStarted) {
       sendJson(response, 503, { error: { type: "upstream_error", message } });
       return;
