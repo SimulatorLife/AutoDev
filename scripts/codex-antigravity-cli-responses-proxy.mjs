@@ -143,6 +143,82 @@ function shapeOnly(value, depth = 0) {
   return Object.fromEntries(Object.entries(value).map(([ key, entry ]) => [ key, shapeOnly(entry, depth + 1) ]));
 }
 
+/**
+ * Tracks the subagents one agy turn dispatches, so each is reported once when it
+ * starts and once when it ends.
+ *
+ * Extracted from the request handler because the lifecycle below is subtle and
+ * was wrong: it treated the dispatch step's completion as the child's, which is
+ * exactly the kind of mistake that needs a test able to reach it.
+ */
+function createSpawnTracker(agentEvents) {
+  const reportedSpawns = new Set();
+  // Spawn steps whose children are still running.
+  //
+  // `invoke_subagent` is fire-and-forget: measured directly from agy's
+  // stream-json, the dispatch step reports `state: DONE` with
+  // `duration_seconds: 0.043` inside a turn that ran 45s while the child
+  // actually did the work. Its terminal state says the dispatch finished, not
+  // the child, and agy emits no later step when a child completes -- the
+  // child's result reaches the parent as context, invisibly. So the child's
+  // true runtime is not observable from this stream at all.
+  //
+  // Closing on that DONE therefore reported ~40ms for children that ran for
+  // minutes, which is worse than reporting nothing: it fills the usage tables
+  // with a number that looks like a measurement. These stay open instead and
+  // are closed with the parent turn, which bounds the child honestly -- it ran
+  // somewhere inside that window.
+  const openSpawns = new Map();
+  // Count a spawn once, when the step opens. A step reports ACTIVE then DONE
+  // for the same step_index, and a run may end without a DONE at all, so the
+  // opening transition is the only one that appears exactly once per
+  // invocation. A step that carries no index cannot be de-duplicated that way,
+  // and keying every such step under `undefined` would drop every spawn after
+  // the first; ACTIVE alone still keeps those from being counted twice.
+  const reportSpawns = (update) => {
+    const toolName = String(update?.tool_name ?? update?.tool_info?.name ?? "");
+    if (!agentEvents?.isSpawnTool(toolName)) return;
+    if (String(update.state ?? "").toUpperCase() !== "ACTIVE") return;
+    if (Number.isFinite(update.step_index)) {
+      if (reportedSpawns.has(update.step_index)) return;
+      reportedSpawns.add(update.step_index);
+    }
+    if (LOG_SPAWN_STEPS) console.error(`agy spawn step ${JSON.stringify(shapeOnly(update))}`);
+    const children = spawnedChildren(update);
+    console.error(`agy spawn tool=${toolName} children=${children.length} roles=${children.map(({ role }) => role ?? "unattributed").join(",")}`);
+    openSpawns.set(Number.isFinite(update.step_index) ? update.step_index : children[ 0 ].id, { tool: toolName, children, startedAt: Date.now() });
+    void agentEvents.reportSpawns({ tool: toolName, children });
+  };
+  const closeSpawn = (key, outcome) => {
+    const open = openSpawns.get(key);
+    if (!open) return;
+    openSpawns.delete(key);
+    void agentEvents.reportResults({ tool: open.tool, children: open.children, outcome, durationMs: Date.now() - open.startedAt });
+  };
+  // A dispatch step reaching a terminal state settles the *dispatch*, not the
+  // children. `DONE` means agy handed the work off successfully and the child
+  // is now running, so the child stays open and is closed with the parent turn.
+  // Any other terminal state means the hand-off itself failed, and a child that
+  // was never dispatched has no runtime to bound -- that one closes here.
+  const reportSpawnResults = (update) => {
+    const toolName = String(update?.tool_name ?? update?.tool_info?.name ?? "");
+    if (!agentEvents?.isSpawnTool(toolName)) return;
+    const state = String(update.state ?? "").toUpperCase();
+    if (!state || state === "ACTIVE" || state === "DONE" || !Number.isFinite(update.step_index)) return;
+    closeSpawn(update.step_index, "failure");
+  };
+  // Every child still open when the turn ends closes with it. That is the
+  // normal path for a successful dispatch, not an edge case.
+  const flushSpawns = (outcome) => {
+    for (const key of [ ...openSpawns.keys() ]) closeSpawn(key, outcome);
+  };
+  const observeSpawnStep = (update) => {
+    reportSpawns(update);
+    reportSpawnResults(update);
+  };
+  return { observeSpawnStep, flushSpawns, openSpawnCount: () => openSpawns.size };
+}
+
 function modelMetadata() {
   return {
     slug: DEFAULT_MODEL,
@@ -395,57 +471,7 @@ async function handle(request, response) {
   // never reach the router as requests. Report them, or an orchestrator turn
   // served here reads as "never delegated".
   const agentEvents = resolveAgentEventReporter(request.headers);
-  const reportedSpawns = new Set();
-  // Spawn steps still running, so the children each one opened can be closed
-  // with the duration agy actually spent on them. Without a close the router
-  // still counts the child, but measures it against the whole parent turn.
-  const openSpawns = new Map();
-  // Count a spawn once, when the step opens. A tool step reports ACTIVE then
-  // DONE for the same step_index, and a run may end without a DONE at all, so
-  // the opening transition is the only one that appears exactly once per
-  // invocation. A step that carries no index cannot be de-duplicated that way,
-  // and keying every such step under `undefined` would drop every spawn after
-  // the first; ACTIVE alone still keeps those from being counted twice.
-  const reportSpawns = (update) => {
-    const toolName = String(update?.tool_name ?? update?.tool_info?.name ?? "");
-    if (!agentEvents?.isSpawnTool(toolName)) return;
-    if (String(update.state ?? "").toUpperCase() !== "ACTIVE") return;
-    if (Number.isFinite(update.step_index)) {
-      if (reportedSpawns.has(update.step_index)) return;
-      reportedSpawns.add(update.step_index);
-    }
-    if (LOG_SPAWN_STEPS) console.error(`agy spawn step ${JSON.stringify(shapeOnly(update))}`);
-    const children = spawnedChildren(update);
-    console.error(`agy spawn tool=${toolName} children=${children.length} roles=${children.map(({ role }) => role ?? "unattributed").join(",")}`);
-    openSpawns.set(Number.isFinite(update.step_index) ? update.step_index : children[ 0 ].id, { tool: toolName, children, startedAt: Date.now() });
-    void agentEvents.reportSpawns({ tool: toolName, children });
-  };
-  // The same step reaching a terminal state closes its children. Only DONE is
-  // a success; agy uses other terminal states for a step that errored or was
-  // cancelled, and a child that did not finish its work is not a completed turn.
-  const closeSpawn = (key, outcome) => {
-    const open = openSpawns.get(key);
-    if (!open) return;
-    openSpawns.delete(key);
-    void agentEvents.reportResults({ tool: open.tool, children: open.children, outcome, durationMs: Date.now() - open.startedAt });
-  };
-  const reportSpawnResults = (update) => {
-    const toolName = String(update?.tool_name ?? update?.tool_info?.name ?? "");
-    if (!agentEvents?.isSpawnTool(toolName)) return;
-    const state = String(update.state ?? "").toUpperCase();
-    if (!state || state === "ACTIVE" || !Number.isFinite(update.step_index)) return;
-    closeSpawn(update.step_index, state === "DONE" ? "success" : "failure");
-  };
-  // A run can end without a terminal state for every spawn step -- agy may stop
-  // mid-step, and a step with no index can never be matched to one. Those
-  // children still ran, so they end with the turn that contained them.
-  const flushSpawns = (outcome) => {
-    for (const key of [ ...openSpawns.keys() ]) closeSpawn(key, outcome);
-  };
-  const observeSpawnStep = (update) => {
-    reportSpawns(update);
-    reportSpawnResults(update);
-  };
+  const { observeSpawnStep, flushSpawns } = createSpawnTracker(agentEvents);
   const prompt = promptFromInput(payload.input ?? "", bridgeInstructions(agentRole));
   let cwd;
   try {
@@ -663,4 +689,4 @@ if (IS_MAIN) {
   });
 }
 
-export { agyArgs, modelEffort, resolveEffort, resolveModel, spawnedChildren, subagentModel };
+export { agyArgs, createSpawnTracker, modelEffort, resolveEffort, resolveModel, spawnedChildren, subagentModel };

@@ -9,7 +9,7 @@ import {
   SUBAGENT_SPAWN_TOOLS_HEADER,
   resolveAgentEventReporter,
 } from "../scripts/codex/lib/agent-events.mjs";
-import { agyArgs, modelEffort, resolveEffort, resolveModel, spawnedChildren, subagentModel } from "../scripts/codex-antigravity-cli-responses-proxy.mjs";
+import { agyArgs, createSpawnTracker, modelEffort, resolveEffort, resolveModel, spawnedChildren, subagentModel } from "../scripts/codex-antigravity-cli-responses-proxy.mjs";
 
 const read = (path) => readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
 
@@ -353,4 +353,86 @@ test("the Claude bridge reports the spawns its Agent tool makes in-process", () 
 
 test("the installer ships the reporting module the bridges import at runtime", () => {
   assert.match(read("scripts/codex/install-codex-integration.sh"), /scripts\/codex\/lib\/agent-events\.mjs/);
+});
+
+// The two `invoke_subagent` step_updates agy really emitted for one dispatch,
+// captured from `agy -p ... --output-format stream-json`. The turn ran 45s and
+// the child genuinely did the work; the dispatch step reports 43ms.
+const AGY_INVOKE_SUBAGENT_STEPS = JSON.parse(readFileSync(new URL("./fixtures/agy-invoke-subagent-steps.json", import.meta.url), "utf8"));
+
+function recordingReporter() {
+  const spawns = [];
+  const results = [];
+  return {
+    spawns,
+    results,
+    isSpawnTool: (name) => name === "invoke_subagent",
+    reportSpawns: async (event) => { spawns.push(event); },
+    reportResults: async (event) => { results.push(event); },
+  };
+}
+
+test("a dispatch completing is not the child completing", async () => {
+  // agy's own numbers: DONE carries duration_seconds 0.043 for a child that ran
+  // inside a 45s turn. Closing on that DONE filled the usage tables with ~40ms
+  // durations for children that ran for minutes -- a number that looks like a
+  // measurement and is not one.
+  const [ active, done ] = AGY_INVOKE_SUBAGENT_STEPS;
+  assert.equal(active.state, "ACTIVE");
+  assert.equal(done.state, "DONE");
+  assert.ok(done.duration_seconds < 0.5, "the dispatch step is the hand-off, not the child's work");
+
+  const reporter = recordingReporter();
+  const tracker = createSpawnTracker(reporter);
+  tracker.observeSpawnStep(active);
+  assert.equal(reporter.spawns.length, 1);
+  assert.deepEqual(reporter.spawns[ 0 ].children.map(({ role }) => role), [ "research" ]);
+
+  tracker.observeSpawnStep(done);
+  assert.equal(reporter.results.length, 0, "a completed dispatch must not close the child it started");
+  assert.equal(tracker.openSpawnCount(), 1);
+
+  // The child closes with the turn that contained it, which bounds its runtime
+  // honestly: it ran somewhere inside that window.
+  tracker.flushSpawns("success");
+  assert.equal(reporter.results.length, 1);
+  assert.equal(reporter.results[ 0 ].outcome, "success");
+  assert.equal(tracker.openSpawnCount(), 0);
+});
+
+test("a dispatch that never happened closes immediately as a failure", async () => {
+  // Any terminal state other than DONE means the hand-off itself failed. That
+  // child was never dispatched, so there is no runtime to bound and nothing to
+  // wait for.
+  const [ active ] = AGY_INVOKE_SUBAGENT_STEPS;
+  for (const state of [ "ERROR", "CANCELLED" ]) {
+    const reporter = recordingReporter();
+    const tracker = createSpawnTracker(reporter);
+    tracker.observeSpawnStep(active);
+    tracker.observeSpawnStep({ ...active, state });
+    assert.equal(reporter.results.length, 1, state);
+    assert.equal(reporter.results[ 0 ].outcome, "failure", state);
+    assert.equal(tracker.openSpawnCount(), 0, state);
+  }
+});
+
+test("one dispatch is reported once however many updates it emits", async () => {
+  const [ active, done ] = AGY_INVOKE_SUBAGENT_STEPS;
+  const reporter = recordingReporter();
+  const tracker = createSpawnTracker(reporter);
+  for (const update of [ active, active, done, active ]) tracker.observeSpawnStep(update);
+  assert.equal(reporter.spawns.length, 1, "a repeated ACTIVE is the same dispatch, not another one");
+  tracker.flushSpawns("success");
+  assert.equal(reporter.results.length, 1);
+});
+
+test("a tool that is not the spawn tool is ignored entirely", async () => {
+  const reporter = recordingReporter();
+  const tracker = createSpawnTracker(reporter);
+  // `manage_subagents` is how agy tends its children afterwards; it dispatches
+  // nothing and must not be counted as a spawn.
+  tracker.observeSpawnStep({ step_index: 9, state: "ACTIVE", step_type: "tool", tool_name: "manage_subagents" });
+  tracker.observeSpawnStep({ step_index: 9, state: "DONE", step_type: "tool", tool_name: "manage_subagents" });
+  assert.equal(reporter.spawns.length, 0);
+  assert.equal(reporter.results.length, 0);
 });

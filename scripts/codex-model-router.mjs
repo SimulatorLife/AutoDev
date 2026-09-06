@@ -1285,10 +1285,38 @@ function openBridgeSubagentUsage({ requestId, context, role, childId, model }) {
   }
 }
 
+/**
+ * Move one child from `started` to how it ended.
+ *
+ * `byStatus` is a breakdown of how spawns finished, but only the open path ever
+ * wrote to it, so it read `{ started: N }` forever -- which says "none of these
+ * ever finished" about children that had all completed. Settled here rather
+ * than at either caller because this is the one place a child actually
+ * transitions from open to closed, and it does so exactly once.
+ */
+function settleSubagentStatus(requestId, outcome) {
+  const status = outcome === "failure" ? "failure" : "success";
+  if ((subagentTelemetry.byStatus.started ?? 0) > 0) subagentTelemetry.byStatus.started -= 1;
+  bumpCount(subagentTelemetry.byStatus, status, 1);
+  // Attach it to the batch it came from so a row can show how its children
+  // ended, not just that they started. Oldest unsettled batch for this request
+  // first: children open in order and a batch is only ever partly settled while
+  // its siblings are still running.
+  const batch = subagentTelemetry.recent.find((candidate) => candidate.requestId === requestId
+    && candidate.mechanism === "bridge_native"
+    && (candidate.settled?.success ?? 0) + (candidate.settled?.failure ?? 0) < candidate.count);
+  if (batch) {
+    batch.settled = batch.settled ?? { success: 0, failure: 0 };
+    batch.settled[status] += 1;
+  }
+  scheduleRouterStatePersist();
+}
+
 function closeBridgeSubagentUsage(key, { outcome = "success", failureClass = null, elapsedMs = null, toolCalls = 0 } = {}) {
   const entry = bridgeSubagentUsage.get(key);
   if (!entry) return false;
   bridgeSubagentUsage.delete(key);
+  settleSubagentStatus(entry.requestId, outcome);
   recordUsageEvent({
     phase: "result",
     requestId: key,
@@ -1343,6 +1371,7 @@ function recordSubagentSpawn({ mechanism, provider = null, role = null, status =
     requestId,
     workspace: workspace ?? null,
     count,
+    settled: { success: 0, failure: 0 },
   };
   subagentTelemetry.total += count;
   bumpCount(subagentTelemetry.byMechanism, mechanism, count);
@@ -1898,7 +1927,15 @@ function loadRouterState(file = STATE_FILE) {
         }
       }
       if (Array.isArray(saved.recent)) {
-        subagentTelemetry.recent = saved.recent.filter((entry) => entry && typeof entry === "object").slice(-MAX_RECENT_SUBAGENT_SPAWNS);
+        subagentTelemetry.recent = saved.recent
+          .filter((entry) => entry && typeof entry === "object")
+          .slice(-MAX_RECENT_SUBAGENT_SPAWNS)
+          .map((entry) => ({
+            ...entry,
+            settled: entry.settled && typeof entry.settled === "object"
+              ? { success: Number(entry.settled.success) || 0, failure: Number(entry.settled.failure) || 0 }
+              : { success: 0, failure: 0 },
+          }));
       }
     }
     if (Array.isArray(parsed.providerCooldowns)) {

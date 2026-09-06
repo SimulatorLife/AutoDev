@@ -855,6 +855,38 @@ still has its children counted; only the per-child duration is lost. A report
 that lands after the parent turn already ended is opened and settled at once
 rather than dropped, because bridges post without awaiting.
 
+##### What a spawn tool's completion does and does not mean
+
+For Antigravity, closing on the dispatch step is *wrong*, and the parent-turn
+bound above is the accurate path rather than the fallback. Captured directly
+from `agy -p ... --output-format stream-json`, one `invoke_subagent` dispatch
+emits exactly two updates:
+
+```jsonc
+{ "step_index": 2, "state": "ACTIVE", "step_type": "subagent", "tool_name": "invoke_subagent",
+  "subagent_info": { "subagents": [ { "type_name": "research", "role": "Line Counter",
+                                      "conversation_id": "b1655ed9-…", "log_uri": "file:///…" } ] } }
+{ "step_index": 2, "state": "DONE",   "duration_seconds": 0.043191, … }
+```
+
+The turn containing that dispatch ran 45.2 seconds and the child genuinely did
+the work. `invoke_subagent` is fire-and-forget: `DONE` reports that the
+*hand-off* finished in 43ms, and agy emits no later step when a child completes
+-- the child's result reaches the parent as context, invisibly. The child's true
+runtime is therefore not observable from this stream at all, and
+`manage_subagents` is how agy tends children afterwards rather than a completion
+signal.
+
+So a bridge must not treat a spawn tool's `DONE` as its children finishing. Doing
+so reported ~40ms for children that ran for minutes, which is worse than
+reporting nothing: it fills the usage tables with a number that looks like a
+measurement. Antigravity children stay open and close with the parent turn,
+which bounds them honestly -- the child ran somewhere inside that window. A
+terminal state other than `DONE` does close immediately, because that means the
+hand-off itself failed and there was never a child to wait for.
+
+Read a bridge-native child's duration as an upper bound, not a measurement.
+
 These turns are deliberately *not* fed through the router's event path.
 Provider health, cooldown, and the fallback chain describe routing decisions
 this router made, and a child it never routed must not move them. Only the
@@ -863,6 +895,12 @@ count them, tagged with the `subagent` origin.
 
 Two details follow from that:
 
+- `status.subagents.byStatus` is the breakdown of how spawns *ended*: a close
+  moves a child from `started` to `success` or `failure`, and each row in
+  `recent` carries its own `settled` tally so a batch shows how its children
+  finished rather than only how many it began. It previously reported
+  `{ started: N }` forever, which read as "none of these ever finished" about
+  children that had all completed.
 - A child whose spawn step exported no role is counted under
   `unattributed-subagent`, never the bare `unattributed` role. That key is
   roleless *orchestrator* traffic, which the dashboard renders as the

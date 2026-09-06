@@ -784,6 +784,101 @@ test("an Antigravity batch spawn reaches the router as one count per child", asy
   }
 });
 
+test("a spawn breakdown says how its children ended, not only that they started", async () => {
+  // `byStatus` is the breakdown of how spawns finished, but only the open path
+  // ever wrote to it, so it read `{ started: N }` forever -- which says "none of
+  // these ever finished" about children that had all completed.
+  resetSubagentTelemetry();
+  try {
+    noteBridgeRequest("request-status", { provider: "antigravity", model: "gemini-3.8-flash-medium", role: null, workspace: "SimulatorLife/RacingGame" });
+    ingestAgentEvents({
+      requestId: "request-status",
+      events: [ { type: "subagent_spawn", tool: "invoke_subagent", role: "research", count: 2, children: [ { id: "c1" }, { id: "c2" } ] } ],
+    });
+    assert.deepEqual(subagentStatus().byStatus, { started: 2 });
+
+    ingestAgentEvents({
+      requestId: "request-status",
+      events: [ { type: "subagent_result", tool: "invoke_subagent", role: "research", outcome: "success", durationMs: 45_000, children: [ { id: "c1" } ] } ],
+    });
+    // A close settles a child; it never invents one.
+    assert.deepEqual(subagentStatus().byStatus, { started: 1, success: 1 });
+    assert.equal(subagentStatus().total, 2, "settling is not a new spawn");
+
+    ingestAgentEvents({
+      requestId: "request-status",
+      events: [ { type: "subagent_result", tool: "invoke_subagent", role: "research", outcome: "failure", children: [ { id: "c2" } ] } ],
+    });
+    assert.deepEqual(subagentStatus().byStatus, { started: 0, success: 1, failure: 1 });
+
+    // The batch row carries its own tally, so a reader can see how that
+    // delegation ended rather than only how many it started.
+    const [ batch ] = subagentStatus().recent;
+    assert.equal(batch.count, 2);
+    assert.deepEqual(batch.settled, { success: 1, failure: 1 });
+  } finally {
+    resetSubagentTelemetry();
+  }
+});
+
+test("a spawn row restored from an older state file still settles", async () => {
+  // Rows written before `settled` existed come back without it, and the scan
+  // that finds a batch reads that field on every row it walks past.
+  const directory = await mkdtemp(join(tmpdir(), "router-settled-state-"));
+  const file = join(directory, "state.json");
+  try {
+    resetSubagentTelemetry();
+    noteBridgeRequest("request-old-row", { provider: "antigravity", model: "gemini-3.8-flash-medium", role: null, workspace: "SimulatorLife/RacingGame" });
+    ingestAgentEvents({
+      requestId: "request-old-row",
+      events: [ { type: "subagent_spawn", tool: "invoke_subagent", role: "research", count: 1, children: [ { id: "c1" } ] } ],
+    });
+    const aged = JSON.parse(serializeRouterState());
+    for (const entry of aged.subagents.recent) delete entry.settled;
+    await writeFile(file, JSON.stringify(aged), "utf8");
+
+    resetSubagentTelemetry();
+    assert.equal(loadRouterState(file), true);
+    assert.deepEqual(subagentStatus().recent[ 0 ].settled, { success: 0, failure: 0 }, "a restored row is normalized, not left ragged");
+
+    noteBridgeRequest("request-old-row", { provider: "antigravity", model: "gemini-3.8-flash-medium", role: null, workspace: "SimulatorLife/RacingGame" });
+    ingestAgentEvents({
+      requestId: "request-old-row",
+      events: [ { type: "subagent_spawn", tool: "invoke_subagent", role: "research", count: 1, children: [ { id: "c2" } ] } ],
+    });
+    ingestAgentEvents({
+      requestId: "request-old-row",
+      events: [ { type: "subagent_result", tool: "invoke_subagent", role: "research", outcome: "success", children: [ { id: "c2" } ] } ],
+    });
+    assert.equal(subagentStatus().byStatus.success, 1);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+    resetSubagentTelemetry();
+    resetRouterTelemetry();
+  }
+});
+
+test("children still running when the parent turn ends are settled by it", async () => {
+  // The normal path for Antigravity: `invoke_subagent` dispatches and never
+  // reports a close, because agy emits no step when a child finishes. The
+  // parent turn is the only honest bound on those children.
+  resetSubagentTelemetry();
+  try {
+    noteBridgeRequest("request-parent-close", { provider: "antigravity", model: "gemini-3.8-flash-medium", role: null, workspace: "SimulatorLife/RacingGame" });
+    ingestAgentEvents({
+      requestId: "request-parent-close",
+      events: [ { type: "subagent_spawn", tool: "invoke_subagent", role: "research", count: 1, children: [ { id: "c1" } ] } ],
+    });
+    assert.deepEqual(subagentStatus().byStatus, { started: 1 });
+
+    closeBridgeSubagentsForRequest("request-parent-close", "success", 45_000);
+    assert.deepEqual(subagentStatus().byStatus, { started: 0, success: 1 });
+    assert.deepEqual(subagentStatus().recent[ 0 ].settled, { success: 1, failure: 0 });
+  } finally {
+    resetSubagentTelemetry();
+  }
+});
+
 test("an Antigravity batch spawn contributes measured turns to the usage tables", async () => {
   // The spawn count alone left the provider that actually ran a twelve-way
   // fan-out showing exactly one turn in "Provider health and usage", and no

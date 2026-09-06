@@ -689,8 +689,11 @@
       document.querySelector("#subagents-total").textContent = subagents.total ?? 0;
       const spawnMechanisms = Object.entries(subagents.byMechanism ?? {}).map(([ key, value ]) => `${text(key)}: ${value}`).join(", ") || "-";
       const spawnProviders = Object.entries(subagents.byProvider ?? {}).map(([ key, value ]) => `${text(key)}: ${value}`).join(", ") || "-";
+      // How the spawns ended, not just that they began. A breakdown that only
+      // ever said "started" read as "none of these finished".
+      const spawnStatuses = Object.entries(subagents.byStatus ?? {}).filter(([ , value ]) => value > 0).map(([ key, value ]) => `${text(key)}: ${value}`).join(", ") || "-";
       document.querySelector("#subagent-summary").textContent =
-        `Total ${subagents.total ?? 0} · ${spawnMechanisms} · by provider ${spawnProviders} · spawn-capable providers: ${(subagents.spawnCapableProviders ?? []).join(", ") || "-"} · Codex-native OTEL spawns: ${subagents.codexNativeSpawns ?? 0}. Rows cover the ${recentSpawns.length} most recent spawns; the totals row is the all-time count.`;
+        `Total ${subagents.total ?? 0} · ${spawnMechanisms} · by provider ${spawnProviders} · by outcome ${spawnStatuses} · spawn-capable providers: ${(subagents.spawnCapableProviders ?? []).join(", ") || "-"} · Codex-native OTEL spawns: ${subagents.codexNativeSpawns ?? 0}. Rows cover the ${recentSpawns.length} most recent spawns; the totals row is the all-time count.`;
       const spawnFailures = status.spawnFailures ?? {};
       const recentSpawnFailures = Array.isArray(spawnFailures.recent) ? spawnFailures.recent : [];
       const latestByReason = new Map();

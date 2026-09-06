@@ -38,6 +38,7 @@ console.log("");
 console.log(`Subagents spawned: ${subagents.total ?? 0} (${counts(subagents.byMechanism)})`);
 console.log(`  by provider: ${counts(subagents.byProvider)}`);
 console.log(`  by role: ${counts(subagents.byRole)}`);
+console.log(`  by outcome: ${counts(subagents.byStatus)}`);
 console.log(`  spawn-capable providers: ${(subagents.spawnCapableProviders ?? []).join(", ") || "-"}; Codex-native OTEL spawns: ${subagents.codexNativeSpawns ?? 0}`);
 for (const spawn of (subagents.recent ?? []).slice(0, 10)) {
   console.log(`  ${spawn.timestamp} ${spawn.mechanism} ${spawn.provider}/${spawn.role} ${spawn.tool ?? "-"}`);
