@@ -27,7 +27,7 @@ The editable provider/model choices live in
 `roles.<role>.tier` selects the tier for each capability role. For example, set
 Claude's smart model to `claude-opus-5` or Codex's to `gpt-5.6-sol` there; providers like MiniMax or Copilot that use the same model across tiers only need to define `default`. The installer materializes this file as
 `$CODEX_HOME/codex-model-routing.json`.
-For the `default` capability tier, the router randomizes Claude, Gemini/Antigravity, and MiniMax, then falls back to Copilot and OpenAI/Codex. For `smart`, it randomizes Claude and Gemini/Antigravity, then falls back directly to OpenAI/Codex Sol. Providers that are unavailable or return fallbackable limit errors are skipped and the next provider in the current group is tried before progressing to the next group:
+For the `default` capability tier, the router randomizes Claude, Gemini/Antigravity, and MiniMax, then falls back to Copilot and OpenAI/Codex. For `smart`, it randomizes Claude and Gemini/Antigravity, then falls back directly to OpenAI/Codex Sol. Providers that are unavailable or return fallbackable limit errors are skipped and the next provider in the current group is tried before progressing to the next group. A skipped provider is not forgotten: if no candidate serves the turn, the router reconsiders the ones it skipped as a bounded last resort before giving up (see "Cooldowns and provider selection"):
 
 1. `default`: Claude, Gemini/Antigravity, MiniMax (randomized), then Copilot, then OpenAI/Codex Luna
 2. `smart`: Claude, Gemini/Antigravity (randomized), then OpenAI/Codex Sol
@@ -95,9 +95,18 @@ Differences from a role request:
   downstream SSE responses. This allows MiniMax to properly receive and invoke
   `spawn_agent` during orchestrator turns rather than emitting plain text.
 
-When every orchestrator candidate is unavailable or cooling down, the router
-returns `503 router_provider_exhausted` with a `Retry-After` header, exactly as
-it does for an exhausted role tier.
+When the orchestrator tier is genuinely exhausted, the router returns
+`503 router_provider_exhausted` exactly as it does for an exhausted role tier --
+but only after the last-resort pass and the bounded wait below have both failed.
+That distinction matters for the orchestrator specifically: its 503 ends the root
+turn and every child with it, so exhausting the tier is the most expensive
+failure in the system and worth the extra attempts to avoid.
+
+A subagent that comes back with `status: "incomplete"` is a normal, actionable
+outcome rather than a lost turn: the child hit a limit partway through, and the
+work it finished is in the response. An orchestrator reading one should use that
+work and decide whether to re-delegate, not treat the turn as having produced
+nothing. See "Partial results on provider exhaustion".
 
 Provider availability is checked through local health endpoints and credential
 checks. HTTP 429/5xx, quota, session-limit, high-demand, timeout, and
@@ -108,16 +117,131 @@ streaming has begun cannot be safely replayed. Claude's `rate_limit_event` is
 informational when `rate_limit_info.status` is `allowed`; only a non-allowed
 status is treated as a Claude limit.
 
-Provider failures use exponential backoff: the default cooldown is 30 seconds,
-then 60 seconds, 120 seconds, and so on up to 10 minutes for repeated failures.
-The cooldown and failure streak are provider-wide, so a failing provider moves
-behind healthy peers for later role requests. When every candidate is cooling
-down, the router returns `503 router_provider_exhausted` with a `Retry-After`
-header indicating the earliest retry time rather than immediately hammering the
-same provider. Override the defaults with the positive millisecond environment
-variables `CODEX_ROUTER_PROVIDER_COOLDOWN_MS` and
-`CODEX_ROUTER_PROVIDER_COOLDOWN_MAX_MS` when operating a deliberately different
-retry policy.
+### Cooldowns and provider selection
+
+A cooldown is load-shedding advice, not proof a provider is dead. There are four
+kinds, and which one applies decides both how long it lasts and whether the
+provider can still be attempted when nothing else is left. `GET /status` reports
+the kind as `cooldownKind`, with `cooldownFailureClass`, `cooldownResetsAt` and
+`lastResortEligible` alongside it.
+
+| Kind | Applies to | Duration | Last resort? | Survives a restart? |
+| --- | --- | --- | --- | --- |
+| `transient` | any fallbackable failure, and any limit the router only inferred from prose | 30s doubling to 10min | yes | no |
+| `hard` | `quota_exhausted` / `session_limit` that the **provider itself declared** | until the declared reset, else a 15min floor, capped at 6h | only while no reset time is known | yes |
+| `probe` | a local bridge that did not answer its health check | 5s doubling to 30s | yes | no |
+| `config` | `authentication`, `invalid_model` | fixed 30s, never escalates | no | no |
+
+Three rules are load-bearing:
+
+- **A hard cooldown needs corroboration.** `classifyProviderFailure` matches
+  keywords, and bridges put CLI stderr tails into error messages, so one stray
+  "quota" in an unrelated crash could otherwise take a provider out for fifteen
+  minutes. Only a provider *reporting* a limit -- `x-autodev-limit-source:
+  reported`, from a Claude `rate_limit_event` or an upstream that sent the limit
+  headers -- produces a hard cooldown. An inferred limit stays on the transient
+  ladder.
+- **Probe failures ride their own ladder.** A local bridge restarting says
+  nothing about the provider behind it, and escalating the provider's own backoff
+  for it was how a one-minute outage became a ten-minute one.
+- **A cooldown only ever moves later.** A short probe cooldown landing on top of
+  a long declared limit must not shorten it.
+
+Selection then runs in up to three passes, and only reaches a 503 if all three
+come up empty:
+
+1. **Primary.** Every candidate that is not cooling, in tier order.
+2. **Last resort.** The candidates pass 1 skipped, soonest-to-lapse first, capped
+   at `CODEX_ROUTER_LAST_RESORT_MAX_ATTEMPTS` (default 2). Excluded: anything
+   already attempted, a `config` cooldown, a provider already serving another
+   request (so concurrent exhausted requests do not pile onto the same one), and
+   a `hard` cooldown with a declared reset still in the future -- that provider
+   has stated it will not serve yet, and attempting it anyway is exactly the
+   hammering cooldowns exist to prevent. A success clears the cooldown, so the
+   chain heals itself.
+3. **Bounded wait.** If a cooldown lapses within
+   `CODEX_ROUTER_EXHAUSTION_WAIT_MS` (default 20s), the router waits for it and
+   makes one more attempt rather than ending the caller's turn. It happens before
+   response headers, so the client sees a slow request rather than a stalled
+   stream, and it is cut short if the client disconnects. Keep it small: a role
+   request holds its subagent slot throughout, and the per-session limit is
+   typically 2. Set it to `0` to disable waiting entirely.
+
+`CODEX_ROUTER_CHAIN_SELECTION_DEADLINE_MS` (default 120s) bounds how long the
+router may spend *looking* for a provider. It is checked only before starting a
+candidate and never during one, so a long turn that lands on the last candidate
+still gets the full `CODEX_ROUTER_UPSTREAM_TIMEOUT_MS`. Without it, a tier of
+five hanging providers could hold a subagent slot for over an hour.
+
+All of these are positive-millisecond environment variables:
+`CODEX_ROUTER_PROVIDER_COOLDOWN_MS` (30_000),
+`CODEX_ROUTER_PROVIDER_COOLDOWN_MAX_MS` (600_000),
+`CODEX_ROUTER_HARD_COOLDOWN_MS` (900_000),
+`CODEX_ROUTER_HARD_COOLDOWN_MAX_MS` (21_600_000),
+`CODEX_ROUTER_PROBE_COOLDOWN_MS` (5_000),
+`CODEX_ROUTER_PROBE_COOLDOWN_MAX_MS` (30_000),
+`CODEX_ROUTER_PROBE_TIMEOUT_MS` (700),
+`CODEX_ROUTER_LAST_RESORT_MAX_ATTEMPTS` (2),
+`CODEX_ROUTER_EXHAUSTION_WAIT_MS` (20_000, `0` disables) and
+`CODEX_ROUTER_CHAIN_SELECTION_DEADLINE_MS` (120_000).
+
+### Declared limits
+
+A provider bridge that knows it hit a usage limit says so structurally rather
+than only in prose, on both the streamed and non-streamed paths:
+
+| Header | Value |
+| --- | --- |
+| `x-autodev-limit-class` | `quota_exhausted`, `session_limit`, `throttled`, `capacity` |
+| `x-autodev-limit-type` | the provider's own window name, e.g. `weekly`, `five_hour`, `session` |
+| `x-autodev-limit-resets-at` | ISO-8601 UTC |
+| `x-autodev-limit-source` | `reported` (the provider said so) or `inferred` (a bridge matched free text) |
+
+The same shape appears as `error.limit` in a non-streamed failure body and as
+`response.incomplete_details.provider_limit` on a streamed one, so the router
+reads one shape wherever it finds it. `scripts/codex/lib/provider-limits.mjs` is
+the single implementation; the Claude bridge is Python and restates the same
+literals, with `tests/provider-limits.test.mjs` guarding against drift.
+
+Only `reported` corroborates a hard cooldown. A bridge classifying its CLI's
+error text always reports `inferred`, which is enough to pick a better HTTP
+status and a `Retry-After` but never enough to strand a provider for the hard
+window.
+
+### Partial results on provider exhaustion
+
+A turn cut short after streaming has begun cannot be replayed on another
+provider, so whatever the model already produced is all the caller will ever get
+for that turn. It used to be discarded: the bridges emitted a bare
+`response.failed` and threw away every token they had already sent, leaving the
+parent with an error string in place of a partial result it could have acted on.
+
+All three CLI bridges now close such a turn as an *incomplete* response instead,
+in this order:
+
+```
+response.output_text.delta          (a truncation notice, appended to what the client already saw)
+response.reasoning_summary_text.done / _part.done / output_item.done   (reasoning, status "incomplete")
+response.output_text.done / content_part.done / output_item.done       (message,   status "incomplete")
+response.completed { status: "incomplete", incomplete_details: { reason, provider_limit } }
+data: [DONE]
+```
+
+`incomplete_details.reason` is `provider_limit`, `provider_timeout` or
+`provider_interrupted`. The truncation notice is deliberately in the text a model
+will read, not only in metadata: a partial answer mistaken for a complete one is
+worse than a failure.
+
+This is not a way of reporting success. `responseWasNotCompleted` treats any
+status other than `completed` as a provider failure, so the turn still counts as
+a failure, still cools the provider, and now cools it on the class the provider
+reported rather than a generic `upstream_error`.
+
+The router applies the same contract as a backstop for what the bridges cannot
+cover -- the bridge process being killed, or the socket dropping under it. A
+stream that ends without a terminal event is closed by the router itself,
+carrying the text it had already forwarded. The invariant: **the router never
+ends a started stream without a terminal event.**
 
 ## Observability
 
@@ -127,6 +251,16 @@ The router makes its effective choice visible in two ways:
   `x-autodev-request-id`. For a role request such as `autodev/explorer`, these
   identify the concrete provider/model selected after shuffling, load balancing,
   health checks, and fallback.
+- An exhaustion response additionally carries `x-autodev-limit-class` and
+  `x-autodev-limit-resets-at` for the soonest-resetting candidate, alongside
+  `retry-after`.
+- Router events carry a `selection` field naming the pass that chose a provider:
+  `primary`, `last_resort`, or `exhaustion_wait`. The `phase` is unchanged, so
+  every existing counter keeps working; `selection` only says how hard the router
+  had to look. A waiting request also emits its own `exhaustion_wait` event.
+- Per-provider `/status` entries report `cooldownKind`, `cooldownFailureClass`,
+  `cooldownResetsAt`, `lastResortEligible`, and `probeFailureStreak` alongside
+  the existing cooldown countdown and failure streak.
 - The status payload and dashboard report the effective Codex per-session
   concurrency limit, the number of active session buckets, active role-based
   subagent slots, and denials caused by that limit. An active session is a
@@ -250,11 +384,20 @@ operational data survives reboot, tmpfs clears, and `/tmp` rotation.
 
 Provider counters, recent events, and the
 versioned privacy-safe OTEL aggregate section are also persisted atomically in
-`$CODEX_HOME/codex-router-state.json`, so they survive router restarts. Only
-active requests, in-flight sessions, and short cooldown timers reset.
+`$CODEX_HOME/codex-router-state.json`, so they survive router restarts. Active
+requests and in-flight sessions reset, and so do `transient`, `probe` and
+`config` cooldowns -- those are the router's own guesses about a moment that has
+passed, and a restart is a legitimate reason to go and look again. A `hard`
+cooldown survives: a provider that declared it is out of usage until Tuesday is
+still out of usage on Tuesday, and the router restarts often enough under launchd
+that dropping it would put it straight back to re-probing an exhausted account.
+Restored cooldowns are dropped if already past and re-clamped to
+`CODEX_ROUTER_HARD_COOLDOWN_MAX_MS` on the way back in.
 Failure classes include `session_limit`,
 `throttled`, `quota_exhausted`, `capacity`, `timeout`, `unavailable`,
-`authentication`, and `invalid_model`. These are observations from upstream
+`authentication`, `invalid_model`, and `probe_unavailable` (a local bridge that
+did not answer its health check). Of these, only `session_limit` and
+`quota_exhausted` are *hard*, and only when the provider declared them. These are observations from upstream
 responses and local health checks, not a provider's authoritative quota API;
 the persisted counters remain available after the router process restarts. Use
 the router instance ID and request ID to correlate a turn with its fallback
@@ -369,13 +512,34 @@ Router-generated provider errors include stable `code`, `retryable`,
 fields in the JSON error object. Transport failures are logged as structured
 `transport_error` events with only sanitized error name/code/syscall fields;
 raw exception text, credentials, prompts, and upstream bodies are not exposed.
-When no provider can complete a role request, the router returns HTTP 503
-with a `router_provider_exhausted` error code, the same
-`x-autodev-request-id` header, and a `retry-after` header sized to the
-provider cooldown window. Concurrency denials return HTTP 429 with
-`retry-after: 1` and the same `x-autodev-request-id`. The dashboard's
+When no provider can complete a role request -- after the primary, last-resort
+and bounded-wait passes have all failed -- the router returns HTTP 503 with a
+`router_provider_exhausted` error code, the same `x-autodev-request-id` header,
+and a `retry-after` header sized to the provider cooldown window.
+
+The consumer of that error is a model deciding what to do next, so it carries
+enough to act on rather than four repetitions of "cooldown active". `error.details`
+holds `retryAfterMs`, `resetsAt`, `lastResortAttempts`, `selectionDeadlineReached`,
+the per-candidate `providers[]` summary (`state`, `failureClass`, `resetsAt`,
+`retryAfterMs`), and a `recommendedAction`:
+
+- `summarize_and_yield` when every candidate is hard-limited. There is nothing to
+  retry into; the right move is to return a summary of the work completed so far.
+- `retry_after` otherwise, with the wait in `retryAfterMs`.
+
+The message text says the same thing in prose, naming each provider and its reset
+time, because that is what a model actually reads. Concurrency denials return HTTP
+429 with `retry-after: 1` and the same `x-autodev-request-id`.
+
+A started stream never ends without a terminal event on any of these paths: an
+exhausted chain, a concrete-request failure, or an internal router error will
+close the stream rather than leaving the caller with a truncated body that is
+indistinguishable from a hung provider. The dashboard's
 `Spawn failures` table renders the recent request IDs by reason so the
 same header can be traced from the API call through the router's event log.
+Its reasons are `provider_exhausted`, `selection_deadline` (the router spent its
+provider-selection budget without finding one),
+`max_concurrent_threads_per_session`, and `spawn_tool_unavailable`.
 
 ### Streaming resilience and keep-alives
 
@@ -1022,6 +1186,10 @@ the job because its fallback is entangled with semantics LiteLLM cannot express:
 - the session-to-provider join that attributes `router_alias` subagents to the
   provider that ran the parent turn;
 - namespaced-tool flattening for every non-Codex provider;
+- the declared-limit contract: cooldowns keyed to a provider's own stated reset
+  time rather than a generic backoff curve, and a last-resort pass that treats a
+  cooldown as advice rather than a bar so an orchestrator turn survives a tier
+  that is briefly all cooling at once;
 - the `x-autodev-*` headers, which the router **generates** per request from its
   own alias dispatch. LiteLLM can forward allowlisted client headers; it cannot
   mint them, and a forwarded client value would be exactly the spoofable input

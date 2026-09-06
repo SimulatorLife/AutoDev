@@ -19,14 +19,18 @@ if (process.argv.includes("--json")) {
 console.log(`Router ${body.router} (pid ${body.pid}, instance ${body.routerInstanceId})`);
 console.log(`Started: ${body.startedAt}`);
 console.log("");
-console.log("Provider            Status             Active  Attempts  Successes  Failures  Last failure");
-console.log("------------------  -----------------  ------  --------  ---------  --------  ------------");
+console.log("Provider            Status                                   Active  Attempts  Successes  Failures  Last failure");
+console.log("------------------  ---------------------------------------  ------  --------  ---------  --------  ------------");
 for (const [provider, state] of Object.entries(body.providers ?? {})) {
   const lastFailure = state.lastFailure
     ? `${state.lastFailure.class}${state.lastFailure.status ? ` (HTTP ${state.lastFailure.status})` : ""}`
     : "-";
-  const cooldown = state.cooldownRemainingMs > 0 ? ` (${Math.ceil(state.cooldownRemainingMs / 1000)}s)` : "";
-  console.log(`${provider.padEnd(19)} ${(state.status + cooldown).padEnd(18)} ${String(state.activeRequests).padStart(6)}  ${String(state.attempts).padStart(8)}  ${String(state.successes).padStart(9)}  ${String(state.failures).padStart(8)}  ${lastFailure}`);
+  const cooldown = state.cooldownRemainingMs > 0
+    ? state.cooldownResetsAt
+      ? ` (${state.cooldownKind}, resets ${state.cooldownResetsAt})`
+      : ` (${state.cooldownKind ?? "cooldown"} ${Math.ceil(state.cooldownRemainingMs / 1000)}s)`
+    : "";
+  console.log(`${provider.padEnd(19)} ${(state.status + cooldown).padEnd(40)} ${String(state.activeRequests).padStart(6)}  ${String(state.attempts).padStart(8)}  ${String(state.successes).padStart(9)}  ${String(state.failures).padStart(8)}  ${lastFailure}`);
 }
 
 const subagents = body.subagents ?? {};

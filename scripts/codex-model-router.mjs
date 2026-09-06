@@ -13,6 +13,7 @@ import { pathToFileURL } from "node:url";
 // and the directory the agent actually runs in from drifting apart -- they
 // were separate implementations, and they disagreed.
 import { WORKSPACE_KEYS, isDirectory } from "./codex/lib/resolve-workspace.mjs";
+import { INCOMPLETE_REASON_INTERRUPTED, INCOMPLETE_REASON_TIMEOUT, isHardLimitClass, LIMIT_HEADER_CLASS, LIMIT_HEADER_RESETS_AT, LIMIT_SOURCE_REPORTED, normalizeResetsAt, readLimitHeaders, terminalIncompleteEvents } from "./codex/lib/provider-limits.mjs";
 
 const HOST = process.env.CODEX_MODEL_ROUTER_HOST ?? "127.0.0.1";
 const PORT = Number.parseInt(process.env.CODEX_MODEL_ROUTER_PORT ?? "4100", 10);
@@ -134,6 +135,30 @@ function positiveDuration(value, fallback) {
 
 const PROVIDER_COOLDOWN_MS = positiveDuration(process.env.CODEX_ROUTER_PROVIDER_COOLDOWN_MS, 30_000);
 const PROVIDER_COOLDOWN_MAX_MS = Math.max(PROVIDER_COOLDOWN_MS, positiveDuration(process.env.CODEX_ROUTER_PROVIDER_COOLDOWN_MAX_MS, 600_000));
+// A provider that has told us it is out of usage until a stated time is not the
+// same thing as one that blipped a 503, and backing both off on one 30s-doubling
+// ladder meant a weekly quota was re-probed every ten minutes forever while a
+// local bridge that flapped for a minute was taken out for the same ten. These
+// are the three other cooldown shapes; `cooldownProvider` picks between them.
+const HARD_COOLDOWN_MS = positiveDuration(process.env.CODEX_ROUTER_HARD_COOLDOWN_MS, 900_000);
+const HARD_COOLDOWN_MAX_MS = Math.max(HARD_COOLDOWN_MS, positiveDuration(process.env.CODEX_ROUTER_HARD_COOLDOWN_MAX_MS, 21_600_000));
+const PROBE_COOLDOWN_MS = positiveDuration(process.env.CODEX_ROUTER_PROBE_COOLDOWN_MS, 5_000);
+const PROBE_COOLDOWN_MAX_MS = Math.max(PROBE_COOLDOWN_MS, positiveDuration(process.env.CODEX_ROUTER_PROBE_COOLDOWN_MAX_MS, 30_000));
+const PROBE_TIMEOUT_MS = positiveDuration(process.env.CODEX_ROUTER_PROBE_TIMEOUT_MS, 700);
+// A cooldown is load-shedding advice, not evidence a provider is dead. When
+// every candidate is cooling the router would rather attempt a few of them than
+// strand the caller, so it makes a bounded last-resort pass and, if a cooldown
+// is about to lapse anyway, waits for it. Both budgets are small: a role request
+// holds a subagent slot for the whole time, and the wait happens before response
+// headers, so the client sees a slow request rather than an idle stream.
+const LAST_RESORT_MAX_ATTEMPTS = positiveDuration(process.env.CODEX_ROUTER_LAST_RESORT_MAX_ATTEMPTS, 2);
+const EXHAUSTION_WAIT_MS = Number.parseInt(process.env.CODEX_ROUTER_EXHAUSTION_WAIT_MS ?? "", 10) >= 0
+  ? Number.parseInt(process.env.CODEX_ROUTER_EXHAUSTION_WAIT_MS, 10)
+  : 20_000;
+// Bounds how long the router may spend *looking* for a provider. Checked only
+// before starting a candidate, never during one, so a legitimately long turn
+// that lands on the last candidate still gets the full upstream timeout.
+const CHAIN_SELECTION_DEADLINE_MS = positiveDuration(process.env.CODEX_ROUTER_CHAIN_SELECTION_DEADLINE_MS, 120_000);
 // Keep the router's total upstream lifetime longer than the provider bridge
 // defaults. The caller still owns cancellation, and the timeout aborts an
 // in-flight response body as well as a connection that never produces headers.
@@ -162,8 +187,13 @@ const CONCRETE_TRANSPORT_MAX_ATTEMPTS = Math.max(
 // Time the router will wait for in-flight response requests to drain after a
 // shutdown signal before forcibly aborting them and exiting.
 const SHUTDOWN_DRAIN_TIMEOUT_MS = positiveDuration(process.env.CODEX_ROUTER_SHUTDOWN_DRAIN_MS, 30_000);
+// provider -> { until, kind, failureClass, resetsAt, since }. `kind` is what
+// decides whether a cooling provider may still be attempted as a last resort.
 const providerCooldowns = new Map();
 const providerFailureStreaks = new Map();
+// Probe failures ride their own ladder: a local bridge restarting must not
+// escalate the backoff that describes the real provider's health.
+const providerProbeStreaks = new Map();
 const activeProviderRequests = new Map();
 const ROUTER_STARTED_AT = new Date().toISOString();
 const ROUTER_INSTANCE_ID = randomUUID();
@@ -1467,6 +1497,10 @@ function routeCredentialAvailable(route, environment = process.env) {
   return !route.envKey || Boolean(String(environment[route.envKey] ?? "").trim());
 }
 
+// A local bridge that did not answer its health check. Distinct from the
+// classes below, which all describe something the provider itself said.
+const PROBE_FAILURE_CLASS = "probe_unavailable";
+
 function classifyProviderFailure(status, body = "") {
   const text = String(body ?? "");
   if (/session.?limit|session.*(?:exhaust|capacity)|concurrent session/i.test(text)) return "session_limit";
@@ -1481,7 +1515,7 @@ function classifyProviderFailure(status, body = "") {
   return "request_error";
 }
 
-function recordRouterEvent({ phase, requestId, role = null, requestedModel, provider, model, workspace = null, outcome = null, status = null, failureClass = null, denialReason = null, spawnFailureReason = null, elapsedMs = null, toolCalls = 0, errorName = null, errorCode = null, syscall = null, origin = null }) {
+function recordRouterEvent({ phase, requestId, role = null, requestedModel, provider, model, workspace = null, outcome = null, status = null, failureClass = null, denialReason = null, spawnFailureReason = null, elapsedMs = null, toolCalls = 0, errorName = null, errorCode = null, syscall = null, origin = null, selection = null }) {
   const timestamp = new Date().toISOString();
   const workspaceContext = typeof workspace === "string" ? { key: workspace, cwd: null } : workspace;
   const event = {
@@ -1506,6 +1540,10 @@ function recordRouterEvent({ phase, requestId, role = null, requestedModel, prov
     errorName,
     errorCode,
     syscall,
+    // "primary", "last_resort" or "exhaustion_wait": which selection pass chose
+    // this provider. Phase stays as it was so every existing counter keeps
+    // working; this only says how hard the router had to look.
+    selection,
   };
   recentRouterEvents.push(event);
   while (recentRouterEvents.length > Math.max(1, MAX_RECENT_EVENTS)) recentRouterEvents.shift();
@@ -1562,22 +1600,29 @@ function resetRouterTelemetry() {
   spawnFailureTelemetry.recent = [];
   providerCooldowns.clear();
   providerFailureStreaks.clear();
+  providerProbeStreaks.clear();
   scheduleRouterStatePersist();
 }
 
 function getRouterStatus(now = Date.now()) {
   const providers = Object.fromEntries(ROUTES.map((route) => {
     const state = providerState(route.provider);
-    const cooldownUntil = providerCooldowns.get(route.provider) ?? 0;
-    if (cooldownUntil <= now) providerCooldowns.delete(route.provider);
+    const cooldown = providerCooldown(route.provider, now);
     const activeRequests = getActiveRequests(route.provider);
-    const coolingDown = cooldownUntil > now;
+    const coolingDown = cooldown !== null;
     return [route.provider, {
-      status: coolingDown ? (state.lastFailureClass ?? "cooldown") : "ready",
+      status: coolingDown ? (cooldown.failureClass ?? state.lastFailureClass ?? "cooldown") : "ready",
       activeRequests,
-      cooldownUntil: coolingDown ? new Date(cooldownUntil).toISOString() : null,
-      cooldownRemainingMs: coolingDown ? cooldownUntil - now : 0,
+      cooldownUntil: coolingDown ? new Date(cooldown.until).toISOString() : null,
+      cooldownRemainingMs: coolingDown ? cooldown.until - now : 0,
+      // Which policy is holding this provider back, and whether it can still be
+      // tried as a last resort when every candidate is cooling at once.
+      cooldownKind: coolingDown ? cooldown.kind : null,
+      cooldownFailureClass: coolingDown ? cooldown.failureClass ?? null : null,
+      cooldownResetsAt: coolingDown ? cooldown.resetsAt ?? null : null,
+      lastResortEligible: coolingDown ? cooldownAllowsLastResort(cooldown, now) : true,
       failureStreak: providerFailureStreaks.get(route.provider) ?? 0,
+      probeFailureStreak: providerProbeStreaks.get(route.provider) ?? 0,
       configuredModels: ROUTING.providers[route.provider]?.models ?? {},
       capabilities: providerCapabilities(route.provider),
       attempts: state.attempts,
@@ -1750,7 +1795,7 @@ function restoreOtelTelemetry(snapshot) {
 
 function serializeRouterState() {
   return JSON.stringify({
-    schema: "autodev-router-persisted-state-v1",
+    schema: "autodev-router-persisted-state-v2",
     updatedAt: new Date().toISOString(),
     providerTelemetry: Object.fromEntries(providerTelemetry),
     usage: usagePersistenceSnapshot(),
@@ -1764,6 +1809,15 @@ function serializeRouterState() {
       recent: subagentTelemetry.recent,
     },
     spawnFailures: spawnFailureTelemetry,
+    // Only hard cooldowns survive a restart. A provider that stated it is out
+    // of usage until Tuesday is still out of usage on Tuesday, and the router
+    // restarts often enough (launchd KeepAlive) that dropping that would put it
+    // straight back to re-probing an exhausted account. Transient and probe
+    // cooldowns are the router's own guesses about a moment that has passed, so
+    // a restart is a legitimate reason to go and look again.
+    providerCooldowns: [...providerCooldowns.entries()]
+      .filter(([, entry]) => entry.kind === "hard")
+      .map(([provider, entry]) => ({ provider, ...entry })),
     recentEvents: [...recentRouterEvents],
     otelTelemetry: otelPersistenceSnapshot(),
   }, null, 2);
@@ -1773,7 +1827,7 @@ function loadRouterState(file = STATE_FILE) {
   if (!existsSync(file)) return false;
   try {
     const parsed = JSON.parse(readFileSync(file, "utf8"));
-    if (parsed?.schema !== "autodev-router-persisted-state-v1") return false;
+    if (parsed?.schema !== "autodev-router-persisted-state-v2") return false;
     for (const [provider, saved] of Object.entries(parsed.providerTelemetry ?? {})) {
       if (!providerTelemetry.has(provider) || !saved || typeof saved !== "object") continue;
       const current = providerState(provider);
@@ -1832,6 +1886,25 @@ function loadRouterState(file = STATE_FILE) {
       }
       if (Array.isArray(saved.recent)) {
         subagentTelemetry.recent = saved.recent.filter((entry) => entry && typeof entry === "object").slice(-MAX_RECENT_SUBAGENT_SPAWNS);
+      }
+    }
+    if (Array.isArray(parsed.providerCooldowns)) {
+      const now = Date.now();
+      for (const entry of parsed.providerCooldowns) {
+        if (!entry || typeof entry !== "object" || entry.kind !== "hard") continue;
+        if (!providerTelemetry.has(entry.provider)) continue;
+        const until = Number(entry.until);
+        // Re-clamp on the way back in: a persisted deadline is only as good as
+        // the clock that wrote it, and one far in the future would strand a
+        // provider that has long since recovered.
+        if (!Number.isFinite(until) || until <= now) continue;
+        providerCooldowns.set(entry.provider, {
+          until: Math.min(until, now + HARD_COOLDOWN_MAX_MS),
+          kind: "hard",
+          failureClass: typeof entry.failureClass === "string" ? entry.failureClass : null,
+          resetsAt: normalizeResetsAt(entry.resetsAt),
+          since: typeof entry.since === "number" ? entry.since : now,
+        });
       }
     }
     if (Array.isArray(parsed.recentEvents)) {
@@ -2103,33 +2176,121 @@ function providerPriority(tier, random = Math.random) {
   return providers;
 }
 
-function isProviderCoolingDown(provider, now = Date.now()) {
-  const cooldownUntil = providerCooldowns.get(provider) ?? 0;
-  if (cooldownUntil > now) return true;
+function providerCooldown(provider, now = Date.now()) {
+  const entry = providerCooldowns.get(provider);
+  if (!entry) return null;
+  if (entry.until > now) return entry;
   providerCooldowns.delete(provider);
-  return false;
+  return null;
 }
 
-function cooldownProvider(provider, now = Date.now()) {
+function isProviderCoolingDown(provider, now = Date.now()) {
+  return providerCooldown(provider, now) !== null;
+}
+
+/**
+ * Back a provider off, for a duration that depends on *why* it failed.
+ *
+ * - `config` (authentication, invalid model): a deterministic misconfiguration.
+ *   Fixed and short, with no streak escalation, and never retried as a last
+ *   resort -- re-sending a request against a broken credential cannot work.
+ * - `probe`: the local bridge did not answer its health check. Its own short
+ *   ladder, because a bridge restarting says nothing about the provider behind
+ *   it and must not push the real backoff toward its ceiling.
+ * - `hard`: the provider itself reported that it is out of usage. Held until the
+ *   reset time it stated, with no escalation -- that time is authoritative, and
+ *   guessing a longer one helps nobody.
+ * - `transient`: everything else, on the original 30s-doubling ladder.
+ *
+ * A hard class requires `structured` corroboration: a provider *reporting* the
+ * limit, not this router matching keywords in prose. Bridges ship stderr tails
+ * in error messages, and one stray "quota" in an unrelated crash must not take a
+ * provider out for the hard window.
+ */
+function cooldownProvider(provider, { now = Date.now(), failureClass = null, resetsAt = null, structured = false } = {}) {
+  const record = (kind, durationMs, streak = 0, until = now + durationMs) => {
+    const entry = { until, kind, failureClass, resetsAt: kind === "hard" ? resetsAt : null, since: now };
+    // A cooldown only ever moves later. Otherwise a short one -- a health probe
+    // failing while the provider is already out of usage for the week -- would
+    // silently shorten the long one and put the router straight back into the
+    // hammering the long one exists to prevent. The later deadline keeps its own
+    // kind and reset, because that is the one still describing the provider.
+    const existing = providerCooldowns.get(provider);
+    const kept = existing && existing.until > until ? existing : entry;
+    providerCooldowns.set(provider, kept);
+    return { provider, kind, streak, durationMs: until - now, cooldownUntil: kept.until, resetsAt: kept.resetsAt };
+  };
+  if (failureClass === "authentication" || failureClass === "invalid_model") {
+    return record("config", PROVIDER_COOLDOWN_MS);
+  }
+  if (failureClass === PROBE_FAILURE_CLASS) {
+    const streak = (providerProbeStreaks.get(provider) ?? 0) + 1;
+    providerProbeStreaks.set(provider, streak);
+    return record("probe", Math.min(PROBE_COOLDOWN_MAX_MS, PROBE_COOLDOWN_MS * (2 ** (streak - 1))), streak);
+  }
+  if (structured && isHardLimitClass(failureClass)) {
+    const declared = resetsAt ? Date.parse(resetsAt) : Number.NaN;
+    // A stated reset is taken at face value, including an imminent one -- the
+    // whole point of asking for it is to stop guessing. A reset already in the
+    // past means the provider is wrong or its clock is, so that falls back to
+    // the short transient window rather than to no cooldown at all. The ceiling
+    // caps how long one declaration can strand a provider.
+    const until = Number.isNaN(declared)
+      ? now + HARD_COOLDOWN_MS
+      : declared <= now
+        ? now + PROVIDER_COOLDOWN_MS
+        : Math.min(declared, now + HARD_COOLDOWN_MAX_MS);
+    return record("hard", until - now, 0, until);
+  }
   const streak = (providerFailureStreaks.get(provider) ?? 0) + 1;
   providerFailureStreaks.set(provider, streak);
-  const durationMs = Math.min(PROVIDER_COOLDOWN_MAX_MS, PROVIDER_COOLDOWN_MS * (2 ** (streak - 1)));
-  providerCooldowns.set(provider, now + durationMs);
-  return { provider, streak, durationMs, cooldownUntil: now + durationMs };
+  return record("transient", Math.min(PROVIDER_COOLDOWN_MAX_MS, PROVIDER_COOLDOWN_MS * (2 ** (streak - 1))), streak);
 }
 
 function clearProviderCooldown(provider) {
   providerCooldowns.delete(provider);
   providerFailureStreaks.delete(provider);
+  providerProbeStreaks.delete(provider);
 }
 
 function nextProviderRetryMs(providers, now = Date.now()) {
   let earliest = null;
   for (const provider of providers) {
-    const cooldownUntil = providerCooldowns.get(provider);
-    if (cooldownUntil > now && (earliest === null || cooldownUntil < earliest)) earliest = cooldownUntil;
+    const entry = providerCooldowns.get(provider);
+    if (entry && entry.until > now && (earliest === null || entry.until < earliest)) earliest = entry.until;
   }
   return earliest === null ? 0 : earliest - now;
+}
+
+/**
+ * A provider is worth one more attempt while cooling when the cooldown is our
+ * own guess rather than something the provider stated. A deterministic config
+ * failure is excluded, and so is a hard limit with a reset time still in the
+ * future: the provider has said it will not serve until then, and attempting it
+ * anyway is guaranteed to fail and is exactly the hammering cooldowns exist to
+ * prevent. A hard cooldown with no stated reset stays eligible, because that
+ * floor is this router's guess and not the provider's word.
+ */
+function cooldownAllowsLastResort(entry, now = Date.now()) {
+  if (!entry) return true;
+  if (entry.kind === "config") return false;
+  if (entry.kind === "hard" && entry.resetsAt && Date.parse(entry.resetsAt) > now) return false;
+  return true;
+}
+
+/** Per-provider cooldown state for the structured exhaustion body and /status. */
+function providerCooldownSummary(providers, now = Date.now()) {
+  return [ ...new Set(providers) ].map((provider) => {
+    const entry = providerCooldowns.get(provider);
+    const cooling = entry && entry.until > now;
+    return {
+      provider,
+      state: cooling ? entry.kind : "available",
+      failureClass: cooling ? entry.failureClass ?? null : providerState(provider).lastFailureClass ?? null,
+      resetsAt: cooling ? entry.resetsAt ?? null : null,
+      retryAfterMs: cooling ? entry.until - now : 0,
+    };
+  });
 }
 
 function roleForModel(model) {
@@ -2335,12 +2496,36 @@ function responseWasNotCompleted(response) {
   return response?.status != null && response.status !== "completed";
 }
 
+/** The reason and declared limit a non-streamed incomplete response carries. */
+function incompleteFromResponse(parsed) {
+  const details = parsed?.incomplete_details;
+  const declared = details?.provider_limit;
+  return {
+    incompleteReason: details?.reason ?? null,
+    limit: declared?.class
+      ? {
+        limitClass: String(declared.class).toLowerCase(),
+        limitType: declared.type ? String(declared.type).toLowerCase() : null,
+        resetsAt: normalizeResetsAt(declared.resets_at),
+        source: declared.source === LIMIT_SOURCE_REPORTED ? LIMIT_SOURCE_REPORTED : "inferred",
+      }
+      : null,
+  };
+}
+
 async function writeResponseStream(response, upstream, publicModel, signal = null) {
   const decoder = new TextDecoder();
   const seenToolCalls = new Set();
   let toolCalls = 0;
   let buffer = "";
   let terminal = null;
+  // Enough of the turn to close it properly if the stream dies mid-flight. The
+  // bridges flush their own partial work when they can see the failure coming;
+  // this is the backstop for what they cannot -- the bridge process being
+  // killed, or the socket dropping under them.
+  const streamState = { sawCreated: false, responseId: null, model: publicModel, itemId: null, reasoningId: null, text: "", reasoning: "" };
+  let incompleteReason = null;
+  let reportedLimit = null;
   const onResponseError = () => {
     // Absorb client disconnect socket errors (EPIPE, ECONNRESET, etc.)
   };
@@ -2357,15 +2542,42 @@ async function writeResponseStream(response, upstream, publicModel, signal = nul
   const keepAlive = setInterval(() => {
     safeWrite(": codex-router keep-alive\n\n");
   }, 2000);
-  const inspectTerminal = (event) => {
+  const inspectEvent = (event) => {
     for (const line of event.split(/\r?\n/)) {
       if (!line.startsWith("data: ") || line.slice(6) === "[DONE]") continue;
       try {
         const parsed = JSON.parse(line.slice(6));
-        if (parsed.type === "response.failed") {
+        if (parsed.type === "response.created") {
+          streamState.sawCreated = true;
+          streamState.responseId = parsed.response?.id ?? streamState.responseId;
+        } else if (parsed.type === "response.output_item.added") {
+          if (parsed.item?.type === "reasoning") streamState.reasoningId = parsed.item.id ?? streamState.reasoningId;
+          if (parsed.item?.type === "message") streamState.itemId = parsed.item.id ?? streamState.itemId;
+        } else if (parsed.type === "response.output_text.delta") {
+          streamState.text += String(parsed.delta ?? "");
+          streamState.itemId = parsed.item_id ?? streamState.itemId;
+        } else if (parsed.type === "response.reasoning_summary_text.delta") {
+          streamState.reasoning += String(parsed.delta ?? "");
+          streamState.reasoningId = parsed.item_id ?? streamState.reasoningId;
+        } else if (parsed.type === "response.failed") {
           terminal = "failed";
         } else if (parsed.type === "response.completed") {
           terminal = responseWasNotCompleted(parsed.response) ? "failed" : "completed";
+          // A bridge that closed a turn as incomplete already said why and, for
+          // a limit, until when. Carry both back to the chain so the provider is
+          // cooled on what it actually reported rather than a generic
+          // upstream_error.
+          const details = parsed.response?.incomplete_details;
+          if (details?.reason) incompleteReason = details.reason;
+          const declared = details?.provider_limit;
+          if (declared?.class) {
+            reportedLimit = {
+              limitClass: String(declared.class).toLowerCase(),
+              limitType: declared.type ? String(declared.type).toLowerCase() : null,
+              resetsAt: normalizeResetsAt(declared.resets_at),
+              source: declared.source === LIMIT_SOURCE_REPORTED ? LIMIT_SOURCE_REPORTED : "inferred",
+            };
+          }
         }
       } catch {
         // Preserve the existing tolerant behavior for malformed provider lines.
@@ -2378,23 +2590,49 @@ async function writeResponseStream(response, upstream, publicModel, signal = nul
       if (!boundary) break;
       const end = boundary.index + boundary[0].length;
       const event = buffer.slice(0, end);
-      inspectTerminal(event);
+      inspectEvent(event);
       toolCalls += countToolCallsFromSse(event, seenToolCalls);
       safeWrite(transformSseEvent(event, publicModel));
       buffer = buffer.slice(end);
     }
     if (flush && buffer && isWritable()) {
-      inspectTerminal(buffer);
+      inspectEvent(buffer);
       toolCalls += countToolCallsFromSse(buffer, seenToolCalls);
       safeWrite(transformSseEvent(buffer, publicModel));
       buffer = "";
     }
   };
+  // Close a stream the upstream abandoned. Whatever it had already sent is what
+  // the caller keeps -- so it is closed as an incomplete turn carrying that
+  // work, rather than a bare failure that throws it away and leaves the caller
+  // parsing an error string for a result it can no longer see.
+  const closeIncomplete = (reason, message) => {
+    if (!isWritable()) return;
+    if (!streamState.sawCreated) {
+      // Nothing to close: no turn was ever opened on the wire.
+      safeWrite(responseFailureEvent(message));
+      return;
+    }
+    incompleteReason = incompleteReason ?? reason;
+    for (const [eventName, body] of terminalIncompleteEvents({
+      responseId: streamState.responseId ?? `router_${Date.now()}`,
+      itemId: streamState.itemId ?? `msg_${Date.now()}`,
+      reasoningId: streamState.reasoningId ?? `rs_${Date.now()}`,
+      text: streamState.text,
+      reasoningText: streamState.reasoning,
+      reason,
+      limit: reportedLimit,
+      response: { id: streamState.responseId, object: "response", created_at: Math.floor(Date.now() / 1000), model: publicModel },
+    })) {
+      safeWrite(`event: ${eventName}\ndata: ${JSON.stringify(body)}\n\n`);
+    }
+  };
+  const streamResult = () => ({ toolCalls, failed: terminal === "completed" ? false : true, incompleteReason, limit: reportedLimit });
   if (!upstream.body) {
     clearInterval(keepAlive);
     safeWrite(responseFailureEvent("Upstream provider returned no response body."));
     response.removeListener("error", onResponseError);
-    return { toolCalls, failed: true };
+    return streamResult();
   }
   try {
     for await (const chunk of upstream.body) {
@@ -2408,25 +2646,21 @@ async function writeResponseStream(response, upstream, publicModel, signal = nul
     }
   } catch (error) {
     if (isWritable()) {
-      const message = signal?.aborted && signal.reason?.name === "TimeoutError"
+      const timedOut = signal?.aborted && signal.reason?.name === "TimeoutError";
+      const message = timedOut
         ? `Upstream provider exceeded the ${Math.ceil(UPSTREAM_TIMEOUT_MS / 1000)}s response timeout.`
         : error instanceof Error ? error.message : String(error);
-      safeWrite(responseFailureEvent(message));
-      return { toolCalls, failed: true };
+      closeIncomplete(timedOut ? INCOMPLETE_REASON_TIMEOUT : INCOMPLETE_REASON_INTERRUPTED, message);
     }
-    return { toolCalls, failed: true };
+    return streamResult();
   } finally {
     clearInterval(keepAlive);
     response.removeListener("error", onResponseError);
   }
-  if (terminal === "failed") return { toolCalls, failed: true };
-  if (terminal !== "completed") {
-    if (isWritable()) {
-      safeWrite(responseFailureEvent("Upstream provider closed the stream before response.completed."));
-    }
-    return { toolCalls, failed: true };
+  if (terminal === null) {
+    closeIncomplete(INCOMPLETE_REASON_INTERRUPTED, "Upstream provider closed the stream before response.completed.");
   }
-  return { toolCalls, failed: false };
+  return streamResult();
 }
 
 function responseFailureEvent(message) {
@@ -2487,6 +2721,10 @@ function errorBody(message, type = "invalid_request_error", context = {}) {
       model: pickString(context.model),
       requestId: pickString(context.requestId),
       routerInstanceId: ROUTER_INSTANCE_ID,
+      // Structured detail for a caller that can act on it -- which providers
+      // are out, until when, and whether waiting or yielding is the right move.
+      // Validated as a plain object so nothing unexpected reaches the wire.
+      details: context.details && typeof context.details === "object" && !Array.isArray(context.details) ? context.details : null,
     },
   };
 }
@@ -2614,10 +2852,16 @@ async function fetchUpstream(route, payload, wantsStream, turnMetadataHeader, cl
     body: JSON.stringify(requestPayload),
   });
   if (!upstream.ok) {
+    const body = await upstream.text();
     return {
       ok: false,
       status: upstream.status,
-      body: await upstream.text(),
+      body,
+      // What the provider said about its own limit, if anything. A declared
+      // limit is the only thing that corroborates a long hard cooldown; without
+      // it the router is left matching keywords in prose, which is exactly the
+      // guess that used to lock a provider out over an unrelated stderr tail.
+      limit: declaredLimit(upstream.headers, body),
       // Only transient upstream statuses are eligible for a bounded retry on
       // the direct concrete path; auth/payload errors must not be retried.
       retryable: [502, 503, 504].includes(upstream.status),
@@ -2647,19 +2891,50 @@ async function writeSuccessfulResponse(response, route, result, wantsStream, pub
     const toolCalls = countToolCallsFromSse(body);
     const parsed = replaceModelFields(responseTextFromSse(body), publicModel);
     sendJson(response, upstream.status, parsed, responseHeaders);
-    return { toolCalls, failed: responseWasNotCompleted(parsed) };
+    return { toolCalls, failed: responseWasNotCompleted(parsed), ...incompleteFromResponse(parsed) };
   }
   try {
     const parsed = JSON.parse(body);
     const toolCalls = countToolCallsInResponse(parsed);
     const rewritten = rewriteToolNamespaces(replaceModelFields(parsed, publicModel));
     sendJson(response, upstream.status, rewritten, responseHeaders);
-    return { toolCalls, failed: responseWasNotCompleted(rewritten) };
+    return { toolCalls, failed: responseWasNotCompleted(rewritten), ...incompleteFromResponse(rewritten) };
   } catch {
     response.writeHead(upstream.status, { ...responseHeaders, "content-type": upstream.headers.get("content-type") ?? "application/json" });
     response.end(body);
     return { toolCalls: 0, failed: false };
   }
+}
+
+/**
+ * The limit a provider declared, from its response headers or, failing that,
+ * from an `error.limit` field in its body. Returns null when it declared none,
+ * so a caller can tell "no limit reported" from "reported without a reset".
+ */
+function declaredLimit(headers, body) {
+  const fromHeaders = readLimitHeaders(headers);
+  if (fromHeaders) return fromHeaders;
+  try {
+    const declared = JSON.parse(String(body ?? ""))?.error?.limit;
+    if (!declared?.class) return null;
+    return {
+      limitClass: String(declared.class).toLowerCase(),
+      limitType: declared.type ? String(declared.type).toLowerCase() : null,
+      resetsAt: normalizeResetsAt(declared.resets_at),
+      source: declared.source === LIMIT_SOURCE_REPORTED ? LIMIT_SOURCE_REPORTED : "inferred",
+    };
+  } catch {
+    return null;
+  }
+}
+
+/** Cooldown options describing a failed attempt, for `cooldownProvider`. */
+function cooldownFor(failureClass, limit = null) {
+  return {
+    failureClass: limit?.limitClass ?? failureClass,
+    resetsAt: limit?.resetsAt ?? null,
+    structured: limit?.source === LIMIT_SOURCE_REPORTED,
+  };
 }
 
 function fallbackable(status, body) {
@@ -2675,7 +2950,7 @@ async function providerAvailable(route) {
   }
   if (!route.healthUrl) return true;
   try {
-    const result = await fetch(route.healthUrl, { signal: AbortSignal.timeout(700) });
+    const result = await fetch(route.healthUrl, { signal: AbortSignal.timeout(PROBE_TIMEOUT_MS) });
     return result.ok;
   } catch {
     return false;
@@ -2699,7 +2974,13 @@ async function proxyConcreteResponse(response, route, payload, wantsStream, requ
   const maxAttempts = Math.max(CONCRETE_STATUS_MAX_ATTEMPTS, CONCRETE_TRANSPORT_MAX_ATTEMPTS);
   const sendFailureResponse = (status, failureClass) => {
     if (response.writableEnded) return;
-    if (response.headersSent) { response.end(); return; }
+    if (response.headersSent) {
+      // Never leave a caller holding a stream with no terminal event; a
+      // truncated SSE body is indistinguishable from a hung provider.
+      try { response.write(responseFailureEvent(`Direct request to ${payload.model} failed with HTTP ${status}.`)); } catch {}
+      response.end();
+      return;
+    }
     const errorType = status === 401
       ? "router_authentication_error"
       : status === 502 || status === 503 || status === 504 ? "router_provider_unavailable" : "router_upstream_error";
@@ -2747,7 +3028,7 @@ async function proxyConcreteResponse(response, route, payload, wantsStream, requ
             continue;
           }
           recordRouterEvent({ phase: "result", requestId, requestedModel: payload.model, provider: route.provider, model: payload.model, workspace, outcome: "failure", status: result.status, failureClass, elapsedMs: Date.now() - startedAt });
-          if (result.retryable) cooldownProvider(route.provider, Date.now());
+          if (result.retryable) cooldownProvider(route.provider, cooldownFor(failureClass, result.limit));
           sendFailureResponse(result.status, failureClass);
           return;
         }
@@ -2778,7 +3059,7 @@ async function proxyConcreteResponse(response, route, payload, wantsStream, requ
         }
         const failureClass = classifyProviderFailure(502, error instanceof Error ? error.message : String(error));
         recordRouterEvent({ phase: "result", requestId, requestedModel: payload.model, provider: route.provider, model: payload.model, workspace, outcome: "failure", status: 502, failureClass, elapsedMs: Date.now() - startedAt });
-        cooldownProvider(route.provider, Date.now());
+        cooldownProvider(route.provider, cooldownFor(failureClass));
         sendFailureResponse(502, failureClass);
         return;
       }
@@ -2790,8 +3071,10 @@ async function proxyConcreteResponse(response, route, payload, wantsStream, requ
     const failureClass = classifyProviderFailure(502, error instanceof Error ? error.message : String(error));
     recordRouterEvent({ phase: "result", requestId, requestedModel: payload.model, provider: route.provider, model: payload.model, workspace, outcome: "failure", status: 502, failureClass, elapsedMs: Date.now() - startedAt });
     if (!response.writableEnded) {
-      if (response.headersSent) response.end();
-      else sendJson(response, 502, errorBody(`Direct concrete request to ${payload.model} (${route.provider}) could not be completed.`, "router_upstream_error", { code: "router_upstream_error", retryable: true, failureClass, provider: route.provider, model: payload.model, requestId }), { "x-autodev-provider": route.provider, "x-autodev-model": payload.model, "x-autodev-request-id": requestId });
+      if (response.headersSent) {
+        try { response.write(responseFailureEvent(`Direct request to ${payload.model} could not be completed.`)); } catch {}
+        response.end();
+      } else sendJson(response, 502, errorBody(`Direct concrete request to ${payload.model} (${route.provider}) could not be completed.`, "router_upstream_error", { code: "router_upstream_error", retryable: true, failureClass, provider: route.provider, model: payload.model, requestId }), { "x-autodev-provider": route.provider, "x-autodev-model": payload.model, "x-autodev-request-id": requestId });
     }
   } finally {
     decrementActiveRequests(route.provider);
@@ -2819,20 +3102,29 @@ function payloadForCandidate(payload, candidate) {
 // error.
 async function proxyFallbackChain(response, { candidates, role = null, origin = null, subject, agentRole = null, sessionKey = null }, payload, wantsStream, requestId, turnMetadataHeader, workspace, clientSignal = null) {
   const failures = [];
-  for (const route of candidates) {
-    if (isProviderCoolingDown(route.provider)) {
-      failures.push(`${route.provider}: cooldown active`);
-      recordRouterEvent({ phase: "skipped", requestId, role, origin, requestedModel: payload.model, provider: route.provider, model: route.model, workspace, failureClass: providerState(route.provider).lastFailureClass ?? "cooldown" });
-      continue;
-    }
-    if (!(await providerAvailable(route))) {
-      failures.push(`${route.provider}: unavailable`);
-      cooldownProvider(route.provider);
-      recordRouterEvent({ phase: "skipped", requestId, role, origin, requestedModel: payload.model, provider: route.provider, model: route.model, workspace, failureClass: "unavailable" });
-      continue;
-    }
+  const attempted = new Set();
+  const skipped = [];
+  const startedAt = Date.now();
+  // Bounds how long the router spends *looking* for a provider, not how long a
+  // turn may run: checked before starting a candidate and never during one, so
+  // a long turn on the last candidate still gets the full upstream timeout.
+  const selectionDeadline = startedAt + CHAIN_SELECTION_DEADLINE_MS;
+  let deadlineReached = false;
+  let lastResortAttempts = 0;
+
+  const noteSkip = (route, why, failureClass) => {
+    failures.push(`${route.provider}: ${why}`);
+    skipped.push(route);
+    recordRouterEvent({ phase: "skipped", requestId, role, origin, requestedModel: payload.model, provider: route.provider, model: route.model, workspace, failureClass });
+  };
+
+  // One attempt against one provider. Returns "served" when a response was
+  // written, "terminal" when the provider's own error was passed through
+  // verbatim, or "fallback" when the next candidate should be tried.
+  const attemptCandidate = async (route, selection) => {
     const attemptStartedAt = Date.now();
-    recordRouterEvent({ phase: "selected", requestId, role, origin, requestedModel: payload.model, provider: route.provider, model: route.model, workspace });
+    attempted.add(route.provider);
+    recordRouterEvent({ phase: "selected", requestId, role, origin, requestedModel: payload.model, provider: route.provider, model: route.model, workspace, selection });
     // A bridge report names only the request id, so record which provider and
     // workspace this attempt resolved to before the upstream call begins.
     noteBridgeRequest(requestId, { provider: route.provider, model: route.model, role, workspace: workspace?.key ?? null });
@@ -2844,60 +3136,213 @@ async function proxyFallbackChain(response, { candidates, role = null, origin = 
         try {
           const responseResult = await writeSuccessfulResponse(response, route, result, wantsStream, payload.model, requestId, route.model);
           if (responseResult.failed) {
-            cooldownProvider(route.provider);
-            recordRouterEvent({ phase: "result", requestId, role, origin, requestedModel: payload.model, provider: route.provider, model: route.model, workspace, outcome: "failure", status: result.upstream.status, failureClass: "upstream_error", elapsedMs: Date.now() - attemptStartedAt, toolCalls: responseResult.toolCalls });
-            return;
+            // A turn the provider closed as incomplete already said why, and for
+            // a limit, until when. Cool it on what it reported rather than on a
+            // generic upstream_error -- that report is the whole reason the
+            // bridges now carry one.
+            const failureClass = responseResult.limit?.limitClass ?? (responseResult.incompleteReason ? "unavailable" : "upstream_error");
+            cooldownProvider(route.provider, cooldownFor(failureClass, responseResult.limit));
+            recordRouterEvent({ phase: "result", requestId, role, origin, requestedModel: payload.model, provider: route.provider, model: route.model, workspace, outcome: "failure", status: result.upstream.status, failureClass, elapsedMs: Date.now() - attemptStartedAt, toolCalls: responseResult.toolCalls, selection });
+            return "served";
           }
           clearProviderCooldown(route.provider);
-          recordRouterEvent({ phase: "result", requestId, role, origin, requestedModel: payload.model, provider: route.provider, model: route.model, workspace, outcome: "success", status: result.upstream.status, elapsedMs: Date.now() - attemptStartedAt, toolCalls: responseResult.toolCalls });
+          recordRouterEvent({ phase: "result", requestId, role, origin, requestedModel: payload.model, provider: route.provider, model: route.model, workspace, outcome: "success", status: result.upstream.status, elapsedMs: Date.now() - attemptStartedAt, toolCalls: responseResult.toolCalls, selection });
         } catch (streamError) {
-          cooldownProvider(route.provider);
+          cooldownProvider(route.provider, cooldownFor("upstream_error"));
           throw streamError;
         }
-        return;
+        return "served";
       }
-      const failureClass = classifyProviderFailure(result.status, result.body);
+      const failureClass = result.limit?.limitClass ?? classifyProviderFailure(result.status, result.body);
       failures.push(`${route.provider}: HTTP ${result.status}`);
-      recordRouterEvent({ phase: "result", requestId, role, origin, requestedModel: payload.model, provider: route.provider, model: route.model, workspace, outcome: "failure", status: result.status, failureClass, elapsedMs: Date.now() - attemptStartedAt });
+      recordRouterEvent({ phase: "result", requestId, role, origin, requestedModel: payload.model, provider: route.provider, model: route.model, workspace, outcome: "failure", status: result.status, failureClass, elapsedMs: Date.now() - attemptStartedAt, selection });
       if (!fallbackable(result.status, result.body)) {
         response.writeHead(result.status, { "content-type": "application/json", "x-autodev-provider": route.provider, "x-autodev-model": route.model, "x-autodev-request-id": requestId, "x-autodev-router-instance-id": ROUTER_INSTANCE_ID });
         response.end(result.body);
-        return;
+        return "terminal";
       }
-      cooldownProvider(route.provider);
+      cooldownProvider(route.provider, cooldownFor(failureClass, result.limit));
+      return "fallback";
     } catch (error) {
-      const failureClass = classifyProviderFailure(502, error instanceof Error ? error.message : String(error));
-      logTransportError({ requestId, role, requestedModel: payload.model, provider: route.provider, model: route.model, error, workspace });
+      // A missing credential is deterministic, not a transient network failure:
+      // it gets the short config cooldown and is never retried as a last
+      // resort, because re-sending against a broken credential cannot work.
+      const isAuthFailure = error?.code === "router_auth_unavailable";
+      const failureClass = isAuthFailure ? "authentication" : classifyProviderFailure(502, error instanceof Error ? error.message : String(error));
+      if (!isAuthFailure) logTransportError({ requestId, role, requestedModel: payload.model, provider: route.provider, model: route.model, error, workspace });
       // Keep provider-specific exception text private; the structured event
       // carries the safe failure class and the response needs only a stable
       // provider summary for fallback diagnostics.
       failures.push(`${route.provider}: ${failureClass}`);
-      recordRouterEvent({ phase: "result", requestId, role, origin, requestedModel: payload.model, provider: route.provider, model: route.model, workspace, outcome: "failure", status: 502, failureClass, elapsedMs: Date.now() - attemptStartedAt });
-      cooldownProvider(route.provider);
+      recordRouterEvent({ phase: "result", requestId, role, origin, requestedModel: payload.model, provider: route.provider, model: route.model, workspace, outcome: "failure", status: 502, failureClass, elapsedMs: Date.now() - attemptStartedAt, selection });
+      cooldownProvider(route.provider, cooldownFor(failureClass));
       if (response.headersSent) {
-        if (!response.writableEnded) response.end();
-        return;
+        // The stream already closed itself as incomplete on the way out of
+        // writeResponseStream; this is the backstop for a throw that happened
+        // anywhere else with headers already on the wire. Never leave a caller
+        // holding a stream with no terminal event.
+        if (!response.writableEnded) {
+          try { response.write(responseFailureEvent(`Router could not complete ${subject}: ${failureClass}.`)); } catch {}
+          response.end();
+        }
+        return "served";
       }
+      return "fallback";
     } finally {
       decrementActiveRequests(route.provider);
     }
+  };
+
+  // "unavailable" is distinct from "fallback": nothing was sent, so it does not
+  // count against a pass that is budgeted in attempts.
+  const tryCandidate = async (route, selection) => {
+    if (!(await providerAvailable(route))) {
+      // A health probe says the local bridge did not answer. That is real, but
+      // it says nothing about the provider behind it, so it rides its own short
+      // ladder rather than escalating the provider's own backoff.
+      cooldownProvider(route.provider, { failureClass: PROBE_FAILURE_CLASS });
+      noteSkip(route, "unavailable", PROBE_FAILURE_CLASS);
+      return "unavailable";
+    }
+    return attemptCandidate(route, selection);
+  };
+  const served = (outcome) => outcome === "served" || outcome === "terminal";
+
+  // Pass 1: the candidates that are not cooling at all.
+  for (const route of candidates) {
+    if (Date.now() > selectionDeadline) { deadlineReached = true; break; }
+    if (isProviderCoolingDown(route.provider)) {
+      noteSkip(route, "cooldown active", providerCooldown(route.provider)?.failureClass ?? providerState(route.provider).lastFailureClass ?? "cooldown");
+      continue;
+    }
+    if (served(await tryCandidate(route, "primary"))) return;
   }
-  recordSpawnFailure({ requestId, role, requestedModel: payload.model, reason: "provider_exhausted" });
-  const retryAfterMs = nextProviderRetryMs(candidates.map(({ provider }) => provider));
-  const retryAfterSeconds = Math.max(1, Math.ceil(retryAfterMs / 1000));
-  const retryMessage = retryAfterMs > 0 ? ` Retry after approximately ${retryAfterSeconds}s.` : "";
-  sendJson(
-    response,
-    503,
-    errorBody(`No available provider completed ${subject}.${retryMessage} ${failures.join("; ")}`, "router_provider_exhausted", {
-      code: "router_provider_exhausted",
-      retryable: true,
-      failureClass: "unavailable",
-      model: payload.model,
-      requestId,
-    }),
-    { "x-autodev-request-id": requestId, "retry-after": String(retryAfterSeconds) },
-  );
+
+  // Pass 2: a cooldown is load-shedding advice, not proof a provider is dead.
+  // Rather than strand the caller, try a bounded number of the ones we skipped,
+  // soonest-to-lapse first. Excluded: anything already attempted, a
+  // deterministic config failure, a provider that stated a reset time still in
+  // the future (it has told us it will not serve, and attempting it anyway is
+  // the hammering cooldowns exist to prevent), and any provider already serving
+  // another request -- so concurrent exhausted requests do not all pile onto
+  // the same cooling provider at once.
+  if (!deadlineReached) {
+    const eligible = skipped
+      .filter((route) => !attempted.has(route.provider) && cooldownAllowsLastResort(providerCooldown(route.provider)) && getActiveRequests(route.provider) === 0)
+      .sort((a, b) => (providerCooldown(a.provider)?.until ?? 0) - (providerCooldown(b.provider)?.until ?? 0))
+      .slice(0, LAST_RESORT_MAX_ATTEMPTS);
+    for (const route of eligible) {
+      if (Date.now() > selectionDeadline) { deadlineReached = true; break; }
+      lastResortAttempts += 1;
+      if (served(await tryCandidate(route, "last_resort"))) return;
+    }
+  }
+
+  // Pass 3: if a cooldown is about to lapse anyway, wait for it rather than
+  // handing back a 503 that ends the caller's turn. Bounded and pre-header, so
+  // the client sees a slow request rather than a stalled stream -- and a role
+  // request holds its subagent slot throughout, which is why the budget is
+  // small.
+  const waitCandidates = candidates.filter((route) => !attempted.has(route.provider));
+  const waitMs = nextProviderRetryMs(waitCandidates.map(({ provider }) => provider));
+  if (!deadlineReached && EXHAUSTION_WAIT_MS > 0 && waitMs > 0 && waitMs <= EXHAUSTION_WAIT_MS && !clientSignal?.aborted && !response.headersSent) {
+    recordRouterEvent({ phase: "exhaustion_wait", requestId, role, origin, requestedModel: payload.model, provider: null, model: null, workspace, elapsedMs: waitMs });
+    await delay(waitMs, clientSignal);
+    if (!clientSignal?.aborted) {
+      // One attempt, not one candidate: a provider whose local bridge is down
+      // was never asked anything, so it must not consume the single try the
+      // wait bought.
+      for (const route of waitCandidates) {
+        if (isProviderCoolingDown(route.provider)) continue;
+        const outcome = await tryCandidate(route, "exhaustion_wait");
+        if (served(outcome)) return;
+        if (outcome !== "unavailable") break;
+      }
+    }
+  }
+
+  recordSpawnFailure({ requestId, role, requestedModel: payload.model, reason: deadlineReached ? "selection_deadline" : "provider_exhausted" });
+  // This is the one path that never emits a `result` event, so the bridge rows
+  // opened for this request would otherwise stay open forever.
+  closeBridgeSubagentsForRequest(requestId, "failure");
+  const summary = providerCooldownSummary(candidates.map(({ provider }) => provider));
+  sendJson(response, 503, exhaustionBody({ subject, summary, failures, model: payload.model, requestId, lastResortAttempts, deadlineReached }), exhaustionHeaders({ summary, requestId }));
+}
+
+/** Sleep, cut short if the client gives up on the request. */
+function delay(ms, signal = null) {
+  return new Promise((resolve) => {
+    const timer = setTimeout(finish, ms);
+    function finish() {
+      clearTimeout(timer);
+      signal?.removeEventListener?.("abort", finish);
+      resolve();
+    }
+    signal?.addEventListener?.("abort", finish, { once: true });
+  });
+}
+
+/** The soonest-resetting provider in a cooldown summary, or null. */
+function soonestReset(summary) {
+  return summary
+    .filter((entry) => entry.resetsAt)
+    .sort((a, b) => Date.parse(a.resetsAt) - Date.parse(b.resetsAt))[0] ?? null;
+}
+
+/**
+ * The body returned when no provider could serve the turn.
+ *
+ * The consumer is a model reading an error string, so the prose has to carry as
+ * much as the JSON: which providers are out, until when, and what to do about
+ * it. "cooldown active" four times over told the caller nothing it could act on
+ * and ended the session.
+ */
+function exhaustionBody({ subject, summary, failures, model, requestId, lastResortAttempts, deadlineReached }) {
+  const now = Date.now();
+  const retryAfterMs = summary.reduce((soonest, entry) => (entry.retryAfterMs > 0 && (soonest === 0 || entry.retryAfterMs < soonest) ? entry.retryAfterMs : soonest), 0);
+  const hard = summary.filter((entry) => entry.state === "hard");
+  const everyCandidateHardLimited = hard.length > 0 && hard.length === summary.length;
+  const reset = soonestReset(summary);
+  const described = summary.map((entry) => {
+    if (entry.state === "available") return `${entry.provider}: available but did not complete the turn`;
+    if (entry.resetsAt) return `${entry.provider}: ${entry.failureClass ?? entry.state}, resets at ${entry.resetsAt}`;
+    return `${entry.provider}: ${entry.failureClass ?? entry.state}, retry in ${Math.ceil(entry.retryAfterMs / 1000)}s`;
+  });
+  const action = everyCandidateHardLimited ? "summarize_and_yield" : "retry_after";
+  const guidance = everyCandidateHardLimited
+    ? `Every provider is out of usage${reset ? ` until at least ${reset.resetsAt}` : ""}. Return a summary of the work completed so far rather than retrying.`
+    : `Retry after approximately ${Math.max(1, Math.ceil(retryAfterMs / 1000))}s.`;
+  const reason = deadlineReached
+    ? `No available provider completed ${subject} within the ${Math.ceil(CHAIN_SELECTION_DEADLINE_MS / 1000)}s provider-selection budget.`
+    : `No available provider completed ${subject}.`;
+  return errorBody(`${reason} ${described.join("; ")}. ${guidance}`, "router_provider_exhausted", {
+    code: "router_provider_exhausted",
+    retryable: true,
+    failureClass: everyCandidateHardLimited ? (hard[0].failureClass ?? "quota_exhausted") : "unavailable",
+    model,
+    requestId,
+    details: {
+      retryAfterMs,
+      resetsAt: reset?.resetsAt ?? null,
+      recommendedAction: action,
+      lastResortAttempts,
+      selectionDeadlineReached: deadlineReached,
+      providers: summary,
+      failures,
+      now: new Date(now).toISOString(),
+    },
+  });
+}
+
+function exhaustionHeaders({ summary, requestId }) {
+  const retryAfterMs = summary.reduce((soonest, entry) => (entry.retryAfterMs > 0 && (soonest === 0 || entry.retryAfterMs < soonest) ? entry.retryAfterMs : soonest), 0);
+  const headers = { "x-autodev-request-id": requestId, "retry-after": String(Math.max(1, Math.ceil(retryAfterMs / 1000))) };
+  const reset = soonestReset(summary);
+  if (reset) {
+    headers[LIMIT_HEADER_RESETS_AT] = reset.resetsAt;
+    if (reset.failureClass) headers[LIMIT_HEADER_CLASS] = reset.failureClass;
+  }
+  return headers;
 }
 
 async function proxyRoleResponse(response, role, payload, wantsStream, requestId, turnMetadataHeader, workspace, clientSignal = null, sessionKey = null) {
@@ -3148,19 +3593,23 @@ async function handleRequest(request, response) {
         }), { "retry-after": "1", "x-autodev-request-id": requestId });
         return;
       }
-      // An `autodev/<role>` request *is* a spawned subagent: the parent's own
-      // spawn tool created the child thread that sent it. Recorded here rather
-      // than in the fallback chain so one spawn counts once, not once per
-      // provider attempted.
-      recordSubagentSpawn({
-        mechanism: "router_alias",
-        provider: orchestratorProviderForSession(session.key),
-        role,
-        tool: "multi_agent_v1.spawn",
-        requestId,
-        workspace: workspace?.key ?? null,
-      });
+      // Everything after the slot is acquired runs inside the try that releases
+      // it. Recording the spawn used to sit outside, so anything thrown there
+      // leaked the slot permanently -- and with a per-session limit of two, two
+      // leaks end delegation for that session until the router restarts.
       try {
+        // An `autodev/<role>` request *is* a spawned subagent: the parent's own
+        // spawn tool created the child thread that sent it. Recorded here rather
+        // than in the fallback chain so one spawn counts once, not once per
+        // provider attempted.
+        recordSubagentSpawn({
+          mechanism: "router_alias",
+          provider: orchestratorProviderForSession(session.key),
+          role,
+          tool: "multi_agent_v1.spawn",
+          requestId,
+          workspace: workspace?.key ?? null,
+        });
         await proxyRoleResponse(response, role, payload, wantsStream, requestId, turnMetadataHeader, workspace, clientAbort.signal, session.key);
       } finally {
         releaseSubagentSlot(session.key);
@@ -3201,8 +3650,10 @@ async function handle(request, response) {
     }));
     if (response.writableEnded || response.destroyed) return;
     try {
-      if (response.headersSent) response.end();
-      else sendJson(response, 502, errorBody("The router could not complete the request.", "router_internal_error", { code: "router_internal_error", retryable: true }));
+      if (response.headersSent) {
+        try { response.write(responseFailureEvent("The router could not complete the request.")); } catch {}
+        response.end();
+      } else sendJson(response, 502, errorBody("The router could not complete the request.", "router_internal_error", { code: "router_internal_error", retryable: true }));
     } catch {
       // The client may have disconnected between the state check and the write.
     }
@@ -3223,7 +3674,10 @@ export {
   classifyProviderFailure,
   clearProviderCooldown,
   codexTelemetryStatus,
+  cooldownAllowsLastResort,
   cooldownProvider,
+  providerCooldownSummary,
+  declaredLimit,
   countToolCallsFromSse,
   countToolCallsInResponse,
   concurrencyStatus,

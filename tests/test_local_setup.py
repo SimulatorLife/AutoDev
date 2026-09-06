@@ -455,17 +455,106 @@ class LocalSetupTests(unittest.TestCase):
         self.assertIsNone(claude_bridge.rate_limit_event_error(event))
 
     def test_claude_rejected_rate_limit_event_is_classified(self):
-        event = {"type": "rate_limit_event", "rate_limit_info": {"status": "rejected", "rateLimitType": "weekly", "resetsAt": 123}}
+        event = {"type": "rate_limit_event", "rate_limit_info": {"status": "rejected", "rateLimitType": "weekly", "resetsAt": 1757174400}}
         error = claude_bridge.rate_limit_event_error(event)
         self.assertIsInstance(error, claude_bridge.ClaudeRateLimitError)
         self.assertIn("weekly", str(error))
-        self.assertIn("123", str(error))
+        # A rejected weekly window is exhaustion until it resets, and the reset
+        # is carried structurally: the router stops guessing it out of prose.
+        self.assertEqual(error.limit_class, "quota_exhausted")
+        self.assertEqual(error.limit_type, "weekly")
+        self.assertEqual(error.resets_at, "2025-09-06T16:00:00.000Z")
+        self.assertEqual(error.source, claude_bridge.LIMIT_SOURCE_REPORTED)
+
+    def test_claude_rejected_session_window_is_a_session_limit(self):
+        event = {"type": "rate_limit_event", "rate_limit_info": {"status": "rejected", "rateLimitType": "session"}}
+        error = claude_bridge.rate_limit_event_error(event)
+        self.assertEqual(error.limit_class, "session_limit")
+        self.assertIsNone(error.resets_at)
+
+    def test_claude_reset_times_are_normalized_or_dropped(self):
+        # Claude states the reset as epoch seconds, epoch milliseconds, or ISO
+        # depending on release. Anything else is dropped rather than guessed:
+        # the router stops routing until the time this hands it.
+        self.assertEqual(claude_bridge.normalize_resets_at(1757174400), "2025-09-06T16:00:00.000Z")
+        self.assertEqual(claude_bridge.normalize_resets_at(1757174400000), "2025-09-06T16:00:00.000Z")
+        self.assertEqual(claude_bridge.normalize_resets_at("1757174400"), "2025-09-06T16:00:00.000Z")
+        self.assertEqual(claude_bridge.normalize_resets_at("2026-09-06T15:40:00Z"), "2026-09-06T15:40:00.000Z")
+        for rubbish in ("garbage", "", None, True, {}):
+            self.assertIsNone(claude_bridge.normalize_resets_at(rubbish))
+
+    def test_claude_error_text_only_ever_infers_a_limit(self):
+        # Free text can pick a better status and retry hint, but it must never
+        # corroborate the hard cooldown that takes a provider out for a window.
+        with self.assertRaises(claude_bridge.ClaudeRateLimitError) as context:
+            claude_bridge.raise_classified_claude_error("weekly limit reached, quota exceeded")
+        self.assertEqual(context.exception.source, claude_bridge.LIMIT_SOURCE_INFERRED)
+        self.assertEqual(context.exception.limit_class, "quota_exhausted")
+
+    def test_claude_streaming_limit_returns_the_work_already_done(self):
+        original_runner = claude_bridge.run_claude_stream
+
+        def truncated_runner(*args, **kwargs):
+            yield ("delta", "first half. ", None)
+            yield ("delta", "second half.", None)
+            raise claude_bridge.ClaudeRateLimitError(
+                "Claude rate limit (weekly): status is rejected",
+                limit_class="quota_exhausted",
+                limit_type="weekly",
+                resets_at="2026-09-06T15:40:00.000Z",
+                source=claude_bridge.LIMIT_SOURCE_REPORTED,
+            )
+
+        claude_bridge.run_claude_stream = truncated_runner
+        server = claude_bridge.ThreadingHTTPServer(("127.0.0.1", 0), claude_bridge.Handler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            with tempfile.TemporaryDirectory() as workspace:
+                request = urllib.request.Request(
+                    f"http://127.0.0.1:{server.server_address[1]}/v1/responses",
+                    data=json.dumps({"model": "sonnet", "input": "hello", "stream": True, "cwd": workspace}).encode(),
+                    headers={
+                        "Content-Type": "application/json",
+                        **({"Authorization": f"Bearer {claude_bridge.AUTH_TOKEN}"} if claude_bridge.AUTH_TOKEN else {}),
+                    },
+                    method="POST",
+                )
+                body = urllib.request.urlopen(request, timeout=5).read().decode()
+        finally:
+            claude_bridge.run_claude_stream = original_runner
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=5)
+
+        # The work already streamed comes back as a well-formed incomplete
+        # response rather than being discarded with a bare response.failed.
+        self.assertNotIn("response.failed", body)
+        self.assertIn("response.output_text.done", body)
+        self.assertIn("first half. second half.", body)
+        completed = next(
+            json.loads(line[len("data: "):])
+            for line in body.splitlines()
+            if line.startswith("data: ") and '"response.completed"' in line
+        )
+        self.assertEqual(completed["response"]["status"], "incomplete")
+        self.assertEqual(completed["response"]["incomplete_details"]["reason"], "provider_limit")
+        self.assertEqual(completed["response"]["incomplete_details"]["provider_limit"]["class"], "quota_exhausted")
+        self.assertEqual(completed["response"]["incomplete_details"]["provider_limit"]["resets_at"], "2026-09-06T15:40:00.000Z")
+        self.assertIn("first half. second half.", completed["response"]["output_text"])
+        self.assertIn("[Incomplete:", completed["response"]["output_text"])
 
     def test_claude_rate_limit_is_reported_as_retryable_http_429(self):
         original_runner = claude_bridge.run_claude_stream
 
         def rate_limited_runner(*args, **kwargs):
-            raise claude_bridge.ClaudeRateLimitError("weekly limit reached")
+            raise claude_bridge.ClaudeRateLimitError(
+                "weekly limit reached",
+                limit_class="quota_exhausted",
+                limit_type="weekly",
+                resets_at="2026-09-06T15:40:00.000Z",
+                source=claude_bridge.LIMIT_SOURCE_REPORTED,
+            )
             yield  # Make this a generator with the same interface as the real runner.
 
         claude_bridge.run_claude_stream = rate_limited_runner
@@ -488,6 +577,14 @@ class LocalSetupTests(unittest.TestCase):
                 self.assertEqual(context.exception.code, 429)
                 payload = json.loads(context.exception.read())
                 self.assertEqual(payload["error"]["type"], "rate_limit_error")
+                # The router falls back on the status, and now learns how long
+                # this provider is out for instead of inferring it.
+                self.assertEqual(payload["error"]["limit"]["class"], "quota_exhausted")
+                self.assertEqual(payload["error"]["limit"]["resets_at"], "2026-09-06T15:40:00.000Z")
+                self.assertEqual(context.exception.headers[claude_bridge.LIMIT_HEADER_CLASS], "quota_exhausted")
+                self.assertEqual(context.exception.headers[claude_bridge.LIMIT_HEADER_RESETS_AT], "2026-09-06T15:40:00.000Z")
+                self.assertEqual(context.exception.headers[claude_bridge.LIMIT_HEADER_SOURCE], claude_bridge.LIMIT_SOURCE_REPORTED)
+                self.assertIsNotNone(context.exception.headers["Retry-After"])
         finally:
             claude_bridge.run_claude_stream = original_runner
             server.shutdown()
@@ -1134,7 +1231,14 @@ class LocalSetupTests(unittest.TestCase):
     def test_antigravity_stream_reports_early_provider_errors_as_retryable(self):
         proxy = (REPO_ROOT / "scripts/codex-antigravity-cli-responses-proxy.mjs").read_text()
         self.assertIn('if (!streamStarted)', proxy)
-        self.assertIn('sendJson(response, 503', proxy)
+        # Still a retryable status the router can fall back on, but the status is
+        # now chosen from the failure: agy reports a usage limit as an error
+        # string like any other failure, and a 429 carrying the limit headers is
+        # the difference between the router guessing and the router knowing.
+        self.assertIn('classifyCliLimit(message, error.exitCode)', proxy)
+        self.assertIn('? 429 : 503', proxy)
+        self.assertIn('sendJson(response, status, body, headers)', proxy)
+        self.assertIn('limitResponseHeaders(limit)', proxy)
         # agy stopping without a terminal result is the failure that ends long
         # delegating turns, so the error carries the exit status and stderr
         # rather than a bare sentence that says nothing about why.
@@ -1146,23 +1250,26 @@ class LocalSetupTests(unittest.TestCase):
         # logged: a turn that failed because the client had already gone is the
         # case most worth seeing, and it used to return here without a word.
         self.assertIn('isWritable()', proxy)
-        self.assertIn(
-            "    if (!isWritable()) return;\n"
-            "    if (!streamStarted) {\n"
-            "      sendJson(response, 503",
-            proxy,
-        )
         catch_block = proxy[proxy.rindex("} catch (error) {"):]
         self.assertLess(
             catch_block.index("logTurnEnd("),
             catch_block.index("if (!isWritable()) return;"),
             "the failure must be logged before the writability check returns",
         )
-        # A failure after the stream opened is a failure, not a completed
-        # response carrying the error as assistant text. The old fake-completion
-        # existed only because the removed LiteLLM hop mistranslated
-        # response.failed from a custom upstream.
-        self.assertIn('emit("response.failed"', proxy)
+        self.assertLess(
+            catch_block.index("if (!isWritable()) return;"),
+            catch_block.index("if (!streamStarted) {"),
+            "the writability check must guard the pre-stream error response",
+        )
+        # A failure after the stream opened is never a completed response
+        # carrying the error as assistant text -- the old fake-completion existed
+        # only because the removed LiteLLM hop mistranslated response.failed. It
+        # is no longer a bare response.failed either: that discarded every token
+        # already streamed. The turn closes as *incomplete*, carrying the work
+        # that finished, which the router still counts as a provider failure.
+        self.assertIn("terminalIncompleteEvents({", proxy)
+        self.assertIn('"incomplete")', proxy)
+        self.assertNotIn('emit("response.failed"', proxy)
         self.assertNotIn("failedStream", proxy)
 
     def test_copilot_proxy_does_not_report_an_empty_clean_exit_as_success(self):

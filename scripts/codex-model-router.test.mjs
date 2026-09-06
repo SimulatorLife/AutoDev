@@ -15,7 +15,10 @@ import {
   catalogModelIds,
   classifyProviderFailure,
   clearProviderCooldown,
+  cooldownAllowsLastResort,
   cooldownProvider,
+  declaredLimit,
+  providerCooldownSummary,
   decrementActiveRequests,
   downstreamHeaders,
   fallbackable,
@@ -104,7 +107,13 @@ test("the router calls the Antigravity adapter directly, with no LiteLLM hop", a
   assert.doesNotMatch(router, /metadata\?\.provider_error/, "the faked-completion detector is obsolete");
 
   const bridge = read("scripts/codex-antigravity-cli-responses-proxy.mjs");
-  assert.match(bridge, /emit\("response\.failed"/, "a post-stream failure must be reported as a failure");
+  // A post-stream failure must never read as success. It is no longer a bare
+  // `response.failed` either: that discarded every token already streamed. The
+  // turn is closed as *incomplete* instead, carrying the work that finished --
+  // which `responseWasNotCompleted` still counts as a provider failure.
+  assert.match(bridge, /terminalIncompleteEvents\(\{/, "a post-stream failure must close the turn as incomplete");
+  assert.match(bridge, /"incomplete"\)/, "the flushed payload must not claim it completed");
+  assert.doesNotMatch(bridge, /emit\("response\.failed"/, "a flushed turn must not also be reported as failed");
   assert.doesNotMatch(bridge, /failedStream/);
 
   for (const path of [
@@ -322,19 +331,95 @@ test("classifies provider exhaustion and transient responses for fallback", () =
 
 test("temporarily omits providers after a fallbackable limit or outage", () => {
   const now = 1000;
-  cooldownProvider("minimax", now);
+  cooldownProvider("minimax", { now });
   assert.equal(isProviderCoolingDown("minimax", now + 1), true);
   assert.equal(isProviderCoolingDown("minimax", now + 30_000), false);
   clearProviderCooldown("minimax");
   assert.equal(isProviderCoolingDown("minimax", now), false);
 });
 
+test("holds a provider that reported a real reset until that reset, not on the transient ladder", () => {
+  const now = 1_000;
+  try {
+    const resetsAt = new Date(now + 3_600_000).toISOString();
+    const hard = cooldownProvider("minimax", { now, failureClass: "quota_exhausted", resetsAt, structured: true });
+    assert.equal(hard.kind, "hard");
+    assert.equal(hard.cooldownUntil, Date.parse(resetsAt), "the provider's own reset time is authoritative");
+    assert.equal(hard.resetsAt, resetsAt);
+
+    // Repeating it does not escalate: the reset time is a fact, not a guess.
+    assert.equal(cooldownProvider("minimax", { now, failureClass: "quota_exhausted", resetsAt, structured: true }).cooldownUntil, Date.parse(resetsAt));
+
+    // A reset further out than the ceiling is clamped rather than trusted whole.
+    clearProviderCooldown("minimax");
+    const far = cooldownProvider("minimax", { now, failureClass: "quota_exhausted", resetsAt: new Date(now + 30 * 86_400_000).toISOString(), structured: true });
+    assert.equal(far.cooldownUntil, now + 21_600_000);
+  } finally {
+    clearProviderCooldown("minimax");
+  }
+});
+
+test("a limit only inferred from prose stays on the transient ladder", () => {
+  const now = 1_000;
+  try {
+    // classifyProviderFailure matches keywords, and bridges ship stderr tails in
+    // error messages. One stray "quota" must not take a provider out for the
+    // hard window; only a provider *reporting* the limit does that.
+    const inferred = cooldownProvider("minimax", { now, failureClass: "quota_exhausted", structured: false });
+    assert.equal(inferred.kind, "transient");
+    assert.equal(inferred.durationMs, 30_000);
+  } finally {
+    clearProviderCooldown("minimax");
+  }
+});
+
+test("health probe failures and broken credentials get their own cooldowns", () => {
+  const now = 1_000;
+  try {
+    // A local bridge restarting says nothing about the provider behind it, so
+    // it must not push the provider's own backoff toward its ceiling.
+    const first = cooldownProvider("minimax", { now, failureClass: "probe_unavailable" });
+    const second = cooldownProvider("minimax", { now, failureClass: "probe_unavailable" });
+    assert.equal(first.kind, "probe");
+    assert.equal(first.durationMs, 5_000);
+    assert.equal(second.durationMs, 10_000);
+    assert.equal(getRouterStatus(now + 1).providers.minimax.failureStreak, 0, "a probe failure must not move the provider's own streak");
+
+    clearProviderCooldown("minimax");
+    // A broken credential is deterministic: fixed, unescalating, and never
+    // retried as a last resort, because re-sending cannot make it work.
+    const config = cooldownProvider("minimax", { now, failureClass: "authentication" });
+    assert.equal(config.kind, "config");
+    assert.equal(cooldownProvider("minimax", { now, failureClass: "authentication" }).durationMs, 30_000);
+  } finally {
+    clearProviderCooldown("minimax");
+    resetRouterTelemetry();
+  }
+});
+
+test("a cooldown only ever moves later", () => {
+  const now = 1_000;
+  try {
+    const resetsAt = new Date(now + 3_600_000).toISOString();
+    cooldownProvider("minimax", { now, failureClass: "quota_exhausted", resetsAt, structured: true });
+    // A five-second probe failure landing on top of an hour-long usage limit
+    // must not shorten it back to five seconds.
+    cooldownProvider("minimax", { now, failureClass: "probe_unavailable" });
+    const status = getRouterStatus(now + 1).providers.minimax;
+    assert.equal(status.cooldownKind, "hard");
+    assert.equal(status.cooldownResetsAt, resetsAt);
+  } finally {
+    clearProviderCooldown("minimax");
+    resetRouterTelemetry();
+  }
+});
+
 test("backs off repeatedly failing providers and moves them behind healthy peers", () => {
   resetRouterTelemetry();
   activeProviderRequests.clear();
   try {
-    const first = cooldownProvider("claude", 1_000);
-    const second = cooldownProvider("claude", 1_000);
+    const first = cooldownProvider("claude", { now: 1_000 });
+    const second = cooldownProvider("claude", { now: 1_000 });
     assert.equal(first.durationMs, 30_000);
     assert.equal(second.durationMs, 60_000);
     assert.equal(nextProviderRetryMs([ "claude", "minimax" ], 1_000), 60_000);
@@ -2709,7 +2794,7 @@ test("graceful shutdown drains in-flight requests, persists state, and stops acc
       // the test path with the precondition event and let beginShutdown
       // perform its own flush; both paths are covered.
       const persisted = JSON.parse(await readFile(stateFile, "utf8"));
-      assert.equal(persisted.schema, "autodev-router-persisted-state-v1");
+      assert.equal(persisted.schema, "autodev-router-persisted-state-v2");
       assert.equal(persisted.recentEvents.some((event) => event.requestId === "shutdown-precondition"), true);
       assert.ok(typeof persisted.updatedAt === "string" && persisted.updatedAt.length > 0);
       assert.equal(upstreamCalls, 1, `the in-flight request must complete cleanly without a new upstream call; got ${upstreamCalls}`);
@@ -2956,3 +3041,387 @@ test("abrupt client disconnect during SSE stream does not crash the router proce
 });
 
 
+// --- provider exhaustion: keeping the caller's turn alive ------------------
+//
+// A cooldown is load-shedding advice, not proof a provider is dead. The router
+// used to enforce it as though it were: every candidate cooling meant nothing
+// was attempted and the caller's turn ended on a 503 listing four providers as
+// "cooldown active". The tests below pin the three ways out of that -- a bounded
+// last-resort pass, a bounded wait for a cooldown about to lapse, and an error
+// that actually says what to do -- and the limits on each.
+
+const PROVIDER_KEYS = [ "LITELLM_API_KEY", "MINIMAX_API_KEY", "CODEX_ROUTER_COPILOT_API_KEY" ];
+
+/**
+ * Run `body` with every provider credential present and fetch stubbed.
+ * `prepare` runs after telemetry is reset, which is where cooldown setup has to
+ * go: resetRouterTelemetry clears the cooldown map.
+ */
+async function withStubbedProviders(stub, body, prepare = () => {}) {
+  const originalFetch = globalThis.fetch;
+  const originalCredentials = Object.fromEntries(PROVIDER_KEYS.map((key) => [ key, process.env[ key ] ]));
+  for (const key of PROVIDER_KEYS) process.env[ key ] = "test-provider-key";
+  resetRouterTelemetry();
+  activeProviderRequests.clear();
+  prepare();
+  globalThis.fetch = async (url, options) => stub(String(url), options) ?? originalFetch(url, options);
+  const server = createServer((request, response) => { void handle(request, response); });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  try {
+    return await body({ port: server.address().port, fetch: originalFetch });
+  } finally {
+    await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    globalThis.fetch = originalFetch;
+    for (const [ key, value ] of Object.entries(originalCredentials)) {
+      if (value === undefined) delete process.env[ key ];
+      else process.env[ key ] = value;
+    }
+    activeProviderRequests.clear();
+    resetRouterTelemetry();
+  }
+}
+
+const healthyProbe = (target) => (target.endsWith("/health") || target.endsWith("/health/liveliness") ? new Response("ok", { status: 200 }) : null);
+const jsonResponse = (body, init = {}) => new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" }, ...init });
+const DEFAULT_TIER = [ "claude", "antigravity", "minimax", "copilot", "codex" ];
+
+test("attempts a cooling provider as a last resort rather than stranding the caller", async () => {
+  let responseCalls = 0;
+  await withStubbedProviders(
+    (target) => healthyProbe(target) ?? (target.endsWith("/responses") || target.startsWith("https://chatgpt.com/")
+      ? (responseCalls += 1, jsonResponse({ id: "last-resort", model: "sonnet", output_text: "served" }))
+      : null),
+    async ({ port, fetch: realFetch }) => {
+      const response = await realFetch(`http://127.0.0.1:${port}/v1/responses`, {
+        method: "POST",
+        headers: { "content-type": "application/json", "x-codex-session-id": "last-resort-test" },
+        body: JSON.stringify({ model: "autodev/default", stream: false }),
+      });
+      assert.equal(response.status, 200, "a soft cooldown must not be an absolute bar");
+      assert.equal(responseCalls, 1);
+      assert.ok(getRouterStatus().recentEvents.some((event) => event.selection === "last_resort"), "the last-resort pass must be visible in the event log");
+      // Serving clears the cooldown: the chain heals itself.
+      assert.equal(isProviderCoolingDown(response.headers.get("x-autodev-provider")), false);
+    },
+    // Out of usage with no stated reset: the 15-minute floor is the router's own
+    // guess, so a last resort may still challenge it -- and it is far enough out
+    // that the bounded wait cannot fire and confuse what is being measured.
+    () => { for (const provider of DEFAULT_TIER) cooldownProvider(provider, { failureClass: "quota_exhausted", structured: true }); },
+  );
+  for (const provider of DEFAULT_TIER) clearProviderCooldown(provider);
+});
+
+test("bounds how many cooling providers the last-resort pass will try", async () => {
+  let responseCalls = 0;
+  await withStubbedProviders(
+    (target) => healthyProbe(target) ?? (target.endsWith("/responses") || target.startsWith("https://chatgpt.com/")
+      ? (responseCalls += 1, new Response(JSON.stringify({ error: "temporarily unavailable" }), { status: 503 }))
+      : null),
+    async ({ port, fetch: realFetch }) => {
+      const response = await realFetch(`http://127.0.0.1:${port}/v1/responses`, {
+        method: "POST",
+        headers: { "content-type": "application/json", "x-codex-session-id": "last-resort-cap" },
+        body: JSON.stringify({ model: "autodev/default", stream: false }),
+      });
+      assert.equal(response.status, 503);
+      // Five cooling candidates, but the pass is capped: falling back to fumes
+      // must not become a way to hammer everything that is already struggling.
+      assert.equal(responseCalls, 2);
+      assert.equal((await response.json()).error.details.lastResortAttempts, 2);
+    },
+    () => { for (const provider of DEFAULT_TIER) cooldownProvider(provider, { failureClass: "quota_exhausted", structured: true }); },
+  );
+  for (const provider of DEFAULT_TIER) clearProviderCooldown(provider);
+});
+
+test("never re-attempts a provider that stated a reset time still in the future", async () => {
+  let responseCalls = 0;
+  const resetsAt = new Date(Date.now() + 3_600_000).toISOString();
+  await withStubbedProviders(
+    (target) => healthyProbe(target) ?? (target.endsWith("/responses") || target.startsWith("https://chatgpt.com/") ? (responseCalls += 1, jsonResponse({ id: "x" })) : null),
+    async ({ port, fetch: realFetch }) => {
+      const response = await realFetch(`http://127.0.0.1:${port}/v1/responses`, {
+        method: "POST",
+        headers: { "content-type": "application/json", "x-codex-session-id": "hard-limit-test" },
+        body: JSON.stringify({ model: "autodev/default", stream: false }),
+      });
+      assert.equal(response.status, 503);
+      // The providers said they will not serve until the reset. Attempting them
+      // anyway is guaranteed to fail and is exactly the hammering a cooldown
+      // exists to prevent.
+      assert.equal(responseCalls, 0);
+      const body = await response.json();
+      assert.equal(body.error.details.recommendedAction, "summarize_and_yield");
+      assert.equal(body.error.details.resetsAt, resetsAt);
+      assert.equal(body.error.failureClass, "quota_exhausted");
+      assert.match(body.error.message, /Return a summary of the work completed so far/);
+      assert.equal(response.headers.get("x-autodev-limit-resets-at"), resetsAt);
+      assert.equal(response.headers.get("x-autodev-limit-class"), "quota_exhausted");
+      for (const entry of body.error.details.providers) assert.equal(entry.state, "hard");
+    },
+    () => { for (const provider of DEFAULT_TIER) cooldownProvider(provider, { failureClass: "quota_exhausted", resetsAt, structured: true }); },
+  );
+  for (const provider of DEFAULT_TIER) clearProviderCooldown(provider);
+});
+
+test("waits out a cooldown that is about to lapse instead of ending the turn", async () => {
+  let responseCalls = 0;
+  await withStubbedProviders(
+    (target) => healthyProbe(target) ?? (target.endsWith("/responses") || target.startsWith("https://chatgpt.com/")
+      ? (responseCalls += 1, jsonResponse({ id: "after-wait", model: "sonnet", output_text: "served" }))
+      : null),
+    async ({ port, fetch: realFetch }) => {
+      const response = await realFetch(`http://127.0.0.1:${port}/v1/responses`, {
+        method: "POST",
+        headers: { "content-type": "application/json", "x-codex-session-id": "wait-test" },
+        body: JSON.stringify({ model: "autodev/default", stream: false }),
+      });
+      assert.equal(response.status, 200);
+      assert.equal(responseCalls, 1);
+      assert.ok(getRouterStatus().recentEvents.some((event) => event.phase === "exhaustion_wait"));
+    },
+    // A stated reset moments away. The last-resort pass will not touch it -- the
+    // provider has said it will not serve yet -- so the wait is the only thing
+    // that can save this turn.
+    () => {
+      const resetsAt = new Date(Date.now() + 250).toISOString();
+      for (const provider of DEFAULT_TIER) cooldownProvider(provider, { failureClass: "quota_exhausted", resetsAt, structured: true });
+    },
+  );
+  for (const provider of DEFAULT_TIER) clearProviderCooldown(provider);
+});
+
+test("a provider whose bridge is down does not consume the attempt the wait bought", async () => {
+  let responseCalls = 0;
+  // Only MiniMax's bridge is up. Whatever order the tier shuffles into, every
+  // other candidate fails its health probe first.
+  const MINIMAX_PORT = "18765";
+  await withStubbedProviders(
+    (target) => {
+      if (target.endsWith("/health") || target.endsWith("/health/liveliness")) {
+        return new Response("", { status: target.includes(MINIMAX_PORT) ? 200 : 503 });
+      }
+      if (target.endsWith("/responses") || target.startsWith("https://chatgpt.com/")) {
+        responseCalls += 1;
+        return jsonResponse({ id: "after-wait", model: "m", output_text: "served" });
+      }
+      return null;
+    },
+    async ({ port, fetch: realFetch }) => {
+      const response = await realFetch(`http://127.0.0.1:${port}/v1/responses`, {
+        method: "POST",
+        headers: { "content-type": "application/json", "x-codex-session-id": "wait-skip-test" },
+        body: JSON.stringify({ model: "autodev/default", stream: false }),
+      });
+      // A candidate whose bridge did not answer was never asked anything, so it
+      // must not consume the single attempt the wait bought. Spending it on a
+      // health probe wasted the whole wait.
+      assert.equal(response.status, 200);
+      assert.equal(responseCalls, 1);
+      assert.equal(response.headers.get("x-autodev-provider"), "minimax");
+    },
+    () => {
+      const resetsAt = new Date(Date.now() + 250).toISOString();
+      for (const provider of DEFAULT_TIER) cooldownProvider(provider, { failureClass: "session_limit", resetsAt, structured: true });
+    },
+  );
+  for (const provider of DEFAULT_TIER) clearProviderCooldown(provider);
+});
+
+test("does not wait for a cooldown that is nowhere near lapsing", async () => {
+  const startedAt = Date.now();
+  const resetsAt = new Date(startedAt + 3_600_000).toISOString();
+  await withStubbedProviders(
+    (target) => healthyProbe(target) ?? (target.endsWith("/responses") ? jsonResponse({ id: "never" }) : null),
+    async ({ port, fetch: realFetch }) => {
+      const response = await realFetch(`http://127.0.0.1:${port}/v1/responses`, {
+        method: "POST",
+        headers: { "content-type": "application/json", "x-codex-session-id": "no-wait-test" },
+        body: JSON.stringify({ model: "autodev/default", stream: false }),
+      });
+      assert.equal(response.status, 503);
+      // An hour is not something to hold a subagent slot for.
+      assert.ok(Date.now() - startedAt < 5_000, "the router must not hold the request for a distant reset");
+    },
+    () => { for (const provider of DEFAULT_TIER) cooldownProvider(provider, { failureClass: "session_limit", resetsAt, structured: true }); },
+  );
+  for (const provider of DEFAULT_TIER) clearProviderCooldown(provider);
+});
+
+test("holds a provider until the reset time it declared in its response", async () => {
+  const resetsAt = new Date(Date.now() + 7_200_000).toISOString();
+  for (const provider of DEFAULT_TIER) clearProviderCooldown(provider);
+  await withStubbedProviders(
+    (target) => healthyProbe(target) ?? (target.endsWith("/responses") || target.startsWith("https://chatgpt.com/")
+      ? new Response(JSON.stringify({ error: { message: "out of usage", type: "rate_limit_error" } }), {
+        status: 429,
+        headers: { "x-autodev-limit-class": "quota_exhausted", "x-autodev-limit-type": "weekly", "x-autodev-limit-resets-at": resetsAt, "x-autodev-limit-source": "reported" },
+      })
+      : null),
+    async ({ port, fetch: realFetch }) => {
+      const response = await realFetch(`http://127.0.0.1:${port}/v1/responses`, {
+        method: "POST",
+        headers: { "content-type": "application/json", "x-codex-session-id": "declared-limit-test" },
+        body: JSON.stringify({ model: "autodev/default", stream: false }),
+      });
+      assert.equal(response.status, 503);
+      const claude = getRouterStatus().providers.claude;
+      // The provider's own word, not a 30s guess doubling toward ten minutes.
+      assert.equal(claude.cooldownKind, "hard");
+      assert.equal(claude.cooldownResetsAt, resetsAt);
+      assert.equal(claude.cooldownUntil, resetsAt);
+      assert.equal(claude.lastResortEligible, false);
+    },
+  );
+  for (const provider of DEFAULT_TIER) clearProviderCooldown(provider);
+});
+
+test("a turn a provider closed as incomplete reaches the caller and cools on the reported class", async () => {
+  const resetsAt = new Date(Date.now() + 5_400_000).toISOString();
+  const incomplete = [
+    'data: {"type":"response.created","response":{"id":"resp_1"}}',
+    'data: {"type":"response.output_item.added","output_index":1,"item":{"id":"msg_1","type":"message"}}',
+    'data: {"type":"response.output_text.delta","item_id":"msg_1","delta":"half a result"}',
+    `data: {"type":"response.completed","response":{"id":"resp_1","status":"incomplete","output_text":"half a result","incomplete_details":{"reason":"provider_limit","provider_limit":{"class":"session_limit","type":"session","resets_at":"${resetsAt}","source":"reported"}}}}`,
+    "data: [DONE]",
+  ].join("\n\n") + "\n\n";
+  for (const provider of DEFAULT_TIER) clearProviderCooldown(provider);
+  await withStubbedProviders(
+    (target) => healthyProbe(target) ?? (target.endsWith("/responses") || target.startsWith("https://chatgpt.com/")
+      ? new Response(incomplete, { status: 200, headers: { "content-type": "text/event-stream" } })
+      : null),
+    async ({ port, fetch: realFetch }) => {
+      const response = await realFetch(`http://127.0.0.1:${port}/v1/responses`, {
+        method: "POST",
+        headers: { "content-type": "application/json", "x-codex-session-id": "incomplete-test" },
+        body: JSON.stringify({ model: "autodev/default", stream: true }),
+      });
+      const body = await response.text();
+      // The work the child did reaches the parent; it is not replaced by an
+      // error string, and it is not replayed on another provider either --
+      // a stream cannot be taken back once it has started.
+      assert.match(body, /half a result/);
+      const served = response.headers.get("x-autodev-provider");
+      const provider = getRouterStatus().providers[ served ];
+      assert.equal(provider.cooldownKind, "hard", "an incomplete turn is still a provider failure");
+      assert.equal(provider.cooldownResetsAt, resetsAt);
+      assert.equal(provider.failures, 1);
+    },
+  );
+  for (const provider of DEFAULT_TIER) clearProviderCooldown(provider);
+});
+
+test("closes an abandoned stream as incomplete, carrying what it already forwarded", async () => {
+  for (const provider of DEFAULT_TIER) clearProviderCooldown(provider);
+  const truncated = [
+    'data: {"type":"response.created","response":{"id":"resp_2"}}',
+    'data: {"type":"response.output_item.added","output_index":1,"item":{"id":"msg_2","type":"message"}}',
+    'data: {"type":"response.output_text.delta","item_id":"msg_2","delta":"work in progress"}',
+  ].join("\n\n") + "\n\n";
+  await withStubbedProviders(
+    (target) => healthyProbe(target) ?? (target.endsWith("/responses") || target.startsWith("https://chatgpt.com/")
+      ? new Response(truncated, { status: 200, headers: { "content-type": "text/event-stream" } })
+      : null),
+    async ({ port, fetch: realFetch }) => {
+      const response = await realFetch(`http://127.0.0.1:${port}/v1/responses`, {
+        method: "POST",
+        headers: { "content-type": "application/json", "x-codex-session-id": "truncated-test" },
+        body: JSON.stringify({ model: "autodev/default", stream: true }),
+      });
+      const body = await response.text();
+      // A stream that just stops is indistinguishable from a hung provider.
+      // The router closes it itself, and the partial work survives.
+      assert.match(body, /"status":"incomplete"/);
+      assert.match(body, /"reason":"provider_interrupted"/);
+      assert.match(body, /work in progress/);
+      assert.doesNotMatch(body, /closed the stream before response\.completed/);
+    },
+  );
+  for (const provider of DEFAULT_TIER) clearProviderCooldown(provider);
+});
+
+test("releases the subagent slot when every provider is exhausted", async () => {
+  resetConcurrencyTelemetry();
+  await withStubbedProviders(
+    (target) => healthyProbe(target) ?? (target.endsWith("/responses") ? jsonResponse({ id: "never" }) : null),
+    async ({ port, fetch: realFetch }) => {
+      const response = await realFetch(`http://127.0.0.1:${port}/v1/responses`, {
+        method: "POST",
+        headers: { "content-type": "application/json", "x-codex-session-id": "slot-release-test" },
+        body: JSON.stringify({ model: "autodev/default", stream: false }),
+      });
+      assert.equal(response.status, 503);
+      // A wedged or exhausted child must not hold a slot: with a per-session
+      // limit of two, two of those end delegation for the session.
+      assert.equal(concurrencyStatus().activeSubagentThreads, 0);
+      assert.equal(concurrencyStatus().activeSessions, 0);
+    },
+    // A broken credential: never retried as a last resort, so this exhausts
+    // immediately and the only question is whether the slot came back.
+    () => { for (const provider of DEFAULT_TIER) cooldownProvider(provider, { failureClass: "authentication" }); },
+  );
+  for (const provider of DEFAULT_TIER) clearProviderCooldown(provider);
+  resetConcurrencyTelemetry();
+});
+
+test("only a provider-declared cooldown survives a router restart", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "router-cooldown-state-"));
+  const file = join(directory, "state.json");
+  const resetsAt = new Date(Date.now() + 3_600_000).toISOString();
+  try {
+    resetRouterTelemetry();
+    cooldownProvider("claude", { failureClass: "quota_exhausted", resetsAt, structured: true });
+    cooldownProvider("minimax", {});
+    cooldownProvider("copilot", { failureClass: "probe_unavailable" });
+    await writeFile(file, serializeRouterState(), "utf8");
+
+    resetRouterTelemetry();
+    assert.equal(loadRouterState(file), true);
+    const providers = getRouterStatus().providers;
+    // The provider said it is out until the reset, and a launchd restart does
+    // not change that. The router's own guesses about a moment that has passed
+    // are worth re-checking, so they are not carried over.
+    assert.equal(providers.claude.cooldownKind, "hard");
+    assert.equal(providers.claude.cooldownResetsAt, resetsAt);
+    assert.equal(providers.minimax.cooldownUntil, null);
+    assert.equal(providers.copilot.cooldownUntil, null);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+    for (const provider of DEFAULT_TIER) clearProviderCooldown(provider);
+    resetRouterTelemetry();
+  }
+});
+
+test("reads a declared limit from headers or from the error body", () => {
+  const resetsAt = "2026-09-06T15:40:00.000Z";
+  const fromHeaders = declaredLimit(new Headers({ "x-autodev-limit-class": "session_limit", "x-autodev-limit-resets-at": resetsAt, "x-autodev-limit-source": "reported" }), "");
+  assert.equal(fromHeaders.limitClass, "session_limit");
+  assert.equal(fromHeaders.resetsAt, resetsAt);
+  assert.equal(fromHeaders.source, "reported");
+
+  const fromBody = declaredLimit(new Headers(), JSON.stringify({ error: { limit: { class: "quota_exhausted", resets_at: resetsAt, source: "reported" } } }));
+  assert.equal(fromBody.limitClass, "quota_exhausted");
+  assert.equal(fromBody.resetsAt, resetsAt);
+
+  // A provider that declared nothing must not be read as declaring something:
+  // that is what leaves the router guessing from prose.
+  assert.equal(declaredLimit(new Headers(), "you have exceeded your quota"), null);
+  assert.equal(declaredLimit(new Headers(), "not json at all"), null);
+});
+
+test("summarizes every candidate's cooldown for the exhaustion body", () => {
+  const now = 1_000_000;
+  try {
+    const resetsAt = new Date(now + 600_000).toISOString();
+    cooldownProvider("claude", { now, failureClass: "quota_exhausted", resetsAt, structured: true });
+    cooldownProvider("minimax", { now });
+    const summary = providerCooldownSummary([ "claude", "minimax", "codex" ], now + 1);
+    assert.deepEqual(summary.map(({ provider, state }) => [ provider, state ]), [ [ "claude", "hard" ], [ "minimax", "transient" ], [ "codex", "available" ] ]);
+    assert.equal(summary[ 0 ].resetsAt, resetsAt);
+    assert.equal(summary[ 1 ].retryAfterMs, 29_999);
+    assert.equal(cooldownAllowsLastResort(null), true);
+  } finally {
+    clearProviderCooldown("claude");
+    clearProviderCooldown("minimax");
+  }
+});

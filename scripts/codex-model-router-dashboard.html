@@ -637,7 +637,11 @@
           ? Math.round(modelStats.durationMs / (modelStats.successes + modelStats.failures))
           : 0;
         const limited = state.status !== "ready";
-        const cooldown = state.cooldownRemainingMs > 0 ? ` (${Math.ceil(state.cooldownRemainingMs / 1000)}s)` : "";
+        const cooldown = state.cooldownRemainingMs > 0
+          ? state.cooldownResetsAt
+            ? ` (${state.cooldownKind}, resets ${state.cooldownResetsAt})`
+            : ` (${state.cooldownKind ?? "cooldown"} ${Math.ceil(state.cooldownRemainingMs / 1000)}s)`
+          : "";
         const providerCell = collapsible
           ? `<button type="button" class="toggle-provider" data-provider-group="${group}" aria-expanded="${expanded}"><span class="caret">${expanded ? "▾" : "▸"}</span> <code>${text(provider)}</code></button>`
           : `<code>${text(provider)}</code>`;

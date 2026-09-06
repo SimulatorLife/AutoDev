@@ -35,6 +35,7 @@ const MODEL_EFFORT_SUFFIX = /-(low|medium|high)$/;
 
 import { resolveCwd, WorkspaceResolutionError } from "./codex/lib/resolve-workspace.mjs";
 import { bridgeInstructions, isOrchestratorRole, resolveAgentRole } from "./codex/lib/bridge-role.mjs";
+import { classifyCliLimit, INCOMPLETE_REASON_INTERRUPTED, INCOMPLETE_REASON_PROVIDER_LIMIT, limitPayload, limitResponseHeaders, retryAfterSecondsFromLimit, terminalIncompleteEvents } from "./codex/lib/provider-limits.mjs";
 import { resolveAgentEventReporter } from "./codex/lib/agent-events.mjs";
 
 // agy's spawn tool takes a batch, not one child: the orchestrator calls
@@ -228,7 +229,7 @@ function responseMessageItem(text, itemId) {
   };
 }
 
-function responsePayload(model, text, result, responseId = `resp_${randomBytes(12).toString("hex")}`, itemId = `msg_${randomBytes(10).toString("hex")}`, output = null) {
+function responsePayload(model, text, result, responseId = `resp_${randomBytes(12).toString("hex")}`, itemId = `msg_${randomBytes(10).toString("hex")}`, output = null, status = "completed") {
   const usage = result?.usage ?? {};
   const inputTokens = Number(usage.input_tokens ?? 0);
   const outputTokens = Number(usage.output_tokens ?? 0);
@@ -238,7 +239,7 @@ function responsePayload(model, text, result, responseId = `resp_${randomBytes(1
     object: "response",
     created_at: Math.floor(Date.now() / 1000),
     model,
-    status: "completed",
+    status,
     output: output ?? [ message ],
     output_text: text,
     usage: {
@@ -249,9 +250,9 @@ function responsePayload(model, text, result, responseId = `resp_${randomBytes(1
   };
 }
 
-function sendJson(response, status, body) {
+function sendJson(response, status, body, extraHeaders = {}) {
   const encoded = Buffer.from(JSON.stringify(body));
-  response.writeHead(status, { "content-type": "application/json", "content-length": encoded.length, connection: "close" });
+  response.writeHead(status, { "content-type": "application/json", "content-length": encoded.length, connection: "close", ...extraHeaders });
   response.end(encoded);
 }
 
@@ -327,7 +328,7 @@ function runAgy(prompt, model, effort, cwd, onEvent) {
         // being discarded into a bare sentence.
         const how = signal ? `on ${signal}` : `with code ${code}`;
         const tail = stderr.trim().slice(-2000);
-        finish(reject, new Error(`agy exited ${how} without a terminal result event${tail ? `: ${tail}` : " and wrote nothing to stderr"}`));
+        finish(reject, Object.assign(new Error(`agy exited ${how} without a terminal result event${tail ? `: ${tail}` : " and wrote nothing to stderr"}`), { exitCode: code }));
         return;
       }
       if (result.status && result.status !== "SUCCESS") {
@@ -336,7 +337,7 @@ function runAgy(prompt, model, effort, cwd, onEvent) {
         return;
       }
       if (code !== 0) {
-        finish(reject, new Error(stderr.trim().slice(-4000) || `agy exited with code ${code}`));
+        finish(reject, Object.assign(new Error(stderr.trim().slice(-4000) || `agy exited with code ${code}`), { exitCode: code }));
         return;
       }
       const finalText = String(result.response ?? emitted);
@@ -477,6 +478,9 @@ async function handle(request, response) {
   const itemId = `msg_${randomBytes(10).toString("hex")}`;
   const activityParts = [];
   const seenActivities = new Set();
+  // Exactly what this client already received, so flushing it on a failure is
+  // truthful by construction rather than a second guess at the turn's output.
+  let partialText = "";
   let sequenceNumber = 0;
   let streamStarted = false;
   const pendingEvents = [];
@@ -554,6 +558,7 @@ async function handle(request, response) {
       if (event.type === "process") { child = event.child; return; }
       if (event.type === "text_delta") {
         startStream();
+        partialText += event.text;
         emit("response.output_text.delta", { type: "response.output_text.delta", item_id: itemId, delta: event.text, content_index: 0, output_index: 1 });
       }
       if (event.event === "step_update") {
@@ -602,16 +607,39 @@ async function handle(request, response) {
     if (!turnSettled) logTurnEnd("failed", `${message}${isWritable() ? "" : " (client already gone)"}`);
     turnSettled = true;
     if (!isWritable()) return;
+    // agy reports a usage limit as nothing but an error string, so this is the
+    // one place the difference between "out of quota" and "the CLI crashed" can
+    // be recovered. It is only ever `inferred`, never enough on its own to take
+    // the provider out for a long cooldown, but it is enough to pick a status
+    // the router can act on and a retry hint it can size a wait against.
+    const limit = classifyCliLimit(message, error.exitCode);
     if (!streamStarted) {
-      sendJson(response, 503, { error: { type: "upstream_error", message } });
+      const status = limit && [ "throttled", "session_limit", "quota_exhausted" ].includes(limit.limitClass) ? 429 : 503;
+      const headers = limitResponseHeaders(limit);
+      const retryAfter = retryAfterSecondsFromLimit(limit);
+      if (retryAfter !== null) headers[ "retry-after" ] = String(retryAfter);
+      const body = { error: { type: "upstream_error", message } };
+      const declaredLimit = limitPayload(limit);
+      if (declaredLimit) body.error.limit = declaredLimit;
+      sendJson(response, status, body, headers);
       return;
     }
-    // A failure after the stream opened is reported as a failure. The bridge
-    // used to fake a *completed* response carrying the error as assistant text,
-    // because the LiteLLM hop that once sat in front of this adapter could not
-    // translate `response.failed` from a custom upstream. The router calls this
-    // adapter directly now, so a quota exhaustion reads as one.
-    emit("response.failed", { type: "response.failed", response: { id: responseId, status: "failed", error: { message, type: "upstream_error" } } });
+    // A failure after the stream opened cannot be replayed on another provider,
+    // so the work already sent is all the parent will ever get for this turn --
+    // and it used to be discarded with a bare `response.failed`. Close the turn
+    // as incomplete instead, carrying that work and saying why it stopped. The
+    // turn is still not completed, so the router still counts it as a failure.
+    for (const [ eventName, body ] of terminalIncompleteEvents({
+      responseId,
+      itemId,
+      reasoningId,
+      text: partialText,
+      reasoningText: activityParts.join("\n"),
+      reason: limit ? INCOMPLETE_REASON_PROVIDER_LIMIT : INCOMPLETE_REASON_INTERRUPTED,
+      limit,
+      provider: "antigravity",
+      response: responsePayload(payload.model ?? model, partialText, null, responseId, itemId, [], "incomplete"),
+    })) emit(eventName, body);
     if (isWritable()) {
       try { response.end("data: [DONE]\n\n"); } catch { }
     }

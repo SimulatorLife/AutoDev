@@ -18,10 +18,11 @@ const PROJECT_ROOT = process.env.CODEX_PROJECT_ROOT ?? process.env.COPILOT_PROJE
 
 import { resolveCwd, WorkspaceResolutionError } from "./codex/lib/resolve-workspace.mjs";
 import { bridgeInstructions, isOrchestratorRole, resolveAgentRole } from "./codex/lib/bridge-role.mjs";
+import { classifyCliLimit, INCOMPLETE_REASON_INTERRUPTED, INCOMPLETE_REASON_PROVIDER_LIMIT, limitPayload, limitResponseHeaders, retryAfterSecondsFromLimit, terminalIncompleteEvents } from "./codex/lib/provider-limits.mjs";
 
-function sendJson(response, status, body) {
+function sendJson(response, status, body, extraHeaders = {}) {
   const encoded = Buffer.from(JSON.stringify(body));
-  response.writeHead(status, { "content-type": "application/json", "content-length": encoded.length, connection: "close" });
+  response.writeHead(status, { "content-type": "application/json", "content-length": encoded.length, connection: "close", ...extraHeaders });
   response.end(encoded);
 }
 
@@ -29,14 +30,14 @@ function responseMessageItem(text, itemId) {
   return { id: itemId, type: "message", role: "assistant", status: "completed", content: [ { type: "output_text", text, annotations: [] } ] };
 }
 
-function responsePayload(model, text, result, responseId = `resp_${randomBytes(12).toString("hex")}`, itemId = `msg_${randomBytes(10).toString("hex")}`, output = null) {
+function responsePayload(model, text, result, responseId = `resp_${randomBytes(12).toString("hex")}`, itemId = `msg_${randomBytes(10).toString("hex")}`, output = null, status = "completed") {
   const message = responseMessageItem(text, itemId);
   return {
     id: responseId,
     object: "response",
     created_at: Math.floor(Date.now() / 1000),
     model,
-    status: "completed",
+    status,
     output: output ?? [ message ],
     output_text: text,
     // The Copilot CLI reports premium-request spend rather than token counts,
@@ -200,6 +201,9 @@ async function handle(request, response) {
   const itemId = `msg_${randomBytes(10).toString("hex")}`;
   const activityParts = [];
   const seenActivities = new Set();
+  // Exactly what this client already received, so flushing it on a failure is
+  // truthful by construction rather than a second guess at the turn's output.
+  let partialText = "";
   let sequenceNumber = 0;
   let streamStarted = false;
   const pendingEvents = [];
@@ -265,6 +269,7 @@ async function handle(request, response) {
       if (event.type === "process") { child = event.child; return; }
       startStream();
       if (event.type === "text_delta") {
+        partialText += event.text;
         emit("response.output_text.delta", { type: "response.output_text.delta", item_id: itemId, delta: event.text, content_index: 0, output_index: 1 });
         return;
       }
@@ -290,11 +295,37 @@ async function handle(request, response) {
   } catch (error) {
     if (!isWritable()) return;
     const message = error.message ?? String(error);
+    // The CLI reports a usage limit as an error string like any other failure,
+    // so this is the one place the two can be told apart. Only ever `inferred`:
+    // enough to pick a status the router can act on, never enough on its own to
+    // take the provider out for a long cooldown.
+    const limit = classifyCliLimit(message, error.exitCode);
     if (!streamStarted) {
-      sendJson(response, 503, { error: { type: "copilot_proxy_error", message } });
+      const status = limit && [ "throttled", "session_limit", "quota_exhausted" ].includes(limit.limitClass) ? 429 : 503;
+      const headers = limitResponseHeaders(limit);
+      const retryAfter = retryAfterSecondsFromLimit(limit);
+      if (retryAfter !== null) headers[ "retry-after" ] = String(retryAfter);
+      const body = { error: { type: "copilot_proxy_error", message } };
+      const declaredLimit = limitPayload(limit);
+      if (declaredLimit) body.error.limit = declaredLimit;
+      sendJson(response, status, body, headers);
       return;
     }
-    emit("response.failed", { type: "response.failed", response: { id: responseId, status: "failed", error: { message, type: "upstream_error" } } });
+    // A failure after the stream opened cannot be replayed elsewhere, so the
+    // work already sent is all the parent will get for this turn. Close it as
+    // incomplete carrying that work rather than discarding it with a bare
+    // `response.failed`; it still counts as a provider failure upstream.
+    for (const [ eventName, body ] of terminalIncompleteEvents({
+      responseId,
+      itemId,
+      reasoningId,
+      text: partialText,
+      reasoningText: activityParts.join(""),
+      reason: limit ? INCOMPLETE_REASON_PROVIDER_LIMIT : INCOMPLETE_REASON_INTERRUPTED,
+      limit,
+      provider: "copilot",
+      response: responsePayload(payload.model, partialText, null, responseId, itemId, [], "incomplete"),
+    })) emit(eventName, body);
     if (isWritable()) {
       try { response.end("data: [DONE]\n\n"); } catch {}
     }

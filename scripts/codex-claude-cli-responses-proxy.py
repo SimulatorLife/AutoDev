@@ -9,6 +9,7 @@ OAuth-only environment and translates its text deltas into Responses SSE.
 from __future__ import annotations
 
 import json
+import math
 import os
 import queue
 import re
@@ -17,6 +18,7 @@ import subprocess
 import sys
 import threading
 import time
+from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
@@ -59,8 +61,57 @@ DISALLOWED_CLAUDE_TOOLS = ("Agent", "Task")
 CROSS_SESSION_CLAUDE_TOOLS = ("SendMessage", "ListAgents")
 
 
+# Provider limit vocabulary. These literals mirror
+# scripts/codex/lib/provider-limits.mjs exactly, and
+# tests/provider-limits.test.mjs reads this file as text to assert they still
+# do: the router reads what this bridge writes, so the two must not drift.
+LIMIT_HEADER_CLASS = "x-autodev-limit-class"
+LIMIT_HEADER_TYPE = "x-autodev-limit-type"
+LIMIT_HEADER_RESETS_AT = "x-autodev-limit-resets-at"
+LIMIT_HEADER_SOURCE = "x-autodev-limit-source"
+# `reported` means Claude itself said so -- a rate_limit_event carrying a
+# status. `inferred` means this bridge matched free text, which is a hint worth
+# acting on but not evidence: only `reported` corroborates a long hard cooldown
+# in the router.
+LIMIT_SOURCE_REPORTED = "reported"
+LIMIT_SOURCE_INFERRED = "inferred"
+INCOMPLETE_REASON_PROVIDER_LIMIT = "provider_limit"
+INCOMPLETE_REASON_TIMEOUT = "provider_timeout"
+INCOMPLETE_REASON_INTERRUPTED = "provider_interrupted"
+HARD_LIMIT_CLASSES = ("quota_exhausted", "session_limit")
+
+
 class ClaudeRateLimitError(RuntimeError):
-    """Claude rejected the request because an account/session limit applies."""
+    """Claude rejected the request because an account/session limit applies.
+
+    Carries the limit structurally as well as in the message: the router needs
+    the class and the real reset time to decide how long to stop routing here,
+    and re-deriving either by matching this message's prose is exactly the
+    guessing this field set exists to end.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        limit_class: str = "session_limit",
+        limit_type: str | None = None,
+        resets_at: str | None = None,
+        source: str = LIMIT_SOURCE_INFERRED,
+    ) -> None:
+        super().__init__(message)
+        self.limit_class = limit_class
+        self.limit_type = limit_type
+        self.resets_at = resets_at
+        self.source = source
+
+    @property
+    def limit(self) -> dict[str, Any]:
+        return {
+            "limit_class": self.limit_class,
+            "limit_type": self.limit_type,
+            "resets_at": self.resets_at,
+            "source": self.source,
+        }
 
 
 class ClaudeOverloadedError(RuntimeError):
@@ -701,7 +752,204 @@ def resolve_cwd(request: dict[str, Any], headers: Any = None) -> str:
     )
 
 
+def normalize_resets_at(value: Any) -> str | None:
+    """Normalize a reset time to ISO-8601 UTC.
+
+    Claude states it as epoch seconds, epoch milliseconds, or an ISO string
+    depending on release. Anything unparseable is dropped rather than guessed:
+    the router stops routing to this provider until the time we hand it, so a
+    wrong reset time is worse than no reset time.
+    """
+    if value is None or value == "":
+        return None
+    millis: float | None = None
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        # Seconds and milliseconds are told apart by magnitude; a seconds value
+        # large enough to be ambiguous would be in the year 33658.
+        millis = float(value) if value > 1e11 else float(value) * 1000.0
+    elif isinstance(value, str):
+        trimmed = value.strip()
+        if not trimmed:
+            return None
+        if trimmed.isdigit():
+            numeric = float(trimmed)
+            millis = numeric if numeric > 1e11 else numeric * 1000.0
+        else:
+            try:
+                parsed = datetime.fromisoformat(trimmed.replace("Z", "+00:00"))
+            except ValueError:
+                return None
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=timezone.utc)
+            millis = parsed.timestamp() * 1000.0
+    if millis is None:
+        return None
+    try:
+        moment = datetime.fromtimestamp(millis / 1000.0, tz=timezone.utc)
+    except (OverflowError, OSError, ValueError):
+        return None
+    return moment.strftime("%Y-%m-%dT%H:%M:%S.") + f"{moment.microsecond // 1000:03d}Z"
+
+
+CLI_LIMIT_PATTERNS = (
+    ("quota_exhausted", "quota", r"quota (?:exceeded|exhausted)|out of (?:credit|quota)|insufficient (?:credit|quota|fund)|billing|usage limit reached|weekly limit"),
+    ("session_limit", "session", r"session limit|concurrent session|session capacity"),
+    ("throttled", "rate", r"rate.?limit|too many requests|429"),
+)
+RESETS_AT_PATTERN = r"reset(?:s|ting)?(?: at| on| in)?[:\s]+([0-9TZ:.\-+ ]{4,40})"
+
+
+def classify_cli_limit(message: Any, exit_code: Any = None) -> dict[str, Any] | None:
+    """Best-effort classification of a CLI failure message.
+
+    Always reports `inferred`. This reads free text, and a keyword in an error
+    string must not be able to take a provider out for the hard-cooldown
+    window; it is enough to pick a better HTTP status and a retry hint.
+    """
+    text = str(message or "")
+    if not text.strip():
+        return None
+    for limit_class, limit_type, pattern in CLI_LIMIT_PATTERNS:
+        if not re.search(pattern, text, re.IGNORECASE):
+            continue
+        resets_match = re.search(RESETS_AT_PATTERN, text, re.IGNORECASE)
+        return {
+            "limit_class": limit_class,
+            "limit_type": limit_type,
+            "resets_at": normalize_resets_at(resets_match.group(1).strip()) if resets_match else None,
+            "source": LIMIT_SOURCE_INFERRED,
+            "exit_code": exit_code if isinstance(exit_code, int) else None,
+        }
+    return None
+
+
+def limit_response_headers(limit: dict[str, Any] | None) -> dict[str, str]:
+    """Response headers describing a limit; absent fields are omitted."""
+    if not limit or not limit.get("limit_class"):
+        return {}
+    headers = {LIMIT_HEADER_CLASS: limit["limit_class"]}
+    if limit.get("limit_type"):
+        headers[LIMIT_HEADER_TYPE] = limit["limit_type"]
+    if limit.get("resets_at"):
+        headers[LIMIT_HEADER_RESETS_AT] = limit["resets_at"]
+    headers[LIMIT_HEADER_SOURCE] = LIMIT_SOURCE_REPORTED if limit.get("source") == LIMIT_SOURCE_REPORTED else LIMIT_SOURCE_INFERRED
+    return headers
+
+
+def retry_after_seconds_from_limit(limit: dict[str, Any] | None, now: float | None = None) -> int | None:
+    """Seconds until the limit's stated reset, or None when it stated none."""
+    resets_at = (limit or {}).get("resets_at")
+    if not resets_at:
+        return None
+    try:
+        moment = datetime.fromisoformat(str(resets_at).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    reference = time.time() if now is None else now
+    return max(1, math.ceil(moment.timestamp() - reference))
+
+
+def limit_payload(limit: dict[str, Any] | None) -> dict[str, Any] | None:
+    """The wire shape of a limit.
+
+    Used identically for `incomplete_details.provider_limit` and for
+    `error.limit` on a non-streamed failure, so the router reads one shape
+    wherever it finds it.
+    """
+    if not limit or not limit.get("limit_class"):
+        return None
+    return {
+        "class": limit["limit_class"],
+        "type": limit.get("limit_type"),
+        "resets_at": limit.get("resets_at"),
+        "source": limit.get("source") or LIMIT_SOURCE_INFERRED,
+    }
+
+
+def incomplete_details(reason: str, limit: dict[str, Any] | None = None) -> dict[str, Any]:
+    details: dict[str, Any] = {"reason": reason}
+    payload = limit_payload(limit)
+    if payload:
+        details["provider_limit"] = payload
+    return details
+
+
+def truncation_notice(provider: str | None = None, limit: dict[str, Any] | None = None, reason: str = INCOMPLETE_REASON_PROVIDER_LIMIT) -> str:
+    """The sentence appended to a truncated turn's text.
+
+    The consumer is a model deciding what to do next, so it has to say plainly
+    that the work is partial: a partial answer read as a complete one is worse
+    than a failure.
+    """
+    who = f"The {provider} provider" if provider else "The provider"
+    limit_class = (limit or {}).get("limit_class")
+    if limit_class == "capacity":
+        cause = "was over capacity"
+    elif reason == INCOMPLETE_REASON_TIMEOUT:
+        cause = "timed out"
+    elif reason == INCOMPLETE_REASON_INTERRUPTED:
+        cause = "stopped unexpectedly"
+    elif limit_class == "session_limit":
+        cause = "reached its session limit"
+    elif limit_class == "throttled":
+        cause = "was rate limited"
+    else:
+        cause = "ran out of usage"
+    resets = f" Usage resets at {limit['resets_at']}." if (limit or {}).get("resets_at") else ""
+    return f"\n\n[Incomplete: {who} {cause} and this turn stopped here. Everything above is work that finished; nothing after it ran.{resets}]"
+
+
+def terminal_incomplete_events(
+    response_id: str,
+    item_id: str,
+    reasoning_id: str,
+    text: str = "",
+    reasoning_text: str = "",
+    reason: str = INCOMPLETE_REASON_PROVIDER_LIMIT,
+    limit: dict[str, Any] | None = None,
+    provider: str | None = None,
+    response: dict[str, Any] | None = None,
+) -> list[tuple[str, dict[str, Any]]]:
+    """Ordered terminal events closing a turn that was cut short.
+
+    Mirrors the success path this bridge already emits, so a consumer needs no
+    special case beyond reading `status`. Returns (event_name, payload) pairs
+    for the caller to send in order before writing `data: [DONE]`.
+    """
+    notice = truncation_notice(provider, limit, reason)
+    final_text = f"{text}{notice}"
+    completed_reasoning = {"id": reasoning_id, "type": "reasoning", "status": "incomplete", "summary": [{"type": "summary_text", "text": reasoning_text}], "content": []}
+    completed_message = {"id": item_id, "type": "message", "role": "assistant", "status": "incomplete", "content": [{"type": "output_text", "text": final_text, "annotations": []}]}
+    payload = dict(response or {"id": response_id, "object": "response", "created_at": int(time.time()), "output": []})
+    payload.update({
+        "id": response_id,
+        "status": "incomplete",
+        "incomplete_details": incomplete_details(reason, limit),
+        "output": [completed_reasoning, completed_message],
+        "output_text": final_text,
+    })
+    return [
+        # The notice goes out as a delta first so a client rendering the stream
+        # live sees it in place, not only in the terminal snapshot.
+        ("response.output_text.delta", {"type": "response.output_text.delta", "item_id": item_id, "delta": notice, "content_index": 0, "output_index": 1}),
+        ("response.reasoning_summary_text.done", {"type": "response.reasoning_summary_text.done", "item_id": reasoning_id, "output_index": 0, "summary_index": 0, "text": reasoning_text}),
+        ("response.reasoning_summary_part.done", {"type": "response.reasoning_summary_part.done", "item_id": reasoning_id, "output_index": 0, "summary_index": 0, "part": {"type": "summary_text", "text": reasoning_text}}),
+        ("response.output_item.done", {"type": "response.output_item.done", "output_index": 0, "item": completed_reasoning}),
+        ("response.output_text.done", {"type": "response.output_text.done", "item_id": item_id, "text": final_text, "content_index": 0, "output_index": 1}),
+        ("response.content_part.done", {"type": "response.content_part.done", "item_id": item_id, "output_index": 1, "content_index": 0, "part": {"type": "output_text", "text": final_text, "annotations": []}}),
+        ("response.output_item.done", {"type": "response.output_item.done", "output_index": 1, "item": completed_message}),
+        ("response.completed", {"type": "response.completed", "response": payload}),
+    ]
+
+
 def rate_limit_event_error(event: dict[str, Any]) -> ClaudeRateLimitError | None:
+    """Build a structured error from Claude's own rate_limit_event.
+
+    This is the one place a Claude limit is *reported* rather than inferred, so
+    it is the only path that hands the router a reset time it will trust.
+    """
     rate_info = event.get("rate_limit_info", {})
     if not isinstance(rate_info, dict):
         return None
@@ -709,11 +957,20 @@ def rate_limit_event_error(event: dict[str, Any]) -> ClaudeRateLimitError | None
     if not status or status == "allowed":
         return None
     limit_type = rate_info.get("rateLimitType", "session")
+    resets_at = normalize_resets_at(rate_info.get("resetsAt"))
+    # A rejected weekly or billing window is exhaustion until it resets; a
+    # rejected session window is a session limit; anything else is throttling
+    # that clears on its own.
+    if re.search(r"week|month|quota|billing|credit", str(limit_type), re.IGNORECASE):
+        limit_class = "quota_exhausted"
+    elif status == "rejected":
+        limit_class = "session_limit"
+    else:
+        limit_class = "throttled"
     message = f"Claude rate limit ({limit_type}): status is {status}"
-    resets_at = rate_info.get("resetsAt")
     if resets_at:
         message += f" (resets at {resets_at})"
-    return ClaudeRateLimitError(message)
+    return ClaudeRateLimitError(message, limit_class=limit_class, limit_type=str(limit_type), resets_at=resets_at, source=LIMIT_SOURCE_REPORTED)
 
 
 def classify_claude_error(message: Any, error_code: Any = None) -> type[RuntimeError] | None:
@@ -727,8 +984,20 @@ def classify_claude_error(message: Any, error_code: Any = None) -> type[RuntimeE
 
 def raise_classified_claude_error(message: Any, error_code: Any = None) -> None:
     error_type = classify_claude_error(message, error_code)
-    if error_type is not None:
-        raise error_type(str(message))
+    if error_type is None:
+        return
+    if error_type is ClaudeRateLimitError:
+        # An error message is free text, so whatever it yields stays `inferred`
+        # and cannot trigger a long hard cooldown downstream.
+        limit = classify_cli_limit(message) or {}
+        raise ClaudeRateLimitError(
+            str(message),
+            limit_class=limit.get("limit_class", "throttled"),
+            limit_type=limit.get("limit_type"),
+            resets_at=limit.get("resets_at"),
+            source=LIMIT_SOURCE_INFERRED,
+        )
+    raise error_type(str(message))
 
 
 def run_claude_stream(prompt: str, model: str = DEFAULT_CLAUDE_MODEL, effort: str = DEFAULT_CLAUDE_EFFORT, cwd: str = ".", agent_role: Any = None):
@@ -866,6 +1135,7 @@ def response_payload(
     metadata: dict[str, Any],
     response_id: str | None = None,
     output: list[dict[str, Any]] | None = None,
+    status: str = "completed",
 ) -> dict[str, Any]:
     response_id = response_id or f"resp_{secrets.token_hex(12)}"
     usage = metadata.get("usage", {})
@@ -876,7 +1146,7 @@ def response_payload(
         "object": "response",
         "created_at": int(time.time()),
         "model": model,
-        "status": "completed",
+        "status": status,
         "output": output if output is not None else [message_item(text)],
         "output_text": text,
         "usage": {"input_tokens": input_tokens, "output_tokens": output_tokens, "total_tokens": input_tokens + output_tokens},
@@ -890,11 +1160,13 @@ class Handler(BaseHTTPRequestHandler):
     def log_message(self, format: str, *args: object) -> None:
         print(format % args, flush=True)
 
-    def send_json(self, status: int, payload: dict[str, Any]) -> None:
+    def send_json(self, status: int, payload: dict[str, Any], extra_headers: dict[str, str] | None = None) -> None:
         encoded = json.dumps(payload, ensure_ascii=False).encode()
         self.send_response(status)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(encoded)))
+        for name, value in (extra_headers or {}).items():
+            self.send_header(name, str(value))
         self.end_headers()
         self.wfile.write(encoded)
 
@@ -917,6 +1189,61 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(b": claude-bridge keep-alive\n\n")
         self.wfile.flush()
 
+    def send_incomplete(
+        self,
+        *,
+        response_id: str,
+        item_id: str,
+        reasoning_id: str,
+        text: str,
+        reasoning_text: str,
+        reason: str,
+        limit: dict[str, Any] | None,
+        model: str,
+        metadata: dict[str, Any],
+    ) -> None:
+        """Close a stream the turn could not finish, carrying the work it did.
+
+        The alternative -- a bare `response.failed` -- throws away every token
+        the model already produced and already sent to this client, leaving the
+        parent with an error string in place of a partial result it could act
+        on. The turn is still reported as not completed: `status` is
+        "incomplete" and `incomplete_details` says why, so the router still
+        counts it as a provider failure and cools the provider.
+        """
+        payload = response_payload(model, text, metadata, response_id, [], status="incomplete")
+        for name, event in terminal_incomplete_events(
+            response_id,
+            item_id,
+            reasoning_id,
+            text=text,
+            reasoning_text=reasoning_text,
+            reason=reason,
+            limit=limit,
+            provider="claude",
+            response=payload,
+        ):
+            self.send_sse(name, event)
+        self.wfile.write(b"data: [DONE]\n\n")
+        self.wfile.flush()
+
+    def send_limit_json(self, status: int, message: str, error_type: str, limit: dict[str, Any] | None) -> None:
+        """A pre-stream failure, with the limit stated structurally.
+
+        Sent before any output, so the router can still fall back to another
+        provider on the HTTP status -- and now knows from the headers how long
+        this one is actually out for, rather than guessing from the message.
+        """
+        headers = limit_response_headers(limit)
+        retry_after = retry_after_seconds_from_limit(limit)
+        if retry_after is not None:
+            headers["Retry-After"] = str(retry_after)
+        body: dict[str, Any] = {"error": {"message": message, "type": error_type}}
+        payload = limit_payload(limit)
+        if payload:
+            body["error"]["limit"] = payload
+        self.send_json(status, body, headers)
+
     def do_POST(self) -> None:
         if self.path != "/v1/responses":
             self.send_json(404, {"error": {"message": "not found", "type": "invalid_request_error"}})
@@ -925,9 +1252,19 @@ class Handler(BaseHTTPRequestHandler):
             self.send_json(401, {"error": {"message": "invalid local gateway key", "type": "authentication_error"}})
             return
         stream_headers_sent = False
+        # Hoisted above the try: a turn cut short still owes its caller the work
+        # it finished, and the handlers below cannot flush what they cannot see.
+        response_id = f"resp_{secrets.token_hex(12)}"
+        reasoning_id = f"rs_{secrets.token_hex(12)}"
+        item_id = f"msg_{secrets.token_hex(10)}"
+        request_model = MODEL
+        text = ""
+        reasoning_text = ""
+        metadata: dict[str, Any] = {}
         try:
             length = int(self.headers.get("Content-Length", "0"))
             request = json.loads(self.rfile.read(length))
+            request_model = request.get("model", MODEL)
             claude_model = resolve_claude_model(request.get("model"))
             claude_effort = resolve_claude_effort(requested_effort(request))
             # The router classifies the turn; only it can tell this bridge that
@@ -968,8 +1305,6 @@ class Handler(BaseHTTPRequestHandler):
             role_label = "orchestrator" if is_orchestrator_role(agent_role) else "leaf"
             print(f"claude request model={claude_model} effort={claude_effort} role={role_label} cwd={cwd}", flush=True)
             if not request.get("stream"):
-                text = ""
-                metadata: dict[str, Any] = {}
                 for kind, value, _ in run_claude_stream(prompt, claude_model, claude_effort, cwd=cwd, agent_role=agent_role):
                     if kind == "tools":
                         note_available_tools(value)
@@ -979,18 +1314,12 @@ class Handler(BaseHTTPRequestHandler):
                         note_tool_use(value)
                     elif kind == "complete":
                         text, metadata = value
-                payload = response_payload(request.get("model", MODEL), text, metadata)
+                payload = response_payload(request_model, text, metadata)
                 print(f"claude-cli result chars={len(text)} model_usage={metadata.get('modelUsage', {})}", flush=True)
                 self.send_json(200, payload)
                 return
 
-            response_id = f"resp_{secrets.token_hex(12)}"
-            reasoning_id = f"rs_{secrets.token_hex(12)}"
-            item_id = f"msg_{secrets.token_hex(10)}"
-            initial = {"id": response_id, "object": "response", "created_at": int(time.time()), "model": request.get("model", MODEL), "status": "in_progress", "output": []}
-            text = ""
-            reasoning_text = ""
-            metadata: dict[str, Any] = {}
+            initial = {"id": response_id, "object": "response", "created_at": int(time.time()), "model": request_model, "status": "in_progress", "output": []}
 
             def start_stream() -> None:
                 """Commit to the SSE response.
@@ -1038,7 +1367,7 @@ class Handler(BaseHTTPRequestHandler):
             start_stream()
             completed_reasoning = {"id": reasoning_id, "type": "reasoning", "status": "completed", "summary": [{"type": "summary_text", "text": reasoning_text}], "content": []}
             completed_message = message_item(text, item_id)
-            payload = response_payload(request.get("model", MODEL), text, metadata, response_id, [completed_reasoning, completed_message])
+            payload = response_payload(request_model, text, metadata, response_id, [completed_reasoning, completed_message])
             self.send_sse("response.reasoning_summary_text.done", {"type": "response.reasoning_summary_text.done", "item_id": reasoning_id, "output_index": 0, "summary_index": 0, "text": reasoning_text})
             self.send_sse("response.reasoning_summary_part.done", {"type": "response.reasoning_summary_part.done", "item_id": reasoning_id, "output_index": 0, "summary_index": 0, "part": {"type": "summary_text", "text": reasoning_text}})
             self.send_sse("response.output_item.done", {"type": "response.output_item.done", "output_index": 0, "item": completed_reasoning})
@@ -1060,38 +1389,73 @@ class Handler(BaseHTTPRequestHandler):
             print(f"Claude rate limit: {exc}", flush=True)
             try:
                 if stream_headers_sent:
-                    self.send_sse("response.failed", {"type": "response.failed", "response": {"id": response_id, "status": "failed", "error": {"message": str(exc), "type": "rate_limit_error"}}})
-                    self.wfile.write(b"data: [DONE]\n\n")
-                    self.wfile.flush()
+                    self.send_incomplete(
+                        response_id=response_id,
+                        item_id=item_id,
+                        reasoning_id=reasoning_id,
+                        text=text,
+                        reasoning_text=reasoning_text,
+                        reason=INCOMPLETE_REASON_PROVIDER_LIMIT,
+                        limit=exc.limit,
+                        model=request_model,
+                        metadata=metadata,
+                    )
                 else:
-                    self.send_json(429, {"error": {"message": str(exc), "type": "rate_limit_error"}})
+                    self.send_limit_json(429, str(exc), "rate_limit_error", exc.limit)
             except (BrokenPipeError, ConnectionResetError, OSError):
                 pass
         except ClaudeOverloadedError as exc:
             print(f"Claude overloaded: {exc}", flush=True)
+            # Capacity pressure is a limit of a kind, but a transient one: it is
+            # never a hard class, so it can only ever shorten routing here.
+            capacity = {"limit_class": "capacity", "limit_type": "capacity", "resets_at": None, "source": LIMIT_SOURCE_INFERRED}
             try:
                 if stream_headers_sent:
-                    self.send_sse("response.failed", {"type": "response.failed", "response": {"id": response_id, "status": "failed", "error": {"message": str(exc), "type": "overloaded_error"}}})
-                    self.wfile.write(b"data: [DONE]\n\n")
-                    self.wfile.flush()
+                    self.send_incomplete(
+                        response_id=response_id,
+                        item_id=item_id,
+                        reasoning_id=reasoning_id,
+                        text=text,
+                        reasoning_text=reasoning_text,
+                        reason=INCOMPLETE_REASON_INTERRUPTED,
+                        limit=capacity,
+                        model=request_model,
+                        metadata=metadata,
+                    )
                 else:
-                    self.send_json(503, {"error": {"message": str(exc), "type": "overloaded_error"}})
+                    self.send_limit_json(503, str(exc), "overloaded_error", capacity)
             except (BrokenPipeError, ConnectionResetError, OSError):
                 pass
         except subprocess.TimeoutExpired:
             if stream_headers_sent:
-                self.send_sse("response.failed", {"type": "response.failed", "response": {"id": response_id, "status": "failed", "error": {"message": "Claude CLI timed out", "type": "timeout_error"}}})
-                self.wfile.write(b"data: [DONE]\n\n")
-                self.wfile.flush()
+                self.send_incomplete(
+                    response_id=response_id,
+                    item_id=item_id,
+                    reasoning_id=reasoning_id,
+                    text=text,
+                    reasoning_text=reasoning_text,
+                    reason=INCOMPLETE_REASON_TIMEOUT,
+                    limit=None,
+                    model=request_model,
+                    metadata=metadata,
+                )
             else:
                 self.send_json(504, {"error": {"message": "Claude CLI timed out", "type": "timeout_error"}})
         except Exception as exc:
             print(f"Claude upstream failure: {exc}", flush=True)
             try:
                 if stream_headers_sent:
-                    self.send_sse("response.failed", {"type": "response.failed", "response": {"id": response_id, "status": "failed", "error": {"message": str(exc), "type": "upstream_error"}}})
-                    self.wfile.write(b"data: [DONE]\n\n")
-                    self.wfile.flush()
+                    self.send_incomplete(
+                        response_id=response_id,
+                        item_id=item_id,
+                        reasoning_id=reasoning_id,
+                        text=text,
+                        reasoning_text=reasoning_text,
+                        reason=INCOMPLETE_REASON_INTERRUPTED,
+                        limit=None,
+                        model=request_model,
+                        metadata=metadata,
+                    )
                 else:
                     self.send_json(502, {"error": {"message": str(exc), "type": "upstream_error"}})
             except (BrokenPipeError, ConnectionResetError, OSError):
