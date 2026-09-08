@@ -87,6 +87,9 @@ custom_provider_names=(local_model_router claude_code_subscription minimax antig
 cocoindex_code_package="cocoindex-code[full]==0.2.41"
 tracked_sources=""
 router_auth_requested=0
+# Set by check_router_auth_state when the boundary needs a manual step
+# (relaunch Codex / restart the router agent) that no install can perform.
+router_auth_action_required=0
 materialize_only=0
 
 # The installed path for a runtime module: its repo path without the leading
@@ -608,24 +611,39 @@ check_router_auth_state() {
         launchd_token="$(launchctl getenv CODEX_ROUTER_AUTH_TOKEN 2>/dev/null || printf '')"
       fi
       if [[ -z "$launchd_token" ]]; then
-        printf '%s\n' 'router is enforcing auth but the launchd user environment has no token; Codex Desktop will 401 (restart the router agent, then relaunch Codex)'
+        router_auth_action_required=1
+        printf '%s\n' 'action required: router is enforcing auth but the launchd user environment has no token; Codex Desktop will 401 (restart the router agent, then relaunch Codex)'
       elif [[ "$launchd_token" != "$staged_token" ]]; then
-        printf '%s\n' 'router is enforcing auth but the launchd user environment holds a stale token; Codex Desktop will 401 (restart the router agent, then relaunch Codex)'
+        router_auth_action_required=1
+        printf '%s\n' 'action required: router is enforcing auth but the launchd user environment holds a stale token; Codex Desktop will 401 (restart the router agent, then relaunch Codex)'
       else
         # The launchd domain being correct still does not prove the Codex
         # process running right now inherited it: a Desktop app launched
         # before the token was published keeps its original environment for
         # its whole lifetime, which is exactly how a healthy-looking router
         # and a 401ing Desktop session coexist. Inspect the live process.
-        local stale_pids pid
+        # Match on the process name rather than the app bundle path: the
+        # client is equally often a CLI `codex` from ~/.local/bin or
+        # /usr/local/bin, and a bundle-path pattern both missed those and
+        # swept in the unrelated codex-code-mode-host helper. `pgrep -x`
+        # matches the codex binary itself and nothing else.
+        #
+        # Compare the token's value, not merely its presence: rotating the
+        # token via --enable-router-auth leaves an old process holding a
+        # well-formed token the router no longer accepts, which 401s exactly
+        # like having none at all.
+        local stale_pids pid process_token
         stale_pids=""
-        for pid in $(pgrep -f 'ChatGPT\.app/Contents/Resources/codex' 2>/dev/null); do
-          if ! ps eww -o command= "$pid" 2>/dev/null | tr ' ' '\n' | grep -q '^CODEX_ROUTER_AUTH_TOKEN='; then
+        for pid in $(pgrep -x codex 2>/dev/null); do
+          process_token="$(ps eww -o command= "$pid" 2>/dev/null | tr ' ' '\n' \
+            | sed -n 's/^CODEX_ROUTER_AUTH_TOKEN=//p' | tail -n 1)"
+          if [[ "$process_token" != "$staged_token" ]]; then
             stale_pids="${stale_pids:+$stale_pids }$pid"
           fi
         done
         if [[ -n "$stale_pids" ]]; then
-          printf 'running Codex process predates the auth token and will 401 (pid%s %s); quit and relaunch Codex\n' \
+          router_auth_action_required=1
+          printf 'action required: running Codex process predates the current auth token and will 401 (pid%s %s); quit and relaunch Codex\n' \
             "$([[ "$stale_pids" == *' '* ]] && printf 's')" "$stale_pids"
         else
           printf '%s\n' 'ok router authentication is active'
@@ -854,7 +872,11 @@ if [[ "$check_only" == 1 ]]; then
     exit 2
   fi
   check_links
-  exit $?
+  status=$?
+  if [[ "$status" == 0 && "$router_auth_action_required" == 1 ]]; then
+    status=1
+  fi
+  exit "$status"
 fi
 
 if [[ "$router_auth_requested" == 1 ]]; then

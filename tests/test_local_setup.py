@@ -1648,10 +1648,35 @@ class LocalSetupTests(unittest.TestCase):
         body = installer.split("check_router_auth_state() {")[1].split("\n}")[0]
         self.assertIn("launchctl getenv CODEX_ROUTER_AUTH_TOKEN", body)
         self.assertIn("stale token", body)
-        self.assertIn("predates the auth token", body)
+        self.assertIn("predates the current auth token", body)
         # The live Desktop process keeps the environment it launched with, so
         # the check has to inspect it rather than trust the launchd domain.
         self.assertIn("ps eww -o command=", body)
+        # Match the codex binary by process name: a CLI codex from ~/.local/bin
+        # is just as much a router client as the app bundle, and an app-path
+        # pattern also swept in the unrelated codex-code-mode-host helper.
+        self.assertIn("pgrep -x codex", body)
+        self.assertNotIn("ChatGPT", body)
+        # A rotated token leaves an old process holding a well-formed token the
+        # router no longer accepts, so presence alone is not the test.
+        self.assertIn('"$process_token" != "$staged_token"', body)
+        # Every actionable branch has to raise the flag, not just print.
+        self.assertEqual(body.count("router_auth_action_required=1"), 3)
+        self.assertEqual(body.count("action required:"), 3)
+
+    def test_installer_check_fails_when_the_auth_boundary_needs_a_manual_step(self):
+        # --check is a gate: a boundary that will 401 must not exit 0. A normal
+        # install must not inherit that, since restarting the router is itself
+        # what strands the running app.
+        installer = INSTALLER_PATH.read_text()
+        self.assertIn("router_auth_action_required=0", installer)
+        gate = installer.split('if [[ "$check_only" == 1 ]]; then')[1].split("\nfi")[0]
+        self.assertIn('"$router_auth_action_required" == 1', gate)
+        self.assertIn("status=1", gate)
+        # The install path prints the same note but still exits on its own
+        # merits, so the flag must not be wired into the tail-end check_links.
+        tail = installer.split('if [[ "$materialize_only" == 0 ]]; then')[-1]
+        self.assertNotIn("router_auth_action_required", tail)
 
     def test_installer_can_materialize_router_auth_without_restarting_services(self):
         with tempfile.TemporaryDirectory() as home, tempfile.TemporaryDirectory() as codex_home:
