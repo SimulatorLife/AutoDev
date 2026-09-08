@@ -30,9 +30,9 @@ delegated work genuinely requires its own children.
 
 HOW TO SPAWN:
 
-There is exactly one delegation path, and it is the same one whatever runtime
-you are: every child is created by the shared orchestration layer, so it is a
-real tracked agent session. Never delegate any other way -- a child created
+There is exactly one delegation path, and it is the same one whatever your
+runtime: every child is created by the shared orchestration layer, so it is a
+real tracked agent session. Never delegate any other way; a child created
 inside your own runtime's private task or subagent tool is invisible to the
 parent session, cannot be attributed, and its work cannot be found again.
 

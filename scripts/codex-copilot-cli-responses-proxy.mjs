@@ -18,6 +18,7 @@ const PROJECT_ROOT = process.env.CODEX_PROJECT_ROOT ?? process.env.COPILOT_PROJE
 
 import { resolveCwd, WorkspaceResolutionError } from "./codex/lib/resolve-workspace.mjs";
 import { bridgeInstructions, isOrchestratorRole, resolveAgentRole } from "./codex/lib/bridge-role.mjs";
+import { roleContract } from "./codex/lib/execution-contract.mjs";
 import { classifyCliLimit, INCOMPLETE_REASON_INTERRUPTED, INCOMPLETE_REASON_PROVIDER_LIMIT, limitPayload, limitResponseHeaders, retryAfterSecondsFromLimit, terminalIncompleteEvents } from "./codex/lib/provider-limits.mjs";
 
 function sendJson(response, status, body, extraHeaders = {}) {
@@ -76,9 +77,10 @@ function toolActivityText(data) {
  * final answer and for the commentary/tool narration around it, so the parent
  * sees the turn progress instead of one silent block at the end.
  */
-function runCopilot(prompt, model, cwd, onEvent) {
+function runCopilot(prompt, model, cwd, onEvent, agentRole = null) {
   return new Promise((resolve, reject) => {
-    const args = [ "--no-auto-update", "--no-color", "--output-format", "json", "--allow-all-tools", "--allow-all-paths", "--allow-all-urls", "--no-ask-user", "--prompt", prompt ];
+    const args = [ "--no-auto-update", "--no-color", "--output-format", "json", "--prompt", prompt ];
+    if (!roleContract(agentRole).readOnly) args.splice(4, 0, "--allow-all-tools", "--allow-all-paths", "--allow-all-urls", "--no-ask-user");
     if (model && model !== "copilot" && model !== "auto") args.push("--model", model);
     const child = spawn(process.env.COPILOT_BIN ?? "copilot", args, { cwd, stdio: [ "ignore", "pipe", "pipe" ] });
     const phases = new Map();
@@ -188,7 +190,7 @@ async function handle(request, response) {
 
   if (payload.stream === false) {
     try {
-      const result = await runCopilot(prompt, payload.model, cwd);
+      const result = await runCopilot(prompt, payload.model, cwd, undefined, agentRole);
       sendJson(response, 200, responsePayload(payload.model, result.text, result.result));
     } catch (error) {
       sendJson(response, 503, { error: { type: "copilot_proxy_error", message: error.message ?? String(error) } });
@@ -276,7 +278,7 @@ async function handle(request, response) {
       // Commentary and tool narration are appended verbatim; the CLI streams
       // commentary token by token, so those parts are keyed by their text.
       emitActivity(event.text, event.key ?? `activity:${activityParts.length}:${event.text}`);
-    });
+    }, agentRole);
     startStream();
     const reasoningText = activityParts.join("");
     const completedReasoning = { id: reasoningId, type: "reasoning", status: "completed", summary: [ { type: "summary_text", text: reasoningText } ], content: [] };

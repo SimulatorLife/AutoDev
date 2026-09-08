@@ -45,8 +45,8 @@ fi
 proxy_host="${CODEX_MINIMAX_PROXY_HOST:-127.0.0.1}"
 proxy_port="${CODEX_MINIMAX_PROXY_PORT:-18765}"
 proxy_url="http://${proxy_host}:${proxy_port}"
-proxy_log="${CODEX_MINIMAX_PROXY_LOG:-${TMPDIR:-/tmp}/codex-minimax-proxy-${proxy_port}.log}"
-proxy_pid_file="${CODEX_MINIMAX_PROXY_PID_FILE:-${TMPDIR:-/tmp}/codex-minimax-proxy-${proxy_port}.pid}"
+proxy_log="${CODEX_MINIMAX_PROXY_LOG:-${CODEX_HOME:-$HOME/.codex}/run/codex-minimax-proxy-${proxy_port}.log}"
+proxy_pid_file="${CODEX_MINIMAX_PROXY_PID_FILE:-${CODEX_HOME:-$HOME/.codex}/run/codex-minimax-proxy-${proxy_port}.pid}"
 upstream_base_url="${CODEX_MINIMAX_UPSTREAM_URL:-https://api.minimax.io}"
 
 proxy_is_ready() {
@@ -60,19 +60,27 @@ fi
 if [[ "$daemon_mode" != 1 ]]; then
   launch_domain="gui/$(id -u)"
   launch_label="com.codex.minimax-proxy"
-  # The repository lives under Desktop, where launchd can be denied access by
-  # macOS privacy controls. Start the canonical versioned script directly from
-  # the Codex lifecycle process instead.
-  launchctl bootout "$launch_domain/$launch_label" >/dev/null 2>&1 || true
-  direct_launcher="$HOME/.codex/hooks/ensure-codex-minimax-proxy.sh"
-  /bin/bash "$direct_launcher" --daemon
+  launch_plist="$HOME/Library/LaunchAgents/$launch_label.plist"
+  launchctl print "$launch_domain/$launch_label" >/dev/null 2>&1 &&
+    launchctl kickstart -k "$launch_domain/$launch_label" >/dev/null 2>&1 || true
+  if ! launchctl print "$launch_domain/$launch_label" >/dev/null 2>&1 && [[ -f "$launch_plist" ]]; then
+    launchctl bootstrap "$launch_domain" "$launch_plist" >/dev/null 2>&1 || true
+    launchctl enable "$launch_domain/$launch_label" >/dev/null 2>&1 || true
+  fi
   for _ in {1..50}; do
-    if proxy_is_ready; then
-      exit 0
-    fi
+    proxy_is_ready && exit 0
     sleep 0.1
   done
 
+  # A sandbox may make launchctl unavailable. Start the daemon only when the
+  # launchd job is absent, and keep its state private to CODEX_HOME/run.
+  if ! launchctl print "$launch_domain/$launch_label" >/dev/null 2>&1 && [[ ! -f "$launch_plist" ]]; then
+    /bin/bash "$HOME/.codex/hooks/ensure-codex-minimax-proxy.sh" --daemon
+    for _ in {1..50}; do
+      proxy_is_ready && exit 0
+      sleep 0.1
+    done
+  fi
   echo "MiniMax compatibility proxy failed to start." >&2
   echo "Proxy log: $proxy_log" >&2
   cat "$proxy_log" >&2 2>/dev/null || true

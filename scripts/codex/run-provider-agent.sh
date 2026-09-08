@@ -13,6 +13,7 @@ if [[ -z "$codex_bin" ]]; then
 fi
 [[ -x "$codex_bin" ]] || { echo "Codex CLI not found; set CODEX_BIN to the current codex executable." >&2; exit 1; }
 role="default"
+workspace="$repo_root"
 prompt=""
 prompt_file=""
 check_only=0
@@ -29,6 +30,7 @@ Options:
   --role ROLE          Role label (default: default)
   --prompt TEXT        Prompt to send to the role
   --prompt-file FILE   Read the prompt from FILE; use - for stdin
+  --cwd DIR            Run the role against DIR instead of AutoDev
   --check              Validate the role and local router launcher only
 USAGE
 }
@@ -48,6 +50,11 @@ while [[ $# -gt 0 ]]; do
     --prompt-file)
       [[ $# -ge 2 ]] || { usage; exit 2; }
       prompt_file="$2"
+      shift 2
+      ;;
+    --cwd|-C)
+      [[ $# -ge 2 ]] || { usage; exit 2; }
+      workspace="$2"
       shift 2
       ;;
     --check)
@@ -75,6 +82,8 @@ case "$role" in
   *) echo "Unsupported role: $role" >&2; usage; exit 2 ;;
 esac
 
+[[ -d "$workspace" ]] || { echo "Workspace is not a directory: $workspace" >&2; exit 1; }
+workspace="$(cd -- "$workspace" && pwd)"
 role_file="$codex_home/agents/$role.toml"
 [[ -f "$role_file" ]] || { echo "Missing materialized role: $role_file" >&2; exit 1; }
 router_ensure="$repo_root/scripts/ensure-codex-model-router.sh"
@@ -126,7 +135,7 @@ print(config.get("sandbox_mode", ""))
 PY
 )"
 prompt=$'Provider-neutral role instructions:\n'"$role_context"$'\n\nBounded task:\n'"$prompt"
-codex_args=(--strict-config -C "$repo_root" -c "model_reasoning_effort=$role_effort")
+codex_args=(--strict-config -C "$workspace" -c "model_reasoning_effort=$role_effort")
 [[ -n "$role_summary" ]] && codex_args+=(-c "model_reasoning_summary=$role_summary")
 [[ -n "$role_sandbox" ]] && codex_args+=(-c "sandbox_mode=$role_sandbox")
 exec "$codex_bin" "${codex_args[@]}" exec --model "autodev/$role" \

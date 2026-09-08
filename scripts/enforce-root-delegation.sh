@@ -42,7 +42,7 @@ active_model="$(
 case "$active_model" in
   autodev/orchestrator)
     ;;
-  autodev/*|MiniMax-*|sonnet|opus|haiku|claude-*)
+  autodev/*|MiniMax-*|sonnet|opus|haiku|claude-*|gemini-*|copilot*)
     exit 0
     ;;
 esac

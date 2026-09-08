@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
-set -a
-source "$HOME/.codex/.env"
-set +a
+if [[ -f "${CODEX_ENV_FILE:-$HOME/.codex/.env}" ]]; then
+  set -a
+  source "${CODEX_ENV_FILE:-$HOME/.codex/.env}"
+  set +a
+fi
 if [[ -z "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]]; then
   export CLAUDE_CODE_OAUTH_TOKEN="$(/usr/bin/security find-generic-password -a "$USER" -s "com.codex.claude-bridge.oauth-token" -w 2>/dev/null || true)"
 fi

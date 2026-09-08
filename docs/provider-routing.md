@@ -1412,3 +1412,13 @@ after the user-level provider configuration reload. The repository’s roles,
 user-level provider registry, explicit non-OpenAI auth boundaries, combined
 model catalog, hooks, gateways, and direct CLI/app-server transports are
 configured and validated.
+
+### Cross-provider execution contract
+
+`/Users/henrykirk/AutoDev/scripts/codex/execution-contract.json` is the shared
+contract for role kind, read-only intent, expected MCP capabilities, and provider
+spawn capabilities. The Claude, Antigravity, and Copilot bridge prompt paths
+append the role-specific contract instead of treating every non-orchestrator as
+an identical generic leaf. The installer deploys the contract beside the bridge
+runtime modules. Native TOML role files remain the Codex configuration surface;
+contract changes must be validated with the bridge-role matrix tests.

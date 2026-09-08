@@ -39,7 +39,7 @@ PROJECT_ROOT = os.environ.get("CODEX_PROJECT_ROOT")
 # default five-minute ceiling made legitimate tool-heavy subagent turns look
 # like premature transport failures.
 CLAUDE_TIMEOUT_SECONDS = float(os.environ.get("CLAUDE_CODE_BRIDGE_TIMEOUT_SECONDS", "900"))
-CLI = "/Users/henrykirk/.local/bin/claude"
+CLI = os.environ.get("CLAUDE_BIN", "/Users/henrykirk/.local/bin/claude")
 DEFAULT_CLAUDE_MODEL = "sonnet"
 DEFAULT_CLAUDE_EFFORT = "medium"
 # Claude Code's Agent tool (Task in older releases) is the recursive boundary.
@@ -266,6 +266,11 @@ def load_bridge_prompt(name: str) -> str:
 
 LEAF_BRIDGE_INSTRUCTIONS = load_bridge_prompt("leaf")
 ORCHESTRATOR_BRIDGE_INSTRUCTIONS = load_bridge_prompt("orchestrator")
+_CONTRACT_FILE = _PROMPT_DIRECTORY.parent / "execution-contract.json"
+try:
+    EXECUTION_CONTRACT = json.loads(_CONTRACT_FILE.read_text(encoding="utf-8"))
+except (OSError, json.JSONDecodeError) as exc:
+    raise RuntimeError(f"execution contract could not be loaded from {_CONTRACT_FILE}: {exc}") from exc
 # Replaces the Claude CLI's own default system prompt rather than appending to
 # it, so bridge turns are governed only by AutoDev policy. See system_prompt().
 BASE_SYSTEM_PROMPT = load_bridge_prompt("base")
@@ -331,10 +336,18 @@ class AgentEventReporter:
         body = json.dumps({"requestId": self.request_id, "events": events}).encode()
         request = Request(self.url, data=body, headers={"Content-Type": "application/json"}, method="POST")
         try:
-            with urlopen(request, timeout=AGENT_EVENTS_TIMEOUT_SECONDS):
-                pass
-        except (URLError, OSError, ValueError):
-            pass
+            with urlopen(request, timeout=AGENT_EVENTS_TIMEOUT_SECONDS) as response:
+                if response.status < 200 or response.status >= 300:
+                    raise URLError(f"HTTP {response.status}")
+        except (URLError, OSError, ValueError) as exc:
+            # Best effort by design: preserve the model turn, but leave a
+            # credential-free loss record so missing child telemetry is visible.
+            print(json.dumps({
+                "schema": "autodev-agent-telemetry-v1",
+                "event": "report_lost",
+                "requestId": self.request_id,
+                "reason": str(exc),
+            }), flush=True)
 
 
 def resolve_agent_event_reporter(headers: Any) -> AgentEventReporter | None:
@@ -375,7 +388,14 @@ def bridge_instructions(role: Any) -> str:
     delegation the root turn exists to perform. Anything that is not explicitly
     the orchestrator is treated as a leaf.
     """
-    return ORCHESTRATOR_BRIDGE_INSTRUCTIONS if is_orchestrator_role(role) else LEAF_BRIDGE_INSTRUCTIONS
+    key = "orchestrator" if is_orchestrator_role(role) else (str(role).lower() if role else "default")
+    contract = EXECUTION_CONTRACT.get("roles", {}).get(key) or EXECUTION_CONTRACT["roles"]["default"]
+    expected = ", ".join(contract.get("mcp", [])) or "none declared"
+    base = ORCHESTRATOR_BRIDGE_INSTRUCTIONS if is_orchestrator_role(role) else LEAF_BRIDGE_INSTRUCTIONS
+    return (f"{base}\n\n## Effective role contract\n\n"
+            f"{contract.get('instructions', '')}\n\n"
+            f"Expected MCP/tool capabilities: {expected}. If a required capability is unavailable, "
+            "report that fact instead of silently substituting a different workflow.")
 
 
 def system_prompt(role: Any, cwd: str) -> str:
@@ -836,6 +856,13 @@ def claude_cli_args(prompt: str, model: str, effort: str, agent_role: Any = None
         denied = list(CROSS_SESSION_CLAUDE_TOOLS)
     else:
         denied = [*DISALLOWED_CLAUDE_TOOLS, *CROSS_SESSION_CLAUDE_TOOLS]
+    contract_key = "orchestrator" if orchestrator else (str(agent_role).lower() if agent_role else "default")
+    role_contract = EXECUTION_CONTRACT.get("roles", {}).get(contract_key) or EXECUTION_CONTRACT["roles"]["default"]
+    if role_contract.get("readOnly"):
+        # Prompt text is not an enforcement boundary. Read-only roles must not
+        # receive shell or file-mutating Claude tools even when the bridge uses
+        # a non-interactive permission mode.
+        denied.extend(["Bash", "Edit", "Write", "NotebookEdit"])
     if agent_role in PLAYWRIGHT_AGENT_ROLES:
         denied.extend(PLAYWRIGHT_DISALLOWED_TOOLS)
     subagent_boundary = ["--disallowed-tools", ",".join(denied)]
@@ -1630,7 +1657,18 @@ class Handler(BaseHTTPRequestHandler):
                         note_tool_use(value)
                     elif kind == "complete":
                         text, metadata = value
-                payload = response_payload(request_model, text, metadata)
+                output_items = [message_item(text)]
+                spawn_children = close_spawn_session(spawn_session) if spawn_session else []
+                if spawn_children:
+                    _, spawn_item = exec_tool_call_events(
+                        f"ctc_{secrets.token_hex(12)}",
+                        f"call_{secrets.token_hex(12)}",
+                        build_spawn_script(spawn_children),
+                        len(output_items),
+                    )
+                    output_items.append(spawn_item)
+                    print(f"claude delegating {len(spawn_children)} subagent(s) through Codex", flush=True)
+                payload = response_payload(request_model, text, metadata, output=output_items)
                 print(f"claude-cli result chars={len(text)} model_usage={metadata.get('modelUsage', {})}", flush=True)
                 self.send_json(200, payload)
                 return

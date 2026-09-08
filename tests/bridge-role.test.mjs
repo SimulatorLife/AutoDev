@@ -9,6 +9,7 @@ import {
   isOrchestratorRole,
   resolveAgentRole,
 } from "../scripts/codex/lib/bridge-role.mjs";
+import { EXECUTION_CONTRACT, roleContract } from "../scripts/codex/lib/execution-contract.mjs";
 
 const read = (path) => readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
 
@@ -30,15 +31,25 @@ test("only the exact orchestrator role escapes the leaf policy", () => {
   }
 });
 
+test("the execution contract preserves role-specific capabilities across bridge prompts", () => {
+  assert.equal(EXECUTION_CONTRACT.version, 1);
+  assert.equal(roleContract("explorer").readOnly, true);
+  assert.ok(roleContract("explorer").mcp.includes("lsp"));
+  assert.ok(roleContract("browser-tester").mcp.includes("playwright"));
+  assert.equal(roleContract("orchestrator").kind, "orchestrator");
+  assert.match(bridgeInstructions("explorer"), /Effective role contract/);
+  assert.match(bridgeInstructions("explorer"), /read-only codebase explorer/i);
+});
+
 test("the orchestrator is never handed the leaf prompt, and the leaf is never handed the orchestrator prompt", () => {
   const orchestrator = bridgeInstructions(ORCHESTRATOR_AGENT_ROLE);
-  assert.equal(orchestrator, read("scripts/codex/prompts/orchestrator.md").trim());
+  assert.match(orchestrator, new RegExp(read("scripts/codex/prompts/orchestrator.md").trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
   assert.match(orchestrator, /ROOT ORCHESTRATOR POLICY/);
   assert.doesNotMatch(orchestrator, /leaf agent|Do not spawn child agents/);
 
   for (const role of [ null, undefined, "explorer", "worker", "smart" ]) {
     const leaf = bridgeInstructions(role);
-    assert.equal(leaf, read("scripts/codex/prompts/leaf.md").trim(), `${String(role)} must get the leaf prompt`);
+    assert.match(leaf, new RegExp(read("scripts/codex/prompts/leaf.md").trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&")), `${String(role)} must get the leaf prompt`);
     assert.match(leaf, /bounded leaf agent/);
     assert.match(leaf, /Do not spawn\s+child agents/);
   }

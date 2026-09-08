@@ -1,4 +1,5 @@
 import { readFileSync } from "node:fs";
+import { roleContract } from "./execution-contract.mjs";
 
 // Router-generated request header naming the agent role a provider bridge is
 // serving. The router builds its outbound header set from scratch, so this can
@@ -40,6 +41,13 @@ export function isOrchestratorRole(role) {
  */
 export function bridgeInstructions(role) {
   const key = isOrchestratorRole(role) ? "orchestrator" : "leaf";
-  if (!cache.has(key)) cache.set(key, readFileSync(PROMPTS[key], "utf8").trim());
-  return cache.get(key);
+  const contractKey = isOrchestratorRole(role) ? "orchestrator" : role;
+  const contract = roleContract(contractKey);
+  const cacheKey = `${key}:${contractKey ?? "default"}`;
+  if (!cache.has(cacheKey)) {
+    const base = readFileSync(PROMPTS[key], "utf8").trim();
+    const tools = contract.mcp.length > 0 ? contract.mcp.join(", ") : "none declared";
+    cache.set(cacheKey, `${base}\n\n## Effective role contract\n\n${contract.instructions}\n\nExpected MCP/tool capabilities: ${tools}. If a required capability is unavailable, report that fact instead of silently substituting a different workflow.`);
+  }
+  return cache.get(cacheKey);
 }

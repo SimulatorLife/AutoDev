@@ -35,6 +35,7 @@ const MODEL_EFFORT_SUFFIX = /-(low|medium|high)$/;
 
 import { resolveCwd, WorkspaceResolutionError } from "./codex/lib/resolve-workspace.mjs";
 import { bridgeInstructions, isOrchestratorRole, resolveAgentRole } from "./codex/lib/bridge-role.mjs";
+import { roleContract } from "./codex/lib/execution-contract.mjs";
 import { classifyCliLimit, INCOMPLETE_REASON_INTERRUPTED, INCOMPLETE_REASON_PROVIDER_LIMIT, limitPayload, limitResponseHeaders, retryAfterSecondsFromLimit, terminalIncompleteEvents } from "./codex/lib/provider-limits.mjs";
 import { resolveAgentEventReporter } from "./codex/lib/agent-events.mjs";
 import { SpawnSessionRegistry } from "./codex/lib/bridge-spawn-session.mjs";
@@ -460,17 +461,17 @@ function agyEnvironment(spawnSession) {
   };
 }
 
-function agyArgs(prompt, model, effort) {
-  const permissionArgs = AGY_SKIP_PERMISSIONS === "true" ? [ "--dangerously-skip-permissions" ] : [];
+function agyArgs(prompt, model, effort, agentRole = null) {
+  const permissionArgs = AGY_SKIP_PERMISSIONS === "true" && !roleContract(agentRole).readOnly ? [ "--dangerously-skip-permissions" ] : [];
   // Only pass --effort when the model id does not already fix it; see
   // MODEL_EFFORT_SUFFIX.
   const effortArgs = modelEffort(model) ? [] : [ "--effort", effort ];
   return [ "-p", prompt, "--model", model, ...effortArgs, "--mode", AGY_MODE, ...permissionArgs, "--output-format", "stream-json", "--print-timeout", PRINT_TIMEOUT ];
 }
 
-function runAgy(prompt, model, effort, cwd, onEvent, spawnSession = null) {
+function runAgy(prompt, model, effort, cwd, onEvent, spawnSession = null, agentRole = null) {
   return new Promise((resolve, reject) => {
-    const child = spawn(CLI, agyArgs(prompt, model, effort), { cwd, env: agyEnvironment(spawnSession), stdio: [ "ignore", "pipe", "pipe" ] });
+    const child = spawn(CLI, agyArgs(prompt, model, effort, agentRole), { cwd, env: agyEnvironment(spawnSession), stdio: [ "ignore", "pipe", "pipe" ] });
     let stderr = "";
     let terminalResult = null;
     let emitted = "";
@@ -644,10 +645,21 @@ async function handle(request, response) {
     try {
       const result = await runAgy(prompt, model, effort, cwd, (event) => {
         if (event.event === "step_update") observeSpawnStep(event.step_update ?? {});
-      }, spawnSession);
-      flushSpawns("success");
+      }, spawnSession, agentRole);
+      const spawnChildren = spawnSession ? spawnSessions.close(spawnSession) : [];
+      const output = [ responseMessageItem(result.text, `msg_${randomBytes(10).toString("hex")}`) ];
+      if (spawnChildren.length > 0) {
+        const spawnEvents = execToolCallSseEvents({
+          itemId: mintCallItemId(),
+          callId: mintCallId(spawnSession, output.length),
+          source: buildSpawnScript(spawnChildren),
+          outputIndex: output.length,
+        });
+        output.push(spawnEvents.at(-1)[ 1 ].item);
+        console.error(`agy delegating ${spawnChildren.length} subagent(s) through Codex`);
+      }
       logTurnEnd("succeeded");
-      sendJson(response, 200, responsePayload(payload.model ?? model, result.text, result.result));
+      sendJson(response, 200, responsePayload(payload.model ?? model, result.text, result.result, undefined, undefined, output));
     } catch (error) {
       flushSpawns("failure");
       logTurnEnd("failed", error.message ?? String(error));
@@ -760,7 +772,7 @@ async function handle(request, response) {
         }
         if (update.step_type === "tool") console.error(`agy tool=${update.tool_name ?? "unknown"}`);
       }
-    });
+    }, spawnSession, agentRole);
     clearInterval(keepAlive);
     flushSpawns("success");
     startStream();

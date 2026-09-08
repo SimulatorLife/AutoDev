@@ -142,13 +142,22 @@ class AgentEventReporter {
 
   async post(events) {
     try {
-      await fetch(this.url, {
+      const response = await fetch(this.url, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ requestId: this.requestId, events }),
       });
-    } catch {
-      // Best effort by design; see reportSpawn.
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    } catch (error) {
+      // Best effort by design; see reportSpawn. Emit a bounded, credential-free
+      // loss record so an operator can distinguish "no children" from telemetry
+      // transport failure without turning observability into a turn failure.
+      console.error(JSON.stringify({
+        schema: "autodev-agent-telemetry-v1",
+        event: "report_lost",
+        requestId: this.requestId,
+        reason: error instanceof Error ? error.message : String(error),
+      }));
     }
   }
 }

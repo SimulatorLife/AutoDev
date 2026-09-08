@@ -362,7 +362,7 @@ class LocalSetupTests(unittest.TestCase):
         instructions = (REPO_ROOT / "scripts/codex/agents/docs-researcher.toml").read_text()
         self.assertIn("native", instructions)
         self.assertIn("web-search tool", instructions)
-        self.assertIn('sandbox_mode = "danger-full-access"', instructions)
+        self.assertIn('sandbox_mode = "read-only"', instructions)
 
     def test_user_level_lsp_server_and_role_skill_contract(self):
         config_path = REPO_ROOT / "scripts/codex/config.toml"
@@ -729,8 +729,9 @@ class LocalSetupTests(unittest.TestCase):
         # workspace the bridge resolved has to be stated explicitly or the agent
         # begins the turn not knowing which repository it is in.
         self.assertIn("/tmp/workspace", prompt)
-        # Role policy is the most recent instruction the model reads.
-        self.assertTrue(prompt.rstrip().endswith(claude_bridge.ORCHESTRATOR_BRIDGE_INSTRUCTIONS))
+        # The shared execution contract follows the role prompt and is the
+        # most recent instruction the model reads.
+        self.assertTrue(prompt.rstrip().endswith("instead of silently substituting a different workflow."))
 
     def test_claude_bridge_disables_the_bundled_skill_catalogue(self):
         """Claude Code's bundled skills are a second, unversioned source of
@@ -745,7 +746,8 @@ class LocalSetupTests(unittest.TestCase):
         is a bounded leaf that must not spawn child agents, which suppresses the
         delegation the root turn exists to perform."""
         orchestrator = claude_bridge.bridge_instructions("orchestrator")
-        self.assertEqual(orchestrator, claude_bridge.ORCHESTRATOR_BRIDGE_INSTRUCTIONS)
+        self.assertIn(claude_bridge.ORCHESTRATOR_BRIDGE_INSTRUCTIONS, orchestrator)
+        self.assertIn("Effective role contract", orchestrator)
         self.assertIn("ROOT ORCHESTRATOR POLICY", orchestrator)
         self.assertNotIn("bounded leaf agent", orchestrator)
         self.assertNotIn("Do not spawn", orchestrator)
@@ -756,11 +758,10 @@ class LocalSetupTests(unittest.TestCase):
 
         for role in (None, "", "explorer", "worker", "orchestrator-ish"):
             with self.subTest(role=role):
-                self.assertEqual(
-                    claude_bridge.bridge_instructions(role),
-                    claude_bridge.LEAF_BRIDGE_INSTRUCTIONS,
-                    msg="anything that is not exactly the orchestrator is a leaf",
-                )
+                instructions = claude_bridge.bridge_instructions(role)
+                self.assertIn(claude_bridge.LEAF_BRIDGE_INSTRUCTIONS, instructions,
+                              msg="anything that is not exactly the orchestrator is a leaf")
+                self.assertIn("Effective role contract", instructions)
         self.assertIn("bounded leaf agent", claude_bridge.LEAF_BRIDGE_INSTRUCTIONS)
         self.assertIn("Do not spawn", claude_bridge.LEAF_BRIDGE_INSTRUCTIONS)
 
@@ -1347,7 +1348,7 @@ class LocalSetupTests(unittest.TestCase):
         for role in ("browser-tester", "docs-researcher", "explorer", "validator"):
             with self.subTest(role=role):
                 instructions = (REPO_ROOT / "scripts/codex/agents" / f"{role}.toml").read_text()
-                self.assertIn('sandbox_mode = "danger-full-access"', instructions)
+                self.assertIn('sandbox_mode = "read-only"', instructions)
                 self.assertIn("$CODEX_HOME (~/.codex)", instructions)
                 self.assertIn("without editing those paths", instructions)
 

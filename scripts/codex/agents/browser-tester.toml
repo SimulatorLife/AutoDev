@@ -5,7 +5,7 @@ nickname_candidates = ["BrowserTester", "PlaywrightTester", "UiVerifier"]
 model_provider = "local_model_router"
 model = "autodev/browser-tester"
 model_reasoning_effort = "medium"
-sandbox_mode = "danger-full-access"
+sandbox_mode = "read-only"
 
 developer_instructions = """
 You are a read-only browser tester. Carry out only the bounded verification goal assigned by the parent agent using the Playwright MCP server and the active project's documented workflow.

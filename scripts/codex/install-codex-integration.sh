@@ -63,6 +63,8 @@ runtime_module_names=(
   # else would pull it in: an installed bridge whose --mcp-config points at a
   # missing file silently loses delegation.
   scripts/codex/lib/spawn-shim-mcp.mjs
+  scripts/codex/lib/execution-contract.mjs
+  scripts/codex/execution-contract.json
   scripts/codex/prompts/base.md
   scripts/codex/prompts/leaf.md
   scripts/codex/prompts/orchestrator.md
@@ -73,6 +75,13 @@ catalog_names=(claude minimax antigravity codex)
 agent_role_names=(browser-tester default docs-researcher explorer smart validator worker)
 skill_names=(ccc code-simplification diagnosing-bugs improve-codebase-architecture lsp-mcp-server orchestration remove-legacy-shims resolve-merge-conflicts)
 rule_names=(default.rules)
+launchagent_labels=(
+  com.codex.model-router
+  com.codex.claude-bridge
+  com.codex.minimax-proxy
+  com.codex.antigravity-proxy
+  com.codex.copilot-proxy
+)
 custom_provider_names=(local_model_router claude_code_subscription minimax antigravity_cli)
 cocoindex_code_package="cocoindex-code[full]"
 tracked_sources=""
@@ -672,6 +681,16 @@ check_links() {
   if ! check_removed_runtime_hooks; then
     failed=1
   fi
+  for label in "${launchagent_labels[@]}"; do
+    source="$repo_root/scripts/codex/launchagents/$label.plist"
+    target="$HOME/Library/LaunchAgents/$label.plist"
+    if check_one "$source" "$target"; then
+      printf 'ok %s -> %s\n' "$target" "$source"
+    else
+      printf 'missing-or-drifted %s -> %s\n' "$target" "$source"
+      failed=1
+    fi
+  done
   if ! check_versioned_sources; then
     failed=1
   fi
@@ -845,13 +864,6 @@ for router_log in \
   fi
   chmod 0600 "$router_log"
 done
-launchagent_labels=(
-  com.codex.model-router
-  com.codex.claude-bridge
-  com.codex.minimax-proxy
-  com.codex.antigravity-proxy
-  com.codex.copilot-proxy
-)
 for label in "${launchagent_labels[@]}"; do
   plist_src="$repo_root/scripts/codex/launchagents/$label.plist"
   if [[ -f "$plist_src" ]]; then

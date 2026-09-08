@@ -10,9 +10,11 @@ is_claude_model="$(node -e '
 ')"
 [[ "$is_claude_model" == "1" ]] || exit 0
 
-set -a
-source "$HOME/.codex/.env"
-set +a
+if [[ -f "${CODEX_ENV_FILE:-$HOME/.codex/.env}" ]]; then
+  set -a
+  source "${CODEX_ENV_FILE:-$HOME/.codex/.env}"
+  set +a
+fi
 
 claude_oauth_token="${CLAUDE_CODE_OAUTH_TOKEN:-}"
 if [[ -z "$claude_oauth_token" ]]; then
@@ -26,16 +28,30 @@ fi
 
 domain="gui/$(id -u)"
 label="com.codex.claude-bridge"
-# The repository lives under Desktop, where launchd can be denied access by
-# macOS privacy controls. Start the canonical versioned launcher directly from
-# the Codex lifecycle process instead.
-launchctl bootout "$domain/$label" >/dev/null 2>&1 || true
-direct_launcher="$HOME/.codex/hooks/run-codex-claude-bridge.sh"
-nohup /bin/bash "$direct_launcher" \
-  >"${TMPDIR:-/tmp}/codex-claude-bridge.log" 2>&1 </dev/null &
+plist="$HOME/Library/LaunchAgents/$label.plist"
+launcher="$HOME/.codex/hooks/run-codex-claude-bridge.sh"
+run_dir="${CODEX_HOME:-$HOME/.codex}/run"
+mkdir -p "$run_dir"
+chmod 0700 "$run_dir"
+log="$run_dir/codex-claude-bridge.fallback.log"
+
+if launchctl print "$domain/$label" >/dev/null 2>&1; then
+  launchctl kickstart -k "$domain/$label" >/dev/null 2>&1 || true
+elif [[ -f "$plist" ]] && launchctl bootstrap "$domain" "$plist" >/dev/null 2>&1; then
+  launchctl enable "$domain/$label" >/dev/null 2>&1 || true
+fi
 for _ in {1..50}; do
   if curl --silent --fail --max-time 1 http://127.0.0.1:4000/health/liveliness >/dev/null 2>&1; then exit 0; fi
   sleep 0.1
 done
+# launchctl may be unavailable inside a sandbox. Only then use a private,
+# explicitly logged fallback process; never boot out a healthy supervisor.
+if ! launchctl print "$domain/$label" >/dev/null 2>&1 && [[ ! -f "$plist" ]]; then
+  nohup /bin/bash "$launcher" >"$log" 2>&1 </dev/null &
+  for _ in {1..50}; do
+    curl --silent --fail --max-time 1 http://127.0.0.1:4000/health/liveliness >/dev/null 2>&1 && exit 0
+    sleep 0.1
+  done
+fi
 echo "Claude Code bridge failed to start." >&2
 exit 1

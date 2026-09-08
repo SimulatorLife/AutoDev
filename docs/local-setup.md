@@ -162,3 +162,14 @@ so agents can query approved localhost diagnostics such as the model router.
 Read-only roles use a broader filesystem policy only to inspect runtime state
 such as `~/.codex`; their role instructions still prohibit edits outside the
 active repository.
+
+### Execution contract
+
+The versioned execution contract is `scripts/codex/execution-contract.json`. It
+is installed beside the bridge modules and is consumed by provider bridges when
+composing role instructions. It is the authoritative cross-provider inventory
+for role kind, read-only intent, expected MCP capabilities, and provider spawn
+capabilities. A bridge must report missing capabilities rather than silently
+substituting a different workflow. Native role TOMLs remain the Codex-native
+configuration surface; changes to role capability policy must update the
+contract and its matrix tests together.
