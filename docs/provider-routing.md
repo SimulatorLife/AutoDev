@@ -69,7 +69,31 @@ Differences from a role request:
   bridges select their role instructions from it, so an orchestrator turn that
   degrades onto a bridge-backed provider receives the orchestrator policy
   rather than the leaf policy. See "Agent role across the bridge boundary".
-- Every provider in `providerGroups.orchestrator` must declare
+- 
+### Truncation reasons when an orchestrator turn cuts short
+
+The router, all three bridges, and the Python bridge share one vocabulary for
+why a turn stopped before it finished (`scripts/codex/lib/provider-limits.mjs`
+and the `tests/provider-limits.test.mjs` mirroring test pin both sides).
+`provider_limit`, `provider_timeout`, and `provider_interrupted` were the only
+values through early 2026; the cluster of long-running antigravity-orchestrated
+turns that died with "The antigravity provider stopped unexpectedly" without
+any clue whether agy had crashed or the upstream had walked away led to the
+addition of `client_disconnected`. The antigravity bridge detects the new
+cause at the request handler -- it tracks the most recent delegator step in
+a closure-scoped state object and routes `response.on("close")` and
+`response.on("error")` to a `do-not-kill` branch that lets agy finish to its
+`--print-timeout` instead of `SIGTERM`-ing it mid-delegation. The launchd log
+distinguishes the two cases by name (`agy turn aborted-delegation` vs.
+`agy turn aborted`); the truncation notice carries the new reason to any
+future re-attach path.
+
+Adding a new reason is a small but cross-cutting change: the JS-side
+`INCOMPLETE_REASON_*` constant in `provider-limits.mjs`, the matching Python
+literal in `codex-claude-cli-responses-proxy.py`, the cause ladder in both
+`truncationNotice` functions, and the test that asserts both sides agree.
+
+Every provider in `providerGroups.orchestrator` must declare
   `capabilities.subagentSpawn: true`, and the router refuses to start
   otherwise. The orchestrator's entire job is delegating, so a provider with no
   delegation path would silently turn the root agent into a single-threaded

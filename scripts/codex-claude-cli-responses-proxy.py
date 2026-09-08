@@ -101,6 +101,11 @@ LIMIT_SOURCE_INFERRED = "inferred"
 INCOMPLETE_REASON_PROVIDER_LIMIT = "provider_limit"
 INCOMPLETE_REASON_TIMEOUT = "provider_timeout"
 INCOMPLETE_REASON_INTERRUPTED = "provider_interrupted"
+# The upstream closed the connection while the provider was in the middle of
+# executing a tool that spawns sub-agents (Claude: Agent / Task). Mirrors the
+# JS-side INCOMPLETE_REASON_CLIENT_DISCONNECTED in scripts/codex/lib/provider-limits.mjs;
+# the provider-limits test asserts both sides agree so they cannot drift.
+INCOMPLETE_REASON_CLIENT_DISCONNECTED = "client_disconnected"
 HARD_LIMIT_CLASSES = ("quota_exhausted", "session_limit")
 
 
@@ -1186,6 +1191,8 @@ def truncation_notice(provider: str | None = None, limit: dict[str, Any] | None 
         cause = "timed out"
     elif reason == INCOMPLETE_REASON_INTERRUPTED:
         cause = "stopped unexpectedly"
+    elif reason == INCOMPLETE_REASON_CLIENT_DISCONNECTED:
+        cause = "was disconnected mid-delegation"
     elif limit_class == "session_limit":
         cause = "reached its session limit"
     elif limit_class == "throttled":

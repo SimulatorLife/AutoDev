@@ -74,6 +74,18 @@ Treat each child handle as a two-phase resource:
   known before attempting new delegation. Stale handles can retain capacity
   even when their work is no longer running.
 
+Antigravity-orchestrated turns wrap their work in the CLI's own `invoke_subagent`
+and `manage_subagents` tools. Those children are subprocess calls inside agy,
+not `autodev/<role>` requests through the router, so per-session concurrency
+enforcement does not cover them; the antigravity bridge tracks the most recent
+delegator step and stops killing agy when the upstream goes away mid-delegation,
+emitting an `INCOMPLETE_REASON_CLIENT_DISCONNECTED` truncation instead of an
+`INCOMPLETE_REASON_INTERRUPTED` one when the cause was the parent stream going
+idle. Long delegations therefore surface in launchd logs as `agy turn aborted-
+delegation` with the delegator tool name, not `agy turn aborted`. Treat those
+as `agy turn succeeded after upstream close` for telemetry: the work ran, the
+parent just wasn't listening.
+
 Report rate limits, stalls, provider failures, skipped roles, and
 unavailable execution paths explicitly. Treat missing or partial delegated
 evidence as missing evidence, not as a successful result.

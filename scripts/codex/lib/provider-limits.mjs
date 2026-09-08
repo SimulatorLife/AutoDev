@@ -34,6 +34,19 @@ export const LIMIT_SOURCE_INFERRED = "inferred";
 export const INCOMPLETE_REASON_PROVIDER_LIMIT = "provider_limit";
 export const INCOMPLETE_REASON_TIMEOUT = "provider_timeout";
 export const INCOMPLETE_REASON_INTERRUPTED = "provider_interrupted";
+// The upstream closed the connection while the provider was in the middle of
+// executing a tool that spawns sub-agents (agy: invoke_subagent /
+// manage_subagents; claude: Agent / Task). This is distinct from
+// INCOMPLETE_REASON_INTERRUPTED, which the router reaches for when the
+// provider's response stream simply stopped without telling us why: the
+// truncation notice needs to point operators at the right cause so they do not
+// chase a phantom provider stall when the cause was a per-session timeout the
+// router hit because agy was waiting on its own children. Currently delivered
+// only through bridge log lines and any future re-attach path; the router still
+// emits the generic INCOMPLETE_REASON_INTERRUPTED for now because the upstream
+// is gone by the time this is known and the SSE socket it would have travelled
+// out of is already closed.
+export const INCOMPLETE_REASON_CLIENT_DISCONNECTED = "client_disconnected";
 
 // Classes that mean "this provider will not serve again until its window
 // resets", as opposed to a transient failure worth retrying in seconds.
@@ -184,11 +197,13 @@ export function truncationNotice({ provider = null, limit = null, reason = INCOM
       ? "timed out"
       : reason === INCOMPLETE_REASON_INTERRUPTED
         ? "stopped unexpectedly"
-        : limit?.limitClass === "session_limit"
-          ? "reached its session limit"
-          : limit?.limitClass === "throttled"
-            ? "was rate limited"
-            : "ran out of usage";
+        : reason === INCOMPLETE_REASON_CLIENT_DISCONNECTED
+          ? "was disconnected mid-delegation"
+          : limit?.limitClass === "session_limit"
+            ? "reached its session limit"
+            : limit?.limitClass === "throttled"
+              ? "was rate limited"
+              : "ran out of usage";
   const resets = limit?.resetsAt ? ` Usage resets at ${limit.resetsAt}.` : "";
   return `\n\n[Incomplete: ${who} ${cause} and this turn stopped here. Everything above is work that finished; nothing after it ran.${resets}]`;
 }

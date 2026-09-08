@@ -6,6 +6,7 @@ import {
   classifyCliLimit,
   HARD_LIMIT_CLASSES,
   incompleteDetails,
+  INCOMPLETE_REASON_CLIENT_DISCONNECTED,
   INCOMPLETE_REASON_INTERRUPTED,
   INCOMPLETE_REASON_PROVIDER_LIMIT,
   INCOMPLETE_REASON_TIMEOUT,
@@ -119,7 +120,14 @@ test("an incomplete turn carries its work, and says plainly that it is partial",
 
   assert.match(truncationNotice({ reason: INCOMPLETE_REASON_TIMEOUT }), /timed out/);
   assert.match(truncationNotice({ reason: INCOMPLETE_REASON_INTERRUPTED }), /stopped unexpectedly/);
+  // The new client-disconnected reason names the cause precisely so a model
+  // reading the partial turn can tell that the upstream went away mid-
+  // delegation rather than chase a phantom provider stall.
+  const disconnectedNotice = truncationNotice({ reason: INCOMPLETE_REASON_CLIENT_DISCONNECTED, provider: "antigravity" });
+  assert.match(disconnectedNotice, /The antigravity provider was disconnected mid-delegation/);
+  assert.match(disconnectedNotice, /nothing after it ran/);
   assert.deepEqual(incompleteDetails(INCOMPLETE_REASON_INTERRUPTED), { reason: INCOMPLETE_REASON_INTERRUPTED });
+  assert.deepEqual(incompleteDetails(INCOMPLETE_REASON_CLIENT_DISCONNECTED), { reason: INCOMPLETE_REASON_CLIENT_DISCONNECTED });
 });
 
 test("the Python bridge mirrors this vocabulary exactly", () => {
@@ -138,6 +146,7 @@ test("the Python bridge mirrors this vocabulary exactly", () => {
     INCOMPLETE_REASON_PROVIDER_LIMIT,
     INCOMPLETE_REASON_TIMEOUT,
     INCOMPLETE_REASON_INTERRUPTED,
+    INCOMPLETE_REASON_CLIENT_DISCONNECTED,
     ...HARD_LIMIT_CLASSES,
   ];
   for (const literal of literals) {

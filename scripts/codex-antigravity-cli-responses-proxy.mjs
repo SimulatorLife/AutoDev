@@ -36,7 +36,7 @@ const MODEL_EFFORT_SUFFIX = /-(low|medium|high)$/;
 import { resolveCwd, WorkspaceResolutionError } from "./codex/lib/resolve-workspace.mjs";
 import { bridgeInstructions, isOrchestratorRole, resolveAgentRole } from "./codex/lib/bridge-role.mjs";
 import { roleContract } from "./codex/lib/execution-contract.mjs";
-import { classifyCliLimit, INCOMPLETE_REASON_INTERRUPTED, INCOMPLETE_REASON_PROVIDER_LIMIT, limitPayload, limitResponseHeaders, retryAfterSecondsFromLimit, terminalIncompleteEvents } from "./codex/lib/provider-limits.mjs";
+import { classifyCliLimit, INCOMPLETE_REASON_CLIENT_DISCONNECTED, INCOMPLETE_REASON_INTERRUPTED, INCOMPLETE_REASON_PROVIDER_LIMIT, limitPayload, limitResponseHeaders, retryAfterSecondsFromLimit, terminalIncompleteEvents } from "./codex/lib/provider-limits.mjs";
 import { resolveAgentEventReporter } from "./codex/lib/agent-events.mjs";
 import { SpawnSessionRegistry } from "./codex/lib/bridge-spawn-session.mjs";
 import { buildSpawnScript, execToolCallSseEvents, mintCallId, mintCallItemId } from "./codex/lib/codex-spawn-tools.mjs";
@@ -255,6 +255,65 @@ function createSpawnTracker(agentEvents) {
   return { observeSpawnStep, flushSpawns, openSpawnCount: () => openSpawns.size };
 }
 
+/**
+ * Update a delegation tracker from one step_update event and report whether
+ * the transition started, ended, or changed nothing. A pure helper so tests
+ * can drive it without spinning up the request handler.
+ *
+ * The caller owns the `delegation` state object -- { activeTool, activeStep,
+ * activatedAt } -- and this helper mutates it in place. The `isSpawnTool`
+ * callback mirrors the AgentEventReporter.isSpawnTool contract: true for
+ * tools that spawn sub-agents, false for everything else.
+ *
+ * Returns one of:
+ *   { kind: "entered", tool }
+ *   { kind: "exited", tool }
+ *   { kind: "unchanged" }
+ */
+function updateDelegationState(delegation, update, isSpawnTool) {
+  if (!delegation || typeof delegation !== "object") return { kind: "unchanged" };
+  // Without a spawn-tools callback we cannot classify the event, and a wrong
+  // classification here would either miss the kill-on-close path or trigger
+  // it falsely. Leave the tracker untouched; the bridge always passes a
+  // callback in production but this keeps the helper safe under partial mocks.
+  if (typeof isSpawnTool !== "function") return { kind: "unchanged" };
+  const stepToolName = String(update?.tool_name ?? update?.tool_info?.name ?? "");
+  const stepState = String(update?.state ?? "").toUpperCase();
+  const stepIndex = Number.isFinite(update?.step_index) ? update.step_index : null;
+  const isDelegator = Boolean(isSpawnTool(stepToolName));
+  if (isDelegator && stepState === "ACTIVE") {
+    delegation.activeTool = stepToolName;
+    delegation.activeStep = stepIndex;
+    delegation.activatedAt = Date.now();
+    return { kind: "entered", tool: stepToolName };
+  }
+  // Clear on a terminal state for the *same* step the delegator is running
+  // on. A non-delegator event for a different step (the wrap-up that arrives
+  // after a spawn step's DONE, or a fresh tool call) must NOT clear the
+  // tracker -- the close handler would still see us as delegating and the
+  // heartbeat would still be ticking, and that is exactly what we want.
+  const isTerminal = stepState === "DONE" || stepState === "ERROR" || stepState === "FAILED" || stepState === "CANCELLED";
+  if (isTerminal && delegation.activeStep === stepIndex) {
+    const previous = delegation.activeTool;
+    delegation.activeTool = null;
+    delegation.activeStep = null;
+    delegation.activatedAt = 0;
+    return { kind: "exited", tool: previous };
+  }
+  return { kind: "unchanged" };
+}
+
+/**
+ * Decide what a response.on("close") / response.on("error") handler should
+ * do given the current delegation tracker. Pure helper so the close handler
+ * and tests share one decision point.
+ */
+function decideCloseOnDelegation(delegation) {
+  if (delegation?.activeTool) {
+    return { kill: false, reason: "client_disconnected", tool: delegation.activeTool };
+  }
+  return { kill: true, reason: "provider_interrupted", tool: null };
+}
 function modelMetadata() {
   return {
     slug: DEFAULT_MODEL,
@@ -723,9 +782,64 @@ async function handle(request, response) {
   // Set once the turn has produced its final event, so the close that always
   // follows a completed stream is not reported as the client hanging up.
   let turnSettled = false;
+  // Tracks the most recent spawn-step tool the bridge saw from agy. Active
+  // spawn steps are the dangerous case: the parent agy process is waiting for
+  // its children, the bridge's SSE stream is idle (only keep-alives), and any
+  // of the upstream idle / wall-clock ceilings will close the connection.
+  // Killing agy in that window also kills the children and strands any work
+  // they had buffered, so we let agy run to its PRINT_TIMEOUT instead and
+  // surface the cause as INCOMPLETE_REASON_CLIENT_DISCONNECTED. The launchd
+  // log distinguishes the two cases by name.
+  const delegation = {
+    activeTool: null,
+    activeStep: null,
+    activatedAt: 0,
+  };
+  let clientDisconnectMidDelegation = false;
+  let clientDisconnectDetail = "";
+  // Synthetic activity the bridge emits while agy is mid-delegation, so the
+  // Codex-side idle / wall-clock timers see real Responses traffic rather
+  // than only SSE comment keep-alives. The 2-second keep-alive above is not
+  // counted as data by every fetch client; emitting a real event every 30 s
+  // gives the upstream something it cannot strip.
+  let delegationHeartbeat = null;
+  const startDelegationHeartbeat = () => {
+    if (delegationHeartbeat) return;
+    let tick = 0;
+    delegationHeartbeat = setInterval(() => {
+      if (!delegation.activeTool || !streamStarted || !isWritable()) return;
+      tick += 1;
+      try {
+        emit("response.reasoning_summary_text.delta", {
+          type: "response.reasoning_summary_text.delta",
+          item_id: reasoningId,
+          output_index: 0,
+          summary_index: 0,
+          delta: ` (delegation heartbeat ${tick}; agy still working)\n`,
+        });
+      } catch { }
+    }, 30_000);
+  };
+  const stopDelegationHeartbeat = () => {
+    if (!delegationHeartbeat) return;
+    clearInterval(delegationHeartbeat);
+    delegationHeartbeat = null;
+  };
   const onResponseError = () => {
     clientClosed = true;
     clearInterval(keepAlive);
+    stopDelegationHeartbeat();
+    const errorDecision = decideCloseOnDelegation(delegation);
+    if (!errorDecision.kill) {
+      clientDisconnectMidDelegation = true;
+      clientDisconnectDetail = `the client connection errored during ${errorDecision.tool}; agy will continue to print-timeout`;
+      if (!turnSettled) logTurnEnd("aborted-delegation", clientDisconnectDetail);
+      // Do NOT kill agy: the cause was the upstream going away while agy was
+      // delegating, and killing agy here strands the children it had spawned.
+      // runAgy will keep awaiting agy's natural completion; whatever it
+      // produces is discarded because the upstream is already gone.
+      return;
+    }
     if (!turnSettled) logTurnEnd("aborted", "the client connection errored; agy was killed mid-turn");
     if (child && !child.killed) child.kill("SIGTERM");
   };
@@ -740,11 +854,23 @@ async function handle(request, response) {
   response.on("close", () => {
     clientClosed = true;
     clearInterval(keepAlive);
+    stopDelegationHeartbeat();
     response.removeListener("error", onResponseError);
     // The router aborting its upstream fetch -- its 15-minute timeout, or its
     // own client going away -- reaches this bridge as nothing but a closed
-    // socket. Naming it is the difference between "agy died" and "agy was
-    // killed because nobody was listening any more".
+    // socket. Naming it is the difference between "agy died", "agy was
+    // killed because nobody was listening any more", and "agy was delegating
+    // when nobody was listening any more" -- the third case is the one that
+    // was killing long-running orchestrator turns in the antigravity path
+    // before this branch was added.
+    const closeDecision = decideCloseOnDelegation(delegation);
+    if (!closeDecision.kill) {
+      clientDisconnectMidDelegation = true;
+      clientDisconnectDetail = `the client disconnected during ${closeDecision.tool}; agy will continue to print-timeout`;
+      if (!turnSettled) logTurnEnd("aborted-delegation", clientDisconnectDetail);
+      // Do NOT kill agy for the same reason as onResponseError above.
+      return;
+    }
     if (!turnSettled) logTurnEnd("aborted", "the client disconnected; agy was killed mid-turn");
     if (child && !child.killed) child.kill("SIGTERM");
   });
@@ -770,11 +896,44 @@ async function handle(request, response) {
           startStream();
           emitActivity(activity, key);
         }
+        // Track the most recent delegator step so response.on("close") and
+        // response.on("error") can tell a turn that aborted during delegation
+        // apart from one that aborted before delegation started. The
+        // synthetic heartbeat rides on the same flag.
+        const transition = updateDelegationState(delegation, update, (name) => agentEvents?.isSpawnTool(name) ?? false);
+        if (transition.kind === "entered") startDelegationHeartbeat();
+        if (transition.kind === "exited") stopDelegationHeartbeat();
         if (update.step_type === "tool") console.error(`agy tool=${update.tool_name ?? "unknown"}`);
       }
     }, spawnSession, agentRole);
     clearInterval(keepAlive);
+    stopDelegationHeartbeat();
     flushSpawns("success");
+    // If the upstream closed mid-delegation, the run still completes here --
+    // agy got its full PRINT_TIMEOUT -- but the parent is gone. Emit an
+    // incomplete event carrying the cause so any future re-attach can replay
+    // the work; for now the bytes go nowhere because isWritable() is false.
+    if (clientDisconnectMidDelegation) {
+      turnSettled = true;
+      logTurnEnd("succeeded-mid-delegation", `agy finished after upstream close: ${clientDisconnectDetail}`);
+      for (const [ eventName, body ] of terminalIncompleteEvents({
+        responseId,
+        itemId,
+        reasoningId,
+        text: result.text ?? partialText,
+        reasoningText: activityParts.join("\n"),
+        reason: INCOMPLETE_REASON_CLIENT_DISCONNECTED,
+        limit: null,
+        provider: "antigravity",
+        response: responsePayload(payload.model ?? model, result.text ?? partialText, null, responseId, itemId, [], "incomplete"),
+      })) {
+        if (isWritable()) emit(eventName, body);
+      }
+      if (isWritable()) {
+        try { response.end("data: [DONE]\n\n"); } catch { }
+      }
+      return;
+    }
     startStream();
     const reasoningText = activityParts.join("\n");
     const completedReasoning = { id: reasoningId, type: "reasoning", status: "completed", summary: [ { type: "summary_text", text: reasoningText } ], content: [] };
@@ -810,6 +969,7 @@ async function handle(request, response) {
     }
   } catch (error) {
     clearInterval(keepAlive);
+    stopDelegationHeartbeat();
     flushSpawns("failure");
     const message = error.message ?? String(error);
     // Logged before the writability check: a turn that failed *because* the
@@ -871,4 +1031,4 @@ if (IS_MAIN) {
   });
 }
 
-export { agyArgs, createSpawnTracker, modelEffort, resolveEffort, resolveModel, spawnedChildren, subagentModel };
+export { agyArgs, createSpawnTracker, decideCloseOnDelegation, modelEffort, resolveEffort, resolveModel, spawnedChildren, subagentModel, updateDelegationState };
