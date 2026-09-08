@@ -15,12 +15,6 @@ on:
       agent:
         type: string
         required: true
-      agent_command:
-        type: string
-        required: false
-      agent_command_file:
-        type: string
-        required: false
       agent_setup_command:
         type: string
         required: false
@@ -487,8 +481,8 @@ jobs:
 
           stdbuf -oL -eL bash "$setup_script" 2>&1 | tee "$RUNNER_TEMP/agent-setup.log"
 
-      - name: Run agent custom command with retries
-        if: ${{ inputs.agent_command != '' || inputs.agent_command_file != '' }}
+      - name: Run canonical AutoDev CI provider command with retries
+        if: ${{ inputs.agent != '' }}
         shell: bash
         id: run_agent
         continue-on-error: true
@@ -503,40 +497,19 @@ jobs:
           AGENT_NAME: ${{ inputs.agent }}
           MAX_AGENT_RETRIES: ${{ inputs.max_agent_retries }}
           WORKING_BRANCH: ${{ env.WORKING_BRANCH }}
-          AGENT_COMMAND: ${{ inputs.agent_command }}
-          AGENT_COMMAND_FILE: ${{ inputs.agent_command_file }}
+          AUTODEV_CI_PROVIDER: ${{ inputs.agent }}
         run: |
           set -euo pipefail
 
           cd "${GITHUB_WORKSPACE}"
 
-          echo "Running agent command with retry support"
+          echo "Running canonical AutoDev provider command with retry support"
           echo "[agent] Workflow working directory: $(pwd)"
           echo "[agent] Workflow git root: $(git rev-parse --show-toplevel)"
           echo "[agent] Workflow branch: $(git branch --show-current)"
 
           script="$RUNNER_TEMP/agent_cmd.sh"
-
-          if [ -n "${AGENT_COMMAND_FILE:-}" ]; then
-            case "${AGENT_COMMAND_FILE}" in
-              /*|../*|*/../*|*/..|..)
-                echo "❌ agent_command_file must be a safe repository-relative path."
-                exit 1
-                ;;
-            esac
-
-            source_script="${GITHUB_WORKSPACE}/${AGENT_COMMAND_FILE}"
-
-            if [ ! -f "${source_script}" ]; then
-              echo "❌ agent_command_file does not exist: ${AGENT_COMMAND_FILE}"
-              exit 1
-            fi
-
-            cp "${source_script}" "$script"
-          else
-            printf '%s\n' "${AGENT_COMMAND}" > "$script"
-          fi
-
+          cp "${GITHUB_WORKSPACE}/.autodev/scripts/codex/run-ci-provider.sh" "$script"
           sed -i 's/\r$//' "$script"
           chmod 700 "$script"
 

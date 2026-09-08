@@ -834,11 +834,18 @@ def spawn_shim_mcp_config(session_key: str) -> str:
 
 def claude_cli_args(prompt: str, model: str, effort: str, agent_role: Any = None, cwd: str = ".", spawn_session: str | None = None) -> list[str]:
     codex_home = os.environ.get("CODEX_HOME", os.path.expanduser("~/.codex"))
-    additional_dirs = tuple(
+    configured_dirs = [
         directory
         for directory in os.environ.get("CLAUDE_CODE_ADDITIONAL_DIRS", codex_home).split(os.pathsep)
         if directory
-    )
+    ]
+    # Workspace-local skills and policy are part of the target contract. Expose
+    # the workspace's .agents tree to Claude without making it a global user
+    # registry or guessing from task prose.
+    workspace_agents = os.path.join(cwd, ".agents") if cwd else ""
+    if workspace_agents and os.path.isdir(workspace_agents) and workspace_agents not in configured_dirs:
+        configured_dirs.append(workspace_agents)
+    additional_dirs = tuple(configured_dirs)
     orchestrator = is_orchestrator_role(agent_role)
     # Delegation is the root orchestrator's job, so it keeps the delegation tool
     # the recursion boundary removes from every leaf role -- but *which* tool it

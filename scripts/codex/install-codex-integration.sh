@@ -86,6 +86,8 @@ launchagent_labels=(
 custom_provider_names=(local_model_router claude_code_subscription minimax antigravity_cli)
 cocoindex_code_package="cocoindex-code[full]"
 tracked_sources=""
+router_auth_requested=0
+materialize_only=0
 
 # The installed path for a runtime module: its repo path without the leading
 # `scripts/`, because the bridges are installed flat into the hooks directory
@@ -756,6 +758,25 @@ check_links() {
   return "$failed"
 }
 
+enable_router_auth() {
+  local env_file="${CODEX_ENV_FILE:-$codex_home/.env}"
+  local token
+  mkdir -p -- "$(dirname -- "$env_file")"
+  if [[ -f "$env_file" ]] && token="$(sed -n 's/^CODEX_ROUTER_AUTH_TOKEN=//p' "$env_file" | tail -n 1)" && [[ -n "$token" ]]; then
+    printf 'ok router auth token already exists in %s\n' "$env_file" >&2
+  else
+    command -v openssl >/dev/null 2>&1 || { printf 'openssl is required to enable router auth\n' >&2; return 1; }
+    token="$(openssl rand -hex 32)"
+    (umask 077; printf 'CODEX_ROUTER_AUTH_TOKEN=%s\n' "$token" >>"$env_file")
+    printf 'created router auth token in %s\n' "$env_file" >&2
+  fi
+  chmod 0600 "$env_file"
+  export CODEX_ROUTER_AUTH_TOKEN="$token"
+  if command -v launchctl >/dev/null 2>&1; then
+    launchctl setenv CODEX_ROUTER_AUTH_TOKEN "$token" >/dev/null 2>&1 || true
+  fi
+}
+
 # `--restart` is gone: installing now always restarts, so a flag asking for it
 # described a choice that no longer exists. It is rejected rather than accepted
 # as a no-op, because silently ignoring it would leave the caller believing they
@@ -766,14 +787,24 @@ case "${1:-}" in
     check_links
     exit $?
     ;;
+  --enable-router-auth)
+    router_auth_requested=1
+    ;;
+  --materialize-only)
+    materialize_only=1
+    ;;
   *)
-    printf 'usage: %s [--check]\n' "${BASH_SOURCE[0]##*/}" >&2
+    printf 'usage: %s [--check|--enable-router-auth|--materialize-only]\n' "${BASH_SOURCE[0]##*/}" >&2
     printf 'installing always restarts the services; there is no --restart.\n' >&2
     exit 2
     ;;
 esac
 
-if ! install_cocoindex_code; then
+if [[ "$router_auth_requested" == 1 ]]; then
+  enable_router_auth || exit 1
+fi
+
+if [[ "$materialize_only" == 0 ]] && ! install_cocoindex_code; then
   exit 1
 fi
 
@@ -898,7 +929,7 @@ link_one "$repo_root/scripts/codex/model-routing.json" "$codex_home/codex-model-
 # The registration consumes the installed spawn shim, so it must happen after
 # runtime modules are materialized. The Playwright entry is registered in the
 # same pass for agy's global MCP registry.
-if ! register_agy_spawn_shim; then
+if [[ "$materialize_only" == 0 ]] && ! register_agy_spawn_shim; then
   exit 1
 fi
 # The router (parent transport) and the four subagent bridges must survive app
@@ -1086,6 +1117,10 @@ restart_services() {
     printf 'bridge start failed: ensure-codex-copilot-proxy.sh (router will route around it)\n' >&2
 }
 
-restart_services
+if [[ "$materialize_only" == 0 ]]; then
+  restart_services
+else
+  printf '%s\n' 'Materialized AutoDev integration without restarting services.' >&2
+fi
 
 check_links

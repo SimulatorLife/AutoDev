@@ -172,11 +172,13 @@ test('target auto-merge requires completed target check evidence', async () => {
 
 test('MiniMax invocation configures headless OpenAI-compatible authentication', async () => {
   const source = await readWorkflow('minimax-invoke.yml');
-  assert.match(source, /--auth-type openai/);
-  assert.match(source, /--openai-api-key/);
-  assert.match(source, /--openai-base-url/);
-  assert.match(source, /pnpm --silent dlx \$AUTODEV_QWEN_PACKAGE/);
-  assert.doesNotMatch(source, /\bnpx\b/);
+  const runner = await readFile(path.join(root, 'scripts', 'codex', 'run-ci-provider.sh'), 'utf8');
+  assert.match(source, /agent: mini-max/);
+  assert.match(runner, /mini-max\)/);
+  assert.match(runner, /--auth-type openai/);
+  assert.match(runner, /--openai-api-key/);
+  assert.match(runner, /--openai-base-url/);
+  assert.doesNotMatch(runner, /\bnpx\b/);
 });
 
 test('local provider tooling resolves the playwright MCP from a pinned devDependency', async () => {
@@ -187,13 +189,8 @@ test('local provider tooling resolves the playwright MCP from a pinned devDepend
   ];
   for (const configFile of configs) {
     const source = await readFile(configFile, 'utf8');
-    if (configFile.endsWith(path.join('scripts', 'codex', 'config.toml'))) {
-      assert.match(source, /command = "bash"/);
-      assert.match(source, /run-autodev-mcp\.sh\\" playwright/);
-    } else {
-      assert.match(source, /command = "pnpm"/);
-      assert.match(source, /args = \["exec", "playwright-mcp"\]/);
-    }
+    assert.match(source, /command = "bash"/);
+    assert.match(source, /run-autodev-mcp\.sh\\" playwright/);
     // Assert against configuration, not prose: a comment may name the forbidden
     // runners in order to warn about them.
     const settings = source.split('\n').filter((line) => !line.trimStart().startsWith('#')).join('\n');
@@ -235,28 +232,18 @@ test('the user-level MCP servers are self-sufficient, so no repository needs to 
 test('provider CLI versions are pinned in one AutoDev manifest', async () => {
   const manifest = JSON.parse(await readFile(path.join(root, '.github', 'ci', 'provider-tools.json'), 'utf8'));
   assert.equal(manifest.schemaVersion, 1);
-  for (const [provider, packageSpec] of Object.entries(manifest.tools)) {
-    assert.match(packageSpec.package, /@[^@\s]+\@[0-9]+\.[0-9]+\.[0-9]+$/, provider);
+  for (const packageSpec of Object.values(manifest.tools)) {
+    assert.match(packageSpec.package, /@[^@\s]+\@[0-9]+\.[0-9]+\.[0-9]+$/);
   }
-  const workflows = {
-    claude: 'AUTODEV_CLAUDE_PACKAGE',
-    gemini: 'AUTODEV_GEMINI_PACKAGE',
-    qwen: 'AUTODEV_QWEN_PACKAGE',
-    codex: 'AUTODEV_CODEX_PACKAGE',
-  };
-  for (const [provider, variable] of Object.entries(workflows)) {
-    const sources = provider === 'claude'
-      ? ['claude-invoke.yml']
-      : provider === 'gemini'
-        ? ['gemini-invoke.yml']
-        : provider === 'qwen'
-          ? ['qwen-invoke.yml', 'minimax-invoke.yml']
-          : ['minimax-codex-invoke.yml'];
-    for (const name of sources) {
-      const source = await readWorkflow(name);
-      assert.match(source, new RegExp(`\\$${variable}`), name);
-      assert.doesNotMatch(source, /pnpm\s+--silent\s+dlx\s+[^\n]*@latest/, name);
-    }
+  const invoke = await readWorkflow('agent-invoke.yml');
+  assert.match(invoke, /run-ci-provider\.sh/);
+  assert.match(invoke, /AUTODEV_\$\{key\}_PACKAGE/);
+  const runner = await readFile(path.join(root, 'scripts', 'codex', 'run-ci-provider.sh'), 'utf8');
+  assert.match(runner, /require_pinned_package/);
+  for (const name of ['claude-invoke.yml', 'gemini-invoke.yml', 'minimax-invoke.yml', 'qwen-invoke.yml', 'minimax-codex-invoke.yml']) {
+    const source = await readWorkflow(name);
+    assert.doesNotMatch(source, /agent_command:/, name);
+    assert.doesNotMatch(source, /pnpm\s+--silent\s+dlx\s+[^\n]*@latest/, name);
   }
 });
 
@@ -314,6 +301,12 @@ test('agent invocation interface omits unused compatibility inputs', async () =>
   const source = await readWorkflow('agent-invoke.yml');
   assert.doesNotMatch(source, /\n      target_sha:/);
   assert.doesNotMatch(source, /\n      working_branch:/);
+});
+
+test('the canonical CI provider entrypoint is valid bash', () => {
+  const script = path.join(root, 'scripts', 'codex', 'run-ci-provider.sh');
+  const result = spawnSync('bash', ['-n', script], { encoding: 'utf8' });
+  assert.equal(result.status, 0, result.stderr);
 });
 
 test('agent-invoke.yml run: blocks are syntactically valid bash', async () => {

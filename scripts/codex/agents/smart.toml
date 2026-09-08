@@ -26,14 +26,14 @@ edit outside the active repository unless the parent explicitly establishes
 that scope; report a workspace mismatch instead of guessing."""
 
 [mcp_servers.lsp]
-command = "pnpm"
-args = ["exec", "lsp-mcp-server"]
+command = "bash"
+args = ["-lc", "exec \"${CODEX_HOME:-$HOME/.codex}/hooks/run-autodev-mcp.sh\" lsp"]
 enabled = true
 
 [mcp_servers.playwright]
 enabled = true
-command = "pnpm"
-args = ["exec", "playwright-mcp"]
+command = "bash"
+args = ["-lc", "exec \"${CODEX_HOME:-$HOME/.codex}/hooks/run-autodev-mcp.sh\" playwright"]
 default_tools_approval_mode = "approve"
 enabled_tools = [
   "browser_navigate",

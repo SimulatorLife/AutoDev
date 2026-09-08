@@ -23,8 +23,8 @@ edit outside the active repository unless the parent explicitly establishes
 that scope; report a workspace mismatch instead of guessing."""
 
 [mcp_servers.lsp]
-command = "pnpm"
-args = ["exec", "lsp-mcp-server"]
+command = "bash"
+args = ["-lc", "exec \"${CODEX_HOME:-$HOME/.codex}/hooks/run-autodev-mcp.sh\" lsp"]
 enabled = true
 
 [[skills.config]]

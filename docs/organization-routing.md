@@ -46,3 +46,12 @@ The reusable `agent-invoke.yml` workflow loads provider CLI package versions fro
 manifest variables rather than `pnpm dlx ...@latest`, so a provider upgrade is a
 reviewed AutoDev policy change instead of an implicit supply-chain change on the
 next scheduled run.
+
+## Canonical CI execution entrypoint
+
+Provider-specific workflow files select the provider and any provider-specific
+setup policy only. Execution is centralized in
+`scripts/codex/run-ci-provider.sh`, invoked by `agent-invoke.yml`; arbitrary
+provider command strings are not accepted by the reusable workflow. This keeps
+retry, checkout, prompt, push, and provider-command boundaries in one control
+path while retaining provider-specific CLI flags inside the canonical runner.

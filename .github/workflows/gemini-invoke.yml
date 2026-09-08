@@ -55,23 +55,3 @@ jobs:
           echo "❌ Missing .gemini/policies/tools.toml"
           exit 1
         fi
-      agent_command: |
-        set -euo pipefail
-
-        export GEMINI_CLI_TRUST_WORKSPACE=true
-        export GEMINI_API_KEY="${OPENAI_API_KEY}"
-        export NODE_OPTIONS="--max-old-space-size=4096"
-
-        set +e
-        stdbuf -oL -eL pnpm --silent dlx $AUTODEV_GEMINI_PACKAGE \
-          --approval-mode=yolo \
-          --policy="$HOME/.gemini/policies" \
-          --output-format=stream-json \
-          --skip-trust \
-          --prompt "" < "${AGENT_PROMPT_FILE}" 2>&1 | tee "$RUNNER_TEMP/agent-stream.jsonl"
-        agent_status="${PIPESTATUS[0]}"
-        set -e
-
-        if [ "${agent_status}" -ne 0 ]; then
-          exit "${agent_status}"
-        fi

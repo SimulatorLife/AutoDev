@@ -47,18 +47,3 @@ jobs:
       additional_context: ${{ github.event.comment.body }}
       openai_base_url: 'https://api.minimax.io/v1'
       agent: mini-max-codex
-      agent_command: |
-        set -euo pipefail
-
-        set +e
-        stdbuf -oL -eL pnpm --silent dlx $AUTODEV_CODEX_PACKAGE exec \
-          --profile=minimax \
-          --json \
-          - < "${AGENT_PROMPT_FILE}" \
-          2>&1 | tee "$RUNNER_TEMP/agent-stream.jsonl"
-        agent_status="${PIPESTATUS[0]}"
-        set -e
-
-        if [ "${agent_status}" -ne 0 ]; then
-          exit "${agent_status}"
-        fi

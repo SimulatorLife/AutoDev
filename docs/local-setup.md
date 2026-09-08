@@ -181,3 +181,26 @@ outside AutoDev's managed flat roles. A project-local role that reuses a managed
 name is rejected as an explicit conflict rather than silently choosing precedence;
 this keeps user-level provider routing deterministic while allowing repository-
 specific agents, MCPs, and skills to coexist under distinct names.
+
+To enable the router authentication boundary during a planned restart, run:
+
+```bash
+bash scripts/codex/install-codex-integration.sh --enable-router-auth
+```
+
+This creates/reuses a private `CODEX_ROUTER_AUTH_TOKEN` in
+`$CODEX_HOME/.env`, exports it to launchd, and lets the configured
+`local_model_router` provider send the same bearer token. It is intentionally an
+explicit migration flag rather than an implicit install-time change so an
+existing Desktop session is not disconnected unexpectedly.
+
+For a live Desktop session, use `--materialize-only` to synchronize hooks,
+role files, MCP launchers, and rendered LaunchAgents without cycling any running
+service:
+
+```bash
+bash scripts/codex/install-codex-integration.sh --materialize-only
+```
+
+Run the normal installer later, when no active task depends on the local router,
+to restart the supervisors and load the new runtime code.

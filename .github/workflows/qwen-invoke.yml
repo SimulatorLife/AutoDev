@@ -65,19 +65,3 @@ jobs:
         }
 
         pull_qwen_configured_model
-      agent_command: |
-        set -euo pipefail
-
-        set +e
-        stdbuf -oL -eL pnpm --silent dlx $AUTODEV_QWEN_PACKAGE \
-          --yolo \
-          --debug \
-          --experimental-lsp \
-          --output-format=stream-json \
-          --prompt "" < "${AGENT_PROMPT_FILE}" 2>&1 | tee "$RUNNER_TEMP/agent-stream.jsonl"
-        agent_status="${PIPESTATUS[0]}"
-        set -e
-
-        if [ "${agent_status}" -ne 0 ]; then
-          exit "${agent_status}"
-        fi

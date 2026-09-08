@@ -342,8 +342,8 @@ class LocalSetupTests(unittest.TestCase):
                 role_config = tomllib.loads((role_dir / f"{role}.toml").read_text())
                 server = role_config["mcp_servers"]["playwright"]
                 self.assertTrue(server["enabled"])
-                self.assertEqual(server["command"], "pnpm")
-                self.assertEqual(server["args"], ["exec", "playwright-mcp"])
+                self.assertEqual(server["command"], "bash")
+                self.assertEqual(server["args"], ["-lc", 'exec "${CODEX_HOME:-$HOME/.codex}/hooks/run-autodev-mcp.sh" playwright'])
                 self.assertEqual(server["default_tools_approval_mode"], "approve")
                 self.assertTrue(required_tools <= set(server["enabled_tools"]))
 
@@ -387,6 +387,8 @@ class LocalSetupTests(unittest.TestCase):
             with self.subTest(role=role):
                 role_config = tomllib.loads((role_dir / f"{role}.toml").read_text())
                 self.assertTrue(role_config["mcp_servers"]["lsp"]["enabled"])
+                self.assertEqual(role_config["mcp_servers"]["lsp"]["command"], "bash")
+                self.assertEqual(role_config["mcp_servers"]["lsp"]["args"], ["-lc", 'exec "${CODEX_HOME:-$HOME/.codex}/hooks/run-autodev-mcp.sh" lsp'])
                 skill_config = {
                     entry["name"]: entry["enabled"]
                     for entry in role_config["skills"]["config"]
@@ -1022,6 +1024,13 @@ class LocalSetupTests(unittest.TestCase):
         self.assertIn('elif kind == "activity":\n                    start_stream()', bridge)
         self.assertIn("response.reasoning_summary_text.delta", bridge)
 
+    def test_claude_cli_exposes_workspace_local_agents_directory(self):
+        with tempfile.TemporaryDirectory() as workspace:
+            (Path(workspace) / ".agents").mkdir()
+            args = claude_bridge.claude_cli_args("prompt", "sonnet", "medium", "explorer", workspace)
+            add_dir_index = args.index("--add-dir")
+            self.assertIn(str(Path(workspace) / ".agents"), args[add_dir_index + 1:])
+
     def test_claude_cli_allows_approved_runtime_directory_inspection(self):
         with patch.dict(claude_bridge.os.environ, {"CLAUDE_CODE_ADDITIONAL_DIRS": "/Users/henrykirk/.codex:/Users/henrykirk/.agents"}, clear=False):
             args = claude_bridge.claude_cli_args("prompt", "sonnet", "medium")
@@ -1573,6 +1582,12 @@ class LocalSetupTests(unittest.TestCase):
         reap_body = installer.split("reap_unmanaged() {")[1].split("\n}")[0]
         self.assertIn('ps -o command= -p "$pid"', reap_body)
         self.assertIn("does not own", reap_body)
+
+    def test_installer_exposes_safe_materialize_only_mode(self):
+        installer = INSTALLER_PATH.read_text()
+        self.assertIn("--materialize-only", installer)
+        self.assertIn('if [[ "$materialize_only" == 0 ]]; then', installer)
+        self.assertIn("Materialized AutoDev integration without restarting services.", installer)
 
     def test_installer_rejects_an_unknown_flag(self):
         result = subprocess.run(

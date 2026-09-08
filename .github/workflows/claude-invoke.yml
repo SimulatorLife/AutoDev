@@ -43,25 +43,3 @@ jobs:
       additional_context: ${{ github.event.comment.body }}
       agent: claude
       openai_base_url: 'https://api.anthropic.com'
-      agent_command: |
-        set -euo pipefail
-
-        export CLAUDE_CODE_OAUTH_TOKEN="${OPENAI_API_KEY}"
-        export DISABLE_AUTOUPDATER=1
-        export DISABLE_TELEMETRY=1
-        export NODE_OPTIONS="--max-old-space-size=4096"
-
-        set +e
-        stdbuf -oL -eL pnpm --silent dlx $AUTODEV_CLAUDE_PACKAGE \
-          -p \
-          --model claude-sonnet-5 \
-          --dangerously-skip-permissions \
-          --strict-mcp-config \
-          --output-format=stream-json \
-          --verbose < "${AGENT_PROMPT_FILE}" 2>&1 | tee "$RUNNER_TEMP/agent-stream.jsonl"
-        agent_status="${PIPESTATUS[0]}"
-        set -e
-
-        if [ "${agent_status}" -ne 0 ]; then
-          exit "${agent_status}"
-        fi
