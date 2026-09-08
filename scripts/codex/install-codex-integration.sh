@@ -51,6 +51,7 @@ dashboard_asset_names=(codex-model-router-dashboard.html)
 # (see runtime_module_target), which puts it at the same depth below a bridge
 # as it sits in a checkout. One relative specifier -- `./codex/lib/x.mjs`,
 # `./codex/prompts/x.md` -- therefore resolves in both.
+mcp_launcher_names=(run-autodev-mcp.sh)
 runtime_module_names=(
   scripts/codex/lib/resolve-workspace.mjs
   scripts/codex/lib/bridge-role.mjs
@@ -160,6 +161,36 @@ check_one() {
   [[ "$source" == /* && -L "$target" && "$(readlink "$target")" == "$source" ]]
 }
 
+render_launchagent() {
+  local source="$1"
+  local target="$2"
+  mkdir -p -- "$(dirname -- "$target")"
+  local temporary="$target.$$"
+  sed \
+    -e "s#__CODEX_HOME__#${codex_home//\\/\\\\}#g" \
+    -e "s#__HOME__#${HOME//\\/\\\\}#g" \
+    "$source" >"$temporary"
+  chmod 0644 "$temporary"
+  mv -f -- "$temporary" "$target"
+}
+
+check_rendered_launchagent() {
+  local source="$1"
+  local target="$2"
+  [[ -f "$target" && ! -L "$target" ]] || return 1
+  local temporary
+  temporary="$(mktemp "${TMPDIR:-/tmp}/autodev-plist.XXXXXX")"
+  # Render to a temporary file without moving it into the managed directory.
+  sed \
+    -e "s#__CODEX_HOME__#${codex_home//\\/\\\\}#g" \
+    -e "s#__HOME__#${HOME//\\/\\\\}#g" \
+    "$source" >"$temporary"
+  cmp -s "$temporary" "$target"
+  local result=$?
+  rm -f -- "$temporary"
+  return "$result"
+}
+
 check_skill_one() {
   local source="$1"
   local target="$2"
@@ -243,6 +274,12 @@ check_versioned_sources() {
       failed=1
     fi
   done
+  for name in "${mcp_launcher_names[@]}"; do
+    source="$repo_root/scripts/codex/$name"
+    if ! check_versioned_source "$source"; then
+      failed=1
+    fi
+  done
   for source in "$repo_root/scripts/codex/config.toml" "$repo_root/scripts/codex/install-codex-integration.sh" \
     "$repo_root/scripts/codex/launchagents/com.codex.model-router.plist" \
     "$repo_root/scripts/codex/launchagents/com.codex.claude-bridge.plist" \
@@ -264,9 +301,21 @@ check_agent_registry() {
   local failed=0
   local role project_section user_section
 
-  if [[ -d "$repo_root/.codex/agents" ]] && find "$repo_root/.codex/agents" -type f -print -quit 2>/dev/null | grep -q .; then
-    printf 'project-local-agent-role-not-allowed %s\n' "$repo_root/.codex/agents"
-    failed=1
+  # Workspace-local agents are supported, but the flat user registry owns the
+  # managed role names. Allow project-specific names while rejecting only an
+  # ambiguous same-name override that would make precedence depend on launch
+  # surface rather than the documented role contract.
+  if [[ -d "$repo_root/.codex/agents" ]]; then
+    while IFS= read -r local_agent; do
+      local_name="$(basename "$local_agent" .toml)"
+      case " ${agent_role_names[*]} " in
+        *" $local_name "*)
+          printf 'project-agent-role-conflict %s\n' "$local_agent"
+          failed=1
+          ;;
+        *) printf 'ok project-local-agent-role %s\n' "$local_agent" ;;
+      esac
+    done < <(find "$repo_root/.codex/agents" -type f -name '*.toml' -print 2>/dev/null | sort)
   fi
 
   for role in "${agent_role_names[@]}"; do
@@ -601,6 +650,16 @@ check_links() {
       failed=1
     fi
   done
+  for name in "${mcp_launcher_names[@]}"; do
+    source="$repo_root/scripts/codex/$name"
+    target="$hooks_dir/$name"
+    if check_one "$source" "$target"; then
+      printf 'ok %s -> %s\n' "$target" "$source"
+    else
+      printf 'missing-or-drifted %s -> %s\n' "$target" "$source"
+      failed=1
+    fi
+  done
   for name in "${hook_names[@]}"; do
     source="$repo_root/scripts/$name"
     target="$hooks_dir/$name"
@@ -684,7 +743,7 @@ check_links() {
   for label in "${launchagent_labels[@]}"; do
     source="$repo_root/scripts/codex/launchagents/$label.plist"
     target="$HOME/Library/LaunchAgents/$label.plist"
-    if check_one "$source" "$target"; then
+    if check_rendered_launchagent "$source" "$target"; then
       printf 'ok %s -> %s\n' "$target" "$source"
     else
       printf 'missing-or-drifted %s -> %s\n' "$target" "$source"
@@ -799,6 +858,9 @@ for name in "${runtime_module_names[@]}"; do
   mkdir -p -- "$(dirname -- "$target")"
   install -m 0644 "$source" "$target"
 done
+for name in "${mcp_launcher_names[@]}"; do
+  link_one "$repo_root/scripts/codex/$name" "$hooks_dir/$name"
+done
 for name in "${hook_names[@]}"; do
   chmod +x "$repo_root/scripts/$name"
   copy_runtime_one "$repo_root/scripts/$name" "$hooks_dir/$name"
@@ -867,14 +929,14 @@ done
 for label in "${launchagent_labels[@]}"; do
   plist_src="$repo_root/scripts/codex/launchagents/$label.plist"
   if [[ -f "$plist_src" ]]; then
-    link_one "$plist_src" "$HOME/Library/LaunchAgents/$label.plist"
+    render_launchagent "$plist_src" "$HOME/Library/LaunchAgents/$label.plist"
   fi
 done
 
 # The CODEX_HOME the installed launchagents point at. The plists carry one fixed
 # absolute path, so this is the only tree whose services this installer owns.
 plist_codex_home() {
-  local plist="$repo_root/scripts/codex/launchagents/com.codex.model-router.plist"
+  local plist="$HOME/Library/LaunchAgents/com.codex.model-router.plist"
   [[ -f "$plist" ]] || return 0
   /usr/bin/plutil -extract EnvironmentVariables.CODEX_HOME raw -o - "$plist" 2>/dev/null || true
 }
@@ -959,10 +1021,22 @@ restart_services() {
     printf 'materialized into %s; leaving the services under %s alone.\n' "$hooks_dir" "$plist_home/hooks" >&2
     return 0
   fi
-  local launchd_ok=1 label plist_link probe
+  local launchd_ok=1 foreign_service=0 label plist_link probe job_dump expected_hook
   for label in "${launchagent_labels[@]}"; do
     local plist_link="$HOME/Library/LaunchAgents/$label.plist"
     [[ -f "$plist_link" ]] || { launchd_ok=0; continue; }
+    # LaunchAgent labels are global. Never boot out a service owned by a
+    # different CODEX_HOME (for example a hermetic installer test or a staged
+    # migration); only cycle a loaded job whose program is this install's hook.
+    if job_dump="$(launchctl print "$domain/$label" 2>/dev/null)"; then
+      expected_hook="$(service_hook "$label")"
+      if ! grep -Fq -- "$expected_hook" <<<"$job_dump"; then
+        printf 'loaded %s belongs to another runtime; leaving it alone.\n' "$label" >&2
+        launchd_ok=0
+        foreign_service=1
+        continue
+      fi
+    fi
     launchctl bootout "$domain/$label" >/dev/null 2>&1 || true
     reap_unmanaged "$label"
     if launchctl bootstrap "$domain" "$plist_link" >/dev/null 2>&1; then
@@ -972,6 +1046,10 @@ restart_services() {
       launchd_ok=0
     fi
   done
+  if [[ "$foreign_service" == 1 ]]; then
+    printf '%s\n' 'another AutoDev runtime owns one or more labels; leaving all active services untouched.' >&2
+    return 0
+  fi
   if [[ "$launchd_ok" == 1 ]]; then
     printf '%s\n' 'Provider bridges supervised by launchd (KeepAlive; survive restart/crash/sleep).' >&2
     # Let services bind before the idempotent ensure-hooks run, so those hooks

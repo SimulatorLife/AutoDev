@@ -5,6 +5,15 @@
 set -euo pipefail
 
 hook_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+resolve_node() {
+  if command -v node >/dev/null 2>&1; then command -v node; return 0; fi
+  local candidate
+  for candidate in "$(ls -d "$HOME"/.nvm/versions/node/*/bin/node 2>/dev/null | sort -V | tail -1)" /opt/homebrew/bin/node /usr/local/bin/node; do
+    [[ -x "$candidate" ]] && { printf '%s\n' "$candidate"; return 0; }
+  done
+  return 1
+}
+node_bin="$(resolve_node)" || { echo "ensure-codex-minimax-proxy: node not found" >&2; exit 127; }
 
 # launchd and other background hooks do not inherit interactive-shell
 # credentials. Load the local credential file without printing its contents.
@@ -25,7 +34,7 @@ fi
 minimax_model="${CODEX_MINIMAX_MODEL:-MiniMax-M3}"
 
 active_model="$(
-  node -e '
+  "$node_bin" -e '
     const fs = require("node:fs");
 
     try {
@@ -102,7 +111,7 @@ fi
 MINIMAX_PROXY_HOST="$proxy_host" \
 MINIMAX_PROXY_PORT="$proxy_port" \
 MINIMAX_PROXY_UPSTREAM_BASE_URL="$upstream_base_url" \
-nohup node "$proxy_script" \
+nohup "$node_bin" "$proxy_script" \
   >"$proxy_log" 2>&1 \
   </dev/null &
 proxy_pid=$!

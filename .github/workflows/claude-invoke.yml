@@ -52,7 +52,7 @@ jobs:
         export NODE_OPTIONS="--max-old-space-size=4096"
 
         set +e
-        stdbuf -oL -eL pnpm --silent dlx @anthropic-ai/claude-code@latest \
+        stdbuf -oL -eL pnpm --silent dlx $AUTODEV_CLAUDE_PACKAGE \
           -p \
           --model claude-sonnet-5 \
           --dangerously-skip-permissions \

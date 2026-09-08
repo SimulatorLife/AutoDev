@@ -72,6 +72,7 @@ import {
   roleCandidates,
   roleForModel,
   routeCredentialAvailable,
+  routerAuthorizationValid,
   routeForModel,
   transformSseEvent,
   flattenOutboundTools,
@@ -98,6 +99,13 @@ import { resolveAgentEventReporter } from "./codex/lib/agent-events.mjs";
 import { spawnedChildren } from "./codex-antigravity-cli-responses-proxy.mjs";
 
 const read = (path) => readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
+
+test("router auth is opt-in and validates bearer tokens without exposing the token", () => {
+  assert.equal(routerAuthorizationValid({ headers: {} }), true);
+  assert.equal(routerAuthorizationValid({ headers: {} }, "secret"), false);
+  assert.equal(routerAuthorizationValid({ headers: { authorization: "Bearer wrong" } }, "secret"), false);
+  assert.equal(routerAuthorizationValid({ headers: { authorization: "Bearer secret" } }, "secret"), true);
+});
 
 test("the router calls the Antigravity adapter directly, with no LiteLLM hop", async () => {
   // LiteLLM used to sit between the router and the agy adapter as an identity

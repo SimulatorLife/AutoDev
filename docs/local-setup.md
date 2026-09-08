@@ -14,9 +14,11 @@ Provider-specific `ensure-*` and `run-*` scripts are intentionally separate so a
 
 The tracked Codex role files under `scripts/codex/agents/` are regular configuration files. Provider identity is configured in the provider profiles/catalogs, while role names remain stable and codebase-agnostic.
 
-The user-level config registers the `lsp` MCP server as `pnpm exec lsp-mcp-server`
-and the `playwright` MCP server as `pnpm exec playwright-mcp`. Both resolve from
-pinned AutoDev devDependencies (`lsp-mcp-server` and `@playwright/mcp`) rather
+The user-level config registers the `lsp` and `playwright` MCP servers through the
+installed `run-autodev-mcp.sh` launcher. The launcher resolves binaries from
+AutoDev's pinned devDependencies while preserving the active workspace as the
+MCP process cwd, so a target repository does not need to duplicate those
+packages. Both resolve from pinned AutoDev devDependencies (`lsp-mcp-server` and `@playwright/mcp`) rather
 than `pnpm dlx @playwright/mcp@latest`; `dlx @latest` re-resolves the package on
 every cold start (network + startup latency), grows the pnpm `dlx` cache, and
 drifts the version across hosts and agents, so it is not used. Code-oriented
@@ -173,3 +175,9 @@ capabilities. A bridge must report missing capabilities rather than silently
 substituting a different workflow. Native role TOMLs remain the Codex-native
 configuration surface; changes to role capability policy must update the
 contract and its matrix tests together.
+
+Workspace-local `.codex/agents/*.toml` roles are allowed when they use names
+outside AutoDev's managed flat roles. A project-local role that reuses a managed
+name is rejected as an explicit conflict rather than silently choosing precedence;
+this keeps user-level provider routing deterministic while allowing repository-
+specific agents, MCPs, and skills to coexist under distinct names.

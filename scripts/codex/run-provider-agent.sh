@@ -101,6 +101,11 @@ if [[ -n "$prompt_file" ]]; then
 fi
 [[ -n "$prompt" ]] || { echo "Provide --prompt or --prompt-file (use - for stdin)." >&2; exit 2; }
 bash "$router_ensure"
+if [[ -f "${CODEX_ENV_FILE:-$codex_home/.env}" ]]; then
+  set -a
+  source "${CODEX_ENV_FILE:-$codex_home/.env}"
+  set +a
+fi
 
 role_context="$(python3 - "$role_file" <<'PY'
 import sys

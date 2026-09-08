@@ -51,7 +51,7 @@ test("the orchestrator is never handed the leaf prompt, and the leaf is never ha
     const leaf = bridgeInstructions(role);
     assert.match(leaf, new RegExp(read("scripts/codex/prompts/leaf.md").trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&")), `${String(role)} must get the leaf prompt`);
     assert.match(leaf, /bounded leaf agent/);
-    assert.match(leaf, /Do not spawn\s+child agents/);
+    assert.match(leaf, /Do (?:\*{1,2})?not(?:\*{1,2})?\s+spawn\s+child agents/);
   }
 });
 

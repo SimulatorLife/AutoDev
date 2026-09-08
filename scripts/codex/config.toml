@@ -59,6 +59,7 @@ stream_idle_timeout_ms = 300000
 [model_providers.local_model_router]
 name = "Local model-aware Codex Responses router"
 base_url = "http://127.0.0.1:4100/v1"
+env_key = "CODEX_ROUTER_AUTH_TOKEN"
 wire_api = "responses"
 requires_openai_auth = false
 request_max_retries = 1
@@ -247,8 +248,8 @@ trust_level = "untrusted"
 # Playwright/LSP versions.
 [mcp_servers.lsp]
 enabled = true
-command = "pnpm"
-args = ["exec", "lsp-mcp-server"]
+command = "bash"
+args = ["-lc", "exec \"${CODEX_HOME:-$HOME/.codex}/hooks/run-autodev-mcp.sh\" lsp"]
 default_tools_approval_mode = "approve"
 
 # Registered once at the Codex user level. No cwd is specified: Codex starts
@@ -262,8 +263,8 @@ default_tools_approval_mode = "approve"
 
 [mcp_servers.playwright]
 enabled = true
-command = "pnpm"
-args = ["exec", "playwright-mcp"]
+command = "bash"
+args = ["-lc", "exec \"${CODEX_HOME:-$HOME/.codex}/hooks/run-autodev-mcp.sh\" playwright"]
 default_tools_approval_mode = "approve"
 
 [mcp_servers.node_repl]

@@ -185,6 +185,19 @@ jobs:
       - name: Stage AutoDev Node version
         run: cp .autodev/.nvmrc "$RUNNER_TEMP/autodev.nvmrc"
 
+      - name: Load pinned AutoDev provider tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          manifest=.autodev/.github/ci/provider-tools.json
+          test -f "$manifest" || { echo "Missing provider tool manifest: $manifest" >&2; exit 1; }
+          jq -e '.schemaVersion == 1 and (.tools | type == "object")' "$manifest" >/dev/null
+          for provider in claude gemini qwen codex; do
+            package="$(jq -er --arg provider "$provider" '.tools[$provider].package | select(type == "string" and length > 0)' "$manifest")"
+            key="$(printf '%s' "$provider" | tr '[:lower:]' '[:upper:]')"
+            echo "AUTODEV_${key}_PACKAGE=$package" >> "$GITHUB_ENV"
+          done
+
       - name: Read AutoDev package manager version
         id: autodev_package_manager
         shell: bash

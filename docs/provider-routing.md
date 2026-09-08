@@ -521,7 +521,9 @@ without leaking a stale tracker.
 The router is supervised by a `KeepAlive` launchd job
 (`com.codex.model-router`) so it survives app restarts, crashes, and sleep. The launchd plist lives at
 `scripts/codex/launchagents/com.codex.model-router.plist` and is materialized
-under `~/Library/LaunchAgents/` by the installer. Three contracts separate
+under `~/Library/LaunchAgents/` by the installer. Five provider services are
+materialized from portable templates, and the installer verifies their rendered
+content before restarting them. Three contracts separate
 "the process is alive" from "the process can serve":
 
 - **Liveness** — `GET /health/liveliness` (or `/health`) returns
@@ -1170,7 +1172,7 @@ The local router owns the GPT branch separately and forwards it to
 `https://chatgpt.com/backend-api/codex/responses` with the existing Codex OAuth
 token and account ID from `auth.json`.
 
-The four LaunchAgents under `scripts/codex/launchagents/` are the supported
+The five LaunchAgents under `scripts/codex/launchagents/` are the supported
 persistence path for this Desktop host. The installer loads them with `KeepAlive`
 and also retains idempotent direct-start hooks as a fallback when `launchctl` is
 inaccessible.
@@ -1186,7 +1188,7 @@ being reported as a successful early turn.
 ## Versioned integration, source of truth, and setup
 
 `scripts/codex/` owns the versioned machine-local Codex integration materialized
-into `/Users/henrykirk/.codex` through managed symlinks and runtime copies. Keep provider credentials in
+into `$CODEX_HOME` through managed symlinks and runtime copies. Keep provider credentials in
 `/Users/henrykirk/.codex/.env` or Keychain; no secret belongs in this
 repository.
 
@@ -1401,7 +1403,7 @@ Target state and current verification:
 | Requirement | State |
 | --- | --- |
 | OpenAI/Codex orchestrator and tracked user-level cross-provider TOMLs | Configured under `scripts/codex/agents/` and materialized as verified regular-file copies under `~/.codex/agents/`. The orchestrator runs on the `autodev/orchestrator` alias so it degrades to Claude Opus, MiniMax, then Gemini when Codex is out of usage. |
-| Shared user-level skills | Configured under `scripts/codex/skills/` as AutoDev-owned versioned directories and materialized under `~/.agents/skills/`; `install-codex-integration.sh --check` verifies all three links. |
+| Shared user-level skills | Configured under `scripts/codex/skills/` as AutoDev-owned versioned directories and materialized under `~/.agents/skills/`; `install-codex-integration.sh --check` verifies every managed skill link. |
 | Versioned scripts/hooks/config installed into `~/.codex` | Configured; profiles/catalogs/config are symlinked and app-executed hooks are checksum-checked runtime copies; `install-codex-integration.sh --check` passes. |
 | Native app-server custom-provider routing | Verified: `thread/start` selects the custom provider; Claude reached its upstream session-limit response. |
 | Direct CLI provider turns | Transport paths verified; Claude was session-limited, MiniMax was upstream high-demand limited, and Antigravity was quota-limited. |
@@ -1422,3 +1424,22 @@ append the role-specific contract instead of treating every non-orchestrator as
 an identical generic leaf. The installer deploys the contract beside the bridge
 runtime modules. Native TOML role files remain the Codex configuration surface;
 contract changes must be validated with the bridge-role matrix tests.
+
+### Route manifest ownership
+
+`/Users/henrykirk/AutoDev/scripts/codex/model-routing.json` now owns provider
+route metadata: model-family patterns, local bridge URLs, health probes, and
+credential environment keys. The router derives its route table from that
+manifest and validates every provider entry. Older installed routing files that
+lack the new `routes` block temporarily use the built-in migration defaults until
+the installer is rerun; the versioned source is the authoritative configuration.
+
+### Optional local router authentication
+
+The router supports an opt-in Bearer-token boundary for `/v1/responses` via
+`CODEX_ROUTER_AUTH_TOKEN`. Set the same token in the provider client environment
+(`CODEX_ROUTER_AUTH_TOKEN`) and keep it in the private `$CODEX_HOME/.env`; the
+launcher loads that file without printing it. Authentication is disabled when
+unset so existing installations remain operational during migration. After
+setting it, restart the router and Codex together and confirm
+`/status.authentication.responseRequests` is `true`.

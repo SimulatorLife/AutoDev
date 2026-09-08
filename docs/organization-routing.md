@@ -38,3 +38,11 @@ AutoDev's own checks and validation profile use pnpm `10.32.1` with the committe
 `pnpm-lock.yaml`. The generic target runner may still invoke npm when a different
 SimulatorLife target explicitly declares npm or has an npm lockfile; that is a
 target-repository compatibility path, not an AutoDev dependency.
+
+## CI provider tool versions
+
+The reusable `agent-invoke.yml` workflow loads provider CLI package versions from
+`.github/ci/provider-tools.json`. Provider workflows reference the exported
+manifest variables rather than `pnpm dlx ...@latest`, so a provider upgrade is a
+reviewed AutoDev policy change instead of an implicit supply-chain change on the
+next scheduled run.

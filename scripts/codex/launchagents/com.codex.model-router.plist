@@ -17,7 +17,7 @@
   <key>ProgramArguments</key>
   <array>
     <string>/bin/bash</string>
-    <string>/Users/henrykirk/.codex/hooks/run-codex-model-router.sh</string>
+    <string>__CODEX_HOME__/hooks/run-codex-model-router.sh</string>
   </array>
 
   <key>RunAtLoad</key>
@@ -44,9 +44,9 @@
     <key>PATH</key>
     <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
     <key>CODEX_HOME</key>
-    <string>/Users/henrykirk/.codex</string>
+    <string>__CODEX_HOME__</string>
     <key>HOME</key>
-    <string>/Users/henrykirk</string>
+    <string>__HOME__</string>
   </dict>
 
   <!-- Separate stdout/stderr so structured router events (autodev-router-event-v1
@@ -54,9 +54,9 @@
        to correlate by timestamp when triaging. The installer's ensure hook
        tails the stderr log on startup failure; keep the .err.log suffix. -->
   <key>StandardOutPath</key>
-  <string>/Users/henrykirk/.codex/run/codex-model-router.launchd.out.log</string>
+  <string>__CODEX_HOME__/run/codex-model-router.launchd.out.log</string>
   <key>StandardErrorPath</key>
-  <string>/Users/henrykirk/.codex/run/codex-model-router.launchd.err.log</string>
+  <string>__CODEX_HOME__/run/codex-model-router.launchd.err.log</string>
 
   <!-- process-type=Background keeps launchd from surfacing the router as an
        app in the Dock/foreground during boot, so the desktop session stays

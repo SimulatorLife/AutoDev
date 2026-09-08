@@ -63,7 +63,7 @@ jobs:
         export NODE_OPTIONS="--max-old-space-size=4096"
 
         set +e
-        stdbuf -oL -eL pnpm --silent dlx @google/gemini-cli@latest \
+        stdbuf -oL -eL pnpm --silent dlx $AUTODEV_GEMINI_PACKAGE \
           --approval-mode=yolo \
           --policy="$HOME/.gemini/policies" \
           --output-format=stream-json \

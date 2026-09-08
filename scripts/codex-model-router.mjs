@@ -21,27 +21,34 @@ import { dropUnresolvableReasoning, normalizeInputItemIds } from "./codex/lib/re
 
 const HOST = process.env.CODEX_MODEL_ROUTER_HOST ?? "127.0.0.1";
 const PORT = Number.parseInt(process.env.CODEX_MODEL_ROUTER_PORT ?? "4100", 10);
-const CODEX_HOME = process.env.CODEX_HOME ?? "/Users/henrykirk/.codex";
+const CODEX_HOME = process.env.CODEX_HOME ?? `${process.env.HOME ?? process.cwd()}/.codex`;
 const AUTH_FILE = process.env.CODEX_ROUTER_AUTH_FILE ?? `${CODEX_HOME}/auth.json`;
 const CATALOG_FILE = process.env.CODEX_ROUTER_CATALOG_FILE ?? `${CODEX_HOME}/codex-model-catalog.json`;
-const GPT_BASE_URL = process.env.CODEX_ROUTER_GPT_BASE_URL ?? "https://chatgpt.com/backend-api/codex";
 const DASHBOARD_FILE = new URL("./codex-model-router-dashboard.html", import.meta.url);
 const IS_MAIN = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
 const STATE_FILE = process.env.CODEX_ROUTER_STATE_FILE ?? `${CODEX_HOME}/codex-router-state.json`;
-
-const ROUTES = Object.freeze([
-  { provider: "claude", pattern: /^(sonnet|opus|haiku|claude-[A-Za-z0-9][A-Za-z0-9.-]*)$/, baseUrl: "http://127.0.0.1:4000/v1", healthUrl: "http://127.0.0.1:4000/health/liveliness", envKey: "LITELLM_API_KEY" },
-  { provider: "minimax", pattern: /^MiniMax-[A-Za-z0-9][A-Za-z0-9.-]*$/, baseUrl: "http://127.0.0.1:18765/v1", healthUrl: "http://127.0.0.1:18765/health", envKey: "MINIMAX_API_KEY" },
-  { provider: "antigravity", pattern: /^gemini-[A-Za-z0-9][A-Za-z0-9.-]*$/, baseUrl: "http://127.0.0.1:4002/v1", healthUrl: "http://127.0.0.1:4002/health/liveliness", envKey: "LITELLM_API_KEY" },
-  { provider: "codex", pattern: /^(gpt-[A-Za-z0-9][A-Za-z0-9.-]*|o[1-9][A-Za-z0-9.-]*|codex-[A-Za-z0-9][A-Za-z0-9.-]*)$/, baseUrl: GPT_BASE_URL, envKey: null },
-  { provider: "copilot", pattern: /^copilot$/, baseUrl: "http://127.0.0.1:4003/v1", healthUrl: "http://127.0.0.1:4003/health/liveliness", envKey: "CODEX_ROUTER_COPILOT_API_KEY" },
-]);
+const ROUTER_AUTH_TOKEN = process.env.CODEX_ROUTER_AUTH_TOKEN ?? "";
 const ROUTING_CONFIG_FILE = process.env.CODEX_ROUTER_CONFIG_FILE
   ?? (existsSync(`${CODEX_HOME}/codex-model-routing.json`)
     ? `${CODEX_HOME}/codex-model-routing.json`
     : new URL('./codex/model-routing.json', import.meta.url).pathname);
 const ROLE_NAMES = ['default', 'docs-researcher', 'browser-tester', 'explorer', 'worker', 'validator', 'smart'];
 const ROUTING_CONFIG = JSON.parse(readFileSync(ROUTING_CONFIG_FILE, 'utf8'));
+const DEFAULT_ROUTES = [
+  { provider: "claude", pattern: /^(sonnet|opus|haiku|claude-[A-Za-z0-9][A-Za-z0-9.-]*)$/, baseUrl: "http://127.0.0.1:4000/v1", healthUrl: "http://127.0.0.1:4000/health/liveliness", envKey: "LITELLM_API_KEY" },
+  { provider: "minimax", pattern: /^MiniMax-[A-Za-z0-9][A-Za-z0-9.-]*$/, baseUrl: "http://127.0.0.1:18765/v1", healthUrl: "http://127.0.0.1:18765/health", envKey: "MINIMAX_API_KEY" },
+  { provider: "antigravity", pattern: /^gemini-[A-Za-z0-9][A-Za-z0-9.-]*$/, baseUrl: "http://127.0.0.1:4002/v1", healthUrl: "http://127.0.0.1:4002/health/liveliness", envKey: "LITELLM_API_KEY" },
+  { provider: "codex", pattern: /^(gpt-[A-Za-z0-9][A-Za-z0-9.-]*|o[1-9][A-Za-z0-9.-]*|codex-[A-Za-z0-9][A-Za-z0-9.-]*)$/, baseUrl: process.env.CODEX_ROUTER_GPT_BASE_URL ?? "https://chatgpt.com/backend-api/codex", envKey: null },
+  { provider: "copilot", pattern: /^copilot$/, baseUrl: "http://127.0.0.1:4003/v1", healthUrl: "http://127.0.0.1:4003/health/liveliness", envKey: "CODEX_ROUTER_COPILOT_API_KEY" },
+];
+const ROUTES = Object.freeze(ROUTING_CONFIG.routes
+  ? Object.entries(ROUTING_CONFIG.routes).map(([provider, route]) => ({
+    ...route,
+    provider,
+    pattern: new RegExp(route.pattern),
+    ...(provider === "codex" && process.env.CODEX_ROUTER_GPT_BASE_URL ? { baseUrl: process.env.CODEX_ROUTER_GPT_BASE_URL } : {}),
+  }))
+  : DEFAULT_ROUTES);
 
 function validateTierGroups(config, tier) {
   const groups = config.providerGroups[tier];
@@ -59,6 +66,17 @@ function validateTierGroups(config, tier) {
 function validateRoutingConfig(config) {
   if (!config.providerGroups || typeof config.providerGroups !== 'object') throw new Error(`Routing config requires providerGroups: ${ROUTING_CONFIG_FILE}`);
   if (!config.providers || typeof config.providers !== 'object') throw new Error(`Routing config requires providers: ${ROUTING_CONFIG_FILE}`);
+  if (config.routes !== undefined) {
+    if (!config.routes || typeof config.routes !== 'object') throw new Error(`Routing config routes must be an object: ${ROUTING_CONFIG_FILE}`);
+    for (const provider of Object.keys(config.providers)) {
+      const route = config.routes[provider];
+      if (!route || typeof route !== 'object' || typeof route.pattern !== 'string' || !route.pattern.trim() || typeof route.baseUrl !== 'string' || !route.baseUrl.trim()) {
+        throw new Error(`Routing config provider ${provider} must define a route with pattern and baseUrl.`);
+      }
+      if (route.healthUrl !== undefined && typeof route.healthUrl !== 'string') throw new Error(`Routing config provider ${provider} route healthUrl must be a string.`);
+      if (route.envKey !== undefined && route.envKey !== null && typeof route.envKey !== 'string') throw new Error(`Routing config provider ${provider} route envKey must be a string or null.`);
+    }
+  }
   if (!config.roles || typeof config.roles !== 'object') throw new Error(`Routing config requires roles: ${ROUTING_CONFIG_FILE}`);
   if (!config.orchestrator || typeof config.orchestrator !== 'object') throw new Error(`Routing config requires an orchestrator block: ${ROUTING_CONFIG_FILE}`);
   for (const [provider, info] of Object.entries(config.providers)) {
@@ -1694,6 +1712,7 @@ function getRouterStatus(now = Date.now()) {
     startedAt: ROUTER_STARTED_AT,
     pid: process.pid,
     telemetryPersistence: { enabled: IS_MAIN, file: STATE_FILE, updatedAt: persistedStateUpdatedAt },
+    authentication: { responseRequests: Boolean(ROUTER_AUTH_TOKEN) },
     usage: usageStatus(),
     codexTelemetry: codexTelemetryStatus(),
     concurrency: concurrencyStatus(),
@@ -3631,6 +3650,20 @@ function workspaceContextFromRequest(request, payload, turnMetadataHeader) {
   };
 }
 
+function routerAuthorizationValid(request, configuredToken = ROUTER_AUTH_TOKEN) {
+  if (!configuredToken) return true;
+  const raw = request.headers.authorization;
+  const value = Array.isArray(raw) ? raw[0] : raw;
+  return typeof value === "string" && value === `Bearer ${configuredToken}`;
+}
+
+function sendRouterAuthFailure(response) {
+  sendJson(response, 401, errorBody("Router authentication is required.", "router_authentication_error", {
+    code: "router_authentication_error",
+    retryable: false,
+  }), { "www-authenticate": "Bearer" });
+}
+
 async function handleRequest(request, response) {
   const pathname = new URL(request.url ?? "/", `http://${HOST}:${PORT}`).pathname;
   // Liveness is unconditional: a draining process is still alive and must
@@ -3660,6 +3693,10 @@ async function handleRequest(request, response) {
   }
   if (pathname === "/v1/models" && request.method === "GET") {
     sendJson(response, 200, await loadCatalog());
+    return;
+  }
+  if (pathname === "/v1/responses" && request.method === "POST" && !routerAuthorizationValid(request)) {
+    sendRouterAuthFailure(response);
     return;
   }
   if (pathname === AGENT_EVENTS_PATH && request.method === "POST") {
@@ -3873,6 +3910,7 @@ export {
   ROUTER_INSTANCE_ID,
   spawnFailureStatus,
   routeCredentialAvailable,
+  routerAuthorizationValid,
   roleCandidates,
   roleForModel,
   routeForModel,

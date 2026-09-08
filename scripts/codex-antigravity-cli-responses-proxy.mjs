@@ -14,7 +14,7 @@ const IS_MAIN = process.argv[ 1 ] && import.meta.url === pathToFileURL(process.a
 
 const HOST = process.env.AGY_PROXY_HOST ?? "127.0.0.1";
 const PORT = Number.parseInt(process.env.AGY_PROXY_PORT ?? "4002", 10);
-const CLI = process.env.AGY_CLI_PATH ?? "/Users/henrykirk/.local/bin/agy";
+const CLI = process.env.AGY_CLI_PATH ?? `${process.env.HOME ?? process.cwd()}/.local/bin/agy`;
 const DEFAULT_MODEL = "gemini-3.8-flash-medium";
 const DEFAULT_EFFORT = "medium";
 const AGY_MODE = process.env.AGY_MODE ?? "accept-edits";

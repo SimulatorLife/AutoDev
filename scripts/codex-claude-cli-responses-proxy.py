@@ -39,7 +39,7 @@ PROJECT_ROOT = os.environ.get("CODEX_PROJECT_ROOT")
 # default five-minute ceiling made legitimate tool-heavy subagent turns look
 # like premature transport failures.
 CLAUDE_TIMEOUT_SECONDS = float(os.environ.get("CLAUDE_CODE_BRIDGE_TIMEOUT_SECONDS", "900"))
-CLI = os.environ.get("CLAUDE_BIN", "/Users/henrykirk/.local/bin/claude")
+CLI = os.environ.get("CLAUDE_BIN", os.path.expanduser("~/.local/bin/claude"))
 DEFAULT_CLAUDE_MODEL = "sonnet"
 DEFAULT_CLAUDE_EFFORT = "medium"
 # Claude Code's Agent tool (Task in older releases) is the recursive boundary.

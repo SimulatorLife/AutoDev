@@ -368,8 +368,8 @@ class LocalSetupTests(unittest.TestCase):
         config_path = REPO_ROOT / "scripts/codex/config.toml"
         config = tomllib.loads(config_path.read_text())
         lsp_server = config["mcp_servers"]["lsp"]
-        self.assertEqual(lsp_server["command"], "pnpm")
-        self.assertEqual(lsp_server["args"], ["exec", "lsp-mcp-server"])
+        self.assertEqual(lsp_server["command"], "bash")
+        self.assertEqual(lsp_server["args"], ["-lc", 'exec "${CODEX_HOME:-$HOME/.codex}/hooks/run-autodev-mcp.sh" lsp'])
         self.assertTrue(lsp_server["enabled"])
         user_skill_config = {
             entry["name"]: entry["enabled"]
@@ -763,7 +763,7 @@ class LocalSetupTests(unittest.TestCase):
                               msg="anything that is not exactly the orchestrator is a leaf")
                 self.assertIn("Effective role contract", instructions)
         self.assertIn("bounded leaf agent", claude_bridge.LEAF_BRIDGE_INSTRUCTIONS)
-        self.assertIn("Do not spawn", claude_bridge.LEAF_BRIDGE_INSTRUCTIONS)
+        self.assertRegex(claude_bridge.LEAF_BRIDGE_INSTRUCTIONS, r"Do \*not\* spawn")
 
     def test_agent_role_comes_only_from_the_router_generated_header(self):
         headers = http.client.HTTPMessage()
@@ -2007,6 +2007,22 @@ class LocalSetupTests(unittest.TestCase):
             0,
             msg="plutil -lint failed for " + str(plist_path) + ": " + result.stderr,
         )
+
+    def test_launchagent_templates_render_portably_for_custom_home(self):
+        for plist_path in (REPO_ROOT / "scripts/codex/launchagents").glob("*.plist"):
+            source = plist_path.read_text()
+            self.assertIn("__CODEX_HOME__", source, msg=plist_path.name)
+            self.assertNotIn("/Users/henrykirk", source, msg=plist_path.name)
+        with tempfile.TemporaryDirectory() as home, tempfile.TemporaryDirectory() as codex_home:
+            run = self._run_installer(home, codex_home)
+            self.assertEqual(run.returncode, 0, msg=run.stdout + run.stderr)
+            target = Path(home) / "Library/LaunchAgents/com.codex.model-router.plist"
+            self.assertTrue(target.is_file())
+            self.assertFalse(target.is_symlink())
+            rendered = target.read_text()
+            self.assertIn(str(codex_home), rendered)
+            self.assertNotIn("__CODEX_HOME__", rendered)
+            self.assertNotIn("__HOME__", rendered)
 
     def test_installer_materializes_user_private_run_directory(self):
         """The installer must create $CODEX_HOME/run with mode 0700 so the

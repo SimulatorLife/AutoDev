@@ -69,7 +69,7 @@ jobs:
         set -euo pipefail
 
         set +e
-        stdbuf -oL -eL pnpm --silent dlx @qwen-code/qwen-code@latest \
+        stdbuf -oL -eL pnpm --silent dlx $AUTODEV_QWEN_PACKAGE \
           --yolo \
           --debug \
           --experimental-lsp \
