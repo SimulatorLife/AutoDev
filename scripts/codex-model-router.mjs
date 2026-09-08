@@ -14,6 +14,10 @@ import { pathToFileURL } from "node:url";
 // were separate implementations, and they disagreed.
 import { WORKSPACE_KEYS, isDirectory } from "./codex/lib/resolve-workspace.mjs";
 import { INCOMPLETE_REASON_INTERRUPTED, INCOMPLETE_REASON_TIMEOUT, isHardLimitClass, LIMIT_HEADER_CLASS, LIMIT_HEADER_RESETS_AT, LIMIT_SOURCE_REPORTED, normalizeResetsAt, readLimitHeaders, terminalIncompleteEvents } from "./codex/lib/provider-limits.mjs";
+// Providers disagree about the Responses API's item-id contract, and Codex
+// replays whatever it was handed on every later turn. Normalising outbound is
+// what stops one lax turn from permanently poisoning a session.
+import { normalizeInputItemIds } from "./codex/lib/responses-item-ids.mjs";
 
 const HOST = process.env.CODEX_MODEL_ROUTER_HOST ?? "127.0.0.1";
 const PORT = Number.parseInt(process.env.CODEX_MODEL_ROUTER_PORT ?? "4100", 10);
@@ -79,6 +83,11 @@ function validateRoutingConfig(config) {
       if (info.capabilities.subagentSpawn !== true) {
         throw new Error(`Routing config provider ${provider} declares capabilities.subagentSpawnTools but is not spawn-capable.`);
       }
+    }
+    // Optional, and true when absent: a provider only names this to opt out of
+    // having its item ids corrected on the way upstream.
+    if (info.capabilities.normalizeItemIds !== undefined && typeof info.capabilities.normalizeItemIds !== 'boolean') {
+      throw new Error(`Routing config provider ${provider} must declare capabilities.normalizeItemIds as a boolean.`);
     }
   }
   for (const role of ROLE_NAMES) {
@@ -1124,7 +1133,15 @@ function spawnFailureStatus() {
 function providerCapabilities(provider) {
   const capabilities = ROUTING.providers[provider]?.capabilities ?? {};
   const spawnTools = Array.isArray(capabilities.subagentSpawnTools) ? [...capabilities.subagentSpawnTools] : [];
-  return { subagentSpawn: capabilities.subagentSpawn === true, subagentSpawnTools: spawnTools };
+  // Opt-out rather than opt-in: honouring the id contract is the default a
+  // provider has to be excused from, not a feature it has to ask for. The
+  // escape hatch exists for a provider that turns out to pair items by the ids
+  // it minted and so needs to see them come back unchanged.
+  return {
+    subagentSpawn: capabilities.subagentSpawn === true,
+    subagentSpawnTools: spawnTools,
+    normalizeItemIds: capabilities.normalizeItemIds !== false,
+  };
 }
 
 // Tool names whose invocation inside a provider bridge means "a subagent was
@@ -1544,7 +1561,7 @@ function classifyProviderFailure(status, body = "") {
   return "request_error";
 }
 
-function recordRouterEvent({ phase, requestId, role = null, requestedModel, provider, model, workspace = null, outcome = null, status = null, failureClass = null, denialReason = null, spawnFailureReason = null, elapsedMs = null, toolCalls = 0, errorName = null, errorCode = null, syscall = null, origin = null, selection = null }) {
+function recordRouterEvent({ phase, requestId, role = null, requestedModel, provider, model, workspace = null, outcome = null, status = null, failureClass = null, denialReason = null, spawnFailureReason = null, elapsedMs = null, toolCalls = 0, errorName = null, errorCode = null, syscall = null, origin = null, selection = null, normalizedItemIds = 0 }) {
   const timestamp = new Date().toISOString();
   const workspaceContext = typeof workspace === "string" ? { key: workspace, cwd: null } : workspace;
   const event = {
@@ -1573,6 +1590,10 @@ function recordRouterEvent({ phase, requestId, role = null, requestedModel, prov
     // this provider. Phase stays as it was so every existing counter keeps
     // working; this only says how hard the router had to look.
     selection,
+    // How many item ids this request had to have corrected. A provider minting
+    // ids that violate the Responses contract is otherwise invisible until a
+    // session dies against a stricter provider weeks later.
+    normalizedItemIds,
   };
   recentRouterEvents.push(event);
   while (recentRouterEvents.length > Math.max(1, MAX_RECENT_EVENTS)) recentRouterEvents.shift();
@@ -2891,7 +2912,7 @@ function responseTextFromSse(body) {
   };
 }
 
-function upstreamPayload(route, payload, wantsStream) {
+function upstreamPayload(route, payload, wantsStream, requestId = null) {
   // `extra_headers` is an SDK escape hatch a proxy consumes as outbound HTTP
   // headers. Never pass the caller's value through the router: doing so would
   // bypass the router's credential and header allowlist. Every provider now
@@ -2901,6 +2922,25 @@ function upstreamPayload(route, payload, wantsStream) {
   const { extra_headers: _discardedExtraHeaders, ...safePayload } = payload;
   if (route.provider !== "codex" && Array.isArray(safePayload.tools)) {
     safePayload.tools = flattenOutboundTools(safePayload.tools);
+  }
+  // Codex replays the whole conversation on every turn, so a single item an
+  // earlier provider mis-labelled fails every later request against a provider
+  // that checks. Correcting it here -- the one point every upstream call passes
+  // through -- also repairs sessions already carrying bad ids, because the
+  // stored history is re-sent rather than re-read.
+  if (providerCapabilities(route.provider).normalizeItemIds) {
+    const { input, changed } = normalizeInputItemIds(safePayload.input);
+    if (changed) {
+      safePayload.input = input;
+      recordRouterEvent({
+        phase: "item_ids_normalized",
+        requestId,
+        requestedModel: payload.model ?? null,
+        provider: route.provider,
+        model: safePayload.model ?? null,
+        normalizedItemIds: changed,
+      });
+    }
   }
   return route.provider === "codex" ? { ...safePayload, stream: true, store: false } : { ...safePayload, stream: wantsStream };
 }
@@ -2919,7 +2959,7 @@ async function fetchUpstream(route, payload, wantsStream, turnMetadataHeader, cl
       throw authError;
     }
   }
-  const requestPayload = upstreamPayload(route, payload, wantsStream);
+  const requestPayload = upstreamPayload(route, payload, wantsStream, requestId);
   const timeoutSignal = AbortSignal.timeout(UPSTREAM_TIMEOUT_MS);
   const signal = clientSignal ? AbortSignal.any([clientSignal, timeoutSignal]) : timeoutSignal;
   const upstream = await fetch(`${route.baseUrl}/responses`, {
@@ -3841,6 +3881,7 @@ export {
   AGENT_EVENTS_PATH,
   validateRoutingConfig,
   workspaceContextFromRequest,
+  upstreamPayload,
 };
 
 if (IS_MAIN) {

@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { spawn } from "node:child_process";
 import { createServer } from "node:http";
 import { connect } from "node:net";
 import { existsSync, readFileSync } from "node:fs";
@@ -19,6 +20,7 @@ import {
   cooldownProvider,
   declaredLimit,
   providerCooldownSummary,
+  providerCapabilities,
   decrementActiveRequests,
   downstreamHeaders,
   fallbackable,
@@ -87,6 +89,7 @@ import {
   AGENT_EVENTS_PATH,
   tryAcquireSubagentSlot,
   validateRoutingConfig,
+  upstreamPayload,
   workspaceContextFromRequest,
 } from "./codex-model-router.mjs";
 import { resolveAgentEventReporter } from "./codex/lib/agent-events.mjs";
@@ -179,11 +182,11 @@ test("router status surfaces each provider's subagent spawn capability and watch
   const providers = getRouterStatus().providers;
   // Only the CLI-delegation bridges name tools: their spawns are invisible to
   // the router unless it tells them which tool names to report.
-  assert.deepEqual(providers.claude.capabilities, { subagentSpawn: true, subagentSpawnTools: [ "Agent", "Task" ] });
-  assert.deepEqual(providers.antigravity.capabilities, { subagentSpawn: true, subagentSpawnTools: [ "invoke_subagent" ] });
-  assert.deepEqual(providers.codex.capabilities, { subagentSpawn: true, subagentSpawnTools: [] });
-  assert.deepEqual(providers.minimax.capabilities, { subagentSpawn: true, subagentSpawnTools: [] });
-  assert.deepEqual(providers.copilot.capabilities, { subagentSpawn: false, subagentSpawnTools: [] });
+  assert.deepEqual(providers.claude.capabilities, { subagentSpawn: true, subagentSpawnTools: [ "Agent", "Task" ], normalizeItemIds: true });
+  assert.deepEqual(providers.antigravity.capabilities, { subagentSpawn: true, subagentSpawnTools: [ "invoke_subagent" ], normalizeItemIds: true });
+  assert.deepEqual(providers.codex.capabilities, { subagentSpawn: true, subagentSpawnTools: [], normalizeItemIds: true });
+  assert.deepEqual(providers.minimax.capabilities, { subagentSpawn: true, subagentSpawnTools: [], normalizeItemIds: true });
+  assert.deepEqual(providers.copilot.capabilities, { subagentSpawn: false, subagentSpawnTools: [], normalizeItemIds: true });
 });
 
 test("orchestrator alias degrades from the pinned primary provider to a load-balanced fallback group with pinned reasoning effort", () => {
@@ -289,6 +292,26 @@ test("validates routing config and requires default model for providers", () => 
   assert.throws(
     () => validateRoutingConfig({ ...validConfig, orchestrator: { ...validConfig.orchestrator, reasoningEffort: { unknownProvider: "high" } } }),
     /orchestrator\.reasoningEffort references unknown provider unknownProvider/
+  );
+
+  // Absent means "yes": a provider only names this to opt out.
+  assert.doesNotThrow(() => validateRoutingConfig({
+    ...validConfig,
+    providers: {
+      ...validConfig.providers,
+      testProvider: { capabilities: { subagentSpawn: true, normalizeItemIds: false }, models: { default: "test-model" } },
+    },
+  }));
+
+  assert.throws(
+    () => validateRoutingConfig({
+      ...validConfig,
+      providers: {
+        ...validConfig.providers,
+        testProvider: { capabilities: { subagentSpawn: true, normalizeItemIds: "no" }, models: { default: "test-model" } },
+      },
+    }),
+    /Routing config provider testProvider must declare capabilities\.normalizeItemIds as a boolean/
   );
 });
 
@@ -3640,4 +3663,87 @@ test("a continuation prefers the provider still holding the turn, without pinnin
   assert.deepEqual(providers(orchestratorCandidates(() => 0, "not-a-provider")), providers(plain));
   assert.deepEqual(providers(orchestratorCandidates(() => 0, plain[ 0 ].provider)), providers(plain));
   assert.deepEqual(providers(orchestratorCandidates(() => 0, null)), providers(plain));
+});
+
+// A turn served by a provider that mints ids the Responses contract rejects
+// poisons the session permanently: Codex stores what it was handed and replays
+// it on every later turn, so the first request that lands on a provider which
+// validates fails, and so does every request after it.
+test("outbound item ids are corrected to match their item type", () => {
+  const poisoned = [
+    { type: "message", id: "msg_1", role: "user", content: [] },
+    { type: "reasoning", id: "06eea1506b9c37f6f3f4bb02f90abd28_rs" },
+    { type: "custom_tool_call", id: "06ef3bc08924acade1facee14da0af2e_fc_0", call_id: "call_8ec20ad454e0460d9d4b6662", name: "exec", input: "text()" },
+    { type: "custom_tool_call_output", id: "ctco_1", call_id: "call_8ec20ad454e0460d9d4b6662", output: "ok" },
+  ];
+
+  for (const model of [ "gpt-5.6-luna", "MiniMax-M3", "sonnet" ]) {
+    const route = routeForModel(model);
+    const sent = upstreamPayload(route, { model, input: poisoned }, true);
+    assert.match(sent.input[ 1 ].id, /^rs_/, `${route.provider} reasoning id`);
+    assert.match(sent.input[ 2 ].id, /^ctc_/, `${route.provider} tool call id`);
+    // Untouched: these already conform.
+    assert.equal(sent.input[ 0 ].id, "msg_1");
+    assert.equal(sent.input[ 3 ].id, "ctco_1");
+    // A call and its output are paired by call_id alone, so rewriting one side
+    // of that pair would strand the result.
+    assert.equal(sent.input[ 2 ].call_id, "call_8ec20ad454e0460d9d4b6662");
+    assert.equal(sent.input[ 3 ].call_id, "call_8ec20ad454e0460d9d4b6662");
+    // The caller's array is never mutated in place.
+    assert.equal(poisoned[ 2 ].id, "06ef3bc08924acade1facee14da0af2e_fc_0");
+  }
+});
+
+test("a payload whose ids already conform is forwarded unchanged", () => {
+  const input = [ { type: "reasoning", id: "rs_abc" }, { type: "custom_tool_call", id: "ctc_abc", call_id: "call_1", name: "exec" } ];
+  const sent = upstreamPayload(routeForModel("gpt-5.6-luna"), { model: "gpt-5.6-luna", input }, true);
+  assert.equal(sent.input, input);
+});
+
+test("every provider normalises item ids unless its routing config opts out", () => {
+  for (const provider of Object.keys(JSON.parse(readFileSync(new URL("./codex/model-routing.json", import.meta.url), "utf8")).providers)) {
+    assert.equal(providerCapabilities(provider).normalizeItemIds, true, provider);
+  }
+});
+
+// The escape hatch has to actually reach upstreamPayload, not just parse. Run
+// it in a child so the routing config can be swapped before module load.
+test("a provider that opts out keeps the ids it minted", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "router-normalize-"));
+  try {
+    const base = JSON.parse(readFileSync(new URL("./codex/model-routing.json", import.meta.url), "utf8"));
+    base.providers.minimax.capabilities.normalizeItemIds = false;
+    const configFile = join(directory, "model-routing.json");
+    await writeFile(configFile, JSON.stringify(base));
+
+    const script = `
+      import { routeForModel, upstreamPayload, providerCapabilities } from ${JSON.stringify(new URL("./codex-model-router.mjs", import.meta.url).href)};
+      const input = [ { type: "reasoning", id: "06eea1506b9c37f6f3f4bb02f90abd28_rs" } ];
+      const optedOut = upstreamPayload(routeForModel("MiniMax-M3"), { model: "MiniMax-M3", input }, true);
+      const strict = upstreamPayload(routeForModel("gpt-5.6-luna"), { model: "gpt-5.6-luna", input }, true);
+      console.log(JSON.stringify({
+        capability: providerCapabilities("minimax").normalizeItemIds,
+        minimax: optedOut.input[0].id,
+        codex: strict.input[0].id,
+      }));
+    `;
+    const child = spawn(process.execPath, [ "--input-type=module", "-e", script ], {
+      env: { ...process.env, CODEX_ROUTER_CONFIG_FILE: configFile },
+      stdio: [ "ignore", "pipe", "pipe" ],
+    });
+    let stdout = "";
+    let stderr = "";
+    child.stdout.on("data", (chunk) => { stdout += chunk; });
+    child.stderr.on("data", (chunk) => { stderr += chunk; });
+    const code = await new Promise((resolve) => child.on("close", resolve));
+    assert.equal(code, 0, stderr);
+
+    const result = JSON.parse(stdout);
+    assert.equal(result.capability, false);
+    assert.equal(result.minimax, "06eea1506b9c37f6f3f4bb02f90abd28_rs", "the opted-out provider still sees its own id");
+    // Opting one provider out must not weaken the provider that actually rejects.
+    assert.match(result.codex, /^rs_/);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
 });

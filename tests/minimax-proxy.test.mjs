@@ -4,7 +4,7 @@ import { createServer } from "node:http";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 
-import { AGENT_ROLE_HEADER, FORWARDED_REQUEST_HEADERS } from "../scripts/codex-model-router.mjs";
+import { AGENT_ROLE_HEADER, FORWARDED_REQUEST_HEADERS, routeForModel, upstreamPayload } from "../scripts/codex-model-router.mjs";
 import { coerceResponseBody, freeformInputFromArguments } from "../scripts/codex-minimax-responses-proxy.mjs";
 
 const read = (path) => readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
@@ -230,4 +230,90 @@ test("a response declaring no freeform tools is returned unchanged", () => {
   const body = { response: { output: [ { type: "function_call", id: "fc_1", name: "exec", arguments: "{}" } ] } };
   assert.equal(coerceResponseBody(body, new Set()), body);
   assert.equal(coerceResponseBody(body, null), body);
+});
+
+// MiniMax mints item ids the Responses contract rejects (`<hex>_rs`,
+// `<hex>_fc_<n>`), and the router now corrects them on every route rather than
+// only the one that complained. Correcting them must not disturb anything
+// MiniMax itself relies on -- above all the call_id pairing that attaches a
+// tool result to the call that produced it, which the proxy's own freeform
+// coercion depends on.
+test("normalising item ids upstream leaves everything MiniMax relies on intact", async () => {
+  let upstreamRequestBody = null;
+  const upstream = createServer((request, response) => {
+    const chunks = [];
+    request.on("data", (chunk) => chunks.push(chunk));
+    request.on("end", () => {
+      upstreamRequestBody = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(JSON.stringify({ output: [] }));
+    });
+  });
+  await new Promise((resolve) => upstream.listen(0, "127.0.0.1", resolve));
+  const upstreamPort = upstream.address().port;
+
+  const proxyPort = 18800 + (process.pid % 500);
+  const child = spawn(process.execPath, [ PROXY ], {
+    env: {
+      ...process.env,
+      MINIMAX_PROXY_HOST: "127.0.0.1",
+      MINIMAX_PROXY_PORT: String(proxyPort),
+      MINIMAX_PROXY_UPSTREAM_BASE_URL: `http://127.0.0.1:${upstreamPort}`,
+    },
+    stdio: [ "ignore", "pipe", "pipe" ],
+  });
+  try {
+    await new Promise((resolve, reject) => {
+      child.stderr.on("data", (chunk) => { if (String(chunk).includes("listening")) resolve(); });
+      child.once("error", reject);
+      setTimeout(() => reject(new Error("MiniMax proxy did not start")), 10000).unref();
+    });
+
+    // History as MiniMax itself would have written it on an earlier turn.
+    const history = [
+      { type: "message", id: "msg_1", role: "user", content: [ { type: "input_text", text: "go" } ] },
+      { type: "reasoning", id: "06eea1506b9c37f6f3f4bb02f90abd28_rs", summary: [] },
+      { type: "custom_tool_call", id: "06ef3bc08924acade1facee14da0af2e_fc_0", call_id: "call_8ec20ad454e0460d9d4b6662", name: "exec", input: "text()" },
+      { type: "custom_tool_call_output", call_id: "call_8ec20ad454e0460d9d4b6662", output: "ok" },
+    ];
+    const payload = upstreamPayload(routeForModel("MiniMax-M3"), {
+      model: "MiniMax-M3",
+      input: history,
+      tools: [ { type: "namespace", name: "multi_agent_v1", tools: [ { type: "function", name: "spawn_agent" } ] } ],
+    }, false);
+
+    const response = await fetch(`http://127.0.0.1:${proxyPort}/v1/responses`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    assert.equal(response.status, 200);
+
+    const sent = upstreamRequestBody.input;
+
+    // The contract is enforced on MiniMax's own route too.
+    assert.match(sent[ 1 ].id, /^rs_/);
+    assert.match(sent[ 2 ].id, /^ctc_/);
+
+    // The pairing MiniMax reads is byte-identical to what it minted, on both
+    // sides of the pair.
+    assert.equal(sent[ 2 ].call_id, "call_8ec20ad454e0460d9d4b6662");
+    assert.equal(sent[ 3 ].call_id, "call_8ec20ad454e0460d9d4b6662");
+    assert.deepEqual(sent.map((item) => item.call_id), history.map((item) => item.call_id));
+
+    // An item MiniMax sent without an id must not acquire one.
+    assert.equal("id" in sent[ 3 ], false);
+
+    // Everything else about the item survives untouched.
+    assert.equal(sent[ 2 ].name, "exec");
+    assert.equal(sent[ 2 ].input, "text()");
+    assert.equal(sent[ 0 ].id, "msg_1");
+    assert.deepEqual(sent[ 0 ].content, history[ 0 ].content);
+
+    // The proxy's other outbound rewrite still happens.
+    assert.equal(upstreamRequestBody.tools[ 0 ].name, "multi_agent_v1__spawn_agent");
+  } finally {
+    child.kill("SIGTERM");
+    await new Promise((resolve) => upstream.close(resolve));
+  }
 });

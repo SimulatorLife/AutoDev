@@ -135,6 +135,56 @@ Differences from a role request:
   at -- a wrong guess would replace a visible failure with a script that runs
   and does the wrong thing.
 
+### Item ids are corrected at the router, not in the adapters
+
+Every item in a Responses request carries an `id` whose prefix encodes its type
+-- `rs_` for `reasoning`, `ctc_` for `custom_tool_call`, `msg_` for `message`
+-- and the OpenAI backend rejects the whole request when a prefix and a type
+disagree:
+
+```
+Invalid 'input[18].id': '06ef3bc08924acade1facee14da0af2e_fc_0'.
+Expected an ID that begins with 'ctc'.
+```
+
+Not every provider honours that contract. MiniMax mints ids shaped
+`<32 hex>_rs` and `<32 hex>_fc_<n>`, and the freeform coercion above retypes a
+`function_call` as a `custom_tool_call` while keeping the id it arrived with.
+Codex stores whatever a provider hands back and replays it on every later turn,
+so a single turn served by a lax provider poisons the session for good: the
+next turn that lands on a provider which validates fails, and so does every
+turn after it, because the history only grows. Because the orchestrator tier is
+pinned to `codex` with `minimax` in its fallback group, and a fresh turn is not
+a continuation and so is not pinned to the provider that served the last one,
+one failover is enough to end a session.
+
+`upstreamPayload` in `scripts/codex-model-router.mjs` therefore rewrites any
+non-conforming id, using `scripts/codex/lib/responses-item-ids.mjs`. The router
+is the right place for it rather than each adapter: it is the one point every
+upstream call passes through, and since stored history is re-sent rather than
+re-read, correcting outbound also repairs sessions that are already carrying
+bad ids -- no rollout file is touched. The MiniMax proxy's id passthrough is
+left deliberately alone; one normalisation layer is easier to reason about than
+two that can disagree.
+
+Three properties the rewrite has to keep:
+
+- The replacement is `<prefix><sha256(original)>`, not a random value. The same
+  item is re-sent every turn, and an id that moved between turns would change
+  the serialised request prefix each time and defeat upstream prompt caching.
+- `call_id` is never touched. A tool call and its output are paired by that
+  field alone, so rewriting one side would strand the other.
+- An item with no `id` does not acquire one. Codex legitimately omits it on
+  some tool outputs, and an invented id would name an item the upstream never
+  issued.
+
+Normalisation runs on every route. A provider that turns out to pair items by
+the ids it minted can opt out with `capabilities.normalizeItemIds: false` in
+`scripts/codex/model-routing.json`; absent means enabled. Requests that needed a
+correction emit an `item_ids_normalized` router event carrying the count, so a
+provider drifting from the contract is visible immediately rather than as a
+dead session weeks later.
+
 When the orchestrator tier is genuinely exhausted, the router returns
 `503 router_provider_exhausted` exactly as it does for an exhausted role tier --
 but only after the last-resort pass and the bounded wait below have both failed.

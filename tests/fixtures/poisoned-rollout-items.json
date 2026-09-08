@@ -1,0 +1,210 @@
+{
+  "source": "rollout-2026-09-08T09-06-20-01a08120-6b25-7b83-82fe-e361db57f4a0.jsonl",
+  "upstreamError": {
+    "message": "Invalid 'input[18].id': '06ef3bc08924acade1facee14da0af2e_fc_0'. Expected an ID that begins with 'ctc'.",
+    "type": "invalid_request_error",
+    "param": "input[18].id",
+    "code": "invalid_value"
+  },
+  "items": [
+    {
+      "type": "message",
+      "id": "msg_01a08120-713d-7260-be5d-fe71fa0bb26a",
+      "role": "developer"
+    },
+    {
+      "type": "message",
+      "id": "msg_01a08120-713d-7260-be5d-fe832c17f03a",
+      "role": "user"
+    },
+    {
+      "type": "message",
+      "id": "msg_01a08120-747f-73a1-a3be-c579c229c6f8",
+      "role": "user"
+    },
+    {
+      "type": "message",
+      "id": "msg_01a08120-7482-7d52-9433-8dd7698dd9f8",
+      "role": "developer"
+    },
+    {
+      "type": "reasoning",
+      "id": "rs_0252e954049dbf1c016aa00850d46087d1853ed6aa5cb47915"
+    },
+    {
+      "type": "custom_tool_call",
+      "id": "ctc_0252e954049dbf1c016aa00852854887d1adbeb08aad5e9992",
+      "call_id": "call_lPRP1ldytrmL0AfnqiBtKccN",
+      "name": "exec"
+    },
+    {
+      "type": "custom_tool_call_output",
+      "id": "ctco_01a08120-842a-75b3-a097-502c5c353545",
+      "call_id": "call_lPRP1ldytrmL0AfnqiBtKccN"
+    },
+    {
+      "type": "reasoning",
+      "id": "rs_0252e954049dbf1c016aa00855524887d18c533b16ac858670"
+    },
+    {
+      "type": "custom_tool_call",
+      "id": "ctc_0252e954049dbf1c016aa008572e0087d1804073be236a8d60",
+      "call_id": "call_B3u5fMXvgTlUwtLcOTcJVScy",
+      "name": "exec"
+    },
+    {
+      "type": "custom_tool_call_output",
+      "id": "ctco_01a08120-a178-7c31-8f1f-f60f29bac9d9",
+      "call_id": "call_B3u5fMXvgTlUwtLcOTcJVScy"
+    },
+    {
+      "type": "reasoning",
+      "id": "rs_0252e954049dbf1c016aa00866751487d183041f407e333ab6"
+    },
+    {
+      "type": "custom_tool_call",
+      "id": "ctc_0252e954049dbf1c016aa008674bec87d19e3d9b1a767621d7",
+      "call_id": "call_gZmSljcWPczIKQO3o6QTJR1e",
+      "name": "exec"
+    },
+    {
+      "type": "custom_tool_call_output",
+      "id": "ctco_01a08120-ed75-7a01-9f35-3ace9caed00a",
+      "call_id": "call_gZmSljcWPczIKQO3o6QTJR1e"
+    },
+    {
+      "type": "reasoning",
+      "id": "rs_0252e954049dbf1c016aa008777c8087d1b141d51e464b249c"
+    },
+    {
+      "type": "custom_tool_call",
+      "id": "ctc_0252e954049dbf1c016aa00879239887d1a34d5a1bec6f1790",
+      "call_id": "call_kDCfiC7qxuTyvwafVROPzOg0",
+      "name": "exec"
+    },
+    {
+      "type": "custom_tool_call_output",
+      "id": "ctco_01a08121-43d2-7270-a770-92d788ee2206",
+      "call_id": "call_kDCfiC7qxuTyvwafVROPzOg0"
+    },
+    {
+      "type": "custom_tool_call",
+      "id": "06ef3bc08924acade1facee14da0af2e_fc_0",
+      "call_id": "call_8ec20ad454e0460d9d4b6662",
+      "name": "exec"
+    },
+    {
+      "type": "custom_tool_call_output",
+      "id": "ctco_01a08122-3ccf-7f83-b956-2b91d729cf93",
+      "call_id": "call_8ec20ad454e0460d9d4b6662"
+    },
+    {
+      "type": "custom_tool_call",
+      "id": "06ef3bc43b096c4935a65885c28fb67b_fc_0",
+      "call_id": "call_50aa7b6865b74e1a9364482e",
+      "name": "exec"
+    },
+    {
+      "type": "custom_tool_call_output",
+      "id": "ctco_01a08122-6c83-75b0-9481-28a17a0d3dfe",
+      "call_id": "call_50aa7b6865b74e1a9364482e"
+    },
+    {
+      "type": "custom_tool_call",
+      "id": "06ef3bd17272448eb101ee6cdf83f933_fc_0",
+      "call_id": "call_44bb24af9c6c42b2bfaced5b",
+      "name": "exec"
+    },
+    {
+      "type": "custom_tool_call_output",
+      "id": "ctco_01a08122-84a2-7f53-901f-8b39c735227d",
+      "call_id": "call_44bb24af9c6c42b2bfaced5b"
+    },
+    {
+      "type": "custom_tool_call",
+      "id": "06ef3bd68e86cdf8f8f9dffba9201e5e_fc_0",
+      "call_id": "call_bde9f188952c4e5f833d77da",
+      "name": "exec"
+    },
+    {
+      "type": "custom_tool_call_output",
+      "id": "ctco_01a08122-958a-7723-95e8-1c14c04cd2a3",
+      "call_id": "call_bde9f188952c4e5f833d77da"
+    },
+    {
+      "type": "custom_tool_call",
+      "id": "06ef3bda3f784cd7cb75f8a8a87b307d_fc_0",
+      "call_id": "call_d710455e75e04729bd2039cf",
+      "name": "exec"
+    },
+    {
+      "type": "custom_tool_call_output",
+      "id": "ctco_01a08122-a3cb-7863-88a9-bfe741e9a0f1",
+      "call_id": "call_d710455e75e04729bd2039cf"
+    },
+    {
+      "type": "custom_tool_call",
+      "id": "06ef3bdfb2ae20567e8a851797c4d318_fc_0",
+      "call_id": "call_c17fbd93416d4882b77edd30",
+      "name": "exec"
+    },
+    {
+      "type": "custom_tool_call_output",
+      "id": "ctco_01a08122-b71c-7b01-8221-0ae286b43072",
+      "call_id": "call_c17fbd93416d4882b77edd30"
+    },
+    {
+      "type": "custom_tool_call",
+      "id": "06ef3be33ff72107dffac02dfcea8760_fc_0",
+      "call_id": "call_a3c88036100641bfb955fd8d",
+      "name": "exec"
+    },
+    {
+      "type": "custom_tool_call_output",
+      "id": "ctco_01a08123-1037-7e10-827b-7072b03fbdbc",
+      "call_id": "call_a3c88036100641bfb955fd8d"
+    },
+    {
+      "type": "custom_tool_call",
+      "id": "06ef3bfc6a78ab20ec9300c58204e2e4_fc_0",
+      "call_id": "call_a1b9f121e7a54efaa8bd8f30",
+      "name": "exec"
+    },
+    {
+      "type": "custom_tool_call_output",
+      "id": "ctco_01a08123-22b8-78c1-a9ab-2cdce12f1f0e",
+      "call_id": "call_a1b9f121e7a54efaa8bd8f30"
+    },
+    {
+      "type": "custom_tool_call",
+      "id": "06ef3bff6af26cfe5f5e727107c9b110_fc_0",
+      "call_id": "call_a76ec866d00f46289622cdbb",
+      "name": "exec"
+    },
+    {
+      "type": "custom_tool_call_output",
+      "id": "ctco_01a08123-37e1-7be2-b64b-0ed49b3eb830",
+      "call_id": "call_a76ec866d00f46289622cdbb"
+    },
+    {
+      "type": "message",
+      "id": "msg_01a08125-4685-7e80-ae18-caf8962b0045",
+      "role": "user"
+    },
+    {
+      "type": "message",
+      "id": "msg_01a08125-74af-73e1-bd53-c1af04aa8b11",
+      "role": "user"
+    },
+    {
+      "type": "message",
+      "id": "msg_01a08125-74b2-74c1-91ba-5f6e286361fd",
+      "role": "developer"
+    },
+    {
+      "type": "message",
+      "id": "msg_01a0812a-185a-7ad0-8de0-ef30991c02ec",
+      "role": "user"
+    }
+  ]
+}
