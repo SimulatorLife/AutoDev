@@ -305,6 +305,74 @@ check_user_agent_files() {
   return "$failed"
 }
 
+ensure_pipx() {
+  # pipx is a prerequisite of the step below, not a thing the operator should
+  # have to go and fetch by hand: this script is meant to be the single entry
+  # point, and bailing out with "install pipx, then rerun" makes it two.
+  #
+  # Homebrew first on any machine that has it. The Pythons Homebrew ships are
+  # PEP 668 externally-managed, so `pip install --user` fails there outright,
+  # and Homebrew also puts pipx somewhere already on PATH. The pip fallback is
+  # for machines with no Homebrew (Linux, CI), and is only attempted when the
+  # interpreter actually permits it -- forcing past an externally-managed marker
+  # would be modifying a Python the OS package manager owns.
+  if command -v pipx >/dev/null 2>&1; then
+    printf 'ok pipx (%s)\n' "$(command -v pipx)" >&2
+    return 0
+  fi
+  if [[ "${AUTODEV_SKIP_PIPX_INSTALL:-0}" == "1" ]]; then
+    printf 'skipping pipx installation (AUTODEV_SKIP_PIPX_INSTALL=1)\n' >&2
+    return 1
+  fi
+
+  if command -v brew >/dev/null 2>&1; then
+    # `bash` is a universal binary on macOS and, on this class of machine,
+    # launches translated (x86_64 under Rosetta) even when the login shell is
+    # native arm64. This script is normally invoked as `bash install-...sh`, so
+    # it inherits that -- and Homebrew installed at the ARM prefix refuses to
+    # install from a translated process ("Cannot install under Rosetta 2 in ARM
+    # default prefix"). Re-exec brew natively in that case; `arch -arm64` works
+    # from a translated parent, and the check is a no-op on Intel and on Linux.
+    local brew_launcher=()
+    if [[ "$(sysctl -n sysctl.proc_translated 2>/dev/null || echo 0)" == "1" ]] \
+      && [[ "$(sysctl -n hw.optional.arm64 2>/dev/null || echo 0)" == "1" ]]; then
+      brew_launcher=(arch -arm64)
+      printf 'running Homebrew natively (this process is translated under Rosetta)\n' >&2
+    fi
+    printf 'installing pipx with Homebrew\n' >&2
+    "${brew_launcher[@]}" brew install pipx || true
+  elif python3 -c 'import os, sysconfig, sys; sys.exit(0 if not os.path.exists(os.path.join(sysconfig.get_path("stdlib"), "EXTERNALLY-MANAGED")) else 1)' 2>/dev/null; then
+    printf 'installing pipx with pip --user\n' >&2
+    python3 -m pip install --user pipx || true
+    # A --user install lands in the interpreter's user base, which is not
+    # necessarily on PATH; add it for the rest of this run so the pipx call
+    # below resolves even before any shell restart.
+    local user_bin
+    user_bin="$(python3 -c 'import site, os; print(os.path.join(site.getuserbase(), "bin"))' 2>/dev/null || true)"
+    if [[ -n "$user_bin" && -d "$user_bin" ]]; then
+      export PATH="$user_bin:$PATH"
+    fi
+  else
+    printf 'cannot install pipx automatically: no Homebrew, and this Python is externally managed (PEP 668)\n' >&2
+    printf 'Install pipx yourself (e.g. `brew install pipx`, or your distro package), then rerun %s\n' "${BASH_SOURCE[0]##*/}" >&2
+    return 1
+  fi
+
+  # The shell caches command lookups, so a freshly installed pipx is invisible
+  # to `command -v` in this same process without clearing that cache.
+  hash -r 2>/dev/null || true
+  if ! command -v pipx >/dev/null 2>&1; then
+    printf 'pipx installation did not put pipx on PATH\n' >&2
+    printf 'Install pipx yourself, then rerun %s\n' "${BASH_SOURCE[0]##*/}" >&2
+    return 1
+  fi
+  # Puts pipx's own bin directory on PATH for future shells. Best effort: it
+  # edits shell rc files, and a failure here does not stop this run, which uses
+  # the absolute paths above.
+  pipx ensurepath >/dev/null 2>&1 || true
+  printf 'ok pipx installed (%s)\n' "$(command -v pipx)" >&2
+}
+
 install_cocoindex_code() {
   # The MCP entry is versioned in config.toml; this step owns only the user-level
   # executable. A missing ccc is fatal unless a caller explicitly opts out (the
@@ -317,12 +385,37 @@ install_cocoindex_code() {
     printf 'ok CocoIndex Code executable (%s)\n' "$(command -v ccc)" >&2
     return 0
   fi
-  if ! command -v pipx >/dev/null 2>&1; then
-    printf 'CocoIndex Code is not installed: pipx is required to install %s\n' "$cocoindex_code_package" >&2
-    printf 'Install pipx, then rerun %s\n' "${BASH_SOURCE[0]##*/}" >&2
+  if ! ensure_pipx; then
     return 1
   fi
   printf 'installing CocoIndex Code with pipx (%s)\n' "$cocoindex_code_package" >&2
+  # Some of this package's dependencies build C extensions from source
+  # (`watchdog` compiles against the macOS FSEvents API). On a Mac where clang
+  # is not already resolving the SDK -- Command Line Tools selected through
+  # Xcode.app, no SDKROOT exported -- that build fails on a missing `assert.h`,
+  # which reads as a broken package rather than a missing toolchain setting.
+  # Supply the SDK path the way Apple's own tooling does, and only when the
+  # caller has not already chosen one.
+  if [[ -z "${SDKROOT:-}" ]] && command -v xcrun >/dev/null 2>&1; then
+    local sdk_path
+    sdk_path="$(xcrun --show-sdk-path 2>/dev/null || true)"
+    if [[ -n "$sdk_path" && -d "$sdk_path" ]]; then
+      printf 'using macOS SDK at %s for native dependency builds\n' "$sdk_path" >&2
+      export SDKROOT="$sdk_path"
+    fi
+  fi
+  # A third-party clang earlier on PATH than /usr/bin -- a Homebrew LLVM is the
+  # usual one -- does not carry Apple's SDK search conventions, so these builds
+  # fail on a missing `math.h` or `library 'm' not found`. That looks like a
+  # broken package and is really a shadowed compiler. Point the build at Apple's
+  # clang for this install only; the caller's PATH and any CC they chose
+  # themselves are left alone.
+  if [[ "$(uname -s)" == "Darwin" && -z "${CC:-}" && -x /usr/bin/clang ]] \
+    && ! (command -v clang >/dev/null 2>&1 && clang --version 2>/dev/null | grep -q 'Apple clang'); then
+    printf 'using /usr/bin/clang for native builds (the clang on PATH is not Apple clang)\n' >&2
+    export CC=/usr/bin/clang
+    export CXX=/usr/bin/clang++
+  fi
   pipx install "$cocoindex_code_package"
 }
 

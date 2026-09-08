@@ -278,6 +278,21 @@ class LocalSetupTests(unittest.TestCase):
         self.assertIn('cocoindex_code_package="cocoindex-code[full]"', installer)
         self.assertIn('pipx install "$cocoindex_code_package"', installer)
         self.assertIn("AUTODEV_SKIP_COCOINDEX_INSTALL", installer)
+        # pipx is a prerequisite of that step, not homework for the operator:
+        # this script is meant to be the single entry point, and stopping with
+        # "install pipx, then rerun" makes it two.
+        self.assertIn("ensure_pipx", installer)
+        self.assertIn("AUTODEV_SKIP_PIPX_INSTALL", installer)
+        # `bash` is a universal binary on macOS and can launch translated even
+        # when the login shell is native arm64. This script is normally invoked
+        # as `bash install-...sh`, and Homebrew at the ARM prefix refuses to
+        # install from a translated process, so brew has to be re-exec'd
+        # natively or the Homebrew path never works on Apple Silicon.
+        self.assertIn("sysctl.proc_translated", installer)
+        self.assertIn("arch -arm64", installer)
+        # The pip fallback must not force past a PEP 668 marker: that Python is
+        # owned by the OS package manager.
+        self.assertIn("EXTERNALLY-MANAGED", installer)
 
     def test_cocoindex_is_limited_to_code_capable_agent_roles(self):
         expected_enabled = {"default", "explorer", "smart", "validator", "worker"}
