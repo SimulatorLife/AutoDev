@@ -84,7 +84,7 @@ launchagent_labels=(
   com.codex.copilot-proxy
 )
 custom_provider_names=(local_model_router claude_code_subscription minimax antigravity_cli)
-cocoindex_code_package="cocoindex-code[full]"
+cocoindex_code_package="cocoindex-code[full]==0.2.41"
 tracked_sources=""
 router_auth_requested=0
 materialize_only=0
@@ -586,6 +586,25 @@ check_legacy_skill_links() {
   return "$failed"
 }
 
+check_router_auth_state() {
+  local env_file="${CODEX_ENV_FILE:-$codex_home/.env}"
+  if [[ ! -f "$env_file" ]] || ! grep -q '^CODEX_ROUTER_AUTH_TOKEN=' "$env_file"; then
+    printf '%s\n' 'router auth token not staged (use --enable-router-auth during a planned restart)'
+    return 0
+  fi
+  local status_json auth_enabled
+  if status_json="$(curl --silent --max-time 1 http://127.0.0.1:4100/status 2>/dev/null)"; then
+    auth_enabled="$(printf '%s' "$status_json" | python3 -c 'import json,sys; print("1" if json.load(sys.stdin).get("authentication", {}).get("responseRequests") else "0")' 2>/dev/null || printf '0')"
+    if [[ "$auth_enabled" == 1 ]]; then
+      printf '%s\n' 'ok router authentication is active'
+    else
+      printf '%s\n' 'router auth token staged; active router still needs a planned restart'
+    fi
+  else
+    printf '%s\n' 'router auth token staged (router status unavailable)'
+  fi
+}
+
 check_removed_runtime_hooks() {
   local failed=0
   local name target
@@ -755,6 +774,7 @@ check_links() {
   if ! check_versioned_sources; then
     failed=1
   fi
+  check_router_auth_state
   return "$failed"
 }
 
@@ -772,7 +792,7 @@ enable_router_auth() {
   fi
   chmod 0600 "$env_file"
   export CODEX_ROUTER_AUTH_TOKEN="$token"
-  if command -v launchctl >/dev/null 2>&1; then
+  if [[ "${AUTODEV_SKIP_LAUNCHCTL:-0}" != "1" ]] && command -v launchctl >/dev/null 2>&1; then
     launchctl setenv CODEX_ROUTER_AUTH_TOKEN "$token" >/dev/null 2>&1 || true
   fi
 }
@@ -781,24 +801,27 @@ enable_router_auth() {
 # described a choice that no longer exists. It is rejected rather than accepted
 # as a no-op, because silently ignoring it would leave the caller believing they
 # had opted into something.
-case "${1:-}" in
-  "") ;;
-  --check)
-    check_links
-    exit $?
-    ;;
-  --enable-router-auth)
-    router_auth_requested=1
-    ;;
-  --materialize-only)
-    materialize_only=1
-    ;;
-  *)
-    printf 'usage: %s [--check|--enable-router-auth|--materialize-only]\n' "${BASH_SOURCE[0]##*/}" >&2
-    printf 'installing always restarts the services; there is no --restart.\n' >&2
+check_only=0
+for argument in "$@"; do
+  case "$argument" in
+    --check) check_only=1 ;;
+    --enable-router-auth) router_auth_requested=1 ;;
+    --materialize-only) materialize_only=1 ;;
+    *)
+      printf 'usage: %s [--check|--enable-router-auth] [--materialize-only]\n' "${BASH_SOURCE[0]##*/}" >&2
+      printf 'installing normally restarts services; use --materialize-only for a live session.\n' >&2
+      exit 2
+      ;;
+  esac
+done
+if [[ "$check_only" == 1 ]]; then
+  if [[ "$router_auth_requested" == 1 || "$materialize_only" == 1 || "$#" -ne 1 ]]; then
+    printf '%s\n' '--check cannot be combined with install options.' >&2
     exit 2
-    ;;
-esac
+  fi
+  check_links
+  exit $?
+fi
 
 if [[ "$router_auth_requested" == 1 ]]; then
   enable_router_auth || exit 1
@@ -995,6 +1018,16 @@ service_hook() {
   esac
 }
 
+service_launcher() {
+  case "$1" in
+    com.codex.model-router) printf '%s/run-codex-model-router.sh\n' "$hooks_dir" ;;
+    com.codex.claude-bridge) printf '%s/run-codex-claude-bridge.sh\n' "$hooks_dir" ;;
+    com.codex.antigravity-proxy) printf '%s/run-codex-antigravity-proxy.sh\n' "$hooks_dir" ;;
+    com.codex.copilot-proxy) printf '%s/run-codex-copilot-cli-responses-proxy.sh\n' "$hooks_dir" ;;
+    com.codex.minimax-proxy) printf '%s/ensure-codex-minimax-proxy.sh\n' "$hooks_dir" ;;
+  esac
+}
+
 # Terminate any process holding this service's port that launchd is not
 # supervising. Such a process is unkillable-by-design from launchd's point of
 # view: it owns the bind, so `bootstrap` fails and the agent never starts, while
@@ -1060,7 +1093,7 @@ restart_services() {
     # different CODEX_HOME (for example a hermetic installer test or a staged
     # migration); only cycle a loaded job whose program is this install's hook.
     if job_dump="$(launchctl print "$domain/$label" 2>/dev/null)"; then
-      expected_hook="$(service_hook "$label")"
+      expected_hook="$(service_launcher "$label")"
       if ! grep -Fq -- "$expected_hook" <<<"$job_dump"; then
         printf 'loaded %s belongs to another runtime; leaving it alone.\n' "$label" >&2
         launchd_ok=0

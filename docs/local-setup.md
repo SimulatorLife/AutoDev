@@ -44,7 +44,7 @@ settings. Antigravity has no per-turn MCP flag, so the installer updates its
 single global `playwright` entry to `pnpm exec playwright-mcp`.
 
 The installer installs CocoIndex Code once at the user level with
-`pipx install 'cocoindex-code[full]'` when `ccc` is not already available. It
+`pipx install 'cocoindex-code[full]==0.2.41'` when `ccc` is not already available. It
 registers the stdio MCP once in the user-level Codex config as `ccc mcp` without
 a `cwd`; Codex therefore starts it from the active session workspace. CocoIndex
 Code keeps each repository's incremental index in that repository's
@@ -185,14 +185,16 @@ specific agents, MCPs, and skills to coexist under distinct names.
 To enable the router authentication boundary during a planned restart, run:
 
 ```bash
-bash scripts/codex/install-codex-integration.sh --enable-router-auth
+bash scripts/codex/install-codex-integration.sh --enable-router-auth --materialize-only
 ```
 
 This creates/reuses a private `CODEX_ROUTER_AUTH_TOKEN` in
-`$CODEX_HOME/.env`, exports it to launchd, and lets the configured
-`local_model_router` provider send the same bearer token. It is intentionally an
-explicit migration flag rather than an implicit install-time change so an
-existing Desktop session is not disconnected unexpectedly.
+`$CODEX_HOME/.env`, exports it to launchd, and synchronizes the configured
+`local_model_router` provider without restarting the current services. Run the
+normal installer later, when no active task depends on the local router, to
+restart the supervisors and enforce the token on live requests. It is
+intentionally an explicit migration flag rather than an implicit install-time
+change so an existing Desktop session is not disconnected unexpectedly.
 
 For a live Desktop session, use `--materialize-only` to synchronize hooks,
 role files, MCP launchers, and rendered LaunchAgents without cycling any running

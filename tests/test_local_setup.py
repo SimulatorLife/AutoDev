@@ -275,7 +275,7 @@ class LocalSetupTests(unittest.TestCase):
         self.assertIn("agent owns the `ccc` lifecycle", skill_text)
 
         installer = (REPO_ROOT / "scripts/codex/install-codex-integration.sh").read_text()
-        self.assertIn('cocoindex_code_package="cocoindex-code[full]"', installer)
+        self.assertIn('cocoindex_code_package="cocoindex-code[full]==0.2.41"', installer)
         self.assertIn('pipx install "$cocoindex_code_package"', installer)
         self.assertIn("AUTODEV_SKIP_COCOINDEX_INSTALL", installer)
         # pipx is a prerequisite of that step, not homework for the operator:
@@ -1532,11 +1532,11 @@ class LocalSetupTests(unittest.TestCase):
         # disk look correct. This used to sit behind an opt-in --restart.
         installer = INSTALLER_PATH.read_text()
         self.assertIn("restart_services()", installer)
-        self.assertIn("\nrestart_services\n", installer)
+        self.assertIn("restart_services", installer)
         self.assertNotIn('== "--restart"', installer)
         # Rejected, not silently accepted: ignoring the old flag would leave the
         # caller believing they had opted into something.
-        self.assertIn("there is no --restart", installer)
+        self.assertIn("installing normally restarts services", installer)
         for probe in (
             "http://127.0.0.1:4100/health/readiness",
             "http://127.0.0.1:4000/health/liveliness",
@@ -1574,14 +1574,38 @@ class LocalSetupTests(unittest.TestCase):
         labels = installer.split("\nlaunchagent_labels=(")[1].split(")")[0].split()
         ports = installer.split("service_port() {")[1].split("}")[0]
         hooks = installer.split("service_hook() {")[1].split("}")[0]
+        launchers = installer.split("service_launcher() {")[1].split("}")[0]
         for label in labels:
             self.assertIn(label, ports, msg=f"{label} needs a port")
             self.assertIn(label, hooks, msg=f"{label} needs a hook path")
+            self.assertIn(label, launchers, msg=f"{label} needs a launchd launcher path")
         # The guard is the command line, not the port: something unrelated
         # holding the port is a conflict to report, never something to kill.
         reap_body = installer.split("reap_unmanaged() {")[1].split("\n}")[0]
         self.assertIn('ps -o command= -p "$pid"', reap_body)
         self.assertIn("does not own", reap_body)
+
+    def test_installer_can_materialize_router_auth_without_restarting_services(self):
+        with tempfile.TemporaryDirectory() as home, tempfile.TemporaryDirectory() as codex_home:
+            environment = os.environ.copy()
+            environment.update({
+                "HOME": home,
+                "CODEX_HOME": codex_home,
+                "AUTODEV_SKIP_COCOINDEX_INSTALL": "1",
+                "AUTODEV_SKIP_AGY_MCP": "1",
+                "AUTODEV_SKIP_LAUNCHCTL": "1",
+            })
+            run = subprocess.run(
+                ["bash", str(INSTALLER_PATH), "--enable-router-auth", "--materialize-only"],
+                capture_output=True,
+                text=True,
+                env=environment,
+            )
+            self.assertEqual(run.returncode, 0, msg=run.stdout + run.stderr)
+            token_file = Path(codex_home) / ".env"
+            token = next((line.split("=", 1)[1] for line in token_file.read_text().splitlines() if line.startswith("CODEX_ROUTER_AUTH_TOKEN=")), "")
+            self.assertRegex(token, r"^[0-9a-f]{64}$")
+            self.assertIn("Materialized AutoDev integration without restarting services.", run.stderr)
 
     def test_installer_exposes_safe_materialize_only_mode(self):
         installer = INSTALLER_PATH.read_text()
@@ -1596,7 +1620,7 @@ class LocalSetupTests(unittest.TestCase):
             text=True,
         )
         self.assertEqual(result.returncode, 2)
-        self.assertIn("there is no --restart", result.stderr)
+        self.assertIn("use --materialize-only", result.stderr)
 
     def test_ensure_hooks_adopt_the_launchd_agent_rather_than_racing_it(self):
         # An ensure hook that unconditionally backgrounds its own copy creates a
