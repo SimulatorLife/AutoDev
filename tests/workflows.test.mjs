@@ -201,6 +201,13 @@ test('local provider tooling resolves the playwright MCP from a pinned devDepend
 
   const manifest = JSON.parse(await readFile(path.join(root, 'package.json'), 'utf8'));
   assert.equal(manifest.devDependencies['@playwright/mcp'], '^0.0.80');
+
+  for (const role of ['browser-tester', 'smart']) {
+    const roleSource = await readFile(path.join(root, 'scripts', 'codex', 'agents', `${role}.toml`), 'utf8');
+    const roleSettings = roleSource.slice(roleSource.indexOf('[mcp_servers.playwright]')).split('\n\n')[0];
+    assert.match(roleSettings, /enabled = true/, role);
+    assert.match(roleSettings, /default_tools_approval_mode = "approve"/, role);
+  }
 });
 
 test('the user-level MCP servers are self-sufficient, so no repository needs to redeclare them', async () => {

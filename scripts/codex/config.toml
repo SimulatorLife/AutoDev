@@ -108,7 +108,7 @@ config_file = "./agents/smart.toml"
 description = "General-purpose developer."
 config_file = "./agents/default.toml"
 [agents."docs-researcher"]
-description = "OpenAI documentation researcher."
+description = "Documentation researcher with authoritative website access."
 config_file = "./agents/docs-researcher.toml"
 [agents."browser-tester"]
 description = "Read-only browser tester."
@@ -251,6 +251,15 @@ command = "pnpm"
 args = ["exec", "lsp-mcp-server"]
 default_tools_approval_mode = "approve"
 
+# Registered once at the Codex user level. No cwd is specified: Codex starts
+# stdio MCP servers from the active session workspace, so CocoIndex Code keeps a
+# separate .cocoindex_code index for each repository.
+[mcp_servers."cocoindex-code"]
+enabled = true
+command = "ccc"
+args = ["mcp"]
+default_tools_approval_mode = "approve"
+
 [mcp_servers.playwright]
 enabled = true
 command = "pnpm"
@@ -344,6 +353,10 @@ enabled = false
 
 [[skills.config]]
 name = "lsp-mcp-server"
+enabled = true
+
+[[skills.config]]
+name = "ccc"
 enabled = true
 
 [[skills.config]]

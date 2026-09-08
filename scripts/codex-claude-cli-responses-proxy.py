@@ -26,8 +26,11 @@ from urllib.error import URLError
 from urllib.parse import urlsplit
 from urllib.request import Request, urlopen
 
-HOST = "127.0.0.1"
-PORT = 4000
+HOST = os.environ.get("CLAUDE_BRIDGE_HOST", "127.0.0.1")
+# Overridable so a second instance can be exercised without taking the port out
+# from under the running service, matching the MiniMax and Antigravity proxies.
+# The launchd service sets neither and keeps the default.
+PORT = int(os.environ.get("CLAUDE_BRIDGE_PORT", "4000"))
 MODEL = "claude-subscription"
 AUTH_TOKEN = os.environ.get("LITELLM_API_KEY", "")
 PROJECT_ROOT = os.environ.get("CODEX_PROJECT_ROOT")
@@ -59,6 +62,26 @@ DISALLOWED_CLAUDE_TOOLS = ("Agent", "Task")
 # every bridged agent's reach. An unknown name in --disallowed-tools is inert,
 # so this costs nothing while that property holds.
 CROSS_SESSION_CLAUDE_TOOLS = ("SendMessage", "ListAgents")
+
+# Claude Code runs behind the Responses bridge rather than loading Codex's TOML
+# role file. Keep the browser role's MCP contract here too: otherwise a native
+# Codex child sees Playwright while a browser-tester routed to Claude silently
+# falls back to shell-only investigation. The prefixed names are the tool names
+# Claude Code assigns to an MCP server's tools.
+PLAYWRIGHT_AGENT_ROLES = frozenset({"browser-tester", "smart"})
+PLAYWRIGHT_COMMAND = "pnpm"
+PLAYWRIGHT_ARGS = ("exec", "playwright-mcp")
+PLAYWRIGHT_DISALLOWED_TOOLS = tuple(
+    f"mcp__playwright__{name}"
+    for name in (
+        "browser_drop",
+        "browser_evaluate",
+        "browser_file_upload",
+        "browser_navigate_back",
+        "browser_network_request",
+        "browser_run_code_unsafe",
+    )
+)
 
 
 # Provider limit vocabulary. These literals mirror
@@ -385,6 +408,188 @@ def content_text(content: Any) -> str:
     )
 
 
+# Stage 0 diagnostic, enabled with AUTODEV_LOG_TOOLS=1.
+#
+# The design for bridging delegation into Codex's own spawn tool rests on one
+# unverified claim: that the router's outbound tool flattening actually puts a
+# `multi_agent_v1__*` entry in front of this bridge, and that Codex sends the
+# matching `function_call_output` back in a shape this bridge can pair up. Both
+# are cheap to observe and expensive to guess wrong, so observe them first.
+# This is scaffolding -- it comes out once the spawn bridge is built.
+LOG_TOOLS = os.environ.get("AUTODEV_LOG_TOOLS") == "1"
+
+
+def _tool_names(tools: Any) -> list[str]:
+    names: list[str] = []
+    for tool in tools if isinstance(tools, list) else []:
+        if not isinstance(tool, dict):
+            continue
+        name = tool.get("name")
+        if not isinstance(name, str):
+            function = tool.get("function")
+            name = function.get("name") if isinstance(function, dict) else None
+        if isinstance(name, str):
+            names.append(name)
+    return names
+
+
+def log_inbound_request(request: Any, headers: Any) -> None:
+    """Record what Codex offered and what the router said about this turn."""
+    if not LOG_TOOLS:
+        return
+    tools = request.get("tools")
+    routing = {
+        key: value
+        for key, value in headers.items()
+        if key.lower().startswith(("x-autodev-", "x-codex-"))
+    }
+    print(f"[stage0] tool_names={sorted(_tool_names(tools))}", flush=True)
+    print(f"[stage0] routing_headers={json.dumps(routing, sort_keys=True)}", flush=True)
+    for tool in tools if isinstance(tools, list) else []:
+        if not isinstance(tool, dict):
+            continue
+        name = tool.get("name")
+        if isinstance(name, str) and name.startswith("multi_agent_v1"):
+            print(f"[stage0] spawn_tool={json.dumps(tool, sort_keys=True)}", flush=True)
+    for item in request.get("input") or []:
+        if isinstance(item, dict) and item.get("type") in ("function_call", "function_call_output"):
+            print(f"[stage0] input_item={json.dumps(item, sort_keys=True)[:2000]}", flush=True)
+
+
+# --- Driving Codex's own spawner from this bridge ----------------------------
+#
+# Children spawned inside the Claude CLI are invisible to Codex: no Codex thread
+# exists, so the app has nothing to render and the router only learns of them
+# through the /v1/agent-events side channel. Asking Codex to spawn instead gives
+# a real, clickable session and routes the child back through the router like
+# any other `autodev/<role>` request.
+#
+# Codex runs these models in *code mode*: the request carries no `tools` array,
+# and the whole tool surface is one `exec` tool -- declared `"type": "custom"`
+# inside an `additional_tools` input item -- whose payload is raw JavaScript
+# evaluated in a V8 isolate. The spawner is reached from inside that script and
+# is never named in the request. This mirrors
+# scripts/codex/lib/codex-spawn-tools.mjs; tests/provider-limits.test.mjs style
+# parity checks read both files as text, so the literals must not drift.
+SPAWN_TOOL = "multi_agent_v1__spawn_agent"
+EXEC_TOOL = "exec"
+SPAWN_YIELD_MS = 60000
+
+# Delegation is dispatched, not awaited: a spawn returns as soon as Codex has
+# created the child (observed at 0.1-0.8s for a batch) and Codex tracks it from
+# there. The CLI is told so explicitly, because a model that believes it must
+# collect the results will otherwise sit and poll for output that never comes
+# back through this channel.
+SPAWN_DISPATCH_NOTICE = (
+    "Dispatched {count} subagent(s): {roles}. They are running now and are tracked by the "
+    "orchestration layer, not by you. End your turn now with a brief statement of what you "
+    "delegated -- do not wait for them, and do not do their work yourself. Their results are "
+    "delivered to you automatically on your next turn."
+)
+
+
+def build_spawn_script(children: list[dict[str, Any]], yield_time_ms: int = SPAWN_YIELD_MS) -> str:
+    """The JavaScript body for one spawn batch.
+
+    One `Promise.all` rather than a call per child keeps a wide fan-out to a
+    single tool call, and mirrors the shape Codex's own GPT-served turns
+    produce. The role must travel as `agent_type`: `agent` is accepted and
+    silently ignored, and the child comes back generic instead of the role that
+    was asked for.
+    """
+    if not children:
+        raise ValueError("build_spawn_script requires at least one child")
+    tasks = []
+    for child in children:
+        agent_type = child.get("agent_type")
+        message = child.get("message") or ""
+        # json.dumps is the escaping: the script is source text, and a prompt
+        # containing quotes or newlines would otherwise end the string literal.
+        if isinstance(agent_type, str) and agent_type.strip():
+            tasks.append(f"{{ agent_type: {json.dumps(agent_type.strip())}, message: {json.dumps(message)} }}")
+        else:
+            tasks.append(f"{{ message: {json.dumps(message)} }}")
+    return "\n".join([
+        f"// @exec: {json.dumps({'yield_time_ms': yield_time_ms}, separators=(',', ':'))}",
+        f"const tasks = [{', '.join(tasks)}];",
+        f"const out = await Promise.all(tasks.map((t) => tools.{SPAWN_TOOL}(t)));",
+        "out.forEach(text);",
+        "",
+    ])
+
+
+def exec_tool_call_events(item_id: str, call_id: str, source: str, output_index: int) -> list[tuple[str, dict[str, Any]]]:
+    """The SSE events for one `exec` call, emitted atomically.
+
+    The whole script is known before the first event is written. A partially
+    written call is worse than none: the router's mid-stream backstop
+    reconstructs `output` from the items it saw and would hand Codex a script
+    that is valid JavaScript but truncated.
+    """
+    base = {"id": item_id, "type": "custom_tool_call", "call_id": call_id, "name": EXEC_TOOL}
+    completed = {**base, "input": source, "status": "completed"}
+    return [
+        ("response.output_item.added", {"type": "response.output_item.added", "output_index": output_index, "item": {**base, "input": "", "status": "in_progress"}}),
+        ("response.custom_tool_call_input.delta", {"type": "response.custom_tool_call_input.delta", "item_id": item_id, "output_index": output_index, "delta": source}),
+        ("response.custom_tool_call_input.done", {"type": "response.custom_tool_call_input.done", "item_id": item_id, "output_index": output_index, "input": source}),
+        ("response.output_item.done", {"type": "response.output_item.done", "output_index": output_index, "item": completed}),
+    ], completed
+
+
+# Codex conversations with a turn in flight, so the MCP shim's out-of-band HTTP
+# call can find the turn it belongs to. Keyed by the router's session id; a turn
+# the router could not identify never registers, because two unrelated Codex
+# conversations would otherwise share one entry.
+SPAWN_SESSIONS: dict[str, dict[str, Any]] = {}
+SPAWN_SESSIONS_LOCK = threading.Lock()
+UNIDENTIFIED_SESSION_SCOPE = "process-fallback"
+
+
+def can_hold_spawn_session(session_key: Any, session_scope: Any) -> bool:
+    return isinstance(session_key, str) and bool(session_key.strip()) and session_scope != UNIDENTIFIED_SESSION_SCOPE
+
+
+def open_spawn_session(session_key: str, *, orchestrator: bool) -> None:
+    with SPAWN_SESSIONS_LOCK:
+        SPAWN_SESSIONS[session_key] = {"orchestrator": orchestrator, "children": []}
+
+
+def close_spawn_session(session_key: str) -> list[dict[str, Any]]:
+    with SPAWN_SESSIONS_LOCK:
+        entry = SPAWN_SESSIONS.pop(session_key, None)
+    return list(entry["children"]) if entry else []
+
+
+def record_spawn_request(session_key: str, children: list[dict[str, Any]]) -> tuple[bool, str]:
+    """Record one delegation request against an in-flight turn.
+
+    Returns (accepted, message-for-the-model). A refusal is deliberately a
+    readable sentence rather than a transport error: the model can act on it by
+    doing the work itself, which is strictly better than a failed turn.
+    """
+    with SPAWN_SESSIONS_LOCK:
+        entry = SPAWN_SESSIONS.get(session_key)
+        if entry is None:
+            return False, "Delegation is unavailable in this session. Do the work directly."
+        if not entry["orchestrator"]:
+            return False, "This is a bounded leaf turn and may not delegate. Do the work directly."
+        accepted = []
+        for child in children:
+            message = child.get("message")
+            if not isinstance(message, str) or not message.strip():
+                continue
+            agent_type = child.get("agent_type")
+            accepted.append({
+                "agent_type": agent_type.strip() if isinstance(agent_type, str) and agent_type.strip() else None,
+                "message": message,
+            })
+        if not accepted:
+            return False, "Every child needs a non-empty `message`. Nothing was dispatched."
+        entry["children"].extend(accepted)
+    roles = ", ".join(sorted({c["agent_type"] or "default" for c in accepted}))
+    return True, SPAWN_DISPATCH_NOTICE.format(count=len(accepted), roles=roles)
+
+
 def prompt_from_input(value: Any) -> str:
     """The delegated task text alone.
 
@@ -568,7 +773,46 @@ def read_stderr(process: subprocess.Popen[str], events: queue.Queue[tuple[str, A
     events.put(("stderr_done", None))
 
 
-def claude_cli_args(prompt: str, model: str, effort: str, agent_role: Any = None, cwd: str = ".") -> list[str]:
+def mcp_config_for_role(role: Any = None, spawn_session: str | None = None) -> str | None:
+    """Return bridge-owned MCP servers needed by this role.
+
+    The Claude CLI accepts an inline JSON string with ``--mcp-config``. Do not
+    write a shared ``~/.claude`` setting: that would expose a browser server to
+    unrelated sessions and would leave the provider dependent on mutable user
+    state. Without ``--strict-mcp-config`` these entries augment the project's
+    own servers.
+    """
+    servers: dict[str, Any] = {}
+    if role in PLAYWRIGHT_AGENT_ROLES:
+        servers["playwright"] = {
+            "command": PLAYWRIGHT_COMMAND,
+            "args": list(PLAYWRIGHT_ARGS),
+        }
+    if is_orchestrator_role(role) and spawn_session:
+        shim = os.path.join(os.path.dirname(os.path.abspath(__file__)), "codex", "lib", "spawn-shim-mcp.mjs")
+        servers["autodev_spawn"] = {
+            "command": os.environ.get("AUTODEV_NODE_BIN", "node"),
+            "args": [shim],
+            "env": {
+                "AUTODEV_BRIDGE_URL": f"http://{HOST}:{PORT}",
+                "AUTODEV_BRIDGE_TOKEN": AUTH_TOKEN,
+                "AUTODEV_SPAWN_SESSION": spawn_session,
+            },
+        }
+    return json.dumps({"mcpServers": servers}) if servers else None
+
+
+def spawn_shim_mcp_config(session_key: str) -> str:
+    """The MCP server config for the Codex delegation shim.
+
+    Kept as a narrow helper for callers/tests that need to inspect the shim
+    entry; normal CLI construction uses :func:`mcp_config_for_role` so a
+    browser role can receive Playwright in the same invocation.
+    """
+    return mcp_config_for_role("orchestrator", session_key)  # type: ignore[return-value]
+
+
+def claude_cli_args(prompt: str, model: str, effort: str, agent_role: Any = None, cwd: str = ".", spawn_session: str | None = None) -> list[str]:
     codex_home = os.environ.get("CODEX_HOME", os.path.expanduser("~/.codex"))
     additional_dirs = tuple(
         directory
@@ -576,11 +820,28 @@ def claude_cli_args(prompt: str, model: str, effort: str, agent_role: Any = None
         if directory
     )
     orchestrator = is_orchestrator_role(agent_role)
-    # Delegation is the root orchestrator's job, so it keeps the Agent tool the
-    # recursion boundary removes from every leaf role. Cross-session reach is
-    # denied to both: see CROSS_SESSION_CLAUDE_TOOLS.
-    denied = list(CROSS_SESSION_CLAUDE_TOOLS) if orchestrator else [*DISALLOWED_CLAUDE_TOOLS, *CROSS_SESSION_CLAUDE_TOOLS]
+    # Delegation is the root orchestrator's job, so it keeps the delegation tool
+    # the recursion boundary removes from every leaf role -- but *which* tool it
+    # keeps depends on whether this turn can reach Codex's own spawner.
+    #
+    # With the shim available, Claude's own `Agent` tool is denied to the
+    # orchestrator too. That is the entire point: a child spawned inside this
+    # CLI is invisible to Codex and to the app, so leaving `Agent` in place
+    # would just offer a second, worse door that the model would sometimes
+    # choose. Without a session to hold, the shim cannot work and `Agent` stays
+    # as the fallback -- an invisible child still beats no delegation at all.
+    # Cross-session reach is denied in every case: see CROSS_SESSION_CLAUDE_TOOLS.
+    shim_available = orchestrator and bool(spawn_session)
+    if orchestrator and not shim_available:
+        denied = list(CROSS_SESSION_CLAUDE_TOOLS)
+    else:
+        denied = [*DISALLOWED_CLAUDE_TOOLS, *CROSS_SESSION_CLAUDE_TOOLS]
+    if agent_role in PLAYWRIGHT_AGENT_ROLES:
+        denied.extend(PLAYWRIGHT_DISALLOWED_TOOLS)
     subagent_boundary = ["--disallowed-tools", ",".join(denied)]
+    mcp_config = mcp_config_for_role(agent_role, spawn_session if shim_available else None)
+    if mcp_config:
+        subagent_boundary += ["--mcp-config", mcp_config]
     return [
         CLI,
         "-p",
@@ -1000,9 +1261,9 @@ def raise_classified_claude_error(message: Any, error_code: Any = None) -> None:
     raise error_type(str(message))
 
 
-def run_claude_stream(prompt: str, model: str = DEFAULT_CLAUDE_MODEL, effort: str = DEFAULT_CLAUDE_EFFORT, cwd: str = ".", agent_role: Any = None):
+def run_claude_stream(prompt: str, model: str = DEFAULT_CLAUDE_MODEL, effort: str = DEFAULT_CLAUDE_EFFORT, cwd: str = ".", agent_role: Any = None, spawn_session: str | None = None):
     process = subprocess.Popen(
-        claude_cli_args(prompt, model, effort, agent_role, cwd),
+        claude_cli_args(prompt, model, effort, agent_role, cwd, spawn_session),
         cwd=cwd,
         env=claude_environment(),
         stdin=subprocess.DEVNULL,
@@ -1244,7 +1505,51 @@ class Handler(BaseHTTPRequestHandler):
             body["error"]["limit"] = payload
         self.send_json(status, body, headers)
 
+    def spawn_request_body(self) -> dict[str, Any]:
+        length = int(self.headers.get("Content-Length", "0"))
+        try:
+            parsed = json.loads(self.rfile.read(length)) if length else {}
+        except json.JSONDecodeError:
+            return {}
+        return parsed if isinstance(parsed, dict) else {}
+
+    def handle_spawn_attach(self) -> None:
+        """Tell the shim whether this turn may delegate at all.
+
+        The shim asks before offering the tool, so a leaf turn -- or a turn with
+        no in-flight session, which means the CLI outlived its request -- simply
+        does not see a delegation tool rather than seeing one that fails.
+        """
+        body = self.spawn_request_body()
+        session_key = body.get("session")
+        with SPAWN_SESSIONS_LOCK:
+            entry = SPAWN_SESSIONS.get(session_key) if isinstance(session_key, str) else None
+            allowed = bool(entry and entry["orchestrator"])
+        self.send_json(200, {"spawnAllowed": allowed})
+
+    def handle_spawn_call(self) -> None:
+        body = self.spawn_request_body()
+        session_key = body.get("session")
+        children = body.get("children")
+        if not isinstance(session_key, str) or not isinstance(children, list):
+            self.send_json(400, {"error": "Malformed delegation request."})
+            return
+        accepted, message = record_spawn_request(session_key, children)
+        self.send_json(200 if accepted else 409, {"text": message} if accepted else {"error": message})
+
     def do_POST(self) -> None:
+        # The shim runs as a child of the CLI this bridge started, so it reaches
+        # the bridge over the same loopback port the router uses, behind the
+        # same bearer check.
+        if self.path in ("/v1/bridge-spawn/attach", "/v1/bridge-spawn/call"):
+            if AUTH_TOKEN and self.headers.get("Authorization") != f"Bearer {AUTH_TOKEN}":
+                self.send_json(401, {"error": "invalid local gateway key"})
+                return
+            if self.path.endswith("/attach"):
+                self.handle_spawn_attach()
+            else:
+                self.handle_spawn_call()
+            return
         if self.path != "/v1/responses":
             self.send_json(404, {"error": {"message": "not found", "type": "invalid_request_error"}})
             return
@@ -1252,6 +1557,7 @@ class Handler(BaseHTTPRequestHandler):
             self.send_json(401, {"error": {"message": "invalid local gateway key", "type": "authentication_error"}})
             return
         stream_headers_sent = False
+        spawn_session: str | None = None
         # Hoisted above the try: a turn cut short still owes its caller the work
         # it finished, and the handlers below cannot flush what they cannot see.
         response_id = f"resp_{secrets.token_hex(12)}"
@@ -1271,6 +1577,16 @@ class Handler(BaseHTTPRequestHandler):
             # it is serving the root orchestrator rather than a delegated leaf.
             agent_role = resolve_agent_role(self.headers)
             agent_events = resolve_agent_event_reporter(self.headers)
+            log_inbound_request(request, self.headers)
+            # Router-generated identity of the Codex conversation. Delegation
+            # through Codex needs it so the shim's out-of-band call can find the
+            # turn it belongs to; a turn the router could not identify holds no
+            # session and falls back to the CLI's own delegation tool.
+            session_header = self.headers.get("x-autodev-session-id")
+            session_scope = self.headers.get("x-autodev-session-scope")
+            spawn_session = session_header if can_hold_spawn_session(session_header, session_scope) else None
+            if spawn_session:
+                open_spawn_session(spawn_session, orchestrator=is_orchestrator_role(agent_role))
 
             def note_tool_use(block: dict[str, Any]) -> None:
                 name = block.get("name")
@@ -1305,7 +1621,7 @@ class Handler(BaseHTTPRequestHandler):
             role_label = "orchestrator" if is_orchestrator_role(agent_role) else "leaf"
             print(f"claude request model={claude_model} effort={claude_effort} role={role_label} cwd={cwd}", flush=True)
             if not request.get("stream"):
-                for kind, value, _ in run_claude_stream(prompt, claude_model, claude_effort, cwd=cwd, agent_role=agent_role):
+                for kind, value, _ in run_claude_stream(prompt, claude_model, claude_effort, cwd=cwd, agent_role=agent_role, spawn_session=spawn_session):
                     if kind == "tools":
                         note_available_tools(value)
                     elif kind == "delta":
@@ -1345,7 +1661,7 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_sse("response.output_item.added", {"type": "response.output_item.added", "output_index": 1, "item": {"id": item_id, "type": "message", "role": "assistant", "status": "in_progress", "content": []}})
                 self.send_sse("response.content_part.added", {"type": "response.content_part.added", "item_id": item_id, "output_index": 1, "content_index": 0, "part": {"type": "output_text", "text": "", "annotations": []}})
 
-            for kind, value, _ in run_claude_stream(prompt, claude_model, claude_effort, cwd=cwd, agent_role=agent_role):
+            for kind, value, _ in run_claude_stream(prompt, claude_model, claude_effort, cwd=cwd, agent_role=agent_role, spawn_session=spawn_session):
                 if kind == "tools":
                     note_available_tools(value)
                 elif kind == "delta":
@@ -1367,13 +1683,31 @@ class Handler(BaseHTTPRequestHandler):
             start_stream()
             completed_reasoning = {"id": reasoning_id, "type": "reasoning", "status": "completed", "summary": [{"type": "summary_text", "text": reasoning_text}], "content": []}
             completed_message = message_item(text, item_id)
-            payload = response_payload(request_model, text, metadata, response_id, [completed_reasoning, completed_message])
+            # Delegation the turn asked for, collected out-of-band by the shim
+            # while Claude ran. Emitted as one `exec` call after the message:
+            # Codex runs the script, creates the children itself, and they
+            # become real sessions the app can show -- which is the whole reason
+            # this path exists.
+            spawn_children = close_spawn_session(spawn_session) if spawn_session else []
+            output_items = [completed_reasoning, completed_message]
+            spawn_events: list[tuple[str, dict[str, Any]]] = []
+            if spawn_children:
+                spawn_item_id = f"ctc_{secrets.token_hex(12)}"
+                spawn_call_id = f"call_{secrets.token_hex(12)}"
+                spawn_events, spawn_item = exec_tool_call_events(
+                    spawn_item_id, spawn_call_id, build_spawn_script(spawn_children), len(output_items)
+                )
+                output_items.append(spawn_item)
+                print(f"claude delegating {len(spawn_children)} subagent(s) through Codex", flush=True)
+            payload = response_payload(request_model, text, metadata, response_id, output_items)
             self.send_sse("response.reasoning_summary_text.done", {"type": "response.reasoning_summary_text.done", "item_id": reasoning_id, "output_index": 0, "summary_index": 0, "text": reasoning_text})
             self.send_sse("response.reasoning_summary_part.done", {"type": "response.reasoning_summary_part.done", "item_id": reasoning_id, "output_index": 0, "summary_index": 0, "part": {"type": "summary_text", "text": reasoning_text}})
             self.send_sse("response.output_item.done", {"type": "response.output_item.done", "output_index": 0, "item": completed_reasoning})
             self.send_sse("response.output_text.done", {"type": "response.output_text.done", "item_id": item_id, "text": text, "content_index": 0, "output_index": 1})
             self.send_sse("response.content_part.done", {"type": "response.content_part.done", "item_id": item_id, "output_index": 1, "content_index": 0, "part": {"type": "output_text", "text": text, "annotations": []}})
             self.send_sse("response.output_item.done", {"type": "response.output_item.done", "output_index": 1, "item": completed_message})
+            for event_name, event_payload in spawn_events:
+                self.send_sse(event_name, event_payload)
             self.send_sse("response.completed", {"type": "response.completed", "response": payload})
             self.wfile.write(b"data: [DONE]\n\n")
             self.wfile.flush()
@@ -1460,6 +1794,14 @@ class Handler(BaseHTTPRequestHandler):
                     self.send_json(502, {"error": {"message": str(exc), "type": "upstream_error"}})
             except (BrokenPipeError, ConnectionResetError, OSError):
                 pass
+        finally:
+            # The registry must not outlive the turn on any path. A stale entry
+            # would accept a delegation from a CLI that outlived its request and
+            # attach it to nothing, and on a reused session key it would attach
+            # it to the *next* turn. `spawn_session` is bound before the try, so
+            # a failure before that point leaves nothing to clean up.
+            if locals().get("spawn_session"):
+                close_spawn_session(spawn_session)
 
 
 if __name__ == "__main__":

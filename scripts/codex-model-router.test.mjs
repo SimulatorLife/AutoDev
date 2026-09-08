@@ -42,6 +42,9 @@ import {
   parseTurnMetadataJson,
   persistRouterStateNow,
   PROCESS_FALLBACK_SESSION_KEY,
+  SESSION_ID_HEADER,
+  SESSION_SCOPE_HEADER,
+  carriesPendingToolResult,
   recordConcurrencyDenial,
   recordRouterEvent,
   recordSpawnFailure,
@@ -633,6 +636,33 @@ test("router flattens outbound tools and rewrites inbound tool namespaces in SSE
   const transformed = transformSseEvent(sseEvent, "autodev/orchestrator");
   assert.match(transformed, /"namespace":"multi_agent_v1"/);
   assert.match(transformed, /"name":"spawn_agent"/);
+});
+
+test("an exec tool call carrying a spawn script reaches Codex byte for byte", async () => {
+  // Codex runs these models in code mode: a bridge that wants a real child
+  // thread emits an `exec` custom tool call whose JavaScript calls
+  // `tools.multi_agent_v1__spawn_agent`. That spawn name therefore travels
+  // inside a *string* -- the script source -- and the namespace rewriting above
+  // must not touch it. If it ever did, Codex would be handed a script calling a
+  // function that does not exist, and every bridge-driven spawn would fail with
+  // nothing in the router log to explain it.
+  const { buildSpawnScript, execToolCallSseEvents } = await import("./codex/lib/codex-spawn-tools.mjs");
+  const source = buildSpawnScript([ { agentType: "explorer", message: "audit the catalogue" } ]);
+
+  for (const [ name, payload ] of execToolCallSseEvents({ itemId: "ctc_1", callId: "call_1", source })) {
+    const transformed = transformSseEvent(`event: ${name}\ndata: ${JSON.stringify(payload)}\n\n`, "autodev/orchestrator");
+    const back = JSON.parse(transformed.split("\n").find((line) => line.startsWith("data: ")).slice(6));
+    assert.deepEqual(back.item ?? null, payload.item ?? null);
+    assert.equal(back.delta ?? null, payload.delta ?? null);
+    assert.equal(back.input ?? null, payload.input ?? null);
+  }
+
+  // The rewriting is real, so the pass-through above is not vacuous: the same
+  // name as a bare `function_call` name still gets split into a namespace.
+  assert.deepEqual(
+    rewriteToolNamespaces({ name: "multi_agent_v1__spawn_agent", type: "function_call" }),
+    { name: "spawn_agent", namespace: "multi_agent_v1", type: "function_call" },
+  );
 });
 
 test("only bridges that spawn inside their own runtime are told what to report", () => {
@@ -3551,4 +3581,63 @@ test("summarizes every candidate's cooldown for the exhaustion body", () => {
     clearProviderCooldown("claude");
     clearProviderCooldown("minimax");
   }
+});
+
+test("a bridge is told which Codex conversation it is serving, and how sure the router is", () => {
+  // A bridge that drives Codex's own spawner has to split one CLI turn across
+  // two requests, so it needs to recognise the continuation as the same
+  // conversation. Codex serves its own children and is never told.
+  const claude = downstreamHeaders({ provider: "claude", envKey: "LITELLM_API_KEY" }, {}, null, "orchestrator", "req-1", { key: "sess-1", scope: "identified" });
+  assert.equal(claude[ SESSION_ID_HEADER ], "sess-1");
+  assert.equal(claude[ SESSION_SCOPE_HEADER ], "identified");
+
+  const codex = downstreamHeaders({ provider: "codex" }, { token: "t", accountId: "a" }, null, "orchestrator", "req-1", { key: "sess-1", scope: "identified" });
+  assert.equal(codex[ SESSION_ID_HEADER ], undefined);
+
+  // The scope is what stops a bridge holding CLI state under the router's
+  // process-wide fallback key, where two unrelated conversations would share
+  // one process and see each other's work.
+  const unidentified = downstreamHeaders({ provider: "claude", envKey: "LITELLM_API_KEY" }, {}, null, "orchestrator", "req-1", { key: PROCESS_FALLBACK_SESSION_KEY, scope: "process-fallback" });
+  assert.equal(unidentified[ SESSION_SCOPE_HEADER ], "process-fallback");
+
+  // No session resolved at all means no header, not an empty one.
+  const none = downstreamHeaders({ provider: "claude", envKey: "LITELLM_API_KEY" }, {}, null, "orchestrator", "req-1", null);
+  assert.equal(none[ SESSION_ID_HEADER ], undefined);
+  assert.equal(none[ SESSION_SCOPE_HEADER ], undefined);
+});
+
+test("the session headers are router-generated and never forwarded from the client", () => {
+  // Same trust argument as the agent role: a bridge acts on these, so a client
+  // must not be able to name someone else's session.
+  assert.equal(FORWARDED_REQUEST_HEADERS.includes(SESSION_ID_HEADER), false);
+  assert.equal(FORWARDED_REQUEST_HEADERS.includes(SESSION_SCOPE_HEADER), false);
+});
+
+test("a turn continuing a tool call is recognised as one", () => {
+  assert.equal(carriesPendingToolResult({ input: [ { type: "custom_tool_call_output", call_id: "c1", output: "x" } ] }), true);
+  assert.equal(carriesPendingToolResult({ input: [ { type: "function_call_output", call_id: "c1", output: "x" } ] }), true);
+  assert.equal(carriesPendingToolResult({ input: [ { type: "message", role: "user", content: [] } ] }), false);
+  assert.equal(carriesPendingToolResult({}), false);
+  assert.equal(carriesPendingToolResult(null), false);
+});
+
+test("a continuation prefers the provider still holding the turn, without pinning to it", () => {
+  // The bridge that made the tool call is holding a live CLI for the answer.
+  // Sending the continuation elsewhere strands it and loses the turn's work.
+  const providers = (list) => list.map((c) => c.provider);
+  const plain = orchestratorCandidates(() => 0);
+  assert.ok(plain.length > 1, "this test needs a multi-provider orchestrator tier");
+
+  const last = plain.at(-1).provider;
+  const hoisted = orchestratorCandidates(() => 0, last);
+  assert.equal(hoisted[ 0 ].provider, last, "the holding provider is tried first");
+  // Still a preference, not a pin: every candidate survives, exactly once, so
+  // the chain can still degrade if that provider is down.
+  assert.deepEqual([ ...providers(hoisted) ].sort(), [ ...providers(plain) ].sort());
+  assert.equal(new Set(providers(hoisted)).size, hoisted.length);
+
+  // An unknown or already-first preference changes nothing.
+  assert.deepEqual(providers(orchestratorCandidates(() => 0, "not-a-provider")), providers(plain));
+  assert.deepEqual(providers(orchestratorCandidates(() => 0, plain[ 0 ].provider)), providers(plain));
+  assert.deepEqual(providers(orchestratorCandidates(() => 0, null)), providers(plain));
 });

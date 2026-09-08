@@ -5,6 +5,7 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import { AGENT_ROLE_HEADER, FORWARDED_REQUEST_HEADERS } from "../scripts/codex-model-router.mjs";
+import { coerceResponseBody, freeformInputFromArguments } from "../scripts/codex-minimax-responses-proxy.mjs";
 
 const read = (path) => readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
 const PROXY = new URL("../scripts/codex-minimax-responses-proxy.mjs", import.meta.url).pathname;
@@ -156,4 +157,77 @@ test("the proxy flattens namespaced tools in outbound HTTP requests sent to Mini
     child.kill("SIGTERM");
     await new Promise((resolve) => upstream.close(resolve));
   }
+});
+
+// --- Freeform (code-mode) tool coercion -------------------------------------
+//
+// Codex runs these models in code mode: the only tool is `exec`, declared with
+// `"type": "custom"`, and its payload is raw JavaScript rather than JSON
+// arguments. MiniMax has no notion of a freeform tool and answers with an
+// ordinary function_call, which Codex rejects outright with "tool exec invoked
+// with incompatible payload" -- so before this coercion a MiniMax-served turn
+// could reason but could never run anything. Shapes below are taken verbatim
+// from live MiniMax responses.
+
+test("exec called as though it were exec_command becomes a runnable script", () => {
+  const source = freeformInputFromArguments(
+    '{"cmd":"wc -l < scripts/codex/prompts/leaf.md","workdir":"/Users/henrykirk/AutoDev"}',
+  );
+  assert.match(source, /await tools\.exec_command\(/);
+  assert.match(source, /text\(/);
+  // The model's intent is preserved exactly, not paraphrased.
+  const call = JSON.parse(source.match(/exec_command\((\{.*?\})\);/)[ 1 ]);
+  assert.deepEqual(call, { cmd: "wc -l < scripts/codex/prompts/leaf.md", workdir: "/Users/henrykirk/AutoDev" });
+  assert.doesNotThrow(() => new Function(`return (async () => {\n${source}\n});`));
+});
+
+test("a model that already understood code mode is passed through", () => {
+  assert.equal(freeformInputFromArguments('{"input":"text(1 + 1)"}'), "text(1 + 1)");
+  assert.equal(freeformInputFromArguments('{"code":"text(2)"}'), "text(2)");
+  // Raw source that is not JSON at all is exactly what the tool wants.
+  assert.equal(freeformInputFromArguments("text(3)"), "text(3)");
+  assert.equal(freeformInputFromArguments('"text(4)"'), "text(4)");
+});
+
+test("an unrecognised argument shape is left alone rather than guessed at", () => {
+  // Guessing would swap one broken call for a differently broken one, and hide
+  // the failure behind a script that runs but does the wrong thing.
+  assert.equal(freeformInputFromArguments('{"unexpected":"shape"}'), null);
+  assert.equal(freeformInputFromArguments("[1,2,3]"), null);
+  assert.equal(freeformInputFromArguments(""), null);
+  assert.equal(freeformInputFromArguments(undefined), null);
+});
+
+test("`command` is accepted as an alias for `cmd`", () => {
+  const source = freeformInputFromArguments('{"command":"ls","workdir":"/tmp"}');
+  const call = JSON.parse(source.match(/exec_command\((\{.*?\})\);/)[ 1 ]);
+  assert.deepEqual(call, { cmd: "ls", workdir: "/tmp" });
+});
+
+test("a non-streaming response has its freeform call coerced too", () => {
+  const body = {
+    response: {
+      output: [
+        { type: "reasoning", id: "rs_1" },
+        { type: "function_call", id: "fc_1", call_id: "call_1", name: "exec", namespace: "functions", arguments: '{"cmd":"ls","workdir":"/tmp"}' },
+        { type: "function_call", id: "fc_2", call_id: "call_2", name: "some_real_function", arguments: '{"a":1}' },
+      ],
+    },
+  };
+  const coerced = coerceResponseBody(body, new Set([ "exec" ]));
+  const [ , execItem, otherItem ] = coerced.response.output;
+  assert.equal(execItem.type, "custom_tool_call");
+  assert.match(execItem.input, /exec_command/);
+  // The function-shaped fields must not survive onto a custom tool call.
+  assert.equal(execItem.arguments, undefined);
+  assert.equal(execItem.namespace, undefined);
+  assert.equal(execItem.call_id, "call_1");
+  // A genuine function tool is untouched.
+  assert.deepEqual(otherItem, body.response.output[ 2 ]);
+});
+
+test("a response declaring no freeform tools is returned unchanged", () => {
+  const body = { response: { output: [ { type: "function_call", id: "fc_1", name: "exec", arguments: "{}" } ] } };
+  assert.equal(coerceResponseBody(body, new Set()), body);
+  assert.equal(coerceResponseBody(body, null), body);
 });

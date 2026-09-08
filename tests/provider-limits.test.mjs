@@ -147,7 +147,11 @@ test("the Python bridge mirrors this vocabulary exactly", () => {
     assert.match(bridge, new RegExp(`def ${name}\\(`), `the Python bridge must implement ${name}`);
   }
   // Both sides emit the same event ordering; the Python list is the one place
-  // that could silently reorder.
-  const pythonOrder = [ ...bridge.matchAll(/\n {8}\("(response\.[a-z_.]+)", \{"type"/g) ].map((match) => match[ 1 ]);
+  // that could silently reorder. Scoped to `terminal_incomplete_events` rather
+  // than scraped from the whole file: the bridge emits other event sequences
+  // too (the `exec` tool call it uses to delegate through Codex), and matching
+  // those here would make this assertion fail for a reason it does not describe.
+  const terminalBody = bridge.slice(bridge.indexOf("def terminal_incomplete_events("));
+  const pythonOrder = [ ...terminalBody.matchAll(/\n {8}\("(response\.[a-z_.]+)", \{"type"/g) ].map((match) => match[ 1 ]);
   assert.deepEqual(pythonOrder, terminalIncompleteEvents({ responseId: "r", itemId: "i", reasoningId: "rs" }).map(([ name ]) => name));
 });

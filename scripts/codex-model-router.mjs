@@ -2380,11 +2380,32 @@ function roleCandidates(role, random = Math.random) {
 // effort for its primary provider and applies an explicit per-provider effort
 // for each fallback provider so a downgraded run still reasons at the intended
 // depth.
-function orchestratorCandidates(random = Math.random) {
-  return tierCandidates(ORCHESTRATOR_TIER, random).map((candidate) => ({
+function orchestratorCandidates(random = Math.random, preferred = null) {
+  const candidates = tierCandidates(ORCHESTRATOR_TIER, random).map((candidate) => ({
     ...candidate,
     reasoningEffort: ORCHESTRATOR_REASONING_EFFORT[candidate.provider] ?? null,
   }));
+  // A turn that ended with a tool call is continued by a *second* request
+  // carrying the tool's output. A bridge driving Codex's spawner is holding a
+  // live CLI for that continuation, so sending it to a different provider
+  // strands that CLI and loses the turn's work. Hoist the provider that served
+  // the turn rather than pinning to it: if it is now down the chain still
+  // degrades, and the bridge treats an unknown continuation as a fresh run.
+  if (!preferred) return candidates;
+  const index = candidates.findIndex((candidate) => candidate.provider === preferred);
+  if (index <= 0) return candidates;
+  return [ candidates[ index ], ...candidates.slice(0, index), ...candidates.slice(index + 1) ];
+}
+
+/**
+ * True when Codex is handing back the result of a tool call the provider made
+ * on a previous request, which makes this the continuation of that turn.
+ */
+function carriesPendingToolResult(payload) {
+  for (const item of Array.isArray(payload?.input) ? payload.input : []) {
+    if (item?.type === "custom_tool_call_output" || item?.type === "function_call_output") return true;
+  }
+  return false;
 }
 
 function providerModelMetadata(model) {
@@ -2804,7 +2825,7 @@ function bridgeTelemetryHeaders(route, requestId) {
   };
 }
 
-function downstreamHeaders(route, auth, turnMetadataHeader, agentRole = null, requestId = null) {
+function downstreamHeaders(route, auth, turnMetadataHeader, agentRole = null, requestId = null, session = null) {
   const headers = { "content-type": "application/json", accept: "text/event-stream", ...bridgeTelemetryHeaders(route, requestId) };
   if (route.envKey) {
     const key = process.env[route.envKey];
@@ -2829,6 +2850,12 @@ function downstreamHeaders(route, auth, turnMetadataHeader, agentRole = null, re
   // Router-classified, not client-supplied: the value comes from this router's
   // own alias dispatch, so a bridge can trust it to select role instructions.
   if (agentRole) headers[AGENT_ROLE_HEADER] = agentRole;
+  // Codex serves its own children directly and never needs to be told which
+  // conversation it is in, so this goes only to the bridges that do.
+  if (session?.key && route.provider !== "codex") {
+    headers[SESSION_ID_HEADER] = session.key;
+    headers[SESSION_SCOPE_HEADER] = session.scope ?? "identified";
+  }
   return headers;
 }
 
@@ -2878,7 +2905,7 @@ function upstreamPayload(route, payload, wantsStream) {
   return route.provider === "codex" ? { ...safePayload, stream: true, store: false } : { ...safePayload, stream: wantsStream };
 }
 
-async function fetchUpstream(route, payload, wantsStream, turnMetadataHeader, clientSignal = null, agentRole = null, requestId = null) {
+async function fetchUpstream(route, payload, wantsStream, turnMetadataHeader, clientSignal = null, agentRole = null, requestId = null, session = null) {
   let auth = null;
   if (route.provider === "codex") {
     try {
@@ -2897,7 +2924,7 @@ async function fetchUpstream(route, payload, wantsStream, turnMetadataHeader, cl
   const signal = clientSignal ? AbortSignal.any([clientSignal, timeoutSignal]) : timeoutSignal;
   const upstream = await fetch(`${route.baseUrl}/responses`, {
     method: "POST",
-    headers: downstreamHeaders(route, auth, turnMetadataHeader, agentRole, requestId),
+    headers: downstreamHeaders(route, auth, turnMetadataHeader, agentRole, requestId, session),
     signal,
     body: JSON.stringify(requestPayload),
   });
@@ -3150,7 +3177,7 @@ function payloadForCandidate(payload, candidate) {
 // fallback traffic on a non-Codex provider is still counted as orchestrator
 // rather than direct. `subject` is the human-readable label for the exhaustion
 // error.
-async function proxyFallbackChain(response, { candidates, role = null, origin = null, subject, agentRole = null, sessionKey = null }, payload, wantsStream, requestId, turnMetadataHeader, workspace, clientSignal = null) {
+async function proxyFallbackChain(response, { candidates, role = null, origin = null, subject, agentRole = null, sessionKey = null, session = null }, payload, wantsStream, requestId, turnMetadataHeader, workspace, clientSignal = null) {
   const failures = [];
   const attempted = new Set();
   const skipped = [];
@@ -3181,7 +3208,7 @@ async function proxyFallbackChain(response, { candidates, role = null, origin = 
     if (agentRole === ORCHESTRATOR_AGENT_ROLE) noteOrchestratorSession(sessionKey, route.provider);
     incrementActiveRequests(route.provider);
     try {
-      const result = await fetchUpstream(route, payloadForCandidate(payload, route), wantsStream, turnMetadataHeader, clientSignal, agentRole, requestId);
+      const result = await fetchUpstream(route, payloadForCandidate(payload, route), wantsStream, turnMetadataHeader, clientSignal, agentRole, requestId, session);
       if (result.ok) {
         try {
           const responseResult = await writeSuccessfulResponse(response, route, result, wantsStream, payload.model, requestId, route.model);
@@ -3395,12 +3422,14 @@ function exhaustionHeaders({ summary, requestId }) {
   return headers;
 }
 
-async function proxyRoleResponse(response, role, payload, wantsStream, requestId, turnMetadataHeader, workspace, clientSignal = null, sessionKey = null) {
-  return proxyFallbackChain(response, { candidates: roleCandidates(role), role, agentRole: role, subject: `role ${role}`, sessionKey }, payload, wantsStream, requestId, turnMetadataHeader, workspace, clientSignal);
+async function proxyRoleResponse(response, role, payload, wantsStream, requestId, turnMetadataHeader, workspace, clientSignal = null, session = null) {
+  return proxyFallbackChain(response, { candidates: roleCandidates(role), role, agentRole: role, subject: `role ${role}`, sessionKey: session?.key ?? null, session }, payload, wantsStream, requestId, turnMetadataHeader, workspace, clientSignal);
 }
 
-async function proxyOrchestratorResponse(response, payload, wantsStream, requestId, turnMetadataHeader, workspace, clientSignal = null, sessionKey = null) {
-  return proxyFallbackChain(response, { candidates: orchestratorCandidates(), role: null, origin: "orchestrator", agentRole: ORCHESTRATOR_AGENT_ROLE, subject: "the orchestrator", sessionKey }, payload, wantsStream, requestId, turnMetadataHeader, workspace, clientSignal);
+async function proxyOrchestratorResponse(response, payload, wantsStream, requestId, turnMetadataHeader, workspace, clientSignal = null, session = null) {
+  const sessionKey = session?.key ?? null;
+  const preferred = carriesPendingToolResult(payload) ? orchestratorProviderForSession(sessionKey) : null;
+  return proxyFallbackChain(response, { candidates: orchestratorCandidates(Math.random, preferred), role: null, origin: "orchestrator", agentRole: ORCHESTRATOR_AGENT_ROLE, subject: "the orchestrator", sessionKey, session }, payload, wantsStream, requestId, turnMetadataHeader, workspace, clientSignal);
 }
 
 function requestSession(request, payload, turnMetadataHeader = null) {
@@ -3432,6 +3461,20 @@ const FORWARDED_REQUEST_HEADERS = Object.freeze(["x-codex-turn-metadata"]);
 // orchestrator policy, not the leaf policy that forbids spawning subagents.
 const AGENT_ROLE_HEADER = "x-autodev-agent-role";
 const ORCHESTRATOR_AGENT_ROLE = "orchestrator";
+
+// Router-generated (never forwarded from the client) identity of the Codex
+// conversation this request belongs to. A bridge that drives Codex's own
+// spawner has to split one CLI turn across two requests -- it ends the first
+// with a tool call and Codex returns the result on the next -- so it needs to
+// recognise the continuation as the same conversation.
+//
+// The scope travels with it and matters as much as the key: `requestSession`
+// falls back to one process-wide key when a request carries no identity at all,
+// and a bridge holding CLI state under that key would let two unrelated Codex
+// conversations share one process. Telling the bridge the key is not specific
+// lets it fail closed to a one-shot run instead of guessing.
+const SESSION_ID_HEADER = "x-autodev-session-id";
+const SESSION_SCOPE_HEADER = "x-autodev-session-scope";
 
 // Router-generated headers that let a CLI-delegation bridge report the
 // subagents it spawns inside its own runtime. The router owns all three
@@ -3626,7 +3669,7 @@ async function handleRequest(request, response) {
       // is still resolved so a later role request from the same session can be
       // attributed to the provider that ran the parent turn.
       const orchestratorSession = requestSession(request, payload, turnMetadataHeader);
-      await proxyOrchestratorResponse(response, payload, wantsStream, requestId, turnMetadataHeader, workspace, clientAbort.signal, orchestratorSession.key);
+      await proxyOrchestratorResponse(response, payload, wantsStream, requestId, turnMetadataHeader, workspace, clientAbort.signal, orchestratorSession);
       return;
     }
     if (role) {
@@ -3660,7 +3703,7 @@ async function handleRequest(request, response) {
           requestId,
           workspace: workspace?.key ?? null,
         });
-        await proxyRoleResponse(response, role, payload, wantsStream, requestId, turnMetadataHeader, workspace, clientAbort.signal, session.key);
+        await proxyRoleResponse(response, role, payload, wantsStream, requestId, turnMetadataHeader, workspace, clientAbort.signal, session);
       } finally {
         releaseSubagentSlot(session.key);
       }
@@ -3791,6 +3834,9 @@ export {
   noteOrchestratorSession,
   orchestratorProviderForSession,
   SUBAGENT_SPAWN_TOOLS_HEADER,
+  SESSION_ID_HEADER,
+  SESSION_SCOPE_HEADER,
+  carriesPendingToolResult,
   AGENT_EVENTS_URL_HEADER,
   AGENT_EVENTS_PATH,
   validateRoutingConfig,

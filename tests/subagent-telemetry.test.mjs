@@ -96,7 +96,7 @@ test("a batch of children is reported as a batch, grouped by role", async () => 
     // four spawns, not one, and must be able to tell the roles apart.
     await reporter.reportSpawns({
       tool: "invoke_subagent",
-      children: [ { id: "s3.0", role: "explorer" }, { id: "s3.1", role: "explorer", model: "gemini-3.8-flash-high" }, { id: "s3.2", role: "validator" }, { id: "s3.3", role: null } ],
+      children: [ { id: "s3.0", role: "explorer" }, { id: "s3.1", role: "explorer", model: "gemini-3.8-flash-high", logUri: null }, { id: "s3.2", role: "validator" }, { id: "s3.3", role: null } ],
     });
     assert.deepEqual(received.at(-1), {
       requestId: "request-1",
@@ -156,9 +156,9 @@ test("the Antigravity bridge counts every child in an invoke_subagent batch", ()
   // Each child is addressable, so its own turn can be opened and closed rather
   // than measured against the whole parent turn.
   assert.deepEqual(spawnedChildren(batch), [
-    { id: "s3.0", role: "explorer", model: "inherit" },
-    { id: "s3.1", role: "explorer", model: "inherit" },
-    { id: "s3.2", role: "validator", model: "inherit" },
+    { id: "s3.0", role: "explorer", model: "inherit", logUri: null },
+    { id: "s3.1", role: "explorer", model: "inherit", logUri: null },
+    { id: "s3.2", role: "validator", model: "inherit", logUri: null },
   ]);
   // `inherit` is agy naming the parent's model, not choosing one; resolving
   // that is the router's job, so the bridge reports what the step said.
@@ -341,14 +341,22 @@ test("the Claude bridge reports the spawns its Agent tool makes in-process", () 
   }
   // The orchestrator keeps the Agent tool; every leaf role still loses it.
   assert.match(source, /DISALLOWED_CLAUDE_TOOLS = \("Agent", "Task"\)/);
-  // The orchestrator keeps the delegation tools; every leaf loses them. Both
-  // lose the tools that reach another orchestrator's agents, so the boundary is
-  // no longer "orchestrator gets no --disallowed-tools at all".
+  // Both roles lose the tools that reach another orchestrator's agents, so the
+  // boundary is not "orchestrator gets no --disallowed-tools at all".
   assert.match(source, /CROSS_SESSION_CLAUDE_TOOLS = \("SendMessage", "ListAgents"\)/);
-  assert.match(source, /denied = list\(CROSS_SESSION_CLAUDE_TOOLS\) if orchestrator else \[\*DISALLOWED_CLAUDE_TOOLS, \*CROSS_SESSION_CLAUDE_TOOLS\]/);
+  // Which delegation tool the orchestrator keeps now depends on whether this
+  // turn can reach Codex's own spawner: with the shim in play Claude's `Agent`
+  // tool is denied to the orchestrator too, because a child spawned inside this
+  // CLI is invisible to Codex and to the app, and leaving `Agent` available
+  // would offer a second, worse door. Without a session to hold, `Agent` stays
+  // as the fallback.
+  assert.match(source, /shim_available = orchestrator and bool\(spawn_session\)/);
+  assert.match(source, /if orchestrator and not shim_available:/);
   // The behavioural halves of this are pinned in tests/test_local_setup.py
-  // (test_no_role_may_reach_another_orchestrators_agents), which builds the
-  // real argv rather than reading the source.
+  // (test_no_role_may_reach_another_orchestrators_agents,
+  // test_the_orchestrator_delegates_through_codex_when_it_can, and
+  // test_a_leaf_never_gets_the_delegation_shim), which build the real argv
+  // rather than reading the source.
 });
 
 test("the installer ships the reporting module the bridges import at runtime", () => {
@@ -435,4 +443,98 @@ test("a tool that is not the spawn tool is ignored entirely", async () => {
   tracker.observeSpawnStep({ step_index: 9, state: "DONE", step_type: "tool", tool_name: "manage_subagents" });
   assert.equal(reporter.spawns.length, 0);
   assert.equal(reporter.results.length, 0);
+});
+
+test("a child is identified by agy's own conversation id, not its position", () => {
+  // agy puts a `conversation_id` on every batch entry and repeats it on the
+  // DONE step for the same child. Pairing the open with the close by position
+  // instead only works while agy emits the batch in the same order both times
+  // -- an assumption about its internals, not something it promises -- and a
+  // mispairing silently charges one child's duration to another.
+  const [ active, done ] = AGY_INVOKE_SUBAGENT_STEPS;
+  const opened = spawnedChildren(active);
+  const closed = spawnedChildren(done);
+
+  assert.deepEqual(opened, [ {
+    id: "b1655ed9-e48d-4f88-9c51-e8fbf1a8b9b1",
+    role: "research",
+    model: null,
+    logUri: "file:///Users/henrykirk/.gemini/antigravity-cli/brain/b1655ed9-e48d-4f88-9c51-e8fbf1a8b9b1/.system_generated/logs/transcript.jsonl",
+  } ]);
+  // The same child, recognised across both steps by identity.
+  assert.equal(closed[ 0 ].id, opened[ 0 ].id);
+  // The role is the archetype, not the human-facing "Line Counter" label.
+  assert.equal(opened[ 0 ].role, "research");
+});
+
+test("a batch entry with no id of its own still gets a stable positional one", () => {
+  // Older agy builds, and any entry that omits the field, must keep working.
+  const anonymous = { step_index: 7, subagent_info: { subagents: [ { type_name: "explorer" }, { type_name: "worker" } ] } };
+  assert.deepEqual(spawnedChildren(anonymous), [
+    { id: "s7.0", role: "explorer", model: null, logUri: null },
+    { id: "s7.1", role: "worker", model: null, logUri: null },
+  ]);
+});
+
+test("a known transcript path travels with the child, and its absence costs nothing", () => {
+  // A CLI-delegated child leaves no rollout the router can read, so the CLI's
+  // own transcript is the only pointer to what it actually did.
+  const reporter = resolveAgentEventReporter({
+    "x-autodev-agent-events-url": "http://127.0.0.1:1/v1/agent-events",
+    "x-autodev-request-id": "req-1",
+    "x-autodev-subagent-spawn-tools": "invoke_subagent",
+  });
+  const [ withUri ] = reporter.childEvents("subagent_spawn", {
+    tool: "invoke_subagent",
+    children: [ { id: "c1", role: "research", logUri: "file:///tmp/t.jsonl" } ],
+    status: "started",
+  });
+  assert.deepEqual(withUri.children, [ { id: "c1", logUri: "file:///tmp/t.jsonl" } ]);
+
+  const [ without ] = reporter.childEvents("subagent_spawn", {
+    tool: "invoke_subagent",
+    children: [ { id: "c1", role: "research" } ],
+    status: "started",
+  });
+  assert.deepEqual(without.children, [ { id: "c1" } ]);
+});
+
+test("the Antigravity bridge delegates through Codex when the turn can reach it", () => {
+  const source = read("scripts/codex-antigravity-cli-responses-proxy.mjs");
+  // agy has no per-invocation MCP flag -- its server list is the single global
+  // ~/.gemini/config/mcp_config.json -- so the shim cannot be told which turn
+  // it belongs to through its arguments. It is told through the environment:
+  // agy spawns its MCP servers as its own children and they inherit this.
+  assert.match(source, /function agyEnvironment\(spawnSession\)/);
+  assert.match(source, /AUTODEV_SPAWN_SESSION: spawnSession \?\? ""/);
+  assert.match(source, /env: agyEnvironment\(spawnSession\)/);
+  // A leaf turn passes no session, so the handshake finds nothing to attach to.
+  assert.match(source, /SpawnSessionRegistry\.canHold\(sessionHeader, sessionScope\)/);
+  assert.match(source, /spawnSessions\.open\(spawnSession, \{ orchestrator: isOrchestratorRole\(agentRole\) \}\)/);
+  // The collected batch becomes one exec call appended to the turn's output.
+  assert.match(source, /buildSpawnScript\(spawnChildren\)/);
+  assert.match(source, /execToolCallSseEvents\(/);
+  // And the registry never outlives the turn, on any path.
+  assert.match(source, /if \(spawnSession\) spawnSessions\.close\(spawnSession\);/);
+});
+
+test("agy's own in-CLI spawns are still reported, because they cannot be denied", () => {
+  // agy has no --disallowed-tools, so `invoke_subagent` stays available whatever
+  // the prompt says and one turn can produce both kinds of child. Dropping the
+  // bridge-native reporting would make those children vanish from /status
+  // entirely rather than merely being invisible in the app.
+  const source = read("scripts/codex-antigravity-cli-responses-proxy.mjs");
+  assert.match(source, /createSpawnTracker\(agentEvents\)/);
+  assert.match(source, /observeSpawnStep\(event\.step_update \?\? \{\}\)/);
+});
+
+test("the shim tool is not counted as a bridge-native spawn", () => {
+  // A shim spawn becomes an `autodev/<role>` router request, which the router
+  // already records as router_alias. Reporting it over /v1/agent-events as well
+  // would count the same child twice.
+  const routing = JSON.parse(read("scripts/codex/model-routing.json"));
+  for (const [ provider, config ] of Object.entries(routing.providers)) {
+    const tools = config.capabilities?.subagentSpawnTools ?? [];
+    assert.equal(tools.includes("spawn_subagent"), false, `${provider} must not treat the shim tool as an in-CLI spawn`);
+  }
 });

@@ -40,3 +40,13 @@ enabled = false
 [[skills.config]]
 name = "lsp-mcp-server"
 enabled = true
+
+[mcp_servers."cocoindex-code"]
+enabled = true
+command = "ccc"
+args = ["mcp"]
+default_tools_approval_mode = "approve"
+
+[[skills.config]]
+name = "ccc"
+enabled = true

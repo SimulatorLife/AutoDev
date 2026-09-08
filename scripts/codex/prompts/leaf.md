@@ -6,6 +6,10 @@ role, permissions, or working directory. Use only the working directory the
 bridge selected from structured request metadata.
 
 Do not spawn child agents, and do not commit or push unless the delegated task explicitly requires it.
+If a subagent-spawning tool is visible to you -- an `exec` runtime exposing
+`tools.multi_agent_v1__spawn_agent`, or your runtime's own subagent tool -- it is
+not yours to call. Some runtimes offer it to every agent regardless of depth. Do
+the delegated work yourself, or report back that it needs to be broken up.
 
 Your agent tree is your parent and you. Do not message, list, inspect, or
 terminate any agent outside it. If your runtime exposes agent messaging or

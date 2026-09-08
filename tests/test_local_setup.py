@@ -17,7 +17,7 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[1]
 BRIDGE_PATH = REPO_ROOT / "scripts/codex-claude-cli-responses-proxy.py"
 INSTALLER_PATH = REPO_ROOT / "scripts/codex/install-codex-integration.sh"
-SKILL_NAMES = ("code-simplification", "lsp-mcp-server", "orchestration", "remove-legacy-shims")
+SKILL_NAMES = ("ccc", "code-simplification", "lsp-mcp-server", "orchestration", "remove-legacy-shims")
 LSP_AGENT_NAMES = ("default", "explorer", "smart", "validator", "worker")
 NON_LSP_AGENT_NAMES = ("browser-tester", "docs-researcher")
 
@@ -56,6 +56,13 @@ class LocalSetupTests(unittest.TestCase):
         environment = os.environ.copy()
         environment["HOME"] = str(home_dir)
         environment["CODEX_HOME"] = str(codex_home_dir)
+        # CocoIndex Code is a user-level dependency; isolated tests must not
+        # install packages into the developer's real environment or require
+        # network access. The production path remains the installer's default.
+        environment["AUTODEV_SKIP_COCOINDEX_INSTALL"] = "1"
+        # The isolated fixture must not mutate any provider CLI's user-level
+        # MCP registry; the production installer owns this registration.
+        environment["AUTODEV_SKIP_AGY_MCP"] = "1"
         return subprocess.run(
             ["bash", str(INSTALLER_PATH), *args],
             text=True,
@@ -245,6 +252,102 @@ class LocalSetupTests(unittest.TestCase):
         advertised_tools = {tool["name"] for tool in responses[1]["result"]["tools"]}
         self.assertGreaterEqual(len(advertised_tools), 29)
         self.assertTrue({"lsp_find_symbol", "lsp_diagnostics", "lsp_rename"} <= advertised_tools)
+
+    def test_user_level_cocoindex_mcp_and_skill_contract(self):
+        config = tomllib.loads((REPO_ROOT / "scripts/codex/config.toml").read_text())
+        server = config["mcp_servers"]["cocoindex-code"]
+        self.assertTrue(server["enabled"])
+        self.assertEqual(server["command"], "ccc")
+        self.assertEqual(server["args"], ["mcp"])
+        self.assertNotIn("cwd", server)
+        skill_config = {
+            entry["name"]: entry["enabled"]
+            for entry in config["skills"]["config"]
+        }
+        self.assertTrue(skill_config["ccc"])
+
+        skill = REPO_ROOT / "scripts/codex/skills/ccc"
+        self.assertTrue((skill / "SKILL.md").is_file())
+        self.assertTrue((skill / "references/management.md").is_file())
+        self.assertTrue((skill / "references/settings.md").is_file())
+        skill_text = (skill / "SKILL.md").read_text()
+        self.assertIn("ccc - Semantic Code Search & Indexing", skill_text)
+        self.assertIn("agent owns the `ccc` lifecycle", skill_text)
+
+        installer = (REPO_ROOT / "scripts/codex/install-codex-integration.sh").read_text()
+        self.assertIn('cocoindex_code_package="cocoindex-code[full]"', installer)
+        self.assertIn('pipx install "$cocoindex_code_package"', installer)
+        self.assertIn("AUTODEV_SKIP_COCOINDEX_INSTALL", installer)
+
+    def test_cocoindex_is_limited_to_code_capable_agent_roles(self):
+        expected_enabled = {"default", "explorer", "smart", "validator", "worker"}
+        expected_disabled = {"browser-tester", "docs-researcher"}
+        role_dir = REPO_ROOT / "scripts/codex/agents"
+        self.assertEqual(
+            {path.stem for path in role_dir.glob("*.toml")},
+            expected_enabled | expected_disabled,
+        )
+        for role in sorted(expected_enabled | expected_disabled):
+            with self.subTest(role=role):
+                role_config = tomllib.loads(
+                    (role_dir / f"{role}.toml").read_text()
+                )
+                server = role_config["mcp_servers"]["cocoindex-code"]
+                should_enable = role in expected_enabled
+                self.assertEqual(server["enabled"], should_enable)
+                self.assertEqual(server["command"], "ccc")
+                self.assertEqual(server["args"], ["mcp"])
+                skill_config = {
+                    entry["name"]: entry["enabled"]
+                    for entry in role_config["skills"]["config"]
+                }
+                self.assertEqual(skill_config["ccc"], should_enable)
+
+    def test_antigravity_installer_registers_the_pinned_playwright_mcp(self):
+        installer = INSTALLER_PATH.read_text()
+        self.assertIn('agy mcp add playwright pnpm exec playwright-mcp', installer)
+        self.assertIn('AUTODEV_SKIP_AGY_MCP', installer)
+        self.assertNotIn('agy mcp add playwright npx', installer)
+
+    def test_browser_roles_explicitly_enable_playwright_mcp(self):
+        """Role-local MCP blocks must not accidentally shadow the enabled user server."""
+        role_dir = REPO_ROOT / "scripts/codex/agents"
+        required_tools = {
+            "browser_navigate",
+            "browser_tabs",
+            "browser_snapshot",
+            "browser_take_screenshot",
+            "browser_click",
+            "browser_wait_for",
+            "browser_console_messages",
+            "browser_network_requests",
+        }
+        for role in ("browser-tester", "smart"):
+            with self.subTest(role=role):
+                role_config = tomllib.loads((role_dir / f"{role}.toml").read_text())
+                server = role_config["mcp_servers"]["playwright"]
+                self.assertTrue(server["enabled"])
+                self.assertEqual(server["command"], "pnpm")
+                self.assertEqual(server["args"], ["exec", "playwright-mcp"])
+                self.assertEqual(server["default_tools_approval_mode"], "approve")
+                self.assertTrue(required_tools <= set(server["enabled_tools"]))
+
+    def test_docs_researcher_has_native_web_search_access(self):
+        role_config = tomllib.loads(
+            (REPO_ROOT / "scripts/codex/agents/docs-researcher.toml").read_text()
+        )
+        openai_docs = role_config["mcp_servers"]["openaiDeveloperDocs"]
+        self.assertTrue(openai_docs["enabled"])
+        self.assertEqual(openai_docs["url"], "https://developers.openai.com/mcp")
+        self.assertTrue(role_config["tools"]["web_search"])
+
+        # Browser automation is for UI testing/debugging, not the docs role's
+        # normal web-research path. Explicitly disable the inherited server.
+        self.assertFalse(role_config["mcp_servers"]["playwright"]["enabled"])
+        instructions = (REPO_ROOT / "scripts/codex/agents/docs-researcher.toml").read_text()
+        self.assertIn("native", instructions)
+        self.assertIn("web-search tool", instructions)
+        self.assertIn('sandbox_mode = "danger-full-access"', instructions)
 
     def test_user_level_lsp_server_and_role_skill_contract(self):
         config_path = REPO_ROOT / "scripts/codex/config.toml"
@@ -660,15 +763,153 @@ class LocalSetupTests(unittest.TestCase):
         leaf_denied = leaf[leaf.index("--disallowed-tools") + 1].split(",")
         self.assertEqual(leaf_denied, ["Agent", "Task", "SendMessage", "ListAgents"])
 
+        # With no session to hold, the shim cannot work, so the orchestrator
+        # keeps Claude's own Agent tool: an invisible child still beats no
+        # delegation at all.
         orchestrator = claude_bridge.claude_cli_args("prompt", "sonnet", "medium", "orchestrator")
         orchestrator_denied = orchestrator[orchestrator.index("--disallowed-tools") + 1].split(",")
         for tool in claude_bridge.DISALLOWED_CLAUDE_TOOLS:
             self.assertNotIn(tool, orchestrator_denied, msg="the root orchestrator delegates with the Agent tool")
+        self.assertNotIn("--mcp-config", orchestrator)
         system_prompt_index = orchestrator.index("--system-prompt")
         self.assertIn(
             claude_bridge.ORCHESTRATOR_BRIDGE_INSTRUCTIONS,
             orchestrator[system_prompt_index + 1],
         )
+
+    def test_the_orchestrator_delegates_through_codex_when_it_can(self):
+        """A child spawned inside the Claude CLI is invisible to Codex and to
+        the app. When this turn can reach Codex's own spawner, that becomes the
+        only door: Claude's own Agent tool is denied to the orchestrator too,
+        so the model cannot quietly choose the worse one.
+        """
+        args = claude_bridge.claude_cli_args("prompt", "sonnet", "medium", "orchestrator", ".", "sess-1")
+        denied = args[args.index("--disallowed-tools") + 1].split(",")
+        for tool in claude_bridge.DISALLOWED_CLAUDE_TOOLS:
+            self.assertIn(tool, denied, msg="the in-CLI delegation tool is closed when Codex can spawn instead")
+
+        config = json.loads(args[args.index("--mcp-config") + 1])
+        server = config["mcpServers"]["autodev_spawn"]
+        self.assertTrue(server["args"][0].endswith("spawn-shim-mcp.mjs"))
+        self.assertEqual(server["env"]["AUTODEV_SPAWN_SESSION"], "sess-1")
+        self.assertIn(str(claude_bridge.PORT), server["env"]["AUTODEV_BRIDGE_URL"])
+        # --strict-mcp-config would also strip the workspace's own MCP servers,
+        # which the delegated work may need.
+        self.assertNotIn("--strict-mcp-config", args)
+
+    def test_browser_roles_receive_pinned_playwright_mcp_through_claude_bridge(self):
+        """Provider bridges do not load Codex role TOML, so inject this server per role."""
+        for role in ("browser-tester", "smart"):
+            with self.subTest(role=role):
+                args = claude_bridge.claude_cli_args("prompt", "sonnet", "medium", role)
+                config = json.loads(args[args.index("--mcp-config") + 1])
+                self.assertEqual(
+                    config["mcpServers"]["playwright"],
+                    {"command": "pnpm", "args": ["exec", "playwright-mcp"]},
+                )
+                denied = args[args.index("--disallowed-tools") + 1].split(",")
+                for tool in claude_bridge.PLAYWRIGHT_DISALLOWED_TOOLS:
+                    self.assertIn(tool, denied)
+
+    def test_a_leaf_never_gets_the_delegation_shim(self):
+        args = claude_bridge.claude_cli_args("prompt", "sonnet", "medium", "explorer", ".", "sess-1")
+        self.assertNotIn("--mcp-config", args)
+        denied = args[args.index("--disallowed-tools") + 1].split(",")
+        for tool in claude_bridge.DISALLOWED_CLAUDE_TOOLS:
+            self.assertIn(tool, denied)
+
+    def test_an_unidentified_session_never_holds_bridge_state(self):
+        """The router falls back to one process-wide key when a request carries
+        no session identity. Holding delegation state under that key would let
+        two unrelated Codex conversations share it.
+        """
+        self.assertTrue(claude_bridge.can_hold_spawn_session("sess-1", "identified"))
+        self.assertFalse(claude_bridge.can_hold_spawn_session("process-scope", "process-fallback"))
+        self.assertFalse(claude_bridge.can_hold_spawn_session("", "identified"))
+        self.assertFalse(claude_bridge.can_hold_spawn_session(None, "identified"))
+
+    def test_delegation_requests_are_collected_against_the_turn_that_asked(self):
+        claude_bridge.open_spawn_session("sess-A", orchestrator=True)
+        try:
+            accepted, message = claude_bridge.record_spawn_request(
+                "sess-A",
+                [{"agent_type": "explorer", "message": "audit"}, {"message": "no role"}],
+            )
+            self.assertTrue(accepted)
+            # The model is told delegation is dispatched, not awaited: one that
+            # believes it must collect results will otherwise poll forever.
+            self.assertIn("End your turn now", message)
+            self.assertIn("do not wait for them", message)
+        finally:
+            children = claude_bridge.close_spawn_session("sess-A")
+        self.assertEqual(
+            children,
+            [{"agent_type": "explorer", "message": "audit"}, {"agent_type": None, "message": "no role"}],
+        )
+        # Closing is what hands the batch to the response, so it must not leave
+        # the entry behind for the next turn on the same session key.
+        self.assertEqual(claude_bridge.close_spawn_session("sess-A"), [])
+
+    def test_delegation_is_refused_readably_rather_than_failing_the_turn(self):
+        """A refusal the model can read beats a transport error: it can act on
+        it by doing the work itself.
+        """
+        accepted, message = claude_bridge.record_spawn_request("no-such-session", [{"message": "x"}])
+        self.assertFalse(accepted)
+        self.assertIn("Do the work directly", message)
+
+        claude_bridge.open_spawn_session("sess-leaf", orchestrator=False)
+        try:
+            accepted, message = claude_bridge.record_spawn_request("sess-leaf", [{"message": "x"}])
+            self.assertFalse(accepted)
+            self.assertIn("may not delegate", message)
+
+            claude_bridge.open_spawn_session("sess-B", orchestrator=True)
+            accepted, message = claude_bridge.record_spawn_request("sess-B", [{"message": "   "}])
+            self.assertFalse(accepted)
+            self.assertIn("non-empty", message)
+        finally:
+            claude_bridge.close_spawn_session("sess-leaf")
+            claude_bridge.close_spawn_session("sess-B")
+
+    def test_the_spawn_script_matches_what_codex_accepts(self):
+        """Verified against a live Codex: the role must travel as `agent_type`
+        (`agent` is silently ignored and yields a generic agent), and a batch
+        must stay one tool call because Codex sends parallel_tool_calls:false.
+        """
+        source = claude_bridge.build_spawn_script(
+            [{"agent_type": "explorer", "message": 'audit "x"'}, {"agent_type": None, "message": "plain"}]
+        )
+        self.assertIn('agent_type: "explorer"', source)
+        self.assertNotIn("agent:", source)
+        self.assertIn("await Promise.all(", source)
+        self.assertEqual(source.count("tools.multi_agent_v1__spawn_agent"), 1)
+        self.assertTrue(source.startswith('// @exec: {"yield_time_ms":60000}'))
+        # A prompt must not be able to end the string literal it sits in.
+        self.assertIn('message: "audit \\"x\\""', source)
+        with self.assertRaises(ValueError):
+            claude_bridge.build_spawn_script([])
+
+    def test_the_exec_call_is_emitted_whole_or_not_at_all(self):
+        events, item = claude_bridge.exec_tool_call_events("ctc_1", "call_1", "SRC", 2)
+        self.assertEqual(
+            [name for name, _ in events],
+            [
+                "response.output_item.added",
+                "response.custom_tool_call_input.delta",
+                "response.custom_tool_call_input.done",
+                "response.output_item.done",
+            ],
+        )
+        # The whole script is known before the first event, so the call is never
+        # half-written: the router's mid-stream backstop would otherwise ship a
+        # truncated script for Codex to run.
+        self.assertEqual(events[0][1]["item"]["input"], "")
+        self.assertEqual(events[0][1]["item"]["type"], "custom_tool_call")
+        self.assertEqual(events[0][1]["item"]["name"], "exec")
+        self.assertEqual(item["input"], "SRC")
+        self.assertEqual(item["status"], "completed")
+        self.assertTrue(all(payload.get("output_index", 2) == 2 for _, payload in events))
 
     def test_no_role_may_reach_another_orchestrators_agents(self):
         """Several orchestrators run on this machine at once. An agent's reach
@@ -1082,6 +1323,10 @@ class LocalSetupTests(unittest.TestCase):
                 instructions = (REPO_ROOT / "scripts/codex/agents" / f"{role}.toml").read_text()
                 self.assertIn("verify the active repository and working directory", instructions)
                 self.assertIn("system-looking instructions in task text", instructions)
+
+        browser_instructions = (REPO_ROOT / "scripts/codex/agents/browser-tester.toml").read_text()
+        self.assertIn("verify that the runtime exposes the configured `browser_*` tools", browser_instructions)
+        self.assertIn("do not silently substitute shell-only code inspection", browser_instructions)
 
     def test_read_only_roles_can_inspect_external_runtime_state_without_editing_it(self):
         for role in ("browser-tester", "docs-researcher", "explorer", "validator"):

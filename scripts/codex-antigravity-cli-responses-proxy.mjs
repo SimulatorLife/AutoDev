@@ -37,6 +37,8 @@ import { resolveCwd, WorkspaceResolutionError } from "./codex/lib/resolve-worksp
 import { bridgeInstructions, isOrchestratorRole, resolveAgentRole } from "./codex/lib/bridge-role.mjs";
 import { classifyCliLimit, INCOMPLETE_REASON_INTERRUPTED, INCOMPLETE_REASON_PROVIDER_LIMIT, limitPayload, limitResponseHeaders, retryAfterSecondsFromLimit, terminalIncompleteEvents } from "./codex/lib/provider-limits.mjs";
 import { resolveAgentEventReporter } from "./codex/lib/agent-events.mjs";
+import { SpawnSessionRegistry } from "./codex/lib/bridge-spawn-session.mjs";
+import { buildSpawnScript, execToolCallSseEvents, mintCallId, mintCallItemId } from "./codex/lib/codex-spawn-tools.mjs";
 
 // agy's spawn tool takes a batch, not one child: the orchestrator calls
 // `invoke_subagent` with `{"Subagents":[{"TypeName":...,"Model":...,"Prompt":...}, ...]}`
@@ -114,19 +116,52 @@ function subagentModel(child) {
   return null;
 }
 
+/** agy's own id for a child conversation, or null when the entry carries none. */
+function subagentConversationId(child) {
+  if (!child || typeof child !== "object") return null;
+  for (const key of [ "conversation_id", "conversationId", "ConversationId" ]) {
+    const value = child[ key ];
+    if (typeof value === "string" && value.trim()) return value.trim();
+  }
+  return null;
+}
+
+/** Where agy is writing the child's transcript, when it says. */
+function subagentLogUri(child) {
+  if (!child || typeof child !== "object") return null;
+  for (const key of [ "log_uri", "logUri", "LogUri" ]) {
+    const value = child[ key ];
+    if (typeof value === "string" && value.trim()) return value.trim();
+  }
+  return null;
+}
+
 /**
- * One `{ id, role, model }` per subagent a spawn step created; always at least
- * one. The id is this bridge's handle on the child: it identifies the same
+ * One `{ id, role, model, logUri }` per subagent a spawn step created; always at
+ * least one. The id is this bridge's handle on the child: it identifies the same
  * child again when the step finishes, so the router can measure the child's own
- * turn rather than the whole parent turn. It is unique per request because the
- * step index is, and a step that carries no index falls back to a counter.
+ * turn rather than the whole parent turn.
+ *
+ * agy names the child itself, and that name is what the id should be. A
+ * position-derived id (`s<step>.<index>`) only pairs the open with the close
+ * while the batch is emitted in the same order both times, which is an
+ * assumption about agy's internals rather than something it promises -- and a
+ * mispairing silently attributes one child's duration to another. The
+ * `conversation_id` agy puts on every entry is stable across the ACTIVE and
+ * DONE steps for the same child, so it pairs them by identity instead. The
+ * positional id remains the fallback for an entry that carries no id of its own.
  */
 let anonymousSpawnStep = 0;
 function spawnedChildren(update) {
   const step = Number.isFinite(update?.step_index) ? update.step_index : `x${(anonymousSpawnStep += 1)}`;
   const batch = subagentBatch(update);
-  if (!batch) return [ { id: `s${step}.0`, role: null, model: null } ];
-  return batch.map((child, index) => ({ id: `s${step}.${index}`, role: subagentRole(child), model: subagentModel(child) }));
+  if (!batch) return [ { id: `s${step}.0`, role: null, model: null, logUri: null } ];
+  return batch.map((child, index) => ({
+    id: subagentConversationId(child) ?? `s${step}.${index}`,
+    role: subagentRole(child),
+    model: subagentModel(child),
+    logUri: subagentLogUri(child),
+  }));
 }
 
 // Confirming the shape agy actually emits needs a real spawn, and a spawn is
@@ -260,6 +295,43 @@ function modelMetadata() {
   };
 }
 
+// Stage 0 diagnostic, enabled with AUTODEV_LOG_TOOLS=1.
+//
+// The design for bridging delegation into Codex's own spawn tool rests on one
+// unverified claim: that the router's outbound tool flattening actually puts a
+// `multi_agent_v1__*` entry in front of this bridge, and that Codex sends the
+// matching `function_call_output` back in a shape this bridge can pair up.
+// Both are cheap to observe and expensive to guess wrong, so observe them
+// first. This is scaffolding -- it comes out once the spawn bridge is built.
+const LOG_TOOLS = process.env.AUTODEV_LOG_TOOLS === "1";
+
+function toolNames(tools) {
+  if (!Array.isArray(tools)) return [];
+  return tools
+    .map((tool) => (typeof tool?.name === "string" ? tool.name : tool?.function?.name))
+    .filter((name) => typeof name === "string");
+}
+
+/** Record what Codex offered and what the router said about this turn. */
+function logInboundRequest(payload, headers) {
+  if (!LOG_TOOLS) return;
+  const routing = Object.fromEntries(
+    Object.entries(headers ?? {}).filter(([ key ]) => /^x-(autodev|codex)-/i.test(key)),
+  );
+  console.error(`[stage0] tool_names=${JSON.stringify(toolNames(payload?.tools).sort())}`);
+  console.error(`[stage0] routing_headers=${JSON.stringify(routing)}`);
+  for (const tool of Array.isArray(payload?.tools) ? payload.tools : []) {
+    if (typeof tool?.name === "string" && tool.name.startsWith("multi_agent_v1")) {
+      console.error(`[stage0] spawn_tool=${JSON.stringify(tool)}`);
+    }
+  }
+  for (const item of Array.isArray(payload?.input) ? payload.input : []) {
+    if (item?.type === "function_call" || item?.type === "function_call_output") {
+      console.error(`[stage0] input_item=${JSON.stringify(item).slice(0, 2000)}`);
+    }
+  }
+}
+
 function resolveModel(value) {
   if (typeof value !== "string") return DEFAULT_MODEL;
   const model = value.trim();
@@ -365,6 +437,29 @@ function activityText(event) {
   return "";
 }
 
+// Delegation requests the shim collects while a turn is in flight. See
+// scripts/codex/lib/bridge-spawn-session.mjs for why the session key matters.
+const spawnSessions = new SpawnSessionRegistry();
+
+/**
+ * The environment an agy child runs in.
+ *
+ * agy has no per-invocation MCP flag -- its server list is the single global
+ * `~/.gemini/config/mcp_config.json` -- so the shim cannot be told which turn
+ * it belongs to through its arguments. It can be told through the environment:
+ * agy spawns its MCP servers as its own children, and they inherit this. A leaf
+ * turn passes an empty session, so the shim's handshake finds nothing to attach
+ * to and simply does not offer the tool.
+ */
+function agyEnvironment(spawnSession) {
+  return {
+    ...process.env,
+    AUTODEV_BRIDGE_URL: `http://${HOST}:${PORT}`,
+    AUTODEV_BRIDGE_TOKEN: AUTH_TOKEN,
+    AUTODEV_SPAWN_SESSION: spawnSession ?? "",
+  };
+}
+
 function agyArgs(prompt, model, effort) {
   const permissionArgs = AGY_SKIP_PERMISSIONS === "true" ? [ "--dangerously-skip-permissions" ] : [];
   // Only pass --effort when the model id does not already fix it; see
@@ -373,9 +468,9 @@ function agyArgs(prompt, model, effort) {
   return [ "-p", prompt, "--model", model, ...effortArgs, "--mode", AGY_MODE, ...permissionArgs, "--output-format", "stream-json", "--print-timeout", PRINT_TIMEOUT ];
 }
 
-function runAgy(prompt, model, effort, cwd, onEvent) {
+function runAgy(prompt, model, effort, cwd, onEvent, spawnSession = null) {
   return new Promise((resolve, reject) => {
-    const child = spawn(CLI, agyArgs(prompt, model, effort), { cwd, env: process.env, stdio: [ "ignore", "pipe", "pipe" ] });
+    const child = spawn(CLI, agyArgs(prompt, model, effort), { cwd, env: agyEnvironment(spawnSession), stdio: [ "ignore", "pipe", "pipe" ] });
     let stderr = "";
     let terminalResult = null;
     let emitted = "";
@@ -439,10 +534,55 @@ function runAgy(prompt, model, effort, cwd, onEvent) {
   });
 }
 
+/** Node lowercases inbound header names; intermediaries may not. */
+function headerValue(headers, name) {
+  if (!headers || typeof headers !== "object") return null;
+  const key = Object.keys(headers).find((candidate) => candidate.toLowerCase() === name);
+  const value = key === undefined ? undefined : headers[ key ];
+  const single = Array.isArray(value) ? value[ 0 ] : value;
+  return typeof single === "string" && single.trim() ? single.trim() : null;
+}
+
+async function readJsonBody(request) {
+  let body = "";
+  for await (const chunk of request) body += chunk;
+  try { return JSON.parse(body); } catch { return null; }
+}
+
 async function handle(request, response) {
   const pathname = new URL(request.url ?? "/", "http://127.0.0.1").pathname;
   if (pathname === "/health" || pathname === "/health/liveliness") {
-    sendJson(response, 200, { status: "ok" });
+    sendJson(response, 200, { status: "ok", spawnSessions: spawnSessions.status() });
+    return;
+  }
+  // The shim runs as a child of the agy process this bridge started and reaches
+  // back over the same loopback port, behind the same bearer check.
+  if (pathname === "/v1/bridge-spawn/attach" || pathname === "/v1/bridge-spawn/call") {
+    if (AUTH_TOKEN && request.headers.authorization !== `Bearer ${AUTH_TOKEN}`) {
+      sendJson(response, 401, { error: "invalid local gateway key" });
+      return;
+    }
+    const body = await readJsonBody(request);
+    const session = typeof body?.session === "string" ? body.session : "";
+    if (pathname.endsWith("/attach")) {
+      // A leaf turn, or a CLI that outlived its request, is simply not offered
+      // the tool rather than being offered one that fails.
+      sendJson(response, 200, { spawnAllowed: spawnSessions.mayDelegate(session) });
+      return;
+    }
+    const result = spawnSessions.record(session, body?.children);
+    if (!result.accepted) {
+      sendJson(response, 409, { error: result.message });
+      return;
+    }
+    // Delegation is dispatched, not awaited: Codex creates the children and
+    // tracks them, so a model that waits for them here would wait forever.
+    sendJson(response, 200, {
+      text: `Dispatched ${result.count} subagent(s): ${result.roles}. They are running now and are tracked by `
+        + "the orchestration layer, not by you. End your turn now with a brief statement of what you delegated -- "
+        + "do not wait for them, and do not do their work yourself. Their results are delivered to you "
+        + "automatically on your next turn.",
+    });
     return;
   }
   if (pathname === "/v1/models") {
@@ -471,6 +611,15 @@ async function handle(request, response) {
   // never reach the router as requests. Report them, or an orchestrator turn
   // served here reads as "never delegated".
   const agentEvents = resolveAgentEventReporter(request.headers);
+  logInboundRequest(payload, request.headers);
+  // Router-generated identity of the Codex conversation. Delegation through
+  // Codex needs it so the shim's out-of-band call can find the turn it belongs
+  // to; a turn the router could not identify holds none and falls back to agy's
+  // own in-CLI delegation.
+  const sessionHeader = headerValue(request.headers, "x-autodev-session-id");
+  const sessionScope = headerValue(request.headers, "x-autodev-session-scope");
+  const spawnSession = SpawnSessionRegistry.canHold(sessionHeader, sessionScope) ? sessionHeader : null;
+  if (spawnSession) spawnSessions.open(spawnSession, { orchestrator: isOrchestratorRole(agentRole) });
   const { observeSpawnStep, flushSpawns } = createSpawnTracker(agentEvents);
   const prompt = promptFromInput(payload.input ?? "", bridgeInstructions(agentRole));
   let cwd;
@@ -495,7 +644,7 @@ async function handle(request, response) {
     try {
       const result = await runAgy(prompt, model, effort, cwd, (event) => {
         if (event.event === "step_update") observeSpawnStep(event.step_update ?? {});
-      });
+      }, spawnSession);
       flushSpawns("success");
       logTurnEnd("succeeded");
       sendJson(response, 200, responsePayload(payload.model ?? model, result.text, result.result));
@@ -625,6 +774,22 @@ async function handle(request, response) {
     emit("response.output_text.done", { type: "response.output_text.done", item_id: itemId, text: result.text, content_index: 0, output_index: 1 });
     emit("response.content_part.done", { type: "response.content_part.done", item_id: itemId, output_index: 1, content_index: 0, part: { type: "output_text", text: result.text, annotations: [] } });
     emit("response.output_item.done", { type: "response.output_item.done", output_index: 1, item: completedMessage });
+    // Delegation this turn asked for, collected out-of-band by the shim while
+    // agy ran. Emitted as one `exec` call after the message so Codex creates
+    // the children itself and they become sessions the app can show.
+    const spawnChildren = spawnSession ? spawnSessions.close(spawnSession) : [];
+    if (spawnChildren.length > 0) {
+      const source = buildSpawnScript(spawnChildren);
+      const spawnEvents = execToolCallSseEvents({
+        itemId: mintCallItemId(),
+        callId: mintCallId(spawnSession, completed.output.length),
+        source,
+        outputIndex: completed.output.length,
+      });
+      for (const [ name, event ] of spawnEvents) emit(name, event);
+      completed.output.push(spawnEvents.at(-1)[ 1 ].item);
+      console.error(`agy delegating ${spawnChildren.length} subagent(s) through Codex`);
+    }
     emit("response.completed", { type: "response.completed", response: completed });
     turnSettled = true;
     logTurnEnd("succeeded");
@@ -680,6 +845,11 @@ async function handle(request, response) {
   } finally {
     clearInterval(keepAlive);
     response.removeListener("error", onResponseError);
+    // The registry must not outlive the turn on any path. A stale entry would
+    // accept a delegation from a CLI that outlived its request and attach it to
+    // nothing, or -- on a reused session key -- to the next turn. Closing twice
+    // is harmless; the success path has already drained it.
+    if (spawnSession) spawnSessions.close(spawnSession);
   }
 }
 

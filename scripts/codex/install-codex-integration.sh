@@ -56,6 +56,12 @@ runtime_module_names=(
   scripts/codex/lib/bridge-role.mjs
   scripts/codex/lib/agent-events.mjs
   scripts/codex/lib/provider-limits.mjs
+  scripts/codex/lib/codex-spawn-tools.mjs
+  scripts/codex/lib/bridge-spawn-session.mjs
+  # Executed as a child process by the bridges rather than imported, so nothing
+  # else would pull it in: an installed bridge whose --mcp-config points at a
+  # missing file silently loses delegation.
+  scripts/codex/lib/spawn-shim-mcp.mjs
   scripts/codex/prompts/base.md
   scripts/codex/prompts/leaf.md
   scripts/codex/prompts/orchestrator.md
@@ -64,9 +70,10 @@ runtime_module_names=(
 profile_names=(claude minimax antigravity)
 catalog_names=(claude minimax antigravity codex)
 agent_role_names=(browser-tester default docs-researcher explorer smart validator worker)
-skill_names=(code-simplification diagnosing-bugs improve-codebase-architecture lsp-mcp-server orchestration remove-legacy-shims resolve-merge-conflicts)
+skill_names=(ccc code-simplification diagnosing-bugs improve-codebase-architecture lsp-mcp-server orchestration remove-legacy-shims resolve-merge-conflicts)
 rule_names=(default.rules)
 custom_provider_names=(local_model_router claude_code_subscription minimax antigravity_cli)
+cocoindex_code_package="cocoindex-code[full]"
 tracked_sources=""
 
 # The installed path for a runtime module: its repo path without the leading
@@ -298,6 +305,84 @@ check_user_agent_files() {
   return "$failed"
 }
 
+install_cocoindex_code() {
+  # The MCP entry is versioned in config.toml; this step owns only the user-level
+  # executable. A missing ccc is fatal unless a caller explicitly opts out (the
+  # opt-out is used by isolated installer tests and is not a production path).
+  if [[ "${AUTODEV_SKIP_COCOINDEX_INSTALL:-0}" == "1" ]]; then
+    printf 'skipping CocoIndex Code installation (AUTODEV_SKIP_COCOINDEX_INSTALL=1)\n' >&2
+    return 0
+  fi
+  if command -v ccc >/dev/null 2>&1; then
+    printf 'ok CocoIndex Code executable (%s)\n' "$(command -v ccc)" >&2
+    return 0
+  fi
+  if ! command -v pipx >/dev/null 2>&1; then
+    printf 'CocoIndex Code is not installed: pipx is required to install %s\n' "$cocoindex_code_package" >&2
+    printf 'Install pipx, then rerun %s\n' "${BASH_SOURCE[0]##*/}" >&2
+    return 1
+  fi
+  printf 'installing CocoIndex Code with pipx (%s)\n' "$cocoindex_code_package" >&2
+  pipx install "$cocoindex_code_package"
+}
+
+check_cocoindex_code_executable() {
+  if [[ "${AUTODEV_SKIP_COCOINDEX_INSTALL:-0}" == "1" ]]; then
+    printf 'skipping CocoIndex Code executable check (AUTODEV_SKIP_COCOINDEX_INSTALL=1)\n'
+    return 0
+  fi
+  if command -v ccc >/dev/null 2>&1; then
+    printf 'ok CocoIndex Code executable (%s)\n' "$(command -v ccc)"
+    return 0
+  fi
+  printf 'missing CocoIndex Code executable ccc (run the installer without AUTODEV_SKIP_COCOINDEX_INSTALL)\n'
+  return 1
+}
+
+check_agy_playwright_mcp() {
+  if [[ "${AUTODEV_SKIP_AGY_MCP:-0}" == "1" ]]; then
+    printf 'skipping agy Playwright MCP check (AUTODEV_SKIP_AGY_MCP=1)\n'
+    return 0
+  fi
+  if ! command -v agy >/dev/null 2>&1; then
+    printf 'skipping agy Playwright MCP check (agy is not installed)\n'
+    return 0
+  fi
+  local listing
+  listing="$(agy mcp list 2>/dev/null || true)"
+  if grep -Eq '^playwright[[:space:]]+stdio[[:space:]]+enabled[[:space:]]+pnpm exec playwright-mcp[[:space:]]*$' <<<"$listing"; then
+    printf 'ok agy Playwright MCP (pinned pnpm executable)\n'
+    return 0
+  fi
+  printf 'missing-or-drifted agy Playwright MCP (expected pnpm exec playwright-mcp)\n'
+  return 1
+}
+
+check_cocoindex_code_config() {
+  local config="$repo_root/scripts/codex/config.toml"
+  local failed=0
+  grep -Fq '[mcp_servers."cocoindex-code"]' "$config" || {
+    printf 'missing-user-mcp-registration cocoindex-code\n'
+    failed=1
+  }
+  grep -Fq 'command = "ccc"' "$config" || {
+    printf 'invalid-user-mcp-command cocoindex-code\n'
+    failed=1
+  }
+  grep -Fq 'args = ["mcp"]' "$config" || {
+    printf 'invalid-user-mcp-args cocoindex-code\n'
+    failed=1
+  }
+  grep -Fq 'name = "ccc"' "$config" || {
+    printf 'missing-user-skill-registration ccc\n'
+    failed=1
+  }
+  if [[ "$failed" == 0 ]]; then
+    printf 'ok CocoIndex Code user MCP and skill registration\n'
+  fi
+  return "$failed"
+}
+
 check_custom_provider_config() {
   local failed=0
   local provider profile
@@ -478,6 +563,15 @@ check_links() {
   if ! check_custom_provider_config; then
     failed=1
   fi
+  if ! check_cocoindex_code_executable; then
+    failed=1
+  fi
+  if ! check_agy_playwright_mcp; then
+    failed=1
+  fi
+  if ! check_cocoindex_code_config; then
+    failed=1
+  fi
   if ! check_legacy_skill_links; then
     failed=1
   fi
@@ -506,6 +600,52 @@ case "${1:-}" in
     exit 2
     ;;
 esac
+
+if ! install_cocoindex_code; then
+  exit 1
+fi
+
+register_agy_spawn_shim() {
+  # The Antigravity bridge hands agy a delegation tool so its children are
+  # created by Codex -- and therefore appear as real, clickable sessions --
+  # rather than inside agy where nothing can see them.
+  #
+  # Unlike Claude, agy has no per-invocation MCP flag: its server list is the
+  # single global ~/.gemini/config/mcp_config.json, so the registration has to
+  # happen once, here. The bridge still decides per turn whether the tool is
+  # offered at all: it passes the session in the child's environment, which the
+  # shim inherits, and a leaf turn passes none.
+  if [[ "${AUTODEV_SKIP_AGY_MCP:-0}" == "1" ]]; then
+    printf 'skipping agy MCP registration (AUTODEV_SKIP_AGY_MCP=1)\n' >&2
+    return 0
+  fi
+  if ! command -v agy >/dev/null 2>&1; then
+    printf 'skipping agy MCP registration (agy is not installed)\n' >&2
+    return 0
+  fi
+  # agy has no per-invocation MCP config, so the browser role's server must be
+  # registered globally. Keep it on the same pinned package used by native
+  # Codex and Claude bridge turns; an npx @latest entry can fail on an offline
+  # host and silently deprives browser-tester children of their only browser.
+  if ! agy mcp add playwright pnpm exec playwright-mcp >/dev/null 2>&1; then
+    printf 'could not register the pinned agy Playwright MCP server\n' >&2
+    return 1
+  fi
+  printf 'ok agy Playwright MCP registered (playwright)\n' >&2
+  local shim="$codex_home/hooks/codex/lib/spawn-shim-mcp.mjs"
+  if [[ ! -f "$shim" ]]; then
+    printf 'agy spawn shim missing at %s\n' "$shim" >&2
+    return 1
+  fi
+  if agy mcp add autodev_spawn node "$shim" >/dev/null 2>&1; then
+    printf 'ok agy spawn shim registered (autodev_spawn)\n' >&2
+    return 0
+  fi
+  # Not fatal: agy then delegates in its own runtime as it did before, which is
+  # invisible to the app but still delegation.
+  printf 'could not register the agy spawn shim; agy will delegate in-CLI instead\n' >&2
+  return 0
+}
 
 for name in "${obsolete_launchagent_labels[@]}"; do
   target="$HOME/Library/LaunchAgents/$name.plist"
@@ -580,6 +720,12 @@ for role in "${agent_role_names[@]}"; do
 done
 link_one "$repo_root/scripts/codex/config.toml" "$codex_home/config.toml"
 link_one "$repo_root/scripts/codex/model-routing.json" "$codex_home/codex-model-routing.json"
+# The registration consumes the installed spawn shim, so it must happen after
+# runtime modules are materialized. The Playwright entry is registered in the
+# same pass for agy's global MCP registry.
+if ! register_agy_spawn_shim; then
+  exit 1
+fi
 # The router (parent transport) and the four subagent bridges must survive app
 # restarts, crashes, and sleep. launchd KeepAlive agents provide that durability
 # (each plist invokes the installed hook copy under ~/.codex, outside Desktop,

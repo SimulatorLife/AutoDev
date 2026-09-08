@@ -78,12 +78,37 @@ Differences from a role request:
   - **Native Codex spawn** (`codex`, `minimax`): the parent drives Codex's own
     `multi_agent_v1` spawn tool, which creates a child thread that asks this
     router for an `autodev/<role>` alias.
+
+    Note how that call actually reaches Codex, because it is not what the model
+    catalog suggests. These models run in **code mode**: the request carries no
+    `tools` array at all, and the entire tool surface arrives as a single `exec`
+    tool -- declared `"type": "custom"` inside an `additional_tools` input item
+    -- whose payload is raw JavaScript evaluated in a V8 isolate. The spawn
+    function is reached from inside that script as
+    `tools.multi_agent_v1__spawn_agent({ agent_type, message })` and is never
+    named in the request. Two consequences worth knowing before changing
+    anything here:
+      - The role must travel as `agent_type`. `agent` is accepted and silently
+        ignored, and the child comes back as a generic agent rather than the
+        role that was asked for.
+      - Fan-out happens inside one script (`await Promise.all(tasks.map(...))`),
+        which is why Codex sending `parallel_tool_calls: false` does not cap it.
+    `scripts/codex/prompts/orchestrator.md` states this to the model, and
+    `scripts/codex/lib/codex-spawn-tools.mjs` builds the call for any component
+    that needs to emit one.
   - **Bridge-native spawn** (`claude`, `antigravity`): the CLI behind the bridge
     delegates inside its own runtime -- Claude's `Agent` tool, Antigravity's
     `invoke_subagent` -- and no router request is made for
     the child. Those providers additionally declare
     `capabilities.subagentSpawnTools`, the tool names that mean "a subagent was
     spawned"; see "Counting subagents across providers".
+
+    Browser-capable bridge roles are configured independently of native Codex
+    role TOML. The Claude bridge injects the pinned `playwright-mcp` command
+    through an inline `--mcp-config` only for `browser-tester` and `smart`, and
+    denies the unneeded browser tools. Antigravity has one global MCP registry,
+    so the installer owns its `playwright` entry and pins it to the active
+    repository's `pnpm exec playwright-mcp` instead of `npx @latest`.
 
   Copilot's CLI has no subagent tool, so it stays out of the orchestrator tier.
 - MiniMax is restored in the orchestrator fallback chain. Codex CLI defines
@@ -94,6 +119,21 @@ Differences from a role request:
   definitions (e.g., `multi_agent_v1__spawn_agent`) and re-expands them in
   downstream SSE responses. This allows MiniMax to properly receive and invoke
   `spawn_agent` during orchestrator turns rather than emitting plain text.
+
+  That proxy also coerces **freeform tool calls**. MiniMax has no notion of a
+  `"type": "custom"` tool, so it answers Codex's code-mode `exec` with an
+  ordinary `function_call` carrying JSON arguments -- typically the
+  `{cmd, workdir}` shape of `exec_command`. Codex rejects that outright with
+  `tool exec invoked with incompatible payload`, which meant a MiniMax-served
+  turn could reason but never actually run anything, and every such turn logged
+  a burst of those errors. The proxy now rewrites those calls into a
+  `custom_tool_call` whose script performs the same work, keeping the `event:`
+  header and the terminal `response.completed` snapshot in step with the
+  rewritten payload. Freeform tool names are learned from the request's own
+  `"type": "custom"` declarations rather than hard-coded, and an argument shape
+  the proxy does not recognise is passed through untouched rather than guessed
+  at -- a wrong guess would replace a visible failure with a script that runs
+  and does the wrong thing.
 
 When the orchestrator tier is genuinely exhausted, the router returns
 `503 router_provider_exhausted` exactly as it does for an exhausted role tier --
@@ -327,14 +367,11 @@ last-observed timestamps rather than only a combined text summary.
 Failures raised by the Codex app-server before a role request reaches the router
 are not inferable from router traffic alone.
 
-The status payload also includes a `codexTasks` snapshot from the local Codex
-app-server `thread/list` method. It reports counts and task metadata for
-statuses such as `active`, `idle`, and `notLoaded` (up to the configured page
-window); it is deliberately not interpreted as an orphan detector. Codex
-returns task timestamps as Unix seconds, so the router normalizes `createdAt`
-and `updatedAt` to ISO 8601 strings before exposing them to API and dashboard
-consumers. The router refreshes the snapshot periodically and retains the last
-snapshot if the app-server is unavailable. The local CLI view is:
+The status payload carries no view of the Codex app-server's own threads. A
+`codexTasks` snapshot from `thread/list` was surfaced here for a while and has
+been removed (see "What the router deliberately does not do" below);
+`scripts/codex-model-router.test.mjs` asserts the field stays absent. The local
+CLI view is:
 
   ```sh
   node /Users/henrykirk/AutoDev/scripts/codex-model-router-status.mjs
@@ -1109,9 +1146,12 @@ installer is the only supported materialization path into
   receive regular files rather than symlinks; the installer replaces symlinks and
   verifies exact content matches. Code-oriented roles (`default`, `explorer`,
   `worker`, `validator`, and `smart`) enable the user-level `lsp` MCP server and
-  the matching `lsp-mcp-server` skill; `browser-tester` and `docs-researcher`
-  explicitly disable both. There is one flat role registry; provider assignment
-  is expressed by each role's `model_provider` and
+  the matching `lsp-mcp-server` skill. `browser-tester` and `smart` explicitly
+  enable the user-level `playwright` MCP server with the approved browser tool
+  allowlist; the role-local `enabled = true` is intentional because a role block
+  otherwise overrides the user-level server entry. `browser-tester` and
+  `docs-researcher` explicitly disable `lsp`. There is one flat role registry;
+  provider assignment is expressed by each role's `model_provider` and
   `model`, not by a provider-specific directory, launcher-specific role name,
   or duplicated role definition.
 - `.codex/config.toml` is project execution configuration only. It does not

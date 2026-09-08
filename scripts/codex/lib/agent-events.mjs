@@ -110,8 +110,12 @@ class AgentEventReporter {
       const role = typeof child?.role === "string" && child.role.trim() ? child.role.trim() : null;
       const model = typeof child?.model === "string" && child.model.trim() ? child.model.trim() : null;
       const id = typeof child?.id === "string" && child.id.trim() ? child.id.trim() : this.nextChildId();
+      // A CLI-delegated child leaves no rollout the router can read, so where
+      // the bridge knows the CLI's own transcript path it is the only pointer
+      // to what the child actually did. Carried only when present.
+      const logUri = typeof child?.logUri === "string" && child.logUri.trim() ? child.logUri.trim() : null;
       if (!byRole.has(role)) byRole.set(role, []);
-      byRole.get(role).push(model ? { id, model } : { id });
+      byRole.get(role).push({ id, ...(model ? { model } : {}), ...(logUri ? { logUri } : {}) });
     }
     return [ ...byRole ].map(([ role, group ]) => ({ type, tool, role, status, count: group.length, children: group, ...extra }));
   }

@@ -21,17 +21,49 @@ than `pnpm dlx @playwright/mcp@latest`; `dlx @latest` re-resolves the package on
 every cold start (network + startup latency), grows the pnpm `dlx` cache, and
 drifts the version across hosts and agents, so it is not used. Code-oriented
 roles (`default`, `explorer`, `worker`, `validator`, and `smart`) enable the
-`lsp` server and the `lsp-mcp-server` skill. The `browser-tester` and
+`lsp` server and the `lsp-mcp-server` skill. The `browser-tester` and `smart`
+role files explicitly enable the `playwright` server and pin its tool approval
+mode to `approve`; this explicit role-level enablement is required because the
+role block overrides the user-level MCP entry. The `browser-tester` and
 `docs-researcher` roles explicitly disable `lsp` because their bounded work does
 not require code navigation. AutoDev declares the MCP bridge, browser
 automation, and TypeScript language-server dependencies so this repository can
 launch and use them with `pnpm exec`. Other active repositories need to expose
 the same `lsp-mcp-server` and `playwright-mcp` commands through their package
-manager for the user-level MCP entries to work there.
+manager for the user-level MCP entries to work there. The `docs-researcher`
+role enables the OpenAI Developer Docs MCP and Codex's native `web_search`
+tool, which is the appropriate search/open/read path for authoritative websites.
+The Playwright MCP remains for browser/UI testing roles and is disabled for
+`docs-researcher`. Provider bridges that run Claude Code receive the same pinned
+Playwright server through a per-turn inline `--mcp-config` for `browser-tester`
+and `smart`; the bridge denies the unneeded evaluate, upload, navigation-back,
+and unsafe code-execution tools rather than relying on mutable `~/.claude`
+settings. Antigravity has no per-turn MCP flag, so the installer updates its
+single global `playwright` entry to `pnpm exec playwright-mcp`.
+
+The installer installs CocoIndex Code once at the user level with
+`pipx install 'cocoindex-code[full]'` when `ccc` is not already available. It
+registers the stdio MCP once in the user-level Codex config as `ccc mcp` without
+a `cwd`; Codex therefore starts it from the active session workspace. CocoIndex
+Code keeps each repository's incremental index in that repository's
+`.cocoindex_code/` directory. The installer does not run `codex mcp add` on every
+invocation because that command is not an idempotent upsert; the versioned config
+stanza is the single registration source of truth. Install `pipx` before running
+the installer if it is not already present. For a new repository, the installed
+`ccc` skill directs the agent to run `ccc index` from that repository root; later
+searches refresh changed files incrementally.
+
+CocoIndex Code is enabled in the `default`, `explorer`, `worker`, `validator`,
+and `smart` agent profiles. It is explicitly disabled in `docs-researcher` and
+`browser-tester`, whose jobs are documentation/web research and UI testing
+rather than codebase semantic search. The user-level registration remains in
+place so the selected coding profiles can use the same MCP without duplicate
+installations.
 
 The installer exposes these AutoDev-owned shared skill directories in
 `$HOME/.agents/skills/` through symlinks:
 
+- `ccc`
 - `code-simplification`
 - `diagnosing-bugs`
 - `improve-codebase-architecture`
@@ -112,9 +144,10 @@ recursive deletion.
 - Prefer `ensure-*` scripts for idempotent setup and the `diagnose-*` scripts for evidence before changing provider routing.
 - Open `http://127.0.0.1:4100/dashboard` in a browser for the lightweight live
   dashboard. Raw JSON status is available at `http://127.0.0.1:4100/status`.
-  The dashboard also periodically queries the local Codex
-  app-server for `thread/list` task status and shows the returned task IDs and
-  metadata. Inspect the same state with
+  The dashboard shows only the router's own state; it does not query the Codex
+  app-server. A `thread/list` snapshot was surfaced here once and was removed
+  because nothing in routing, concurrency, or fallback read it and it cold-spawned
+  an app-server process on every refresh. Inspect the same state with
   `node scripts/codex-model-router-status.mjs` (use `--json` for automation).
   It reports observed session-limit, throttling, quota, capacity, timeout, and
   availability failures; it cannot query an upstream provider's private quota

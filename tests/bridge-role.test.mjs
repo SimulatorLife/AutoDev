@@ -44,6 +44,40 @@ test("the orchestrator is never handed the leaf prompt, and the leaf is never ha
   }
 });
 
+test("the orchestrator prompt teaches the spawn call a code-mode runtime actually accepts", () => {
+  const orchestrator = bridgeInstructions(ORCHESTRATOR_AGENT_ROLE);
+  // Verified against a live Codex 0.153.1 and against recorded rollouts of
+  // GPT-served turns that spawned successfully. Codex runs these models in code
+  // mode: there is no spawn tool in the request, only an `exec` tool whose
+  // JavaScript reaches `tools.multi_agent_v1__spawn_agent`. Telling the model to
+  // "use whatever your runtime provides" left it with nothing to act on, which
+  // is why delegation never happened on a code-mode provider.
+  assert.match(orchestrator, /tools\.multi_agent_v1__spawn_agent/);
+  // The role travels as `agent_type`; `agent` is accepted and silently ignored,
+  // producing a generic agent instead of the requested role.
+  assert.match(orchestrator, /agent_type/);
+  assert.match(orchestrator, /Promise\.all/);
+  // A batch must stay one call: fan-out inside a single call is what runs the
+  // children in parallel and what keeps a wide fan-out from being counted as
+  // one delegation.
+  assert.match(orchestrator, /ONE call rather than one call per child/);
+  // Both runtimes reach the same spawner, so the contract is stated once and
+  // only the spelling differs. A model must never be left choosing between
+  // this path and its own runtime's private task tool.
+  assert.match(orchestrator, /exactly one delegation path/);
+  assert.match(orchestrator, /spawn_subagent/);
+  // And it must not invent a blocking wait: spawning is fire-and-forget.
+  assert.match(orchestrator, /fire-and-forget/);
+});
+
+test("a leaf is told to ignore a spawn tool its runtime leaks to it", () => {
+  // agy's MCP config is global, so a spawn tool can be visible to a leaf turn
+  // that has no business calling it. The leaf prompt is the only lever there.
+  const leaf = bridgeInstructions("explorer");
+  assert.match(leaf, /multi_agent_v1__spawn_agent/);
+  assert.match(leaf, /not yours to call/);
+});
+
 test("every provider bridge picks its instructions from the shared role prompts", () => {
   for (const path of [
     "scripts/codex-antigravity-cli-responses-proxy.mjs",
