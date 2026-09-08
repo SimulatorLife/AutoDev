@@ -27,7 +27,11 @@ const CATALOG_FILE = process.env.CODEX_ROUTER_CATALOG_FILE ?? `${CODEX_HOME}/cod
 const DASHBOARD_FILE = new URL("./codex-model-router-dashboard.html", import.meta.url);
 const IS_MAIN = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
 const STATE_FILE = process.env.CODEX_ROUTER_STATE_FILE ?? `${CODEX_HOME}/codex-router-state.json`;
-const ROUTER_AUTH_TOKEN = process.env.CODEX_ROUTER_AUTH_TOKEN ?? "";
+// Read once at startup, but kept mutable so the test suite can pin it. The
+// launcher sources $CODEX_HOME/.env before exec, so a developer shell that
+// legitimately carries the token would otherwise silently arm the auth gate
+// against tests that send no Authorization header.
+let ROUTER_AUTH_TOKEN = process.env.CODEX_ROUTER_AUTH_TOKEN ?? "";
 const ROUTING_CONFIG_FILE = process.env.CODEX_ROUTER_CONFIG_FILE
   ?? (existsSync(`${CODEX_HOME}/codex-model-routing.json`)
     ? `${CODEX_HOME}/codex-model-routing.json`
@@ -3657,6 +3661,10 @@ function routerAuthorizationValid(request, configuredToken = ROUTER_AUTH_TOKEN) 
   return typeof value === "string" && value === `Bearer ${configuredToken}`;
 }
 
+function setRouterAuthTokenForTests(token) {
+  ROUTER_AUTH_TOKEN = typeof token === "string" ? token : "";
+}
+
 function sendRouterAuthFailure(response) {
   sendJson(response, 401, errorBody("Router authentication is required.", "router_authentication_error", {
     code: "router_authentication_error",
@@ -3911,6 +3919,7 @@ export {
   spawnFailureStatus,
   routeCredentialAvailable,
   routerAuthorizationValid,
+  setRouterAuthTokenForTests,
   roleCandidates,
   roleForModel,
   routeForModel,

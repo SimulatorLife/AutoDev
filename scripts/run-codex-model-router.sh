@@ -9,6 +9,28 @@ if [[ -f "$HOME/.codex/.env" ]]; then
   set +a
 fi
 
+# Republish the router auth token to the launchd user domain.
+#
+# This is what keeps the two ends of the auth boundary agreeing across a
+# reboot. The router gets the token durably from the .env sourced above, so
+# once a token exists it enforces on every boot. Codex Desktop, though,
+# resolves `env_key = "CODEX_ROUTER_AUTH_TOKEN"` from its own process
+# environment and does NOT read $CODEX_HOME/.env -- so its only supply is
+# what launchd hands a GUI launch. `launchctl setenv` does not survive a
+# reboot, so without this the router would come up enforcing while every
+# Desktop session came up unable to authenticate, and each boot would 401.
+#
+# RunAtLoad puts this before the user's Codex launch, and .env stays the one
+# source of truth: the token is never written into the (git-tracked,
+# symlinked) config.toml. A failure here must not stop the router from
+# starting -- a router that is up and rejecting is far easier to diagnose
+# than one that never bound its port.
+if [[ -n "${CODEX_ROUTER_AUTH_TOKEN:-}" && "${AUTODEV_SKIP_LAUNCHCTL:-0}" != "1" ]] \
+  && command -v launchctl >/dev/null 2>&1; then
+  launchctl setenv CODEX_ROUTER_AUTH_TOKEN "$CODEX_ROUTER_AUTH_TOKEN" 2>/dev/null || \
+    echo "run-codex-model-router: could not publish CODEX_ROUTER_AUTH_TOKEN to launchd" >&2
+fi
+
 # launchd starts us with a minimal PATH that lacks nvm/homebrew node.
 # Resolve a real node binary robustly before exec.
 resolve_node() {

@@ -1585,6 +1585,74 @@ class LocalSetupTests(unittest.TestCase):
         self.assertIn('ps -o command= -p "$pid"', reap_body)
         self.assertIn("does not own", reap_body)
 
+    def test_router_launcher_republishes_the_auth_token_to_launchd(self):
+        # Codex resolves env_key from its own process environment and never
+        # reads $CODEX_HOME/.env, while `launchctl setenv` is lost on reboot.
+        # The RunAtLoad launcher is what keeps the enforcing router and the
+        # Desktop app supplied from the same durable .env token.
+        with tempfile.TemporaryDirectory() as scratch:
+            root = Path(scratch)
+            binaries = root / "bin"
+            binaries.mkdir()
+            log = root / "calls.log"
+            (binaries / "launchctl").write_text(
+                '#!/bin/bash\necho "launchctl $*" >> "$STUB_LOG"\n'
+            )
+            (binaries / "node").write_text(
+                '#!/bin/bash\necho "node token=${CODEX_ROUTER_AUTH_TOKEN:-<unset>}" >> "$STUB_LOG"\n'
+            )
+            for stub in binaries.iterdir():
+                stub.chmod(0o755)
+            hooks = root / "home/.codex/hooks"
+            hooks.mkdir(parents=True)
+            (root / "home/.codex/.env").write_text("CODEX_ROUTER_AUTH_TOKEN=tok-from-dotenv\n")
+            launcher = hooks / "run-codex-model-router.sh"
+            launcher.write_text((REPO_ROOT / "scripts/run-codex-model-router.sh").read_text())
+            (hooks / "codex-model-router.mjs").write_text("")
+
+            def run(**overrides):
+                log.write_text("")
+                environment = {
+                    "HOME": str(root / "home"),
+                    "STUB_LOG": str(log),
+                    "PATH": f"{binaries}:/usr/bin:/bin",
+                }
+                environment.update(overrides)
+                result = subprocess.run(
+                    ["bash", str(launcher)], capture_output=True, text=True, env=environment,
+                )
+                self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
+                return log.read_text()
+
+            published = run()
+            self.assertIn("launchctl setenv CODEX_ROUTER_AUTH_TOKEN tok-from-dotenv", published)
+            # The router itself must still receive the token it enforces with.
+            self.assertIn("node token=tok-from-dotenv", published)
+
+            # Tests and sandboxes opt out of touching the real user domain.
+            skipped = run(AUTODEV_SKIP_LAUNCHCTL="1")
+            self.assertNotIn("launchctl", skipped)
+            self.assertIn("node token=tok-from-dotenv", skipped)
+
+            # No staged token means no boundary to publish, and the router
+            # must still start rather than fail closed on a missing file.
+            (root / "home/.codex/.env").unlink()
+            unstaged = run()
+            self.assertNotIn("launchctl", unstaged)
+            self.assertIn("node token=<unset>", unstaged)
+
+    def test_installer_check_reports_a_one_sided_router_auth_boundary(self):
+        # An enforcing router alone is not a working boundary: reporting "ok"
+        # from router status let a 401ing Desktop session pass a green check.
+        installer = INSTALLER_PATH.read_text()
+        body = installer.split("check_router_auth_state() {")[1].split("\n}")[0]
+        self.assertIn("launchctl getenv CODEX_ROUTER_AUTH_TOKEN", body)
+        self.assertIn("stale token", body)
+        self.assertIn("predates the auth token", body)
+        # The live Desktop process keeps the environment it launched with, so
+        # the check has to inspect it rather than trust the launchd domain.
+        self.assertIn("ps eww -o command=", body)
+
     def test_installer_can_materialize_router_auth_without_restarting_services(self):
         with tempfile.TemporaryDirectory() as home, tempfile.TemporaryDirectory() as codex_home:
             environment = os.environ.copy()

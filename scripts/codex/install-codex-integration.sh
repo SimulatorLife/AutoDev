@@ -596,7 +596,41 @@ check_router_auth_state() {
   if status_json="$(curl --silent --max-time 1 http://127.0.0.1:4100/status 2>/dev/null)"; then
     auth_enabled="$(printf '%s' "$status_json" | python3 -c 'import json,sys; print("1" if json.load(sys.stdin).get("authentication", {}).get("responseRequests") else "0")' 2>/dev/null || printf '0')"
     if [[ "$auth_enabled" == 1 ]]; then
-      printf '%s\n' 'ok router authentication is active'
+      # An enforcing router is only half the boundary. Codex reads the token
+      # from its own process environment (env_key) and never from .env, so a
+      # launchd user domain that is missing or stale means every Desktop
+      # session 401s no matter how healthy the router looks. Reporting "ok"
+      # off the router alone is what let that state pass a green --check.
+      local staged_token launchd_token
+      staged_token="$(sed -n 's/^CODEX_ROUTER_AUTH_TOKEN=//p' "$env_file" | tail -n 1)"
+      launchd_token=""
+      if [[ "${AUTODEV_SKIP_LAUNCHCTL:-0}" != "1" ]] && command -v launchctl >/dev/null 2>&1; then
+        launchd_token="$(launchctl getenv CODEX_ROUTER_AUTH_TOKEN 2>/dev/null || printf '')"
+      fi
+      if [[ -z "$launchd_token" ]]; then
+        printf '%s\n' 'router is enforcing auth but the launchd user environment has no token; Codex Desktop will 401 (restart the router agent, then relaunch Codex)'
+      elif [[ "$launchd_token" != "$staged_token" ]]; then
+        printf '%s\n' 'router is enforcing auth but the launchd user environment holds a stale token; Codex Desktop will 401 (restart the router agent, then relaunch Codex)'
+      else
+        # The launchd domain being correct still does not prove the Codex
+        # process running right now inherited it: a Desktop app launched
+        # before the token was published keeps its original environment for
+        # its whole lifetime, which is exactly how a healthy-looking router
+        # and a 401ing Desktop session coexist. Inspect the live process.
+        local stale_pids pid
+        stale_pids=""
+        for pid in $(pgrep -f 'ChatGPT\.app/Contents/Resources/codex' 2>/dev/null); do
+          if ! ps eww -o command= "$pid" 2>/dev/null | tr ' ' '\n' | grep -q '^CODEX_ROUTER_AUTH_TOKEN='; then
+            stale_pids="${stale_pids:+$stale_pids }$pid"
+          fi
+        done
+        if [[ -n "$stale_pids" ]]; then
+          printf 'running Codex process predates the auth token and will 401 (pid%s %s); quit and relaunch Codex\n' \
+            "$([[ "$stale_pids" == *' '* ]] && printf 's')" "$stale_pids"
+        else
+          printf '%s\n' 'ok router authentication is active'
+        fi
+      fi
     else
       printf '%s\n' 'router auth token staged; active router still needs a planned restart'
     fi

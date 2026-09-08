@@ -73,6 +73,7 @@ import {
   roleForModel,
   routeCredentialAvailable,
   routerAuthorizationValid,
+  setRouterAuthTokenForTests,
   routeForModel,
   transformSseEvent,
   flattenOutboundTools,
@@ -99,6 +100,12 @@ import { resolveAgentEventReporter } from "./codex/lib/agent-events.mjs";
 import { spawnedChildren } from "./codex-antigravity-cli-responses-proxy.mjs";
 
 const read = (path) => readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
+
+// The launcher publishes CODEX_ROUTER_AUTH_TOKEN into the launchd user domain,
+// so a maintainer's shell normally carries it. Without pinning, the module
+// would arm the auth gate and every request-level test below -- none of which
+// send an Authorization header -- would 401 on a correctly configured machine.
+setRouterAuthTokenForTests("");
 
 test("router auth is opt-in and validates bearer tokens without exposing the token", () => {
   assert.equal(routerAuthorizationValid({ headers: {} }), true);
