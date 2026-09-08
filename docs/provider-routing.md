@@ -178,12 +178,35 @@ Three properties the rewrite has to keep:
   some tool outputs, and an invented id would name an item the upstream never
   issued.
 
-Normalisation runs on every route. A provider that turns out to pair items by
+Normalisation runs on every route for self-contained items (messages, tool calls, and tool outputs). A provider that turns out to pair items by
 the ids it minted can opt out with `capabilities.normalizeItemIds: false` in
 `scripts/codex/model-routing.json`; absent means enabled. Requests that needed a
 correction emit an `item_ids_normalized` router event carrying the count, so a
 provider drifting from the contract is visible immediately rather than as a
 dead session weeks later.
+
+### Reasoning items are dropped when unresolvable, not rewritten
+
+Reasoning items are fundamentally different from tool calls. While a tool call
+carries its own name, input, and `call_id`, a reasoning item without
+`encrypted_content` is only a *reference* to an item the backend stored. Because
+Codex requests operate with `store: false`, the OpenAI backend persists nothing;
+an unencrypted reasoning item minted by a foreign provider (such as MiniMax's
+`<32 hex>_rs` or bridge-minted activity summaries) has nothing to resolve to.
+Rewriting its id to a conforming `rs_<32 hex>` simply converts a 400 format
+validation error into a 404 (`Item with id 'rs_...' not found. Items are not persisted
+when store is set to false`).
+
+Therefore, reasoning items are excluded from id rewriting. Instead:
+
+- On Codex routes (`route.provider === "codex"`), `dropUnresolvableReasoning`
+  drops foreign reasoning items lacking `encrypted_content`. Genuine OpenAI
+  reasoning items carrying `encrypted_content` are preserved. When foreign
+  reasoning items are removed, the router emits a `foreign_reasoning_dropped`
+  event with `droppedReasoningItems: <count>`.
+- On non-Codex routes, reasoning items are passed through untouched so the
+  provider that minted them retains its own reasoning continuity on subsequent
+  turns.
 
 When the orchestrator tier is genuinely exhausted, the router returns
 `503 router_provider_exhausted` exactly as it does for an exhausted role tier --

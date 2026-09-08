@@ -291,9 +291,12 @@ test("normalising item ids upstream leaves everything MiniMax relies on intact",
 
     const sent = upstreamRequestBody.input;
 
-    // The contract is enforced on MiniMax's own route too.
-    assert.match(sent[ 1 ].id, /^rs_/);
+    // The contract is enforced on self-contained items like tool calls.
     assert.match(sent[ 2 ].id, /^ctc_/);
+
+    // Reasoning items are not self-contained and are excluded from normalisation,
+    // preserving MiniMax's own reasoning continuity on its own route.
+    assert.equal(sent[ 1 ].id, "06eea1506b9c37f6f3f4bb02f90abd28_rs");
 
     // The pairing MiniMax reads is byte-identical to what it minted, on both
     // sides of the pair.

@@ -8,6 +8,8 @@ import test from "node:test";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
+import { RESPONSES_ITEM_ID_PREFIXES } from "./codex/lib/responses-item-ids.mjs";
+
 import {
   activeProviderRequests,
   AGENT_ROLE_HEADER,
@@ -576,14 +578,22 @@ test("orchestrator alias falls back to another provider when the primary is unav
 });
 
 test("reports the earliest provider retry time when every role candidate is cooling down", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (url, options) => {
+    const target = String(url);
+    if (target.endsWith("/health") || target.endsWith("/health/liveliness")) {
+      return new Response("down", { status: 503 });
+    }
+    return originalFetch(url, options);
+  };
   resetRouterTelemetry();
   const cooldownStartedAt = Date.now();
-  for (const provider of [ "claude", "antigravity", "minimax", "copilot", "codex" ]) cooldownProvider(provider, cooldownStartedAt);
+  for (const provider of [ "claude", "antigravity", "minimax", "copilot", "codex" ]) cooldownProvider(provider, { now: cooldownStartedAt });
   const server = createServer((request, response) => { void handle(request, response); });
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
   try {
     const address = server.address();
-    const response = await fetch(`http://127.0.0.1:${address.port}/v1/responses`, {
+    const response = await originalFetch(`http://127.0.0.1:${address.port}/v1/responses`, {
       method: "POST",
       headers: { "content-type": "application/json", "x-codex-session-id": "cooldown-test" },
       body: JSON.stringify({ model: "autodev/default", stream: false }),
@@ -593,6 +603,8 @@ test("reports the earliest provider retry time when every role candidate is cool
     assert.match((await response.json()).error.message, /Retry after approximately 30s/);
   } finally {
     await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    globalThis.fetch = originalFetch;
+    for (const provider of [ "claude", "antigravity", "minimax", "copilot", "codex" ]) clearProviderCooldown(provider);
     resetRouterTelemetry();
   }
 });
@@ -3677,25 +3689,50 @@ test("outbound item ids are corrected to match their item type", () => {
     { type: "custom_tool_call_output", id: "ctco_1", call_id: "call_8ec20ad454e0460d9d4b6662", output: "ok" },
   ];
 
-  for (const model of [ "gpt-5.6-luna", "MiniMax-M3", "sonnet" ]) {
+  // Non-Codex providers preserve reasoning items with their minted IDs for continuity,
+  // while self-contained items like tool calls are normalized.
+  for (const model of [ "MiniMax-M3", "sonnet" ]) {
     const route = routeForModel(model);
     const sent = upstreamPayload(route, { model, input: poisoned }, true);
-    assert.match(sent.input[ 1 ].id, /^rs_/, `${route.provider} reasoning id`);
-    assert.match(sent.input[ 2 ].id, /^ctc_/, `${route.provider} tool call id`);
-    // Untouched: these already conform.
+    assert.equal(sent.input.length, 4);
     assert.equal(sent.input[ 0 ].id, "msg_1");
+    assert.equal(sent.input[ 1 ].id, "06eea1506b9c37f6f3f4bb02f90abd28_rs", `${route.provider} reasoning id preserved`);
+    assert.match(sent.input[ 2 ].id, /^ctc_/, `${route.provider} tool call id normalized`);
     assert.equal(sent.input[ 3 ].id, "ctco_1");
-    // A call and its output are paired by call_id alone, so rewriting one side
-    // of that pair would strand the result.
     assert.equal(sent.input[ 2 ].call_id, "call_8ec20ad454e0460d9d4b6662");
     assert.equal(sent.input[ 3 ].call_id, "call_8ec20ad454e0460d9d4b6662");
-    // The caller's array is never mutated in place.
-    assert.equal(poisoned[ 2 ].id, "06ef3bc08924acade1facee14da0af2e_fc_0");
   }
+
+  // On Codex routes, reasoning items without encrypted_content are unresolvable references
+  // under store: false and are dropped outright, while tool calls are normalized.
+  const codexRoute = routeForModel("gpt-5.6-luna");
+  const codexSent = upstreamPayload(codexRoute, { model: "gpt-5.6-luna", input: poisoned }, true);
+  assert.equal(codexSent.input.length, 3, "unresolvable foreign reasoning item dropped");
+  assert.equal(codexSent.input[ 0 ].id, "msg_1");
+  assert.match(codexSent.input[ 1 ].id, /^ctc_/, "tool call id normalized");
+  assert.equal(codexSent.input[ 2 ].id, "ctco_1");
+  assert.equal(codexSent.input[ 1 ].call_id, "call_8ec20ad454e0460d9d4b6662");
+  assert.equal(codexSent.input[ 2 ].call_id, "call_8ec20ad454e0460d9d4b6662");
+
+  // A genuine reasoning item carrying encrypted_content survives on Codex.
+  const withEncrypted = [
+    { type: "reasoning", id: "rs_0252e954049dbf1c016aa00850d46087d1853ed6aa5cb47915", encrypted_content: "enc_data" },
+    { type: "custom_tool_call", id: "06ef3bc08924acade1facee14da0af2e_fc_0", call_id: "call_8ec20ad454e0460d9d4b6662", name: "exec", input: "text()" },
+  ];
+  const codexSurvives = upstreamPayload(codexRoute, { model: "gpt-5.6-luna", input: withEncrypted }, true);
+  assert.equal(codexSurvives.input.length, 2);
+  assert.equal(codexSurvives.input[ 0 ].id, "rs_0252e954049dbf1c016aa00850d46087d1853ed6aa5cb47915");
+  assert.match(codexSurvives.input[ 1 ].id, /^ctc_/);
+
+  // The caller's array is never mutated in place.
+  assert.equal(poisoned[ 2 ].id, "06ef3bc08924acade1facee14da0af2e_fc_0");
 });
 
 test("a payload whose ids already conform is forwarded unchanged", () => {
-  const input = [ { type: "reasoning", id: "rs_abc" }, { type: "custom_tool_call", id: "ctc_abc", call_id: "call_1", name: "exec" } ];
+  const input = [
+    { type: "reasoning", id: "rs_abc", encrypted_content: "enc_1" },
+    { type: "custom_tool_call", id: "ctc_abc", call_id: "call_1", name: "exec" },
+  ];
   const sent = upstreamPayload(routeForModel("gpt-5.6-luna"), { model: "gpt-5.6-luna", input }, true);
   assert.equal(sent.input, input);
 });
@@ -3718,7 +3755,7 @@ test("a provider that opts out keeps the ids it minted", async () => {
 
     const script = `
       import { routeForModel, upstreamPayload, providerCapabilities } from ${JSON.stringify(new URL("./codex-model-router.mjs", import.meta.url).href)};
-      const input = [ { type: "reasoning", id: "06eea1506b9c37f6f3f4bb02f90abd28_rs" } ];
+      const input = [ { type: "custom_tool_call", id: "06ef3bc08924acade1facee14da0af2e_fc_0", call_id: "call_1", name: "exec" } ];
       const optedOut = upstreamPayload(routeForModel("MiniMax-M3"), { model: "MiniMax-M3", input }, true);
       const strict = upstreamPayload(routeForModel("gpt-5.6-luna"), { model: "gpt-5.6-luna", input }, true);
       console.log(JSON.stringify({
@@ -3740,10 +3777,131 @@ test("a provider that opts out keeps the ids it minted", async () => {
 
     const result = JSON.parse(stdout);
     assert.equal(result.capability, false);
-    assert.equal(result.minimax, "06eea1506b9c37f6f3f4bb02f90abd28_rs", "the opted-out provider still sees its own id");
+    assert.equal(result.minimax, "06ef3bc08924acade1facee14da0af2e_fc_0", "the opted-out provider still sees its own id");
     // Opting one provider out must not weaken the provider that actually rejects.
-    assert.match(result.codex, /^rs_/);
+    assert.match(result.codex, /^ctc_/);
   } finally {
     await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("end-to-end: unresolvable reasoning items dropped and tool call ids normalized on codex route", async () => {
+  resetRouterTelemetry();
+  const fixture = JSON.parse(readFileSync(new URL("../tests/fixtures/poisoned-rollout-items.json", import.meta.url), "utf8"));
+
+  const unresolvable1 = { type: "reasoning", id: "06eea1506b9c37f6f3f4bb02f90abd28_rs" };
+  const unresolvable2 = { type: "reasoning", id: "rs_bridge_synthetic_123456" };
+  const extraGenuine = { type: "reasoning", id: "rs_extra_genuine_123456789012345678901234567890123456789012", encrypted_content: "enc_extra" };
+
+  const inputWithForeign = [
+    ...fixture.items,
+    unresolvable1,
+    unresolvable2,
+    extraGenuine,
+  ];
+
+  let upstreamRequestBody = null;
+  const upstream = createServer((request, response) => {
+    const chunks = [];
+    request.on("data", (chunk) => chunks.push(chunk));
+    request.on("end", () => {
+      upstreamRequestBody = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+      // 1. Format validation (400)
+      for (let i = 0; i < upstreamRequestBody.input.length; i++) {
+        const item = upstreamRequestBody.input[i];
+        const prefix = RESPONSES_ITEM_ID_PREFIXES[item.type];
+        if (prefix && typeof item.id === "string" && !item.id.startsWith(prefix)) {
+          response.writeHead(400, { "content-type": "application/json" });
+          response.end(JSON.stringify({
+            error: {
+              message: `Invalid 'input[${i}].id': '${item.id}'. Expected an ID that begins with '${prefix.slice(0, -1)}'.`,
+              type: "invalid_request_error",
+            },
+          }));
+          return;
+        }
+      }
+      // 2. Lookup rule (404)
+      if (upstreamRequestBody.store === false) {
+        for (const item of upstreamRequestBody.input) {
+          if (item.type === "reasoning" && (!item.encrypted_content || typeof item.encrypted_content !== "string")) {
+            response.writeHead(404, { "content-type": "application/json" });
+            response.end(JSON.stringify({
+              error: {
+                message: `Item with id '${item.id}' not found. Items are not persisted when store is set to false.`,
+                type: "invalid_request_error",
+              },
+            }));
+            return;
+          }
+        }
+      }
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(JSON.stringify({ id: "resp_success", output: [] }));
+    });
+  });
+  await new Promise((resolve) => upstream.listen(0, "127.0.0.1", resolve));
+  const upstreamPort = upstream.address().port;
+
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (url, options) => {
+    const target = String(url);
+    if (target.startsWith("https://chatgpt.com/") || target.endsWith("/responses")) {
+      return originalFetch(`http://127.0.0.1:${upstreamPort}/v1/responses`, options);
+    }
+    return originalFetch(url, options);
+  };
+
+  const server = createServer((request, response) => { void handle(request, response); });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  try {
+    const address = server.address();
+    const response = await originalFetch(`http://127.0.0.1:${address.port}/v1/responses`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-codex-session-id": "e2e-reasoning-drop-test" },
+      body: JSON.stringify({ model: "gpt-5.6-luna", input: inputWithForeign, stream: false }),
+    });
+    assert.equal(response.status, 200);
+
+    const events = getRouterStatus().recentEvents;
+    const dropEvent = events.find((e) => e.phase === "foreign_reasoning_dropped");
+    const normEvent = events.find((e) => e.phase === "item_ids_normalized");
+
+    assert.ok(dropEvent, "foreign_reasoning_dropped event fired");
+    assert.equal(dropEvent.droppedReasoningItems, 2);
+
+    assert.ok(normEvent, "item_ids_normalized event fired");
+    assert.equal(normEvent.normalizedItemIds, 9);
+
+    // Verify upstream saw 0 non-conforming IDs
+    const nonConforming = upstreamRequestBody.input.filter((item) => {
+      const prefix = RESPONSES_ITEM_ID_PREFIXES[item.type];
+      return prefix && typeof item.id === "string" && !item.id.startsWith(prefix);
+    });
+    assert.equal(nonConforming.length, 0);
+
+    // input[18].id on the wire is ctc_e60e73b91d8baea7b1f1d138d2967e27 (was 06ef3bc43b096c4935a65885c28fb67b_fc_0)
+    assert.equal(upstreamRequestBody.input[ 18 ].id, "ctc_e60e73b91d8baea7b1f1d138d2967e27");
+
+    // All 26 call_ids (13 tool calls, 13 outputs) from fixture are preserved exactly
+    const wireCalls = upstreamRequestBody.input.filter((i) => i.type === "custom_tool_call");
+    const wireOutputs = upstreamRequestBody.input.filter((i) => i.type === "custom_tool_call_output");
+    assert.equal(wireCalls.length, 13);
+    assert.equal(wireOutputs.length, 13);
+    assert.deepEqual(wireCalls.map((i) => i.call_id), fixture.items.filter((i) => i.type === "custom_tool_call").map((i) => i.call_id));
+    assert.deepEqual(wireOutputs.map((i) => i.call_id), fixture.items.filter((i) => i.type === "custom_tool_call_output").map((i) => i.call_id));
+
+    // Reasoning items reaching upstream: 4 from fixture + 1 extra = 5 genuine encrypted ones
+    const wireReasoning = upstreamRequestBody.input.filter((i) => i.type === "reasoning");
+    assert.equal(wireReasoning.length, 5);
+    for (const r of wireReasoning) {
+      assert.match(r.id, /^rs_/);
+      assert.ok(r.encrypted_content && r.encrypted_content.length > 0);
+    }
+  } finally {
+    await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    await new Promise((resolve) => upstream.close(resolve));
+    globalThis.fetch = originalFetch;
+    resetRouterTelemetry();
   }
 });

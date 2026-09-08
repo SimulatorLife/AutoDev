@@ -1,5 +1,6 @@
 {
   "source": "rollout-2026-09-08T09-06-20-01a08120-6b25-7b83-82fe-e361db57f4a0.jsonl",
+  "note": "Item skeleton only. encrypted_content is redacted to a marker; its presence or absence is preserved because that is what decides whether the upstream can resolve a reasoning item.",
   "upstreamError": {
     "message": "Invalid 'input[18].id': '06ef3bc08924acade1facee14da0af2e_fc_0'. Expected an ID that begins with 'ctc'.",
     "type": "invalid_request_error",
@@ -29,7 +30,8 @@
     },
     {
       "type": "reasoning",
-      "id": "rs_0252e954049dbf1c016aa00850d46087d1853ed6aa5cb47915"
+      "id": "rs_0252e954049dbf1c016aa00850d46087d1853ed6aa5cb47915",
+      "encrypted_content": "<redacted-present-in-original>"
     },
     {
       "type": "custom_tool_call",
@@ -44,7 +46,8 @@
     },
     {
       "type": "reasoning",
-      "id": "rs_0252e954049dbf1c016aa00855524887d18c533b16ac858670"
+      "id": "rs_0252e954049dbf1c016aa00855524887d18c533b16ac858670",
+      "encrypted_content": "<redacted-present-in-original>"
     },
     {
       "type": "custom_tool_call",
@@ -59,7 +62,8 @@
     },
     {
       "type": "reasoning",
-      "id": "rs_0252e954049dbf1c016aa00866751487d183041f407e333ab6"
+      "id": "rs_0252e954049dbf1c016aa00866751487d183041f407e333ab6",
+      "encrypted_content": "<redacted-present-in-original>"
     },
     {
       "type": "custom_tool_call",
@@ -74,7 +78,8 @@
     },
     {
       "type": "reasoning",
-      "id": "rs_0252e954049dbf1c016aa008777c8087d1b141d51e464b249c"
+      "id": "rs_0252e954049dbf1c016aa008777c8087d1b141d51e464b249c",
+      "encrypted_content": "<redacted-present-in-original>"
     },
     {
       "type": "custom_tool_call",

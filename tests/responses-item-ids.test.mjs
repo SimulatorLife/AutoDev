@@ -6,6 +6,7 @@ import {
   RESPONSES_ITEM_ID_PREFIXES,
   normalizeItemId,
   normalizeInputItemIds,
+  dropUnresolvableReasoning,
 } from "../scripts/codex/lib/responses-item-ids.mjs";
 
 const conforms = (item) => {
@@ -13,10 +14,11 @@ const conforms = (item) => {
   return !prefix || typeof item.id !== "string" || item.id.startsWith(prefix);
 };
 
-test("a MiniMax-minted id is rewritten to its type's prefix", () => {
+test("a MiniMax-minted id is rewritten to its type's prefix for self-contained items", () => {
   assert.match(normalizeItemId("custom_tool_call", "06ef3bc08924acade1facee14da0af2e_fc_0"), /^ctc_[0-9a-f]{32}$/);
-  assert.match(normalizeItemId("reasoning", "06eea1506b9c37f6f3f4bb02f90abd28_rs"), /^rs_[0-9a-f]{32}$/);
   assert.match(normalizeItemId("function_call", "06a9c3a9e1f7e0da8b8f2979b8775435_fc_1"), /^fc_[0-9a-f]{32}$/);
+  // Reasoning items are not self-contained; they are excluded from id rewriting.
+  assert.equal(normalizeItemId("reasoning", "06eea1506b9c37f6f3f4bb02f90abd28_rs"), null);
 });
 
 test("an id that already conforms is left exactly as it is", () => {
@@ -60,15 +62,15 @@ test("call_id is never rewritten", () => {
 });
 
 test("normalisation is deterministic, so a replayed turn hashes the same way", () => {
-  const first = normalizeItemId("reasoning", "06eea1506b9c37f6f3f4bb02f90abd28_rs");
-  const second = normalizeItemId("reasoning", "06eea1506b9c37f6f3f4bb02f90abd28_rs");
+  const first = normalizeItemId("custom_tool_call", "06ef3bc08924acade1facee14da0af2e_fc_0");
+  const second = normalizeItemId("custom_tool_call", "06ef3bc08924acade1facee14da0af2e_fc_0");
   assert.equal(first, second);
   // Distinct originals stay distinct: two items must never collapse onto one id.
-  assert.notEqual(first, normalizeItemId("reasoning", "06eea1506b9c37f6f3f4bb02f90abd29_rs"));
+  assert.notEqual(first, normalizeItemId("custom_tool_call", "06ef3bc08924acade1facee14da0af2e_fc_1"));
 });
 
 test("normalisation is idempotent", () => {
-  const input = [ { type: "reasoning", id: "06eea1506b9c37f6f3f4bb02f90abd28_rs" } ];
+  const input = [ { type: "custom_tool_call", id: "06ef3bc08924acade1facee14da0af2e_fc_0", call_id: "call_1", name: "exec" } ];
   const once = normalizeInputItemIds(input);
   const twice = normalizeInputItemIds(once.input);
   assert.equal(once.changed, 1);
@@ -115,4 +117,42 @@ test("the rollout that crashed the orchestrator normalises cleanly", () => {
   assert.deepEqual(input.filter((item) => !conforms(item)), [], "no item is left violating the contract");
   assert.match(input[ 18 ].id, /^ctc_/);
   assert.deepEqual(input.map((item) => item.call_id), fixture.items.map((item) => item.call_id));
+
+  // Genuine reasoning items in the real session carry encrypted_content and survive.
+  const { input: resolvable, dropped } = dropUnresolvableReasoning(input);
+  assert.equal(dropped, 0);
+  assert.equal(resolvable.filter((item) => item.type === "reasoning").length, 4);
+});
+
+test("dropUnresolvableReasoning drops reasoning items lacking encrypted_content", () => {
+  const input = [
+    { type: "message", id: "msg_1", role: "user" },
+    { type: "reasoning", id: "06eea1506b9c37f6f3f4bb02f90abd28_rs" },
+    { type: "reasoning", id: "rs_bridge1234567890123456" },
+    { type: "reasoning", id: "rs_empty", encrypted_content: "" },
+    { type: "reasoning", id: "rs_0252e954049dbf1c016aa00850d46087d1853ed6aa5cb47915", encrypted_content: "enc_valid" },
+    { type: "custom_tool_call", id: "ctc_1", call_id: "call_1", name: "exec" },
+  ];
+  const { input: filtered, dropped } = dropUnresolvableReasoning(input);
+  assert.equal(dropped, 3);
+  assert.equal(filtered.length, 3);
+  assert.equal(filtered[ 0 ].id, "msg_1");
+  assert.equal(filtered[ 1 ].id, "rs_0252e954049dbf1c016aa00850d46087d1853ed6aa5cb47915");
+  assert.equal(filtered[ 2 ].id, "ctc_1");
+});
+
+test("dropUnresolvableReasoning preserves inputs with only valid encrypted reasoning or no reasoning", () => {
+  const input = [
+    { type: "message", id: "msg_1" },
+    { type: "reasoning", id: "rs_1", encrypted_content: "valid" },
+  ];
+  const { input: out, dropped } = dropUnresolvableReasoning(input);
+  assert.equal(dropped, 0);
+  assert.equal(out, input);
+});
+
+test("dropUnresolvableReasoning handles non-array input without throwing", () => {
+  for (const value of [ undefined, null, "text", 7, {} ]) {
+    assert.deepEqual(dropUnresolvableReasoning(value), { input: value, dropped: 0 });
+  }
 });

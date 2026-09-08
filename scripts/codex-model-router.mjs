@@ -17,7 +17,7 @@ import { INCOMPLETE_REASON_INTERRUPTED, INCOMPLETE_REASON_TIMEOUT, isHardLimitCl
 // Providers disagree about the Responses API's item-id contract, and Codex
 // replays whatever it was handed on every later turn. Normalising outbound is
 // what stops one lax turn from permanently poisoning a session.
-import { normalizeInputItemIds } from "./codex/lib/responses-item-ids.mjs";
+import { dropUnresolvableReasoning, normalizeInputItemIds } from "./codex/lib/responses-item-ids.mjs";
 
 const HOST = process.env.CODEX_MODEL_ROUTER_HOST ?? "127.0.0.1";
 const PORT = Number.parseInt(process.env.CODEX_MODEL_ROUTER_PORT ?? "4100", 10);
@@ -1561,7 +1561,7 @@ function classifyProviderFailure(status, body = "") {
   return "request_error";
 }
 
-function recordRouterEvent({ phase, requestId, role = null, requestedModel, provider, model, workspace = null, outcome = null, status = null, failureClass = null, denialReason = null, spawnFailureReason = null, elapsedMs = null, toolCalls = 0, errorName = null, errorCode = null, syscall = null, origin = null, selection = null, normalizedItemIds = 0 }) {
+function recordRouterEvent({ phase, requestId, role = null, requestedModel, provider, model, workspace = null, outcome = null, status = null, failureClass = null, denialReason = null, spawnFailureReason = null, elapsedMs = null, toolCalls = 0, errorName = null, errorCode = null, syscall = null, origin = null, selection = null, normalizedItemIds = 0, droppedReasoningItems = 0 }) {
   const timestamp = new Date().toISOString();
   const workspaceContext = typeof workspace === "string" ? { key: workspace, cwd: null } : workspace;
   const event = {
@@ -1594,6 +1594,8 @@ function recordRouterEvent({ phase, requestId, role = null, requestedModel, prov
     // ids that violate the Responses contract is otherwise invisible until a
     // session dies against a stricter provider weeks later.
     normalizedItemIds,
+    // Reasoning items removed because this upstream could not resolve them.
+    droppedReasoningItems,
   };
   recentRouterEvents.push(event);
   while (recentRouterEvents.length > Math.max(1, MAX_RECENT_EVENTS)) recentRouterEvents.shift();
@@ -2922,6 +2924,26 @@ function upstreamPayload(route, payload, wantsStream, requestId = null) {
   const { extra_headers: _discardedExtraHeaders, ...safePayload } = payload;
   if (route.provider !== "codex" && Array.isArray(safePayload.tools)) {
     safePayload.tools = flattenOutboundTools(safePayload.tools);
+  }
+  // A reasoning item without encrypted content names something the backend is
+  // meant to be holding, and Codex sends `store: false`, so one produced by a
+  // different provider resolves to nothing and 404s the turn. Only the OpenAI
+  // route can be sure: every reasoning item it issues is encrypted, so an
+  // unencrypted one is definitionally foreign. Elsewhere these are the
+  // provider's own reasoning continuity and must survive.
+  if (route.provider === "codex") {
+    const { input, dropped } = dropUnresolvableReasoning(safePayload.input);
+    if (dropped) {
+      safePayload.input = input;
+      recordRouterEvent({
+        phase: "foreign_reasoning_dropped",
+        requestId,
+        requestedModel: payload.model ?? null,
+        provider: route.provider,
+        model: safePayload.model ?? null,
+        droppedReasoningItems: dropped,
+      });
+    }
   }
   // Codex replays the whole conversation on every turn, so a single item an
   // earlier provider mis-labelled fails every later request against a provider
