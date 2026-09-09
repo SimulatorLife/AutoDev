@@ -54,11 +54,11 @@ test("provider adapters put the complete shared prompt in the actual CLI prompt"
   assert.ok(leaf.startsWith(base));
   assert.match(leaf, /## Workspace[\s\S]*Working directory: \/tmp\/workspace/);
   assert.match(leaf, /You are a bounded leaf agent executing/);
-  assert.match(leaf, /Use CocoIndex[\s\S]*lsp-mcp-server/);
+  assert.match(leaf, /Use CocoIndex \(`ccc`, `cocoindex-code`\)[\s\S]*Use LSP \(`lsp-mcp-server`, `lsp`\)/);
   assert.doesNotMatch(leaf, /# Root orchestrator bootstrap/);
   assert.ok(orchestrator.startsWith(base));
   assert.match(orchestrator, /## Canonical orchestration skill/);
-  assert.match(orchestrator, /Use CocoIndex[\s\S]*lsp-mcp-server/);
+  assert.match(orchestrator, /Use CocoIndex \(`ccc`, `cocoindex-code`\)[\s\S]*Use LSP \(`lsp-mcp-server`, `lsp`\)/);
   assert.doesNotMatch(orchestrator, /You are a bounded leaf agent executing/);
   assert.equal(promptFromInput("leaf task", leaf), `${leaf}\n\nleaf task`);
   assert.equal(inputText("root task", orchestrator), `${orchestrator}\n\nDelegated task:\nroot task`);
