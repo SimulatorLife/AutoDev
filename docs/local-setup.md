@@ -14,8 +14,8 @@ Provider-specific `ensure-*` and `run-*` scripts are intentionally separate so a
 
 The tracked Codex role files under `scripts/codex/agents/` contain role-specific
 configuration plus shared-prompt composition markers. The installer renders
-`base.md` and `leaf.md` into regular files under `$CODEX_HOME/agents/` before
-Codex loads them; provider identity remains configured in the provider
+`base.md`, `leaf.md`, and the optional `code-search.md` piece into regular files
+under `$CODEX_HOME/agents/` before Codex loads them; provider identity remains configured in the provider
 profiles/catalogs, while role names stay stable and codebase-agnostic.
 
 The user-level config registers the `lsp` and `playwright` MCP servers through the
@@ -61,12 +61,14 @@ the installer if it is not already present. For a new repository, the installed
 `ccc` skill directs the agent to run `ccc index` from that repository root; later
 searches refresh changed files incrementally.
 
-CocoIndex Code is enabled in the `default`, `explorer`, `worker`, `validator`,
-and `smart` agent profiles. It is explicitly disabled in `docs-researcher` and
+CocoIndex Code is enabled for the root orchestrator and in the `default`,
+`explorer`, `worker`, `validator`, and `smart` agent profiles. It is explicitly disabled in `docs-researcher` and
 `browser-tester`, whose jobs are documentation/web research and UI testing
 rather than codebase semantic search. The user-level registration remains in
 place so the selected coding profiles can use the same MCP without duplicate
-installations.
+installations. The shared codebase-navigation prompt piece tells every role
+with both capabilities to use CocoIndex before deeper inspection and LSP for
+semantic navigation; provider bridges wire the same MCP servers explicitly.
 
 The installer exposes these AutoDev-owned shared skill directories in
 `$HOME/.agents/skills/` through symlinks. The root `orchestration` skill is

@@ -13,6 +13,8 @@ developer_instructions = """
 
 {{AUTODEV_LEAF_PROMPT}}
 
+{{AUTODEV_CODE_SEARCH_PROMPT}}
+
 {{AUTODEV_ROLE_PROMPT}}
 """
 

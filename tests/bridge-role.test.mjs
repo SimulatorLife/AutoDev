@@ -54,9 +54,11 @@ test("provider adapters put the complete shared prompt in the actual CLI prompt"
   assert.ok(leaf.startsWith(base));
   assert.match(leaf, /## Workspace[\s\S]*Working directory: \/tmp\/workspace/);
   assert.match(leaf, /You are a bounded leaf agent executing/);
+  assert.match(leaf, /Use CocoIndex[\s\S]*lsp-mcp-server/);
   assert.doesNotMatch(leaf, /# Root orchestrator bootstrap/);
   assert.ok(orchestrator.startsWith(base));
   assert.match(orchestrator, /## Canonical orchestration skill/);
+  assert.match(orchestrator, /Use CocoIndex[\s\S]*lsp-mcp-server/);
   assert.doesNotMatch(orchestrator, /You are a bounded leaf agent executing/);
   assert.equal(promptFromInput("leaf task", leaf), `${leaf}\n\nleaf task`);
   assert.equal(inputText("root task", orchestrator), `${orchestrator}\n\nDelegated task:\nroot task`);
@@ -174,6 +176,7 @@ test("the installer ships every shared module the bridges import", () => {
     "scripts/codex/prompts/base.md",
     "scripts/codex/prompts/leaf.md",
     "scripts/codex/prompts/orchestrator.md",
+    "scripts/codex/prompts/code-search.md",
     "scripts/codex/skills/orchestration/SKILL.md",
   ]) {
     assert.ok(installer.includes(asset), `installer must deploy ${asset}`);
@@ -187,6 +190,7 @@ test("the installer ships every shared module the bridges import", () => {
 test("the root delegation hook injects the same orchestrator prompt the bridges use", () => {
   const hook = read("scripts/enforce-root-delegation.sh");
   assert.match(hook, /codex\/prompts\/orchestrator\.md/);
+  assert.match(hook, /codex\/prompts\/code-search\.md/);
   // The policy text lives in one file; the hook must not carry its own copy.
   assert.doesNotMatch(hook, /ROOT ORCHESTRATOR POLICY/);
   assert.doesNotMatch(hook, /ROOT DELEGATION REQUIREMENT/);

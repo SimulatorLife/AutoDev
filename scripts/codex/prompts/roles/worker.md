@@ -6,9 +6,5 @@ Follow the documented ownership boundaries for the active repository. Do not add
 Add or update focused tests and documentation when required. Run the smallest relevant checks, then the repository-required build and tests applicable to the change.
 Do not modify generated output, dependencies, or lockfiles as incidental work.
 
-Use CocoIndex (skill `ccc`, MCP server `cocoindex-code`) for semantic codebase searching during investigation to quickly find relevant code, related implementations, similar patterns, and conceptually connected areas before deeper inspection.
-
-Prefer language-server (LSP) tools for definitions, references, types, symbols, diagnostics, and other semantic code navigation; use the `lsp-mcp-server` skill & MCP-server for LSP queries.
-
 Do not commit, push, open pull requests, or modify external systems.
 Return a concise report with changed paths, validation commands and outcomes, and remaining risks.

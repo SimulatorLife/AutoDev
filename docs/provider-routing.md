@@ -817,9 +817,9 @@ transport responsible only for composing them:
 
 | Consumer | Shared composition | Provider-specific boundary |
 | --- | --- | --- |
-| Native Codex child | `base.md` + `leaf.md` + role-specific `developer_instructions` | `render-agent-configs.py` materializes the complete role TOML under `~/.codex/agents` |
-| Antigravity/Copilot bridge | `base.md` + workspace + `leaf.md` (or `orchestrator.md` + orchestration skill) + role fragment + capability metadata | `composeProviderPrompt(role, cwd)` then appends the delegated task |
-| Claude bridge | `base.md` + workspace + `leaf.md` (or `orchestrator.md` + orchestration skill) + role fragment + capability metadata | `system_prompt()` passes the composed text as the replacement CLI system prompt |
+| Native Codex child | `base.md` + `leaf.md` + optional `code-search.md` + role-specific `developer_instructions` | `render-agent-configs.py` materializes the complete role TOML under `~/.codex/agents` |
+| Antigravity/Copilot bridge | `base.md` + workspace + `leaf.md` (or `orchestrator.md` + orchestration skill) + optional `code-search.md` + role fragment + capability metadata | `composeProviderPrompt(role, cwd)` then appends the delegated task |
+| Claude bridge | `base.md` + workspace + `leaf.md` (or `orchestrator.md` + orchestration skill) + optional `code-search.md` + role fragment + capability metadata | `system_prompt()` passes the composed text as the replacement CLI system prompt |
 | MiniMax pass-through | Native Codex request, including the rendered role configuration | The proxy remains transport-only and does not author a competing prompt |
 
 The orchestration skill is the single source of truth for delegation procedure,
@@ -828,6 +828,14 @@ small bootstrap of root identity and a pointer to the canonical policy. The nati
 hook injects the same skill content and recovery preflight; provider bridges use
 `bridge-role.mjs` to assemble the same role prompt. Execution-contract JSON remains
 machine-readable capability metadata and does not duplicate procedural policy.
+
+`scripts/codex/prompts/code-search.md` is the single shared prompt piece for
+CocoIndex and LSP usage. It is included only when the role contract exposes
+both `cocoindex-code` and `lsp`, including the root orchestrator. Native role
+TOMLs use `{{AUTODEV_CODE_SEARCH_PROMPT}}`; bridges and the root hook load the
+same file directly. The orchestrator's root config enables the `ccc` skill and
+the `cocoindex-code` MCP server, while provider bridges explicitly pass the
+same code MCP servers when they serve a code-capable role.
 
 The tracked role TOMLs contain only role-specific policy plus composition markers;
 they do not copy the universal base/leaf text. The installer renders them before

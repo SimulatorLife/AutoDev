@@ -17,6 +17,7 @@ from pathlib import Path
 
 BASE_MARKER = "{{AUTODEV_BASE_PROMPT}}"
 LEAF_MARKER = "{{AUTODEV_LEAF_PROMPT}}"
+CODE_SEARCH_MARKER = "{{AUTODEV_CODE_SEARCH_PROMPT}}"
 ROLE_MARKER = "{{AUTODEV_ROLE_PROMPT}}"
 
 
@@ -30,19 +31,29 @@ def read_prompt(path: Path, label: str) -> str:
     return text
 
 
-def render_role(source: Path, output: Path, prompt_dir: Path, base: str, leaf: str) -> None:
+def render_role(
+    source: Path,
+    output: Path,
+    prompt_dir: Path,
+    base: str,
+    leaf: str,
+    code_search: str,
+) -> None:
     text = source.read_text(encoding="utf-8")
     if any(text.count(marker) != 1 for marker in (BASE_MARKER, LEAF_MARKER, ROLE_MARKER)):
         raise RuntimeError(
             f"{source} must contain exactly one {BASE_MARKER}, {LEAF_MARKER}, and {ROLE_MARKER}"
         )
+    if text.count(CODE_SEARCH_MARKER) > 1:
+        raise RuntimeError(f"{source} must contain at most one {CODE_SEARCH_MARKER}")
     role_prompt = read_prompt(prompt_dir / "roles" / f"{source.stem}.md", f"{source.stem} role")
     rendered = (
         text.replace(BASE_MARKER, base)
         .replace(LEAF_MARKER, leaf)
+        .replace(CODE_SEARCH_MARKER, code_search)
         .replace(ROLE_MARKER, role_prompt)
     )
-    if any(marker in rendered for marker in (BASE_MARKER, LEAF_MARKER, ROLE_MARKER)):
+    if any(marker in rendered for marker in (BASE_MARKER, LEAF_MARKER, CODE_SEARCH_MARKER, ROLE_MARKER)):
         raise RuntimeError(f"unrendered prompt marker remains in {source}")
     try:
         tomllib.loads(rendered)
@@ -68,13 +79,14 @@ def render_role(source: Path, output: Path, prompt_dir: Path, base: str, leaf: s
 def render_directory(source_dir: Path, prompt_dir: Path, output_dir: Path) -> list[Path]:
     base = read_prompt(prompt_dir / "base.md", "base")
     leaf = read_prompt(prompt_dir / "leaf.md", "leaf")
+    code_search = read_prompt(prompt_dir / "code-search.md", "code search")
     sources = sorted(source_dir.glob("*.toml"))
     if not sources:
         raise RuntimeError(f"no role TOML files found under {source_dir}")
     rendered = []
     for source in sources:
         output = output_dir / source.name
-        render_role(source, output, prompt_dir, base, leaf)
+        render_role(source, output, prompt_dir, base, leaf, code_search)
         rendered.append(output)
     return rendered
 

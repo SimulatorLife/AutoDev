@@ -11,6 +11,7 @@ export const ORCHESTRATOR_AGENT_ROLE = "orchestrator";
 const PROMPTS = Object.freeze({
   base: new URL("../prompts/base.md", import.meta.url),
   leaf: new URL("../prompts/leaf.md", import.meta.url),
+  codeSearch: new URL("../prompts/code-search.md", import.meta.url),
   orchestrator: new URL("../prompts/orchestrator.md", import.meta.url),
   roleDirectory: new URL("../prompts/roles/", import.meta.url),
 });
@@ -18,6 +19,7 @@ const ORCHESTRATION_SKILL = new URL("../skills/orchestration/SKILL.md", import.m
 const ROLE_PROMPT_NAMES = new Set(["browser-tester", "default", "docs-researcher", "explorer", "orchestrator", "smart", "validator", "worker"]);
 const cache = new Map();
 const BASE_PROMPT = readFileSync(PROMPTS.base, "utf8").trim();
+const CODE_SEARCH_PROMPT = readFileSync(PROMPTS.codeSearch, "utf8").trim();
 
 function headerValue(headers, name) {
   if (!headers || typeof headers !== "object") return null;
@@ -55,11 +57,14 @@ export function roleInstructions(role) {
     const canonical = key === "orchestrator"
       ? `\n\n## Canonical orchestration skill\n\n${readFileSync(ORCHESTRATION_SKILL, "utf8").trim()}`
       : "";
+    const codeSearch = contract.mcp.includes("lsp") && contract.mcp.includes("cocoindex-code")
+      ? `\n\n${CODE_SEARCH_PROMPT}`
+      : "";
     const requestedRolePrompt = isOrchestratorRole(role) ? "orchestrator" : (typeof role === "string" && role.trim() ? role.trim().toLowerCase() : "default");
     const rolePromptKey = ROLE_PROMPT_NAMES.has(requestedRolePrompt) ? requestedRolePrompt : "default";
     const rolePrompt = readFileSync(new URL(`${rolePromptKey}.md`, PROMPTS.roleDirectory), "utf8").trim();
     const tools = contract.mcp.length > 0 ? contract.mcp.join(", ") : "none declared";
-    cache.set(cacheKey, `${bootstrap}${canonical}\n\n## Effective role contract\n\n${rolePrompt}\n\nExpected MCP/tool capabilities: ${tools}. If a required capability is unavailable, report that fact instead of silently substituting a different workflow.`);
+    cache.set(cacheKey, `${bootstrap}${canonical}${codeSearch}\n\n## Effective role contract\n\n${rolePrompt}\n\nExpected MCP/tool capabilities: ${tools}. If a required capability is unavailable, report that fact instead of silently substituting a different workflow.`);
   }
   return cache.get(cacheKey);
 }

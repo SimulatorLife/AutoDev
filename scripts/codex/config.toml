@@ -256,6 +256,8 @@ default_tools_approval_mode = "approve"
 # stdio MCP servers from the active session workspace, so CocoIndex Code keeps a
 # separate .cocoindex_code index for each repository.
 [mcp_servers."cocoindex-code"]
+# This user-level entry is available to the root orchestrator as well as
+# code-capable child roles; role contracts decide which prompts may use it.
 enabled = true
 command = "ccc"
 args = ["mcp"]

@@ -261,6 +261,7 @@ ORCHESTRATOR_AGENT_ROLE = "orchestrator"
 # installed copy (`$CODEX_HOME/hooks/`).
 _PROMPT_DIRECTORY = Path(__file__).resolve().parent / "codex" / "prompts"
 _ORCHESTRATION_SKILL = _PROMPT_DIRECTORY.parent / "skills" / "orchestration" / "SKILL.md"
+_CODE_SEARCH_PROMPT = _PROMPT_DIRECTORY / "code-search.md"
 _ROLE_PROMPT_DIRECTORY = _PROMPT_DIRECTORY / "roles"
 
 
@@ -409,11 +410,14 @@ def bridge_instructions(role: Any) -> str:
     canonical = ""
     if is_orchestrator_role(role) and _ORCHESTRATION_SKILL.is_file():
         canonical = f"\n\n## Canonical orchestration skill\n\n{_ORCHESTRATION_SKILL.read_text(encoding='utf-8').strip()}"
+    code_search = ""
+    if "lsp" in contract.get("mcp", []) and "cocoindex-code" in contract.get("mcp", []) and _CODE_SEARCH_PROMPT.is_file():
+        code_search = f"\n\n{_CODE_SEARCH_PROMPT.read_text(encoding='utf-8').strip()}"
     role_key = "orchestrator" if is_orchestrator_role(role) else (str(role).lower() if role else "default")
     if not (_ROLE_PROMPT_DIRECTORY / f"{role_key}.md").is_file():
         role_key = "default"
     role_prompt = load_role_prompt(role_key)
-    return (f"{base}{canonical}\n\n## Effective role contract\n\n"
+    return (f"{base}{canonical}{code_search}\n\n## Effective role contract\n\n"
             f"{role_prompt}\n\n"
             f"Expected MCP/tool capabilities: {expected}. If a required capability is unavailable, "
             "report that fact instead of silently substituting a different workflow.")
@@ -838,6 +842,18 @@ def mcp_config_for_role(role: Any = None, spawn_session: str | None = None) -> s
     own servers.
     """
     servers: dict[str, Any] = {}
+    contract_key = "orchestrator" if is_orchestrator_role(role) else (str(role).lower() if role else "default")
+    role_contract = EXECUTION_CONTRACT.get("roles", {}).get(contract_key) or EXECUTION_CONTRACT["roles"]["default"]
+    if "lsp" in role_contract.get("mcp", []):
+        servers["lsp"] = {
+            "command": "bash",
+            "args": ["-lc", 'exec "${CODEX_HOME:-$HOME/.codex}/hooks/run-autodev-mcp.sh" lsp'],
+        }
+    if "cocoindex-code" in role_contract.get("mcp", []):
+        servers["cocoindex-code"] = {
+            "command": "ccc",
+            "args": ["mcp"],
+        }
     if role in PLAYWRIGHT_AGENT_ROLES:
         servers["playwright"] = {
             "command": PLAYWRIGHT_COMMAND,
