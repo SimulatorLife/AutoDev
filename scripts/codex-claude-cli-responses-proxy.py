@@ -887,7 +887,10 @@ def claude_cli_args(prompt: str, model: str, effort: str, agent_role: Any = None
     codex_home = os.environ.get("CODEX_HOME", os.path.expanduser("~/.codex"))
     configured_dirs = [
         directory
-        for directory in os.environ.get("CLAUDE_CODE_ADDITIONAL_DIRS", codex_home).split(os.pathsep)
+        for directory in os.environ.get(
+            "CLAUDE_CODE_ADDITIONAL_DIRS",
+            os.pathsep.join((codex_home, os.path.expanduser("~/.agents"))),
+        ).split(os.pathsep)
         if directory
     ]
     # Workspace-local skills and policy are part of the target contract. Expose

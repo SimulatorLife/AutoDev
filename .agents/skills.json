@@ -1,0 +1,11 @@
+{
+  "entries": [
+    {
+      "path": "scripts/codex/skills",
+      "include_only": [
+        "ccc",
+        "lsp-mcp-server"
+      ]
+    }
+  ]
+}

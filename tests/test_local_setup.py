@@ -80,6 +80,7 @@ class LocalSetupTests(unittest.TestCase):
         # install packages into the developer's real environment or require
         # network access. The production path remains the installer's default.
         environment["AUTODEV_SKIP_COCOINDEX_INSTALL"] = "1"
+        environment["AUTODEV_SKIP_LSP_INSTALL"] = "1"
         # The isolated fixture must not mutate any provider CLI's user-level
         # MCP registry; the production installer owns this registration.
         environment["AUTODEV_SKIP_AGY_MCP"] = "1"
@@ -212,6 +213,8 @@ class LocalSetupTests(unittest.TestCase):
                     self.assertIn(f".agents/skills/{name}", check.stdout)
 
     def test_lsp_mcp_server_launches_from_autodev_workspace(self):
+        launcher = (REPO_ROOT / "scripts/codex/run-autodev-mcp.sh").read_text()
+        self.assertIn('export PATH="$repo_root/node_modules/.bin:${HOME:-.}/.local/bin:${PATH:-}"', launcher)
         language_server = subprocess.run(
             ["pnpm", "exec", "typescript-language-server", "--version"],
             cwd=REPO_ROOT,
@@ -224,6 +227,19 @@ class LocalSetupTests(unittest.TestCase):
             msg=f"TypeScript language server is unavailable: {language_server.stderr}",
         )
         self.assertRegex(language_server.stdout.strip(), r"^\d+\.\d+\.\d+$")
+
+        python_language_server = subprocess.run(
+            ["pylsp", "--version"],
+            cwd=REPO_ROOT,
+            text=True,
+            capture_output=True,
+        )
+        self.assertEqual(
+            python_language_server.returncode,
+            0,
+            msg=f"Python language server is unavailable: {python_language_server.stderr}",
+        )
+        self.assertRegex(python_language_server.stdout.strip(), r"^pylsp v\d+\.\d+\.\d+$")
 
         request = {
             "jsonrpc": "2.0",
@@ -296,7 +312,9 @@ class LocalSetupTests(unittest.TestCase):
 
         installer = (REPO_ROOT / "scripts/codex/install-codex-integration.sh").read_text()
         self.assertIn('cocoindex_code_package="cocoindex-code[full]==0.2.41"', installer)
+        self.assertIn('python_language_server_package="python-lsp-server==1.15.0"', installer)
         self.assertIn('pipx install "$cocoindex_code_package"', installer)
+        self.assertIn('pipx install "$python_language_server_package"', installer)
         self.assertIn("AUTODEV_SKIP_COCOINDEX_INSTALL", installer)
         # pipx is a prerequisite of that step, not homework for the operator:
         # this script is meant to be the single entry point, and stopping with
@@ -341,8 +359,25 @@ class LocalSetupTests(unittest.TestCase):
     def test_antigravity_installer_registers_the_pinned_playwright_mcp(self):
         installer = INSTALLER_PATH.read_text()
         self.assertIn('agy mcp add playwright pnpm exec playwright-mcp', installer)
+        self.assertIn('agy mcp add cocoindex-code ccc mcp', installer)
+        self.assertIn("agy mcp add lsp bash -lc 'exec", installer)
+        self.assertIn('mcp(cocoindex-code)', installer)
+        self.assertIn('mcp(cocoindex-code/search)', installer)
+        self.assertIn('mcp(lsp)', installer)
+        self.assertIn('mcp(lsp/*)', installer)
+        self.assertIn('copilot mcp add cocoindex-code -- ccc mcp', installer)
+        self.assertIn("copilot mcp add lsp -- bash -lc 'exec", installer)
+        self.assertIn('register_agy_code_skills', installer)
         self.assertIn('AUTODEV_SKIP_AGY_MCP', installer)
         self.assertNotIn('agy mcp add playwright npx', installer)
+
+    def test_antigravity_discovers_the_code_skills_from_the_workspace(self):
+        skills_config = json.loads((REPO_ROOT / ".agents/skills.json").read_text())
+        self.assertEqual(skills_config["entries"][0]["path"], "scripts/codex/skills")
+        self.assertEqual(
+            skills_config["entries"][0]["include_only"],
+            ["ccc", "lsp-mcp-server"],
+        )
 
     def test_browser_roles_explicitly_enable_playwright_mcp(self):
         """Role-local MCP blocks must not accidentally shadow the enabled user server."""
@@ -1112,6 +1147,11 @@ class LocalSetupTests(unittest.TestCase):
             args = claude_bridge.claude_cli_args("prompt", "sonnet", "medium", "explorer", workspace)
             add_dir_index = args.index("--add-dir")
             self.assertIn(str(Path(workspace) / ".agents"), args[add_dir_index + 1:])
+
+    def test_claude_cli_exposes_global_autodev_skills_directory(self):
+        args = claude_bridge.claude_cli_args("prompt", "sonnet", "medium", "explorer", "/tmp/workspace")
+        add_dir_index = args.index("--add-dir")
+        self.assertIn(str(Path.home() / ".agents"), args[add_dir_index + 1:])
 
     def test_claude_cli_allows_approved_runtime_directory_inspection(self):
         with patch.dict(claude_bridge.os.environ, {"CLAUDE_CODE_ADDITIONAL_DIRS": "/Users/henrykirk/.codex:/Users/henrykirk/.agents"}, clear=False):

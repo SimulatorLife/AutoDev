@@ -80,7 +80,10 @@ function toolActivityText(data) {
 function runCopilot(prompt, model, cwd, onEvent, agentRole = null) {
   return new Promise((resolve, reject) => {
     const args = [ "--no-auto-update", "--no-color", "--output-format", "json", "--prompt", prompt ];
-    if (!roleContract(agentRole).readOnly) args.splice(4, 0, "--allow-all-tools", "--allow-all-paths", "--allow-all-urls", "--no-ask-user");
+    const contract = roleContract(agentRole);
+    if (contract.mcp.includes("cocoindex-code")) args.push("--allow-tool=cocoindex-code");
+    if (contract.mcp.includes("lsp")) args.push("--allow-tool=lsp");
+    if (!contract.readOnly) args.splice(4, 0, "--allow-all-tools", "--allow-all-paths", "--allow-all-urls", "--no-ask-user");
     if (model && model !== "copilot" && model !== "auto") args.push("--model", model);
     const child = spawn(process.env.COPILOT_BIN ?? "copilot", args, { cwd, stdio: [ "ignore", "pipe", "pipe" ] });
     const phases = new Map();

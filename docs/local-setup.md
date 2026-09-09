@@ -28,6 +28,11 @@ every cold start (network + startup latency), grows the pnpm `dlx` cache, and
 drifts the version across hosts and agents, so it is not used. Code-oriented
 roles (`default`, `explorer`, `worker`, `validator`, and `smart`) enable the
 `lsp` server and the `lsp-mcp-server` skill. The `browser-tester` and `smart`
+roles use the pinned TypeScript language server from AutoDev's devDependencies;
+the installer also installs `python-lsp-server==1.15.0` with pipx so Python
+files have a working `pylsp` backend. The launcher adds both AutoDev's
+`node_modules/.bin` and the pipx user bin directory to `PATH` before starting
+the LSP MCP server. The `browser-tester` and `smart`
 role files explicitly enable the `playwright` server and pin its tool approval
 mode to `approve`; this explicit role-level enablement is required because the
 role block overrides the user-level MCP entry. The `browser-tester` and
@@ -75,6 +80,16 @@ The installer exposes these AutoDev-owned shared skill directories in
 also enabled in the parent user config and injected deterministically into root
 turns by the delegation hook and provider bridges; leaf role TOMLs keep it
 disabled so child agents do not inherit parent orchestration policy.
+
+Antigravity has a separate global MCP registry and workspace customization
+discovery. The installer registers the pinned `cocoindex-code` and `lsp` MCP
+servers with `agy`; `.agents/skills.json` exposes the corresponding `ccc` and
+`lsp-mcp-server` skills to Antigravity sessions in this repository. Without
+both registrations, Antigravity can receive the code-search wording but cannot
+actually call either semantic tool surface. The installer also grants those
+two MCP servers at the global Antigravity permission boundary; otherwise
+headless subagents silently deny their tool calls because they cannot answer an
+interactive permission prompt.
 
 - `ccc`
 - `code-simplification`

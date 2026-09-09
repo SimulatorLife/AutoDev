@@ -229,6 +229,24 @@ test('the user-level MCP servers are self-sufficient, so no repository needs to 
   }
 });
 
+test('Antigravity workspace customizations expose the code skills', async () => {
+  const skills = JSON.parse(await readFile(path.join(root, '.agents', 'skills.json'), 'utf8'));
+  assert.deepEqual(skills, {
+    entries: [
+      { path: 'scripts/codex/skills', include_only: ['ccc', 'lsp-mcp-server'] },
+    ],
+  });
+});
+
+test('provider bridges explicitly expose code MCP capabilities', async () => {
+  const copilot = await readFile(path.join(root, 'scripts', 'codex-copilot-cli-responses-proxy.mjs'), 'utf8');
+  assert.match(copilot, /--allow-tool=cocoindex-code/);
+  assert.match(copilot, /--allow-tool=lsp/);
+  const claude = await readFile(path.join(root, 'scripts', 'codex-claude-cli-responses-proxy.py'), 'utf8');
+  assert.match(claude, /cocoindex-code/);
+  assert.match(claude, /_CODE_SEARCH_PROMPT/);
+});
+
 test('provider CLI versions are pinned in one AutoDev manifest', async () => {
   const manifest = JSON.parse(await readFile(path.join(root, '.github', 'ci', 'provider-tools.json'), 'utf8'));
   assert.equal(manifest.schemaVersion, 1);

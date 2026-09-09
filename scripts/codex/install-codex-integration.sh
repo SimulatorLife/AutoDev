@@ -89,6 +89,7 @@ launchagent_labels=(
 )
 custom_provider_names=(local_model_router claude_code_subscription minimax antigravity_cli)
 cocoindex_code_package="cocoindex-code[full]==0.2.41"
+python_language_server_package="python-lsp-server==1.15.0"
 tracked_sources=""
 router_auth_requested=0
 # Set by check_router_auth_state when the boundary needs a manual step
@@ -501,6 +502,25 @@ install_cocoindex_code() {
   pipx install "$cocoindex_code_package"
 }
 
+install_python_language_server() {
+  # lsp-mcp-server's Python adapter launches `pylsp` by name. Keep that
+  # language server installed alongside the pinned CocoIndex executable so
+  # Python symbol, reference, and diagnostic tools work in headless agents.
+  if [[ "${AUTODEV_SKIP_LSP_INSTALL:-0}" == "1" ]]; then
+    printf 'skipping Python language-server installation (AUTODEV_SKIP_LSP_INSTALL=1)\n' >&2
+    return 0
+  fi
+  if command -v pylsp >/dev/null 2>&1; then
+    printf 'ok Python language server (%s)\n' "$(command -v pylsp)" >&2
+    return 0
+  fi
+  if ! ensure_pipx; then
+    return 1
+  fi
+  printf 'installing Python language server with pipx (%s)\n' "$python_language_server_package" >&2
+  pipx install "$python_language_server_package"
+}
+
 check_cocoindex_code_executable() {
   if [[ "${AUTODEV_SKIP_COCOINDEX_INSTALL:-0}" == "1" ]]; then
     printf 'skipping CocoIndex Code executable check (AUTODEV_SKIP_COCOINDEX_INSTALL=1)\n'
@@ -511,6 +531,19 @@ check_cocoindex_code_executable() {
     return 0
   fi
   printf 'missing CocoIndex Code executable ccc (run the installer without AUTODEV_SKIP_COCOINDEX_INSTALL)\n'
+  return 1
+}
+
+check_python_language_server() {
+  if [[ "${AUTODEV_SKIP_LSP_INSTALL:-0}" == "1" ]]; then
+    printf 'skipping Python language-server check (AUTODEV_SKIP_LSP_INSTALL=1)\n'
+    return 0
+  fi
+  if command -v pylsp >/dev/null 2>&1; then
+    printf 'ok Python language server (%s)\n' "$(command -v pylsp)"
+    return 0
+  fi
+  printf 'missing Python language server pylsp (run the installer without AUTODEV_SKIP_LSP_INSTALL)\n'
   return 1
 }
 
@@ -531,6 +564,128 @@ check_agy_playwright_mcp() {
   fi
   printf 'missing-or-drifted agy Playwright MCP (expected pnpm exec playwright-mcp)\n'
   return 1
+}
+
+check_agy_code_mcp() {
+  if [[ "${AUTODEV_SKIP_AGY_MCP:-0}" == "1" ]]; then
+    printf 'skipping agy code MCP check (AUTODEV_SKIP_AGY_MCP=1)\n'
+    return 0
+  fi
+  if ! command -v agy >/dev/null 2>&1; then
+    printf 'skipping agy code MCP check (agy is not installed)\n'
+    return 0
+  fi
+  local listing
+  listing="$(agy mcp list 2>/dev/null || true)"
+  local failed=0
+  grep -Eq '^cocoindex-code[[:space:]]+stdio[[:space:]]+enabled[[:space:]]+ccc mcp[[:space:]]*$' <<<"$listing" || {
+    printf 'missing-or-drifted agy CocoIndex MCP (expected ccc mcp)\n'
+    failed=1
+  }
+  grep -Eq '^lsp[[:space:]]+stdio[[:space:]]+enabled[[:space:]]+bash -lc exec .*run-autodev-mcp\.sh.* lsp[[:space:]]*$' <<<"$listing" || {
+    printf 'missing-or-drifted agy LSP MCP (expected the pinned run-autodev-mcp.sh launcher)\n'
+    failed=1
+  }
+  if [[ "$failed" == 0 ]]; then
+    printf 'ok agy code MCP servers (cocoindex-code, lsp)\n'
+  fi
+  return "$failed"
+}
+
+check_agy_code_mcp_permissions() {
+  if [[ "${AUTODEV_SKIP_AGY_MCP:-0}" == "1" ]]; then
+    printf 'skipping agy code MCP permission check (AUTODEV_SKIP_AGY_MCP=1)\n'
+    return 0
+  fi
+  if ! command -v agy >/dev/null 2>&1; then
+    printf 'skipping agy code MCP permission check (agy is not installed)\n'
+    return 0
+  fi
+  local config="$HOME/.gemini/config/config.json"
+  [[ -f "$config" ]] || {
+    printf 'missing agy global permission config %s\n' "$config"
+    return 1
+  }
+  python3 - "$config" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as stream:
+    config = json.load(stream)
+allow = config.get("userSettings", {}).get("globalPermissionGrants", {}).get("allow", [])
+missing = [
+    grant for grant in (
+        "mcp(cocoindex-code)",
+        "mcp(cocoindex-code/search)",
+        "mcp(lsp)",
+        "mcp(lsp/*)",
+    ) if grant not in allow
+]
+if missing:
+    print("missing agy MCP permission grants: " + ", ".join(missing))
+    raise SystemExit(1)
+print("ok agy code MCP permission grants (cocoindex-code, lsp)")
+PY
+}
+
+check_agy_code_skills() {
+  if [[ "${AUTODEV_SKIP_AGY_MCP:-0}" == "1" ]]; then
+    printf 'skipping agy code-skill check (AUTODEV_SKIP_AGY_MCP=1)\n'
+    return 0
+  fi
+  if ! command -v agy >/dev/null 2>&1; then
+    printf 'skipping agy code-skill check (agy is not installed)\n'
+    return 0
+  fi
+  local config="$HOME/.gemini/config/skills.json"
+  [[ -f "$config" ]] || {
+    printf 'missing agy global skill config %s\n' "$config"
+    return 1
+  }
+  python3 - "$config" "$repo_root/scripts/codex/skills" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as stream:
+    config = json.load(stream)
+expected = sys.argv[2]
+managed = any(
+    entry.get("path") == expected
+    and entry.get("include_only") == ["ccc", "lsp-mcp-server"]
+    for entry in config.get("entries", [])
+    if isinstance(entry, dict)
+)
+if not managed:
+    print("missing agy global ccc/lsp skill registration")
+    raise SystemExit(1)
+print("ok agy code skills (ccc, lsp-mcp-server)")
+PY
+}
+
+check_copilot_code_mcp() {
+  if [[ "${AUTODEV_SKIP_COPILOT_MCP:-0}" == "1" ]]; then
+    printf 'skipping Copilot code MCP check (AUTODEV_SKIP_COPILOT_MCP=1)\n'
+    return 0
+  fi
+  if ! command -v copilot >/dev/null 2>&1; then
+    printf 'skipping Copilot code MCP check (copilot is not installed)\n'
+    return 0
+  fi
+  local listing
+  listing="$(copilot mcp list 2>/dev/null || true)"
+  local failed=0
+  grep -Fq 'cocoindex-code' <<<"$listing" && grep -Fq 'Command: ccc mcp' <<<"$listing" || {
+    printf 'missing-or-drifted Copilot CocoIndex MCP\n'
+    failed=1
+  }
+  grep -Fq 'Command: bash -lc exec "${CODEX_HOME:-$HOME/.codex}/hooks/run-autodev-mcp.sh" lsp' <<<"$listing" || {
+    printf 'missing-or-drifted Copilot LSP MCP\n'
+    failed=1
+  }
+  if [[ "$failed" == 0 ]]; then
+    printf 'ok Copilot code MCP servers (cocoindex-code, lsp)\n'
+  fi
+  return "$failed"
 }
 
 check_cocoindex_code_config() {
@@ -829,7 +984,22 @@ check_links() {
   if ! check_cocoindex_code_executable; then
     failed=1
   fi
+  if ! check_python_language_server; then
+    failed=1
+  fi
   if ! check_agy_playwright_mcp; then
+    failed=1
+  fi
+  if ! check_agy_code_mcp; then
+    failed=1
+  fi
+  if ! check_agy_code_mcp_permissions; then
+    failed=1
+  fi
+  if ! check_copilot_code_mcp; then
+    failed=1
+  fi
+  if ! check_agy_code_skills; then
     failed=1
   fi
   if ! check_cocoindex_code_config; then
@@ -914,6 +1084,9 @@ fi
 if [[ "$materialize_only" == 0 ]] && ! install_cocoindex_code; then
   exit 1
 fi
+if [[ "$materialize_only" == 0 ]] && ! install_python_language_server; then
+  exit 1
+fi
 
 register_agy_spawn_shim() {
   # The Antigravity bridge hands agy a delegation tool so its children are
@@ -942,6 +1115,20 @@ register_agy_spawn_shim() {
     return 1
   fi
   printf 'ok agy Playwright MCP registered (playwright)\n' >&2
+  # Antigravity has one global MCP registry rather than Codex's per-role
+  # configuration. Register the same pinned code servers globally so
+  # orchestrator and code-capable subagents receive the actual ccc and LSP
+  # tools, not only the shared prompt instructions.
+  if ! agy mcp add cocoindex-code ccc mcp >/dev/null 2>&1; then
+    printf 'could not register the agy CocoIndex MCP server\n' >&2
+    return 1
+  fi
+  printf 'ok agy CocoIndex MCP registered (cocoindex-code)\n' >&2
+  if ! agy mcp add lsp bash -lc 'exec "${CODEX_HOME:-$HOME/.codex}/hooks/run-autodev-mcp.sh" lsp' >/dev/null 2>&1; then
+    printf 'could not register the agy LSP MCP server\n' >&2
+    return 1
+  fi
+  printf 'ok agy LSP MCP registered (lsp)\n' >&2
   local shim="$codex_home/hooks/codex/lib/spawn-shim-mcp.mjs"
   if [[ ! -f "$shim" ]]; then
     printf 'agy spawn shim missing at %s\n' "$shim" >&2
@@ -955,6 +1142,113 @@ register_agy_spawn_shim() {
   # invisible to the app but still delegation.
   printf 'could not register the agy spawn shim; agy will delegate in-CLI instead\n' >&2
   return 0
+}
+
+grant_agy_code_mcp_permissions() {
+  if [[ "${AUTODEV_SKIP_AGY_MCP:-0}" == "1" || ! -x "$(command -v agy 2>/dev/null || true)" ]]; then
+    return 0
+  fi
+  local config="$HOME/.gemini/config/config.json"
+  mkdir -p -- "$(dirname -- "$config")"
+  python3 - "$config" <<'PY'
+import json
+import os
+import sys
+import tempfile
+
+path = sys.argv[1]
+if os.path.isfile(path):
+    with open(path, encoding="utf-8") as stream:
+        config = json.load(stream)
+else:
+    config = {}
+settings = config.setdefault("userSettings", {})
+grants = settings.setdefault("globalPermissionGrants", {})
+allow = grants.setdefault("allow", [])
+for grant in (
+    "mcp(cocoindex-code)",
+    "mcp(cocoindex-code/search)",
+    "mcp(lsp)",
+    "mcp(lsp/*)",
+):
+    if grant not in allow:
+        allow.append(grant)
+directory = os.path.dirname(path)
+fd, temporary = tempfile.mkstemp(prefix=".config.", suffix=".json", dir=directory)
+try:
+    with os.fdopen(fd, "w", encoding="utf-8") as stream:
+        json.dump(config, stream, indent=2)
+        stream.write("\n")
+    os.replace(temporary, path)
+finally:
+    try:
+        os.unlink(temporary)
+    except FileNotFoundError:
+        pass
+PY
+  printf 'ok agy code MCP permissions granted (cocoindex-code, lsp)\n' >&2
+}
+
+register_copilot_code_mcp() {
+  if [[ "${AUTODEV_SKIP_COPILOT_MCP:-0}" == "1" ]]; then
+    return 0
+  fi
+  if ! command -v copilot >/dev/null 2>&1; then
+    return 0
+  fi
+  if ! copilot mcp add cocoindex-code -- ccc mcp >/dev/null 2>&1; then
+    printf 'could not register the Copilot CocoIndex MCP server\n' >&2
+    return 1
+  fi
+  if ! copilot mcp add lsp -- bash -lc 'exec "${CODEX_HOME:-$HOME/.codex}/hooks/run-autodev-mcp.sh" lsp' >/dev/null 2>&1; then
+    printf 'could not register the Copilot LSP MCP server\n' >&2
+    return 1
+  fi
+  printf 'ok Copilot code MCP servers registered (cocoindex-code, lsp)\n' >&2
+}
+
+register_agy_code_skills() {
+  if [[ "${AUTODEV_SKIP_AGY_MCP:-0}" == "1" ]] || ! command -v agy >/dev/null 2>&1; then
+    return 0
+  fi
+  local config="$HOME/.gemini/config/skills.json"
+  mkdir -p -- "$(dirname -- "$config")"
+  python3 - "$config" "$repo_root/scripts/codex/skills" <<'PY'
+import json
+import os
+import sys
+import tempfile
+
+path, skills_path = sys.argv[1:]
+if os.path.isfile(path):
+    with open(path, encoding="utf-8") as stream:
+        config = json.load(stream)
+else:
+    config = {}
+entries = config.setdefault("entries", [])
+managed = {"path": skills_path, "include_only": ["ccc", "lsp-mcp-server"]}
+entries[:] = [
+    entry for entry in entries
+    if not (
+        isinstance(entry, dict)
+        and entry.get("path") == skills_path
+    )
+]
+entries.append(managed)
+directory = os.path.dirname(path)
+fd, temporary = tempfile.mkstemp(prefix=".skills.", suffix=".json", dir=directory)
+try:
+    with os.fdopen(fd, "w", encoding="utf-8") as stream:
+        json.dump(config, stream, indent=2)
+        stream.write("\n")
+    os.replace(temporary, path)
+finally:
+    try:
+        os.unlink(temporary)
+    except FileNotFoundError:
+        pass
+PY
+  printf 'ok agy code skills registered (ccc, lsp-mcp-server)\n' >&2
 }
 
 for name in "${obsolete_launchagent_labels[@]}"; do
@@ -1046,6 +1340,15 @@ link_one "$repo_root/scripts/codex/model-routing.json" "$codex_home/codex-model-
 # runtime modules are materialized. The Playwright entry is registered in the
 # same pass for agy's global MCP registry.
 if [[ "$materialize_only" == 0 ]] && ! register_agy_spawn_shim; then
+  exit 1
+fi
+if [[ "$materialize_only" == 0 ]] && ! grant_agy_code_mcp_permissions; then
+  exit 1
+fi
+if [[ "$materialize_only" == 0 ]] && ! register_copilot_code_mcp; then
+  exit 1
+fi
+if [[ "$materialize_only" == 0 ]] && ! register_agy_code_skills; then
   exit 1
 fi
 # The router (parent transport) and the four subagent bridges must survive app
