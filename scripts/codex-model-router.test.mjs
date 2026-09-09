@@ -1559,6 +1559,71 @@ test("ingests Codex OTEL skill metrics with cumulative dedupe and tolerates invo
   assert.deepEqual(skill.byStatus, { injected: 5, skipped: 2 });
   assert.deepEqual(skill.byInvokeType, { auto: 2 });
 
+test("reads skill names from skillName / skill / skill_name depending on metric source", () => {
+  resetOtelTelemetry();
+  const start = BigInt(Date.now()) * 1_000_000n;
+  const attrs = (entries) => entries.map(([ key, value ]) => ({ key, value: { stringValue: String(value) } }));
+  const injected = (skillAttribute, value) => ({
+    name: "codex.skill.injected",
+    sum: { aggregationTemporality: 1, isMonotonic: true, dataPoints: [ {
+      attributes: attrs([ [ skillAttribute, "skill-A" ], [ "status", "injected" ] ]),
+      startTimeUnixNano: String(start), timeUnixNano: String(start + 1n), asInt: String(value),
+    } ] },
+  });
+  const shadow = (skillAttribute, value, time) => ({
+    name: "codex.skills.shadow_selection.invocation",
+    sum: { aggregationTemporality: 2, isMonotonic: true, dataPoints: [ {
+      attributes: attrs([ [ skillAttribute, "skill-A" ], [ "status", "ok" ] ]),
+      startTimeUnixNano: String(start), timeUnixNano: String(time), asInt: String(value),
+    } ] },
+  });
+  const ingest = (metrics) => ingestOtelSignal("metrics", { resourceMetrics: [ { scopeMetrics: [ { metrics } ] } ] });
+
+  // Modern codex.skill.injected attaches the skill name as skillName.
+  ingest([ injected("skillName", 2) ]);
+  // Legacy and shadow-selection exporters carry it under skill or skill_name.
+  ingest([ shadow("skill", 1, 2n), shadow("skill_name", 1, 3n) ]);
+
+  const telemetry = codexTelemetryStatus();
+  assert.deepEqual(telemetry.skills.injected.bySkill.map((row) => row.skill), [ "skill-A" ]);
+  assert.equal(telemetry.skills.injected.bySkill[ 0 ].total, 2);
+  assert.deepEqual(telemetry.skills.usage.bySkill.map((row) => row.skill), [ "skill-A" ]);
+  assert.equal(telemetry.skills.usage.bySkill[ 0 ].total, 2);
+  resetOtelTelemetry();
+});
+
+test("labels all skills without a recognised name 'unknown'", () => {
+  resetOtelTelemetry();
+  const start = BigInt(Date.now()) * 1_000_000n;
+  const attrs = (entries) => entries.map(([ key, value ]) => ({ key, value: { stringValue: String(value) } }));
+  const point = (attributes, value) => ({
+    attributes: attrs(attributes),
+    startTimeUnixNano: String(start), timeUnixNano: String(start + 1n), asInt: String(value),
+  });
+  ingestOtelSignal("metrics", { resourceMetrics: [ { scopeMetrics: [ { metrics: [
+    { name: "codex.skill.injected", sum: { aggregationTemporality: 1, isMonotonic: true, dataPoints: [
+      point([ [ "status", "injected" ] ], 3),
+      point([ [ "skillName", "" ], [ "status", "injected" ] ], 1),
+      point([ [ "skillName", "   " ], [ "status", "injected" ] ], 1),
+    ] } },
+  ] } ] } ] });
+  ingestOtelSignal("metrics", { resourceMetrics: [ { scopeMetrics: [ { metrics: [
+    { name: "codex.skills.shadow_selection.invocation", sum: { aggregationTemporality: 2, isMonotonic: true, dataPoints: [
+      point([ [ "status", "ok" ] ], 1),
+    ] } },
+  ] } ] } ] });
+
+  const telemetry = codexTelemetryStatus();
+  // codex.skill.injected has no recognised fallback contract; the bucket must
+  // be "unknown" so callers can tell apart a missing attribute from the
+  // explicit literal skill name "unknown".
+  assert.equal(telemetry.skills.injected.bySkill.find((row) => row.skill === "unknown")?.total, 5);
+  // Shadow-selection uses the same fallback so all un-attributed invocations
+  // remain visible without inventing a skill name.
+  assert.equal(telemetry.skills.usage.bySkill.find((row) => row.skill === "unknown")?.total, 1);
+  resetOtelTelemetry();
+});
+
   assert.deepEqual(telemetry.skills.threads.enabledTotal, { count: 2, sum: 7, average: 3.5 });
   assert.deepEqual(telemetry.skills.threads.keptTotal, { count: 2, sum: 4, average: 2 });
   assert.equal(telemetry.skills.threads.truncated.count, 2);
@@ -1644,6 +1709,39 @@ test("counts delta-temporality skill metrics once per export", () => {
   assert.equal(telemetry.skills.injected.total, 5);
   assert.equal(telemetry.skills.threads.enabledTotal.count, 2);
   assert.equal(telemetry.skills.threads.enabledTotal.sum, 2);
+  resetOtelTelemetry();
+});
+
+test("reads tool names from tool / toolName / tool_name and shows real names in the dashboard buckets", () => {
+  resetOtelTelemetry();
+  const start = BigInt(Date.now()) * 1_000_000n;
+  const attrs = (entries) => entries.map(([ key, value ]) => ({ key, value: { stringValue: String(value) } }));
+  const point = (entries, value) => ({
+    attributes: attrs(entries),
+    startTimeUnixNano: String(start), timeUnixNano: String(start + 1n), asInt: String(value),
+  });
+  ingestOtelSignal("metrics", { resourceMetrics: [ { scopeMetrics: [ { metrics: [ {
+    name: "codex.tool.call",
+    sum: { aggregationTemporality: 1, dataPoints: [
+      point([ [ "tool", "exec_command" ], [ "source", "builtin" ], [ "status", "ok" ] ], 4),
+      point([ [ "toolName", "apply_patch" ], [ "source", "builtin" ], [ "status", "ok" ] ], 2),
+      point([ [ "toolName", "" ], [ "source", "builtin" ], [ "status", "ok" ] ], 1),
+      point([ [ "toolName", "   " ], [ "source", "builtin" ], [ "status", "ok" ] ], 1),
+    ] },
+  } ] } ] } ] });
+  const telemetry = codexTelemetryStatus();
+  // Both modern and legacy spellings resolve to their real tool name; the dashboard
+  // would otherwise show every row collapsed under the fallback bucket.
+  const execRow = telemetry.tools.byTool.find((row) => row.tool === "exec_command");
+  assert.equal(execRow?.count, 4);
+  const applyPatchRow = telemetry.tools.byTool.find((row) => row.tool === "apply_patch");
+  assert.equal(applyPatchRow?.count, 2);
+  // Empty or whitespace-only names fall back to "unknown-tool" so genuinely
+  // missing attributes are still visible in the dashboard rather than silently
+  // dropped. With cumulative-temporality dedupe, the two empty rows collapse
+  // into one because they share the same series key.
+  const unknownRow = telemetry.tools.byTool.find((row) => row.tool === "unknown-tool");
+  assert.equal(unknownRow?.count, 1);
   resetOtelTelemetry();
 });
 
@@ -1942,6 +2040,50 @@ test("persists provider telemetry and recent events across router restarts", asy
     assert.deepEqual(restored.codexTelemetry.threads.started, { total: 1, bySource: { subagent: 1 } });
     assert.match(serializeRouterState(), /"otelTelemetry"/);
     assert.doesNotMatch(serializeRouterState(), /prompt_text|api[_-]?key|authorization/i);
+  } finally {
+    resetRouterTelemetry();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("drops legacy unknown-skill persistence after skillName support is installed", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "autodev-router-skill-migration-"));
+  const stateFile = join(directory, "router-state.json");
+  try {
+    resetRouterTelemetry();
+    resetOtelTelemetry();
+    const state = JSON.parse(serializeRouterState());
+    state.otelTelemetry.tools = {
+      byTool: [
+        { tool: "unknown-tool", source: "unknown", server: "", count: 5, byStatus: { unknown: 5 }, durationCount: 5, durationMs: 50 },
+        { tool: "exec_command", source: "builtin", server: "", count: 2, byStatus: { ok: 2 }, durationCount: 2, durationMs: 20 },
+      ],
+    };
+    state.otelTelemetry.skills.usage = {
+      total: 7,
+      byStatus: { unknown: 5, ok: 2 },
+      byInvokeType: { implicit: 7 },
+      byAgentKind: { unknown: 5, root: 2 },
+      byModel: { unknown: 5, "autodev/orchestrator": 2 },
+      byPlugin: { none: 5, orchestration: 2 },
+      bySkill: [
+        { skill: "unknown-skill", total: 5, byStatus: { unknown: 5 }, byInvokeType: { implicit: 5 }, byAgentKind: { unknown: 5 }, byModel: { unknown: 5 }, byPlugin: { none: 5 } },
+        { skill: "orchestration", total: 2, byStatus: { ok: 2 }, byInvokeType: { implicit: 2 }, byAgentKind: { root: 2 }, byModel: { "autodev/orchestrator": 2 }, byPlugin: { orchestration: 2 } },
+      ],
+    };
+    await writeFile(stateFile, JSON.stringify(state), "utf8");
+    assert.equal(loadRouterState(stateFile), true);
+    const usage = getRouterStatus().codexTelemetry.skills.usage;
+    assert.equal(usage.total, 2);
+    assert.deepEqual(usage.byStatus, { ok: 2 });
+    assert.deepEqual(usage.byInvokeType, { implicit: 2 });
+    assert.deepEqual(usage.byAgentKind, { root: 2 });
+    assert.deepEqual(usage.byModel, { "autodev/orchestrator": 2 });
+    assert.deepEqual(usage.byPlugin, { orchestration: 2 });
+    assert.deepEqual(usage.bySkill.map(({ skill }) => skill), [ "orchestration" ]);
+    const tools = getRouterStatus().codexTelemetry.tools.byTool;
+    assert.deepEqual(tools.map(({ tool }) => tool), [ "exec_command" ]);
+    assert.equal(tools[ 0 ].count, 2);
   } finally {
     resetRouterTelemetry();
     await rm(directory, { recursive: true, force: true });

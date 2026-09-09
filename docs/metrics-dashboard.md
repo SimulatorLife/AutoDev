@@ -69,9 +69,13 @@ log-derived turn/token counters to avoid double-counting.
 
 The dashboard and CLI expose the observed metric-name inventory, SQLite
 initialization/fallback totals and durations, and native tool calls grouped by
-sanitized tool/source/server labels. Unknown metric names remain visible in
-the inventory but are not interpreted until their schema and operational value
-are validated.
+sanitized tool/source/server labels. Native tool metrics use `tool` in current Codex OTLP exports; older
+versions may use `toolName` or `tool_name`. The router accepts all three. Legacy persisted `unknown-tool`
+buckets created before the modern attribute was available are discarded during
+restore because they cannot be mapped back to a real tool. Newly missing tool
+names remain visible as `unknown-tool` for diagnosis. Unknown metric names
+remain visible in the inventory but are not interpreted until their schema and
+operational value are validated.
 
 ## Subagents spawned
 
@@ -171,9 +175,13 @@ points, Codex resends the running total on every export, so the router tracks
 the last observed point per series (metric name, attributes, and
 `startTimeUnixNano`) and only applies the delta; delta points are applied once
 per export timestamp. Both forms tolerate duplicate resends and counter
-resets. `codex.skill.injected` carries a `skill` and `status` attribute; some
-Codex versions attach `invoke_type` instead of, or alongside, `status`, which
-the router tolerates and aggregates separately. The source-backed
+resets. `codex.skill.injected` carries the modern `skillName` and `status` attributes;
+older Codex versions may use `skill` or `skill_name`. The router accepts all
+three spellings and uses `unknown` only when none is present. Some Codex
+versions attach `invoke_type` instead of, or alongside, `status`, which the
+router tolerates and aggregates separately. Legacy persisted `unknown-skill`
+invocation buckets are discarded on restore because they cannot be mapped back
+to a real skill; newly emitted metrics are tracked by their actual names. The source-backed
 `codex.thread.skills.description_truncated_chars` metric is not currently in
 the official catalog; when present, the router totals and averages it
 separately.

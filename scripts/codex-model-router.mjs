@@ -614,10 +614,21 @@ function skillAgentKind(attributes) {
   return sessionSource.startsWith("subagent_thread_spawn_") ? "subagent" : "root";
 }
 
+// Codex's runtime emits entity names (skills, tools, hooks, etc.) under
+// different attribute keys depending on exporter and version. The router
+// accepts every observed spelling so dashboards never collapse real rows into
+// the fallback bucket. Order matters: the modern key is checked first.
+function readNamedAttribute(attributes, fallback, ...keys) {
+  for (const key of keys) {
+    const value = attributes?.[key];
+    if (typeof value === "string" && value.trim()) return safeMetricLabel(value, fallback);
+  }
+  return fallback;
+}
 function noteSkillInjected(metricName, attributes, dataPoint, temporality) {
   const delta = otelSeriesDelta(otelSeriesKey(metricName, attributes, dataPoint.startTimeUnixNano), dataPoint.timeUnixNano, otelSumDataPointValue(dataPoint), temporality);
   if (delta === 0) return;
-  const skill = safeMetricLabel(attributes.skill);
+  const skill = readNamedAttribute(attributes, "unknown", "skillName", "skill", "skill_name");
   const status = safeMetricLabel(attributes.status);
   // Some Codex versions attach `invoke_type` instead of, or alongside,
   // `status`; tolerate its absence and aggregate it separately when present.
@@ -651,7 +662,7 @@ function skillUsageBucket(name) {
 function noteSkillUsage(target, bucketForSkill, metricName, attributes, dataPoint, temporality, value = otelSumDataPointValue(dataPoint)) {
   const delta = otelSeriesDelta(otelSeriesKey(metricName, attributes, dataPoint.startTimeUnixNano), dataPoint.timeUnixNano, value, temporality);
   if (delta === 0) return;
-  const skill = safeMetricLabel(attributes.skill ?? attributes.skill_name, "unknown-skill");
+  const skill = readNamedAttribute(attributes, "unknown", "skillName", "skill", "skill_name");
   const status = safeMetricLabel(attributes.status);
   const invokeType = typeof attributes.invoke_type === "string" && attributes.invoke_type ? safeMetricLabel(attributes.invoke_type) : null;
   const agentKind = skillAgentKind(attributes);
@@ -727,12 +738,20 @@ function noteSqliteCounter(collection, metricName, attributes, dataPoint, tempor
   sqliteBucket(collection, attributes).count += delta;
 }
 
+function toolNameAttribute(attributes, fallback = "unknown-tool") {
+  // Codex attaches the tool name as "tool" in current OTLP exports, with
+  // "toolName" and "tool_name" used by other versions. Without consulting all
+  // observed spellings, every tool row collapses into the
+  // fallback bucket even when the upstream provided the real name.
+  return readNamedAttribute(attributes, fallback, "tool", "toolName", "tool_name");
+}
+
 function toolKey(attributes) {
-  return [safeMetricLabel(attributes.tool_name, "unknown-tool"), safeMetricLabel(attributes.source), safeMetricLabel(attributes.server_name, "")].join("::");
+  return [toolNameAttribute(attributes), safeMetricLabel(attributes.source), safeMetricLabel(attributes.server_name, "")].join("::");
 }
 
 function toolBucket(attributes) {
-  const tool = safeMetricLabel(attributes.tool_name, "unknown-tool");
+  const tool = toolNameAttribute(attributes);
   const source = safeMetricLabel(attributes.source);
   const server = safeMetricLabel(attributes.server_name, "");
   const key = toolKey(attributes);
@@ -741,7 +760,8 @@ function toolBucket(attributes) {
 }
 
 function noteToolCounter(metricName, attributes, dataPoint, temporality) {
-  const delta = otelSeriesDelta(otelSeriesKey(metricName, { tool_name: safeMetricLabel(attributes.tool_name, "unknown-tool"), source: safeMetricLabel(attributes.source), server_name: safeMetricLabel(attributes.server_name, "") }, dataPoint.startTimeUnixNano), dataPoint.timeUnixNano, otelSumDataPointValue(dataPoint), temporality);
+  const identity = { tool_name: toolNameAttribute(attributes), source: safeMetricLabel(attributes.source), server_name: safeMetricLabel(attributes.server_name, "") };
+  const delta = otelSeriesDelta(otelSeriesKey(metricName, identity, dataPoint.startTimeUnixNano), dataPoint.timeUnixNano, otelSumDataPointValue(dataPoint), temporality);
   if (delta === 0) return;
   const bucket = toolBucket(attributes);
   const status = safeMetricLabel(attributes.status);
@@ -750,7 +770,7 @@ function noteToolCounter(metricName, attributes, dataPoint, temporality) {
 }
 
 function noteToolDuration(metricName, attributes, dataPoint, temporality) {
-  const identity = { tool_name: safeMetricLabel(attributes.tool_name, "unknown-tool"), source: safeMetricLabel(attributes.source), server_name: safeMetricLabel(attributes.server_name, "") };
+  const identity = { tool_name: toolNameAttribute(attributes), source: safeMetricLabel(attributes.source), server_name: safeMetricLabel(attributes.server_name, "") };
   const count = otelSeriesDelta(otelSeriesKey(`${metricName}#count`, identity, dataPoint.startTimeUnixNano), dataPoint.timeUnixNano, numberAttribute({ count: dataPoint.count }, "count"), temporality);
   const sum = otelSeriesDelta(otelSeriesKey(`${metricName}#sum`, identity, dataPoint.startTimeUnixNano), dataPoint.timeUnixNano, numberAttribute({ sum: dataPoint.sum }, "sum"), temporality);
   const bucket = toolBucket(attributes);
@@ -1808,12 +1828,30 @@ function restoreOtelTelemetry(snapshot) {
   }
   if (skills?.usage && typeof skills.usage === "object") {
     const usage = otelTelemetry.skills.usage;
+    // Before the router read Codex's modern skillName attribute, every
+    // shadow-selection invocation without the legacy skill key was persisted
+    // under unknown-skill. That bucket cannot be mapped back to individual
+    // skills after the fact, so discard it during restore rather than showing
+    // a false skill name forever. New genuinely missing attributes use unknown
+    // and remain visible as such.
+    const legacyUnknown = (Array.isArray(skills.usage.bySkill) ? skills.usage.bySkill : []).find((entry) => entry?.skill === "unknown-skill");
+    const legacyUnknownTotal = isFiniteNonnegative(legacyUnknown?.total) ? legacyUnknown.total : 0;
     restoreNumberFields(usage, skills.usage, ["total"]);
+    usage.total = Math.max(0, usage.total - legacyUnknownTotal);
+    const subtractLegacy = (target, source) => {
+      for (const [key, count] of Object.entries(source ?? {})) {
+        if (!isFiniteNonnegative(count)) continue;
+        const safeKey = safeMetricLabel(key);
+        target[safeKey] = Math.max(0, (target[safeKey] ?? 0) - count);
+        if (target[safeKey] === 0) delete target[safeKey];
+      }
+    };
     for (const [field, target] of [["byStatus", usage.byStatus], ["byInvokeType", usage.byInvokeType], ["byAgentKind", usage.byAgentKind], ["byModel", usage.byModel], ["byPlugin", usage.byPlugin]]) {
       for (const [key, count] of Object.entries(skills.usage[field] ?? {})) if (isFiniteNonnegative(count)) target[safeMetricLabel(key)] = count;
+      if (legacyUnknown) subtractLegacy(target, legacyUnknown[field]);
     }
     for (const entry of Array.isArray(skills.usage.bySkill) ? skills.usage.bySkill : []) {
-      if (!entry || typeof entry.skill !== "string") continue;
+      if (!entry || typeof entry.skill !== "string" || entry.skill === "unknown-skill") continue;
       const bucket = skillUsageBucket(safeMetricLabel(entry.skill));
       restoreNumberFields(bucket, entry, ["total"]);
       for (const [field, target] of [["byStatus", bucket.byStatus], ["byInvokeType", bucket.byInvokeType], ["byAgentKind", bucket.byAgentKind], ["byModel", bucket.byModel], ["byPlugin", bucket.byPlugin]]) {
@@ -1836,6 +1874,12 @@ function restoreOtelTelemetry(snapshot) {
   }
   for (const entry of Array.isArray(snapshot.tools?.byTool) ? snapshot.tools.byTool : []) {
     if (!entry || typeof entry.tool !== "string") continue;
+    // Older Codex exports omitted the modern toolName attribute, so the entire
+    // historical tool inventory was persisted as unknown-tool. It cannot be
+    // reconstructed after persistence; discard that legacy bucket on restore
+    // instead of displaying a false tool name. New missing names remain visible
+    // as unknown-tool for diagnosis.
+    if (entry.tool === "unknown-tool") continue;
     const restored = { tool: safeMetricLabel(entry.tool, "unknown-tool"), source: safeMetricLabel(entry.source), server: safeMetricLabel(entry.server, ""), count: 0, byStatus: {}, durationCount: 0, durationMs: 0 };
     restoreNumberFields(restored, entry, ["count", "durationCount", "durationMs"]);
     for (const [status, count] of Object.entries(entry.byStatus ?? {})) if (isFiniteNonnegative(count)) restored.byStatus[safeMetricLabel(status)] = count;
