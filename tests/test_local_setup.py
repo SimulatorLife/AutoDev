@@ -373,6 +373,7 @@ class LocalSetupTests(unittest.TestCase):
         openai_docs = role_config["mcp_servers"]["openaiDeveloperDocs"]
         self.assertTrue(openai_docs["enabled"])
         self.assertEqual(openai_docs["url"], "https://developers.openai.com/mcp")
+        self.assertEqual(openai_docs["transport"], "streamable_http")
         self.assertTrue(role_config["tools"]["web_search"])
 
         # Browser automation is for UI testing/debugging, not the docs role's

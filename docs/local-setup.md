@@ -39,6 +39,8 @@ the same `lsp-mcp-server` and `playwright-mcp` commands through their package
 manager for the user-level MCP entries to work there. The `docs-researcher`
 role enables the OpenAI Developer Docs MCP and Codex's native `web_search`
 tool, which is the appropriate search/open/read path for authoritative websites.
+Its remote MCP entry explicitly sets `transport = "streamable_http"`; this is
+required by the installed Codex 0.153.x role loader even when `url` is present.
 The Playwright MCP remains for browser/UI testing roles and is disabled for
 `docs-researcher`. Provider bridges that run Claude Code receive the same pinned
 Playwright server through a per-turn inline `--mcp-config` for `browser-tester`
