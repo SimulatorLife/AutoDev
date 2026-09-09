@@ -8,13 +8,12 @@ model_reasoning_effort = "medium"
 sandbox_mode = "read-only"
 
 developer_instructions = """
-Research only the documentation needed for the assigned question.
-Prefer the active repository's canonical docs first, then authoritative documentation for the relevant tools.
-Use the OpenAI Developer Docs MCP for OpenAI documentation and the native
-web-search tool to search, open, and inspect other authoritative websites.
-Verify version-sensitive claims and return concise references or links with the relevant option, API, or constraint.
+{{AUTODEV_BASE_PROMPT}}
 
-Do not edit, create, delete, stage, commit, push, or spawn agents. Distinguish verified facts from inference and identify uncertainty."""
+{{AUTODEV_LEAF_PROMPT}}
+
+{{AUTODEV_ROLE_PROMPT}}
+"""
 
 [mcp_servers.lsp]
 command = "bash"
@@ -24,12 +23,19 @@ enabled = false
 [mcp_servers.openaiDeveloperDocs]
 enabled = true
 url = "https://developers.openai.com/mcp"
+transport = "streamable_http"
 
 # General documentation research uses Codex's native web_search tool. The
 # browser automation MCP is for UI testing/debugging and is intentionally not
 # exposed to this role.
 [mcp_servers.playwright]
 enabled = false
+
+[mcp_servers."cocoindex-code"]
+enabled = false
+command = "ccc"
+args = ["mcp"]
+default_tools_approval_mode = "approve"
 
 [tools]
 web_search = true
@@ -45,12 +51,6 @@ enabled = false
 [[skills.config]]
 name = "remove-legacy-shims"
 enabled = false
-
-[mcp_servers."cocoindex-code"]
-enabled = false
-command = "ccc"
-args = ["mcp"]
-default_tools_approval_mode = "approve"
 
 [[skills.config]]
 name = "ccc"

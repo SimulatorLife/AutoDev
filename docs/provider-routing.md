@@ -808,19 +808,28 @@ policy. Every bridge receives it as an ordinary request header; Antigravity
 once also received it in the Responses `extra_headers` body field because the
 LiteLLM hop that used to sit in front of that adapter dropped raw headers.
 
-Bridges resolve the header and pick one of two prompt bootstraps:
+Every provider receives the same shared prompt layers, with the outer
+transport responsible only for composing them:
 
-| Role | Bootstrap | Additional canonical policy | Claude CLI subagent tools |
-| --- | --- | --- | --- |
-| `orchestrator` | `scripts/codex/prompts/orchestrator.md` | `scripts/codex/skills/orchestration/SKILL.md` injected by `bridge-role.mjs` | available |
-| anything else (including absent) | `scripts/codex/prompts/leaf.md` | none | `--disallowed-tools Agent,Task` |
+| Consumer | Shared composition | Provider-specific boundary |
+| --- | --- | --- |
+| Native Codex child | `base.md` + `leaf.md` + role-specific `developer_instructions` | `render-agent-configs.py` materializes the complete role TOML under `~/.codex/agents` |
+| Antigravity/Copilot bridge | `base.md` + workspace + `leaf.md` (or `orchestrator.md` + orchestration skill) + role fragment + capability metadata | `composeProviderPrompt(role, cwd)` then appends the delegated task |
+| Claude bridge | `base.md` + workspace + `leaf.md` (or `orchestrator.md` + orchestration skill) + role fragment + capability metadata | `system_prompt()` passes the composed text as the replacement CLI system prompt |
+| MiniMax pass-through | Native Codex request, including the rendered role configuration | The proxy remains transport-only and does not author a competing prompt |
 
 The orchestration skill is the single source of truth for delegation procedure,
 child lifecycle, recovery, and role selection. The orchestrator prompt is only a
 small bootstrap of root identity and a pointer to the canonical policy. The native root
 hook injects the same skill content and recovery preflight; provider bridges use
-`bridge-role.mjs` to assemble the same prompt. Execution-contract JSON remains
+`bridge-role.mjs` to assemble the same role prompt. Execution-contract JSON remains
 machine-readable capability metadata and does not duplicate procedural policy.
+
+The tracked role TOMLs contain only role-specific policy plus composition markers;
+they do not copy the universal base/leaf text. The installer renders them before
+Codex can load them, and tests compare the installed files with the renderer's
+output. A change to `base.md` or `leaf.md` therefore propagates to native and
+bridge-backed children through their actual prompt path.
 
 The Antigravity bridge has no equivalent CLI flag: `agy` exposes its subagent
 tools unconditionally, so a leaf turn there is bounded by `leaf.md` prompt
@@ -1303,10 +1312,11 @@ installer is the only supported materialization path into
   Destructive `git clean`, `git rebase`, whole-tree `git restore`, force branch
   deletion, force push, superuser/raw-disk formatting, and root/home wildcard
   deletion commands are forbidden.
-- User-level role definitions: `scripts/codex/agents/*.toml`, materialized as
-  managed regular-file copies under `$CODEX_HOME/agents/`. The role loader must
-  receive regular files rather than symlinks; the installer replaces symlinks and
-  verifies exact content matches. Code-oriented roles (`default`, `explorer`,
+- User-level role definitions: `scripts/codex/agents/*.toml`, rendered from
+  the shared `base.md` + `leaf.md` prompt layers and materialized as managed
+  regular-file copies under `$CODEX_HOME/agents/`. The role loader must receive
+  regular files rather than symlinks; the installer replaces symlinks and
+  verifies exact rendered content matches. Code-oriented roles (`default`, `explorer`,
   `worker`, `validator`, and `smart`) enable the user-level `lsp` MCP server and
   the matching `lsp-mcp-server` skill. `browser-tester` and `smart` explicitly
   enable the user-level `playwright` MCP server with the approved browser tool
@@ -1506,11 +1516,13 @@ configured and validated.
 
 `/Users/henrykirk/AutoDev/scripts/codex/execution-contract.json` is the shared
 contract for role kind, read-only intent, expected MCP capabilities, and provider
-spawn capabilities. The Claude, Antigravity, and Copilot bridge prompt paths
-append the role-specific contract instead of treating every non-orchestrator as
-an identical generic leaf. The installer deploys the contract beside the bridge
-runtime modules. Native TOML role files remain the Codex configuration surface;
-contract changes must be validated with the bridge-role matrix tests.
+spawn capabilities. The Claude, Antigravity, and Copilot bridge prompt paths append the canonical
+role fragment from `scripts/codex/prompts/roles/` and use this JSON only for
+capability metadata. The installer deploys both beside the bridge runtime
+modules. Native TOML role files remain the Codex configuration surface; the
+installer renders their shared prompt markers before deployment. Prompt or
+capability changes must be validated with the bridge-role matrix and native
+prompt-rendering tests.
 
 ### Route manifest ownership
 

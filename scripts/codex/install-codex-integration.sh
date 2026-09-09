@@ -52,6 +52,7 @@ dashboard_asset_names=(codex-model-router-dashboard.html)
 # as it sits in a checkout. One relative specifier -- `./codex/lib/x.mjs`,
 # `./codex/prompts/x.md` -- therefore resolves in both.
 mcp_launcher_names=(run-autodev-mcp.sh)
+agent_renderer_name=scripts/codex/render-agent-configs.py
 runtime_module_names=(
   scripts/codex/lib/resolve-workspace.mjs
   scripts/codex/lib/bridge-role.mjs
@@ -75,6 +76,7 @@ runtime_module_names=(
 profile_names=(claude minimax antigravity)
 catalog_names=(claude minimax antigravity codex)
 agent_role_names=(browser-tester default docs-researcher explorer smart validator worker)
+prompt_role_names=(browser-tester default docs-researcher explorer orchestrator smart validator worker)
 skill_names=(ccc code-simplification diagnosing-bugs improve-codebase-architecture lsp-mcp-server orchestration remove-legacy-shims resolve-merge-conflicts)
 rule_names=(default.rules)
 launchagent_labels=(
@@ -353,20 +355,34 @@ check_agent_registry() {
   return "$failed"
 }
 
+render_agent_configs() {
+  local output_dir="$1"
+  python3 "$repo_root/$agent_renderer_name" \
+    --source-dir "$repo_root/scripts/codex/agents" \
+    --prompt-dir "$repo_root/scripts/codex/prompts" \
+    --output-dir "$output_dir"
+}
+
 check_user_agent_files() {
   local failed=0
-  local role source target
+  local role source target rendered_dir
+  rendered_dir="$(mktemp -d "${TMPDIR:-/tmp}/autodev-rendered-agents.XXXXXX")"
+  if ! render_agent_configs "$rendered_dir"; then
+    rm -rf -- "$rendered_dir"
+    return 1
+  fi
 
   for role in "${agent_role_names[@]}"; do
     source="$repo_root/scripts/codex/agents/$role.toml"
     target="$agents_dir/$role.toml"
-    if [[ -f "$target" && ! -L "$target" ]] && cmp -s "$source" "$target"; then
-      printf 'ok %s (runtime copy of %s)\n' "$target" "$source"
+    if [[ -f "$target" && ! -L "$target" ]] && cmp -s "$rendered_dir/$role.toml" "$target"; then
+      printf 'ok %s (rendered from %s + shared prompts)\n' "$target" "$source"
     else
-      printf 'missing, symlinked, or drifted %s -> %s\n' "$target" "$source"
+      printf 'missing, symlinked, or drifted rendered role %s -> %s\n' "$target" "$source"
       failed=1
     fi
   done
+  rm -rf -- "$rendered_dir"
   return "$failed"
 }
 
@@ -724,6 +740,16 @@ check_links() {
       failed=1
     fi
   done
+  for name in "${prompt_role_names[@]}"; do
+    source="$repo_root/scripts/codex/prompts/roles/$name.md"
+    target="$(runtime_module_target "scripts/codex/prompts/roles/$name.md")"
+    if [[ -f "$target" && ! -L "$target" ]] && cmp -s "$source" "$target"; then
+      printf 'ok %s (runtime role prompt copy)\n' "$target"
+    else
+      printf 'missing-or-drifted %s -> %s\n' "$target" "$source"
+      failed=1
+    fi
+  done
   for name in "${mcp_launcher_names[@]}"; do
     source="$repo_root/scripts/codex/$name"
     target="$hooks_dir/$name"
@@ -969,6 +995,12 @@ for name in "${runtime_module_names[@]}"; do
   mkdir -p -- "$(dirname -- "$target")"
   install -m 0644 "$source" "$target"
 done
+for name in "${prompt_role_names[@]}"; do
+  source="$repo_root/scripts/codex/prompts/roles/$name.md"
+  target="$(runtime_module_target "scripts/codex/prompts/roles/$name.md")"
+  mkdir -p -- "$(dirname -- "$target")"
+  install -m 0644 "$source" "$target"
+done
 for name in "${mcp_launcher_names[@]}"; do
   link_one "$repo_root/scripts/codex/$name" "$hooks_dir/$name"
 done
@@ -1001,9 +1033,12 @@ for name in "${skill_names[@]}"; do
   link_skill "$repo_root/scripts/codex/skills/$name" "$user_skills_dir/$name"
 done
 mkdir -p -- "$agents_dir"
+rendered_agents_dir="$(mktemp -d "${TMPDIR:-/tmp}/autodev-rendered-agents.XXXXXX")"
+render_agent_configs "$rendered_agents_dir"
 for role in "${agent_role_names[@]}"; do
-  copy_agent_role "$repo_root/scripts/codex/agents/$role.toml" "$agents_dir/$role.toml"
+  copy_agent_role "$rendered_agents_dir/$role.toml" "$agents_dir/$role.toml"
 done
+rm -rf -- "$rendered_agents_dir"
 link_one "$repo_root/scripts/codex/config.toml" "$codex_home/config.toml"
 link_one "$repo_root/scripts/codex/model-routing.json" "$codex_home/codex-model-routing.json"
 # The registration consumes the installed spawn shim, so it must happen after

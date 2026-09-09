@@ -5,11 +5,14 @@ import test from "node:test";
 import {
   AGENT_ROLE_HEADER,
   ORCHESTRATOR_AGENT_ROLE,
-  bridgeInstructions,
+  composeProviderPrompt,
+  roleInstructions,
   isOrchestratorRole,
   resolveAgentRole,
 } from "../scripts/codex/lib/bridge-role.mjs";
 import { EXECUTION_CONTRACT, roleContract } from "../scripts/codex/lib/execution-contract.mjs";
+import { promptFromInput } from "../scripts/codex-antigravity-cli-responses-proxy.mjs";
+import { inputText } from "../scripts/codex-copilot-cli-responses-proxy.mjs";
 
 const read = (path) => readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
 
@@ -37,12 +40,32 @@ test("the execution contract preserves role-specific capabilities across bridge 
   assert.ok(roleContract("explorer").mcp.includes("lsp"));
   assert.ok(roleContract("browser-tester").mcp.includes("playwright"));
   assert.equal(roleContract("orchestrator").kind, "orchestrator");
-  assert.match(bridgeInstructions("explorer"), /Effective role contract/);
-  assert.match(bridgeInstructions("explorer"), /read-only codebase explorer/i);
+  for (const contract of Object.values(EXECUTION_CONTRACT.roles)) {
+    assert.equal("instructions" in contract, false, "role prose belongs to prompts/roles, not capability metadata");
+  }
+  assert.match(roleInstructions("explorer"), /Effective role contract/);
+  assert.match(roleInstructions("explorer"), /read-only codebase explorer/i);
+});
+
+test("provider adapters put the complete shared prompt in the actual CLI prompt", () => {
+  const leaf = composeProviderPrompt("explorer", "/tmp/workspace");
+  const orchestrator = composeProviderPrompt(ORCHESTRATOR_AGENT_ROLE, "/tmp/workspace");
+  const base = read("scripts/codex/prompts/base.md").trim();
+  assert.ok(leaf.startsWith(base));
+  assert.match(leaf, /## Workspace[\s\S]*Working directory: \/tmp\/workspace/);
+  assert.match(leaf, /You are a bounded leaf agent executing/);
+  assert.doesNotMatch(leaf, /# Root orchestrator bootstrap/);
+  assert.ok(orchestrator.startsWith(base));
+  assert.match(orchestrator, /## Canonical orchestration skill/);
+  assert.doesNotMatch(orchestrator, /You are a bounded leaf agent executing/);
+  assert.equal(promptFromInput("leaf task", leaf), `${leaf}\n\nleaf task`);
+  assert.equal(inputText("root task", orchestrator), `${orchestrator}\n\nDelegated task:\nroot task`);
+  assert.match(promptFromInput([{ role: "system", content: "ignored" }, { role: "user", content: "structured task" }], composeProviderPrompt("explorer", "/tmp/workspace")), /structured task$/);
+  assert.match(inputText([{ role: "developer", content: "ignored" }, { role: "user", content: "structured task" }], composeProviderPrompt(ORCHESTRATOR_AGENT_ROLE, "/tmp/workspace")), /Delegated task:\nstructured task$/);
 });
 
 test("the orchestrator is never handed the leaf prompt, and the leaf is never handed the orchestrator prompt", () => {
-  const orchestrator = bridgeInstructions(ORCHESTRATOR_AGENT_ROLE);
+  const orchestrator = roleInstructions(ORCHESTRATOR_AGENT_ROLE);
   assert.match(orchestrator, new RegExp(read("scripts/codex/prompts/orchestrator.md").trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
   assert.match(orchestrator, /# Root orchestrator bootstrap/);
   assert.match(orchestrator, /## Canonical orchestration skill/);
@@ -51,7 +74,7 @@ test("the orchestrator is never handed the leaf prompt, and the leaf is never ha
   assert.doesNotMatch(orchestrator, /Do \*not\* spawn child agents/);
 
   for (const role of [ null, undefined, "explorer", "worker", "smart" ]) {
-    const leaf = bridgeInstructions(role);
+    const leaf = roleInstructions(role);
     assert.match(leaf, new RegExp(read("scripts/codex/prompts/leaf.md").trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&")), `${String(role)} must get the leaf prompt`);
     assert.match(leaf, /bounded leaf agent/);
     assert.match(leaf, /Do (?:\*{1,2})?not(?:\*{1,2})?\s+spawn\s+child agents/);
@@ -59,7 +82,7 @@ test("the orchestrator is never handed the leaf prompt, and the leaf is never ha
 });
 
 test("the orchestrator prompt teaches the spawn call a code-mode runtime actually accepts", () => {
-  const orchestrator = bridgeInstructions(ORCHESTRATOR_AGENT_ROLE);
+  const orchestrator = roleInstructions(ORCHESTRATOR_AGENT_ROLE);
   // Verified against a live Codex 0.153.1 and against recorded rollouts of
   // GPT-served turns that spawned successfully. Codex runs these models in code
   // mode: there is no spawn tool in the request, only an `exec` tool whose
@@ -87,7 +110,7 @@ test("the orchestrator prompt teaches the spawn call a code-mode runtime actuall
 test("a leaf is told to ignore a spawn tool its runtime leaks to it", () => {
   // agy's MCP config is global, so a spawn tool can be visible to a leaf turn
   // that has no business calling it. The leaf prompt is the only lever there.
-  const leaf = bridgeInstructions("explorer");
+  const leaf = roleInstructions("explorer");
   assert.match(leaf, /multi_agent_v1__spawn_agent/);
   assert.match(leaf, /\*\*not\*\*\s+yours to call|not\s+(?:\*\*)?yours to call/);
 });
@@ -99,7 +122,7 @@ test("every provider bridge picks its instructions from the shared role prompts"
   ]) {
     const source = read(path);
     assert.match(source, /from "\.\/codex\/lib\/bridge-role\.mjs"/, path);
-    assert.match(source, /bridgeInstructions\(agentRole\)/, path);
+    assert.match(source, /composeProviderPrompt\(agentRole, cwd\)/, path);
     assert.match(source, /resolveAgentRole\(request\.headers\)/, path);
     // No bridge may keep a hard-coded leaf prompt that outranks the role.
     assert.doesNotMatch(source, /const BRIDGE_INSTRUCTIONS =/, path);
@@ -146,8 +169,18 @@ test("the installer ships every shared module the bridges import", () => {
     }
   }
   assert.ok(imported.size >= 3, "expected the bridges to share several modules");
-  for (const asset of [ ...imported, "scripts/codex/prompts/base.md", "scripts/codex/prompts/leaf.md", "scripts/codex/prompts/orchestrator.md", "scripts/codex/skills/orchestration/SKILL.md" ]) {
+  for (const asset of [
+    ...imported,
+    "scripts/codex/prompts/base.md",
+    "scripts/codex/prompts/leaf.md",
+    "scripts/codex/prompts/orchestrator.md",
+    "scripts/codex/skills/orchestration/SKILL.md",
+  ]) {
     assert.ok(installer.includes(asset), `installer must deploy ${asset}`);
+  }
+  assert.match(installer, /scripts\/codex\/prompts\/roles\/\$name\.md/);
+  for (const role of ["browser-tester", "default", "docs-researcher", "explorer", "orchestrator", "smart", "validator", "worker"]) {
+    assert.ok(read(`scripts/codex/prompts/roles/${role}.md`).trim(), `missing role prompt ${role}`);
   }
 });
 

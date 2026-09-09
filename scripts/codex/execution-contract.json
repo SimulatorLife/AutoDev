@@ -4,57 +4,95 @@
     "orchestrator": {
       "kind": "orchestrator",
       "readOnly": false,
-      "mcp": ["lsp", "cocoindex-code", "playwright", "autodev_spawn"],
-      "instructions": "You are the root orchestrator. Plan, delegate through the configured orchestration layer, integrate child results, and preserve the active workspace boundary. Do not perform child work before delegating useful independent tasks."
+      "mcp": [
+        "lsp",
+        "cocoindex-code",
+        "playwright",
+        "autodev_spawn"
+      ]
     },
     "default": {
       "kind": "leaf",
       "readOnly": false,
-      "mcp": ["lsp", "cocoindex-code"],
-      "instructions": "You are a general-purpose implementation agent. Follow the active repository instructions, make root-cause changes, update tests and documentation, and do not spawn children."
+      "mcp": [
+        "lsp",
+        "cocoindex-code"
+      ]
     },
     "worker": {
       "kind": "leaf",
       "readOnly": false,
-      "mcp": ["lsp", "cocoindex-code"],
-      "instructions": "You are an execution-focused implementation worker. Make only the bounded change assigned by the parent, preserve unrelated work, and do not spawn children."
+      "mcp": [
+        "lsp",
+        "cocoindex-code"
+      ]
     },
     "explorer": {
       "kind": "leaf",
       "readOnly": true,
-      "mcp": ["lsp", "cocoindex-code"],
-      "instructions": "You are a read-only codebase explorer. Inspect source, tests, configuration, and documentation; report precise evidence and do not edit, stage, commit, push, or spawn children."
+      "mcp": [
+        "lsp",
+        "cocoindex-code"
+      ]
     },
     "validator": {
       "kind": "leaf",
       "readOnly": true,
-      "mcp": ["lsp", "cocoindex-code"],
-      "instructions": "You are a read-only validation agent. Verify the bounded claim or change with focused checks, report exact commands and failures, and do not edit or spawn children."
+      "mcp": [
+        "lsp",
+        "cocoindex-code"
+      ]
     },
     "browser-tester": {
       "kind": "leaf",
       "readOnly": true,
-      "mcp": ["playwright"],
-      "instructions": "You are a read-only browser tester. Use the configured browser tools for runtime evidence, report observed behavior, and do not edit files or spawn children."
+      "mcp": [
+        "playwright"
+      ]
     },
     "docs-researcher": {
       "kind": "leaf",
       "readOnly": true,
-      "mcp": ["openaiDeveloperDocs"],
-      "instructions": "You are a read-only documentation researcher. Prefer canonical and authoritative documentation, distinguish verified facts from inference, and do not edit or spawn children."
+      "mcp": [
+        "openaiDeveloperDocs"
+      ]
     },
     "smart": {
       "kind": "leaf",
       "readOnly": false,
-      "mcp": ["lsp", "cocoindex-code", "playwright", "openaiDeveloperDocs"],
-      "instructions": "You are a full-capability implementation agent. Complete only the bounded task, preserve unrelated work, use the relevant configured tools, and do not spawn children."
+      "mcp": [
+        "lsp",
+        "cocoindex-code",
+        "playwright",
+        "openaiDeveloperDocs"
+      ]
     }
   },
   "providers": {
-    "claude": { "spawnTools": ["Agent", "Task"], "permissionMode": "configured" },
-    "antigravity": { "spawnTools": ["invoke_subagent"], "permissionMode": "configured" },
-    "minimax": { "spawnTools": [], "permissionMode": "upstream" },
-    "copilot": { "spawnTools": [], "permissionMode": "configured" },
-    "codex": { "spawnTools": [], "permissionMode": "native" }
+    "claude": {
+      "spawnTools": [
+        "Agent",
+        "Task"
+      ],
+      "permissionMode": "configured"
+    },
+    "antigravity": {
+      "spawnTools": [
+        "invoke_subagent"
+      ],
+      "permissionMode": "configured"
+    },
+    "minimax": {
+      "spawnTools": [],
+      "permissionMode": "upstream"
+    },
+    "copilot": {
+      "spawnTools": [],
+      "permissionMode": "configured"
+    },
+    "codex": {
+      "spawnTools": [],
+      "permissionMode": "native"
+    }
   }
 }

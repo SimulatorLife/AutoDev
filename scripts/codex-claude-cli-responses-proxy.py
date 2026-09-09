@@ -261,12 +261,20 @@ ORCHESTRATOR_AGENT_ROLE = "orchestrator"
 # installed copy (`$CODEX_HOME/hooks/`).
 _PROMPT_DIRECTORY = Path(__file__).resolve().parent / "codex" / "prompts"
 _ORCHESTRATION_SKILL = _PROMPT_DIRECTORY.parent / "skills" / "orchestration" / "SKILL.md"
+_ROLE_PROMPT_DIRECTORY = _PROMPT_DIRECTORY / "roles"
 
 
 def load_bridge_prompt(name: str) -> str:
     prompt = _PROMPT_DIRECTORY / f"{name}.md"
     if not prompt.is_file():
         raise RuntimeError(f"Bridge prompt {name!r} was not found at: {prompt}")
+    return prompt.read_text(encoding="utf-8").strip()
+
+
+def load_role_prompt(role: str) -> str:
+    prompt = _ROLE_PROMPT_DIRECTORY / f"{role}.md"
+    if not prompt.is_file():
+        raise RuntimeError(f"Role prompt {role!r} was not found at: {prompt}")
     return prompt.read_text(encoding="utf-8").strip()
 
 
@@ -401,8 +409,12 @@ def bridge_instructions(role: Any) -> str:
     canonical = ""
     if is_orchestrator_role(role) and _ORCHESTRATION_SKILL.is_file():
         canonical = f"\n\n## Canonical orchestration skill\n\n{_ORCHESTRATION_SKILL.read_text(encoding='utf-8').strip()}"
+    role_key = "orchestrator" if is_orchestrator_role(role) else (str(role).lower() if role else "default")
+    if not (_ROLE_PROMPT_DIRECTORY / f"{role_key}.md").is_file():
+        role_key = "default"
+    role_prompt = load_role_prompt(role_key)
     return (f"{base}{canonical}\n\n## Effective role contract\n\n"
-            f"{contract.get('instructions', '')}\n\n"
+            f"{role_prompt}\n\n"
             f"Expected MCP/tool capabilities: {expected}. If a required capability is unavailable, "
             "report that fact instead of silently substituting a different workflow.")
 

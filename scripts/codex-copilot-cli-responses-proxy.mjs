@@ -17,7 +17,7 @@ const TIMEOUT_MS = Number.parseInt(process.env.COPILOT_PROXY_TIMEOUT_MS ?? "9000
 const PROJECT_ROOT = process.env.CODEX_PROJECT_ROOT ?? process.env.COPILOT_PROJECT_ROOT ?? null;
 
 import { resolveCwd, WorkspaceResolutionError } from "./codex/lib/resolve-workspace.mjs";
-import { bridgeInstructions, isOrchestratorRole, resolveAgentRole } from "./codex/lib/bridge-role.mjs";
+import { composeProviderPrompt, isOrchestratorRole, resolveAgentRole } from "./codex/lib/bridge-role.mjs";
 import { roleContract } from "./codex/lib/execution-contract.mjs";
 import { classifyCliLimit, INCOMPLETE_REASON_INTERRUPTED, INCOMPLETE_REASON_PROVIDER_LIMIT, limitPayload, limitResponseHeaders, retryAfterSecondsFromLimit, terminalIncompleteEvents } from "./codex/lib/provider-limits.mjs";
 
@@ -176,7 +176,6 @@ async function handle(request, response) {
   // The router classifies the turn; only it can tell this bridge that it is
   // serving the root orchestrator rather than a delegated leaf.
   const agentRole = resolveAgentRole(request.headers);
-  const prompt = inputText(payload.input, bridgeInstructions(agentRole));
   let cwd;
   try {
     cwd = resolveCwd(payload, request.headers, PROJECT_ROOT);
@@ -186,6 +185,7 @@ async function handle(request, response) {
     sendJson(response, 400, { error: { type: "invalid_request_error", message: error.message } });
     return;
   }
+  const prompt = inputText(payload.input, composeProviderPrompt(agentRole, cwd));
   console.error(`copilot request model=${payload.model} role=${isOrchestratorRole(agentRole) ? "orchestrator" : "leaf"} cwd=${cwd}`);
 
   if (payload.stream === false) {
@@ -342,3 +342,5 @@ if (IS_MAIN) {
     console.error(`Copilot Responses proxy listening at http://${HOST}:${PORT}`);
   });
 }
+
+export { inputText };

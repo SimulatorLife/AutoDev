@@ -12,7 +12,11 @@ bash scripts/codex/install-codex-integration.sh
 
 Provider-specific `ensure-*` and `run-*` scripts are intentionally separate so a machine can enable only the providers it has credentials for. Use environment variables documented in each script to override local binary paths and project roots; do not add machine secrets or generated logs to this repository.
 
-The tracked Codex role files under `scripts/codex/agents/` are regular configuration files. Provider identity is configured in the provider profiles/catalogs, while role names remain stable and codebase-agnostic.
+The tracked Codex role files under `scripts/codex/agents/` contain role-specific
+configuration plus shared-prompt composition markers. The installer renders
+`base.md` and `leaf.md` into regular files under `$CODEX_HOME/agents/` before
+Codex loads them; provider identity remains configured in the provider
+profiles/catalogs, while role names stay stable and codebase-agnostic.
 
 The user-level config registers the `lsp` and `playwright` MCP servers through the
 installed `run-autodev-mcp.sh` launcher. The launcher resolves binaries from
@@ -171,13 +175,14 @@ active repository.
 ### Execution contract
 
 The versioned execution contract is `scripts/codex/execution-contract.json`. It
-is installed beside the bridge modules and is consumed by provider bridges when
-composing role instructions. It is the authoritative cross-provider inventory
-for role kind, read-only intent, expected MCP capabilities, and provider spawn
-capabilities. A bridge must report missing capabilities rather than silently
-substituting a different workflow. Native role TOMLs remain the Codex-native
-configuration surface; changes to role capability policy must update the
-contract and its matrix tests together.
+is installed beside the bridge modules and is consumed by provider bridges for
+role kind, read-only intent, expected MCP capabilities, and provider spawn
+capabilities. Canonical role prose lives in
+`scripts/codex/prompts/roles/*.md`; bridges and the native-role renderer share
+those fragments instead of duplicating them. A bridge must report missing
+capabilities rather than silently substituting a different workflow. Native role
+TOMLs remain the Codex-native configuration surface; changes to role capability
+policy must update the contract and its matrix tests together.
 
 Workspace-local `.codex/agents/*.toml` roles are allowed when they use names
 outside AutoDev's managed flat roles. A project-local role that reuses a managed

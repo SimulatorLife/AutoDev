@@ -34,7 +34,7 @@ const EFFORTS = new Set([ "low", "medium", "high" ]);
 const MODEL_EFFORT_SUFFIX = /-(low|medium|high)$/;
 
 import { resolveCwd, WorkspaceResolutionError } from "./codex/lib/resolve-workspace.mjs";
-import { bridgeInstructions, isOrchestratorRole, resolveAgentRole } from "./codex/lib/bridge-role.mjs";
+import { composeProviderPrompt, isOrchestratorRole, resolveAgentRole } from "./codex/lib/bridge-role.mjs";
 import { roleContract } from "./codex/lib/execution-contract.mjs";
 import { classifyCliLimit, INCOMPLETE_REASON_CLIENT_DISCONNECTED, INCOMPLETE_REASON_INTERRUPTED, INCOMPLETE_REASON_PROVIDER_LIMIT, limitPayload, limitResponseHeaders, retryAfterSecondsFromLimit, terminalIncompleteEvents } from "./codex/lib/provider-limits.mjs";
 import { resolveAgentEventReporter } from "./codex/lib/agent-events.mjs";
@@ -707,7 +707,6 @@ async function handle(request, response) {
   const sessionScope = headerValue(request.headers, "x-autodev-session-scope");
   const spawnSession = SpawnSessionRegistry.canHold(sessionHeader, sessionScope) ? sessionHeader : null;
   const { observeSpawnStep, flushSpawns } = createSpawnTracker(agentEvents);
-  const prompt = promptFromInput(payload.input ?? "", bridgeInstructions(agentRole));
   let cwd;
   try {
     cwd = resolveCwd(payload, request.headers, PROJECT_ROOT);
@@ -717,6 +716,7 @@ async function handle(request, response) {
     sendJson(response, 400, { error: { type: "invalid_request_error", message: error.message } });
     return;
   }
+  const prompt = promptFromInput(payload.input ?? "", composeProviderPrompt(agentRole, cwd));
   // Only hold delegation state once all pre-flight validation has succeeded.
   // An invalid workspace must not leave an orphaned entry that a later shim
   // process could attach to.
@@ -1062,4 +1062,4 @@ if (IS_MAIN) {
   });
 }
 
-export { agyArgs, agyFailureMessage, createSpawnTracker, decideCloseOnDelegation, modelEffort, resolveEffort, resolveModel, spawnedChildren, subagentModel, updateDelegationState };
+export { agyArgs, agyFailureMessage, createSpawnTracker, decideCloseOnDelegation, modelEffort, promptFromInput, resolveEffort, resolveModel, spawnedChildren, subagentModel, updateDelegationState };
