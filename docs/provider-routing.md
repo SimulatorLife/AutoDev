@@ -160,7 +160,7 @@ Every provider in `providerGroups.orchestrator` must declare
         each child independently keeps successful siblings visible when the configured
         concurrency limit rejects one child; the tool output names that rejected child
         instead of collapsing the whole batch into an opaque `Failed creating` error.
-    `scripts/codex/prompts/orchestrator.md` states this to the model, and
+    The canonical `orchestration` skill documents this contract, and
     `scripts/codex/lib/codex-spawn-tools.mjs` builds the call for any component
     that needs to emit one.
   - **Bridge-native spawn** (`claude`, `antigravity`): the CLI behind the bridge
@@ -808,12 +808,19 @@ policy. Every bridge receives it as an ordinary request header; Antigravity
 once also received it in the Responses `extra_headers` body field because the
 LiteLLM hop that used to sit in front of that adapter dropped raw headers.
 
-Bridges resolve the header and pick one of two shared prompts:
+Bridges resolve the header and pick one of two prompt bootstraps:
 
-| Role | Prompt | Claude CLI subagent tools |
-| --- | --- | --- |
-| `orchestrator` | `scripts/codex/prompts/orchestrator.md` | available |
-| anything else (including absent) | `scripts/codex/prompts/leaf.md` | `--disallowed-tools Agent,Task` |
+| Role | Bootstrap | Additional canonical policy | Claude CLI subagent tools |
+| --- | --- | --- | --- |
+| `orchestrator` | `scripts/codex/prompts/orchestrator.md` | `scripts/codex/skills/orchestration/SKILL.md` injected by `bridge-role.mjs` | available |
+| anything else (including absent) | `scripts/codex/prompts/leaf.md` | none | `--disallowed-tools Agent,Task` |
+
+The orchestration skill is the single source of truth for delegation procedure,
+child lifecycle, recovery, and role selection. The orchestrator prompt is only a
+small bootstrap of root identity and a pointer to the canonical policy. The native root
+hook injects the same skill content and recovery preflight; provider bridges use
+`bridge-role.mjs` to assemble the same prompt. Execution-contract JSON remains
+machine-readable capability metadata and does not duplicate procedural policy.
 
 The Antigravity bridge has no equivalent CLI flag: `agy` exposes its subagent
 tools unconditionally, so a leaf turn there is bounded by `leaf.md` prompt
@@ -821,7 +828,7 @@ policy alone rather than at the CLI boundary. `agy`'s own subagent definitions
 do carry an `EnableSubagentTools` field ("Grant tools to define and invoke its
 own subagents"), but the model sets it when it spawns a child, so it bounds
 depth below the orchestrator rather than bounding the turn the bridge starts;
-`orchestrator.md` asks for it to be withheld by default.
+The canonical `orchestration` skill requires it to be withheld by default.
 
 #### Isolation between concurrently running orchestrators
 
@@ -885,12 +892,12 @@ role prompt accounts for; a bridge turn is governed by the role prompts and the
 target repository's own skills.
 
 Anything that is not exactly `orchestrator` is treated as a leaf, so a missing
-or unrecognized header fails closed to the bounded policy. The same
-`orchestrator.md` is what the `enforce-root-delegation.sh` `UserPromptSubmit`
-hook injects, so the root agent gets one delegation policy no matter which
-provider serves it. The JavaScript bridges share
-`scripts/codex/lib/bridge-role.mjs`; the Claude bridge reads the same prompt
-files from Python. The installer deploys both the shared module and the prompt
+or unrecognized header fails closed to the bounded policy. The
+`enforce-root-delegation.sh` `UserPromptSubmit` hook injects the orchestrator
+bootstrap and the canonical `orchestration` skill, so the root agent gets one
+delegation policy no matter which provider serves it. The JavaScript bridges
+share `scripts/codex/lib/bridge-role.mjs`; the Claude bridge reads the same
+prompt files and skill from Python. The installer deploys both the shared module and the prompt
 files into the hooks directory at their repo path minus the leading `scripts/`,
 so a bridge sits at the same depth above them there as it does in a checkout
 and one relative lookup -- `./codex/lib/…`, `./codex/prompts/…` -- resolves in

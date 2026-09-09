@@ -452,6 +452,14 @@ class LocalSetupTests(unittest.TestCase):
                 (REPO_ROOT / "scripts/codex/lib/resolve-workspace.mjs").read_bytes(),
             )
 
+    def test_root_config_enables_canonical_orchestration_skill(self):
+        config = (REPO_ROOT / "scripts/codex/config.toml").read_text()
+        self.assertIn('[[skills.config]]\nname = "orchestration"\nenabled = true', config)
+        for role in ("default", "explorer", "validator", "worker", "smart", "docs-researcher", "browser-tester"):
+            role_config = (REPO_ROOT / "scripts/codex/agents" / f"{role}.toml").read_text()
+            self.assertIn('name = "orchestration"', role_config)
+            self.assertIn('name = "orchestration"\nenabled = false', role_config)
+
     def test_user_level_skill_registry_contains_all_requested_skill_names(self):
         names = {path.name for path in (REPO_ROOT / "scripts/codex/skills").iterdir()}
         self.assertTrue(set(SKILL_NAMES) <= names)
@@ -750,12 +758,14 @@ class LocalSetupTests(unittest.TestCase):
         orchestrator = claude_bridge.bridge_instructions("orchestrator")
         self.assertIn(claude_bridge.ORCHESTRATOR_BRIDGE_INSTRUCTIONS, orchestrator)
         self.assertIn("Effective role contract", orchestrator)
-        self.assertIn("ROOT ORCHESTRATOR POLICY", orchestrator)
+        self.assertIn("# Root orchestrator bootstrap", orchestrator)
+        self.assertIn("## Canonical orchestration skill", orchestrator)
         self.assertNotIn("bounded leaf agent", orchestrator)
         self.assertNotIn("Do not spawn", orchestrator)
 
         prompt = claude_bridge.system_prompt("orchestrator", "/tmp/workspace")
-        self.assertIn("ROOT ORCHESTRATOR POLICY", prompt)
+        self.assertIn("# Root orchestrator bootstrap", prompt)
+        self.assertIn("## Canonical orchestration skill", prompt)
         self.assertNotIn("bounded leaf agent", prompt)
 
         for role in (None, "", "explorer", "worker", "orchestrator-ish"):
@@ -963,14 +973,17 @@ class LocalSetupTests(unittest.TestCase):
         leaf = (REPO_ROOT / "scripts/codex/prompts/leaf.md").read_text()
         orchestrator = (REPO_ROOT / "scripts/codex/prompts/orchestrator.md").read_text()
         self.assertIn("Your agent tree is your parent and you", leaf)
-        self.assertIn("Your agent tree is you and the agents you spawn", orchestrator)
-        for prompt in (leaf, orchestrator):
-            self.assertIn("Other orchestrators", prompt)
+        self.assertIn("# Root orchestrator bootstrap", orchestrator)
+        self.assertNotIn("## Root orchestrator contract", orchestrator)
+        orchestrator_instructions = claude_bridge.bridge_instructions("orchestrator")
+        self.assertIn("## Root orchestrator contract", orchestrator_instructions)
+        self.assertIn("Other orchestrators and their children are peers", orchestrator_instructions)
+        self.assertIn("Other orchestrators", leaf)
         # The dangerous move is acting on an id harvested from somewhere other
         # than spawning it -- ~/.gemini/antigravity-cli/presence/ is a
         # machine-wide registry of live conversation ids.
         self.assertIn("never to an ID you discovered by reading the", leaf)
-        self.assertIn("never act on an agent ID you did not", orchestrator)
+        self.assertIn("never act on an agent ID you did not", claude_bridge.bridge_instructions("orchestrator"))
 
     def test_claude_stream_reports_reasoning_and_tool_activity(self):
         """Claude reports far more than its final answer. Without forwarding
@@ -1426,7 +1439,7 @@ class LocalSetupTests(unittest.TestCase):
                 check=True,
                 env=environment,
             )
-        self.assertIn("ROOT ORCHESTRATOR POLICY", result.stdout)
+        self.assertIn("# Root orchestrator bootstrap", result.stdout)
 
     def test_orchestrator_uses_router_fallback_alias(self):
         config = (REPO_ROOT / "scripts/codex/config.toml").read_text()
@@ -1818,7 +1831,7 @@ class LocalSetupTests(unittest.TestCase):
                     check=True,
                     env=environment,
                 )
-            self.assertIn("ROOT ORCHESTRATOR POLICY", result.stdout)
+            self.assertIn("# Root orchestrator bootstrap", result.stdout)
 
     def test_provider_bridges_never_infer_workspace_from_prompt_text(self):
         for relative_path in (
@@ -1939,6 +1952,69 @@ class LocalSetupTests(unittest.TestCase):
         ):
             self.assertIn(required, skill)
 
+    def test_canonical_orchestration_skill_is_injected_through_every_root_path(self):
+        """The orchestration skill is the single source of truth for root
+        delegation behavior. The bridge-role loader, the Claude bridge, and the
+        root delegation hook must each inject it as a coherent section, and no
+        leaf path may carry the orchestration policy into a delegated turn.
+        """
+        skill = (REPO_ROOT / "scripts/codex/skills/orchestration/SKILL.md").read_text()
+        self.assertIn("## Root orchestrator contract", skill)
+        self.assertIn("## Capability roles", skill)
+
+        # Every orchestrator path loads the same canonical skill file by
+        # relative path so the installer ships it. JS uses URL-style paths
+        # while the Claude bridge composes its path with Path parts.
+        path_patterns = (
+            ("scripts/codex/lib/bridge-role.mjs", "../skills/orchestration/SKILL.md"),
+            ("scripts/codex/lib/bridge-role.mjs", "skills/orchestration/SKILL.md"),
+            ("scripts/codex-claude-cli-responses-proxy.py", '"orchestration"'),
+            ("scripts/codex-claude-cli-responses-proxy.py", '"SKILL.md"'),
+            ("scripts/enforce-root-delegation.sh", "skills/orchestration/SKILL.md"),
+        )
+        for relative_path, needle in path_patterns:
+            with self.subTest(path=relative_path, needle=needle):
+                source = (REPO_ROOT / relative_path).read_text()
+                self.assertIn(needle, source, f"{relative_path} must reference {needle!r}")
+
+        # Bridge-role output for an orchestrator turn carries the canonical
+        # skill section header; leaf turns do not.
+        orch = claude_bridge.bridge_instructions("orchestrator")
+        self.assertIn("## Canonical orchestration skill", orch)
+        self.assertIn("## Root orchestrator contract", orch)
+        for leaf_role in ("default", "explorer", "validator", "worker"):
+            with self.subTest(leaf_role=leaf_role):
+                instructions = claude_bridge.bridge_instructions(leaf_role)
+                self.assertNotIn("## Canonical orchestration skill", instructions)
+                self.assertNotIn("## Root orchestrator contract", instructions)
+
+        # The Claude bridge's assembled system prompt carries the same section.
+        prompt = claude_bridge.system_prompt("orchestrator", "/tmp/workspace")
+        self.assertIn("## Canonical orchestration skill", prompt)
+        self.assertIn("## Root orchestrator contract", prompt)
+        self.assertNotIn(
+            "## Canonical orchestration skill",
+            claude_bridge.system_prompt("worker", "/tmp/workspace"),
+        )
+
+        # The native root delegation hook must inject the same section headers
+        # for a non-Codex parent model.
+        hook = REPO_ROOT / "scripts/enforce-root-delegation.sh"
+        with tempfile.TemporaryDirectory() as home:
+            (Path(home) / ".codex/hooks").mkdir(parents=True)
+            environment = os.environ.copy()
+            environment["HOME"] = home
+            result = subprocess.run(
+                ["bash", str(hook)],
+                input=json.dumps({"model": "gpt-5.6-luna", "session_id": "parent-test-1"}),
+                text=True,
+                capture_output=True,
+                check=True,
+                env=environment,
+            )
+        self.assertIn("## Canonical orchestration skill", result.stdout)
+        self.assertIn("## Root orchestrator contract", result.stdout)
+
     def test_root_delegation_hook_injects_spawn_safety_policy_for_parent_models(self):
         hook = REPO_ROOT / "scripts/enforce-root-delegation.sh"
         with tempfile.TemporaryDirectory() as home:
@@ -1957,7 +2033,7 @@ class LocalSetupTests(unittest.TestCase):
         self.assertIn("parent-test-1", result.stdout)
         self.assertIn("configured limit", result.stdout)
         self.assertIn("close_agent", result.stdout)
-        self.assertIn("bounded recovery retry", result.stdout)
+        self.assertIn("retry the original batch once", result.stdout)
         self.assertIn("list_agents", result.stdout)
         self.assertIn("read_thread", result.stdout)
         self.assertIn("list_threads", result.stdout)
@@ -1978,7 +2054,7 @@ class LocalSetupTests(unittest.TestCase):
                 check=True,
                 env=environment,
             )
-        self.assertIn("ROOT ORCHESTRATOR POLICY", result.stdout)
+        self.assertIn("# Root orchestrator bootstrap", result.stdout)
 
 
 

@@ -58,12 +58,13 @@ esac
 # installed copy (`$CODEX_HOME/hooks/`).
 hook_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 prompt_file="$hook_dir/codex/prompts/orchestrator.md"
+skill_file="$hook_dir/codex/skills/orchestration/SKILL.md"
 if [[ ! -f "$prompt_file" ]]; then
   echo "enforce-root-delegation: orchestrator prompt not found at $prompt_file" >&2
   exit 0
 fi
 
-printf '%s' "$input" | HOOK_PROMPT_FILE="$prompt_file" HOOK_ROOT_DIR="$hook_dir" node -e '
+printf '%s' "$input" | HOOK_PROMPT_FILE="$prompt_file" HOOK_SKILL_FILE="$skill_file" HOOK_ROOT_DIR="$hook_dir" node -e '
   const fs = require("node:fs");
   const path = require("node:path");
   const { pathToFileURL } = require("node:url");
@@ -80,6 +81,9 @@ printf '%s' "$input" | HOOK_PROMPT_FILE="$prompt_file" HOOK_ROOT_DIR="$hook_dir"
       } catch { }
     }
     const prompt = fs.readFileSync(process.env.HOOK_PROMPT_FILE, "utf8").trim();
+    const skill = fs.existsSync(process.env.HOOK_SKILL_FILE)
+      ? "\n\n## Canonical orchestration skill\n\n" + fs.readFileSync(process.env.HOOK_SKILL_FILE, "utf8").trim()
+      : "\n\nCanonical orchestration skill is unavailable; report that capability failure instead of silently substituting a workflow.";
     const recoveryContext = recovery
       ? "\n\n## Current-parent recovery preflight\nExecute this preflight before retrying a thread-limit/admission failure. It reads only the current parent task spawn history, waits for each child, and closes terminal handles; it never closes foreign or running children.\n\n```js\n" + recovery + "```"
       : "\n\nCurrent-parent recovery preflight is unavailable because the hook did not receive a parent session id or could not load the recovery helper. Do not infer child ids from global task listings.";
@@ -87,7 +91,7 @@ printf '%s' "$input" | HOOK_PROMPT_FILE="$prompt_file" HOOK_ROOT_DIR="$hook_dir"
       systemMessage: "UserPromptSubmit hook fired: injecting root delegation policy",
       hookSpecificOutput: {
         hookEventName: "UserPromptSubmit",
-        additionalContext: prompt + recoveryContext
+        additionalContext: prompt + skill + recoveryContext
       }
     }));
   })();

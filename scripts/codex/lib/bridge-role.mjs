@@ -12,6 +12,7 @@ const PROMPTS = Object.freeze({
   leaf: new URL("../prompts/leaf.md", import.meta.url),
   orchestrator: new URL("../prompts/orchestrator.md", import.meta.url),
 });
+const ORCHESTRATION_SKILL = new URL("../skills/orchestration/SKILL.md", import.meta.url);
 const cache = new Map();
 
 function headerValue(headers, name) {
@@ -46,8 +47,11 @@ export function bridgeInstructions(role) {
   const cacheKey = `${key}:${contractKey ?? "default"}`;
   if (!cache.has(cacheKey)) {
     const base = readFileSync(PROMPTS[key], "utf8").trim();
+    const canonical = key === "orchestrator"
+      ? `\n\n## Canonical orchestration skill\n\n${readFileSync(ORCHESTRATION_SKILL, "utf8").trim()}`
+      : "";
     const tools = contract.mcp.length > 0 ? contract.mcp.join(", ") : "none declared";
-    cache.set(cacheKey, `${base}\n\n## Effective role contract\n\n${contract.instructions}\n\nExpected MCP/tool capabilities: ${tools}. If a required capability is unavailable, report that fact instead of silently substituting a different workflow.`);
+    cache.set(cacheKey, `${base}${canonical}\n\n## Effective role contract\n\n${contract.instructions}\n\nExpected MCP/tool capabilities: ${tools}. If a required capability is unavailable, report that fact instead of silently substituting a different workflow.`);
   }
   return cache.get(cacheKey);
 }

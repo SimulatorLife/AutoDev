@@ -359,6 +359,9 @@ enabled = true
 [[skills.config]]
 name = "ccc"
 enabled = true
+[[skills.config]]
+name = "orchestration"
+enabled = true
 
 [[skills.config]]
 name = "plugin-management:plugin-management"

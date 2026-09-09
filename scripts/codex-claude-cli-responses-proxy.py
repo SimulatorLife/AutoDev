@@ -260,6 +260,7 @@ ORCHESTRATOR_AGENT_ROLE = "orchestrator"
 # file sits beside `codex/prompts/` in a checkout (`scripts/`) and again in the
 # installed copy (`$CODEX_HOME/hooks/`).
 _PROMPT_DIRECTORY = Path(__file__).resolve().parent / "codex" / "prompts"
+_ORCHESTRATION_SKILL = _PROMPT_DIRECTORY.parent / "skills" / "orchestration" / "SKILL.md"
 
 
 def load_bridge_prompt(name: str) -> str:
@@ -397,7 +398,10 @@ def bridge_instructions(role: Any) -> str:
     contract = EXECUTION_CONTRACT.get("roles", {}).get(key) or EXECUTION_CONTRACT["roles"]["default"]
     expected = ", ".join(contract.get("mcp", [])) or "none declared"
     base = ORCHESTRATOR_BRIDGE_INSTRUCTIONS if is_orchestrator_role(role) else LEAF_BRIDGE_INSTRUCTIONS
-    return (f"{base}\n\n## Effective role contract\n\n"
+    canonical = ""
+    if is_orchestrator_role(role) and _ORCHESTRATION_SKILL.is_file():
+        canonical = f"\n\n## Canonical orchestration skill\n\n{_ORCHESTRATION_SKILL.read_text(encoding='utf-8').strip()}"
+    return (f"{base}{canonical}\n\n## Effective role contract\n\n"
             f"{contract.get('instructions', '')}\n\n"
             f"Expected MCP/tool capabilities: {expected}. If a required capability is unavailable, "
             "report that fact instead of silently substituting a different workflow.")

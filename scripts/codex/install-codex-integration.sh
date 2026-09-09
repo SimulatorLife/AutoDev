@@ -69,6 +69,7 @@ runtime_module_names=(
   scripts/codex/prompts/base.md
   scripts/codex/prompts/leaf.md
   scripts/codex/prompts/orchestrator.md
+  scripts/codex/skills/orchestration/SKILL.md
 )
 
 profile_names=(claude minimax antigravity)

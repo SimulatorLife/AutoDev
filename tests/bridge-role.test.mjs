@@ -44,8 +44,11 @@ test("the execution contract preserves role-specific capabilities across bridge 
 test("the orchestrator is never handed the leaf prompt, and the leaf is never handed the orchestrator prompt", () => {
   const orchestrator = bridgeInstructions(ORCHESTRATOR_AGENT_ROLE);
   assert.match(orchestrator, new RegExp(read("scripts/codex/prompts/orchestrator.md").trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
-  assert.match(orchestrator, /ROOT ORCHESTRATOR POLICY/);
-  assert.doesNotMatch(orchestrator, /leaf agent|Do not spawn child agents/);
+  assert.match(orchestrator, /# Root orchestrator bootstrap/);
+  assert.match(orchestrator, /## Canonical orchestration skill/);
+  assert.match(orchestrator, /## Root orchestrator contract/);
+  assert.doesNotMatch(orchestrator, /You are a bounded leaf agent executing/);
+  assert.doesNotMatch(orchestrator, /Do \*not\* spawn child agents/);
 
   for (const role of [ null, undefined, "explorer", "worker", "smart" ]) {
     const leaf = bridgeInstructions(role);
@@ -71,7 +74,7 @@ test("the orchestrator prompt teaches the spawn call a code-mode runtime actuall
   // A batch must stay one call: fan-out inside a single call is what runs the
   // children in parallel and what keeps a wide fan-out from being counted as
   // one delegation.
-  assert.match(orchestrator, /ONE call rather than one call per child/);
+  assert.match(orchestrator, /one\s+whole batch call/);
   // Both runtimes reach the same spawner, so the contract is stated once and
   // only the spelling differs. A model must never be left choosing between
   // this path and its own runtime's private task tool.
@@ -86,7 +89,7 @@ test("a leaf is told to ignore a spawn tool its runtime leaks to it", () => {
   // that has no business calling it. The leaf prompt is the only lever there.
   const leaf = bridgeInstructions("explorer");
   assert.match(leaf, /multi_agent_v1__spawn_agent/);
-  assert.match(leaf, /not yours to call/);
+  assert.match(leaf, /\*\*not\*\*\s+yours to call|not\s+(?:\*\*)?yours to call/);
 });
 
 test("every provider bridge picks its instructions from the shared role prompts", () => {
@@ -143,7 +146,7 @@ test("the installer ships every shared module the bridges import", () => {
     }
   }
   assert.ok(imported.size >= 3, "expected the bridges to share several modules");
-  for (const asset of [ ...imported, "scripts/codex/prompts/base.md", "scripts/codex/prompts/leaf.md", "scripts/codex/prompts/orchestrator.md" ]) {
+  for (const asset of [ ...imported, "scripts/codex/prompts/base.md", "scripts/codex/prompts/leaf.md", "scripts/codex/prompts/orchestrator.md", "scripts/codex/skills/orchestration/SKILL.md" ]) {
     assert.ok(installer.includes(asset), `installer must deploy ${asset}`);
   }
 });

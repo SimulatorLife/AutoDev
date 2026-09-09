@@ -7,8 +7,63 @@ description: Coordinate independent work across the configured agents and provid
 
 Use this skill to coordinate independent work across the configured capability
 roles. The orchestrator owns the plan and integration; delegated roles own
-their bounded execution. Select configured roles and explicit
-`autodev/<role>` aliases rather than hard-coding a provider or concrete model.
+their bounded execution. Select explicit configured autodev/<role> model aliases rather than hard-coding a provider or concrete model.
+
+## Root orchestrator contract
+
+This skill is the single source of truth for root delegation behavior. Provider
+prompts, hooks, and bridges may bootstrap or inject this skill, but must not
+maintain competing copies of its procedure.
+
+The root orchestrator owns planning, delegation, integration, and final
+validation. Before substantial work, identify useful independent subtasks and
+assign them through the configured role-based orchestration layer. There is
+exactly one delegation path: the configured `spawn_subagent`/role-based
+surface (or its code-mode `multi_agent_v1__spawn_agent` implementation). Use
+one whole batch call for independent work; do not substitute `create_thread`,
+`fork_thread`, or provider-private task APIs for the role-based child path.
+
+The parent may message, wait for, resume, and close only children in its own
+agent tree. Never act on an agent ID you did not receive from this parent's
+spawn call or recover from this parent's own Codex App history; never use IDs
+discovered by reading the filesystem, global task list, or another parent's
+output. Other orchestrators and their children are peers, not recovery
+candidates. Roles are leaves unless a task explicitly requires otherwise and
+has an approved nested-delegation design.
+
+For a native code-mode provider, the delegation call uses the runtime's
+`exec` surface and `tools.multi_agent_v1__spawn_agent` with `{ agent_type,
+message }`. Batch calls use `Promise.allSettled`, emit a structured
+`spawn_status: "created"` or `spawn_status: "rejected"` result per child, and
+never hide successful siblings behind one rejected child. Spawning is
+fire-and-forget: children continue under the orchestration layer after the
+spawn call returns, and the parent must not poll for their lifetime. Provider
+bridges use the same parent-owned path when available; bridge-native children
+remain provider-owned and are reported separately.
+
+A spawn failure never authorizes silent takeover of delegated implementation
+scopes. A rejected entry with no `agent_id` created no child handle. On an
+admission/thread-limit failure against the configured limit, stop repeated spawn
+attempts, recover known terminal children owned by this parent, retry the
+original batch once, and if that fails report the exact unavailable path while
+remaining the coordinator.
+
+When a child reaches `completed`, `errored`, `interrupted`, `shutdown`, or an
+explicit provider-incomplete terminal state, consume its result and call
+`close_agent` immediately. Completion does not release the child handle by
+itself. If the runtime offers owner-scoped `list_agents`/`manage_subagents`, use
+it during recovery. If only Codex App `read_thread` is available, recover IDs
+only from successful spawn results in this parent's history. Do not use global
+`list_threads`, filesystem state, telemetry, or UI listings as ownership proof.
+The root hook may inject an executable current-parent recovery preflight; run it
+before retrying admission failures. It must wait children, close terminal ones,
+and leave running or foreign children untouched.
+
+The router's active-child count is router-admission telemetry, not the Codex
+app's open child-handle count. A zero router count does not prove that the
+parent has no open handles. Keep the active workspace/worktree aligned with the
+parent and report missing roles, tools, provider limits, stalls, partial child
+results, and unavailable recovery surfaces explicitly.
 
 ## Capability roles
 
@@ -82,8 +137,9 @@ Treat each child handle as a two-phase resource:
   state, telemetry, and UI listings are not child-handle enumeration. Close
   only known terminal children owned by this parent, retry the original
   delegation once, and then stop retrying.
-  Do not silently take over the delegated scopes after the bounded recovery
-  attempt fails; report the capacity/provider failure to the parent/user.
+  Do not silently perform delegated implementation scopes after the bounded
+  recovery attempt fails; report the capacity/provider failure to the
+  parent/user.
 - Never perform a global cleanup or close a handle discovered outside this
   parent tree. Router active-slot telemetry cannot prove that the Codex app has
   no open child handles.

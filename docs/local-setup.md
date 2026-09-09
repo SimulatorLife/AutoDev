@@ -63,7 +63,10 @@ place so the selected coding profiles can use the same MCP without duplicate
 installations.
 
 The installer exposes these AutoDev-owned shared skill directories in
-`$HOME/.agents/skills/` through symlinks:
+`$HOME/.agents/skills/` through symlinks. The root `orchestration` skill is
+also enabled in the parent user config and injected deterministically into root
+turns by the delegation hook and provider bridges; leaf role TOMLs keep it
+disabled so child agents do not inherit parent orchestration policy.
 
 - `ccc`
 - `code-simplification`
