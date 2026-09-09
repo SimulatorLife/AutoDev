@@ -1297,6 +1297,59 @@ test("relays the canonical workspaces-map-keyed turn metadata even when it arriv
   }
 });
 
+test("restores validated workspace metadata on role and concrete continuations", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalCredentials = {
+    LITELLM_API_KEY: process.env.LITELLM_API_KEY,
+    MINIMAX_API_KEY: process.env.MINIMAX_API_KEY,
+  };
+  const workspace = await mkdtemp(join(tmpdir(), "autodev-workspace-continuity-"));
+  const observedHeaders = [];
+  process.env.LITELLM_API_KEY = "test-provider-key";
+  process.env.MINIMAX_API_KEY = "test-provider-key";
+  resetRouterTelemetry();
+  for (const provider of [ "claude", "antigravity", "minimax", "copilot", "codex" ]) clearProviderCooldown(provider);
+  globalThis.fetch = async (url, options) => {
+    const target = String(url);
+    if (target.endsWith("/health") || target.endsWith("/health/liveliness")) return new Response("ok", { status: 200 });
+    if (target.endsWith("/responses")) {
+      observedHeaders.push(options.headers[ "x-codex-turn-metadata" ] ?? null);
+      return new Response(JSON.stringify({ id: "workspace-continuity", output_text: "ok" }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }
+    return originalFetch(url, options);
+  };
+  const server = createServer((request, response) => { void handle(request, response); });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  try {
+    const address = server.address();
+    const turnMetadata = JSON.stringify({ workspaces: { [workspace]: { git: { branch: "main" } } } });
+    for (const [index, model] of ["gemini-3.8-flash-medium", "autodev/default"].entries()) {
+      const sessionId = `workspace-continuity-${index}`;
+      const send = (headers) => originalFetch(`http://127.0.0.1:${address.port}/v1/responses`, {
+        method: "POST",
+        headers: { "content-type": "application/json", "x-codex-session-id": sessionId, ...headers },
+        body: JSON.stringify({ model, stream: false }),
+      });
+      assert.equal((await send({ "x-codex-turn-metadata": turnMetadata })).status, 200);
+      assert.equal((await send({})).status, 200);
+      const continuedHeader = observedHeaders.at(-1);
+      assert.deepEqual(JSON.parse(continuedHeader).workspaces[workspace], {});
+    }
+  } finally {
+    await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    globalThis.fetch = originalFetch;
+    for (const [key, value] of Object.entries(originalCredentials)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+    resetRouterTelemetry();
+    await rm(workspace, { recursive: true, force: true });
+  }
+});
+
 test("sends the router's own headers to the Antigravity adapter and discards the caller's", async () => {
   const originalFetch = globalThis.fetch;
   let upstreamHeaders = null;

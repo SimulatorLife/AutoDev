@@ -9,7 +9,7 @@ import {
   resolveCwd,
   WorkspaceResolutionError,
 } from "../scripts/codex/lib/resolve-workspace.mjs";
-import { workspaceContextFromRequest } from "../scripts/codex-model-router.mjs";
+import { workspaceContextFromRequest, workspaceMetadataForSession } from "../scripts/codex-model-router.mjs";
 
 async function withWorkspace(callback) {
   const workspace = await mkdtemp(path.join(tmpdir(), "autodev-workspace-"));
@@ -98,6 +98,40 @@ test("the router labels a turn with the workspace the bridge will actually use",
       const ambiguous = JSON.stringify({ workspaces: { [ real ]: { git: {} }, [ other ]: { git: {} } } });
       assert.equal(workspaceContextFromRequest({ headers: {} }, {}, ambiguous).cwd, null);
       assert.throws(() => resolveCwd({}, { "x-codex-turn-metadata": ambiguous }), AmbiguousWorkspaceError);
+    });
+  });
+});
+
+test("the router carries a validated workspace across metadata-less continuations", async () => {
+  await withWorkspace(async (workspace) => {
+    const session = { key: `workspace-session-${workspace}`, scope: "identified" };
+    const firstHeader = JSON.stringify({ workspaces: { [workspace]: { git: { branch: "main" } } } });
+
+    // The first request establishes the session's workspace from the same
+    // structured metadata the provider bridge will use.
+    assert.equal(workspaceMetadataForSession({}, firstHeader, session), firstHeader);
+
+    // A continuation that loses the transport metadata still receives a
+    // canonical structured workspace, rather than making the bridge guess.
+    const continued = workspaceMetadataForSession({}, null, session);
+    assert.equal(resolveCwd({}, { "x-codex-turn-metadata": continued }), workspace);
+
+    // A new/unidentified conversation never inherits another session's path.
+    assert.equal(workspaceMetadataForSession({}, null, { key: "process-scope", scope: "process-fallback" }), null);
+  });
+});
+
+test("workspace continuity does not override an invalid or ambiguous claim", async () => {
+  await withWorkspace(async (workspace) => {
+    const session = { key: `invalid-workspace-session-${workspace}`, scope: "identified" };
+    const firstHeader = JSON.stringify({ workspaces: { [workspace]: { git: {} } } });
+    workspaceMetadataForSession({}, firstHeader, session);
+
+    assert.equal(workspaceMetadataForSession({ cwd: "/does/not/exist" }, null, session), null);
+    assert.equal(workspaceMetadataForSession({ cwd: 42 }, null, session), null);
+    await withWorkspace(async (other) => {
+      const ambiguous = JSON.stringify({ workspaces: { [workspace]: { git: {} }, [other]: { git: {} } } });
+      assert.equal(workspaceMetadataForSession({}, ambiguous, session), ambiguous);
     });
   });
 });

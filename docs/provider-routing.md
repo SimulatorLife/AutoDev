@@ -100,7 +100,11 @@ logs, then classify the first failing boundary:
   metadata (or an explicit `CODEX_PROJECT_ROOT`). The bridge fails closed rather
   than taking a repository path from task prose. Invalid requests are rejected
   before delegation state is opened, so a failed pre-flight cannot leave a stale
-  spawn session attached to a later turn.
+  spawn session attached to a later turn. The router also retains the last
+  successfully resolved workspace for an identified conversation and restores
+  it when a continuation drops the turn-metadata transport header. This is
+  session continuity, not process-cwd discovery: anonymous sessions and
+  invalid/ambiguous workspace claims still fail closed.
 
 The most useful evidence is the bridge log line immediately after `agy request`:
 `agy turn failed after ...: status ERROR; timeout waiting for response; ...`,

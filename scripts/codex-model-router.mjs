@@ -12,7 +12,7 @@ import { pathToFileURL } from "node:url";
 // the same turn for telemetry. Sharing the primitives is what keeps the label
 // and the directory the agent actually runs in from drifting apart -- they
 // were separate implementations, and they disagreed.
-import { WORKSPACE_KEYS, isDirectory } from "./codex/lib/resolve-workspace.mjs";
+import { resolveCwd, WORKSPACE_KEYS, isDirectory } from "./codex/lib/resolve-workspace.mjs";
 import { INCOMPLETE_REASON_INTERRUPTED, INCOMPLETE_REASON_TIMEOUT, isHardLimitClass, LIMIT_HEADER_CLASS, LIMIT_HEADER_RESETS_AT, LIMIT_SOURCE_REPORTED, normalizeResetsAt, readLimitHeaders, terminalIncompleteEvents } from "./codex/lib/provider-limits.mjs";
 // Providers disagree about the Responses API's item-id contract, and Codex
 // replays whatever it was handed on every later turn. Normalising outbound is
@@ -1174,6 +1174,24 @@ const subagentTelemetry = {
 // without limit.
 const MAX_TRACKED_ORCHESTRATOR_SESSIONS = 256;
 const orchestratorProviderBySession = new Map();
+
+// Codex can omit turn metadata on a continuation request even though the
+// conversation itself is still identified. A bridge cannot safely recover the
+// workspace from its process cwd, so retain only the last workspace that this
+// router successfully resolved for that identified conversation. This is
+// continuity, not workspace discovery: anonymous requests and sessions with no
+// previously validated workspace still fail closed at the bridge boundary.
+const MAX_TRACKED_WORKSPACE_SESSIONS = 256;
+const workspaceMetadataBySession = new Map();
+
+function rememberWorkspaceMetadata(sessionKey, workspacePath) {
+  if (!sessionKey || sessionKey === PROCESS_FALLBACK_SESSION_KEY || !workspacePath) return;
+  workspaceMetadataBySession.delete(sessionKey);
+  workspaceMetadataBySession.set(sessionKey, JSON.stringify({ workspaces: { [workspacePath]: {} } }));
+  while (workspaceMetadataBySession.size > MAX_TRACKED_WORKSPACE_SESSIONS) {
+    workspaceMetadataBySession.delete(workspaceMetadataBySession.keys().next().value);
+  }
+}
 
 // Recorded when the attempt is dispatched, not when it succeeds: a parent
 // spawns children mid-turn and waits for them, so the child's request arrives
@@ -3485,6 +3503,48 @@ function requestSession(request, payload, turnMetadataHeader = null) {
   return { key: PROCESS_FALLBACK_SESSION_KEY, scope: "process-fallback" };
 }
 
+function hasWorkspaceClaim(payload, turnMetadataHeader) {
+  const explicitPaths = [
+    ...WORKSPACE_KEYS.map((key) => payload?.[key]),
+    ...(payload?.metadata && typeof payload.metadata === "object" ? WORKSPACE_KEYS.map((key) => payload.metadata[key]) : []),
+  ];
+  if (explicitPaths.some((value) => value !== null && value !== undefined && (typeof value !== "string" || value.trim()))) return true;
+  const clientMetadata = payload?.client_metadata;
+  if (clientMetadata && typeof clientMetadata === "object" && Object.hasOwn(clientMetadata, "x-codex-turn-metadata")) return true;
+  const turnMetadata = parseTurnMetadataJson(turnMetadataHeader);
+  return Boolean(turnMetadata && Object.hasOwn(turnMetadata, "workspaces"));
+}
+
+/**
+ * Keep a validated workspace attached to an identified conversation when a
+ * later Codex continuation drops its workspace transport metadata. The
+ * canonicalized single-workspace header is intentionally only minted after
+ * resolveCwd accepts the current request; an invalid or ambiguous claim is
+ * returned unchanged so the bridge can continue to fail closed.
+ */
+function workspaceMetadataForSession(payload, turnMetadataHeader, session) {
+  const headers = turnMetadataHeader ? { "x-codex-turn-metadata": turnMetadataHeader } : {};
+  let workspacePath = null;
+  try {
+    workspacePath = resolveCwd(payload, headers);
+  } catch {
+    // Missing, invalid, or ambiguous current metadata is handled below. Only
+    // a completely metadata-less continuation may use the session's prior
+    // validated workspace.
+  }
+  if (workspacePath) {
+    if (session?.scope === "identified") rememberWorkspaceMetadata(session.key, workspacePath);
+    // Preserve the caller's richer metadata (including repository identity) if
+    // it supplied one. Top-level-only requests need a canonical header so a
+    // bridge still receives structured workspace data.
+    return turnMetadataHeader ?? JSON.stringify({ workspaces: { [workspacePath]: {} } });
+  }
+  if (session?.scope === "identified" && !hasWorkspaceClaim(payload, turnMetadataHeader)) {
+    return workspaceMetadataBySession.get(session.key) ?? turnMetadataHeader;
+  }
+  return turnMetadataHeader;
+}
+
 // The only request header the router ever re-emits toward a provider bridge.
 // Provider bridges resolve their own workspace `cwd` from this JSON turn
 // metadata; the router itself never inspects `workspaces`, it only validates
@@ -3709,7 +3769,9 @@ async function handleRequest(request, response) {
   const requestId = String(request.headers["x-request-id"] ?? randomUUID());
   const wantsStream = payload.stream !== false;
   const turnMetadataHeader = resolveTurnMetadataHeader(request, payload);
-  const workspace = workspaceContextFromRequest(request, payload, turnMetadataHeader);
+  const session = requestSession(request, payload, turnMetadataHeader);
+  const effectiveTurnMetadataHeader = workspaceMetadataForSession(payload, turnMetadataHeader, session);
+  const workspace = workspaceContextFromRequest(request, payload, effectiveTurnMetadataHeader);
   const clientAbort = new AbortController();
   const abortForRequest = () => clientAbort.abort();
   const abortForRequestClose = () => { if (!request.complete) clientAbort.abort(); };
@@ -3728,12 +3790,10 @@ async function handleRequest(request, response) {
       // primary provider is out of usage or otherwise unavailable. Its session
       // is still resolved so a later role request from the same session can be
       // attributed to the provider that ran the parent turn.
-      const orchestratorSession = requestSession(request, payload, turnMetadataHeader);
-      await proxyOrchestratorResponse(response, payload, wantsStream, requestId, turnMetadataHeader, workspace, clientAbort.signal, orchestratorSession);
+      await proxyOrchestratorResponse(response, payload, wantsStream, requestId, effectiveTurnMetadataHeader, workspace, clientAbort.signal, session);
       return;
     }
     if (role) {
-      const session = requestSession(request, payload, turnMetadataHeader);
       const denialReason = tryAcquireSubagentSlot(session.key);
       if (denialReason) {
         recordConcurrencyDenial({ requestId, role, requestedModel: payload.model, sessionScope: session.scope, reason: denialReason });
@@ -3763,7 +3823,7 @@ async function handleRequest(request, response) {
           requestId,
           workspace: workspace?.key ?? null,
         });
-        await proxyRoleResponse(response, role, payload, wantsStream, requestId, turnMetadataHeader, workspace, clientAbort.signal, session);
+        await proxyRoleResponse(response, role, payload, wantsStream, requestId, effectiveTurnMetadataHeader, workspace, clientAbort.signal, session);
       } finally {
         releaseSubagentSlot(session.key);
       }
@@ -3774,7 +3834,7 @@ async function handleRequest(request, response) {
       sendJson(response, 400, errorBody(`No local route is configured for model ${String(payload.model)}`));
       return;
     }
-    await proxyConcreteResponse(response, route, payload, wantsStream, requestId, turnMetadataHeader, workspace, clientAbort.signal);
+    await proxyConcreteResponse(response, route, payload, wantsStream, requestId, effectiveTurnMetadataHeader, workspace, clientAbort.signal);
   } finally {
     unregisterActiveRequest(clientAbort);
     request.removeListener("aborted", abortForRequest);
@@ -3903,6 +3963,7 @@ export {
   AGENT_EVENTS_PATH,
   validateRoutingConfig,
   workspaceContextFromRequest,
+  workspaceMetadataForSession,
   upstreamPayload,
 };
 
