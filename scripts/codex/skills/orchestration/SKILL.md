@@ -73,6 +73,20 @@ Treat each child handle as a two-phase resource:
 - If the turn is interrupted, close every child handle whose final status is
   known before attempting new delegation. Stale handles can retain capacity
   even when their work is no longer running.
+- Treat a rejected spawn with no returned child id as an admission failure, not
+  as a child that needs closing. If the runtime exposes an owner-scoped
+  `list_agents`/`manage_subagents` operation, enumerate this parent's children
+  before recovery. If only Codex App `read_thread` is available, recover IDs
+  only from successful spawn results in this parent's own history. Otherwise use
+  only IDs returned by this parent's spawn calls. `list_threads`, filesystem
+  state, telemetry, and UI listings are not child-handle enumeration. Close
+  only known terminal children owned by this parent, retry the original
+  delegation once, and then stop retrying.
+  Do not silently take over the delegated scopes after the bounded recovery
+  attempt fails; report the capacity/provider failure to the parent/user.
+- Never perform a global cleanup or close a handle discovered outside this
+  parent tree. Router active-slot telemetry cannot prove that the Codex app has
+  no open child handles.
 
 Antigravity-orchestrated turns wrap their work in the CLI's own `invoke_subagent`
 and `manage_subagents` tools. Those children are subprocess calls inside agy,

@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   EXEC_TOOL,
   SPAWN_TOOL,
+  buildRecoveryScript,
   buildSpawnScript,
   carriesPendingSpawnResult,
   execToolCallSseEvents,
@@ -21,19 +22,67 @@ test("the spawn call targets Codex's own code-mode tools", () => {
   assert.equal(SPAWN_TOOL, "multi_agent_v1__spawn_agent");
 });
 
-test("a batch spawns through one Promise.all so fan-out needs no parallel tool calls", () => {
+test("recovery script closes only terminal children owned by the parent", async () => {
+  const source = buildRecoveryScript("parent-1");
+  const closed = [];
+  const output = [];
+  const tools = {
+    mcp__codex_app__read_thread: async () => ({ content: [ { text: JSON.stringify({ turns: [ { items: [
+      { type: "collabAgentToolCall", senderThreadId: "other-parent", receiverThreadIds: [ "foreign" ] },
+      { type: "collabAgentToolCall", senderThreadId: "parent-1", receiverThreadIds: [ "done", "running" ] },
+    ] } ] }) } ] }),
+    multi_agent_v1__wait_agent: async ({ targets }) => ({ status: { [targets[0]]: targets[0] === "done" ? { completed: null } : "running" } }),
+    multi_agent_v1__close_agent: async ({ target }) => { closed.push(target); return { status: "closed" }; },
+  };
+  const run = new Function("tools", "text", `return (async () => {\n${source}\n})();`);
+  await run(tools, (value) => output.push(JSON.parse(value)));
+  assert.deepEqual(closed, [ "done" ]);
+  assert.deepEqual(output, [ { recovery_status: "closed", child_id: "done", previous_status: { completed: null } } ]);
+});
+
+test("a bridge spawn batch runs owner-scoped terminal-handle recovery first", () => {
+  const source = buildSpawnScript([ { message: "x" } ], { recoverParentId: "parent-1" });
+  assert.match(source, /mcp__codex_app__read_thread/);
+  assert.match(source, /senderThreadId === recoveryParentId/);
+  assert.match(source, /multi_agent_v1__close_agent/);
+  assert.match(source, /recoveryParentId = "parent-1"/);
+});
+
+test("a batch settles through one Promise.allSettled so one rejection preserves siblings", () => {
   const source = buildSpawnScript([
     { agentType: "explorer", message: "audit the catalogue" },
     { agentType: "validator", message: "run the focused tests" },
   ]);
   assert.match(source, /^\/\/ @exec: \{"yield_time_ms":60000\}\n/);
-  assert.match(source, /const out = await Promise\.all\(tasks\.map\(\(t\) => tools\.multi_agent_v1__spawn_agent\(t\)\)\);/);
-  assert.match(source, /out\.forEach\(text\);/);
+  assert.match(source, /const out = await Promise\.allSettled\(tasks\.map\(\(t\) => tools\.multi_agent_v1__spawn_agent\(t\)\)\);/);
+  assert.match(source, /result\.status === "fulfilled"/);
+  assert.match(source, /spawn_status: "created"/);
+  assert.match(source, /spawn_status: "rejected"/);
   // One `tasks` array, not one call per child: a twelve-way fan-out must stay a
   // single tool call.
   assert.equal(source.match(/tools\.multi_agent_v1__spawn_agent/g).length, 1);
   assert.match(source, /agent_type: "explorer"/);
   assert.match(source, /agent_type: "validator"/);
+});
+
+test("a rejected child is reported without hiding successfully created siblings", async () => {
+  const source = buildSpawnScript([
+    { agentType: "explorer", message: "first" },
+    { agentType: "validator", message: "second" },
+  ]);
+  const values = [];
+  const tools = {
+    [SPAWN_TOOL]: async ({ message }) => {
+      if (message === "second") throw new Error("thread limit reached");
+      return { agent_id: "child-1", nickname: "Explorer" };
+    },
+  };
+  const run = new Function("tools", "text", `return (async () => {\n${source}\n})();`);
+  await run(tools, (value) => values.push(JSON.parse(value)));
+  assert.deepEqual(values, [
+    { spawn_status: "created", agent_id: "child-1", nickname: "Explorer" },
+    { spawn_status: "rejected", agent_id: null, error: "thread limit reached" },
+  ]);
 });
 
 test("the role travels as agent_type, because `agent` is silently ignored by Codex", () => {

@@ -49,7 +49,11 @@ esac
 
 # The injected policy is the same orchestrator prompt the provider bridges hand
 # a non-Codex root turn, so the root agent gets one delegation policy no matter
-# which provider serves it. One relative path covers both layouts: this hook
+# which provider serves it. The injected prompt also owns the terminal-child
+# close/recovery protocol; this hook must not attempt a global cleanup because
+# it cannot distinguish another parent tree's handles. The prompt conditionally
+# uses owner-scoped enumeration when a runtime provides it. One relative path covers
+# both layouts: this hook
 # sits beside `codex/prompts/` in a checkout (`scripts/`) and again in the
 # installed copy (`$CODEX_HOME/hooks/`).
 hook_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
@@ -59,14 +63,32 @@ if [[ ! -f "$prompt_file" ]]; then
   exit 0
 fi
 
-HOOK_PROMPT_FILE="$prompt_file" node -e '
+printf '%s' "$input" | HOOK_PROMPT_FILE="$prompt_file" HOOK_ROOT_DIR="$hook_dir" node -e '
   const fs = require("node:fs");
+  const path = require("node:path");
+  const { pathToFileURL } = require("node:url");
 
-  process.stdout.write(JSON.stringify({
-    systemMessage: "UserPromptSubmit hook fired: injecting root delegation policy",
-    hookSpecificOutput: {
-      hookEventName: "UserPromptSubmit",
-      additionalContext: fs.readFileSync(process.env.HOOK_PROMPT_FILE, "utf8").trim()
+  (async () => {
+    let input = {};
+    try { input = JSON.parse(fs.readFileSync(0, "utf8")); } catch { }
+    const parentId = typeof input.session_id === "string" && input.session_id.trim() ? input.session_id.trim() : null;
+    let recovery = "";
+    if (parentId) {
+      try {
+        const module = await import(pathToFileURL(path.join(process.env.HOOK_ROOT_DIR, "codex/lib/codex-spawn-tools.mjs")).href);
+        recovery = module.buildRecoveryScript(parentId);
+      } catch { }
     }
-  }));
+    const prompt = fs.readFileSync(process.env.HOOK_PROMPT_FILE, "utf8").trim();
+    const recoveryContext = recovery
+      ? "\n\n## Current-parent recovery preflight\nExecute this preflight before retrying a thread-limit/admission failure. It reads only the current parent task spawn history, waits for each child, and closes terminal handles; it never closes foreign or running children.\n\n```js\n" + recovery + "```"
+      : "\n\nCurrent-parent recovery preflight is unavailable because the hook did not receive a parent session id or could not load the recovery helper. Do not infer child ids from global task listings.";
+    process.stdout.write(JSON.stringify({
+      systemMessage: "UserPromptSubmit hook fired: injecting root delegation policy",
+      hookSpecificOutput: {
+        hookEventName: "UserPromptSubmit",
+        additionalContext: prompt + recoveryContext
+      }
+    }));
+  })();
 '

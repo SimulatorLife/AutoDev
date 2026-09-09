@@ -21,8 +21,9 @@
  *   - the spawn argument is `{ agent_type, message }`. Passing `agent` instead
  *     is silently ignored and yields a generic agent, which is why that
  *     spelling is not accepted here.
- *   - one `exec` call can spawn many agents by awaiting `Promise.all` over the
- *     batch, so fan-out does not need parallel tool calls. This matters because
+ *   - one `exec` call can spawn many agents by awaiting `Promise.allSettled` over
+ *     the batch, so fan-out does not need parallel tool calls and one rejected
+ *     child does not erase siblings that were already created. This matters because
  *     Codex sends `parallel_tool_calls: false` on the wire regardless of what
  *     the model catalog advertises.
  *   - each spawn resolves to `{ agent_id, nickname }`, and `agent_id` is the
@@ -46,13 +47,64 @@ const DEFAULT_YIELD_MS = 60_000;
 /**
  * The JavaScript body for one spawn batch.
  *
- * Emitting the batch as a single `Promise.all` rather than a call per child is
- * what keeps a wide fan-out to one tool call, and it mirrors the shape Codex's
+ * Emitting the batch as a single `Promise.allSettled` rather than a call per
+ * child keeps a wide fan-out to one tool call, and it mirrors the shape Codex's
  * own GPT-served turns produce, so it exercises a path Codex already handles.
- * Each result is passed to `text()` so it comes back in the tool output, one
- * JSON object per line, which `parseSpawnResults` reads.
+ * Each result or rejection is passed to `text()` so it comes back in the tool
+ * output, one JSON object or readable failure per line. A rejected child must
+ * not turn successful siblings into an opaque "Failed creating" tool error.
  */
-export function buildSpawnScript(children, { yieldTimeMs = DEFAULT_YIELD_MS } = {}) {
+/**
+ * JavaScript preflight that recovers terminal child handles owned by the
+ * current parent when the Codex App MCP is available inside code mode.
+ *
+ * This is intentionally owner-scoped and best-effort: a missing app tool or a
+ * child that is still running must never block the real spawn batch or close a
+ * foreign parent's child. The parent id is supplied by the bridge from the
+ * router-generated conversation identity.
+ */
+export function buildRecoveryScript(parentId) {
+  if (typeof parentId !== "string" || !parentId.trim()) return "";
+  const encodedParent = JSON.stringify(parentId.trim());
+  return [
+    `const recoveryParentId = ${encodedParent};`,
+    `const recoveryTerminal = new Set(["completed", "errored", "interrupted", "shutdown", "not_found"]);`,
+    "const recoveryObjects = (value, seen = new Set()) => {",
+    "  if (!value || typeof value !== \"object\" || seen.has(value)) return [];",
+    "  seen.add(value);",
+    "  const found = [value];",
+    "  if (Array.isArray(value)) for (const item of value) found.push(...recoveryObjects(item, seen));",
+    "  else for (const item of Object.values(value)) found.push(...recoveryObjects(item, seen));",
+    "  return found;",
+    "};",
+    "const recoveryParse = (value) => {",
+    "  if (value && typeof value === \"object\") return value;",
+    "  if (typeof value !== \"string\") return null;",
+    "  try { return JSON.parse(value); } catch { return null; }",
+    "};",
+    "const recoverOwnedTerminalChildren = async () => {",
+    "  if (typeof tools.mcp__codex_app__read_thread !== \"function\") return;",
+    "  let history;",
+    "  try { history = await tools.mcp__codex_app__read_thread({ threadId: recoveryParentId, turnLimit: 20, includeOutputs: false, maxOutputCharsPerItem: 2000 }); } catch { return; }",
+    "  const parsed = [history, ...(history?.content ?? [])].flatMap((value) => { const object = recoveryParse(value?.text ?? value); return object ? [object] : []; });",
+    "  const calls = recoveryObjects(parsed).filter((item) => item?.type === \"collabAgentToolCall\" && item.senderThreadId === recoveryParentId && Array.isArray(item.receiverThreadIds));",
+    "  const childIds = [...new Set(calls.flatMap((item) => item.receiverThreadIds.filter((id) => typeof id === \"string\" && id.trim())))];",
+    "  if (typeof tools.multi_agent_v1__wait_agent !== \"function\" || typeof tools.multi_agent_v1__close_agent !== \"function\") return;",
+    "  for (const childId of childIds) {",
+    "    let waited;",
+    "    try { waited = await tools.multi_agent_v1__wait_agent({ targets: [childId], timeout_ms: 30000 }); } catch { continue; }",
+    "    const status = waited?.status?.[childId];",
+    "    const terminal = typeof status === \"string\" ? recoveryTerminal.has(status) : Boolean(status && typeof status === \"object\" && Object.keys(status).some((key) => recoveryTerminal.has(key)));",
+    "    if (!terminal) continue;",
+    "    try { await tools.multi_agent_v1__close_agent({ target: childId }); text(JSON.stringify({ recovery_status: \"closed\", child_id: childId, previous_status: status })); } catch { }",
+    "  }",
+    "};",
+    "await recoverOwnedTerminalChildren();",
+    "",
+  ].join("\n");
+}
+
+export function buildSpawnScript(children, { yieldTimeMs = DEFAULT_YIELD_MS, recoverParentId = null } = {}) {
   const tasks = children.map((child) => {
     const agentType = typeof child?.agentType === "string" && child.agentType.trim() ? child.agentType.trim() : null;
     const message = typeof child?.message === "string" ? child.message : "";
@@ -64,11 +116,13 @@ export function buildSpawnScript(children, { yieldTimeMs = DEFAULT_YIELD_MS } = 
       : `{ message: ${JSON.stringify(message)} }`;
   });
   if (tasks.length === 0) throw new Error("buildSpawnScript requires at least one child");
+  const recovery = buildRecoveryScript(recoverParentId);
   return [
     `// @exec: ${JSON.stringify({ yield_time_ms: yieldTimeMs })}`,
+    ...(recovery ? [ recovery ] : []),
     `const tasks = [${tasks.join(", ")}];`,
-    `const out = await Promise.all(tasks.map((t) => tools.${SPAWN_TOOL}(t)));`,
-    `out.forEach(text);`,
+    `const out = await Promise.allSettled(tasks.map((t) => tools.${SPAWN_TOOL}(t)));`,
+    `out.forEach((result) => text(JSON.stringify(result.status === "fulfilled" ? { spawn_status: "created", ...(result.value && typeof result.value === "object" ? result.value : {}) } : { spawn_status: "rejected", agent_id: null, error: String(result.reason?.message ?? result.reason) })));`,
     "",
   ].join("\n");
 }

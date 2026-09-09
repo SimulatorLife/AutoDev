@@ -45,7 +45,7 @@ test("delegation is collected against the turn that asked, and drained by it", (
 
 test("a refusal is a sentence the model can act on, not a transport error", () => {
   const [ r ] = registry();
-  assert.match(r.record("no-such-session", [ { message: "x" } ]).message, /Do the work directly/);
+  assert.match(r.record("no-such-session", [ { message: "x" } ]).message, /no child was created/);
 
   r.open("leaf", { orchestrator: false });
   const leaf = r.record("leaf", [ { message: "x" } ]);

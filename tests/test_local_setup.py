@@ -874,7 +874,7 @@ class LocalSetupTests(unittest.TestCase):
         """
         accepted, message = claude_bridge.record_spawn_request("no-such-session", [{"message": "x"}])
         self.assertFalse(accepted)
-        self.assertIn("Do the work directly", message)
+        self.assertIn("no child was created", message)
 
         claude_bridge.open_spawn_session("sess-leaf", orchestrator=False)
         try:
@@ -900,7 +900,15 @@ class LocalSetupTests(unittest.TestCase):
         )
         self.assertIn('agent_type: "explorer"', source)
         self.assertNotIn("agent:", source)
-        self.assertIn("await Promise.all(", source)
+        self.assertIn("await Promise.allSettled(", source)
+        self.assertIn('spawn_status: "created"', source)
+        self.assertIn('spawn_status: "rejected"', source)
+        recovered = claude_bridge.build_spawn_script(
+            [{"agent_type": "explorer", "message": "x"}], recover_parent_id="parent-1"
+        )
+        self.assertIn("mcp__codex_app__read_thread", recovered)
+        self.assertIn("senderThreadId === recoveryParentId", recovered)
+        self.assertIn("multi_agent_v1__close_agent", recovered)
         self.assertEqual(source.count("tools.multi_agent_v1__spawn_agent"), 1)
         self.assertTrue(source.startswith('// @exec: {"yield_time_ms":60000}'))
         # A prompt must not be able to end the string literal it sits in.
@@ -1747,6 +1755,10 @@ class LocalSetupTests(unittest.TestCase):
         # rather than a bare sentence that says nothing about why.
         self.assertIn('without a terminal result event', proxy)
         self.assertIn('const how = signal ? `on ${signal}` : `with code ${code}`', proxy)
+        self.assertIn('status: result.status', proxy)
+        self.assertIn('error: "empty response"', proxy)
+        self.assertIn('Only hold delegation state once all pre-flight validation has succeeded.', proxy)
+        self.assertIn('if (spawnSession) spawnSessions.close(spawnSession);', proxy)
         # Closed-socket guard appears before the 503 send so the proxy does not
         # raise on a client disconnect that lands between the upstream failure
         # and the retryable error response. It now sits *after* the failure is
@@ -1935,14 +1947,21 @@ class LocalSetupTests(unittest.TestCase):
             environment["HOME"] = home
             result = subprocess.run(
                 ["bash", str(hook)],
-                input=json.dumps({"model": "gpt-5.6-luna"}),
+                input=json.dumps({"model": "gpt-5.6-luna", "session_id": "parent-test-1"}),
                 text=True,
                 capture_output=True,
                 check=True,
                 env=environment,
             )
         self.assertIn("explicit configured autodev/<role> model aliases", result.stdout)
+        self.assertIn("parent-test-1", result.stdout)
         self.assertIn("configured limit", result.stdout)
+        self.assertIn("close_agent", result.stdout)
+        self.assertIn("bounded recovery retry", result.stdout)
+        self.assertIn("list_agents", result.stdout)
+        self.assertIn("read_thread", result.stdout)
+        self.assertIn("list_threads", result.stdout)
+        self.assertIn("do not silently perform", result.stdout)
         self.assertIn("workspace aligned", result.stdout)
 
     def test_root_delegation_hook_injects_for_parent_models(self):

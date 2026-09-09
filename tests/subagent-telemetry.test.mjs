@@ -9,7 +9,7 @@ import {
   SUBAGENT_SPAWN_TOOLS_HEADER,
   resolveAgentEventReporter,
 } from "../scripts/codex/lib/agent-events.mjs";
-import { agyArgs, createSpawnTracker, modelEffort, resolveEffort, resolveModel, spawnedChildren, subagentModel } from "../scripts/codex-antigravity-cli-responses-proxy.mjs";
+import { agyArgs, agyFailureMessage, createSpawnTracker, modelEffort, resolveEffort, resolveModel, spawnedChildren, subagentModel } from "../scripts/codex-antigravity-cli-responses-proxy.mjs";
 
 const read = (path) => readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
 
@@ -228,6 +228,22 @@ test("a failed report costs a count, never the model turn", async () => {
   // Nothing is listening on this port; the reporter must resolve anyway.
   const reporter = resolveAgentEventReporter({ ...routerHeaders, [ AGENT_EVENTS_URL_HEADER ]: "http://127.0.0.1:1/v1/agent-events" });
   await reporter.reportSpawn({ tool: "invoke_subagent" });
+});
+
+test("Antigravity failures retain terminal status, exit details, and bounded stderr", () => {
+  const message = agyFailureMessage({
+    status: "ERROR",
+    error: "timeout waiting for response",
+    stderr: "diagnostic\n".repeat(500),
+    code: 1,
+  });
+  assert.match(message, /status ERROR/);
+  assert.match(message, /timeout waiting for response/);
+  assert.match(message, /exit code 1/);
+  assert.match(message, /stderr:/);
+  assert.ok(message.length <= 2100, `failure detail must stay bounded (got ${message.length})`);
+
+  assert.match(agyFailureMessage({ status: "SUCCESS", error: "empty response" }), /empty response/);
 });
 
 test("the Antigravity bridge never hands agy a model and effort that conflict", () => {
@@ -511,8 +527,9 @@ test("the Antigravity bridge delegates through Codex when the turn can reach it"
   // A leaf turn passes no session, so the handshake finds nothing to attach to.
   assert.match(source, /SpawnSessionRegistry\.canHold\(sessionHeader, sessionScope\)/);
   assert.match(source, /spawnSessions\.open\(spawnSession, \{ orchestrator: isOrchestratorRole\(agentRole\) \}\)/);
+  assert.match(source, /recoverParentId: spawnSession/);
   // The collected batch becomes one exec call appended to the turn's output.
-  assert.match(source, /buildSpawnScript\(spawnChildren\)/);
+  assert.match(source, /buildSpawnScript\(spawnChildren, \{ recoverParentId: spawnSession \}\)/);
   assert.match(source, /execToolCallSseEvents\(/);
   // And the registry never outlives the turn, on any path.
   assert.match(source, /if \(spawnSession\) spawnSessions\.close\(spawnSession\);/);

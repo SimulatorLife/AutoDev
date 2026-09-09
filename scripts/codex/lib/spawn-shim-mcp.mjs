@@ -41,7 +41,7 @@ const TOOL = {
     "This is the only way to delegate in this session. The child is created by the",
     "orchestration layer rather than inside this CLI, which is what makes it a real,",
     "trackable agent session rather than an invisible one. Returns the spawned",
-    "agents' ids.",
+    "agents' ids and per-child dispatch status. A rejected child has no child id to close.",
     "",
     "Spawn a whole batch in one call when the work is independent -- that is cheaper",
     "and runs in parallel. Each child must get the full context it needs: it cannot",
@@ -143,15 +143,15 @@ async function handle(message) {
     try {
       const result = await callBridge("/v1/bridge-spawn/call", { children, pid: process.pid, ppid: process.ppid });
       if (!result.ok) {
-        toolError(id, result.body?.error ?? `Delegation failed (HTTP ${result.status}). Do the work directly.`);
+        toolError(id, result.body?.error ?? `Delegation failed (HTTP ${result.status}); no child was created. Do not retry blindly or take over delegated scopes.`);
         return;
       }
       reply(id, { content: [ { type: "text", text: result.body?.text ?? result.text ?? "" } ] });
     } catch (error) {
-      // The turn must not die because delegation did; tell the model so it can
-      // fall back to doing the work itself.
+      // The turn must not die because delegation failed; tell the orchestrator
+      // that no child exists and to follow its bounded recovery protocol.
       const reason = error?.name === "AbortError" ? "timed out" : "failed";
-      toolError(id, `Delegation ${reason}. Do the work directly and say that delegation was unavailable.`);
+      toolError(id, `Delegation ${reason}; no child was created. Do not retry blindly or take over delegated scopes. Close known terminal child handles, retry once if appropriate, otherwise report that delegation is unavailable.`);
     }
     return;
   }

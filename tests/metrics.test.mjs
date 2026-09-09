@@ -19,8 +19,8 @@ test('metrics identify agent PRs and provider invocation comments', () => {
 test('router dashboard gives the skills subsection the same heading treatment', async () => {
   const dashboard = await readFile(path.join(root, 'scripts', 'codex-model-router-dashboard.html'), 'utf8');
   assert.match(dashboard, /h2\s*\{\s*font-size: 1rem;\s*margin: 1\.5rem 0 \.5rem;\s*\}/);
-  assert.match(dashboard, /<h2><button type="button" class="toggle-section" aria-controls="skills-selection-section"/);
-  assert.match(dashboard, /Skill selection &amp; context telemetry<\/button><\/h2>/);
+  assert.match(dashboard, /<h2><button type="button" class="toggle-section" aria-controls="skills-context-section"/);
+  assert.match(dashboard, /Skill context telemetry<\/button><\/h2>/);
 });
 
 test('metrics dashboard renders requested counters and recent links', () => {

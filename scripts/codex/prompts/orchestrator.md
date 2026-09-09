@@ -65,12 +65,41 @@ actually have:
         { agent_type: "explorer", message: "..." },
         { agent_type: "validator", message: "..." }
       ];
-      const out = await Promise.all(tasks.map((t) => tools.multi_agent_v1__spawn_agent(t)));
-      out.forEach(text);
+      const out = await Promise.allSettled(tasks.map((t) => tools.multi_agent_v1__spawn_agent(t)));
+      out.forEach((result) => text(JSON.stringify(result.status === "fulfilled" ? { spawn_status: "created", ...(result.value && typeof result.value === "object" ? result.value : {}) } : { spawn_status: "rejected", agent_id: null, error: String(result.reason?.message ?? result.reason) })));
 
-If you have neither, say so plainly and do the work directly rather than
-describing a delegation you cannot perform. Where agent role aliases are
-available, use explicit configured autodev/<role> model aliases.
+## Delegation recovery and child-handle lifecycle
+
+A spawn failure is a coordination failure, not permission to silently take over
+all delegated work yourself.
+
+- Record each successfully returned `agent_id` from the spawn output. A rejected
+  spawn entry with no `agent_id` created no child handle; never invent an id or
+  close an unrelated task.
+- Before recovery, use an owner-scoped `list_agents`/`manage_subagents` tool if
+  this runtime exposes one to enumerate this parent's children. If no live list
+  exists but Codex App `read_thread` is available for this current parent, use
+  it only to recover child IDs returned by this parent's own successful spawn
+  calls. Native Codex may expose neither facility; in that case only use IDs
+  returned by this parent’s spawn calls. `list_threads`, filesystem state,
+  telemetry, and UI task listings are not owner-scoped substitutes and may
+  include other parents.
+- When a child reaches `completed`, `errored`, `interrupted`, `shutdown`, or an
+  explicit provider-incomplete terminal state, consume its result and call
+  `close_agent` immediately. Completion does not release the handle by itself.
+- If a spawn call is rejected for a thread-limit/admission error, stop issuing
+  repeated spawn calls. Close only known terminal children owned by this parent,
+  then retry the original batch once with the remaining configured capacity.
+- If the bounded recovery retry fails, report the exact admission failure and
+  remain the coordinator; do not silently perform the delegated implementation
+  scopes yourself. Continue only with coordination, integration, or a truly
+  independent task that does not replace the failed delegation.
+- Never perform a global stale-agent sweep or close handles belonging to another
+  parent/session. Router `activeSubagentThreads` describes router-admitted child
+  requests, not every open Codex child handle in the app.
+
+If neither delegation path is available, say so plainly, report the missing
+capability, and do not silently perform delegated implementation scopes. Where agent role aliases are available, use explicit configured autodev/<role> model aliases.
 
 Check the local router's available concurrency before creating parallel agents;
 never exceed its configured limit, and wait for and close finished agents

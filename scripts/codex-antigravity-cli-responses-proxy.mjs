@@ -445,6 +445,24 @@ function responseMessageItem(text, itemId) {
   };
 }
 
+/**
+ * Preserve the provider's terminal status and stderr when agy returns no
+ * answer. A successful process with an empty `response` is not a successful
+ * model turn, and reducing either case to "completed without a response
+ * message" makes an intermittent provider failure impossible to diagnose.
+ * Stderr is bounded because agy can echo verbose tool diagnostics.
+ */
+function agyFailureMessage({ status = null, error = null, stderr = "", code = null, signal = null } = {}) {
+  const details = [];
+  if (status) details.push(`status ${status}`);
+  if (error) details.push(String(error));
+  if (signal) details.push(`signal ${signal}`);
+  else if (code !== null && code !== undefined) details.push(`exit code ${code}`);
+  const stderrTail = String(stderr ?? "").trim().slice(-2000);
+  if (stderrTail) details.push(`stderr: ${stderrTail}`);
+  return details.join("; ") || "agy returned no diagnostic details";
+}
+
 function responsePayload(model, text, result, responseId = `resp_${randomBytes(12).toString("hex")}`, itemId = `msg_${randomBytes(10).toString("hex")}`, output = null, status = "completed") {
   const usage = result?.usage ?? {};
   const inputTokens = Number(usage.input_tokens ?? 0);
@@ -571,8 +589,12 @@ function runAgy(prompt, model, effort, cwd, onEvent, spawnSession = null, agentR
         return;
       }
       if (result.status && result.status !== "SUCCESS") {
-        const tail = stderr.trim().slice(-2000);
-        finish(reject, new Error(result.error ?? `agy ended with status ${result.status}${tail ? `: ${tail}` : ""}`));
+        finish(reject, Object.assign(new Error(agyFailureMessage({
+          status: result.status,
+          error: result.error,
+          stderr,
+          code,
+        })), { exitCode: code }));
         return;
       }
       if (code !== 0) {
@@ -585,7 +607,12 @@ function runAgy(prompt, model, effort, cwd, onEvent, spawnSession = null, agentR
         if (suffix) onEvent?.({ type: "text_delta", text: suffix });
       }
       if (!finalText.trim()) {
-        finish(reject, new Error("agy completed without a response message"));
+        finish(reject, new Error(agyFailureMessage({
+          status: result.status ?? "SUCCESS",
+          error: "empty response",
+          stderr,
+          code,
+        })));
         return;
       }
       finish(resolve, { text: finalText || emitted, result });
@@ -679,7 +706,6 @@ async function handle(request, response) {
   const sessionHeader = headerValue(request.headers, "x-autodev-session-id");
   const sessionScope = headerValue(request.headers, "x-autodev-session-scope");
   const spawnSession = SpawnSessionRegistry.canHold(sessionHeader, sessionScope) ? sessionHeader : null;
-  if (spawnSession) spawnSessions.open(spawnSession, { orchestrator: isOrchestratorRole(agentRole) });
   const { observeSpawnStep, flushSpawns } = createSpawnTracker(agentEvents);
   const prompt = promptFromInput(payload.input ?? "", bridgeInstructions(agentRole));
   let cwd;
@@ -691,6 +717,10 @@ async function handle(request, response) {
     sendJson(response, 400, { error: { type: "invalid_request_error", message: error.message } });
     return;
   }
+  // Only hold delegation state once all pre-flight validation has succeeded.
+  // An invalid workspace must not leave an orphaned entry that a later shim
+  // process could attach to.
+  if (spawnSession) spawnSessions.open(spawnSession, { orchestrator: isOrchestratorRole(agentRole) });
   console.error(`agy request model=${model} effort=${effort} role=${isOrchestratorRole(agentRole) ? "orchestrator" : "leaf"} cwd=${cwd}`);
   // A turn logged its start and nothing else, so a failed one left only the
   // step lines that happened to precede it -- the reason it died reached the
@@ -711,7 +741,7 @@ async function handle(request, response) {
         const spawnEvents = execToolCallSseEvents({
           itemId: mintCallItemId(),
           callId: mintCallId(spawnSession, output.length),
-          source: buildSpawnScript(spawnChildren),
+          source: buildSpawnScript(spawnChildren, { recoverParentId: spawnSession }),
           outputIndex: output.length,
         });
         output.push(spawnEvents.at(-1)[ 1 ].item);
@@ -721,6 +751,7 @@ async function handle(request, response) {
       sendJson(response, 200, responsePayload(payload.model ?? model, result.text, result.result, undefined, undefined, output));
     } catch (error) {
       flushSpawns("failure");
+      if (spawnSession) spawnSessions.close(spawnSession);
       logTurnEnd("failed", error.message ?? String(error));
       sendJson(response, 502, { error: { type: "upstream_error", message: error.message ?? String(error) } });
     }
@@ -950,7 +981,7 @@ async function handle(request, response) {
     // the children itself and they become sessions the app can show.
     const spawnChildren = spawnSession ? spawnSessions.close(spawnSession) : [];
     if (spawnChildren.length > 0) {
-      const source = buildSpawnScript(spawnChildren);
+      const source = buildSpawnScript(spawnChildren, { recoverParentId: spawnSession });
       const spawnEvents = execToolCallSseEvents({
         itemId: mintCallItemId(),
         callId: mintCallId(spawnSession, completed.output.length),
@@ -1031,4 +1062,4 @@ if (IS_MAIN) {
   });
 }
 
-export { agyArgs, createSpawnTracker, decideCloseOnDelegation, modelEffort, resolveEffort, resolveModel, spawnedChildren, subagentModel, updateDelegationState };
+export { agyArgs, agyFailureMessage, createSpawnTracker, decideCloseOnDelegation, modelEffort, resolveEffort, resolveModel, spawnedChildren, subagentModel, updateDelegationState };

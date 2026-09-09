@@ -508,19 +508,21 @@ SPAWN_YIELD_MS = 60000
 SPAWN_DISPATCH_NOTICE = (
     "Dispatched {count} subagent(s): {roles}. They are running now and are tracked by the "
     "orchestration layer, not by you. End your turn now with a brief statement of what you "
-    "delegated -- do not wait for them, and do not do their work yourself. Their results are "
-    "delivered to you automatically on your next turn."
+    "delegated -- do not wait for them, and do not do their work yourself. On your next turn, "
+    "consume terminal child results and close each known child handle immediately; the parent "
+    "session's capacity is not released by completion alone."
 )
 
 
-def build_spawn_script(children: list[dict[str, Any]], yield_time_ms: int = SPAWN_YIELD_MS) -> str:
+def build_spawn_script(children: list[dict[str, Any]], yield_time_ms: int = SPAWN_YIELD_MS, recover_parent_id: str | None = None) -> str:
     """The JavaScript body for one spawn batch.
 
-    One `Promise.all` rather than a call per child keeps a wide fan-out to a
-    single tool call, and mirrors the shape Codex's own GPT-served turns
-    produce. The role must travel as `agent_type`: `agent` is accepted and
-    silently ignored, and the child comes back generic instead of the role that
-    was asked for.
+    One `Promise.allSettled` rather than a call per child keeps a wide fan-out
+    to a single tool call, and mirrors the shape Codex's own GPT-served turns
+    produce. A rejected child is returned as readable output instead of erasing
+    siblings that were created. The role must travel as `agent_type`: `agent`
+    is accepted and silently ignored, and the child comes back generic instead
+    of the role that was asked for.
     """
     if not children:
         raise ValueError("build_spawn_script requires at least one child")
@@ -534,11 +536,22 @@ def build_spawn_script(children: list[dict[str, Any]], yield_time_ms: int = SPAW
             tasks.append(f"{{ agent_type: {json.dumps(agent_type.strip())}, message: {json.dumps(message)} }}")
         else:
             tasks.append(f"{{ message: {json.dumps(message)} }}")
+    recovery = []
+    if isinstance(recover_parent_id, str) and recover_parent_id.strip():
+        recovery = [
+            f"const recoveryParentId = {json.dumps(recover_parent_id.strip())};",
+            'const recoveryTerminal = new Set(["completed", "errored", "interrupted", "shutdown", "not_found"]);',
+            'const recoveryObjects = (value, seen = new Set()) => { if (!value || typeof value !== "object" || seen.has(value)) return []; seen.add(value); const found = [value]; if (Array.isArray(value)) for (const item of value) found.push(...recoveryObjects(item, seen)); else for (const item of Object.values(value)) found.push(...recoveryObjects(item, seen)); return found; };',
+            'const recoveryParse = (value) => { if (value && typeof value === "object") return value; if (typeof value !== "string") return null; try { return JSON.parse(value); } catch { return null; } };',
+            'const recoverOwnedTerminalChildren = async () => { if (typeof tools.mcp__codex_app__read_thread !== "function") return; let history; try { history = await tools.mcp__codex_app__read_thread({ threadId: recoveryParentId, turnLimit: 20, includeOutputs: false, maxOutputCharsPerItem: 2000 }); } catch { return; } const parsed = [history, ...(history?.content ?? [])].flatMap((value) => { const object = recoveryParse(value?.text ?? value); return object ? [object] : []; }); const calls = recoveryObjects(parsed).filter((item) => item?.type === "collabAgentToolCall" && item.senderThreadId === recoveryParentId && Array.isArray(item.receiverThreadIds)); const childIds = [...new Set(calls.flatMap((item) => item.receiverThreadIds.filter((id) => typeof id === "string" && id.trim())))]; if (typeof tools.multi_agent_v1__wait_agent !== "function" || typeof tools.multi_agent_v1__close_agent !== "function") return; for (const childId of childIds) { let waited; try { waited = await tools.multi_agent_v1__wait_agent({ targets: [childId], timeout_ms: 30000 }); } catch { continue; } const status = waited?.status?.[childId]; const terminal = typeof status === "string" ? recoveryTerminal.has(status) : Boolean(status && typeof status === "object" && Object.keys(status).some((key) => recoveryTerminal.has(key))); if (!terminal) continue; try { await tools.multi_agent_v1__close_agent({ target: childId }); text(JSON.stringify({ recovery_status: "closed", child_id: childId, previous_status: status })); } catch { } } };',
+            'await recoverOwnedTerminalChildren();',
+        ]
     return "\n".join([
         f"// @exec: {json.dumps({'yield_time_ms': yield_time_ms}, separators=(',', ':'))}",
+        *recovery,
         f"const tasks = [{', '.join(tasks)}];",
-        f"const out = await Promise.all(tasks.map((t) => tools.{SPAWN_TOOL}(t)));",
-        "out.forEach(text);",
+        f"const out = await Promise.allSettled(tasks.map((t) => tools.{SPAWN_TOOL}(t)));",
+        'out.forEach((result) => text(JSON.stringify(result.status === "fulfilled" ? { spawn_status: "created", ...(result.value && typeof result.value === "object" ? result.value : {}) } : { spawn_status: "rejected", agent_id: null, error: String(result.reason?.message ?? result.reason) })));',
         "",
     ])
 
@@ -589,13 +602,14 @@ def record_spawn_request(session_key: str, children: list[dict[str, Any]]) -> tu
     """Record one delegation request against an in-flight turn.
 
     Returns (accepted, message-for-the-model). A refusal is deliberately a
-    readable sentence rather than a transport error: the model can act on it by
-    doing the work itself, which is strictly better than a failed turn.
+    readable sentence rather than a transport error. Missing session state is
+    an admission failure with no child to close; only a bounded leaf may be
+    told to do the work directly.
     """
     with SPAWN_SESSIONS_LOCK:
         entry = SPAWN_SESSIONS.get(session_key)
         if entry is None:
-            return False, "Delegation is unavailable in this session. Do the work directly."
+            return False, "Delegation is unavailable in this session; no child was created. Do not retry blindly or take over delegated scopes. Report the unavailable delegation path."
         if not entry["orchestrator"]:
             return False, "This is a bounded leaf turn and may not delegate. Do the work directly."
         accepted = []
@@ -1677,7 +1691,7 @@ class Handler(BaseHTTPRequestHandler):
                     _, spawn_item = exec_tool_call_events(
                         f"ctc_{secrets.token_hex(12)}",
                         f"call_{secrets.token_hex(12)}",
-                        build_spawn_script(spawn_children),
+                        build_spawn_script(spawn_children, recover_parent_id=spawn_session),
                         len(output_items),
                     )
                     output_items.append(spawn_item)
@@ -1747,7 +1761,7 @@ class Handler(BaseHTTPRequestHandler):
                 spawn_item_id = f"ctc_{secrets.token_hex(12)}"
                 spawn_call_id = f"call_{secrets.token_hex(12)}"
                 spawn_events, spawn_item = exec_tool_call_events(
-                    spawn_item_id, spawn_call_id, build_spawn_script(spawn_children), len(output_items)
+                    spawn_item_id, spawn_call_id, build_spawn_script(spawn_children, recover_parent_id=spawn_session), len(output_items)
                 )
                 output_items.append(spawn_item)
                 print(f"claude delegating {len(spawn_children)} subagent(s) through Codex", flush=True)

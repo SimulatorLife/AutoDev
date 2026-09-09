@@ -140,7 +140,7 @@ state-database, and concurrency values as category/metric/value rows instead of
 embedding those values in prose. Each table section has one heading that also
 owns its collapse toggle. The primary Provider health and usage, Usage by
 orchestrator and subagents, MCP server telemetry, Skills, and Hooks tables are
-expanded by default; the combined Skill selection/context table is visible
+expanded by default; the Skill context telemetry table is visible
 inside Skills, while secondary metric inventory, spawn-failure, task, and
 recent-event sections can be expanded independently. The Subagents spawned
 table is also expanded by default and sits directly above the spawn-failure
@@ -148,9 +148,8 @@ section, so observed spawns and the failures that prevented them read together.
 
 Totals footers are shown for homogeneous roll-up tables: provider/usage,
 MCP lifecycle, Skills injections, hook/runtime calls, observed metric counts,
-and spawn-failure reasons. The Operational summary and combined Skill
-selection/context table intentionally do not have totals because their rows
-mix incompatible units; the Codex task snapshot and recent-event list are entity/event views rather than additive
+and spawn-failure reasons. The Operational summary and Skill context telemetry table intentionally do not
+have totals because their rows mix incompatible units; the Codex task snapshot and recent-event list are entity/event views rather than additive
 measurements.
 
 
@@ -172,45 +171,44 @@ process-local and are intentionally reset on restart.
 
 Skill metrics may use cumulative or delta OTLP temporality. For cumulative
 points, Codex resends the running total on every export, so the router tracks
-the last observed point per series (metric name, attributes, and
-`startTimeUnixNano`) and only applies the delta; delta points are applied once
-per export timestamp. Both forms tolerate duplicate resends and counter
-resets. `codex.skill.injected` carries the modern `skillName` and `status` attributes;
+only the retained skill-context series (metric name, attributes, and
+`startTimeUnixNano`) and applies the delta; delta points are applied once per
+export timestamp. Both forms tolerate duplicate resends and counter resets.
+`codex.skill.injected` carries the modern `skillName` and `status` attributes;
 older Codex versions may use `skill` or `skill_name`. The router accepts all
 three spellings and uses `unknown` only when none is present. Some Codex
 versions attach `invoke_type` instead of, or alongside, `status`, which the
-router tolerates and aggregates separately. Legacy persisted `unknown-skill`
-invocation buckets are discarded on restore because they cannot be mapped back
-to a real skill; newly emitted metrics are tracked by their actual names. The source-backed
+router tolerates and aggregates separately. The source-backed
 `codex.thread.skills.description_truncated_chars` metric is not currently in
 the official catalog; when present, the router totals and averages it
 separately.
 
-The Skills table separates context injections from invocation counts. The
-`codex.skill.injected` totals show recognized skill injection outcomes and may
-be de-duplicated by Codex within a turn; they are not a count of every operation
-performed under a skill. The `Invocations` column uses the separate
-`codex.skills.shadow_selection.invocation` signal when available, which is the
-closer native measure for repeated skill selection/use. Injection and invocation
-shares, statuses, and invoke types are kept distinct.
+The [official OpenAI Codex skills documentation](https://developers.openai.com/codex/skills)
+describes explicit `$skill`
+invocation and implicit prompt-based selection, but does not document the
+`codex.skills.shadow_selection.*` metric family. The metric names and values
+show that family is selector instrumentation: catalog size, selected-entry
+size, query-term count, reduction, selector duration, and a shadow-selector
+invocation count. None is a reliable count of a skill being loaded or used by
+the task. The router therefore ignores the entire family, including its native
+metric inventory and persisted cumulative cursors. The dashboard's Skills
+table reports `codex.skill.injected` context outcomes only; it does not label
+shadow-selection activity as skill invocations.
 
 The table also shows root-vs-subagent agent kind, model, and plugin where native
 metadata is present. Agent kind is derived from `session_source`: a
 `subagent_thread_spawn_*` source is `subagent`, other non-empty sources are
-`root`, and missing metadata is `unknown`. This does not identify the human who
-selected a skill or recover the exact child role/thread. The combined Skill
-selection & context telemetry table exposes aggregate catalog/selection
-diagnostics, turn duration, and enabled/kept/truncated/description-truncation
-aggregates. None of these thread-level histograms provides a reliable skill-name dimension, so the
-router does not invent per-skill availability counts. No prompt or skill
-content is exported or stored; only metric attributes and numeric aggregates
-are retained.
+`root`, and missing metadata is `unknown`. The Skill context telemetry table
+exposes retained turn-duration and enabled/kept/truncated/description-
+truncation aggregates. These thread-level histograms do not provide a reliable
+skill-name dimension, so the router does not invent per-skill availability
+counts. No prompt or skill content is exported or stored; only metric
+attributes and numeric aggregates are retained.
 
 These are Codex-native metrics, not a generic audit stream for every provider
-behind the router. A zero `codexTelemetry.skills` value means that no Codex
-skill metric was received; it does not prove that no skill was available or
-used. Structured skill selections in normal Codex child threads are included
-when the child exporter sends the corresponding `ResourceMetrics` batch.
+behind the router. A zero `codexTelemetry.skills.injected` value means that no
+Codex skill-context injection metric was received; it does not prove that no
+skill was available or used.
 
 The dashboard labels MCP state as an observation (`ready`, `error`, or `stale`),
 not as an authoritative process-health guarantee. Codex currently emits MCP

@@ -7,3 +7,5 @@ node_modules/
 .env.*
 !.env.example
 .playwright-mcp/
+# CocoIndex Code (ccc)
+/.cocoindex_code/

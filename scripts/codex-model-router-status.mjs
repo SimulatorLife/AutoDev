@@ -82,21 +82,15 @@ for (const server of (codexTelemetry.mcpServers ?? [])) {
 
 const skills = codexTelemetry.skills ?? {};
 const skillsInjected = skills.injected ?? {};
-const skillsUsage = skills.usage ?? {};
-const skillsSelection = skills.selection ?? {};
+const skillsTurnDuration = skills.turnDuration ?? {};
 const skillsThreads = skills.threads ?? {};
 const histogramText = (histogram) => `avg ${Number(histogram?.average ?? 0).toFixed(1)} (n=${histogram?.count ?? 0}, sum=${histogram?.sum ?? 0})`;
 console.log("");
 console.log(`Skills injected: ${skillsInjected.total ?? 0} (${counts(skillsInjected.byStatus)}), invoke_type: ${counts(skillsInjected.byInvokeType)}, agent kind: ${counts(skillsInjected.byAgentKind)}`);
-console.log(`Skill invocations: ${skillsUsage.total ?? 0} (${counts(skillsUsage.byStatus)}), invoke_type: ${counts(skillsUsage.byInvokeType)}, agent kind: ${counts(skillsUsage.byAgentKind)}`);
-console.log(`Skill selection: catalog avg ${histogramText(skillsSelection.catalogEntries)}, selected avg ${histogramText(skillsSelection.selectedEntries)}, duration ${histogramText(skillsSelection.durationMs)}`);
+console.log(`Skill turn duration: ${histogramText(skillsTurnDuration.durationSeconds)}`);
 console.log(`Thread skills: enabled ${histogramText(skillsThreads.enabledTotal)}, kept ${histogramText(skillsThreads.keptTotal)}, truncated ${histogramText(skillsThreads.truncated)}, description chars ${histogramText(skillsThreads.descriptionTruncatedChars)}`);
 for (const skill of (skillsInjected.bySkill ?? [])) {
-  const usage = (skillsUsage.bySkill ?? []).find((entry) => entry.skill === skill.skill);
-  console.log(`  ${skill.skill}: injected ${skill.total} (${counts(skill.byStatus)}), invocations ${usage?.total ?? 0} (${counts(usage?.byStatus)}), invoke_type: ${counts(usage?.byInvokeType ?? skill.byInvokeType)}, agent kind: ${counts(usage?.byAgentKind ?? skill.byAgentKind)}, models: ${counts(usage?.byModel ?? skill.byModel)}, plugins: ${counts(usage?.byPlugin ?? skill.byPlugin)}`);
-}
-for (const skill of (skillsUsage.bySkill ?? []).filter((entry) => !(skillsInjected.bySkill ?? []).some((injected) => injected.skill === entry.skill))) {
-  console.log(`  ${skill.skill}: injected 0, invocations ${skill.total} (${counts(skill.byStatus)}), invoke_type: ${counts(skill.byInvokeType)}, agent kind: ${counts(skill.byAgentKind)}, models: ${counts(skill.byModel)}, plugins: ${counts(skill.byPlugin)}`);
+  console.log(`  ${skill.skill}: injected ${skill.total} (${counts(skill.byStatus)}), invoke_type: ${counts(skill.byInvokeType)}, agent kind: ${counts(skill.byAgentKind)}, models: ${counts(skill.byModel)}, plugins: ${counts(skill.byPlugin)}`);
 }
 
 const nativeMetrics = codexTelemetry.metrics?.observed ?? [];

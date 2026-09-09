@@ -67,12 +67,13 @@ export class SpawnSessionRegistry {
    * Record one delegation request against an in-flight turn.
    *
    * Returns `{ accepted, message }`. A refusal is a readable sentence rather
-   * than an error because the model is the one who reads it: it can act on
-   * "do the work directly" and cannot act on a transport failure.
+   * than a transport error because the model is the one who reads it. Missing
+   * session state is an admission failure with no child to close; a bounded
+   * leaf may instead be told to do the work directly.
    */
   record(sessionKey, children) {
     const session = this.sessions.get(sessionKey);
-    if (!session) return { accepted: false, message: "Delegation is unavailable in this session. Do the work directly." };
+    if (!session) return { accepted: false, message: "Delegation is unavailable in this session; no child was created. Do not retry blindly or take over delegated scopes. Report the unavailable delegation path." };
     if (!session.orchestrator) return { accepted: false, message: "This is a bounded leaf turn and may not delegate. Do the work directly." };
 
     const accepted = [];

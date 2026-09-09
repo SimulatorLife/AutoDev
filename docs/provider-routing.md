@@ -69,7 +69,47 @@ Differences from a role request:
   bridges select their role instructions from it, so an orchestrator turn that
   degrades onto a bridge-backed provider receives the orchestrator policy
   rather than the leaf policy. See "Agent role across the bridge boundary".
-- 
+
+### Diagnosing an agent that fails to create or stops unexpectedly
+
+The Desktop message `Failed to create an agent` is a wrapper around several
+independent failure boundaries; it is not evidence that the target repository's
+code failed. First check the router `/status` snapshot and the provider bridge
+logs, then classify the first failing boundary:
+
+- **Native spawn admission:** Codex's `multi_agent_v1__spawn_agent` can be
+  rejected by the app's available-thread limit or the configured
+  `max_concurrent_threads_per_session` (currently `2` in
+  `scripts/codex/config.toml`). This is an admission/configuration failure, not
+  a child code failure. A batch uses `Promise.allSettled`, so a rejected entry is
+  returned as `Spawn failed: ...` and successful siblings remain trackable.
+- **Antigravity process startup/transport:** `agy` can exit without a terminal
+  result, return `status: ERROR`, or report `timeout waiting for response` / a
+  network issue. The bridge returns a retryable upstream response and logs the
+  terminal status, exit code, and a bounded stderr tail; it no longer reduces an
+  empty terminal response to the unhelpful `completed without a response`
+  message. A live `/health/liveliness` only proves the local adapter is alive,
+  not that the upstream Antigravity service answered a turn.
+- **Headless permissions:** read-only roles intentionally do not receive
+  `--dangerously-skip-permissions`. If the installed `agy` configuration cannot
+  approve its read tools without prompting, the CLI reports that a tool such as
+  `read_file` was auto-denied and the turn stops. This is a host/provider
+  permission configuration problem; do not weaken the read-only contract to hide
+  it.
+- **Workspace resolution:** bridge requests must carry structured workspace
+  metadata (or an explicit `CODEX_PROJECT_ROOT`). The bridge fails closed rather
+  than taking a repository path from task prose. Invalid requests are rejected
+  before delegation state is opened, so a failed pre-flight cannot leave a stale
+  spawn session attached to a later turn.
+
+The most useful evidence is the bridge log line immediately after `agy request`:
+`agy turn failed after ...: status ERROR; timeout waiting for response; ...`,
+`agy workspace resolution failed: ...`, or a successful turn line. Router
+`status` also separates provider failures from concurrency denials and records
+which provider/model was selected. A clean provider health check with a failed
+turn should be investigated as an upstream CLI/account/network or permission
+problem, not as a target-repository build failure.
+
 ### Truncation reasons when an orchestrator turn cuts short
 
 The router, all three bridges, and the Python bridge share one vocabulary for
@@ -115,8 +155,11 @@ Every provider in `providerGroups.orchestrator` must declare
       - The role must travel as `agent_type`. `agent` is accepted and silently
         ignored, and the child comes back as a generic agent rather than the
         role that was asked for.
-      - Fan-out happens inside one script (`await Promise.all(tasks.map(...))`),
-        which is why Codex sending `parallel_tool_calls: false` does not cap it.
+      - Fan-out happens inside one script (`await Promise.allSettled(tasks.map(...))`),
+        which is why Codex sending `parallel_tool_calls: false` does not cap it. Settling
+        each child independently keeps successful siblings visible when the configured
+        concurrency limit rejects one child; the tool output names that rejected child
+        instead of collapsing the whole batch into an opaque `Failed creating` error.
     `scripts/codex/prompts/orchestrator.md` states this to the model, and
     `scripts/codex/lib/codex-spawn-tools.mjs` builds the call for any component
     that needs to emit one.
@@ -677,6 +720,19 @@ close the stream rather than leaving the caller with a truncated body that is
 indistinguishable from a hung provider. The dashboard's
 `Spawn failures` table renders the recent request IDs by reason so the
 same header can be traced from the API call through the router's event log.
+The router's `concurrency.scope` is `router-admitted-child-requests`:
+`activeSubagentThreads` reports only child requests currently admitted by the
+router, not open Codex app child handles or provider CLI processes. Cumulative
+`denials` and `spawnFailures` remain historical diagnostics. A Codex app
+`thread limit reached` error can therefore occur while this router reports zero
+active requests. The root delegation hook injects an executable current-parent
+recovery preflight: when Codex App `read_thread` is available, it reads only
+that parent's `collabAgentToolCall.receiverThreadIds`, waits each child, and
+calls `close_agent` only for terminal statuses. The same owner-scoped preflight
+is emitted before bridge-driven native spawn batches when the bridge has the
+parent session id. The owning orchestrator can therefore reclaim terminal
+handles before retrying; no global cleanup is safe.
+
 Its reasons are `provider_exhausted`, `selection_deadline` (the router spent its
 provider-selection budget without finding one),
 `max_concurrent_threads_per_session`, and `spawn_tool_unavailable`.
