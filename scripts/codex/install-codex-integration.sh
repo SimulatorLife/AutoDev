@@ -671,14 +671,15 @@ check_copilot_code_mcp() {
     printf 'skipping Copilot code MCP check (copilot is not installed)\n'
     return 0
   fi
-  local listing
-  listing="$(copilot mcp list 2>/dev/null || true)"
+  local cocoindex_config lsp_config
+  cocoindex_config="$(copilot mcp get cocoindex-code 2>/dev/null || true)"
+  lsp_config="$(copilot mcp get lsp 2>/dev/null || true)"
   local failed=0
-  grep -Fq 'cocoindex-code' <<<"$listing" && grep -Fq 'Command: ccc mcp' <<<"$listing" || {
+  grep -Fq 'Command: ccc mcp' <<<"$cocoindex_config" || {
     printf 'missing-or-drifted Copilot CocoIndex MCP\n'
     failed=1
   }
-  grep -Fq 'Command: bash -lc exec "${CODEX_HOME:-$HOME/.codex}/hooks/run-autodev-mcp.sh" lsp' <<<"$listing" || {
+  grep -Fq 'Command: bash -lc exec "${CODEX_HOME:-$HOME/.codex}/hooks/run-autodev-mcp.sh" lsp' <<<"$lsp_config" || {
     printf 'missing-or-drifted Copilot LSP MCP\n'
     failed=1
   }
@@ -1196,13 +1197,21 @@ register_copilot_code_mcp() {
   if ! command -v copilot >/dev/null 2>&1; then
     return 0
   fi
-  if ! copilot mcp add cocoindex-code -- ccc mcp >/dev/null 2>&1; then
-    printf 'could not register the Copilot CocoIndex MCP server\n' >&2
-    return 1
+  local listing
+  listing="$(copilot mcp list 2>/dev/null || true)"
+  if ! grep -Fq 'cocoindex-code' <<<"$listing" || ! grep -Fq 'Command: ccc mcp' <<<"$listing"; then
+    copilot mcp remove cocoindex-code >/dev/null 2>&1 || true
+    if ! copilot mcp add cocoindex-code -- ccc mcp >/dev/null 2>&1; then
+      printf 'could not register the Copilot CocoIndex MCP server\n' >&2
+      return 1
+    fi
   fi
-  if ! copilot mcp add lsp -- bash -lc 'exec "${CODEX_HOME:-$HOME/.codex}/hooks/run-autodev-mcp.sh" lsp' >/dev/null 2>&1; then
-    printf 'could not register the Copilot LSP MCP server\n' >&2
-    return 1
+  if ! grep -Fq 'Command: bash -lc exec "${CODEX_HOME:-$HOME/.codex}/hooks/run-autodev-mcp.sh" lsp' <<<"$listing"; then
+    copilot mcp remove lsp >/dev/null 2>&1 || true
+    if ! copilot mcp add lsp -- bash -lc 'exec "${CODEX_HOME:-$HOME/.codex}/hooks/run-autodev-mcp.sh" lsp' >/dev/null 2>&1; then
+      printf 'could not register the Copilot LSP MCP server\n' >&2
+      return 1
+    fi
   fi
   printf 'ok Copilot code MCP servers registered (cocoindex-code, lsp)\n' >&2
 }
