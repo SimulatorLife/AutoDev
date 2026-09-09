@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { join } from "node:path";
 import test from "node:test";
 
 import {
@@ -89,12 +90,26 @@ test("the role travels as agent_type, because `agent` is silently ignored by Cod
   const source = buildSpawnScript([ { agentType: "explorer", message: "x" } ]);
   assert.match(source, /agent_type: "explorer"/);
   assert.doesNotMatch(source, /\bagent:/);
+  assert.match(source, /type: "skill", name: "ccc"/);
+  assert.match(source, /type: "skill", name: "lsp-mcp-server"/);
+});
+
+test("code skills are attached only to code-capable children", () => {
+  const code = buildSpawnScript([ { agentType: "worker", message: "x" } ]);
+  const browser = buildSpawnScript([ { agentType: "browser-tester", message: "x" } ]);
+  const docs = buildSpawnScript([ { agentType: "docs-researcher", message: "x" } ]);
+  assert.match(code, /name: "ccc"/);
+  assert.match(code, /name: "lsp-mcp-server"/);
+  assert.doesNotMatch(browser, /name: "ccc"/);
+  assert.doesNotMatch(browser, /name: "lsp-mcp-server"/);
+  assert.doesNotMatch(docs, /name: "ccc"/);
+  assert.doesNotMatch(docs, /name: "lsp-mcp-server"/);
 });
 
 test("a child with no role spawns without one rather than inventing a default", () => {
   const source = buildSpawnScript([ { message: "just do it" } ]);
   assert.doesNotMatch(source, /agent_type/);
-  assert.match(source, /\{ message: "just do it" \}/);
+  assert.match(source, /\{ message: "just do it", items:/);
 });
 
 test("a prompt cannot break out of the generated script", () => {
@@ -114,8 +129,14 @@ test("a prompt cannot break out of the generated script", () => {
   // A pure data literal: no calls, no references, nothing to execute.
   const tasks = new Function(`return ${literal};`)();
   assert.deepEqual(tasks, [
-    { agent_type: "explorer", message: nasty },
-    { agent_type: "validator", message: "benign" },
+    { agent_type: "explorer", message: nasty, items: [
+      { type: "skill", name: "ccc", path: join(process.env.HOME, ".agents/skills/ccc") },
+      { type: "skill", name: "lsp-mcp-server", path: join(process.env.HOME, ".agents/skills/lsp-mcp-server") },
+    ] },
+    { agent_type: "validator", message: "benign", items: [
+      { type: "skill", name: "ccc", path: join(process.env.HOME, ".agents/skills/ccc") },
+      { type: "skill", name: "lsp-mcp-server", path: join(process.env.HOME, ".agents/skills/lsp-mcp-server") },
+    ] },
   ]);
 
   // And the surrounding script still has exactly the one spawn call it wrote.

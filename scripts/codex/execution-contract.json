@@ -9,7 +9,8 @@
         "cocoindex-code",
         "playwright",
         "autodev_spawn"
-      ]
+      ],
+      "skills": ["orchestration", "ccc", "lsp-mcp-server"]
     },
     "default": {
       "kind": "leaf",
@@ -17,7 +18,8 @@
       "mcp": [
         "lsp",
         "cocoindex-code"
-      ]
+      ],
+      "skills": ["ccc", "lsp-mcp-server"]
     },
     "worker": {
       "kind": "leaf",
@@ -25,7 +27,8 @@
       "mcp": [
         "lsp",
         "cocoindex-code"
-      ]
+      ],
+      "skills": ["ccc", "lsp-mcp-server"]
     },
     "explorer": {
       "kind": "leaf",
@@ -33,7 +36,8 @@
       "mcp": [
         "lsp",
         "cocoindex-code"
-      ]
+      ],
+      "skills": ["ccc", "lsp-mcp-server"]
     },
     "validator": {
       "kind": "leaf",
@@ -41,21 +45,24 @@
       "mcp": [
         "lsp",
         "cocoindex-code"
-      ]
+      ],
+      "skills": ["ccc", "lsp-mcp-server"]
     },
     "browser-tester": {
       "kind": "leaf",
       "readOnly": true,
       "mcp": [
         "playwright"
-      ]
+      ],
+      "skills": []
     },
     "docs-researcher": {
       "kind": "leaf",
       "readOnly": true,
       "mcp": [
         "openaiDeveloperDocs"
-      ]
+      ],
+      "skills": []
     },
     "smart": {
       "kind": "leaf",
@@ -65,7 +72,8 @@
         "cocoindex-code",
         "playwright",
         "openaiDeveloperDocs"
-      ]
+      ],
+      "skills": ["ccc", "lsp-mcp-server"]
     }
   },
   "providers": {

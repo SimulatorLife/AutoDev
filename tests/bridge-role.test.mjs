@@ -40,6 +40,7 @@ test("the execution contract preserves role-specific capabilities across bridge 
   assert.ok(roleContract("explorer").mcp.includes("lsp"));
   assert.ok(roleContract("browser-tester").mcp.includes("playwright"));
   assert.equal(roleContract("orchestrator").kind, "orchestrator");
+  assert.deepEqual(roleContract("explorer").skills, ["ccc", "lsp-mcp-server"]);
   for (const contract of Object.values(EXECUTION_CONTRACT.roles)) {
     assert.equal("instructions" in contract, false, "role prose belongs to prompts/roles, not capability metadata");
   }

@@ -552,6 +552,24 @@ class LocalSetupTests(unittest.TestCase):
         self.assertIn("render-agent-configs.py", installer)
         self.assertIn("render_agent_configs", installer)
 
+    def test_execution_contract_matches_role_toml_mcp_and_skill_capabilities(self):
+        contract = json.loads((REPO_ROOT / "scripts/codex/execution-contract.json").read_text())
+        role_dir = REPO_ROOT / "scripts/codex/agents"
+        for source in sorted(role_dir.glob("*.toml")):
+            with self.subTest(role=source.stem):
+                role_config = tomllib.loads(source.read_text())
+                enabled_mcp = [
+                    name for name, settings in role_config["mcp_servers"].items()
+                    if isinstance(settings, dict) and settings.get("enabled") is True
+                ]
+                enabled_skills = [
+                    entry["name"] for entry in role_config.get("skills", {}).get("config", [])
+                    if entry.get("enabled") is True
+                ]
+                role_contract = contract["roles"][source.stem]
+                self.assertCountEqual(role_contract["mcp"], enabled_mcp)
+                self.assertCountEqual(role_contract["skills"], enabled_skills)
+
     def test_user_level_skill_registry_contains_all_requested_skill_names(self):
         names = {path.name for path in (REPO_ROOT / "scripts/codex/skills").iterdir()}
         self.assertTrue(set(SKILL_NAMES) <= names)
