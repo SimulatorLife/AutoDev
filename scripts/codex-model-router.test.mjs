@@ -2015,7 +2015,7 @@ test("tracks router-visible subagent spawn failure reasons", () => {
   resetRouterTelemetry();
 });
 
-test("serves HTML only from /dashboard and raw JSON from /status", async () => {
+test("serves the live component dashboard and keeps /status raw JSON", async () => {
   const server = createServer((request, response) => { void handle(request, response); });
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
   try {
@@ -2024,135 +2024,77 @@ test("serves HTML only from /dashboard and raw JSON from /status", async () => {
     assert.equal(dashboard.status, 200);
     assert.match(dashboard.headers.get("content-type"), /text\/html/);
     const dashboardBody = (await dashboard.text()).replace(/\s+/g, " ").replace(/>\s+</g, "><");
-    assert.match(dashboardBody, /setInterval\(refresh, 3000\)/);
-    assert.match(dashboardBody, /id="usage-breakdown"/);
-    assert.match(dashboardBody, /id="workspace-usage"/);
-    assert.match(dashboardBody, /Usage by workspace/);
-    assert.match(dashboardBody, /id="usage-total-attempts"/);
-    assert.doesNotMatch(dashboardBody, /id="by-origin"/);
-    assert.doesNotMatch(dashboardBody, /id="by-role"/);
-    assert.doesNotMatch(dashboardBody, /id="by-model"/);
-    assert.match(dashboardBody, /<th>Category<\/th>\s*<th>Active<\/th>\s*<th>Attempts<\/th>/);
-    assert.match(dashboardBody, /const usageBreakdownRows = \(usage\)/);
-    assert.match(dashboardBody, /byRole\.unattributed \?\? \{\}/);
-    assert.match(dashboardBody, /class="toggle-usage" data-usage-group="subagents"/);
-    assert.match(dashboardBody, /class="usage-child" data-usage-child="subagents"\$\{expanded \? "" : " hidden"\}/);
-    assert.match(dashboardBody, /const expandedUsageGroups = new Set\(\);/);
-    assert.match(dashboardBody, /role !== "unattributed"/);
-    assert.match(dashboardBody, /usageRow\("Orchestrator", orchestrator\)/);
-    assert.match(dashboardBody, /<code>Subagents<\/code>/);
-    assert.match(dashboardBody, /Usage by orchestrator and subagents/);
-    assert.match(dashboardBody, /aria-controls="provider-health-section" aria-expanded="true"/);
-    assert.match(dashboardBody, /aria-controls="usage-section" aria-expanded="true"/);
-    assert.doesNotMatch(dashboardBody, /<h2>By origin<\/h2>/);
-    assert.doesNotMatch(dashboardBody, /<h2>By role<\/h2>/);
-    assert.match(dashboardBody, /id="operational-summaries"/);
-    assert.match(dashboardBody, /aria-controls="operational-summaries-section"\s*aria-expanded="false"/);
-    assert.match(dashboardBody, /id="operational-summaries-section" hidden/);
-    assert.match(dashboardBody, /summaryRow/);
-    assert.match(dashboardBody, /Codex telemetry/);
-    assert.match(dashboardBody, /State database/);
-    assert.match(dashboardBody, /Concurrency/);
-    assert.match(dashboardBody, /Category<\/th>\s*<th>Metric<\/th>\s*<th>Value<\/th>/);
-    assert.match(dashboardBody, /id="mcp-telemetry-section"/);
-    assert.match(dashboardBody, /aria-controls="mcp-telemetry-section" aria-expanded="true"/);
-    assert.doesNotMatch(dashboardBody, /Codex telemetry<\/button>/);
-    assert.match(dashboardBody, /id="mcp-telemetry"/);
-    assert.match(dashboardBody, /id="mcp-total-init"/);
-    assert.match(dashboardBody, /id="mcp-total-duration"/);
-    assert.match(dashboardBody, /id="skills-section"/);
-    assert.match(dashboardBody, /aria-controls="skills-section" aria-expanded="true"/);
-    assert.match(dashboardBody, /id="skills-table"/);
-    assert.match(dashboardBody, /<th>Totals<\/th>/);
-    assert.match(dashboardBody, /id="skills-total"/);
-    assert.match(dashboardBody, /id="skills-context"/);
-    assert.doesNotMatch(dashboardBody, /skillsUsage/);
-    assert.doesNotMatch(dashboardBody, /shadow_selection\./);
-    assert.match(dashboardBody, /id="skills-context"/);
-    assert.match(dashboardBody, /aria-controls="skills-context-section" aria-expanded="true"/);
-    assert.doesNotMatch(dashboardBody, /<th>Invocations<\/th>/);
-    assert.match(dashboardBody, /<th>Skill<\/th>\s*<th>Injected<\/th>\s*<th>Injection share<\/th>\s*<th>By status<\/th>\s*<th>By invoke type<\/th>/);
-    assert.match(dashboardBody, /id="skills-histograms"/);
-    assert.match(dashboardBody, /aria-controls="skills-context-section" aria-expanded="true"/);
-    assert.match(dashboardBody, /id="skills-context-section"/);
-    assert.match(dashboardBody, /id="skills-context"/);
-    assert.match(dashboardBody, /skillShare/);
-    assert.match(dashboardBody, /histogramRow/);
-    assert.match(dashboardBody, /description_truncated_chars/);
-    assert.match(dashboardBody, /text\(key\)/);
-    assert.match(dashboardBody, /byAgentKind/);
-    assert.match(dashboardBody, /byModel/);
-    assert.match(dashboardBody, /byPlugin/);
-    assert.match(dashboardBody, /id="native-metrics"/);
-    assert.match(dashboardBody, /id="native-metrics-summary"/);
-    assert.match(dashboardBody, /id="native-metrics-total-exports"/);
-    assert.match(dashboardBody, /id="native-metrics-total-points"/);
-    assert.match(dashboardBody, /aria-controls="native-metrics-section" aria-expanded="false"/);
-    assert.match(dashboardBody, /id="native-metrics-section" hidden/);
-    assert.match(dashboardBody, /millisecondsText/);
-    assert.match(dashboardBody, /id="hooks-section"/);
-    assert.match(dashboardBody, /aria-controls="hooks-section" aria-expanded="true"/);
-    assert.match(dashboardBody, /<span class="caret">▾<\/span> Hooks<\/button>/);
-    assert.match(dashboardBody, /id="native-runtime-telemetry"/);
-    assert.match(dashboardBody, /id="native-runtime-total-calls"/);
-    assert.match(dashboardBody, /<td>Thread<\/td>/);
-    assert.match(dashboardBody, /<td>Spawn<\/td>/);
-    assert.match(dashboardBody, /threadSource/);
-    assert.match(dashboardBody, /spawnSource/);
-    assert.doesNotMatch(dashboardBody, /id="hooks-threads-summary"/);
-    assert.doesNotMatch(dashboardBody, /codex\.skill\.injected/);
-    assert.match(dashboardBody, /codex\.thread\.skills\.enabled_total/);
-    assert.match(dashboardBody, /MCP ready/);
-    assert.match(dashboardBody, /aria-controls="recent-routing-events-section" aria-expanded="false"/);
-    assert.match(dashboardBody, /id="recent-routing-events-section" hidden/);
-    assert.match(dashboardBody, /document\.querySelectorAll\("\.toggle-section"\)/);
-    assert.doesNotMatch(dashboardBody, /id="spawn-failures"/);
-    assert.match(dashboardBody, /<th>Reason \/ type<\/th>\s*<th>Count<\/th>\s*<th>Last observed<\/th>/);
-    assert.match(dashboardBody, /id="spawn-failures-by-reason"/);
-    assert.match(dashboardBody, /aria-controls="spawn-failures-section" aria-expanded="false"/);
-    assert.match(dashboardBody, /id="spawn-failures-section" hidden/);
-    assert.match(dashboardBody, /id="spawn-failures-total"/);
-    assert.match(dashboardBody, /spawnFailureRows/);
-    assert.match(dashboardBody, /latestByReason/);
-    assert.match(dashboardBody, /processFallbackEnforcement/);
-    assert.match(dashboardBody, /process-wide bucket/);
-    assert.match(dashboardBody, /\[\s*"Concurrency", "Active sessions", concurrency\.activeSessions \?\? 0\s*\]/);
-    assert.doesNotMatch(dashboardBody, /id="skills-summary"|id="sqlite-telemetry"|id="concurrency"/);
-    assert.match(dashboardBody, /<tfoot>/);
-    assert.match(dashboardBody, /class="provider-summary"/);
-    assert.match(dashboardBody, /id="summary-attempts"/);
-    assert.match(dashboardBody, /const collapsible = uniqueModels.length > 1/);
-    // A model observed only in usage -- a pinned direct request, or a CLI
-    // subagent's own model -- still has to reach the provider's row.
-    assert.match(dashboardBody, /const observedModels = Object\.keys\(modelUsage\)\.filter/);
-    assert.match(dashboardBody, /id="usage-summary"/);
-    assert.match(dashboardBody, /CLI-delegated subagent turn/);
-    assert.match(dashboardBody, /const modelStats = uniqueModels.reduce/);
-    assert.match(dashboardBody, /total\.active \+= stats\.active \?\? 0;/);
-    assert.match(dashboardBody, /\$\{cooldown\}<\/td><td>\$\{modelStats\.active\}<\/td><td>\$\{modelStats\.attempts\}<\/td>/);
-    assert.match(dashboardBody, /const modelLimited = limited && \(stats\.failures \?\? 0\) > 0 && stats\.lastFailure;/);
-    assert.match(dashboardBody, /\$\{text\(modelStatus\)\}<\/td><td>\$\{stats\.active \?\? 0\}<\/td><td>\$\{stats\.attempts \?\? 0\}<\/td>/);
-    assert.doesNotMatch(dashboardBody, /<\/td><td>0<\/td><td>\$\{stats\.attempts \?\? 0\}<\/td>/);
-    assert.match(dashboardBody, /const configuredCell = collapsible \? ""/);
-    assert.match(dashboardBody, /<th>Provider<\/th><th>Model<\/th>/);
-    assert.match(dashboardBody, /id="providers-table"/);
-    assert.match(dashboardBody, /#providers-table \{ table-layout: fixed; min-width: 0; width: 100%; \}/);
-    assert.match(dashboardBody, /class="table-scroll"/);
-    assert.match(dashboardBody, /<th>Tool calls<\/th><th>Avg\. turn<\/th>/);
-    assert.match(dashboardBody, /const configuredCell = collapsible \? ""/);
-    assert.match(dashboardBody, /Provider skips/);
-    assert.match(dashboardBody, /: "";/);
-    assert.doesNotMatch(dashboardBody, />—</);
+
+    // The dashboard is a live view: it fetches the raw status endpoint on load
+    // and polls it without putting a second data contract in the HTML.
+    assert.match(dashboardBody, /fetch\("\/status", \{ cache: "no-store", headers: \{ Accept: "application\/json" \} \}\)/);
+    assert.match(dashboardBody, /refresh\(\); setInterval\(refresh, 3000\)/);
+
+    // Top-level panels define the reference hierarchy. Nested panels are part
+    // of their owning domain rather than independent dashboard sections.
+    const panels = [...dashboardBody.matchAll(/<dashboard-panel id="([^"]+)"/g)].map((match) => match[1]);
+    assert.deepEqual(panels, [
+      "panel-providers",
+      "panel-orchestrator",
+      "workspace-usage-section",
+      "panel-skills",
+      "panel-hooks",
+      "panel-ops",
+      "panel-events",
+    ]);
+    assert.match(dashboardBody, /<dashboard-panel id="panel-orchestrator"[\s\S]*?<sub-panel id="panel-spawn-breakdown"/);
+    assert.match(dashboardBody, /<sub-panel id="panel-spawn-breakdown"[\s\S]*?<sub-panel id="panel-spawn-failures"/);
+    assert.match(dashboardBody, /<dashboard-panel id="panel-skills"[\s\S]*?<sub-panel id="panel-skill-context"/);
+    assert.match(dashboardBody, /<dashboard-panel id="panel-ops"[\s\S]*?<sub-panel id="panel-native-metrics"/);
+
+    // Rendering is componentized, and untrusted live labels have an explicit
+    // escaping path. Event text and status metadata use textContent directly.
+    for (const component of [
+      "status-badge", "health-badge", "stat-card", "mini-stat", "outcome-bar",
+      "metric-bar", "share-bar", "row-toggle", "dashboard-panel", "sub-panel",
+    ]) {
+      assert.match(dashboardBody, new RegExp(`customElements\\.define\\("${component}"`));
+    }
+    assert.match(dashboardBody, /function escapeHtml\(str\)/);
+    assert.match(dashboardBody, /escapeHtml\(providerName\)/);
+    assert.match(dashboardBody, /escapeHtml\(wsKey\)/);
+    assert.match(dashboardBody, /escapeHtml\(m\.name\)/);
+    assert.match(dashboardBody, /m\.exports \?\? 0/);
+    assert.match(dashboardBody, /m\.dataPoints \?\? 0/);
+    assert.match(dashboardBody, /status\.concurrency \?\? \{\}/);
+    assert.match(dashboardBody, /const toolsList = status\.codexTelemetry\?\.tools\?\.byTool \?\? \[\]/);
+    assert.doesNotMatch(dashboardBody, /exportCount|dataPointsCount|codexTelemetry\?\.concurrency/);
+    assert.match(dashboardBody, /logEl\.textContent = events\.map/);
+    assert.match(dashboardBody, /metaEl\.textContent/);
+    assert.match(dashboardBody, /errorEl\.textContent/);
+    assert.doesNotMatch(dashboardBody, /document\.write\s*\(/);
+
+    // MCP observations are embedded in the relevant usage/operational views;
+    // there is deliberately no standalone MCP panel.
+    assert.match(dashboardBody, /MCP servers/);
+    assert.match(dashboardBody, /MCP ready \/ observed/);
+    assert.doesNotMatch(dashboardBody, /<(?:dashboard-panel|sub-panel)[^>]*(?:id="[^"]*mcp|title="[^"]*MCP)/i);
+
+    // Workspace-level named attribution is not available from the status
+    // contract. The renderer must show explicit empty states, not fabricate it.
+    assert.match(dashboardBody, /Named tool telemetry is unavailable per-workspace/);
+    assert.match(dashboardBody, /Named skill attribution is unavailable per-workspace/);
 
     const browserStatus = await fetch(`http://127.0.0.1:${address.port}/status`, { headers: { Accept: "text/html" } });
     assert.equal(browserStatus.status, 200);
     assert.match(browserStatus.headers.get("content-type"), /application\/json/);
-    assert.equal((await browserStatus.json()).schema, "autodev-router-status-v1");
+    const browserPayload = await browserStatus.json();
+    assert.equal(browserPayload.schema, "autodev-router-status-v1");
+    assert.doesNotMatch(JSON.stringify(browserPayload), /<html/i);
 
+    // Accept negotiation remains intentionally inert: both callers receive
+    // the same JSON shape even though the dashboard asks for HTML first.
     const api = await fetch(`http://127.0.0.1:${address.port}/status`, { headers: { Accept: "application/json" } });
     assert.equal(api.status, 200);
     assert.match(api.headers.get("content-type"), /application\/json/);
-    assert.equal((await api.json()).schema, "autodev-router-status-v1");
+    const apiPayload = await api.json();
+    assert.equal(apiPayload.schema, browserPayload.schema);
+    assert.deepEqual(Object.keys(apiPayload).sort(), Object.keys(browserPayload).sort());
   } finally {
     await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
   }

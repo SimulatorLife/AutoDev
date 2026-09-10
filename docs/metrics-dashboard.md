@@ -7,6 +7,40 @@ Each run also writes a step summary and uploads a 90-day JSON snapshot artifact.
 The default lookback is 90 days and can be changed with the numeric
 `lookback_days` dispatch input.
 
+## Local live dashboard
+
+The router serves the live dashboard at `http://127.0.0.1:4100/dashboard`. It
+fetches the raw `/status` JSON on initial load and refreshes it every three
+seconds (`setInterval(..., 3000)`), so the page is an operational view rather
+than a separately maintained data snapshot. The `/status` endpoint remains
+JSON for every `Accept` header; the dashboard does not change that API
+contract.
+
+The page has one componentized hierarchy:
+
+1. KPI cards.
+2. **Provider health**.
+3. **Orchestrator & subagent usage**, containing **Spawn breakdown** and
+   **Spawn failures**.
+4. **Usage by workspace**.
+5. **Skill telemetry**, containing **Skill context telemetry**.
+6. **Hooks & runtime telemetry**.
+7. **Operational summary**, containing **Native metrics observed**.
+8. **Recent routing events**.
+
+Panels, badges, metric bars, outcome bars, row toggles, and stat cards are
+custom elements. Live labels are escaped before HTML insertion, while event
+logs, metadata, and errors use text-only DOM updates. MCP lifecycle observations
+are shown in the relevant usage cards and operational summary; there is no
+standalone MCP panel.
+
+Per-workspace usage currently has reliable totals, role, and model dimensions.
+The status contract does not provide named tool or named skill attribution at
+that same workspace granularity. Expanded workspace rows therefore show the
+explicit empty states **“Named tool telemetry is unavailable per-workspace”**
+and **“Named skill attribution is unavailable per-workspace”**, rather than
+inventing a join from unrelated telemetry.
+
 ## Reported metrics
 
 - Agent PR-and-ping PRs raised and successfully merged, by target repository.
@@ -101,8 +135,8 @@ the bridge reports one count per entry and takes each child's role from the
 batch. The Role column reading `unattributed` for an Antigravity row therefore
 means the CLI step exported no tool arguments, not that the delegation was
 anonymous. A `bridge_native` subagent never makes a router request of its own,
-so its turn reaches **Usage by orchestrator and subagents** and **Provider
-health and usage** only through the bridge's report. Those reports are now
+so its turn reaches **Orchestrator & subagent usage** and **Provider health**
+only through the bridge's report. Those reports are now
 counted: each child opens a usage turn attributed to the provider, workspace,
 and model of the request the bridge was serving, and closes with the duration
 the CLI spent on it (or, when the bridge reports no close, with the time
@@ -129,28 +163,28 @@ that session's `autodev/orchestrator` turn -- and reads `unattributed` when the
 router never saw that session's parent turn. See
 `docs/provider-routing.md` -> "Counting subagents across providers".
 
-A provider's row in **Provider health and usage** sums every model observed for
+A provider's row in **Provider health** sums every model observed for
 that provider, not only the models its tiers configure. A directly pinned model
 and a CLI subagent's own model both appear in usage under a key no tier names;
 summing the configured list alone made the provider rows add up to less than
 the totals row beneath them.
 
-The dashboard's Operational summary table groups Codex receiver,
-state-database, and concurrency values as category/metric/value rows instead of
-embedding those values in prose. Each table section has one heading that also
-owns its collapse toggle. The primary Provider health and usage, Usage by
-orchestrator and subagents, MCP server telemetry, Skills, and Hooks tables are
-expanded by default; the Skill context telemetry table is visible
-inside Skills, while secondary metric inventory, spawn-failure, task, and
-recent-event sections can be expanded independently. The Subagents spawned
-table is also expanded by default and sits directly above the spawn-failure
-section, so observed spawns and the failures that prevented them read together.
+The dashboard's Operational summary groups Codex receiver, state-database,
+and concurrency values as category/metric/value rows instead of embedding those
+values in prose. Each panel heading owns its collapse toggle. Provider health,
+Orchestrator & subagent usage, Usage by workspace, Skill telemetry, and Hooks &
+runtime telemetry are expanded by default; Spawn breakdown, Spawn failures,
+Skill context telemetry, Native metrics observed, Operational summary, and
+Recent routing events are independently collapsible. The Subagents spawned
+roll-up remains in the orchestrator/subagent area rather than becoming a
+separate top-level panel.
 
-Totals footers are shown for homogeneous roll-up tables: provider/usage,
-MCP lifecycle, Skills injections, hook/runtime calls, observed metric counts,
-and spawn-failure reasons. The Operational summary and Skill context telemetry table intentionally do not
-have totals because their rows mix incompatible units; the Codex task snapshot and recent-event list are entity/event views rather than additive
-measurements.
+Totals footers are shown only for homogeneous roll-up tables: provider/usage,
+Skills injections, hook/runtime calls, observed metric counts, and spawn-failure
+reasons. Operational summary and Skill context telemetry intentionally have no
+totals because their rows mix incompatible units; recent routing events are an
+event view rather than an additive measurement. MCP observations likewise do
+not form a standalone table or panel.
 
 
 

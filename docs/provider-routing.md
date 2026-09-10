@@ -521,7 +521,17 @@ The router makes its effective choice visible in two ways:
   **Subagents spawned** and `codex-model-router-status.mjs` prints it under
   `Subagents spawned:`. See "Counting subagents across providers".
 - Open `http://127.0.0.1:4100/dashboard` in a browser for the live HTML
-  dashboard; it polls the JSON status every 3 seconds. `GET /status` always
+  dashboard; it fetches `/status` on load and polls the same JSON endpoint every
+  three seconds. The dashboard is componentized: KPI cards lead Provider
+  health, Orchestrator & subagent usage (with Spawn breakdown and Spawn
+  failures), Usage by workspace, Skill telemetry (with Skill context
+  telemetry), Hooks & runtime telemetry, Operational summary (with Native
+  metrics observed), and Recent routing events. The renderer escapes live
+  labels and uses text-only updates for logs and status metadata. MCP lifecycle
+  observations appear in the relevant usage cards and operational summary; no
+  standalone MCP panel exists. Per-workspace named tool and skill attribution
+  is unavailable in the status contract, so expanded workspace rows display
+  explicit empty states instead of fabricating that join. `GET /status` always
   returns raw JSON regardless of the `Accept` header, including the current
   router instance, active requests, configured models, cooldown countdowns,
   per-provider attempt and success/failure counters, the last classified

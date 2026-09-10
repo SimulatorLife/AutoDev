@@ -16,11 +16,27 @@ test('metrics identify agent PRs and provider invocation comments', () => {
   assert.deepEqual(metrics.parseInvocationComment('**[🤖 mini-max]** Hi, I\'ve received your request. https://github.com/SimulatorLife/AutoDev/actions/runs/123'), { agent: 'mini-max', runId: 123 });
 });
 
-test('router dashboard gives the skills subsection the same heading treatment', async () => {
-  const dashboard = await readFile(path.join(root, 'scripts', 'codex-model-router-dashboard.html'), 'utf8');
-  assert.match(dashboard, /h2\s*\{\s*font-size: 1rem;\s*margin: 1\.5rem 0 \.5rem;\s*\}/);
-  assert.match(dashboard, /<h2><button type="button" class="toggle-section" aria-controls="skills-context-section"/);
-  assert.match(dashboard, /Skill context telemetry<\/button><\/h2>/);
+test('router dashboard exposes the component hierarchy and explicit workspace attribution states', async () => {
+  const dashboard = (await readFile(path.join(root, 'scripts', 'codex-model-router-dashboard.html'), 'utf8'))
+    .replace(/\s+/g, ' ')
+    .replace(/>\s+</g, '><');
+  const panels = [...dashboard.matchAll(/<dashboard-panel id="([^"]+)"/g)].map((match) => match[1]);
+  assert.deepEqual(panels, [
+    'panel-providers',
+    'panel-orchestrator',
+    'workspace-usage-section',
+    'panel-skills',
+    'panel-hooks',
+    'panel-ops',
+    'panel-events',
+  ]);
+  assert.match(dashboard, /<dashboard-panel id="panel-orchestrator"[\s\S]*?<sub-panel id="panel-spawn-breakdown"/);
+  assert.match(dashboard, /<dashboard-panel id="panel-skills"[\s\S]*?<sub-panel id="panel-skill-context"/);
+  assert.match(dashboard, /<dashboard-panel id="panel-ops"[\s\S]*?<sub-panel id="panel-native-metrics"/);
+  assert.match(dashboard, /Named tool telemetry is unavailable per-workspace/);
+  assert.match(dashboard, /Named skill attribution is unavailable per-workspace/);
+  assert.match(dashboard, /MCP servers/);
+  assert.doesNotMatch(dashboard, /<(?:dashboard-panel|sub-panel)[^>]*(?:id="[^"]*mcp|title="[^"]*MCP)/i);
 });
 
 test('metrics dashboard renders requested counters and recent links', () => {

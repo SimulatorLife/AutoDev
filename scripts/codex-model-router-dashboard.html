@@ -1,881 +1,2471 @@
-<!doctype html>
+<!DOCTYPE html>
+
 <html lang="en">
 
 <head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Codex model router</title>
+  <meta charset="utf-8" />
+  <meta content="width=device-width,initial-scale=1" name="viewport" />
+  <title>Codex model router · integrated dashboard</title>
   <style>
     :root {
-      color-scheme: light dark;
-      font: 14px system-ui, sans-serif;
+      color-scheme: dark;
+
+      /* palette */
+      --bg: #0d1117;
+      --panel: #161b22;
+      --panel-alt: #11161c;
+      --border: #30363d;
+      --border-soft: #252b33;
+      --text: #e6edf3;
+      --code: #c9d1d9;
+      --muted: #8b949e;
+      --subtle: #6e7681;
+      --good: #3fb950;
+      --bad: #f85149;
+      --active: #58a6ff;
+      --skip: #d29922;
+
+      /* typography */
+      --font-base: 14px;
+      --font-title: 24px;
+      --font-code: 12px;
+      --font-sm: 11px;
+      --font-xs: 10px;
+      --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      --caps-spacing: .05em;
+
+      /* spacing */
+      --gap-xs: 4px;
+      --gap-sm: 6px;
+      --gap-md: 8px;
+      --gap-lg: 10px;
+      --pad-page: 28px;
+      --pad-note: 10px 14px;
+      --pad-cell: 11px 12px;
+      --pad-cell-compact: 9px 11px;
+      --pad-section: 14px 16px 16px;
+      --pad-panel-summary: 12px 15px;
+      --pad-subpanel-summary: 11px 14px;
+
+      /* shape + borders */
+      --radius-sm: 5px;
+      --radius-md: 7px;
+      --radius-lg: 10px;
+      --radius-pill: 999px;
+      --line: 1px solid var(--border);
+      --line-soft: 1px solid var(--border-soft);
+      --transition-fast: transform .12s;
+    }
+
+    * {
+      box-sizing: border-box;
     }
 
     body {
-      margin: 1.5rem;
-      max-width: none;
+      margin: 0;
+      padding: var(--pad-page);
+      background: var(--bg);
+      color: var(--text);
+      font: var(--font-base)/1.45 ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
     }
 
-    h1 {
-      font-size: 1.35rem;
-      margin-bottom: .25rem;
+    .dashboard {
+      max-width: 1500px;
+      margin: 0 auto;
     }
 
-    h2 {
-      font-size: 1rem;
-      margin: 1.5rem 0 .5rem;
+    .page-header {
+      margin-bottom: 16px;
     }
 
-    #meta,
-    #subagent-summary,
-    #usage-summary,
+    .page-title {
+      margin: 0;
+      font-size: var(--font-title);
+      line-height: 1.2;
+      letter-spacing: -.02em;
+    }
+
+    .page-meta,
+    .muted {
+      color: var(--muted);
+    }
+
+    .page-meta {
+      margin-top: 5px;
+      font-size: var(--font-code);
+    }
+
     #error {
-      color: #666;
+      display: none;
+      padding: 10px 14px;
+      margin-bottom: 14px;
+      background: #f851491f;
+      border: 1px solid var(--bad);
+      border-radius: var(--radius-md);
+      color: var(--bad);
+      font-size: var(--font-sm);
     }
 
-    #error {
-      color: #b42318;
+    #error:not(:empty) {
+      display: block;
+    }
+
+    .good {
+      color: var(--good);
+    }
+
+    .bad {
+      color: var(--bad);
+    }
+
+    .warning {
+      color: var(--skip);
+    }
+
+    .dim {
+      color: var(--subtle);
+    }
+
+    .kpi-grid,
+    .route-grid,
+    .route-stats,
+    .details-grid,
+    .skill-breakdown-grid,
+    .ops-grid,
+    .kv,
+    .skill-breakdown-line {
+      display: grid;
+    }
+
+    .kpi-grid {
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+      gap: var(--gap-lg);
+      margin-bottom: 14px;
+    }
+
+    .route-grid {
+      grid-template-columns: 1fr 1fr;
+    }
+
+    .route-stats {
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: var(--gap-md);
+    }
+
+    .details-grid {
+      grid-template-columns: 1fr 1.25fr 1.15fr .9fr;
+    }
+
+    .skill-breakdown-grid {
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+    }
+
+    .ops-grid {
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+
+    .table-wrap,
+    .event-log {
+      overflow-x: auto;
     }
 
     table {
-      border-collapse: collapse;
       width: 100%;
-    }
-
-    .table-scroll {
-      overflow-x: visible;
+      min-width: 900px;
+      border-collapse: collapse;
     }
 
     th,
     td {
-      border-bottom: 1px solid #8885;
-      padding: .45rem .55rem;
-      text-align: left;
-      vertical-align: top;
-    }
-
-    #providers-table th,
-    #providers-table td {
-      white-space: normal;
-      overflow-wrap: anywhere;
+      padding: var(--pad-cell);
+      font-variant-numeric: tabular-nums;
     }
 
     th {
+      color: var(--muted);
+      background: var(--panel-alt);
+      border-bottom: var(--line);
+      font-size: var(--font-sm);
+      font-weight: 650;
+      text-align: right;
+      text-transform: uppercase;
+      letter-spacing: .045em;
       white-space: nowrap;
     }
 
-    .toggle-provider,
-    .toggle-usage,
-    .toggle-section {
-      background: none;
-      border: 0;
-      color: inherit;
-      cursor: pointer;
-      font: inherit;
-      padding: 0;
+    td {
+      text-align: right;
+      border-bottom: var(--line-soft);
     }
 
-    .toggle-provider:hover,
-    .toggle-usage:hover,
-    .toggle-section:hover {
-      text-decoration: underline;
+    th:first-child,
+    td:first-child {
+      text-align: left;
     }
 
-    #providers-table {
-      table-layout: fixed;
-      min-width: 0;
-      width: 100%;
+    code {
+      color: var(--code);
+      font: var(--font-code)/1.4 var(--font-mono);
     }
 
-    #providers-table th:nth-child(1),
-    #providers-table td:nth-child(1) {
-      width: 14%;
+    .section-note {
+      padding: var(--pad-note);
+      color: var(--muted);
+      background: var(--panel-alt);
+      border-bottom: var(--line-soft);
+      font-size: var(--font-sm);
     }
 
-    #providers-table th:nth-child(2),
-    #providers-table td:nth-child(2) {
-      width: 20%;
-      overflow-wrap: anywhere;
-      white-space: normal;
+    .section-note strong {
+      color: var(--code);
     }
 
-    #providers-table th:nth-child(3),
-    #providers-table td:nth-child(3) {
-      width: 10%;
+    .compact-table {
+      min-width: 760px;
     }
 
-    #providers-table th:nth-child(4),
-    #providers-table td:nth-child(4) {
-      width: 5%;
+    .compact-table th,
+    .compact-table td {
+      padding: var(--pad-cell-compact);
     }
 
-    #providers-table th:nth-child(5),
-    #providers-table td:nth-child(5) {
-      width: 7%;
+    .compact-table tfoot :is(th, td),
+    #workspace-usage-table tfoot :is(th, td) {
+      background: var(--panel-alt);
+      border-top: var(--line);
+      border-bottom: 0;
+      font-weight: 700;
+      vertical-align: middle;
     }
 
-    #providers-table th:nth-child(6),
-    #providers-table td:nth-child(6) {
-      width: 7%;
-    }
-
-    #providers-table th:nth-child(7),
-    #providers-table td:nth-child(7) {
-      width: 7%;
-    }
-
-    #providers-table th:nth-child(8),
-    #providers-table td:nth-child(8) {
-      width: 6%;
-    }
-
-    #providers-table th:nth-child(9),
-    #providers-table td:nth-child(9) {
-      width: 7%;
-    }
-
-    #providers-table th:nth-child(10),
-    #providers-table td:nth-child(10) {
-      width: 7%;
-    }
-
-    #providers-table th:nth-child(11),
-    #providers-table td:nth-child(11) {
-      width: 10%;
-    }
-
-    .caret {
-      display: inline-flex;
-      width: 1em;
-      height: 1em;
+    .inline-code-list,
+    .route-title {
+      display: flex;
       align-items: center;
-      justify-content: center;
-      vertical-align: -0.1em;
     }
 
-    .provider-model,
-    .usage-child {
-      background: #8881;
+    .inline-code-list {
+      flex-wrap: wrap;
+      gap: 5px;
     }
 
-    .provider-model td:first-child,
-    .usage-child td:first-child {
-      padding-left: 1.5rem;
+    .inline-code-list code {
+      padding: 2px 5px;
+      background: var(--border-soft);
+      border: var(--line);
+      border-radius: var(--radius-sm);
     }
 
-    .provider-summary {
-      border-top: 2px solid #888;
+    .route-card,
+    .detail-group,
+    .skill-breakdown-group,
+    .ops-group {
+      min-width: 0;
+      padding: var(--pad-section);
+      border-right: var(--line-soft);
+    }
+
+    .route-card:last-child,
+    .detail-group:last-child,
+    .skill-breakdown-group:last-child,
+    .ops-group:last-child {
+      border-right: 0;
+    }
+
+    .route-title {
+      gap: 7px;
+      margin-bottom: var(--gap-lg);
       font-weight: 700;
     }
 
-    .provider-summary th,
-    .provider-summary td {
-      padding-top: .7rem;
+    .route-outcome {
+      margin-top: var(--gap-lg);
     }
 
-    code,
-    pre {
-      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    .details-row,
+    .skill-details-row {
+      background: var(--panel-alt);
     }
 
-    pre {
-      white-space: pre-wrap;
-      line-height: 1.45;
+    .details-row>td,
+    .skill-details-row>td {
+      padding: 0;
+      text-align: left;
+      border-bottom: var(--line);
     }
 
-    .ok {
-      color: #16803c;
+    .detail-group :is(h2),
+    .provider-name,
+    .skill-breakdown-group h3,
+    .ops-group h3 {
+      color: var(--muted);
+      font-size: var(--font-xs);
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: var(--caps-spacing);
     }
 
-    .limited {
-      color: #b54708;
-      font-weight: 600;
+    .detail-group h2,
+    .skill-breakdown-group h3,
+    .ops-group h3 {
+      margin: 0 0 var(--gap-lg);
+    }
+
+    .provider-name {
+      margin: 2px 0 5px;
+    }
+
+    .metric-list,
+    .provider-block,
+    .skill-breakdown-list,
+    .kv-list {
+      display: grid;
+    }
+
+    .metric-list,
+    .provider-block {
+      gap: 5px;
+    }
+
+    .provider-block {
+      padding-bottom: var(--gap-md);
+    }
+
+    .provider-block:last-child {
+      padding-bottom: 0;
+    }
+
+    .skill-share-cell {
+      min-width: 130px;
+    }
+
+    .skill-breakdown-list {
+      gap: var(--gap-md);
+    }
+
+    .skill-breakdown-line {
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: var(--gap-lg);
+      margin-bottom: var(--gap-xs);
+      align-items: baseline;
+    }
+
+    .skill-breakdown-line .metric-name {
+      color: var(--code);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .skill-breakdown-line .metric-value {
+      color: var(--text);
+    }
+
+    .empty-state {
+      color: var(--subtle);
+      font-size: var(--font-sm);
+    }
+
+    .kv-list {
+      gap: var(--gap-sm);
+    }
+
+    .kv {
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 12px;
+      align-items: baseline;
+    }
+
+    .kv span:first-child {
+      color: var(--code);
+    }
+
+    .kv span:last-child {
+      color: var(--text);
+      font-variant-numeric: tabular-nums;
+      text-align: right;
+    }
+
+    .event-log {
+      margin: 0;
+      padding: 14px 16px 16px;
+      color: var(--code);
+      background: #0b0f14;
+      font: var(--font-sm)/1.65 var(--font-mono);
+      white-space: pre;
+    }
+
+    .runtime-table :is(th, td):nth-child(4) {
+      width: 34%;
+    }
+
+    .section-stack {
+      display: grid;
+    }
+
+    .bar {
+      grid-column: 1/-1;
+      height: 3px;
+      overflow: hidden;
+      border-radius: var(--radius-pill);
+      background: var(--border-soft);
+    }
+
+    .bar i {
+      display: block;
+      width: var(--w);
+      height: 100%;
+      border-radius: inherit;
+      background: var(--subtle);
+    }
+
+    @media (max-width:1100px) {
+      .kpi-grid {
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+      }
+
+      .route-stats {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+
+      :is(.details-grid, .skill-breakdown-grid) {
+        grid-template-columns: 1fr 1fr;
+      }
+    }
+
+    @media (max-width:800px) {
+      body {
+        padding: 16px;
+      }
+
+      :is(.kpi-grid, .route-grid, .ops-grid) {
+        grid-template-columns: 1fr;
+      }
+
+      .route-stats {
+        grid-template-columns: 1fr 1fr;
+      }
+
+      :is(.details-grid, .skill-breakdown-grid) {
+        grid-template-columns: 1fr;
+      }
+
+      :is(.route-card, .ops-group) {
+        border-right: 0;
+        border-bottom: var(--line-soft);
+      }
+
+      :is(.detail-group, .skill-breakdown-group) {
+        border-right: 0;
+        border-bottom: var(--line-soft);
+      }
+
+      :is(.route-card, .ops-group):last-child {
+        border-bottom: 0;
+      }
     }
   </style>
 </head>
 
 <body>
-  <h1>Codex model router</h1>
-  <div id="meta">Loading…</div>
-  <div id="error" role="alert"></div>
-
-  <h2><button type="button" class="toggle-section" aria-controls="provider-health-section" aria-expanded="true"><span
-        class="caret">▾</span> Provider health and usage</button></h2>
-  <div id="provider-health-section">
-    <div class="table-scroll">
-      <table id="providers-table">
-        <thead>
-          <tr>
-            <th>Provider</th>
-            <th>Model</th>
-            <th>Status</th>
-            <th>Active</th>
-            <th>Attempts</th>
-            <th>Successes</th>
-            <th>Failures</th>
-            <th>Tool calls</th>
-            <th>Avg. turn</th>
-            <th>Provider skips</th>
-            <th>Last failure</th>
-          </tr>
-        </thead>
-        <tbody id="providers">
-          <tr>
-            <td colspan="11">Loading…</td>
-          </tr>
-        </tbody>
-        <tfoot>
-          <tr class="provider-summary">
-            <th colspan="2">Totals</th>
-            <td>all</td>
-            <td id="summary-active">0</td>
-            <td id="summary-attempts">0</td>
-            <td id="summary-successes">0</td>
-            <td id="summary-failures">0</td>
-            <td id="summary-tools">0</td>
-            <td id="summary-duration">0.0s</td>
-            <td id="summary-skips">0</td>
-            <td></td>
-          </tr>
-        </tfoot>
-      </table>
+  <main class="dashboard">
+    <div class="page-header">
+      <div>
+        <h1 class="page-title">Codex model router</h1>
+        <div class="page-meta" id="page-meta">Loading router status...</div>
+      </div>
     </div>
-  </div>
+    <div id="error" role="alert"></div>
 
-  <h2><button type="button" class="toggle-section" aria-controls="usage-section" aria-expanded="true"><span
-        class="caret">▾</span> Usage by orchestrator and subagents</button></h2>
-  <div id="usage-section">
-    <div id="usage-summary">Loading…</div>
-    <table id="usage-table">
-      <thead>
-        <tr>
-          <th>Category</th>
-          <th>Active</th>
-          <th>Attempts</th>
-          <th>Successes</th>
-          <th>Failures</th>
-          <th>Avg turn</th>
-          <th>Tool calls</th>
-        </tr>
-      </thead>
-      <tbody id="usage-breakdown">
-        <tr>
-          <td colspan="7">Loading…</td>
-        </tr>
-      </tbody>
-      <tfoot>
-        <tr class="provider-summary">
-          <th>Totals</th>
-          <td id="usage-total-active">0</td>
-          <td id="usage-total-attempts">0</td>
-          <td id="usage-total-successes">0</td>
-          <td id="usage-total-failures">0</td>
-          <td id="usage-total-duration">0.0s</td>
-          <td id="usage-total-tools">0</td>
-        </tr>
-      </tfoot>
-    </table>
-  </div>
+    <!-- 1. KPI Grid -->
+    <section class="kpi-grid" id="kpi-grid">
+      <stat-card id="kpi-agents" label="Active agents" value="—">—</stat-card>
+      <stat-card id="kpi-attempts" label="Attempts" value="—">—</stat-card>
+      <stat-card id="kpi-tools" label="Tool calls" value="—">—</stat-card>
+      <stat-card id="kpi-skills" label="Skill uses" value="—">—</stat-card>
+      <stat-card id="kpi-turn" label="Average turn" value="—">—</stat-card>
+    </section>
 
-  <h2><button type="button" class="toggle-section" aria-controls="workspace-usage-section" aria-expanded="true"><span
-        class="caret">▾</span> Usage by workspace</button></h2>
-  <div id="workspace-usage-section">
-    <table id="workspace-usage-table">
-      <thead>
-        <tr>
-          <th>Repository / workspace</th>
-          <th>CWD</th>
-          <th>Active</th>
-          <th>Attempts</th>
-          <th>Successes</th>
-          <th>Failures</th>
-          <th>Avg turn</th>
-          <th>Tool calls</th>
-          <th>Roles</th>
-          <th>Models</th>
-          <th>Providers</th>
-        </tr>
-      </thead>
-      <tbody id="workspace-usage">
-        <tr><td colspan="11">No workspace usage observed yet.</td></tr>
-      </tbody>
-    </table>
-  </div>
+    <!-- 2. Provider Health -->
+    <dashboard-panel id="panel-providers" open="" summary="" title="Provider health">
+      <div class="section-note">
+        Provider/model <strong>usage</strong> is consolidated into Workspace usage below; this table keeps the
+        configuration and health signals that are not duplicated there.
+      </div>
+      <div class="table-wrap">
+        <table class="compact-table">
+          <thead>
+            <tr>
+              <th>Provider</th>
+              <th>Configured models</th>
+              <th>Status</th>
+              <th>Active</th>
+              <th>Avg turn</th>
+              <th>Outcomes</th>
+              <th>Last failure</th>
+            </tr>
+          </thead>
+          <tbody id="providers-tbody">
+            <tr><td colspan="7" class="dim" style="text-align:center">Loading providers...</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </dashboard-panel>
 
-  <h2><button type="button" class="toggle-section" aria-controls="mcp-telemetry-section" aria-expanded="true"><span
-        class="caret">▾</span> MCP server telemetry</button></h2>
-  <div id="mcp-telemetry-section">
-    <table>
-      <thead>
-        <tr>
-          <th>MCP server</th>
-          <th>Health</th>
-          <th>Last observed</th>
-          <th>Initializations</th>
-          <th>Tool discovery</th>
-          <th>Failures</th>
-          <th>Avg. duration</th>
-        </tr>
-      </thead>
-      <tbody id="mcp-telemetry">
-        <tr>
-          <td colspan="7">Loading…</td>
-        </tr>
-      </tbody>
-      <tfoot>
-        <tr class="provider-summary">
-          <th>Totals</th>
-          <td id="mcp-total-health">0/0 ready</td>
-          <td id="mcp-total-last">-</td>
-          <td id="mcp-total-init">0</td>
-          <td id="mcp-total-discovery">0</td>
-          <td id="mcp-total-failures">0</td>
-          <td id="mcp-total-duration">0.0s</td>
-        </tr>
-      </tfoot>
-    </table>
-  </div>
+    <!-- 3. Orchestrator & Subagent Usage -->
+    <dashboard-panel id="panel-orchestrator" open="" summary="" title="Orchestrator &amp; subagent usage">
+      <div class="section-note">
+        CLI-delegated children reported by provider bridges are included here; roleless child traffic is attributed
+        separately from roleless orchestrator traffic.
+      </div>
+      <div class="route-grid" id="route-grid">
+      </div>
+      <sub-panel id="panel-spawn-breakdown" summary="" title="Spawn breakdown">
+        <div class="section-note">
+          This stays separate from the Roles/Models workspace breakdown because it answers a different question:
+          <strong>who spawned what, by which mechanism and spawn tool</strong>.
+        </div>
+        <div class="table-wrap">
+          <table class="compact-table">
+            <thead>
+              <tr>
+                <th>Spawned by</th>
+                <th>Mechanism</th>
+                <th>Role</th>
+                <th>Spawn tool</th>
+                <th>Count</th>
+              </tr>
+            </thead>
+            <tbody id="spawn-breakdown-tbody">
+            </tbody>
+            <tfoot id="spawn-breakdown-tfoot">
+            </tfoot>
+          </table>
+        </div>
+      </sub-panel>
+      <sub-panel id="panel-spawn-failures" summary="" title="Spawn failures">
+        <div class="section-note">
+          Router-admitted child requests only; app-level spawn admission and open child handles remain outside this
+          telemetry.
+        </div>
+        <div class="table-wrap">
+          <table class="compact-table">
+            <thead>
+              <tr>
+                <th>Reason / type</th>
+                <th>Count</th>
+                <th>Last observed</th>
+              </tr>
+            </thead>
+            <tbody id="spawn-failures-tbody">
+            </tbody>
+            <tfoot id="spawn-failures-tfoot">
+            </tfoot>
+          </table>
+        </div>
+      </sub-panel>
+    </dashboard-panel>
 
-  <h2><button type="button" class="toggle-section" aria-controls="skills-section" aria-expanded="true"><span
-        class="caret">▾</span> Skills</button></h2>
-  <div id="skills-section">
-    <table>
-      <thead>
-        <tr>
-          <th>Skill</th>
-          <th>Injected</th>
-          <th>Injection share</th>
-          <th>By status</th>
-          <th>By invoke type</th>
-          <th>Agent kind</th>
-          <th>Models</th>
-          <th>Plugins</th>
-        </tr>
-      </thead>
-      <tbody id="skills-table">
-        <tr>
-          <td colspan="8">Loading…</td>
-        </tr>
-      </tbody>
-      <tfoot>
-        <tr class="provider-summary">
-          <th>Totals</th>
-          <th id="skills-total">0</th>
-          <th id="skills-total-share">0.0%</th>
-          <td id="skills-total-status">-</td>
-          <td id="skills-total-invoke-type">-</td>
-          <td id="skills-total-agent-kind">-</td>
-          <td id="skills-total-model">-</td>
-          <td id="skills-total-plugin">-</td>
-        </tr>
-      </tfoot>
-    </table>
+    <!-- 4. Usage by Workspace -->
+    <dashboard-panel id="workspace-usage-section" open="" summary="" title="Usage by workspace">
+      <div class="section-note">Click a workspace to expand roles, models, grouped native/MCP tools, and skill usage</div>
+      <div class="table-wrap">
+        <table id="workspace-usage-table">
+          <thead>
+            <tr>
+              <th>Repository / workspace</th>
+              <th>Active</th>
+              <th>Attempts</th>
+              <th>Avg turn</th>
+              <th>Tool calls</th>
+              <th>Skill uses</th>
+            </tr>
+          </thead>
+          <tbody id="workspace-usage">
+            <tr><td colspan="6" class="dim" style="text-align:center">Loading workspace usage...</td></tr>
+          </tbody>
+          <tfoot id="workspace-usage-tfoot">
+          </tfoot>
+        </table>
+      </div>
+    </dashboard-panel>
 
-    <h2><button type="button" class="toggle-section" aria-controls="skills-context-section" aria-expanded="true"><span
-          class="caret">▾</span> Skill context telemetry</button></h2>
-    <div id="skills-context-section">
-      <div><small>Turn duration and per-thread aggregate skill-context histograms — samples (count), total (sum), and
-          average. Histogram rows are thread aggregates, not per-skill.</small></div>
-      <table>
-        <thead>
-          <tr>
-            <th>Metric</th>
-            <th>Samples</th>
-            <th>Total</th>
-            <th>Average</th>
-          </tr>
-        </thead>
-        <tbody id="skills-context">
-          <tr>
-            <td colspan="4">Loading…</td>
-          </tr>
-        </tbody>
-        <tbody id="skills-histograms">
-          <tr>
-            <td colspan="4">Loading…</td>
-          </tr>
-        </tbody>
-      </table>
+    <!-- 5. Skill Telemetry -->
+    <dashboard-panel id="panel-skills" open="" summary="" title="Skill telemetry">
+      <div class="section-note">Click a skill to expand its usage context. Top-level rows show outcome and
+        overall share; details show where and how that skill was used.</div>
+      <div class="table-wrap">
+        <table class="compact-table skills-usage-table">
+          <thead>
+            <tr>
+              <th>Skill</th>
+              <th>Uses</th>
+              <th>Share</th>
+            </tr>
+          </thead>
+          <tbody id="skills-usage-tbody">
+            <tr><td colspan="3" class="dim" style="text-align:center">Loading skill telemetry...</td></tr>
+          </tbody>
+          <tfoot id="skills-usage-tfoot">
+          </tfoot>
+        </table>
+      </div>
+      <sub-panel id="panel-skill-context" summary="" title="Skill context telemetry">
+        <div class="section-note">
+          Turn-duration and per-thread aggregate skill-context histograms. These rows are thread aggregates, not
+          per-skill usage.
+        </div>
+        <div class="table-wrap">
+          <table class="compact-table">
+            <thead>
+              <tr>
+                <th>Metric</th>
+                <th>Samples</th>
+                <th>Total</th>
+                <th>Average</th>
+              </tr>
+            </thead>
+            <tbody id="skill-context-tbody">
+            </tbody>
+          </table>
+        </div>
+      </sub-panel>
+    </dashboard-panel>
+
+    <!-- 6. Hooks & Runtime Telemetry -->
+    <dashboard-panel id="panel-hooks" summary="" title="Hooks &amp; runtime telemetry">
+      <div class="section-note">
+        Native and MCP tool counts are already organized under Workspace usage, so this view focuses on hooks plus
+        thread/spawn runtime events and their timing/status metadata.
+      </div>
+      <div class="table-wrap">
+        <table class="compact-table runtime-table">
+          <thead>
+            <tr>
+              <th>Type</th>
+              <th>Name</th>
+              <th>Source / handler</th>
+              <th>Outcomes</th>
+              <th>Avg duration</th>
+            </tr>
+          </thead>
+          <tbody id="hooks-tbody">
+          </tbody>
+          <tfoot id="hooks-tfoot">
+          </tfoot>
+        </table>
+      </div>
+    </dashboard-panel>
+
+    <!-- 7. Operational Summary -->
+    <dashboard-panel id="panel-ops" summary="Telemetry · metrics · state DB · concurrency" title="Operational summary">
+      <div class="section-body section-stack">
+        <div class="ops-grid" id="ops-grid">
+        </div>
+        <sub-panel id="panel-native-metrics" summary="" title="Native metrics observed">
+          <div class="table-wrap">
+            <table class="compact-table">
+              <thead>
+                <tr>
+                  <th>Metric</th>
+                  <th>Exports</th>
+                  <th>Data points</th>
+                </tr>
+              </thead>
+              <tbody id="native-metrics-tbody">
+              </tbody>
+              <tfoot id="native-metrics-tfoot">
+              </tfoot>
+            </table>
+          </div>
+        </sub-panel>
+      </div>
+    </dashboard-panel>
+
+    <!-- 8. Recent Routing Events -->
+    <dashboard-panel id="panel-events" summary="" title="Recent routing events">
+      <pre class="event-log" id="recent-events-log">No routing events yet.</pre>
+    </dashboard-panel>
+  </main>
+
+  <template id="status-badge-template">
+    <style>
+      :host {
+        display: inline-flex;
+        vertical-align: middle;
+      }
+
+      .badge {
+        display: inline-flex;
+        min-width: 32px;
+        justify-content: center;
+        padding: 2px 7px;
+        color: var(--muted);
+        background: var(--border-soft);
+        border-radius: var(--radius-pill);
+        font-size: var(--font-sm);
+        font-weight: 700;
+        box-sizing: border-box;
+      }
+
+      :host([active]) .badge {
+        color: var(--active);
+        background: #58a6ff1f;
+        outline: 1px solid #58a6ff3d;
+      }
+    </style>
+    <span class="badge">
+      <slot></slot>
+    </span>
+  </template>
+
+  <template id="health-badge-template">
+    <style>
+      :host {
+        display: inline-flex;
+        vertical-align: middle;
+      }
+
+      .badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 5px;
+        font-size: var(--font-sm);
+        font-weight: 700;
+      }
+
+      .dot {
+        width: 7px;
+        height: 7px;
+        border-radius: 50%;
+        background: currentColor;
+      }
+
+      :host([state="ready"]) .badge {
+        color: var(--good);
+      }
+
+      :host([state="limited"]) .badge {
+        color: var(--skip);
+      }
+
+      :host([state="error"]) .badge {
+        color: var(--bad);
+      }
+    </style>
+    <span class="badge"><i class="dot"></i>
+      <slot></slot>
+    </span>
+  </template>
+
+  <template id="stat-card-template">
+    <style>
+      :host {
+        display: block;
+        min-width: 0;
+        padding: 13px 14px;
+        background: var(--panel);
+        border: var(--line);
+        border-radius: var(--radius-lg);
+        box-sizing: border-box;
+      }
+
+      .label {
+        margin-bottom: 5px;
+        color: var(--muted);
+        font-size: var(--font-xs);
+        font-weight: 700;
+        letter-spacing: var(--caps-spacing);
+        text-transform: uppercase;
+      }
+
+      .value {
+        color: var(--text);
+        font-size: 19px;
+        font-weight: 700;
+        font-variant-numeric: tabular-nums;
+      }
+
+      .detail {
+        margin-top: 3px;
+        color: var(--subtle);
+        font-size: var(--font-sm);
+      }
+
+      ::slotted(.good) {
+        color: var(--good);
+        font-weight: 650;
+      }
+
+      ::slotted(.bad) {
+        color: var(--bad);
+        font-weight: 650;
+      }
+
+      ::slotted(.warning) {
+        color: var(--skip);
+      }
+    </style>
+    <div class="label"></div>
+    <div class="value"></div>
+    <div class="detail">
+      <slot></slot>
     </div>
-  </div>
+  </template>
 
-  <h2><button type="button" class="toggle-section" aria-controls="hooks-section" aria-expanded="true"><span
-        class="caret">▾</span> Hooks</button></h2>
-  <div id="hooks-section">
-    <table>
-      <thead>
-        <tr>
-          <th>Type</th>
-          <th>Name</th>
-          <th>Source</th>
-          <th>Handler / server</th>
-          <th>Count</th>
-          <th>By status</th>
-          <th>Avg. duration</th>
-        </tr>
-      </thead>
-      <tbody id="native-runtime-telemetry">
-        <tr>
-          <td colspan="7">Loading…</td>
-        </tr>
-      </tbody>
-      <tfoot>
-        <tr class="provider-summary">
-          <th>Totals</th>
-          <td>-</td>
-          <td>-</td>
-          <td>-</td>
-          <td id="native-runtime-total-calls">0</td>
-          <td id="native-runtime-total-status">-</td>
-          <td id="native-runtime-total-duration">0.0s</td>
-        </tr>
-      </tfoot>
-    </table>
-  </div>
+  <template id="mini-stat-template">
+    <style>
+      :host {
+        display: block;
+        min-width: 0;
+        padding: var(--gap-md) 9px;
+        background: var(--panel-alt);
+        border: var(--line-soft);
+        border-radius: var(--radius-md);
+        box-sizing: border-box;
+      }
 
-  <h2><button type="button" class="toggle-section" aria-controls="operational-summaries-section"
-      aria-expanded="false"><span class="caret">▸</span> Operational summary</button></h2>
-  <div id="operational-summaries-section" hidden>
-    <table>
-      <thead>
-        <tr>
-          <th>Category</th>
-          <th>Metric</th>
-          <th>Value</th>
-        </tr>
-      </thead>
-      <tbody id="operational-summaries">
-        <tr>
-          <td colspan="3">Loading…</td>
-        </tr>
-      </tbody>
-    </table>
-  </div>
+      .label {
+        color: var(--subtle);
+        font-size: 9px;
+        font-weight: 700;
+        text-transform: uppercase;
+      }
 
-  <h2><button type="button" class="toggle-section" aria-controls="native-metrics-section" aria-expanded="false"><span
-        class="caret">▸</span> Native metrics observed</button></h2>
-  <div id="native-metrics-section" hidden>
-    <div id="native-metrics-summary">Loading…</div>
-    <table>
-      <thead>
-        <tr>
-          <th>Metric</th>
-          <th>Exports</th>
-          <th>Data points</th>
-        </tr>
-      </thead>
-      <tbody id="native-metrics">
-        <tr>
-          <td colspan="3">Loading…</td>
-        </tr>
-      </tbody>
-      <tfoot>
-        <tr class="provider-summary">
-          <th>Totals</th>
-          <td id="native-metrics-total-exports">0</td>
-          <td id="native-metrics-total-points">0</td>
-        </tr>
-      </tfoot>
-    </table>
-  </div>
+      .value {
+        margin-top: 3px;
+        color: var(--text);
+        font-size: 13px;
+        font-weight: 650;
+        font-variant-numeric: tabular-nums;
+      }
+    </style>
+    <div class="label"></div>
+    <div class="value"></div>
+  </template>
 
+  <template id="outcome-bar-template">
+    <style>
+      :host {
+        display: block;
+        min-width: 150px;
+      }
 
-  <h2><button type="button" class="toggle-section" aria-controls="subagents-section" aria-expanded="true"><span
-        class="caret">▾</span> Subagents spawned</button></h2>
-  <div id="subagents-section">
-    <div id="subagent-summary">Loading…</div>
-    <table>
-      <thead>
-        <tr>
-          <th>Spawned by</th>
-          <th>Mechanism</th>
-          <th>Role</th>
-          <th>Spawn tool</th>
-          <th>Count</th>
-        </tr>
-      </thead>
-      <tbody id="subagents-by-provider">
-        <tr>
-          <td colspan="5">Loading…</td>
-        </tr>
-      </tbody>
-      <tfoot>
-        <tr class="provider-summary">
-          <th>Totals</th>
-          <td>-</td>
-          <td>-</td>
-          <td>-</td>
-          <td id="subagents-total">0</td>
-        </tr>
-      </tfoot>
-    </table>
-  </div>
+      .counts {
+        display: flex;
+        justify-content: flex-end;
+        flex-wrap: wrap;
+        gap: 7px var(--gap-lg);
+        white-space: nowrap;
+        font-size: var(--font-sm);
+        font-variant-numeric: tabular-nums;
+      }
 
-  <h2><button type="button" class="toggle-section" aria-controls="spawn-failures-section" aria-expanded="false"><span
-        class="caret">▸</span> Subagent spawn failure telemetry</button></h2>
-  <div id="spawn-failures-section" hidden>
-    <div><small>Router-admitted child requests only; Codex app-level spawn admission and open child handles are outside this telemetry.</small></div>
-    <table>
-      <thead>
-        <tr>
-          <th>Reason / type</th>
-          <th>Count</th>
-          <th>Last observed</th>
-        </tr>
-      </thead>
-      <tbody id="spawn-failures-by-reason">
-        <tr>
-          <td colspan="3">Loading…</td>
-        </tr>
-      </tbody>
-      <tfoot>
-        <tr class="provider-summary">
-          <th>Totals</th>
-          <td id="spawn-failures-total">0</td>
-          <td id="spawn-failures-last">-</td>
-        </tr>
-      </tfoot>
-    </table>
-  </div>
+      :host([align="left"]) .counts {
+        justify-content: flex-start;
+      }
 
-  <h2><button type="button" class="toggle-section" aria-controls="recent-routing-events-section"
-      aria-expanded="false"><span class="caret">▸</span> Recent routing events</button></h2>
-  <div id="recent-routing-events-section" hidden>
-    <pre id="events">Loading…</pre>
-  </div>
+      .success-text {
+        color: var(--good);
+      }
+
+      .fail-text {
+        color: var(--bad);
+      }
+
+      .skip-text {
+        color: var(--skip);
+      }
+
+      .rate {
+        margin-top: 3px;
+        color: var(--subtle);
+        font-size: var(--font-sm);
+        text-align: right;
+      }
+
+      :host([align="left"]) .rate {
+        text-align: left;
+      }
+
+      .bar {
+        display: flex;
+        height: 5px;
+        margin-top: var(--gap-sm);
+        overflow: hidden;
+        background: var(--border-soft);
+        border-radius: var(--radius-pill);
+      }
+
+      .success {
+        background: var(--good);
+      }
+
+      .fail {
+        background: var(--bad);
+      }
+
+      .skip {
+        background: var(--skip);
+      }
+
+      :host([no-bar]) .bar {
+        display: none;
+      }
+    </style>
+    <div class="counts">
+      <span class="success-text"></span>
+      <span class="fail-text"></span>
+      <span class="skip-text"></span>
+    </div>
+    <div class="rate" hidden=""></div>
+    <div class="bar">
+      <i class="success"></i>
+      <i class="fail"></i>
+      <i class="skip"></i>
+    </div>
+  </template>
+
+  <template id="outcome-legend-template">
+    <style>
+      :host {
+        display: flex;
+        gap: var(--gap-lg);
+        margin: -3px 0 9px;
+        color: var(--muted);
+        font-size: var(--font-xs);
+      }
+
+      span {
+        display: inline-flex;
+        align-items: center;
+        gap: var(--gap-xs);
+      }
+
+      i {
+        width: 7px;
+        height: 7px;
+        border-radius: 2px;
+      }
+
+      .success {
+        background: var(--good);
+      }
+
+      .failure {
+        background: var(--bad);
+      }
+    </style>
+    <span><i class="success"></i>Successful</span>
+    <span><i class="failure"></i>Failed</span>
+  </template>
+
+  <template id="metric-bar-template">
+    <style>
+      :host {
+        display: block;
+        min-width: 0;
+      }
+
+      .metric {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        gap: 5px var(--gap-lg);
+        align-items: baseline;
+      }
+
+      .name {
+        display: flex;
+        align-items: center;
+        gap: var(--gap-sm);
+        min-width: 0;
+        color: var(--code);
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .label {
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+
+      .value {
+        color: var(--text);
+        font-variant-numeric: tabular-nums;
+      }
+
+      .track {
+        grid-column: 1/-1;
+        height: 3px;
+        overflow: hidden;
+        border-radius: var(--radius-pill);
+        background: var(--border-soft);
+      }
+
+      .fill {
+        display: flex;
+        width: var(--fill);
+        height: 100%;
+        overflow: hidden;
+        border-radius: inherit;
+      }
+
+      .success {
+        width: var(--success);
+        background: var(--good);
+      }
+
+      .fail {
+        width: var(--fail);
+        background: var(--bad);
+      }
+
+      .neutral {
+        width: 100%;
+        background: var(--subtle);
+      }
+
+      :host(:not([neutral])) .neutral,
+      :host([neutral]) :is(.success, .fail) {
+        display: none;
+      }
+
+      status-badge {
+        flex: 0 0 auto;
+      }
+    </style>
+    <div class="metric">
+      <div class="name"><span class="label"></span><span class="active-slot"></span></div>
+      <span class="value"></span>
+      <div class="track">
+        <div class="fill">
+          <i class="success"></i>
+          <i class="fail"></i>
+          <i class="neutral"></i>
+        </div>
+      </div>
+    </div>
+  </template>
+
+  <template id="share-bar-template">
+    <style>
+      :host {
+        display: block;
+        width: 100px;
+        margin: 5px 0 0 auto;
+      }
+
+      .track {
+        width: 100%;
+        height: var(--gap-xs);
+        overflow: hidden;
+        background: var(--border-soft);
+        border-radius: var(--radius-pill);
+      }
+
+      i {
+        display: block;
+        width: var(--value);
+        height: 100%;
+        background: var(--subtle);
+      }
+    </style>
+    <div class="track"><i></i></div>
+  </template>
+
+  <template id="row-toggle-template">
+    <style>
+      :host {
+        display: block;
+        text-align: left;
+      }
+
+      button {
+        display: inline-flex;
+        align-items: center;
+        gap: var(--gap-md);
+        padding: 0;
+        color: inherit;
+        background: none;
+        border: 0;
+        cursor: pointer;
+        font: inherit;
+        text-align: left;
+      }
+
+      .chevron {
+        width: 12px;
+        color: var(--subtle);
+        font-size: var(--font-xs);
+        transition: var(--transition-fast);
+      }
+
+      button[aria-expanded="true"] .chevron {
+        transform: rotate(90deg);
+      }
+
+      code {
+        color: var(--code);
+        font: var(--font-code)/1.4 var(--font-mono);
+      }
+
+      .subtitle {
+        padding-left: 20px;
+        margin-top: 3px;
+        color: var(--subtle);
+        font-size: var(--font-xs);
+        line-height: 1.2;
+      }
+
+      .subtitle:empty {
+        display: none;
+      }
+    </style>
+    <button aria-expanded="false" type="button">
+      <span class="chevron">▶</span>
+      <code class="label"></code>
+    </button>
+    <div class="subtitle"></div>
+  </template>
+
+  <template id="dashboard-panel-template">
+    <style>
+      :host {
+        display: block;
+        margin-bottom: 12px;
+      }
+
+      details {
+        overflow: hidden;
+        background: var(--panel);
+        border: var(--line);
+        border-radius: var(--radius-lg);
+      }
+
+      summary {
+        display: flex;
+        align-items: center;
+        gap: 9px;
+        padding: var(--pad-panel-summary);
+        cursor: pointer;
+        list-style: none;
+        user-select: none;
+      }
+
+      summary::-webkit-details-marker {
+        display: none;
+      }
+
+      .caret {
+        width: 12px;
+        color: var(--subtle);
+        font-size: var(--font-xs);
+        transition: var(--transition-fast);
+      }
+
+      details[open]>summary .caret {
+        transform: rotate(90deg);
+      }
+
+      .title {
+        font-size: 13px;
+        font-weight: 700;
+      }
+
+      .summary {
+        margin-left: auto;
+        color: var(--muted);
+        font-size: var(--font-sm);
+        font-variant-numeric: tabular-nums;
+      }
+
+      .body {
+        border-top: var(--line);
+      }
+    </style>
+    <details>
+      <summary>
+        <span class="caret">▶</span>
+        <span class="title"></span>
+        <span class="summary"></span>
+      </summary>
+      <div class="body">
+        <slot></slot>
+      </div>
+    </details>
+  </template>
+
+  <template id="sub-panel-template">
+    <style>
+      :host {
+        display: block;
+        border-top: var(--line);
+      }
+
+      details {
+        background: var(--panel);
+      }
+
+      summary {
+        display: flex;
+        gap: var(--gap-lg);
+        padding: var(--pad-subpanel-summary);
+        cursor: pointer;
+        color: var(--muted);
+        background: var(--panel-alt);
+        font-size: var(--font-sm);
+        font-weight: 700;
+        list-style: none;
+      }
+
+      summary::-webkit-details-marker {
+        display: none;
+      }
+
+      .caret {
+        width: 12px;
+        color: var(--subtle);
+        font-size: 9px;
+        transition: var(--transition-fast);
+      }
+
+      details[open]>summary .caret {
+        transform: rotate(90deg);
+      }
+
+      .summary {
+        margin-left: auto;
+        color: var(--subtle);
+        font-weight: 500;
+      }
+
+      .body {
+        border-top: var(--line-soft);
+      }
+    </style>
+    <details>
+      <summary>
+        <span class="caret">▶</span>
+        <span class="title"></span>
+        <span class="summary"></span>
+      </summary>
+      <div class="body">
+        <slot></slot>
+      </div>
+    </details>
+  </template>
 
   <script>
-    const text = (value) => String(value ?? "").replace(/[&<>"']/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[ character ]));
-    const labelOrDash = (value) => value == null || (typeof value === "string" && value.trim() === "") ? "-" : value;
-    const formatTimestamp = (value) => {
-      const date = new Date(value);
-      if (Number.isNaN(date.getTime())) return text(value);
+    class TemplateElement extends HTMLElement {
+      mount(templateId) {
+        if (this.shadowRoot) return this.shadowRoot;
+        const template = document.getElementById(templateId);
+        const root = this.attachShadow({ mode: "open" });
+        root.append(template.content.cloneNode(true));
+        return root;
+      }
+    }
+
+    class StatusBadge extends TemplateElement {
+      connectedCallback() {
+        this.mount("status-badge-template");
+      }
+    }
+    customElements.define("status-badge", StatusBadge);
+
+    class HealthBadge extends TemplateElement {
+      connectedCallback() {
+        this.mount("health-badge-template");
+      }
+    }
+    customElements.define("health-badge", HealthBadge);
+
+    class StatCard extends TemplateElement {
+      static get observedAttributes() { return ["label", "value"]; }
+      connectedCallback() {
+        this.mount("stat-card-template");
+        this.updateContent();
+      }
+      attributeChangedCallback() {
+        this.updateContent();
+      }
+      updateContent() {
+        if (!this.shadowRoot) return;
+        const root = this.shadowRoot;
+        const labelEl = root.querySelector(".label");
+        const valueEl = root.querySelector(".value");
+        if (labelEl) labelEl.textContent = this.getAttribute("label") ?? "";
+        if (valueEl) valueEl.textContent = this.getAttribute("value") ?? "";
+      }
+    }
+    customElements.define("stat-card", StatCard);
+
+    class MiniStat extends TemplateElement {
+      static get observedAttributes() { return ["label", "value"]; }
+      connectedCallback() {
+        this.mount("mini-stat-template");
+        this.updateContent();
+      }
+      attributeChangedCallback() {
+        this.updateContent();
+      }
+      updateContent() {
+        if (!this.shadowRoot) return;
+        const root = this.shadowRoot;
+        const labelEl = root.querySelector(".label");
+        const valueEl = root.querySelector(".value");
+        if (labelEl) labelEl.textContent = this.getAttribute("label") ?? "";
+        if (valueEl) valueEl.textContent = this.getAttribute("value") ?? "";
+      }
+    }
+    customElements.define("mini-stat", MiniStat);
+
+    class OutcomeBar extends TemplateElement {
+      static get observedAttributes() { return ["success", "fail", "skip", "rate", "no-bar", "align"]; }
+      connectedCallback() {
+        this.mount("outcome-bar-template");
+        this.updateContent();
+      }
+      attributeChangedCallback() {
+        this.updateContent();
+      }
+      updateContent() {
+        if (!this.shadowRoot) return;
+        const root = this.shadowRoot;
+        const success = Number(this.getAttribute("success") ?? 0);
+        const fail = Number(this.getAttribute("fail") ?? 0);
+        const hasSkip = this.hasAttribute("skip");
+        const skip = Number(this.getAttribute("skip") ?? 0);
+        const total = success + fail + (hasSkip ? skip : 0);
+
+        const successEl = root.querySelector(".success-text");
+        const failEl = root.querySelector(".fail-text");
+        const skipEl = root.querySelector(".skip-text");
+        const rateEl = root.querySelector(".rate");
+
+        if (successEl) successEl.textContent = `${success.toLocaleString()} success`;
+        if (failEl) failEl.textContent = `${fail.toLocaleString()} fail`;
+
+        if (skipEl) {
+          skipEl.hidden = !hasSkip;
+          if (hasSkip) skipEl.textContent = `${skip.toLocaleString()} skip`;
+        }
+
+        const pct = (value) => total > 0 ? `${(value / total * 100).toFixed(4)}%` : "0%";
+        const successBar = root.querySelector(".success");
+        const failBar = root.querySelector(".fail");
+        const skipBar = root.querySelector(".skip");
+
+        if (successBar) successBar.style.width = pct(success);
+        if (failBar) failBar.style.width = pct(fail);
+        if (skipBar) {
+          skipBar.style.width = pct(skip);
+          skipBar.hidden = !hasSkip;
+        }
+
+        if (rateEl) {
+          const hasRate = this.hasAttribute("rate");
+          rateEl.hidden = !hasRate;
+          if (hasRate) {
+            rateEl.textContent = total > 0 ? `${(success / total * 100).toFixed(1)}% successful` : "—";
+          }
+        }
+      }
+    }
+    customElements.define("outcome-bar", OutcomeBar);
+
+    class OutcomeLegend extends TemplateElement {
+      connectedCallback() {
+        this.mount("outcome-legend-template");
+      }
+    }
+    customElements.define("outcome-legend", OutcomeLegend);
+
+    class MetricBar extends TemplateElement {
+      static get observedAttributes() { return ["label", "value", "success", "fail", "fill", "active", "neutral"]; }
+      connectedCallback() {
+        this.mount("metric-bar-template");
+        this.updateContent();
+      }
+      attributeChangedCallback() {
+        this.updateContent();
+      }
+      updateContent() {
+        if (!this.shadowRoot) return;
+        const root = this.shadowRoot;
+        const value = Number(this.getAttribute("value") ?? 0);
+        const success = Number(this.getAttribute("success") ?? value);
+        const fail = Number(this.getAttribute("fail") ?? 0);
+        const total = success + fail;
+
+        const labelEl = root.querySelector(".label");
+        const valueEl = root.querySelector(".value");
+        const fillEl = root.querySelector(".fill");
+        const successEl = root.querySelector(".success");
+        const failEl = root.querySelector(".fail");
+        const activeSlot = root.querySelector(".active-slot");
+
+        if (labelEl) labelEl.textContent = this.getAttribute("label") ?? "";
+        if (valueEl) valueEl.textContent = value.toLocaleString();
+        if (fillEl) fillEl.style.setProperty("--fill", `${this.getAttribute("fill") ?? 100}%`);
+
+        const successPct = total > 0 ? (success / total * 100) : 0;
+        const failPct = total > 0 ? (fail / total * 100) : 0;
+        if (successEl) successEl.style.setProperty("--success", `${successPct}%`);
+        if (failEl) failEl.style.setProperty("--fail", `${failPct}%`);
+
+        if (activeSlot) {
+          activeSlot.replaceChildren();
+          const active = Number(this.getAttribute("active") ?? 0);
+          if (active > 0) {
+            const badge = document.createElement("status-badge");
+            badge.setAttribute("active", "");
+            badge.textContent = active.toLocaleString();
+            activeSlot.append(badge);
+          }
+        }
+
+        if (!this.hasAttribute("neutral")) {
+          this.title = `${success.toLocaleString()} successful, ${fail.toLocaleString()} failed`;
+        } else {
+          this.removeAttribute("title");
+        }
+      }
+    }
+    customElements.define("metric-bar", MetricBar);
+
+    class ShareBar extends TemplateElement {
+      static get observedAttributes() { return ["value"]; }
+      connectedCallback() {
+        this.mount("share-bar-template");
+        this.updateContent();
+      }
+      attributeChangedCallback() {
+        this.updateContent();
+      }
+      updateContent() {
+        if (!this.shadowRoot) return;
+        const i = this.shadowRoot.querySelector("i");
+        if (i) i.style.setProperty("--value", `${this.getAttribute("value") ?? 0}%`);
+      }
+    }
+    customElements.define("share-bar", ShareBar);
+
+    class RowToggle extends TemplateElement {
+      static get observedAttributes() { return ["label", "subtitle", "expanded"]; }
+      connectedCallback() {
+        this.mount("row-toggle-template");
+        this.updateContent();
+        const button = this.shadowRoot?.querySelector("button");
+        if (button && !this._hasClick) {
+          this._hasClick = true;
+          button.addEventListener("click", (ev) => {
+            ev.stopPropagation();
+            const row = this.closest("tr");
+            const detail = row?.nextElementSibling;
+            if (!detail) return;
+            const expanded = button.getAttribute("aria-expanded") === "true";
+            const next = !expanded;
+            button.setAttribute("aria-expanded", String(next));
+            this.setAttribute("expanded", String(next));
+            row.setAttribute("aria-expanded", String(next));
+            detail.hidden = !next;
+            this.dispatchEvent(new CustomEvent("row-toggle-change", {
+              bubbles: true,
+              composed: true,
+              detail: { label: this.getAttribute("label"), expanded: next }
+            }));
+          });
+        }
+      }
+      attributeChangedCallback() {
+        this.updateContent();
+      }
+      updateContent() {
+        if (!this.shadowRoot) return;
+        const root = this.shadowRoot;
+        const button = root.querySelector("button");
+        const labelEl = root.querySelector(".label");
+        const subtitleEl = root.querySelector(".subtitle");
+        if (labelEl) labelEl.textContent = this.getAttribute("label") ?? "";
+        if (subtitleEl) subtitleEl.textContent = this.getAttribute("subtitle") ?? "";
+        const isExpanded = this.getAttribute("expanded") === "true";
+        if (button) button.setAttribute("aria-expanded", String(isExpanded));
+        const row = this.closest("tr");
+        if (row) {
+          row.setAttribute("aria-expanded", String(isExpanded));
+          const detail = row.nextElementSibling;
+          if (detail && (detail.classList.contains("details-row") || detail.classList.contains("skill-details-row"))) {
+            detail.hidden = !isExpanded;
+          }
+        }
+      }
+    }
+    customElements.define("row-toggle", RowToggle);
+
+    class DashboardPanel extends TemplateElement {
+      static get observedAttributes() { return ["title", "summary", "open"]; }
+      connectedCallback() {
+        this.mount("dashboard-panel-template");
+        this.updateContent();
+        const details = this.shadowRoot?.querySelector("details");
+        if (details && !this._hasToggle) {
+          this._hasToggle = true;
+          details.addEventListener("toggle", () => {
+            if (details.open) this.setAttribute("open", "");
+            else this.removeAttribute("open");
+            this.dispatchEvent(new CustomEvent("panel-toggle", {
+              bubbles: true,
+              composed: true,
+              detail: { id: this.id, title: this.getAttribute("title"), open: details.open }
+            }));
+          });
+        }
+      }
+      attributeChangedCallback(name, oldVal, newVal) {
+        if (oldVal === newVal) return;
+        this.updateContent();
+      }
+      updateContent() {
+        if (!this.shadowRoot) return;
+        const root = this.shadowRoot;
+        const details = root.querySelector("details");
+        const titleEl = root.querySelector(".title");
+        const summaryEl = root.querySelector(".summary");
+        if (titleEl) titleEl.textContent = this.getAttribute("title") ?? "";
+        if (summaryEl) summaryEl.textContent = this.getAttribute("summary") ?? "";
+        if (details) {
+          const wantsOpen = this.hasAttribute("open");
+          if (details.open !== wantsOpen) {
+            details.open = wantsOpen;
+          }
+        }
+      }
+    }
+    customElements.define("dashboard-panel", DashboardPanel);
+
+    class SubPanel extends TemplateElement {
+      static get observedAttributes() { return ["title", "summary", "open"]; }
+      connectedCallback() {
+        this.mount("sub-panel-template");
+        this.updateContent();
+        const details = this.shadowRoot?.querySelector("details");
+        if (details && !this._hasToggle) {
+          this._hasToggle = true;
+          details.addEventListener("toggle", () => {
+            if (details.open) this.setAttribute("open", "");
+            else this.removeAttribute("open");
+            this.dispatchEvent(new CustomEvent("panel-toggle", {
+              bubbles: true,
+              composed: true,
+              detail: { id: this.id, title: this.getAttribute("title"), open: details.open }
+            }));
+          });
+        }
+      }
+      attributeChangedCallback(name, oldVal, newVal) {
+        if (oldVal === newVal) return;
+        this.updateContent();
+      }
+      updateContent() {
+        if (!this.shadowRoot) return;
+        const root = this.shadowRoot;
+        const details = root.querySelector("details");
+        const titleEl = root.querySelector(".title");
+        const summaryEl = root.querySelector(".summary");
+        if (titleEl) titleEl.textContent = this.getAttribute("title") ?? "";
+        if (summaryEl) summaryEl.textContent = this.getAttribute("summary") ?? "";
+        if (details) {
+          const wantsOpen = this.hasAttribute("open");
+          if (details.open !== wantsOpen) {
+            details.open = wantsOpen;
+          }
+        }
+      }
+    }
+    customElements.define("sub-panel", SubPanel);
+
+    // Track user expansion state across polling refreshes
+    const expandedRows = new Set();
+    const panelOpenStates = new Map();
+
+    document.addEventListener("row-toggle-change", (e) => {
+      const { label, expanded } = e.detail;
+      if (!label) return;
+      if (expanded) expandedRows.add(label);
+      else expandedRows.delete(label);
+    });
+
+    document.addEventListener("panel-toggle", (e) => {
+      const key = e.detail.id || e.detail.title;
+      if (key) panelOpenStates.set(key, e.detail.open);
+    });
+
+    function syncPanel(panel, title, summary) {
+      if (!panel) return;
+      if (title != null) panel.setAttribute("title", title);
+      if (summary != null) panel.setAttribute("summary", summary);
+      const key = panel.id || panel.getAttribute("title");
+      if (key && panelOpenStates.has(key)) {
+        panel.toggleAttribute("open", panelOpenStates.get(key));
+      }
+    }
+
+    function escapeHtml(str) {
+      if (str == null) return "";
+      return String(str)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#39;");
+    }
+
+    function formatTimestamp(isoString) {
+      if (!isoString) return "";
+      const d = new Date(isoString);
+      if (isNaN(d.getTime())) return String(isoString);
       const parts = Object.fromEntries(new Intl.DateTimeFormat("en-US", {
         timeZone: "America/New_York",
         year: "numeric", month: "2-digit", day: "2-digit",
         hour: "2-digit", minute: "2-digit", second: "2-digit",
-        fractionalSecondDigits: 3, hour12: false, timeZoneName: "short"
-      }).formatToParts(date).map(({ type, value: part }) => [ type, part ]));
+        fractionalSecondDigits: 3, hour12: false, timeZoneName: "short",
+      }).formatToParts(d).map(({ type, value }) => [type, value]));
       const hour = parts.hour === "24" ? "00" : parts.hour;
       return `${parts.year}-${parts.month}-${parts.day} ${hour}:${parts.minute}:${parts.second}.${parts.fractionalSecond} ${parts.timeZoneName}`;
-    };
-    const modelList = (models) => Object.entries(models ?? {}).map(([ tier, model ]) => `${tier}: ${model}`).join(", ") || "-";
-    const failureText = (failure) => failure ? `${failure.class}${failure.status ? ` (HTTP ${failure.status})` : ""}` : "";
-    const durationText = (milliseconds) => `${(Number(milliseconds ?? 0) / 1000).toFixed(1)}s`;
-    const millisecondsText = (milliseconds) => `${Math.round(Number(milliseconds ?? 0))}ms`;
-    const usageRow = (label, state, cellPrefix = `<code>${text(label)}</code>`) => `<tr><td>${cellPrefix}</td><td>${state.active ?? 0}</td><td>${state.attempts ?? 0}</td><td>${state.successes ?? 0}</td><td>${state.failures ?? 0}</td><td>${durationText(state.averageDurationMs)}</td><td>${state.toolCalls ?? 0}</td></tr>`;
-    // byRole.unattributed folds roleless traffic from both the "orchestrator" and "direct"
-    // origins into a single Orchestrator row; see docs/provider-routing.md for the caveat.
-    const usageBreakdownRows = (usage) => {
-      const byRole = usage?.byRole ?? {};
-      const orchestrator = byRole.unattributed ?? {};
-      const roleEntries = Object.entries(byRole).filter(([ role ]) => role !== "unattributed");
-      const subagentTotal = roleEntries.reduce((total, [ , bucket ]) => {
-        total.active += bucket.active ?? 0;
-        total.attempts += bucket.attempts ?? 0;
-        total.successes += bucket.successes ?? 0;
-        total.failures += bucket.failures ?? 0;
-        total.toolCalls += bucket.toolCalls ?? 0;
-        total.durationMs += bucket.durationMs ?? 0;
-        return total;
-      }, { active: 0, attempts: 0, successes: 0, failures: 0, toolCalls: 0, durationMs: 0 });
-      const subagentTurns = subagentTotal.successes + subagentTotal.failures;
-      subagentTotal.averageDurationMs = subagentTurns > 0 ? Math.round(subagentTotal.durationMs / subagentTurns) : 0;
-      const expanded = expandedUsageGroups.has("subagents");
-      const orchestratorRow = usageRow("Orchestrator", orchestrator);
-      const subagentsCell = `<button type="button" class="toggle-usage" data-usage-group="subagents" aria-expanded="${expanded}"><span class="caret">${expanded ? "▾" : "▸"}</span> <code>Subagents</code></button>`;
-      const subagentsRow = usageRow(null, subagentTotal, subagentsCell);
-      const childRows = roleEntries.map(([ role, bucket ]) => `<tr class="usage-child" data-usage-child="subagents"${expanded ? "" : " hidden"}><td>↳ <code>${text(role)}</code></td><td>${bucket.active ?? 0}</td><td>${bucket.attempts ?? 0}</td><td>${bucket.successes ?? 0}</td><td>${bucket.failures ?? 0}</td><td>${durationText(bucket.averageDurationMs)}</td><td>${bucket.toolCalls ?? 0}</td></tr>`).join("");
-      return orchestratorRow + subagentsRow + childRows;
-    };
-    const workspaceUsageRows = (usage) => Object.entries(usage?.byWorkspace ?? {})
-      .sort(([ nameA, a ], [ nameB, b ]) => Number(b.attempts ?? 0) - Number(a.attempts ?? 0) || nameA.localeCompare(nameB))
-      .map(([ name, bucket ]) => `<tr><td><code>${text(name)}</code></td><td><code>${text(bucket.cwd ?? "-")}</code></td><td>${bucket.active ?? 0}</td><td>${bucket.attempts ?? 0}</td><td>${bucket.successes ?? 0}</td><td>${bucket.failures ?? 0}</td><td>${durationText(bucket.averageDurationMs)}</td><td>${bucket.toolCalls ?? 0}</td><td>${Object.entries(bucket.byRole ?? {}).map(([ key, value ]) => `${text(key)}: ${value.attempts ?? 0}`).join(", ") || "-"}</td><td>${Object.entries(bucket.byModel ?? {}).map(([ key, value ]) => `${text(key)}: ${value.attempts ?? 0}`).join(", ") || "-"}</td><td>${Object.entries(bucket.byProvider ?? {}).map(([ key, value ]) => `${text(key)}: ${value.attempts ?? 0}`).join(", ") || "-"}</td></tr>`).join("") || '<tr><td colspan="11">No workspace usage observed yet.</td></tr>';
-    // Matches UNATTRIBUTED_SUBAGENT_ROLE in codex-model-router.mjs: a CLI child
-    // whose spawn step exported no role. It is deliberately not the bare
-    // `unattributed` key, which is roleless orchestrator traffic.
-    const UNATTRIBUTED_SUBAGENT_ROLE = "unattributed-subagent";
-    const expandedProviders = new Set();
-    const expandedUsageGroups = new Set();
-
-    function render(status) {
-      document.title = `${status.router} · status`;
-      document.querySelector("#meta").textContent = `Instance ${status.routerInstanceId} · PID ${status.pid} · started ${formatTimestamp(status.startedAt)} · updates every 3 seconds`;
-      document.querySelector("#error").textContent = "";
-      const modelUsage = status.usage?.byModel ?? {};
-      const providerRows = Object.entries(status.providers ?? {}).map(([ provider, state ], index) => {
-        const group = `provider-${index}`;
-        const models = Object.entries(state.configuredModels ?? {});
-        // Every model observed for this provider, not only the configured ones.
-        // A direct request can pin a model no tier names, and a CLI-delegated
-        // subagent can run on a model its parent was not routed to; summing the
-        // configured list alone silently dropped both, so the provider rows
-        // added up to less than the totals row below them.
-        const observedModels = Object.keys(modelUsage).filter((key) => key.startsWith(`${provider}/`)).map((key) => key.slice(provider.length + 1));
-        const uniqueModels = [ ...new Map([
-          ...models.map(([ tier, model ]) => [ model, [ tier, model ] ]),
-          ...observedModels.map((model) => [ model, [ "observed", model ] ]),
-        ]).values() ];
-        const collapsible = uniqueModels.length > 1;
-        const expanded = collapsible && expandedProviders.has(group);
-        const modelStats = uniqueModels.reduce((total, [ , model ]) => {
-          const stats = modelUsage[ `${provider}/${model}` ] ?? {};
-          total.active += stats.active ?? 0;
-          total.attempts += stats.attempts ?? 0;
-          total.successes += stats.successes ?? 0;
-          total.failures += stats.failures ?? 0;
-          total.skipped += stats.skipped ?? 0;
-          total.durationMs += stats.durationMs ?? 0;
-          total.toolCalls += stats.toolCalls ?? 0;
-          return total;
-        }, { active: 0, attempts: 0, successes: 0, failures: 0, skipped: 0, durationMs: 0, toolCalls: 0 });
-        modelStats.averageDurationMs = modelStats.successes + modelStats.failures > 0
-          ? Math.round(modelStats.durationMs / (modelStats.successes + modelStats.failures))
-          : 0;
-        const limited = state.status !== "ready";
-        const cooldown = state.cooldownRemainingMs > 0
-          ? state.cooldownResetsAt
-            ? ` (${state.cooldownKind}, resets ${state.cooldownResetsAt})`
-            : ` (${state.cooldownKind ?? "cooldown"} ${Math.ceil(state.cooldownRemainingMs / 1000)}s)`
-          : "";
-        const providerCell = collapsible
-          ? `<button type="button" class="toggle-provider" data-provider-group="${group}" aria-expanded="${expanded}"><span class="caret">${expanded ? "▾" : "▸"}</span> <code>${text(provider)}</code></button>`
-          : `<code>${text(provider)}</code>`;
-        const configuredCell = collapsible ? "" : `<code>${text(uniqueModels[ 0 ]?.[ 1 ] ?? models[ 0 ]?.[ 1 ] ?? "")}</code>`;
-        const parent = `<tr class="provider-parent"><td>${providerCell}</td><td>${configuredCell}</td><td class="${limited ? "limited" : "ok"}">${text(state.status)}${cooldown}</td><td>${modelStats.active}</td><td>${modelStats.attempts}</td><td>${modelStats.successes}</td><td>${modelStats.failures}</td><td>${modelStats.toolCalls}</td><td>${durationText(modelStats.averageDurationMs)}</td><td>${modelStats.skipped}</td><td>${text(failureText(state.lastFailure))}</td></tr>`;
-        const children = collapsible ? uniqueModels.map(([ , model ]) => {
-          const stats = modelUsage[ `${provider}/${model}` ] ?? {};
-          // A model's own lastFailure never clears on a later success (server-side usage
-          // bucket), so once the provider itself has recovered (limited=false), treat every
-          // child as ready rather than showing a stale failure indefinitely.
-          const modelLimited = limited && (stats.failures ?? 0) > 0 && stats.lastFailure;
-          const modelStatus = modelLimited ? (stats.lastFailure.class ?? "failed") : state.status;
-          return `<tr class="provider-model" data-provider-child="${group}"${expanded ? "" : " hidden"}><td>↳</td><td><code>${text(model)}</code></td><td class="${modelStatus === "ready" ? "ok" : "limited"}">${text(modelStatus)}</td><td>${stats.active ?? 0}</td><td>${stats.attempts ?? 0}</td><td>${stats.successes ?? 0}</td><td>${stats.failures ?? 0}</td><td>${stats.toolCalls ?? 0}</td><td>${durationText(stats.averageDurationMs)}</td><td>${stats.skipped ?? 0}</td><td>${text(failureText(stats.lastFailure))}</td></tr>`;
-        }).join("") : "";
-        return parent + children;
-      }).join("") || '<tr><td colspan="11">No providers configured.</td></tr>';
-      document.querySelector("#providers").innerHTML = providerRows;
-      document.querySelectorAll(".toggle-provider").forEach((button) => button.addEventListener("click", () => {
-        const group = button.dataset.providerGroup;
-        const expanded = button.getAttribute("aria-expanded") === "true";
-        if (expanded) expandedProviders.delete(group); else expandedProviders.add(group);
-        button.setAttribute("aria-expanded", String(!expanded));
-        button.querySelector(".caret").textContent = expanded ? "▸" : "▾";
-        document.querySelectorAll(`[data-provider-child="${group}"]`).forEach((row) => { row.hidden = expanded; });
-      }));
-      // Subagent spawns, unified across providers. `router_alias` spawns are
-      // observed as `autodev/<role>` requests; `bridge_native` spawns happen
-      // inside a provider CLI and are reported to /v1/agent-events. The recent
-      // list is what carries the provider/role/tool combination, so rows are
-      // rolled up from it and the aggregate totals label the summary line.
-      const subagents = status.subagents ?? {};
-      const recentSpawns = Array.isArray(subagents.recent) ? subagents.recent : [];
-      const spawnGroups = new Map();
-      for (const spawn of recentSpawns) {
-        const key = [ spawn.provider, spawn.mechanism, spawn.role, spawn.tool ?? "-" ].join("\u0000");
-        spawnGroups.set(key, (spawnGroups.get(key) ?? 0) + (Number(spawn.count) || 1));
-      }
-      const subagentRows = [ ...spawnGroups.entries() ]
-        .sort(([ keyA, countA ], [ keyB, countB ]) => countB - countA || keyA.localeCompare(keyB))
-        .map(([ key, count ]) => {
-          const [ provider, mechanism, role, tool ] = key.split("\u0000");
-          return `<tr><td><code>${text(provider)}</code></td><td>${text(mechanism)}</td><td><code>${text(role)}</code></td><td><code>${text(tool)}</code></td><td>${count}</td></tr>`;
-        }).join("");
-      document.querySelector("#subagents-by-provider").innerHTML = subagentRows || '<tr><td colspan="5">No subagent spawns observed.</td></tr>';
-      document.querySelector("#subagents-total").textContent = subagents.total ?? 0;
-      const spawnMechanisms = Object.entries(subagents.byMechanism ?? {}).map(([ key, value ]) => `${text(key)}: ${value}`).join(", ") || "-";
-      const spawnProviders = Object.entries(subagents.byProvider ?? {}).map(([ key, value ]) => `${text(key)}: ${value}`).join(", ") || "-";
-      // How the spawns ended, not just that they began. A breakdown that only
-      // ever said "started" read as "none of these finished".
-      const spawnStatuses = Object.entries(subagents.byStatus ?? {}).filter(([ , value ]) => value > 0).map(([ key, value ]) => `${text(key)}: ${value}`).join(", ") || "-";
-      document.querySelector("#subagent-summary").textContent =
-        `Total ${subagents.total ?? 0} · ${spawnMechanisms} · by provider ${spawnProviders} · by outcome ${spawnStatuses} · spawn-capable providers: ${(subagents.spawnCapableProviders ?? []).join(", ") || "-"} · Codex-native OTEL spawns: ${subagents.codexNativeSpawns ?? 0}. Rows cover the ${recentSpawns.length} most recent spawns; the totals row is the all-time count.`;
-      const spawnFailures = status.spawnFailures ?? {};
-      const recentSpawnFailures = Array.isArray(spawnFailures.recent) ? spawnFailures.recent : [];
-      const latestByReason = new Map();
-      for (const failure of recentSpawnFailures) {
-        const reason = failure?.reason;
-        if (typeof reason !== "string" || !reason) continue;
-        const current = latestByReason.get(reason);
-        if (!current || String(failure.timestamp ?? "") > String(current.timestamp ?? "")) latestByReason.set(reason, failure);
-      }
-      const spawnFailureRows = Object.entries(spawnFailures.byReason ?? {})
-        .sort(([ reasonA, countA ], [ reasonB, countB ]) => Number(countB) - Number(countA) || reasonA.localeCompare(reasonB))
-        .map(([ reason, count ]) => {
-          const latest = latestByReason.get(reason);
-          return `<tr><td><code>${text(reason)}</code></td><td>${count}</td><td>${latest ? formatTimestamp(latest.timestamp) : "-"}</td></tr>`;
-        }).join("");
-      document.querySelector("#spawn-failures-by-reason").innerHTML = spawnFailureRows || '<tr><td colspan="3">No subagent spawn failures observed.</td></tr>';
-      const overallLastSpawnFailure = [ ...latestByReason.values() ].sort((a, b) => String(a.timestamp ?? "").localeCompare(String(b.timestamp ?? ""))).at(-1);
-      document.querySelector("#spawn-failures-total").textContent = spawnFailures.total ?? 0;
-      document.querySelector("#spawn-failures-last").textContent = overallLastSpawnFailure ? formatTimestamp(overallLastSpawnFailure.timestamp) : "-";
-      const concurrency = status.concurrency ?? {};
-      const limit = (value) => value == null ? "unlimited" : value;
-      const denial = concurrency.lastDenial ? `${concurrency.lastDenial.reason} (${concurrency.lastDenial.sessionScope})` : "-";
-      const denialsByReason = Object.entries(concurrency.denialsByReason ?? {}).map(([ reason, count ]) => `${text(reason)}: ${count}`).join(", ") || "-";
-      const usage = status.usage ?? {};
-      const totals = usage.totals ?? {};
-      const active = Object.values(status.providers ?? {}).reduce((sum, provider) => sum + Number(provider.activeRequests ?? 0), 0);
-      document.querySelector("#summary-active").textContent = active;
-      document.querySelector("#summary-attempts").textContent = totals.attempts ?? 0;
-      document.querySelector("#summary-successes").textContent = totals.successes ?? 0;
-      document.querySelector("#summary-failures").textContent = totals.failures ?? 0;
-      document.querySelector("#summary-tools").textContent = totals.toolCalls ?? 0;
-      document.querySelector("#summary-duration").textContent = durationText(totals.averageDurationMs);
-      document.querySelector("#summary-skips").textContent = totals.skipped ?? 0;
-      document.querySelector("#usage-breakdown").innerHTML = usageBreakdownRows(usage);
-      // Turns done behind the router but never routed by it. A CLI-delegated
-      // child (Antigravity's `invoke_subagent`, Claude's `Agent`) makes no
-      // router request, so its turn reaches these tables only through the
-      // bridge's report; saying so keeps the rows from reading as routing
-      // decisions the router made.
-      const bridgeNative = Number(status.subagents?.byMechanism?.bridge_native ?? 0);
-      document.querySelector("#usage-summary").textContent = bridgeNative > 0
-        ? `Includes ${bridgeNative} CLI-delegated subagent turn(s) reported by a provider bridge rather than routed. A child whose CLI exported no role is counted under ${text(UNATTRIBUTED_SUBAGENT_ROLE)}.`
-        : "Every row is a turn this router routed. CLI-delegated subagents appear here once a provider bridge reports them.";
-      document.querySelector("#workspace-usage").innerHTML = workspaceUsageRows(usage);
-      document.querySelector("#usage-total-active").textContent = totals.active ?? 0;
-      document.querySelector("#usage-total-attempts").textContent = totals.attempts ?? 0;
-      document.querySelector("#usage-total-successes").textContent = totals.successes ?? 0;
-      document.querySelector("#usage-total-failures").textContent = totals.failures ?? 0;
-      document.querySelector("#usage-total-duration").textContent = durationText(totals.averageDurationMs);
-      document.querySelector("#usage-total-tools").textContent = totals.toolCalls ?? 0;
-      document.querySelectorAll(".toggle-usage").forEach((button) => button.addEventListener("click", () => {
-        const group = button.dataset.usageGroup;
-        const expanded = button.getAttribute("aria-expanded") === "true";
-        if (expanded) expandedUsageGroups.delete(group); else expandedUsageGroups.add(group);
-        button.setAttribute("aria-expanded", String(!expanded));
-        button.querySelector(".caret").textContent = expanded ? "▸" : "▾";
-        document.querySelectorAll(`[data-usage-child="${group}"]`).forEach((row) => { row.hidden = expanded; });
-      }));
-      const codexTelemetry = status.codexTelemetry ?? {};
-      const receiver = codexTelemetry.receiver ?? {};
-      const turns = codexTelemetry.turns ?? {};
-      const tokens = codexTelemetry.tokens ?? {};
-      const mcpSummary = codexTelemetry.mcpSummary ?? {};
-      const mcpServers = codexTelemetry.mcpServers ?? [];
-      const mcpRows = mcpServers.map((server) => `<tr><td><code>${text(server.name)}</code></td><td class="${server.health === "ready" ? "ok" : server.health === "error" ? "limited" : ""}">${text(server.health)}</td><td>${server.lastSeenAt ? formatTimestamp(server.lastSeenAt) : "-"}</td><td>${server.initAttempts ?? 0}</td><td>${server.toolDiscoveryAttempts ?? 0}</td><td>${server.failures ?? 0}</td><td>${durationText(server.averageDurationMs)}</td></tr>`).join("") || '<tr><td colspan="7">No MCP lifecycle telemetry received yet.</td></tr>';
-      document.querySelector("#mcp-telemetry").innerHTML = mcpRows;
-      const mcpTotalDurationMs = mcpServers.reduce((sum, server) => sum + Number(server.durationMs ?? 0), 0);
-      const mcpTotalDurationCount = mcpServers.reduce((sum, server) => sum + Number(server.durationCount ?? 0), 0);
-      const mcpLastSeen = mcpServers.map((server) => server.lastSeenAt).filter(Boolean).sort().at(-1);
-      document.querySelector("#mcp-total-health").textContent = `${mcpServers.filter((server) => server.health === "ready").length}/${mcpServers.length} ready`;
-      document.querySelector("#mcp-total-last").textContent = mcpLastSeen ? formatTimestamp(mcpLastSeen) : "-";
-      document.querySelector("#mcp-total-init").textContent = mcpServers.reduce((sum, server) => sum + Number(server.initAttempts ?? 0), 0);
-      document.querySelector("#mcp-total-discovery").textContent = mcpServers.reduce((sum, server) => sum + Number(server.toolDiscoveryAttempts ?? 0), 0);
-      document.querySelector("#mcp-total-failures").textContent = mcpServers.reduce((sum, server) => sum + Number(server.failures ?? 0), 0);
-      document.querySelector("#mcp-total-duration").textContent = durationText(mcpTotalDurationCount ? mcpTotalDurationMs / mcpTotalDurationCount : 0);
-      const countsText = (counts) => Object.entries(counts ?? {}).map(([ key, value ]) => `${text(key)}: ${value}`).join(", ") || "-";
-      const summaryCountsText = (counts) => Object.entries(counts ?? {}).map(([ key, value ]) => `${key}: ${value}`).join(", ") || "-";
-      const skills = codexTelemetry.skills ?? {};
-      const skillsInjected = skills.injected ?? {};
-      const skillsTurnDuration = skills.turnDuration ?? {};
-      const skillsThreads = skills.threads ?? {};
-      const hasThreadMetrics = Object.values(skillsThreads).some((metric) => (metric?.count ?? 0) > 0);
-      const skillInjectTotal = Number(skillsInjected.total ?? 0);
-      const skillShare = (value, total) => total > 0 ? `${((Number(value ?? 0) / total) * 100).toFixed(1)}%` : "-";
-      const injectedBySkill = new Map((skillsInjected.bySkill ?? []).map((entry) => [ entry.skill, entry ]));
-      const skillNames = [ ...injectedBySkill.keys() ].sort((a, b) => a.localeCompare(b));
-      document.querySelector("#skills-table").innerHTML = skillNames.map((skillName) => {
-        const injected = injectedBySkill.get(skillName) ?? {};
-        const injectedTotal = injected.total ?? 0;
-        return `<tr><td><code>${text(skillName)}</code></td><td>${injectedTotal}</td><td>${skillShare(injectedTotal, skillInjectTotal)}</td><td>${countsText(injected.byStatus)}</td><td>${countsText(injected.byInvokeType)}</td><td>${countsText(injected.byAgentKind)}</td><td>${countsText(injected.byModel)}</td><td>${countsText(injected.byPlugin)}</td></tr>`;
-      }).join("") || '<tr><td colspan="8">No skill metrics observed yet.</td></tr>';
-      document.querySelector("#skills-total").textContent = skillInjectTotal;
-      document.querySelector("#skills-total-share").textContent = skillInjectTotal > 0 ? "100.0%" : "0.0%";
-      document.querySelector("#skills-total-status").textContent = countsText(skillsInjected.byStatus);
-      document.querySelector("#skills-total-invoke-type").textContent = countsText(skillsInjected.byInvokeType);
-      document.querySelector("#skills-total-agent-kind").textContent = countsText(skillsInjected.byAgentKind);
-      document.querySelector("#skills-total-model").textContent = countsText(skillsInjected.byModel);
-      document.querySelector("#skills-total-plugin").textContent = countsText(skillsInjected.byPlugin);
-      const histogramRow = (label, histogram) => {
-        const count = histogram?.count ?? 0;
-        const sum = histogram?.sum ?? 0;
-        const average = Number(histogram?.average ?? 0);
-        return `<tr><td><code>${text(label)}</code></td><td>${count}</td><td>${count > 0 ? sum : 0}</td><td>${count > 0 ? average.toFixed(1) : "0.0"}</td></tr>`;
-      };
-      const selectionRows = histogramRow("codex.skill.turn.duration_seconds", skillsTurnDuration.durationSeconds);
-      document.querySelector("#skills-context").innerHTML = selectionRows;
-      const histogramRows = [
-        histogramRow("codex.thread.skills.enabled_total", skillsThreads.enabledTotal),
-        histogramRow("codex.thread.skills.kept_total", skillsThreads.keptTotal),
-        histogramRow("codex.thread.skills.truncated", skillsThreads.truncated),
-        histogramRow("codex.thread.skills.description_truncated_chars", skillsThreads.descriptionTruncatedChars),
-      ].join("");
-      document.querySelector("#skills-histograms").innerHTML = hasThreadMetrics
-        ? histogramRows
-        : '<tr><td colspan="4">No skill context histogram telemetry received yet.</td></tr>';
-      const observedMetrics = codexTelemetry.metrics?.observed ?? [];
-      document.querySelector("#native-metrics-summary").textContent = observedMetrics.length ? `${observedMetrics.length} metric name(s) observed across ${observedMetrics.reduce((sum, metric) => sum + (metric.exports ?? 0), 0)} export(s).` : "No native metric names observed yet.";
-      document.querySelector("#native-metrics").innerHTML = observedMetrics.map((metric) => `<tr><td><code>${text(metric.name)}</code></td><td>${metric.exports ?? 0}</td><td>${metric.dataPoints ?? 0}</td></tr>`).join("") || '<tr><td colspan="3">No native metric batches received yet.</td></tr>';
-      document.querySelector("#native-metrics-total-exports").textContent = observedMetrics.reduce((sum, metric) => sum + Number(metric.exports ?? 0), 0);
-      document.querySelector("#native-metrics-total-points").textContent = observedMetrics.reduce((sum, metric) => sum + Number(metric.dataPoints ?? 0), 0);
-      const hooks = codexTelemetry.hooks?.byHook ?? [];
-      const threads = codexTelemetry.threads ?? {};
-      const spawns = threads.spawns ?? {};
-      const threadSource = { count: threads.started?.total ?? 0, byStatus: {} };
-      const spawnSource = { count: spawns.total ?? 0, byStatus: spawns.byStatus ?? {} };
-      const runtimeRows = [
-        ...(codexTelemetry.tools?.byTool ?? []).map((tool) => `<tr><td>Tool</td><td><code>${text(tool.tool)}</code></td><td>${text(tool.source)}</td><td>${text(labelOrDash(tool.server))}</td><td>${tool.count ?? 0}</td><td>${countsText(tool.byStatus)}</td><td>${millisecondsText(tool.averageDurationMs)}</td></tr>`),
-        ...hooks.map((hook) => `<tr><td>Hook</td><td><code>${text(hook.hook)}</code></td><td>${text(hook.source)}</td><td>${text(labelOrDash(hook.handlerType))}</td><td>${hook.count ?? 0}</td><td>${countsText(hook.byStatus)}</td><td>${millisecondsText(hook.averageDurationMs)}</td></tr>`),
-        `<tr><td>Thread</td><td><code>started</code></td><td>-</td><td>-</td><td>${threadSource.count}</td><td>-</td><td>-</td></tr>`,
-        `<tr><td>Spawn</td><td><code>native agent</code></td><td>-</td><td>-</td><td>${spawnSource.count}</td><td>${countsText(spawnSource.byStatus)}</td><td>-</td></tr>`,
-      ].join("");
-      document.querySelector("#native-runtime-telemetry").innerHTML = runtimeRows;
-      const runtimeSources = [ ...(codexTelemetry.tools?.byTool ?? []), ...hooks, threadSource, spawnSource ];
-      const runtimeStatusTotals = runtimeSources.reduce((totalsByStatus, item) => {
-        for (const [ status, count ] of Object.entries(item.byStatus ?? {})) totalsByStatus[ status ] = (totalsByStatus[ status ] ?? 0) + Number(count ?? 0);
-        return totalsByStatus;
-      }, {});
-      const runtimeDurationMs = runtimeSources.reduce((sum, item) => sum + Number(item.durationMs ?? 0), 0);
-      const runtimeDurationCount = runtimeSources.reduce((sum, item) => sum + Number(item.durationCount ?? 0), 0);
-      document.querySelector("#native-runtime-total-calls").textContent = runtimeSources.reduce((sum, item) => sum + Number(item.count ?? 0), 0);
-      document.querySelector("#native-runtime-total-status").innerHTML = countsText(runtimeStatusTotals);
-      document.querySelector("#native-runtime-total-duration").textContent = millisecondsText(runtimeDurationCount ? runtimeDurationMs / runtimeDurationCount : 0);
-      const sqlite = codexTelemetry.sqlite ?? {};
-      const sqliteInit = sqlite.init?.total ?? 0;
-      const sqliteFallbacks = sqlite.fallbacks?.total ?? 0;
-      const sqliteDuration = sqlite.initDurationMs ?? {};
-      const summaryRow = (category, metric, value) => `<tr><td>${text(category)}</td><td>${text(metric)}</td><td>${text(value)}</td></tr>`;
-      const operationalRows = [
-        [ "Codex telemetry", "OTLP logs", receiver.logs ?? 0 ],
-        [ "Codex telemetry", "OTLP traces", receiver.traces ?? 0 ],
-        [ "Codex telemetry", "OTLP metrics", receiver.metrics ?? 0 ],
-        [ "Codex telemetry", "Invalid signals", receiver.invalid ?? 0 ],
-        [ "Codex telemetry", "Recent sessions", `${codexTelemetry.sessionsRecent ?? 0}/${codexTelemetry.sessionsObserved ?? 0}` ],
-        [ "Codex telemetry", "Completed turns / prompts", `${turns.completed ?? 0}/${turns.prompts ?? 0}` ],
-        [ "Codex telemetry", "Average TTFT", durationText(turns.averageTtftMs) ],
-        [ "Codex telemetry", "Tokens", tokens.total ?? 0 ],
-        [ "Codex telemetry", "MCP ready / observed", `${mcpSummary.ready ?? 0}/${mcpSummary.observed ?? 0}` ],
-        [ "Codex telemetry", "Last received", receiver.lastReceivedAt ? formatTimestamp(receiver.lastReceivedAt) : "-" ],
-        [ "State database", "Initializations", sqliteInit ],
-        [ "State database", "Fallbacks", sqliteFallbacks ],
-        [ "State database", "Init duration samples", sqliteDuration.totalCount ?? 0 ],
-        [ "State database", "Average init duration", sqliteDuration.totalCount ? millisecondsText(sqliteDuration.totalSum / sqliteDuration.totalCount) : "0ms" ],
-        [ "Concurrency", "Admission scope", concurrency.scope ?? "router-admitted-child-requests" ],
-        [ "Concurrency", "Per-session limit", limit(concurrency.effectivePerSessionLimit) ],
-        [ "Concurrency", "Active sessions", concurrency.activeSessions ?? 0 ],
-        [ "Concurrency", "Active subagents", concurrency.activeSubagentThreads ?? 0 ],
-        [ "Concurrency", "Denials", concurrency.denials ?? 0 ],
-        [ "Concurrency", "Denials by reason", summaryCountsText(concurrency.denialsByReason) ],
-        [ "Concurrency", "Last denial", denial ],
-        ...(concurrency.processFallbackEnforcement ? [ [ "Concurrency", "Fallback warning", `${concurrency.processFallbackActiveThreads ?? 0} unidentified active thread(s) share one process-wide bucket` ] ] : []),
-      ].map(([ category, metric, value ]) => summaryRow(category, metric, value)).join("");
-      document.querySelector("#operational-summaries").innerHTML = operationalRows;
-      document.querySelector("#events").textContent = (status.recentEvents ?? []).slice(0, 25).map((event) => {
-        const target = `${event.provider}/${event.model}`;
-        const outcome = event.outcome ?? event.failureClass ?? "-";
-        return `${formatTimestamp(event.timestamp)}  ${event.requestId}  ${event.phase}  ${target}  ${outcome}`;
-      }).join("\n") || "No routing events yet.";
     }
 
-    document.querySelectorAll(".toggle-section").forEach((button) => button.addEventListener("click", () => {
-      const target = document.getElementById(button.getAttribute("aria-controls"));
-      const expanded = button.getAttribute("aria-expanded") === "true";
-      button.setAttribute("aria-expanded", String(!expanded));
-      button.querySelector(".caret").textContent = expanded ? "▸" : "▾";
-      target.hidden = expanded;
-    }));
+    function formatTokens(tokens) {
+      const n = Number(tokens ?? 0);
+      if (n >= 1e9) return `${(n / 1e9).toFixed(1)}B`;
+      if (n >= 1e6) return `${(n / 1e6).toFixed(1)}M`;
+      if (n >= 1e3) return `${(n / 1e3).toFixed(1)}K`;
+      return n.toLocaleString();
+    }
+
+    function durationText(ms) {
+      return `${(Number(ms ?? 0) / 1000).toFixed(1)}s`;
+    }
+
+    function formatDenialsByReason(reasons) {
+      if (!reasons || typeof reasons !== "object") return "None";
+      const entries = Object.entries(reasons);
+      if (!entries.length) return "None";
+      return entries.map(([k, v]) => `${k}: ${v}`).join(", ");
+    }
+
+    function formatLastDenial(denial) {
+      if (!denial) return "None";
+      if (typeof denial === "string") return denial;
+      if (typeof denial !== "object") return String(denial);
+      const reason = denial.reason ?? "unknown";
+      const target = denial.requestedModel || denial.role || "";
+      const detail = target ? ` (${target})` : "";
+      return `${reason}${detail}`;
+    }
+
+    function render(status) {
+      if (!status || typeof status !== "object") return;
+
+      document.title = `${status.router ?? "Codex model router"} · integrated dashboard`;
+      const metaEl = document.getElementById("page-meta");
+      if (metaEl) {
+        metaEl.textContent = `Instance ${status.routerInstanceId ?? "-"} · PID ${status.pid ?? "-"} · started ${formatTimestamp(status.startedAt) || "—"} · refresh cadence 3s`;
+      }
+      const errorEl = document.getElementById("error");
+      if (errorEl) errorEl.textContent = "";
+
+      // 1. KPI Grid
+      const orchActive = Number(status.usage?.byRole?.unattributed?.active ?? 0);
+      let subActive = 0;
+      for (const [role, b] of Object.entries(status.usage?.byRole ?? {})) {
+        if (role !== "unattributed") subActive += Number(b?.active ?? 0);
+      }
+      const concurrency = status.concurrency ?? {};
+      if (concurrency.activeSubagentThreads != null) {
+        subActive = Math.max(subActive, Number(concurrency.activeSubagentThreads));
+      }
+      const totalActive = orchActive + subActive;
+      const workspacesList = Object.entries(status.usage?.byWorkspace ?? {});
+      const activeWorkspaces = workspacesList.filter(([, w]) => Number(w?.active ?? 0) > 0).length;
+
+      const attemptsTotal = Number(status.usage?.totals?.attempts ?? 0);
+      const attemptsSuccess = Number(status.usage?.totals?.successes ?? 0);
+      const attemptsFail = Number(status.usage?.totals?.failures ?? 0);
+      const attemptsSkip = Number(status.usage?.totals?.skipped ?? 0);
+
+      let toolOk = 0;
+      let toolErr = 0;
+      let toolCount = 0;
+      for (const t of status.codexTelemetry?.tools?.byTool ?? []) {
+        const ok = Number(t.byStatus?.ok ?? t.byStatus?.success ?? (t.count != null && !t.byStatus?.error && !t.byStatus?.failure ? t.count : 0));
+        const err = Number(t.byStatus?.error ?? t.byStatus?.failure ?? 0);
+        toolOk += ok;
+        toolErr += err;
+        toolCount += (t.count != null ? Number(t.count) : ok + err);
+      }
+      if (toolCount === 0) {
+        toolCount = Number(status.usage?.totals?.toolCalls ?? 0);
+        toolOk = toolCount;
+      }
+
+      const skillUsesTotal = Number(status.codexTelemetry?.skills?.injected?.total ?? 0);
+      const skillRowsList = status.codexTelemetry?.skills?.injected?.bySkill ?? [];
+      const observedSkillsCount = skillRowsList.length;
+
+      const avgTurnMs = Number(status.usage?.totals?.averageDurationMs ?? 0);
+      const avgTurnSec = (avgTurnMs / 1000).toFixed(1);
+
+      const kpiAgents = document.getElementById("kpi-agents");
+      if (kpiAgents) {
+        kpiAgents.setAttribute("value", String(totalActive));
+        kpiAgents.innerHTML = `<strong>${orchActive}</strong> orchestrators · <strong>${subActive}</strong> subagents · <strong>${activeWorkspaces}</strong> workspaces active`;
+      }
+      const kpiAttempts = document.getElementById("kpi-attempts");
+      if (kpiAttempts) {
+        kpiAttempts.setAttribute("value", attemptsTotal.toLocaleString());
+        kpiAttempts.innerHTML = `<span class="good">${attemptsSuccess.toLocaleString()} success</span> · <span class="bad">${attemptsFail.toLocaleString()} fail</span>${attemptsSkip > 0 ? ` · <span class="warning">${attemptsSkip.toLocaleString()} skipped</span>` : ""}`;
+      }
+      const kpiTools = document.getElementById("kpi-tools");
+      if (kpiTools) {
+        kpiTools.setAttribute("value", toolCount.toLocaleString());
+        kpiTools.innerHTML = `<span class="good">${toolOk.toLocaleString()} success</span> · <span class="bad">${toolErr.toLocaleString()} fail</span>`;
+      }
+      const kpiSkills = document.getElementById("kpi-skills");
+      if (kpiSkills) {
+        kpiSkills.setAttribute("value", skillUsesTotal.toLocaleString());
+        kpiSkills.textContent = `${observedSkillsCount} observed skills`;
+      }
+      const kpiTurn = document.getElementById("kpi-turn");
+      if (kpiTurn) {
+        kpiTurn.setAttribute("value", `${avgTurnSec}s`);
+        kpiTurn.textContent = "Across routed + bridge-reported turns";
+      }
+
+      // 2. Provider health
+      const providersEntries = Object.entries(status.providers ?? {});
+      const readyProvidersCount = providersEntries.filter(([, p]) => p.status === "ready").length;
+      const activeReqSum = providersEntries.reduce((sum, [, p]) => sum + Number(p.activeRequests ?? 0), 0);
+      syncPanel(document.getElementById("panel-providers"), "Provider health", `${readyProvidersCount} / ${providersEntries.length} ready · ${activeReqSum} active`);
+
+      const providersTbody = document.getElementById("providers-tbody");
+      if (providersTbody) {
+        if (!providersEntries.length) {
+          providersTbody.innerHTML = `<tr><td colspan="7" class="dim" style="text-align:center">No providers configured</td></tr>`;
+        } else {
+          providersTbody.innerHTML = providersEntries.map(([providerName, p]) => {
+            const configuredModels = Object.values(p.configuredModels ?? {});
+            const observedModels = Object.keys(status.usage?.byModel ?? {})
+              .filter((key) => key.startsWith(`${providerName}/`))
+              .map((key) => key.slice(providerName.length + 1));
+            const uniqueModels = [...new Set([...configuredModels, ...observedModels])];
+            const modelsHtml = uniqueModels.length
+              ? `<div class="inline-code-list">${uniqueModels.map(m => `<code>${escapeHtml(m)}</code>`).join("")}</div>`
+              : "<code>-</code>";
+
+            const stateAttr = p.status === "ready" ? "ready" : ((p.status === "cooldown" || (p.cooldownRemainingMs ?? 0) > 0) ? "limited" : "error");
+            const cooldownSuffix = (p.cooldownRemainingMs > 0) ? ` (${Math.ceil(p.cooldownRemainingMs / 1000)}s)` : "";
+
+            let avgTurn = "—";
+            let modelSumDuration = 0;
+            let modelSumTurns = 0;
+            for (const [mKey, stats] of Object.entries(status.usage?.byModel ?? {})) {
+              if (mKey.startsWith(`${providerName}/`)) {
+                modelSumDuration += Number(stats.durationMs ?? 0);
+                modelSumTurns += Number(stats.successes ?? 0) + Number(stats.failures ?? 0);
+              }
+            }
+            if (modelSumTurns > 0) {
+              avgTurn = `${((modelSumDuration / modelSumTurns) / 1000).toFixed(1)}s`;
+            } else if (p.attempts > 0 && p.durationMs != null) {
+              avgTurn = `${((p.durationMs / (p.successes + p.failures || 1)) / 1000).toFixed(1)}s`;
+            }
+
+            let failureHtml = '<span class="muted">-</span>';
+            if (p.lastFailure) {
+              let fText = "";
+              if (typeof p.lastFailure === "string") {
+                fText = p.lastFailure;
+              } else if (typeof p.lastFailure === "object") {
+                const fClass = p.lastFailure.class ?? p.lastFailure.error ?? p.lastFailureClass ?? "error";
+                const fStatus = p.lastFailure.status ? ` (HTTP ${p.lastFailure.status})` : "";
+                fText = `${fClass}${fStatus}`;
+              }
+              failureHtml = `<code>${escapeHtml(fText)}</code>`;
+            }
+
+            return `<tr>
+              <td><code>${escapeHtml(providerName)}</code></td>
+              <td>${modelsHtml}</td>
+              <td><health-badge state="${stateAttr}">${escapeHtml(p.status)}${cooldownSuffix}</health-badge></td>
+              <td><status-badge ${p.activeRequests > 0 ? 'active=""' : ''}>${Number(p.activeRequests ?? 0)}</status-badge></td>
+              <td>${escapeHtml(avgTurn)}</td>
+              <td class="outcome-cell"><outcome-bar fail="${Number(p.failures ?? 0)}" skip="${Number(p.skipped ?? 0)}" success="${Number(p.successes ?? 0)}"></outcome-bar></td>
+              <td>${failureHtml}</td>
+            </tr>`;
+          }).join("");
+        }
+      }
+
+      // 3. Orchestrator & subagent usage
+      syncPanel(document.getElementById("panel-orchestrator"), "Orchestrator & subagent usage", `${attemptsTotal.toLocaleString()} attempts`);
+
+      const orch = status.usage?.byRole?.unattributed ?? {};
+      const orchTurns = Number(orch.successes ?? 0) + Number(orch.failures ?? 0);
+      const orchAvgTurn = orchTurns > 0 ? `${((orch.durationMs ?? 0) / orchTurns / 1000).toFixed(1)}s` : "0.0s";
+      const orchToolCalls = Number(orch.toolCalls ?? 0);
+
+      let subAttempts = 0;
+      let subSuccess = 0;
+      let subFail = 0;
+      let subSkip = 0;
+      let subToolCalls = 0;
+      let subDuration = 0;
+      for (const [role, b] of Object.entries(status.usage?.byRole ?? {})) {
+        if (role === "unattributed") continue;
+        subAttempts += Number(b.attempts ?? 0);
+        subSuccess += Number(b.successes ?? 0);
+        subFail += Number(b.failures ?? 0);
+        subSkip += Number(b.skipped ?? 0);
+        subToolCalls += Number(b.toolCalls ?? 0);
+        subDuration += Number(b.durationMs ?? 0);
+      }
+      const subTurns = subSuccess + subFail;
+      const subAvgTurn = subTurns > 0 ? `${(subDuration / subTurns / 1000).toFixed(1)}s` : "0.0s";
+
+      const mcpServersCount = status.codexTelemetry?.mcpSummary?.ready ?? status.codexTelemetry?.mcpSummary?.observed ?? 0;
+      const skillsCount = observedSkillsCount;
+
+      const routeGrid = document.getElementById("route-grid");
+      if (routeGrid) {
+        routeGrid.innerHTML = `
+          <div class="route-card">
+            <div class="route-title">
+              <code>Orchestrator</code>
+              <status-badge ${orchActive > 0 ? 'active=""' : ''}>${orchActive}</status-badge>
+            </div>
+            <div class="route-stats">
+              <mini-stat label="Avg turn" value="${orchAvgTurn}"></mini-stat>
+              <mini-stat label="Tool calls" value="${orchToolCalls.toLocaleString()}"></mini-stat>
+              <mini-stat label="MCP servers" value="${mcpServersCount}"></mini-stat>
+              <mini-stat label="Skills" value="${skillsCount}"></mini-stat>
+            </div>
+            <div class="route-outcome">
+              <outcome-bar align="left" fail="${orch.failures ?? 0}" skip="${orch.skipped ?? 0}" success="${orch.successes ?? 0}"></outcome-bar>
+            </div>
+          </div>
+          <div class="route-card">
+            <div class="route-title">
+              <code>Subagents</code>
+              <status-badge ${subActive > 0 ? 'active=""' : ''}>${subActive}</status-badge>
+            </div>
+            <div class="route-stats">
+              <mini-stat label="Avg turn" value="${subAvgTurn}"></mini-stat>
+              <mini-stat label="Tool calls" value="${subToolCalls.toLocaleString()}"></mini-stat>
+              <mini-stat label="MCP servers" value="${mcpServersCount}"></mini-stat>
+              <mini-stat label="Skills" value="${skillsCount}"></mini-stat>
+            </div>
+            <div class="route-outcome">
+              <outcome-bar align="left" fail="${subFail}" skip="${subSkip}" success="${subSuccess}"></outcome-bar>
+            </div>
+          </div>
+        `;
+      }
+
+      // Spawn breakdown sub-panel
+      const spawnGroups = new Map();
+      for (const s of status.subagents?.recent ?? []) {
+        const key = `${s.provider ?? "unattributed"}\0${s.mechanism ?? "bridge_native"}\0${s.role ?? "unattributed"}\0${s.tool ?? "-"}`;
+        const count = Number(s.count ?? 1);
+        const current = spawnGroups.get(key) ?? {
+          provider: s.provider ?? "unattributed",
+          mechanism: s.mechanism ?? "bridge_native",
+          role: s.role ?? "unattributed",
+          tool: s.tool ?? "-",
+          count: 0
+        };
+        current.count += count;
+        spawnGroups.set(key, current);
+      }
+      const spawnList = [...spawnGroups.values()].sort((a, b) => b.count - a.count);
+      const totalSpawns = Number(status.subagents?.total ?? spawnList.reduce((sum, item) => sum + item.count, 0));
+      syncPanel(document.getElementById("panel-spawn-breakdown"), "Spawn breakdown", `${totalSpawns.toLocaleString()} total`);
+
+      const spawnTbody = document.getElementById("spawn-breakdown-tbody");
+      const spawnTfoot = document.getElementById("spawn-breakdown-tfoot");
+      if (spawnTbody && spawnTfoot) {
+        if (!spawnList.length) {
+          spawnTbody.innerHTML = `<tr><td colspan="5" class="dim" style="text-align:center">No subagent spawns recorded yet</td></tr>`;
+          spawnTfoot.innerHTML = "";
+        } else {
+          spawnTbody.innerHTML = spawnList.map(item => `
+            <tr>
+              <td><code>${escapeHtml(item.provider)}</code></td>
+              <td><code>${escapeHtml(item.mechanism)}</code></td>
+              <td><code>${escapeHtml(item.role)}</code></td>
+              <td><code>${escapeHtml(item.tool)}</code></td>
+              <td>${item.count.toLocaleString()}</td>
+            </tr>
+          `).join("");
+          spawnTfoot.innerHTML = `
+            <tr>
+              <th>Totals</th>
+              <td>-</td>
+              <td>-</td>
+              <td>-</td>
+              <td>${totalSpawns.toLocaleString()}</td>
+            </tr>
+          `;
+        }
+      }
+
+      // Spawn failures sub-panel
+      const failuresTotal = Number(status.spawnFailures?.total ?? 0);
+      syncPanel(document.getElementById("panel-spawn-failures"), "Spawn failures", `${failuresTotal} observed`);
+
+      const failuresTbody = document.getElementById("spawn-failures-tbody");
+      const failuresTfoot = document.getElementById("spawn-failures-tfoot");
+      if (failuresTbody && failuresTfoot) {
+        const byReason = Object.entries(status.spawnFailures?.byReason ?? {});
+        if (!byReason.length) {
+          failuresTbody.innerHTML = `<tr><td colspan="3" class="dim" style="text-align:center">No spawn failures observed</td></tr>`;
+          failuresTfoot.innerHTML = "";
+        } else {
+          const recentFailures = status.spawnFailures?.recent ?? [];
+          failuresTbody.innerHTML = byReason.map(([reason, count]) => {
+            const lastEntry = recentFailures.find(r => r.reason === reason);
+            const lastTs = lastEntry ? formatTimestamp(lastEntry.timestamp) : "—";
+            return `
+              <tr>
+                <td><code>${escapeHtml(reason)}</code></td>
+                <td>${Number(count).toLocaleString()}</td>
+                <td>${escapeHtml(lastTs)}</td>
+              </tr>
+            `;
+          }).join("");
+          const latestTs = recentFailures.length ? formatTimestamp(recentFailures[0].timestamp) : "—";
+          failuresTfoot.innerHTML = `
+            <tr>
+              <th>Totals</th>
+              <td>${failuresTotal.toLocaleString()}</td>
+              <td>${escapeHtml(latestTs)}</td>
+            </tr>
+          `;
+        }
+      }
+
+      // 4. Usage by Workspace
+      syncPanel(document.getElementById("workspace-usage-section"), "Usage by workspace", `${workspacesList.length} workspaces`);
+
+      const wsTbody = document.getElementById("workspace-usage");
+      const wsTfoot = document.getElementById("workspace-usage-tfoot");
+      if (wsTbody && wsTfoot) {
+        if (!workspacesList.length) {
+          wsTbody.innerHTML = `<tr><td colspan="6" class="dim" style="text-align:center">No workspace usage observed yet.</td></tr>`;
+          wsTfoot.innerHTML = "";
+        } else {
+          const sortedWorkspaces = [...workspacesList].sort(([, a], [, b]) => (Number(b.attempts ?? 0) - Number(a.attempts ?? 0)));
+
+          let wsTotalActive = 0;
+          let wsTotalAttempts = 0;
+          let wsTotalSuccess = 0;
+          let wsTotalFail = 0;
+          let wsTotalDuration = 0;
+          let wsTotalTools = 0;
+          let wsTotalSkills = 0;
+
+          wsTbody.innerHTML = sortedWorkspaces.map(([wsKey, w]) => {
+            const active = Number(w.active ?? 0);
+            const attempts = Number(w.attempts ?? 0);
+            const successes = Number(w.successes ?? 0);
+            const failures = Number(w.failures ?? 0);
+            const toolCalls = Number(w.toolCalls ?? 0);
+            const skillUses = Number(w.skillUses ?? 0);
+            const avgDurationMs = Number(w.averageDurationMs ?? 0);
+
+            wsTotalActive += active;
+            wsTotalAttempts += attempts;
+            wsTotalSuccess += successes;
+            wsTotalFail += failures;
+            wsTotalDuration += (successes + failures) * avgDurationMs;
+            wsTotalTools += toolCalls;
+            wsTotalSkills += skillUses;
+
+            const isExpanded = expandedRows.has(wsKey);
+            const subtitle = w.cwd ? `CWD · ${w.cwd}` : "";
+
+            // Build Roles breakdown
+            const roleEntries = Object.entries(w.byRole ?? {});
+            const maxRoleAttempts = Math.max(...roleEntries.map(([, r]) => Number(r.attempts ?? 0)), 1);
+            const rolesHtml = roleEntries.length ? roleEntries.map(([rName, r]) => {
+              const rAttempts = Number(r.attempts ?? 0);
+              const rSuccess = Number(r.successes ?? 0);
+              const rFail = Number(r.failures ?? 0);
+              const rActive = Number(r.active ?? 0);
+              const fill = (rAttempts / maxRoleAttempts * 100).toFixed(1);
+              return `<metric-bar fill="${fill}" label="${escapeHtml(rName)}" success="${rSuccess}" fail="${rFail}" value="${rAttempts}" ${rActive > 0 ? `active="${rActive}"` : ''}></metric-bar>`;
+            }).join("") : `<div class="empty-state">No roles observed</div>`;
+
+            // Build Models breakdown grouped by provider
+            const modelEntries = Object.entries(w.byModel ?? {});
+            const maxModelAttempts = Math.max(...modelEntries.map(([, m]) => Number(m.attempts ?? 0)), 1);
+            const providerModelGroups = new Map();
+            for (const [mKey, m] of modelEntries) {
+              const slashIdx = mKey.indexOf("/");
+              const prov = slashIdx >= 0 ? mKey.slice(0, slashIdx) : "default";
+              const model = slashIdx >= 0 ? mKey.slice(slashIdx + 1) : mKey;
+              if (!providerModelGroups.has(prov)) providerModelGroups.set(prov, []);
+              providerModelGroups.get(prov).push({ model, stats: m });
+            }
+
+            const modelsHtml = providerModelGroups.size ? [...providerModelGroups.entries()].map(([prov, models]) => `
+              <div class="provider-block">
+                <div class="provider-name">${escapeHtml(prov)}</div>
+                ${models.map(({ model, stats }) => {
+                  const mAttempts = Number(stats.attempts ?? 0);
+                  const mSuccess = Number(stats.successes ?? 0);
+                  const mFail = Number(stats.failures ?? 0);
+                  const mActive = Number(stats.active ?? 0);
+                  const fill = (mAttempts / maxModelAttempts * 100).toFixed(1);
+                  return `<metric-bar fill="${fill}" label="${escapeHtml(model)}" success="${mSuccess}" fail="${mFail}" value="${mAttempts}" ${mActive > 0 ? `active="${mActive}"` : ''}></metric-bar>`;
+                }).join("")}
+              </div>
+            `).join("") : `<div class="empty-state">No models observed</div>`;
+
+            return `
+              <tr class="workspace-row" ${isExpanded ? 'aria-expanded="true"' : ''}>
+                <td><row-toggle label="${escapeHtml(wsKey)}" subtitle="${escapeHtml(subtitle)}" expanded="${isExpanded}"></row-toggle></td>
+                <td><status-badge ${active > 0 ? 'active=""' : ''}>${active}</status-badge></td>
+                <td class="attempts"><outcome-bar fail="${failures}" no-bar="" rate="" success="${successes}"></outcome-bar></td>
+                <td>${durationText(avgDurationMs)}</td>
+                <td class="attempts"><outcome-bar fail="0" no-bar="" success="${toolCalls}"></outcome-bar></td>
+                <td>${skillUses.toLocaleString()}</td>
+              </tr>
+              <tr class="details-row" ${isExpanded ? '' : 'hidden=""'}>
+                <td colspan="6">
+                  <div class="details-grid">
+                    <section class="detail-group">
+                      <h2>Roles</h2>
+                      <outcome-legend></outcome-legend>
+                      <div class="metric-list">${rolesHtml}</div>
+                    </section>
+                    <section class="detail-group">
+                      <h2>Models</h2>
+                      <outcome-legend></outcome-legend>
+                      <div class="metric-list">${modelsHtml}</div>
+                    </section>
+                    <section class="detail-group">
+                      <h2>Tools</h2>
+                      <div class="empty-state">Named tool telemetry is unavailable per-workspace</div>
+                    </section>
+                    <section class="detail-group">
+                      <h2>Skill usage</h2>
+                      <div class="empty-state">Named skill attribution is unavailable per-workspace</div>
+                    </section>
+                  </div>
+                </td>
+              </tr>
+            `;
+          }).join("");
+
+          const wsTurns = wsTotalSuccess + wsTotalFail;
+          const wsAvgTurnSec = wsTurns > 0 ? (wsTotalDuration / wsTurns / 1000).toFixed(1) : "0.0";
+          wsTfoot.innerHTML = `
+            <tr>
+              <th>Totals</th>
+              <td><status-badge ${wsTotalActive > 0 ? 'active=""' : ''}>${wsTotalActive}</status-badge></td>
+              <td class="attempts"><outcome-bar fail="${wsTotalFail}" no-bar="" rate="" success="${wsTotalSuccess}"></outcome-bar></td>
+              <td>${wsAvgTurnSec}s</td>
+              <td class="attempts"><outcome-bar fail="0" no-bar="" success="${wsTotalTools}"></outcome-bar></td>
+              <td>${wsTotalSkills.toLocaleString()}</td>
+            </tr>
+          `;
+        }
+      }
+
+      // 5. Skill Telemetry
+      syncPanel(document.getElementById("panel-skills"), "Skill telemetry", `${skillUsesTotal.toLocaleString()} uses · ${skillRowsList.length} skills`);
+
+      const skillsTbody = document.getElementById("skills-usage-tbody");
+      const skillsTfoot = document.getElementById("skills-usage-tfoot");
+      if (skillsTbody && skillsTfoot) {
+        if (!skillRowsList.length) {
+          skillsTbody.innerHTML = `<tr><td colspan="3" class="dim" style="text-align:center">No skill telemetry recorded yet</td></tr>`;
+          skillsTfoot.innerHTML = "";
+        } else {
+          const sortedSkills = [...skillRowsList].sort((a, b) => Number(b.total ?? 0) - Number(a.total ?? 0));
+          let skillsTotalSuccess = 0;
+          let skillsTotalFail = 0;
+
+          skillsTbody.innerHTML = sortedSkills.map(s => {
+            const skillName = s.skill;
+            const isExpanded = expandedRows.has(skillName);
+            const total = Number(s.total ?? 0);
+            const ok = Number(s.byStatus?.ok ?? s.byStatus?.success ?? (s.byStatus?.failure || s.byStatus?.error ? total - Number(s.byStatus?.error ?? s.byStatus?.failure ?? 0) : total));
+            const err = Number(s.byStatus?.error ?? s.byStatus?.failure ?? 0);
+
+            skillsTotalSuccess += ok;
+            skillsTotalFail += err;
+
+            const share = skillUsesTotal > 0 ? (total / skillUsesTotal * 100).toFixed(1) : "0.0";
+
+            const renderSubGroup = (title, dataObj) => {
+              const entries = Object.entries(dataObj ?? {});
+              if (!entries.length) {
+                return `
+                  <section class="skill-breakdown-group">
+                    <h3>${escapeHtml(title)}</h3>
+                    <div class="skill-breakdown-list"><div class="empty-state">None observed</div></div>
+                  </section>
+                `;
+              }
+              const maxVal = Math.max(...entries.map(([, v]) => Number(v)), 1);
+              return `
+                <section class="skill-breakdown-group">
+                  <h3>${escapeHtml(title)}</h3>
+                  <div class="skill-breakdown-list">
+                    ${entries.map(([k, v]) => {
+                      const num = Number(v);
+                      const w = (num / maxVal * 100).toFixed(1);
+                      return `
+                        <div class="skill-breakdown-metric">
+                          <div class="skill-breakdown-line">
+                            <span class="metric-name">${escapeHtml(k)}</span>
+                            <span class="metric-value">${num.toLocaleString()}</span>
+                          </div>
+                          <div class="bar"><i style="--w:${w}%"></i></div>
+                        </div>
+                      `;
+                    }).join("")}
+                  </div>
+                </section>
+              `;
+            };
+
+            return `
+              <tr class="skill-row" ${isExpanded ? 'aria-expanded="true"' : ''}>
+                <td><row-toggle label="${escapeHtml(skillName)}" expanded="${isExpanded}"></row-toggle></td>
+                <td class="attempts"><outcome-bar fail="${err}" rate="" success="${ok}"></outcome-bar></td>
+                <td class="skill-share-cell">
+                  <strong>${share}%</strong>
+                  <share-bar value="${share}"></share-bar>
+                </td>
+              </tr>
+              <tr class="skill-details-row" ${isExpanded ? '' : 'hidden=""'}>
+                <td colspan="3">
+                  <div class="skill-breakdown-grid">
+                    ${renderSubGroup("Invoke type", s.byInvokeType)}
+                    ${renderSubGroup("Agent kind", s.byAgentKind)}
+                    ${renderSubGroup("Models", s.byModel)}
+                    ${renderSubGroup("Plugins", s.byPlugin)}
+                  </div>
+                </td>
+              </tr>
+            `;
+          }).join("");
+
+          skillsTfoot.innerHTML = `
+            <tr>
+              <th>Totals</th>
+              <td class="attempts"><outcome-bar fail="${skillsTotalFail}" no-bar="" rate="" success="${skillsTotalSuccess}"></outcome-bar></td>
+              <td><strong>100%</strong></td>
+            </tr>
+          `;
+        }
+      }
+
+      // Skill context sub-panel
+      syncPanel(document.getElementById("panel-skill-context"), "Skill context telemetry", "5 aggregate metrics");
+      const skillCtxTbody = document.getElementById("skill-context-tbody");
+      if (skillCtxTbody) {
+        const skillsOtel = status.codexTelemetry?.skills;
+        const turnDurBucket = skillsOtel?.turnDuration?.durationSeconds;
+        const enabledBucket = skillsOtel?.threads?.enabledTotal;
+        const keptBucket = skillsOtel?.threads?.keptTotal;
+        const truncatedBucket = skillsOtel?.threads?.truncated;
+        const descTruncatedBucket = skillsOtel?.threads?.descriptionTruncatedChars;
+
+        const histograms = [
+          {
+            name: "codex.skill.turn.duration_seconds",
+            samples: turnDurBucket?.count ?? 0,
+            total: Number(turnDurBucket?.sum ?? 0).toFixed(1),
+            average: Number(turnDurBucket?.average ?? 0).toFixed(1),
+          },
+          {
+            name: "codex.thread.skills.enabled_total",
+            samples: enabledBucket?.count ?? 0,
+            total: Math.round(enabledBucket?.sum ?? 0).toLocaleString(),
+            average: Number(enabledBucket?.average ?? 0).toFixed(1),
+          },
+          {
+            name: "codex.thread.skills.kept_total",
+            samples: keptBucket?.count ?? 0,
+            total: Math.round(keptBucket?.sum ?? 0).toLocaleString(),
+            average: Number(keptBucket?.average ?? 0).toFixed(1),
+          },
+          {
+            name: "codex.thread.skills.truncated",
+            samples: truncatedBucket?.count ?? 0,
+            total: Math.round(truncatedBucket?.sum ?? 0).toLocaleString(),
+            average: Number(truncatedBucket?.average ?? 0).toFixed(1),
+          },
+          {
+            name: "codex.thread.skills.description_truncated_chars",
+            samples: descTruncatedBucket?.count ?? 0,
+            total: Math.round(descTruncatedBucket?.sum ?? 0).toLocaleString(),
+            average: Number(descTruncatedBucket?.average ?? 0).toFixed(1),
+          },
+        ];
+
+        skillCtxTbody.innerHTML = histograms.map(h => `
+          <tr>
+            <td><code>${escapeHtml(h.name)}</code></td>
+            <td>${Number(h.samples).toLocaleString()}</td>
+            <td>${escapeHtml(h.total)}</td>
+            <td>${escapeHtml(h.average)}</td>
+          </tr>
+        `).join("");
+      }
+
+      // 6. Hooks & runtime telemetry
+      const hooksList = status.codexTelemetry?.hooks?.byHook ?? [];
+      const toolsList = status.codexTelemetry?.tools?.byTool ?? [];
+      const threadStarted = status.codexTelemetry?.threads?.started;
+      const threadSpawns = status.codexTelemetry?.threads?.spawns;
+
+      let runtimeTotalEvents = 0;
+      for (const h of hooksList) {
+        const ok = Number(h.byStatus?.ok ?? h.byStatus?.success ?? (h.count != null && !h.byStatus?.error && !h.byStatus?.failure ? h.count : 0));
+        const err = Number(h.byStatus?.error ?? h.byStatus?.failure ?? 0);
+        runtimeTotalEvents += (ok + err || Number(h.count ?? h.durationCount ?? 0));
+      }
+      for (const tool of toolsList) runtimeTotalEvents += Number(tool.count ?? 0);
+      if (threadStarted?.total) runtimeTotalEvents += Number(threadStarted.total);
+      if (threadSpawns?.total) runtimeTotalEvents += Number(threadSpawns.total);
+
+      syncPanel(document.getElementById("panel-hooks"), "Hooks & runtime telemetry", `${runtimeTotalEvents.toLocaleString()} events`);
+
+      const hooksTbody = document.getElementById("hooks-tbody");
+      const hooksTfoot = document.getElementById("hooks-tfoot");
+      if (hooksTbody && hooksTfoot) {
+        const rows = [];
+        let totalOk = 0;
+        let totalErr = 0;
+        let totalDuration = 0;
+        let durationCount = 0;
+
+        for (const h of hooksList) {
+          const ok = Number(h.byStatus?.ok ?? h.byStatus?.success ?? (h.count != null && !h.byStatus?.error && !h.byStatus?.failure ? h.count : 0));
+          const err = Number(h.byStatus?.error ?? h.byStatus?.failure ?? 0);
+          totalOk += ok;
+          totalErr += err;
+          const avgDur = Number(h.averageDurationMs ?? 0);
+          const durSamples = Number(h.durationCount ?? (ok + err || 1));
+          if (avgDur > 0) {
+            totalDuration += avgDur * durSamples;
+            durationCount += durSamples;
+          }
+          rows.push(`
+            <tr>
+              <td>Hook</td>
+              <td><code>${escapeHtml(h.hook)}</code></td>
+              <td>${escapeHtml(h.source ?? "-")} · ${escapeHtml(h.handlerType || "native")}</td>
+              <td class="outcome-cell"><outcome-bar fail="${err}" success="${ok}"></outcome-bar></td>
+              <td>${Math.round(avgDur)}ms</td>
+            </tr>
+          `);
+        }
+
+        for (const tool of toolsList) {
+          const err = Number(tool.byStatus?.error ?? tool.byStatus?.failure ?? 0);
+          const count = Number(tool.count ?? 0);
+          const ok = Number(tool.byStatus?.ok ?? tool.byStatus?.success ?? Math.max(0, count - err));
+          const avgDur = Number(tool.averageDurationMs ?? 0);
+          const samples = Number(tool.durationCount ?? 0);
+          const source = [tool.source, tool.server].filter(Boolean).join(" · ") || "native";
+          totalOk += ok;
+          totalErr += err;
+          if (avgDur > 0 && samples > 0) {
+            totalDuration += avgDur * samples;
+            durationCount += samples;
+          }
+          rows.push(`
+            <tr>
+              <td>Tool</td>
+              <td><code>${escapeHtml(tool.tool ?? "unknown-tool")}</code></td>
+              <td>${escapeHtml(source)}</td>
+              <td class="outcome-cell"><outcome-bar fail="${err}" success="${ok}"></outcome-bar></td>
+              <td>${samples > 0 ? `${Math.round(avgDur)}ms` : "—"}</td>
+            </tr>
+          `);
+        }
+
+        if (threadStarted && Number(threadStarted.total ?? 0) > 0) {
+          const count = Number(threadStarted.total);
+          totalOk += count;
+          rows.push(`
+            <tr>
+              <td>Thread</td>
+              <td><code>started</code></td>
+              <td>runtime</td>
+              <td class="outcome-cell"><outcome-bar fail="0" success="${count}"></outcome-bar></td>
+              <td>—</td>
+            </tr>
+          `);
+        }
+
+        if (threadSpawns && Number(threadSpawns.total ?? 0) > 0) {
+          const count = Number(threadSpawns.total);
+          const err = Number(threadSpawns.byStatus?.error ?? threadSpawns.byStatus?.failure ?? 0);
+          const ok = Number(threadSpawns.byStatus?.ok ?? threadSpawns.byStatus?.success ?? (count - err));
+          totalOk += ok;
+          totalErr += err;
+          rows.push(`
+            <tr>
+              <td>Spawn</td>
+              <td><code>native agent</code></td>
+              <td>runtime</td>
+              <td class="outcome-cell"><outcome-bar fail="${err}" success="${ok}"></outcome-bar></td>
+              <td>—</td>
+            </tr>
+          `);
+        }
+
+        if (!rows.length) {
+          hooksTbody.innerHTML = `<tr><td colspan="5" class="dim" style="text-align:center">No hooks or runtime events recorded yet</td></tr>`;
+          hooksTfoot.innerHTML = "";
+        } else {
+          hooksTbody.innerHTML = rows.join("");
+          const avgDurText = durationCount > 0 ? `${Math.round(totalDuration / durationCount)}ms` : "—";
+          hooksTfoot.innerHTML = `
+            <tr>
+              <th>Totals</th>
+              <td>—</td>
+              <td>—</td>
+              <td class="outcome-cell"><outcome-bar fail="${totalErr}" success="${totalOk}"></outcome-bar></td>
+              <td>${avgDurText}</td>
+            </tr>
+          `;
+        }
+      }
+
+      // 7. Operational summary
+      syncPanel(document.getElementById("panel-ops"), "Operational summary", "Telemetry · metrics · state DB · concurrency");
+
+      const opsGrid = document.getElementById("ops-grid");
+      if (opsGrid) {
+        const receiver = status.codexTelemetry?.receiver;
+        const sqlite = status.codexTelemetry?.sqlite;
+        const concurrency = status.concurrency ?? {};
+
+        const invalidSignals = Number(receiver?.invalid ?? 0);
+        const initSamples = Number(sqlite?.initDurationMs?.totalCount ?? 0);
+        const initSum = Number(sqlite?.initDurationMs?.totalSum ?? 0);
+        const avgInitDur = initSamples > 0 ? (initSum / initSamples) : 0;
+        const inFlightRequests = Number(Object.values(status.activeRequests ?? {}).reduce((sum, v) => sum + Number(v ?? 0), 0));
+        const perSessionLimit = concurrency.effectivePerSessionLimit ?? concurrency.maxConcurrentThreadsPerSession ?? "none";
+
+        opsGrid.innerHTML = `
+          <section class="ops-group">
+            <h3>Codex telemetry</h3>
+            <div class="kv-list">
+              <div class="kv"><span>OTLP logs</span><span>${Number(receiver?.logs ?? 0).toLocaleString()}</span></div>
+              <div class="kv"><span>OTLP traces</span><span>${Number(receiver?.traces ?? 0).toLocaleString()}</span></div>
+              <div class="kv"><span>OTLP metrics</span><span>${Number(receiver?.metrics ?? 0).toLocaleString()}</span></div>
+              <div class="kv"><span>Invalid signals</span><span class="${invalidSignals > 0 ? 'bad' : 'good'}">${invalidSignals}</span></div>
+              <div class="kv"><span>Recent sessions</span><span>${Number(status.codexTelemetry?.sessionsRecent ?? 0)} / ${Number(status.codexTelemetry?.sessionsObserved ?? 0)}</span></div>
+              <div class="kv"><span>Completed turns / prompts</span><span>${Number(status.codexTelemetry?.turns?.completed ?? 0).toLocaleString()} / ${Number(status.codexTelemetry?.turns?.prompts ?? 0).toLocaleString()}</span></div>
+              <div class="kv"><span>Average TTFT</span><span>${((Number(status.codexTelemetry?.turns?.averageTtftMs ?? 0)) / 1000).toFixed(1)}s</span></div>
+              <div class="kv"><span>Tokens</span><span>${escapeHtml(formatTokens(status.codexTelemetry?.tokens?.total ?? 0))}</span></div>
+              <div class="kv"><span>MCP ready / observed</span><span>${Number(status.codexTelemetry?.mcpSummary?.ready ?? 0)} / ${Number(status.codexTelemetry?.mcpSummary?.observed ?? 0)}</span></div>
+              <div class="kv"><span>Last received</span><span>${escapeHtml(formatTimestamp(receiver?.lastReceivedAt)) || "—"}</span></div>
+            </div>
+          </section>
+          <section class="ops-group">
+            <h3>State database</h3>
+            <div class="kv-list">
+              <div class="kv"><span>Initializations</span><span>${Number(sqlite?.init?.total ?? 0).toLocaleString()}</span></div>
+              <div class="kv"><span>Fallbacks</span><span>${Number(sqlite?.fallbacks?.total ?? 0).toLocaleString()}</span></div>
+              <div class="kv"><span>Init duration samples</span><span>${initSamples.toLocaleString()}</span></div>
+              <div class="kv"><span>Average init duration</span><span>${Math.round(avgInitDur)}ms</span></div>
+            </div>
+          </section>
+          <section class="ops-group">
+            <h3>Concurrency</h3>
+            <div class="kv-list">
+              <div class="kv"><span>Admission scope</span><span>${escapeHtml(concurrency.scope ?? "router-admitted-child-requests")}</span></div>
+              <div class="kv"><span>Per-session limit</span><span>${escapeHtml(String(perSessionLimit))}</span></div>
+              <div class="kv"><span>Active sessions</span><span>${Number(concurrency.activeSessions ?? 0)}</span></div>
+              <div class="kv"><span>In-flight requests</span><span>${inFlightRequests}</span></div>
+              <div class="kv"><span>Active subagents</span><span>${Number(concurrency.activeSubagentThreads ?? 0)}</span></div>
+              <div class="kv"><span>Denials</span><span>${Number(concurrency.denials ?? 0)}</span></div>
+              <div class="kv"><span>Denials by reason</span><span>${escapeHtml(formatDenialsByReason(concurrency.denialsByReason))}</span></div>
+              <div class="kv"><span>Last denial</span><span>${escapeHtml(formatLastDenial(concurrency.lastDenial))}</span></div>
+            </div>
+          </section>
+        `;
+      }
+
+      // Native metrics observed sub-panel
+      const metricsList = status.codexTelemetry?.metrics?.observed ?? [];
+      let totalExports = 0;
+      let totalPoints = 0;
+      for (const m of metricsList) {
+        totalExports += Number(m.exports ?? 0);
+        totalPoints += Number(m.dataPoints ?? 0);
+      }
+      syncPanel(document.getElementById("panel-native-metrics"), "Native metrics observed", `${metricsList.length} metrics · ${totalExports.toLocaleString()} exports`);
+
+      const metricsTbody = document.getElementById("native-metrics-tbody");
+      const metricsTfoot = document.getElementById("native-metrics-tfoot");
+      if (metricsTbody && metricsTfoot) {
+        if (!metricsList.length) {
+          metricsTbody.innerHTML = `<tr><td colspan="3" class="dim" style="text-align:center">No native metrics observed</td></tr>`;
+          metricsTfoot.innerHTML = "";
+        } else {
+          metricsTbody.innerHTML = metricsList.map(m => {
+            const exp = Number(m.exports ?? 0);
+            const dp = Number(m.dataPoints ?? 0);
+            return `
+            <tr>
+              <td><code>${escapeHtml(m.name)}</code></td>
+              <td>${exp.toLocaleString()}</td>
+              <td>${dp.toLocaleString()}</td>
+            </tr>
+          `;
+          }).join("");
+          metricsTfoot.innerHTML = `
+            <tr>
+              <th>Totals</th>
+              <td>${totalExports.toLocaleString()}</td>
+              <td>${totalPoints.toLocaleString()}</td>
+            </tr>
+          `;
+        }
+      }
+
+      // 8. Recent routing events
+      const events = status.recentEvents ?? [];
+      syncPanel(document.getElementById("panel-events"), "Recent routing events", `latest ${events.length} shown`);
+      const logEl = document.getElementById("recent-events-log");
+      if (logEl) {
+        if (!events.length) {
+          logEl.textContent = "No routing events yet.";
+        } else {
+          logEl.textContent = events.map(e => {
+            const ts = formatTimestamp(e.timestamp) || "—";
+            const req = (e.requestId ?? "-").padEnd(10);
+            const phase = (e.phase ?? "-").padEnd(9);
+            const target = (e.provider && e.model ? `${e.provider}/${e.model}` : (e.requestedModel ?? "-")).padEnd(35);
+            const outcome = e.outcome ?? e.failureClass ?? e.denialReason ?? e.spawnFailureReason ?? "-";
+            return `${ts}  ${req}  ${phase}  ${target}  ${outcome}`;
+          }).join("\n");
+        }
+      }
+    }
 
     async function refresh() {
       try {
@@ -883,9 +2473,13 @@
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         render(await response.json());
       } catch (error) {
-        document.querySelector("#error").textContent = `Unable to read router status: ${error.message}`;
+        const errorEl = document.getElementById("error");
+        if (errorEl) {
+          errorEl.textContent = `Unable to read router status: ${error.message}`;
+        }
       }
     }
+
     refresh();
     setInterval(refresh, 3000);
   </script>
