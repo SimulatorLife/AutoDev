@@ -60,6 +60,10 @@ command = "bash"
 args = ["-lc", "exec \"${CODEX_HOME:-$HOME/.codex}/hooks/run-autodev-mcp.sh\" cocoindex-code"]
 default_tools_approval_mode = "approve"
 
+[tools]
+web_search = true
+
+
 [[skills.config]]
 name = "orchestration"
 enabled = false

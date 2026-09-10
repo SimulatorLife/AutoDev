@@ -191,9 +191,17 @@ Every provider in `providerGroups.orchestrator` must declare
     Browser-capable bridge roles are configured independently of native Codex
     role TOML. The Claude bridge injects the pinned `playwright-mcp` command
     through an inline `--mcp-config` only for `browser-tester` and `smart`, and
-    denies the unneeded browser tools. Antigravity has one global MCP registry,
-    so the installer owns its `playwright` entry and pins it to the active
-    repository's `pnpm exec playwright-mcp` instead of `npx @latest`.
+    denies unneeded browser tools. Claude explicitly allows `WebSearch` and `WebFetch`
+    for research-capable roles (`docs-researcher`, `smart`, `orchestrator`).
+    Playwright is strictly reserved for UI and browser testing and is never exposed
+    to the orchestrator. Because Antigravity's MCP configuration is global, registering
+    Playwright for `agy` would expose it across all roles (including the orchestrator);
+    rather than falsely claiming per-role isolation, Playwright registration and
+    `browser-tester` routing are removed for Antigravity. Antigravity uses its native
+    `search_web` and `read_url_content` tools backed by pre-approved `read_url(*)` permissions.
+    Copilot explicitly allows `web_search` and `web_fetch` for research-capable roles
+    without granting blanket `allow-all` permissions. MiniMax preserves `web_search`
+    and `web_fetch` tool payloads in its proxy transformations.
 
   Copilot's CLI has no subagent tool, so it stays out of the orchestrator tier.
 - MiniMax is restored in the orchestrator fallback chain. Codex CLI defines

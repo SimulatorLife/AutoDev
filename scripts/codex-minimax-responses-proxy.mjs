@@ -62,12 +62,24 @@ function rewrite(value) {
   return result;
 }
 
+const WEB_RESEARCH_TOOL_NAMES = new Set([ "web_search", "web_fetch" ]);
+
+export function isWebResearchTool(tool) {
+  if (!tool || typeof tool !== "object") return false;
+  if (WEB_RESEARCH_TOOL_NAMES.has(tool.type) || WEB_RESEARCH_TOOL_NAMES.has(tool.name)) return true;
+  if (tool.function && typeof tool.function.name === "string" && WEB_RESEARCH_TOOL_NAMES.has(tool.function.name)) return true;
+  return false;
+}
+
 function getNamespacePrefix(ns) {
   const match = flattenedNamespaces.find(([namespace]) => namespace === ns);
   return match ? match[1] : `${ns}__`;
 }
 
 function flattenOutboundTool(tool, defaultNamespace = null) {
+  if (isWebResearchTool(tool)) {
+    return { ...tool };
+  }
   const ns = tool.namespace ?? defaultNamespace;
   const prefix = ns ? getNamespacePrefix(ns) : "";
 
@@ -145,7 +157,7 @@ function collectFreeformToolNames(payload, names = new Set()) {
   const visit = (tools) => {
     for (const tool of Array.isArray(tools) ? tools : []) {
       if (!tool || typeof tool !== "object") continue;
-      if (tool.type === "custom" && typeof tool.name === "string") names.add(tool.name);
+      if (tool.type === "custom" && typeof tool.name === "string" && !isWebResearchTool(tool)) names.add(tool.name);
       if (Array.isArray(tool.tools)) visit(tool.tools);
     }
   };
@@ -213,7 +225,7 @@ function createFreeformCoercion(freeformNames) {
   const coerced = new Map(); // item_id -> { source }
 
   const isFreeform = (item) =>
-    item?.type === "function_call" && typeof item.name === "string" && freeformNames.has(item.name);
+    item?.type === "function_call" && typeof item.name === "string" && freeformNames.has(item.name) && !isWebResearchTool(item);
 
   return function coerce(event) {
     if (!event || typeof event !== "object") return event;
@@ -286,7 +298,7 @@ export function coerceResponseBody(body, freeformNames) {
 
   let changed = false;
   const coercedOutput = output.map((item) => {
-    if (item?.type !== "function_call" || typeof item.name !== "string" || !freeformNames.has(item.name)) return item;
+    if (item?.type !== "function_call" || typeof item.name !== "string" || !freeformNames.has(item.name) || isWebResearchTool(item)) return item;
     const source = freeformInputFromArguments(item.arguments);
     if (source === null) return item;
     changed = true;

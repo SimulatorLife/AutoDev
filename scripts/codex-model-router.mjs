@@ -33,15 +33,19 @@ const STATE_FILE = process.env.CODEX_ROUTER_STATE_FILE ?? `${CODEX_HOME}/codex-r
 // against tests that send no Authorization header.
 let ROUTER_AUTH_TOKEN = process.env.CODEX_ROUTER_AUTH_TOKEN ?? "";
 const ROUTING_CONFIG_FILE = process.env.CODEX_ROUTER_CONFIG_FILE
-  ?? (existsSync(`${CODEX_HOME}/codex-model-routing.json`)
-    ? `${CODEX_HOME}/codex-model-routing.json`
-    : new URL('./codex/model-routing.json', import.meta.url).pathname);
+  ?? (existsSync(new URL('./codex/model-routing.json', import.meta.url).pathname)
+    ? new URL('./codex/model-routing.json', import.meta.url).pathname
+    : (existsSync(`${CODEX_HOME}/codex-model-routing.json`)
+      ? `${CODEX_HOME}/codex-model-routing.json`
+      : new URL('./codex/model-routing.json', import.meta.url).pathname));
 const ROLE_NAMES = ['default', 'docs-researcher', 'browser-tester', 'explorer', 'worker', 'validator', 'smart'];
 const ROUTING_CONFIG = JSON.parse(readFileSync(ROUTING_CONFIG_FILE, 'utf8'));
 const EXECUTION_CONTRACT_FILE = process.env.CODEX_EXECUTION_CONTRACT_FILE
-  ?? (existsSync(`${CODEX_HOME}/hooks/codex/execution-contract.json`)
-    ? `${CODEX_HOME}/hooks/codex/execution-contract.json`
-    : new URL('./codex/execution-contract.json', import.meta.url).pathname);
+  ?? (existsSync(new URL('./codex/execution-contract.json', import.meta.url).pathname)
+    ? new URL('./codex/execution-contract.json', import.meta.url).pathname
+    : (existsSync(`${CODEX_HOME}/hooks/codex/execution-contract.json`)
+      ? `${CODEX_HOME}/hooks/codex/execution-contract.json`
+      : new URL('./codex/execution-contract.json', import.meta.url).pathname));
 const EXECUTION_CONTRACT = JSON.parse(readFileSync(EXECUTION_CONTRACT_FILE, 'utf8'));
 const DEFAULT_ROUTES = [
   { provider: "claude", pattern: /^(sonnet|opus|haiku|claude-[A-Za-z0-9][A-Za-z0-9.-]*)$/, baseUrl: "http://127.0.0.1:4000/v1", healthUrl: "http://127.0.0.1:4000/health/liveliness", envKey: "LITELLM_API_KEY" },
@@ -1166,12 +1170,22 @@ function providerCapabilities(provider) {
   };
 }
 
+const OPTIONAL_ROLE_MCP = new Set(["openaiDeveloperDocs"]);
+
 function roleCapabilityRequirements(role) {
   const key = role === ORCHESTRATOR_AGENT_ROLE ? "orchestrator" : (typeof role === "string" && role.trim() ? role.trim().toLowerCase() : "default");
   const contract = EXECUTION_CONTRACT.roles?.[key] ?? EXECUTION_CONTRACT.roles?.default ?? {};
+  const webResearch = contract.webResearch && typeof contract.webResearch === "object"
+    ? {
+        search: contract.webResearch.search === true,
+        fetch: contract.webResearch.fetch === true,
+        optionalMcp: new Set(Array.isArray(contract.webResearch.optionalMcp) ? contract.webResearch.optionalMcp : []),
+      }
+    : { search: false, fetch: false, optionalMcp: new Set() };
   return {
     mcp: new Set(Array.isArray(contract.mcp) ? contract.mcp : []),
     skills: new Set(Array.isArray(contract.skills) ? contract.skills : []),
+    webResearch,
   };
 }
 
@@ -1179,7 +1193,7 @@ function missingProviderCapabilities(provider, role) {
   const requirements = roleCapabilityRequirements(role);
   const capabilities = providerCapabilities(provider);
   return {
-    mcp: [...requirements.mcp].filter((name) => !capabilities.mcp.includes(name)),
+    mcp: [...requirements.mcp].filter((name) => !OPTIONAL_ROLE_MCP.has(name) && !requirements.webResearch.optionalMcp.has(name) && !capabilities.mcp.includes(name)),
     skills: [...requirements.skills].filter((name) => !capabilities.skills.includes(name)),
   };
 }

@@ -48,16 +48,21 @@ launch and use them with `pnpm exec`. Other active repositories need to expose
 the same `lsp-mcp-server` and `playwright-mcp` commands through their package
 manager for the user-level MCP entries to work there. The `docs-researcher`
 role enables the OpenAI Developer Docs MCP and Codex's native `web_search`
-tool, which is the appropriate search/open/read path for authoritative websites.
+tool, which includes web fetching/opening and is the appropriate search/open/read
+path for authoritative websites. Do not add a separate Codex `web_fetch` tool.
 Its remote MCP entry explicitly sets `transport = "streamable_http"`; this is
 required by the installed Codex 0.153.x role loader even when `url` is present.
-The Playwright MCP remains for browser/UI testing roles and is disabled for
-`docs-researcher`. Provider bridges that run Claude Code receive the same pinned
-Playwright server through a per-turn inline `--mcp-config` for `browser-tester`
-and `smart`; the bridge denies the unneeded evaluate, upload, navigation-back,
-and unsafe code-execution tools rather than relying on mutable `~/.claude`
-settings. Antigravity has no per-turn MCP flag, so the installer updates its
-single global `playwright` entry to `pnpm exec playwright-mcp`.
+The Playwright MCP remains strictly for UI and browser testing roles and is disabled
+for `docs-researcher`, which must explicitly use web search/fetch tools and never Playwright.
+`smart` and `orchestrator` follow the web-research policy. Provider bridges that run
+Claude Code receive the pinned Playwright server through a per-turn inline `--mcp-config`
+only for `browser-tester` and `smart`; the bridge denies the unneeded evaluate, upload,
+navigation-back, and unsafe code-execution tools rather than relying on mutable `~/.claude`
+settings. Playwright is never exposed to the root orchestrator. Because Antigravity's
+MCP configuration is global, registering Playwright globally would expose it across all
+roles including the orchestrator; rather than falsely claiming per-role isolation, Playwright
+registration and `browser-tester` routing are removed for Antigravity. For documentation
+and web research, Antigravity uses its native `search_web` and `read_url_content` tools.
 
 The installer installs CocoIndex Code once at the user level with
 `pipx install 'cocoindex-code[full]==0.2.41'` when `ccc` is not already available. It
@@ -101,8 +106,9 @@ Headless subagents run noninteractively and cannot answer interactive permission
 prompts; if a required tool lacks pre-approval, the CLI auto-denies the call and
 halts the turn. The installer pre-approves required capabilities in
 `~/.gemini/antigravity-cli/settings.json` under `permissions.allow`:
-- Required MCP servers and subpaths: `cocoindex-code`, `lsp`, `playwright`,
+- Required MCP servers and subpaths: `cocoindex-code`, `lsp`,
   `openaiDeveloperDocs`, `autodev_spawn`, and their tool wildcards (`mcp(<name>/*)`).
+- Web research permissions: `read_url(*)` for headless document and URL inspection.
 - Exact and recursive read grants for shared configuration: `read_file(~/.agents)`
   plus `read_file(~/.agents/**)`, and the equivalent pair for `~/.codex`.
 - Scoped `read_file(<root>)` and `read_file(<root>/**)` grants for every

@@ -75,7 +75,6 @@ class LocalSetupTests(unittest.TestCase):
         fake_agy.write_text(f"""#!/usr/bin/env bash
 if [[ "${{1:-}}" == "mcp" && "${{2:-}}" == "list" ]]; then
   cat <<EOF
-playwright        stdio  enabled   pnpm exec playwright-mcp
 cocoindex-code    stdio  enabled   bash -lc exec "{codex_home_dir}/hooks/run-autodev-mcp.sh" cocoindex-code
 lsp               stdio  enabled   bash -lc exec "{codex_home_dir}/hooks/run-autodev-mcp.sh" lsp
 EOF
@@ -399,8 +398,7 @@ exit 0
         self.assertIn('permissions.setdefault("allow", [])', installer)
         self.assertIn('config.get("permissions", {}).get("allow", [])', installer)
         for grant in (
-            'mcp(playwright)',
-            'mcp(playwright/*)',
+            'read_url(*)',
             'mcp(openaiDeveloperDocs)',
             'mcp(openaiDeveloperDocs/*)',
             'mcp(autodev_spawn)',
@@ -445,8 +443,7 @@ exit 0
                 "mcp(cocoindex-code/search)",
                 "mcp(lsp)",
                 "mcp(lsp/*)",
-                "mcp(playwright)",
-                "mcp(playwright/*)",
+                "read_url(*)",
                 "mcp(openaiDeveloperDocs)",
                 "mcp(openaiDeveloperDocs/*)",
                 "mcp(autodev_spawn)",
@@ -524,9 +521,11 @@ exit 0
             self.assertNotEqual(check_missing_file.returncode, 0)
             self.assertIn("missing Antigravity CLI permission settings", check_missing_file.stdout)
 
-    def test_antigravity_installer_registers_the_pinned_playwright_mcp(self):
+    def test_antigravity_installer_removes_global_playwright_and_registers_web_reading(self):
         installer = INSTALLER_PATH.read_text()
-        self.assertIn('agy mcp add playwright pnpm exec playwright-mcp', installer)
+        self.assertIn('agy mcp remove playwright', installer)
+        self.assertNotIn('agy mcp add playwright', installer)
+        self.assertIn('"read_url(*)"', installer)
         self.assertIn("agy mcp add cocoindex-code bash -lc 'exec \"${CODEX_HOME:-$HOME/.codex}/hooks/run-autodev-mcp.sh\" cocoindex-code'", installer)
         self.assertIn("agy mcp add lsp bash -lc 'exec", installer)
         self.assertIn("agy mcp add openaiDeveloperDocs https://developers.openai.com/mcp", installer)
@@ -580,6 +579,8 @@ exit 0
         self.assertEqual(openai_docs["url"], "https://developers.openai.com/mcp")
         self.assertEqual(openai_docs["transport"], "streamable_http")
         self.assertTrue(role_config["tools"]["web_search"])
+        self.assertNotIn("web_fetch", role_config["tools"])
+        self.assertNotIn("web_research", role_config)
 
         # Browser automation is for UI testing/debugging, not the docs role's
         # normal web-research path. Explicitly disable the inherited server,
@@ -591,6 +592,8 @@ exit 0
         instructions = (REPO_ROOT / "scripts/codex/prompts/roles/docs-researcher.md").read_text()
         self.assertIn("native", instructions)
         self.assertIn("web-search tool", instructions)
+        self.assertIn("web-fetch tool", instructions)
+        self.assertIn("Never use Playwright", instructions)
         self.assertIn('sandbox_mode = "read-only"', (REPO_ROOT / "scripts/codex/agents/docs-researcher.toml").read_text())
 
     def test_user_level_lsp_server_and_role_skill_contract(self):
@@ -1228,6 +1231,25 @@ exit 0
                 denied = args[args.index("--disallowed-tools") + 1].split(",")
                 for tool in claude_bridge.PLAYWRIGHT_DISALLOWED_TOOLS:
                     self.assertIn(tool, denied)
+
+    def test_claude_bridge_explicitly_allows_web_research_tools_for_capable_roles(self):
+        for role in ("docs-researcher", "smart", "orchestrator"):
+            with self.subTest(role=role):
+                args = claude_bridge.claude_cli_args("prompt", "sonnet", "medium", role)
+                self.assertIn("--allowed-tools", args)
+                allowed = args[args.index("--allowed-tools") + 1].split(",")
+                self.assertEqual(set(allowed), {"WebSearch", "WebFetch"})
+
+        for role in ("browser-tester", "explorer", "worker", "validator", "default", None):
+            with self.subTest(role=role):
+                args = claude_bridge.claude_cli_args("prompt", "sonnet", "medium", role)
+                self.assertNotIn("--allowed-tools", args)
+
+    def test_claude_bridge_does_not_expose_playwright_to_orchestrator(self):
+        args = claude_bridge.claude_cli_args("prompt", "sonnet", "medium", "orchestrator")
+        if "--mcp-config" in args:
+            config = json.loads(args[args.index("--mcp-config") + 1])
+            self.assertNotIn("playwright", config.get("mcpServers", {}))
 
     def test_a_leaf_never_gets_the_delegation_shim(self):
         args = claude_bridge.claude_cli_args("prompt", "sonnet", "medium", "explorer", ".", "sess-1")
@@ -2171,6 +2193,7 @@ exit 0
                 "HOME": home,
                 "CODEX_HOME": codex_home,
                 "AUTODEV_SKIP_COCOINDEX_INSTALL": "1",
+                "AUTODEV_SKIP_LSP_INSTALL": "1",
                 "AUTODEV_SKIP_AGY_MCP": "1",
                 "AUTODEV_SKIP_COPILOT_MCP": "1",
                 "AUTODEV_SKIP_LAUNCHCTL": "1",
@@ -2201,6 +2224,12 @@ exit 0
         )
         self.assertEqual(result.returncode, 2)
         self.assertIn("use --materialize-only", result.stderr)
+
+    def test_installer_configures_agy_permissions_with_read_url_and_no_playwright(self):
+        installer = INSTALLER_PATH.read_text()
+        self.assertIn('"read_url(*)"', installer)
+        self.assertNotIn("check_agy_playwright_mcp", installer)
+        self.assertIn("agy mcp remove playwright", installer)
 
     def test_ensure_hooks_adopt_the_launchd_agent_rather_than_racing_it(self):
         # An ensure hook that unconditionally backgrounds its own copy creates a

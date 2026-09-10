@@ -85,6 +85,8 @@ PLAYWRIGHT_DISALLOWED_TOOLS = tuple(
         "browser_run_code_unsafe",
     )
 )
+RESEARCH_CAPABLE_ROLES = frozenset({"docs-researcher", "smart", "orchestrator"})
+CLAUDE_RESEARCH_ALLOWED_TOOLS = ("WebSearch", "WebFetch")
 
 
 # Provider limit vocabulary. These literals mirror
@@ -201,10 +203,10 @@ def model_metadata() -> dict[str, Any]:
         "max_context_window": 200000,
         "model_messages": {"instructions_template": "You are a bounded external-provider Codex agent."},
         "input_modalities": ["text"],
-        "experimental_supported_tools": [],
+        "experimental_supported_tools": ["web_search", "web_fetch"],
         "support_verbosity": False,
         "supports_parallel_tool_calls": False,
-        "supports_search_tool": False,
+        "supports_search_tool": True,
         "tool_mode": "code_mode_only",
         "truncation_policy": {"mode": "tokens", "limit": 10000},
         "use_responses_lite": True,
@@ -396,6 +398,10 @@ def resolve_agent_role(headers: Any) -> str | None:
 
 def is_orchestrator_role(role: Any) -> bool:
     return role == ORCHESTRATOR_AGENT_ROLE
+
+
+def is_research_role(role: Any) -> bool:
+    return bool(role and str(role).strip().lower() in RESEARCH_CAPABLE_ROLES)
 
 
 def bridge_instructions(role: Any) -> str:
@@ -963,6 +969,9 @@ def claude_cli_args(prompt: str, model: str, effort: str, agent_role: Any = None
     mcp_config = mcp_config_for_role(agent_role, spawn_session if shim_available else None)
     if mcp_config:
         subagent_boundary += ["--mcp-config", mcp_config]
+    allowed_boundary = []
+    if is_research_role(agent_role):
+        allowed_boundary = ["--allowed-tools", ",".join(CLAUDE_RESEARCH_ALLOWED_TOOLS)]
     return [
         CLI,
         "-p",
@@ -972,6 +981,7 @@ def claude_cli_args(prompt: str, model: str, effort: str, agent_role: Any = None
         "--effort",
         effort,
         *subagent_boundary,
+        *allowed_boundary,
         "--permission-mode",
         # The parent explicitly authorizes runtime diagnostics outside the
         # workspace. Role instructions remain read-only; this mode prevents

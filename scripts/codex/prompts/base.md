@@ -7,7 +7,8 @@ the file reader, search with the search tools, and change files with the edit
 tools rather than driving them through shell text processing. Use absolute
 paths. Read a file before editing it. Issue independent tool calls together
 rather than one at a time; only serialize calls whose inputs depend on an
-earlier result.
+earlier result. Use web search and fetch tools for website and documentation
+research. Keep Playwright strictly for UI and browser testing.
 
 ## Repository instructions
 

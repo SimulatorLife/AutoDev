@@ -225,7 +225,18 @@ test('the user-level MCP servers are self-sufficient, so no repository needs to 
       assert.match(block, /run-autodev-mcp\.sh/, server);
     }
     assert.match(block, /default_tools_approval_mode = "approve"/, server);
-    assert.match(block, /enabled = true/, server);
+    assert.match(block, server === 'playwright' ? /enabled = false/ : /enabled = true/, server);
+  }
+});
+
+test('root website research uses native search while Playwright stays role-scoped', async () => {
+  const config = await readFile(path.join(root, 'scripts', 'codex', 'config.toml'), 'utf8');
+  assert.match(config, /\[tools\][\s\S]*web_search = true/);
+  const playwright = config.slice(config.indexOf('[mcp_servers.playwright]')).split('\n\n')[0];
+  assert.match(playwright, /enabled = false/);
+  for (const role of ['docs-researcher', 'smart', 'orchestrator']) {
+    const source = await readFile(path.join(root, 'scripts', 'codex', 'agents', `${role}.toml`), 'utf8');
+    assert.match(source, /web_search = true/, role);
   }
 });
 
@@ -242,9 +253,19 @@ test('provider bridges explicitly expose code MCP capabilities', async () => {
   const copilot = await readFile(path.join(root, 'scripts', 'codex-copilot-cli-responses-proxy.mjs'), 'utf8');
   assert.match(copilot, /--allow-tool=cocoindex-code/);
   assert.match(copilot, /--allow-tool=lsp/);
+  assert.match(copilot, /--allow-tool=web_search/);
+  assert.match(copilot, /--allow-tool=web_fetch/);
   const claude = await readFile(path.join(root, 'scripts', 'codex-claude-cli-responses-proxy.py'), 'utf8');
   assert.match(claude, /cocoindex-code/);
   assert.match(claude, /_CODE_SEARCH_PROMPT/);
+  assert.match(claude, /WebSearch/);
+  assert.match(claude, /WebFetch/);
+  const antigravity = await readFile(path.join(root, 'scripts', 'codex-antigravity-cli-responses-proxy.mjs'), 'utf8');
+  assert.match(antigravity, /search_web/);
+  assert.match(antigravity, /read_url_content/);
+  const installer = await readFile(path.join(root, 'scripts', 'codex', 'install-codex-integration.sh'), 'utf8');
+  assert.match(installer, /read_url\(\*\)/);
+  assert.match(installer, /agy mcp remove playwright/);
 });
 
 test('provider CLI versions are pinned in one AutoDev manifest', async () => {

@@ -27,7 +27,12 @@
       "mcp": [
         "openaiDeveloperDocs"
       ],
-      "skills": []
+      "skills": [],
+      "webResearch": {
+        "search": true,
+        "fetch": true,
+        "optionalMcp": []
+      }
     },
     "explorer": {
       "kind": "leaf",
@@ -47,14 +52,18 @@
       "mcp": [
         "lsp",
         "cocoindex-code",
-        "playwright",
         "autodev_spawn"
       ],
       "skills": [
         "orchestration",
         "ccc",
         "lsp-mcp-server"
-      ]
+      ],
+      "webResearch": {
+        "search": true,
+        "fetch": true,
+        "optionalMcp": []
+      }
     },
     "smart": {
       "kind": "leaf",
@@ -68,7 +77,14 @@
       "skills": [
         "ccc",
         "lsp-mcp-server"
-      ]
+      ],
+      "webResearch": {
+        "search": true,
+        "fetch": true,
+        "optionalMcp": [
+          "playwright"
+        ]
+      }
     },
     "validator": {
       "kind": "leaf",

@@ -46,6 +46,11 @@ prevent_idle_sleep = true
 personality = true
 image_generation = false
 
+[tools]
+# Website research is a native Codex capability. Browser automation is not a
+# root-turn tool; browser-tester/smart role configs enable Playwright only when
+# their bounded UI-testing work requires it.
+web_search = true
 [model_providers.claude_code_subscription]
 name = "Claude Code OAuth subscription bridge"
 base_url = "http://127.0.0.1:4000/v1"
@@ -264,7 +269,7 @@ args = ["-lc", "exec \"${CODEX_HOME:-$HOME/.codex}/hooks/run-autodev-mcp.sh\" co
 default_tools_approval_mode = "approve"
 
 [mcp_servers.playwright]
-enabled = true
+enabled = false
 command = "bash"
 args = ["-lc", "exec \"${CODEX_HOME:-$HOME/.codex}/hooks/run-autodev-mcp.sh\" playwright"]
 default_tools_approval_mode = "approve"

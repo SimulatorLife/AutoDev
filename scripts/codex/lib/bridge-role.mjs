@@ -64,7 +64,10 @@ export function roleInstructions(role) {
     const rolePromptKey = ROLE_PROMPT_NAMES.has(requestedRolePrompt) ? requestedRolePrompt : "default";
     const rolePrompt = readFileSync(new URL(`${rolePromptKey}.md`, PROMPTS.roleDirectory), "utf8").trim();
     const tools = contract.mcp.length > 0 ? contract.mcp.join(", ") : "none declared";
-    cache.set(cacheKey, `${bootstrap}${canonical}${codeSearch}\n\n## Effective role contract\n\n${rolePrompt}\n\nExpected MCP/tool capabilities: ${tools}. If a required capability is unavailable, report that fact instead of silently substituting a different workflow.`);
+    const webResearch = contract.webResearch?.search && contract.webResearch?.fetch
+      ? " Website research is available through the provider's native search/fetch tools; use those for public documentation and URLs, never Playwright."
+      : "";
+    cache.set(cacheKey, `${bootstrap}${canonical}${codeSearch}\n\n## Effective role contract\n\n${rolePrompt}\n\nExpected MCP/tool capabilities: ${tools}.${webResearch} If a required capability is unavailable, report that fact instead of silently substituting a different workflow.`);
   }
   return cache.get(cacheKey);
 }

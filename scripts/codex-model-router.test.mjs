@@ -3,7 +3,7 @@ import { spawn } from "node:child_process";
 import { createServer } from "node:http";
 import { connect } from "node:net";
 import { existsSync, readFileSync } from "node:fs";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import test from "node:test";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -25,6 +25,7 @@ import {
   providerCapabilities,
   providerSupportsRole,
   missingProviderCapabilities,
+  roleCapabilityRequirements,
   decrementActiveRequests,
   downstreamHeaders,
   fallbackable,
@@ -4226,5 +4227,91 @@ test("end-to-end: unresolvable reasoning items dropped and tool call ids normali
     await new Promise((resolve) => upstream.close(resolve));
     globalThis.fetch = originalFetch;
     resetRouterTelemetry();
+  }
+});
+
+test("research roles request website tools without a provider routing capability gate", () => {
+  for (const role of ["docs-researcher", "smart", "orchestrator"]) {
+    const requirements = roleCapabilityRequirements(role);
+    assert.deepEqual(requirements.webResearch.search, true, `${role} search requirement`);
+    assert.deepEqual(requirements.webResearch.fetch, true, `${role} fetch requirement`);
+  }
+  for (const provider of ["codex", "claude", "antigravity", "copilot", "minimax"]) {
+    assert.equal("webResearch" in providerCapabilities(provider), false, `${provider} must not gate web research through routing metadata`);
+  }
+});
+
+test("orchestrator role contract does not require playwright", () => {
+  const requirements = roleCapabilityRequirements("orchestrator");
+  assert.ok(!requirements.mcp.has("playwright"), "orchestrator must not require playwright");
+  assert.equal(requirements.webResearch.search, true);
+  assert.equal(requirements.webResearch.fetch, true);
+});
+
+test("contract rendering fails when a research role is missing webResearch or has invalid configuration", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "render-contract-neg-"));
+  try {
+    const rolesDir = join(directory, "agents");
+    await mkdir(rolesDir, { recursive: true });
+    const srcDir = new URL("./codex/agents", import.meta.url).pathname;
+    const { readdirSync, copyFileSync } = await import("node:fs");
+    for (const file of readdirSync(srcDir)) {
+      if (file.endsWith(".toml")) {
+        copyFileSync(join(srcDir, file), join(rolesDir, file));
+      }
+    }
+    await writeFile(join(rolesDir, "docs-researcher.toml"), `
+name = "docs-researcher"
+sandbox_mode = "read-only"
+[mcp_servers.openaiDeveloperDocs]
+enabled = true
+url = "https://developers.openai.com/mcp"
+transport = "streamable_http"
+`);
+
+    const renderer = new URL("./codex/render-execution-contract.py", import.meta.url).pathname;
+    const rootConfig = new URL("./codex/config.toml", import.meta.url).pathname;
+    const contractPath = new URL("./codex/execution-contract.json", import.meta.url).pathname;
+    const outputPath = join(directory, "output.json");
+
+    const child = spawn("python3", [
+      renderer,
+      "--source-dir", rolesDir,
+      "--root-config", rootConfig,
+      "--contract", contractPath,
+      "--output", outputPath,
+    ], { stdio: ["ignore", "pipe", "pipe"] });
+
+    let stderr = "";
+    child.stderr.on("data", (chunk) => { stderr += chunk; });
+    const code = await new Promise((resolve) => child.on("close", resolve));
+    assert.notEqual(code, 0, "contract rendering should fail when docs-researcher lacks webResearch");
+    assert.match(stderr, /role 'docs-researcher' must declare webResearch/);
+
+    // Also verify an invalid native tools declaration fails.
+    await writeFile(join(rolesDir, "docs-researcher.toml"), `
+name = "docs-researcher"
+sandbox_mode = "read-only"
+[tools]
+web_search = "invalid-not-bool"
+[mcp_servers.openaiDeveloperDocs]
+enabled = true
+url = "https://developers.openai.com/mcp"
+transport = "streamable_http"
+`);
+    const child2 = spawn("python3", [
+      renderer,
+      "--source-dir", rolesDir,
+      "--root-config", rootConfig,
+      "--contract", contractPath,
+      "--output", outputPath,
+    ], { stdio: ["ignore", "pipe", "pipe"] });
+    let stderr2 = "";
+    child2.stderr.on("data", (chunk) => { stderr2 += chunk; });
+    const code2 = await new Promise((resolve) => child2.on("close", resolve));
+    assert.notEqual(code2, 0, "contract rendering should fail when web_search has an invalid type");
+    assert.match(stderr2, /tools\.web_search must be boolean/);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
   }
 });

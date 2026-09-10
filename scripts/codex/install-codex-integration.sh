@@ -629,25 +629,6 @@ check_python_language_server() {
   return 1
 }
 
-check_agy_playwright_mcp() {
-  if [[ "${AUTODEV_SKIP_AGY_MCP:-0}" == "1" ]]; then
-    printf 'skipping agy Playwright MCP check (AUTODEV_SKIP_AGY_MCP=1)\n'
-    return 0
-  fi
-  if ! command -v agy >/dev/null 2>&1; then
-    printf 'skipping agy Playwright MCP check (agy is not installed)\n'
-    return 0
-  fi
-  local listing
-  listing="$(agy mcp list 2>/dev/null || true)"
-  if grep -Eq '^playwright[[:space:]]+stdio[[:space:]]+enabled[[:space:]]+pnpm exec playwright-mcp[[:space:]]*$' <<<"$listing"; then
-    printf 'ok agy Playwright MCP (pinned pnpm executable)\n'
-    return 0
-  fi
-  printf 'missing-or-drifted agy Playwright MCP (expected pnpm exec playwright-mcp)\n'
-  return 1
-}
-
 check_agy_code_mcp() {
   if [[ "${AUTODEV_SKIP_AGY_MCP:-0}" == "1" ]]; then
     printf 'skipping agy code MCP check (AUTODEV_SKIP_AGY_MCP=1)\n'
@@ -707,8 +688,7 @@ required = [
     "mcp(cocoindex-code/search)",
     "mcp(lsp)",
     "mcp(lsp/*)",
-    "mcp(playwright)",
-    "mcp(playwright/*)",
+    "read_url(*)",
     "mcp(openaiDeveloperDocs)",
     "mcp(openaiDeveloperDocs/*)",
     "mcp(autodev_spawn)",
@@ -1101,9 +1081,6 @@ check_links() {
   if ! check_python_language_server; then
     failed=1
   fi
-  if ! check_agy_playwright_mcp; then
-    failed=1
-  fi
   if ! check_agy_code_mcp; then
     failed=1
   fi
@@ -1220,15 +1197,11 @@ register_agy_spawn_shim() {
     printf 'skipping agy MCP registration (agy is not installed)\n' >&2
     return 0
   fi
-  # agy has no per-invocation MCP config, so the browser role's server must be
-  # registered globally. Keep it on the same pinned package used by native
-  # Codex and Claude bridge turns; an npx @latest entry can fail on an offline
-  # host and silently deprives browser-tester children of their only browser.
-  if ! agy mcp add playwright pnpm exec playwright-mcp >/dev/null 2>&1; then
-    printf 'could not register the pinned agy Playwright MCP server\n' >&2
-    return 1
-  fi
-  printf 'ok agy Playwright MCP registered (playwright)\n' >&2
+  # Because Antigravity MCP configuration is global, registering Playwright
+  # exposes it across all roles (including orchestrator). Remove Playwright
+  # registration for agy to keep Playwright strictly UI-testing and avoid false
+  # per-role isolation claims.
+  agy mcp remove playwright >/dev/null 2>&1 || true
   # Antigravity has one global MCP registry rather than Codex's per-role
   # configuration. Register the same pinned code servers globally so
   # orchestrator and code-capable subagents receive the actual ccc and LSP
@@ -1293,8 +1266,7 @@ required = [
     "mcp(cocoindex-code/search)",
     "mcp(lsp)",
     "mcp(lsp/*)",
-    "mcp(playwright)",
-    "mcp(playwright/*)",
+    "read_url(*)",
     "mcp(openaiDeveloperDocs)",
     "mcp(openaiDeveloperDocs/*)",
     "mcp(autodev_spawn)",
@@ -1312,6 +1284,10 @@ for shared in (os.path.expanduser("~/.agents"), os.path.expanduser("~/.codex")):
     for grant in (f"read_file({shared})", f"read_file({shared}/**)"):
         if grant not in required:
             required.append(grant)
+
+for grant in ("mcp(playwright)", "mcp(playwright/*)"):
+    while grant in allow:
+        allow.remove(grant)
 
 for grant in required:
     if grant not in allow:
@@ -1490,8 +1466,8 @@ render_claude_skill_views
 link_one "$repo_root/scripts/codex/config.toml" "$codex_home/config.toml"
 link_one "$repo_root/scripts/codex/model-routing.json" "$codex_home/codex-model-routing.json"
 # The registration consumes the installed spawn shim, so it must happen after
-# runtime modules are materialized. The Playwright entry is registered in the
-# same pass for agy's global MCP registry.
+# runtime modules are materialized. agy permissions and skills are registered in
+# subsequent passes.
 if [[ "$materialize_only" == 0 ]] && ! register_agy_spawn_shim; then
   exit 1
 fi

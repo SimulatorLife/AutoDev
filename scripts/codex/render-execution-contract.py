@@ -19,7 +19,7 @@ MCP_ORDER = {"lsp": 0, "cocoindex-code": 1, "playwright": 2, "openaiDeveloperDoc
 SKILL_ORDER = {"orchestration": 0, "ccc": 1, "lsp-mcp-server": 2}
 
 
-def read_role(source: Path) -> tuple[str, list[str], list[str], bool]:
+def read_role(source: Path) -> tuple[str, list[str], list[str], bool, dict[str, bool] | None]:
     config = tomllib.loads(source.read_text(encoding="utf-8"))
     kind = "orchestrator" if any(line.strip() == "# role-kind: orchestrator" for line in source.read_text().splitlines()) else "leaf"
     mcp = [
@@ -34,7 +34,21 @@ def read_role(source: Path) -> tuple[str, list[str], list[str], bool]:
     ]
     mcp.sort(key=lambda name: (MCP_ORDER.get(name, 99), name))
     skills.sort(key=lambda name: (SKILL_ORDER.get(name, 99), name))
-    return kind, mcp, skills, config.get("sandbox_mode") == "read-only"
+
+    web_research = None
+    tools_config = config.get("tools")
+    if tools_config is not None:
+        if not isinstance(tools_config, dict):
+            raise RuntimeError(f"{source}: tools must be a table")
+        if "web_search" in tools_config and not isinstance(tools_config["web_search"], bool):
+            raise RuntimeError(f"{source}: tools.web_search must be boolean")
+        if tools_config.get("web_search") is True:
+            # Codex's web_search includes page fetching/opening; keep that
+            # provider-specific fact out of the native TOML and expose one
+            # provider-neutral role capability in the generated contract.
+            web_research = {"search": True, "fetch": True, "optionalMcp": []}
+
+    return kind, mcp, skills, config.get("sandbox_mode") == "read-only", web_research
 
 
 def render(source_dir: Path, root_config_path: Path, contract_path: Path) -> dict:
@@ -52,13 +66,27 @@ def render(source_dir: Path, root_config_path: Path, contract_path: Path) -> dic
     }
     roles = contract["roles"]
     for source in sorted(source_dir.glob("*.toml")):
-        kind, mcp, skills, read_only = read_role(source)
-        roles[source.stem] = {
+        kind, mcp, skills, read_only, web_research = read_role(source)
+        role_entry = {
             "kind": kind,
             "readOnly": read_only,
             "mcp": mcp,
             "skills": skills,
         }
+        if web_research is not None:
+            if source.stem == "smart":
+                web_research["optionalMcp"] = ["playwright"]
+            role_entry["webResearch"] = web_research
+        roles[source.stem] = role_entry
+
+    RESEARCH_ROLES = {"docs-researcher", "smart", "orchestrator"}
+    for role_name in RESEARCH_ROLES:
+        if role_name in roles:
+            wr = roles[role_name].get("webResearch")
+            if not wr or not wr.get("search") or not wr.get("fetch"):
+                raise RuntimeError(
+                    f"role '{role_name}' must declare webResearch with search and fetch enabled"
+                )
 
     if "orchestrator" not in roles:
         raise RuntimeError("role TOMLs must include the orchestrator capability declaration")

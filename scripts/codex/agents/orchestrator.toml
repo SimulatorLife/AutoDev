@@ -10,10 +10,15 @@ enabled = true
 enabled = true
 
 [mcp_servers.playwright]
-enabled = true
+enabled = false
+command = "bash"
+args = ["-lc", "exec \"${CODEX_HOME:-$HOME/.codex}/hooks/run-autodev-mcp.sh\" playwright"]
 
 [mcp_servers.autodev_spawn]
 enabled = true
+
+[tools]
+web_search = true
 
 [[skills.config]]
 name = "orchestration"

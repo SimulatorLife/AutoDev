@@ -393,10 +393,10 @@ function modelMetadata() {
     max_context_window: 1000000,
     model_messages: { instructions_template: "You are a bounded external-provider Codex agent." },
     input_modalities: [ "text" ],
-    experimental_supported_tools: [],
+    experimental_supported_tools: [ "web_search", "web_fetch" ],
     support_verbosity: false,
     supports_parallel_tool_calls: false,
-    supports_search_tool: false,
+    supports_search_tool: true,
     tool_mode: "code_mode_only",
     truncation_policy: { mode: "tokens", limit: 10000 },
     use_responses_lite: true,
@@ -558,6 +558,8 @@ function sseLine(eventName, body, sequenceNumber) {
   return `event: ${eventName}\ndata: ${JSON.stringify(payload)}\n\n`;
 }
 
+const ANTIGRAVITY_WEB_RESEARCH_TOOLS = new Set([ "search_web", "read_url_content" ]);
+
 function activityText(event) {
   if (event?.event !== "step_update" || !event.step_update) return "";
   const update = event.step_update;
@@ -566,6 +568,14 @@ function activityText(event) {
   const toolName = String(update.tool_name ?? update.tool_info?.name ?? "tool");
 
   if (stepType === "tool") {
+    if (toolName === "search_web") {
+      if (state === "ACTIVE") return "Antigravity is searching the web.";
+      if (state === "DONE") return "Antigravity finished searching the web.";
+    }
+    if (toolName === "read_url_content") {
+      if (state === "ACTIVE") return "Antigravity is reading web URL content.";
+      if (state === "DONE") return "Antigravity finished reading web URL content.";
+    }
     if (state === "ACTIVE") return `Antigravity is using ${toolName}.`;
     if (state === "DONE") return `Antigravity finished ${toolName}.`;
     return `Antigravity tool ${toolName}: ${state.toLowerCase()}.`;
@@ -819,6 +829,10 @@ async function handle(request, response) {
     if (!(error instanceof WorkspaceResolutionError)) throw error;
     console.error(`agy workspace resolution failed: ${error.message}`);
     sendJson(response, 400, { error: { type: "invalid_request_error", message: error.message } });
+    return;
+  }
+  if (agentRole === "browser-tester") {
+    sendJson(response, 400, { error: { type: "invalid_request_error", message: "Antigravity global MCP does not support browser-tester isolation; Playwright registration and browser-tester routing are removed for agy" } });
     return;
   }
   const prompt = promptFromInput(payload.input ?? "", composeProviderPrompt(agentRole, cwd));
@@ -1196,4 +1210,4 @@ if (IS_MAIN) {
   });
 }
 
-export { agyArgs, agyErrorDetails, agyFailureMessage, agyPermissionFailure, createSpawnTracker, decideCloseOnDelegation, isDelegationActive, modelEffort, promptFromInput, resolveEffort, resolveModel, spawnedChildren, subagentModel, updateDelegationState };
+export { ANTIGRAVITY_WEB_RESEARCH_TOOLS, agyArgs, agyErrorDetails, agyFailureMessage, agyPermissionFailure, createSpawnTracker, decideCloseOnDelegation, isDelegationActive, modelEffort, promptFromInput, resolveEffort, resolveModel, spawnedChildren, subagentModel, updateDelegationState };

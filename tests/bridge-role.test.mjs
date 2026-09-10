@@ -40,6 +40,8 @@ test("the execution contract preserves role-specific capabilities across bridge 
   assert.ok(roleContract("explorer").mcp.includes("lsp"));
   assert.ok(roleContract("browser-tester").mcp.includes("playwright"));
   assert.equal(roleContract("orchestrator").kind, "orchestrator");
+  assert.deepEqual(roleContract("orchestrator").webResearch, { search: true, fetch: true, optionalMcp: [] });
+  assert.deepEqual(roleContract("smart").webResearch, { search: true, fetch: true, optionalMcp: ["playwright"] });
   assert.deepEqual(roleContract("explorer").skills, ["ccc", "lsp-mcp-server"]);
   for (const contract of Object.values(EXECUTION_CONTRACT.roles)) {
     assert.equal("instructions" in contract, false, "role prose belongs to prompts/roles, not capability metadata");
@@ -195,4 +197,24 @@ test("the root delegation hook injects the same orchestrator prompt the bridges 
   // The policy text lives in one file; the hook must not carry its own copy.
   assert.doesNotMatch(hook, /ROOT ORCHESTRATOR POLICY/);
   assert.doesNotMatch(hook, /ROOT DELEGATION REQUIREMENT/);
+});
+
+test("web research policy and Playwright boundaries are enforced in role prompts", () => {
+  const docs = read("scripts/codex/prompts/roles/docs-researcher.md");
+  assert.match(docs, /web-search/i);
+  assert.match(docs, /web-fetch/i);
+  assert.match(docs, /never use playwright/i);
+
+  const smart = read("scripts/codex/prompts/roles/smart.md");
+  assert.match(smart, /web search and fetch tools/i);
+  assert.match(smart, /strictly for UI and browser testing/i);
+
+  const orchestrator = read("scripts/codex/prompts/roles/orchestrator.md");
+  assert.match(orchestrator, /web search and fetch tools/i);
+  assert.match(orchestrator, /strictly for delegated UI and browser testing/i);
+
+  const browserTester = read("scripts/codex/prompts/roles/browser-tester.md");
+  assert.match(browserTester, /Playwright is strictly for UI and browser testing/);
+  assert.match(browserTester, /do not invent a generic browser substitute/);
+  assert.match(browserTester, /Remain Playwright-only/);
 });

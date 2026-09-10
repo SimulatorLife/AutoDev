@@ -74,7 +74,6 @@
         "mcp": [
           "lsp",
           "cocoindex-code",
-          "playwright",
           "autodev_spawn"
         ],
         "skills": [
@@ -120,7 +119,6 @@
         "mcp": [
           "lsp",
           "cocoindex-code",
-          "playwright",
           "autodev_spawn"
         ],
         "skills": [
@@ -138,8 +136,7 @@
         "subagentSpawn": false,
         "mcp": [
           "lsp",
-          "cocoindex-code",
-          "playwright"
+          "cocoindex-code"
         ],
         "skills": [
           "ccc",

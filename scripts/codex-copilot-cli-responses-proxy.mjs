@@ -77,12 +77,19 @@ function toolActivityText(data) {
  * final answer and for the commentary/tool narration around it, so the parent
  * sees the turn progress instead of one silent block at the end.
  */
+const RESEARCH_CAPABLE_ROLES = new Set([ "docs-researcher", "smart", "orchestrator" ]);
+
+function isResearchRole(role) {
+  return typeof role === "string" && RESEARCH_CAPABLE_ROLES.has(role.trim().toLowerCase());
+}
+
 function runCopilot(prompt, model, cwd, onEvent, agentRole = null) {
   return new Promise((resolve, reject) => {
     const args = [ "--no-auto-update", "--no-color", "--output-format", "json", "--prompt", prompt ];
     const contract = roleContract(agentRole);
     if (contract.mcp.includes("cocoindex-code")) args.push("--allow-tool=cocoindex-code");
     if (contract.mcp.includes("lsp")) args.push("--allow-tool=lsp");
+    if (isResearchRole(agentRole)) args.push("--allow-tool=web_search", "--allow-tool=web_fetch");
     if (!contract.readOnly) args.splice(4, 0, "--allow-all-tools", "--allow-all-paths", "--allow-all-urls", "--no-ask-user");
     if (model && model !== "copilot" && model !== "auto") args.push("--model", model);
     const child = spawn(process.env.COPILOT_BIN ?? "copilot", args, { cwd, stdio: [ "ignore", "pipe", "pipe" ] });
@@ -348,4 +355,4 @@ if (IS_MAIN) {
   });
 }
 
-export { inputText };
+export { inputText, isResearchRole, runCopilot, RESEARCH_CAPABLE_ROLES };
