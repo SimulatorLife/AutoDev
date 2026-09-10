@@ -68,7 +68,26 @@ class LocalSetupTests(unittest.TestCase):
         )
 
     @staticmethod
-    def _run_installer(home_dir, codex_home_dir, *args):
+    def _create_mock_agy(home_dir, codex_home_dir):
+        bin_dir = Path(home_dir) / "bin"
+        bin_dir.mkdir(parents=True, exist_ok=True)
+        fake_agy = bin_dir / "agy"
+        fake_agy.write_text(f"""#!/usr/bin/env bash
+if [[ "${{1:-}}" == "mcp" && "${{2:-}}" == "list" ]]; then
+  cat <<EOF
+playwright        stdio  enabled   pnpm exec playwright-mcp
+cocoindex-code    stdio  enabled   bash -lc exec "{codex_home_dir}/hooks/run-autodev-mcp.sh" cocoindex-code
+lsp               stdio  enabled   bash -lc exec "{codex_home_dir}/hooks/run-autodev-mcp.sh" lsp
+EOF
+  exit 0
+fi
+exit 0
+""")
+        fake_agy.chmod(0o755)
+        return bin_dir
+
+    @staticmethod
+    def _run_installer(home_dir, codex_home_dir, *args, **extra_env):
         """Run scripts/codex/install-codex-integration.sh with isolated HOME/CODEX_HOME.
 
         Returns the completed subprocess.CompletedProcess so callers can
@@ -87,6 +106,7 @@ class LocalSetupTests(unittest.TestCase):
         # MCP registry; the production installer owns this registration.
         environment["AUTODEV_SKIP_AGY_MCP"] = "1"
         environment["AUTODEV_SKIP_COPILOT_MCP"] = "1"
+        environment.update(extra_env)
         return subprocess.run(
             ["bash", str(INSTALLER_PATH), *args],
             text=True,
@@ -385,11 +405,124 @@ class LocalSetupTests(unittest.TestCase):
             'mcp(openaiDeveloperDocs/*)',
             'mcp(autodev_spawn)',
             'mcp(autodev_spawn/*)',
+            "unsandboxed(pwd)",
+            "unsandboxed(pnpm test)",
+            "unsandboxed(python3 -m unittest discover -s tests -p 'test_*.py')",
         ):
             self.assertIn(grant, installer)
-        self.assertIn('f"read_file({read_root})"', installer)
-        self.assertNotIn('f"read_file({read_root}/**)"', installer)
+        self.assertIn('f"read_file({normalized})"', installer)
+        self.assertIn('f"read_file({normalized}/**)"', installer)
         self.assertNotIn('local config="$HOME/.gemini/config/config.json"', installer)
+        self.assertIn('AUTODEV_AGY_READ_ROOTS', installer)
+        self.assertIn('agy_read_roots', installer)
+        # AUTODEV_AGY_READ_ROOT (singular) was a transitional compatibility
+        # alias for the current AUTODEV_AGY_READ_ROOTS (plural) setting; no
+        # other script, test, or doc in the repo still references it, so the
+        # installer must not carry it as a legacy fallback.
+        self.assertNotIn('AUTODEV_AGY_READ_ROOT:-', installer)
+
+    def test_antigravity_permissions_defaults_to_repository_root(self):
+        with tempfile.TemporaryDirectory() as home, tempfile.TemporaryDirectory() as codex_home:
+            bin_dir = self._create_mock_agy(home, codex_home)
+            env_overrides = {
+                "AUTODEV_SKIP_AGY_MCP": "0",
+                "PATH": f"{bin_dir}:{os.environ.get('PATH', '')}",
+            }
+            run = self._run_installer(home, codex_home, **env_overrides)
+            self.assertEqual(run.returncode, 0, msg=f"installer failed:\nSTDOUT={run.stdout}\nSTDERR={run.stderr}")
+            settings_path = Path(home) / ".gemini/antigravity-cli/settings.json"
+            self.assertTrue(settings_path.is_file())
+            data = json.loads(settings_path.read_text())
+            allow = data.get("permissions", {}).get("allow", [])
+            self.assertIn(f"read_file({REPO_ROOT})", allow)
+            self.assertIn(f"read_file({REPO_ROOT}/**)", allow)
+            self.assertIn(f"read_file({Path(home) / '.agents'})", allow)
+            self.assertIn(f"read_file({Path(home) / '.agents'}/**)", allow)
+            self.assertIn(f"read_file({Path(home) / '.codex'})", allow)
+            self.assertIn(f"read_file({Path(home) / '.codex'}/**)", allow)
+            for mcp_grant in (
+                "mcp(cocoindex-code)",
+                "mcp(cocoindex-code/search)",
+                "mcp(lsp)",
+                "mcp(lsp/*)",
+                "mcp(playwright)",
+                "mcp(playwright/*)",
+                "mcp(openaiDeveloperDocs)",
+                "mcp(openaiDeveloperDocs/*)",
+                "mcp(autodev_spawn)",
+                "mcp(autodev_spawn/*)",
+                "unsandboxed(pwd)",
+                "unsandboxed(pnpm test)",
+                "unsandboxed(python3 -m unittest discover -s tests -p 'test_*.py')",
+            ):
+                self.assertIn(mcp_grant, allow)
+            self.assertNotIn("command(*)", allow)
+            check = self._run_installer(home, codex_home, "--check", **env_overrides)
+            self.assertEqual(check.returncode, 0, msg=f"--check failed:\nSTDOUT={check.stdout}\nSTDERR={check.stderr}")
+            self.assertIn("ok Antigravity CLI permission grants (MCP and read_file)", check.stdout)
+
+    def test_antigravity_permissions_supports_multiple_roots(self):
+        with tempfile.TemporaryDirectory() as home, tempfile.TemporaryDirectory() as codex_home, \
+             tempfile.TemporaryDirectory() as ws1, tempfile.TemporaryDirectory() as ws2:
+            bin_dir = self._create_mock_agy(home, codex_home)
+            roots_setting = f":{ws1}::{ws2}:{ws1}:"
+            env_overrides = {
+                "AUTODEV_SKIP_AGY_MCP": "0",
+                "PATH": f"{bin_dir}:{os.environ.get('PATH', '')}",
+                "AUTODEV_AGY_READ_ROOTS": roots_setting,
+            }
+            run = self._run_installer(home, codex_home, **env_overrides)
+            self.assertEqual(run.returncode, 0, msg=f"installer failed:\nSTDOUT={run.stdout}\nSTDERR={run.stderr}")
+            settings_path = Path(home) / ".gemini/antigravity-cli/settings.json"
+            self.assertTrue(settings_path.is_file())
+            data = json.loads(settings_path.read_text())
+            allow = data.get("permissions", {}).get("allow", [])
+            self.assertIn(f"read_file({ws1})", allow)
+            self.assertIn(f"read_file({ws1}/**)", allow)
+            self.assertIn(f"read_file({ws2})", allow)
+            self.assertIn(f"read_file({ws2}/**)", allow)
+            self.assertEqual(allow.count(f"read_file({ws1})"), 1)
+            self.assertEqual(allow.count(f"read_file({ws1}/**)"), 1)
+            self.assertIn(f"read_file({Path(home) / '.agents'})", allow)
+            self.assertIn(f"read_file({Path(home) / '.agents'}/**)", allow)
+            self.assertIn(f"read_file({Path(home) / '.codex'})", allow)
+            self.assertIn(f"read_file({Path(home) / '.codex'}/**)", allow)
+            check = self._run_installer(home, codex_home, "--check", **env_overrides)
+            self.assertEqual(check.returncode, 0, msg=f"--check failed:\nSTDOUT={check.stdout}\nSTDERR={check.stderr}")
+            self.assertIn("ok Antigravity CLI permission grants (MCP and read_file)", check.stdout)
+
+    def test_antigravity_permissions_check_detects_missing_permission(self):
+        with tempfile.TemporaryDirectory() as home, tempfile.TemporaryDirectory() as codex_home, \
+             tempfile.TemporaryDirectory() as ws1, tempfile.TemporaryDirectory() as ws2:
+            bin_dir = self._create_mock_agy(home, codex_home)
+            env_overrides = {
+                "AUTODEV_SKIP_AGY_MCP": "0",
+                "PATH": f"{bin_dir}:{os.environ.get('PATH', '')}",
+                "AUTODEV_AGY_READ_ROOTS": f"{ws1}:{ws2}",
+            }
+            run = self._run_installer(home, codex_home, **env_overrides)
+            self.assertEqual(run.returncode, 0)
+            settings_path = Path(home) / ".gemini/antigravity-cli/settings.json"
+
+            orig_content = settings_path.read_text()
+            data = json.loads(orig_content)
+            data["permissions"]["allow"] = [g for g in data["permissions"]["allow"] if g != f"read_file({ws2})"]
+            settings_path.write_text(json.dumps(data, indent=2))
+            check_missing_root = self._run_installer(home, codex_home, "--check", **env_overrides)
+            self.assertNotEqual(check_missing_root.returncode, 0)
+            self.assertIn(f"missing Antigravity CLI permission grants: read_file({ws2})", check_missing_root.stdout)
+
+            data = json.loads(orig_content)
+            data["permissions"]["allow"] = [g for g in data["permissions"]["allow"] if g != "mcp(lsp)"]
+            settings_path.write_text(json.dumps(data, indent=2))
+            check_missing_mcp = self._run_installer(home, codex_home, "--check", **env_overrides)
+            self.assertNotEqual(check_missing_mcp.returncode, 0)
+            self.assertIn("missing Antigravity CLI permission grants: mcp(lsp)", check_missing_mcp.stdout)
+
+            settings_path.unlink()
+            check_missing_file = self._run_installer(home, codex_home, "--check", **env_overrides)
+            self.assertNotEqual(check_missing_file.returncode, 0)
+            self.assertIn("missing Antigravity CLI permission settings", check_missing_file.stdout)
 
     def test_antigravity_installer_registers_the_pinned_playwright_mcp(self):
         installer = INSTALLER_PATH.read_text()

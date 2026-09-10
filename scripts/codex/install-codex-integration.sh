@@ -173,6 +173,36 @@ check_one() {
   local target="$2"
   [[ "$source" == /* && -L "$target" && "$(readlink "$target")" == "$source" ]]
 }
+# Resolve the list of filesystem roots the Antigravity CLI must be able to
+# read across headless subagent turns. The variable is colon-separated to
+# match the existing $PATH convention (one entry per workspace) and defaults
+# to the AutoDev repository root so a single-workspace install keeps
+# working without an environment override. Empty entries and duplicates are
+# stripped; callers iterate the result one root per line. Per-root grants
+# stay narrow (`read_file(<root>)` plus the recursive `read_file(<root>/**)`
+# needed to cover files nested under it) instead of graduating to
+# `command(*)` or global `--dangerously-skip-permissions`, because the
+# headless surface for read-only roles is bounded code-search navigation
+# rather than shell execution.
+agy_read_roots() {
+  local raw_roots="${AUTODEV_AGY_READ_ROOTS:-$repo_root}"
+  local entry seen=""
+  local IFS=:
+  set -f
+  for entry in $raw_roots; do
+    [[ -n "$entry" ]] || continue
+    case ":$seen:" in *":$entry:"*) continue ;; esac
+    seen="${seen:+$seen:}$entry"
+    printf "%s\n" "$entry"
+  done
+  set +f
+  # A user setting that produces only empty entries (e.g. "::" or ":") must
+  # not silently leave the permission grant empty: fall back to the
+  # repository root so --check still has something to validate.
+  if [[ -z "$seen" ]]; then
+    printf "%s\n" "$repo_root"
+  fi
+}
 
 render_launchagent() {
   local source="$1"
@@ -658,12 +688,17 @@ check_agy_code_mcp_permissions() {
     printf 'missing Antigravity CLI permission settings %s\n' "$config"
     return 1
   }
-  python3 - "$config" "$repo_root" <<'PY'
+  local roots=()
+  while IFS= read -r root; do
+    [[ -n "$root" ]] && roots+=("$root")
+  done < <(agy_read_roots)
+  python3 - "$config" "${roots[@]}" <<'PY'
 import json
 import os
 import sys
 
-path, workspace = sys.argv[1:]
+path = sys.argv[1]
+read_roots = sys.argv[2:]
 with open(path, encoding="utf-8") as stream:
     config = json.load(stream)
 allow = config.get("permissions", {}).get("allow", [])
@@ -678,10 +713,20 @@ required = [
     "mcp(openaiDeveloperDocs/*)",
     "mcp(autodev_spawn)",
     "mcp(autodev_spawn/*)",
-    f"read_file({workspace})",
-    f"read_file({os.path.expanduser('~/.agents')})",
-    f"read_file({os.path.expanduser('~/.codex')})",
+    "unsandboxed(pwd)",
+    "unsandboxed(pnpm test)",
+    "unsandboxed(python3 -m unittest discover -s tests -p 'test_*.py')",
 ]
+for root in read_roots:
+    normalized = os.path.abspath(os.path.expanduser(root))
+    for grant in (f"read_file({normalized})", f"read_file({normalized}/**)"):
+        if grant not in required:
+            required.append(grant)
+for shared in (os.path.expanduser("~/.agents"), os.path.expanduser("~/.codex")):
+    for grant in (f"read_file({shared})", f"read_file({shared}/**)"):
+        if grant not in required:
+            required.append(grant)
+
 missing = [grant for grant in required if grant not in allow]
 if missing:
     print("missing Antigravity CLI permission grants: " + ", ".join(missing))
@@ -1223,16 +1268,19 @@ grant_agy_code_mcp_permissions() {
     return 0
   fi
   local config="$agy_settings_file"
-  local read_root="${AUTODEV_AGY_READ_ROOT:-$repo_root}"
+  local roots=()
+  while IFS= read -r root; do
+    [[ -n "$root" ]] && roots+=("$root")
+  done < <(agy_read_roots)
   mkdir -p -- "$(dirname -- "$config")"
-  python3 - "$config" "$read_root" <<'PY'
+  python3 - "$config" "${roots[@]}" <<'PY'
 import json
 import os
 import sys
 import tempfile
 
 path = sys.argv[1]
-read_root = sys.argv[2]
+read_roots = sys.argv[2:]
 if os.path.isfile(path):
     with open(path, encoding="utf-8") as stream:
         config = json.load(stream)
@@ -1240,7 +1288,7 @@ else:
     config = {}
 permissions = config.setdefault("permissions", {})
 allow = permissions.setdefault("allow", [])
-for grant in (
+required = [
     "mcp(cocoindex-code)",
     "mcp(cocoindex-code/search)",
     "mcp(lsp)",
@@ -1251,12 +1299,24 @@ for grant in (
     "mcp(openaiDeveloperDocs/*)",
     "mcp(autodev_spawn)",
     "mcp(autodev_spawn/*)",
-    f"read_file({read_root})",
-    f"read_file({os.path.expanduser('~/.agents')})",
-    f"read_file({os.path.expanduser('~/.codex')})",
-):
+    "unsandboxed(pwd)",
+    "unsandboxed(pnpm test)",
+    "unsandboxed(python3 -m unittest discover -s tests -p 'test_*.py')",
+]
+for root in read_roots:
+    normalized = os.path.abspath(os.path.expanduser(root))
+    for grant in (f"read_file({normalized})", f"read_file({normalized}/**)"):
+        if grant not in required:
+            required.append(grant)
+for shared in (os.path.expanduser("~/.agents"), os.path.expanduser("~/.codex")):
+    for grant in (f"read_file({shared})", f"read_file({shared}/**)"):
+        if grant not in required:
+            required.append(grant)
+
+for grant in required:
     if grant not in allow:
         allow.append(grant)
+
 directory = os.path.dirname(path)
 fd, temporary = tempfile.mkstemp(prefix=".config.", suffix=".json", dir=directory)
 try:

@@ -249,10 +249,51 @@ test("Antigravity permission failures become structured diagnostics", () => {
     provider: "antigravity",
     role: "explorer",
     workspace: "/workspace",
+    requestId: null,
     code: "AGY_PERMISSION_DENIED",
     phase: "tool_permission",
     tool: "read_file",
   });
+
+  // The router-generated request id is what lets an AGY_PERMISSION_DENIED
+  // failure be correlated back to the router request that produced it,
+  // without carrying any prompt text.
+  assert.deepEqual(agyErrorDetails({
+    message: "permission denied",
+    failureCode: "AGY_PERMISSION_DENIED",
+    failurePhase: "tool_permission",
+    failureTool: "read_file",
+  }, "explorer", "/workspace", "req-abc123"), {
+    type: "AGY_PERMISSION_DENIED",
+    message: "permission denied",
+    provider: "antigravity",
+    role: "explorer",
+    workspace: "/workspace",
+    requestId: "req-abc123",
+    code: "AGY_PERMISSION_DENIED",
+    phase: "tool_permission",
+    tool: "read_file",
+  });
+});
+
+test("the router's request id reaches agyErrorDetails and logTurnEnd without any prompt content", () => {
+  // An AGY_PERMISSION_DENIED failure used to surface at the router as a bare
+  // `upstream_error`, with nothing in either the error body or the bridge log
+  // that could be matched back to the router request that produced it. The
+  // request id the router already issues on every request (the same header
+  // AgentEventReporter is authorized from) is what closes that gap -- it
+  // carries no prompt text, only an id the router itself assigned.
+  const source = read("scripts/codex-antigravity-cli-responses-proxy.mjs");
+  assert.match(source, /import \{ REQUEST_ID_HEADER, resolveAgentEventReporter \} from "\.\/codex\/lib\/agent-events\.mjs";/);
+  assert.match(source, /const requestId = headerValue\(request\.headers, REQUEST_ID_HEADER\);/);
+  // Both places agyErrorDetails is called for an upstream failure (the
+  // non-streaming 502 path and the stream-not-yet-started 429/503 path) pass
+  // it through.
+  const errorDetailsCallSites = [ ...source.matchAll(/agyErrorDetails\(error, agentRole, cwd, requestId\)/g) ];
+  assert.equal(errorDetailsCallSites.length, 2, "both agyErrorDetails call sites must thread the router request id");
+  // logTurnEnd names the request alongside the outcome, so a turn's end can be
+  // matched to the router's own log of the same request.
+  assert.match(source, /agy turn \$\{outcome\} after \$\{elapsed\(\)\} request=\$\{requestId \?\? "none"\}/);
 });
 
 test("Antigravity failures retain terminal status, exit details, and bounded stderr", () => {
@@ -298,6 +339,33 @@ test("the Antigravity bridge never hands agy a model and effort that conflict", 
   assert.equal(resolveModel("not a model id"), "gemini-3.8-flash-medium");
   assert.equal(resolveEffort({ reasoning: { effort: "xhigh" } }), "high");
   assert.equal(resolveEffort({}), "medium");
+});
+
+test("agyArgs sandboxes read-only roles instead of granting them permission bypass", () => {
+  // validator/explorer/docs-researcher/browser-tester are readOnly: true in
+  // the execution contract. A headless run of one of those roles still needs
+  // to get past agy's interactive permission gate -- but --dangerously-skip-permissions
+  // (or an operator granting command(*)) would hand it a write escalation its
+  // contract never authorizes. agy's own --sandbox flag runs the turn without
+  // prompting, inside terminal restrictions, instead of bypassing permissions,
+  // so a read-only role gets a headless run without gaining anything a
+  // write-capable role has.
+  for (const role of [ "validator", "explorer", "docs-researcher", "browser-tester" ]) {
+    const args = agyArgs("task", "claude-sonnet-4-6", "high", role);
+    assert.ok(args.includes("--sandbox"), `${role} (readOnly) must be sandboxed`);
+    assert.equal(args.includes("--dangerously-skip-permissions"), false, `${role} must never receive permission bypass`);
+  }
+
+  // Write-capable roles are unaffected: no --sandbox, and their existing
+  // AGY_SKIP_PERMISSIONS behavior is unchanged.
+  for (const role of [ "default", "orchestrator", "smart", "worker" ]) {
+    const args = agyArgs("task", "claude-sonnet-4-6", "high", role);
+    assert.equal(args.includes("--sandbox"), false, `${role} (write-capable) must not be sandboxed`);
+  }
+
+  // No role at all (null) must not be sandboxed either -- it resolves to the
+  // "default" contract, which is write-capable.
+  assert.equal(agyArgs("task", "claude-sonnet-4-6", "high", null).includes("--sandbox"), false);
 });
 
 test("the Antigravity bridge reports the subagents its own CLI spawns", () => {
@@ -486,6 +554,46 @@ test("a tool that is not the spawn tool is ignored entirely", async () => {
   assert.equal(reporter.results.length, 0);
 });
 
+test("a pending child's telemetry close cannot fire twice", async () => {
+  // The request handler's disconnect path and its normal-completion path both
+  // can reach flushSpawns for the same turn (a close event racing the
+  // response finishing). The Map-delete-on-close in createSpawnTracker is
+  // what has to make a second close a no-op instead of a second report.
+  const [ active ] = AGY_INVOKE_SUBAGENT_STEPS;
+  const reporter = recordingReporter();
+  const tracker = createSpawnTracker(reporter);
+  tracker.observeSpawnStep(active);
+  tracker.flushSpawns("success");
+  assert.equal(reporter.results.length, 1);
+  assert.equal(tracker.openSpawnCount(), 0);
+  tracker.flushSpawns("success");
+  assert.equal(reporter.results.length, 1, "closing an already-closed spawn must not report a second time");
+});
+
+test("pending-child tracking works even when no AgentEventReporter exists, but reports nothing", async () => {
+  // resolveAgentEventReporter returns null whenever the router's telemetry
+  // headers are absent (or the caller is not the router). Losing pending-child
+  // tracking in that case is exactly what let the bridge kill agy mid-delegation
+  // with no explanation, so the tracker must still recognize agy's own spawn
+  // tool without a reporter -- while still sending no telemetry anywhere, since
+  // nothing authorized a report.
+  const [ active, done ] = AGY_INVOKE_SUBAGENT_STEPS;
+  const tracker = createSpawnTracker(null);
+  tracker.observeSpawnStep(active);
+  assert.equal(tracker.openSpawnCount(), 1, "agy's own spawn tool name is recognized without a reporter");
+  tracker.observeSpawnStep(done);
+  assert.equal(tracker.openSpawnCount(), 1, "DONE still does not close the child without a reporter");
+  tracker.flushSpawns("success");
+  assert.equal(tracker.openSpawnCount(), 0);
+
+  // A hand-off failure (ERROR/CANCELLED) still closes immediately without a
+  // reporter, exactly as it does with one.
+  const failed = createSpawnTracker(null);
+  failed.observeSpawnStep(active);
+  failed.observeSpawnStep({ ...active, state: "ERROR" });
+  assert.equal(failed.openSpawnCount(), 0);
+});
+
 test("a child is identified by agy's own conversation id, not its position", () => {
   // agy puts a `conversation_id` on every batch entry and repeats it on the
   // DONE step for the same child. Pairing the open with the close by position
@@ -568,6 +676,43 @@ test("agy's own in-CLI spawns are still reported, because they cannot be denied"
   const source = read("scripts/codex-antigravity-cli-responses-proxy.mjs");
   assert.match(source, /createSpawnTracker\(agentEvents\)/);
   assert.match(source, /observeSpawnStep\(event\.step_update \?\? \{\}\)/);
+});
+
+test("pending children from the spawn tracker gate the bridge's disconnect kill and heartbeat", () => {
+  // invoke_subagent's own step closes (ACTIVE -> DONE) as soon as the
+  // hand-off succeeds, long before the children it dispatched finish. If the
+  // close/heartbeat decisions look only at that step's activeTool, a
+  // disconnect arriving after DONE reads as an ordinary idle turn and kills
+  // agy out from under still-running children. These assertions pin the
+  // wiring that folds the spawn tracker's openSpawnCount() into the
+  // delegation state both decisions read.
+  const source = read("scripts/codex-antigravity-cli-responses-proxy.mjs");
+  assert.match(source, /pendingChildren: 0,/);
+  assert.match(source, /delegation\.pendingChildren = openSpawnCount\(\);/);
+  assert.match(source, /function isDelegationActive\(delegation\)/);
+  assert.match(source, /return Number\(delegation\.pendingChildren\) > 0;/);
+  // Both the close/error decision and the heartbeat gate read that combined
+  // signal, not activeTool alone.
+  assert.match(source, /if \(isDelegationActive\(delegation\)\) \{/);
+  assert.match(source, /if \(!isDelegationActive\(delegation\) \|\| !streamStarted \|\| !isWritable\(\)\) return;/);
+  // The heartbeat only stops once the tracker agrees no dispatched child is
+  // still open -- not merely because the dispatch step itself closed.
+  assert.match(source, /if \(transition\.kind === "exited" && !isDelegationActive\(delegation\)\) stopDelegationHeartbeat\(\);/);
+
+  // Telemetry reporting still requires a router-authorized reporter, but
+  // recognizing agy's own spawn tool for lifecycle tracking does not -- that
+  // is what keeps the kill decision correct when the router sent no
+  // telemetry headers at all.
+  assert.match(source, /const ANTIGRAVITY_SPAWN_TOOL_NAMES = new Set\(\[ "invoke_subagent" \]\);/);
+  assert.match(source, /function isSpawnToolName\(agentEvents, toolName\) \{/);
+  assert.match(source, /if \(agentEvents\) return agentEvents\.isSpawnTool\(toolName\);/);
+  assert.match(source, /isSpawnToolName\(agentEvents, name\)/);
+
+  // A child closing deletes it from the tracker's own map, which is what
+  // makes closing it a second time (a stray flush on another exit path) a
+  // no-op instead of a second telemetry post.
+  assert.match(source, /if \(agentEvents\) void agentEvents\.reportResults\(/);
+  assert.match(source, /if \(agentEvents\) void agentEvents\.reportSpawns\(/);
 });
 
 test("the shim tool is not counted as a bridge-native spawn", () => {

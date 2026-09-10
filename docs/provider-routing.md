@@ -95,7 +95,10 @@ logs, then classify the first failing boundary:
   approve its read tools without prompting, the CLI reports that a tool such as
   `read_file` was auto-denied and the turn stops. This is a host/provider
   permission configuration problem; do not weaken the read-only contract to hide
-  it.
+  it. Configure `AUTODEV_AGY_READ_ROOTS` as a colon-separated list of absolute
+  workspace roots before installation when more than the AutoDev repository
+  needs to be readable. The installer grants each root recursively, but it does
+  not grant `command(*)`; validation commands remain explicitly scoped.
 - **Workspace resolution:** bridge requests must carry structured workspace
   metadata (or an explicit `CODEX_PROJECT_ROOT`). The bridge fails closed rather
   than taking a repository path from task prose. Invalid requests are rejected
@@ -131,6 +134,17 @@ a closure-scoped state object and routes `response.on("close")` and
 distinguishes the two cases by name (`agy turn aborted-delegation` vs.
 `agy turn aborted`); the truncation notice carries the new reason to any
 future re-attach path.
+
+The delegator step is not the child lifetime. `invoke_subagent` reports `DONE`
+when its hand-off completes, while the child continues in the background and
+agy may report that the root agent is waiting for background tasks. The bridge
+therefore keeps a pending-child count separate from the active step: its
+heartbeat continues while that count is nonzero, and a client disconnect does
+not SIGTERM agy until the parent turn settles. This prevents the stream-idle or
+15-minute upstream timeout from killing the process that owns still-running
+children. A launchd line naming `agy turn aborted-delegation` confirms this
+protected path; `agy turn aborted` means no active or pending delegation was
+observed.
 
 Adding a new reason is a small but cross-cutting change: the JS-side
 `INCOMPLETE_REASON_*` constant in `provider-limits.mjs`, the matching Python

@@ -37,7 +37,7 @@ import { resolveCwd, WorkspaceResolutionError } from "./codex/lib/resolve-worksp
 import { composeProviderPrompt, isOrchestratorRole, resolveAgentRole } from "./codex/lib/bridge-role.mjs";
 import { roleContract } from "./codex/lib/execution-contract.mjs";
 import { classifyCliLimit, INCOMPLETE_REASON_CLIENT_DISCONNECTED, INCOMPLETE_REASON_INTERRUPTED, INCOMPLETE_REASON_PROVIDER_LIMIT, limitPayload, limitResponseHeaders, retryAfterSecondsFromLimit, terminalIncompleteEvents } from "./codex/lib/provider-limits.mjs";
-import { resolveAgentEventReporter } from "./codex/lib/agent-events.mjs";
+import { REQUEST_ID_HEADER, resolveAgentEventReporter } from "./codex/lib/agent-events.mjs";
 import { SpawnSessionRegistry } from "./codex/lib/bridge-spawn-session.mjs";
 import { buildSpawnScript, execToolCallSseEvents, mintCallId, mintCallItemId } from "./codex/lib/codex-spawn-tools.mjs";
 
@@ -179,6 +179,23 @@ function shapeOnly(value, depth = 0) {
   return Object.fromEntries(Object.entries(value).map(([ key, entry ]) => [ key, shapeOnly(entry, depth + 1) ]));
 }
 
+// agy's own name for its batch delegation tool. Reporting a spawn to the
+// router needs the router's headers -- somewhere to post, and a request id to
+// correlate the report -- so a caller that is not the router, or a header
+// that failed to propagate through an intermediary, correctly gets no
+// telemetry. But the delegation *lifecycle* this bridge tracks locally (not
+// killing agy while a child it dispatched is still running) only needs to
+// recognize the step as a spawn, not to report it anywhere. Falling back to
+// agy's own tool name keeps that recognition working even with no reporter,
+// without granting the caller anything a header would: nothing is ever
+// posted to the router unless resolveAgentEventReporter actually authorized
+// it, so this does not weaken the router/caller boundary.
+const ANTIGRAVITY_SPAWN_TOOL_NAMES = new Set([ "invoke_subagent" ]);
+function isSpawnToolName(agentEvents, toolName) {
+  if (agentEvents) return agentEvents.isSpawnTool(toolName);
+  return ANTIGRAVITY_SPAWN_TOOL_NAMES.has(toolName);
+}
+
 /**
  * Tracks the subagents one agy turn dispatches, so each is reported once when it
  * starts and once when it ends.
@@ -186,6 +203,12 @@ function shapeOnly(value, depth = 0) {
  * Extracted from the request handler because the lifecycle below is subtle and
  * was wrong: it treated the dispatch step's completion as the child's, which is
  * exactly the kind of mistake that needs a test able to reach it.
+ *
+ * `openSpawnCount()` is also the source of truth for pending children outside
+ * this module: the request handler folds it into its delegation state so a
+ * disconnect or heartbeat decision made while children are still open does
+ * not depend on the dispatch step (which closes on `DONE`, long before its
+ * children do) being the only signal of delegation in flight.
  */
 function createSpawnTracker(agentEvents) {
   const reportedSpawns = new Set();
@@ -213,7 +236,7 @@ function createSpawnTracker(agentEvents) {
   // the first; ACTIVE alone still keeps those from being counted twice.
   const reportSpawns = (update) => {
     const toolName = String(update?.tool_name ?? update?.tool_info?.name ?? "");
-    if (!agentEvents?.isSpawnTool(toolName)) return;
+    if (!isSpawnToolName(agentEvents, toolName)) return;
     if (String(update.state ?? "").toUpperCase() !== "ACTIVE") return;
     if (Number.isFinite(update.step_index)) {
       if (reportedSpawns.has(update.step_index)) return;
@@ -223,13 +246,20 @@ function createSpawnTracker(agentEvents) {
     const children = spawnedChildren(update);
     console.error(`agy spawn tool=${toolName} children=${children.length} roles=${children.map(({ role }) => role ?? "unattributed").join(",")}`);
     openSpawns.set(Number.isFinite(update.step_index) ? update.step_index : children[ 0 ].id, { tool: toolName, children, startedAt: Date.now() });
-    void agentEvents.reportSpawns({ tool: toolName, children });
+    // Telemetry needs a reporter the router actually authorized; pending-child
+    // tracking above does not, and must happen whether or not one exists.
+    if (agentEvents) void agentEvents.reportSpawns({ tool: toolName, children });
   };
+  // Deleting the map entry is what makes a close idempotent: a key already
+  // closed (by this or the flush path) has nothing left to delete, so a
+  // second attempt to close the same spawn -- from a stray duplicate event,
+  // or from flushSpawns running after an individual close already ran -- is a
+  // no-op rather than a second telemetry post or a second decrement.
   const closeSpawn = (key, outcome) => {
     const open = openSpawns.get(key);
     if (!open) return;
     openSpawns.delete(key);
-    void agentEvents.reportResults({ tool: open.tool, children: open.children, outcome, durationMs: Date.now() - open.startedAt });
+    if (agentEvents) void agentEvents.reportResults({ tool: open.tool, children: open.children, outcome, durationMs: Date.now() - open.startedAt });
   };
   // A dispatch step reaching a terminal state settles the *dispatch*, not the
   // children. `DONE` means agy handed the work off successfully and the child
@@ -238,7 +268,7 @@ function createSpawnTracker(agentEvents) {
   // was never dispatched has no runtime to bound -- that one closes here.
   const reportSpawnResults = (update) => {
     const toolName = String(update?.tool_name ?? update?.tool_info?.name ?? "");
-    if (!agentEvents?.isSpawnTool(toolName)) return;
+    if (!isSpawnToolName(agentEvents, toolName)) return;
     const state = String(update.state ?? "").toUpperCase();
     if (!state || state === "ACTIVE" || state === "DONE" || !Number.isFinite(update.step_index)) return;
     closeSpawn(update.step_index, "failure");
@@ -304,15 +334,41 @@ function updateDelegationState(delegation, update, isSpawnTool) {
 }
 
 /**
+ * True while agy is either inside a delegator step or still has children the
+ * spawn tracker has not closed. `invoke_subagent` hands work to children and
+ * reports its own step `DONE` immediately -- the dispatch finished, not the
+ * work -- so `activeTool` alone goes false long before the children do.
+ * `pendingChildren` is expected to be kept in sync with the spawn tracker's
+ * `openSpawnCount()` by the caller; this function only reads it.
+ */
+function isDelegationActive(delegation) {
+  if (!delegation || typeof delegation !== "object") return false;
+  if (delegation.activeTool) return true;
+  return Number(delegation.pendingChildren) > 0;
+}
+
+/**
  * Decide what a response.on("close") / response.on("error") handler should
  * do given the current delegation tracker. Pure helper so the close handler
  * and tests share one decision point.
+ *
+ * `kill: false` while EITHER a delegator step is active OR children it
+ * dispatched are still open, so a turn that has moved past its
+ * `invoke_subagent` step -- ACTIVE -> DONE closes the dispatch, not the
+ * children -- is not mistaken for an ordinary idle turn while those children
+ * are still running. An ordinary disconnected turn -- no delegator ever ran,
+ * or every child it dispatched has already closed -- still gets killed.
  */
 function decideCloseOnDelegation(delegation) {
-  if (delegation?.activeTool) {
-    return { kill: false, reason: "client_disconnected", tool: delegation.activeTool };
+  if (isDelegationActive(delegation)) {
+    return {
+      kill: false,
+      reason: "client_disconnected",
+      tool: delegation?.activeTool ?? null,
+      pendingChildren: Number(delegation?.pendingChildren) || 0,
+    };
   }
-  return { kill: true, reason: "provider_interrupted", tool: null };
+  return { kill: true, reason: "provider_interrupted", tool: null, pendingChildren: 0 };
 }
 function modelMetadata() {
   return {
@@ -546,11 +602,24 @@ function agyEnvironment(spawnSession) {
 }
 
 function agyArgs(prompt, model, effort, agentRole = null) {
-  const permissionArgs = AGY_SKIP_PERMISSIONS === "true" && !roleContract(agentRole).readOnly ? [ "--dangerously-skip-permissions" ] : [];
+  const readOnly = roleContract(agentRole).readOnly;
+  const permissionArgs = AGY_SKIP_PERMISSIONS === "true" && !readOnly ? [ "--dangerously-skip-permissions" ] : [];
+  // A read-only role (validator, explorer, ...) never needs
+  // --dangerously-skip-permissions -- its contract grants it no writes to
+  // approve -- but leaving it on agy's interactive permission gate means a
+  // headless run either hangs on a prompt nothing will ever answer, or has
+  // to be started with command(*) / --dangerously-skip-permissions granted
+  // anyway, which is exactly the write escalation the contract is trying to
+  // keep it away from. `--sandbox` is agy's own terminal-restriction mode:
+  // it runs the turn without asking, but inside restrictions instead of with
+  // permissions bypassed, so a read-only role gets a headless run without
+  // gaining anything a write-capable role has. Write-capable roles are
+  // unaffected; they keep whatever AGY_SKIP_PERMISSIONS already decided.
+  const sandboxArgs = readOnly ? [ "--sandbox" ] : [];
   // Only pass --effort when the model id does not already fix it; see
   // MODEL_EFFORT_SUFFIX.
   const effortArgs = modelEffort(model) ? [] : [ "--effort", effort ];
-  return [ "-p", prompt, "--model", model, ...effortArgs, "--mode", AGY_MODE, ...permissionArgs, "--output-format", "stream-json", "--print-timeout", PRINT_TIMEOUT ];
+  return [ "-p", prompt, "--model", model, ...effortArgs, "--mode", AGY_MODE, ...permissionArgs, ...sandboxArgs, "--output-format", "stream-json", "--print-timeout", PRINT_TIMEOUT ];
 }
 
 function runAgy(prompt, model, effort, cwd, onEvent, spawnSession = null, agentRole = null) {
@@ -643,13 +712,21 @@ async function readJsonBody(request) {
   try { return JSON.parse(body); } catch { return null; }
 }
 
-function agyErrorDetails(error, role, workspace) {
+// The router already knows role/workspace for this request -- it chose both
+// before routing here -- but has no way to correlate a failure this bridge
+// reports back to the request it issued, short of diffing timestamps. The
+// router-generated request id already travels on every router-issued request
+// as a header (the same one AgentEventReporter authorizes telemetry from), so
+// echoing it back costs nothing new to plumb and nothing that was not already
+// there: no prompt text, just the identity the router itself assigned.
+function agyErrorDetails(error, role, workspace, requestId = null) {
   const details = {
     type: error?.failureCode ?? "upstream_error",
     message: error?.message ?? String(error),
     provider: "antigravity",
     role: role ?? "default",
     workspace,
+    requestId: requestId ?? null,
   };
   if (error?.failureCode) {
     details.code = error.failureCode;
@@ -729,7 +806,12 @@ async function handle(request, response) {
   const sessionHeader = headerValue(request.headers, "x-autodev-session-id");
   const sessionScope = headerValue(request.headers, "x-autodev-session-scope");
   const spawnSession = SpawnSessionRegistry.canHold(sessionHeader, sessionScope) ? sessionHeader : null;
-  const { observeSpawnStep, flushSpawns } = createSpawnTracker(agentEvents);
+  // The router's own correlation id for this request. It already travels on
+  // every router-issued call (AgentEventReporter is authorized from the same
+  // header) so a failure this bridge reports back can be matched to the
+  // router request that produced it without carrying any prompt content.
+  const requestId = headerValue(request.headers, REQUEST_ID_HEADER);
+  const { observeSpawnStep, flushSpawns, openSpawnCount } = createSpawnTracker(agentEvents);
   let cwd;
   try {
     cwd = resolveCwd(payload, request.headers, PROJECT_ROOT);
@@ -751,10 +833,12 @@ async function handle(request, response) {
   // A turn logged its start and nothing else, so a failed one left only the
   // step lines that happened to precede it -- the reason it died reached the
   // router as an HTTP status and was never written down anywhere. Every exit
-  // from here on names itself and how long it took.
+  // from here on names itself and how long it took. The request id rides
+  // along so this line can be matched to the router's own log of the same
+  // request without exposing anything the router did not already assign.
   const turnStartedAt = Date.now();
   const elapsed = () => `${((Date.now() - turnStartedAt) / 1000).toFixed(1)}s`;
-  const logTurnEnd = (outcome, detail = "") => console.error(`agy turn ${outcome} after ${elapsed()}${detail ? `: ${detail}` : ""}`);
+  const logTurnEnd = (outcome, detail = "") => console.error(`agy turn ${outcome} after ${elapsed()} request=${requestId ?? "none"}${detail ? `: ${detail}` : ""}`);
 
   if (!payload.stream) {
     try {
@@ -779,7 +863,7 @@ async function handle(request, response) {
       flushSpawns("failure");
       if (spawnSession) spawnSessions.close(spawnSession);
       logTurnEnd("failed", error.message ?? String(error));
-      sendJson(response, 502, { error: agyErrorDetails(error, agentRole, cwd) });
+      sendJson(response, 502, { error: agyErrorDetails(error, agentRole, cwd, requestId) });
     }
     return;
   }
@@ -839,18 +923,27 @@ async function handle(request, response) {
   // Set once the turn has produced its final event, so the close that always
   // follows a completed stream is not reported as the client hanging up.
   let turnSettled = false;
-  // Tracks the most recent spawn-step tool the bridge saw from agy. Active
-  // spawn steps are the dangerous case: the parent agy process is waiting for
-  // its children, the bridge's SSE stream is idle (only keep-alives), and any
-  // of the upstream idle / wall-clock ceilings will close the connection.
-  // Killing agy in that window also kills the children and strands any work
-  // they had buffered, so we let agy run to its PRINT_TIMEOUT instead and
-  // surface the cause as INCOMPLETE_REASON_CLIENT_DISCONNECTED. The launchd
-  // log distinguishes the two cases by name.
+  // Tracks the most recent spawn-step tool the bridge saw from agy, and how
+  // many of the children it dispatched the spawn tracker still has open.
+  // Active spawn steps and open children are both the dangerous case: the
+  // parent agy process is waiting on work the bridge's SSE stream cannot see
+  // (only keep-alives), and any of the upstream idle / wall-clock ceilings
+  // will close the connection. `activeTool` alone is not enough to detect
+  // this: `invoke_subagent` reports its own step `DONE` as soon as the
+  // hand-off succeeds, long before the children it dispatched finish, so
+  // `pendingChildren` -- kept in sync with the spawn tracker's
+  // `openSpawnCount()` below -- is what keeps this true for the rest of the
+  // children's run. Killing agy in that window also kills the children and
+  // strands any work they had buffered, so we let agy run to its
+  // PRINT_TIMEOUT instead and surface the cause as
+  // INCOMPLETE_REASON_CLIENT_DISCONNECTED. The launchd log distinguishes the
+  // two cases by name. An ordinary disconnected turn -- no delegator ever
+  // ran, or every dispatched child has already closed -- is still killed.
   const delegation = {
     activeTool: null,
     activeStep: null,
     activatedAt: 0,
+    pendingChildren: 0,
   };
   let clientDisconnectMidDelegation = false;
   let clientDisconnectDetail = "";
@@ -864,7 +957,7 @@ async function handle(request, response) {
     if (delegationHeartbeat) return;
     let tick = 0;
     delegationHeartbeat = setInterval(() => {
-      if (!delegation.activeTool || !streamStarted || !isWritable()) return;
+      if (!isDelegationActive(delegation) || !streamStarted || !isWritable()) return;
       tick += 1;
       try {
         emit("response.reasoning_summary_text.delta", {
@@ -882,6 +975,9 @@ async function handle(request, response) {
     clearInterval(delegationHeartbeat);
     delegationHeartbeat = null;
   };
+  const delegationDetail = (decision) => decision.tool
+    ? `during ${decision.tool}`
+    : `while ${decision.pendingChildren} delegated child(ren) were still running`;
   const onResponseError = () => {
     clientClosed = true;
     clearInterval(keepAlive);
@@ -889,7 +985,7 @@ async function handle(request, response) {
     const errorDecision = decideCloseOnDelegation(delegation);
     if (!errorDecision.kill) {
       clientDisconnectMidDelegation = true;
-      clientDisconnectDetail = `the client connection errored during ${errorDecision.tool}; agy will continue to print-timeout`;
+      clientDisconnectDetail = `the client connection errored ${delegationDetail(errorDecision)}; agy will continue to print-timeout`;
       if (!turnSettled) logTurnEnd("aborted-delegation", clientDisconnectDetail);
       // Do NOT kill agy: the cause was the upstream going away while agy was
       // delegating, and killing agy here strands the children it had spawned.
@@ -923,7 +1019,7 @@ async function handle(request, response) {
     const closeDecision = decideCloseOnDelegation(delegation);
     if (!closeDecision.kill) {
       clientDisconnectMidDelegation = true;
-      clientDisconnectDetail = `the client disconnected during ${closeDecision.tool}; agy will continue to print-timeout`;
+      clientDisconnectDetail = `the client disconnected ${delegationDetail(closeDecision)}; agy will continue to print-timeout`;
       if (!turnSettled) logTurnEnd("aborted-delegation", clientDisconnectDetail);
       // Do NOT kill agy for the same reason as onResponseError above.
       return;
@@ -942,6 +1038,10 @@ async function handle(request, response) {
       if (event.event === "step_update") {
         const update = event.step_update ?? {};
         observeSpawnStep(update);
+        // Kept in sync on every step so a dispatch step's own DONE -- which
+        // clears activeTool below -- does not read as "delegation over" while
+        // the spawn tracker still has children it dispatched open.
+        delegation.pendingChildren = openSpawnCount();
         const activity = activityText(event);
         const key = `${update.step_index ?? "?"}:${update.state ?? "?"}:${update.step_type ?? "?"}:${update.tool_name ?? ""}`;
         if (activity) {
@@ -956,16 +1056,23 @@ async function handle(request, response) {
         // Track the most recent delegator step so response.on("close") and
         // response.on("error") can tell a turn that aborted during delegation
         // apart from one that aborted before delegation started. The
-        // synthetic heartbeat rides on the same flag.
-        const transition = updateDelegationState(delegation, update, (name) => agentEvents?.isSpawnTool(name) ?? false);
+        // synthetic heartbeat rides on the same flag. isSpawnToolName falls
+        // back to agy's own tool name when the router sent no reporter, so
+        // this classification -- and therefore the kill decision -- still
+        // works when the telemetry headers are absent.
+        const transition = updateDelegationState(delegation, update, (name) => isSpawnToolName(agentEvents, name));
         if (transition.kind === "entered") startDelegationHeartbeat();
-        if (transition.kind === "exited") stopDelegationHeartbeat();
+        // The dispatch step closing does not by itself mean delegation is
+        // over: only stop the heartbeat once the spawn tracker agrees no
+        // dispatched children are still open.
+        if (transition.kind === "exited" && !isDelegationActive(delegation)) stopDelegationHeartbeat();
         if (update.step_type === "tool") console.error(`agy tool=${update.tool_name ?? "unknown"}`);
       }
     }, spawnSession, agentRole);
     clearInterval(keepAlive);
     stopDelegationHeartbeat();
     flushSpawns("success");
+    delegation.pendingChildren = openSpawnCount();
     // If the upstream closed mid-delegation, the run still completes here --
     // agy got its full PRINT_TIMEOUT -- but the parent is gone. Emit an
     // incomplete event carrying the cause so any future re-attach can replay
@@ -1028,6 +1135,7 @@ async function handle(request, response) {
     clearInterval(keepAlive);
     stopDelegationHeartbeat();
     flushSpawns("failure");
+    delegation.pendingChildren = openSpawnCount();
     const message = error.message ?? String(error);
     // Logged before the writability check: a turn that failed *because* the
     // client had already gone is exactly the case worth seeing, and it used to
@@ -1046,7 +1154,7 @@ async function handle(request, response) {
       const headers = limitResponseHeaders(limit);
       const retryAfter = retryAfterSecondsFromLimit(limit);
       if (retryAfter !== null) headers[ "retry-after" ] = String(retryAfter);
-      const body = { error: agyErrorDetails(error, agentRole, cwd) };
+      const body = { error: agyErrorDetails(error, agentRole, cwd, requestId) };
       const declaredLimit = limitPayload(limit);
       if (declaredLimit) body.error.limit = declaredLimit;
       sendJson(response, status, body, headers);
@@ -1088,4 +1196,4 @@ if (IS_MAIN) {
   });
 }
 
-export { agyArgs, agyErrorDetails, agyFailureMessage, agyPermissionFailure, createSpawnTracker, decideCloseOnDelegation, modelEffort, promptFromInput, resolveEffort, resolveModel, spawnedChildren, subagentModel, updateDelegationState };
+export { agyArgs, agyErrorDetails, agyFailureMessage, agyPermissionFailure, createSpawnTracker, decideCloseOnDelegation, isDelegationActive, modelEffort, promptFromInput, resolveEffort, resolveModel, spawnedChildren, subagentModel, updateDelegationState };

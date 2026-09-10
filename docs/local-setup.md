@@ -95,10 +95,48 @@ discovery. The installer registers the pinned `cocoindex-code` and `lsp` MCP
 servers with `agy`; `.agents/skills.json` exposes the corresponding `ccc` and
 `lsp-mcp-server` skills to Antigravity sessions in this repository. Without
 both registrations, Antigravity can receive the code-search wording but cannot
-actually call either semantic tool surface. The installer also grants those
-two MCP servers at the global Antigravity permission boundary; otherwise
-headless subagents silently deny their tool calls because they cannot answer an
-interactive permission prompt.
+actually call either semantic tool surface.
+
+Headless subagents run noninteractively and cannot answer interactive permission
+prompts; if a required tool lacks pre-approval, the CLI auto-denies the call and
+halts the turn. The installer pre-approves required capabilities in
+`~/.gemini/antigravity-cli/settings.json` under `permissions.allow`:
+- Required MCP servers and subpaths: `cocoindex-code`, `lsp`, `playwright`,
+  `openaiDeveloperDocs`, `autodev_spawn`, and their tool wildcards (`mcp(<name>/*)`).
+- Exact and recursive read grants for shared configuration: `read_file(~/.agents)`
+  plus `read_file(~/.agents/**)`, and the equivalent pair for `~/.codex`.
+- Scoped `read_file(<root>)` and `read_file(<root>/**)` grants for every
+  configured workspace.
+- A small fixed `unsandboxed(...)` allowlist for `pwd`, `pnpm test`, and the
+  repository Python test command; this is not a general shell grant.
+
+By default, the installer grants read access to the current AutoDev repository root.
+When working across multiple repositories or projects, configure the roots via the
+colon-separated `AUTODEV_AGY_READ_ROOTS` environment variable:
+
+```bash
+export AUTODEV_AGY_READ_ROOTS="/path/to/repo1:/path/to/repo2"
+bash scripts/codex/install-codex-integration.sh
+```
+
+The installer normalizes each entry, strips empty segments, and deduplicates
+paths. Per-root grants stay narrow (`read_file(<root>)`) instead of graduating to
+`command(*)` or global `--dangerously-skip-permissions`, because the headless
+surface for read-only roles is bounded code-search navigation rather than shell
+execution. The bridge passes agy's `--sandbox` flag to read-only roles so they
+can run headlessly within terminal restrictions; write-capable roles retain
+their existing permission policy. Broad shell execution is never granted to
+read-only validation roles.
+
+Run the installer with `--check` to validate that all configured workspace roots
+and required MCP/read grants are present in the settings file:
+
+```bash
+bash scripts/codex/install-codex-integration.sh --check
+```
+
+If any configured workspace or required MCP permission is missing, `--check`
+reports the missing grants and exits with a non-zero status.
 
 - `ccc`
 - `code-simplification`

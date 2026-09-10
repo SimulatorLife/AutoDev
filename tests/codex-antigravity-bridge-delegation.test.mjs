@@ -2,14 +2,28 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  createSpawnTracker,
   decideCloseOnDelegation,
+  isDelegationActive,
   updateDelegationState,
 } from "../scripts/codex-antigravity-cli-responses-proxy.mjs";
 
 const spawnTools = new Set([ "invoke_subagent", "manage_subagents" ]);
 const isSpawnTool = (name) => spawnTools.has(name);
 
-const freshState = () => ({ activeTool: null, activeStep: null, activatedAt: 0 });
+const freshState = () => ({ activeTool: null, activeStep: null, activatedAt: 0, pendingChildren: 0 });
+
+function recordingReporter() {
+  const spawns = [];
+  const results = [];
+  return {
+    spawns,
+    results,
+    isSpawnTool: (name) => name === "invoke_subagent",
+    reportSpawns: async (event) => { spawns.push(event); },
+    reportResults: async (event) => { results.push(event); },
+  };
+}
 
 test("a non-spawn tool never marks the turn as delegating", () => {
   const state = freshState();
@@ -135,4 +149,131 @@ test("decideCloseOnDelegation tolerates a null state", () => {
   const decision = decideCloseOnDelegation(null);
   assert.equal(decision.kill, true);
   assert.equal(decision.reason, "provider_interrupted");
+});
+
+// --- Pending-children lifecycle: ACTIVE -> DONE closes the dispatch step,
+// not the children invoke_subagent handed work off to. The bridge must not
+// read that DONE as "delegation is over" while the spawn tracker still has
+// children open.
+
+test("isDelegationActive stays true after ACTIVE -> DONE while children are still pending", () => {
+  const state = freshState();
+  updateDelegationState(state, { step_index: 3, state: "ACTIVE", tool_name: "invoke_subagent" }, isSpawnTool);
+  assert.equal(isDelegationActive(state), true, "an active dispatch step is delegation in flight");
+
+  // The dispatch step closes -- agy handed the work off successfully -- but
+  // the child it dispatched is still running, so pendingChildren stays > 0.
+  // A caller (the request handler) is responsible for keeping this in sync
+  // with the spawn tracker's openSpawnCount(); this test drives it directly.
+  const transition = updateDelegationState(state, { step_index: 3, state: "DONE", tool_name: "invoke_subagent" }, isSpawnTool);
+  state.pendingChildren = 1;
+  assert.equal(transition.kind, "exited");
+  assert.equal(state.activeTool, null, "the dispatch step itself is no longer active");
+  assert.equal(isDelegationActive(state), true, "a pending child keeps delegation active even with no active step");
+
+  // Once the child closes, both signals agree delegation is over.
+  state.pendingChildren = 0;
+  assert.equal(isDelegationActive(state), false);
+});
+
+test("decideCloseOnDelegation does not kill while pending children exist, even with no active step", () => {
+  const state = { activeTool: null, activeStep: null, activatedAt: 0, pendingChildren: 2 };
+  const decision = decideCloseOnDelegation(state);
+  assert.equal(decision.kill, false, "children invoke_subagent dispatched must not be stranded by a kill");
+  assert.equal(decision.reason, "client_disconnected");
+  assert.equal(decision.tool, null, "no dispatch step is active, so there is no tool to name");
+  assert.equal(decision.pendingChildren, 2);
+});
+
+test("decideCloseOnDelegation still kills an ordinary disconnected turn with nothing pending", () => {
+  // No delegator ever ran, or every dispatched child has already closed:
+  // an ordinary idle/disconnected turn must still be killed, not left to run
+  // to PRINT_TIMEOUT for no reason.
+  const state = { activeTool: null, activeStep: null, activatedAt: 0, pendingChildren: 0 };
+  const decision = decideCloseOnDelegation(state);
+  assert.equal(decision.kill, true);
+  assert.equal(decision.reason, "provider_interrupted");
+  assert.equal(decision.pendingChildren, 0);
+});
+
+test("the heartbeat's own gate (isDelegationActive) stays open across a dispatch DONE with open children", () => {
+  // This mirrors the request handler's setInterval guard directly, so a
+  // regression in that gate (reverting to `!delegation.activeTool`) is
+  // caught without spinning up the HTTP server.
+  const state = freshState();
+  const heartbeatShouldTick = () => isDelegationActive(state);
+
+  updateDelegationState(state, { step_index: 1, state: "ACTIVE", tool_name: "invoke_subagent" }, isSpawnTool);
+  state.pendingChildren = 1;
+  assert.equal(heartbeatShouldTick(), true, "ticks while the dispatch step is active");
+
+  updateDelegationState(state, { step_index: 1, state: "DONE", tool_name: "invoke_subagent" }, isSpawnTool);
+  assert.equal(heartbeatShouldTick(), true, "keeps ticking after DONE because a child is still pending");
+
+  state.pendingChildren = 0;
+  assert.equal(heartbeatShouldTick(), false, "stops once the last pending child has closed");
+});
+
+test("an end-to-end dispatch: spawn tracker + delegation state agree children outlive the DONE step", () => {
+  // Wires createSpawnTracker's openSpawnCount() into a delegation object the
+  // same way the request handler does, so this exercises the actual
+  // integration rather than two isolated units that happen to agree.
+  const reporter = recordingReporter();
+  const tracker = createSpawnTracker(reporter);
+  const state = freshState();
+
+  const active = { step_index: 3, state: "ACTIVE", step_type: "tool", tool_name: "invoke_subagent", tool_info: { args: { Subagents: [ { TypeName: "explorer" } ] } } };
+  tracker.observeSpawnStep(active);
+  state.pendingChildren = tracker.openSpawnCount();
+  updateDelegationState(state, active, isSpawnTool);
+  assert.equal(decideCloseOnDelegation(state).kill, false);
+
+  const done = { step_index: 3, state: "DONE", step_type: "tool", tool_name: "invoke_subagent" };
+  tracker.observeSpawnStep(done);
+  state.pendingChildren = tracker.openSpawnCount();
+  const transition = updateDelegationState(state, done, isSpawnTool);
+  assert.equal(transition.kind, "exited");
+  assert.equal(state.activeTool, null);
+  // The dispatch closed, but the child it started never got a matching close
+  // event (agy emits none), so the tracker -- and therefore the delegation
+  // state -- still consider it open.
+  assert.equal(tracker.openSpawnCount(), 1);
+  assert.equal(decideCloseOnDelegation(state).kill, false, "a disconnect here must not strand the open child");
+
+  // The parent turn settles: every child still open closes with it, exactly
+  // once, and delegation is then correctly inactive.
+  tracker.flushSpawns("success");
+  state.pendingChildren = tracker.openSpawnCount();
+  assert.equal(tracker.openSpawnCount(), 0);
+  assert.equal(reporter.results.length, 1, "the pending child's telemetry closes exactly once");
+  assert.equal(decideCloseOnDelegation(state).kill, true, "nothing is pending any more, so an ordinary disconnect kills agy");
+
+  // A second flush (e.g. a stray extra call on another exit path) must not
+  // double-report the same child's close.
+  tracker.flushSpawns("success");
+  assert.equal(reporter.results.length, 1, "closing an already-closed spawn is a no-op");
+});
+
+test("delegation tracking still recognizes agy's own spawn tool when the router sent no reporter", () => {
+  // No AgentEventReporter -- the router did not send telemetry headers, or
+  // the caller is not the router -- must not silently disable pending-child
+  // tracking (and therefore the kill decision). It must, however, still send
+  // no telemetry anywhere, since nothing authorized a report.
+  const tracker = createSpawnTracker(null);
+
+  const active = { step_index: 1, state: "ACTIVE", step_type: "tool", tool_name: "invoke_subagent" };
+  tracker.observeSpawnStep(active);
+  assert.equal(tracker.openSpawnCount(), 1, "agy's own spawn tool is still recognized without a reporter");
+
+  const done = { step_index: 1, state: "DONE", step_type: "tool", tool_name: "invoke_subagent" };
+  tracker.observeSpawnStep(done);
+  assert.equal(tracker.openSpawnCount(), 1, "DONE still does not close the child without a reporter");
+
+  tracker.flushSpawns("success");
+  assert.equal(tracker.openSpawnCount(), 0);
+
+  // A tool that is not agy's spawn tool must still be ignored.
+  const other = createSpawnTracker(null);
+  other.observeSpawnStep({ step_index: 2, state: "ACTIVE", step_type: "tool", tool_name: "manage_subagents" });
+  assert.equal(other.openSpawnCount(), 0);
 });
