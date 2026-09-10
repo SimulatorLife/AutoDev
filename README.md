@@ -31,7 +31,10 @@ AutoDev itself is managed with pnpm `10.32.1`, declared by `packageManager` in
 `package.json` and locked in `pnpm-lock.yaml`. Use `pnpm install --frozen-lockfile`
 before running the checks. The target-aware runner intentionally retains an npm
 compatibility branch for organization repositories that have not migrated their
-own package manager; that branch is not used to validate AutoDev.
+own package manager; that branch is not used to validate AutoDev. Native Codex
+role MCP entries must use a complete stdio or streamable-HTTP transport shape;
+see [`docs/local-setup.md`](docs/local-setup.md) for the role and installer
+contract.
 
 ## Configure target repositories
 

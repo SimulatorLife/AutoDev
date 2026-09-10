@@ -51,12 +51,6 @@ enabled = false
 command = "bash"
 args = ["-lc", "exec \"${CODEX_HOME:-$HOME/.codex}/hooks/run-autodev-mcp.sh\" cocoindex-code"]
 
-[mcp_servers.codex_app]
-enabled = false
-
-[mcp_servers.codex_apps]
-enabled = false
-
 [skills]
 include_instructions = false
 

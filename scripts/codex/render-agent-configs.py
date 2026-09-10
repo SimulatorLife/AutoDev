@@ -21,6 +21,31 @@ CODE_SEARCH_MARKER = "{{AUTODEV_CODE_SEARCH_PROMPT}}"
 ROLE_MARKER = "{{AUTODEV_ROLE_PROMPT}}"
 
 
+def validate_mcp_servers(config: dict, source: Path) -> None:
+    """Reject MCP entries that declare neither a valid stdio nor a valid
+    streamable HTTP transport.
+
+    An entry with only ``enabled = ...`` and no ``command``/``url`` is not a
+    server declaration at all -- it is a stub that silently does nothing at
+    runtime. Every entry (enabled or not) must be a real, launchable server so
+    a disabled role-local override still documents how that server would run.
+    """
+    for name, server in config.get("mcp_servers", {}).items():
+        if not isinstance(server, dict):
+            raise RuntimeError(f"{source}: mcp_servers.{name} must be a table")
+        has_command = isinstance(server.get("command"), str) and bool(server["command"])
+        has_args = isinstance(server.get("args"), list) and bool(server["args"])
+        is_valid_stdio = has_command and has_args
+        has_url = isinstance(server.get("url"), str) and server["url"].startswith(("http://", "https://"))
+        is_valid_http = has_url and server.get("transport") == "streamable_http"
+        if not (is_valid_stdio or is_valid_http):
+            raise RuntimeError(
+                f"{source}: mcp_servers.{name} has neither a valid stdio transport "
+                "(command + args) nor a valid streamable HTTP transport "
+                '(url + transport = "streamable_http")'
+            )
+
+
 def read_prompt(path: Path, label: str) -> str:
     try:
         text = path.read_text(encoding="utf-8").strip()
@@ -56,9 +81,10 @@ def render_role(
     if any(marker in rendered for marker in (BASE_MARKER, LEAF_MARKER, CODE_SEARCH_MARKER, ROLE_MARKER)):
         raise RuntimeError(f"unrendered prompt marker remains in {source}")
     try:
-        tomllib.loads(rendered)
+        rendered_config = tomllib.loads(rendered)
     except tomllib.TOMLDecodeError as error:
         raise RuntimeError(f"rendered role config is invalid TOML: {source}: {error}") from error
+    validate_mcp_servers(rendered_config, source)
 
     output.parent.mkdir(parents=True, exist_ok=True)
     descriptor, temporary_name = tempfile.mkstemp(

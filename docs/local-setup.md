@@ -16,7 +16,12 @@ The tracked Codex role files under `scripts/codex/agents/` contain role-specific
 configuration plus shared-prompt composition markers. The installer renders
 `base.md`, `leaf.md`, and the optional `code-search.md` piece into regular files
 under `$CODEX_HOME/agents/` before Codex loads them; provider identity remains configured in the provider
-profiles/catalogs, while role names stay stable and codebase-agnostic.
+profiles/catalogs, while role names stay stable and codebase-agnostic. Every
+`[mcp_servers.<name>]` table in a native role must also declare a complete
+transport: stdio servers provide `command` and `args`, while streamable HTTP
+servers provide `url` and `transport = "streamable_http"`, even when the entry
+is disabled. Codex App connectors are native app tools rather than role MCP
+servers and must not be represented as enabled-only role tables.
 
 The user-level config registers the `lsp` and `playwright` MCP servers through the
 installed `run-autodev-mcp.sh` launcher. The launcher resolves binaries from

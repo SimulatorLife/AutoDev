@@ -335,14 +335,18 @@ class LocalSetupTests(unittest.TestCase):
         # owned by the OS package manager.
         self.assertIn("EXTERNALLY-MANAGED", installer)
 
-    def test_leaf_roles_disable_codex_app_mcp_servers(self):
+    def test_leaf_roles_do_not_declare_codex_app_mcp_stubs(self):
+        """codex_app/codex_apps are Codex's own built-in servers, disabled by
+        default. A role-local ``enabled = false`` entry with no command/url is
+        not a real server declaration -- it is a stub the hardened renderer
+        now rejects, so role TOMLs must not declare it at all."""
         role_dir = REPO_ROOT / "scripts/codex/agents"
         leaf_roles = ("browser-tester", "default", "docs-researcher", "explorer", "smart", "validator", "worker")
         for role in leaf_roles:
             with self.subTest(role=role):
                 config = tomllib.loads((role_dir / f"{role}.toml").read_text())
-                self.assertFalse(config["mcp_servers"]["codex_app"]["enabled"])
-                self.assertFalse(config["mcp_servers"]["codex_apps"]["enabled"])
+                self.assertNotIn("codex_app", config["mcp_servers"])
+                self.assertNotIn("codex_apps", config["mcp_servers"])
 
     def test_cocoindex_is_limited_to_code_capable_agent_roles(self):
         expected_enabled = {"default", "explorer", "smart", "validator", "worker", "orchestrator"}
@@ -441,14 +445,16 @@ class LocalSetupTests(unittest.TestCase):
         openai_docs = role_config["mcp_servers"]["openaiDeveloperDocs"]
         self.assertTrue(openai_docs["enabled"])
         self.assertEqual(openai_docs["url"], "https://developers.openai.com/mcp")
-        # Codex infers streamable HTTP from `url`; `transport =
-        # "streamable_http"` is not a valid native role field.
-        self.assertNotIn("transport", openai_docs)
+        self.assertEqual(openai_docs["transport"], "streamable_http")
         self.assertTrue(role_config["tools"]["web_search"])
 
         # Browser automation is for UI testing/debugging, not the docs role's
-        # normal web-research path. Explicitly disable the inherited server.
-        self.assertFalse(role_config["mcp_servers"]["playwright"]["enabled"])
+        # normal web-research path. Explicitly disable the inherited server,
+        # but it must still be a valid, launchable stdio entry.
+        playwright = role_config["mcp_servers"]["playwright"]
+        self.assertFalse(playwright["enabled"])
+        self.assertEqual(playwright["command"], "bash")
+        self.assertEqual(playwright["args"], ["-lc", 'exec "${CODEX_HOME:-$HOME/.codex}/hooks/run-autodev-mcp.sh" playwright'])
         instructions = (REPO_ROOT / "scripts/codex/prompts/roles/docs-researcher.md").read_text()
         self.assertIn("native", instructions)
         self.assertIn("web-search tool", instructions)
@@ -629,11 +635,10 @@ class LocalSetupTests(unittest.TestCase):
                 self.assertCountEqual(role_contract["skills"], enabled_skills)
 
     def test_role_mcp_http_servers_use_codex_native_url_configuration(self):
-        """Codex role TOMLs use ``url`` for streamable HTTP MCP servers.
-
-        ``transport = \"streamable_http\"`` is not a valid Codex role field;
-        leaving it in a role causes Codex to discard that role entirely before
-        it can load any of its skills or MCP servers.
+        """Codex role TOMLs use ``url`` + ``transport = "streamable_http"`` for
+        streamable HTTP MCP servers. The hardened renderer rejects a ``url``
+        entry that omits the explicit transport, so every URL-based server
+        must declare it.
         """
         for source in sorted((REPO_ROOT / "scripts/codex/agents").glob("*.toml")):
             config = tomllib.loads(source.read_text())
@@ -643,7 +648,55 @@ class LocalSetupTests(unittest.TestCase):
                 with self.subTest(role=source.stem, server=name):
                     self.assertIsInstance(server["url"], str)
                     self.assertTrue(server["url"].startswith(("http://", "https://")))
-                    self.assertNotIn("transport", server)
+                    self.assertEqual(server["transport"], "streamable_http")
+
+    def test_renderer_rejects_mcp_entries_without_a_valid_transport(self):
+        """A ``mcp_servers`` entry that is only ``enabled = ...`` (no command,
+        no url) is not a launchable server -- it is exactly the codex_app
+        stub shape this hardening was added to catch. Same for a ``url``
+        entry missing the explicit streamable HTTP transport, or a stdio
+        entry missing ``args``."""
+        header = (
+            'name = "default"\n'
+            'model_provider = "local_model_router"\n'
+            'model = "autodev/default"\n'
+            'developer_instructions = """\n'
+            "{{AUTODEV_BASE_PROMPT}}\n\n{{AUTODEV_LEAF_PROMPT}}\n\n{{AUTODEV_ROLE_PROMPT}}\n"
+            '"""\n\n'
+        )
+        bad_bodies = {
+            "bare_enabled_stub": '[mcp_servers.codex_app]\nenabled = false\n',
+            "url_missing_transport": (
+                '[mcp_servers.openaiDeveloperDocs]\n'
+                'enabled = true\n'
+                'url = "https://developers.openai.com/mcp"\n'
+            ),
+            "stdio_missing_args": (
+                '[mcp_servers.lsp]\n'
+                'enabled = true\n'
+                'command = "bash"\n'
+            ),
+        }
+        for label, body in bad_bodies.items():
+            with self.subTest(case=label):
+                with tempfile.TemporaryDirectory() as source_dir, tempfile.TemporaryDirectory() as output_dir:
+                    (Path(source_dir) / "default.toml").write_text(header + body)
+                    result = subprocess.run(
+                        [
+                            "python3",
+                            str(AGENT_RENDERER_PATH),
+                            "--source-dir",
+                            source_dir,
+                            "--prompt-dir",
+                            str(REPO_ROOT / "scripts/codex/prompts"),
+                            "--output-dir",
+                            output_dir,
+                        ],
+                        text=True,
+                        capture_output=True,
+                    )
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertIn("valid stdio", result.stderr)
 
     def test_user_level_skill_registry_contains_all_requested_skill_names(self):
         names = {path.name for path in (REPO_ROOT / "scripts/codex/skills").iterdir()}

@@ -23,12 +23,6 @@ command = "bash"
 args = ["-lc", "exec \"${CODEX_HOME:-$HOME/.codex}/hooks/run-autodev-mcp.sh\" lsp"]
 enabled = true
 
-[mcp_servers.codex_app]
-enabled = false
-
-[mcp_servers.codex_apps]
-enabled = false
-
 [[skills.config]]
 name = "orchestration"
 enabled = false
