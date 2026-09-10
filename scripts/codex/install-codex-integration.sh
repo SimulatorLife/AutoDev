@@ -13,6 +13,7 @@ hooks_dir="$codex_home/hooks"
 agents_dir="$codex_home/agents"
 rules_dir="$codex_home/rules"
 user_skills_dir="$HOME/.agents/skills"
+agy_settings_file="$HOME/.gemini/antigravity-cli/settings.json"
 legacy_skills_dirs=("$codex_home/skills" "$codex_home/agents/skills")
 
 hook_names=(
@@ -629,7 +630,7 @@ check_agy_code_mcp() {
   local listing
   listing="$(agy mcp list 2>/dev/null || true)"
   local failed=0
-  grep -Fq 'cocoindex-code  stdio  enabled   bash -lc exec "${CODEX_HOME:-$HOME/.codex}/hooks/run-autodev-mcp.sh" cocoindex-code' <<<"$listing" || {
+  grep -Eq '^cocoindex-code[[:space:]]+stdio[[:space:]]+enabled[[:space:]]+bash -lc exec .*run-autodev-mcp\.sh.* cocoindex-code[[:space:]]*$' <<<"$listing" || {
     printf 'missing-or-drifted agy CocoIndex MCP (expected the pinned run-autodev-mcp.sh launcher)\n'
     failed=1
   }
@@ -652,30 +653,40 @@ check_agy_code_mcp_permissions() {
     printf 'skipping agy code MCP permission check (agy is not installed)\n'
     return 0
   fi
-  local config="$HOME/.gemini/config/config.json"
+  local config="$agy_settings_file"
   [[ -f "$config" ]] || {
-    printf 'missing agy global permission config %s\n' "$config"
+    printf 'missing Antigravity CLI permission settings %s\n' "$config"
     return 1
   }
-  python3 - "$config" <<'PY'
+  python3 - "$config" "$repo_root" <<'PY'
 import json
+import os
 import sys
 
-with open(sys.argv[1], encoding="utf-8") as stream:
+path, workspace = sys.argv[1:]
+with open(path, encoding="utf-8") as stream:
     config = json.load(stream)
-allow = config.get("userSettings", {}).get("globalPermissionGrants", {}).get("allow", [])
-missing = [
-    grant for grant in (
-        "mcp(cocoindex-code)",
-        "mcp(cocoindex-code/search)",
-        "mcp(lsp)",
-        "mcp(lsp/*)",
-    ) if grant not in allow
+allow = config.get("permissions", {}).get("allow", [])
+required = [
+    "mcp(cocoindex-code)",
+    "mcp(cocoindex-code/search)",
+    "mcp(lsp)",
+    "mcp(lsp/*)",
+    "mcp(playwright)",
+    "mcp(playwright/*)",
+    "mcp(openaiDeveloperDocs)",
+    "mcp(openaiDeveloperDocs/*)",
+    "mcp(autodev_spawn)",
+    "mcp(autodev_spawn/*)",
+    f"read_file({workspace})",
+    f"read_file({os.path.expanduser('~/.agents')})",
+    f"read_file({os.path.expanduser('~/.codex')})",
 ]
+missing = [grant for grant in required if grant not in allow]
 if missing:
-    print("missing agy MCP permission grants: " + ", ".join(missing))
+    print("missing Antigravity CLI permission grants: " + ", ".join(missing))
     raise SystemExit(1)
-print("ok agy code MCP permission grants (cocoindex-code, lsp)")
+print("ok Antigravity CLI permission grants (MCP and read_file)")
 PY
 }
 
@@ -1187,6 +1198,11 @@ register_agy_spawn_shim() {
     return 1
   fi
   printf 'ok agy LSP MCP registered (lsp)\n' >&2
+  if ! agy mcp add openaiDeveloperDocs https://developers.openai.com/mcp >/dev/null 2>&1; then
+    printf 'could not register the agy OpenAI Developer Docs MCP server\n' >&2
+    return 1
+  fi
+  printf 'ok agy OpenAI Developer Docs MCP registered (openaiDeveloperDocs)\n' >&2
   local shim="$codex_home/hooks/codex/lib/spawn-shim-mcp.mjs"
   if [[ ! -f "$shim" ]]; then
     printf 'agy spawn shim missing at %s\n' "$shim" >&2
@@ -1206,7 +1222,7 @@ grant_agy_code_mcp_permissions() {
   if [[ "${AUTODEV_SKIP_AGY_MCP:-0}" == "1" || ! -x "$(command -v agy 2>/dev/null || true)" ]]; then
     return 0
   fi
-  local config="$HOME/.gemini/config/config.json"
+  local config="$agy_settings_file"
   local read_root="${AUTODEV_AGY_READ_ROOT:-$repo_root}"
   mkdir -p -- "$(dirname -- "$config")"
   python3 - "$config" "$read_root" <<'PY'
@@ -1222,17 +1238,22 @@ if os.path.isfile(path):
         config = json.load(stream)
 else:
     config = {}
-settings = config.setdefault("userSettings", {})
-grants = settings.setdefault("globalPermissionGrants", {})
-allow = grants.setdefault("allow", [])
+permissions = config.setdefault("permissions", {})
+allow = permissions.setdefault("allow", [])
 for grant in (
     "mcp(cocoindex-code)",
     "mcp(cocoindex-code/search)",
     "mcp(lsp)",
     "mcp(lsp/*)",
-    f"read_file({read_root}/**)",
-    f"read_file({os.path.expanduser('~/.agents')}/**)",
-    f"read_file({os.path.expanduser('~/.codex')}/**)",
+    "mcp(playwright)",
+    "mcp(playwright/*)",
+    "mcp(openaiDeveloperDocs)",
+    "mcp(openaiDeveloperDocs/*)",
+    "mcp(autodev_spawn)",
+    "mcp(autodev_spawn/*)",
+    f"read_file({read_root})",
+    f"read_file({os.path.expanduser('~/.agents')})",
+    f"read_file({os.path.expanduser('~/.codex')})",
 ):
     if grant not in allow:
         allow.append(grant)
@@ -1249,7 +1270,7 @@ finally:
     except FileNotFoundError:
         pass
 PY
-  printf 'ok agy code MCP permissions granted (cocoindex-code, lsp)\n' >&2
+  printf 'ok Antigravity CLI permissions granted (MCP and read_file)\n' >&2
 }
 
 register_copilot_code_mcp() {

@@ -9,7 +9,7 @@ import {
   SUBAGENT_SPAWN_TOOLS_HEADER,
   resolveAgentEventReporter,
 } from "../scripts/codex/lib/agent-events.mjs";
-import { agyArgs, agyFailureMessage, createSpawnTracker, modelEffort, resolveEffort, resolveModel, spawnedChildren, subagentModel } from "../scripts/codex-antigravity-cli-responses-proxy.mjs";
+import { agyArgs, agyErrorDetails, agyFailureMessage, agyPermissionFailure, createSpawnTracker, modelEffort, resolveEffort, resolveModel, spawnedChildren, subagentModel } from "../scripts/codex-antigravity-cli-responses-proxy.mjs";
 
 const read = (path) => readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
 
@@ -228,6 +228,31 @@ test("a failed report costs a count, never the model turn", async () => {
   // Nothing is listening on this port; the reporter must resolve anyway.
   const reporter = resolveAgentEventReporter({ ...routerHeaders, [ AGENT_EVENTS_URL_HEADER ]: "http://127.0.0.1:1/v1/agent-events" });
   await reporter.reportSpawn({ tool: "invoke_subagent" });
+});
+
+test("Antigravity permission failures become structured diagnostics", () => {
+  const stderr = 'jetski: no output produced — a tool required the "read_file" permission that headless mode cannot prompt for, so it was auto-denied.';
+  assert.deepEqual(agyPermissionFailure(stderr), {
+    failureCode: "AGY_PERMISSION_DENIED",
+    failurePhase: "tool_permission",
+    failureTool: "read_file",
+  });
+  assert.deepEqual(agyPermissionFailure("ordinary provider stderr"), {});
+  assert.deepEqual(agyErrorDetails({
+    message: "permission denied",
+    failureCode: "AGY_PERMISSION_DENIED",
+    failurePhase: "tool_permission",
+    failureTool: "read_file",
+  }, "explorer", "/workspace"), {
+    type: "AGY_PERMISSION_DENIED",
+    message: "permission denied",
+    provider: "antigravity",
+    role: "explorer",
+    workspace: "/workspace",
+    code: "AGY_PERMISSION_DENIED",
+    phase: "tool_permission",
+    tool: "read_file",
+  });
 });
 
 test("Antigravity failures retain terminal status, exit details, and bounded stderr", () => {

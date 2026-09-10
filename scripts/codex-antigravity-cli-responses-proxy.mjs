@@ -452,6 +452,13 @@ function responseMessageItem(text, itemId) {
  * message" makes an intermittent provider failure impossible to diagnose.
  * Stderr is bounded because agy can echo verbose tool diagnostics.
  */
+function agyPermissionFailure(stderr = "") {
+  const text = String(stderr ?? "");
+  const match = text.match(/tool required the ["']([^"']+)["'] permission[^\n]*auto-denied/i);
+  if (!match) return {};
+  return { failureCode: "AGY_PERMISSION_DENIED", failurePhase: "tool_permission", failureTool: match[ 1 ] };
+}
+
 function agyFailureMessage({ status = null, error = null, stderr = "", code = null, signal = null } = {}) {
   const details = [];
   if (status) details.push(`status ${status}`);
@@ -585,7 +592,7 @@ function runAgy(prompt, model, effort, cwd, onEvent, spawnSession = null, agentR
         // being discarded into a bare sentence.
         const how = signal ? `on ${signal}` : `with code ${code}`;
         const tail = stderr.trim().slice(-2000);
-        finish(reject, Object.assign(new Error(`agy exited ${how} without a terminal result event${tail ? `: ${tail}` : " and wrote nothing to stderr"}`), { exitCode: code }));
+        finish(reject, Object.assign(new Error(`agy exited ${how} without a terminal result event${tail ? `: ${tail}` : " and wrote nothing to stderr"}`), { exitCode: code, ...agyPermissionFailure(stderr) }));
         return;
       }
       if (result.status && result.status !== "SUCCESS") {
@@ -594,11 +601,11 @@ function runAgy(prompt, model, effort, cwd, onEvent, spawnSession = null, agentR
           error: result.error,
           stderr,
           code,
-        })), { exitCode: code }));
+        })), { exitCode: code, ...agyPermissionFailure(stderr) }));
         return;
       }
       if (code !== 0) {
-        finish(reject, Object.assign(new Error(stderr.trim().slice(-4000) || `agy exited with code ${code}`), { exitCode: code }));
+        finish(reject, Object.assign(new Error(stderr.trim().slice(-4000) || `agy exited with code ${code}`), { exitCode: code, ...agyPermissionFailure(stderr) }));
         return;
       }
       const finalText = String(result.response ?? emitted);
@@ -607,12 +614,12 @@ function runAgy(prompt, model, effort, cwd, onEvent, spawnSession = null, agentR
         if (suffix) onEvent?.({ type: "text_delta", text: suffix });
       }
       if (!finalText.trim()) {
-        finish(reject, new Error(agyFailureMessage({
+        finish(reject, Object.assign(new Error(agyFailureMessage({
           status: result.status ?? "SUCCESS",
           error: "empty response",
           stderr,
           code,
-        })));
+        })), agyPermissionFailure(stderr)));
         return;
       }
       finish(resolve, { text: finalText || emitted, result });
@@ -634,6 +641,22 @@ async function readJsonBody(request) {
   let body = "";
   for await (const chunk of request) body += chunk;
   try { return JSON.parse(body); } catch { return null; }
+}
+
+function agyErrorDetails(error, role, workspace) {
+  const details = {
+    type: error?.failureCode ?? "upstream_error",
+    message: error?.message ?? String(error),
+    provider: "antigravity",
+    role: role ?? "default",
+    workspace,
+  };
+  if (error?.failureCode) {
+    details.code = error.failureCode;
+    details.phase = error.failurePhase ?? null;
+    details.tool = error.failureTool ?? null;
+  }
+  return details;
 }
 
 async function handle(request, response) {
@@ -722,7 +745,8 @@ async function handle(request, response) {
   // process could attach to.
   if (spawnSession) spawnSessions.open(spawnSession, { orchestrator: isOrchestratorRole(agentRole) });
   const bootstrapContract = roleContract(agentRole);
-  console.error(`agy bootstrap provider=antigravity model=${model} role=${agentRole ?? "default"} cwd=${cwd} skills=${JSON.stringify(bootstrapContract.skills ?? [])} mcp=${JSON.stringify(bootstrapContract.mcp ?? [])}`);
+  const home = process.env.HOME ?? "";
+  console.error(`agy bootstrap provider=antigravity model=${model} role=${agentRole ?? "default"} cwd=${cwd} skills=${JSON.stringify(bootstrapContract.skills ?? [])} mcp=${JSON.stringify(bootstrapContract.mcp ?? [])} permission_settings=${home}/.gemini/antigravity-cli/settings.json skill_registry=${cwd}/.agents/skills.json mcp_registry=${home}/.gemini/config/mcp_config.json`);
   console.error(`agy request model=${model} effort=${effort} role=${isOrchestratorRole(agentRole) ? "orchestrator" : "leaf"} cwd=${cwd}`);
   // A turn logged its start and nothing else, so a failed one left only the
   // step lines that happened to precede it -- the reason it died reached the
@@ -755,7 +779,7 @@ async function handle(request, response) {
       flushSpawns("failure");
       if (spawnSession) spawnSessions.close(spawnSession);
       logTurnEnd("failed", error.message ?? String(error));
-      sendJson(response, 502, { error: { type: "upstream_error", message: error.message ?? String(error) } });
+      sendJson(response, 502, { error: agyErrorDetails(error, agentRole, cwd) });
     }
     return;
   }
@@ -1022,7 +1046,7 @@ async function handle(request, response) {
       const headers = limitResponseHeaders(limit);
       const retryAfter = retryAfterSecondsFromLimit(limit);
       if (retryAfter !== null) headers[ "retry-after" ] = String(retryAfter);
-      const body = { error: { type: "upstream_error", message } };
+      const body = { error: agyErrorDetails(error, agentRole, cwd) };
       const declaredLimit = limitPayload(limit);
       if (declaredLimit) body.error.limit = declaredLimit;
       sendJson(response, status, body, headers);
@@ -1064,4 +1088,4 @@ if (IS_MAIN) {
   });
 }
 
-export { agyArgs, agyFailureMessage, createSpawnTracker, decideCloseOnDelegation, modelEffort, promptFromInput, resolveEffort, resolveModel, spawnedChildren, subagentModel, updateDelegationState };
+export { agyArgs, agyErrorDetails, agyFailureMessage, agyPermissionFailure, createSpawnTracker, decideCloseOnDelegation, modelEffort, promptFromInput, resolveEffort, resolveModel, spawnedChildren, subagentModel, updateDelegationState };

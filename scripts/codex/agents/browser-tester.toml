@@ -76,5 +76,21 @@ name = "remove-legacy-shims"
 enabled = false
 
 [[skills.config]]
+name = "code-simplification"
+enabled = false
+
+[[skills.config]]
+name = "doubt-driven-development"
+enabled = false
+
+[[skills.config]]
+name = "resolve-merge-conflicts"
+enabled = false
+
+[[skills.config]]
+name = "improve-codebase-architecture"
+enabled = false
+
+[[skills.config]]
 name = "ccc"
 enabled = false

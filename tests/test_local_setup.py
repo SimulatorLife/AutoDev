@@ -335,6 +335,15 @@ class LocalSetupTests(unittest.TestCase):
         # owned by the OS package manager.
         self.assertIn("EXTERNALLY-MANAGED", installer)
 
+    def test_leaf_roles_disable_codex_app_mcp_servers(self):
+        role_dir = REPO_ROOT / "scripts/codex/agents"
+        leaf_roles = ("browser-tester", "default", "docs-researcher", "explorer", "smart", "validator", "worker")
+        for role in leaf_roles:
+            with self.subTest(role=role):
+                config = tomllib.loads((role_dir / f"{role}.toml").read_text())
+                self.assertFalse(config["mcp_servers"]["codex_app"]["enabled"])
+                self.assertFalse(config["mcp_servers"]["codex_apps"]["enabled"])
+
     def test_cocoindex_is_limited_to_code_capable_agent_roles(self):
         expected_enabled = {"default", "explorer", "smart", "validator", "worker", "orchestrator"}
         expected_disabled = {"browser-tester", "docs-researcher"}
@@ -360,11 +369,30 @@ class LocalSetupTests(unittest.TestCase):
                 }
                 self.assertEqual(skill_config["ccc"], should_enable)
 
+    def test_antigravity_installer_uses_cli_settings_permissions_file(self):
+        installer = INSTALLER_PATH.read_text()
+        self.assertIn('agy_settings_file="$HOME/.gemini/antigravity-cli/settings.json"', installer)
+        self.assertIn('permissions.setdefault("allow", [])', installer)
+        self.assertIn('config.get("permissions", {}).get("allow", [])', installer)
+        for grant in (
+            'mcp(playwright)',
+            'mcp(playwright/*)',
+            'mcp(openaiDeveloperDocs)',
+            'mcp(openaiDeveloperDocs/*)',
+            'mcp(autodev_spawn)',
+            'mcp(autodev_spawn/*)',
+        ):
+            self.assertIn(grant, installer)
+        self.assertIn('f"read_file({read_root})"', installer)
+        self.assertNotIn('f"read_file({read_root}/**)"', installer)
+        self.assertNotIn('local config="$HOME/.gemini/config/config.json"', installer)
+
     def test_antigravity_installer_registers_the_pinned_playwright_mcp(self):
         installer = INSTALLER_PATH.read_text()
         self.assertIn('agy mcp add playwright pnpm exec playwright-mcp', installer)
         self.assertIn("agy mcp add cocoindex-code bash -lc 'exec \"${CODEX_HOME:-$HOME/.codex}/hooks/run-autodev-mcp.sh\" cocoindex-code'", installer)
         self.assertIn("agy mcp add lsp bash -lc 'exec", installer)
+        self.assertIn("agy mcp add openaiDeveloperDocs https://developers.openai.com/mcp", installer)
         self.assertIn('mcp(cocoindex-code)', installer)
         self.assertIn('mcp(cocoindex-code/search)', installer)
         self.assertIn('mcp(lsp)', installer)
