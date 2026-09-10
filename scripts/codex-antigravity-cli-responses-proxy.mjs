@@ -721,6 +721,8 @@ async function handle(request, response) {
   // An invalid workspace must not leave an orphaned entry that a later shim
   // process could attach to.
   if (spawnSession) spawnSessions.open(spawnSession, { orchestrator: isOrchestratorRole(agentRole) });
+  const bootstrapContract = roleContract(agentRole);
+  console.error(`agy bootstrap provider=antigravity model=${model} role=${agentRole ?? "default"} cwd=${cwd} skills=${JSON.stringify(bootstrapContract.skills ?? [])} mcp=${JSON.stringify(bootstrapContract.mcp ?? [])}`);
   console.error(`agy request model=${model} effort=${effort} role=${isOrchestratorRole(agentRole) ? "orchestrator" : "leaf"} cwd=${cwd}`);
   // A turn logged its start and nothing else, so a failed one left only the
   // step lines that happened to precede it -- the reason it died reached the

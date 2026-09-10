@@ -16,9 +16,22 @@ repo_root="$(cd -- "$(dirname -- "$source_path")/../.." && pwd)"
 export PATH="$repo_root/node_modules/.bin:${HOME:-.}/.local/bin:${PATH:-}"
 tool="${1:-}"
 case "$tool" in
-  lsp) binary="$repo_root/node_modules/.bin/lsp-mcp-server" ;;
-  playwright) binary="$repo_root/node_modules/.bin/playwright-mcp" ;;
+  lsp)
+    binary="$repo_root/node_modules/.bin/lsp-mcp-server"
+    args=()
+    ;;
+  playwright)
+    binary="$repo_root/node_modules/.bin/playwright-mcp"
+    args=()
+    ;;
+  cocoindex-code)
+    # Agent shells are intentionally forbidden from invoking the ccc CLI.
+    # Resolve the backend here, outside the model shell permission boundary.
+    binary="${AUTODEV_COCOINDEX_BIN:-${HOME:-}/.local/bin/ccc}"
+    if [[ ! -x "$binary" ]]; then binary="$(command -v ccc || true)"; fi
+    args=(mcp)
+    ;;
   *) echo "unsupported AutoDev MCP: ${tool:-<missing>}" >&2; exit 2 ;;
 esac
 [[ -x "$binary" ]] || { echo "AutoDev MCP binary is missing: $binary" >&2; exit 1; }
-exec "$binary"
+exec "$binary" "${args[@]}"

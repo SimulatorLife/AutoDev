@@ -46,6 +46,9 @@ DEFAULT_CLAUDE_EFFORT = "medium"
 # Keep it unavailable for every request sent through this gateway; the parent
 # Codex process remains responsible for orchestration.
 DISALLOWED_CLAUDE_TOOLS = ("Agent", "Task")
+# The MCP backend is launched by the bridge, but the model must not invoke the
+# CocoIndex CLI through Claude's Bash tool as a fallback.
+DISALLOWED_CLI_COMMANDS = ("Bash(ccc *)",)
 
 # Tools that reach *outside* this turn's own agent tree, to other Claude
 # sessions running on the same machine. Denied for every role, orchestrator
@@ -832,6 +835,27 @@ def read_stderr(process: subprocess.Popen[str], events: queue.Queue[tuple[str, A
     events.put(("stderr_done", None))
 
 
+def role_contract_for(role: Any = None) -> dict[str, Any]:
+    contract_key = "orchestrator" if is_orchestrator_role(role) else (str(role).lower() if role else "default")
+    return EXECUTION_CONTRACT.get("roles", {}).get(contract_key) or EXECUTION_CONTRACT["roles"]["default"]
+
+
+def claude_skill_view_for_role(role: Any = None) -> str | None:
+    """Return the generated Claude-native skill discovery view for a role."""
+    contract = role_contract_for(role)
+    if not contract.get("skills"):
+        return None
+    role_key = "orchestrator" if is_orchestrator_role(role) else (str(role).lower() if role else "default")
+    codex_home = os.environ.get("CODEX_HOME", os.path.expanduser("~/.codex"))
+    view = os.path.join(codex_home, "provider-runtime", "claude", role_key)
+    if not os.path.isdir(os.path.join(view, ".claude", "skills")):
+        raise RuntimeError(
+            f"Claude skill bootstrap view is missing for role {role_key}: {view}; "
+            "rerun install-codex-integration.sh"
+        )
+    return view
+
+
 def mcp_config_for_role(role: Any = None, spawn_session: str | None = None) -> str | None:
     """Return bridge-owned MCP servers needed by this role.
 
@@ -842,8 +866,7 @@ def mcp_config_for_role(role: Any = None, spawn_session: str | None = None) -> s
     own servers.
     """
     servers: dict[str, Any] = {}
-    contract_key = "orchestrator" if is_orchestrator_role(role) else (str(role).lower() if role else "default")
-    role_contract = EXECUTION_CONTRACT.get("roles", {}).get(contract_key) or EXECUTION_CONTRACT["roles"]["default"]
+    role_contract = role_contract_for(role)
     if "lsp" in role_contract.get("mcp", []):
         servers["lsp"] = {
             "command": "bash",
@@ -851,8 +874,15 @@ def mcp_config_for_role(role: Any = None, spawn_session: str | None = None) -> s
         }
     if "cocoindex-code" in role_contract.get("mcp", []):
         servers["cocoindex-code"] = {
-            "command": "ccc",
-            "args": ["mcp"],
+            "command": "bash",
+            "args": ["-lc", 'exec "${CODEX_HOME:-$HOME/.codex}/hooks/run-autodev-mcp.sh" cocoindex-code'],
+        }
+    if "openaiDeveloperDocs" in role_contract.get("mcp", []):
+        # The role TOMLs identify this server by contract name; the endpoint is
+        # a stable provider-owned service and is materialized here just like
+        # the other explicit Claude MCP entries.
+        servers["openaiDeveloperDocs"] = {
+            "url": "https://developers.openai.com/mcp",
         }
     if role in PLAYWRIGHT_AGENT_ROLES:
         servers["playwright"] = {
@@ -889,10 +919,13 @@ def claude_cli_args(prompt: str, model: str, effort: str, agent_role: Any = None
         directory
         for directory in os.environ.get(
             "CLAUDE_CODE_ADDITIONAL_DIRS",
-            os.pathsep.join((codex_home, os.path.expanduser("~/.agents"))),
+            codex_home,
         ).split(os.pathsep)
         if directory
     ]
+    skill_view = claude_skill_view_for_role(agent_role)
+    if skill_view and skill_view not in configured_dirs:
+        configured_dirs.append(skill_view)
     # Workspace-local skills and policy are part of the target contract. Expose
     # the workspace's .agents tree to Claude without making it a global user
     # registry or guessing from task prose.
@@ -913,12 +946,12 @@ def claude_cli_args(prompt: str, model: str, effort: str, agent_role: Any = None
     # as the fallback -- an invisible child still beats no delegation at all.
     # Cross-session reach is denied in every case: see CROSS_SESSION_CLAUDE_TOOLS.
     shim_available = orchestrator and bool(spawn_session)
+    denied = [*DISALLOWED_CLI_COMMANDS]
     if orchestrator and not shim_available:
-        denied = list(CROSS_SESSION_CLAUDE_TOOLS)
+        denied.extend(CROSS_SESSION_CLAUDE_TOOLS)
     else:
-        denied = [*DISALLOWED_CLAUDE_TOOLS, *CROSS_SESSION_CLAUDE_TOOLS]
-    contract_key = "orchestrator" if orchestrator else (str(agent_role).lower() if agent_role else "default")
-    role_contract = EXECUTION_CONTRACT.get("roles", {}).get(contract_key) or EXECUTION_CONTRACT["roles"]["default"]
+        denied.extend([*DISALLOWED_CLAUDE_TOOLS, *CROSS_SESSION_CLAUDE_TOOLS])
+    role_contract = role_contract_for(agent_role)
     if role_contract.get("readOnly"):
         # Prompt text is not an enforcement boundary. Read-only roles must not
         # receive shell or file-mutating Claude tools even when the bridge uses
@@ -1709,6 +1742,14 @@ class Handler(BaseHTTPRequestHandler):
             prompt = prompt_from_input(request.get("input", ""))
             cwd = resolve_cwd(request, self.headers)
             role_label = "orchestrator" if is_orchestrator_role(agent_role) else "leaf"
+            contract = role_contract_for(agent_role)
+            skill_view = claude_skill_view_for_role(agent_role)
+            print(
+                f"claude bootstrap provider=claude model={claude_model} role={agent_role or 'default'} "
+                f"cwd={cwd} skills={contract.get('skills', [])} skill_view={skill_view or 'none'} "
+                f"mcp={contract.get('mcp', [])}",
+                flush=True,
+            )
             print(f"claude request model={claude_model} effort={claude_effort} role={role_label} cwd={cwd}", flush=True)
             if not request.get("stream"):
                 for kind, value, _ in run_claude_stream(prompt, claude_model, claude_effort, cwd=cwd, agent_role=agent_role, spawn_session=spawn_session):

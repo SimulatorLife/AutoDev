@@ -189,6 +189,8 @@ async function handle(request, response) {
     return;
   }
   const prompt = inputText(payload.input, composeProviderPrompt(agentRole, cwd));
+  const bootstrapContract = roleContract(agentRole);
+  console.error(`copilot bootstrap provider=copilot model=${payload.model} role=${agentRole ?? "default"} cwd=${cwd} skills=${JSON.stringify(bootstrapContract.skills ?? [])} mcp=${JSON.stringify(bootstrapContract.mcp ?? [])}`);
   console.error(`copilot request model=${payload.model} role=${isOrchestratorRole(agentRole) ? "orchestrator" : "leaf"} cwd=${cwd}`);
 
   if (payload.stream === false) {

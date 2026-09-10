@@ -1274,12 +1274,18 @@ snapshots, the bridge forwards only the canonical deltas so subagent
 commentary is not rendered twice; assistant-only streams remain supported.
 The bridge also passes the approved runtime directories in
 `CLAUDE_CODE_ADDITIONAL_DIRS` to Claude Code via `--add-dir`; it defaults to
-`~/.codex`. This lets read-only roles inspect materialized role/config and
+`~/.codex`. AutoDev skills use a generated role-specific view under
+`$CODEX_HOME/provider-runtime/claude/<role>/.claude/skills/`, because Claude's
+additional-directory discovery does not treat `~/.agents/skills` as a skill root.
+This lets read-only roles inspect materialized role/config and
 telemetry state outside the repository while their role instructions continue
 to forbid edits outside the active workspace. The bridge uses Claude Code's
 `bypassPermissions` mode by default so approved runtime reads and localhost
 diagnostics are not blocked by an interactive approval gate; override
 `CLAUDE_CODE_PERMISSION_MODE` when a stricter provider policy is required.
+The bridge intentionally does not pass Claude's `--bare` flag: Claude documents
+that mode as skipping OAuth/keychain authentication, while AutoDev relies on
+`CLAUDE_CODE_OAUTH_TOKEN` and the first-party subscription flow.
 The local router owns the GPT branch separately and forwards it to
 `https://chatgpt.com/backend-api/codex/responses` with the existing Codex OAuth
 token and account ID from `auth.json`.

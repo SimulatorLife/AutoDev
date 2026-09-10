@@ -18,6 +18,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 BRIDGE_PATH = REPO_ROOT / "scripts/codex-claude-cli-responses-proxy.py"
 INSTALLER_PATH = REPO_ROOT / "scripts/codex/install-codex-integration.sh"
 AGENT_RENDERER_PATH = REPO_ROOT / "scripts/codex/render-agent-configs.py"
+PROVIDER_SKILL_VIEW_RENDERER_PATH = REPO_ROOT / "scripts/codex/render-provider-skill-views.py"
 EXECUTION_CONTRACT_RENDERER_PATH = REPO_ROOT / "scripts/codex/render-execution-contract.py"
 SKILL_NAMES = ("ccc", "code-simplification", "lsp-mcp-server", "orchestration", "remove-legacy-shims")
 LSP_AGENT_NAMES = ("default", "explorer", "smart", "validator", "worker")
@@ -295,8 +296,8 @@ class LocalSetupTests(unittest.TestCase):
         config = tomllib.loads((REPO_ROOT / "scripts/codex/config.toml").read_text())
         server = config["mcp_servers"]["cocoindex-code"]
         self.assertTrue(server["enabled"])
-        self.assertEqual(server["command"], "ccc")
-        self.assertEqual(server["args"], ["mcp"])
+        self.assertEqual(server["command"], "bash")
+        self.assertEqual(server["args"], ["-lc", 'exec "${CODEX_HOME:-$HOME/.codex}/hooks/run-autodev-mcp.sh" cocoindex-code'])
         self.assertNotIn("cwd", server)
         skill_config = {
             entry["name"]: entry["enabled"]
@@ -351,8 +352,8 @@ class LocalSetupTests(unittest.TestCase):
                 should_enable = role in expected_enabled
                 self.assertEqual(server["enabled"], should_enable)
                 if role != "orchestrator":
-                    self.assertEqual(server["command"], "ccc")
-                    self.assertEqual(server["args"], ["mcp"])
+                    self.assertEqual(server["command"], "bash")
+                    self.assertEqual(server["args"], ["-lc", 'exec "${CODEX_HOME:-$HOME/.codex}/hooks/run-autodev-mcp.sh" cocoindex-code'])
                 skill_config = {
                     entry["name"]: entry["enabled"]
                     for entry in role_config["skills"]["config"]
@@ -362,13 +363,13 @@ class LocalSetupTests(unittest.TestCase):
     def test_antigravity_installer_registers_the_pinned_playwright_mcp(self):
         installer = INSTALLER_PATH.read_text()
         self.assertIn('agy mcp add playwright pnpm exec playwright-mcp', installer)
-        self.assertIn('agy mcp add cocoindex-code ccc mcp', installer)
+        self.assertIn("agy mcp add cocoindex-code bash -lc 'exec \"${CODEX_HOME:-$HOME/.codex}/hooks/run-autodev-mcp.sh\" cocoindex-code'", installer)
         self.assertIn("agy mcp add lsp bash -lc 'exec", installer)
         self.assertIn('mcp(cocoindex-code)', installer)
         self.assertIn('mcp(cocoindex-code/search)', installer)
         self.assertIn('mcp(lsp)', installer)
         self.assertIn('mcp(lsp/*)', installer)
-        self.assertIn('copilot mcp add cocoindex-code -- ccc mcp', installer)
+        self.assertIn("copilot mcp add cocoindex-code -- bash -lc 'exec \"${CODEX_HOME:-$HOME/.codex}/hooks/run-autodev-mcp.sh\" cocoindex-code'", installer)
         self.assertIn("copilot mcp add lsp -- bash -lc 'exec", installer)
         self.assertIn('register_agy_code_skills', installer)
         self.assertIn('AUTODEV_SKIP_AGY_MCP', installer)
@@ -881,7 +882,7 @@ class LocalSetupTests(unittest.TestCase):
     def test_claude_cli_disables_subagent_tools(self):
         args = claude_bridge.claude_cli_args("prompt", "sonnet", "medium")
         deny_index = args.index("--disallowed-tools")
-        self.assertEqual(args[deny_index + 1], "Agent,Task,SendMessage,ListAgents")
+        self.assertEqual(args[deny_index + 1], "Bash(ccc *),Agent,Task,SendMessage,ListAgents")
         system_prompt_index = args.index("--system-prompt")
         self.assertIn(claude_bridge.LEAF_BRIDGE_INSTRUCTIONS, args[system_prompt_index + 1])
 
@@ -949,7 +950,7 @@ class LocalSetupTests(unittest.TestCase):
     def test_orchestrator_keeps_the_delegation_tools_every_leaf_loses(self):
         leaf = claude_bridge.claude_cli_args("prompt", "sonnet", "medium")
         leaf_denied = leaf[leaf.index("--disallowed-tools") + 1].split(",")
-        self.assertEqual(leaf_denied, ["Agent", "Task", "SendMessage", "ListAgents"])
+        self.assertEqual(leaf_denied, ["Bash(ccc *)", "Agent", "Task", "SendMessage", "ListAgents"])
 
         # With no session to hold, the shim cannot work, so the orchestrator
         # keeps Claude's own Agent tool: an invisible child still beats no
@@ -965,6 +966,20 @@ class LocalSetupTests(unittest.TestCase):
             claude_bridge.ORCHESTRATOR_BRIDGE_INSTRUCTIONS,
             orchestrator[system_prompt_index + 1],
         )
+
+    def test_claude_role_mcp_config_materializes_documentation_server_from_contract(self):
+        for role in ("smart", "docs-researcher"):
+            with self.subTest(role=role):
+                args = claude_bridge.claude_cli_args("prompt", "sonnet", "medium", role, "/tmp/workspace")
+                config = json.loads(args[args.index("--mcp-config") + 1])
+                self.assertEqual(config["mcpServers"]["openaiDeveloperDocs"], {"url": "https://developers.openai.com/mcp"})
+
+    def test_claude_bridge_does_not_enable_bare_mode_for_oauth_sessions(self):
+        args = claude_bridge.claude_cli_args("prompt", "sonnet", "medium", "explorer", "/tmp/workspace")
+        self.assertNotIn("--bare", args)
+        self.assertIn("--permission-mode", args)
+        self.assertIn("--mcp-config", args)
+        self.assertIn("--add-dir", args)
 
     def test_the_orchestrator_delegates_through_codex_when_it_can(self):
         """A child spawned inside the Claude CLI is invisible to Codex and to
@@ -1215,10 +1230,65 @@ class LocalSetupTests(unittest.TestCase):
             add_dir_index = args.index("--add-dir")
             self.assertIn(str(Path(workspace) / ".agents"), args[add_dir_index + 1:])
 
-    def test_claude_cli_exposes_global_autodev_skills_directory(self):
+    def test_claude_cli_exposes_role_specific_skill_view_not_canonical_agents_root(self):
         args = claude_bridge.claude_cli_args("prompt", "sonnet", "medium", "explorer", "/tmp/workspace")
         add_dir_index = args.index("--add-dir")
-        self.assertIn(str(Path.home() / ".agents"), args[add_dir_index + 1:])
+        directories = args[add_dir_index + 1:]
+        expected = str(Path(claude_bridge.os.environ.get("CODEX_HOME", Path.home() / ".codex")) / "provider-runtime" / "claude" / "explorer")
+        self.assertIn(expected, directories)
+        self.assertNotIn(str(Path.home() / ".agents"), directories)
+        self.assertTrue((Path(expected) / ".claude" / "skills" / "ccc" / "SKILL.md").is_file())
+
+    def test_claude_roles_without_skills_receive_no_skill_view(self):
+        for role in ("browser-tester", "docs-researcher"):
+            with self.subTest(role=role):
+                args = claude_bridge.claude_cli_args("prompt", "sonnet", "medium", role, "/tmp/workspace")
+                self.assertFalse(any("provider-runtime/claude/" in value for value in args))
+
+    def test_provider_skill_view_renderer_projects_only_enabled_role_skills(self):
+        with tempfile.TemporaryDirectory() as canonical, tempfile.TemporaryDirectory() as output:
+            canonical_path = Path(canonical)
+            for name in ("ccc", "lsp-mcp-server", "orchestration"):
+                skill = canonical_path / name
+                skill.mkdir()
+                (skill / "SKILL.md").write_text(f"# {name}\n")
+            contract = canonical_path / "contract.json"
+            contract.write_text(json.dumps({"roles": {
+                "explorer": {"skills": ["ccc", "lsp-mcp-server"]},
+                "browser-tester": {"skills": []},
+                "orchestrator": {"skills": ["orchestration"]},
+            }}))
+            subprocess.run([
+                "python3", str(PROVIDER_SKILL_VIEW_RENDERER_PATH),
+                "--contract", str(contract), "--canonical-root", str(canonical_path),
+                "--output-root", str(Path(output) / "claude"), "--provider", "claude",
+            ], check=True, capture_output=True, text=True)
+            self.assertTrue((Path(output) / "claude/explorer/.claude/skills/ccc").is_symlink())
+            self.assertTrue((Path(output) / "claude/explorer/.claude/skills/lsp-mcp-server").is_symlink())
+            self.assertFalse((Path(output) / "claude/browser-tester/.claude/skills/ccc").exists())
+            self.assertTrue((Path(output) / "claude/orchestrator/.claude/skills/orchestration").is_symlink())
+            subprocess.run([
+                "python3", str(PROVIDER_SKILL_VIEW_RENDERER_PATH),
+                "--contract", str(contract), "--canonical-root", str(canonical_path),
+                "--output-root", str(Path(output) / "claude"), "--provider", "claude", "--check",
+            ], check=True, capture_output=True, text=True)
+            stale = Path(output) / "claude/explorer/.claude/skills/stale"
+            stale.symlink_to(canonical_path / "ccc", target_is_directory=True)
+            subprocess.run([
+                "python3", str(PROVIDER_SKILL_VIEW_RENDERER_PATH),
+                "--contract", str(contract), "--canonical-root", str(canonical_path),
+                "--output-root", str(Path(output) / "claude"), "--provider", "claude",
+            ], check=True, capture_output=True, text=True)
+            self.assertFalse(stale.exists() or stale.is_symlink())
+            missing_contract = canonical_path / "missing-contract.json"
+            missing_contract.write_text(json.dumps({"roles": {"explorer": {"skills": ["missing"]}}}))
+            missing = subprocess.run([
+                "python3", str(PROVIDER_SKILL_VIEW_RENDERER_PATH),
+                "--contract", str(missing_contract), "--canonical-root", str(canonical_path),
+                "--output-root", str(Path(output) / "missing"), "--provider", "claude",
+            ], capture_output=True, text=True)
+            self.assertNotEqual(missing.returncode, 0)
+            self.assertIn("missing skill source", missing.stderr + missing.stdout)
 
     def test_claude_cli_allows_approved_runtime_directory_inspection(self):
         with patch.dict(claude_bridge.os.environ, {"CLAUDE_CODE_ADDITIONAL_DIRS": "/Users/henrykirk/.codex:/Users/henrykirk/.agents"}, clear=False):

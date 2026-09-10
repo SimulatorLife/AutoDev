@@ -259,8 +259,8 @@ default_tools_approval_mode = "approve"
 # This user-level entry is available to the root orchestrator as well as
 # code-capable child roles; role contracts decide which prompts may use it.
 enabled = true
-command = "ccc"
-args = ["mcp"]
+command = "bash"
+args = ["-lc", "exec \"${CODEX_HOME:-$HOME/.codex}/hooks/run-autodev-mcp.sh\" cocoindex-code"]
 default_tools_approval_mode = "approve"
 
 [mcp_servers.playwright]

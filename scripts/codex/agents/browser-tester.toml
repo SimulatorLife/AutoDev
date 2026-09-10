@@ -48,8 +48,8 @@ enabled_tools = [
 
 [mcp_servers."cocoindex-code"]
 enabled = false
-command = "ccc"
-args = ["mcp"]
+command = "bash"
+args = ["-lc", "exec \"${CODEX_HOME:-$HOME/.codex}/hooks/run-autodev-mcp.sh\" cocoindex-code"]
 
 [skills]
 include_instructions = false

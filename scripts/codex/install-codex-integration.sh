@@ -54,6 +54,7 @@ dashboard_asset_names=(codex-model-router-dashboard.html)
 mcp_launcher_names=(run-autodev-mcp.sh)
 agent_renderer_name=scripts/codex/render-agent-configs.py
 execution_contract_builder_name=scripts/codex/render-execution-contract.py
+provider_skill_view_renderer_name=scripts/codex/render-provider-skill-views.py
 runtime_module_names=(
   scripts/codex/lib/resolve-workspace.mjs
   scripts/codex/lib/bridge-role.mjs
@@ -267,7 +268,7 @@ check_versioned_sources() {
       failed=1
     fi
   done
-  for source in "$repo_root/scripts/codex/agents/orchestrator.toml" "$repo_root/$execution_contract_builder_name"; do
+  for source in "$repo_root/scripts/codex/agents/orchestrator.toml" "$repo_root/$execution_contract_builder_name" "$repo_root/$provider_skill_view_renderer_name"; do
     if ! check_versioned_source "$source"; then
       failed=1
     fi
@@ -392,6 +393,28 @@ check_user_agent_files() {
   done
   rm -rf -- "$rendered_dir"
   return "$failed"
+}
+
+render_claude_skill_views() {
+  python3 "$repo_root/$provider_skill_view_renderer_name" \
+    --contract "$repo_root/scripts/codex/execution-contract.json" \
+    --canonical-root "$user_skills_dir" \
+    --output-root "$codex_home/provider-runtime/claude" \
+    --provider claude >/dev/null
+  printf 'rendered Claude role skill views\n'
+}
+
+check_claude_skill_views() {
+  if python3 "$repo_root/$provider_skill_view_renderer_name" \
+    --contract "$repo_root/scripts/codex/execution-contract.json" \
+    --canonical-root "$user_skills_dir" \
+    --output-root "$codex_home/provider-runtime/claude" \
+    --provider claude --check >/dev/null; then
+    printf 'ok Claude role skill views\n'
+    return 0
+  fi
+  printf 'missing-or-drifted Claude role skill views\n'
+  return 1
 }
 
 check_execution_contract() {
@@ -606,8 +629,8 @@ check_agy_code_mcp() {
   local listing
   listing="$(agy mcp list 2>/dev/null || true)"
   local failed=0
-  grep -Eq '^cocoindex-code[[:space:]]+stdio[[:space:]]+enabled[[:space:]]+ccc mcp[[:space:]]*$' <<<"$listing" || {
-    printf 'missing-or-drifted agy CocoIndex MCP (expected ccc mcp)\n'
+  grep -Fq 'cocoindex-code  stdio  enabled   bash -lc exec "${CODEX_HOME:-$HOME/.codex}/hooks/run-autodev-mcp.sh" cocoindex-code' <<<"$listing" || {
+    printf 'missing-or-drifted agy CocoIndex MCP (expected the pinned run-autodev-mcp.sh launcher)\n'
     failed=1
   }
   grep -Eq '^lsp[[:space:]]+stdio[[:space:]]+enabled[[:space:]]+bash -lc exec .*run-autodev-mcp\.sh.* lsp[[:space:]]*$' <<<"$listing" || {
@@ -703,7 +726,7 @@ check_copilot_code_mcp() {
   cocoindex_config="$(copilot mcp get cocoindex-code 2>/dev/null || true)"
   lsp_config="$(copilot mcp get lsp 2>/dev/null || true)"
   local failed=0
-  grep -Fq 'Command: ccc mcp' <<<"$cocoindex_config" || {
+  grep -Fq 'Command: bash -lc exec "${CODEX_HOME:-$HOME/.codex}/hooks/run-autodev-mcp.sh" cocoindex-code' <<<"$cocoindex_config" || {
     printf 'missing-or-drifted Copilot CocoIndex MCP\n'
     failed=1
   }
@@ -724,11 +747,11 @@ check_cocoindex_code_config() {
     printf 'missing-user-mcp-registration cocoindex-code\n'
     failed=1
   }
-  grep -Fq 'command = "ccc"' "$config" || {
+  grep -Fq 'command = "bash"' "$config" || {
     printf 'invalid-user-mcp-command cocoindex-code\n'
     failed=1
   }
-  grep -Fq 'args = ["mcp"]' "$config" || {
+  grep -Fq 'run-autodev-mcp.sh\" cocoindex-code' "$config" || {
     printf 'invalid-user-mcp-args cocoindex-code\n'
     failed=1
   }
@@ -1010,6 +1033,9 @@ check_links() {
   if ! check_execution_contract; then
     failed=1
   fi
+  if ! check_claude_skill_views; then
+    failed=1
+  fi
   if ! check_custom_provider_config; then
     failed=1
   fi
@@ -1151,7 +1177,7 @@ register_agy_spawn_shim() {
   # configuration. Register the same pinned code servers globally so
   # orchestrator and code-capable subagents receive the actual ccc and LSP
   # tools, not only the shared prompt instructions.
-  if ! agy mcp add cocoindex-code ccc mcp >/dev/null 2>&1; then
+  if ! agy mcp add cocoindex-code bash -lc 'exec "${CODEX_HOME:-$HOME/.codex}/hooks/run-autodev-mcp.sh" cocoindex-code' >/dev/null 2>&1; then
     printf 'could not register the agy CocoIndex MCP server\n' >&2
     return 1
   fi
@@ -1235,9 +1261,9 @@ register_copilot_code_mcp() {
   fi
   local listing
   listing="$(copilot mcp list 2>/dev/null || true)"
-  if ! grep -Fq 'cocoindex-code' <<<"$listing" || ! grep -Fq 'Command: ccc mcp' <<<"$listing"; then
+  if ! grep -Fq 'cocoindex-code' <<<"$listing" || ! grep -Fq 'Command: bash -lc exec "${CODEX_HOME:-$HOME/.codex}/hooks/run-autodev-mcp.sh" cocoindex-code' <<<"$listing"; then
     copilot mcp remove cocoindex-code >/dev/null 2>&1 || true
-    if ! copilot mcp add cocoindex-code -- ccc mcp >/dev/null 2>&1; then
+    if ! copilot mcp add cocoindex-code -- bash -lc 'exec "${CODEX_HOME:-$HOME/.codex}/hooks/run-autodev-mcp.sh" cocoindex-code' >/dev/null 2>&1; then
       printf 'could not register the Copilot CocoIndex MCP server\n' >&2
       return 1
     fi
@@ -1379,6 +1405,7 @@ for role in "${agent_role_names[@]}"; do
   copy_agent_role "$rendered_agents_dir/$role.toml" "$agents_dir/$role.toml"
 done
 rm -rf -- "$rendered_agents_dir"
+render_claude_skill_views
 link_one "$repo_root/scripts/codex/config.toml" "$codex_home/config.toml"
 link_one "$repo_root/scripts/codex/model-routing.json" "$codex_home/codex-model-routing.json"
 # The registration consumes the installed spawn shim, so it must happen after

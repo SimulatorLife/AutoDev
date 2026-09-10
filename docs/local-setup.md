@@ -76,7 +76,11 @@ with both capabilities to use CocoIndex before deeper inspection and LSP for
 semantic navigation; provider bridges wire the same MCP servers explicitly.
 
 The installer exposes these AutoDev-owned shared skill directories in
-`$HOME/.agents/skills/` through symlinks. The root `orchestration` skill is
+`$HOME/.agents/skills/` through symlinks. Claude additionally receives
+role-specific views under `$CODEX_HOME/provider-runtime/claude/<role>/.claude/skills/`;
+these views contain symlinks only for skills enabled by the role TOML because
+Claude's `--add-dir` discovery does not treat `~/.agents/skills` as a skill root.
+The root `orchestration` skill is
 also enabled in the parent user config and injected deterministically into root
 turns by the delegation hook and provider bridges; leaf role TOMLs keep it
 disabled so child agents do not inherit parent orchestration policy.
@@ -135,7 +139,9 @@ The same rules allow explicit localhost diagnostics such as
 `curl http://127.0.0.1:4100/status`, while remote curl commands remain gated.
 They also deny direct `ccc` CLI execution from agent shell commands. Code-capable
 roles must use the configured `cocoindex-code` MCP server; the configured MCP
-process is still allowed to launch its backend command. The rules also deny
+process is still allowed to launch its backend command. Every native and provider
+registration goes through `run-autodev-mcp.sh cocoindex-code`, so minimal provider
+PATH environments do not lose the backend executable. The rules also deny
 destructive Git history/worktree operations, force pushes and branch deletion,
 superuser/raw-disk commands, and catastrophic root/home recursive deletion.
 

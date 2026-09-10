@@ -55,8 +55,8 @@ enabled = true
 
 [mcp_servers."cocoindex-code"]
 enabled = true
-command = "ccc"
-args = ["mcp"]
+command = "bash"
+args = ["-lc", "exec \"${CODEX_HOME:-$HOME/.codex}/hooks/run-autodev-mcp.sh\" cocoindex-code"]
 default_tools_approval_mode = "approve"
 
 [[skills.config]]
