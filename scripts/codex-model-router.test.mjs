@@ -1799,8 +1799,8 @@ test("inventories native metrics and aggregates safe SQLite and tool telemetry",
           { name: "codex.sqlite.fallback.count", sum: { aggregationTemporality: 1, dataPoints: [ dataPoint([ [ "db", "memories" ], [ "status", "locked" ] ], 1) ] } },
           { name: "codex.tool.call", sum: { aggregationTemporality: 1, dataPoints: [ dataPoint([ [ "tool_name", "exec" ], [ "source", "builtin" ], [ "status", "ok" ], [ "arguments", "/private/path" ] ], 3) ] } },
           { name: "codex.tool.call.duration_ms", histogram: { aggregationTemporality: 1, dataPoints: [ histogramPoint([ [ "tool_name", "exec" ], [ "source", "builtin" ] ], 3, 90) ] } },
-          { name: "codex.hooks.run", sum: { aggregationTemporality: 1, dataPoints: [ dataPoint([ [ "hook_name", "SessionStart" ], [ "hook_source", "user" ], [ "handler_type", "command" ], [ "status", "ok" ] ], 2) ] } },
-          { name: "codex.hooks.run.duration_ms", histogram: { aggregationTemporality: 1, dataPoints: [ histogramPoint([ [ "hook_name", "SessionStart" ], [ "hook_source", "user" ], [ "handler_type", "command" ] ], 2, 20) ] } },
+          { name: "codex.hooks.run", sum: { aggregationTemporality: 1, dataPoints: [ dataPoint([ [ "hook_name", "SessionStart" ], [ "source", "user" ], [ "handler_type", "command" ], [ "status", "ok" ] ], 2) ] } },
+          { name: "codex.hooks.run.duration_ms", histogram: { aggregationTemporality: 1, dataPoints: [ histogramPoint([ [ "hook_name", "SessionStart" ], [ "source", "user" ], [ "handler_type", "command" ] ], 2, 20) ] } },
           { name: "codex.thread.started", sum: { aggregationTemporality: 1, dataPoints: [ dataPoint([ [ "source", "subagent" ] ], 4) ] } },
           { name: "codex.multi_agent.spawn", sum: { aggregationTemporality: 1, dataPoints: [ dataPoint([ [ "agent_role", "worker" ], [ "requested_model", "autodev/worker" ], [ "status", "ok" ] ], 1) ] } },
         ]
@@ -1840,7 +1840,7 @@ test("accepts histogram-shaped lifecycle metrics when Codex reports them as dist
     resourceMetrics: [ {
       scopeMetrics: [ {
         metrics: [
-          { name: "codex.hooks.run", histogram: { aggregationTemporality: 1, dataPoints: [ point([ [ "hook_name", "SessionEnd" ], [ "hook_source", "user" ], [ "handler_type", "command" ], [ "status", "ok" ] ], 2) ] } },
+          { name: "codex.hooks.run", histogram: { aggregationTemporality: 1, dataPoints: [ point([ [ "hook_name", "SessionEnd" ], [ "source", "user" ], [ "handler_type", "command" ], [ "status", "ok" ] ], 2) ] } },
           { name: "codex.thread.started", histogram: { aggregationTemporality: 1, dataPoints: [ point([ [ "source", "subagent" ] ], 3) ] } },
           { name: "codex.multi_agent.spawn", histogram: { aggregationTemporality: 1, dataPoints: [ point([ [ "agent_role", "worker" ], [ "requested_model", "autodev/worker" ], [ "status", "ok" ] ], 1) ] } },
         ]
@@ -1852,6 +1852,155 @@ test("accepts histogram-shaped lifecycle metrics when Codex reports them as dist
   assert.deepEqual(telemetry.threads.started, { total: 3, bySource: { subagent: 3 } });
   assert.deepEqual(telemetry.threads.spawns, { total: 1, byStatus: { ok: 1 }, byRole: { worker: 1 }, byModel: { "autodev/worker": 1 } });
   resetOtelTelemetry();
+});
+
+test("uses canonical source attribute for hook identity so project and user hooks stay separate", () => {
+  resetOtelTelemetry();
+  const start = BigInt(Date.now()) * 1_000_000n;
+  const attrs = (entries) => entries.map(([ key, value ]) => ({ key, value: { stringValue: String(value) } }));
+  const point = (entries, value) => ({
+    attributes: attrs(entries),
+    startTimeUnixNano: String(start), timeUnixNano: String(start + 1n), asInt: String(value),
+  });
+  ingestOtelSignal("metrics", {
+    resourceMetrics: [ {
+      scopeMetrics: [ {
+        metrics: [ {
+          name: "codex.hooks.run",
+          sum: {
+            aggregationTemporality: 1, dataPoints: [
+              point([ [ "hook_name", "SessionStart" ], [ "source", "project" ], [ "handler_type", "command" ] ], 2),
+              point([ [ "hook_name", "SessionStart" ], [ "source", "user" ], [ "handler_type", "command" ] ], 5),
+            ]
+          },
+        } ]
+      } ]
+    } ]
+  });
+  const telemetry = codexTelemetryStatus();
+  const projectHook = telemetry.hooks.byHook.find((entry) => entry.source === "project");
+  assert.equal(projectHook.count, 2);
+  const userHook = telemetry.hooks.byHook.find((entry) => entry.source === "user");
+  assert.equal(userHook.count, 5);
+  assert.equal(telemetry.hooks.byHook.length, 2);
+  resetOtelTelemetry();
+});
+
+test("normalizes Codex tool success boolean into ok and error status buckets", () => {
+  resetOtelTelemetry();
+  const start = BigInt(Date.now()) * 1_000_000n;
+  const point = (entries, value, offset) => ({
+    attributes: entries,
+    startTimeUnixNano: String(start + offset), timeUnixNano: String(start + offset + 1n), asInt: String(value),
+  });
+  ingestOtelSignal("metrics", {
+    resourceMetrics: [ {
+      scopeMetrics: [ {
+        metrics: [ {
+          name: "codex.tool.call",
+          sum: {
+            aggregationTemporality: 1, dataPoints: [
+              point([ { key: "tool", value: { stringValue: "exec_command" } }, { key: "source", value: { stringValue: "builtin" } }, { key: "success", value: { boolValue: true } } ], 3, 0n),
+              point([ { key: "tool", value: { stringValue: "exec_command" } }, { key: "source", value: { stringValue: "builtin" } }, { key: "success", value: { boolValue: false } } ], 1, 2n),
+              point([ { key: "tool", value: { stringValue: "exec_command" } }, { key: "source", value: { stringValue: "builtin" } }, { key: "success", value: { stringValue: "true" } } ], 2, 4n),
+              point([ { key: "tool", value: { stringValue: "exec_command" } }, { key: "source", value: { stringValue: "builtin" } } ], 2, 6n),
+            ]
+          },
+        } ]
+      } ]
+    } ]
+  });
+  const telemetry = codexTelemetryStatus();
+  const exec = telemetry.tools.byTool.find((entry) => entry.tool === "exec_command");
+  // boolean or string success=true → ok, success=false → error, missing → unknown.
+  // Without normalization, Codex's string-encoded success would be lost.
+  assert.deepEqual(exec.byStatus, { ok: 5, error: 1, unknown: 2 });
+  resetOtelTelemetry();
+});
+
+test("reads tool server metadata from server / mcp_server without inferring it from the tool name", () => {
+  resetOtelTelemetry();
+  const start = BigInt(Date.now()) * 1_000_000n;
+  const attrs = (entries) => entries.map(([ key, value ]) => ({ key, value: { stringValue: String(value) } }));
+  const point = (entries, value) => ({
+    attributes: attrs(entries),
+    startTimeUnixNano: String(start), timeUnixNano: String(start + 1n), asInt: String(value),
+  });
+  ingestOtelSignal("metrics", {
+    resourceMetrics: [ {
+      scopeMetrics: [ {
+        metrics: [ {
+          name: "codex.tool.call",
+          sum: {
+            aggregationTemporality: 1, dataPoints: [
+              point([ [ "tool", "playwright_navigate" ], [ "source", "mcp" ], [ "mcp_server", "playwright" ] ], 1),
+              point([ [ "tool", "playwright_navigate" ], [ "source", "mcp" ], [ "server", "playwright-alt" ] ], 2),
+              point([ [ "tool", "playwright_navigate" ], [ "source", "mcp" ] ], 3),
+              point([ [ "tool", "codex_apps_search" ], [ "source", "mcp" ], [ "server", "codex_apps" ] ], 4),
+            ]
+          },
+        } ]
+      } ]
+    } ]
+  });
+  const telemetry = codexTelemetryStatus();
+  const byServer = Object.fromEntries(telemetry.tools.byTool.filter((entry) => entry.tool === "playwright_navigate").map((entry) => [ entry.server, entry.count ]));
+  assert.deepEqual(byServer, { playwright: 1, "playwright-alt": 2, "": 3 });
+  // The router never guesses that "playwright_navigate" belongs to the
+  // playwright server just because of the prefix.
+  assert.equal(telemetry.tools.byTool.find((entry) => entry.tool === "codex_apps_search").server, "codex_apps");
+  resetOtelTelemetry();
+});
+
+test("drops persisted hook and tool aggregates when the OTEL persistence schema bumps", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "autodev-router-hook-schema-"));
+  const stateFile = join(directory, "router-state.json");
+  try {
+    resetOtelTelemetry();
+    ingestOtelSignal("metrics", {
+      resourceMetrics: [ {
+        scopeMetrics: [ {
+          metrics: [
+            { name: "codex.tool.call", sum: { aggregationTemporality: 1, dataPoints: [ { attributes: [ { key: "tool", value: { stringValue: "legacy_tool" } }, { key: "source", value: { stringValue: "builtin" } }, { key: "success", value: { boolValue: true } } ], startTimeUnixNano: "1", timeUnixNano: "2", asInt: "3" } ] } },
+            { name: "codex.hooks.run", sum: { aggregationTemporality: 1, dataPoints: [ { attributes: [ { key: "hook_name", value: { stringValue: "LegacyHook" } }, { key: "source", value: { stringValue: "project" } }, { key: "handler_type", value: { stringValue: "command" } } ], startTimeUnixNano: "1", timeUnixNano: "2", asInt: "1" } ] } },
+          ]
+        } ]
+      } ]
+    });
+    await persistRouterStateNow(stateFile);
+    resetOtelTelemetry();
+    // Simulate a stale snapshot from before the schema bump: the previous
+    // router version persisted under schemaVersion 1 with source and
+    // server_name attributes. The current router must treat that file as
+    // incompatible and discard every hook/tool aggregate so the next export
+    // is not silently mixed with old counts.
+    const raw = JSON.parse(await readFile(stateFile, "utf8"));
+    raw.otelTelemetry.schemaVersion = 1;
+    await writeFile(stateFile, JSON.stringify(raw), "utf8");
+    assert.equal(loadRouterState(stateFile), true);
+    const discarded = getRouterStatus().codexTelemetry;
+    assert.equal(discarded.tools.byTool.length, 0);
+    assert.equal(discarded.hooks.byHook.length, 0);
+    // Schema 2 snapshots written by the current router still restore cleanly
+    // with the canonical source and server metadata attributes.
+    ingestOtelSignal("metrics", {
+      resourceMetrics: [ {
+        scopeMetrics: [ {
+          metrics: [ { name: "codex.hooks.run", sum: { aggregationTemporality: 1, dataPoints: [ { attributes: [ { key: "hook_name", value: { stringValue: "SessionStart" } }, { key: "source", value: { stringValue: "project" } }, { key: "handler_type", value: { stringValue: "command" } } ], startTimeUnixNano: "1", timeUnixNano: "2", asInt: "1" } ] } } ]
+        } ]
+      } ]
+    });
+    await persistRouterStateNow(stateFile);
+    resetOtelTelemetry();
+    assert.equal(loadRouterState(stateFile), true);
+    const restored = getRouterStatus().codexTelemetry;
+    assert.equal(restored.hooks.byHook.length, 1);
+    assert.equal(restored.hooks.byHook[ 0 ].source, "project");
+    assert.equal(restored.hooks.byHook[ 0 ].count, 1);
+  } finally {
+    resetOtelTelemetry();
+    await rm(directory, { recursive: true, force: true });
+  }
 });
 
 test("tracks router-visible subagent spawn failure reasons", () => {
@@ -2043,7 +2192,7 @@ test("persists provider telemetry and recent events across router restarts", asy
           }, {
           }, {
             name: "codex.hooks.run",
-            sum: { aggregationTemporality: 1, dataPoints: [ { attributes: [ { key: "hook_name", value: { stringValue: "SessionStart" } }, { key: "hook_source", value: { stringValue: "user" } }, { key: "handler_type", value: { stringValue: "command" } }, { key: "status", value: { stringValue: "ok" } } ], startTimeUnixNano: "1", timeUnixNano: "2", asInt: "1" } ] },
+            sum: { aggregationTemporality: 1, dataPoints: [ { attributes: [ { key: "hook_name", value: { stringValue: "SessionStart" } }, { key: "source", value: { stringValue: "user" } }, { key: "handler_type", value: { stringValue: "command" } }, { key: "status", value: { stringValue: "ok" } } ], startTimeUnixNano: "1", timeUnixNano: "2", asInt: "1" } ] },
           }, {
             name: "codex.thread.started",
             sum: { aggregationTemporality: 1, dataPoints: [ { attributes: [ { key: "source", value: { stringValue: "subagent" } } ], startTimeUnixNano: "1", timeUnixNano: "2", asInt: "1" } ] },

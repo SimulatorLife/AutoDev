@@ -162,12 +162,31 @@ are shown as rows rather than duplicated in a subtitle.
 `codex.turn.token_usage` and native turn counters remain inventory-only because
 the router already derives token and turn totals from lifecycle logs.
 
+The current OTLP field mapping for this table is: tool rows use
+`codex.tool.call` and `codex.tool.call.duration_ms`, with `tool` as the name
+(`toolName` and `tool_name` are accepted spellings), `source` as the source,
+server metadata from `server`, `mcp_server`, `serverName`, or `server_name`,
+and `success` (`true`/`false`, sometimes string-encoded by OTLP) for the
+status bucket. Hook rows use
+`codex.hooks.run` and `codex.hooks.run.duration_ms`, with `hook_name`,
+`source`, `handler_type`, and `status`. A missing or non-applicable server/handler is rendered as
+`-`; the router never infers a server from a tool name, and real API values are
+preserved.
+
 The router persists these OTEL aggregates in a versioned `otelTelemetry` section
 of `$CODEX_HOME/codex-router-state.json`. It also persists hashed cumulative
 series cursors so a restart does not count the next cumulative export twice.
 Session IDs, raw attributes, prompts, tool arguments, paths, and queries are
 not written to the state file. Active sessions and in-flight requests remain
 process-local and are intentionally reset on restart.
+
+The current OTEL persistence schema is version 2. Old aggregates written with
+the previous attribution schema are not migrated. To remove incorrectly
+attributed aggregates, reset the persisted `otelTelemetry` section (or remove
+the state file when a full telemetry reset is acceptable) and restart the
+router; refreshing the dashboard alone does not clear persisted data. The
+restart is required for the router to load the new schema and write a clean
+snapshot.
 
 Skill metrics may use cumulative or delta OTLP temporality. For cumulative
 points, Codex resends the running total on every export, so the router tracks

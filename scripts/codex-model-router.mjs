@@ -705,6 +705,30 @@ function noteSqliteCounter(collection, metricName, attributes, dataPoint, tempor
   sqliteBucket(collection, attributes).count += delta;
 }
 
+// Codex's current tool-call export uses a boolean `success` attribute in
+// place of a literal status string. Normalize the boolean into the existing
+// ok/error buckets so dashboards keep their status totals. A missing or
+// unrecognised attribute is reported as unknown -- the router never invents
+// a status from the previous data point.
+function toolStatusAttribute(attributes) {
+  if (typeof attributes.success === "boolean") return attributes.success ? "ok" : "error";
+  if (typeof attributes.success === "string") {
+    const success = attributes.success.trim().toLowerCase();
+    if (success === "true") return "ok";
+    if (success === "false") return "error";
+  }
+  if (typeof attributes.status === "string" && attributes.status.trim()) return safeMetricLabel(attributes.status);
+  return "unknown";
+}
+
+// Codex surfaces the server that owns a tool call through a small set of
+// attribute spellings across versions. Read whichever the upstream actually
+// sent; do not infer the server from the tool name -- the dashboard would
+// otherwise double-attribute every MCP-prefixed tool.
+function toolServerAttribute(attributes, fallback = "") {
+  return readNamedAttribute(attributes, fallback, "server", "mcp_server", "serverName", "server_name");
+}
+
 function toolNameAttribute(attributes, fallback = "unknown-tool") {
   // Codex attaches the tool name as "tool" in current OTLP exports, with
   // "toolName" and "tool_name" used by other versions. Without consulting all
@@ -714,30 +738,30 @@ function toolNameAttribute(attributes, fallback = "unknown-tool") {
 }
 
 function toolKey(attributes) {
-  return [toolNameAttribute(attributes), safeMetricLabel(attributes.source), safeMetricLabel(attributes.server_name, "")].join("::");
+  return [toolNameAttribute(attributes), safeMetricLabel(attributes.source), toolServerAttribute(attributes)].join("::");
 }
 
 function toolBucket(attributes) {
   const tool = toolNameAttribute(attributes);
   const source = safeMetricLabel(attributes.source);
-  const server = safeMetricLabel(attributes.server_name, "");
+  const server = toolServerAttribute(attributes);
   const key = toolKey(attributes);
   if (!otelTelemetry.tools.has(key)) otelTelemetry.tools.set(key, { tool, source, server, count: 0, byStatus: {}, durationCount: 0, durationMs: 0 });
   return otelTelemetry.tools.get(key);
 }
 
 function noteToolCounter(metricName, attributes, dataPoint, temporality) {
-  const identity = { tool_name: toolNameAttribute(attributes), source: safeMetricLabel(attributes.source), server_name: safeMetricLabel(attributes.server_name, "") };
+  const identity = { tool_name: toolNameAttribute(attributes), source: safeMetricLabel(attributes.source), server: toolServerAttribute(attributes) };
   const delta = otelSeriesDelta(otelSeriesKey(metricName, identity, dataPoint.startTimeUnixNano), dataPoint.timeUnixNano, otelSumDataPointValue(dataPoint), temporality);
   if (delta === 0) return;
   const bucket = toolBucket(attributes);
-  const status = safeMetricLabel(attributes.status);
+  const status = toolStatusAttribute(attributes);
   bucket.count += delta;
   bucket.byStatus[status] = (bucket.byStatus[status] ?? 0) + delta;
 }
 
 function noteToolDuration(metricName, attributes, dataPoint, temporality) {
-  const identity = { tool_name: toolNameAttribute(attributes), source: safeMetricLabel(attributes.source), server_name: safeMetricLabel(attributes.server_name, "") };
+  const identity = { tool_name: toolNameAttribute(attributes), source: safeMetricLabel(attributes.source), server: toolServerAttribute(attributes) };
   const count = otelSeriesDelta(otelSeriesKey(`${metricName}#count`, identity, dataPoint.startTimeUnixNano), dataPoint.timeUnixNano, numberAttribute({ count: dataPoint.count }, "count"), temporality);
   const sum = otelSeriesDelta(otelSeriesKey(`${metricName}#sum`, identity, dataPoint.startTimeUnixNano), dataPoint.timeUnixNano, numberAttribute({ sum: dataPoint.sum }, "sum"), temporality);
   const bucket = toolBucket(attributes);
@@ -746,12 +770,12 @@ function noteToolDuration(metricName, attributes, dataPoint, temporality) {
 }
 
 function hookKey(attributes) {
-  return [safeMetricLabel(attributes.hook_name, "unknown-hook"), safeMetricLabel(attributes.hook_source), safeMetricLabel(attributes.handler_type, "")].join("::");
+  return [safeMetricLabel(attributes.hook_name, "unknown-hook"), safeMetricLabel(attributes.source), safeMetricLabel(attributes.handler_type, "")].join("::");
 }
 
 function hookBucket(attributes) {
   const hook = safeMetricLabel(attributes.hook_name, "unknown-hook");
-  const source = safeMetricLabel(attributes.hook_source);
+  const source = safeMetricLabel(attributes.source);
   const handlerType = safeMetricLabel(attributes.handler_type, "");
   const key = hookKey(attributes);
   if (!otelTelemetry.hooks.has(key)) otelTelemetry.hooks.set(key, { hook, source, handlerType, count: 0, byStatus: {}, durationCount: 0, durationMs: 0 });
@@ -759,7 +783,7 @@ function hookBucket(attributes) {
 }
 
 function noteHookCounter(metricName, attributes, dataPoint, temporality) {
-  const identity = { hook_name: safeMetricLabel(attributes.hook_name, "unknown-hook"), hook_source: safeMetricLabel(attributes.hook_source), handler_type: safeMetricLabel(attributes.handler_type, "") };
+  const identity = { hook_name: safeMetricLabel(attributes.hook_name, "unknown-hook"), source: safeMetricLabel(attributes.source), handler_type: safeMetricLabel(attributes.handler_type, "") };
   const delta = otelSeriesDelta(otelSeriesKey(metricName, identity, dataPoint.startTimeUnixNano), dataPoint.timeUnixNano, otelSumDataPointValue(dataPoint), temporality);
   if (delta === 0) return;
   const bucket = hookBucket(attributes);
@@ -769,7 +793,7 @@ function noteHookCounter(metricName, attributes, dataPoint, temporality) {
 }
 
 function noteHookDuration(metricName, attributes, dataPoint, temporality) {
-  const identity = { hook_name: safeMetricLabel(attributes.hook_name, "unknown-hook"), hook_source: safeMetricLabel(attributes.hook_source), handler_type: safeMetricLabel(attributes.handler_type, "") };
+  const identity = { hook_name: safeMetricLabel(attributes.hook_name, "unknown-hook"), source: safeMetricLabel(attributes.source), handler_type: safeMetricLabel(attributes.handler_type, "") };
   const count = otelSeriesDelta(otelSeriesKey(`${metricName}#count`, identity, dataPoint.startTimeUnixNano), dataPoint.timeUnixNano, numberAttribute({ count: dataPoint.count }, "count"), temporality);
   const sum = otelSeriesDelta(otelSeriesKey(`${metricName}#sum`, identity, dataPoint.startTimeUnixNano), dataPoint.timeUnixNano, numberAttribute({ sum: dataPoint.sum }, "sum"), temporality);
   const bucket = hookBucket(attributes);
@@ -778,7 +802,7 @@ function noteHookDuration(metricName, attributes, dataPoint, temporality) {
 }
 
 function noteHookHistogramCount(metricName, attributes, dataPoint, temporality) {
-  const identity = { hook_name: safeMetricLabel(attributes.hook_name, "unknown-hook"), hook_source: safeMetricLabel(attributes.hook_source), handler_type: safeMetricLabel(attributes.handler_type, "") };
+  const identity = { hook_name: safeMetricLabel(attributes.hook_name, "unknown-hook"), source: safeMetricLabel(attributes.source), handler_type: safeMetricLabel(attributes.handler_type, "") };
   const delta = otelSeriesDelta(otelSeriesKey(`${metricName}#count`, identity, dataPoint.startTimeUnixNano), dataPoint.timeUnixNano, numberAttribute({ count: dataPoint.count }, "count"), temporality);
   if (delta === 0) return;
   const bucket = hookBucket(attributes);
@@ -1766,7 +1790,7 @@ function usagePersistenceSnapshot() {
   };
 }
 
-const OTEL_PERSISTENCE_SCHEMA_VERSION = 1;
+const OTEL_PERSISTENCE_SCHEMA_VERSION = 2;
 
 function otelPersistenceSnapshot() {
   const telemetry = codexTelemetryStatus();
@@ -1840,7 +1864,7 @@ function restoreOtelTelemetry(snapshot) {
     // instead of displaying a false tool name. New missing names remain visible
     // as unknown-tool for diagnosis.
     if (entry.tool === "unknown-tool") continue;
-    const restored = { tool: safeMetricLabel(entry.tool, "unknown-tool"), source: safeMetricLabel(entry.source), server: safeMetricLabel(entry.server, ""), count: 0, byStatus: {}, durationCount: 0, durationMs: 0 };
+    const restored = { tool: safeMetricLabel(entry.tool, "unknown-tool"), source: safeMetricLabel(entry.source), server: toolServerAttribute({ server: entry.server, mcp_server: entry.mcp_server }), count: 0, byStatus: {}, durationCount: 0, durationMs: 0 };
     restoreNumberFields(restored, entry, ["count", "durationCount", "durationMs"]);
     for (const [status, count] of Object.entries(entry.byStatus ?? {})) if (isFiniteNonnegative(count)) restored.byStatus[safeMetricLabel(status)] = count;
     otelTelemetry.tools.set(toolKey(restored), restored);
@@ -1850,7 +1874,7 @@ function restoreOtelTelemetry(snapshot) {
     const restored = { hook: safeMetricLabel(entry.hook, "unknown-hook"), source: safeMetricLabel(entry.source), handlerType: safeMetricLabel(entry.handlerType, ""), count: 0, byStatus: {}, durationCount: 0, durationMs: 0 };
     restoreNumberFields(restored, entry, ["count", "durationCount", "durationMs"]);
     for (const [status, count] of Object.entries(entry.byStatus ?? {})) if (isFiniteNonnegative(count)) restored.byStatus[safeMetricLabel(status)] = count;
-    otelTelemetry.hooks.set(hookKey({ hook_name: restored.hook, hook_source: restored.source, handler_type: restored.handlerType }), restored);
+    otelTelemetry.hooks.set(hookKey({ hook_name: restored.hook, source: restored.source, handler_type: restored.handlerType }), restored);
   }
   restoreNumberFields(otelTelemetry.threads.started, snapshot.threads?.started, ["total"]);
   for (const [source, count] of Object.entries(snapshot.threads?.started?.bySource ?? {})) if (isFiniteNonnegative(count)) otelTelemetry.threads.started.bySource[safeMetricLabel(source)] = count;

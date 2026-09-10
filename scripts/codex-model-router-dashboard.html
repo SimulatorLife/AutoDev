@@ -546,6 +546,7 @@
 
   <script>
     const text = (value) => String(value ?? "").replace(/[&<>"']/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[ character ]));
+    const labelOrDash = (value) => value == null || (typeof value === "string" && value.trim() === "") ? "-" : value;
     const formatTimestamp = (value) => {
       const date = new Date(value);
       if (Number.isNaN(date.getTime())) return text(value);
@@ -815,8 +816,8 @@
       const threadSource = { count: threads.started?.total ?? 0, byStatus: {} };
       const spawnSource = { count: spawns.total ?? 0, byStatus: spawns.byStatus ?? {} };
       const runtimeRows = [
-        ...(codexTelemetry.tools?.byTool ?? []).map((tool) => `<tr><td>Tool</td><td><code>${text(tool.tool)}</code></td><td>${text(tool.source)}</td><td>${text(tool.server || "-")}</td><td>${tool.count ?? 0}</td><td>${countsText(tool.byStatus)}</td><td>${millisecondsText(tool.averageDurationMs)}</td></tr>`),
-        ...hooks.map((hook) => `<tr><td>Hook</td><td><code>${text(hook.hook)}</code></td><td>${text(hook.source)}</td><td>${text(hook.handlerType || "-")}</td><td>${hook.count ?? 0}</td><td>${countsText(hook.byStatus)}</td><td>${millisecondsText(hook.averageDurationMs)}</td></tr>`),
+        ...(codexTelemetry.tools?.byTool ?? []).map((tool) => `<tr><td>Tool</td><td><code>${text(tool.tool)}</code></td><td>${text(tool.source)}</td><td>${text(labelOrDash(tool.server))}</td><td>${tool.count ?? 0}</td><td>${countsText(tool.byStatus)}</td><td>${millisecondsText(tool.averageDurationMs)}</td></tr>`),
+        ...hooks.map((hook) => `<tr><td>Hook</td><td><code>${text(hook.hook)}</code></td><td>${text(hook.source)}</td><td>${text(labelOrDash(hook.handlerType))}</td><td>${hook.count ?? 0}</td><td>${countsText(hook.byStatus)}</td><td>${millisecondsText(hook.averageDurationMs)}</td></tr>`),
         `<tr><td>Thread</td><td><code>started</code></td><td>-</td><td>-</td><td>${threadSource.count}</td><td>-</td><td>-</td></tr>`,
         `<tr><td>Spawn</td><td><code>native agent</code></td><td>-</td><td>-</td><td>${spawnSource.count}</td><td>${countsText(spawnSource.byStatus)}</td><td>-</td></tr>`,
       ].join("");
