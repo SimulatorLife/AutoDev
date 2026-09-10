@@ -98,6 +98,9 @@ import {
   validateRoutingConfig,
   upstreamPayload,
   workspaceContextFromRequest,
+  registerWorkspaceId,
+  attributionDiagnosticsStatus,
+  resetAttributionDiagnostics,
 } from "./codex-model-router.mjs";
 import { resolveAgentEventReporter } from "./codex/lib/agent-events.mjs";
 import { spawnedChildren } from "./codex-antigravity-cli-responses-proxy.mjs";
@@ -1137,7 +1140,7 @@ test("derives a privacy-safe repository and cwd label from turn metadata", () =>
       },
     }),
   );
-  assert.deepEqual(context, { key: "SimulatorLife/RacingGame", cwd: "RacingGame" });
+  assert.deepEqual(context, { key: "SimulatorLife/RacingGame", cwd: "RacingGame", workspace_id: "ws_d8911866a131" });
   assert.equal(JSON.stringify(context).includes("/Users/henrykirk"), false);
 });
 
@@ -1192,6 +1195,603 @@ test("persists workspace usage dimensions across router restarts", async () => {
     assert.equal(restored.byProvider.minimax.successes, 1);
   } finally {
     resetRouterTelemetry();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("attributes named tools, skills, and skillUses across two distinct workspaces while preserving global telemetry and scalar toolCalls", () => {
+  resetRouterTelemetry();
+  resetOtelTelemetry();
+
+  // Register two distinct workspaces with stable opaque IDs via turn metadata
+  const wsContextA = workspaceContextFromRequest(
+    { headers: {} },
+    {},
+    JSON.stringify({
+      workspace_id: "ws-alpha-123",
+      workspaces: {
+        "/Users/henrykirk/Desktop/RacingGame": {
+          associated_remote_urls: { origin: "https://github.com/SimulatorLife/RacingGame.git" },
+        },
+      },
+    }),
+  );
+  assert.equal(wsContextA.key, "SimulatorLife/RacingGame");
+  assert.equal(wsContextA.workspace_id, "ws-alpha-123");
+
+  const wsContextB = workspaceContextFromRequest(
+    { headers: {} },
+    {},
+    JSON.stringify({
+      workspace_id: "ws-beta-456",
+      workspaces: {
+        "/Users/henrykirk/Desktop/WebPortal": {
+          associated_remote_urls: { origin: "https://github.com/Company/WebPortal.git" },
+        },
+      },
+    }),
+  );
+  assert.equal(wsContextB.key, "Company/WebPortal");
+  assert.equal(wsContextB.workspace_id, "ws-beta-456");
+
+  // Record normal turns that increment attempts, successes, and scalar toolCalls
+  recordRouterEvent({
+    phase: "selected",
+    requestId: "req-a",
+    provider: "codex",
+    model: "gpt-5.6-luna",
+    workspace: wsContextA,
+  });
+  recordRouterEvent({
+    phase: "result",
+    requestId: "req-a",
+    provider: "codex",
+    model: "gpt-5.6-luna",
+    workspace: wsContextA,
+    outcome: "success",
+    status: 200,
+    elapsedMs: 20,
+    toolCalls: 5,
+  });
+
+  recordRouterEvent({
+    phase: "selected",
+    requestId: "req-b",
+    provider: "claude",
+    model: "sonnet",
+    workspace: wsContextB,
+  });
+  recordRouterEvent({
+    phase: "result",
+    requestId: "req-b",
+    provider: "claude",
+    model: "sonnet",
+    workspace: wsContextB,
+    outcome: "success",
+    status: 200,
+    elapsedMs: 15,
+    toolCalls: 3,
+  });
+
+  // Helper for OTLP points
+  const attrs = (entries) => entries.map(([ key, value ]) => ({ key, value: { stringValue: String(value) } }));
+  const point = (entries, value, start = "1", time = "2") => ({
+    attributes: attrs(entries),
+    startTimeUnixNano: String(start),
+    timeUnixNano: String(time),
+    asInt: String(value),
+  });
+
+  // Send tool and skill OTLP metrics for both workspaces
+  ingestOtelSignal("metrics", {
+    resourceMetrics: [
+      {
+        resource: { attributes: attrs([ [ "workspace_id", "ws-alpha-123" ] ]) },
+        scopeMetrics: [ {
+          metrics: [
+            {
+              name: "codex.tool.call",
+              sum: {
+                aggregationTemporality: 1,
+                dataPoints: [
+                  point([ [ "tool", "exec_command" ], [ "source", "builtin" ], [ "status", "ok" ] ], 4, "10", "20"),
+                  point([ [ "tool", "read_file" ], [ "source", "builtin" ], [ "status", "ok" ] ], 2, "10", "20"),
+                ],
+              },
+            },
+            {
+              name: "codex.skill.injected",
+              sum: {
+                aggregationTemporality: 1,
+                dataPoints: [
+                  point([ [ "skill", "ccc" ], [ "status", "ok" ] ], 2, "10", "20"),
+                ],
+              },
+            },
+          ],
+        } ],
+      },
+      {
+        resource: { attributes: attrs([ [ "workspace_id", "ws-beta-456" ] ]) },
+        scopeMetrics: [ {
+          metrics: [
+            {
+              name: "codex.tool.call",
+              sum: {
+                aggregationTemporality: 1,
+                dataPoints: [
+                  point([ [ "tool", "exec_command" ], [ "source", "builtin" ], [ "status", "ok" ] ], 3, "10", "20"),
+                  point([ [ "tool", "write_file" ], [ "source", "builtin" ], [ "status", "ok" ] ], 1, "10", "20"),
+                ],
+              },
+            },
+            {
+              name: "codex.skill.injected",
+              sum: {
+                aggregationTemporality: 1,
+                dataPoints: [
+                  point([ [ "skill", "lsp-mcp-server" ], [ "status", "ok" ] ], 5, "10", "20"),
+                ],
+              },
+            },
+          ],
+        } ],
+      },
+    ],
+  });
+
+  const status = getRouterStatus();
+  const wsA = status.usage.byWorkspace[ "SimulatorLife/RacingGame" ];
+  const wsB = status.usage.byWorkspace[ "Company/WebPortal" ];
+
+  // Scalar toolCalls semantics preserved
+  assert.equal(wsA.toolCalls, 5);
+  assert.equal(wsB.toolCalls, 3);
+
+  // Per-workspace skillUses
+  assert.equal(wsA.skillUses, 2);
+  assert.equal(wsB.skillUses, 5);
+
+  // Per-workspace named tools (byTool)
+  assert.equal(Array.isArray(wsA.byTool), true);
+  assert.equal(wsA.byTool.find((t) => t.tool === "exec_command")?.count, 4);
+  assert.equal(wsA.byTool.find((t) => t.tool === "read_file")?.count, 2);
+  assert.equal(wsA.byTool.find((t) => t.tool === "write_file"), undefined);
+
+  assert.equal(Array.isArray(wsB.byTool), true);
+  assert.equal(wsB.byTool.find((t) => t.tool === "exec_command")?.count, 3);
+  assert.equal(wsB.byTool.find((t) => t.tool === "write_file")?.count, 1);
+  assert.equal(wsB.byTool.find((t) => t.tool === "read_file"), undefined);
+
+  // Per-workspace named skills (bySkill)
+  assert.equal(Array.isArray(wsA.bySkill), true);
+  assert.equal(wsA.bySkill.find((s) => s.skill === "ccc")?.total, 2);
+  assert.equal(wsA.bySkill.find((s) => s.skill === "lsp-mcp-server"), undefined);
+
+  assert.equal(Array.isArray(wsB.bySkill), true);
+  assert.equal(wsB.bySkill.find((s) => s.skill === "lsp-mcp-server")?.total, 5);
+  assert.equal(wsB.bySkill.find((s) => s.skill === "ccc"), undefined);
+
+  // Global telemetry preserved and reflects aggregate of both workspaces
+  const globalExec = status.codexTelemetry.tools.byTool.find((t) => t.tool === "exec_command");
+  assert.equal(globalExec?.count, 7); // 4 + 3
+  assert.equal(status.codexTelemetry.tools.byTool.find((t) => t.tool === "read_file")?.count, 2);
+  assert.equal(status.codexTelemetry.tools.byTool.find((t) => t.tool === "write_file")?.count, 1);
+  assert.equal(status.codexTelemetry.skills.injected.total, 7); // 2 + 5
+  assert.equal(status.codexTelemetry.skills.injected.bySkill.find((s) => s.skill === "ccc")?.total, 2);
+  assert.equal(status.codexTelemetry.skills.injected.bySkill.find((s) => s.skill === "lsp-mcp-server")?.total, 5);
+
+  resetRouterTelemetry();
+  resetOtelTelemetry();
+});
+
+test("dedupes cumulative and delta OTLP metrics independently across multiple workspaces", () => {
+  resetRouterTelemetry();
+  resetOtelTelemetry();
+
+  registerWorkspaceId("ws-1", "RepoA");
+  registerWorkspaceId("ws-2", "RepoB");
+
+  const attrs = (entries) => entries.map(([ key, value ]) => ({ key, value: { stringValue: String(value) } }));
+  const point = (entries, value, start, time) => ({
+    attributes: attrs(entries),
+    startTimeUnixNano: String(start),
+    timeUnixNano: String(time),
+    asInt: String(value),
+  });
+
+  // Workspace 1 sends cumulative 5 at T=100
+  // Workspace 2 sends cumulative 3 at T=100
+  ingestOtelSignal("metrics", {
+    resourceMetrics: [
+      {
+        resource: { attributes: attrs([ [ "workspace_id", "ws-1" ] ]) },
+        scopeMetrics: [ {
+          metrics: [ {
+            name: "codex.tool.call",
+            sum: {
+              aggregationTemporality: 2, // CUMULATIVE
+              dataPoints: [ point([ [ "tool", "bash" ], [ "source", "builtin" ], [ "status", "ok" ] ], 5, 0, 100) ],
+            },
+          } ],
+        } ],
+      },
+      {
+        resource: { attributes: attrs([ [ "workspace_id", "ws-2" ] ]) },
+        scopeMetrics: [ {
+          metrics: [ {
+            name: "codex.tool.call",
+            sum: {
+              aggregationTemporality: 2, // CUMULATIVE
+              dataPoints: [ point([ [ "tool", "bash" ], [ "source", "builtin" ], [ "status", "ok" ] ], 3, 0, 100) ],
+            },
+          } ],
+        } ],
+      },
+    ],
+  });
+
+  let status = getRouterStatus();
+  assert.equal(status.usage.byWorkspace.RepoA.byTool.find((t) => t.tool === "bash")?.count, 5);
+  assert.equal(status.usage.byWorkspace.RepoB.byTool.find((t) => t.tool === "bash")?.count, 3);
+  assert.equal(status.codexTelemetry.tools.byTool.find((t) => t.tool === "bash")?.count, 8);
+
+  // Workspace 1 sends cumulative 8 at T=200 (delta = 3)
+  // Workspace 2 resends cumulative 3 at T=100 (duplicate timestamp -> delta = 0)
+  ingestOtelSignal("metrics", {
+    resourceMetrics: [
+      {
+        resource: { attributes: attrs([ [ "workspace_id", "ws-1" ] ]) },
+        scopeMetrics: [ {
+          metrics: [ {
+            name: "codex.tool.call",
+            sum: {
+              aggregationTemporality: 2,
+              dataPoints: [ point([ [ "tool", "bash" ], [ "source", "builtin" ], [ "status", "ok" ] ], 8, 0, 200) ],
+            },
+          } ],
+        } ],
+      },
+      {
+        resource: { attributes: attrs([ [ "workspace_id", "ws-2" ] ]) },
+        scopeMetrics: [ {
+          metrics: [ {
+            name: "codex.tool.call",
+            sum: {
+              aggregationTemporality: 2,
+              dataPoints: [ point([ [ "tool", "bash" ], [ "source", "builtin" ], [ "status", "ok" ] ], 3, 0, 100) ],
+            },
+          } ],
+        } ],
+      },
+    ],
+  });
+
+  status = getRouterStatus();
+  assert.equal(status.usage.byWorkspace.RepoA.byTool.find((t) => t.tool === "bash")?.count, 8);
+  assert.equal(status.usage.byWorkspace.RepoB.byTool.find((t) => t.tool === "bash")?.count, 3);
+  assert.equal(status.codexTelemetry.tools.byTool.find((t) => t.tool === "bash")?.count, 11);
+
+  // Resend identical cumulative 8 at T=200 for Workspace 1 (duplicate timestamp)
+  ingestOtelSignal("metrics", {
+    resourceMetrics: [ {
+      resource: { attributes: attrs([ [ "workspace_id", "ws-1" ] ]) },
+      scopeMetrics: [ {
+        metrics: [ {
+          name: "codex.tool.call",
+          sum: {
+            aggregationTemporality: 2,
+            dataPoints: [ point([ [ "tool", "bash" ], [ "source", "builtin" ], [ "status", "ok" ] ], 8, 0, 200) ],
+          },
+        } ],
+      } ],
+    } ],
+  });
+
+  status = getRouterStatus();
+  assert.equal(status.usage.byWorkspace.RepoA.byTool.find((t) => t.tool === "bash")?.count, 8);
+  assert.equal(status.codexTelemetry.tools.byTool.find((t) => t.tool === "bash")?.count, 11);
+
+  resetRouterTelemetry();
+  resetOtelTelemetry();
+});
+
+test("attributes tool call durations per-workspace and preserves global duration metrics", () => {
+  resetRouterTelemetry();
+  resetOtelTelemetry();
+
+  registerWorkspaceId("ws-dur-1", "RepoDurA");
+  registerWorkspaceId("ws-dur-2", "RepoDurB");
+
+  const attrs = (entries) => entries.map(([ key, value ]) => ({ key, value: { stringValue: String(value) } }));
+  const histPoint = (entries, count, sum, start, time) => ({
+    attributes: attrs(entries),
+    startTimeUnixNano: String(start),
+    timeUnixNano: String(time),
+    count: String(count),
+    sum,
+  });
+
+  ingestOtelSignal("metrics", {
+    resourceMetrics: [
+      {
+        resource: { attributes: attrs([ [ "workspace_id", "ws-dur-1" ] ]) },
+        scopeMetrics: [ {
+          metrics: [ {
+            name: "codex.tool.call.duration_ms",
+            histogram: {
+              aggregationTemporality: 1, // DELTA
+              dataPoints: [ histPoint([ [ "tool_name", "exec" ], [ "source", "builtin" ] ], 2, 100, 0, 10) ],
+            },
+          } ],
+        } ],
+      },
+      {
+        resource: { attributes: attrs([ [ "workspace_id", "ws-dur-2" ] ]) },
+        scopeMetrics: [ {
+          metrics: [ {
+            name: "codex.tool.call.duration_ms",
+            histogram: {
+              aggregationTemporality: 1, // DELTA
+              dataPoints: [ histPoint([ [ "tool_name", "exec" ], [ "source", "builtin" ] ], 3, 60, 0, 10) ],
+            },
+          } ],
+        } ],
+      },
+    ],
+  });
+
+  const status = getRouterStatus();
+  const toolA = status.usage.byWorkspace.RepoDurA.byTool.find((t) => t.tool === "exec");
+  assert.equal(toolA.durationCount, 2);
+  assert.equal(toolA.durationMs, 100);
+  assert.equal(toolA.averageDurationMs, 50);
+
+  const toolB = status.usage.byWorkspace.RepoDurB.byTool.find((t) => t.tool === "exec");
+  assert.equal(toolB.durationCount, 3);
+  assert.equal(toolB.durationMs, 60);
+  assert.equal(toolB.averageDurationMs, 20);
+
+  const globalTool = status.codexTelemetry.tools.byTool.find((t) => t.tool === "exec");
+  assert.equal(globalTool.durationCount, 5);
+  assert.equal(globalTool.durationMs, 160);
+  assert.equal(globalTool.averageDurationMs, 32);
+
+  resetRouterTelemetry();
+  resetOtelTelemetry();
+});
+
+test("fails closed on unknown workspace IDs and ambiguous resource fallbacks with structured diagnostics", () => {
+  resetRouterTelemetry();
+  resetOtelTelemetry();
+
+  registerWorkspaceId("ws-known", "KnownRepo");
+
+  const attrs = (entries) => entries.map(([ key, value ]) => ({ key, value: { stringValue: String(value) } }));
+  const point = (entries, value, start = "0", time = "10") => ({
+    attributes: attrs(entries),
+    startTimeUnixNano: String(start),
+    timeUnixNano: String(time),
+    asInt: String(value),
+  });
+
+  // 1. Data point with an unknown workspace ID fails closed
+  ingestOtelSignal("metrics", {
+    resourceMetrics: [ {
+      scopeMetrics: [ {
+        metrics: [ {
+          name: "codex.tool.call",
+          sum: {
+            aggregationTemporality: 1,
+            dataPoints: [ point([ [ "tool", "exec" ], [ "source", "builtin" ], [ "workspace_id", "ws-unknown-999" ] ], 2) ],
+          },
+        } ],
+      } ],
+    } ],
+  });
+
+  let status = getRouterStatus();
+  assert.equal(status.usage.byWorkspace.KnownRepo, undefined);
+  assert.equal(status.codexTelemetry.tools.byTool.find((t) => t.tool === "exec")?.count, 2);
+
+  let diag = attributionDiagnosticsStatus();
+  assert.equal(diag.unattributed, 1);
+  assert.equal(diag.byReason.unknown_workspace_id, 1);
+  assert.equal(diag.unknownWorkspaceIds.includes("ws-unknown-999"), true);
+
+  // 2. Unambiguous resource fallback succeeds
+  ingestOtelSignal("metrics", {
+    resourceMetrics: [ {
+      resource: { attributes: attrs([ [ "workspace_id", "ws-known" ] ]) },
+      scopeMetrics: [ {
+        metrics: [ {
+          name: "codex.tool.call",
+          sum: {
+            aggregationTemporality: 1,
+            dataPoints: [ point([ [ "tool", "exec" ], [ "source", "builtin" ] ], 4, 10, 20) ],
+          },
+        } ],
+      } ],
+    } ],
+  });
+
+  status = getRouterStatus();
+  assert.equal(status.usage.byWorkspace.KnownRepo.byTool.find((t) => t.tool === "exec")?.count, 4);
+  diag = attributionDiagnosticsStatus();
+  assert.equal(diag.attributed, 1);
+  assert.equal(diag.bySource.resource, 1);
+
+  // 3. Ambiguous resource fallback (conflicting workspace IDs) fails closed
+  ingestOtelSignal("metrics", {
+    resourceMetrics: [ {
+      resource: { attributes: attrs([ [ "workspace_id", "ws-known" ], [ "workspace.id", "ws-different" ] ]) },
+      scopeMetrics: [ {
+        metrics: [ {
+          name: "codex.tool.call",
+          sum: {
+            aggregationTemporality: 1,
+            dataPoints: [ point([ [ "tool", "exec" ], [ "source", "builtin" ] ], 1, 20, 30) ],
+          },
+        } ],
+      } ],
+    } ],
+  });
+
+  diag = attributionDiagnosticsStatus();
+  assert.equal(diag.byReason.ambiguous_resource, 1);
+  // KnownRepo should not have received the ambiguous call
+  assert.equal(status.usage.byWorkspace.KnownRepo.byTool.find((t) => t.tool === "exec")?.count, 4);
+
+  resetRouterTelemetry();
+  resetOtelTelemetry();
+});
+
+test("ensures privacy by never leaking local filesystem paths in workspace attribution or diagnostics", () => {
+  resetRouterTelemetry();
+  resetOtelTelemetry();
+
+  const secretPath = "/Users/henrykirk/Desktop/SecretProject";
+  const context = workspaceContextFromRequest(
+    { headers: {} },
+    {},
+    JSON.stringify({
+      workspace_id: "/Users/henrykirk/local/ws-id",
+      workspaces: {
+        [secretPath]: {
+          associated_remote_urls: { origin: "https://github.com/Confidential/SecretProject.git" },
+        },
+      },
+    }),
+  );
+
+  // Workspace key is privacy-safe repository, and cwd is basename
+  assert.equal(context.key, "Confidential/SecretProject");
+  assert.equal(context.cwd, "SecretProject");
+  // Opaque workspace_id hashes local file path
+  assert.equal(context.workspace_id.startsWith("ws_"), true);
+  assert.equal(context.workspace_id.includes("/Users/henrykirk"), false);
+
+  const attrs = (entries) => entries.map(([ key, value ]) => ({ key, value: { stringValue: String(value) } }));
+  const point = (entries, value) => ({
+    attributes: attrs(entries),
+    startTimeUnixNano: "1",
+    timeUnixNano: "2",
+    asInt: String(value),
+  });
+
+  // OTLP datapoint with unknown path-like workspace_id
+  ingestOtelSignal("metrics", {
+    resourceMetrics: [ {
+      scopeMetrics: [ {
+        metrics: [ {
+          name: "codex.tool.call",
+          sum: {
+            aggregationTemporality: 1,
+            dataPoints: [ point([ [ "tool", "apply_patch" ], [ "source", "builtin" ], [ "workspace_id", "/Users/henrykirk/Private/Path" ] ], 1) ],
+          },
+        } ],
+      } ],
+    } ],
+  });
+
+  const status = getRouterStatus();
+  const serialized = JSON.stringify({ usage: status.usage, attributionDiagnostics: status.attributionDiagnostics });
+  assert.equal(serialized.includes("/Users/henrykirk"), false);
+  const diag = attributionDiagnosticsStatus();
+  assert.equal(JSON.stringify(diag).includes("/Users/henrykirk"), false);
+
+  resetRouterTelemetry();
+  resetOtelTelemetry();
+});
+
+test("persists and restores per-workspace tool and skill attribution across router restarts", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "autodev-workspace-attribution-"));
+  const stateFile = join(directory, "router-state.json");
+  try {
+    resetRouterTelemetry();
+    resetOtelTelemetry();
+
+    registerWorkspaceId("ws-pers-1", "OwnerA/ProjectA");
+    registerWorkspaceId("ws-pers-2", "OwnerB/ProjectB");
+
+    const attrs = (entries) => entries.map(([ key, value ]) => ({ key, value: { stringValue: String(value) } }));
+    const point = (entries, value, start, time) => ({
+      attributes: attrs(entries),
+      startTimeUnixNano: String(start),
+      timeUnixNano: String(time),
+      asInt: String(value),
+    });
+
+    ingestOtelSignal("metrics", {
+      resourceMetrics: [
+        {
+          resource: { attributes: attrs([ [ "workspace_id", "ws-pers-1" ] ]) },
+          scopeMetrics: [ {
+            metrics: [
+              {
+                name: "codex.tool.call",
+                sum: {
+                  aggregationTemporality: 2,
+                  dataPoints: [ point([ [ "tool", "exec_command" ], [ "source", "builtin" ], [ "status", "ok" ] ], 6, 0, 100) ],
+                },
+              },
+              {
+                name: "codex.skill.injected",
+                sum: {
+                  aggregationTemporality: 1,
+                  dataPoints: [ point([ [ "skill", "ccc" ], [ "status", "ok" ] ], 3, 0, 100) ],
+                },
+              },
+            ],
+          } ],
+        },
+      ],
+    });
+
+    await persistRouterStateNow(stateFile);
+
+    // Verify persisted schema
+    const raw = JSON.parse(await readFile(stateFile, "utf8"));
+    assert.equal(raw.usage.schemaVersion, 5);
+    assert.ok(Array.isArray(raw.usage.workspaceRegistry));
+    const savedWs = raw.usage.byWorkspace[ "OwnerA/ProjectA" ];
+    assert.equal(savedWs.skillUses, 3);
+    assert.equal(savedWs.byTool.find((t) => t.tool === "exec_command")?.count, 6);
+    assert.equal(savedWs.bySkill.find((s) => s.skill === "ccc")?.total, 3);
+
+    resetRouterTelemetry();
+    resetOtelTelemetry();
+
+    assert.equal(loadRouterState(stateFile), true);
+
+    const restoredStatus = getRouterStatus();
+    const restoredWs = restoredStatus.usage.byWorkspace[ "OwnerA/ProjectA" ];
+    assert.equal(restoredWs.skillUses, 3);
+    assert.equal(restoredWs.byTool.find((t) => t.tool === "exec_command")?.count, 6);
+    assert.equal(restoredWs.bySkill.find((s) => s.skill === "ccc")?.total, 3);
+
+    // Subsequent cumulative metric export resumes from persisted series without double-counting
+    ingestOtelSignal("metrics", {
+      resourceMetrics: [ {
+        resource: { attributes: attrs([ [ "workspace_id", "ws-pers-1" ] ]) },
+        scopeMetrics: [ {
+          metrics: [ {
+            name: "codex.tool.call",
+            sum: {
+              aggregationTemporality: 2,
+              dataPoints: [ point([ [ "tool", "exec_command" ], [ "source", "builtin" ], [ "status", "ok" ] ], 9, 0, 200) ],
+            },
+          } ],
+        } ],
+      } ],
+    });
+
+    const afterResumeStatus = getRouterStatus();
+    const afterWs = afterResumeStatus.usage.byWorkspace[ "OwnerA/ProjectA" ];
+    assert.equal(afterWs.byTool.find((t) => t.tool === "exec_command")?.count, 9); // 6 + (9 - 6) = 9
+  } finally {
+    resetRouterTelemetry();
+    resetOtelTelemetry();
     await rm(directory, { recursive: true, force: true });
   }
 });
@@ -1259,7 +1859,9 @@ test("forwards x-codex-turn-metadata to the upstream provider bridge without lea
       body: JSON.stringify({ model: "sonnet", stream: false }),
     });
     assert.equal(response.status, 200);
-    assert.equal(upstreamHeaders[ "x-codex-turn-metadata" ], turnMetadata);
+    const forwardedMetadata = JSON.parse(upstreamHeaders[ "x-codex-turn-metadata" ]);
+    assert.deepEqual(forwardedMetadata.workspaces, JSON.parse(turnMetadata).workspaces);
+    assert.equal(forwardedMetadata.workspace_id, "ws_fe80d628d784");
     assert.notEqual(upstreamHeaders.authorization, "Bearer client-supplied-secret");
   } finally {
     await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
@@ -1296,7 +1898,7 @@ test("relays the canonical workspaces-map-keyed turn metadata even when it arriv
       body: JSON.stringify({ model: "sonnet", stream: false, client_metadata: { "x-codex-turn-metadata": canonical } }),
     });
     assert.equal(response.status, 200);
-    assert.equal(upstreamHeaders[ "x-codex-turn-metadata" ], JSON.stringify(canonical));
+    assert.equal(upstreamHeaders[ "x-codex-turn-metadata" ], JSON.stringify({ ...canonical, workspace_id: "ws_fe80d628d784" }));
   } finally {
     await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
     globalThis.fetch = originalFetch;
@@ -1392,7 +1994,9 @@ test("sends the router's own headers to the Antigravity adapter and discards the
     // These used to ride in the Responses body because the LiteLLM hop dropped
     // raw headers. The router calls the adapter directly now, so they are
     // ordinary request headers.
-    assert.equal(upstreamHeaders[ "x-codex-turn-metadata" ], turnMetadata);
+    const forwardedMetadata = JSON.parse(upstreamHeaders[ "x-codex-turn-metadata" ]);
+    assert.deepEqual(forwardedMetadata.workspaces, JSON.parse(turnMetadata).workspaces);
+    assert.equal(forwardedMetadata.workspace_id, "ws_fe80d628d784");
     assert.equal(upstreamHeaders[ "x-autodev-subagent-spawn-tools" ], "invoke_subagent");
     assert.ok(upstreamHeaders[ "x-autodev-request-id" ]);
     assert.ok(upstreamHeaders[ "x-autodev-agent-events-url" ]);

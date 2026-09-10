@@ -109,7 +109,9 @@ test("the router carries a validated workspace across metadata-less continuation
 
     // The first request establishes the session's workspace from the same
     // structured metadata the provider bridge will use.
-    assert.equal(workspaceMetadataForSession({}, firstHeader, session), firstHeader);
+    const established = workspaceMetadataForSession({}, firstHeader, session);
+    assert.deepEqual(JSON.parse(established).workspaces, JSON.parse(firstHeader).workspaces);
+    assert.equal(JSON.parse(established).workspace_id.startsWith("ws_"), true);
 
     // A continuation that loses the transport metadata still receives a
     // canonical structured workspace, rather than making the bridge guess.

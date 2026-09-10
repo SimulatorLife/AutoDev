@@ -568,7 +568,10 @@
 
     <!-- 4. Usage by Workspace -->
     <dashboard-panel id="workspace-usage-section" open="" summary="" title="Usage by workspace">
-      <div class="section-note">Click a workspace to expand roles, models, grouped native/MCP tools, and skill usage</div>
+      <div class="section-note">Click a workspace to expand roles, models, named tool attribution, and skill usage.
+        <strong>Tool calls</strong> here is a response-output count inferred from Responses API tool-call items on
+        this workspace's turns; it is a different measurement from the OTLP-named runtime tool rows shown per
+        workspace when expanded, and the two are not expected to match.</div>
       <div class="table-wrap">
         <table id="workspace-usage-table">
           <thead>
@@ -577,7 +580,7 @@
               <th>Active</th>
               <th>Attempts</th>
               <th>Avg turn</th>
-              <th>Tool calls</th>
+              <th title="Response-output tool-call count, not the OTLP-named tool rows shown when a row is expanded">Tool calls (response output)</th>
               <th>Skill uses</th>
             </tr>
           </thead>
@@ -1649,6 +1652,75 @@
       return `${(Number(ms ?? 0) / 1000).toFixed(1)}s`;
     }
 
+    // Normalizes a per-workspace named-attribution field (`byTool`/`bySkill`)
+    // into a flat row list. The status contract may surface this dimension as
+    // either an array of OTLP-shaped rows (`tool`/`skill`, `count`,
+    // `byStatus`, and for tools `source`/`server`) -- the same shape the
+    // global codexTelemetry.tools/skills tables already use -- or a
+    // per-workspace dimension object keyed by name (matching the existing
+    // byRole/byModel/byProvider buckets). Both are supported so the frontend
+    // does not hard-code an assumption the backend has not committed to.
+    // Returns `null` when the field itself is absent (fail closed: the
+    // dimension is unavailable, not merely empty) and `[]` when the backend
+    // reports the dimension but no named events were observed yet.
+    function normalizeWorkspaceNamedUsage(raw, identityKeys) {
+      if (Array.isArray(raw)) {
+        return raw.map((entry) => {
+          if (!entry || typeof entry !== "object") return null;
+          const name = identityKeys.map((key) => entry[key]).find((value) => typeof value === "string" && value.trim());
+          if (!name) return null;
+          const ok = Number(entry.byStatus?.ok ?? entry.byStatus?.success ?? entry.successes ?? 0);
+          const err = Number(entry.byStatus?.error ?? entry.byStatus?.failure ?? entry.failures ?? 0);
+          const count = Number(entry.count ?? entry.total ?? entry.attempts ?? entry.toolCalls ?? entry.skillUses ?? 0) || (ok + err);
+          return {
+            name,
+            count,
+            ok,
+            err,
+            hasOutcomes: ok + err > 0,
+            source: typeof entry.source === "string" && entry.source ? entry.source : null,
+            server: typeof entry.server === "string" && entry.server ? entry.server : null,
+          };
+        }).filter(Boolean);
+      }
+      if (raw && typeof raw === "object") {
+        return Object.entries(raw).filter(([name]) => typeof name === "string" && name.trim()).map(([name, value]) => {
+          const bucket = value && typeof value === "object" ? value : {};
+          const ok = Number(bucket.byStatus?.ok ?? bucket.byStatus?.success ?? bucket.successes ?? 0);
+          const err = Number(bucket.byStatus?.error ?? bucket.byStatus?.failure ?? bucket.failures ?? 0);
+          const count = Number(bucket.count ?? bucket.total ?? bucket.attempts ?? bucket.toolCalls ?? bucket.skillUses ?? (typeof value === "number" ? value : 0)) || (ok + err);
+          return {
+            name,
+            count,
+            ok,
+            err,
+            hasOutcomes: ok + err > 0,
+            source: typeof bucket.source === "string" && bucket.source ? bucket.source : null,
+            server: typeof bucket.server === "string" && bucket.server ? bucket.server : null,
+          };
+        });
+      }
+      return null;
+    }
+
+    // Renders a normalized per-workspace named-attribution row list, with
+    // distinct fallbacks for "dimension unavailable" (fail closed -- the
+    // backend does not yet report this join) versus "dimension available,
+    // nothing observed yet".
+    function renderWorkspaceNamedUsage(rows, { unavailableLabel, emptyLabel }) {
+      if (rows === null) return `<div class="empty-state">${escapeHtml(unavailableLabel)}</div>`;
+      if (!rows.length) return `<div class="empty-state">${escapeHtml(emptyLabel)}</div>`;
+      const sorted = [...rows].sort((a, b) => b.count - a.count);
+      const maxCount = Math.max(...sorted.map((r) => r.count), 1);
+      return `<div class="metric-list">${sorted.map((r) => {
+        const fill = (r.count / maxCount * 100).toFixed(1);
+        const originSuffix = [r.source, r.server].filter(Boolean).join(" · ");
+        const label = originSuffix ? `${r.name} (${originSuffix})` : r.name;
+        const outcomeAttrs = r.hasOutcomes ? `success="${r.ok}" fail="${r.err}"` : `success="${r.count}" fail="0" neutral=""`;
+        return `<metric-bar fill="${fill}" label="${escapeHtml(label)}" value="${r.count}" ${outcomeAttrs}></metric-bar>`;
+      }).join("")}</div>`;
+    }
+
     function formatDenialsByReason(reasons) {
       if (!reasons || typeof reasons !== "object") return "None";
       const entries = Object.entries(reasons);
@@ -2034,6 +2106,19 @@
               </div>
             `).join("") : `<div class="empty-state">No models observed</div>`;
 
+            // Named tool/skill attribution: status.usage.byWorkspace[*].byTool
+            // and bySkill, when the backend reports them.
+            const wsToolRows = normalizeWorkspaceNamedUsage(w.byTool, ["tool", "name"]);
+            const wsToolsHtml = renderWorkspaceNamedUsage(wsToolRows, {
+              unavailableLabel: "Named tool telemetry is unavailable per-workspace",
+              emptyLabel: "No named tool calls observed for this workspace yet",
+            });
+            const wsSkillRows = normalizeWorkspaceNamedUsage(w.bySkill, ["skill", "name"]);
+            const wsSkillsHtml = renderWorkspaceNamedUsage(wsSkillRows, {
+              unavailableLabel: "Named skill attribution is unavailable per-workspace",
+              emptyLabel: "No named skill uses observed for this workspace yet",
+            });
+
             return `
               <tr class="workspace-row" ${isExpanded ? 'aria-expanded="true"' : ''}>
                 <td><row-toggle label="${escapeHtml(wsKey)}" subtitle="${escapeHtml(subtitle)}" expanded="${isExpanded}"></row-toggle></td>
@@ -2058,11 +2143,14 @@
                     </section>
                     <section class="detail-group">
                       <h2>Tools</h2>
-                      <div class="empty-state">Named tool telemetry is unavailable per-workspace</div>
+                      <div class="section-note">OTLP-named runtime tool rows joined to this workspace; distinct
+                        from the response-output tool-call count (${toolCalls.toLocaleString()}) shown in the
+                        summary row above.</div>
+                      ${wsToolsHtml}
                     </section>
                     <section class="detail-group">
                       <h2>Skill usage</h2>
-                      <div class="empty-state">Named skill attribution is unavailable per-workspace</div>
+                      ${wsSkillsHtml}
                     </section>
                   </div>
                 </td>

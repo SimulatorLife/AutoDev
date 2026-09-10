@@ -298,10 +298,150 @@ function usageKey(requestId, provider, model) {
   return `${requestId}\0${provider}\0${model}`;
 }
 
+const workspaceIdRegistry = new Map();
+const workspaceIdConflicts = new Set();
+// These flags describe whether the current/persisted OTLP stream has supplied
+// workspace identity for each named signal. They intentionally reset with
+// telemetry so an exporter downgrade returns the dashboard to "unavailable".
+const workspaceAttributionCapabilities = { tools: false, skills: false };
+
+function safeWorkspaceId(value) {
+  if (typeof value !== "string" || !value.trim()) return "unknown";
+  const trimmed = value.trim();
+  if (trimmed.startsWith("/") || trimmed.startsWith("~") || trimmed.includes("\\") || trimmed.includes("/Users/") || trimmed.includes("/home/")) {
+    const digest = createHash("sha256").update(trimmed).digest("hex").slice(0, 12);
+    return `ws_${digest}`;
+  }
+  return safeMetricLabel(trimmed);
+}
+
+function registerWorkspaceId(workspaceId, workspaceKey) {
+  if (typeof workspaceId !== "string" || !workspaceId.trim() || typeof workspaceKey !== "string" || !workspaceKey.trim()) return false;
+  const id = safeWorkspaceId(workspaceId);
+  const key = workspaceKey.trim();
+  const existing = workspaceIdRegistry.get(id);
+  if (workspaceIdConflicts.has(id)) return false;
+  if (existing && existing !== key) {
+    workspaceIdRegistry.delete(id);
+    workspaceIdConflicts.add(id);
+    return false;
+  }
+  workspaceIdRegistry.set(id, key);
+  return true;
+}
+
+const MAX_UNKNOWN_WORKSPACE_IDS = 100;
+const attributionDiagnostics = {
+  total: 0,
+  attributed: 0,
+  unattributed: 0,
+  byReason: {
+    missing_workspace: 0,
+    unknown_workspace_id: 0,
+    ambiguous_resource: 0,
+  },
+  bySource: {
+    datapoint: 0,
+    resource: 0,
+  },
+  unknownWorkspaceIds: new Set(),
+};
+
+function attributionDiagnosticsStatus() {
+  return {
+    total: attributionDiagnostics.total,
+    attributed: attributionDiagnostics.attributed,
+    unattributed: attributionDiagnostics.unattributed,
+    byReason: { ...attributionDiagnostics.byReason },
+    bySource: { ...attributionDiagnostics.bySource },
+    unknownWorkspaceIds: [...attributionDiagnostics.unknownWorkspaceIds],
+  };
+}
+
+function resetAttributionDiagnostics() {
+  attributionDiagnostics.total = 0;
+  attributionDiagnostics.attributed = 0;
+  attributionDiagnostics.unattributed = 0;
+  attributionDiagnostics.byReason = {
+    missing_workspace: 0,
+    unknown_workspace_id: 0,
+    ambiguous_resource: 0,
+  };
+  attributionDiagnostics.bySource = {
+    datapoint: 0,
+    resource: 0,
+  };
+  attributionDiagnostics.unknownWorkspaceIds.clear();
+}
+
+function formatWorkspaceTools(toolsMap) {
+  if (!toolsMap) return [];
+  return [...toolsMap.values()].map((tool) => ({
+    ...tool,
+    averageDurationMs: tool.durationCount ? Math.round(tool.durationMs / tool.durationCount) : 0,
+    byStatus: { ...tool.byStatus },
+  })).sort((a, b) => `${a.tool}/${a.source}/${a.server}`.localeCompare(`${b.tool}/${b.source}/${b.server}`));
+}
+
+function formatWorkspaceSkills(skillsMap) {
+  if (!skillsMap) return [];
+  return [...skillsMap.values()].map((skill) => ({
+    ...skill,
+    byStatus: { ...skill.byStatus },
+    byInvokeType: { ...skill.byInvokeType },
+    byAgentKind: { ...skill.byAgentKind },
+    byModel: { ...skill.byModel },
+    byPlugin: { ...skill.byPlugin },
+  })).sort((a, b) => a.skill.localeCompare(b.skill));
+}
+
 function workspaceBucket(collection, key, cwd = null) {
-  if (!collection[key]) collection[key] = { ...emptyUsageBucket(), cwd, byRole: {}, byModel: {}, byProvider: {} };
-  if (cwd && !collection[key].cwd) collection[key].cwd = cwd;
-  return collection[key];
+  if (!collection[key]) {
+    collection[key] = {
+      ...emptyUsageBucket(),
+      cwd,
+      skillUses: 0,
+      byRole: {},
+      byModel: {},
+      byProvider: {},
+      tools: new Map(),
+      skills: new Map(),
+    };
+  }
+  const bucket = collection[key];
+  if (cwd && !bucket.cwd) bucket.cwd = cwd;
+  if (!bucket.tools) bucket.tools = new Map();
+  if (!bucket.skills) bucket.skills = new Map();
+  if (typeof bucket.skillUses !== "number") bucket.skillUses = 0;
+  return bucket;
+}
+
+function workspaceToolBucket(wsBucket, attributes) {
+  if (!wsBucket.tools) wsBucket.tools = new Map();
+  const tool = toolNameAttribute(attributes);
+  const source = safeMetricLabel(attributes.source);
+  const server = toolServerAttribute(attributes);
+  const key = toolKey(attributes);
+  if (!wsBucket.tools.has(key)) {
+    wsBucket.tools.set(key, { tool, source, server, count: 0, byStatus: {}, durationCount: 0, durationMs: 0 });
+  }
+  return wsBucket.tools.get(key);
+}
+
+function workspaceSkillBucket(wsBucket, skillName) {
+  if (!wsBucket.skills) wsBucket.skills = new Map();
+  if (!wsBucket.skills.has(skillName)) {
+    wsBucket.skills.set(skillName, {
+      skill: skillName,
+      total: 0,
+      byStatus: {},
+      byInvokeType: {},
+      byAgentKind: {},
+      byModel: {},
+      byPlugin: {},
+    });
+  }
+  return wsBucket.skills.get(skillName);
 }
 
 function workspaceDimensionBuckets(bucket, { role, provider, model }) {
@@ -319,6 +459,9 @@ function recordUsageEvent({ phase, requestId, role, provider, model, workspace =
   const modelKey = `${provider}/${model}`;
   const buckets = [usageTelemetry.totals, usageBucket(usageTelemetry.byRole, roleKey), usageBucket(usageTelemetry.byModel, modelKey), usageBucket(usageTelemetry.byOrigin, origin)];
   if (workspaceContext?.key) {
+    if (workspaceContext.workspace_id) {
+      registerWorkspaceId(workspaceContext.workspace_id, workspaceContext.key);
+    }
     const workspaceUsage = workspaceBucket(usageTelemetry.byWorkspace, workspaceContext.key, workspaceContext.cwd);
     buckets.push(workspaceUsage, ...workspaceDimensionBuckets(workspaceUsage, { role, provider, model }));
   }
@@ -359,6 +502,11 @@ function resetUsageTelemetry() {
   usageTelemetry.byOrigin = {};
   usageTelemetry.byWorkspace = {};
   inFlightUsage.clear();
+  workspaceIdRegistry.clear();
+  workspaceIdConflicts.clear();
+  workspaceAttributionCapabilities.tools = false;
+  workspaceAttributionCapabilities.skills = false;
+  resetAttributionDiagnostics();
 }
 
 function usageSnapshot(collection) {
@@ -374,13 +522,19 @@ function usageStatus() {
     byRole: usageSnapshot(usageTelemetry.byRole),
     byModel: usageSnapshot(usageTelemetry.byModel),
     byOrigin: usageSnapshot(usageTelemetry.byOrigin),
-    byWorkspace: Object.fromEntries(Object.entries(usageTelemetry.byWorkspace).map(([key, bucket]) => [key, {
-      ...bucket,
-      averageDurationMs: bucket.successes + bucket.failures > 0 ? Math.round(bucket.durationMs / (bucket.successes + bucket.failures)) : 0,
-      byRole: usageSnapshot(bucket.byRole),
-      byModel: usageSnapshot(bucket.byModel),
-      byProvider: usageSnapshot(bucket.byProvider),
-    }])),
+    byWorkspace: Object.fromEntries(Object.entries(usageTelemetry.byWorkspace).map(([key, bucket]) => {
+      const { tools, skills, workspace_id: _workspaceId, ...publicBucket } = bucket;
+      return [key, {
+        ...publicBucket,
+        averageDurationMs: bucket.successes + bucket.failures > 0 ? Math.round(bucket.durationMs / (bucket.successes + bucket.failures)) : 0,
+        skillUses: bucket.skillUses ?? 0,
+        byRole: usageSnapshot(bucket.byRole),
+        byModel: usageSnapshot(bucket.byModel),
+        byProvider: usageSnapshot(bucket.byProvider),
+        ...(workspaceAttributionCapabilities.tools ? { byTool: formatWorkspaceTools(tools) } : {}),
+        ...(workspaceAttributionCapabilities.skills ? { bySkill: formatWorkspaceSkills(skills) } : {}),
+      }];
+    })),
   };
 }
 
@@ -631,8 +785,64 @@ function readNamedAttribute(attributes, fallback, ...keys) {
   }
   return fallback;
 }
-function noteSkillInjected(metricName, attributes, dataPoint, temporality) {
-  const delta = otelSeriesDelta(otelSeriesKey(metricName, attributes, dataPoint.startTimeUnixNano), dataPoint.timeUnixNano, otelSumDataPointValue(dataPoint), temporality);
+function extractWorkspaceIdWithAmbiguity(attributes) {
+  if (!attributes || typeof attributes !== "object") return { id: null, ambiguous: false };
+  const found = [];
+  for (const key of ["workspace_id", "workspace.id", "workspaceId"]) {
+    const val = attributes[key];
+    if (typeof val === "string" && val.trim()) {
+      found.push(val.trim());
+    }
+  }
+  const unique = [...new Set(found)];
+  if (unique.length > 1) return { id: null, ambiguous: true };
+  return { id: unique[0] ?? null, ambiguous: false };
+}
+
+function resolveDatapointWorkspace(dataPointAttributes, resourceAttributes = {}) {
+  const dp = extractWorkspaceIdWithAmbiguity(dataPointAttributes);
+  const resource = extractWorkspaceIdWithAmbiguity(resourceAttributes);
+  const dpId = dp.id ? safeWorkspaceId(dp.id) : null;
+  const resourceId = resource.id ? safeWorkspaceId(resource.id) : null;
+  if (dp.ambiguous || resource.ambiguous || (dpId && resourceId && dpId !== resourceId)) {
+    attributionDiagnostics.total += 1;
+    attributionDiagnostics.unattributed += 1;
+    attributionDiagnostics.byReason.ambiguous_resource += 1;
+    return { status: "unattributed", workspaceKey: null, workspaceId: null, reason: "ambiguous_resource", source: dp.id ? "datapoint" : "resource" };
+  }
+
+  const workspaceId = dpId ?? resourceId;
+  const source = dpId ? "datapoint" : resourceId ? "resource" : null;
+  if (!workspaceId) {
+    attributionDiagnostics.total += 1;
+    attributionDiagnostics.unattributed += 1;
+    attributionDiagnostics.byReason.missing_workspace += 1;
+    return { status: "unattributed", workspaceKey: null, workspaceId: null, reason: "missing_workspace", source: null };
+  }
+
+  attributionDiagnostics.total += 1;
+  const workspaceKey = workspaceIdConflicts.has(workspaceId) ? null : workspaceIdRegistry.get(workspaceId);
+  if (workspaceKey) {
+    attributionDiagnostics.attributed += 1;
+    attributionDiagnostics.bySource[source] += 1;
+    return { status: "attributed", workspaceKey, workspaceId, source };
+  }
+
+  attributionDiagnostics.unattributed += 1;
+  attributionDiagnostics.byReason.unknown_workspace_id += 1;
+  attributionDiagnostics.unknownWorkspaceIds.delete(workspaceId);
+  attributionDiagnostics.unknownWorkspaceIds.add(workspaceId);
+  while (attributionDiagnostics.unknownWorkspaceIds.size > MAX_UNKNOWN_WORKSPACE_IDS) {
+    attributionDiagnostics.unknownWorkspaceIds.delete(attributionDiagnostics.unknownWorkspaceIds.values().next().value);
+  }
+  return { status: "unattributed", workspaceKey: null, workspaceId, reason: "unknown_workspace_id", source };
+}
+
+function noteSkillInjected(metricName, attributes, dataPoint, temporality, dpAttributes = null, resourceAttributes = {}) {
+  const wsResolution = resolveDatapointWorkspace(dpAttributes ?? attributes, resourceAttributes);
+  if (wsResolution.workspaceId) workspaceAttributionCapabilities.skills = true;
+  const seriesAttributes = { ...attributes, workspace_id: wsResolution.workspaceId || "" };
+  const delta = otelSeriesDelta(otelSeriesKey(metricName, seriesAttributes, dataPoint.startTimeUnixNano), dataPoint.timeUnixNano, otelSumDataPointValue(dataPoint), temporality);
   if (delta === 0) return;
   const skill = readNamedAttribute(attributes, "unknown", "skillName", "skill", "skill_name");
   const status = safeMetricLabel(attributes.status);
@@ -656,6 +866,18 @@ function noteSkillInjected(metricName, attributes, dataPoint, temporality) {
   bucket.byAgentKind[agentKind] = (bucket.byAgentKind[agentKind] ?? 0) + delta;
   bucket.byModel[model] = (bucket.byModel[model] ?? 0) + delta;
   bucket.byPlugin[plugin] = (bucket.byPlugin[plugin] ?? 0) + delta;
+
+  if (wsResolution.status === "attributed") {
+    const wsBucket = workspaceBucket(usageTelemetry.byWorkspace, wsResolution.workspaceKey);
+    wsBucket.skillUses = (wsBucket.skillUses ?? 0) + delta;
+    const wsSkill = workspaceSkillBucket(wsBucket, skill);
+    wsSkill.total += delta;
+    wsSkill.byStatus[status] = (wsSkill.byStatus[status] ?? 0) + delta;
+    if (invokeType) wsSkill.byInvokeType[invokeType] = (wsSkill.byInvokeType[invokeType] ?? 0) + delta;
+    wsSkill.byAgentKind[agentKind] = (wsSkill.byAgentKind[agentKind] ?? 0) + delta;
+    wsSkill.byModel[model] = (wsSkill.byModel[model] ?? 0) + delta;
+    wsSkill.byPlugin[plugin] = (wsSkill.byPlugin[plugin] ?? 0) + delta;
+  }
 }
 
 function noteThreadSkillsHistogram(bucket, metricName, attributes, dataPoint, temporality) {
@@ -754,23 +976,50 @@ function toolBucket(attributes) {
   return otelTelemetry.tools.get(key);
 }
 
-function noteToolCounter(metricName, attributes, dataPoint, temporality) {
-  const identity = { tool_name: toolNameAttribute(attributes), source: safeMetricLabel(attributes.source), server: toolServerAttribute(attributes) };
+function toolSeriesIdentity(attributes, workspaceId = "") {
+  return {
+    tool_name: toolNameAttribute(attributes),
+    source: safeMetricLabel(attributes.source),
+    server: toolServerAttribute(attributes),
+    workspace_id: workspaceId || "",
+  };
+}
+
+function noteToolCounter(metricName, attributes, dataPoint, temporality, resourceAttributes = {}) {
+  const wsResolution = resolveDatapointWorkspace(attributes, resourceAttributes);
+  if (wsResolution.workspaceId) workspaceAttributionCapabilities.tools = true;
+  const identity = toolSeriesIdentity(attributes, wsResolution.workspaceId);
   const delta = otelSeriesDelta(otelSeriesKey(metricName, identity, dataPoint.startTimeUnixNano), dataPoint.timeUnixNano, otelSumDataPointValue(dataPoint), temporality);
   if (delta === 0) return;
   const bucket = toolBucket(attributes);
   const status = toolStatusAttribute(attributes);
   bucket.count += delta;
   bucket.byStatus[status] = (bucket.byStatus[status] ?? 0) + delta;
+
+  if (wsResolution.status === "attributed") {
+    const wsBucket = workspaceBucket(usageTelemetry.byWorkspace, wsResolution.workspaceKey);
+    const wsTool = workspaceToolBucket(wsBucket, attributes);
+    wsTool.count += delta;
+    wsTool.byStatus[status] = (wsTool.byStatus[status] ?? 0) + delta;
+  }
 }
 
-function noteToolDuration(metricName, attributes, dataPoint, temporality) {
-  const identity = { tool_name: toolNameAttribute(attributes), source: safeMetricLabel(attributes.source), server: toolServerAttribute(attributes) };
+function noteToolDuration(metricName, attributes, dataPoint, temporality, resourceAttributes = {}) {
+  const wsResolution = resolveDatapointWorkspace(attributes, resourceAttributes);
+  if (wsResolution.workspaceId) workspaceAttributionCapabilities.tools = true;
+  const identity = toolSeriesIdentity(attributes, wsResolution.workspaceId);
   const count = otelSeriesDelta(otelSeriesKey(`${metricName}#count`, identity, dataPoint.startTimeUnixNano), dataPoint.timeUnixNano, numberAttribute({ count: dataPoint.count }, "count"), temporality);
   const sum = otelSeriesDelta(otelSeriesKey(`${metricName}#sum`, identity, dataPoint.startTimeUnixNano), dataPoint.timeUnixNano, numberAttribute({ sum: dataPoint.sum }, "sum"), temporality);
   const bucket = toolBucket(attributes);
   bucket.durationCount += count;
   bucket.durationMs += sum;
+
+  if (wsResolution.status === "attributed") {
+    const wsBucket = workspaceBucket(usageTelemetry.byWorkspace, wsResolution.workspaceKey);
+    const wsTool = workspaceToolBucket(wsBucket, attributes);
+    wsTool.durationCount += count;
+    wsTool.durationMs += sum;
+  }
 }
 
 function hookKey(attributes) {
@@ -880,7 +1129,8 @@ function ingestOtelMetrics(payload) {
           const temporality = metric.sum?.aggregationTemporality;
           const resourceAttributes = otelAttributes(resourceMetric.resource?.attributes);
           for (const dataPoint of metric.sum?.dataPoints ?? []) {
-            noteSkillInjected(metric.name, { ...resourceAttributes, ...otelAttributes(dataPoint.attributes) }, dataPoint, temporality);
+            const dpAttributes = otelAttributes(dataPoint.attributes);
+            noteSkillInjected(metric.name, { ...resourceAttributes, ...dpAttributes }, dataPoint, temporality, dpAttributes, resourceAttributes);
           }
         } else if (SKILL_TURN_HISTOGRAMS[metric.name]) {
           const bucket = otelTelemetry.skills.turnDuration[SKILL_TURN_HISTOGRAMS[metric.name]];
@@ -909,10 +1159,12 @@ function ingestOtelMetrics(payload) {
           }
         } else if (metric.name === "codex.tool.call") {
           const temporality = metric.sum?.aggregationTemporality;
-          for (const dataPoint of metric.sum?.dataPoints ?? []) noteToolCounter(metric.name, otelAttributes(dataPoint.attributes), dataPoint, temporality);
+          const resourceAttributes = otelAttributes(resourceMetric.resource?.attributes);
+          for (const dataPoint of metric.sum?.dataPoints ?? []) noteToolCounter(metric.name, otelAttributes(dataPoint.attributes), dataPoint, temporality, resourceAttributes);
         } else if (metric.name === "codex.tool.call.duration_ms") {
           const temporality = metric.histogram?.aggregationTemporality;
-          for (const dataPoint of metric.histogram?.dataPoints ?? []) noteToolDuration(metric.name, otelAttributes(dataPoint.attributes), dataPoint, temporality);
+          const resourceAttributes = otelAttributes(resourceMetric.resource?.attributes);
+          for (const dataPoint of metric.histogram?.dataPoints ?? []) noteToolDuration(metric.name, otelAttributes(dataPoint.attributes), dataPoint, temporality, resourceAttributes);
         } else if (metric.name === "codex.hooks.run") {
           const temporality = metric.sum?.aggregationTemporality;
           for (const dataPoint of metric.sum?.dataPoints ?? []) noteHookCounter(metric.name, otelAttributes(dataPoint.attributes), dataPoint, temporality);
@@ -966,6 +1218,14 @@ function resetOtelTelemetry() {
     descriptionTruncatedChars: { count: 0, sum: 0 },
   };
   otelMetricSeries.clear();
+  workspaceAttributionCapabilities.tools = false;
+  workspaceAttributionCapabilities.skills = false;
+  resetAttributionDiagnostics();
+  for (const bucket of Object.values(usageTelemetry.byWorkspace)) {
+    bucket.tools?.clear();
+    bucket.skills?.clear();
+    bucket.skillUses = 0;
+  }
 }
 
 function codexTelemetryStatus(now = Date.now()) {
@@ -1773,6 +2033,7 @@ function getRouterStatus(now = Date.now()) {
     telemetryPersistence: { enabled: IS_MAIN, file: STATE_FILE, updatedAt: persistedStateUpdatedAt },
     authentication: { responseRequests: Boolean(ROUTER_AUTH_TOKEN) },
     usage: usageStatus(),
+    attributionDiagnostics: attributionDiagnosticsStatus(),
     codexTelemetry: codexTelemetryStatus(),
     concurrency: concurrencyStatus(),
     subagents: subagentStatus(),
@@ -1787,20 +2048,35 @@ function usagePersistenceSnapshot() {
   const withoutActive = (bucket) => {
     const copy = { ...bucket };
     delete copy.active;
+    delete copy.workspace_id;
+    delete copy.tools;
+    delete copy.skills;
     return copy;
   };
   return {
-    schemaVersion: 4,
+    schemaVersion: 5,
     totals: withoutActive(usageTelemetry.totals),
     byRole: Object.fromEntries(Object.entries(usageTelemetry.byRole).map(([key, bucket]) => [key, withoutActive(bucket)])),
     byModel: Object.fromEntries(Object.entries(usageTelemetry.byModel).map(([key, bucket]) => [key, withoutActive(bucket)])),
     byOrigin: Object.fromEntries(Object.entries(usageTelemetry.byOrigin).map(([key, bucket]) => [key, withoutActive(bucket)])),
     byWorkspace: Object.fromEntries(Object.entries(usageTelemetry.byWorkspace).map(([key, bucket]) => [key, {
       ...withoutActive(bucket),
+      skillUses: bucket.skillUses ?? 0,
       byRole: Object.fromEntries(Object.entries(bucket.byRole).map(([name, value]) => [name, withoutActive(value)])),
       byModel: Object.fromEntries(Object.entries(bucket.byModel).map(([name, value]) => [name, withoutActive(value)])),
       byProvider: Object.fromEntries(Object.entries(bucket.byProvider).map(([name, value]) => [name, withoutActive(value)])),
+      byTool: [...(bucket.tools?.values() ?? [])].map((t) => ({ ...t, byStatus: { ...t.byStatus } })),
+      bySkill: [...(bucket.skills?.values() ?? [])].map((s) => ({
+        ...s,
+        byStatus: { ...s.byStatus },
+        byInvokeType: { ...s.byInvokeType },
+        byAgentKind: { ...s.byAgentKind },
+        byModel: { ...s.byModel },
+        byPlugin: { ...s.byPlugin },
+      })),
     }])),
+    workspaceRegistry: [...workspaceIdRegistry.entries()],
+    workspaceAttributionCapabilities: { ...workspaceAttributionCapabilities },
   };
 }
 
@@ -1972,6 +2248,18 @@ function loadRouterState(file = STATE_FILE) {
       if (saved.lastFailure === null || (saved.lastFailure && typeof saved.lastFailure === "object")) current.lastFailure = saved.lastFailure;
     }
     if (parsed.usage && typeof parsed.usage === "object") {
+      if (parsed.usage.workspaceAttributionCapabilities && typeof parsed.usage.workspaceAttributionCapabilities === "object") {
+        for (const key of ["tools", "skills"]) {
+          if (parsed.usage.workspaceAttributionCapabilities[key] === true) workspaceAttributionCapabilities[key] = true;
+        }
+      }
+      if (Array.isArray(parsed.usage.workspaceRegistry)) {
+        for (const [id, key] of parsed.usage.workspaceRegistry) {
+          if (typeof id === "string" && typeof key === "string") {
+            registerWorkspaceId(id, key);
+          }
+        }
+      }
       for (const section of ["byRole", "byModel", "byOrigin"]) {
         if (!parsed.usage[section] || typeof parsed.usage[section] !== "object") continue;
         for (const [key, saved] of Object.entries(parsed.usage[section])) {
@@ -1985,9 +2273,60 @@ function loadRouterState(file = STATE_FILE) {
           if (!saved || typeof saved !== "object") continue;
           const current = workspaceBucket(usageTelemetry.byWorkspace, key, typeof saved.cwd === "string" ? saved.cwd : null);
           restoreUsageBucket(current, saved);
+          if (Number.isInteger(saved.skillUses) && saved.skillUses >= 0) {
+            current.skillUses = saved.skillUses;
+          }
           for (const section of ["byRole", "byModel", "byProvider"]) {
             if (!saved[section] || typeof saved[section] !== "object") continue;
             for (const [name, value] of Object.entries(saved[section])) restoreUsageBucket(usageBucket(current[section], name), value);
+          }
+          if (Array.isArray(saved.byTool)) {
+            for (const tool of saved.byTool) {
+              if (tool && typeof tool.tool === "string") {
+                const restoredTool = {
+                  tool: safeMetricLabel(tool.tool, "unknown-tool"),
+                  source: safeMetricLabel(tool.source),
+                  server: toolServerAttribute({ server: tool.server, mcp_server: tool.mcp_server }),
+                  count: 0,
+                  byStatus: {},
+                  durationCount: 0,
+                  durationMs: 0,
+                };
+                for (const field of ["count", "durationCount", "durationMs"]) {
+                  if (typeof tool[field] === "number" && tool[field] >= 0) restoredTool[field] = tool[field];
+                }
+                if (tool.byStatus && typeof tool.byStatus === "object") {
+                  for (const [st, cnt] of Object.entries(tool.byStatus)) {
+                    if (typeof cnt === "number" && cnt >= 0) restoredTool.byStatus[safeMetricLabel(st)] = cnt;
+                  }
+                }
+                current.tools.set(toolKey(restoredTool), restoredTool);
+              }
+            }
+          }
+          if (Array.isArray(saved.bySkill)) {
+            for (const skill of saved.bySkill) {
+              if (skill && typeof skill.skill === "string") {
+                const restoredSkill = {
+                  skill: safeMetricLabel(skill.skill),
+                  total: 0,
+                  byStatus: {},
+                  byInvokeType: {},
+                  byAgentKind: {},
+                  byModel: {},
+                  byPlugin: {},
+                };
+                if (typeof skill.total === "number" && skill.total >= 0) restoredSkill.total = skill.total;
+                for (const dict of ["byStatus", "byInvokeType", "byAgentKind", "byModel", "byPlugin"]) {
+                  if (skill[dict] && typeof skill[dict] === "object") {
+                    for (const [k, cnt] of Object.entries(skill[dict])) {
+                      if (typeof cnt === "number" && cnt >= 0) restoredSkill[dict][safeMetricLabel(k)] = cnt;
+                    }
+                  }
+                }
+                current.skills.set(restoredSkill.skill, restoredSkill);
+              }
+            }
           }
         }
       }
@@ -3595,6 +3934,14 @@ function hasWorkspaceClaim(payload, turnMetadataHeader) {
  * resolveCwd accepts the current request; an invalid or ambiguous claim is
  * returned unchanged so the bridge can continue to fail closed.
  */
+function addWorkspaceIdToTurnMetadata(payload, turnMetadataHeader) {
+  const parsed = parseTurnMetadataJson(turnMetadataHeader);
+  if (!parsed) return turnMetadataHeader;
+  const context = workspaceContextFromRequest({}, payload, turnMetadataHeader);
+  if (!context.workspace_id || parsed.workspace_id === context.workspace_id) return turnMetadataHeader;
+  return JSON.stringify({ ...parsed, workspace_id: context.workspace_id });
+}
+
 function workspaceMetadataForSession(payload, turnMetadataHeader, session) {
   const headers = turnMetadataHeader ? { "x-codex-turn-metadata": turnMetadataHeader } : {};
   let workspacePath = null;
@@ -3610,10 +3957,11 @@ function workspaceMetadataForSession(payload, turnMetadataHeader, session) {
     // Preserve the caller's richer metadata (including repository identity) if
     // it supplied one. Top-level-only requests need a canonical header so a
     // bridge still receives structured workspace data.
-    return turnMetadataHeader ?? JSON.stringify({ workspaces: { [workspacePath]: {} } });
+    return addWorkspaceIdToTurnMetadata(payload, turnMetadataHeader ?? JSON.stringify({ workspaces: { [workspacePath]: {} } }));
   }
   if (session?.scope === "identified" && !hasWorkspaceClaim(payload, turnMetadataHeader)) {
-    return workspaceMetadataBySession.get(session.key) ?? turnMetadataHeader;
+    const metadata = workspaceMetadataBySession.get(session.key) ?? turnMetadataHeader;
+    return addWorkspaceIdToTurnMetadata(payload, metadata);
   }
   return turnMetadataHeader;
 }
@@ -3729,15 +4077,46 @@ function workspaceContextFromRequest(request, payload, turnMetadataHeader) {
   const path = explicitPaths.find((value) => typeof value === "string" && value.trim())
     ?? (resolvableKeys.length === 1 ? resolvableKeys[0] : null)
     ?? null;
-  const matchingEntry = path && workspaces[path] ? workspaces[path] : Object.values(workspaces)[0];
+  const workspaceKeys = Object.keys(workspaces);
+  // A single unresolved map key is safe to use for a privacy-safe display
+  // label, but it is not used as the execution path. The bridge still receives
+  // the original metadata and fails closed if it cannot resolve that path.
+  const labelPath = path ?? (resolvableKeys.length === 0 && workspaceKeys.length === 1 ? workspaceKeys[0] : null);
+  const matchingEntry = path && workspaces[path]
+    ? workspaces[path]
+    : resolvableKeys.length === 1
+      ? workspaces[resolvableKeys[0]]
+      : workspaceKeys.length === 1
+        ? workspaces[workspaceKeys[0]]
+        : null;
   const remotes = matchingEntry?.associated_remote_urls;
   const repository = remotes && typeof remotes === "object"
     ? Object.values(remotes).map(repositoryIdentity).find(Boolean) ?? null
     : null;
-  return {
-    key: repository ?? workspacePathLabel(path) ?? "unknown",
-    cwd: workspacePathLabel(path),
+  const key = repository ?? workspacePathLabel(labelPath) ?? "unknown";
+  const cwd = workspacePathLabel(labelPath);
+
+  const rawId = matchingEntry?.workspace_id
+    ?? matchingEntry?.workspaceId
+    ?? matchingEntry?.id
+    ?? turnMetadata?.workspace_id
+    ?? turnMetadata?.workspaceId
+    ?? null;
+
+  const derivedId = key !== "unknown" ? `ws_${createHash("sha256").update(key).digest("hex").slice(0, 12)}` : null;
+  const workspaceId = typeof rawId === "string" && rawId.trim() ? safeWorkspaceId(rawId) : derivedId;
+
+  if (key !== "unknown") {
+    if (workspaceId) registerWorkspaceId(workspaceId, key);
+    if (derivedId) registerWorkspaceId(derivedId, key);
+  }
+
+  const context = {
+    key,
+    cwd,
   };
+  if (workspaceId) context.workspace_id = workspaceId;
+  return context;
 }
 
 function routerAuthorizationValid(request, configuredToken = ROUTER_AUTH_TOKEN) {
@@ -4041,6 +4420,9 @@ export {
   workspaceContextFromRequest,
   workspaceMetadataForSession,
   upstreamPayload,
+  registerWorkspaceId,
+  attributionDiagnosticsStatus,
+  resetAttributionDiagnostics,
 };
 
 if (IS_MAIN) {

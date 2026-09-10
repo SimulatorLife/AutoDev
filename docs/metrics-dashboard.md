@@ -34,12 +34,53 @@ logs, metadata, and errors use text-only DOM updates. MCP lifecycle observations
 are shown in the relevant usage cards and operational summary; there is no
 standalone MCP panel.
 
-Per-workspace usage currently has reliable totals, role, and model dimensions.
-The status contract does not provide named tool or named skill attribution at
-that same workspace granularity. Expanded workspace rows therefore show the
-explicit empty states **“Named tool telemetry is unavailable per-workspace”**
-and **“Named skill attribution is unavailable per-workspace”**, rather than
-inventing a join from unrelated telemetry.
+Per-workspace usage always has reliable totals, role, and model dimensions.
+Named tool and named skill attribution at that same workspace granularity --
+`status.usage.byWorkspace[*].byTool` and `...bySkill` -- are optional fields:
+the dashboard renders them when the status payload includes them and falls
+back to an explicit unavailable state when it does not, rather than inventing
+a join from unrelated telemetry or silently showing a zero that would be
+indistinguishable from "observed, but nothing happened." Expanded workspace
+rows show **"Named tool telemetry is unavailable per-workspace"** and
+**"Named skill attribution is unavailable per-workspace"** only when the
+corresponding field is entirely absent from that workspace's bucket; once the
+router starts populating it, the same rows show **"No named tool calls
+observed for this workspace yet"** / **"No named skill uses observed for
+this workspace yet"** if the field is present but empty, and the actual
+per-tool/per-skill breakdown otherwise. This is a fail-closed distinction on
+purpose: "unavailable" must never be collapsed into "zero," because the two
+mean different things to an operator debugging a workspace with no visible
+tool activity.
+
+When present, each `byTool`/`bySkill` entry is attributed under the exact
+same workspace key as its parent `usage.byWorkspace` bucket -- the
+privacy-safe repository label (or cwd-basename fallback) described below.
+The dashboard does not re-derive that attribution itself: it trusts the
+router's own `workspace_id` join (an opaque, hashed-if-path-like identifier
+that OTLP tool/skill events carry and the router matches against a
+workspace's already-resolved key -- see "workspace_id contract" in
+`docs/provider-routing.md` for the full fail-closed and privacy rules) and
+only ever renders a named tool or skill row nested under the workspace bucket
+that already contains it. The dashboard accepts either an array of rows
+(matching the shape of the existing global `codexTelemetry.tools.byTool` and
+`codexTelemetry.skills.injected.bySkill` tables -- name, count, optional
+`byStatus`, and for tools optional `source`/`server`) or a plain object keyed
+by tool/skill name (matching the existing `byRole`/`byModel`/`byProvider`
+per-workspace dimension shape), since the status contract does not yet commit
+to one representation over the other. Rendering never assumes network
+connectivity, ordering, or that the field will appear in a given rollout
+stage -- the fallback path is exercised whenever the field is missing, which
+is also what today's status responses produce.
+
+The workspace table's scalar **Tool calls** column is unrelated to the named
+`byTool` breakdown: it is a response-output count inferred from Responses API
+tool-call items across that workspace's turns (see "Usage is also aggregated
+under `status.usage.byWorkspace`" in `docs/provider-routing.md`), not a count
+of OTLP-named runtime tool invocations. The column header and an expanded-row
+note both label it explicitly as "response output" so the two measurements
+are never conflated; they are not expected to match, since Responses
+tool-call items and Codex's own OTLP `codex.tool.call` events are independent
+instrumentation with different coverage.
 
 ## Reported metrics
 

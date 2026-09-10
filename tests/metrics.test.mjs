@@ -33,8 +33,27 @@ test('router dashboard exposes the component hierarchy and explicit workspace at
   assert.match(dashboard, /<dashboard-panel id="panel-orchestrator"[\s\S]*?<sub-panel id="panel-spawn-breakdown"/);
   assert.match(dashboard, /<dashboard-panel id="panel-skills"[\s\S]*?<sub-panel id="panel-skill-context"/);
   assert.match(dashboard, /<dashboard-panel id="panel-ops"[\s\S]*?<sub-panel id="panel-native-metrics"/);
+  // Per-workspace named tool/skill attribution is rendered conditionally from
+  // status.usage.byWorkspace[*].byTool/bySkill: a fail-closed "unavailable"
+  // state when the backend omits the field entirely, distinct from a
+  // "no data yet" state when the backend reports the dimension but nothing
+  // was observed for that workspace.
+  assert.match(dashboard, /function normalizeWorkspaceNamedUsage\(raw, identityKeys\)/);
+  assert.match(dashboard, /function renderWorkspaceNamedUsage\(rows, \{ unavailableLabel, emptyLabel \}\)/);
+  assert.match(dashboard, /normalizeWorkspaceNamedUsage\(w\.byTool, \["tool", "name"\]\)/);
+  assert.match(dashboard, /normalizeWorkspaceNamedUsage\(w\.bySkill, \["skill", "name"\]\)/);
+  assert.match(dashboard, /if \(rows === null\) return `<div class="empty-state">\$\{escapeHtml\(unavailableLabel\)\}<\/div>`;/);
   assert.match(dashboard, /Named tool telemetry is unavailable per-workspace/);
   assert.match(dashboard, /Named skill attribution is unavailable per-workspace/);
+  assert.match(dashboard, /No named tool calls observed for this workspace yet/);
+  assert.match(dashboard, /No named skill uses observed for this workspace yet/);
+  // The workspace table's scalar toolCalls is a response-output count
+  // (Responses API tool-call items), which the dashboard labels explicitly
+  // as distinct from the OTLP-named runtime tool rows shown per workspace.
+  assert.match(dashboard, /Tool calls \(response output\)/);
+  assert.match(dashboard, /response-output tool-call count/);
+  assert.match(dashboard, /OTLP-named runtime tool rows/);
+  assert.match(dashboard, /OTLP-named runtime tool rows joined to this workspace/);
   assert.match(dashboard, /MCP servers/);
   assert.doesNotMatch(dashboard, /<(?:dashboard-panel|sub-panel)[^>]*(?:id="[^"]*mcp|title="[^"]*MCP)/i);
 });

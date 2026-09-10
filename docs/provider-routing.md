@@ -500,7 +500,56 @@ The router makes its effective choice visible in two ways:
   nested `byRole`, `byModel`, and `byProvider` dimensions. Full absolute paths,
   prompts, credentials, and remote URLs are not stored. The dashboard renders
   this as **Usage by workspace**; missing workspace metadata is attributed to
-  `unknown` rather than guessed from the router daemon's cwd.
+  `unknown` rather than guessed from the router daemon's cwd. The workspace
+  bucket's scalar `toolCalls` is a response-output count inferred from
+  Responses API tool-call items on that workspace's turns, the same inference
+  the top-level `usage.totals.toolCalls` uses -- it is not a count of
+  OTLP-named tool invocations, and the dashboard labels the column
+  accordingly rather than implying the two are the same measurement.
+- A workspace bucket may additionally carry `byTool` and `bySkill`: named
+  tool-call and skill-use attribution scoped to that same workspace, keyed
+  identically to the bucket's own `usage.byWorkspace` key so a named row is
+  never attributed to a different repository label than the totals around it.
+  Unlike the rest of the bucket -- which is populated directly from the
+  router's own resolved turn metadata -- this join runs in the other
+  direction: Codex's OTLP tool/skill events do not carry turn metadata, only
+  a `workspace_id` attribute (checked on the datapoint first, then the
+  metric's resource attributes as a fallback), so the router separately
+  registers each `workspace_id` it observes on a router request against that
+  request's already-resolved workspace key, then looks up incoming OTLP
+  events by that same id. This is the **workspace_id contract**: `byTool`
+  and `bySkill` rows are only ever attributed once a request has told the
+  router which key a given `workspace_id` maps to, never inferred from the
+  OTLP event alone. A `workspace_id` is treated as an opaque token, not a
+  path: any value that looks like a filesystem path (starts with `/` or `~`,
+  or contains `\`, `/Users/`, or `/home/`) is hashed to a short `ws_`-prefixed
+  digest before the router registers, stores, or attributes against it, so a
+  raw absolute path is never retained even transiently under this join --
+  the same privacy posture as the existing `owner/repository` labels which
+  never store the underlying filesystem path either. Attribution fails
+  closed rather than guessing: an OTLP event with no `workspace_id` on
+  either the datapoint or the resource, an event whose `workspace_id` is not
+  yet a registered key, or an event carrying more than one distinct
+  candidate `workspace_id` between the datapoint and resource attributes are
+  all left unattributed (never merged into an unrelated workspace's totals)
+  and counted by reason rather than silently dropped. These fields are
+  optional in the status contract for rollout reasons: the router populates
+  them once it has observed a `workspace_id`-carrying request for a given
+  workspace and matching OTLP events for it, and an older or degraded router
+  build, or a workspace that has only ever made requests without a
+  `workspace_id`, simply omits them entirely. The dashboard and the router
+  that feeds it are therefore free to ship on different schedules without a
+  compatibility shim on either side: the frontend already treats the field
+  as absent-by-default. The dashboard fails closed on
+  their absence: an expanded workspace row renders an explicit "unavailable"
+  state when the field is missing, and a distinct "no data observed yet"
+  state when the field is present but empty, so a real zero is never
+  indistinguishable from the dimension not being reported at all. See
+  `docs/metrics-dashboard.md` for the accepted row shapes and the exact
+  fallback copy. When a validated workspace request has no supplied ID, the
+  router derives a stable `ws_` identifier from its privacy-safe repository
+  label and adds it to the forwarded turn metadata; an upgraded Codex
+  exporter must use that same identifier on the OTLP datapoints.
 - The dashboard's usage table collapses this into exactly two top-level rows,
   Orchestrator and Subagents, because roleless requests only carry an origin
   and role-attributed requests only carry a role: origin and role are not two
@@ -530,8 +579,11 @@ The router makes its effective choice visible in two ways:
   labels and uses text-only updates for logs and status metadata. MCP lifecycle
   observations appear in the relevant usage cards and operational summary; no
   standalone MCP panel exists. Per-workspace named tool and skill attribution
-  is unavailable in the status contract, so expanded workspace rows display
-  explicit empty states instead of fabricating that join. `GET /status` always
+  (`usage.byWorkspace[*].byTool`/`bySkill`) is an optional part of the status
+  contract: expanded workspace rows render it when a workspace bucket carries
+  it and display an explicit fail-closed empty state instead of fabricating
+  that join when it does not, distinct from the empty state shown once the
+  field is populated but a workspace has no named events yet. `GET /status` always
   returns raw JSON regardless of the `Accept` header, including the current
   router instance, active requests, configured models, cooldown countdowns,
   per-provider attempt and success/failure counters, the last classified
