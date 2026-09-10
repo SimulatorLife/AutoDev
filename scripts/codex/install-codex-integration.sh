@@ -53,6 +53,7 @@ dashboard_asset_names=(codex-model-router-dashboard.html)
 # `./codex/prompts/x.md` -- therefore resolves in both.
 mcp_launcher_names=(run-autodev-mcp.sh)
 agent_renderer_name=scripts/codex/render-agent-configs.py
+execution_contract_builder_name=scripts/codex/render-execution-contract.py
 runtime_module_names=(
   scripts/codex/lib/resolve-workspace.mjs
   scripts/codex/lib/bridge-role.mjs
@@ -266,6 +267,11 @@ check_versioned_sources() {
       failed=1
     fi
   done
+  for source in "$repo_root/scripts/codex/agents/orchestrator.toml" "$repo_root/$execution_contract_builder_name"; do
+    if ! check_versioned_source "$source"; then
+      failed=1
+    fi
+  done
   for name in "${skill_names[@]}"; do
     source="$repo_root/scripts/codex/skills/$name"
     if ! check_versioned_source "$source"; then
@@ -386,6 +392,28 @@ check_user_agent_files() {
   done
   rm -rf -- "$rendered_dir"
   return "$failed"
+}
+
+check_execution_contract() {
+  local generated_dir generated
+  generated_dir="$(mktemp -d "${TMPDIR:-/tmp}/autodev-contract.XXXXXX")"
+  generated="$generated_dir/execution-contract.json"
+  if ! python3 "$repo_root/$execution_contract_builder_name" \
+    --source-dir "$repo_root/scripts/codex/agents" \
+    --root-config "$repo_root/scripts/codex/config.toml" \
+    --contract "$repo_root/scripts/codex/execution-contract.json" \
+    --output "$generated" >/dev/null; then
+    rm -rf -- "$generated_dir"
+    return 1
+  fi
+  if cmp -s "$generated" "$repo_root/scripts/codex/execution-contract.json"; then
+    printf 'ok execution contract is generated from role TOMLs\n'
+    rm -rf -- "$generated_dir"
+    return 0
+  fi
+  printf 'execution-contract.json is stale; regenerate it with render-execution-contract.py\n'
+  rm -rf -- "$generated_dir"
+  return 1
 }
 
 ensure_pipx() {
@@ -979,6 +1007,9 @@ check_links() {
   if ! check_user_agent_files; then
     failed=1
   fi
+  if ! check_execution_contract; then
+    failed=1
+  fi
   if ! check_custom_provider_config; then
     failed=1
   fi
@@ -1150,14 +1181,16 @@ grant_agy_code_mcp_permissions() {
     return 0
   fi
   local config="$HOME/.gemini/config/config.json"
+  local read_root="${AUTODEV_AGY_READ_ROOT:-$repo_root}"
   mkdir -p -- "$(dirname -- "$config")"
-  python3 - "$config" <<'PY'
+  python3 - "$config" "$read_root" <<'PY'
 import json
 import os
 import sys
 import tempfile
 
 path = sys.argv[1]
+read_root = sys.argv[2]
 if os.path.isfile(path):
     with open(path, encoding="utf-8") as stream:
         config = json.load(stream)
@@ -1171,6 +1204,9 @@ for grant in (
     "mcp(cocoindex-code/search)",
     "mcp(lsp)",
     "mcp(lsp/*)",
+    f"read_file({read_root}/**)",
+    f"read_file({os.path.expanduser('~/.agents')}/**)",
+    f"read_file({os.path.expanduser('~/.codex')}/**)",
 ):
     if grant not in allow:
         allow.append(grant)

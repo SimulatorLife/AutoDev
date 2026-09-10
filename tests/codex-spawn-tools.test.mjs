@@ -94,7 +94,7 @@ test("the role travels as agent_type, because `agent` is silently ignored by Cod
   assert.match(source, /type: "skill", name: "lsp-mcp-server"/);
 });
 
-test("code skills are attached only to code-capable children", () => {
+test("code skills are attached only to roles declaring them in the contract", () => {
   const code = buildSpawnScript([ { agentType: "worker", message: "x" } ]);
   const browser = buildSpawnScript([ { agentType: "browser-tester", message: "x" } ]);
   const docs = buildSpawnScript([ { agentType: "docs-researcher", message: "x" } ]);

@@ -46,10 +46,9 @@ export const EXEC_TOOL = "exec";
 // The children keep running after the script returns.
 const DEFAULT_YIELD_MS = 60_000;
 function skillItemsForRole(agentType) {
-  // The role contract is the machine-readable projection of the role TOML's
-  // enabled MCP/skill capabilities. Do not maintain a second role allowlist in
-  // this spawn path: changing a role's MCP contract must change its child
-  // bootstrap automatically.
+  // The generated execution contract is the capability projection of the
+  // native role TOMLs. The bridge carries those declared skill identities into
+  // child bootstrap because the current spawn API has no MCP-config field.
   const contract = roleContract(agentType);
   const skillNames = Array.isArray(contract.skills) ? contract.skills : [];
   if (!skillNames.includes("ccc") || !skillNames.includes("lsp-mcp-server")) return "";

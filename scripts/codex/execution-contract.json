@@ -10,7 +10,11 @@
         "playwright",
         "autodev_spawn"
       ],
-      "skills": ["orchestration", "ccc", "lsp-mcp-server"]
+      "skills": [
+        "orchestration",
+        "ccc",
+        "lsp-mcp-server"
+      ]
     },
     "default": {
       "kind": "leaf",
@@ -19,7 +23,10 @@
         "lsp",
         "cocoindex-code"
       ],
-      "skills": ["ccc", "lsp-mcp-server"]
+      "skills": [
+        "ccc",
+        "lsp-mcp-server"
+      ]
     },
     "worker": {
       "kind": "leaf",
@@ -28,7 +35,10 @@
         "lsp",
         "cocoindex-code"
       ],
-      "skills": ["ccc", "lsp-mcp-server"]
+      "skills": [
+        "ccc",
+        "lsp-mcp-server"
+      ]
     },
     "explorer": {
       "kind": "leaf",
@@ -37,7 +47,10 @@
         "lsp",
         "cocoindex-code"
       ],
-      "skills": ["ccc", "lsp-mcp-server"]
+      "skills": [
+        "ccc",
+        "lsp-mcp-server"
+      ]
     },
     "validator": {
       "kind": "leaf",
@@ -46,7 +59,10 @@
         "lsp",
         "cocoindex-code"
       ],
-      "skills": ["ccc", "lsp-mcp-server"]
+      "skills": [
+        "ccc",
+        "lsp-mcp-server"
+      ]
     },
     "browser-tester": {
       "kind": "leaf",
@@ -73,7 +89,10 @@
         "playwright",
         "openaiDeveloperDocs"
       ],
-      "skills": ["ccc", "lsp-mcp-server"]
+      "skills": [
+        "ccc",
+        "lsp-mcp-server"
+      ]
     }
   },
   "providers": {

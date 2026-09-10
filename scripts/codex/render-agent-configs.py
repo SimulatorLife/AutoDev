@@ -80,7 +80,9 @@ def render_directory(source_dir: Path, prompt_dir: Path, output_dir: Path) -> li
     base = read_prompt(prompt_dir / "base.md", "base")
     leaf = read_prompt(prompt_dir / "leaf.md", "leaf")
     code_search = read_prompt(prompt_dir / "code-search.md", "code search")
-    sources = sorted(source_dir.glob("*.toml"))
+    # The root orchestrator has a capability-only TOML declaration used by
+    # the execution-contract builder, not a native child role config.
+    sources = sorted(source for source in source_dir.glob("*.toml") if source.stem != "orchestrator")
     if not sources:
         raise RuntimeError(f"no role TOML files found under {source_dir}")
     rendered = []

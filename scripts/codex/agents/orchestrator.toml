@@ -1,0 +1,28 @@
+# role-kind: orchestrator
+# Capability declaration only. The root turn is selected by the
+# autodev/orchestrator model alias and is not installed as a child role.
+sandbox_mode = "danger-full-access"
+
+[mcp_servers.lsp]
+enabled = true
+
+[mcp_servers."cocoindex-code"]
+enabled = true
+
+[mcp_servers.playwright]
+enabled = true
+
+[mcp_servers.autodev_spawn]
+enabled = true
+
+[[skills.config]]
+name = "orchestration"
+enabled = true
+
+[[skills.config]]
+name = "ccc"
+enabled = true
+
+[[skills.config]]
+name = "lsp-mcp-server"
+enabled = true

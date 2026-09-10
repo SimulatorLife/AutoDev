@@ -175,26 +175,12 @@ For each delegated item, state:
 - tests, checks, or evidence it must return; and
 - any explicitly approved external paths or services it may inspect.
 
-When spawning a code-capable child through `multi_agent_v1__spawn_agent`, attach
-the installed `ccc` and `lsp-mcp-server` skills in the spawn `items` payload as
-well as naming the role. The skill attachments are what cause Codex to merge
-the corresponding `cocoindex-code` and `lsp` MCP tool schemas into the new
-child session; a parent having those tools does not retroactively add them to
-a child created without the attachments. Do not attach these code skills to
-`browser-tester` or `docs-researcher` children, whose contracts intentionally
-do not expose those MCP servers.
+Until the Codex App spawn API accepts a native role-capability contract, the
+provider bridge must carry the generated role skill identities in the spawn
+payload. This is derived from `execution-contract.json`, not a role allowlist;
+the role TOMLs remain the source and drift is checked by the installer. Attach
+`ccc` and `lsp-mcp-server` only when the selected role contract declares them.
 
-Use the exact resolved skill paths from the active skill catalogue, for example:
-
-```js
-items: [
-  { type: "skill", name: "ccc", path: "/.../.agents/skills/ccc" },
-  { type: "skill", name: "lsp-mcp-server", path: "/.../.agents/skills/lsp-mcp-server" },
-]
-```
-
-The `path` values are runtime-resolved inputs, not literal repository paths;
-never invent a path when the active skill catalogue gives a different root.
 
 ## Validation and integration
 

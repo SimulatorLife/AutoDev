@@ -1526,9 +1526,10 @@ configured and validated.
 
 ### Cross-provider execution contract
 
-`/Users/henrykirk/AutoDev/scripts/codex/execution-contract.json` is the shared
-contract for role kind, read-only intent, expected MCP capabilities, and provider
-spawn capabilities. The Claude, Antigravity, and Copilot bridge prompt paths append the canonical
+`/Users/henrykirk/AutoDev/scripts/codex/execution-contract.json` is the generated
+shared contract for role kind, read-only intent, expected MCP/skill capabilities,
+and provider spawn capabilities. It is projected from the native role TOMLs by
+`render-execution-contract.py`; the installer rejects drift. The Claude, Antigravity, and Copilot bridge prompt paths append the canonical
 role fragment from `scripts/codex/prompts/roles/` and use this JSON only for
 capability metadata. The installer deploys both beside the bridge runtime
 modules. Native TOML role files remain the Codex configuration surface; the

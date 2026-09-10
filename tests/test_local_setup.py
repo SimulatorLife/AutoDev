@@ -528,7 +528,8 @@ class LocalSetupTests(unittest.TestCase):
 
     def test_native_role_sources_delegate_shared_prompt_composition_to_renderer(self):
         role_dir = REPO_ROOT / "scripts/codex/agents"
-        for source in sorted(role_dir.glob("*.toml")):
+        role_sources = [source for source in sorted(role_dir.glob("*.toml")) if source.stem != "orchestrator"]
+        for source in role_sources:
             with self.subTest(role=source.stem):
                 text = source.read_text()
                 self.assertEqual(text.count("{{AUTODEV_BASE_PROMPT}}"), 1)
@@ -539,7 +540,7 @@ class LocalSetupTests(unittest.TestCase):
                 self.assertNotIn("verify the active repository and working directory", text)
         with tempfile.TemporaryDirectory() as rendered_dir:
             self._render_agent_configs(rendered_dir)
-            for source in sorted(role_dir.glob("*.toml")):
+            for source in role_sources:
                 role_prompt = (REPO_ROOT / "scripts/codex/prompts/roles" / f"{source.stem}.md").read_text().strip()
                 rendered = tomllib.loads((Path(rendered_dir) / source.name).read_text())
                 self.assertIn(role_prompt, rendered["developer_instructions"])
