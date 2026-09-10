@@ -23,7 +23,6 @@ enabled = false
 [mcp_servers.openaiDeveloperDocs]
 enabled = true
 url = "https://developers.openai.com/mcp"
-transport = "streamable_http"
 
 # General documentation research uses Codex's native web_search tool. The
 # browser automation MCP is for UI testing/debugging and is intentionally not

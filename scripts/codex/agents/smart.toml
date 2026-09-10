@@ -51,7 +51,6 @@ enabled_tools = [
 
 [mcp_servers.openaiDeveloperDocs]
 url = "https://developers.openai.com/mcp"
-transport = "streamable_http"
 enabled = true
 
 [mcp_servers."cocoindex-code"]

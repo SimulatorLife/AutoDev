@@ -70,6 +70,17 @@
         "subagentSpawn": true,
         "subagentSpawnTools": [
           "invoke_subagent"
+        ],
+        "mcp": [
+          "lsp",
+          "cocoindex-code",
+          "playwright",
+          "autodev_spawn"
+        ],
+        "skills": [
+          "ccc",
+          "lsp-mcp-server",
+          "orchestration"
         ]
       },
       "models": {
@@ -84,6 +95,17 @@
         "subagentSpawnTools": [
           "Agent",
           "Task"
+        ],
+        "mcp": [
+          "lsp",
+          "cocoindex-code",
+          "playwright",
+          "autodev_spawn"
+        ],
+        "skills": [
+          "ccc",
+          "lsp-mcp-server",
+          "orchestration"
         ]
       },
       "models": {
@@ -94,7 +116,18 @@
     },
     "minimax": {
       "capabilities": {
-        "subagentSpawn": true
+        "subagentSpawn": true,
+        "mcp": [
+          "lsp",
+          "cocoindex-code",
+          "playwright",
+          "autodev_spawn"
+        ],
+        "skills": [
+          "ccc",
+          "lsp-mcp-server",
+          "orchestration"
+        ]
       },
       "models": {
         "default": "MiniMax-M3"
@@ -102,7 +135,17 @@
     },
     "copilot": {
       "capabilities": {
-        "subagentSpawn": false
+        "subagentSpawn": false,
+        "mcp": [
+          "lsp",
+          "cocoindex-code",
+          "playwright"
+        ],
+        "skills": [
+          "ccc",
+          "lsp-mcp-server",
+          "orchestration"
+        ]
       },
       "models": {
         "default": "copilot"
@@ -110,7 +153,19 @@
     },
     "codex": {
       "capabilities": {
-        "subagentSpawn": true
+        "subagentSpawn": true,
+        "mcp": [
+          "lsp",
+          "cocoindex-code",
+          "playwright",
+          "openaiDeveloperDocs",
+          "autodev_spawn"
+        ],
+        "skills": [
+          "ccc",
+          "lsp-mcp-server",
+          "orchestration"
+        ]
       },
       "models": {
         "smart": "gpt-5.6-sol",

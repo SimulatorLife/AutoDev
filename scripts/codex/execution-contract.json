@@ -1,6 +1,46 @@
 {
   "version": 1,
   "roles": {
+    "browser-tester": {
+      "kind": "leaf",
+      "readOnly": true,
+      "mcp": [
+        "playwright"
+      ],
+      "skills": []
+    },
+    "default": {
+      "kind": "leaf",
+      "readOnly": false,
+      "mcp": [
+        "lsp",
+        "cocoindex-code"
+      ],
+      "skills": [
+        "ccc",
+        "lsp-mcp-server"
+      ]
+    },
+    "docs-researcher": {
+      "kind": "leaf",
+      "readOnly": true,
+      "mcp": [
+        "openaiDeveloperDocs"
+      ],
+      "skills": []
+    },
+    "explorer": {
+      "kind": "leaf",
+      "readOnly": true,
+      "mcp": [
+        "lsp",
+        "cocoindex-code"
+      ],
+      "skills": [
+        "ccc",
+        "lsp-mcp-server"
+      ]
+    },
     "orchestrator": {
       "kind": "orchestrator",
       "readOnly": false,
@@ -16,36 +56,14 @@
         "lsp-mcp-server"
       ]
     },
-    "default": {
+    "smart": {
       "kind": "leaf",
       "readOnly": false,
       "mcp": [
         "lsp",
-        "cocoindex-code"
-      ],
-      "skills": [
-        "ccc",
-        "lsp-mcp-server"
-      ]
-    },
-    "worker": {
-      "kind": "leaf",
-      "readOnly": false,
-      "mcp": [
-        "lsp",
-        "cocoindex-code"
-      ],
-      "skills": [
-        "ccc",
-        "lsp-mcp-server"
-      ]
-    },
-    "explorer": {
-      "kind": "leaf",
-      "readOnly": true,
-      "mcp": [
-        "lsp",
-        "cocoindex-code"
+        "cocoindex-code",
+        "playwright",
+        "openaiDeveloperDocs"
       ],
       "skills": [
         "ccc",
@@ -64,30 +82,12 @@
         "lsp-mcp-server"
       ]
     },
-    "browser-tester": {
-      "kind": "leaf",
-      "readOnly": true,
-      "mcp": [
-        "playwright"
-      ],
-      "skills": []
-    },
-    "docs-researcher": {
-      "kind": "leaf",
-      "readOnly": true,
-      "mcp": [
-        "openaiDeveloperDocs"
-      ],
-      "skills": []
-    },
-    "smart": {
+    "worker": {
       "kind": "leaf",
       "readOnly": false,
       "mcp": [
         "lsp",
-        "cocoindex-code",
-        "playwright",
-        "openaiDeveloperDocs"
+        "cocoindex-code"
       ],
       "skills": [
         "ccc",

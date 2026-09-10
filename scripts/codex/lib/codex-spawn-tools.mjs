@@ -31,8 +31,6 @@
  */
 
 import { randomBytes, createHash } from "node:crypto";
-import { join } from "node:path";
-import { roleContract } from "./execution-contract.mjs";
 
 /** Codex's spawn function, as exposed on the isolate's `tools` global. */
 export const SPAWN_TOOL = "multi_agent_v1__spawn_agent";
@@ -45,22 +43,6 @@ export const EXEC_TOOL = "exec";
 // was 0.8s -- so this only has to cover a slow batch, not a child's lifetime.
 // The children keep running after the script returns.
 const DEFAULT_YIELD_MS = 60_000;
-function skillItemsForRole(agentType) {
-  // The generated execution contract is the capability projection of the
-  // native role TOMLs. The bridge carries those declared skill identities into
-  // child bootstrap because the current spawn API has no MCP-config field.
-  const contract = roleContract(agentType);
-  const skillNames = Array.isArray(contract.skills) ? contract.skills : [];
-  if (!skillNames.includes("ccc") || !skillNames.includes("lsp-mcp-server")) return "";
-  const home = typeof process?.env?.HOME === "string" ? process.env.HOME : "";
-  if (!home.startsWith("/")) return "";
-  const root = join(home, ".agents", "skills");
-  return `, items: [${skillNames
-    .filter((name) => name === "ccc" || name === "lsp-mcp-server")
-    .map((name) => `{ type: "skill", name: ${JSON.stringify(name)}, path: ${JSON.stringify(join(root, name))} }`)
-    .join(", ")}]`;
-}
-
 /**
  * The JavaScript body for one spawn batch.
  *
@@ -129,8 +111,8 @@ export function buildSpawnScript(children, { yieldTimeMs = DEFAULT_YIELD_MS, rec
     // prompt containing quotes, newlines or a `*/` would otherwise end the
     // string or the script.
     return agentType
-      ? `{ agent_type: ${JSON.stringify(agentType)}, message: ${JSON.stringify(message)}${skillItemsForRole(agentType)} }`
-      : `{ message: ${JSON.stringify(message)}${skillItemsForRole("default")} }`;
+      ? `{ agent_type: ${JSON.stringify(agentType)}, message: ${JSON.stringify(message)} }`
+      : `{ message: ${JSON.stringify(message)} }`;
   });
   if (tasks.length === 0) throw new Error("buildSpawnScript requires at least one child");
   const recovery = buildRecoveryScript(recoverParentId);

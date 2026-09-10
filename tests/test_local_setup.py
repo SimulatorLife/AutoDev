@@ -18,6 +18,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 BRIDGE_PATH = REPO_ROOT / "scripts/codex-claude-cli-responses-proxy.py"
 INSTALLER_PATH = REPO_ROOT / "scripts/codex/install-codex-integration.sh"
 AGENT_RENDERER_PATH = REPO_ROOT / "scripts/codex/render-agent-configs.py"
+EXECUTION_CONTRACT_RENDERER_PATH = REPO_ROOT / "scripts/codex/render-execution-contract.py"
 SKILL_NAMES = ("ccc", "code-simplification", "lsp-mcp-server", "orchestration", "remove-legacy-shims")
 LSP_AGENT_NAMES = ("default", "explorer", "smart", "validator", "worker")
 NON_LSP_AGENT_NAMES = ("browser-tester", "docs-researcher")
@@ -84,6 +85,7 @@ class LocalSetupTests(unittest.TestCase):
         # The isolated fixture must not mutate any provider CLI's user-level
         # MCP registry; the production installer owns this registration.
         environment["AUTODEV_SKIP_AGY_MCP"] = "1"
+        environment["AUTODEV_SKIP_COPILOT_MCP"] = "1"
         return subprocess.run(
             ["bash", str(INSTALLER_PATH), *args],
             text=True,
@@ -333,7 +335,7 @@ class LocalSetupTests(unittest.TestCase):
         self.assertIn("EXTERNALLY-MANAGED", installer)
 
     def test_cocoindex_is_limited_to_code_capable_agent_roles(self):
-        expected_enabled = {"default", "explorer", "smart", "validator", "worker"}
+        expected_enabled = {"default", "explorer", "smart", "validator", "worker", "orchestrator"}
         expected_disabled = {"browser-tester", "docs-researcher"}
         role_dir = REPO_ROOT / "scripts/codex/agents"
         self.assertEqual(
@@ -348,8 +350,9 @@ class LocalSetupTests(unittest.TestCase):
                 server = role_config["mcp_servers"]["cocoindex-code"]
                 should_enable = role in expected_enabled
                 self.assertEqual(server["enabled"], should_enable)
-                self.assertEqual(server["command"], "ccc")
-                self.assertEqual(server["args"], ["mcp"])
+                if role != "orchestrator":
+                    self.assertEqual(server["command"], "ccc")
+                    self.assertEqual(server["args"], ["mcp"])
                 skill_config = {
                     entry["name"]: entry["enabled"]
                     for entry in role_config["skills"]["config"]
@@ -409,7 +412,9 @@ class LocalSetupTests(unittest.TestCase):
         openai_docs = role_config["mcp_servers"]["openaiDeveloperDocs"]
         self.assertTrue(openai_docs["enabled"])
         self.assertEqual(openai_docs["url"], "https://developers.openai.com/mcp")
-        self.assertEqual(openai_docs["transport"], "streamable_http")
+        # Codex infers streamable HTTP from `url`; `transport =
+        # "streamable_http"` is not a valid native role field.
+        self.assertNotIn("transport", openai_docs)
         self.assertTrue(role_config["tools"]["web_search"])
 
         # Browser automation is for UI testing/debugging, not the docs role's
@@ -434,7 +439,7 @@ class LocalSetupTests(unittest.TestCase):
         self.assertTrue(user_skill_config["lsp-mcp-server"])
 
         role_dir = REPO_ROOT / "scripts/codex/agents"
-        expected_roles = set(LSP_AGENT_NAMES) | set(NON_LSP_AGENT_NAMES)
+        expected_roles = set(LSP_AGENT_NAMES) | set(NON_LSP_AGENT_NAMES) | {"orchestrator"}
         self.assertEqual(
             {path.stem for path in role_dir.glob("*.toml")},
             expected_roles,
@@ -554,9 +559,32 @@ class LocalSetupTests(unittest.TestCase):
         self.assertIn("render_agent_configs", installer)
 
     def test_execution_contract_matches_role_toml_mcp_and_skill_capabilities(self):
-        contract = json.loads((REPO_ROOT / "scripts/codex/execution-contract.json").read_text())
+        contract_path = REPO_ROOT / "scripts/codex/execution-contract.json"
+        contract = json.loads(contract_path.read_text())
         role_dir = REPO_ROOT / "scripts/codex/agents"
-        for source in sorted(role_dir.glob("*.toml")):
+        role_sources = sorted(role_dir.glob("*.toml"))
+        self.assertEqual(set(contract["roles"]), {source.stem for source in role_sources})
+        with tempfile.TemporaryDirectory() as output_dir:
+            generated = Path(output_dir) / "execution-contract.json"
+            subprocess.run(
+                [
+                    "python3",
+                    str(EXECUTION_CONTRACT_RENDERER_PATH),
+                    "--source-dir",
+                    str(role_dir),
+                    "--root-config",
+                    str(REPO_ROOT / "scripts/codex/config.toml"),
+                    "--contract",
+                    str(contract_path),
+                    "--output",
+                    str(generated),
+                ],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(json.loads(generated.read_text()), contract)
+        for source in role_sources:
             with self.subTest(role=source.stem):
                 role_config = tomllib.loads(source.read_text())
                 enabled_mcp = [
@@ -570,6 +598,23 @@ class LocalSetupTests(unittest.TestCase):
                 role_contract = contract["roles"][source.stem]
                 self.assertCountEqual(role_contract["mcp"], enabled_mcp)
                 self.assertCountEqual(role_contract["skills"], enabled_skills)
+
+    def test_role_mcp_http_servers_use_codex_native_url_configuration(self):
+        """Codex role TOMLs use ``url`` for streamable HTTP MCP servers.
+
+        ``transport = \"streamable_http\"`` is not a valid Codex role field;
+        leaving it in a role causes Codex to discard that role entirely before
+        it can load any of its skills or MCP servers.
+        """
+        for source in sorted((REPO_ROOT / "scripts/codex/agents").glob("*.toml")):
+            config = tomllib.loads(source.read_text())
+            for name, server in config.get("mcp_servers", {}).items():
+                if not isinstance(server, dict) or "url" not in server:
+                    continue
+                with self.subTest(role=source.stem, server=name):
+                    self.assertIsInstance(server["url"], str)
+                    self.assertTrue(server["url"].startswith(("http://", "https://")))
+                    self.assertNotIn("transport", server)
 
     def test_user_level_skill_registry_contains_all_requested_skill_names(self):
         names = {path.name for path in (REPO_ROOT / "scripts/codex/skills").iterdir()}
@@ -625,6 +670,9 @@ class LocalSetupTests(unittest.TestCase):
         if not codex.exists():
             self.skipTest("Codex CLI is not installed at the local validation path")
         for command in (
+            ("ccc", "search", "orchestrator prompt configuration"),
+            ("ccc", "index"),
+            ("ccc", "mcp"),
             ("git", "checkout", "main"),
             ("git", "reset", "--hard", "HEAD"),
             ("git", "stash", "push"),
@@ -1840,6 +1888,7 @@ class LocalSetupTests(unittest.TestCase):
                 "CODEX_HOME": codex_home,
                 "AUTODEV_SKIP_COCOINDEX_INSTALL": "1",
                 "AUTODEV_SKIP_AGY_MCP": "1",
+                "AUTODEV_SKIP_COPILOT_MCP": "1",
                 "AUTODEV_SKIP_LAUNCHCTL": "1",
             })
             run = subprocess.run(

@@ -38,8 +38,19 @@ def read_role(source: Path) -> tuple[str, list[str], list[str], bool]:
 
 
 def render(source_dir: Path, root_config_path: Path, contract_path: Path) -> dict:
-    contract = json.loads(contract_path.read_text(encoding="utf-8"))
-    roles = contract.setdefault("roles", {})
+    template = json.loads(contract_path.read_text(encoding="utf-8"))
+    if not isinstance(template, dict):
+        raise RuntimeError(f"execution contract must contain a JSON object: {contract_path}")
+    # Provider metadata is deliberately retained here because it describes the
+    # adapter boundary, not a role's capabilities. Role entries, in contrast,
+    # are rebuilt from scratch so deleting/renaming a role TOML cannot leave a
+    # stale capability entry behind in the generated artifact.
+    contract = {
+        "version": template.get("version", 1),
+        "roles": {},
+        "providers": template.get("providers", {}),
+    }
+    roles = contract["roles"]
     for source in sorted(source_dir.glob("*.toml")):
         kind, mcp, skills, read_only = read_role(source)
         roles[source.stem] = {
@@ -49,6 +60,8 @@ def render(source_dir: Path, root_config_path: Path, contract_path: Path) -> dic
             "skills": skills,
         }
 
+    if "orchestrator" not in roles:
+        raise RuntimeError("role TOMLs must include the orchestrator capability declaration")
     root_config = tomllib.loads(root_config_path.read_text(encoding="utf-8"))
     orchestrator = roles["orchestrator"]
     enabled_root_mcp = {

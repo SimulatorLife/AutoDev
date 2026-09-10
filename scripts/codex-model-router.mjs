@@ -38,6 +38,11 @@ const ROUTING_CONFIG_FILE = process.env.CODEX_ROUTER_CONFIG_FILE
     : new URL('./codex/model-routing.json', import.meta.url).pathname);
 const ROLE_NAMES = ['default', 'docs-researcher', 'browser-tester', 'explorer', 'worker', 'validator', 'smart'];
 const ROUTING_CONFIG = JSON.parse(readFileSync(ROUTING_CONFIG_FILE, 'utf8'));
+const EXECUTION_CONTRACT_FILE = process.env.CODEX_EXECUTION_CONTRACT_FILE
+  ?? (existsSync(`${CODEX_HOME}/hooks/codex/execution-contract.json`)
+    ? `${CODEX_HOME}/hooks/codex/execution-contract.json`
+    : new URL('./codex/execution-contract.json', import.meta.url).pathname);
+const EXECUTION_CONTRACT = JSON.parse(readFileSync(EXECUTION_CONTRACT_FILE, 'utf8'));
 const DEFAULT_ROUTES = [
   { provider: "claude", pattern: /^(sonnet|opus|haiku|claude-[A-Za-z0-9][A-Za-z0-9.-]*)$/, baseUrl: "http://127.0.0.1:4000/v1", healthUrl: "http://127.0.0.1:4000/health/liveliness", envKey: "LITELLM_API_KEY" },
   { provider: "minimax", pattern: /^MiniMax-[A-Za-z0-9][A-Za-z0-9.-]*$/, baseUrl: "http://127.0.0.1:18765/v1", healthUrl: "http://127.0.0.1:18765/health", envKey: "MINIMAX_API_KEY" },
@@ -92,6 +97,11 @@ function validateRoutingConfig(config) {
     }
     if (!info.capabilities || typeof info.capabilities !== 'object' || typeof info.capabilities.subagentSpawn !== 'boolean') {
       throw new Error(`Routing config provider ${provider} must declare capabilities.subagentSpawn as a boolean.`);
+    }
+    for (const field of ["mcp", "skills"]) {
+      if (info.capabilities[field] !== undefined && (!Array.isArray(info.capabilities[field]) || info.capabilities[field].some((value) => typeof value !== "string" || !value.trim()))) {
+        throw new Error(`Routing config provider ${provider} must declare capabilities.${field} as an array of names.`);
+      }
     }
     // A CLI-delegation bridge spawns inside its own runtime, so the router can
     // only attribute those spawns if it knows which tool names to watch for.
@@ -1126,8 +1136,33 @@ function providerCapabilities(provider) {
   return {
     subagentSpawn: capabilities.subagentSpawn === true,
     subagentSpawnTools: spawnTools,
+    mcp: Array.isArray(capabilities.mcp) ? [...capabilities.mcp] : [],
+    skills: Array.isArray(capabilities.skills) ? [...capabilities.skills] : [],
     normalizeItemIds: capabilities.normalizeItemIds !== false,
   };
+}
+
+function roleCapabilityRequirements(role) {
+  const key = role === ORCHESTRATOR_AGENT_ROLE ? "orchestrator" : (typeof role === "string" && role.trim() ? role.trim().toLowerCase() : "default");
+  const contract = EXECUTION_CONTRACT.roles?.[key] ?? EXECUTION_CONTRACT.roles?.default ?? {};
+  return {
+    mcp: new Set(Array.isArray(contract.mcp) ? contract.mcp : []),
+    skills: new Set(Array.isArray(contract.skills) ? contract.skills : []),
+  };
+}
+
+function missingProviderCapabilities(provider, role) {
+  const requirements = roleCapabilityRequirements(role);
+  const capabilities = providerCapabilities(provider);
+  return {
+    mcp: [...requirements.mcp].filter((name) => !capabilities.mcp.includes(name)),
+    skills: [...requirements.skills].filter((name) => !capabilities.skills.includes(name)),
+  };
+}
+
+function providerSupportsRole(provider, role) {
+  const missing = missingProviderCapabilities(provider, role);
+  return missing.mcp.length === 0 && missing.skills.length === 0;
 }
 
 // Tool names whose invocation inside a provider bridge means "a subagent was
@@ -3917,6 +3952,9 @@ export {
   persistRouterStateNow,
   PROCESS_FALLBACK_SESSION_KEY,
   providerModelMetadata,
+  providerSupportsRole,
+  missingProviderCapabilities,
+  roleCapabilityRequirements,
   recordConcurrencyDenial,
   recordRouterEvent,
   recordSpawnFailure,

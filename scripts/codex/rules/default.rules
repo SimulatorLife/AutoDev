@@ -1,3 +1,12 @@
+# Code-search agents must use the configured CocoIndex MCP server. The CLI
+# executable remains available to the MCP server itself, but model-issued shell
+# commands cannot invoke it as a search/indexing fallback.
+prefix_rule(
+    pattern = ["ccc"],
+    decision = "forbidden",
+    justification = "Use the configured cocoindex-code MCP tools; direct ccc CLI execution is forbidden for agent shell commands.",
+)
+
 # Protect uncommitted work from destructive or history-rewriting Git commands.
 # Codex evaluates these prefixes before dispatching the command.
 prefix_rule(

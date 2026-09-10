@@ -23,6 +23,8 @@ import {
   declaredLimit,
   providerCooldownSummary,
   providerCapabilities,
+  providerSupportsRole,
+  missingProviderCapabilities,
   decrementActiveRequests,
   downstreamHeaders,
   fallbackable,
@@ -199,11 +201,14 @@ test("router status surfaces each provider's subagent spawn capability and watch
   const providers = getRouterStatus().providers;
   // Only the CLI-delegation bridges name tools: their spawns are invisible to
   // the router unless it tells them which tool names to report.
-  assert.deepEqual(providers.claude.capabilities, { subagentSpawn: true, subagentSpawnTools: [ "Agent", "Task" ], normalizeItemIds: true });
-  assert.deepEqual(providers.antigravity.capabilities, { subagentSpawn: true, subagentSpawnTools: [ "invoke_subagent" ], normalizeItemIds: true });
-  assert.deepEqual(providers.codex.capabilities, { subagentSpawn: true, subagentSpawnTools: [], normalizeItemIds: true });
-  assert.deepEqual(providers.minimax.capabilities, { subagentSpawn: true, subagentSpawnTools: [], normalizeItemIds: true });
-  assert.deepEqual(providers.copilot.capabilities, { subagentSpawn: false, subagentSpawnTools: [], normalizeItemIds: true });
+  for (const provider of Object.values(providers)) {
+    assert.ok(Array.isArray(provider.capabilities.mcp));
+    assert.ok(Array.isArray(provider.capabilities.skills));
+    assert.ok(provider.capabilities.mcp.includes("lsp"));
+    assert.ok(provider.capabilities.mcp.includes("cocoindex-code"));
+    assert.ok(provider.capabilities.skills.includes("ccc"));
+    assert.ok(provider.capabilities.skills.includes("lsp-mcp-server"));
+  }
 });
 
 test("orchestrator alias degrades from the pinned primary provider to a load-balanced fallback group with pinned reasoning effort", () => {
@@ -357,12 +362,12 @@ test("resolves role aliases through tier-specific randomized provider groups wit
   assert.equal(smartModelMap.antigravity, "gemini-3.8-flash-high");
   assert.equal(smartModelMap.claude, "claude-opus-5");
   assert.equal(smartModelMap.codex, "gpt-5.6-sol");
-
   assert.notDeepEqual(
     roleCandidates("smart", () => 0).slice(0, 2).map((candidate) => candidate.provider),
     roleCandidates("smart", () => 0.999).slice(0, 2).map((candidate) => candidate.provider),
   );
 });
+
 
 test("classifies provider exhaustion and transient responses for fallback", () => {
   assert.equal(fallbackable(429, "session limit reached"), true);

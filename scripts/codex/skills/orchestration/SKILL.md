@@ -175,11 +175,13 @@ For each delegated item, state:
 - tests, checks, or evidence it must return; and
 - any explicitly approved external paths or services it may inspect.
 
-Until the Codex App spawn API accepts a native role-capability contract, the
-provider bridge must carry the generated role skill identities in the spawn
-payload. This is derived from `execution-contract.json`, not a role allowlist;
-the role TOMLs remain the source and drift is checked by the installer. Attach
-`ccc` and `lsp-mcp-server` only when the selected role contract declares them.
+The selected `agent_type` is the capability selector. Codex must resolve that
+role from its installed `agents/<agent_type>.toml` configuration before the
+child turn starts, including the role TOML's enabled MCP servers and skills.
+The spawn payload must contain only the selected role and task; do not attach
+skill paths or MCP lists per invocation. If the child runtime cannot resolve the
+role contract or expose its declared tools, report a child-bootstrap capability
+failure.
 
 
 ## Validation and integration

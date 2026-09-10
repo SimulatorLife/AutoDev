@@ -133,9 +133,11 @@ codex execpolicy check --pretty \
 
 The same rules allow explicit localhost diagnostics such as
 `curl http://127.0.0.1:4100/status`, while remote curl commands remain gated.
-They also deny destructive Git history/worktree operations, force pushes and
-branch deletion, superuser/raw-disk commands, and catastrophic root/home
-recursive deletion.
+They also deny direct `ccc` CLI execution from agent shell commands. Code-capable
+roles must use the configured `cocoindex-code` MCP server; the configured MCP
+process is still allowed to launch its backend command. The rules also deny
+destructive Git history/worktree operations, force pushes and branch deletion,
+superuser/raw-disk commands, and catastrophic root/home recursive deletion.
 
 ## Safety
 
@@ -204,7 +206,10 @@ capabilities rather than silently substituting a different workflow. Native role
 TOMLs remain the editable capability source; the installer fails when the
 generated contract drifts from them. The root orchestrator uses the
 capability-only `scripts/codex/agents/orchestrator.toml` declaration but is not
-installed as a child role.
+installed as a child role. A native child receives only its `agent_type` and task
+message; Codex resolves the installed role TOML to bootstrap its enabled MCP
+servers and skills. Skill paths and MCP lists are intentionally not copied into
+individual spawn payloads.
 
 Workspace-local `.codex/agents/*.toml` roles are allowed when they use names
 outside AutoDev's managed flat roles. A project-local role that reuses a managed

@@ -5,7 +5,10 @@ description: "This skill should be used when code search is needed (whether expl
 
 # ccc - Semantic Code Search & Indexing
 
-`ccc` is the CLI for CocoIndex Code, providing semantic search over the current codebase and index management.
+`ccc` is the CocoIndex Code backend, providing semantic search over the current
+codebase and index management. Code-capable agent roles receive the
+`cocoindex-code` MCP server; the typed MCP tools are the normal agent search
+surface. The CLI examples below are for operator maintenance and diagnostics.
 
 ## Ownership
 

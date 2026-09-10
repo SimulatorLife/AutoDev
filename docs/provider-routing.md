@@ -817,7 +817,7 @@ transport responsible only for composing them:
 
 | Consumer | Shared composition | Provider-specific boundary |
 | --- | --- | --- |
-| Native Codex child | `base.md` + `leaf.md` + optional `code-search.md` + role-specific `developer_instructions` | `render-agent-configs.py` materializes the complete role TOML under `~/.codex/agents` |
+| Native Codex child | `base.md` + `leaf.md` + optional `code-search.md` + role-specific `developer_instructions` | `render-agent-configs.py` materializes the complete role TOML under `~/.codex/agents`; `agent_type` selects it at spawn time |
 | Antigravity/Copilot bridge | `base.md` + workspace + `leaf.md` (or `orchestrator.md` + orchestration skill) + optional `code-search.md` + role fragment + capability metadata | `composeProviderPrompt(role, cwd)` then appends the delegated task |
 | Claude bridge | `base.md` + workspace + `leaf.md` (or `orchestrator.md` + orchestration skill) + optional `code-search.md` + role fragment + capability metadata | `system_prompt()` passes the composed text as the replacement CLI system prompt |
 | MiniMax pass-through | Native Codex request, including the rendered role configuration | The proxy remains transport-only and does not author a competing prompt |
@@ -826,8 +826,12 @@ The orchestration skill is the single source of truth for delegation procedure,
 child lifecycle, recovery, and role selection. The orchestrator prompt is only a
 small bootstrap of root identity and a pointer to the canonical policy. The native root
 hook injects the same skill content and recovery preflight; provider bridges use
-`bridge-role.mjs` to assemble the same role prompt. Execution-contract JSON remains
-machine-readable capability metadata and does not duplicate procedural policy.
+`bridge-role.mjs` to assemble the same role prompt. Execution-contract JSON is a
+generated projection for provider diagnostics; it is not a second editable role
+capability list. Native child calls carry only `agent_type` and the task message.
+Codex must load the selected role TOML before the first child turn and expose that
+TOML's enabled MCP servers and skills; bridges must not attach skill paths or MCP
+lists per invocation.
 
 `scripts/codex/prompts/code-search.md` is the single shared prompt piece for
 CocoIndex and LSP usage. It is included only when the role contract exposes
