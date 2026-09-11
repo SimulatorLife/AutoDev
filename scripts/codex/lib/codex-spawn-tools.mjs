@@ -84,7 +84,7 @@ export function buildRecoveryScript(parentId) {
     "const recoverOwnedTerminalChildren = async () => {",
     "  if (typeof tools.mcp__codex_app__read_thread !== \"function\") return;",
     "  let history;",
-    "  try { history = await tools.mcp__codex_app__read_thread({ threadId: recoveryParentId, turnLimit: 20, includeOutputs: false, maxOutputCharsPerItem: 2000 }); } catch { return; }",
+    "  try { history = await tools.mcp__codex_app__read_thread({ threadId: recoveryParentId, turnLimit: 10, includeOutputs: false, maxOutputCharsPerItem: 2000 }); } catch { return; }",
     "  const parsed = [history, ...(history?.content ?? [])].flatMap((value) => { const object = recoveryParse(value?.text ?? value); return object ? [object] : []; });",
     "  const calls = recoveryObjects(parsed).filter((item) => item?.type === \"collabAgentToolCall\" && item.senderThreadId === recoveryParentId && Array.isArray(item.receiverThreadIds));",
     "  const childIds = [...new Set(calls.flatMap((item) => item.receiverThreadIds.filter((id) => typeof id === \"string\" && id.trim())))];",
@@ -138,7 +138,7 @@ export function buildSpawnScript(children, { yieldTimeMs = DEFAULT_YIELD_MS, rec
 export function parseSpawnResults(output) {
   const parts = Array.isArray(output)
     ? output.map((part) => (typeof part === "string" ? part : part?.text)).filter((t) => typeof t === "string")
-    : [typeof output === "string" ? output : ""];
+    : [ typeof output === "string" ? output : "" ];
   const results = [];
   for (const part of parts) {
     for (const line of part.split("\n")) {
@@ -184,10 +184,10 @@ export function execToolCallSseEvents({ itemId, callId, source, outputIndex = 0 
   const base = { id: itemId, type: "custom_tool_call", call_id: callId, name: EXEC_TOOL };
   const completed = { ...base, input: source, status: "completed" };
   return [
-    ["response.output_item.added", { type: "response.output_item.added", output_index: outputIndex, item: { ...base, input: "", status: "in_progress" } }],
-    ["response.custom_tool_call_input.delta", { type: "response.custom_tool_call_input.delta", item_id: itemId, output_index: outputIndex, delta: source }],
-    ["response.custom_tool_call_input.done", { type: "response.custom_tool_call_input.done", item_id: itemId, output_index: outputIndex, input: source }],
-    ["response.output_item.done", { type: "response.output_item.done", output_index: outputIndex, item: completed }],
+    [ "response.output_item.added", { type: "response.output_item.added", output_index: outputIndex, item: { ...base, input: "", status: "in_progress" } } ],
+    [ "response.custom_tool_call_input.delta", { type: "response.custom_tool_call_input.delta", item_id: itemId, output_index: outputIndex, delta: source } ],
+    [ "response.custom_tool_call_input.done", { type: "response.custom_tool_call_input.done", item_id: itemId, output_index: outputIndex, input: source } ],
+    [ "response.output_item.done", { type: "response.output_item.done", output_index: outputIndex, item: completed } ],
   ];
 }
 
