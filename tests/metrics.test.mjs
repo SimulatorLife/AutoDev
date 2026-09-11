@@ -144,6 +144,7 @@ test('router dashboard and status CLI contract separates live agent activity fro
   assert.match(rawDashboard, /provider-active/);
   assert.match(rawDashboard, /<status-badge \$\{isActive \? 'active=""' : ''\}>\$\{displayActive\}<\/status-badge>/);
   // Operational summary labels in-flight requests separately
+  assert.match(rawDashboard, /const avgInitDur = initSamples > 0 \? initSum \/ initSamples : 0/);
   assert.match(rawDashboard, /status\.inFlightRequests/);
   assert.match(rawDashboard, /<span>In-flight requests<\/span><span>\$\{inFlightRequests\}<\/span>/);
 

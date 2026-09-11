@@ -2932,6 +2932,7 @@
         const invalidSignals = Number(receiver?.invalid ?? 0);
         const initSamples = Number(sqlite?.initDurationMs?.totalCount ?? 0);
         const initSum = Number(sqlite?.initDurationMs?.totalSum ?? 0);
+        const avgInitDur = initSamples > 0 ? initSum / initSamples : 0;
         const inFlightRequests = typeof status.inFlightRequests === "number"
           ? status.inFlightRequests
           : (status.inFlightRequests && typeof status.inFlightRequests === "object")
