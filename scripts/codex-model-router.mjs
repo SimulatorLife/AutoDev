@@ -125,32 +125,6 @@ function validateRoutingConfig(config) {
     if (typeof info.models.default !== 'string' || !info.models.default.trim()) {
       throw new Error(`Routing config provider ${provider} must define a default model.`);
     }
-    if (!info.capabilities || typeof info.capabilities !== 'object' || typeof info.capabilities.subagentSpawn !== 'boolean') {
-      throw new Error(`Routing config provider ${provider} must declare capabilities.subagentSpawn as a boolean.`);
-    }
-    for (const field of ["mcp", "skills"]) {
-      if (info.capabilities[field] !== undefined && (!Array.isArray(info.capabilities[field]) || info.capabilities[field].some((value) => typeof value !== "string" || !value.trim()))) {
-        throw new Error(`Routing config provider ${provider} must declare capabilities.${field} as an array of names.`);
-      }
-    }
-    // A CLI-delegation bridge spawns inside its own runtime, so the router can
-    // only attribute those spawns if it knows which tool names to watch for.
-    // The list lives here rather than in each bridge so one config edit keeps
-    // the routing decision and the telemetry attribution in agreement.
-    const spawnTools = info.capabilities.subagentSpawnTools;
-    if (spawnTools !== undefined) {
-      if (!Array.isArray(spawnTools) || spawnTools.length === 0 || spawnTools.some((tool) => typeof tool !== 'string' || !tool.trim())) {
-        throw new Error(`Routing config provider ${provider} must declare capabilities.subagentSpawnTools as a non-empty array of tool names.`);
-      }
-      if (info.capabilities.subagentSpawn !== true) {
-        throw new Error(`Routing config provider ${provider} declares capabilities.subagentSpawnTools but is not spawn-capable.`);
-      }
-    }
-    // Optional, and true when absent: a provider only names this to opt out of
-    // having its item ids corrected on the way upstream.
-    if (info.capabilities.normalizeItemIds !== undefined && typeof info.capabilities.normalizeItemIds !== 'boolean') {
-      throw new Error(`Routing config provider ${provider} must declare capabilities.normalizeItemIds as a boolean.`);
-    }
   }
   for (const role of ROLE_NAMES) {
     const tier = config.roles[role]?.tier;
@@ -163,26 +137,6 @@ function validateRoutingConfig(config) {
   }
   if (typeof orchestrator.tier !== 'string' || !orchestrator.tier) throw new Error(`Routing config orchestrator must define a tier.`);
   validateTierGroups(config, orchestrator.tier);
-  // The orchestrator's entire job is delegating, so every provider it can
-  // degrade onto must have a delegation path. There are two, and both count:
-  // Codex and MiniMax drive Codex's own `multi_agent_v1` spawn tool, which
-  // reaches the router back as an `autodev/<role>` request; the Claude and
-  // Antigravity bridges delegate inside their own CLI runtime (Claude's `Agent`
-  // tool, Antigravity's `invoke_subagent`) and report those
-  // spawns over /v1/agent-events. A provider with neither path silently turns
-  // the root agent into a single-threaded chat model, so serving the
-  // orchestrator from one fails closed at config load.
-  for (const group of config.providerGroups[orchestrator.tier]) {
-    for (const provider of group) {
-      if (config.providers[provider].capabilities.subagentSpawn !== true) {
-        throw new Error(
-          `Routing config orchestrator tier ${orchestrator.tier} includes provider ${provider}, `
-          + `which declares capabilities.subagentSpawn: false. Only spawn-capable providers may serve the `
-          + `orchestrator; remove ${provider} from providerGroups.${orchestrator.tier} or make it spawn-capable.`,
-        );
-      }
-    }
-  }
   if (orchestrator.reasoningEffort !== undefined) {
     if (!orchestrator.reasoningEffort || typeof orchestrator.reasoningEffort !== 'object') {
       throw new Error(`Routing config orchestrator.reasoningEffort must be an object mapping providers to effort strings.`);
@@ -1780,22 +1734,18 @@ function spawnFailureStatus() {
 }
 
 function providerCapabilities(provider) {
-  const capabilities = ROUTING.providers[provider]?.capabilities ?? {};
-  const spawnTools = Array.isArray(capabilities.subagentSpawnTools) ? [...capabilities.subagentSpawnTools] : [];
-  // Opt-out rather than opt-in: honouring the id contract is the default a
-  // provider has to be excused from, not a feature it has to ask for. The
-  // escape hatch exists for a provider that turns out to pair items by the ids
-  // it minted and so needs to see them come back unchanged.
+  // All providers are treated as capable of MCP, skills, and subagent spawning;
+  // role TOMLs remain the sole source for role MCP/skill exposure. The generated
+  // execution contract supplies only adapter transport details such as the
+  // bridge-native spawn tool watchlist.
   return {
-    subagentSpawn: capabilities.subagentSpawn === true,
-    subagentSpawnTools: spawnTools,
-    mcp: Array.isArray(capabilities.mcp) ? [...capabilities.mcp] : [],
-    skills: Array.isArray(capabilities.skills) ? [...capabilities.skills] : [],
-    normalizeItemIds: capabilities.normalizeItemIds !== false,
+    subagentSpawn: true,
+    subagentSpawnTools: Array.isArray(EXECUTION_CONTRACT.providers?.[provider]?.spawnTools)
+      ? [...EXECUTION_CONTRACT.providers[provider].spawnTools]
+      : [],
+    normalizeItemIds: true,
   };
 }
-
-const OPTIONAL_ROLE_MCP = new Set(["openaiDeveloperDocs"]);
 
 function roleCapabilityRequirements(role) {
   const key = role === ORCHESTRATOR_AGENT_ROLE ? "orchestrator" : (typeof role === "string" && role.trim() ? role.trim().toLowerCase() : "default");
@@ -1812,20 +1762,6 @@ function roleCapabilityRequirements(role) {
     skills: new Set(Array.isArray(contract.skills) ? contract.skills : []),
     webResearch,
   };
-}
-
-function missingProviderCapabilities(provider, role) {
-  const requirements = roleCapabilityRequirements(role);
-  const capabilities = providerCapabilities(provider);
-  return {
-    mcp: [...requirements.mcp].filter((name) => !OPTIONAL_ROLE_MCP.has(name) && !requirements.webResearch.optionalMcp.has(name) && !capabilities.mcp.includes(name)),
-    skills: [...requirements.skills].filter((name) => !capabilities.skills.includes(name)),
-  };
-}
-
-function providerSupportsRole(provider, role) {
-  const missing = missingProviderCapabilities(provider, role);
-  return missing.mcp.length === 0 && missing.skills.length === 0;
 }
 
 // Tool names whose invocation inside a provider bridge means "a subagent was
@@ -4958,8 +4894,6 @@ export {
   persistRouterStateNow,
   PROCESS_FALLBACK_SESSION_KEY,
   providerModelMetadata,
-  providerSupportsRole,
-  missingProviderCapabilities,
   roleCapabilityRequirements,
   recordConcurrencyDenial,
   recordRouterEvent,

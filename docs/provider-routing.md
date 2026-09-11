@@ -54,7 +54,9 @@ Differences from a role request:
   (`model_reasoning_effort` in the parent config). Each fallback provider is
   dispatched with the effort pinned in `orchestrator.reasoningEffort`
   (`claude` medium, `minimax` high, `antigravity` high by default) so a
-  downgraded run still reasons at the intended depth.
+  downgraded run still reasons at the intended depth. MiniMax-M3 supports only
+  `none` or `high` reasoning effort; attempting to dispatch it with `medium` or
+  `low` is unsupported.
 - Usage telemetry keeps orchestrator fallback traffic under the `orchestrator`
   origin even when it lands on a non-Codex provider, rather than
   reclassifying it as `direct`.
@@ -151,42 +153,41 @@ Adding a new reason is a small but cross-cutting change: the JS-side
 literal in `codex-claude-cli-responses-proxy.py`, the cause ladder in both
 `truncationNotice` functions, and the test that asserts both sides agree.
 
-Every provider in `providerGroups.orchestrator` must declare
-  `capabilities.subagentSpawn: true`, and the router refuses to start
-  otherwise. The orchestrator's entire job is delegating, so a provider with no
-  delegation path would silently turn the root agent into a single-threaded
-  chat model -- a failure that looks identical to a slow turn. There are two
-  delegation paths and both satisfy the requirement:
-  - **Native Codex spawn** (`codex`, `minimax`): the parent drives Codex's own
-    `multi_agent_v1` spawn tool, which creates a child thread that asks this
-    router for an `autodev/<role>` alias.
+All providers are treated as capable of MCP, skills, and subagent spawning;
+role TOMLs remain the sole source for role MCP/skill exposure and normal Codex inheritance.
+Routing does not gate on duplicated provider capability declarations in
+`scripts/codex/model-routing.json`. The orchestrator's entire job is delegating,
+so a provider serving it must have a viable delegation path. There are two
+delegation paths:
+- **Native Codex spawn** (`codex`, `minimax`): the parent drives Codex's own
+  `multi_agent_v1` spawn tool, which creates a child thread that asks this
+  router for an `autodev/<role>` alias.
 
-    Note how that call actually reaches Codex, because it is not what the model
-    catalog suggests. These models run in **code mode**: the request carries no
-    `tools` array at all, and the entire tool surface arrives as a single `exec`
-    tool -- declared `"type": "custom"` inside an `additional_tools` input item
-    -- whose payload is raw JavaScript evaluated in a V8 isolate. The spawn
-    function is reached from inside that script as
-    `tools.multi_agent_v1__spawn_agent({ agent_type, message })` and is never
-    named in the request. Two consequences worth knowing before changing
-    anything here:
-      - The role must travel as `agent_type`. `agent` is accepted and silently
-        ignored, and the child comes back as a generic agent rather than the
-        role that was asked for.
-      - Fan-out happens inside one script (`await Promise.allSettled(tasks.map(...))`),
-        which is why Codex sending `parallel_tool_calls: false` does not cap it. Settling
-        each child independently keeps successful siblings visible when the configured
-        concurrency limit rejects one child; the tool output names that rejected child
-        instead of collapsing the whole batch into an opaque `Failed creating` error.
-    The canonical `orchestration` skill documents this contract, and
-    `scripts/codex/lib/codex-spawn-tools.mjs` builds the call for any component
-    that needs to emit one.
-  - **Bridge-native spawn** (`claude`, `antigravity`): the CLI behind the bridge
-    delegates inside its own runtime -- Claude's `Agent` tool, Antigravity's
-    `invoke_subagent` -- and no router request is made for
-    the child. Those providers additionally declare
-    `capabilities.subagentSpawnTools`, the tool names that mean "a subagent was
-    spawned"; see "Counting subagents across providers".
+  Note how that call actually reaches Codex, because it is not what the model
+  catalog suggests. These models run in **code mode**: the request carries no
+  `tools` array at all, and the entire tool surface arrives as a single `exec`
+  tool -- declared `"type": "custom"` inside an `additional_tools` input item
+  -- whose payload is raw JavaScript evaluated in a V8 isolate. The spawn
+  function is reached from inside that script as
+  `tools.multi_agent_v1__spawn_agent({ agent_type, message })` and is never
+  named in the request. Two consequences worth knowing before changing
+  anything here:
+    - The role must travel as `agent_type`. `agent` is accepted and silently
+      ignored, and the child comes back as a generic agent rather than the
+      role that was asked for.
+    - Fan-out happens inside one script (`await Promise.allSettled(tasks.map(...))`),
+      which is why Codex sending `parallel_tool_calls: false` does not cap it. Settling
+      each child independently keeps successful siblings visible when the configured
+      concurrency limit rejects one child; the tool output names that rejected child
+      instead of collapsing the whole batch into an opaque `Failed creating` error.
+  The canonical `orchestration` skill documents this contract, and
+  `scripts/codex/lib/codex-spawn-tools.mjs` builds the call for any component
+  that needs to emit one.
+- **Bridge-native spawn** (`claude`, `antigravity`): the CLI behind the bridge
+  delegates inside its own runtime -- Claude's `Agent` tool, Antigravity's
+  `invoke_subagent` -- and no router request is made for
+  the child. Watched spawn tool names are defined in the execution contract
+  (`providers.<provider>.spawnTools`); see "Counting subagents across providers".
 
     Browser-capable bridge roles are configured independently of native Codex
     role TOML. The Claude bridge injects the pinned `playwright-mcp` command
@@ -271,12 +272,9 @@ Three properties the rewrite has to keep:
   some tool outputs, and an invented id would name an item the upstream never
   issued.
 
-Normalisation runs on every route for self-contained items (messages, tool calls, and tool outputs). A provider that turns out to pair items by
-the ids it minted can opt out with `capabilities.normalizeItemIds: false` in
-`scripts/codex/model-routing.json`; absent means enabled. Requests that needed a
-correction emit an `item_ids_normalized` router event carrying the count, so a
-provider drifting from the contract is visible immediately rather than as a
-dead session weeks later.
+Normalisation runs on every route for self-contained items (messages, tool calls, and tool outputs). Requests that need a correction emit an
+`item_ids_normalized` router event carrying the count, so upstream protocol
+drift is visible immediately rather than as a dead session weeks later.
 
 ### Reasoning items are dropped when unresolvable, not rewritten
 
@@ -886,9 +884,10 @@ starts the selected provider hook and local CLI profile:
 
 The caller specifies only the role. Direct terminal sessions use the tracked
 `autodev/<role>` aliases through `local_model_router`; provider selection and
-fallback remain inside the router. The launcher also applies the selected role's
-reasoning effort, summary mode, and sandbox settings so a global parent config
-cannot accidentally send a read-only role at the wrong provider effort.
+fallback remain inside the router. The launcher applies an explicitly configured role reasoning effort when one is
+present, plus summary mode and sandbox settings; otherwise it leaves reasoning
+effort unset so the active model or provider profile supplies the compatible
+default.
 The native app-server path is also configured and verified, but the desktop
 high-level fanout service does not currently delegate through it.
 
@@ -1098,7 +1097,7 @@ per request:
 | Header | Value |
 | --- | --- |
 | `x-autodev-request-id` | the router's own request UUID |
-| `x-autodev-subagent-spawn-tools` | comma-separated tool names to watch, from `capabilities.subagentSpawnTools` |
+| `x-autodev-subagent-spawn-tools` | comma-separated tool names to watch, from the execution contract provider specification |
 | `x-autodev-agent-events-url` | `http://127.0.0.1:4100/v1/agent-events` |
 
 A bridge matches the tool names its CLI reports against the watchlist and
@@ -1286,6 +1285,22 @@ omits `--effort` entirely for any model whose id already carries a
 (`claude-sonnet-4-6`, for example). `orchestrator.reasoningEffort.antigravity`
 therefore has effect only through the model the orchestrator tier selects.
 
+### Reasoning effort on MiniMax
+
+MiniMax-M3 supports only `none` or `high` reasoning effort, as declared in its
+model catalog entries (`scripts/codex/catalogs/minimax-model-catalog.json` and
+`scripts/codex/catalogs/codex-model-catalog.json`). It does not support `medium`
+or `low` reasoning levels.
+
+Agent config TOML files under `scripts/codex/agents/` omit role-level
+`model_reasoning_effort` declarations so each child agent inherits
+the configured model reasoning effort (e.g. `default_subagent_reasoning_effort = "high"`
+under the MiniMax profile, or the orchestrator's pinned fallback effort). All
+roles inherit their model's effort cleanly without triggering invalid effort
+rejections on MiniMax. Similarly, `scripts/codex/run-provider-agent.sh` omits
+`-c model_reasoning_effort=...` when role effort is absent, allowing configured
+model/profile effort to inherit rather than forcing a fallback medium effort.
+
 ### Streaming provider progress back to the parent
 
 A bridge that reports only the final assistant message leaves the parent (and
@@ -1384,7 +1399,7 @@ intended repository, and inspect the app task/log event for those failures.
 | Provider    | Local path                                                           | Important constraint                                                                                                                                 |
 | ----------- | -------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Claude      | Codex -> Claude Responses bridge on `127.0.0.1:4000` -> Claude CLI   | Uses `CLAUDE_CODE_OAUTH_TOKEN`; the selected role model and reasoning effort are forwarded.                                                          |
-| MiniMax     | Codex -> MiniMax Responses proxy on `127.0.0.1:18765`                | Transparent pass-through to the remote API, not a CLI gateway; local routing headers are stripped. Provider quota/rate limits are upstream conditions; inspect the proxy log when diagnosing them.                                                      |
+| MiniMax     | Codex -> MiniMax Responses proxy on `127.0.0.1:18765`                | Transparent pass-through to the remote API, not a CLI gateway; local routing headers are stripped. MiniMax-M3 supports only `none` or `high` reasoning effort. Provider quota/rate limits are upstream conditions; inspect the proxy log when diagnosing them. |
 | Antigravity | Codex -> Antigravity adapter `:4002` -> `agy` CLI | `useAiCredits=false` and `useG1Credits=false` keep AI-credit overages disabled. Headless runs require the configured noninteractive permission mode. |
 | GitHub Copilot | Codex -> local Copilot Responses adapter `:4003` -> `copilot` CLI | Requires an authenticated local Copilot CLI; unavailable adapters are skipped by fallback. |
 | Local router | Codex Responses -> `127.0.0.1:4100` -> model-based provider dispatch | GPT/Codex models use the stored Codex OAuth; external model names use the existing local bridges. |
@@ -1574,8 +1589,7 @@ and Antigravity their own subagents -- not a model completion:
 LiteLLM's `anthropic/*` and `gemini/*` providers speak HTTPS with an API key:
 a different account, a different meter, and per-token billing where these have
 a flat subscription. They would also return a completion where these return an
-agent turn, so `capabilities.subagentSpawn: true` -- which the router enforces
-at config load for every orchestrator-tier provider -- could not hold. MiniMax
+agent turn, so delegation across provider bridges could not hold. MiniMax
 is the one bridge whose *auth* would suit a LiteLLM deployment, but most of it
 is the `multi_agent_v1` namespace flatten/re-expand round-trip that LiteLLM has
 no equivalent for; without that the orchestrator emits plain text instead of
@@ -1663,7 +1677,7 @@ configured and validated.
 
 `/Users/henrykirk/AutoDev/scripts/codex/execution-contract.json` is the generated
 shared contract for role kind, read-only intent, expected MCP/skill capabilities,
-and provider spawn capabilities. It is projected from the native role TOMLs by
+and adapter spawn-tool metadata. It is projected from the native role TOMLs by
 `render-execution-contract.py`; the installer rejects drift. The Claude, Antigravity, and Copilot bridge prompt paths append the canonical
 role fragment from `scripts/codex/prompts/roles/` and use this JSON only for
 capability metadata. The installer deploys both beside the bridge runtime
@@ -1677,9 +1691,12 @@ prompt-rendering tests.
 `/Users/henrykirk/AutoDev/scripts/codex/model-routing.json` now owns provider
 route metadata: model-family patterns, local bridge URLs, health probes, and
 credential environment keys. The router derives its route table from that
-manifest and validates every provider entry. Older installed routing files that
-lack the new `routes` block temporarily use the built-in migration defaults until
-the installer is rerun; the versioned source is the authoritative configuration.
+manifest and validates every provider entry. Native model capability metadata
+(such as supported reasoning levels) remains in `scripts/codex/catalogs/`, while
+role MCP and skill exposure remains in the native role TOMLs and their generated
+execution contract. Older installed routing files that lack the new `routes`
+block temporarily use the built-in migration defaults until the installer is
+rerun; the versioned source is the authoritative routing configuration.
 
 ### Optional local router authentication
 

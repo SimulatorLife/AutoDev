@@ -46,6 +46,20 @@ def validate_mcp_servers(config: dict, source: Path) -> None:
             )
 
 
+def validate_reasoning_effort(config: dict, source: Path) -> None:
+    """Reject configurations with reasoning effort unsupported by MiniMax-M3.
+
+    MiniMax-M3 supports only 'none' or 'high' reasoning effort. Role configs
+    must not set unsupported levels like 'medium' or 'low'.
+    """
+    effort = config.get("model_reasoning_effort")
+    if effort is not None and effort not in ("none", "high"):
+        raise RuntimeError(
+            f"{source}: unsupported model_reasoning_effort '{effort}'; "
+            "MiniMax-M3 supports only 'none' or 'high' reasoning effort"
+        )
+
+
 def read_prompt(path: Path, label: str) -> str:
     try:
         text = path.read_text(encoding="utf-8").strip()
@@ -85,6 +99,7 @@ def render_role(
     except tomllib.TOMLDecodeError as error:
         raise RuntimeError(f"rendered role config is invalid TOML: {source}: {error}") from error
     validate_mcp_servers(rendered_config, source)
+    validate_reasoning_effort(rendered_config, source)
 
     output.parent.mkdir(parents=True, exist_ok=True)
     descriptor, temporary_name = tempfile.mkstemp(

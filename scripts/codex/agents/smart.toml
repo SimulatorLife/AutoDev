@@ -4,7 +4,6 @@ nickname_candidates = ["SmartAgent", "FullCapabilityAgent", "GeneralSmart"]
 
 model_provider = "local_model_router"
 model = "autodev/smart"
-model_reasoning_effort = "high"
 model_reasoning_summary = "none"
 sandbox_mode = "danger-full-access"
 

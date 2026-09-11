@@ -66,22 +66,6 @@
   },
   "providers": {
     "antigravity": {
-      "capabilities": {
-        "subagentSpawn": true,
-        "subagentSpawnTools": [
-          "invoke_subagent"
-        ],
-        "mcp": [
-          "lsp",
-          "cocoindex-code",
-          "autodev_spawn"
-        ],
-        "skills": [
-          "ccc",
-          "lsp-mcp-server",
-          "orchestration"
-        ]
-      },
       "models": {
         "smart": "gemini-3.8-flash-high",
         "orchestrator": "gemini-3.8-flash-high",
@@ -89,24 +73,6 @@
       }
     },
     "claude": {
-      "capabilities": {
-        "subagentSpawn": true,
-        "subagentSpawnTools": [
-          "Agent",
-          "Task"
-        ],
-        "mcp": [
-          "lsp",
-          "cocoindex-code",
-          "playwright",
-          "autodev_spawn"
-        ],
-        "skills": [
-          "ccc",
-          "lsp-mcp-server",
-          "orchestration"
-        ]
-      },
       "models": {
         "smart": "claude-opus-5",
         "orchestrator": "claude-opus-5",
@@ -114,56 +80,16 @@
       }
     },
     "minimax": {
-      "capabilities": {
-        "subagentSpawn": true,
-        "mcp": [
-          "lsp",
-          "cocoindex-code",
-          "autodev_spawn"
-        ],
-        "skills": [
-          "ccc",
-          "lsp-mcp-server",
-          "orchestration"
-        ]
-      },
       "models": {
         "default": "MiniMax-M3"
       }
     },
     "copilot": {
-      "capabilities": {
-        "subagentSpawn": false,
-        "mcp": [
-          "lsp",
-          "cocoindex-code"
-        ],
-        "skills": [
-          "ccc",
-          "lsp-mcp-server",
-          "orchestration"
-        ]
-      },
       "models": {
         "default": "copilot"
       }
     },
     "codex": {
-      "capabilities": {
-        "subagentSpawn": true,
-        "mcp": [
-          "lsp",
-          "cocoindex-code",
-          "playwright",
-          "openaiDeveloperDocs",
-          "autodev_spawn"
-        ],
-        "skills": [
-          "ccc",
-          "lsp-mcp-server",
-          "orchestration"
-        ]
-      },
       "models": {
         "smart": "gpt-5.6-sol",
         "orchestrator": "gpt-5.6-luna",

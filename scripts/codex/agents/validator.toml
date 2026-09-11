@@ -4,7 +4,6 @@ nickname_candidates = ["VerificationAgent", "VerificationChecker", "Verification
 
 model_provider = "local_model_router"
 model = "autodev/validator"
-model_reasoning_effort = "medium"
 model_reasoning_summary = "none"
 sandbox_mode = "read-only"
 

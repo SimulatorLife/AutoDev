@@ -4,7 +4,6 @@ nickname_candidates = ["ArchitectureScout", "CodebaseFinder", "CodebaseSurveyor"
 
 model_provider = "local_model_router"
 model = "autodev/explorer"
-model_reasoning_effort = "medium"
 model_reasoning_summary = "none"
 sandbox_mode = "read-only"
 

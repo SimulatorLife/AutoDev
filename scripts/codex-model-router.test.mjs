@@ -23,8 +23,6 @@ import {
   declaredLimit,
   providerCooldownSummary,
   providerCapabilities,
-  providerSupportsRole,
-  missingProviderCapabilities,
   roleCapabilityRequirements,
   decrementActiveRequests,
   downstreamHeaders,
@@ -199,21 +197,20 @@ test("loads editable provider and role models from JSON routing config", async (
   assert.deepEqual(config.orchestrator.reasoningEffort, { claude: "medium", minimax: "high", antigravity: "high" });
 });
 
-test("only spawn-capable providers serve the orchestrator tier", async () => {
+test("all providers are treated as capable of subagent spawning", async () => {
   const config = JSON.parse(await readFile(new URL("./codex/model-routing.json", import.meta.url), "utf8"));
-  // Two delegation paths both count. Codex spawns native child threads, and
-  // MiniMax drives that same tool through the namespace-flattening proxy. The
-  // Claude and Antigravity CLI bridges delegate inside their own runtime and
-  // report those spawns over /v1/agent-events. Copilot's CLI has no subagent
-  // tool, so it stays out of the orchestrator tier.
-  assert.deepEqual(
-    Object.fromEntries(Object.entries(config.providers).map(([ provider, info ]) => [ provider, info.capabilities.subagentSpawn ])),
-    { antigravity: true, claude: true, minimax: true, copilot: false, codex: true },
-  );
+  for (const provider of Object.keys(config.providers)) {
+    assert.equal(config.providers[provider].capabilities, undefined, `${provider} must not declare capabilities in routing config`);
+    assert.equal(
+      providerCapabilities(provider).subagentSpawn,
+      true,
+      `${provider} must be treated as spawn-capable`,
+    );
+  }
   for (const group of config.providerGroups.orchestrator) {
     for (const provider of group) {
       assert.equal(
-        config.providers[ provider ].capabilities.subagentSpawn,
+        providerCapabilities(provider).subagentSpawn,
         true,
         `${provider} serves the orchestrator tier, so it must be able to spawn subagents`,
       );
@@ -221,17 +218,13 @@ test("only spawn-capable providers serve the orchestrator tier", async () => {
   }
 });
 
-test("router status surfaces each provider's subagent spawn capability and watched tools", () => {
+test("router status treats every provider as spawn-capable without role capability metadata", () => {
   const providers = getRouterStatus().providers;
-  // Only the CLI-delegation bridges name tools: their spawns are invisible to
-  // the router unless it tells them which tool names to report.
   for (const provider of Object.values(providers)) {
-    assert.ok(Array.isArray(provider.capabilities.mcp));
-    assert.ok(Array.isArray(provider.capabilities.skills));
-    assert.ok(provider.capabilities.mcp.includes("lsp"));
-    assert.ok(provider.capabilities.mcp.includes("cocoindex-code"));
-    assert.ok(provider.capabilities.skills.includes("ccc"));
-    assert.ok(provider.capabilities.skills.includes("lsp-mcp-server"));
+    assert.equal(provider.capabilities.subagentSpawn, true);
+    assert.ok(Array.isArray(provider.capabilities.subagentSpawnTools));
+    assert.equal("mcp" in provider.capabilities, false);
+    assert.equal("skills" in provider.capabilities, false);
   }
 });
 
@@ -276,8 +269,8 @@ test("validates routing config and requires default model for providers", () => 
       orchestrator: [ [ "testProvider" ], [ "fallbackProvider" ] ],
     },
     providers: {
-      testProvider: { capabilities: { subagentSpawn: true }, models: { default: "test-model" } },
-      fallbackProvider: { capabilities: { subagentSpawn: true }, models: { default: "fallback-model" } },
+      testProvider: { models: { default: "test-model" } },
+      fallbackProvider: { models: { default: "fallback-model" } },
     },
     roles: {
       default: { tier: "default" },
@@ -297,27 +290,8 @@ test("validates routing config and requires default model for providers", () => 
   assert.doesNotThrow(() => validateRoutingConfig(validConfig));
 
   assert.throws(
-    () => validateRoutingConfig({ ...validConfig, providers: { testProvider: { capabilities: { subagentSpawn: true }, models: {} } } }),
+    () => validateRoutingConfig({ ...validConfig, providers: { testProvider: { models: {} } } }),
     /Routing config provider testProvider must define a default model/
-  );
-
-  assert.throws(
-    () => validateRoutingConfig({
-      ...validConfig,
-      providers: { ...validConfig.providers, testProvider: { models: { default: "test-model" } } },
-    }),
-    /Routing config provider testProvider must declare capabilities\.subagentSpawn as a boolean/
-  );
-
-  assert.throws(
-    () => validateRoutingConfig({
-      ...validConfig,
-      providers: {
-        ...validConfig.providers,
-        fallbackProvider: { capabilities: { subagentSpawn: false }, models: { default: "fallback-model" } },
-      },
-    }),
-    /orchestrator tier orchestrator includes provider fallbackProvider, which declares capabilities\.subagentSpawn: false/
   );
 
   assert.throws(
@@ -340,25 +314,6 @@ test("validates routing config and requires default model for providers", () => 
     /orchestrator\.reasoningEffort references unknown provider unknownProvider/
   );
 
-  // Absent means "yes": a provider only names this to opt out.
-  assert.doesNotThrow(() => validateRoutingConfig({
-    ...validConfig,
-    providers: {
-      ...validConfig.providers,
-      testProvider: { capabilities: { subagentSpawn: true, normalizeItemIds: false }, models: { default: "test-model" } },
-    },
-  }));
-
-  assert.throws(
-    () => validateRoutingConfig({
-      ...validConfig,
-      providers: {
-        ...validConfig.providers,
-        testProvider: { capabilities: { subagentSpawn: true, normalizeItemIds: "no" }, models: { default: "test-model" } },
-      },
-    }),
-    /Routing config provider testProvider must declare capabilities\.normalizeItemIds as a boolean/
-  );
 });
 
 test("routes supported model families without provider aliases", () => {
@@ -796,7 +751,7 @@ test("subagent telemetry counts both spawn mechanisms and attributes each to a p
     assert.deepEqual(status.byMechanism, { router_alias: 1, bridge_native: 3 });
     assert.deepEqual(status.byProvider, { claude: 3, minimax: 1 });
     assert.deepEqual(status.byRole, { explorer: 1, worker: 2, validator: 1 });
-    assert.deepEqual(status.spawnCapableProviders, [ "antigravity", "claude", "minimax", "codex" ]);
+    assert.deepEqual(status.spawnCapableProviders, [ "antigravity", "claude", "minimax", "copilot", "codex" ]);
     assert.equal(status.recent[ 0 ].role, "validator", "the recent list is newest first");
     assert.equal(status.recent.at(-1).provider, "claude");
 
@@ -4643,7 +4598,7 @@ test("a payload whose ids already conform is forwarded unchanged", () => {
   assert.equal(sent.input, input);
 });
 
-test("every provider normalises item ids unless its routing config opts out", () => {
+test("every provider normalises item ids", () => {
   for (const provider of Object.keys(JSON.parse(readFileSync(new URL("./codex/model-routing.json", import.meta.url), "utf8")).providers)) {
     assert.equal(providerCapabilities(provider).normalizeItemIds, true, provider);
   }
@@ -4651,46 +4606,6 @@ test("every provider normalises item ids unless its routing config opts out", ()
 
 // The escape hatch has to actually reach upstreamPayload, not just parse. Run
 // it in a child so the routing config can be swapped before module load.
-test("a provider that opts out keeps the ids it minted", async () => {
-  const directory = await mkdtemp(join(tmpdir(), "router-normalize-"));
-  try {
-    const base = JSON.parse(readFileSync(new URL("./codex/model-routing.json", import.meta.url), "utf8"));
-    base.providers.minimax.capabilities.normalizeItemIds = false;
-    const configFile = join(directory, "model-routing.json");
-    await writeFile(configFile, JSON.stringify(base));
-
-    const script = `
-      import { routeForModel, upstreamPayload, providerCapabilities } from ${JSON.stringify(new URL("./codex-model-router.mjs", import.meta.url).href)};
-      const input = [ { type: "custom_tool_call", id: "06ef3bc08924acade1facee14da0af2e_fc_0", call_id: "call_1", name: "exec" } ];
-      const optedOut = upstreamPayload(routeForModel("MiniMax-M3"), { model: "MiniMax-M3", input }, true);
-      const strict = upstreamPayload(routeForModel("gpt-5.6-luna"), { model: "gpt-5.6-luna", input }, true);
-      console.log(JSON.stringify({
-        capability: providerCapabilities("minimax").normalizeItemIds,
-        minimax: optedOut.input[0].id,
-        codex: strict.input[0].id,
-      }));
-    `;
-    const child = spawn(process.execPath, [ "--input-type=module", "-e", script ], {
-      env: { ...process.env, CODEX_ROUTER_CONFIG_FILE: configFile },
-      stdio: [ "ignore", "pipe", "pipe" ],
-    });
-    let stdout = "";
-    let stderr = "";
-    child.stdout.on("data", (chunk) => { stdout += chunk; });
-    child.stderr.on("data", (chunk) => { stderr += chunk; });
-    const code = await new Promise((resolve) => child.on("close", resolve));
-    assert.equal(code, 0, stderr);
-
-    const result = JSON.parse(stdout);
-    assert.equal(result.capability, false);
-    assert.equal(result.minimax, "06ef3bc08924acade1facee14da0af2e_fc_0", "the opted-out provider still sees its own id");
-    // Opting one provider out must not weaken the provider that actually rejects.
-    assert.match(result.codex, /^ctc_/);
-  } finally {
-    await rm(directory, { recursive: true, force: true });
-  }
-});
-
 test("end-to-end: unresolvable reasoning items dropped and tool call ids normalized on codex route", async () => {
   resetRouterTelemetry();
   const fixture = JSON.parse(readFileSync(new URL("../tests/fixtures/poisoned-rollout-items.json", import.meta.url), "utf8"));

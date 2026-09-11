@@ -22,3 +22,16 @@ test('every configured codex routing model has a catalog entry', () => {
     assert.equal(catalogSlugs.has(model), true, `missing catalog entry for routing model "${model}"`);
   }
 });
+
+test('MiniMax-M3 catalog entries support only none or high reasoning effort', async () => {
+  const minimaxCatalog = JSON.parse(
+    await readFile(new URL('../scripts/codex/catalogs/minimax-model-catalog.json', import.meta.url), 'utf8'),
+  );
+  for (const [name, cat] of [['codex-model-catalog', catalog], ['minimax-model-catalog', minimaxCatalog]]) {
+    const model = cat.models.find((m) => m.slug === 'MiniMax-M3');
+    assert.ok(model, `MiniMax-M3 must exist in ${name}`);
+    const levels = model.supported_reasoning_levels.map((l) => l.effort);
+    assert.deepEqual(levels.sort(), ['high', 'none'], `MiniMax-M3 in ${name} must only support none or high reasoning`);
+    assert.ok(['none', 'high'].includes(model.default_reasoning_level));
+  }
+});

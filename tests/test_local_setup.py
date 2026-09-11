@@ -834,6 +834,104 @@ exit 0
                     self.assertNotEqual(result.returncode, 0)
                     self.assertIn("valid stdio", result.stderr)
 
+    def test_minimax_m3_supports_only_none_or_high_reasoning_effort(self):
+        """MiniMax-M3 only supports 'none' (think-off) or 'high' (deep reasoning).
+        Model catalogs, profile configurations, and router fallback definitions must
+        not declare or request unsupported reasoning efforts such as 'medium' or 'low'.
+        """
+        catalogs = (
+            REPO_ROOT / "scripts/codex/catalogs/minimax-model-catalog.json",
+            REPO_ROOT / "scripts/codex/catalogs/codex-model-catalog.json",
+        )
+        for catalog_path in catalogs:
+            with self.subTest(catalog=catalog_path.name):
+                catalog = json.loads(catalog_path.read_text())
+                minimax_models = [m for m in catalog.get("models", []) if m.get("slug") == "MiniMax-M3"]
+                self.assertEqual(len(minimax_models), 1, f"MiniMax-M3 missing in {catalog_path}")
+                m3 = minimax_models[0]
+                supported = [level["effort"] for level in m3.get("supported_reasoning_levels", [])]
+                self.assertEqual(sorted(supported), ["high", "none"])
+                self.assertIn(m3.get("default_reasoning_level"), ("none", "high"))
+
+        # Profile configuration
+        minimax_profile = tomllib.loads((REPO_ROOT / "scripts/codex/profiles/minimax.config.toml").read_text())
+        self.assertIn(minimax_profile.get("model_reasoning_effort"), ("none", "high"))
+        self.assertIn(minimax_profile.get("agents", {}).get("default_subagent_reasoning_effort"), ("none", "high"))
+
+        # Router config orchestrator effort for minimax
+        routing = json.loads((REPO_ROOT / "scripts/codex/model-routing.json").read_text())
+        self.assertIn(routing.get("orchestrator", {}).get("reasoningEffort", {}).get("minimax"), ("none", "high"))
+
+    def test_agent_configs_and_rendered_outputs_inherit_model_reasoning_effort(self):
+        """Agent role configs must omit model_reasoning_effort so child
+        agents inherit the configured model reasoning effort rather than forcing
+        an unsupported level on models like MiniMax-M3.
+        """
+        role_dir = REPO_ROOT / "scripts/codex/agents"
+        role_sources = [source for source in sorted(role_dir.glob("*.toml")) if source.stem != "orchestrator"]
+        for source in role_sources:
+            with self.subTest(source=source.name):
+                content = source.read_text()
+                self.assertNotIn(
+                    'model_reasoning_effort',
+                    content,
+                    f"{source.name} must not specify model_reasoning_effort",
+                )
+                config = tomllib.loads(content)
+                self.assertNotIn(
+                    "model_reasoning_effort",
+                    config,
+                    f"{source.name} must omit role-level model_reasoning_effort to inherit from model",
+                )
+
+        with tempfile.TemporaryDirectory() as rendered_dir:
+            self._render_agent_configs(rendered_dir)
+            for source in role_sources:
+                with self.subTest(rendered=source.name):
+                    rendered_path = Path(rendered_dir) / source.name
+                    rendered_content = rendered_path.read_text()
+                    self.assertNotIn(
+                        'model_reasoning_effort',
+                        rendered_content,
+                        f"Rendered {source.name} must not contain model_reasoning_effort",
+                    )
+                    rendered_config = tomllib.loads(rendered_content)
+                    self.assertNotIn(
+                        "model_reasoning_effort",
+                        rendered_config,
+                        f"Rendered {source.name} must omit role-level model_reasoning_effort to inherit from model",
+                    )
+
+    def test_agent_config_rendering_rejects_unsupported_reasoning_effort(self):
+        """MiniMax-M3 supports only 'none' or 'high' reasoning effort.
+        Rendering validation must reject configurations with unsupported efforts such as 'medium' or 'low'.
+        """
+        header = 'name = "test-agent"\nmodel_provider = "local_model_router"\nmodel = "autodev/test-agent"\n'
+        for invalid_effort in ("medium", "low", "unsupported"):
+            with self.subTest(effort=invalid_effort):
+                with tempfile.TemporaryDirectory() as source_dir, tempfile.TemporaryDirectory() as output_dir:
+                    (Path(source_dir) / "default.toml").write_text(
+                        f'{header}model_reasoning_effort = "{invalid_effort}"\n'
+                        'developer_instructions = """\n{{AUTODEV_BASE_PROMPT}}\n\n{{AUTODEV_LEAF_PROMPT}}\n\n{{AUTODEV_ROLE_PROMPT}}\n"""\n'
+                        '[mcp_servers.lsp]\ncommand = "bash"\nargs = ["-lc", "true"]\nenabled = true\n'
+                    )
+                    result = subprocess.run(
+                        [
+                            "python3",
+                            str(AGENT_RENDERER_PATH),
+                            "--source-dir",
+                            source_dir,
+                            "--prompt-dir",
+                            str(REPO_ROOT / "scripts/codex/prompts"),
+                            "--output-dir",
+                            output_dir,
+                        ],
+                        text=True,
+                        capture_output=True,
+                    )
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertIn("model_reasoning_effort", result.stderr)
+
     def test_user_level_skill_registry_contains_all_requested_skill_names(self):
         names = {path.name for path in (REPO_ROOT / "scripts/codex/skills").iterdir()}
         self.assertTrue(set(SKILL_NAMES) <= names)
@@ -1952,6 +2050,43 @@ exit 0
         self.assertIn('model_reasoning_effort=$role_effort', runner)
         self.assertIn('model_reasoning_summary=$role_summary', runner)
         self.assertIn('sandbox_mode=$role_sandbox', runner)
+        self.assertNotIn('config.get("model_reasoning_effort", "medium")', runner)
+        self.assertIn('print(config.get("model_reasoning_effort", ""))', runner)
+        self.assertIn('[[ -n "$role_effort" ]] && codex_args+=(-c "model_reasoning_effort=$role_effort")', runner)
+
+    def test_provider_role_runner_omits_effort_flag_when_role_effort_absent(self):
+        """When role TOML omits model_reasoning_effort, runner must omit -c model_reasoning_effort=..."""
+        test_script = """
+        set -euo pipefail
+        parse_role() {
+            local role_file="$1"
+            role_effort="$(python3 - "$role_file" <<'PY'
+import sys
+import tomllib
+with open(sys.argv[1], "rb") as stream:
+    config = tomllib.load(stream)
+print(config.get("model_reasoning_effort", ""))
+PY
+)"
+            codex_args=(--strict-config -C "/tmp")
+            [[ -n "$role_effort" ]] && codex_args+=(-c "model_reasoning_effort=$role_effort")
+            printf '%s\n' "${codex_args[@]}"
+        }
+        """
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".toml") as f_absent, \
+             tempfile.NamedTemporaryFile(mode="w", suffix=".toml") as f_present:
+            f_absent.write('name = "default"\n')
+            f_absent.flush()
+            f_present.write('name = "smart"\nmodel_reasoning_effort = "high"\n')
+            f_present.flush()
+
+            cmd = f'{test_script}\nparse_role "{f_absent.name}"'
+            out_absent = subprocess.check_output(["bash", "-c", cmd], text=True)
+            self.assertNotIn("model_reasoning_effort", out_absent)
+
+            cmd = f'{test_script}\nparse_role "{f_present.name}"'
+            out_present = subprocess.check_output(["bash", "-c", cmd], text=True)
+            self.assertIn("model_reasoning_effort=high", out_present)
 
     def test_antigravity_ensure_does_not_double_supervise_launchd_services(self):
         ensure = (REPO_ROOT / "scripts/ensure-codex-antigravity-proxy.sh").read_text()

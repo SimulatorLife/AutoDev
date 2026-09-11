@@ -120,7 +120,7 @@ import sys
 import tomllib
 with open(sys.argv[1], "rb") as stream:
     config = tomllib.load(stream)
-print(config.get("model_reasoning_effort", "medium"))
+print(config.get("model_reasoning_effort", ""))
 PY
 )"
 role_summary="$(python3 - "$role_file" <<'PY'
@@ -140,7 +140,8 @@ print(config.get("sandbox_mode", ""))
 PY
 )"
 prompt=$'Provider-neutral role instructions:\n'"$role_context"$'\n\nBounded task:\n'"$prompt"
-codex_args=(--strict-config -C "$workspace" -c "model_reasoning_effort=$role_effort")
+codex_args=(--strict-config -C "$workspace")
+[[ -n "$role_effort" ]] && codex_args+=(-c "model_reasoning_effort=$role_effort")
 [[ -n "$role_summary" ]] && codex_args+=(-c "model_reasoning_summary=$role_summary")
 [[ -n "$role_sandbox" ]] && codex_args+=(-c "sandbox_mode=$role_sandbox")
 exec "$codex_bin" "${codex_args[@]}" exec --model "autodev/$role" \

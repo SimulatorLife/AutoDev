@@ -4,7 +4,6 @@ nickname_candidates = ["GeneralDev", "GeneralAgent", "GeneralCoder"]
 
 model_provider = "local_model_router"
 model = "autodev/default"
-model_reasoning_effort = "medium"
 
 developer_instructions = """
 {{AUTODEV_BASE_PROMPT}}
