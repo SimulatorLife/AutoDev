@@ -28,6 +28,9 @@ const CATALOG_FILE = process.env.CODEX_ROUTER_CATALOG_FILE ?? `${CODEX_HOME}/cod
 const DASHBOARD_FILE = new URL("./codex-model-router-dashboard.html", import.meta.url);
 const IS_MAIN = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
 const STATE_FILE = process.env.CODEX_ROUTER_STATE_FILE ?? `${CODEX_HOME}/codex-router-state.json`;
+function effectiveStateFile() {
+  return process.env.CODEX_ROUTER_STATE_FILE ?? STATE_FILE;
+}
 const CODEX_STATE_DB_PATH = process.env.CODEX_STATE_DB_PATH ?? `${CODEX_HOME}/state_5.sqlite`;
 // The collector is read-only: it never writes to the Codex-owned
 // state_5.sqlite file or any other path inside $CODEX_HOME. Its derived
@@ -220,6 +223,32 @@ const providerFailureStreaks = new Map();
 // escalate the backoff that describes the real provider's health.
 const providerProbeStreaks = new Map();
 const activeProviderRequests = new Map();
+const disabledProviders = new Set();
+
+function isProviderEnabled(provider) {
+  if (!provider || typeof provider !== "string") return false;
+  return !disabledProviders.has(provider.toLowerCase().trim());
+}
+
+function setProviderEnabled(provider, enabled) {
+  if (!provider || typeof provider !== "string") return;
+  const key = provider.toLowerCase().trim();
+  if (enabled) {
+    disabledProviders.delete(key);
+  } else {
+    disabledProviders.add(key);
+  }
+}
+
+function resetDisabledProvidersForTests() {
+  disabledProviders.clear();
+}
+
+function isLoopbackAddress(address) {
+  if (!address || typeof address !== "string") return false;
+  const normalized = address.replace(/^::ffff:/, "").trim();
+  return normalized === "127.0.0.1" || normalized === "::1" || normalized.startsWith("127.") || normalized === "localhost";
+}
 const ROUTER_STARTED_AT = new Date().toISOString();
 const ROUTER_INSTANCE_ID = randomUUID();
 // Router lifecycle: "ready" accepts new response requests; "draining" rejects
@@ -2873,14 +2902,101 @@ function resetRouterTelemetry() {
   scheduleRouterStatePersist();
 }
 
+function routingStatus() {
+  return {
+    configSource: process.env.CODEX_ROUTER_CONFIG_FILE ? "env_override" : "default_codex_home",
+    configFileExists: existsSync(ROUTING_CONFIG_FILE),
+    orchestrator: {
+      alias: ORCHESTRATOR_ALIAS,
+      tier: ORCHESTRATOR_TIER,
+      reasoningEffort: { ...ORCHESTRATOR_REASONING_EFFORT },
+    },
+    roles: { ...ROUTING.roles },
+    providerGroups: { ...ROUTING.providerGroups },
+    priorities: Object.fromEntries(ROUTES.map((route) => {
+      const tierPrios = {};
+      for (const [tier, groups] of Object.entries(ROUTING.providerGroups)) {
+        if (Array.isArray(groups)) {
+          for (let gIdx = 0; gIdx < groups.length; gIdx++) {
+            const group = groups[gIdx];
+            if (Array.isArray(group) && group.some((name) => name.toLowerCase() === route.provider.toLowerCase())) {
+              tierPrios[tier] = `P${gIdx + 1}`;
+              break;
+            }
+          }
+        }
+      }
+      return [route.provider, tierPrios];
+    })),
+    configuredProviders: Object.keys(ROUTING.providers),
+    enabledProviders: Object.keys(ROUTING.providers).filter((p) => isProviderEnabled(p)),
+    disabledProviders: [...disabledProviders].sort(),
+    routes: Object.fromEntries(ROUTES.map((route) => [
+      route.provider,
+      {
+        pattern: route.pattern instanceof RegExp ? route.pattern.source : String(route.pattern),
+        baseUrl: route.baseUrl,
+        healthUrl: route.healthUrl ?? null,
+        envKey: route.envKey ?? null,
+        credentialConfigured: routeCredentialAvailable(route),
+      },
+    ])),
+  };
+}
+
+function limitsStatus() {
+  return {
+    providerCooldownMs: PROVIDER_COOLDOWN_MS,
+    providerCooldownMaxMs: PROVIDER_COOLDOWN_MAX_MS,
+    hardCooldownMs: HARD_COOLDOWN_MS,
+    hardCooldownMaxMs: HARD_COOLDOWN_MAX_MS,
+    probeCooldownMs: PROBE_COOLDOWN_MS,
+    probeCooldownMaxMs: PROBE_COOLDOWN_MAX_MS,
+    probeTimeoutMs: PROBE_TIMEOUT_MS,
+    lastResortMaxAttempts: LAST_RESORT_MAX_ATTEMPTS,
+    exhaustionWaitMs: EXHAUSTION_WAIT_MS,
+    chainSelectionDeadlineMs: CHAIN_SELECTION_DEADLINE_MS,
+    upstreamTimeoutMs: UPSTREAM_TIMEOUT_MS,
+    concreteRetryBaseMs: CONCRETE_RETRY_BASE_MS,
+    concreteRetryMaxMs: CONCRETE_RETRY_MAX_MS,
+    concreteStatusMaxAttempts: CONCRETE_STATUS_MAX_ATTEMPTS,
+    concreteTransportMaxAttempts: CONCRETE_TRANSPORT_MAX_ATTEMPTS,
+    shutdownDrainTimeoutMs: SHUTDOWN_DRAIN_TIMEOUT_MS,
+    maxConcurrentThreadsPerSession: effectivePerSessionLimit(),
+  };
+}
+
 function getRouterStatus(now = Date.now()) {
   const providers = Object.fromEntries(ROUTES.map((route) => {
     const state = providerState(route.provider);
     const cooldown = providerCooldown(route.provider, now);
     const activeRequests = getActiveRequests(route.provider);
     const coolingDown = cooldown !== null;
+    const enabled = isProviderEnabled(route.provider);
+    const tierPrios = [];
+    for (const [tier, groups] of Object.entries(ROUTING.providerGroups)) {
+      if (Array.isArray(groups)) {
+        for (let gIdx = 0; gIdx < groups.length; gIdx++) {
+          const group = groups[gIdx];
+          if (Array.isArray(group) && group.some((name) => name.toLowerCase() === route.provider.toLowerCase())) {
+            tierPrios.push(`${tier}: P${gIdx + 1}`);
+            break;
+          }
+        }
+      }
+    }
     return [route.provider, {
-      status: coolingDown ? (cooldown.failureClass ?? state.lastFailureClass ?? "cooldown") : "ready",
+      enabled,
+      status: !enabled ? "disabled" : (coolingDown ? (cooldown.failureClass ?? state.lastFailureClass ?? "cooldown") : "ready"),
+      routingPriority: tierPrios.length ? tierPrios.join(" · ") : "—",
+      limits: {
+        cooldownKind: coolingDown ? cooldown.kind : null,
+        cooldownFailureClass: coolingDown ? cooldown.failureClass ?? null : null,
+        cooldownResetsAt: coolingDown ? cooldown.resetsAt ?? null : null,
+        cooldownUntil: coolingDown ? new Date(cooldown.until).toISOString() : null,
+        cooldownRemainingMs: coolingDown ? cooldown.until - now : 0,
+        lastResortEligible: coolingDown ? cooldownAllowsLastResort(cooldown, now) : true,
+      },
       activeRequests,
       cooldownUntil: coolingDown ? new Date(cooldown.until).toISOString() : null,
       cooldownRemainingMs: coolingDown ? cooldown.until - now : 0,
@@ -2917,10 +3033,13 @@ function getRouterStatus(now = Date.now()) {
     telemetryPersistence: {
       enabled: IS_MAIN,
       source: process.env.CODEX_ROUTER_STATE_FILE ? "env_override" : "default_codex_home",
-      exists: existsSync(STATE_FILE),
+      exists: existsSync(effectiveStateFile()),
       updatedAt: persistedStateUpdatedAt,
     },
     authentication: { responseRequests: Boolean(ROUTER_AUTH_TOKEN) },
+    routing: routingStatus(),
+    limits: limitsStatus(),
+    disabledProviders: [...disabledProviders].sort(),
     usage: usageStatus(),
     attributionDiagnostics: attributionDiagnosticsStatus(),
     codexTelemetry: codexTelemetryStatus(),
@@ -3246,6 +3365,7 @@ function serializeRouterState() {
   return JSON.stringify({
     schema: `${PERSISTED_STATE_SCHEMA}-v3`,
     updatedAt: new Date().toISOString(),
+    disabledProviders: [...disabledProviders].sort(),
     providerTelemetry: Object.fromEntries(providerTelemetry),
     usage: usagePersistenceSnapshot(),
     concurrency: concurrencyTelemetry,
@@ -3272,7 +3392,7 @@ function serializeRouterState() {
   }, null, 2);
 }
 
-function loadRouterState(file = STATE_FILE) {
+function loadRouterState(file = effectiveStateFile()) {
   if (!existsSync(file)) return false;
   try {
     const parsed = JSON.parse(readFileSync(file, "utf8"));
@@ -3467,6 +3587,16 @@ function loadRouterState(file = STATE_FILE) {
         });
       }
     }
+    disabledProviders.clear();
+    if (Array.isArray(parsed.disabledProviders)) {
+      for (const provider of parsed.disabledProviders) {
+        if (typeof provider !== "string") continue;
+        const normalized = provider.toLowerCase().trim();
+        if (providerTelemetry.has(normalized) || ROUTING.providers[normalized]) {
+          disabledProviders.add(normalized);
+        }
+      }
+    }
     if (Array.isArray(parsed.recentEvents)) {
       recentRouterEvents.length = 0;
       recentRouterEvents.push(...parsed.recentEvents.filter((event) => event && typeof event === "object").slice(-Math.max(1, MAX_RECENT_EVENTS)));
@@ -3486,7 +3616,7 @@ function loadRouterState(file = STATE_FILE) {
   }
 }
 
-function persistRouterStateNow(file = STATE_FILE) {
+function persistRouterStateNow(file = effectiveStateFile()) {
   if (persistTimeout) {
     clearTimeout(persistTimeout);
     persistTimeout = null;
@@ -3665,7 +3795,7 @@ function setLifecycleState(next) {
   lifecycleStateChangedAt = new Date().toISOString();
 }
 
-async function beginShutdown(signal, server, stateFile = STATE_FILE) {
+async function beginShutdown(signal, server, stateFile = effectiveStateFile()) {
   if (shutdownPromise) return shutdownPromise;
   setLifecycleState("draining");
   const drainingStartedAt = Date.now();
@@ -3731,6 +3861,7 @@ function providerPriority(tier, random = Math.random) {
     const group = rawGroup.map((provider) => provider.trim().toLowerCase());
     const shuffled = shuffleGroup(group, random);
     for (const provider of shuffled) {
+      if (!isProviderEnabled(provider)) continue;
       if (!seen.has(provider)) {
         seen.add(provider);
         providers.push(provider);
@@ -3845,6 +3976,15 @@ function cooldownAllowsLastResort(entry, now = Date.now()) {
 /** Per-provider cooldown state for the structured exhaustion body and /status. */
 function providerCooldownSummary(providers, now = Date.now()) {
   return [ ...new Set(providers) ].map((provider) => {
+    if (!isProviderEnabled(provider)) {
+      return {
+        provider,
+        state: "disabled",
+        failureClass: "provider_disabled",
+        resetsAt: null,
+        retryAfterMs: 0,
+      };
+    }
     const entry = providerCooldowns.get(provider);
     const cooling = entry && entry.until > now;
     return {
@@ -3877,6 +4017,7 @@ function routeForModel(model) {
 function tierCandidates(tier, random = Math.random) {
   if (!tier) return [];
   return providerPriority(tier, random).map((provider) => {
+    if (!isProviderEnabled(provider)) return null;
     const providerModels = ROUTING.providers[provider]?.models;
     const model = providerModels?.[tier] || providerModels?.default;
     if (typeof model !== 'string' || !model) return null;
@@ -3905,7 +4046,7 @@ function orchestratorCandidates(random = Math.random, preferred = null) {
   // strands that CLI and loses the turn's work. Hoist the provider that served
   // the turn rather than pinning to it: if it is now down the chain still
   // degrades, and the bridge treats an unknown continuation as a fresh run.
-  if (!preferred) return candidates;
+  if (!preferred || !isProviderEnabled(preferred)) return candidates;
   const index = candidates.findIndex((candidate) => candidate.provider === preferred);
   if (index <= 0) return candidates;
   return [ candidates[ index ], ...candidates.slice(0, index), ...candidates.slice(index + 1) ];
@@ -4588,6 +4729,25 @@ async function providerAvailable(route) {
 }
 
 async function proxyConcreteResponse(response, route, payload, wantsStream, requestId, turnMetadataHeader, workspace, clientSignal = null) {
+  if (!isProviderEnabled(route.provider)) {
+    recordRouterEvent({ phase: "skipped", requestId, requestedModel: payload.model, provider: route.provider, model: payload.model, workspace, failureClass: "provider_disabled" });
+    recordRouterEvent({ phase: "result", requestId, requestedModel: payload.model, provider: route.provider, model: payload.model, workspace, outcome: "failure", status: 503, failureClass: "provider_disabled" });
+    sendJson(
+      response,
+      503,
+      errorBody(
+        `Direct concrete request to ${payload.model} (${route.provider}) is unavailable because provider ${route.provider} is disabled.`,
+        "router_provider_unavailable",
+        { code: "router_provider_unavailable", retryable: false, failureClass: "provider_disabled", provider: route.provider, model: payload.model, requestId },
+      ),
+      {
+        "x-autodev-provider": route.provider,
+        "x-autodev-model": payload.model,
+        "x-autodev-request-id": requestId,
+      },
+    );
+    return;
+  }
   const startedAt = Date.now();
   recordRouterEvent({ phase: "selected", requestId, requestedModel: payload.model, provider: route.provider, model: payload.model, workspace });
   incrementActiveRequests(route.provider);
@@ -4731,6 +4891,17 @@ function payloadForCandidate(payload, candidate) {
 // rather than direct. `subject` is the human-readable label for the exhaustion
 // error.
 async function proxyFallbackChain(response, { candidates, role = null, origin = null, subject, agentRole = null, sessionKey = null, session = null }, payload, wantsStream, requestId, turnMetadataHeader, workspace, clientSignal = null) {
+  if (!candidates || candidates.length === 0) {
+    recordSpawnFailure({ requestId, role, requestedModel: payload.model, reason: "provider_exhausted" });
+    closeBridgeSubagentsForRequest(requestId, "failure");
+    recordRouterEvent({ phase: "result", requestId, role, origin, requestedModel: payload.model, provider: null, model: null, workspace, outcome: "failure", status: 503, failureClass: "provider_disabled" });
+    sendJson(response, 503, errorBody(
+      `No enabled providers available for ${subject}.`,
+      "router_provider_exhausted",
+      { code: "router_provider_exhausted", retryable: false, failureClass: "provider_disabled", model: payload.model, requestId }
+    ), { "x-autodev-request-id": requestId });
+    return;
+  }
   const failures = [];
   const attempted = new Set();
   const skipped = [];
@@ -4826,6 +4997,10 @@ async function proxyFallbackChain(response, { candidates, role = null, origin = 
   // "unavailable" is distinct from "fallback": nothing was sent, so it does not
   // count against a pass that is budgeted in attempts.
   const tryCandidate = async (route, selection) => {
+    if (!isProviderEnabled(route.provider)) {
+      noteSkip(route, "disabled", "provider_disabled");
+      return "unavailable";
+    }
     if (!(await providerAvailable(route))) {
       // A health probe says the local bridge did not answer. That is real, but
       // it says nothing about the provider behind it, so it rides its own short
@@ -4841,6 +5016,10 @@ async function proxyFallbackChain(response, { candidates, role = null, origin = 
   // Pass 1: the candidates that are not cooling at all.
   for (const route of candidates) {
     if (Date.now() > selectionDeadline) { deadlineReached = true; break; }
+    if (!isProviderEnabled(route.provider)) {
+      noteSkip(route, "disabled", "provider_disabled");
+      continue;
+    }
     if (isProviderCoolingDown(route.provider)) {
       noteSkip(route, "cooldown active", providerCooldown(route.provider)?.failureClass ?? providerState(route.provider).lastFailureClass ?? "cooldown");
       continue;
@@ -4858,7 +5037,7 @@ async function proxyFallbackChain(response, { candidates, role = null, origin = 
   // the same cooling provider at once.
   if (!deadlineReached) {
     const eligible = skipped
-      .filter((route) => !attempted.has(route.provider) && cooldownAllowsLastResort(providerCooldown(route.provider)) && getActiveRequests(route.provider) === 0)
+      .filter((route) => isProviderEnabled(route.provider) && !attempted.has(route.provider) && cooldownAllowsLastResort(providerCooldown(route.provider)) && getActiveRequests(route.provider) === 0)
       .sort((a, b) => (providerCooldown(a.provider)?.until ?? 0) - (providerCooldown(b.provider)?.until ?? 0))
       .slice(0, LAST_RESORT_MAX_ATTEMPTS);
     for (const route of eligible) {
@@ -4873,7 +5052,7 @@ async function proxyFallbackChain(response, { candidates, role = null, origin = 
   // the client sees a slow request rather than a stalled stream -- and a role
   // request holds its subagent slot throughout, which is why the budget is
   // small.
-  const waitCandidates = candidates.filter((route) => !attempted.has(route.provider));
+  const waitCandidates = candidates.filter((route) => isProviderEnabled(route.provider) && !attempted.has(route.provider));
   const waitMs = nextProviderRetryMs(waitCandidates.map(({ provider }) => provider));
   if (!deadlineReached && EXHAUSTION_WAIT_MS > 0 && waitMs > 0 && waitMs <= EXHAUSTION_WAIT_MS && !clientSignal?.aborted && !response.headersSent) {
     recordRouterEvent({ phase: "exhaustion_wait", requestId, role, origin, requestedModel: payload.model, provider: null, model: null, workspace, elapsedMs: waitMs });
@@ -5253,6 +5432,48 @@ async function handleRequest(request, response) {
     sendJson(response, 200, await loadCatalog());
     return;
   }
+  const providerMatch = pathname.match(/^\/v1\/providers\/([a-zA-Z0-9._-]+)$/);
+  if (providerMatch) {
+    if (request.method !== "POST") {
+      sendJson(response, 405, errorBody("Method not allowed", "router_method_not_allowed", { code: "router_method_not_allowed" }), { allow: "POST" });
+      return;
+    }
+    const remoteAddress = request.socket?.remoteAddress;
+    if (!isLoopbackAddress(remoteAddress)) {
+      sendJson(response, 403, errorBody("Provider administration is restricted to loopback connections.", "router_access_denied", { code: "router_access_denied" }));
+      return;
+    }
+    const providerParam = providerMatch[1];
+    const provider = providerParam.toLowerCase().trim();
+    if (!ROUTING.providers[provider] && !ROUTES.some((r) => r.provider === provider)) {
+      sendJson(response, 404, errorBody(`Unknown provider: ${providerParam}`, "router_unknown_provider", { code: "router_unknown_provider" }));
+      return;
+    }
+    let payload;
+    try {
+      payload = JSON.parse(await requestBody(request));
+    } catch {
+      sendJson(response, 400, errorBody("request body must be valid JSON"));
+      return;
+    }
+    if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+      sendJson(response, 400, errorBody("request body must be a JSON object"));
+      return;
+    }
+    if (typeof payload.enabled !== "boolean") {
+      sendJson(response, 400, errorBody("request body requires boolean 'enabled'"));
+      return;
+    }
+    setProviderEnabled(provider, payload.enabled);
+    await persistRouterStateNow();
+    sendJson(response, 200, {
+      ok: true,
+      provider,
+      enabled: payload.enabled,
+      status: payload.enabled ? (isProviderCoolingDown(provider) ? (providerCooldown(provider)?.failureClass ?? "cooldown") : "ready") : "disabled",
+    });
+    return;
+  }
   if (pathname === "/v1/responses" && request.method === "POST" && !routerAuthorizationValid(request)) {
     sendRouterAuthFailure(response);
     return;
@@ -5449,6 +5670,13 @@ export {
   isClientDisconnectError,
   isDraining,
   isProviderCoolingDown,
+  isProviderEnabled,
+  setProviderEnabled,
+  resetDisabledProvidersForTests,
+  disabledProviders,
+  routingStatus,
+  limitsStatus,
+  isLoopbackAddress,
   loadRouterState,
   nextProviderRetryMs,
   parseConcurrencyConfig,

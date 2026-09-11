@@ -41,6 +41,13 @@ import {
   isClientDisconnectError,
   isDraining,
   isProviderCoolingDown,
+  isProviderEnabled,
+  setProviderEnabled,
+  resetDisabledProvidersForTests,
+  disabledProviders,
+  routingStatus,
+  limitsStatus,
+  isLoopbackAddress,
   loadRouterState,
   nextProviderRetryMs,
   parseConcurrencyConfig,
@@ -4874,5 +4881,365 @@ transport = "streamable_http"
     assert.match(stderr2, /tools\.web_search must be boolean/);
   } finally {
     await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("router status includes sanitized routing and limits metadata", () => {
+  resetDisabledProvidersForTests();
+  const status = getRouterStatus();
+
+  // Status shape for routing metadata
+  assert.ok(status.routing, "status must contain routing metadata");
+  assert.ok(["default_codex_home", "env_override"].includes(status.routing.configSource));
+  assert.equal(typeof status.routing.configFileExists, "boolean");
+  assert.equal(typeof status.routing.orchestrator, "object");
+  assert.equal(status.routing.orchestrator.alias, "autodev/orchestrator");
+  assert.equal(typeof status.routing.orchestrator.tier, "string");
+  assert.equal(typeof status.routing.roles, "object");
+  assert.equal(typeof status.routing.providerGroups, "object");
+  assert.ok(Array.isArray(status.routing.configuredProviders));
+  assert.ok(status.routing.configuredProviders.includes("claude"));
+  assert.ok(status.routing.configuredProviders.includes("codex"));
+  assert.ok(Array.isArray(status.routing.enabledProviders));
+  assert.ok(Array.isArray(status.routing.disabledProviders));
+  assert.equal(typeof status.routing.routes, "object");
+  for (const [provider, route] of Object.entries(status.routing.routes)) {
+    assert.equal(typeof route.pattern, "string");
+    assert.equal(typeof route.baseUrl, "string");
+    assert.equal(typeof route.credentialConfigured, "boolean");
+  }
+
+  // Status shape for limits metadata
+  assert.ok(status.limits, "status must contain limits metadata");
+  assert.equal(typeof status.limits.providerCooldownMs, "number");
+  assert.equal(typeof status.limits.providerCooldownMaxMs, "number");
+  assert.equal(typeof status.limits.hardCooldownMs, "number");
+  assert.equal(typeof status.limits.hardCooldownMaxMs, "number");
+  assert.equal(typeof status.limits.probeCooldownMs, "number");
+  assert.equal(typeof status.limits.probeCooldownMaxMs, "number");
+  assert.equal(typeof status.limits.probeTimeoutMs, "number");
+  assert.equal(typeof status.limits.lastResortMaxAttempts, "number");
+  assert.equal(typeof status.limits.exhaustionWaitMs, "number");
+  assert.equal(typeof status.limits.chainSelectionDeadlineMs, "number");
+  assert.equal(typeof status.limits.upstreamTimeoutMs, "number");
+  assert.equal(typeof status.limits.concreteRetryBaseMs, "number");
+  assert.equal(typeof status.limits.concreteRetryMaxMs, "number");
+  assert.equal(typeof status.limits.concreteStatusMaxAttempts, "number");
+  assert.equal(typeof status.limits.concreteTransportMaxAttempts, "number");
+  assert.equal(typeof status.limits.shutdownDrainTimeoutMs, "number");
+  assert.equal(typeof status.limits.maxConcurrentThreadsPerSession, "number");
+
+  // Per-provider enabled property and status
+  assert.ok(status.providers, "status must contain providers");
+  for (const provider of Object.values(status.providers)) {
+    assert.equal(typeof provider.enabled, "boolean");
+    assert.equal(provider.enabled, true);
+    assert.equal(provider.status, "ready");
+  }
+
+  // Verify sanitized: no absolute paths or secret tokens leaked
+  assertNoLeakedPaths(status.routing);
+  assertNoLeakedPaths(status.limits);
+});
+
+test("loopback-only POST /v1/providers/:provider endpoint validation and state persistence", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "autodev-provider-routing-"));
+  const stateFile = join(directory, "codex-router-state.json");
+  const previousStateFile = process.env.CODEX_ROUTER_STATE_FILE;
+  process.env.CODEX_ROUTER_STATE_FILE = stateFile;
+
+  const originalFetch = globalThis.fetch;
+  const server = createServer((request, response) => {
+    if (request.headers["x-test-remote-ip"]) {
+      Object.defineProperty(request.socket, "remoteAddress", { value: request.headers["x-test-remote-ip"], configurable: true });
+    }
+    void handle(request, response);
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const port = server.address().port;
+  const baseUrl = `http://127.0.0.1:${port}`;
+
+  try {
+    resetRouterTelemetry();
+    resetDisabledProvidersForTests();
+
+    // 1. Non-loopback request is rejected with 403
+    const nonLoopbackRes = await originalFetch(`${baseUrl}/v1/providers/claude`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-test-remote-ip": "192.168.1.55" },
+      body: JSON.stringify({ enabled: false }),
+    });
+    assert.equal(nonLoopbackRes.status, 403);
+    const nonLoopbackJson = await nonLoopbackRes.json();
+    assert.equal(nonLoopbackJson.error?.code, "router_access_denied");
+
+    // Helper check
+    assert.equal(isLoopbackAddress("127.0.0.1"), true);
+    assert.equal(isLoopbackAddress("::1"), true);
+    assert.equal(isLoopbackAddress("::ffff:127.0.0.1"), true);
+    assert.equal(isLoopbackAddress("192.168.1.1"), false);
+    assert.equal(isLoopbackAddress("10.0.0.1"), false);
+    assert.equal(isLoopbackAddress(null), false);
+
+    // 2. Invalid method (e.g. GET) is rejected with 405
+    const getRes = await originalFetch(`${baseUrl}/v1/providers/claude`, {
+      method: "GET",
+    });
+    assert.equal(getRes.status, 405);
+    assert.equal(getRes.headers.get("allow"), "POST");
+
+    // 3. Unknown provider is rejected with 404
+    const unknownRes = await originalFetch(`${baseUrl}/v1/providers/unknown_provider_xyz`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ enabled: false }),
+    });
+    assert.equal(unknownRes.status, 404);
+    const unknownJson = await unknownRes.json();
+    assert.equal(unknownJson.error?.code, "router_unknown_provider");
+
+    // 4. Invalid body (not valid JSON) is rejected with 400
+    const malformedRes = await originalFetch(`${baseUrl}/v1/providers/claude`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: "not-json{",
+    });
+    assert.equal(malformedRes.status, 400);
+
+    // 5. Missing / non-boolean enabled is rejected with 400
+    const invalidPayloadRes1 = await originalFetch(`${baseUrl}/v1/providers/claude`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ enabled: "false" }),
+    });
+    assert.equal(invalidPayloadRes1.status, 400);
+
+    const invalidPayloadRes2 = await originalFetch(`${baseUrl}/v1/providers/claude`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({}),
+    });
+    assert.equal(invalidPayloadRes2.status, 400);
+
+    // 6. Disable provider successfully
+    const disableRes = await originalFetch(`${baseUrl}/v1/providers/claude`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ enabled: false }),
+    });
+    assert.equal(disableRes.status, 200);
+    const disableJson = await disableRes.json();
+    assert.equal(disableJson.ok, true);
+    assert.equal(disableJson.provider, "claude");
+    assert.equal(disableJson.enabled, false);
+    assert.equal(disableJson.status, "disabled");
+
+    // In-memory status is updated
+    assert.equal(isProviderEnabled("claude"), false);
+    const statusAfterDisable = getRouterStatus();
+    assert.equal(statusAfterDisable.providers.claude.enabled, false);
+    assert.equal(statusAfterDisable.providers.claude.status, "disabled");
+    assert.ok(statusAfterDisable.routing.disabledProviders.includes("claude"));
+    assert.equal(statusAfterDisable.routing.enabledProviders.includes("claude"), false);
+
+    // Persistence: verify state file written and loadable
+    assert.equal(existsSync(stateFile), true);
+    const savedState = JSON.parse(await readFile(stateFile, "utf8"));
+    assert.deepEqual(savedState.disabledProviders, ["claude"]);
+
+    // Reset memory and restore from file
+    resetDisabledProvidersForTests();
+    assert.equal(isProviderEnabled("claude"), true);
+    assert.equal(loadRouterState(stateFile), true);
+    assert.equal(isProviderEnabled("claude"), false);
+
+    // 7. Re-enable provider successfully
+    const enableRes = await originalFetch(`${baseUrl}/v1/providers/claude`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ enabled: true }),
+    });
+    assert.equal(enableRes.status, 200);
+    const enableJson = await enableRes.json();
+    assert.equal(enableJson.ok, true);
+    assert.equal(enableJson.provider, "claude");
+    assert.equal(enableJson.enabled, true);
+    assert.equal(enableJson.status, "ready");
+
+    assert.equal(isProviderEnabled("claude"), true);
+    const statusAfterEnable = getRouterStatus();
+    assert.equal(statusAfterEnable.providers.claude.enabled, true);
+    assert.equal(statusAfterEnable.providers.claude.status, "ready");
+    assert.equal(statusAfterEnable.routing.disabledProviders.includes("claude"), false);
+  } finally {
+    await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    if (previousStateFile === undefined) delete process.env.CODEX_ROUTER_STATE_FILE;
+    else process.env.CODEX_ROUTER_STATE_FILE = previousStateFile;
+    await rm(directory, { recursive: true, force: true });
+    resetDisabledProvidersForTests();
+    resetRouterTelemetry();
+  }
+});
+
+test("disabled providers are excluded across role aliases, orchestrator, and fallback chains", async () => {
+  resetRouterTelemetry();
+  resetDisabledProvidersForTests();
+
+  // Baseline: all enabled
+  const baselineCandidates = roleCandidates("default", () => 0.5);
+  assert.ok(baselineCandidates.some((c) => c.provider === "claude"));
+
+  // 1. Role aliases exclude disabled provider
+  setProviderEnabled("claude", false);
+  const filteredCandidates = roleCandidates("default", () => 0.5);
+  assert.equal(filteredCandidates.some((c) => c.provider === "claude"), false, "disabled provider must be excluded from role candidates");
+  assert.ok(filteredCandidates.length > 0);
+
+  // 2. Orchestrator excludes disabled provider
+  const baselineOrch = orchestratorCandidates(() => 0.5);
+  assert.equal(baselineOrch[0].provider, "codex");
+
+  setProviderEnabled("codex", false);
+  const filteredOrch = orchestratorCandidates(() => 0.5);
+  assert.equal(filteredOrch.some((c) => c.provider === "codex"), false, "disabled provider must be excluded from orchestrator candidates");
+
+  // Continuation preferred provider is not hoisted if disabled
+  const preferredOrch = orchestratorCandidates(() => 0.5, "codex");
+  assert.equal(preferredOrch.some((c) => c.provider === "codex"), false, "disabled preferred provider must not be hoisted");
+
+  // 3. Fallback request skips disabled provider
+  const originalFetch = globalThis.fetch;
+  const originalCredentials = {
+    LITELLM_API_KEY: process.env.LITELLM_API_KEY,
+    MINIMAX_API_KEY: process.env.MINIMAX_API_KEY,
+  };
+  process.env.LITELLM_API_KEY = "test-key";
+  process.env.MINIMAX_API_KEY = "test-key";
+
+  const attemptedProviders = [];
+  globalThis.fetch = async (url, options) => {
+    const target = String(url);
+    if (target.includes("/health")) return new Response("ok", { status: 200 });
+    let provider = null;
+    if (target.includes(":4000/")) provider = "claude";
+    else if (target.includes(":4002/")) provider = "antigravity";
+    else if (target.includes(":18765/")) provider = "minimax";
+    if (provider) attemptedProviders.push(provider);
+
+    // Claude is disabled, so it should not even be called.
+    // First attempted candidate returns 503 so fallback triggers.
+    if (attemptedProviders.length === 1) {
+      return new Response(JSON.stringify({ error: "provider unavailable" }), { status: 503 });
+    }
+    // Second attempted candidate succeeds
+    return new Response(JSON.stringify({ id: "resp-ok", model: "model-ok", output_text: "success" }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  };
+
+  const server = createServer((request, response) => { void handle(request, response); });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const port = server.address().port;
+
+  try {
+    // claude is disabled, first candidate fails, second should succeed via fallback
+    const response = await originalFetch(`http://127.0.0.1:${port}/v1/responses`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-codex-session-id": "fallback-disabled-test" },
+      body: JSON.stringify({ model: "autodev/default", stream: false }),
+    });
+
+    assert.equal(response.status, 200);
+    assert.equal(attemptedProviders.includes("claude"), false, "claude was disabled and must not have been attempted");
+    assert.equal(attemptedProviders.length, 2, "fallback should attempt the first candidate, fail, then try and succeed with the second");
+    assert.ok(attemptedProviders.includes("antigravity") && attemptedProviders.includes("minimax"));
+
+    // 4. Direct concrete request to disabled provider is rejected with 503
+    const directRes = await originalFetch(`http://127.0.0.1:${port}/v1/responses`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ model: "sonnet", stream: false }),
+    });
+    assert.equal(directRes.status, 503);
+    const directJson = await directRes.json();
+    assert.equal(directJson.error?.code, "router_provider_unavailable");
+    assert.equal(directJson.error?.failureClass, "provider_disabled");
+    assert.equal(directJson.error?.provider, "claude");
+    assert.equal(directRes.headers.get("x-autodev-provider"), "claude");
+  } finally {
+    await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    globalThis.fetch = originalFetch;
+    for (const [ key, value ] of Object.entries(originalCredentials)) {
+      if (value === undefined) delete process.env[ key ];
+      else process.env[ key ] = value;
+    }
+    resetRouterTelemetry();
+    resetDisabledProvidersForTests();
+  }
+});
+
+test("all-disabled behavior rejects aliases, orchestrator, and concrete requests", async () => {
+  resetRouterTelemetry();
+  resetDisabledProvidersForTests();
+  const allProviders = ["claude", "antigravity", "minimax", "copilot", "codex"];
+  for (const provider of allProviders) setProviderEnabled(provider, false);
+
+  const status = getRouterStatus();
+  assert.equal(status.routing.enabledProviders.length, 0);
+  assert.deepEqual(status.routing.disabledProviders, allProviders.sort());
+  for (const p of Object.values(status.providers)) {
+    assert.equal(p.enabled, false);
+    assert.equal(p.status, "disabled");
+  }
+
+  // Candidate lists are empty
+  assert.deepEqual(roleCandidates("default"), []);
+  assert.deepEqual(roleCandidates("smart"), []);
+  assert.deepEqual(orchestratorCandidates(), []);
+
+  const server = createServer((request, response) => { void handle(request, response); });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const port = server.address().port;
+  const baseUrl = `http://127.0.0.1:${port}`;
+
+  try {
+    // 1. Role alias returns 503 provider exhausted
+    const roleRes = await fetch(`${baseUrl}/v1/responses`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ model: "autodev/default", stream: false }),
+    });
+    assert.equal(roleRes.status, 503);
+    const roleJson = await roleRes.json();
+    assert.equal(roleJson.error?.code, "router_provider_exhausted");
+    assert.equal(roleJson.error?.failureClass, "provider_disabled");
+
+    // 2. Orchestrator alias returns 503 provider exhausted
+    const orchRes = await fetch(`${baseUrl}/v1/responses`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ model: "autodev/orchestrator", stream: false }),
+    });
+    assert.equal(orchRes.status, 503);
+    const orchJson = await orchRes.json();
+    assert.equal(orchJson.error?.code, "router_provider_exhausted");
+    assert.equal(orchJson.error?.failureClass, "provider_disabled");
+
+    // 3. Direct concrete request returns 503 provider unavailable
+    const concreteRes = await fetch(`${baseUrl}/v1/responses`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ model: "gpt-5.6-luna", stream: false }),
+    });
+    assert.equal(concreteRes.status, 503);
+    const concreteJson = await concreteRes.json();
+    assert.equal(concreteJson.error?.code, "router_provider_unavailable");
+    assert.equal(concreteJson.error?.failureClass, "provider_disabled");
+    assert.equal(concreteJson.error?.provider, "codex");
+  } finally {
+    await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    resetDisabledProvidersForTests();
+    resetRouterTelemetry();
   }
 });

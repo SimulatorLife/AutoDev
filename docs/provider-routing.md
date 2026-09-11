@@ -462,9 +462,26 @@ The router makes its effective choice visible in two ways:
   `primary`, `last_resort`, or `exhaustion_wait`. The `phase` is unchanged, so
   every existing counter keeps working; `selection` only says how hard the router
   had to look. A waiting request also emits its own `exhaustion_wait` event.
-- Per-provider `/status` entries report `cooldownKind`, `cooldownFailureClass`,
-  `cooldownResetsAt`, `lastResortEligible`, and `probeFailureStreak` alongside
-  the existing cooldown countdown and failure streak.
+- Per-provider `/status` entries report `enabled` (boolean indicating administrative enablement),
+  `status` (`"disabled"`, `"ready"`, or active cooldown failure class), `cooldownKind`,
+  `cooldownFailureClass`, `cooldownResetsAt`, `cooldownUntil`, `cooldownRemainingMs`,
+  `lastResortEligible`, `failureStreak`, and `probeFailureStreak` alongside the
+  cooldown countdown, configured models, capabilities, and attempt/outcome counters.
+- The status payload exposes structured `routing` metadata (`status.routing`):
+  `configSource` (`"default_codex_home"` or `"env_override"`), `configFileExists`,
+  `orchestrator` (`alias`, `tier`, and pinned `reasoningEffort`), configured capability `roles`,
+  `providerGroups` (ordered priority groups per tier), `configuredProviders`,
+  `enabledProviders`, `disabledProviders`, and the active route map (`routes[*]` with
+  pattern, `baseUrl`, `healthUrl`, `envKey`, and `credentialConfigured`). Secret API keys and
+  absolute configuration paths are strictly excluded.
+- The status payload exposes structured `limits` metadata (`status.limits`):
+  the active effective thresholds for provider cooldowns (`providerCooldownMs`,
+  `providerCooldownMaxMs`), hard limits (`hardCooldownMs`, `hardCooldownMaxMs`),
+  probe checks (`probeCooldownMs`, `probeCooldownMaxMs`, `probeTimeoutMs`),
+  `lastResortMaxAttempts`, `exhaustionWaitMs`, `chainSelectionDeadlineMs`,
+  `upstreamTimeoutMs`, concrete retry parameters (`concreteRetryBaseMs`,
+  `concreteRetryMaxMs`, `concreteStatusMaxAttempts`, `concreteTransportMaxAttempts`),
+  `shutdownDrainTimeoutMs`, and `maxConcurrentThreadsPerSession`.
 - The status payload and dashboard report the effective Codex per-session
   concurrency limit, the number of active session buckets, active role-based
   subagent slots, and denials caused by that limit. An active session is a
@@ -567,7 +584,7 @@ The router makes its effective choice visible in two ways:
   a workspace join or treating requested calls as executed.
 `GET /status` always
   returns raw JSON regardless of the `Accept` header, including the current
-  router instance, active requests, configured models, cooldown countdowns,
+  router instance, live agent activity, in-flight requests (`inFlightRequests`), configured models, cooldown countdowns,
   per-provider attempt and success/failure counters, the last classified
   failure, and recent routing events. The status payload includes `spawnFailures` for failures visible at the router
 boundary: concurrency denials and role requests exhausted by provider failures.
@@ -587,6 +604,28 @@ CLI view is:
   node /Users/henrykirk/AutoDev/scripts/codex-model-router-status.mjs
   # Add --json for machine-readable output.
   ```
+
+### Live agent activity vs. in-flight requests transport diagnostics
+
+The router cleanly separates user-facing agent workflow activity from transport-level network requests:
+
+- **Live agent activity (`Active` badges, KPIs, provider rows):**
+  Represents live agent turn execution by the orchestrator or subagents. An agent turn remains active while waiting on tool execution (`tool_executed`, `tool_requested`), user prompt input, or child subagent execution, even when no HTTP request is currently open to the upstream provider model. When `/status` indicates an active or waiting state (e.g. `status` or `state` is `"active"`, `"waiting"`, `"waiting_tool"`, `"waiting_user"`, `"waiting_subagent"`), dashboard badges, the `Active agents` KPI, and provider rows remain active.
+- **In-flight requests transport diagnostics (`inFlightRequests`):**
+  Represents currently open HTTP connections between the router daemon and upstream model provider endpoints. Surfaced separately in the dashboard's Operational summary (`In-flight requests`) and the Status CLI's dedicated `In-Flight` column.
+
+### Lifecycle event contract and configurable TTL
+
+The router coordinates with agents and tool hosts via an explicit lifecycle event contract:
+
+- **Lifecycle trace spans:**
+  The router ingests lifecycle spans (e.g. server discovery, initialization, tool execution) rather than polling static daemon health.
+- **Configurable freshness TTL (`CODEX_ROUTER_OTEL_HEALTH_TTL_MS`):**
+  Configured via `CODEX_ROUTER_OTEL_HEALTH_TTL_MS` (defaults to `120000` ms / 2 minutes).
+- **Observed vs. Ready states:**
+  - `observed`: Measures the unique server inventory seen in lifecycle spans.
+  - `ready`: Measures servers whose most recent observation was successful and occurred within `CODEX_ROUTER_OTEL_HEALTH_TTL_MS`.
+  - `stale`: Observations older than the TTL decay to `stale` without killing or restarting active processes.
 
 To verify the live router is receiving caller identities, inspect
 `.concurrency.lastDenial.sessionScope` in `/status`; `identified` means the
@@ -652,6 +691,99 @@ history. Rotate logs by restarting the router: launchd closes and reopens the
 log file handles, and the ensure hook reuses the same fallback PID file
 without leaking a stale tracker.
 
+### Provider administration, disable semantics, and loopback controls
+
+The router exposes a loopback-restricted administrative endpoint for enabling and disabling
+individual providers dynamically at runtime without restarting the daemon:
+
+```http
+POST /v1/providers/:provider
+Content-Type: application/json
+
+{ "enabled": false }
+```
+
+#### Loopback mutation endpoint specification
+
+- **Loopback-only access:** Enforced via `isLoopbackAddress` on the incoming socket
+  `remoteAddress` (`127.0.0.1`, `::1`, `::ffff:127.0.0.1`, and `localhost`). Calls from
+  non-loopback IP addresses are rejected immediately with HTTP 403 `router_access_denied`
+  (`code: "router_access_denied"`).
+- **HTTP method restriction:** Only `POST` is permitted. Requests using any other HTTP
+  method (such as `GET`, `PUT`, or `DELETE`) return HTTP 405 `router_method_not_allowed`
+  with the `Allow: POST` header.
+- **Provider validation:** The `:provider` path parameter is case-insensitively trimmed and
+  validated against configured providers in `ROUTING.providers` and registered routes.
+  Requests naming an unconfigured provider return HTTP 404 `router_unknown_provider`.
+- **Payload validation:** The request body must be valid JSON containing a boolean `enabled`
+  property (`{ "enabled": true }` or `{ "enabled": false }`). Malformed JSON or non-boolean
+  `enabled` values return HTTP 400 `invalid_request_error`.
+- **Response shape:** On success, returns HTTP 200 JSON:
+  ```json
+  {
+    "ok": true,
+    "provider": "claude",
+    "enabled": false,
+    "status": "disabled"
+  }
+  ```
+  When re-enabled, `status` reflects `"ready"` (or the active cooldown failure class if currently cooling down).
+
+#### Persistence and default behavior
+
+- **Default state:** All configured providers start enabled by default. The in-memory
+  `disabledProviders` set is empty unless restored from persistence or modified via the mutation API.
+- **Immediate atomic persistence:** Whenever a provider's enabled state is changed via
+  `POST /v1/providers/:provider`, the router immediately calls `persistRouterStateNow()`
+  to write the updated `disabledProviders: [...]` array atomically into
+  `$CODEX_HOME/codex-router-state.json`.
+- **Survives restarts:** On startup, `loadRouterState()` loads `disabledProviders` from the
+  persisted state file and re-populates the in-memory set. Disabled providers remain disabled
+  across process restarts, crash recoveries, and launchd reloads. Removing or resetting the state
+  file restores all providers to their default enabled state.
+
+#### Disable semantics across routing tiers
+
+Disabling a provider takes effect immediately across all routing mechanisms:
+
+- **Capability role aliases (`autodev/<role>`):** Disabled providers are omitted from candidate
+  selection in `roleCandidates`. When a fallback chain traverses routes, any disabled candidate
+  is recorded with skip reason `"disabled"` and failure class `"provider_disabled"`. It is never
+  probed, attempted, or counted against attempt budgets.
+- **Orchestrator routing (`autodev/orchestrator`):** Disabled providers are excluded from
+  orchestrator candidates in `orchestratorCandidates`. If an orchestrator session continuation
+  requests its previously preferred provider, that preference is ignored if the provider is disabled.
+- **Direct concrete model requests:** Direct requests targeting a model on a disabled provider
+  (e.g. `POST /v1/responses` with `model: "gpt-5.6-luna"` or `model: "sonnet"`) are rejected
+  immediately with HTTP 503 `router_provider_unavailable`, carrying `code: "router_provider_unavailable"`,
+  `retryable: false`, and `failureClass: "provider_disabled"`. The router records a terminal result
+  event with outcome `"failure"`, status 503, and `failureClass: "provider_disabled"`.
+- **Exhaustion when all candidates disabled:** If all candidate providers for a requested role or
+  orchestrator tier are disabled (or cooling down), the fallback chain terminates immediately
+  with HTTP 503 `router_provider_exhausted` (`failureClass: "provider_disabled"`), recording a
+  `provider_exhausted` spawn failure and closing any bridge subagents without stalled delays.
+- **Exclusion from last-resort and bounded wait:** Disabled providers are excluded from Pass 2
+  last-resort attempts (`cooldownAllowsLastResort`) and Pass 3 bounded wait (`waitCandidates`).
+  A disabled provider is never attempted as a last resort and never waited on.
+
+#### Live dashboard controls
+
+The local HTML dashboard at `http://127.0.0.1:4100/dashboard` provides operational controls in the
+**Provider health** panel:
+
+- **Toggle button:** Each provider row contains an interactive action button (`.btn-provider-toggle`)
+  labeled "Disable" when the provider is active or "Enable" when disabled.
+- **In-flight protection:** Clicking the button disables it and displays "Enabling…" or "Disabling…"
+  while the request is in flight. A client-side `pendingProviderToggles` set prevents concurrent duplicate
+  toggles for the same provider.
+- **Immediate refresh:** On successful `POST /v1/providers/:provider`, the dashboard triggers an immediate
+  call to `refresh()`, updating the table, health badges, routing priority, and panel header without waiting
+  for the next 3-second poll interval.
+- **Error feedback:** If the mutation request fails, the error message is rendered in the dashboard's
+  top-level `#error` container, and the button reverts to its active state.
+- **Visual styling:** Rows for disabled providers receive the `.provider-disabled` class, an error-styled
+  `<health-badge state="error">disabled</health-badge>`, and an "Enable" action button. The panel
+  header summarizes disabled providers alongside ready and active counts (e.g. `4 / 5 ready · 0 active · 1 disabled`).
 
 ### Local, provider-controlled workspace telemetry
 
@@ -750,7 +882,7 @@ content before restarting them. Three contracts separate
   accepts work and HTTP 503 with `router_draining` while it is shutting down.
   It describes router lifecycle readiness, not the health of every upstream.
   Use `GET /status` for the detailed per-provider health, cooldown countdowns,
-  active request counts, and `usage`/`codexTasks` snapshots needed to decide
+  live agent activity, in-flight request diagnostics, and `usage` snapshots needed to decide
   whether an upstream is usable.
 - **In-flight drain** — on `SIGTERM`/`SIGINT` the router stops accepting new
   `/v1/responses` work and gives in-flight requests up to

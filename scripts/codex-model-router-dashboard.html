@@ -484,6 +484,65 @@
         border-bottom: 0;
       }
     }
+
+    .cell-left {
+      text-align: left;
+    }
+
+    .cell-center {
+      text-align: center;
+    }
+
+    .btn-provider-toggle {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      padding: 3px 10px;
+      font-family: inherit;
+      font-size: var(--font-sm);
+      font-weight: 600;
+      color: var(--text);
+      background: var(--border-soft);
+      border: var(--line);
+      border-radius: var(--radius-sm);
+      cursor: pointer;
+      white-space: nowrap;
+      transition: background .12s, border-color .12s, opacity .12s;
+    }
+
+    .btn-provider-toggle:hover:not(:disabled) {
+      background: var(--border);
+      border-color: var(--subtle);
+    }
+
+    .btn-provider-toggle:disabled {
+      opacity: .5;
+      cursor: not-allowed;
+    }
+
+    .provider-disabled td {
+      opacity: .7;
+    }
+
+    .provider-disabled td:first-child,
+    .provider-disabled td:last-child {
+      opacity: 1;
+    }
+
+    .provider-active td {
+      background: rgba(88, 166, 255, 0.05);
+    }
+
+    .cooldown-badge {
+      font-size: var(--font-xs);
+      font-family: var(--font-mono);
+      white-space: nowrap;
+    }
+
+    .limit-details {
+      font-size: var(--font-xs);
+      margin-top: 2px;
+    }
   </style>
 </head>
 
@@ -517,17 +576,20 @@
           <thead>
             <tr>
               <th>Provider</th>
+              <th>Routing priority</th>
               <th>Configured models</th>
               <th>Status</th>
+              <th>Effective limits &amp; cooldowns</th>
               <th>Active</th>
               <th>Avg turn</th>
               <th>Outcomes</th>
               <th>Last failure</th>
+              <th>Control</th>
             </tr>
           </thead>
           <tbody id="providers-tbody">
             <tr>
-              <td colspan="7" class="dim" style="text-align:center">Loading providers...</td>
+              <td colspan="10" class="dim" style="text-align:center">Loading providers...</td>
             </tr>
           </tbody>
         </table>
@@ -1886,6 +1948,173 @@
       return `${reason}${detail}`;
     }
 
+    function formatRoutingPriority(providerName, p, status) {
+      const rawPriority = p?.routingPriority;
+      if (rawPriority != null) {
+        return String(rawPriority);
+      }
+
+      const statusPriorities = status?.routing?.priorities;
+      if (statusPriorities && statusPriorities[providerName] != null) {
+        const val = statusPriorities[providerName];
+        if (typeof val === "object" && !Array.isArray(val)) {
+          return Object.entries(val).map(([ tier, prio ]) => `${tier}: ${prio}`).join(" · ");
+        }
+        return String(val);
+      }
+
+      const providerGroups = status?.routing?.providerGroups;
+      if (providerGroups && typeof providerGroups === "object") {
+        const tierPrios = [];
+        for (const [ tier, groups ] of Object.entries(providerGroups)) {
+          if (Array.isArray(groups)) {
+            for (let gIdx = 0; gIdx < groups.length; gIdx++) {
+              const group = groups[gIdx];
+              if (Array.isArray(group) && group.some((name) => typeof name === "string" && name.toLowerCase() === providerName.toLowerCase())) {
+                tierPrios.push(`${tier}: P${gIdx + 1}`);
+                break;
+              }
+            }
+          }
+        }
+        if (tierPrios.length) return tierPrios.join(" · ");
+      }
+
+      return "—";
+    }
+
+    function formatEffectiveLimitsAndCooldowns(p) {
+      const items = [];
+      const limits = p?.limits && typeof p.limits === "object" && !Array.isArray(p.limits) ? p.limits : {};
+      const cooldownRemainingMs = Number(p?.cooldownRemainingMs ?? limits.cooldownRemainingMs ?? 0);
+      const cooldownUntil = p?.cooldownUntil ?? limits.cooldownUntil ?? null;
+      const cooldownKind = p?.cooldownKind ?? limits.cooldownKind ?? null;
+      const cooldownFailureClass = p?.cooldownFailureClass ?? limits.cooldownFailureClass ?? null;
+      const cooldownResetsAt = p?.cooldownResetsAt ?? limits.cooldownResetsAt ?? null;
+
+      const isCooling = cooldownRemainingMs > 0 || p?.status === "cooldown" || cooldownUntil != null;
+      if (isCooling) {
+        const kind = cooldownKind ? `[${cooldownKind}]` : "[cooldown]";
+        const fClass = cooldownFailureClass ?? (typeof p.status === "string" && p.status !== "ready" && p.status !== "cooldown" ? p.status : "");
+        const dur = cooldownRemainingMs > 0 ? `${Math.ceil(cooldownRemainingMs / 1000)}s` : "";
+        const reset = cooldownResetsAt ? `resets ${cooldownResetsAt}` : "";
+        const timeInfo = [ dur, reset ].filter(Boolean).join(" · ");
+        const desc = [ kind, fClass, timeInfo ].filter(Boolean).join(" ");
+        items.push(`<div class="warning cooldown-badge">⏳ ${escapeHtml(desc)}</div>`);
+      }
+
+      const rawLimits = limits;
+      if (rawLimits != null) {
+        if (typeof rawLimits === "object" && !Array.isArray(rawLimits)) {
+          const entries = Object.entries(rawLimits)
+            .filter(([ k ]) => !["cooldownKind", "cooldownFailureClass", "cooldownResetsAt", "cooldownUntil", "cooldownRemainingMs", "lastResortEligible"].includes(k))
+            .filter(([ , v ]) => v != null && v !== "")
+            .map(([ k, v ]) => `${escapeHtml(k)}: ${escapeHtml(String(v))}`);
+          if (entries.length) {
+            items.push(`<div class="dim limit-details">${entries.join(" · ")}</div>`);
+          }
+        } else if (typeof rawLimits === "string" || typeof rawLimits === "number") {
+          items.push(`<div class="dim limit-details">${escapeHtml(String(rawLimits))}</div>`);
+        }
+      }
+
+      if (!items.length) {
+        return `<span class="dim">—</span>`;
+      }
+      return items.join("");
+    }
+
+    const pendingProviderToggles = new Set();
+    let lastControlError = null;
+
+    async function toggleProvider(providerName, shouldEnable, buttonEl) {
+      if (!providerName || pendingProviderToggles.has(providerName)) return;
+      pendingProviderToggles.add(providerName);
+      lastControlError = null;
+
+      const errorEl = document.getElementById("error");
+      if (errorEl) errorEl.textContent = "";
+
+      if (buttonEl) {
+        buttonEl.disabled = true;
+        buttonEl.textContent = shouldEnable ? "Enabling…" : "Disabling…";
+      }
+
+      try {
+        const response = await fetch(`/v1/providers/${encodeURIComponent(providerName)}`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+          },
+          body: JSON.stringify({
+            enabled: shouldEnable,
+          }),
+        });
+
+        if (!response.ok) {
+          let errDetail = `HTTP ${response.status}`;
+          try {
+            const data = await response.json();
+            errDetail = data?.error?.message ?? data?.message ?? data?.error ?? errDetail;
+          } catch {}
+          throw new Error(`Failed to ${shouldEnable ? "enable" : "disable"} provider "${providerName}": ${errDetail}`);
+        }
+
+        lastControlError = null;
+        await refresh();
+      } catch (err) {
+        lastControlError = err.message;
+        if (errorEl) {
+          errorEl.textContent = err.message;
+        }
+        if (buttonEl) {
+          buttonEl.disabled = false;
+          buttonEl.textContent = shouldEnable ? "Enable" : "Disable";
+        }
+      } finally {
+        pendingProviderToggles.delete(providerName);
+      }
+    }
+
+    function getProviderLiveActivity(p) {
+      if (!p || typeof p !== "object") return 0;
+      if (typeof p.active === "number") return p.active;
+      if (typeof p.liveActivity === "number") return p.liveActivity;
+      if (typeof p.agentActivity === "number") return p.agentActivity;
+      if (typeof p.activeAgents === "number") return p.activeAgents;
+      if (typeof p.activity?.active === "number") return p.activity.active;
+      const statusStr = String(p.status ?? p.state ?? "").toLowerCase();
+      const isWaitOrActive = statusStr === "active" ||
+        statusStr.includes("wait") ||
+        statusStr.includes("tool") ||
+        statusStr.includes("user") ||
+        statusStr.includes("subagent") ||
+        Boolean(p.waiting);
+      if (isWaitOrActive) {
+        return Math.max(1, Number(p.activeRequests ?? 0));
+      }
+      return Number(p.activeRequests ?? 0);
+    }
+
+    function isProviderLiveActive(p) {
+      if (!p || typeof p !== "object") return false;
+      if (getProviderLiveActivity(p) > 0) return true;
+      if (Number(p.activeRequests ?? 0) > 0) return true;
+      if (Number(p.inFlightRequests ?? 0) > 0) return true;
+      const statusStr = String(p.status ?? p.state ?? "").toLowerCase();
+      if (statusStr === "active" || statusStr.includes("wait") || statusStr.includes("tool") || statusStr.includes("user") || statusStr.includes("subagent")) {
+        return true;
+      }
+      return Boolean(p.waiting);
+    }
+
+    window.formatRoutingPriority = formatRoutingPriority;
+    window.formatEffectiveLimitsAndCooldowns = formatEffectiveLimitsAndCooldowns;
+    window.toggleProvider = toggleProvider;
+    window.getProviderLiveActivity = getProviderLiveActivity;
+    window.isProviderLiveActive = isProviderLiveActive;
+
     function render(status) {
       if (!status || typeof status !== "object") return;
 
@@ -1895,7 +2124,7 @@
         metaEl.textContent = `Instance ${status.routerInstanceId ?? "-"} · PID ${status.pid ?? "-"} · started ${formatTimestamp(status.startedAt) || "—"} · refresh cadence 3s`;
       }
       const errorEl = document.getElementById("error");
-      if (errorEl) errorEl.textContent = "";
+      if (errorEl && !lastControlError) errorEl.textContent = "";
 
       // 1. KPI Grid
       const orchActive = Number(status.usage?.byRole?.unattributed?.active ?? 0);
@@ -1907,7 +2136,19 @@
       if (concurrency.activeSubagentThreads != null) {
         subActive = Math.max(subActive, Number(concurrency.activeSubagentThreads));
       }
-      const totalActive = orchActive + subActive;
+      let providerActiveTotal = 0;
+      for (const [ , p ] of Object.entries(status.providers ?? {})) {
+        if (isProviderLiveActive(p)) {
+          providerActiveTotal += Math.max(1, getProviderLiveActivity(p));
+        }
+      }
+      const totalActive = Math.max(
+        orchActive + subActive,
+        providerActiveTotal,
+        Number(concurrency.activeSessions ?? 0),
+        Number(status.activeAgents ?? 0),
+        Number(status.liveActivity ?? 0)
+      );
       const workspacesList = Object.entries(status.usage?.byWorkspace ?? {});
       const activeWorkspaces = workspacesList.filter(([ , w ]) => Number(w?.active ?? 0) > 0).length;
 
@@ -1968,13 +2209,30 @@
       // 2. Provider health
       const providersEntries = Object.entries(status.providers ?? {});
       const readyProvidersCount = providersEntries.filter(([ , p ]) => p.status === "ready").length;
-      const activeReqSum = providersEntries.reduce((sum, [ , p ]) => sum + Number(p.activeRequests ?? 0), 0);
-      syncPanel(document.getElementById("panel-providers"), "Provider health", `${readyProvidersCount} / ${providersEntries.length} ready · ${activeReqSum} active`);
+      const activeReqSum = providersEntries.reduce((sum, [ , p ]) => sum + (isProviderLiveActive(p) ? Math.max(1, getProviderLiveActivity(p)) : 0), 0);
+      const disabledProvidersCount = providersEntries.filter(([ providerName, p ]) =>
+        Boolean(p.disabled || p.enabled === false || p.status === "disabled" || (Array.isArray(status.disabledProviders) && status.disabledProviders.includes(providerName)))
+      ).length;
+      const disabledSummary = disabledProvidersCount > 0 ? ` · ${disabledProvidersCount} disabled` : "";
+      syncPanel(document.getElementById("panel-providers"), "Provider health", `${readyProvidersCount} / ${providersEntries.length} ready · ${activeReqSum} active${disabledSummary}`);
 
       const providersTbody = document.getElementById("providers-tbody");
       if (providersTbody) {
+        if (!providersTbody._hasToggleListener) {
+          providersTbody._hasToggleListener = true;
+          providersTbody.addEventListener("click", (ev) => {
+            const btn = ev.target.closest(".btn-provider-toggle");
+            if (!btn || btn.disabled) return;
+            const provider = btn.getAttribute("data-provider");
+            const action = btn.getAttribute("data-action");
+            if (provider && action) {
+              toggleProvider(provider, action === "enable", btn);
+            }
+          });
+        }
+
         if (!providersEntries.length) {
-          providersTbody.innerHTML = `<tr><td colspan="7" class="dim" style="text-align:center">No providers configured</td></tr>`;
+          providersTbody.innerHTML = `<tr><td colspan="10" class="dim" style="text-align:center">No providers configured</td></tr>`;
         } else {
           providersTbody.innerHTML = providersEntries.map(([ providerName, p ]) => {
             const configuredModels = Object.values(p.configuredModels ?? {});
@@ -1986,8 +2244,22 @@
               ? `<div class="inline-code-list">${uniqueModels.map(m => `<code>${escapeHtml(m)}</code>`).join("")}</div>`
               : "<code>-</code>";
 
-            const stateAttr = p.status === "ready" ? "ready" : ((p.status === "cooldown" || (p.cooldownRemainingMs ?? 0) > 0) ? "limited" : "error");
-            const cooldownSuffix = (p.cooldownRemainingMs > 0) ? ` (${Math.ceil(p.cooldownRemainingMs / 1000)}s)` : "";
+            const priorityText = formatRoutingPriority(providerName, p, status);
+            const limitsCooldownHtml = formatEffectiveLimitsAndCooldowns(p);
+
+            const isDisabled = Boolean(
+              p.disabled ||
+              p.enabled === false ||
+              p.status === "disabled" ||
+              (Array.isArray(status.disabledProviders) && status.disabledProviders.includes(providerName))
+            );
+            const isPending = pendingProviderToggles.has(providerName);
+            const statusLabel = isDisabled ? "disabled" : p.status;
+            const stateAttr = isDisabled ? "error" : (p.status === "ready" ? "ready" : ((p.status === "cooldown" || (p.cooldownRemainingMs ?? 0) > 0) ? "limited" : "error"));
+            const cooldownSuffix = (!isDisabled && p.cooldownRemainingMs > 0) ? ` (${Math.ceil(p.cooldownRemainingMs / 1000)}s)` : "";
+
+            const actionTarget = isDisabled ? "enable" : "disable";
+            const actionLabel = isPending ? (isDisabled ? "Enabling…" : "Disabling…") : (isDisabled ? "Enable" : "Disable");
 
             let avgTurn = "—";
             let modelSumDuration = 0;
@@ -2017,14 +2289,23 @@
               failureHtml = `<code>${escapeHtml(fText)}</code>`;
             }
 
-            return `<tr>
+            const liveActive = getProviderLiveActivity(p);
+            const isActive = isProviderLiveActive(p);
+            const displayActive = liveActive > 0 ? liveActive : (isActive ? 1 : 0);
+
+            return `<tr class="${isDisabled ? "provider-disabled" : (isActive ? "provider-active" : "")}">
               <td><code>${escapeHtml(providerName)}</code></td>
+              <td class="cell-center"><code>${escapeHtml(priorityText)}</code></td>
               <td>${modelsHtml}</td>
-              <td><health-badge state="${stateAttr}">${escapeHtml(p.status)}${cooldownSuffix}</health-badge></td>
-              <td><status-badge ${p.activeRequests > 0 ? 'active=""' : ''}>${Number(p.activeRequests ?? 0)}</status-badge></td>
+              <td><health-badge state="${stateAttr}">${escapeHtml(statusLabel)}${cooldownSuffix}</health-badge></td>
+              <td class="cell-left">${limitsCooldownHtml}</td>
+              <td><status-badge ${isActive ? 'active=""' : ''}>${displayActive}</status-badge></td>
               <td>${escapeHtml(avgTurn)}</td>
               <td class="outcome-cell"><outcome-bar fail="${Number(p.failures ?? 0)}" skip="${Number(p.skipped ?? 0)}" success="${Number(p.successes ?? 0)}"></outcome-bar></td>
               <td>${failureHtml}</td>
+              <td class="cell-center">
+                <button type="button" class="btn-provider-toggle" data-provider="${escapeHtml(providerName)}" data-action="${actionTarget}" ${isPending ? 'disabled=""' : ''}>${escapeHtml(actionLabel)}</button>
+              </td>
             </tr>`;
           }).join("");
         }
@@ -2671,9 +2952,11 @@
         const invalidSignals = Number(receiver?.invalid ?? 0);
         const initSamples = Number(sqlite?.initDurationMs?.totalCount ?? 0);
         const initSum = Number(sqlite?.initDurationMs?.totalSum ?? 0);
-        const avgInitDur = initSamples > 0 ? (initSum / initSamples) : 0;
-        const inFlightRequests = Number(Object.values(status.activeRequests ?? {}).reduce((sum, v) => sum + Number(v ?? 0), 0));
-        const perSessionLimit = concurrency.effectivePerSessionLimit ?? concurrency.maxConcurrentThreadsPerSession ?? "none";
+        const inFlightRequests = typeof status.inFlightRequests === "number"
+          ? status.inFlightRequests
+          : (status.inFlightRequests && typeof status.inFlightRequests === "object")
+            ? Number(Object.values(status.inFlightRequests).reduce((sum, v) => sum + Number(v ?? 0), 0))
+            : Number(Object.values(status.activeRequests ?? {}).reduce((sum, v) => sum + Number(v ?? 0), 0));
 
         opsGrid.innerHTML = `
           <section class="ops-group">

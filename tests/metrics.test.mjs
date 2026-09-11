@@ -92,6 +92,78 @@ test('router dashboard exposes the component hierarchy and explicit workspace at
   assert.match(dashboard, /OTLP-named runtime tool rows joined to this workspace/);
   assert.match(dashboard, /MCP servers/);
   assert.doesNotMatch(dashboard, /<(?:dashboard-panel|sub-panel)[^>]*(?:id="[^"]*mcp|title="[^"]*MCP)/i);
+  // Provider health panel renders routing priorities, effective/live limits and cooldowns,
+  // disabled state, and one enable/disable control per provider.
+  assert.match(dashboard, /Routing priority/);
+  assert.match(dashboard, /Effective limits &amp; cooldowns/);
+  assert.match(dashboard, /formatRoutingPriority/);
+  assert.match(dashboard, /formatEffectiveLimitsAndCooldowns/);
+  assert.match(dashboard, /isDisabled/);
+  assert.match(dashboard, /btn-provider-toggle/);
+  assert.match(dashboard, /\/v1\/providers\//);
+  assert.match(dashboard, /toggleProvider/);
+});
+
+test('router dashboard provider health panel renders routing priorities, limits, disabled state, and toggle controls', async () => {
+  const rawDashboard = await readFile(path.join(root, 'scripts', 'codex-model-router-dashboard.html'), 'utf8');
+  // Panel header and table columns
+  assert.match(rawDashboard, /<dashboard-panel id="panel-providers"[^>]*title="Provider health"/);
+  assert.match(rawDashboard, /<th>Routing priority<\/th>/);
+  assert.match(rawDashboard, /<th>Effective limits &amp; cooldowns<\/th>/);
+  assert.match(rawDashboard, /<th>Control<\/th>/);
+  // Routing priority helper and status handling
+  assert.match(rawDashboard, /function formatRoutingPriority\(/);
+  assert.match(rawDashboard, /formatRoutingPriority\(providerName, p, status\)/);
+  // Effective limits and cooldown helper
+  assert.match(rawDashboard, /function formatEffectiveLimitsAndCooldowns\(/);
+  assert.match(rawDashboard, /formatEffectiveLimitsAndCooldowns\(p\)/);
+  assert.match(rawDashboard, /cooldownRemainingMs/);
+  assert.match(rawDashboard, /cooldownKind/);
+  // Disabled state handling
+  assert.match(rawDashboard, /const isDisabled = Boolean\(/);
+  assert.match(rawDashboard, /statusLabel = isDisabled \? "disabled" : p\.status/);
+  assert.match(rawDashboard, /provider-disabled/);
+  // Controls: POST to /v1/providers/:provider, disable while pending, refresh on success, error UI on failure
+  assert.match(rawDashboard, /class="btn-provider-toggle"/);
+  assert.match(rawDashboard, /fetch\(`\/v1\/providers\/\$\{encodeURIComponent\(providerName\)\}`,\s*\{[^}]*method:\s*"POST"/s);
+  assert.match(rawDashboard, /pendingProviderToggles\.has\(providerName\)/);
+  assert.match(rawDashboard, /buttonEl\.disabled = true/);
+  assert.match(rawDashboard, /await refresh\(\)/);
+  assert.match(rawDashboard, /errorEl\.textContent = err\.message/);
+});
+
+test('router dashboard and status CLI contract separates live agent activity from in-flight requests and documents lifecycle TTL', async () => {
+  const rawDashboard = await readFile(path.join(root, 'scripts', 'codex-model-router-dashboard.html'), 'utf8');
+  // Helper functions for live agent activity and wait status
+  assert.match(rawDashboard, /function getProviderLiveActivity\(/);
+  assert.match(rawDashboard, /function isProviderLiveActive\(/);
+  assert.match(rawDashboard, /window\.getProviderLiveActivity = getProviderLiveActivity/);
+  assert.match(rawDashboard, /window\.isProviderLiveActive = isProviderLiveActive/);
+  // Provider active badge and row remain active during tool/user/subagent waits
+  assert.match(rawDashboard, /statusStr\.includes\("wait"\) \|\| statusStr\.includes\("tool"\) \|\| statusStr\.includes\("user"\) \|\| statusStr\.includes\("subagent"\)/);
+  assert.match(rawDashboard, /provider-active/);
+  assert.match(rawDashboard, /<status-badge \$\{isActive \? 'active=""' : ''\}>\$\{displayActive\}<\/status-badge>/);
+  // Operational summary labels in-flight requests separately
+  assert.match(rawDashboard, /status\.inFlightRequests/);
+  assert.match(rawDashboard, /<span>In-flight requests<\/span><span>\$\{inFlightRequests\}<\/span>/);
+
+  // Status CLI script displays both live agent activity (Active) and transport diagnostics (In-Flight)
+  const statusCli = await readFile(path.join(root, 'scripts', 'codex-model-router-status.mjs'), 'utf8');
+  assert.match(statusCli, /Active\s+In-Flight/);
+  assert.match(statusCli, /getProviderLiveActivity/);
+  assert.match(statusCli, /getProviderInFlight/);
+  assert.match(statusCli, /in-flight requests \$\{totalInFlight\}/);
+
+  // Documentation specifies live activity vs in-flight separation and lifecycle event contract with configurable TTL
+  const metricsDoc = await readFile(path.join(root, 'docs', 'metrics-dashboard.md'), 'utf8');
+  assert.match(metricsDoc, /Live agent activity vs\. in-flight requests transport diagnostics/);
+  assert.match(metricsDoc, /Lifecycle event contract and configurable freshness TTL/);
+  assert.match(metricsDoc, /CODEX_ROUTER_OTEL_HEALTH_TTL_MS/);
+
+  const routingDoc = await readFile(path.join(root, 'docs', 'provider-routing.md'), 'utf8');
+  assert.match(routingDoc, /Live agent activity vs\. in-flight requests transport diagnostics/);
+  assert.match(routingDoc, /Lifecycle event contract and configurable TTL/);
+  assert.match(routingDoc, /CODEX_ROUTER_OTEL_HEALTH_TTL_MS/);
 });
 
 test('metrics dashboard renders requested counters and recent links', () => {

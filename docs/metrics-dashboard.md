@@ -217,6 +217,58 @@ and a CLI subagent's own model both appear in usage under a key no tier names;
 summing the configured list alone made the provider rows add up to less than
 the totals row beneath them.
 
+### Provider health table and controls
+
+The **Provider health** table renders the operational state, routing priority, effective limits, and administration controls for every configured provider:
+
+- **Routing priority:** Formatted by `formatRoutingPriority(providerName, p, status)`, this column maps the provider's configured priority groups across capability tiers (`default`, `smart`, `orchestrator`) from `status.routing.providerGroups`, displaying priority tiers such as `default: P1 · smart: P1 · orchestrator: P2`.
+- **Effective limits & cooldowns:** Formatted by `formatEffectiveLimitsAndCooldowns(p)`, this column displays active cooldown badges with cooldown kind (`transient`, `hard`, `probe`, `config`), failure class, remaining countdown duration, declared reset time (`resets <timestamp>`), and any live provider limit details (`p.effectiveLimits`, `p.liveLimits`, `p.limits`).
+- **Administrative toggle controls:** The **Control** column features an interactive button (`.btn-provider-toggle`) to dynamically enable or disable a provider:
+  - Clicking invokes `toggleProvider(providerName, shouldEnable, buttonEl)`.
+  - While pending, the button is disabled and displays "Enabling…" or "Disabling…", tracked in `pendingProviderToggles` to prevent duplicate concurrent submissions.
+  - The browser issues a `POST /v1/providers/:provider` request with JSON payload `{ "enabled": shouldEnable, "disabled": !shouldEnable }`.
+  - Upon success, the dashboard triggers an immediate `refresh()` to re-fetch `/status` and re-render table state.
+  - If the request fails, the error message is displayed in the dashboard `#error` element and the button re-enables.
+  - Disabled providers are marked with `.provider-disabled` styling and an error-state health badge displaying `disabled`. The panel header displays a disabled provider count (e.g. `4 / 5 ready · 0 active · 1 disabled`) when nonzero.
+
+### Provider administration and status contract
+
+The model router exposes provider state and administrative controls via the following contracts:
+
+- **Loopback mutation endpoint:** `POST /v1/providers/:provider` allows enabling or disabling a provider at runtime. The endpoint is strictly restricted to loopback connections (`127.0.0.1`, `::1`, `::ffff:127.0.0.1`, `localhost`); requests from other origins return HTTP 403 `router_access_denied`. Only `POST` is accepted (other methods return HTTP 405 `router_method_not_allowed`). The request body must be a JSON object containing boolean `enabled` (`{ "enabled": boolean }`).
+- **Persistence and default behavior:** Providers default to enabled. Disabling or enabling a provider immediately updates the in-memory `disabledProviders` set and calls `persistRouterStateNow()` to persist `disabledProviders` atomically to `$CODEX_HOME/codex-router-state.json`. On daemon startup, `loadRouterState()` reloads the persisted disabled list, preserving administrative state across restarts.
+- **Disable semantics:** Disabled providers are excluded from role alias candidates, orchestrator candidates (including session continuation hoisting), last-resort retry passes, and bounded exhaustion waits. A direct concrete model request to a disabled provider is immediately rejected with HTTP 503 `router_provider_unavailable` (`failureClass: "provider_disabled"`). If all providers for a tier are disabled, requests fail immediately with HTTP 503 `router_provider_exhausted`.
+- **Status payload additions (`/status`):**
+  - `status.routing`: Surfaces configuration source, existence, orchestrator configuration, role mappings, `providerGroups` priority hierarchy, `configuredProviders`, `enabledProviders`, `disabledProviders`, and sanitized route definitions.
+  - `status.limits`: Surfaces effective global cooldowns, probe timeouts, last-resort max attempts, exhaustion wait window, selection deadline, upstream timeout, concrete retries, shutdown drain timeout, and per-session concurrency limits.
+  - `status.providers[*].enabled`: Boolean flag reflecting administrative enabled state (`false` when disabled).
+  - `status.providers[*].status`: Reports `"disabled"` when disabled, `"ready"` when operational, or the active cooldown failure class.
+  - `status.providers[*].active`: Live agent activity for the provider (migrated from ambiguous `activeRequests`), representing active turn execution.
+  - `status.inFlightRequests` / `status.providers[*].inFlightRequests`: Transport-layer diagnostic counters representing open HTTP connections to upstream provider models.
+
+### Live agent activity vs. in-flight requests transport diagnostics
+
+The router and dashboard cleanly separate **live agent activity** from **in-flight transport diagnostics**:
+
+- **Live agent activity (`Active` badges, KPIs, provider rows):**
+  Measures active agent workflow turns currently being executed by the orchestrator, subagents, or user sessions. Crucially, an agent does **not** stop being active when an intermediate model HTTP request finishes: during tool execution (`tool_executed`, `tool_requested`), user input waits, or child subagent waits, the agent and provider remain live. When `/status` indicates an active or waiting state (e.g. `status` or `state` is `"active"`, `"waiting"`, `"waiting_tool"`, `"waiting_user"`, `"waiting_subagent"`), the dashboard's `Active agents` KPI, provider table `Active` column, and `<status-badge active="">` remain visibly active and non-zero rather than flickering to zero between model invocations.
+- **In-flight requests (`inFlightRequests`):**
+  A distinct, transport-level diagnostic metric measuring active HTTP requests currently open between the router daemon and upstream provider model APIs. Incremented upon socket dispatch and decremented upon response completion or cancellation. The dashboard's **Operational summary** labels in-flight requests separately under Concurrency (`In-flight requests`), and `scripts/codex-model-router-status.mjs` displays both `Active` (live agent activity) and `In-Flight` (transport requests) side-by-side in its provider table.
+
+### Lifecycle event contract and configurable freshness TTL
+
+The router integrates with upstream agent runtimes (Codex, provider bridges) through an explicit **lifecycle event contract**:
+
+- **Lifecycle spans over persistent health gauges:**
+  Rather than assuming long-lived daemon health, the router ingests discrete lifecycle trace spans and status events (such as server initialization, tool discovery, and runtime heartbeats).
+- **Configurable freshness TTL (`CODEX_ROUTER_OTEL_HEALTH_TTL_MS`):**
+  Freshness is governed by the `CODEX_ROUTER_OTEL_HEALTH_TTL_MS` environment variable (default: `120000` ms / 2 minutes).
+- **Observed vs. Ready semantics:**
+  - `observed`: Measures unique server names or instances seen in lifecycle spans within the relevant partition scope (e.g. orchestrator or subagent union). Repeated spans do not inflate this inventory.
+  - `ready`: Measures servers whose most recent lifecycle observation was successful and occurred within the configured freshness TTL (`now - lastSeenMs <= CODEX_ROUTER_OTEL_HEALTH_TTL_MS`).
+- **Fail-closed stale decay:**
+  When a server's last successful lifecycle observation ages beyond `CODEX_ROUTER_OTEL_HEALTH_TTL_MS`, its status decays gracefully to `stale`. This avoids false-positive "ready" states without initiating disruptive process restarts or kills. Session recency (`sessionsRecent`) is similarly bounded by the same TTL.
+
 The dashboard's Operational summary groups Codex receiver, state-database,
 and concurrency values as category/metric/value rows instead of embedding those
 values in prose. Each panel heading owns its collapse toggle. Provider health,
