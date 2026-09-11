@@ -1731,7 +1731,11 @@ function concurrencyStatus() {
     // This is the router's request-admission view. Codex app child handles are
     // owned by the parent session and are not observable here.
     scope: "router-admitted-child-requests",
-    configFile: CONCURRENCY_CONFIG.file,
+    // The absolute config path is never surfaced on /status (a public,
+    // unauthenticated endpoint); operators only need to know whether an
+    // override is in play and whether the file is actually there.
+    configSource: process.env.CODEX_ROUTER_CODEX_CONFIG_FILE ? "env_override" : "default_codex_home",
+    configFileExists: existsSync(CONCURRENCY_CONFIG.file),
     maxConcurrentThreadsPerSession: effectivePerSessionLimit(),
     effectivePerSessionLimit: effectivePerSessionLimit(),
     activeSubagentThreads: activeSubagentThreads(),
@@ -2488,12 +2492,21 @@ function getRouterStatus(now = Date.now()) {
     }];
   }));
   return {
-    schema: "autodev-router-status-v1",
+    schema: "autodev-router-status-v2",
     router: "codex-model-router",
     routerInstanceId: ROUTER_INSTANCE_ID,
     startedAt: ROUTER_STARTED_AT,
     pid: process.pid,
-    telemetryPersistence: { enabled: IS_MAIN, file: STATE_FILE, updatedAt: persistedStateUpdatedAt },
+    // The absolute state-file path is never surfaced on /status (a public,
+    // unauthenticated endpoint); operators only need to know whether an
+    // override is in play, whether the file is actually there, and when it
+    // was last written.
+    telemetryPersistence: {
+      enabled: IS_MAIN,
+      source: process.env.CODEX_ROUTER_STATE_FILE ? "env_override" : "default_codex_home",
+      exists: existsSync(STATE_FILE),
+      updatedAt: persistedStateUpdatedAt,
+    },
     authentication: { responseRequests: Boolean(ROUTER_AUTH_TOKEN) },
     usage: usageStatus(),
     attributionDiagnostics: attributionDiagnosticsStatus(),

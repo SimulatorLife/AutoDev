@@ -79,6 +79,25 @@ function makeFile(content = "") {
   return file;
 }
 
+// /status is unauthenticated and machine-reachable, so it must never surface
+// an absolute filesystem path (home-directory or $CODEX_HOME-rooted). This
+// walks the full response recursively rather than spot-checking known fields,
+// so a newly added field that accidentally embeds a path fails the test.
+const LEAKED_PATH_PATTERN = /\/Users\/|\/home\/|CODEX_HOME/;
+function assertNoLeakedPaths(value, path = "$") {
+  if (typeof value === "string") {
+    assert.equal(LEAKED_PATH_PATTERN.test(value), false, `leaked filesystem path at ${path}: ${value}`);
+    return;
+  }
+  if (Array.isArray(value)) {
+    value.forEach((item, index) => assertNoLeakedPaths(item, `${path}[${index}]`));
+    return;
+  }
+  if (value && typeof value === "object") {
+    for (const [key, nested] of Object.entries(value)) assertNoLeakedPaths(nested, `${path}.${key}`);
+  }
+}
+
 test("codexStateStatus surfaces the pending envelope before the first snapshot", () => {
   router.resetRouterTelemetry();
   router.resetOtelTelemetry();
@@ -87,6 +106,7 @@ test("codexStateStatus surfaces the pending envelope before the first snapshot",
   assert.equal(status.codexState.localTelemetry.reason, "collector_initializing");
   assert.equal(status.codexState.localTelemetry.pathConfigured, true);
   assert.equal(Object.hasOwn(status.codexState.localTelemetry, "path"), false);
+  assertNoLeakedPaths(status);
 });
 
 test("codexStateStatus surfaces a successful snapshot when refreshed via the exported helper", async () => {

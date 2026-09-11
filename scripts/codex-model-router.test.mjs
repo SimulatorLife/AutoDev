@@ -107,6 +107,26 @@ import { spawnedChildren } from "./codex-antigravity-cli-responses-proxy.mjs";
 
 const read = (path) => readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
 
+// /status is unauthenticated and machine-reachable, so it must never surface
+// an absolute filesystem path (home-directory or $CODEX_HOME-rooted). This
+// walks the full response recursively -- not just the top-level fields known
+// to have carried a path historically -- so a new field added later that
+// accidentally embeds one fails the test instead of shipping silently.
+const LEAKED_PATH_PATTERN = /\/Users\/|\/home\/|CODEX_HOME/;
+function assertNoLeakedPaths(value, path = "$") {
+  if (typeof value === "string") {
+    assert.equal(LEAKED_PATH_PATTERN.test(value), false, `leaked filesystem path at ${path}: ${value}`);
+    return;
+  }
+  if (Array.isArray(value)) {
+    value.forEach((item, index) => assertNoLeakedPaths(item, `${path}[${index}]`));
+    return;
+  }
+  if (value && typeof value === "object") {
+    for (const [key, nested] of Object.entries(value)) assertNoLeakedPaths(nested, `${path}.${key}`);
+  }
+}
+
 // The launcher publishes CODEX_ROUTER_AUTH_TOKEN into the launchd user domain,
 // so a maintainer's shell normally carries it. Without pinning, the module
 // would arm the auth gate and every request-level test below -- none of which
@@ -2689,8 +2709,9 @@ test("serves the live component dashboard and keeps /status raw JSON", async () 
     assert.equal(browserStatus.status, 200);
     assert.match(browserStatus.headers.get("content-type"), /application\/json/);
     const browserPayload = await browserStatus.json();
-    assert.equal(browserPayload.schema, "autodev-router-status-v1");
+    assert.equal(browserPayload.schema, "autodev-router-status-v2");
     assert.doesNotMatch(JSON.stringify(browserPayload), /<html/i);
+    assertNoLeakedPaths(browserPayload);
 
     // Accept negotiation remains intentionally inert: both callers receive
     // the same JSON shape even though the dashboard asks for HTML first.
@@ -2713,11 +2734,21 @@ test("serves status snapshots without exposing request content", async () => {
     const response = await fetch(`http://127.0.0.1:${address.port}/status`);
     assert.equal(response.status, 200);
     const status = await response.json();
-    assert.equal(status.schema, "autodev-router-status-v1");
+    assert.equal(status.schema, "autodev-router-status-v2");
     assert.equal(Object.hasOwn(status, "codexTasks"), false);
     assert.equal(status.providers.claude.configuredModels.default, "sonnet");
     assert.equal(Object.hasOwn(status, "prompt"), false);
     assert.equal(Object.hasOwn(status.providers.claude, "apiKey"), false);
+    // Internal absolute paths (STATE_FILE, CONCURRENCY_CONFIG.file) stay
+    // operational for the process itself; only their public /status
+    // representation is redacted to safe booleans/source metadata.
+    assert.equal(Object.hasOwn(status.telemetryPersistence, "file"), false);
+    assert.equal(typeof status.telemetryPersistence.source, "string");
+    assert.equal(typeof status.telemetryPersistence.exists, "boolean");
+    assert.equal(Object.hasOwn(status.concurrency, "configFile"), false);
+    assert.equal(typeof status.concurrency.configSource, "string");
+    assert.equal(typeof status.concurrency.configFileExists, "boolean");
+    assertNoLeakedPaths(status);
   } finally {
     await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
   }
