@@ -12,6 +12,7 @@ import {
   AGENT_EVENTS_URL_HEADER,
   REQUEST_ID_HEADER,
   SUBAGENT_SPAWN_TOOLS_HEADER,
+  VALID_ACTIVITY_STATES,
   resolveAgentEventReporter,
 } from "../scripts/codex/lib/agent-events.mjs";
 import {
@@ -996,4 +997,226 @@ reporter.flush()
   } finally {
     await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
   }
+});
+
+test("AgentEventReporter posts normalized activity events with requestId", async () => {
+  const received = [];
+  const server = createServer((request, response) => {
+    let body = "";
+    request.on("data", (chunk) => { body += chunk; });
+    request.on("end", () => {
+      received.push(JSON.parse(body));
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end("{}");
+    });
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const port = server.address().port;
+  try {
+    const reporter = resolveAgentEventReporter({
+      [ AGENT_EVENTS_URL_HEADER ]: `http://127.0.0.1:${port}/v1/agent-events`,
+      [ REQUEST_ID_HEADER ]: "req-activity-1",
+      [ SUBAGENT_SPAWN_TOOLS_HEADER ]: "invoke_subagent",
+    });
+    assert.ok(reporter);
+
+    await reporter.reportActivity({ state: "tool_wait" });
+    await reporter.reportActivity({ state: "subagent_wait", childIds: [ "c1", "c2" ] });
+    await reporter.reportActivity("resumed");
+    await reporter.reportActivity({ state: "finished" });
+
+    assert.equal(received.length, 4);
+    assert.deepEqual(received[ 0 ], {
+      requestId: "req-activity-1",
+      events: [ { type: "activity", state: "tool_wait" } ],
+    });
+    assert.deepEqual(received[ 1 ], {
+      requestId: "req-activity-1",
+      events: [ { type: "activity", state: "subagent_wait", childIds: [ "c1", "c2" ] } ],
+    });
+    assert.deepEqual(received[ 2 ], {
+      requestId: "req-activity-1",
+      events: [ { type: "activity", state: "resumed" } ],
+    });
+    assert.deepEqual(received[ 3 ], {
+      requestId: "req-activity-1",
+      events: [ { type: "activity", state: "finished" } ],
+    });
+  } finally {
+    await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+  }
+});
+
+test("activity reporting rejects invalid states and drops unapproved names", async () => {
+  assert.deepEqual(Array.from(VALID_ACTIVITY_STATES).sort(), [
+    "failed",
+    "finished",
+    "resumed",
+    "subagent_wait",
+    "tool_wait",
+    "user_wait",
+  ]);
+
+  const received = [];
+  const server = createServer((request, response) => {
+    let body = "";
+    request.on("data", (chunk) => { body += chunk; });
+    request.on("end", () => {
+      received.push(JSON.parse(body));
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end("{}");
+    });
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const port = server.address().port;
+  try {
+    const reporter = resolveAgentEventReporter({
+      [ AGENT_EVENTS_URL_HEADER ]: `http://127.0.0.1:${port}/v1/agent-events`,
+      [ REQUEST_ID_HEADER ]: "req-activity-2",
+      [ SUBAGENT_SPAWN_TOOLS_HEADER ]: "invoke_subagent",
+    });
+
+    await reporter.reportActivity({ state: "invalid_state" });
+    await reporter.reportActivity({ state: "running" });
+    await reporter.reportActivity({ state: "" });
+    await reporter.reportActivity(null);
+    await reporter.reportActivity(undefined);
+
+    assert.equal(received.length, 0);
+  } finally {
+    await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+  }
+});
+
+test("activity reporting is idempotent against duplicate transitions and terminal states", async () => {
+  const received = [];
+  const server = createServer((request, response) => {
+    let body = "";
+    request.on("data", (chunk) => { body += chunk; });
+    request.on("end", () => {
+      received.push(JSON.parse(body));
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end("{}");
+    });
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const port = server.address().port;
+  try {
+    const reporter = resolveAgentEventReporter({
+      [ AGENT_EVENTS_URL_HEADER ]: `http://127.0.0.1:${port}/v1/agent-events`,
+      [ REQUEST_ID_HEADER ]: "req-activity-3",
+      [ SUBAGENT_SPAWN_TOOLS_HEADER ]: "invoke_subagent",
+    });
+
+    // Duplicate non-resumed transitions are dropped
+    await reporter.reportActivity({ state: "tool_wait" });
+    await reporter.reportActivity({ state: "tool_wait" });
+    assert.equal(received.length, 1);
+
+    // Resumed transition can re-occur
+    await reporter.reportActivity({ state: "resumed" });
+    await reporter.reportActivity({ state: "resumed" });
+    assert.equal(received.length, 3);
+
+    // Terminal state stops any further transitions
+    await reporter.reportActivity({ state: "finished" });
+    assert.equal(received.length, 4);
+
+    await reporter.reportActivity({ state: "tool_wait" });
+    await reporter.reportActivity({ state: "resumed" });
+    await reporter.reportActivity({ state: "failed" });
+    assert.equal(received.length, 4);
+  } finally {
+    await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+  }
+});
+
+test("the Claude bridge AgentEventReporter posts activity telemetry to the router", async () => {
+  const repoRoot = fileURLToPath(new URL("..", import.meta.url));
+  const received = [];
+  const server = createServer((request, response) => {
+    let body = "";
+    request.on("data", (chunk) => { body += chunk; });
+    request.on("end", () => {
+      received.push(JSON.parse(body));
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end("{}");
+    });
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const port = server.address().port;
+  try {
+    const pythonScript = `
+import importlib.util
+from pathlib import Path
+
+bridge_path = Path("scripts/codex-claude-cli-responses-proxy.py").resolve()
+spec = importlib.util.spec_from_file_location("claude_bridge", bridge_path)
+mod = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(mod)
+
+reporter = mod.AgentEventReporter("http://127.0.0.1:${port}/v1/agent-events", "req-claude-act", frozenset(["Agent"]))
+reporter.reportActivity("tool_wait")
+reporter.reportActivity("tool_wait")
+reporter.reportActivity({"state": "subagent_wait", "childIds": ["sub-1", "sub-2"]})
+reporter.reportActivity("resumed")
+reporter.reportActivity("finished")
+reporter.reportActivity("resumed")
+reporter.flush()
+`;
+    await execFileAsync("python3", [ "-c", pythonScript ], { cwd: repoRoot });
+    assert.equal(received.length, 4);
+    assert.deepEqual(received[ 0 ], {
+      requestId: "req-claude-act",
+      events: [ { type: "activity", state: "tool_wait" } ],
+    });
+    assert.deepEqual(received[ 1 ], {
+      requestId: "req-claude-act",
+      events: [ { type: "activity", state: "subagent_wait", childIds: [ "sub-1", "sub-2" ] } ],
+    });
+    assert.deepEqual(received[ 2 ], {
+      requestId: "req-claude-act",
+      events: [ { type: "activity", state: "resumed" } ],
+    });
+    assert.deepEqual(received[ 3 ], {
+      requestId: "req-claude-act",
+      events: [ { type: "activity", state: "finished" } ],
+    });
+  } finally {
+    await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+  }
+});
+
+test("the provider bridges wire activity lifecycle telemetry", () => {
+  // Antigravity bridge source assertions
+  const agySource = read("scripts/codex-antigravity-cli-responses-proxy.mjs");
+  assert.match(agySource, /tool === "ask_question"\) void agentEvents\.reportActivity\(\{ state: "user_wait" \}\)/);
+  assert.match(agySource, /void agentEvents\.reportActivity\(\{ state: "tool_wait" \}\)/);
+  assert.match(agySource, /void agentEvents\.reportActivity\(\{ state: "subagent_wait", childIds: children\.map\(/);
+  assert.match(agySource, /void agentEvents\.reportActivity\(\{ state: "resumed" \}\)/);
+  assert.match(agySource, /void agentEvents\.reportActivity\(\{ state: "finished" \}\)/);
+  assert.match(agySource, /void agentEvents\.reportActivity\(\{ state: "failed" \}\)/);
+
+  // Copilot bridge source assertions
+  const copilotSource = read("scripts/codex-copilot-cli-responses-proxy.mjs");
+  assert.match(copilotSource, /reportActivity\(\{ state: String\(event\.tool/);
+  assert.match(copilotSource, /void agentEvents\.reportActivity\(\{ state: "resumed" \}\)/);
+  assert.match(copilotSource, /void agentEvents\.reportActivity\(\{ state: "finished" \}\)/);
+  assert.match(copilotSource, /void agentEvents\.reportActivity\(\{ state: "failed" \}\)/);
+
+  // Claude bridge source assertions
+  const claudeSource = read("scripts/codex-claude-cli-responses-proxy.py");
+  assert.match(claudeSource, /agent_events\.report_activity_async\("subagent_wait"\)/);
+  assert.match(claudeSource, /agent_events\.report_activity_async\("tool_wait"\)/);
+  assert.match(claudeSource, /ask_question/);
+  assert.match(claudeSource, /agent_events\.report_activity_async\("resumed"\)/);
+  assert.match(claudeSource, /agent_events\.report_activity_async\("finished"\)/);
+  assert.match(claudeSource, /agent_events\.report_activity_async\("failed"\)/);
+
+  // MiniMax bridge source assertions
+  const minimaxSource = read("scripts/codex-minimax-responses-proxy.mjs");
+  assert.match(minimaxSource, /reportActivity\(\{ state: tool\.toLowerCase\(\) === "ask_question"/);
+  assert.match(minimaxSource, /void agentEvents\.reportActivity\(\{ state: "resumed" \}\)/);
+  assert.match(minimaxSource, /void agentEvents\.reportActivity\(\{ state: "finished" \}\)/);
+  assert.match(minimaxSource, /void agentEvents\.reportActivity\(\{ state: "failed" \}\)/);
 });

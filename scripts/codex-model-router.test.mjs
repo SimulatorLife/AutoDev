@@ -106,9 +106,19 @@ import {
   registerWorkspaceId,
   attributionDiagnosticsStatus,
   resetAttributionDiagnostics,
+  agentActivity,
+  AGENT_ACTIVITY_TTL_MS,
+  usageStatus,
 } from "./codex-model-router.mjs";
 import { resolveAgentEventReporter } from "./codex/lib/agent-events.mjs";
 import { spawnedChildren } from "./codex-antigravity-cli-responses-proxy.mjs";
+import {
+  AGENT_ACTIVITY_STATES,
+  AGENT_ACTIVITY_TTL_ENV,
+  createAgentActivityTracker,
+  DEFAULT_AGENT_ACTIVITY_TTL_MS,
+  resolveAgentActivityTtlMs,
+} from "./codex/lib/agent-activity.mjs";
 
 const read = (path) => readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
 
@@ -482,8 +492,9 @@ test("reroutes a role request after a provider returns a fallbackable failure", 
   clearProviderCooldown("claude");
   clearProviderCooldown("antigravity");
   clearProviderCooldown("minimax");
-  activeProviderRequests.set("antigravity", 1);
-  activeProviderRequests.set("minimax", 2);
+  agentActivity.beginRequest("busy-antigravity", { requestId: "busy-antigravity", provider: "antigravity", model: "gemini-3.8-flash-medium", origin: "direct" });
+  agentActivity.beginRequest("busy-minimax-1", { requestId: "busy-minimax-1", provider: "minimax", model: "MiniMax-M3", origin: "direct" });
+  agentActivity.beginRequest("busy-minimax-2", { requestId: "busy-minimax-2", provider: "minimax", model: "MiniMax-M3", origin: "direct" });
   globalThis.fetch = async (url, options) => {
     const target = String(url);
     if (target.endsWith("/health") || target.endsWith("/health/liveliness")) {
@@ -2903,8 +2914,8 @@ test("aggregates usage by role, resolved model, origin, duration, and tool calls
     averageDurationMs: 0,
   });
   recordRouterEvent({ phase: "selected", requestId: "req-usage-role", role: "explorer", requestedModel: "autodev/explorer", provider: "claude", model: "sonnet" });
-  assert.equal(getRouterStatus().usage.byOrigin.subagent.active, 1);
-  assert.equal(getRouterStatus().usage.byRole.explorer.active, 1);
+  assert.equal(getRouterStatus().usage.byOrigin.subagent.active, 0);
+  assert.equal(getRouterStatus().usage.byRole.explorer.active, 0);
   recordRouterEvent({ phase: "result", requestId: "req-usage-role", role: "explorer", requestedModel: "autodev/explorer", provider: "claude", model: "sonnet", outcome: "success", status: 200, elapsedMs: 120, toolCalls: 2 });
   recordRouterEvent({ phase: "selected", requestId: "req-usage-parent", requestedModel: "gpt-5.6-luna", provider: "codex", model: "gpt-5.6-luna" });
   recordRouterEvent({ phase: "result", requestId: "req-usage-parent", requestedModel: "gpt-5.6-luna", provider: "codex", model: "gpt-5.6-luna", outcome: "success", status: 200, elapsedMs: 80, toolCalls: 1 });
@@ -2960,21 +2971,19 @@ test("folds roleless orchestrator and direct traffic into a single unattributed 
   resetRouterTelemetry();
 });
 
-test("byModel active count tracks in-flight requests per model so the dashboard can sum child active into the provider parent", () => {
+test("byModel live activity count is separate from transport in-flight requests", () => {
   resetRouterTelemetry();
   recordRouterEvent({ phase: "selected", requestId: "req-active-1", requestedModel: "sonnet", provider: "claude", model: "sonnet" });
   recordRouterEvent({ phase: "selected", requestId: "req-active-2", requestedModel: "claude-opus-5", provider: "claude", model: "claude-opus-5" });
   let usage = getRouterStatus().usage;
-  assert.equal(usage.byModel[ "claude/sonnet" ].active, 1);
-  assert.equal(usage.byModel[ "claude/claude-opus-5" ].active, 1);
-  // Parent Active = sum of visible children, per model, for this provider.
-  const parentActive = usage.byModel[ "claude/sonnet" ].active + usage.byModel[ "claude/claude-opus-5" ].active;
-  assert.equal(parentActive, 2);
+  assert.equal(usage.byModel[ "claude/sonnet" ].active, 0);
+  assert.equal(usage.byModel[ "claude/claude-opus-5" ].active, 0);
+  assert.equal(getRouterStatus().inFlightRequests.claude ?? 0, 0);
 
   recordRouterEvent({ phase: "result", requestId: "req-active-1", requestedModel: "sonnet", provider: "claude", model: "sonnet", outcome: "success", status: 200, elapsedMs: 5 });
   usage = getRouterStatus().usage;
   assert.equal(usage.byModel[ "claude/sonnet" ].active, 0);
-  assert.equal(usage.byModel[ "claude/claude-opus-5" ].active, 1);
+  assert.equal(usage.byModel[ "claude/claude-opus-5" ].active, 0);
 
   recordRouterEvent({ phase: "result", requestId: "req-active-2", requestedModel: "claude-opus-5", provider: "claude", model: "claude-opus-5", outcome: "success", status: 200, elapsedMs: 5 });
   assert.equal(getRouterStatus().usage.byModel[ "claude/claude-opus-5" ].active, 0);
@@ -3109,7 +3118,8 @@ test("status snapshot exposes configured models, active work, cooldowns, and rec
   assert.equal(selected.providers.claude.status, "ready");
   assert.equal(selected.providers.claude.configuredModels.default, "sonnet");
   assert.equal(selected.providers.claude.attempts, 1);
-  assert.equal(selected.providers.claude.activeRequests, 1);
+  assert.equal(selected.providers.claude.inFlightRequests, 1);
+  assert.equal(selected.providers.claude.active, 0);
 
   cooldownProvider("claude");
   recordRouterEvent({ phase: "result", requestId: "req-status", role: "explorer", requestedModel: "autodev/explorer", provider: "claude", model: "sonnet", outcome: "failure", status: 429, failureClass: "throttled", elapsedMs: 12 });
@@ -3155,24 +3165,27 @@ test("rewrites the routed provider model back to the public role alias", () => {
 
 test("uses the least-busy provider before starting another provider request", () => {
   activeProviderRequests.clear();
-  incrementActiveRequests("claude");
-  incrementActiveRequests("minimax");
+  agentActivity.reset();
+  agentActivity.beginRequest("busy-claude", { requestId: "busy-claude", provider: "claude", model: "sonnet" });
+  agentActivity.beginRequest("busy-minimax", { requestId: "busy-minimax", provider: "minimax", model: "MiniMax-M3" });
   const candidates = roleCandidates("default", () => 0.5).map((candidate) => candidate.provider);
   assert.equal(candidates[ 0 ], "antigravity");
   assert.deepEqual(candidates.slice(3), [ "copilot", "codex" ]);
   activeProviderRequests.clear();
+  agentActivity.reset();
 });
 
 test("balances candidate provider priority across active in-flight requests", () => {
   activeProviderRequests.clear();
   assert.equal(getActiveRequests("claude"), 0);
 
-  incrementActiveRequests("claude");
-  incrementActiveRequests("claude");
-  incrementActiveRequests("antigravity");
-  assert.equal(getActiveRequests("claude"), 2);
-  assert.equal(getActiveRequests("antigravity"), 1);
-  assert.equal(getActiveRequests("minimax"), 0);
+  agentActivity.reset();
+  agentActivity.beginRequest("claude-1", { requestId: "claude-1", provider: "claude", model: "sonnet" });
+  agentActivity.beginRequest("claude-2", { requestId: "claude-2", provider: "claude", model: "sonnet" });
+  agentActivity.beginRequest("antigravity-1", { requestId: "antigravity-1", provider: "antigravity", model: "gemini-3.8-flash-medium" });
+  assert.equal(agentActivity.countLive({ provider: "claude" }), 2);
+  assert.equal(agentActivity.countLive({ provider: "antigravity" }), 1);
+  assert.equal(agentActivity.countLive({ provider: "minimax" }), 0);
 
   const candidates = roleCandidates("default", () => 0.5);
   const providers = candidates.map((c) => c.provider);
@@ -3181,12 +3194,13 @@ test("balances candidate provider priority across active in-flight requests", ()
   assert.equal(providers[ 1 ], "antigravity");
   assert.equal(providers[ 2 ], "claude");
 
-  decrementActiveRequests("claude");
-  decrementActiveRequests("claude");
-  decrementActiveRequests("antigravity");
-  assert.equal(getActiveRequests("claude"), 0);
-  assert.equal(getActiveRequests("antigravity"), 0);
+  agentActivity.finish("claude-1", { requestId: "claude-1" });
+  agentActivity.finish("claude-2", { requestId: "claude-2" });
+  agentActivity.finish("antigravity-1", { requestId: "antigravity-1" });
+  assert.equal(agentActivity.countLive({ provider: "claude" }), 0);
+  assert.equal(agentActivity.countLive({ provider: "antigravity" }), 0);
   activeProviderRequests.clear();
+  agentActivity.reset();
 });
 
 test("handles safe decrement on inactive providers without going negative", () => {
@@ -5242,4 +5256,328 @@ test("all-disabled behavior rejects aliases, orchestrator, and concrete requests
     resetDisabledProvidersForTests();
     resetRouterTelemetry();
   }
+});
+
+// --- Agent activity: shared state machine (scripts/codex/lib/agent-activity.mjs) ---
+
+test("agent activity: TTL resolves from CODEX_ROUTER_AGENT_ACTIVITY_TTL_MS with a 300000ms default", () => {
+  assert.equal(resolveAgentActivityTtlMs({}), DEFAULT_AGENT_ACTIVITY_TTL_MS);
+  assert.equal(DEFAULT_AGENT_ACTIVITY_TTL_MS, 300000);
+  assert.equal(resolveAgentActivityTtlMs({ [AGENT_ACTIVITY_TTL_ENV]: "45000" }), 45000);
+  // Invalid/non-positive overrides fall back to the default rather than
+  // producing a tracker with a zero or NaN TTL.
+  assert.equal(resolveAgentActivityTtlMs({ [AGENT_ACTIVITY_TTL_ENV]: "not-a-number" }), DEFAULT_AGENT_ACTIVITY_TTL_MS);
+  assert.equal(resolveAgentActivityTtlMs({ [AGENT_ACTIVITY_TTL_ENV]: "0" }), DEFAULT_AGENT_ACTIVITY_TTL_MS);
+  assert.equal(resolveAgentActivityTtlMs({ [AGENT_ACTIVITY_TTL_ENV]: "-1" }), DEFAULT_AGENT_ACTIVITY_TTL_MS);
+  assert.equal(AGENT_ACTIVITY_TTL_MS, resolveAgentActivityTtlMs(process.env));
+});
+
+test("agent activity: a response with a tool call opens tool_wait, spanning the gap until the continuation", () => {
+  const tracker = createAgentActivityTracker({ ttlMs: 60000, now: () => 1000 });
+  tracker.beginRequest("session-a", { requestId: "req-1", provider: "codex", model: "gpt-5", role: null });
+  assert.equal(tracker.getState("session-a"), "active");
+  tracker.endRequest("session-a", { requestId: "req-1", outcome: "success", hasToolCalls: true });
+  assert.equal(tracker.getState("session-a"), "tool_wait");
+  assert.equal(tracker.countLive({ provider: "codex" }), 1);
+  // A normal response with no tool call is terminal; explicit user waits arrive
+  // through lifecycle events.
+  const tracker2 = createAgentActivityTracker({ ttlMs: 60000, now: () => 1000 });
+  tracker2.beginRequest("session-b", { requestId: "req-2", provider: "codex", model: "gpt-5" });
+  tracker2.endRequest("session-b", { requestId: "req-2", outcome: "success", hasToolCalls: false });
+  assert.equal(tracker2.getState("session-b"), "finished");
+});
+
+test("agent activity: a continuation after a wait is observed as resumed", () => {
+  const tracker = createAgentActivityTracker({ ttlMs: 60000, now: () => 1000 });
+  tracker.beginRequest("session-a", { requestId: "req-1", provider: "codex", model: "gpt-5" });
+  tracker.endRequest("session-a", { requestId: "req-1", outcome: "success", hasToolCalls: true });
+  assert.equal(tracker.getState("session-a"), "tool_wait");
+  // The continuation carries the tool result on a new requestId, against the
+  // same session subject the router resolves for both requests.
+  const record = tracker.beginRequest("session-a", { requestId: "req-2", provider: "codex", model: "gpt-5" });
+  assert.equal(record.state, "resumed");
+  assert.equal(tracker.getState("session-a"), "resumed");
+  assert.equal(tracker.countLive({}), 1, "a resumed subject is still live");
+  // A begin with no prior wait (fresh subject) is "active", not "resumed".
+  const fresh = tracker.beginRequest("session-c", { requestId: "req-3", provider: "codex", model: "gpt-5" });
+  assert.equal(fresh.state, "active");
+});
+
+test("agent activity: user_wait and subagent_wait are both reachable and distinguishable", () => {
+  const tracker = createAgentActivityTracker({ ttlMs: 60000, now: () => 1000 });
+  tracker.beginRequest("orchestrator-session", { requestId: "req-1", provider: "claude", model: "sonnet" });
+  // Explicit lifecycle signal enters user_wait; a normal final response does not.
+  tracker.applyLifecycleEvent("orchestrator-session", { state: "user_wait", eventId: "user-wait-1" });
+  assert.equal(tracker.getState("orchestrator-session"), "user_wait");
+  // The orchestrator spawns a subagent: it is now waiting on the child.
+  tracker.noteSubagentWait("orchestrator-session");
+  assert.equal(tracker.getState("orchestrator-session"), "subagent_wait");
+  // Re-applying while already waiting is a no-op (idempotent).
+  tracker.noteSubagentWait("orchestrator-session");
+  assert.equal(tracker.getState("orchestrator-session"), "subagent_wait");
+  // Resolving when not in subagent_wait is a no-op.
+  const untouched = createAgentActivityTracker({ ttlMs: 60000, now: () => 1000 });
+  untouched.beginRequest("s", { requestId: "r", provider: "codex", model: "m" });
+  const noop = untouched.noteSubagentResolved("s");
+  assert.equal(noop.state, "active");
+  // The child reports back: the parent resumes.
+  const resolved = tracker.noteSubagentResolved("orchestrator-session");
+  assert.equal(resolved.state, "resumed");
+});
+
+test("agent activity: a matured wait state expires to stale under a fake clock, honoring the TTL", () => {
+  let clock = 0;
+  const tracker = createAgentActivityTracker({ ttlMs: 5000, now: () => clock });
+  tracker.beginRequest("session-a", { requestId: "req-1", provider: "codex", model: "gpt-5" });
+  tracker.endRequest("session-a", { requestId: "req-1", outcome: "success", hasToolCalls: true });
+  assert.equal(tracker.getState("session-a"), "tool_wait");
+  assert.equal(tracker.countLive({}), 1);
+  clock += 4999;
+  assert.equal(tracker.getState("session-a"), "tool_wait", "not yet past the TTL");
+  assert.equal(tracker.countLive({}), 1);
+  clock += 2; // now 5001ms since the wait state was entered, past the 5000ms TTL
+  assert.equal(tracker.getState("session-a"), "stale");
+  assert.equal(tracker.countLive({}), 0, "a stale record is not live");
+  assert.equal(tracker.countByState({}).stale, 1);
+  // A terminal record never goes stale, no matter how old it is.
+  const terminal = createAgentActivityTracker({ ttlMs: 10, now: () => clock });
+  terminal.beginRequest("s2", { requestId: "r", provider: "codex", model: "m" });
+  terminal.endRequest("s2", { requestId: "r", outcome: "failure" });
+  clock += 100000;
+  assert.equal(terminal.getState("s2"), "failed");
+});
+
+test("agent activity: duplicate terminal events are idempotent and never reopen a settled record", () => {
+  const tracker = createAgentActivityTracker({ ttlMs: 60000, now: () => 1000 });
+  tracker.beginRequest("session-a", { requestId: "req-1", provider: "codex", model: "gpt-5" });
+  tracker.endRequest("session-a", { requestId: "req-1", outcome: "failure" });
+  assert.equal(tracker.getState("session-a"), "failed");
+  // Redelivering the same result (same requestId) is a no-op.
+  tracker.endRequest("session-a", { requestId: "req-1", outcome: "success", hasToolCalls: true });
+  assert.equal(tracker.getState("session-a"), "failed", "a settled requestId cannot flip a terminal record");
+  // A later begin for a *different* requestId also cannot reopen a terminal record.
+  const afterBegin = tracker.beginRequest("session-a", { requestId: "req-2", provider: "codex", model: "gpt-5" });
+  assert.equal(afterBegin.state, "failed");
+  assert.equal(tracker.countLive({}), 0);
+
+  // The same guarantee holds for explicit lifecycle events: a duplicated
+  // "finished" (matched by eventId) does not double-apply, and a "failed"
+  // delivered after "finished" does not overwrite it.
+  const tracker2 = createAgentActivityTracker({ ttlMs: 60000, now: () => 1000 });
+  tracker2.beginRequest("session-b", { requestId: "req-1", provider: "codex", model: "gpt-5" });
+  const first = tracker2.applyLifecycleEvent("session-b", { state: "finished", eventId: "evt-1" });
+  assert.equal(first.state, "finished");
+  const redelivered = tracker2.applyLifecycleEvent("session-b", { state: "finished", eventId: "evt-1" });
+  assert.equal(redelivered.state, "finished");
+  const contradicting = tracker2.applyLifecycleEvent("session-b", { state: "failed", eventId: "evt-2" });
+  assert.equal(contradicting.state, "finished", "a terminal record is never reopened by a later lifecycle event");
+  // An unrecognized state is rejected rather than silently ignored.
+  assert.equal(tracker2.applyLifecycleEvent("session-c", { state: "not_a_real_state" }), null);
+});
+
+test("agent activity: counts are always nonnegative, including under out-of-order and unmatched events", () => {
+  const tracker = createAgentActivityTracker({ ttlMs: 60000, now: () => 1000 });
+  // endRequest / finish / noteSubagentResolved with no prior beginRequest are no-ops, not underflows.
+  assert.equal(tracker.endRequest("ghost", { requestId: "r", outcome: "failure" }), null);
+  assert.equal(tracker.finish("ghost", { requestId: "r" }), null);
+  assert.equal(tracker.noteSubagentResolved("ghost"), null);
+  assert.equal(tracker.countLive({}), 0);
+  assert.equal(tracker.countByState({}).active, 0);
+
+  // A burst of begins and ends across several subjects, some unmatched, never
+  // produces a negative count for any state.
+  for (let i = 0; i < 5; i += 1) {
+    tracker.beginRequest(`s${i}`, { requestId: `r${i}`, provider: "codex", model: "m" });
+  }
+  for (let i = 0; i < 3; i += 1) {
+    tracker.endRequest(`s${i}`, { requestId: `r${i}`, outcome: "success", hasToolCalls: i % 2 === 0 });
+  }
+  // Extra, unmatched ends for subjects that were never begun.
+  tracker.endRequest("never-began-1", { requestId: "x", outcome: "success" });
+  tracker.endRequest("never-began-2", { requestId: "y", outcome: "failure" });
+  const counts = tracker.countByState({});
+  for (const state of AGENT_ACTIVITY_STATES) {
+    assert.ok(counts[state] >= 0, `count for ${state} must never be negative`);
+  }
+  assert.ok(tracker.countLive({}) >= 0);
+  assert.ok(tracker.distinctTags({}).length >= 0);
+});
+
+test("agent activity: snapshot groups live activity by provider and by provider/model", () => {
+  const tracker = createAgentActivityTracker({ ttlMs: 60000, now: () => 1000 });
+  tracker.beginRequest("s1", { requestId: "r1", provider: "codex", model: "gpt-5" });
+  tracker.beginRequest("s2", { requestId: "r2", provider: "codex", model: "gpt-5" });
+  tracker.beginRequest("s3", { requestId: "r3", provider: "claude", model: "sonnet" });
+  const snapshot = tracker.snapshot();
+  assert.equal(snapshot.live, 3);
+  assert.equal(snapshot.byProvider.codex.active, 2);
+  assert.equal(snapshot.byProvider.claude.active, 1);
+  assert.equal(snapshot.byModel["codex/gpt-5"].active, 2);
+  assert.equal(snapshot.byModel["claude/sonnet"].active, 1);
+  assert.equal(snapshot.ttlMs, 60000);
+});
+
+test("agent activity: kind/tag scoping isolates a concurrency-style count from an unrelated dimension", () => {
+  const tracker = createAgentActivityTracker({ ttlMs: 60000, now: () => 1000 });
+  tracker.beginRequest("slot:sess-a:1", { requestId: "slot:sess-a:1", kind: "subagent_slot", tag: "sess-a" });
+  tracker.beginRequest("slot:sess-a:2", { requestId: "slot:sess-a:2", kind: "subagent_slot", tag: "sess-a" });
+  tracker.beginRequest("slot:sess-b:1", { requestId: "slot:sess-b:1", kind: "subagent_slot", tag: "sess-b" });
+  tracker.beginRequest("sess-a", { requestId: "r", provider: "codex", model: "m" }); // kind "session", unrelated
+  assert.equal(tracker.countLive({ kind: "subagent_slot" }), 3);
+  assert.equal(tracker.countLive({ kind: "subagent_slot", tag: "sess-a" }), 2);
+  assert.equal(tracker.countLive({ kind: "subagent_slot", tag: "sess-b" }), 1);
+  assert.deepEqual(tracker.distinctTags({ kind: "subagent_slot" }).sort(), ["sess-a", "sess-b"]);
+  assert.equal(tracker.countLive({ kind: "session" }), 1);
+});
+
+// --- Agent activity wired into the router: usage/provider live activity, ---
+// --- concurrency subagent slots, inFlightRequests, and lifecycle events.  ---
+
+test("router status exposes inFlightRequests (transport counters) with no activeRequests alias at the top level", () => {
+  resetRouterTelemetry();
+  const status = getRouterStatus();
+  assert.equal(typeof status.inFlightRequests, "object");
+  assert.equal(status.activeRequests, undefined, "the top-level transport counter map has no compatibility alias");
+  assert.equal(typeof status.liveActivity, "number");
+  assert.ok(status.liveActivity >= 0);
+  for (const provider of Object.values(status.providers)) {
+    // Per-provider entries expose live activity and a separate transport count.
+    assert.equal(typeof provider.active, "number");
+    assert.equal(typeof provider.inFlightRequests, "number");
+    assert.ok(provider.active >= 0);
+  }
+});
+
+test("router usage status carries a live-activity snapshot distinct from each bucket's request-scoped active count", () => {
+  resetRouterTelemetry();
+  agentActivity.reset();
+  const status = usageStatus();
+  assert.ok(status.activity, "usage.activity must be present");
+  assert.equal(status.activity.ttlMs, AGENT_ACTIVITY_TTL_MS);
+  assert.equal(status.activity.live, 0);
+  assert.deepEqual(Object.keys(status.activity.byState).sort(), [...AGENT_ACTIVITY_STATES].sort());
+  agentActivity.beginRequest("some-session", { requestId: "req-1", provider: "claude", model: "sonnet" });
+  const withActivity = usageStatus();
+  assert.equal(withActivity.activity.live, 1);
+  assert.equal(withActivity.activity.byProvider.claude.active, 1);
+  assert.equal(withActivity.activity.byModel["claude/sonnet"].active, 1);
+  agentActivity.reset();
+});
+
+test("router concurrency status derives active subagent slots from agent activity, matching the admission counter exactly", async () => {
+  resetRouterTelemetry();
+  const configuredLimit = concurrencyStatus().effectivePerSessionLimit ?? 4;
+  assert.equal(agentActivity.countLive({ kind: "subagent_slot" }), 0);
+  const slotsToAcquire = Math.max(1, Math.min(2, configuredLimit));
+  for (let i = 0; i < slotsToAcquire; i += 1) {
+    assert.equal(tryAcquireSubagentSlot("activity-concurrency-session"), null);
+  }
+  assert.equal(concurrencyStatus().activeSubagentThreads, slotsToAcquire);
+  assert.equal(agentActivity.countLive({ kind: "subagent_slot" }), slotsToAcquire, "concurrency's admission count and agent-activity's live count must agree");
+  assert.equal(agentActivity.countLive({ kind: "subagent_slot", tag: "activity-concurrency-session" }), slotsToAcquire);
+  for (let i = 0; i < slotsToAcquire; i += 1) releaseSubagentSlot("activity-concurrency-session");
+  assert.equal(concurrencyStatus().activeSubagentThreads, 0);
+  assert.equal(agentActivity.countLive({ kind: "subagent_slot" }), 0);
+  resetConcurrencyTelemetry();
+});
+
+test("router-visible response tool calls and continuations drive session activity through a full round trip", async () => {
+  resetRouterTelemetry();
+  agentActivity.reset();
+  const originalFetch = globalThis.fetch;
+  const originalCredentials = { LITELLM_API_KEY: process.env.LITELLM_API_KEY };
+  process.env.LITELLM_API_KEY = "test-key";
+  let callCount = 0;
+  globalThis.fetch = async (url, options) => {
+    const target = String(url);
+    if (target.includes("/health")) return new Response("ok", { status: 200 });
+    if (target.includes("/responses")) {
+      callCount += 1;
+      if (callCount === 1) {
+        // First turn: the provider asks for a tool call.
+        return new Response(JSON.stringify({
+          id: "resp-1",
+          model: "model-ok",
+          output: [ { id: "call-1", type: "function_call", name: "some_tool", arguments: "{}" } ],
+        }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      // Second turn (the continuation carrying the tool result): a plain answer.
+      return new Response(JSON.stringify({ id: "resp-2", model: "model-ok", output_text: "done" }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }
+    return originalFetch(url, options);
+  };
+  const server = createServer((request, response) => { void handle(request, response); });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const port = server.address().port;
+  const sessionHeader = { "x-codex-session-id": "activity-round-trip-session" };
+  try {
+    const first = await originalFetch(`http://127.0.0.1:${port}/v1/responses`, {
+      method: "POST",
+      headers: { "content-type": "application/json", ...sessionHeader },
+      body: JSON.stringify({ model: "autodev/default", stream: false }),
+    });
+    assert.equal(first.status, 200);
+    assert.equal(agentActivity.getState("activity-round-trip-session"), "tool_wait", "a response carrying a tool call opens tool_wait");
+
+    const second = await originalFetch(`http://127.0.0.1:${port}/v1/responses`, {
+      method: "POST",
+      headers: { "content-type": "application/json", ...sessionHeader },
+      body: JSON.stringify({
+        model: "autodev/default",
+        stream: false,
+        input: [ { type: "function_call_output", call_id: "call-1", output: "ok" } ],
+      }),
+    });
+    assert.equal(second.status, 200);
+    // The continuation's own begin is observable as "resumed" mid-flight, and
+    // settles to finished once its (tool-call-free) response lands.
+    assert.equal(agentActivity.getState("activity-round-trip-session"), "finished");
+  } finally {
+    await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    globalThis.fetch = originalFetch;
+    for (const [ key, value ] of Object.entries(originalCredentials)) {
+      if (value === undefined) delete process.env[ key ];
+      else process.env[ key ] = value;
+    }
+    resetRouterTelemetry();
+    agentActivity.reset();
+  }
+});
+
+test("agent-events endpoint accepts normalized activity lifecycle events, idempotently, scoped to the request's session", () => {
+  resetRouterTelemetry();
+  agentActivity.reset();
+  const requestId = "lifecycle-req-1";
+  noteBridgeRequest(requestId, { provider: "claude", model: "sonnet", role: null, workspace: null, sessionKey: "lifecycle-session" });
+  agentActivity.beginRequest("lifecycle-session", { requestId, provider: "claude", model: "sonnet" });
+
+  const first = ingestAgentEvents({ requestId, events: [ { type: "activity", state: "user_wait", eventId: "evt-1" } ] });
+  assert.equal(first.accepted, 1);
+  assert.equal(agentActivity.getState("lifecycle-session"), "user_wait");
+
+  // Redelivery of the same event id is idempotent.
+  const redelivered = ingestAgentEvents({ requestId, events: [ { type: "activity", state: "subagent_wait", eventId: "evt-1" } ] });
+  assert.equal(redelivered.accepted, 1, "an accepted duplicate still counts as accepted, but must not change state");
+  assert.equal(agentActivity.getState("lifecycle-session"), "user_wait", "a redelivered eventId is a no-op");
+
+  // A new event id is applied normally.
+  const advanced = ingestAgentEvents({ requestId, events: [ { type: "activity", state: "finished", eventId: "evt-2" } ] });
+  assert.equal(advanced.accepted, 1);
+  assert.equal(agentActivity.getState("lifecycle-session"), "finished");
+
+  // A terminal record cannot be reopened, even by an otherwise-valid event.
+  const afterTerminal = ingestAgentEvents({ requestId, events: [ { type: "activity", state: "user_wait", eventId: "evt-3" } ] });
+  assert.equal(afterTerminal.accepted, 1);
+  assert.equal(agentActivity.getState("lifecycle-session"), "finished");
+
+  // An unrecognized state is rejected, not silently accepted.
+  const rejected = ingestAgentEvents({ requestId, events: [ { type: "activity", state: "not_a_real_state" } ] });
+  assert.equal(rejected.rejected, 1);
+  assert.equal(rejected.accepted, 0);
+
+  agentActivity.reset();
+  resetRouterTelemetry();
 });

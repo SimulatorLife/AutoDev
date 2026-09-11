@@ -618,14 +618,14 @@ The router cleanly separates user-facing agent workflow activity from transport-
 
 The router coordinates with agents and tool hosts via an explicit lifecycle event contract:
 
-- **Lifecycle trace spans:**
-  The router ingests lifecycle spans (e.g. server discovery, initialization, tool execution) rather than polling static daemon health.
-- **Configurable freshness TTL (`CODEX_ROUTER_OTEL_HEALTH_TTL_MS`):**
-  Configured via `CODEX_ROUTER_OTEL_HEALTH_TTL_MS` (defaults to `120000` ms / 2 minutes).
-- **Observed vs. Ready states:**
-  - `observed`: Measures the unique server inventory seen in lifecycle spans.
-  - `ready`: Measures servers whose most recent observation was successful and occurred within `CODEX_ROUTER_OTEL_HEALTH_TTL_MS`.
-  - `stale`: Observations older than the TTL decay to `stale` without killing or restarting active processes.
+- **Normalized activity events (`{ type: "activity", state, childIds? }`):**
+  Provider bridges emit explicit `tool_wait`, `user_wait`, `subagent_wait`, `resumed`, `finished`, or `failed` events over the authorized agent-events channel; router-visible response tool calls and continuations supply the native path. User waits are never inferred from arbitrary assistant text.
+- **Configurable freshness TTL (`CODEX_ROUTER_AGENT_ACTIVITY_TTL_MS`):**
+  Configured via `CODEX_ROUTER_AGENT_ACTIVITY_TTL_MS` (defaults to `300000` ms / 5 minutes).
+- **Activity states:**
+  - `active`, `resumed`, `tool_wait`, `user_wait`, and `subagent_wait` count as live activity.
+  - `finished` and `failed` are terminal.
+  - Any non-terminal activity older than the TTL is reported as `stale` and removed from live counts without killing or restarting active processes.
 
 To verify the live router is receiving caller identities, inspect
 `.concurrency.lastDenial.sessionScope` in `/status`; `identified` means the

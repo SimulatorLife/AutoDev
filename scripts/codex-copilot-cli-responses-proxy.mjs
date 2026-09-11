@@ -105,9 +105,16 @@ function copilotToolOutcome(data) {
 /** Post one observation, when the router authorized reporting for this turn. */
 function reportToolObservation(agentEvents, event) {
   if (!agentEvents) return;
-  if (event.type === "tool_requested") void agentEvents.reportToolRequested({ tool: event.tool, callId: event.callId, server: event.server });
-  else if (event.type === "tool_executed") void agentEvents.reportToolExecuted({ tool: event.tool, callId: event.callId, status: event.status, durationMs: event.durationMs, server: event.server });
-  else if (event.type === "tool_unavailable") void agentEvents.reportToolUnavailable({ tool: event.tool, callId: event.callId, reason: event.reason, server: event.server });
+  if (event.type === "tool_requested") {
+    void agentEvents.reportToolRequested({ tool: event.tool, callId: event.callId, server: event.server });
+    if (typeof agentEvents.reportActivity === "function") void agentEvents.reportActivity({ state: String(event.tool ?? "").trim().toLowerCase() === "ask_question" ? "user_wait" : "tool_wait" });
+  } else if (event.type === "tool_executed") {
+    void agentEvents.reportToolExecuted({ tool: event.tool, callId: event.callId, status: event.status, durationMs: event.durationMs, server: event.server });
+    if (typeof agentEvents.reportActivity === "function") void agentEvents.reportActivity({ state: "resumed" });
+  } else if (event.type === "tool_unavailable") {
+    void agentEvents.reportToolUnavailable({ tool: event.tool, callId: event.callId, reason: event.reason, server: event.server });
+    if (typeof agentEvents.reportActivity === "function") void agentEvents.reportActivity({ state: "resumed" });
+  }
 }
 
 function sendJson(response, status, body, extraHeaders = {}) {
@@ -345,8 +352,10 @@ async function handle(request, response) {
   if (payload.stream === false) {
     try {
       const result = await runCopilot(prompt, payload.model, cwd, (event) => reportToolObservation(agentEvents, event), agentRole);
+      if (typeof agentEvents?.reportActivity === "function") void agentEvents.reportActivity({ state: "finished" });
       sendJson(response, 200, responsePayload(payload.model, result.text, result.result));
     } catch (error) {
+      if (typeof agentEvents?.reportActivity === "function") void agentEvents.reportActivity({ state: "failed" });
       sendJson(response, 503, { error: { type: "copilot_proxy_error", message: error.message ?? String(error) } });
     }
     return;
@@ -448,10 +457,12 @@ async function handle(request, response) {
     emit("response.content_part.done", { type: "response.content_part.done", item_id: itemId, output_index: 1, content_index: 0, part: { type: "output_text", text: result.text, annotations: [] } });
     emit("response.output_item.done", { type: "response.output_item.done", output_index: 1, item: completedMessage });
     emit("response.completed", { type: "response.completed", response: completed });
+    if (typeof agentEvents?.reportActivity === "function") void agentEvents.reportActivity({ state: "finished" });
     if (isWritable()) {
       try { response.end("data: [DONE]\n\n"); } catch {}
     }
   } catch (error) {
+    if (typeof agentEvents?.reportActivity === "function") void agentEvents.reportActivity({ state: "failed" });
     if (!isWritable()) return;
     const message = error.message ?? String(error);
     // The CLI reports a usage limit as an error string like any other failure,

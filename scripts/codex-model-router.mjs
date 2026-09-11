@@ -19,6 +19,12 @@ import { INCOMPLETE_REASON_INTERRUPTED, INCOMPLETE_REASON_TIMEOUT, isHardLimitCl
 // what stops one lax turn from permanently poisoning a session.
 import { dropUnresolvableReasoning, normalizeInputItemIds } from "./codex/lib/responses-item-ids.mjs";
 import { CodexStateCollector, loadCodexStateCollectorConfig } from "./codex/lib/codex-state-collector.mjs";
+// Session/agent activity that spans the gaps between requests -- waiting on a
+// tool result, waiting on the next user turn, waiting on a spawned subagent.
+// A single shared state machine backs both the usage-table "live activity"
+// view and the concurrency table's subagent-slot accounting so the two never
+// disagree about what "still active" means.
+import { AGENT_ACTIVITY_STATES, createAgentActivityTracker, resolveAgentActivityTtlMs } from "./codex/lib/agent-activity.mjs";
 
 const HOST = process.env.CODEX_MODEL_ROUTER_HOST ?? "127.0.0.1";
 const PORT = Number.parseInt(process.env.CODEX_MODEL_ROUTER_PORT ?? "4100", 10);
@@ -223,6 +229,11 @@ const providerFailureStreaks = new Map();
 // escalate the backoff that describes the real provider's health.
 const providerProbeStreaks = new Map();
 const activeProviderRequests = new Map();
+// Read once at module load, matching every other env-derived constant here;
+// a test that needs a different TTL builds its own tracker with
+// createAgentActivityTracker({ ttlMs }) rather than mutating this one.
+const AGENT_ACTIVITY_TTL_MS = resolveAgentActivityTtlMs(process.env);
+const agentActivity = createAgentActivityTracker({ ttlMs: AGENT_ACTIVITY_TTL_MS });
 const disabledProviders = new Set();
 
 function isProviderEnabled(provider) {
@@ -546,7 +557,6 @@ function recordUsageEvent({ phase, requestId, role, provider, model, workspace =
     inFlightUsage.set(key, { startedAt: Date.now(), buckets });
     for (const bucket of buckets) {
       bucket.attempts += 1;
-      bucket.active += 1;
       bucket.lastUsedAt = timestamp;
     }
     return;
@@ -560,7 +570,6 @@ function recordUsageEvent({ phase, requestId, role, provider, model, workspace =
   const duration = Number.isFinite(elapsedMs) ? Math.max(0, elapsedMs) : active ? Math.max(0, Date.now() - active.startedAt) : 0;
   const resultBuckets = active?.buckets ?? buckets;
   for (const bucket of resultBuckets) {
-    bucket.active = Math.max(0, bucket.active - 1);
     if (outcome === "success") bucket.successes += 1;
     else bucket.failures += 1;
     bucket.durationMs += duration;
@@ -585,19 +594,34 @@ function resetUsageTelemetry() {
   resetAttributionDiagnostics();
 }
 
-function usageSnapshot(collection) {
+function activityFilter(dimension, key, extra = {}) {
+  const filter = { ...extra };
+  if (dimension === "role" && key === "unattributed") filter.role = null;
+  else if (dimension === "origin" && key === "unattributed") filter.origin = null;
+  else if (dimension === "workspace" && key === "unattributed") filter.workspace = null;
+  else filter[dimension] = key;
+  return filter;
+}
+
+function usageSnapshot(collection, dimension, extraFilter = {}) {
   return Object.fromEntries(Object.entries(collection).map(([key, bucket]) => [key, {
     ...bucket,
+    active: agentActivity.countLive(activityFilter(dimension, key, extraFilter)),
     averageDurationMs: bucket.successes + bucket.failures > 0 ? Math.round(bucket.durationMs / (bucket.successes + bucket.failures)) : 0,
   }]));
 }
 
+
 function usageStatus() {
   return {
-    totals: { ...usageTelemetry.totals, averageDurationMs: usageTelemetry.totals.successes + usageTelemetry.totals.failures > 0 ? Math.round(usageTelemetry.totals.durationMs / (usageTelemetry.totals.successes + usageTelemetry.totals.failures)) : 0 },
-    byRole: usageSnapshot(usageTelemetry.byRole),
-    byModel: usageSnapshot(usageTelemetry.byModel),
-    byOrigin: usageSnapshot(usageTelemetry.byOrigin),
+    // Live activity that spans request gaps (tool_wait/user_wait/
+    // subagent_wait), grouped by provider, model, role, origin, and workspace.
+    // Every public bucket's `active` field is derived from this snapshot.
+    activity: agentActivity.snapshot(),
+    totals: { ...usageTelemetry.totals, active: agentActivity.countLive(), averageDurationMs: usageTelemetry.totals.successes + usageTelemetry.totals.failures > 0 ? Math.round(usageTelemetry.totals.durationMs / (usageTelemetry.totals.successes + usageTelemetry.totals.failures)) : 0 },
+    byRole: usageSnapshot(usageTelemetry.byRole, "role"),
+    byModel: usageSnapshot(usageTelemetry.byModel, "model"),
+    byOrigin: usageSnapshot(usageTelemetry.byOrigin, "origin"),
     byWorkspace: Object.fromEntries(Object.entries(usageTelemetry.byWorkspace).map(([key, bucket]) => {
       const { tools, skills, workspace_id: _workspaceId, bridgeObservations, ...publicBucket } = bucket;
       // Workspace-scoped tool/skill coverage. The capability flags were
@@ -612,12 +636,13 @@ function usageStatus() {
       const formatBridgeSkills = (map) => [...map.entries()].map(([skill, value]) => ({ skill, count: value })).sort((a, b) => a.skill.localeCompare(b.skill));
       return [key, {
         ...publicBucket,
+        active: agentActivity.countLive({ workspace: key }),
         averageDurationMs: bucket.successes + bucket.failures > 0 ? Math.round(bucket.durationMs / (bucket.successes + bucket.failures)) : 0,
         skillUses: bucket.skillUses ?? 0,
         skillContextsInjected: bucket.skillContextsInjected ?? 0,
-        byRole: usageSnapshot(bucket.byRole),
-        byModel: usageSnapshot(bucket.byModel),
-        byProvider: usageSnapshot(bucket.byProvider),
+        byRole: usageSnapshot(bucket.byRole, "role", { workspace: key }),
+        byModel: usageSnapshot(bucket.byModel, "model", { workspace: key }),
+        byProvider: usageSnapshot(bucket.byProvider, "provider", { workspace: key }),
         byMcp: { ...bucket.byMcp },
         toolsUnattributed: bucket.toolsUnattributed ?? 0,
         skillsUnattributed: bucket.skillsUnattributed ?? 0,
@@ -2104,7 +2129,17 @@ const CONCURRENCY_CONFIG = parseConcurrencyConfig();
 // risk (unrelated unidentified callers can cap each other) for never silently granting
 // unbounded concurrency when the router cannot tell sessions apart.
 const PROCESS_FALLBACK_SESSION_KEY = "process-scope";
-const activeSubagentSessions = new Map();
+// A held concurrency slot is itself a live agent activity -- something is
+// occupying it until the role response it was acquired for finishes -- so
+// admission accounting is a view over the shared tracker (kind:
+// "subagent_slot", tagged by session key) rather than a second, parallel
+// counter that could drift from it. `openSubagentSlots` only remembers which
+// tracker subject a given (sessionKey) acquisition mapped to, so the
+// zero-argument `releaseSubagentSlot(sessionKey)` call sites keep working
+// unchanged (LIFO, matching the previous counter's semantics).
+const openSubagentSlots = new Map(); // sessionKey -> array of open activity subjects
+let subagentSlotSequence = 0;
+const SUBAGENT_SLOT_KIND = "subagent_slot";
 const concurrencyTelemetry = { denials: 0, denialsByReason: {}, lastDenial: null };
 const spawnFailureTelemetry = { total: 0, byReason: {}, recent: [] };
 
@@ -2113,25 +2148,33 @@ function effectivePerSessionLimit() {
 }
 
 function activeSubagentThreads() {
-  return [...activeSubagentSessions.values()].reduce((sum, value) => sum + value, 0);
+  return agentActivity.countLive({ kind: SUBAGENT_SLOT_KIND });
 }
 
 function tryAcquireSubagentSlot(sessionKey) {
-  const sessionActive = activeSubagentSessions.get(sessionKey) ?? 0;
+  const sessionActive = agentActivity.countLive({ kind: SUBAGENT_SLOT_KIND, tag: sessionKey });
   const perSessionLimit = effectivePerSessionLimit();
   if (perSessionLimit !== null && sessionActive >= perSessionLimit) return "max_concurrent_threads_per_session";
-  activeSubagentSessions.set(sessionKey, sessionActive + 1);
+  subagentSlotSequence += 1;
+  const subject = `${SUBAGENT_SLOT_KIND}:${sessionKey}:${subagentSlotSequence}`;
+  agentActivity.beginRequest(subject, { requestId: subject, kind: SUBAGENT_SLOT_KIND, tag: sessionKey, origin: "subagent" });
+  const stack = openSubagentSlots.get(sessionKey) ?? [];
+  stack.push(subject);
+  openSubagentSlots.set(sessionKey, stack);
   return null;
 }
 
 function releaseSubagentSlot(sessionKey) {
-  const current = activeSubagentSessions.get(sessionKey) ?? 0;
-  if (current <= 1) activeSubagentSessions.delete(sessionKey);
-  else activeSubagentSessions.set(sessionKey, current - 1);
+  const stack = openSubagentSlots.get(sessionKey);
+  if (!stack || stack.length === 0) return;
+  const subject = stack.pop();
+  if (stack.length === 0) openSubagentSlots.delete(sessionKey);
+  agentActivity.finish(subject, { requestId: subject, outcome: "success" });
 }
 
 function resetConcurrencyTelemetry() {
-  activeSubagentSessions.clear();
+  openSubagentSlots.clear();
+  agentActivity.reset();
   concurrencyTelemetry.denials = 0;
   concurrencyTelemetry.denialsByReason = {};
   concurrencyTelemetry.lastDenial = null;
@@ -2141,7 +2184,7 @@ function concurrencyStatus() {
   // Exposed unconditionally (not only after a denial) so an operator can see the
   // per-session limit is currently being enforced as a single process-wide bucket
   // for any unidentified caller, rather than discovering it only once denials occur.
-  const processFallbackActiveThreads = activeSubagentSessions.get(PROCESS_FALLBACK_SESSION_KEY) ?? 0;
+  const processFallbackActiveThreads = agentActivity.countLive({ kind: SUBAGENT_SLOT_KIND, tag: PROCESS_FALLBACK_SESSION_KEY });
   return {
     // This is the router's request-admission view. Codex app child handles are
     // owned by the parent session and are not observable here.
@@ -2154,7 +2197,7 @@ function concurrencyStatus() {
     maxConcurrentThreadsPerSession: effectivePerSessionLimit(),
     effectivePerSessionLimit: effectivePerSessionLimit(),
     activeSubagentThreads: activeSubagentThreads(),
-    activeSessions: activeSubagentSessions.size,
+    activeSessions: agentActivity.distinctTags({ kind: SUBAGENT_SLOT_KIND }).length,
     processFallbackActiveThreads,
     processFallbackEnforcement: processFallbackActiveThreads > 0,
     denials: concurrencyTelemetry.denials,
@@ -2376,6 +2419,16 @@ function openBridgeSubagentUsage({ requestId, context, role, childId, model }) {
     startedAt: Date.now(),
   };
   bridgeSubagentUsage.set(key, entry);
+  agentActivity.beginRequest(`bridge:${key}`, {
+    requestId: key,
+    provider: entry.provider,
+    model: entry.model,
+    role: entry.role,
+    origin: "subagent",
+    workspace: entry.workspace,
+    kind: "bridge_subagent",
+    tag: entry.requestId,
+  });
   recordUsageEvent({
     phase: "selected",
     requestId: key,
@@ -2429,6 +2482,7 @@ function closeBridgeSubagentUsage(key, { outcome = "success", failureClass = nul
   const entry = bridgeSubagentUsage.get(key);
   if (!entry) return false;
   bridgeSubagentUsage.delete(key);
+  agentActivity.finish(`bridge:${key}`, { requestId: key, outcome });
   settleSubagentStatus(entry.requestId, outcome);
   recordUsageEvent({
     phase: "result",
@@ -2538,7 +2592,13 @@ function subagentStatus() {
 // Ingests a provider bridge's report that its CLI invoked a subagent spawn
 // tool. Only reports naming a request id this router actually issued are
 // counted; anything else is a caller that never served a router request.
-const INGESTED_AGENT_EVENTS = new Set(["subagent_spawn", "subagent_result", "subagent_tools_unavailable", "tool_executed", "tool_requested", "tool_unavailable", "skill_exposed", "skill_used"]);
+const INGESTED_AGENT_EVENTS = new Set(["subagent_spawn", "subagent_result", "subagent_tools_unavailable", "tool_executed", "tool_requested", "tool_unavailable", "skill_exposed", "skill_used", "activity"]);
+
+// States a bridge may report directly over the agent-events channel. This is
+// deliberately narrower than AGENT_ACTIVITY_STATES: "active" and "stale" are
+// derived by the router itself (from a request being served, and from the
+// TTL) and are never something an external report can set.
+const REPORTABLE_AGENT_ACTIVITY_STATES = new Set(["tool_wait", "user_wait", "subagent_wait", "resumed", "finished", "failed"]);
 
 let anonymousChildSequence = 0;
 
@@ -2596,6 +2656,23 @@ function ingestAgentEvents(payload) {
     }
     if (event.type === "skill_used") {
       if (recordBridgeSkillUsed({ event, context })) accepted += 1;
+      continue;
+    }
+    if (event.type === "activity") {
+      // A CLI-delegated turn can tell the router things the response stream
+      // never carries: that it is now waiting on its human, that a spawned
+      // subagent it drove itself has reported back, or that the whole
+      // activity is done. Normalized to the same subject convention every
+      // router-driven begin/end uses, so a bridge report and a router-seen
+      // continuation update the same record instead of two disagreeing ones.
+      const state = typeof event.state === "string" ? event.state.trim() : "";
+      if (!REPORTABLE_AGENT_ACTIVITY_STATES.has(state)) {
+        rejected += 1;
+        continue;
+      }
+      const subject = context.sessionKey || `req:${requestId}`;
+      const eventId = typeof event.eventId === "string" && event.eventId.trim() ? event.eventId.trim() : null;
+      if (agentActivity.applyLifecycleEvent(subject, { state, eventId, provider: context.provider, model: context.model, role: context.role, origin: context.role ? "subagent" : (context.provider === "codex" ? "orchestrator" : "direct"), workspace: context.workspace })) accepted += 1;
       continue;
     }
     const role = typeof event.role === "string" && event.role.trim() ? safeMetricLabel(event.role) : null;
@@ -2970,7 +3047,8 @@ function getRouterStatus(now = Date.now()) {
   const providers = Object.fromEntries(ROUTES.map((route) => {
     const state = providerState(route.provider);
     const cooldown = providerCooldown(route.provider, now);
-    const activeRequests = getActiveRequests(route.provider);
+    const inFlightRequests = getActiveRequests(route.provider);
+    const active = agentActivity.countLive({ provider: route.provider });
     const coolingDown = cooldown !== null;
     const enabled = isProviderEnabled(route.provider);
     const tierPrios = [];
@@ -2997,7 +3075,8 @@ function getRouterStatus(now = Date.now()) {
         cooldownRemainingMs: coolingDown ? cooldown.until - now : 0,
         lastResortEligible: coolingDown ? cooldownAllowsLastResort(cooldown, now) : true,
       },
-      activeRequests,
+      active,
+      inFlightRequests,
       cooldownUntil: coolingDown ? new Date(cooldown.until).toISOString() : null,
       cooldownRemainingMs: coolingDown ? cooldown.until - now : 0,
       // Which policy is holding this provider back, and whether it can still be
@@ -3046,7 +3125,14 @@ function getRouterStatus(now = Date.now()) {
     concurrency: concurrencyStatus(),
     subagents: subagentStatus(),
     spawnFailures: spawnFailureStatus(),
-    activeRequests: Object.fromEntries(activeProviderRequests),
+    // Transport-layer counters only: how many upstream calls are literally
+    // open right now, per provider. This is distinct from usage.activity,
+    // which also covers the gaps between requests (tool_wait/user_wait/
+    // subagent_wait) that this counter cannot see.
+    inFlightRequests: Object.fromEntries(activeProviderRequests),
+    // Total live agent activity (spans request gaps), independent of role/
+    // provider dimension -- the same count usage.activity.live reports.
+    liveActivity: agentActivity.countLive(),
     providers,
     recentEvents: [...recentRouterEvents].reverse(),
     codexState: codexStateStatus(),
@@ -3807,7 +3893,7 @@ async function beginShutdown(signal, server, stateFile = effectiveStateFile()) {
     requestId: null,
     phase: "shutdown_started",
     signal,
-    activeRequests: activeAtStart,
+    inFlightRequests: activeAtStart,
     drainTimeoutMs: SHUTDOWN_DRAIN_TIMEOUT_MS,
   }));
   shutdownPromise = (async () => {
@@ -3848,7 +3934,7 @@ function shuffleGroup(group, random = Math.random) {
   }
   items.sort((a, b) => {
     const failureDifference = (providerFailureStreaks.get(a) ?? 0) - (providerFailureStreaks.get(b) ?? 0);
-    return failureDifference || getActiveRequests(a) - getActiveRequests(b);
+    return failureDifference || agentActivity.countLive({ provider: a }) - agentActivity.countLive({ provider: b });
   });
   return items;
 }
@@ -4353,7 +4439,13 @@ async function writeResponseStream(response, upstream, publicModel, signal = nul
       safeWrite(`event: ${eventName}\ndata: ${JSON.stringify(body)}\n\n`);
     }
   };
-  const streamResult = () => ({ toolCalls, failed: terminal === "completed" ? false : true, incompleteReason, limit: reportedLimit });
+  const streamResult = () => ({
+    toolCalls,
+    failed: terminal === "completed" ? false : true,
+    incompleteReason,
+    limit: reportedLimit,
+    inputRequired: incompleteReason === "input_required" || incompleteReason === "requires_action",
+  });
   if (!upstream.body) {
     clearInterval(keepAlive);
     safeWrite(responseFailureEvent("Upstream provider returned no response body."));
@@ -4658,22 +4750,28 @@ async function writeSuccessfulResponse(response, route, result, wantsStream, pub
     return streamResult;
   }
   const body = await upstream.text();
+  const hasInputRequired = (parsed, incomplete) => parsed?.status === "requires_action"
+    || parsed?.status === "input_required"
+    || incomplete?.incompleteReason === "input_required"
+    || incomplete?.incompleteReason === "requires_action";
   if (route.provider === "codex") {
     const toolCalls = countToolCallsFromSse(body);
     const parsed = replaceModelFields(responseTextFromSse(body), publicModel);
     sendJson(response, upstream.status, parsed, responseHeaders);
-    return { toolCalls, failed: responseWasNotCompleted(parsed), ...incompleteFromResponse(parsed) };
+    const incomplete = incompleteFromResponse(parsed);
+    return { toolCalls, failed: responseWasNotCompleted(parsed), ...incomplete, inputRequired: hasInputRequired(parsed, incomplete) };
   }
   try {
     const parsed = JSON.parse(body);
     const toolCalls = countToolCallsInResponse(parsed);
     const rewritten = rewriteToolNamespaces(replaceModelFields(parsed, publicModel));
     sendJson(response, upstream.status, rewritten, responseHeaders);
-    return { toolCalls, failed: responseWasNotCompleted(rewritten), ...incompleteFromResponse(rewritten) };
+    const incomplete = incompleteFromResponse(rewritten);
+    return { toolCalls, failed: responseWasNotCompleted(rewritten), ...incomplete, inputRequired: hasInputRequired(rewritten, incomplete) };
   } catch {
     response.writeHead(upstream.status, { ...responseHeaders, "content-type": upstream.headers.get("content-type") ?? "application/json" });
     response.end(body);
-    return { toolCalls: 0, failed: false };
+    return { toolCalls: 0, failed: false, inputRequired: false };
   }
 }
 
@@ -4729,6 +4827,9 @@ async function providerAvailable(route) {
 }
 
 async function proxyConcreteResponse(response, route, payload, wantsStream, requestId, turnMetadataHeader, workspace, clientSignal = null) {
+  // A direct concrete request has no session to correlate a later
+  // continuation against, so its activity is scoped to this one request.
+  const activitySubject = `req:${requestId}`;
   if (!isProviderEnabled(route.provider)) {
     recordRouterEvent({ phase: "skipped", requestId, requestedModel: payload.model, provider: route.provider, model: payload.model, workspace, failureClass: "provider_disabled" });
     recordRouterEvent({ phase: "result", requestId, requestedModel: payload.model, provider: route.provider, model: payload.model, workspace, outcome: "failure", status: 503, failureClass: "provider_disabled" });
@@ -4750,6 +4851,7 @@ async function proxyConcreteResponse(response, route, payload, wantsStream, requ
   }
   const startedAt = Date.now();
   recordRouterEvent({ phase: "selected", requestId, requestedModel: payload.model, provider: route.provider, model: payload.model, workspace });
+  agentActivity.beginRequest(activitySubject, { requestId, provider: route.provider, model: payload.model, origin: usageOrigin(null, route.provider), workspace: workspace?.key ?? null });
   incrementActiveRequests(route.provider);
   // Direct concrete requests must not silently reroute to another provider.
   // A single bounded retry is permitted for HTTP 502/503/504 from the
@@ -4799,7 +4901,7 @@ async function proxyConcreteResponse(response, route, payload, wantsStream, requ
   // CLI has no flag that removes its subagent tools, so even a leaf turn there
   // can delegate; register the attribution context so such a spawn is counted
   // rather than rejected as an unknown request.
-  noteBridgeRequest(requestId, { provider: route.provider, model: payload.model, role: null, workspace: workspace?.key ?? null });
+  noteBridgeRequest(requestId, { provider: route.provider, model: payload.model, role: null, workspace: workspace?.key ?? null, sessionKey: null });
   try {
     while (attempts < maxAttempts) {
       try {
@@ -4813,27 +4915,32 @@ async function proxyConcreteResponse(response, route, payload, wantsStream, requ
             await jitteredBackoff();
             if (clientSignal?.aborted) {
               recordRouterEvent({ phase: "result", requestId, requestedModel: payload.model, provider: route.provider, model: payload.model, workspace, outcome: "failure", status: 499, failureClass: "client_aborted", elapsedMs: Date.now() - startedAt });
+              agentActivity.endRequest(activitySubject, { requestId, outcome: "failure", hasToolCalls: false });
               return;
             }
             continue;
           }
           recordRouterEvent({ phase: "result", requestId, requestedModel: payload.model, provider: route.provider, model: payload.model, workspace, outcome: "failure", status: result.status, failureClass, elapsedMs: Date.now() - startedAt });
+          agentActivity.endRequest(activitySubject, { requestId, outcome: "failure", hasToolCalls: false });
           if (result.retryable) cooldownProvider(route.provider, cooldownFor(failureClass, result.limit));
           sendFailureResponse(result.status, failureClass);
           return;
         }
         const responseResult = await writeSuccessfulResponse(response, route, result, wantsStream, payload.model, requestId, payload.model);
         recordRouterEvent({ phase: "result", requestId, requestedModel: payload.model, provider: route.provider, model: payload.model, workspace, outcome: responseResult.failed ? "failure" : "success", status: result.upstream.status, failureClass: responseResult.failed ? "upstream_error" : null, elapsedMs: Date.now() - startedAt, toolCalls: responseResult.toolCalls });
+        agentActivity.endRequest(activitySubject, { requestId, outcome: responseResult.failed ? "failure" : "success", hasToolCalls: responseResult.toolCalls > 0, inputRequired: Boolean(responseResult.inputRequired) });
         return;
       } catch (error) {
         logTransportError({ requestId, provider: route.provider, model: payload.model, error, workspace });
         if (error && typeof error === "object" && error.code === "router_auth_unavailable") {
           recordRouterEvent({ phase: "result", requestId, requestedModel: payload.model, provider: route.provider, model: payload.model, workspace, outcome: "failure", status: 401, failureClass: "authentication", elapsedMs: Date.now() - startedAt });
+          agentActivity.endRequest(activitySubject, { requestId, outcome: "failure", hasToolCalls: false });
           sendFailureResponse(401, "authentication");
           return;
         }
         if (clientSignal?.aborted) {
           recordRouterEvent({ phase: "result", requestId, requestedModel: payload.model, provider: route.provider, model: payload.model, workspace, outcome: "failure", status: 499, failureClass: "client_aborted", elapsedMs: Date.now() - startedAt });
+          agentActivity.endRequest(activitySubject, { requestId, outcome: "failure", hasToolCalls: false });
           return;
         }
         if (attempts < CONCRETE_TRANSPORT_MAX_ATTEMPTS - 1 && !response.headersSent) {
@@ -4843,12 +4950,14 @@ async function proxyConcreteResponse(response, route, payload, wantsStream, requ
           await jitteredBackoff();
           if (clientSignal?.aborted) {
             recordRouterEvent({ phase: "result", requestId, requestedModel: payload.model, provider: route.provider, model: payload.model, workspace, outcome: "failure", status: 499, failureClass: "client_aborted", elapsedMs: Date.now() - startedAt });
+            agentActivity.endRequest(activitySubject, { requestId, outcome: "failure", hasToolCalls: false });
             return;
           }
           continue;
         }
         const failureClass = classifyProviderFailure(502, error instanceof Error ? error.message : String(error));
         recordRouterEvent({ phase: "result", requestId, requestedModel: payload.model, provider: route.provider, model: payload.model, workspace, outcome: "failure", status: 502, failureClass, elapsedMs: Date.now() - startedAt });
+        agentActivity.endRequest(activitySubject, { requestId, outcome: "failure", hasToolCalls: false });
         cooldownProvider(route.provider, cooldownFor(failureClass));
         sendFailureResponse(502, failureClass);
         return;
@@ -4860,6 +4969,7 @@ async function proxyConcreteResponse(response, route, payload, wantsStream, requ
     // diagnostics rather than a half-written body.
     const failureClass = classifyProviderFailure(502, error instanceof Error ? error.message : String(error));
     recordRouterEvent({ phase: "result", requestId, requestedModel: payload.model, provider: route.provider, model: payload.model, workspace, outcome: "failure", status: 502, failureClass, elapsedMs: Date.now() - startedAt });
+    agentActivity.endRequest(activitySubject, { requestId, outcome: "failure", hasToolCalls: false });
     if (!response.writableEnded) {
       if (response.headersSent) {
         try { response.write(responseFailureEvent(`Direct request to ${payload.model} could not be completed.`)); } catch {}
@@ -4891,6 +5001,11 @@ function payloadForCandidate(payload, candidate) {
 // rather than direct. `subject` is the human-readable label for the exhaustion
 // error.
 async function proxyFallbackChain(response, { candidates, role = null, origin = null, subject, agentRole = null, sessionKey = null, session = null }, payload, wantsStream, requestId, turnMetadataHeader, workspace, clientSignal = null) {
+  // The subject whose gap-spanning activity this call drives. A session key
+  // is preferred (it is what lets a continuation on a *later* request find
+  // the same record); an unidentified caller still gets a subject scoped to
+  // this one request so provider/model activity is still observable.
+  const activitySubject = sessionKey || `req:${requestId}`;
   if (!candidates || candidates.length === 0) {
     recordSpawnFailure({ requestId, role, requestedModel: payload.model, reason: "provider_exhausted" });
     closeBridgeSubagentsForRequest(requestId, "failure");
@@ -4926,9 +5041,10 @@ async function proxyFallbackChain(response, { candidates, role = null, origin = 
     const attemptStartedAt = Date.now();
     attempted.add(route.provider);
     recordRouterEvent({ phase: "selected", requestId, role, origin, requestedModel: payload.model, provider: route.provider, model: route.model, workspace, selection });
+    agentActivity.beginRequest(activitySubject, { requestId, provider: route.provider, model: route.model, role, origin: origin ?? usageOrigin(role, route.provider), workspace: workspace?.key ?? null });
     // A bridge report names only the request id, so record which provider and
     // workspace this attempt resolved to before the upstream call begins.
-    noteBridgeRequest(requestId, { provider: route.provider, model: route.model, role, workspace: workspace?.key ?? null });
+    noteBridgeRequest(requestId, { provider: route.provider, model: route.model, role, workspace: workspace?.key ?? null, sessionKey });
     if (agentRole === ORCHESTRATOR_AGENT_ROLE) noteOrchestratorSession(sessionKey, route.provider);
     incrementActiveRequests(route.provider);
     try {
@@ -4944,10 +5060,12 @@ async function proxyFallbackChain(response, { candidates, role = null, origin = 
             const failureClass = responseResult.limit?.limitClass ?? (responseResult.incompleteReason ? "unavailable" : "upstream_error");
             cooldownProvider(route.provider, cooldownFor(failureClass, responseResult.limit));
             recordRouterEvent({ phase: "result", requestId, role, origin, requestedModel: payload.model, provider: route.provider, model: route.model, workspace, outcome: "failure", status: result.upstream.status, failureClass, elapsedMs: Date.now() - attemptStartedAt, toolCalls: responseResult.toolCalls, selection });
+            agentActivity.endRequest(activitySubject, { requestId, outcome: "failure", hasToolCalls: responseResult.toolCalls > 0, inputRequired: Boolean(responseResult.inputRequired) });
             return "served";
           }
           clearProviderCooldown(route.provider);
           recordRouterEvent({ phase: "result", requestId, role, origin, requestedModel: payload.model, provider: route.provider, model: route.model, workspace, outcome: "success", status: result.upstream.status, elapsedMs: Date.now() - attemptStartedAt, toolCalls: responseResult.toolCalls, selection });
+          agentActivity.endRequest(activitySubject, { requestId, outcome: "success", hasToolCalls: responseResult.toolCalls > 0, inputRequired: Boolean(responseResult.inputRequired) });
         } catch (streamError) {
           cooldownProvider(route.provider, cooldownFor("upstream_error"));
           throw streamError;
@@ -4960,6 +5078,7 @@ async function proxyFallbackChain(response, { candidates, role = null, origin = 
       if (!fallbackable(result.status, result.body)) {
         response.writeHead(result.status, { "content-type": "application/json", "x-autodev-provider": route.provider, "x-autodev-model": route.model, "x-autodev-request-id": requestId, "x-autodev-router-instance-id": ROUTER_INSTANCE_ID });
         response.end(result.body);
+        agentActivity.endRequest(activitySubject, { requestId, outcome: "failure", hasToolCalls: false });
         return "terminal";
       }
       cooldownProvider(route.provider, cooldownFor(failureClass, result.limit));
@@ -4986,6 +5105,7 @@ async function proxyFallbackChain(response, { candidates, role = null, origin = 
           try { response.write(responseFailureEvent(`Router could not complete ${subject}: ${failureClass}.`)); } catch {}
           response.end();
         }
+        agentActivity.endRequest(activitySubject, { requestId, outcome: "failure", hasToolCalls: false });
         return "served";
       }
       return "fallback";
@@ -5037,7 +5157,7 @@ async function proxyFallbackChain(response, { candidates, role = null, origin = 
   // the same cooling provider at once.
   if (!deadlineReached) {
     const eligible = skipped
-      .filter((route) => isProviderEnabled(route.provider) && !attempted.has(route.provider) && cooldownAllowsLastResort(providerCooldown(route.provider)) && getActiveRequests(route.provider) === 0)
+      .filter((route) => isProviderEnabled(route.provider) && !attempted.has(route.provider) && cooldownAllowsLastResort(providerCooldown(route.provider)) && agentActivity.countLive({ provider: route.provider }) === 0)
       .sort((a, b) => (providerCooldown(a.provider)?.until ?? 0) - (providerCooldown(b.provider)?.until ?? 0))
       .slice(0, LAST_RESORT_MAX_ATTEMPTS);
     for (const route of eligible) {
@@ -5074,6 +5194,7 @@ async function proxyFallbackChain(response, { candidates, role = null, origin = 
   // This is the one path that never emits a `result` event, so the bridge rows
   // opened for this request would otherwise stay open forever.
   closeBridgeSubagentsForRequest(requestId, "failure");
+  agentActivity.endRequest(activitySubject, { requestId, outcome: "failure", hasToolCalls: false });
   const summary = providerCooldownSummary(candidates.map(({ provider }) => provider));
   sendJson(response, 503, exhaustionBody({ subject, summary, failures, model: payload.model, requestId, lastResortAttempts, deadlineReached }), exhaustionHeaders({ summary, requestId }));
 }
@@ -5581,6 +5702,19 @@ async function handleRequest(request, response) {
           requestId,
           workspace: workspace?.key ?? null,
         });
+        // `session.key` here is this role request's own session key, not a
+        // proven identifier for an orchestrator turn actually waiting on it
+        // -- the router has no reliable parent/child link between a role
+        // alias request and whatever spawned it (they can share a session
+        // key by convention, but nothing here proves the parent is still
+        // in flight, or that it is even the same subject the tracker would
+        // use for that parent's own turn). Marking this session subagent_wait
+        // would just be immediately overwritten by this very call's own
+        // beginRequest below and, worse, would misreport an unrelated caller
+        // on the same session id as "waiting on a subagent" it never spawned.
+        // A parent's subagent_wait can only come from a proven relationship:
+        // the activity lifecycle event a bridge reports against the
+        // requestId it was actually served under (see ingestAgentEvents).
         await proxyRoleResponse(response, role, payload, wantsStream, requestId, effectiveTurnMetadataHeader, workspace, clientAbort.signal, session);
       } finally {
         releaseSubagentSlot(session.key);
@@ -5742,6 +5876,9 @@ export {
   safePrivacyWorkspace,
   otelPersistenceSnapshot,
   restoreOtelTelemetry,
+  agentActivity,
+  AGENT_ACTIVITY_TTL_MS,
+  usageStatus,
 };
 
 if (IS_MAIN) {

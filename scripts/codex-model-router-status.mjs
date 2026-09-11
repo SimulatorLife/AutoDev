@@ -71,36 +71,10 @@ const formatProviderPriority = (providerName, state) => {
   return "-";
 };
 
-const getProviderLiveActivity = (state) => {
-  if (typeof state?.active === "number") return state.active;
-  if (typeof state?.liveActivity === "number") return state.liveActivity;
-  if (typeof state?.agentActivity === "number") return state.agentActivity;
-  if (typeof state?.activeAgents === "number") return state.activeAgents;
-  if (typeof state?.activity?.active === "number") return state.activity.active;
-  const statusStr = String(state?.status ?? state?.state ?? "").toLowerCase();
-  const isWaitOrActive = statusStr === "active" ||
-    statusStr.includes("wait") ||
-    statusStr.includes("tool") ||
-    statusStr.includes("user") ||
-    statusStr.includes("subagent") ||
-    Boolean(state?.waiting);
-  if (isWaitOrActive) {
-    return Math.max(1, Number(state?.activeRequests ?? 0));
-  }
-  return Number(state?.activeRequests ?? 0);
-};
+const getProviderLiveActivity = (state) => Number(state?.active ?? 0);
 
-const getProviderInFlight = (state, providerName) => {
-  if (typeof state?.inFlightRequests === "number") return state.inFlightRequests;
-  if (typeof state?.inFlight === "number") return state.inFlight;
-  if (body?.inFlightRequests && typeof body.inFlightRequests[providerName] === "number") {
-    return body.inFlightRequests[providerName];
-  }
-  if (body?.activeRequests && typeof body.activeRequests[providerName] === "number") {
-    return body.activeRequests[providerName];
-  }
-  return Number(state?.activeRequests ?? 0);
-};
+const getProviderInFlight = (state) => Number(state?.inFlightRequests ?? 0);
+
 
 console.log("");
 console.log("Provider     State     Priority                                Status                                   Active  In-Flight  Attempts  Successes  Failures  Last failure");
@@ -186,7 +160,7 @@ const denialsByReason = counts(concurrency.denialsByReason);
 const fallbackWarning = concurrency.processFallbackEnforcement
   ? ` [WARNING: ${concurrency.processFallbackActiveThreads} active thread(s) have no caller-supplied session id and are sharing one process-wide bucket instead of independent per-session slots -- over-denial risk]`
   : "";
-const totalInFlight = Object.values(body.inFlightRequests ?? body.activeRequests ?? {}).reduce((sum, v) => sum + Number(v ?? 0), 0);
+const totalInFlight = Object.values(body.inFlightRequests ?? {}).reduce((sum, v) => sum + Number(v ?? 0), 0);
 console.log("");
 console.log(`Concurrency: per-session ${limit(concurrency.effectivePerSessionLimit)}, active sessions ${concurrency.activeSessions ?? 0}, active subagents ${concurrency.activeSubagentThreads ?? 0}, in-flight requests ${totalInFlight}, denials ${concurrency.denials ?? 0} (${denialsByReason}), last denial ${lastDenial}${fallbackWarning}`);
 

@@ -46,12 +46,22 @@ function headerValue(headers, name) {
   return typeof single === "string" && single.trim() ? single.trim() : null;
 }
 
+export const VALID_ACTIVITY_STATES = Object.freeze(new Set([
+  "tool_wait",
+  "user_wait",
+  "subagent_wait",
+  "resumed",
+  "finished",
+  "failed",
+]));
+
 class AgentEventReporter {
   constructor(url, requestId, spawnTools) {
     this.url = url;
     this.requestId = requestId;
     this.spawnTools = spawnTools;
     this.childSequence = 0;
+    this.lastActivityState = null;
   }
 
   /** An id unique within this request, for callers that have no id of their own. */
@@ -213,6 +223,34 @@ class AgentEventReporter {
       source: typeof source === "string" && source.trim() ? source.trim() : null,
       pluginId: typeof pluginId === "string" && pluginId.trim() ? pluginId.trim() : null,
     } ]);
+  }
+
+  /**
+   * Post a single normalized activity observation.
+   *
+   * { type: "activity", state: "tool_wait" | "user_wait" | "subagent_wait" | "resumed" | "finished" | "failed", childIds? }
+   */
+  async reportActivity(stateOrOptions, maybeChildIds = null) {
+    let state = null;
+    let childIds = null;
+    if (typeof stateOrOptions === "string") {
+      state = stateOrOptions;
+      childIds = maybeChildIds;
+    } else if (stateOrOptions && typeof stateOrOptions === "object") {
+      state = stateOrOptions.state;
+      childIds = stateOrOptions.childIds ?? stateOrOptions.child_ids ?? maybeChildIds;
+    }
+    const cleanState = typeof state === "string" ? state.trim() : "";
+    if (!VALID_ACTIVITY_STATES.has(cleanState)) return;
+    if (this.lastActivityState === "finished" || this.lastActivityState === "failed") return;
+    if (this.lastActivityState === cleanState && cleanState !== "resumed") return;
+    this.lastActivityState = cleanState;
+    const event = { type: "activity", state: cleanState };
+    if (Array.isArray(childIds)) {
+      const cleanIds = childIds.map((id) => typeof id === "string" ? id.trim() : String(id).trim()).filter(Boolean);
+      if (cleanIds.length > 0) event.childIds = cleanIds;
+    }
+    await this.post([ event ]);
   }
 
   async post(events) {

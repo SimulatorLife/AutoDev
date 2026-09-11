@@ -316,17 +316,23 @@ function createToolObserver(agentEvents) {
       if (requested.has(key)) return;
       requested.add(key);
       void agentEvents.reportToolRequested({ tool, callId, server });
+      if (typeof agentEvents.reportActivity === "function") {
+        if (tool === "ask_question") void agentEvents.reportActivity({ state: "user_wait" });
+        else void agentEvents.reportActivity({ state: "tool_wait" });
+      }
       return;
     }
     if (evidence.kind === "unavailable") {
       if (settled.has(key)) return;
       settled.add(key);
       void agentEvents.reportToolUnavailable({ tool, callId, reason: evidence.reason, server });
+      if (typeof agentEvents.reportActivity === "function") void agentEvents.reportActivity({ state: "resumed" });
       return;
     }
     if (evidence.kind !== "executed" || settled.has(key)) return;
     settled.add(key);
     void agentEvents.reportToolExecuted({ tool, callId, status: evidence.status, durationMs: evidence.durationMs, server });
+    if (typeof agentEvents.reportActivity === "function") void agentEvents.reportActivity({ state: "resumed" });
   };
   // agy auto-denies a tool whose permission the run was not granted and says
   // so only on stderr, which this bridge already parses into the failure it
@@ -395,6 +401,9 @@ function createSpawnTracker(agentEvents) {
     // Telemetry needs a reporter the router actually authorized; pending-child
     // tracking above does not, and must happen whether or not one exists.
     if (agentEvents) void agentEvents.reportSpawns({ tool: toolName, children });
+    if (typeof agentEvents?.reportActivity === "function") {
+      void agentEvents.reportActivity({ state: "subagent_wait", childIds: children.map((c) => c.id) });
+    }
   };
   // Deleting the map entry is what makes a close idempotent: a key already
   // closed (by this or the flush path) has nothing left to delete, so a
@@ -406,6 +415,9 @@ function createSpawnTracker(agentEvents) {
     if (!open) return;
     openSpawns.delete(key);
     if (agentEvents) void agentEvents.reportResults({ tool: open.tool, children: open.children, outcome, durationMs: Date.now() - open.startedAt });
+    if (openSpawns.size === 0 && typeof agentEvents?.reportActivity === "function") {
+      void agentEvents.reportActivity({ state: "resumed" });
+    }
   };
   // A dispatch step reaching a terminal state settles the *dispatch*, not the
   // children. `DONE` means agy handed the work off successfully and the child
@@ -479,17 +491,33 @@ function updateDelegationState(delegation, update, isSpawnTool) {
   return { kind: "unchanged" };
 }
 
+function isCommandStep(update) {
+  const stepType = String(update?.step_type ?? "").toLowerCase();
+  if (stepType === "command") return true;
+  const tool = String(update?.tool_name ?? update?.tool_info?.name ?? "").toLowerCase();
+  return tool === "run_command" || tool === "exec_command" || tool === "execute_command" || tool === "bash";
+}
+
+function isWaitStep(update) {
+  const stepType = String(update?.step_type ?? "").toLowerCase();
+  if (stepType === "wait") return true;
+  const tool = String(update?.tool_name ?? update?.tool_info?.name ?? "").toLowerCase();
+  return tool === "ask_question" || tool === "schedule";
+}
+
 /**
- * True while agy is either inside a delegator step or still has children the
- * spawn tracker has not closed. `invoke_subagent` hands work to children and
- * reports its own step `DONE` immediately -- the dispatch finished, not the
- * work -- so `activeTool` alone goes false long before the children do.
- * `pendingChildren` is expected to be kept in sync with the spawn tracker's
- * `openSpawnCount()` by the caller; this function only reads it.
+ * True while agy is either inside a delegator step, still has children the
+ * spawn tracker has not closed, has active commands running, or has active waits.
+ * `invoke_subagent` hands work to children and reports its own step `DONE`
+ * immediately -- the dispatch finished, not the work -- so `activeTool` alone
+ * goes false long before the children do. Active commands and waits keep the turn
+ * live so disconnect protection and heartbeats protect in-flight execution.
  */
 function isDelegationActive(delegation) {
   if (!delegation || typeof delegation !== "object") return false;
   if (delegation.activeTool) return true;
+  if (Number(delegation.activeCommands) > 0 || Boolean(delegation.activeCommand)) return true;
+  if (Number(delegation.activeWaits) > 0 || Boolean(delegation.activeWait)) return true;
   return Number(delegation.pendingChildren) > 0;
 }
 
@@ -498,23 +526,24 @@ function isDelegationActive(delegation) {
  * do given the current delegation tracker. Pure helper so the close handler
  * and tests share one decision point.
  *
- * `kill: false` while EITHER a delegator step is active OR children it
- * dispatched are still open, so a turn that has moved past its
- * `invoke_subagent` step -- ACTIVE -> DONE closes the dispatch, not the
- * children -- is not mistaken for an ordinary idle turn while those children
- * are still running. An ordinary disconnected turn -- no delegator ever ran,
- * or every child it dispatched has already closed -- still gets killed.
+ * `kill: false` while a delegator step is active, children it dispatched are
+ * still open, active commands are running, or active waits are pending, so a
+ * turn mid-flight is not mistaken for an ordinary idle turn.
  */
 function decideCloseOnDelegation(delegation) {
   if (isDelegationActive(delegation)) {
+    const activeCommands = Number(delegation?.activeCommands) || (delegation?.activeCommand ? 1 : 0);
+    const activeWaits = Number(delegation?.activeWaits) || (delegation?.activeWait ? 1 : 0);
     return {
       kill: false,
       reason: "client_disconnected",
-      tool: delegation?.activeTool ?? null,
+      tool: delegation?.activeTool ?? delegation?.activeCommand ?? null,
       pendingChildren: Number(delegation?.pendingChildren) || 0,
+      activeCommands,
+      activeWaits,
     };
   }
-  return { kill: true, reason: "provider_interrupted", tool: null, pendingChildren: 0 };
+  return { kill: true, reason: "provider_interrupted", tool: null, pendingChildren: 0, activeCommands: 0, activeWaits: 0 };
 }
 function modelMetadata() {
   return {
@@ -1034,8 +1063,10 @@ async function handle(request, response) {
         console.error(`agy delegating ${spawnChildren.length} subagent(s) through Codex`);
       }
       logTurnEnd("succeeded");
+      if (typeof agentEvents?.reportActivity === "function") void agentEvents.reportActivity({ state: "finished" });
       sendJson(response, 200, responsePayload(payload.model ?? model, result.text, result.result, undefined, undefined, output));
     } catch (error) {
+      if (typeof agentEvents?.reportActivity === "function") void agentEvents.reportActivity({ state: "failed" });
       flushSpawns("failure");
       reportPermissionDenial(error);
       if (spawnSession) spawnSessions.close(spawnSession);
@@ -1121,7 +1152,11 @@ async function handle(request, response) {
     activeStep: null,
     activatedAt: 0,
     pendingChildren: 0,
+    activeCommands: 0,
+    activeWaits: 0,
   };
+  const activeCommands = new Set();
+  const activeWaits = new Set();
   let clientDisconnectMidDelegation = false;
   let clientDisconnectDetail = "";
   // Synthetic activity the bridge emits while agy is mid-delegation, so the
@@ -1154,7 +1189,13 @@ async function handle(request, response) {
   };
   const delegationDetail = (decision) => decision.tool
     ? `during ${decision.tool}`
-    : `while ${decision.pendingChildren} delegated child(ren) were still running`;
+    : decision.pendingChildren > 0
+    ? `while ${decision.pendingChildren} delegated child(ren) were still running`
+    : decision.activeCommands > 0
+    ? `while ${decision.activeCommands} active command(s) were still running`
+    : decision.activeWaits > 0
+    ? `while ${decision.activeWaits} active wait(s) were pending`
+    : "while active commands or waits were still running";
   const onResponseError = () => {
     clientClosed = true;
     clearInterval(keepAlive);
@@ -1214,6 +1255,21 @@ async function handle(request, response) {
       }
       if (event.event === "step_update") {
         const update = event.step_update ?? {};
+        const stepToolName = String(update?.tool_name ?? update?.tool_info?.name ?? "");
+        const stepState = String(update?.state ?? "").toUpperCase();
+        const stepIndex = Number.isFinite(update?.step_index) ? update.step_index : (stepToolName || "unknown");
+
+        if (isCommandStep(update)) {
+          if (stepState === "ACTIVE") activeCommands.add(stepIndex);
+          else if (stepState === "DONE" || stepState === "ERROR" || stepState === "FAILED" || stepState === "CANCELLED") activeCommands.delete(stepIndex);
+        }
+        if (isWaitStep(update)) {
+          if (stepState === "ACTIVE") activeWaits.add(stepIndex);
+          else if (stepState === "DONE" || stepState === "ERROR" || stepState === "FAILED" || stepState === "CANCELLED") activeWaits.delete(stepIndex);
+        }
+        delegation.activeCommands = activeCommands.size;
+        delegation.activeWaits = activeWaits.size;
+
         observeSpawnStep(update);
         observeToolStep(update);
         // Kept in sync on every step so a dispatch step's own DONE -- which
@@ -1239,7 +1295,7 @@ async function handle(request, response) {
         // this classification -- and therefore the kill decision -- still
         // works when the telemetry headers are absent.
         const transition = updateDelegationState(delegation, update, (name) => isSpawnToolName(agentEvents, name));
-        if (transition.kind === "entered") startDelegationHeartbeat();
+        if (transition.kind === "entered" || isDelegationActive(delegation)) startDelegationHeartbeat();
         // The dispatch step closing does not by itself mean delegation is
         // over: only stop the heartbeat once the spawn tracker agrees no
         // dispatched children are still open.
@@ -1251,6 +1307,10 @@ async function handle(request, response) {
     stopDelegationHeartbeat();
     flushSpawns("success");
     delegation.pendingChildren = openSpawnCount();
+    activeCommands.clear();
+    activeWaits.clear();
+    delegation.activeCommands = 0;
+    delegation.activeWaits = 0;
     // If the upstream closed mid-delegation, the run still completes here --
     // agy got its full PRINT_TIMEOUT -- but the parent is gone. Emit an
     // incomplete event carrying the cause so any future re-attach can replay
@@ -1258,6 +1318,7 @@ async function handle(request, response) {
     if (clientDisconnectMidDelegation) {
       turnSettled = true;
       logTurnEnd("succeeded-mid-delegation", `agy finished after upstream close: ${clientDisconnectDetail}`);
+      if (typeof agentEvents?.reportActivity === "function") void agentEvents.reportActivity({ state: "finished" });
       for (const [ eventName, body ] of terminalIncompleteEvents({
         responseId,
         itemId,
@@ -1305,6 +1366,7 @@ async function handle(request, response) {
     }
     emit("response.completed", { type: "response.completed", response: completed });
     turnSettled = true;
+    if (typeof agentEvents?.reportActivity === "function") void agentEvents.reportActivity({ state: "finished" });
     logTurnEnd("succeeded");
     if (isWritable()) {
       try { response.end("data: [DONE]\n\n"); } catch { }
@@ -1313,6 +1375,11 @@ async function handle(request, response) {
     clearInterval(keepAlive);
     stopDelegationHeartbeat();
     flushSpawns("failure");
+    activeCommands.clear();
+    activeWaits.clear();
+    delegation.activeCommands = 0;
+    delegation.activeWaits = 0;
+    if (typeof agentEvents?.reportActivity === "function") void agentEvents.reportActivity({ state: "failed" });
     // Reported before the writability check below returns: a permission gap is
     // a fact about the workspace, not about whether the parent is still
     // listening, and it is the only unavailability agy ever states out loud.
@@ -1378,4 +1445,4 @@ if (IS_MAIN) {
   });
 }
 
-export { ANTIGRAVITY_SKILL_EXPOSURE_SOURCE, ANTIGRAVITY_WEB_RESEARCH_TOOLS, agyArgs, agyErrorDetails, agyFailureMessage, agyPermissionFailure, antigravityToolServer, createSpawnTracker, createToolObserver, decideCloseOnDelegation, isDelegationActive, modelEffort, promptFromInput, resolveEffort, resolveModel, spawnedChildren, subagentModel, toolStepEvidence, updateDelegationState };
+export { ANTIGRAVITY_SKILL_EXPOSURE_SOURCE, ANTIGRAVITY_WEB_RESEARCH_TOOLS, agyArgs, agyErrorDetails, agyFailureMessage, agyPermissionFailure, antigravityToolServer, createSpawnTracker, createToolObserver, decideCloseOnDelegation, isCommandStep, isDelegationActive, isWaitStep, modelEffort, promptFromInput, resolveEffort, resolveModel, spawnedChildren, subagentModel, toolStepEvidence, updateDelegationState };

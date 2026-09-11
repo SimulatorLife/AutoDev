@@ -257,17 +257,11 @@ The router and dashboard cleanly separate **live agent activity** from **in-flig
 
 ### Lifecycle event contract and configurable freshness TTL
 
-The router integrates with upstream agent runtimes (Codex, provider bridges) through an explicit **lifecycle event contract**:
+The router integrates with upstream agent runtimes through explicit agent activity events:
 
-- **Lifecycle spans over persistent health gauges:**
-  Rather than assuming long-lived daemon health, the router ingests discrete lifecycle trace spans and status events (such as server initialization, tool discovery, and runtime heartbeats).
-- **Configurable freshness TTL (`CODEX_ROUTER_OTEL_HEALTH_TTL_MS`):**
-  Freshness is governed by the `CODEX_ROUTER_OTEL_HEALTH_TTL_MS` environment variable (default: `120000` ms / 2 minutes).
-- **Observed vs. Ready semantics:**
-  - `observed`: Measures unique server names or instances seen in lifecycle spans within the relevant partition scope (e.g. orchestrator or subagent union). Repeated spans do not inflate this inventory.
-  - `ready`: Measures servers whose most recent lifecycle observation was successful and occurred within the configured freshness TTL (`now - lastSeenMs <= CODEX_ROUTER_OTEL_HEALTH_TTL_MS`).
-- **Fail-closed stale decay:**
-  When a server's last successful lifecycle observation ages beyond `CODEX_ROUTER_OTEL_HEALTH_TTL_MS`, its status decays gracefully to `stale`. This avoids false-positive "ready" states without initiating disruptive process restarts or kills. Session recency (`sessionsRecent`) is similarly bounded by the same TTL.
+- **Lifecycle events:** Provider bridges emit `{ type: "activity", state, childIds? }` events for `tool_wait`, `user_wait`, `subagent_wait`, `resumed`, `finished`, and `failed`; router-visible response tool calls and continuations supply the native path.
+- **Configurable freshness TTL (`CODEX_ROUTER_AGENT_ACTIVITY_TTL_MS`):** Defaults to `300000` ms / 5 minutes.
+- **Live states:** `active`, `resumed`, `tool_wait`, `user_wait`, and `subagent_wait` count as live; `finished` and `failed` are terminal. Non-terminal activity older than the TTL becomes `stale` and is removed from live counts without killing or restarting processes.
 
 The dashboard's Operational summary groups Codex receiver, state-database,
 and concurrency values as category/metric/value rows instead of embedding those

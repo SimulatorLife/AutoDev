@@ -140,7 +140,7 @@ test('router dashboard and status CLI contract separates live agent activity fro
   assert.match(rawDashboard, /window\.getProviderLiveActivity = getProviderLiveActivity/);
   assert.match(rawDashboard, /window\.isProviderLiveActive = isProviderLiveActive/);
   // Provider active badge and row remain active during tool/user/subagent waits
-  assert.match(rawDashboard, /statusStr\.includes\("wait"\) \|\| statusStr\.includes\("tool"\) \|\| statusStr\.includes\("user"\) \|\| statusStr\.includes\("subagent"\)/);
+  assert.match(rawDashboard, /return Number\(p\?\.active \?\? 0\)/);
   assert.match(rawDashboard, /provider-active/);
   assert.match(rawDashboard, /<status-badge \$\{isActive \? 'active=""' : ''\}>\$\{displayActive\}<\/status-badge>/);
   // Operational summary labels in-flight requests separately
@@ -158,12 +158,12 @@ test('router dashboard and status CLI contract separates live agent activity fro
   const metricsDoc = await readFile(path.join(root, 'docs', 'metrics-dashboard.md'), 'utf8');
   assert.match(metricsDoc, /Live agent activity vs\. in-flight requests transport diagnostics/);
   assert.match(metricsDoc, /Lifecycle event contract and configurable freshness TTL/);
-  assert.match(metricsDoc, /CODEX_ROUTER_OTEL_HEALTH_TTL_MS/);
+  assert.match(metricsDoc, /CODEX_ROUTER_AGENT_ACTIVITY_TTL_MS/);
 
   const routingDoc = await readFile(path.join(root, 'docs', 'provider-routing.md'), 'utf8');
   assert.match(routingDoc, /Live agent activity vs\. in-flight requests transport diagnostics/);
   assert.match(routingDoc, /Lifecycle event contract and configurable TTL/);
-  assert.match(routingDoc, /CODEX_ROUTER_OTEL_HEALTH_TTL_MS/);
+  assert.match(routingDoc, /CODEX_ROUTER_AGENT_ACTIVITY_TTL_MS/);
 });
 
 test('metrics dashboard renders requested counters and recent links', () => {

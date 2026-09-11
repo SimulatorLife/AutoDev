@@ -581,6 +581,7 @@
               <th>Status</th>
               <th>Effective limits &amp; cooldowns</th>
               <th>Active</th>
+              <th>In-flight</th>
               <th>Avg turn</th>
               <th>Outcomes</th>
               <th>Last failure</th>
@@ -589,7 +590,7 @@
           </thead>
           <tbody id="providers-tbody">
             <tr>
-              <td colspan="10" class="dim" style="text-align:center">Loading providers...</td>
+              <td colspan="11" class="dim" style="text-align:center">Loading providers...</td>
             </tr>
           </tbody>
         </table>
@@ -2079,34 +2080,12 @@
 
     function getProviderLiveActivity(p) {
       if (!p || typeof p !== "object") return 0;
-      if (typeof p.active === "number") return p.active;
-      if (typeof p.liveActivity === "number") return p.liveActivity;
-      if (typeof p.agentActivity === "number") return p.agentActivity;
-      if (typeof p.activeAgents === "number") return p.activeAgents;
-      if (typeof p.activity?.active === "number") return p.activity.active;
-      const statusStr = String(p.status ?? p.state ?? "").toLowerCase();
-      const isWaitOrActive = statusStr === "active" ||
-        statusStr.includes("wait") ||
-        statusStr.includes("tool") ||
-        statusStr.includes("user") ||
-        statusStr.includes("subagent") ||
-        Boolean(p.waiting);
-      if (isWaitOrActive) {
-        return Math.max(1, Number(p.activeRequests ?? 0));
-      }
-      return Number(p.activeRequests ?? 0);
+      return Number(p?.active ?? 0);
     }
 
     function isProviderLiveActive(p) {
       if (!p || typeof p !== "object") return false;
-      if (getProviderLiveActivity(p) > 0) return true;
-      if (Number(p.activeRequests ?? 0) > 0) return true;
-      if (Number(p.inFlightRequests ?? 0) > 0) return true;
-      const statusStr = String(p.status ?? p.state ?? "").toLowerCase();
-      if (statusStr === "active" || statusStr.includes("wait") || statusStr.includes("tool") || statusStr.includes("user") || statusStr.includes("subagent")) {
-        return true;
-      }
-      return Boolean(p.waiting);
+      return Number(p?.active ?? 0) > 0;
     }
 
     window.formatRoutingPriority = formatRoutingPriority;
@@ -2232,7 +2211,7 @@
         }
 
         if (!providersEntries.length) {
-          providersTbody.innerHTML = `<tr><td colspan="10" class="dim" style="text-align:center">No providers configured</td></tr>`;
+          providersTbody.innerHTML = `<tr><td colspan="11" class="dim" style="text-align:center">No providers configured</td></tr>`;
         } else {
           providersTbody.innerHTML = providersEntries.map(([ providerName, p ]) => {
             const configuredModels = Object.values(p.configuredModels ?? {});
@@ -2300,6 +2279,7 @@
               <td><health-badge state="${stateAttr}">${escapeHtml(statusLabel)}${cooldownSuffix}</health-badge></td>
               <td class="cell-left">${limitsCooldownHtml}</td>
               <td><status-badge ${isActive ? 'active=""' : ''}>${displayActive}</status-badge></td>
+              <td>${Number(p.inFlightRequests ?? 0)}</td>
               <td>${escapeHtml(avgTurn)}</td>
               <td class="outcome-cell"><outcome-bar fail="${Number(p.failures ?? 0)}" skip="${Number(p.skipped ?? 0)}" success="${Number(p.successes ?? 0)}"></outcome-bar></td>
               <td>${failureHtml}</td>
@@ -2956,7 +2936,7 @@
           ? status.inFlightRequests
           : (status.inFlightRequests && typeof status.inFlightRequests === "object")
             ? Number(Object.values(status.inFlightRequests).reduce((sum, v) => sum + Number(v ?? 0), 0))
-            : Number(Object.values(status.activeRequests ?? {}).reduce((sum, v) => sum + Number(v ?? 0), 0));
+            : 0;
 
         opsGrid.innerHTML = `
           <section class="ops-group">

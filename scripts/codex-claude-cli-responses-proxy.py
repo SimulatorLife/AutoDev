@@ -353,6 +353,7 @@ class AgentEventReporter:
         self._reports: queue.Queue[list[dict[str, Any]]] = queue.Queue()
         self._worker_lock = threading.Lock()
         self._worker: threading.Thread | None = None
+        self.last_activity_state: str | None = None
 
     def is_spawn_tool(self, name: Any) -> bool:
         return isinstance(name, str) and name in self.spawn_tools
@@ -514,14 +515,46 @@ class AgentEventReporter:
             "pluginId": normalized_label(effective_plugin_id),
         }])
 
+    def report_activity_async(
+        self,
+        state: Any,
+        child_ids: Any = None,
+        *,
+        childIds: Any = None,
+    ) -> None:
+        """Report a normalized activity lifecycle observation."""
+        effective_child_ids = child_ids if child_ids is not None else childIds
+        effective_state = state
+        if isinstance(state, dict):
+            if effective_child_ids is None:
+                effective_child_ids = state.get("childIds") if "childIds" in state else state.get("child_ids")
+            effective_state = state.get("state")
+        state_str = normalized_label(effective_state)
+        valid_states = ("tool_wait", "user_wait", "subagent_wait", "resumed", "finished", "failed")
+        if state_str not in valid_states:
+            return
+        if self.last_activity_state in ("finished", "failed"):
+            return
+        if self.last_activity_state == state_str and state_str != "resumed":
+            return
+        self.last_activity_state = state_str
+        event: dict[str, Any] = {"type": "activity", "state": state_str}
+        if isinstance(effective_child_ids, (list, tuple)):
+            clean_ids = [str(cid).strip() for cid in effective_child_ids if str(cid).strip()]
+            if clean_ids:
+                event["childIds"] = clean_ids
+        self.post_async([event])
+
     reportToolExecuted = report_tool_executed_async
     reportToolRequested = report_tool_requested_async
     reportToolUnavailable = report_tool_unavailable_async
     reportSkillExposed = report_skill_exposed_async
+    reportActivity = report_activity_async
     report_tool_executed = report_tool_executed_async
     report_tool_requested = report_tool_requested_async
     report_tool_unavailable = report_tool_unavailable_async
     report_skill_exposed = report_skill_exposed_async
+    report_activity = report_activity_async
 
     def post_async(self, events: list[dict[str, Any]]) -> None:
         """Hand a report to the worker. Never blocks the stream loop."""
@@ -1996,6 +2029,11 @@ class Handler(BaseHTTPRequestHandler):
                     return
                 if agent_events.is_spawn_tool(name):
                     agent_events.report_spawn_async(str(name), subagent_role_from_input(block))
+                    agent_events.report_activity_async("subagent_wait")
+                elif str(name).strip().lower() == "ask_question":
+                    agent_events.report_activity_async("user_wait")
+                else:
+                    agent_events.report_activity_async("tool_wait")
                 if not isinstance(name, str) or not name.strip():
                     return
                 raw_id = block.get("id")
@@ -2025,6 +2063,7 @@ class Handler(BaseHTTPRequestHandler):
                 kind, detail = classify_tool_result(block)
                 if kind == "unavailable":
                     agent_events.report_tool_unavailable_async(name, call_id=call_id, reason=detail, server=tool_server(name))
+                    agent_events.report_activity_async("resumed")
                     return
                 agent_events.report_tool_executed_async(
                     name,
@@ -2033,6 +2072,7 @@ class Handler(BaseHTTPRequestHandler):
                     server=tool_server(name),
                     duration_ms=(time.monotonic() - started_at) * 1000,
                 )
+                agent_events.report_activity_async("resumed")
 
             def note_available_tools(tools: Any) -> None:
                 """Record the turn's tool inventory, and report an orchestrator
@@ -2184,17 +2224,25 @@ class Handler(BaseHTTPRequestHandler):
             for event_name, event_payload in spawn_events:
                 self.send_sse(event_name, event_payload)
             self.send_sse("response.completed", {"type": "response.completed", "response": payload})
+            if agent_events is not None:
+                agent_events.report_activity_async("finished")
             self.wfile.write(b"data: [DONE]\n\n")
             self.wfile.flush()
         except (BrokenPipeError, ConnectionResetError, OSError):
+            if agent_events is not None:
+                agent_events.report_activity_async("failed")
             print("client disconnected; Claude request cancelled", flush=True)
         except WorkspaceResolutionError as exc:
+            if agent_events is not None:
+                agent_events.report_activity_async("failed")
             print(f"Claude workspace resolution failed: {exc}", flush=True)
             try:
                 self.send_json(400, {"error": {"message": str(exc), "type": "invalid_request_error"}})
             except (BrokenPipeError, ConnectionResetError, OSError):
                 pass
         except ClaudeRateLimitError as exc:
+            if agent_events is not None:
+                agent_events.report_activity_async("failed")
             print(f"Claude rate limit: {exc}", flush=True)
             try:
                 if stream_headers_sent:
@@ -2214,6 +2262,8 @@ class Handler(BaseHTTPRequestHandler):
             except (BrokenPipeError, ConnectionResetError, OSError):
                 pass
         except ClaudeOverloadedError as exc:
+            if agent_events is not None:
+                agent_events.report_activity_async("failed")
             print(f"Claude overloaded: {exc}", flush=True)
             # Capacity pressure is a limit of a kind, but a transient one: it is
             # never a hard class, so it can only ever shorten routing here.
@@ -2236,6 +2286,8 @@ class Handler(BaseHTTPRequestHandler):
             except (BrokenPipeError, ConnectionResetError, OSError):
                 pass
         except subprocess.TimeoutExpired:
+            if agent_events is not None:
+                agent_events.report_activity_async("failed")
             if stream_headers_sent:
                 self.send_incomplete(
                     response_id=response_id,
@@ -2251,6 +2303,8 @@ class Handler(BaseHTTPRequestHandler):
             else:
                 self.send_json(504, {"error": {"message": "Claude CLI timed out", "type": "timeout_error"}})
         except Exception as exc:
+            if agent_events is not None:
+                agent_events.report_activity_async("failed")
             print(f"Claude upstream failure: {exc}", flush=True)
             try:
                 if stream_headers_sent:
@@ -2270,6 +2324,8 @@ class Handler(BaseHTTPRequestHandler):
             except (BrokenPipeError, ConnectionResetError, OSError):
                 pass
         finally:
+            if agent_events is not None:
+                agent_events.flush()
             # The registry must not outlive the turn on any path. A stale entry
             # would accept a delegation from a CLI that outlived its request and
             # attach it to nothing, and on a reused session key it would attach

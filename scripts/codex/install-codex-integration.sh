@@ -60,6 +60,7 @@ runtime_module_names=(
   scripts/codex/lib/resolve-workspace.mjs
   scripts/codex/lib/bridge-role.mjs
   scripts/codex/lib/agent-events.mjs
+  scripts/codex/lib/agent-activity.mjs
   scripts/codex/lib/provider-limits.mjs
   scripts/codex/lib/responses-item-ids.mjs
   scripts/codex/lib/codex-spawn-tools.mjs

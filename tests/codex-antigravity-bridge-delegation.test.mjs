@@ -4,7 +4,9 @@ import test from "node:test";
 import {
   createSpawnTracker,
   decideCloseOnDelegation,
+  isCommandStep,
   isDelegationActive,
+  isWaitStep,
   updateDelegationState,
 } from "../scripts/codex-antigravity-cli-responses-proxy.mjs";
 
@@ -276,4 +278,66 @@ test("delegation tracking still recognizes agy's own spawn tool when the router 
   const other = createSpawnTracker(null);
   other.observeSpawnStep({ step_index: 2, state: "ACTIVE", step_type: "tool", tool_name: "manage_subagents" });
   assert.equal(other.openSpawnCount(), 0);
+});
+
+test("isDelegationActive treats active commands as live", () => {
+  const state = { activeTool: null, activeStep: null, activatedAt: 0, pendingChildren: 0, activeCommands: 1 };
+  assert.equal(isDelegationActive(state), true);
+  state.activeCommands = 0;
+  state.activeCommand = "run_command";
+  assert.equal(isDelegationActive(state), true);
+  state.activeCommand = null;
+  assert.equal(isDelegationActive(state), false);
+});
+
+test("isDelegationActive treats active waits as live", () => {
+  const state = { activeTool: null, activeStep: null, activatedAt: 0, pendingChildren: 0, activeWaits: 1 };
+  assert.equal(isDelegationActive(state), true);
+  state.activeWaits = 0;
+  state.activeWait = "ask_question";
+  assert.equal(isDelegationActive(state), true);
+  state.activeWait = null;
+  assert.equal(isDelegationActive(state), false);
+});
+
+test("decideCloseOnDelegation does not kill while active commands or waits are running", () => {
+  const cmdState = { activeTool: null, activeStep: null, activatedAt: 0, pendingChildren: 0, activeCommands: 1, activeWaits: 0 };
+  const cmdDecision = decideCloseOnDelegation(cmdState);
+  assert.equal(cmdDecision.kill, false);
+  assert.equal(cmdDecision.reason, "client_disconnected");
+  assert.equal(cmdDecision.activeCommands, 1);
+  assert.equal(cmdDecision.activeWaits, 0);
+
+  const waitState = { activeTool: null, activeStep: null, activatedAt: 0, pendingChildren: 0, activeCommands: 0, activeWaits: 1 };
+  const waitDecision = decideCloseOnDelegation(waitState);
+  assert.equal(waitDecision.kill, false);
+  assert.equal(waitDecision.reason, "client_disconnected");
+  assert.equal(waitDecision.activeCommands, 0);
+  assert.equal(waitDecision.activeWaits, 1);
+});
+
+test("heartbeat gate stays open across tool execution while active commands or waits exist", () => {
+  const state = freshState();
+  state.activeCommands = 1;
+  assert.equal(isDelegationActive(state), true);
+
+  state.activeCommands = 0;
+  assert.equal(isDelegationActive(state), false);
+
+  state.activeWaits = 2;
+  assert.equal(isDelegationActive(state), true);
+  state.activeWaits = 0;
+  assert.equal(isDelegationActive(state), false);
+});
+
+test("isCommandStep and isWaitStep classify execution steps accurately", () => {
+  assert.equal(isCommandStep({ step_type: "command" }), true);
+  assert.equal(isCommandStep({ tool_name: "run_command" }), true);
+  assert.equal(isCommandStep({ tool_name: "bash" }), true);
+  assert.equal(isCommandStep({ tool_name: "read_file" }), false);
+
+  assert.equal(isWaitStep({ step_type: "wait" }), true);
+  assert.equal(isWaitStep({ tool_name: "ask_question" }), true);
+  assert.equal(isWaitStep({ tool_name: "schedule" }), true);
+  assert.equal(isWaitStep({ tool_name: "run_command" }), false);
 });
