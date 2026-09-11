@@ -140,6 +140,81 @@ class AgentEventReporter {
     } ]);
   }
 
+  /**
+   * Post a single tool_executed observation.
+   *
+   * The provider bridge just ran a tool call for the model. This is the
+   * first-class evidence the router needs to mark a tool name as actually
+   * available on this workspace -- without it, per-workspace tool use must
+   * remain unavailable to honour the fail-closed contract. The tool name and
+   * optional call id are the only identifying metadata the router retains;
+   * arguments and outputs are deliberately not propagated.
+   */
+  async reportToolExecuted({ tool, callId = null, status = "ok", server = null, durationMs = null } = {}) {
+    if (typeof tool !== "string" || !tool.trim()) return;
+    await this.post([ {
+      type: "tool_executed",
+      tool: tool.trim(),
+      callId: typeof callId === "string" && callId.trim() ? callId.trim() : null,
+      status: status === "error" || status === "failure" ? "error" : status === "ok" || status === "success" ? "ok" : "unknown",
+      server: typeof server === "string" && server.trim() ? server.trim() : null,
+      durationMs: Number.isFinite(durationMs) ? Math.max(0, Math.round(durationMs)) : null,
+    } ]);
+  }
+
+  /**
+   * Post a single tool_requested observation. The model asked the bridge to
+   * invoke a tool, but the bridge did not necessarily run it -- some
+   * requested tools fail closed at the bridge boundary. Reporting both
+   * requested and executed is what lets the router distinguish "the
+   * provider never offered the tool" from "the provider offered it but
+   * something stopped it from running".
+   */
+  async reportToolRequested({ tool, callId = null, server = null } = {}) {
+    if (typeof tool !== "string" || !tool.trim()) return;
+    await this.post([ {
+      type: "tool_requested",
+      tool: tool.trim(),
+      callId: typeof callId === "string" && callId.trim() ? callId.trim() : null,
+      server: typeof server === "string" && server.trim() ? server.trim() : null,
+    } ]);
+  }
+
+  /**
+   * Post a single tool_unavailable observation. The model asked for a tool
+   * the bridge does not have, or the workspace has explicitly denied the
+   * tool through its own settings. Reporting the gap is what stops the
+   * dashboard from rendering "the workspace never used this tool" when the
+   * truth is "the workspace was forbidden from using it".
+   */
+  async reportToolUnavailable({ tool, callId = null, reason = "denied", server = null } = {}) {
+    if (typeof tool !== "string" || !tool.trim()) return;
+    await this.post([ {
+      type: "tool_unavailable",
+      tool: tool.trim(),
+      callId: typeof callId === "string" && callId.trim() ? callId.trim() : null,
+      reason: typeof reason === "string" && reason.trim() ? reason.trim().slice(0, 64) : "denied",
+      server: typeof server === "string" && server.trim() ? server.trim() : null,
+    } ]);
+  }
+
+  /**
+   * Post a single skill_exposed observation. The bridge just made a skill
+   * available to the model -- either by resolving a `$skill` invocation or
+   * by surfacing the skill in the system prompt. This is the first-class
+   * event the router needs to mark the skill as available per workspace;
+   * without it, per-workspace skill attribution stays unavailable.
+   */
+  async reportSkillExposed({ skill, source = null, pluginId = null } = {}) {
+    if (typeof skill !== "string" || !skill.trim()) return;
+    await this.post([ {
+      type: "skill_exposed",
+      skill: skill.trim(),
+      source: typeof source === "string" && source.trim() ? source.trim() : null,
+      pluginId: typeof pluginId === "string" && pluginId.trim() ? pluginId.trim() : null,
+    } ]);
+  }
+
   async post(events) {
     try {
       const response = await fetch(this.url, {

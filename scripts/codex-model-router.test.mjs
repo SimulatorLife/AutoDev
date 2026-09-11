@@ -1752,7 +1752,7 @@ test("persists and restores per-workspace tool and skill attribution across rout
 
     // Verify persisted schema
     const raw = JSON.parse(await readFile(stateFile, "utf8"));
-    assert.equal(raw.usage.schemaVersion, 5);
+    assert.equal(raw.usage.schemaVersion, 6);
     assert.ok(Array.isArray(raw.usage.workspaceRegistry));
     const savedWs = raw.usage.byWorkspace[ "OwnerA/ProjectA" ];
     assert.equal(savedWs.skillUses, 3);
@@ -2644,6 +2644,7 @@ test("serves the live component dashboard and keeps /status raw JSON", async () 
       "panel-skills",
       "panel-hooks",
       "panel-ops",
+      "panel-codex-state",
       "panel-events",
     ]);
     assert.match(dashboardBody, /<dashboard-panel id="panel-orchestrator"[\s\S]*?<sub-panel id="panel-spawn-breakdown"/);

@@ -506,50 +506,14 @@ The router makes its effective choice visible in two ways:
   the top-level `usage.totals.toolCalls` uses -- it is not a count of
   OTLP-named tool invocations, and the dashboard labels the column
   accordingly rather than implying the two are the same measurement.
-- A workspace bucket may additionally carry `byTool` and `bySkill`: named
-  tool-call and skill-use attribution scoped to that same workspace, keyed
-  identically to the bucket's own `usage.byWorkspace` key so a named row is
-  never attributed to a different repository label than the totals around it.
-  Unlike the rest of the bucket -- which is populated directly from the
-  router's own resolved turn metadata -- this join runs in the other
-  direction: Codex's OTLP tool/skill events do not carry turn metadata, only
-  a `workspace_id` attribute (checked on the datapoint first, then the
-  metric's resource attributes as a fallback), so the router separately
-  registers each `workspace_id` it observes on a router request against that
-  request's already-resolved workspace key, then looks up incoming OTLP
-  events by that same id. This is the **workspace_id contract**: `byTool`
-  and `bySkill` rows are only ever attributed once a request has told the
-  router which key a given `workspace_id` maps to, never inferred from the
-  OTLP event alone. A `workspace_id` is treated as an opaque token, not a
-  path: any value that looks like a filesystem path (starts with `/` or `~`,
-  or contains `\`, `/Users/`, or `/home/`) is hashed to a short `ws_`-prefixed
-  digest before the router registers, stores, or attributes against it, so a
-  raw absolute path is never retained even transiently under this join --
-  the same privacy posture as the existing `owner/repository` labels which
-  never store the underlying filesystem path either. Attribution fails
-  closed rather than guessing: an OTLP event with no `workspace_id` on
-  either the datapoint or the resource, an event whose `workspace_id` is not
-  yet a registered key, or an event carrying more than one distinct
-  candidate `workspace_id` between the datapoint and resource attributes are
-  all left unattributed (never merged into an unrelated workspace's totals)
-  and counted by reason rather than silently dropped. These fields are
-  optional in the status contract for rollout reasons: the router populates
-  them once it has observed a `workspace_id`-carrying request for a given
-  workspace and matching OTLP events for it, and an older or degraded router
-  build, or a workspace that has only ever made requests without a
-  `workspace_id`, simply omits them entirely. The dashboard and the router
-  that feeds it are therefore free to ship on different schedules without a
-  compatibility shim on either side: the frontend already treats the field
-  as absent-by-default. The dashboard fails closed on
-  their absence: an expanded workspace row renders an explicit "unavailable"
-  state when the field is missing, and a distinct "no data observed yet"
-  state when the field is present but empty, so a real zero is never
-  indistinguishable from the dimension not being reported at all. See
-  `docs/metrics-dashboard.md` for the accepted row shapes and the exact
-  fallback copy. When a validated workspace request has no supplied ID, the
-  router derives a stable `ws_` identifier from its privacy-safe repository
-  label and adds it to the forwarded turn metadata; an upgraded Codex
-  exporter must use that same identifier on the OTLP datapoints.
+- A workspace bucket may additionally carry `byTool`, `bySkill`, and
+  coverage counters. These rows come from local causally-linked evidence:
+  AutoDev request context, verified hooks, semantic OTLP `codex.tool_result`
+  records joined by `conversation.id` to the local Codex thread database, and
+  authenticated provider-bridge reports. The router does not require Codex
+  to emit `workspace_id`, does not distribute global metrics by guesswork,
+  and leaves conflicting or missing joins unattributed. Requested and
+  executed provider events remain separate.
 - The dashboard's usage table collapses this into exactly two top-level rows,
   Orchestrator and Subagents, because roleless requests only carry an origin
   and role-attributed requests only carry a role: origin and role are not two
@@ -579,11 +543,11 @@ The router makes its effective choice visible in two ways:
   labels and uses text-only updates for logs and status metadata. MCP lifecycle
   observations appear in the relevant usage cards and operational summary; no
   standalone MCP panel exists. Per-workspace named tool and skill attribution
-  (`usage.byWorkspace[*].byTool`/`bySkill`) is an optional part of the status
-  contract: expanded workspace rows render it when a workspace bucket carries
-  it and display an explicit fail-closed empty state instead of fabricating
-  that join when it does not, distinct from the empty state shown once the
-  field is populated but a workspace has no named events yet. `GET /status` always
+  is sourced from local request context, verified hooks, semantic OTLP joins,
+  and authenticated bridge events. The dashboard distinguishes unavailable,
+  no-data, partial, executed, and requested states rather than fabricating a
+  workspace join or treating requested calls as executed.
+`GET /status` always
   returns raw JSON regardless of the `Accept` header, including the current
   router instance, active requests, configured models, cooldown countdowns,
   per-provider attempt and success/failure counters, the last classified
@@ -670,6 +634,83 @@ history. Rotate logs by restarting the router: launchd closes and reopens the
 log file handles, and the ensure hook reuses the same fallback PID file
 without leaking a stale tracker.
 
+
+### Local, provider-controlled workspace telemetry
+
+The router extends the `usage.byWorkspace` contract with first-class event
+counters so the dashboard can fail closed on per-workspace tool and skill
+attribution. A workspace must receive a first-class event from a provider
+bridge before its `byTool` and `bySkill` rows move off the `unavailable`
+state; OTLP datapoints alone are not sufficient because the OTLP exporter
+only describes what Codex's own runtime emitted.
+
+The new fields on every `usage.byWorkspace[*]` bucket are:
+
+- `toolsExecuted`: count of `tool_executed` events the bridge reported for
+  this workspace. Reaching a positive value is what unlocks per-workspace
+  tool attribution.
+- `toolsRequested`: count of `tool_requested` events. A model that asked
+  for a tool but never ran it still moves this counter so the dashboard can
+  distinguish "the provider never offered the tool" from "the provider
+  offered it but something stopped it from running".
+- `toolsUnavailable`: count of `tool_unavailable` events with the workspace
+  where the bridge refused a tool (workspace settings, permission deny).
+- `skillsExposed`: count of `skill_exposed` events. The first `skill_exposed`
+  for a workspace is what unlocks per-workspace skill attribution.
+- `toolsUnattributed`, `skillsUnattributed`: coverage of OTLP datapoints that
+  could not be joined to a specific name (no `call_id`, no skill attribute)
+  on a workspace where the workspace_id itself resolved. Distinct from
+  `toolsExecuted`/`skillsExposed` because it counts unjoined coverage rather
+  than first-class evidence.
+- `bridgeTools`, `bridgeSkills`: the bridge-reported rows for this workspace,
+  i.e. the raw `tool_executed`/`skill_exposed` rows the dashboard would
+  surface under the per-workspace "Tools" / "Skill usage" expanded rows.
+
+The companion OTLP metric `codex.tool_result` is the runtime-causal "the
+tool call landed" signal. Each datapoint carries a `call_id` (the same id
+emitted on the originating `codex.tool.call`); the router dedupes the
+result against the call id and reports:
+
+- `executed`: number of tool results that were causally resolved to a
+  tool call (unique `call_id`).
+- `unattributed`: number of result events whose `call_id` was either missing
+  or had already been counted under another datapoint. This is the raw
+  coverage the dashboard reports as "executed / unattributed" so the
+  difference between "we observed N result events" and "we observed N
+  executed tools" is visible without reading the OTLP JSON.
+
+The router also persists a derived snapshot of the local Codex state
+database under `status.codexState`. The collector is read-only, opens
+`state_5.sqlite` via the Node `node:sqlite` binding (or reports
+`schema_only` when the binding is unavailable), and surfaces:
+
+- `localTelemetry`: a capability report describing the open outcome
+  (`ok`, `missing`, `schema_only`, `schema_unknown`, `error`, `pending`),
+  the schema fingerprint, the bounded recency window, and the recent
+  thread / project / edge counts.
+- `recentThreads`: the threads the collector could read inside the bounded
+  window, each normalized to a privacy-safe `owner/repository` workspace key,
+  a `cwdBasename`, and the resolved `projectId`. Raw absolute paths never
+  appear in the snapshot.
+- `conversationThreads`: a `conversation.id` -> thread id join. The
+  router cannot derive this from the request stream alone; the collector
+  is the only component that owns this lookup.
+- `spawnEdges`: `parent_thread_id` -> `child_thread_id` edges for the
+  recent window.
+- `projects`: the `projects` table rows Codex uses to group threads.
+
+The path defaults to `$CODEX_HOME/state_5.sqlite` and is overridable via
+`CODEX_STATE_DB_PATH`. The recency window defaults to 24h
+(`CODEX_STATE_COLLECTOR_WINDOW_MS`) and the bound defaults to 500
+(`CODEX_STATE_COLLECTOR_LIMIT`). A live poll refreshes the snapshot every
+5s by default (`CODEX_STATE_COLLECTOR_POLL_MS`); the snapshot is also
+refreshed on demand by `/status` calls. The persisted router state does
+not contain the collector snapshot -- it is rebuilt from the file on
+every router restart.
+
+The collector never writes to `state_5.sqlite`. The router persists the
+derived workspace counters and bridge observations under its own
+`codex-router-state.json`, never the Codex-owned state file.
 
 ## Supervision, liveness, and graceful drain
 

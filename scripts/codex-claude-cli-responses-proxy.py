@@ -311,30 +311,57 @@ AGENT_EVENTS_URL_HEADER = "x-autodev-agent-events-url"
 AGENT_EVENTS_TIMEOUT_SECONDS = 5.0
 
 
+def normalized_label(value: Any) -> str | None:
+    """A non-empty trimmed string, or None. Mirrors the JS reporter's guards."""
+    return value.strip() if isinstance(value, str) and value.strip() else None
+
+
+def tool_server(name: Any) -> str | None:
+    """The MCP server a Claude tool name belongs to, or None for a builtin.
+
+    Claude namespaces every MCP tool as ``mcp__<server>__<tool>``, so the
+    server is recoverable from the name alone -- which is the only place this
+    bridge ever sees it. The router keeps it as a row dimension so an MCP
+    server that is configured but never actually reached is distinguishable
+    from one whose tools ran.
+    """
+    label = normalized_label(name)
+    if label is None or not label.startswith("mcp__"):
+        return None
+    parts = label.split("__")
+    return parts[1] if len(parts) >= 3 and parts[1] else None
+
+
 class AgentEventReporter:
-    """Posts subagent spawns observed in the Claude CLI stream to the router."""
+    """Posts what the Claude CLI did inside its own runtime to the router.
+
+    Three kinds of observation travel this channel, and none of them is
+    visible to the router any other way: the subagents the CLI spawned, the
+    tools it asked for / ran / was refused, and the skills this bridge
+    exposed to the turn. Mirrors scripts/codex/lib/agent-events.mjs, whose
+    docstrings carry the full rationale for each event type.
+    """
 
     def __init__(self, url: str, request_id: str, spawn_tools: frozenset[str]) -> None:
         self.url = url
         self.request_id = request_id
         self.spawn_tools = spawn_tools
+        # A tool-heavy turn reports twice per tool call, so one thread per
+        # report would put hundreds of threads behind a single turn. One
+        # worker drains every report in order instead, and stays a daemon
+        # because telemetry must never hold the process open.
+        self._reports: queue.Queue[list[dict[str, Any]]] = queue.Queue()
+        self._worker_lock = threading.Lock()
+        self._worker: threading.Thread | None = None
 
     def is_spawn_tool(self, name: Any) -> bool:
         return isinstance(name, str) and name in self.spawn_tools
 
     def report_spawn_async(self, tool: str, role: str | None = None, status: str = "started") -> None:
         """Report without blocking the stream loop on an HTTP round trip."""
-        threading.Thread(target=self.report_spawn, args=(tool, role, status), daemon=True).start()
-
-    def report_spawn(self, tool: str, role: str | None = None, status: str = "started") -> None:
-        """Best effort by design: telemetry must never fail a model turn, so a
-        transport error or non-2xx reply costs a count rather than the turn."""
-        self.post([{"type": "subagent_spawn", "tool": tool, "role": role, "status": status, "count": 1}])
+        self.post_async([{"type": "subagent_spawn", "tool": tool, "role": role, "status": status, "count": 1}])
 
     def report_spawn_tools_unavailable_async(self, available: Any) -> None:
-        threading.Thread(target=self.report_spawn_tools_unavailable, args=(available,), daemon=True).start()
-
-    def report_spawn_tools_unavailable(self, available: Any) -> None:
         """Report that the CLI offered no delegation tool at all.
 
         A workspace can remove the tool from under an orchestrator turn: a
@@ -344,13 +371,184 @@ class AgentEventReporter:
         provider that chose not to delegate, so the absence is its own report.
         """
         names = [name for name in (available or []) if isinstance(name, str)]
-        self.post([{
+        self.post_async([{
             "type": "subagent_tools_unavailable",
             "expected": sorted(self.spawn_tools),
             # Bounded and name-only: a tool inventory fingerprints the
             # workspace, and the router needs only enough to name the gap.
             "available": names[:100],
         }])
+
+    def report_tool_requested_async(
+        self,
+        tool: Any,
+        call_id: Any = None,
+        server: Any = None,
+        *,
+        callId: Any = None,
+    ) -> None:
+        """The model asked for a tool; the bridge has not yet seen it run."""
+        effective_call_id = call_id if call_id is not None else callId
+        effective_server = server
+        if isinstance(tool, dict):
+            if effective_call_id is None:
+                effective_call_id = tool.get("callId") if "callId" in tool else tool.get("call_id")
+            if effective_server is None:
+                effective_server = tool.get("server")
+            tool = tool.get("tool")
+        name = normalized_label(tool)
+        if name is None:
+            return
+        self.post_async([{
+            "type": "tool_requested",
+            "tool": name,
+            "callId": normalized_label(effective_call_id),
+            "server": normalized_label(effective_server),
+        }])
+
+    def report_tool_executed_async(
+        self,
+        tool: Any,
+        call_id: Any = None,
+        status: str = "ok",
+        server: Any = None,
+        duration_ms: Any = None,
+        *,
+        callId: Any = None,
+        durationMs: Any = None,
+    ) -> None:
+        """A tool call this turn produced a result. Only ever sent for a call
+        whose result the CLI actually emitted: the router treats it as the
+        first-class evidence that unlocks per-workspace tool attribution, so
+        an inferred execution would unlock it on a guess."""
+        effective_call_id = call_id if call_id is not None else callId
+        effective_duration = duration_ms if duration_ms is not None else durationMs
+        effective_status = status
+        effective_server = server
+        if isinstance(tool, dict):
+            if effective_call_id is None:
+                effective_call_id = tool.get("callId") if "callId" in tool else tool.get("call_id")
+            if effective_status == "ok" and "status" in tool:
+                effective_status = tool.get("status")
+            if effective_server is None:
+                effective_server = tool.get("server")
+            if effective_duration is None:
+                effective_duration = tool.get("durationMs") if "durationMs" in tool else tool.get("duration_ms")
+            tool = tool.get("tool")
+        name = normalized_label(tool)
+        if name is None:
+            return
+        self.post_async([{
+            "type": "tool_executed",
+            "tool": name,
+            "callId": normalized_label(effective_call_id),
+            "status": "error" if effective_status in ("error", "failure") else "ok" if effective_status in ("ok", "success") else "unknown",
+            "server": normalized_label(effective_server),
+            "durationMs": max(0, round(effective_duration)) if isinstance(effective_duration, (int, float)) and math.isfinite(effective_duration) else None,
+        }])
+
+    def report_tool_unavailable_async(
+        self,
+        tool: Any,
+        call_id: Any = None,
+        reason: str = "denied",
+        server: Any = None,
+        *,
+        callId: Any = None,
+    ) -> None:
+        """A tool the model asked for that this workspace would not run."""
+        effective_call_id = call_id if call_id is not None else callId
+        effective_reason = reason
+        effective_server = server
+        if isinstance(tool, dict):
+            if effective_call_id is None:
+                effective_call_id = tool.get("callId") if "callId" in tool else tool.get("call_id")
+            if effective_reason == "denied" and "reason" in tool:
+                effective_reason = tool.get("reason")
+            if effective_server is None:
+                effective_server = tool.get("server")
+            tool = tool.get("tool")
+        name = normalized_label(tool)
+        if name is None:
+            return
+        self.post_async([{
+            "type": "tool_unavailable",
+            "tool": name,
+            "callId": normalized_label(effective_call_id),
+            "reason": (normalized_label(effective_reason) or "denied")[:64],
+            "server": normalized_label(effective_server),
+        }])
+
+    def report_skill_exposed_async(
+        self,
+        skill: Any,
+        source: Any = None,
+        plugin_id: Any = None,
+        *,
+        pluginId: Any = None,
+    ) -> None:
+        """A skill this bridge made available to the turn.
+
+        Exposure, not invocation: the role contract and the generated Claude
+        skill view are what decide which skills the CLI can see, and that
+        decision is made before the model does anything. Reporting it from
+        the model's behaviour instead would report nothing at all for a turn
+        that was given skills and did not reach for them, which is precisely
+        the case the per-workspace skill attribution has to be able to show.
+        """
+        effective_plugin_id = plugin_id if plugin_id is not None else pluginId
+        effective_source = source
+        if isinstance(skill, dict):
+            if effective_source is None:
+                effective_source = skill.get("source")
+            if effective_plugin_id is None:
+                effective_plugin_id = skill.get("pluginId") if "pluginId" in skill else skill.get("plugin_id")
+            skill = skill.get("skill")
+        name = normalized_label(skill)
+        if name is None:
+            return
+        self.post_async([{
+            "type": "skill_exposed",
+            "skill": name,
+            "source": normalized_label(effective_source),
+            "pluginId": normalized_label(effective_plugin_id),
+        }])
+
+    reportToolExecuted = report_tool_executed_async
+    reportToolRequested = report_tool_requested_async
+    reportToolUnavailable = report_tool_unavailable_async
+    reportSkillExposed = report_skill_exposed_async
+    report_tool_executed = report_tool_executed_async
+    report_tool_requested = report_tool_requested_async
+    report_tool_unavailable = report_tool_unavailable_async
+    report_skill_exposed = report_skill_exposed_async
+
+    def post_async(self, events: list[dict[str, Any]]) -> None:
+        """Hand a report to the worker. Never blocks the stream loop."""
+        self._ensure_worker()
+        self._reports.put(events)
+
+    def flush(self, timeout: float | None = 5.0) -> None:
+        """Wait until all pending reports are drained."""
+        try:
+            self._reports.join()
+        except Exception:
+            pass
+
+    def _ensure_worker(self) -> None:
+        with self._worker_lock:
+            if self._worker is not None and self._worker.is_alive():
+                return
+            self._worker = threading.Thread(target=self._drain, name="agent-events", daemon=True)
+            self._worker.start()
+
+    def _drain(self) -> None:
+        while True:
+            events = self._reports.get()
+            try:
+                self.post(events)
+            finally:
+                self._reports.task_done()
 
     def post(self, events: list[dict[str, Any]]) -> None:
         body = json.dumps({"requestId": self.request_id, "events": events}).encode()
@@ -784,6 +982,56 @@ def subagent_role_from_input(block: dict[str, Any]) -> str | None:
     return None
 
 
+# Claude reports a tool call's outcome as a `tool_result` block on the
+# synthetic user turn that follows the call, carrying the `tool_use_id` of the
+# call it settles. That block is the only place in this stream where a tool
+# call is *proved* to have run -- a `tool_use` block only proves the model
+# asked -- so it is what the bridge reports as `tool_executed`.
+def tool_results_from_event(event: dict[str, Any]) -> list[dict[str, Any]]:
+    """Every `tool_result` block one CLI event carries."""
+    if event.get("type") != "user":
+        return []
+    message = event.get("message")
+    content = message.get("content") if isinstance(message, dict) else None
+    if not isinstance(content, list):
+        return []
+    return [block for block in content if isinstance(block, dict) and block.get("type") == "tool_result"]
+
+
+def tool_result_text(block: dict[str, Any]) -> str:
+    """The result's text, whichever of the two shapes Claude used for it."""
+    content = block.get("content")
+    if isinstance(content, str):
+        return content
+    return text_from_content(content)
+
+
+# A failed tool call and a tool the workspace would not run are different
+# facts, and only the second one belongs in `tool_unavailable`: the router
+# counts that event as "the provider offered it but something stopped it from
+# running", which a failing command is not. These are the CLI's own wordings
+# for the second case -- Claude Code emits "Permission to use X has been
+# denied[ because Claude Code is running in don't ask mode]", "Permission for
+# this tool use was denied: it requires interactive approval", and "Error: No
+# such tool available: X" -- so anything else that sets `is_error` is reported
+# as a call that ran and failed.
+TOOL_UNAVAILABLE_PATTERNS = (
+    (re.compile(r"No such tool available", re.IGNORECASE), "no_such_tool"),
+    (re.compile(r"Permission (?:to use \S+ has been|for this tool use was) denied", re.IGNORECASE), "permission_denied"),
+)
+
+
+def classify_tool_result(block: dict[str, Any]) -> tuple[str, str]:
+    """``("executed", "ok"|"error")`` or ``("unavailable", reason)``."""
+    if not block.get("is_error"):
+        return ("executed", "ok")
+    text = tool_result_text(block)
+    for pattern, reason in TOOL_UNAVAILABLE_PATTERNS:
+        if pattern.search(text):
+            return ("unavailable", reason)
+    return ("executed", "error")
+
+
 def emit_once(text: str, key: str, seen: set[str]) -> str:
     if key in seen:
         return ""
@@ -844,6 +1092,13 @@ def read_stderr(process: subprocess.Popen[str], events: queue.Queue[tuple[str, A
 def role_contract_for(role: Any = None) -> dict[str, Any]:
     contract_key = "orchestrator" if is_orchestrator_role(role) else (str(role).lower() if role else "default")
     return EXECUTION_CONTRACT.get("roles", {}).get(contract_key) or EXECUTION_CONTRACT["roles"]["default"]
+
+
+# How a Claude turn discovers the skills its role contract grants it: the
+# generated `.claude/skills` view below, not a `$skill` invocation. Carried on
+# every `skill_exposed` event so the router's rows say which mechanism made
+# the skill available rather than only that something did.
+CLAUDE_SKILL_EXPOSURE_SOURCE = "claude_skill_view"
 
 
 def claude_skill_view_for_role(role: Any = None) -> str | None:
@@ -1449,6 +1704,10 @@ def run_claude_stream(prompt: str, model: str = DEFAULT_CLAUDE_MODEL, effort: st
                 block = tool_uses.feed(value)
                 if block is not None:
                     yield ("tool_use", block, value)
+                # The settled half of the same call: `tool_use` says the model
+                # asked, `tool_result` says the CLI ran it and what came back.
+                for result_block in tool_results_from_event(value):
+                    yield ("tool_result", result_block, value)
                 activity = activity_from_event(value, activity_keys)
                 if activity:
                     yield ("activity", activity, value)
@@ -1721,13 +1980,63 @@ class Handler(BaseHTTPRequestHandler):
             if spawn_session:
                 open_spawn_session(spawn_session, orchestrator=is_orchestrator_role(agent_role))
 
+            # The tool inventory the CLI reported for this turn, from its init
+            # event. A tool the model then asks for that is absent from it was
+            # removed from under the turn -- a workspace `permissions.deny`, an
+            # MCP server that failed to start -- which is a different fact from
+            # a tool that ran and failed.
+            offered_tools: set[str] = set()
+            # Tool calls the model opened, keyed by the id their result names,
+            # so a result can be attributed to the tool and timed against it.
+            pending_tool_calls: dict[str, tuple[str, float]] = {}
+
             def note_tool_use(block: dict[str, Any]) -> None:
                 name = block.get("name")
-                if agent_events is not None and agent_events.is_spawn_tool(name):
+                if agent_events is None:
+                    return
+                if agent_events.is_spawn_tool(name):
                     agent_events.report_spawn_async(str(name), subagent_role_from_input(block))
+                if not isinstance(name, str) or not name.strip():
+                    return
+                raw_id = block.get("id")
+                call_id = raw_id.strip() if isinstance(raw_id, str) and raw_id.strip() else None
+                # The model asking is not the tool running: the call is only
+                # ever reported as `tool_requested` here, and is upgraded to
+                # `tool_executed` when its result block arrives.
+                if offered_tools and name not in offered_tools:
+                    agent_events.report_tool_unavailable_async(name, call_id=call_id, reason="not_offered", server=tool_server(name))
+                    return
+                if call_id is not None:
+                    pending_tool_calls[call_id] = (name, time.monotonic())
+                agent_events.report_tool_requested_async(name, call_id=call_id, server=tool_server(name))
+
+            def note_tool_result(block: dict[str, Any]) -> None:
+                """Settle a call the model opened with the outcome the CLI saw."""
+                if agent_events is None:
+                    return
+                raw_id = block.get("tool_use_id")
+                call_id = raw_id.strip() if isinstance(raw_id, str) and raw_id.strip() else None
+                opened = pending_tool_calls.pop(call_id, None) if call_id is not None else None
+                # A result whose call this bridge never saw open names no tool,
+                # and the router cannot attribute an unnamed one.
+                if opened is None:
+                    return
+                name, started_at = opened
+                kind, detail = classify_tool_result(block)
+                if kind == "unavailable":
+                    agent_events.report_tool_unavailable_async(name, call_id=call_id, reason=detail, server=tool_server(name))
+                    return
+                agent_events.report_tool_executed_async(
+                    name,
+                    call_id=call_id,
+                    status=detail,
+                    server=tool_server(name),
+                    duration_ms=(time.monotonic() - started_at) * 1000,
+                )
 
             def note_available_tools(tools: Any) -> None:
-                """Report an orchestrator turn that was handed no way to delegate.
+                """Record the turn's tool inventory, and report an orchestrator
+                turn that was handed no way to delegate.
 
                 The bridge keeps the delegation tool for the orchestrator, but a
                 project `.claude/settings.json` listing `Agent` under
@@ -1736,9 +2045,10 @@ class Handler(BaseHTTPRequestHandler):
                 and reports zero subagents, which is indistinguishable from a
                 provider that chose not to delegate.
                 """
+                names = [name for name in tools if isinstance(name, str)] if isinstance(tools, list) else []
+                offered_tools.update(names)
                 if agent_events is None or not is_orchestrator_role(agent_role):
                     return
-                names = [name for name in tools if isinstance(name, str)]
                 if any(agent_events.is_spawn_tool(name) for name in names):
                     return
                 print(
@@ -1761,6 +2071,15 @@ class Handler(BaseHTTPRequestHandler):
                 flush=True,
             )
             print(f"claude request model={claude_model} effort={claude_effort} role={role_label} cwd={cwd}", flush=True)
+            # Exposure is decided here, before the CLI starts: the role
+            # contract picks the skills and the generated view is how Claude
+            # discovers them. Reporting it from the model's behaviour instead
+            # would report nothing for a turn that was given skills and never
+            # reached for one, which is exactly the case per-workspace skill
+            # attribution has to be able to show.
+            if agent_events is not None:
+                for exposed_skill in contract.get("skills", []) or []:
+                    agent_events.report_skill_exposed_async(exposed_skill, source=CLAUDE_SKILL_EXPOSURE_SOURCE)
             if not request.get("stream"):
                 for kind, value, _ in run_claude_stream(prompt, claude_model, claude_effort, cwd=cwd, agent_role=agent_role, spawn_session=spawn_session):
                     if kind == "tools":
@@ -1769,6 +2088,8 @@ class Handler(BaseHTTPRequestHandler):
                         text += value
                     elif kind == "tool_use":
                         note_tool_use(value)
+                    elif kind == "tool_result":
+                        note_tool_result(value)
                     elif kind == "complete":
                         text, metadata = value
                 output_items = [message_item(text)]
@@ -1822,6 +2143,8 @@ class Handler(BaseHTTPRequestHandler):
                     self.send_sse("response.output_text.delta", {"type": "response.output_text.delta", "item_id": item_id, "delta": value, "content_index": 0, "output_index": 1})
                 elif kind == "tool_use":
                     note_tool_use(value)
+                elif kind == "tool_result":
+                    note_tool_result(value)
                 elif kind == "activity":
                     start_stream()
                     reasoning_text += value

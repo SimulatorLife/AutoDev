@@ -20,6 +20,95 @@ import { resolveCwd, WorkspaceResolutionError } from "./codex/lib/resolve-worksp
 import { composeProviderPrompt, isOrchestratorRole, resolveAgentRole } from "./codex/lib/bridge-role.mjs";
 import { roleContract } from "./codex/lib/execution-contract.mjs";
 import { classifyCliLimit, INCOMPLETE_REASON_INTERRUPTED, INCOMPLETE_REASON_PROVIDER_LIMIT, limitPayload, limitResponseHeaders, retryAfterSecondsFromLimit, terminalIncompleteEvents } from "./codex/lib/provider-limits.mjs";
+import { resolveAgentEventReporter } from "./codex/lib/agent-events.mjs";
+
+// How a Copilot turn comes by the skills its role contract grants it: the CLI
+// has no per-invocation skill flag, so the contract rendered into the turn's
+// prompt is the exposure. Carried on every `skill_exposed` event so the
+// router's rows say which mechanism made the skill available.
+const SKILL_EXPOSURE_SOURCE = "role_contract";
+
+// What the bridge posts back to the router about one tool call. The CLI's
+// JSONL stream is the only place a Copilot tool call is visible at all: the
+// model router never sees a request for it, and an OTLP datapoint only
+// describes what Codex's own runtime ran.
+const TOOL_OBSERVATION_TYPES = new Set([ "tool_requested", "tool_executed", "tool_unavailable" ]);
+
+// The Copilot CLI's event stream is not a formally specified schema -- the
+// field names below are the ones the CLI and its hooks reference use, and
+// GitHub's own tracker still lists formalizing the stream as an open request.
+// So the probing here is deliberately tolerant and fails closed: a terminal
+// tool event whose shape this bridge does not recognize reports nothing
+// rather than asserting an execution the CLI never evidenced.
+const COPILOT_TOOL_OUTPUT_KEYS = [ "toolResult", "tool_result", "result", "output", "content", "stdout", "error", "errorMessage" ];
+const COPILOT_DENIED_PATTERN = /deni|reject|not[_\s-]?permitted|not[_\s-]?allowed/i;
+
+/** The result payload of a terminal tool event, whatever it is called. */
+function copilotToolResult(data) {
+  const result = data?.toolResult ?? data?.tool_result ?? data?.result ?? null;
+  return result && typeof result === "object" ? result : null;
+}
+
+/**
+ * The CLI's own label for how the call ended (`resultType`, `status`), with
+ * no free result text mixed in: a tool whose *output* happens to contain the
+ * word "denied" did run, and must not be reported as one the workspace
+ * refused to run.
+ */
+function copilotToolStatusLabel(data) {
+  const result = copilotToolResult(data);
+  return [
+    typeof data?.status === "string" ? data.status : "",
+    typeof data?.outcome === "string" ? data.outcome : "",
+    result ? String(result.resultType ?? result.result_type ?? "") : "",
+  ].filter(Boolean).join(" ");
+}
+
+/** True when the event carries the call's own output. */
+function copilotToolOutputPresent(data) {
+  if (!data || typeof data !== "object") return false;
+  return COPILOT_TOOL_OUTPUT_KEYS.some((key) => {
+    const value = data[ key ];
+    if (value === undefined || value === null) return false;
+    return typeof value === "string" ? value.trim() !== "" : true;
+  }) || data.success !== undefined || Number.isFinite(data.exitCode);
+}
+
+/**
+ * What one terminal `tool.*` event proves about the call.
+ *
+ * `executed` is reserved for an event that carries the call's result, because
+ * the router treats `tool_executed` as the first-class evidence that unlocks
+ * per-workspace tool attribution -- an inferred execution would unlock it on
+ * a guess. A call the workspace refused is `unavailable`, and anything else
+ * proves only what the `tool.execution_start` already reported.
+ */
+function copilotToolOutcome(data) {
+  const label = copilotToolStatusLabel(data);
+  if (data?.permissionDenied === true || data?.denied === true || COPILOT_DENIED_PATTERN.test(label)) {
+    return { kind: "unavailable", reason: "denied" };
+  }
+  if (!copilotToolOutputPresent(data)) {
+    if (data?.status === "cancelled" || /cancel/i.test(label)) {
+      return { kind: "unavailable", reason: "cancelled" };
+    }
+    return { kind: "none" };
+  }
+  const failed = data.success === false
+    || data.isError === true
+    || Boolean(data.error ?? data.errorMessage)
+    || (Number.isFinite(data.exitCode) && data.exitCode !== 0)
+    || /error|fail/i.test(label);
+  return { kind: "executed", status: failed ? "error" : "ok" };
+}
+
+/** Post one observation, when the router authorized reporting for this turn. */
+function reportToolObservation(agentEvents, event) {
+  if (!agentEvents) return;
+  if (event.type === "tool_requested") void agentEvents.reportToolRequested({ tool: event.tool, callId: event.callId, server: event.server });
+  else if (event.type === "tool_executed") void agentEvents.reportToolExecuted({ tool: event.tool, callId: event.callId, status: event.status, durationMs: event.durationMs, server: event.server });
+  else if (event.type === "tool_unavailable") void agentEvents.reportToolUnavailable({ tool: event.tool, callId: event.callId, reason: event.reason, server: event.server });
+}
 
 function sendJson(response, status, body, extraHeaders = {}) {
   const encoded = Buffer.from(JSON.stringify(body));
@@ -94,6 +183,9 @@ function runCopilot(prompt, model, cwd, onEvent, agentRole = null) {
     if (model && model !== "copilot" && model !== "auto") args.push("--model", model);
     const child = spawn(process.env.COPILOT_BIN ?? "copilot", args, { cwd, stdio: [ "ignore", "pipe", "pipe" ] });
     const phases = new Map();
+    // Tool calls the CLI opened, keyed by the id its terminal event names, so
+    // a result can be attributed to the tool and timed against its start.
+    const toolCalls = new Map();
     let stderr = "";
     let answer = "";
     let terminalResult = null;
@@ -139,14 +231,51 @@ function runCopilot(prompt, model, cwd, onEvent, agentRole = null) {
           }
           break;
         }
-        case "tool.execution_start":
+        case "tool.execution_start": {
+          const callId = String(data.toolCallId ?? "").trim() || null;
+          const toolName = String(data.toolName ?? "").trim();
+          const server = typeof data.server === "string" && data.server.trim()
+            ? data.server.trim()
+            : (typeof data.serverName === "string" && data.serverName.trim()
+              ? data.serverName.trim()
+              : (toolName.startsWith("mcp__") ? toolName.split("__")[1] : null));
+          if (toolName) {
+            if (callId) toolCalls.set(callId, { tool: toolName, startedAt: Date.now(), server });
+            // The model asking is not the tool running: this call is upgraded
+            // to `tool_executed` only when its terminal event carries a result.
+            onEvent?.({ type: "tool_requested", tool: toolName, callId, server });
+          }
           onEvent?.({ type: "activity", text: toolActivityText(data), key: `tool:${data.toolCallId ?? ""}` });
           break;
+        }
         case "result":
           terminalResult = event;
           break;
-        default:
+        default: {
+          // `tool.execution_complete` settles a call the start event opened.
+          // Matched by prefix rather than by that one name: the CLI's event
+          // vocabulary is not a published schema, and a renamed terminal event
+          // would otherwise silently stop every executed observation. An event
+          // that carries no result still reports nothing (copilotToolOutcome).
+          const eventType = String(event?.type ?? "");
+          if (!eventType.startsWith("tool.") || eventType === "tool.execution_start") break;
+          const callId = String(data.toolCallId ?? "").trim() || null;
+          const open = callId ? toolCalls.get(callId) : null;
+          const toolName = String(data.toolName ?? open?.tool ?? "").trim();
+          if (!toolName) break;
+          const outcome = copilotToolOutcome(data);
+          if (outcome.kind === "none") break;
+          if (callId) toolCalls.delete(callId);
+          const server = (typeof data.server === "string" && data.server.trim()
+            ? data.server.trim()
+            : (typeof data.serverName === "string" && data.serverName.trim()
+              ? data.serverName.trim()
+              : open?.server)) || (toolName.startsWith("mcp__") ? toolName.split("__")[1] : null);
+          onEvent?.(outcome.kind === "unavailable"
+            ? { type: "tool_unavailable", tool: toolName, callId, reason: outcome.reason, server }
+            : { type: "tool_executed", tool: toolName, callId, status: outcome.status, durationMs: open ? Date.now() - open.startedAt : null, server });
           break;
+        }
       }
     });
     child.stderr.on("data", (chunk) => { stderr += chunk.toString(); });
@@ -186,6 +315,9 @@ async function handle(request, response) {
   // The router classifies the turn; only it can tell this bridge that it is
   // serving the root orchestrator rather than a delegated leaf.
   const agentRole = resolveAgentRole(request.headers);
+  // The CLI runs every tool inside its own runtime, so what this turn asked
+  // for, ran, or was refused only reaches the router if this bridge says so.
+  const agentEvents = resolveAgentEventReporter(request.headers);
   let cwd;
   try {
     cwd = resolveCwd(payload, request.headers, PROJECT_ROOT);
@@ -199,10 +331,20 @@ async function handle(request, response) {
   const bootstrapContract = roleContract(agentRole);
   console.error(`copilot bootstrap provider=copilot model=${payload.model} role=${agentRole ?? "default"} cwd=${cwd} skills=${JSON.stringify(bootstrapContract.skills ?? [])} mcp=${JSON.stringify(bootstrapContract.mcp ?? [])}`);
   console.error(`copilot request model=${payload.model} role=${isOrchestratorRole(agentRole) ? "orchestrator" : "leaf"} cwd=${cwd}`);
+  // Exposure, not invocation: the role contract decides which skills this turn
+  // can reach before the CLI starts. Deriving it from what the model happened
+  // to invoke would report nothing for a turn that was given skills and never
+  // reached for one, which is the case per-workspace skill attribution exists
+  // to be able to show.
+  if (agentEvents) {
+    for (const skill of bootstrapContract.skills ?? []) {
+      void agentEvents.reportSkillExposed({ skill, source: SKILL_EXPOSURE_SOURCE });
+    }
+  }
 
   if (payload.stream === false) {
     try {
-      const result = await runCopilot(prompt, payload.model, cwd, undefined, agentRole);
+      const result = await runCopilot(prompt, payload.model, cwd, (event) => reportToolObservation(agentEvents, event), agentRole);
       sendJson(response, 200, responsePayload(payload.model, result.text, result.result));
     } catch (error) {
       sendJson(response, 503, { error: { type: "copilot_proxy_error", message: error.message ?? String(error) } });
@@ -281,6 +423,9 @@ async function handle(request, response) {
   try {
     const result = await runCopilot(prompt, payload.model, cwd, (event) => {
       if (event.type === "process") { child = event.child; return; }
+      // Telemetry only: a tool observation says nothing to the parent, and the
+      // activity line the CLI emits alongside it is what commits the stream.
+      if (TOOL_OBSERVATION_TYPES.has(event.type)) { reportToolObservation(agentEvents, event); return; }
       startStream();
       if (event.type === "text_delta") {
         partialText += event.text;
@@ -355,4 +500,4 @@ if (IS_MAIN) {
   });
 }
 
-export { inputText, isResearchRole, runCopilot, RESEARCH_CAPABLE_ROLES };
+export { copilotToolOutcome, inputText, isResearchRole, runCopilot, RESEARCH_CAPABLE_ROLES, SKILL_EXPOSURE_SOURCE };

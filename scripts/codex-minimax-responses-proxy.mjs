@@ -12,6 +12,8 @@
 import { createServer } from "node:http";
 import { pathToFileURL } from "node:url";
 
+import { resolveAgentEventReporter } from "./codex/lib/agent-events.mjs";
+
 // Bind the port only when run as a program. The rewriting helpers below are
 // pure and worth testing directly; importing this file must not take the port
 // out from under the running proxy. Mirrors the Antigravity bridge.
@@ -312,7 +314,137 @@ export function coerceResponseBody(body, freeformNames) {
     : { ...body, output: coercedOutput };
 }
 
-function rewriteSseLine(line, coerce = null) {
+// Tool telemetry for a pass-through proxy.
+//
+// Unlike the CLI bridges, this proxy runs nothing: MiniMax answers with a tool
+// call and the Codex runtime on the other side executes it. So the two halves
+// of one call arrive in two different requests -- the call in the response
+// streamed back from upstream, and its output in the `input` array of the
+// *next* request. That split is what decides which event each half becomes.
+// The call itself is only ever `tool_requested`: this proxy has no evidence it
+// ran. The output item is the Codex runtime's own record that it did, which is
+// the execution proof `tool_executed` is defined to carry.
+//
+// No skills are reported here. This proxy strips the router's agent-role
+// header rather than honouring it (see strippedRequestHeaders) and selects no
+// role contract, so it exposes no skills to report; claiming otherwise would
+// put a skill on a workspace that never saw one.
+//
+// Every request replays the whole conversation, so the same output item is
+// visible on every later turn of the same session. Reports are therefore
+// de-duplicated by `call_id`, which is unique per tool call -- otherwise a
+// twenty-turn session would report its first tool call twenty times, once
+// under each new router request id.
+const REPORTED_CALL_LIMIT = 4096;
+const reportedCalls = new Map();
+
+function firstReport(kind, callId) {
+  const id = typeof callId === "string" && callId.trim() ? callId.trim() : null;
+  // An un-idd call cannot be de-duplicated across replays, and reporting it
+  // once per remaining turn of the conversation would be worse than not
+  // reporting it at all.
+  if (id === null) return false;
+  const key = `${kind}:${id}`;
+  if (reportedCalls.has(key)) return false;
+  reportedCalls.set(key, true);
+  // Bounded: a long-lived proxy must not keep every call id it ever saw. Map
+  // iterates in insertion order, so the oldest entry is the one that goes.
+  if (reportedCalls.size > REPORTED_CALL_LIMIT) reportedCalls.delete(reportedCalls.keys().next().value);
+  return true;
+}
+
+const TOOL_CALL_ITEM_TYPES = new Set([ "function_call", "custom_tool_call" ]);
+const TOOL_OUTPUT_ITEM_TYPES = new Set([ "function_call_output", "custom_tool_call_output" ]);
+
+const MINIMAX_DENIED_PATTERN = /permission[_\s-]?denied|auto[_\s-]?denied|denied|not[_\s-]?permitted|not[_\s-]?allowed|user[_\s-]?rejected|tool[_\s-]?not[_\s-]?found|no such tool/i;
+
+/** How a tool call ended, as far as its output item says. */
+function toolOutputOutcome(item) {
+  const raw = typeof item?.output === "string" ? item.output : null;
+  let payload = null;
+  if (raw) {
+    try { payload = JSON.parse(raw); } catch { payload = null; }
+  }
+  const metadata = payload && typeof payload === "object" && !Array.isArray(payload) ? payload.metadata : null;
+  const exitCode = metadata && Number.isFinite(metadata.exit_code) ? metadata.exit_code : null;
+  const durationSeconds = metadata && Number.isFinite(metadata.duration_seconds) ? metadata.duration_seconds : null;
+  const statusStr = String(item?.status ?? payload?.status ?? "");
+  const errorStr = String(item?.error ?? payload?.error ?? "");
+  if (item?.denied === true || statusStr === "denied" || MINIMAX_DENIED_PATTERN.test(statusStr) || MINIMAX_DENIED_PATTERN.test(errorStr) || (raw && MINIMAX_DENIED_PATTERN.test(raw))) {
+    return { kind: "unavailable", reason: "denied" };
+  }
+  const failed = statusStr === "failed" || statusStr === "error" || item?.success === false || (exitCode !== null && exitCode !== 0);
+  return {
+    kind: "executed",
+    status: failed ? "error" : "ok",
+    durationMs: durationSeconds === null ? null : Math.max(0, Math.round(durationSeconds * 1000)),
+  };
+}
+
+/** Report every tool call this request carries the output of. */
+function reportExecutedToolCalls(agentEvents, payload) {
+  if (!agentEvents || !payload || typeof payload !== "object") return;
+  const input = Array.isArray(payload.input) ? payload.input : [];
+  // An output item names only the call id it settles, so the name comes from
+  // the call item beside it in the same replayed history.
+  const names = new Map();
+  const servers = new Map();
+  for (const item of input) {
+    if (!item || typeof item !== "object" || !TOOL_CALL_ITEM_TYPES.has(item.type)) continue;
+    const callId = typeof item.call_id === "string" && item.call_id.trim() ? item.call_id.trim() : null;
+    const name = typeof item.name === "string" && item.name.trim() ? item.name.trim() : null;
+    if (callId && name) {
+      names.set(callId, name);
+      const server = typeof item.server === "string" && item.server.trim()
+        ? item.server.trim()
+        : (typeof item.namespace === "string" && item.namespace.trim() ? item.namespace.trim() : null);
+      if (server) servers.set(callId, server);
+    }
+  }
+  for (const item of input) {
+    if (!item || typeof item !== "object" || !TOOL_OUTPUT_ITEM_TYPES.has(item.type)) continue;
+    const callId = typeof item.call_id === "string" && item.call_id.trim() ? item.call_id.trim() : null;
+    const tool = callId ? names.get(callId) : null;
+    // A call whose name is not in this request's history is unattributable,
+    // and the router has nothing to file an unnamed tool under.
+    if (!tool) continue;
+    const server = (callId ? servers.get(callId) : null) ?? (typeof item.server === "string" && item.server.trim() ? item.server.trim() : null);
+    const outcome = toolOutputOutcome(item);
+    if (outcome.kind === "unavailable") {
+      if (!firstReport("unavailable", callId)) continue;
+      void agentEvents.reportToolUnavailable({ tool, callId, reason: outcome.reason, server });
+    } else if (outcome.kind === "executed") {
+      if (!firstReport("executed", callId)) continue;
+      void agentEvents.reportToolExecuted({ tool, callId, status: outcome.status, durationMs: outcome.durationMs, server });
+    }
+  }
+}
+
+/** Report a tool call the model just asked for, once per call id. */
+function reportRequestedToolCall(agentEvents, item) {
+  if (!item || typeof item !== "object" || !TOOL_CALL_ITEM_TYPES.has(item.type)) return;
+  const tool = typeof item.name === "string" ? item.name.trim() : "";
+  const callId = typeof item.call_id === "string" && item.call_id.trim() ? item.call_id.trim() : null;
+  const server = typeof item.server === "string" && item.server.trim()
+    ? item.server.trim()
+    : (typeof item.namespace === "string" && item.namespace.trim() ? item.namespace.trim() : null);
+  if (!tool || !firstReport("requested", callId)) return;
+  void agentEvents.reportToolRequested({ tool, callId, server });
+}
+
+/**
+ * Observe one upstream response event for the tool calls it carries. Progress
+ * and terminal snapshots repeat the whole output array, which is why the
+ * de-duplication above is what makes this safe to call on every event.
+ */
+function observeResponseEvent(agentEvents, event) {
+  if (!agentEvents || !event || typeof event !== "object") return;
+  if (event.item) reportRequestedToolCall(agentEvents, event.item);
+  for (const item of Array.isArray(event.response?.output) ? event.response.output : []) reportRequestedToolCall(agentEvents, item);
+  for (const item of Array.isArray(event.output) ? event.output : []) reportRequestedToolCall(agentEvents, item);
+}
+
+function rewriteSseLine(line, coerce = null, observe = null) {
   const lineEnding = line.endsWith("\r") ? "\r" : "";
   const content = lineEnding ? line.slice(0, -1) : line;
   if (!content.startsWith("data:")) {
@@ -324,6 +456,9 @@ function rewriteSseLine(line, coerce = null) {
   }
   try {
     const rewritten = rewrite(JSON.parse(data));
+    // Observed before coercion: the tool call's own name and call id are what
+    // the router is told about, and coercion only changes the item's shape.
+    observe?.(rewritten);
     const coerced = coerce ? coerce(rewritten) : rewritten;
     if (coerced === null) return null;
     const events = Array.isArray(coerced) ? coerced : [ coerced ];
@@ -361,7 +496,7 @@ function upstreamHeaders(response, upstream) {
   }
 }
 
-async function streamSse(body, response, coerce = null) {
+async function streamSse(body, response, coerce = null, observe = null) {
   const reader = body.getReader();
   const decoder = new TextDecoder();
   let bufferedLine = "";
@@ -393,7 +528,7 @@ async function streamSse(body, response, coerce = null) {
 
     const held = pendingEventLine;
     pendingEventLine = null;
-    const rewritten = rewriteSseLine(line, coerce);
+    const rewritten = rewriteSseLine(line, coerce, observe);
     if (rewritten === null) return; // Header and payload dropped together.
 
     if (held === null) {
@@ -456,6 +591,9 @@ async function forward(request, response) {
     return;
   }
 
+  // The router authorizes reporting per request; a caller that is not the
+  // router, or a request the router sent no telemetry headers on, gets none.
+  const agentEvents = resolveAgentEventReporter(request.headers);
   const abortController = new AbortController();
   const abortUpstream = () => abortController.abort();
   request.once("aborted", abortUpstream);
@@ -475,12 +613,16 @@ async function forward(request, response) {
       try {
         const payload = JSON.parse(rawBody);
         freeformNames = collectFreeformToolNames(payload);
+        // The outputs in this request settle calls a previous response made:
+        // this is where a tool call is proved to have run.
+        reportExecutedToolCalls(agentEvents, payload);
         body = JSON.stringify(rewriteOutboundPayload(payload));
       } catch {
         // Preserve malformed JSON unchanged.
       }
     }
     const coerce = freeformNames.size > 0 ? createFreeformCoercion(freeformNames) : null;
+    const observe = agentEvents ? (event) => observeResponseEvent(agentEvents, event) : null;
 
     const upstream = await fetch(new URL(request.url ?? "/", upstreamBaseUrl), {
       body,
@@ -497,14 +639,18 @@ async function forward(request, response) {
 
     const contentType = upstream.headers.get("content-type") ?? "";
     if (contentType.toLowerCase().includes("text/event-stream")) {
-      await streamSse(upstream.body, response, coerce);
+      await streamSse(upstream.body, response, coerce, observe);
       return;
     }
 
     const responseText = await upstream.text();
     if (contentType.toLowerCase().includes("application/json")) {
       try {
-        response.end(JSON.stringify(coerceResponseBody(rewrite(JSON.parse(responseText)), freeformNames)));
+        const rewritten = rewrite(JSON.parse(responseText));
+        // The non-streaming form of the same observation: one whole response
+        // rather than the event stream that would have carried it.
+        observe?.(rewritten);
+        response.end(JSON.stringify(coerceResponseBody(rewritten, freeformNames)));
         return;
       } catch {
         // Preserve malformed/non-JSON upstream responses unchanged.
@@ -525,3 +671,10 @@ if (IS_MAIN) {
     process.stderr.write(`MiniMax Responses proxy listening at http://${host}:${port}.\n`);
   });
 }
+
+export {
+  observeResponseEvent,
+  reportExecutedToolCalls,
+  reportRequestedToolCall,
+  toolOutputOutcome,
+};

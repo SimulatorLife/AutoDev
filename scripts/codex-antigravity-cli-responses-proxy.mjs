@@ -196,6 +196,152 @@ function isSpawnToolName(agentEvents, toolName) {
   return ANTIGRAVITY_SPAWN_TOOL_NAMES.has(toolName);
 }
 
+// How an agy turn comes by the skills its role contract grants it: agy has no
+// per-invocation skill flag, so the contract rendered into the turn's prompt
+// and the workspace's own `.agents/skills.json` registry are the exposure.
+// Carried on every `skill_exposed` event so the router's rows say which
+// mechanism made the skill available rather than only that something did.
+const ANTIGRAVITY_SKILL_EXPOSURE_SOURCE = "role_contract";
+
+// Where agy puts a tool call's output. Its own changelog describes `tool_info`
+// as carrying "canonical tool name, parameters, and output", and which key
+// holds the payload has moved between CLI versions, so any of these counts as
+// the output that proves the call ran. Guessing one and pinning it would make
+// a CLI update silently downgrade every executed call to a requested one.
+const TOOL_OUTPUT_KEYS = [ "output", "result", "tool_output", "tool_result", "response", "content" ];
+const TERMINAL_TOOL_STATES = new Set([ "DONE", "ERROR", "FAILED", "CANCELLED" ]);
+
+const AGY_DENIED_PATTERN = /permission[_\s-]?denied|auto[_\s-]?denied|denied|not[_\s-]?permitted|not[_\s-]?allowed|no such tool|tool not found/i;
+
+/** True when a step carries the tool call's own output. */
+function toolOutputPresent(update) {
+  const info = structured(update?.tool_info) ?? {};
+  for (const key of TOOL_OUTPUT_KEYS) {
+    const value = info[ key ] ?? update?.[ key ];
+    if (value === undefined || value === null) continue;
+    if (typeof value === "string" ? value.trim() !== "" : true) return true;
+  }
+  return false;
+}
+
+/** The MCP server an Antigravity tool belongs to, or null if builtin / unspecified. */
+function antigravityToolServer(update, toolName) {
+  const rawServer = update?.server ?? update?.tool_info?.server;
+  if (typeof rawServer === "string" && rawServer.trim()) return rawServer.trim();
+  const name = typeof toolName === "string" ? toolName.trim() : "";
+  if (name.startsWith("mcp__")) {
+    const parts = name.split("__");
+    if (parts.length >= 3 && parts[1]) return parts[1];
+  }
+  if (name.startsWith("mcp_")) {
+    const parts = name.split("_");
+    if (parts.length >= 3 && parts[1]) return parts[1];
+  }
+  const args = structured(update?.tool_info?.args) ?? structured(update?.tool_input) ?? {};
+  if (args.ServerName && typeof args.ServerName === "string" && args.ServerName.trim()) {
+    return args.ServerName.trim();
+  }
+  if (args.server_name && typeof args.server_name === "string" && args.server_name.trim()) {
+    return args.server_name.trim();
+  }
+  return null;
+}
+
+/** How long agy says the call took, in ms, or null when it does not say. */
+function toolDurationMs(update) {
+  const seconds = update?.duration_seconds ?? update?.tool_info?.duration_seconds;
+  return Number.isFinite(seconds) ? Math.max(0, Math.round(seconds * 1000)) : null;
+}
+
+/**
+ * What one `step_type: "tool"` update proves about the call.
+ *
+ * `requested` is the model asking; `executed` is the call having run. The
+ * router treats `tool_executed` as the first-class evidence that unlocks
+ * per-workspace tool attribution, so a call is only ever reported as executed
+ * on agy's own completion record for it: `DONE` (which carries
+ * `duration_seconds` for the call), or a terminal state carrying the call's
+ * output. A terminal state with neither -- a cancelled call, one agy refused
+ * -- proves only that the model asked, which the ACTIVE step already said.
+ */
+function toolStepEvidence(update) {
+  const state = String(update?.state ?? "").toUpperCase();
+  if (state === "ACTIVE") return { kind: "requested" };
+  if (!TERMINAL_TOOL_STATES.has(state)) return { kind: "none" };
+  const info = structured(update?.tool_info) ?? {};
+  const statusMessage = String(update?.status_message ?? update?.error ?? info.error ?? info.status_message ?? "");
+  const outputText = String(info.output ?? info.result ?? update?.output ?? update?.result ?? "");
+  if (AGY_DENIED_PATTERN.test(statusMessage) || (state !== "DONE" && AGY_DENIED_PATTERN.test(outputText))) {
+    const reason = /permission|auto[_\s-]?denied/i.test(statusMessage || outputText) ? "permission_denied" : "denied";
+    return { kind: "unavailable", reason };
+  }
+  if (state !== "DONE" && !toolOutputPresent(update)) {
+    if (state === "CANCELLED") return { kind: "unavailable", reason: "cancelled" };
+    return { kind: "none" };
+  }
+  return { kind: "executed", status: state === "DONE" ? "ok" : "error", durationMs: toolDurationMs(update) };
+}
+
+/** agy's handle on a tool call within this turn: its step index. */
+function toolCallId(update) {
+  return Number.isFinite(update?.step_index) ? `s${update.step_index}` : null;
+}
+
+/**
+ * Reports the tools one agy turn asked for and the ones it actually ran.
+ *
+ * Delegation is deliberately out of scope here: agy emits its
+ * `invoke_subagent` dispatch as `step_type: "subagent"`, and those are already
+ * reported through the spawn channel as children rather than as tool calls.
+ * Only `step_type: "tool"` steps reach this observer, so a fan-out is never
+ * counted twice under two different meanings.
+ *
+ * A step repeats its state (ACTIVE while the call runs, then a terminal one),
+ * so both halves are de-duplicated per call: the router counts events, and a
+ * chatty stream would otherwise report one call as several.
+ */
+function createToolObserver(agentEvents) {
+  const requested = new Set();
+  const settled = new Set();
+  const observeToolStep = (update) => {
+    if (!agentEvents) return;
+    if (String(update?.step_type ?? "").toLowerCase() !== "tool") return;
+    const tool = String(update?.tool_name ?? update?.tool_info?.name ?? "").trim();
+    if (!tool) return;
+    const callId = toolCallId(update);
+    const key = callId ?? tool;
+    const evidence = toolStepEvidence(update);
+    const server = antigravityToolServer(update, tool);
+    if (evidence.kind === "requested") {
+      if (requested.has(key)) return;
+      requested.add(key);
+      void agentEvents.reportToolRequested({ tool, callId, server });
+      return;
+    }
+    if (evidence.kind === "unavailable") {
+      if (settled.has(key)) return;
+      settled.add(key);
+      void agentEvents.reportToolUnavailable({ tool, callId, reason: evidence.reason, server });
+      return;
+    }
+    if (evidence.kind !== "executed" || settled.has(key)) return;
+    settled.add(key);
+    void agentEvents.reportToolExecuted({ tool, callId, status: evidence.status, durationMs: evidence.durationMs, server });
+  };
+  // agy auto-denies a tool whose permission the run was not granted and says
+  // so only on stderr, which this bridge already parses into the failure it
+  // raises. That is the one case where the turn knows a tool the model asked
+  // for was never allowed to run, and reporting it is what stops the
+  // dashboard reading a permission gap as "the workspace never used it".
+  const reportPermissionDenial = (error) => {
+    if (!agentEvents) return;
+    if (error?.failureCode !== "AGY_PERMISSION_DENIED") return;
+    const server = antigravityToolServer(null, error.failureTool);
+    void agentEvents.reportToolUnavailable({ tool: error.failureTool, reason: "permission_denied", server });
+  };
+  return { observeToolStep, reportPermissionDenial };
+}
+
 /**
  * Tracks the subagents one agy turn dispatches, so each is reported once when it
  * starts and once when it ends.
@@ -822,6 +968,9 @@ async function handle(request, response) {
   // router request that produced it without carrying any prompt content.
   const requestId = headerValue(request.headers, REQUEST_ID_HEADER);
   const { observeSpawnStep, flushSpawns, openSpawnCount } = createSpawnTracker(agentEvents);
+  // The other half of what agy does inside its own runtime: the tools it
+  // reaches for. Like delegation, none of it reaches the router as a request.
+  const { observeToolStep, reportPermissionDenial } = createToolObserver(agentEvents);
   let cwd;
   try {
     cwd = resolveCwd(payload, request.headers, PROJECT_ROOT);
@@ -844,6 +993,16 @@ async function handle(request, response) {
   const home = process.env.HOME ?? "";
   console.error(`agy bootstrap provider=antigravity model=${model} role=${agentRole ?? "default"} cwd=${cwd} skills=${JSON.stringify(bootstrapContract.skills ?? [])} mcp=${JSON.stringify(bootstrapContract.mcp ?? [])} permission_settings=${home}/.gemini/antigravity-cli/settings.json skill_registry=${cwd}/.agents/skills.json mcp_registry=${home}/.gemini/config/mcp_config.json`);
   console.error(`agy request model=${model} effort=${effort} role=${isOrchestratorRole(agentRole) ? "orchestrator" : "leaf"} cwd=${cwd}`);
+  // Exposure, not invocation: the role contract decides which skills this turn
+  // can reach before agy starts, and that decision is the fact the router
+  // needs. Deriving it from what the model happened to invoke would report
+  // nothing for a turn that was given skills and never reached for one --
+  // exactly the case per-workspace skill attribution has to be able to show.
+  if (agentEvents) {
+    for (const skill of bootstrapContract.skills ?? []) {
+      void agentEvents.reportSkillExposed({ skill, source: ANTIGRAVITY_SKILL_EXPOSURE_SOURCE });
+    }
+  }
   // A turn logged its start and nothing else, so a failed one left only the
   // step lines that happened to precede it -- the reason it died reached the
   // router as an HTTP status and was never written down anywhere. Every exit
@@ -857,7 +1016,10 @@ async function handle(request, response) {
   if (!payload.stream) {
     try {
       const result = await runAgy(prompt, model, effort, cwd, (event) => {
-        if (event.event === "step_update") observeSpawnStep(event.step_update ?? {});
+        if (event.event === "step_update") {
+          observeSpawnStep(event.step_update ?? {});
+          observeToolStep(event.step_update ?? {});
+        }
       }, spawnSession, agentRole);
       const spawnChildren = spawnSession ? spawnSessions.close(spawnSession) : [];
       const output = [ responseMessageItem(result.text, `msg_${randomBytes(10).toString("hex")}`) ];
@@ -875,6 +1037,7 @@ async function handle(request, response) {
       sendJson(response, 200, responsePayload(payload.model ?? model, result.text, result.result, undefined, undefined, output));
     } catch (error) {
       flushSpawns("failure");
+      reportPermissionDenial(error);
       if (spawnSession) spawnSessions.close(spawnSession);
       logTurnEnd("failed", error.message ?? String(error));
       sendJson(response, 502, { error: agyErrorDetails(error, agentRole, cwd, requestId) });
@@ -1052,6 +1215,7 @@ async function handle(request, response) {
       if (event.event === "step_update") {
         const update = event.step_update ?? {};
         observeSpawnStep(update);
+        observeToolStep(update);
         // Kept in sync on every step so a dispatch step's own DONE -- which
         // clears activeTool below -- does not read as "delegation over" while
         // the spawn tracker still has children it dispatched open.
@@ -1149,6 +1313,10 @@ async function handle(request, response) {
     clearInterval(keepAlive);
     stopDelegationHeartbeat();
     flushSpawns("failure");
+    // Reported before the writability check below returns: a permission gap is
+    // a fact about the workspace, not about whether the parent is still
+    // listening, and it is the only unavailability agy ever states out loud.
+    reportPermissionDenial(error);
     delegation.pendingChildren = openSpawnCount();
     const message = error.message ?? String(error);
     // Logged before the writability check: a turn that failed *because* the
@@ -1210,4 +1378,4 @@ if (IS_MAIN) {
   });
 }
 
-export { ANTIGRAVITY_WEB_RESEARCH_TOOLS, agyArgs, agyErrorDetails, agyFailureMessage, agyPermissionFailure, createSpawnTracker, decideCloseOnDelegation, isDelegationActive, modelEffort, promptFromInput, resolveEffort, resolveModel, spawnedChildren, subagentModel, updateDelegationState };
+export { ANTIGRAVITY_SKILL_EXPOSURE_SOURCE, ANTIGRAVITY_WEB_RESEARCH_TOOLS, agyArgs, agyErrorDetails, agyFailureMessage, agyPermissionFailure, antigravityToolServer, createSpawnTracker, createToolObserver, decideCloseOnDelegation, isDelegationActive, modelEffort, promptFromInput, resolveEffort, resolveModel, spawnedChildren, subagentModel, toolStepEvidence, updateDelegationState };

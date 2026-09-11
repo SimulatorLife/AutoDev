@@ -18,6 +18,7 @@ import { INCOMPLETE_REASON_INTERRUPTED, INCOMPLETE_REASON_TIMEOUT, isHardLimitCl
 // replays whatever it was handed on every later turn. Normalising outbound is
 // what stops one lax turn from permanently poisoning a session.
 import { dropUnresolvableReasoning, normalizeInputItemIds } from "./codex/lib/responses-item-ids.mjs";
+import { CodexStateCollector, loadCodexStateCollectorConfig } from "./codex/lib/codex-state-collector.mjs";
 
 const HOST = process.env.CODEX_MODEL_ROUTER_HOST ?? "127.0.0.1";
 const PORT = Number.parseInt(process.env.CODEX_MODEL_ROUTER_PORT ?? "4100", 10);
@@ -27,6 +28,31 @@ const CATALOG_FILE = process.env.CODEX_ROUTER_CATALOG_FILE ?? `${CODEX_HOME}/cod
 const DASHBOARD_FILE = new URL("./codex-model-router-dashboard.html", import.meta.url);
 const IS_MAIN = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
 const STATE_FILE = process.env.CODEX_ROUTER_STATE_FILE ?? `${CODEX_HOME}/codex-router-state.json`;
+const CODEX_STATE_DB_PATH = process.env.CODEX_STATE_DB_PATH ?? `${CODEX_HOME}/state_5.sqlite`;
+// The collector is read-only: it never writes to the Codex-owned
+// state_5.sqlite file or any other path inside $CODEX_HOME. Its derived
+// snapshot is held in this process and surfaced through /status as
+// `codexState`. A live poll is started only when the router is the
+// main module, so test imports do not spin up an interval timer.
+const codexState = {
+  collector: new CodexStateCollector(loadCodexStateCollectorConfig()),
+  lastSnapshot: null,
+  livePollStarted: false,
+};
+async function refreshCodexState() {
+  try {
+    codexState.lastSnapshot = await codexState.collector.collectSnapshot();
+  } catch (error) {
+    codexState.lastSnapshot = {
+      localTelemetry: {
+        status: "error",
+        pathConfigured: true,
+        reason: error instanceof Error ? error.message : String(error),
+        collectedAt: new Date().toISOString(),
+      },
+    };
+  }
+}
 // Read once at startup, but kept mutable so the test suite can pin it. The
 // launcher sources $CODEX_HOME/.env before exec, so a developer shell that
 // legitimately carries the token would otherwise silently arm the auth gate
@@ -406,6 +432,24 @@ function workspaceBucket(collection, key, cwd = null) {
       byProvider: {},
       tools: new Map(),
       skills: new Map(),
+      // Public-facing tool/skill counters that always exist on the bucket
+      // but are only reported when the capability flag has been raised by a
+      // first-class event. `unattributed` counts the coverage the OTLP
+      // exporter emitted without a name (or with a duplicate call id) so
+      // the dashboard can distinguish "we never observed an executed tool
+      // here" from "we observed N executed tools but cannot name any of
+      // them yet". `executed` mirrors the same gate for the bridge-reported
+      // `tool_executed` channel.
+      toolsUnattributed: 0,
+      skillsUnattributed: 0,
+      toolsExecuted: 0,
+      toolsRequested: 0,
+      toolsUnavailable: 0,
+      skillsExposed: 0,
+      bridgeObservations: {
+        tools: new Map(),
+        skills: new Map(),
+      },
     };
   }
   const bucket = collection[key];
@@ -413,6 +457,15 @@ function workspaceBucket(collection, key, cwd = null) {
   if (!bucket.tools) bucket.tools = new Map();
   if (!bucket.skills) bucket.skills = new Map();
   if (typeof bucket.skillUses !== "number") bucket.skillUses = 0;
+  if (typeof bucket.toolsUnattributed !== "number") bucket.toolsUnattributed = 0;
+  if (typeof bucket.skillsUnattributed !== "number") bucket.skillsUnattributed = 0;
+  if (typeof bucket.toolsExecuted !== "number") bucket.toolsExecuted = 0;
+  if (typeof bucket.toolsRequested !== "number") bucket.toolsRequested = 0;
+  if (typeof bucket.toolsUnavailable !== "number") bucket.toolsUnavailable = 0;
+  if (typeof bucket.skillsExposed !== "number") bucket.skillsExposed = 0;
+  if (!bucket.bridgeObservations) bucket.bridgeObservations = { tools: new Map(), skills: new Map() };
+  if (!bucket.bridgeObservations.tools) bucket.bridgeObservations.tools = new Map();
+  if (!bucket.bridgeObservations.skills) bucket.bridgeObservations.skills = new Map();
   return bucket;
 }
 
@@ -523,7 +576,17 @@ function usageStatus() {
     byModel: usageSnapshot(usageTelemetry.byModel),
     byOrigin: usageSnapshot(usageTelemetry.byOrigin),
     byWorkspace: Object.fromEntries(Object.entries(usageTelemetry.byWorkspace).map(([key, bucket]) => {
-      const { tools, skills, workspace_id: _workspaceId, ...publicBucket } = bucket;
+      const { tools, skills, workspace_id: _workspaceId, bridgeObservations, ...publicBucket } = bucket;
+      // Workspace-scoped tool/skill coverage. The capability flags were
+      // historically global; per-workspace attribution now depends on
+      // `bridgeEvents` as the first-class event source. We emit `byTool`
+      // and `bySkill` when the workspace has been proven to carry that
+      // dimension (either through OTLP attribution or through a bridge
+      // report) and an `unavailable` marker otherwise.
+      const toolsCapable = workspaceAttributionCapabilities.tools || (bucket.toolsExecuted ?? 0) > 0 || (bucket.toolsRequested ?? 0) > 0 || (bucket.toolsUnavailable ?? 0) > 0;
+      const skillsCapable = workspaceAttributionCapabilities.skills || (bucket.skillsExposed ?? 0) > 0;
+      const formatBridgeTools = (map) => [...map.values()].map((entry) => ({ ...entry, byStatus: { ...entry.byStatus } })).sort((a, b) => a.tool.localeCompare(b.tool));
+      const formatBridgeSkills = (map) => [...map.entries()].map(([skill, value]) => ({ skill, count: value })).sort((a, b) => a.skill.localeCompare(b.skill));
       return [key, {
         ...publicBucket,
         averageDurationMs: bucket.successes + bucket.failures > 0 ? Math.round(bucket.durationMs / (bucket.successes + bucket.failures)) : 0,
@@ -531,8 +594,20 @@ function usageStatus() {
         byRole: usageSnapshot(bucket.byRole),
         byModel: usageSnapshot(bucket.byModel),
         byProvider: usageSnapshot(bucket.byProvider),
-        ...(workspaceAttributionCapabilities.tools ? { byTool: formatWorkspaceTools(tools) } : {}),
-        ...(workspaceAttributionCapabilities.skills ? { bySkill: formatWorkspaceSkills(skills) } : {}),
+        toolsUnattributed: bucket.toolsUnattributed ?? 0,
+        skillsUnattributed: bucket.skillsUnattributed ?? 0,
+        toolsExecuted: bucket.toolsExecuted ?? 0,
+        toolsRequested: bucket.toolsRequested ?? 0,
+        toolsUnavailable: bucket.toolsUnavailable ?? 0,
+        skillsExposed: bucket.skillsExposed ?? 0,
+        ...(toolsCapable ? { byTool: formatWorkspaceTools(tools) } : { byTool: null }),
+        ...(skillsCapable ? { bySkill: formatWorkspaceSkills(skills) } : { bySkill: null }),
+        ...(bridgeObservations && (bridgeObservations.tools.size > 0 || bridgeObservations.skills.size > 0)
+          ? {
+            bridgeTools: formatBridgeTools(bridgeObservations.tools),
+            bridgeSkills: formatBridgeSkills(bridgeObservations.skills),
+          }
+          : {}),
       }];
     })),
   };
@@ -575,6 +650,23 @@ const otelTelemetry = {
       truncated: { count: 0, sum: 0 },
       descriptionTruncatedChars: { count: 0, sum: 0 },
     },
+  },
+  toolResults: {
+    total: 0,
+    executed: 0,
+    unattributed: 0,
+    byStatus: {},
+    byTool: new Map(),
+    executionDurationMs: { count: 0, sum: 0 },
+    causeResolved: 0,
+    causeUnresolved: 0,
+    seenKeys: new Set(),
+  },
+  bridgeEvents: {
+    toolExecuted: { total: 0, byTool: new Map(), byWorkspace: new Map() },
+    toolRequested: { total: 0, byTool: new Map(), byWorkspace: new Map() },
+    toolUnavailable: { total: 0, byTool: new Map(), byWorkspace: new Map(), byReason: {} },
+    skillExposed: { total: 0, bySkill: new Map(), byWorkspace: new Map() },
   },
 };
 // Cumulative OTLP metric points resend the running total on every export, so
@@ -671,6 +763,65 @@ function noteConversation(attributes, resourceAttributes = {}) {
   return session;
 }
 
+function localWorkspaceForConversation(attributes, resourceAttributes = {}) {
+  const conversationId = attributes?.["conversation.id"] ?? resourceAttributes?.["conversation.id"];
+  if (typeof conversationId !== "string" || !conversationId.trim()) return null;
+  const thread = codexState.lastSnapshot?.conversationThreads?.[conversationId.trim()];
+  if (!thread || typeof (thread.projectKey ?? thread.workspaceKey) !== "string" || !(thread.projectKey ?? thread.workspaceKey).trim()) return null;
+  return thread;
+}
+
+function noteCodexToolResultLog(attributes, resourceAttributes = {}) {
+  const tool = toolNameAttribute(attributes, "unknown-tool");
+  const source = safeMetricLabel(attributes.tool_origin ?? attributes.source, "codex");
+  const server = toolServerAttribute(attributes);
+  const callId = typeof (attributes.call_id ?? attributes.tool_call_id) === "string"
+    ? String(attributes.call_id ?? attributes.tool_call_id).trim()
+    : "";
+  const conversationId = attributes["conversation.id"] ?? resourceAttributes["conversation.id"] ?? "";
+  const key = `log:${toolResultKey({ ...attributes, call_id: callId || attributes.call_id, tool, source, server })}`;
+  if (otelTelemetry.toolResults.seenKeys.has(key)) return;
+  otelTelemetry.toolResults.seenKeys.add(key);
+  while (otelTelemetry.toolResults.seenKeys.size > 5000) {
+    const first = otelTelemetry.toolResults.seenKeys.values().next().value;
+    if (first === undefined) break;
+    otelTelemetry.toolResults.seenKeys.delete(first);
+  }
+  const status = toolStatusAttribute(attributes);
+  const count = 1;
+  otelTelemetry.toolResults.total += count;
+  otelTelemetry.toolResults.executed += count;
+  otelTelemetry.toolResults.causeResolved += callId ? count : 0;
+  otelTelemetry.toolResults.causeUnresolved += callId ? 0 : count;
+  if (!callId) otelTelemetry.toolResults.unattributed += count;
+  otelTelemetry.toolResults.byStatus[status] = (otelTelemetry.toolResults.byStatus[status] ?? 0) + count;
+  const rowKey = [tool, source, server].join("::");
+  const row = otelTelemetry.toolResults.byTool.get(rowKey) ?? { tool, source, server, count: 0, byStatus: {} };
+  row.count += count;
+  row.byStatus[status] = (row.byStatus[status] ?? 0) + count;
+  otelTelemetry.toolResults.byTool.set(rowKey, row);
+  const duration = Number(attributes.duration_ms);
+  const thread = localWorkspaceForConversation(attributes, resourceAttributes);
+  if (!thread) {
+    attributionDiagnostics.total += 1;
+    attributionDiagnostics.unattributed += 1;
+    attributionDiagnostics.byReason.missing_workspace += 1;
+    return;
+  }
+  workspaceAttributionCapabilities.tools = true;
+  attributionDiagnostics.total += 1;
+  attributionDiagnostics.attributed += 1;
+  attributionDiagnostics.bySource.datapoint += 1;
+  const wsBucket = workspaceBucket(usageTelemetry.byWorkspace, thread.projectKey ?? thread.workspaceKey, thread.cwdBasename);
+  const wsTool = workspaceToolBucket(wsBucket, { tool, source, server });
+  wsTool.count += count;
+  wsTool.byStatus[status] = (wsTool.byStatus[status] ?? 0) + count;
+  if (Number.isFinite(duration) && duration >= 0) {
+    wsTool.durationCount += 1;
+    wsTool.durationMs += duration;
+  }
+}
+
 function ingestOtelLogs(payload) {
   for (const resourceLog of payload.resourceLogs ?? []) {
     const resource = otelAttributes(resourceLog.resource?.attributes);
@@ -688,6 +839,8 @@ function ingestOtelLogs(payload) {
           const duration = numberAttribute(attributes, "duration_ms");
           otelTelemetry.turns.ttftMs += duration;
           otelTelemetry.turns.ttftCount += duration > 0 ? 1 : 0;
+        } else if (eventName === "codex.tool_result") {
+          noteCodexToolResultLog(attributes, resource);
         } else if (eventName === "codex.sse_event" && attributes["event.kind"] === "response.completed") {
           otelTelemetry.turns.completed += 1;
           otelTelemetry.tokens.input += numberAttribute(attributes, "input_token_count");
@@ -878,6 +1031,10 @@ function noteSkillInjected(metricName, attributes, dataPoint, temporality, dpAtt
     wsSkill.byModel[model] = (wsSkill.byModel[model] ?? 0) + delta;
     wsSkill.byPlugin[plugin] = (wsSkill.byPlugin[plugin] ?? 0) + delta;
   }
+  if (wsResolution.status === "attributed" && (!skill || skill === "unknown")) {
+    const wsBucket = workspaceBucket(usageTelemetry.byWorkspace, wsResolution.workspaceKey);
+    wsBucket.skillsUnattributed = (wsBucket.skillsUnattributed ?? 0) + delta;
+  }
 }
 
 function noteThreadSkillsHistogram(bucket, metricName, attributes, dataPoint, temporality) {
@@ -1022,6 +1179,128 @@ function noteToolDuration(metricName, attributes, dataPoint, temporality, resour
   }
 }
 
+// Codex's `codex.tool_result` is the first-class OTLP signal for "the tool
+// call landed and produced an outcome". It is causally linked to the
+// originating `codex.tool.call` event by the call id (Codex emits a
+// `tool.call_id` attribute on both), so we dedupe the result against the call
+// by hashing the call id and remembering the last-seen tool name so a later
+// matching tool call cannot be confused with an unrelated one.
+//
+// The metric also distinguishes *executed* results (the runtime carried the
+// call to a backend that returned a value) from *unattributed* results (a
+// tool call was emitted but its result could not be tied back to a tool
+// name). Unattributed coverage is reported separately so the dashboard can
+// fail closed on per-workspace skill/tool attribution while still surfacing
+// the raw execution signal.
+function toolResultKey(attributes) {
+  // Dedup is keyed by call id, tool name, source, and server. The start
+  // timestamp is deliberately excluded: Codex's OTLP exporter occasionally
+  // re-emits the same result event with a slightly different timestamp, and
+  // the dedupe contract is "one call_id -> one executed count", not
+  // "one timestamp -> one executed count".
+  const callId = typeof attributes.call_id === "string" && attributes.call_id.trim()
+    ? attributes.call_id.trim()
+    : typeof attributes.tool_call_id === "string" && attributes.tool_call_id.trim()
+      ? attributes.tool_call_id.trim()
+      : null;
+  const tool = toolNameAttribute(attributes);
+  const source = safeMetricLabel(attributes.source);
+  const server = toolServerAttribute(attributes);
+  const conversationId = typeof attributes["conversation.id"] === "string" ? attributes["conversation.id"].trim() : "";
+  return [ conversationId, callId ?? "no_call_id", tool, source, server ].join("\u0000");
+}
+
+function noteToolResultCounter(metricName, resourceAttributes, dataPoints, temporality) {
+  for (const dataPoint of dataPoints ?? []) {
+    const attributes = otelAttributes(dataPoint.attributes);
+    const wsResolution = resolveDatapointWorkspace(attributes, resourceAttributes);
+    if (wsResolution.workspaceId) workspaceAttributionCapabilities.tools = true;
+    const identity = toolSeriesIdentity(attributes, wsResolution.workspaceId);
+    const tool = toolNameAttribute(attributes);
+    const source = safeMetricLabel(attributes.source);
+    const server = toolServerAttribute(attributes);
+    const status = toolStatusAttribute(attributes);
+    const callId = typeof attributes.call_id === "string" && attributes.call_id.trim()
+      ? attributes.call_id.trim()
+      : typeof attributes.tool_call_id === "string" && attributes.tool_call_id.trim()
+        ? attributes.tool_call_id.trim()
+        : null;
+    // Per-call_id series identity so multiple distinct tool completions
+    // emitted at the same startTimeUnixNano do not collapse into a single
+    // OTLP series under cumulative-temporality dedup. A later duplicate
+    // export of the same call_id is then collapsed by seenKeys below.
+    const resultIdentity = { ...identity, call_id: callId ?? "" };
+    const delta = otelSeriesDelta(otelSeriesKey(`${metricName}#count`, resultIdentity, dataPoint.startTimeUnixNano), dataPoint.timeUnixNano, otelSumDataPointValue(dataPoint), temporality);
+    if (delta === 0) continue;
+    const resultKey = toolResultKey(attributes);
+    const logSeen = otelTelemetry.toolResults.seenKeys.has(`log:${resultKey}`);
+    const metricSeen = otelTelemetry.toolResults.seenKeys.has(`metric:${resultKey}`);
+    // A semantic log record and the corresponding metric describe the same
+    // call. The first source to arrive owns the aggregate; the second source
+    // is skipped. A duplicate metric-only export remains unattributed for
+    // compatibility with the coverage counter.
+    if (logSeen) continue;
+    otelTelemetry.toolResults.total += delta;
+    const duplicateMetric = metricSeen;
+    if (duplicateMetric) {
+      otelTelemetry.toolResults.unattributed += delta;
+    } else {
+      otelTelemetry.toolResults.seenKeys.add(`metric:${resultKey}`);
+    }
+    if (callId && !duplicateMetric) {
+      otelTelemetry.toolResults.executed += delta;
+      otelTelemetry.toolResults.causeResolved += delta;
+      while (otelTelemetry.toolResults.seenKeys.size > 5000) {
+        const first = otelTelemetry.toolResults.seenKeys.values().next().value;
+        if (first === undefined) break;
+        otelTelemetry.toolResults.seenKeys.delete(first);
+      }
+    } else if (!callId && !duplicateMetric) {
+      // A result with no linkable call id cannot be joined to a tool call,
+      // so its outcome is recorded but the executed counter is not moved --
+      // the executed bucket only counts results we proved were the runtime
+      // closing a real call.
+      otelTelemetry.toolResults.unattributed += delta;
+      otelTelemetry.toolResults.causeUnresolved += delta;
+      if (wsResolution.status === "attributed") {
+        const wsBucket = workspaceBucket(usageTelemetry.byWorkspace, wsResolution.workspaceKey);
+        wsBucket.toolsUnattributed = (wsBucket.toolsUnattributed ?? 0) + delta;
+      }
+    } else if (!duplicateMetric) {
+      // A duplicate result for the same call id: counted under unattributed
+      // so coverage reporting can distinguish "we observed N executed tool
+      // results" from "we observed N result events".
+      otelTelemetry.toolResults.unattributed += delta;
+      if (wsResolution.status === "attributed") {
+        const wsBucket = workspaceBucket(usageTelemetry.byWorkspace, wsResolution.workspaceKey);
+        wsBucket.toolsUnattributed = (wsBucket.toolsUnattributed ?? 0) + delta;
+      }
+    }
+    otelTelemetry.toolResults.byStatus[status] = (otelTelemetry.toolResults.byStatus[status] ?? 0) + delta;
+    if (tool && tool !== "unknown-tool") {
+      const resultBucketKey = [tool, source, server].join("::");
+      const resultBucket = otelTelemetry.toolResults.byTool.get(resultBucketKey) ?? { tool, source, server, count: 0, byStatus: {} };
+      resultBucket.count += delta;
+      resultBucket.byStatus[status] = (resultBucket.byStatus[status] ?? 0) + delta;
+      otelTelemetry.toolResults.byTool.set(resultBucketKey, resultBucket);
+    }
+  }
+}
+
+function noteToolResultDuration(metricName, resourceAttributes, dataPoints, temporality) {
+  for (const dataPoint of dataPoints ?? []) {
+    const attributes = otelAttributes(dataPoint.attributes);
+    const wsResolution = resolveDatapointWorkspace(attributes, resourceAttributes);
+    if (wsResolution.workspaceId) workspaceAttributionCapabilities.tools = true;
+    const identity = toolSeriesIdentity(attributes, wsResolution.workspaceId);
+    const count = otelSeriesDelta(otelSeriesKey(`${metricName}#count`, identity, dataPoint.startTimeUnixNano), dataPoint.timeUnixNano, numberAttribute({ count: dataPoint.count }, "count"), temporality);
+    const sum = otelSeriesDelta(otelSeriesKey(`${metricName}#sum`, identity, dataPoint.startTimeUnixNano), dataPoint.timeUnixNano, numberAttribute({ sum: dataPoint.sum }, "sum"), temporality);
+    if (count === 0 && sum === 0) continue;
+    otelTelemetry.toolResults.executionDurationMs.count += count;
+    otelTelemetry.toolResults.executionDurationMs.sum += sum;
+  }
+}
+
 function hookKey(attributes) {
   return [safeMetricLabel(attributes.hook_name, "unknown-hook"), safeMetricLabel(attributes.source), safeMetricLabel(attributes.handler_type, "")].join("::");
 }
@@ -1161,6 +1440,11 @@ function ingestOtelMetrics(payload) {
           const temporality = metric.sum?.aggregationTemporality;
           const resourceAttributes = otelAttributes(resourceMetric.resource?.attributes);
           for (const dataPoint of metric.sum?.dataPoints ?? []) noteToolCounter(metric.name, otelAttributes(dataPoint.attributes), dataPoint, temporality, resourceAttributes);
+        } else if (metric.name === "codex.tool_result") {
+          const resourceAttributes = otelAttributes(resourceMetric.resource?.attributes);
+          noteToolResultCounter(metric.name, resourceAttributes, metric.sum?.dataPoints ?? [], metric.sum?.aggregationTemporality);
+          const histogramTemporality = metric.histogram?.aggregationTemporality;
+          if (metric.histogram?.dataPoints?.length) noteToolResultDuration(metric.name, resourceAttributes, metric.histogram.dataPoints, histogramTemporality);
         } else if (metric.name === "codex.tool.call.duration_ms") {
           const temporality = metric.histogram?.aggregationTemporality;
           const resourceAttributes = otelAttributes(resourceMetric.resource?.attributes);
@@ -1216,6 +1500,23 @@ function resetOtelTelemetry() {
     kept: { count: 0, sum: 0 },
     truncated: { count: 0, sum: 0 },
     descriptionTruncatedChars: { count: 0, sum: 0 },
+  };
+  otelTelemetry.toolResults = {
+    total: 0,
+    executed: 0,
+    unattributed: 0,
+    byStatus: {},
+    byTool: new Map(),
+    executionDurationMs: { count: 0, sum: 0 },
+    causeResolved: 0,
+    causeUnresolved: 0,
+    seenKeys: new Set(),
+  };
+  otelTelemetry.bridgeEvents = {
+    toolExecuted: { total: 0, byTool: new Map(), byWorkspace: new Map() },
+    toolRequested: { total: 0, byTool: new Map(), byWorkspace: new Map() },
+    toolUnavailable: { total: 0, byTool: new Map(), byWorkspace: new Map(), byReason: {} },
+    skillExposed: { total: 0, bySkill: new Map(), byWorkspace: new Map() },
   };
   otelMetricSeries.clear();
   workspaceAttributionCapabilities.tools = false;
@@ -1304,6 +1605,63 @@ function codexTelemetryStatus(now = Date.now()) {
         // trimmed for a thread; count stays 0 when the metric is absent.
         descriptionTruncatedChars: threadHistogram(otelTelemetry.skills.threads.descriptionTruncatedChars),
       },
+    },
+    toolResults: formatToolResults(otelTelemetry.toolResults),
+    bridgeEvents: formatBridgeEvents(otelTelemetry.bridgeEvents),
+  };
+}
+
+function formatToolResults(toolResults) {
+  const byTool = [...toolResults.byTool.values()]
+    .map((entry) => ({ ...entry, byStatus: { ...entry.byStatus } }))
+    .sort((a, b) => `${a.tool}/${a.source}/${a.server}`.localeCompare(`${b.tool}/${b.source}/${b.server}`));
+  return {
+    total: toolResults.total,
+    executed: toolResults.executed,
+    unattributed: toolResults.unattributed,
+    causeResolved: toolResults.causeResolved,
+    causeUnresolved: toolResults.causeUnresolved,
+    byStatus: { ...toolResults.byStatus },
+    byTool,
+    executionDurationMs: {
+      count: toolResults.executionDurationMs.count,
+      sum: toolResults.executionDurationMs.sum,
+      average: toolResults.executionDurationMs.count ? toolResults.executionDurationMs.sum / toolResults.executionDurationMs.count : 0,
+    },
+    dedupeWindow: toolResults.seenKeys.size,
+  };
+}
+
+function formatBridgeEvents(events) {
+  const formatBucket = (bucket) => ({
+    total: bucket.total,
+    byTool: [...bucket.byTool.values()]
+      .map((entry) => ({ ...entry, byStatus: { ...entry.byStatus } }))
+      .sort((a, b) => `${a.tool}/${a.server}`.localeCompare(`${b.tool}/${b.server}`)),
+    byWorkspace: [...bucket.byWorkspace.entries()]
+      .map(([workspaceKey, row]) => ({
+        workspaceKey,
+        count: row.count,
+        byTool: [...row.byTool.values()].map((entry) => ({ ...entry, byStatus: { ...entry.byStatus } })).sort((a, b) => a.tool.localeCompare(b.tool)),
+        bySkill: row.bySkill ? [...row.bySkill.entries()].map(([skill, count]) => ({ skill, count })).sort((a, b) => a.skill.localeCompare(b.skill)) : [],
+        byStatus: { ...row.byStatus },
+      }))
+      .sort((a, b) => a.workspaceKey.localeCompare(b.workspaceKey)),
+  });
+  return {
+    toolExecuted: { ...formatBucket(events.toolExecuted), byReason: {} },
+    toolRequested: { ...formatBucket(events.toolRequested), byReason: {} },
+    toolUnavailable: { ...formatBucket(events.toolUnavailable), byReason: { ...events.toolUnavailable.byReason } },
+    skillExposed: {
+      total: events.skillExposed.total,
+      bySkill: [...events.skillExposed.bySkill.values()].map((entry) => ({ ...entry })).sort((a, b) => a.skill.localeCompare(b.skill)),
+      byWorkspace: [...events.skillExposed.byWorkspace.entries()]
+        .map(([workspaceKey, row]) => ({
+          workspaceKey,
+          count: row.count,
+          bySkill: [...row.bySkill.entries()].map(([skill, count]) => ({ skill, count })).sort((a, b) => a.skill.localeCompare(b.skill)),
+        }))
+        .sort((a, b) => a.workspaceKey.localeCompare(b.workspaceKey)),
     },
   };
 }
@@ -1779,7 +2137,7 @@ function subagentStatus() {
 // Ingests a provider bridge's report that its CLI invoked a subagent spawn
 // tool. Only reports naming a request id this router actually issued are
 // counted; anything else is a caller that never served a router request.
-const INGESTED_AGENT_EVENTS = new Set(["subagent_spawn", "subagent_result", "subagent_tools_unavailable"]);
+const INGESTED_AGENT_EVENTS = new Set(["subagent_spawn", "subagent_result", "subagent_tools_unavailable", "tool_executed", "tool_requested", "tool_unavailable", "skill_exposed"]);
 
 let anonymousChildSequence = 0;
 
@@ -1827,6 +2185,14 @@ function ingestAgentEvents(payload) {
       unavailable += 1;
       continue;
     }
+    if (event.type === "tool_executed" || event.type === "tool_requested" || event.type === "tool_unavailable") {
+      recordBridgeToolObservation({ event, context });
+      continue;
+    }
+    if (event.type === "skill_exposed") {
+      recordBridgeSkillExposure({ event, context });
+      continue;
+    }
     const role = typeof event.role === "string" && event.role.trim() ? safeMetricLabel(event.role) : null;
     const children = reportedChildren(event);
     const count = children.length;
@@ -1857,6 +2223,103 @@ function ingestAgentEvents(payload) {
     accepted += count;
   }
   return { accepted, closed, unavailable, rejected, reason: null };
+}
+
+/**
+ * A bridge observation of a single tool call -- either executed, requested,
+ * or unavailable. These are the first-class events the dashboard requires
+ * before it surfaces per-workspace tool/skill use: an OTLP datapoint alone
+ * is not enough, because the OTLP exporter only describes what Codex's own
+ * runtime emitted, while a bridge can speak to whether the workspace
+ * actually carried the tool, asked for it, or had it removed. Without this
+ * report, per-workspace tool attribution must fail closed.
+ */
+function recordBridgeToolObservation({ event, context }) {
+  const tool = typeof event.tool === "string" && event.tool.trim() ? safeMetricLabel(event.tool) : null;
+  if (!tool) return;
+  const server = typeof event.server === "string" && event.server.trim() ? safeMetricLabel(event.server) : null;
+  const workspaceKey = typeof context.workspace === "string" ? context.workspace : null;
+  const callId = typeof event.callId === "string" && event.callId.trim() ? event.callId.trim() : null;
+  const status = event.type === "tool_unavailable"
+    ? "unavailable"
+    : event.status === "error" || event.status === "failure"
+      ? "error"
+      : event.status === "ok" || event.status === "success"
+        ? "ok"
+        : "unknown";
+  let bucket;
+  if (event.type === "tool_executed") bucket = otelTelemetry.bridgeEvents.toolExecuted;
+  else if (event.type === "tool_requested") bucket = otelTelemetry.bridgeEvents.toolRequested;
+  else bucket = otelTelemetry.bridgeEvents.toolUnavailable;
+  bucket.total += 1;
+  const toolBucketKey = callId ? `${tool}::${callId}` : tool;
+  const toolRow = bucket.byTool.get(toolBucketKey) ?? { tool, server: server ?? "", callId: callId ?? null, count: 0, byStatus: {} };
+  toolRow.count += 1;
+  if (server && !toolRow.server) toolRow.server = server;
+  toolRow.byStatus[status] = (toolRow.byStatus[status] ?? 0) + 1;
+  bucket.byTool.set(toolBucketKey, toolRow);
+  if (workspaceKey) {
+    const wsRow = bucket.byWorkspace.get(workspaceKey) ?? { workspaceKey, count: 0, byTool: new Map(), byStatus: {} };
+    wsRow.count += 1;
+    wsRow.byStatus[status] = (wsRow.byStatus[status] ?? 0) + 1;
+    const wsToolRow = wsRow.byTool.get(tool) ?? { tool, server: server ?? "", count: 0, byStatus: {} };
+    wsToolRow.count += 1;
+    if (server && !wsToolRow.server) wsToolRow.server = server;
+    wsToolRow.byStatus[status] = (wsToolRow.byStatus[status] ?? 0) + 1;
+    wsRow.byTool.set(tool, wsToolRow);
+    bucket.byWorkspace.set(workspaceKey, wsRow);
+  }
+  if (event.type === "tool_unavailable") {
+    const reason = typeof event.reason === "string" && event.reason.trim() ? event.reason.trim().slice(0, 64) : "denied";
+    bucket.byReason[reason] = (bucket.byReason[reason] ?? 0) + 1;
+  }
+  // First-class evidence the tool ran on a workspace. Set the per-workspace
+  // capability flag so a subsequent OTLP `codex.tool.call` datapoint carrying
+  // the same workspace_id can be attributed to that workspace.
+  if (workspaceKey && event.type === "tool_executed") {
+    workspaceAttributionCapabilities.tools = true;
+    const wsBucket = workspaceBucket(usageTelemetry.byWorkspace, workspaceKey);
+    wsBucket.toolsExecuted = (wsBucket.toolsExecuted ?? 0) + 1;
+    const toolBucket = wsBucket.bridgeObservations.tools.get(tool) ?? { tool, server: server ?? "", count: 0, byStatus: {} };
+    toolBucket.count += 1;
+    if (server && !toolBucket.server) toolBucket.server = server;
+    toolBucket.byStatus[status] = (toolBucket.byStatus[status] ?? 0) + 1;
+    wsBucket.bridgeObservations.tools.set(tool, toolBucket);
+  }
+  if (workspaceKey && event.type === "tool_requested") {
+    const wsBucket = workspaceBucket(usageTelemetry.byWorkspace, workspaceKey);
+    wsBucket.toolsRequested = (wsBucket.toolsRequested ?? 0) + 1;
+  }
+  if (workspaceKey && event.type === "tool_unavailable") {
+    const wsBucket = workspaceBucket(usageTelemetry.byWorkspace, workspaceKey);
+    wsBucket.toolsUnavailable = (wsBucket.toolsUnavailable ?? 0) + 1;
+  }
+}
+
+function recordBridgeSkillExposure({ event, context }) {
+  const skill = typeof event.skill === "string" && event.skill.trim() ? safeMetricLabel(event.skill) : null;
+  if (!skill) return;
+  const source = typeof event.source === "string" && event.source.trim() ? safeMetricLabel(event.source) : null;
+  const pluginId = typeof event.pluginId === "string" && event.pluginId.trim() ? safeMetricLabel(event.pluginId) : null;
+  const workspaceKey = typeof context.workspace === "string" ? context.workspace : null;
+  const bucket = otelTelemetry.bridgeEvents.skillExposed;
+  bucket.total += 1;
+  const skillKey = `${skill}::${source ?? ""}::${pluginId ?? ""}`;
+  const skillRow = bucket.bySkill.get(skillKey) ?? { skill, source: source ?? "", pluginId: pluginId ?? "", count: 0, byWorkspace: new Map() };
+  skillRow.count += 1;
+  bucket.bySkill.set(skillKey, skillRow);
+  if (workspaceKey) {
+    const wsRow = bucket.byWorkspace.get(workspaceKey) ?? { workspaceKey, count: 0, bySkill: new Map() };
+    wsRow.count += 1;
+    wsRow.bySkill.set(skill, (wsRow.bySkill.get(skill) ?? 0) + 1);
+    bucket.byWorkspace.set(workspaceKey, wsRow);
+  }
+  if (workspaceKey) {
+    workspaceAttributionCapabilities.skills = true;
+    const wsBucket = workspaceBucket(usageTelemetry.byWorkspace, workspaceKey);
+    wsBucket.skillsExposed = (wsBucket.skillsExposed ?? 0) + 1;
+    wsBucket.bridgeObservations.skills.set(skill, (wsBucket.bridgeObservations.skills.get(skill) ?? 0) + 1);
+  }
 }
 
 function providerState(provider) {
@@ -2041,6 +2504,39 @@ function getRouterStatus(now = Date.now()) {
     activeRequests: Object.fromEntries(activeProviderRequests),
     providers,
     recentEvents: [...recentRouterEvents].reverse(),
+    codexState: codexStateStatus(),
+  };
+}
+
+function setCodexStateSnapshotForTests(snapshot) {
+  codexState.lastSnapshot = snapshot && typeof snapshot === "object" ? snapshot : null;
+}
+
+function codexStateStatus() {
+  const snapshot = codexState.lastSnapshot;
+  if (!snapshot) {
+    return {
+      localTelemetry: {
+        status: "pending",
+        pathConfigured: true,
+        schema: null,
+        capabilities: { tables: {}, columnCount: 0 },
+        threadCount: 0,
+        projectCount: 0,
+        edgeCount: 0,
+        collectedAt: null,
+        reason: "collector_initializing",
+      },
+    };
+  }
+  const { path: _path, ...safeLocalTelemetry } = snapshot.localTelemetry ?? {};
+  return {
+    localTelemetry: { ...safeLocalTelemetry, pathConfigured: Boolean(snapshot.localTelemetry?.path) },
+    recentThreads: snapshot.recentThreads,
+    projects: snapshot.projects,
+    conversationThreads: snapshot.conversationThreads,
+    spawnEdges: snapshot.spawnEdges,
+    schema: snapshot.schema,
   };
 }
 
@@ -2051,10 +2547,11 @@ function usagePersistenceSnapshot() {
     delete copy.workspace_id;
     delete copy.tools;
     delete copy.skills;
+    delete copy.bridgeObservations;
     return copy;
   };
   return {
-    schemaVersion: 5,
+    schemaVersion: 6,
     totals: withoutActive(usageTelemetry.totals),
     byRole: Object.fromEntries(Object.entries(usageTelemetry.byRole).map(([key, bucket]) => [key, withoutActive(bucket)])),
     byModel: Object.fromEntries(Object.entries(usageTelemetry.byModel).map(([key, bucket]) => [key, withoutActive(bucket)])),
@@ -2062,6 +2559,12 @@ function usagePersistenceSnapshot() {
     byWorkspace: Object.fromEntries(Object.entries(usageTelemetry.byWorkspace).map(([key, bucket]) => [key, {
       ...withoutActive(bucket),
       skillUses: bucket.skillUses ?? 0,
+      toolsUnattributed: bucket.toolsUnattributed ?? 0,
+      skillsUnattributed: bucket.skillsUnattributed ?? 0,
+      toolsExecuted: bucket.toolsExecuted ?? 0,
+      toolsRequested: bucket.toolsRequested ?? 0,
+      toolsUnavailable: bucket.toolsUnavailable ?? 0,
+      skillsExposed: bucket.skillsExposed ?? 0,
       byRole: Object.fromEntries(Object.entries(bucket.byRole).map(([name, value]) => [name, withoutActive(value)])),
       byModel: Object.fromEntries(Object.entries(bucket.byModel).map(([name, value]) => [name, withoutActive(value)])),
       byProvider: Object.fromEntries(Object.entries(bucket.byProvider).map(([name, value]) => [name, withoutActive(value)])),
@@ -2074,13 +2577,15 @@ function usagePersistenceSnapshot() {
         byModel: { ...s.byModel },
         byPlugin: { ...s.byPlugin },
       })),
+      bridgeTools: [...(bucket.bridgeObservations?.tools?.values() ?? [])].map((entry) => ({ ...entry, byStatus: { ...entry.byStatus } })),
+      bridgeSkills: [...(bucket.bridgeObservations?.skills?.entries() ?? [])].map(([skill, count]) => ({ skill, count })),
     }])),
     workspaceRegistry: [...workspaceIdRegistry.entries()],
     workspaceAttributionCapabilities: { ...workspaceAttributionCapabilities },
   };
 }
 
-const OTEL_PERSISTENCE_SCHEMA_VERSION = 2;
+const OTEL_PERSISTENCE_SCHEMA_VERSION = 3;
 
 function otelPersistenceSnapshot() {
   const telemetry = codexTelemetryStatus();
@@ -2096,10 +2601,43 @@ function otelPersistenceSnapshot() {
     hooks: telemetry.hooks,
     threads: telemetry.threads,
     sqlite: telemetry.sqlite,
+    toolResults: telemetry.toolResults,
+    bridgeEvents: telemetry.bridgeEvents,
     // Cumulative exports must resume from their previous point after a
     // restart, otherwise the first post-restart batch would be counted twice.
     series: [...otelMetricSeries.entries()].map(([key, value]) => ({ key, timestamp: value.timestamp.toString(), value: value.value })),
   };
+}
+
+function restoreOtelCounters(snapshot) {
+  if (!snapshot || typeof snapshot !== "object") return;
+  if (snapshot.toolResults && typeof snapshot.toolResults === "object") {
+    const target = otelTelemetry.toolResults;
+    for (const field of ["total", "executed", "unattributed", "causeResolved", "causeUnresolved"]) {
+      if (Number.isFinite(snapshot.toolResults[field]) && snapshot.toolResults[field] >= 0) {
+        target[field] = snapshot.toolResults[field];
+      }
+    }
+    if (snapshot.toolResults.byStatus && typeof snapshot.toolResults.byStatus === "object") {
+      for (const [k, v] of Object.entries(snapshot.toolResults.byStatus)) if (Number.isFinite(v) && v >= 0) target.byStatus[safeMetricLabel(k)] = v;
+    }
+    if (snapshot.toolResults.executionDurationMs && typeof snapshot.toolResults.executionDurationMs === "object") {
+      if (Number.isFinite(snapshot.toolResults.executionDurationMs.count) && snapshot.toolResults.executionDurationMs.count >= 0) target.executionDurationMs.count = snapshot.toolResults.executionDurationMs.count;
+      if (Number.isFinite(snapshot.toolResults.executionDurationMs.sum) && snapshot.toolResults.executionDurationMs.sum >= 0) target.executionDurationMs.sum = snapshot.toolResults.executionDurationMs.sum;
+    }
+  }
+  if (snapshot.bridgeEvents && typeof snapshot.bridgeEvents === "object") {
+    const target = otelTelemetry.bridgeEvents;
+    for (const family of ["toolExecuted", "toolRequested", "toolUnavailable", "skillExposed"]) {
+      const source = snapshot.bridgeEvents[family];
+      const destination = target[family];
+      if (!source || typeof source !== "object") continue;
+      if (Number.isFinite(source.total) && source.total >= 0) destination.total = source.total;
+      if (source.byReason && typeof source.byReason === "object") {
+        for (const [k, v] of Object.entries(source.byReason)) if (Number.isFinite(v) && v >= 0) destination.byReason[safeMetricLabel(k)] = v;
+      }
+    }
+  }
 }
 
 function restoreOtelTelemetry(snapshot) {
@@ -2108,6 +2646,7 @@ function restoreOtelTelemetry(snapshot) {
   const restoreNumberFields = (target, source, fields) => {
     for (const field of fields) if (isFiniteNonnegative(source?.[field])) target[field] = source[field];
   };
+  restoreOtelCounters(snapshot);
   restoreNumberFields(otelTelemetry.receiver, snapshot.receiver, ["logs", "traces", "metrics", "invalid"]);
   if (snapshot.receiver?.lastReceivedAt === null || typeof snapshot.receiver?.lastReceivedAt === "string") otelTelemetry.receiver.lastReceivedAt = snapshot.receiver.lastReceivedAt;
   restoreNumberFields(otelTelemetry.turns, snapshot.turns, ["prompts", "completed", "promptLength", "ttftMs", "ttftCount"]);
@@ -2275,6 +2814,30 @@ function loadRouterState(file = STATE_FILE) {
           restoreUsageBucket(current, saved);
           if (Number.isInteger(saved.skillUses) && saved.skillUses >= 0) {
             current.skillUses = saved.skillUses;
+          }
+          for (const counter of ["toolsUnattributed", "skillsUnattributed", "toolsExecuted", "toolsRequested", "toolsUnavailable", "skillsExposed"]) {
+            if (Number.isInteger(saved[counter]) && saved[counter] >= 0) {
+              current[counter] = saved[counter];
+            }
+          }
+          if (Array.isArray(saved.bridgeTools)) {
+            for (const tool of saved.bridgeTools) {
+              if (tool && typeof tool.tool === "string") {
+                const restored = { tool: safeMetricLabel(tool.tool), server: typeof tool.server === "string" ? safeMetricLabel(tool.server) : "", count: 0, byStatus: {} };
+                if (typeof tool.count === "number" && tool.count >= 0) restored.count = tool.count;
+                if (tool.byStatus && typeof tool.byStatus === "object") {
+                  for (const [st, cnt] of Object.entries(tool.byStatus)) if (typeof cnt === "number" && cnt >= 0) restored.byStatus[safeMetricLabel(st)] = cnt;
+                }
+                current.bridgeObservations.tools.set(restored.tool, restored);
+              }
+            }
+          }
+          if (Array.isArray(saved.bridgeSkills)) {
+            for (const skill of saved.bridgeSkills) {
+              if (skill && typeof skill.skill === "string" && typeof skill.count === "number" && skill.count >= 0) {
+                current.bridgeObservations.skills.set(safeMetricLabel(skill.skill), skill.count);
+              }
+            }
           }
           for (const section of ["byRole", "byModel", "byProvider"]) {
             if (!saved[section] || typeof saved[section] !== "object") continue;
@@ -2490,6 +3053,14 @@ if (IS_MAIN) {
   // tests and status tooling) must not install process-wide handlers.
   process.on("uncaughtException", (error) => handleFatalProcessError("uncaught_exception", error));
   process.on("unhandledRejection", (reason) => handleFatalProcessError("unhandled_rejection", reason));
+  // Take the first snapshot synchronously after restore so /status does not
+  // return a "pending" envelope once the router has finished booting, and
+  // start the debounced live poll that keeps it fresh.
+  void refreshCodexState();
+  if (!codexState.livePollStarted) {
+    codexState.collector.startLivePoll();
+    codexState.livePollStarted = true;
+  }
 }
 
 function getActiveRequests(provider) {
@@ -4326,6 +4897,7 @@ async function handle(request, response) {
 }
 
 export {
+  refreshCodexState,
   activeProviderRequests,
   AGENT_ROLE_HEADER,
   ORCHESTRATOR_AGENT_ROLE,
@@ -4339,6 +4911,7 @@ export {
   classifyProviderFailure,
   clearProviderCooldown,
   codexTelemetryStatus,
+  setCodexStateSnapshotForTests,
   cooldownAllowsLastResort,
   cooldownProvider,
   providerCooldownSummary,

@@ -685,6 +685,48 @@
       </div>
     </dashboard-panel>
 
+    <!-- 7.5 Codex state DB and per-workspace bridge coverage -->
+    <dashboard-panel id="panel-codex-state" summary="" title="Codex state &amp; workspace telemetry">
+      <div class="section-note">Local Codex state database (<code>state_5.sqlite</code>) joined to live
+        router telemetry. <strong>Recent threads</strong> are bounded by the configured recency window
+        (<code>CODEX_STATE_COLLECTOR_WINDOW_MS</code>); <strong>conversation threads</strong> provides the
+        <code>conversation.id</code> to thread id lookup the router cannot derive from the request stream
+        alone. <strong>Bridge coverage</strong> reports the per-workspace first-class events the
+        provider bridges reported via <code>/v1/agent-events</code>; a workspace without an executed,
+        requested, unavailable, or skill-exposed observation keeps its tool/skill attribution at the
+        fail-closed <em>unavailable</em> state. <strong>Tool result coverage</strong> separates the
+        causally-joined executed count from the unattributed count so a workspace that only ever
+        received an unlinked result event does not silently look like an executed workspace.</div>
+      <div id="codex-state-cards" class="kpi-grid">
+        <stat-card id="codex-state-status-card" label="State DB" value="-" tone="muted"></stat-card>
+        <stat-card id="codex-state-threads-card" label="Recent threads" value="-" tone="muted"></stat-card>
+        <stat-card id="codex-state-projects-card" label="Projects" value="-" tone="muted"></stat-card>
+        <stat-card id="codex-state-tool-results-card" label="Executed results" value="-" tone="muted"></stat-card>
+        <stat-card id="codex-state-tool-unattributed-card" label="Unattributed results" value="-" tone="muted"></stat-card>
+      </div>
+      <div class="table-wrap">
+        <table id="codex-state-table">
+          <thead>
+            <tr>
+              <th>Workspace</th>
+              <th>Executed</th>
+              <th>Requested</th>
+              <th>Unavailable</th>
+              <th>Skills exposed</th>
+              <th>Tools unattributed</th>
+              <th>Skills unattributed</th>
+            </tr>
+          </thead>
+          <tbody id="codex-state-tbody">
+            <tr><td colspan="7" class="dim" style="text-align:center">Loading workspace coverage...</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div id="codex-state-conversations" class="kv-list">
+        <div class="kv"><span>Conversation -> thread join</span><span id="codex-state-conversation-count">—</span></div>
+      </div>
+    </dashboard-panel>
+
     <!-- 8. Recent Routing Events -->
     <dashboard-panel id="panel-events" summary="" title="Recent routing events">
       <pre class="event-log" id="recent-events-log">No routing events yet.</pre>
@@ -2533,6 +2575,84 @@
             </tr>
           `;
         }
+      }
+
+      // 7.5 Codex state DB + workspace bridge coverage
+      const codexState = status.codexState ?? {};
+      const codexStateLocalTelemetry = codexState.localTelemetry ?? { status: "unknown", reason: "absent" };
+      const codexStateStatus = codexStateLocalTelemetry.status ?? "unknown";
+      const codexStateReason = codexStateLocalTelemetry.reason ?? null;
+      const codexStateSchema = codexStateLocalTelemetry.schema ?? null;
+      const codexStateThreadCount = Number(codexStateLocalTelemetry.threadCount ?? 0);
+      const codexStateProjectCount = Number(codexStateLocalTelemetry.projectCount ?? 0);
+      const codexStateConversationCount = codexState.conversationThreads ? Object.keys(codexState.conversationThreads).length : 0;
+      const toolResults = status.codexTelemetry?.toolResults ?? { total: 0, executed: 0, unattributed: 0 };
+      const bridgeEvents = status.codexTelemetry?.bridgeEvents ?? {};
+      const bridgeExecuted = bridgeEvents.toolExecuted?.total ?? 0;
+      const bridgeRequested = bridgeEvents.toolRequested?.total ?? 0;
+      const bridgeUnavailable = bridgeEvents.toolUnavailable?.total ?? 0;
+      const bridgeSkillExposed = bridgeEvents.skillExposed?.total ?? 0;
+
+      const codexStateStatusCard = document.getElementById("codex-state-status-card");
+      if (codexStateStatusCard) {
+        codexStateStatusCard.setAttribute("value", codexStateStatus);
+        const toneMap = { ok: "good", missing: "warning", schema_only: "warning", schema_unknown: "warning", error: "bad", pending: "muted", unknown: "muted" };
+        codexStateStatusCard.setAttribute("tone", toneMap[codexStateStatus] ?? "muted");
+        codexStateStatusCard.textContent = codexStateReason ?? (codexStateSchema ? `Schema ${codexStateSchema}` : "Awaiting collector snapshot");
+      }
+      const codexStateThreadsCard = document.getElementById("codex-state-threads-card");
+      if (codexStateThreadsCard) {
+        codexStateThreadsCard.setAttribute("value", codexStateThreadCount.toLocaleString());
+        codexStateThreadsCard.textContent = codexStateStatus === "ok" ? "Within recency window" : "Awaiting state DB";
+      }
+      const codexStateProjectsCard = document.getElementById("codex-state-projects-card");
+      if (codexStateProjectsCard) {
+        codexStateProjectsCard.setAttribute("value", codexStateProjectCount.toLocaleString());
+        codexStateProjectsCard.textContent = codexStateStatus === "ok" ? "From state_5.sqlite" : "Awaiting state DB";
+      }
+      const toolResultsExecutedCard = document.getElementById("codex-state-tool-results-card");
+      if (toolResultsExecutedCard) {
+        toolResultsExecutedCard.setAttribute("value", Number(toolResults.executed ?? 0).toLocaleString());
+        toolResultsExecutedCard.textContent = `${Number(toolResults.total ?? 0).toLocaleString()} result events`;
+      }
+      const toolResultsUnattributedCard = document.getElementById("codex-state-tool-unattributed-card");
+      if (toolResultsUnattributedCard) {
+        toolResultsUnattributedCard.setAttribute("value", Number(toolResults.unattributed ?? 0).toLocaleString());
+        const unattributedColor = Number(toolResults.unattributed ?? 0) > 0 ? "warning" : "good";
+        toolResultsUnattributedCard.setAttribute("tone", unattributedColor);
+        toolResultsUnattributedCard.textContent = `${Number(toolResults.causeResolved ?? 0).toLocaleString()} causally resolved`;
+      }
+
+      syncPanel(document.getElementById("panel-codex-state"), "Codex state & workspace telemetry", `${codexStateStatus} · ${codexStateConversationCount.toLocaleString()} conversation joins · ${bridgeExecuted.toLocaleString()} executed / ${bridgeRequested.toLocaleString()} requested / ${bridgeUnavailable.toLocaleString()} unavailable`);
+
+      // Per-workspace coverage table: toolsExecuted / toolsRequested / toolsUnavailable
+      // / skillsExposed / toolsUnattributed / skillsUnattributed all sourced from the
+      // workspace bucket. A workspace with all-zero values still gets a row so an
+      // operator can confirm the router has classified it; an absent bucket means the
+      // workspace has never been resolved by a router request.
+      const codexStateTbody = document.getElementById("codex-state-tbody");
+      if (codexStateTbody) {
+        const wsEntries = Object.entries(status.usage?.byWorkspace ?? {});
+        if (!wsEntries.length) {
+          codexStateTbody.innerHTML = `<tr><td colspan="7" class="dim" style="text-align:center">No workspaces observed yet.</td></tr>`;
+        } else {
+          wsEntries.sort(([, a], [, b]) => (Number(b.toolsExecuted ?? 0) + Number(b.skillsExposed ?? 0)) - (Number(a.toolsExecuted ?? 0) + Number(a.skillsExposed ?? 0)));
+          codexStateTbody.innerHTML = wsEntries.map(([wsKey, w]) => {
+            const executed = Number(w.toolsExecuted ?? 0);
+            const requested = Number(w.toolsRequested ?? 0);
+            const unavailable = Number(w.toolsUnavailable ?? 0);
+            const skillsExposed = Number(w.skillsExposed ?? 0);
+            const toolsUnattributed = Number(w.toolsUnattributed ?? 0);
+            const skillsUnattributed = Number(w.skillsUnattributed ?? 0);
+            const hasAnyEvent = executed + requested + unavailable + skillsExposed + toolsUnattributed + skillsUnattributed > 0;
+            const availability = hasAnyEvent ? "first-class events received" : "no first-class events";
+            return `<tr><td><code>${escapeHtml(wsKey)}</code><div class="muted">${escapeHtml(availability)}</div></td><td>${executed.toLocaleString()}</td><td>${requested.toLocaleString()}</td><td>${unavailable.toLocaleString()}</td><td>${skillsExposed.toLocaleString()}</td><td>${toolsUnattributed.toLocaleString()}</td><td>${skillsUnattributed.toLocaleString()}</td></tr>`;
+          }).join("");
+        }
+      }
+      const conversationCount = document.getElementById("codex-state-conversation-count");
+      if (conversationCount) {
+        conversationCount.textContent = `${codexStateConversationCount.toLocaleString()} conversation -> thread joins`;
       }
 
       // 8. Recent routing events

@@ -26,7 +26,15 @@ The page has one componentized hierarchy:
 5. **Skill telemetry**, containing **Skill context telemetry**.
 6. **Hooks & runtime telemetry**.
 7. **Operational summary**, containing **Native metrics observed**.
-8. **Recent routing events**.
+8. **Codex state & workspace telemetry**, surfacing the local
+   `state_5.sqlite` collector (status, recent threads, projects, the
+   `conversation.id` -> thread join) and per-workspace first-class event
+   coverage (executed / requested / unavailable tool observations,
+   skill exposures, and OTLP `codex.tool_result` executed vs unattributed
+   coverage). Fail closed: a workspace without any bridge event or
+   OTLP-resolved tool result keeps its per-workspace attribution at the
+   `unavailable` state rather than reading as a zero.
+9. **Recent routing events**.
 
 Panels, badges, metric bars, outcome bars, row toggles, and stat cards are
 custom elements. Live labels are escaped before HTML insertion, while event
@@ -53,15 +61,11 @@ mean different things to an operator debugging a workspace with no visible
 tool activity.
 
 When present, each `byTool`/`bySkill` entry is attributed under the exact
-same workspace key as its parent `usage.byWorkspace` bucket -- the
-privacy-safe repository label (or cwd-basename fallback) described below.
-The dashboard does not re-derive that attribution itself: it trusts the
-router's own `workspace_id` join (an opaque, hashed-if-path-like identifier
-that OTLP tool/skill events carry and the router matches against a
-workspace's already-resolved key -- see "workspace_id contract" in
-`docs/provider-routing.md` for the full fail-closed and privacy rules) and
-only ever renders a named tool or skill row nested under the workspace bucket
-that already contains it. The dashboard accepts either an array of rows
+same project/workspace bucket as its parent `usage.byWorkspace` entry. The
+router derives that attribution from local request context, verified hooks,
+thread metadata, semantic OTLP conversation joins, or authenticated bridge
+events; it never distributes global metrics by timing or process cwd. The
+dashboard accepts either an array of rows
 (matching the shape of the existing global `codexTelemetry.tools.byTool` and
 `codexTelemetry.skills.injected.bySkill` tables -- name, count, optional
 `byStatus`, and for tools optional `source`/`server`) or a plain object keyed

@@ -1,7 +1,12 @@
 import assert from "node:assert/strict";
+import { execFile } from "node:child_process";
 import { createServer } from "node:http";
 import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { promisify } from "node:util";
 import test from "node:test";
+
+const execFileAsync = promisify(execFile);
 
 import {
   AGENT_EVENTS_URL_HEADER,
@@ -9,7 +14,32 @@ import {
   SUBAGENT_SPAWN_TOOLS_HEADER,
   resolveAgentEventReporter,
 } from "../scripts/codex/lib/agent-events.mjs";
-import { agyArgs, agyErrorDetails, agyFailureMessage, agyPermissionFailure, createSpawnTracker, modelEffort, resolveEffort, resolveModel, spawnedChildren, subagentModel } from "../scripts/codex-antigravity-cli-responses-proxy.mjs";
+import {
+  ANTIGRAVITY_SKILL_EXPOSURE_SOURCE,
+  agyArgs,
+  agyErrorDetails,
+  agyFailureMessage,
+  agyPermissionFailure,
+  antigravityToolServer,
+  createSpawnTracker,
+  createToolObserver,
+  modelEffort,
+  resolveEffort,
+  resolveModel,
+  spawnedChildren,
+  subagentModel,
+  toolStepEvidence,
+} from "../scripts/codex-antigravity-cli-responses-proxy.mjs";
+import {
+  copilotToolOutcome,
+  SKILL_EXPOSURE_SOURCE as COPILOT_SKILL_EXPOSURE_SOURCE,
+} from "../scripts/codex-copilot-cli-responses-proxy.mjs";
+import {
+  observeResponseEvent,
+  reportExecutedToolCalls,
+  reportRequestedToolCall,
+  toolOutputOutcome as minimaxToolOutputOutcome,
+} from "../scripts/codex-minimax-responses-proxy.mjs";
 
 const read = (path) => readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
 
@@ -723,5 +753,247 @@ test("the shim tool is not counted as a bridge-native spawn", () => {
   for (const [ provider, config ] of Object.entries(routing.providers)) {
     const tools = config.capabilities?.subagentSpawnTools ?? [];
     assert.equal(tools.includes("spawn_subagent"), false, `${provider} must not treat the shim tool as an in-CLI spawn`);
+  }
+});
+
+test("the Antigravity bridge observes and reports tool requests, executions, and denials", async () => {
+  const events = [];
+  const fakeReporter = {
+    reportToolRequested: async (e) => events.push({ type: "tool_requested", ...e }),
+    reportToolExecuted: async (e) => events.push({ type: "tool_executed", ...e }),
+    reportToolUnavailable: async (e) => events.push({ type: "tool_unavailable", ...e }),
+  };
+
+  const { observeToolStep, reportPermissionDenial } = createToolObserver(fakeReporter);
+
+  // 1. ACTIVE step reports tool_requested
+  observeToolStep({
+    step_index: 1,
+    state: "ACTIVE",
+    step_type: "tool",
+    tool_name: "read_file",
+    tool_info: { name: "read_file" },
+  });
+  assert.equal(events.length, 1);
+  assert.deepEqual(events[ 0 ], { type: "tool_requested", tool: "read_file", callId: "s1", server: null });
+
+  // Repeated ACTIVE does not duplicate
+  observeToolStep({
+    step_index: 1,
+    state: "ACTIVE",
+    step_type: "tool",
+    tool_name: "read_file",
+  });
+  assert.equal(events.length, 1);
+
+  // 2. DONE step reports tool_executed
+  observeToolStep({
+    step_index: 1,
+    state: "DONE",
+    step_type: "tool",
+    tool_name: "read_file",
+    duration_seconds: 0.125,
+  });
+  assert.equal(events.length, 2);
+  assert.deepEqual(events[ 1 ], { type: "tool_executed", tool: "read_file", callId: "s1", status: "ok", durationMs: 125, server: null });
+
+  // 3. MCP tool extracts server from name or args
+  assert.equal(antigravityToolServer(null, "mcp__cocoindex-code__search"), "cocoindex-code");
+  assert.equal(antigravityToolServer(null, "mcp_lsp_goto_definition"), "lsp");
+  assert.equal(antigravityToolServer({ tool_info: { args: { ServerName: "openaiDeveloperDocs" } } }, "call_mcp_tool"), "openaiDeveloperDocs");
+
+  // 4. Terminal ERROR with output proves execution (status: error)
+  observeToolStep({
+    step_index: 2,
+    state: "ACTIVE",
+    step_type: "tool",
+    tool_name: "mcp__lsp__lsp_diagnostics",
+  });
+  observeToolStep({
+    step_index: 2,
+    state: "ERROR",
+    step_type: "tool",
+    tool_name: "mcp__lsp__lsp_diagnostics",
+    tool_info: { output: "failed to connect", duration_seconds: 0.5 },
+  });
+  assert.equal(events.length, 4);
+  assert.deepEqual(events[ 2 ], { type: "tool_requested", tool: "mcp__lsp__lsp_diagnostics", callId: "s2", server: "lsp" });
+  assert.deepEqual(events[ 3 ], { type: "tool_executed", tool: "mcp__lsp__lsp_diagnostics", callId: "s2", status: "error", durationMs: 500, server: "lsp" });
+
+  // 5. Denied tool step reports tool_unavailable
+  observeToolStep({
+    step_index: 3,
+    state: "ACTIVE",
+    step_type: "tool",
+    tool_name: "exec_command",
+  });
+  observeToolStep({
+    step_index: 3,
+    state: "ERROR",
+    step_type: "tool",
+    tool_name: "exec_command",
+    error: "permission denied for exec_command",
+  });
+  assert.equal(events.length, 6);
+  assert.deepEqual(events[ 4 ], { type: "tool_requested", tool: "exec_command", callId: "s3", server: null });
+  assert.deepEqual(events[ 5 ], { type: "tool_unavailable", tool: "exec_command", callId: "s3", reason: "permission_denied", server: null });
+
+  // 6. Permission denial from agy stderr reports tool_unavailable
+  reportPermissionDenial({ failureCode: "AGY_PERMISSION_DENIED", failureTool: "read_file" });
+  assert.equal(events.length, 7);
+  assert.deepEqual(events[ 6 ], { type: "tool_unavailable", tool: "read_file", reason: "permission_denied", server: null });
+});
+
+test("the Antigravity bridge reports skill exposure from actual role contract", () => {
+  assert.equal(ANTIGRAVITY_SKILL_EXPOSURE_SOURCE, "role_contract");
+  const source = read("scripts/codex-antigravity-cli-responses-proxy.mjs");
+  assert.match(source, /for \(const skill of bootstrapContract\.skills \?\? \[\]\)/);
+  assert.match(source, /agentEvents\.reportSkillExposed\(\{ skill, source: ANTIGRAVITY_SKILL_EXPOSURE_SOURCE \}\)/);
+});
+
+test("the Copilot bridge evaluates tool outcomes and reports telemetry", () => {
+  // Output present -> executed
+  assert.deepEqual(copilotToolOutcome({ output: "done", success: true }), { kind: "executed", status: "ok" });
+  assert.deepEqual(copilotToolOutcome({ output: "fail", success: false }), { kind: "executed", status: "error" });
+  assert.deepEqual(copilotToolOutcome({ exitCode: 1, output: "error" }), { kind: "executed", status: "error" });
+
+  // Denied / cancelled -> unavailable
+  assert.deepEqual(copilotToolOutcome({ permissionDenied: true }), { kind: "unavailable", reason: "denied" });
+  assert.deepEqual(copilotToolOutcome({ status: "cancelled" }), { kind: "unavailable", reason: "cancelled" });
+  assert.deepEqual(copilotToolOutcome({ status: "rejected by user" }), { kind: "unavailable", reason: "denied" });
+
+  // No output -> none
+  assert.deepEqual(copilotToolOutcome({}), { kind: "none" });
+
+  // Source assertions for Copilot bridge telemetry wiring
+  const source = read("scripts/codex-copilot-cli-responses-proxy.mjs");
+  assert.equal(COPILOT_SKILL_EXPOSURE_SOURCE, "role_contract");
+  assert.match(source, /for \(const skill of bootstrapContract\.skills \?\? \[\]\)/);
+  assert.match(source, /agentEvents\.reportSkillExposed\(\{ skill, source: SKILL_EXPOSURE_SOURCE \}\)/);
+  assert.match(source, /agentEvents\.reportToolRequested\(\{ tool: event\.tool, callId: event\.callId, server: event\.server \}\)/);
+  assert.match(source, /agentEvents\.reportToolExecuted\(\{ tool: event\.tool, callId: event\.callId, status: event\.status, durationMs: event\.durationMs, server: event\.server \}\)/);
+  assert.match(source, /agentEvents\.reportToolUnavailable\(\{ tool: event\.tool, callId: event\.callId, reason: event\.reason, server: event\.server \}\)/);
+});
+
+test("the Claude bridge exposes telemetry API methods and wires tool reporting", () => {
+  const source = read("scripts/codex-claude-cli-responses-proxy.py");
+  assert.match(source, /reportToolExecuted = report_tool_executed_async/);
+  assert.match(source, /reportToolRequested = report_tool_requested_async/);
+  assert.match(source, /reportToolUnavailable = report_tool_unavailable_async/);
+  assert.match(source, /reportSkillExposed = report_skill_exposed_async/);
+
+  // Skill exposure from role contract
+  assert.match(source, /CLAUDE_SKILL_EXPOSURE_SOURCE = "claude_skill_view"/);
+  assert.match(source, /for exposed_skill in contract\.get\("skills", \[\]\) or \[\]:/);
+  assert.match(source, /agent_events\.report_skill_exposed_async\(exposed_skill, source=CLAUDE_SKILL_EXPOSURE_SOURCE\)/);
+
+  // Tool requested on tool_use, unavailable if not offered
+  assert.match(source, /if offered_tools and name not in offered_tools:/);
+  assert.match(source, /agent_events\.report_tool_unavailable_async\(name, call_id=call_id, reason="not_offered", server=tool_server\(name\)\)/);
+  assert.match(source, /agent_events\.report_tool_requested_async\(name, call_id=call_id, server=tool_server\(name\)\)/);
+
+  // Tool executed or unavailable on tool_result
+  assert.match(source, /kind, detail = classify_tool_result\(block\)/);
+  assert.match(source, /if kind == "unavailable":/);
+  assert.match(source, /agent_events\.report_tool_unavailable_async\(name, call_id=call_id, reason=detail, server=tool_server\(name\)\)/);
+  assert.match(source, /agent_events\.report_tool_executed_async\(/);
+});
+
+test("the MiniMax proxy reports tool calls requested and executed or unavailable", () => {
+  // Outcome classification
+  assert.deepEqual(minimaxToolOutputOutcome({ output: JSON.stringify({ result: "done" }) }), { kind: "executed", status: "ok", durationMs: null });
+  assert.deepEqual(minimaxToolOutputOutcome({ output: JSON.stringify({ metadata: { exit_code: 1, duration_seconds: 0.2 } }) }), { kind: "executed", status: "error", durationMs: 200 });
+  assert.deepEqual(minimaxToolOutputOutcome({ status: "denied" }), { kind: "unavailable", reason: "denied" });
+  assert.deepEqual(minimaxToolOutputOutcome({ output: "Permission denied by workspace" }), { kind: "unavailable", reason: "denied" });
+
+  // Reporting requested tool call from upstream event
+  const events = [];
+  const fakeReporter = {
+    reportToolRequested: async (e) => events.push({ type: "tool_requested", ...e }),
+    reportToolExecuted: async (e) => events.push({ type: "tool_executed", ...e }),
+    reportToolUnavailable: async (e) => events.push({ type: "tool_unavailable", ...e }),
+  };
+
+  reportRequestedToolCall(fakeReporter, {
+    type: "function_call",
+    name: "read_file",
+    call_id: "call_mm_1",
+    namespace: "builtin",
+  });
+  assert.equal(events.length, 1);
+  assert.deepEqual(events[ 0 ], { type: "tool_requested", tool: "read_file", callId: "call_mm_1", server: "builtin" });
+
+  // Reporting executed tool call from input payload
+  reportExecutedToolCalls(fakeReporter, {
+    input: [
+      { type: "function_call", name: "read_file", call_id: "call_mm_1", namespace: "builtin" },
+      { type: "function_call_output", call_id: "call_mm_1", output: "file contents" },
+    ],
+  });
+  assert.equal(events.length, 2);
+  assert.deepEqual(events[ 1 ], { type: "tool_executed", tool: "read_file", callId: "call_mm_1", status: "ok", durationMs: null, server: "builtin" });
+});
+
+test("the Claude bridge AgentEventReporter posts tool and skill telemetry to the router", async () => {
+  const repoRoot = fileURLToPath(new URL("..", import.meta.url));
+  const received = [];
+  const server = createServer((request, response) => {
+    let body = "";
+    request.on("data", (chunk) => { body += chunk; });
+    request.on("end", () => {
+      received.push(JSON.parse(body));
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end("{}");
+    });
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const port = server.address().port;
+  try {
+    const pythonScript = `
+import importlib.util
+from pathlib import Path
+
+bridge_path = Path("scripts/codex-claude-cli-responses-proxy.py").resolve()
+spec = importlib.util.spec_from_file_location("claude_bridge", bridge_path)
+mod = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(mod)
+
+reporter = mod.AgentEventReporter("http://127.0.0.1:${port}/v1/agent-events", "req-claude-1", frozenset(["Agent"]))
+reporter.reportToolRequested("read_file", callId="c1", server="builtin")
+reporter.reportToolExecuted("read_file", callId="c1", status="ok", durationMs=120, server="builtin")
+reporter.reportToolUnavailable("write_file", callId="c2", reason="denied", server="builtin")
+reporter.reportSkillExposed("ccc", source="claude_skill_view")
+reporter.reportToolExecuted({"tool": "bash", "callId": "c3", "status": "error", "durationMs": 45})
+reporter.reportSkillExposed({"skill": "lsp-mcp-server", "source": "claude_skill_view"})
+reporter.flush()
+`;
+    await execFileAsync("python3", [ "-c", pythonScript ], { cwd: repoRoot });
+    assert.equal(received.length, 6);
+    assert.deepEqual(received[ 0 ], {
+      requestId: "req-claude-1",
+      events: [ { type: "tool_requested", tool: "read_file", callId: "c1", server: "builtin" } ],
+    });
+    assert.deepEqual(received[ 1 ], {
+      requestId: "req-claude-1",
+      events: [ { type: "tool_executed", tool: "read_file", callId: "c1", status: "ok", durationMs: 120, server: "builtin" } ],
+    });
+    assert.deepEqual(received[ 2 ], {
+      requestId: "req-claude-1",
+      events: [ { type: "tool_unavailable", tool: "write_file", callId: "c2", reason: "denied", server: "builtin" } ],
+    });
+    assert.deepEqual(received[ 3 ], {
+      requestId: "req-claude-1",
+      events: [ { type: "skill_exposed", skill: "ccc", source: "claude_skill_view", pluginId: null } ],
+    });
+    assert.deepEqual(received[ 4 ], {
+      requestId: "req-claude-1",
+      events: [ { type: "tool_executed", tool: "bash", callId: "c3", status: "error", durationMs: 45, server: null } ],
+    });
+    assert.deepEqual(received[ 5 ], {
+      requestId: "req-claude-1",
+      events: [ { type: "skill_exposed", skill: "lsp-mcp-server", source: "claude_skill_view", pluginId: null } ],
+    });
+  } finally {
+    await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
   }
 });

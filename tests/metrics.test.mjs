@@ -28,8 +28,30 @@ test('router dashboard exposes the component hierarchy and explicit workspace at
     'panel-skills',
     'panel-hooks',
     'panel-ops',
+    'panel-codex-state',
     'panel-events',
   ]);
+  // New panel surfaces local state DB status, executed/unattributed tool result
+  // coverage, and the per-workspace first-class event coverage. The renderer
+  // treats absent buckets as `pending` so the panel never reads `null`.
+  assert.match(dashboard, /id="panel-codex-state"/);
+  // The dashboard reads the new fields off the status payload. Both the raw
+  // field references and the rendered labels are required so the panel never
+  // silently degrades when the JSON contract evolves.
+  assert.match(dashboard, /codexState\.localTelemetry/);
+  assert.match(dashboard, /codexState\.conversationThreads/);
+  assert.match(dashboard, /toolResults\.executed/);
+  assert.match(dashboard, /toolResults\.unattributed/);
+  assert.match(dashboard, /bridgeEvents\.toolExecuted/);
+  assert.match(dashboard, /bridgeEvents\.toolRequested/);
+  assert.match(dashboard, /bridgeEvents\.toolUnavailable/);
+  assert.match(dashboard, /bridgeEvents\.skillExposed/);
+  assert.match(dashboard, /codex-state-tool-results-card/);
+  assert.match(dashboard, /codex-state-tool-unattributed-card/);
+  assert.match(dashboard, /codex-state-tbody/);
+  assert.match(dashboard, /Executed</);
+  assert.match(dashboard, /Skills exposed</);
+  assert.match(dashboard, /no first-class events/);
   assert.match(dashboard, /<dashboard-panel id="panel-orchestrator"[\s\S]*?<sub-panel id="panel-spawn-breakdown"/);
   assert.match(dashboard, /<dashboard-panel id="panel-skills"[\s\S]*?<sub-panel id="panel-skill-context"/);
   assert.match(dashboard, /<dashboard-panel id="panel-ops"[\s\S]*?<sub-panel id="panel-native-metrics"/);

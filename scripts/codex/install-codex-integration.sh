@@ -63,6 +63,7 @@ runtime_module_names=(
   scripts/codex/lib/provider-limits.mjs
   scripts/codex/lib/responses-item-ids.mjs
   scripts/codex/lib/codex-spawn-tools.mjs
+  scripts/codex/lib/codex-state-collector.mjs
   scripts/codex/lib/bridge-spawn-session.mjs
   # Executed as a child process by the bridges rather than imported, so nothing
   # else would pull it in: an installed bridge whose --mcp-config points at a
