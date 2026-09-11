@@ -2085,11 +2085,21 @@
         orchMcpCount = Number(mcpByRoleSummary.orchestrator?.observed ?? mcpByRoleSummary.unattributed?.observed ?? 0);
       }
 
-      const subMcpCount = subMcpServerNames.size;
+      let subMcpCount = subMcpServerNames.size;
 
-      // Missing role metadata is intentionally not assigned to either card.
-      // The operational summary and byRole.unattributed retain that evidence.
-      if (orchMcpCount === 0 && mcpByRoleSummary?.orchestrator) {
+      // When the native lifecycle stream has no explicit role attribution,
+      // retain the observed global count in both cards rather than rendering
+      // a misleading zero. Explicit role partitions take precedence whenever
+      // they exist; unattributed/unknown buckets remain visible in /status.
+      const hasExplicitRolePartition = mcpServersList.some((server) => {
+        const roles = extractServerRoles(server);
+        return [...roles].some((role) => role !== "orchestrator" && role !== "unattributed" && role !== "unknown");
+      }) || Object.keys(mcpByRoleSummary ?? {}).some((role) => role !== "orchestrator" && role !== "unattributed" && role !== "unknown");
+      if (!hasExplicitRolePartition) {
+        const observed = Number(mcpSummary?.observed ?? 0);
+        orchMcpCount = observed;
+        subMcpCount = observed;
+      } else if (orchMcpCount === 0 && mcpByRoleSummary?.orchestrator) {
         orchMcpCount = Number(mcpByRoleSummary.orchestrator.observed ?? 0);
       }
 

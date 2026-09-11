@@ -340,6 +340,7 @@ observed servers is displayed as operational health context (`MCP ready / observ
 Both route cards apply role-specific union semantics using `/status` partitions:
 - The **Orchestrator** card displays the unique observed-server union for the orchestrator role.
 - The **Subagents** card displays the unique observed-server union across explicit subagent roles.
+- If the native stream has no explicit role attribution, both cards fall back to the global observed count instead of displaying a misleading zero; the unattributed/unknown partition remains visible in `/status`.
 
 MCP server entries (`status.codexTelemetry.mcpServers`) and summaries
 (`status.codexTelemetry.mcpSummary`) are partitioned into independently

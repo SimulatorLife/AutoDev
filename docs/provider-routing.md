@@ -549,6 +549,8 @@ The router makes its effective choice visible in two ways:
   the unique observed-server union across explicit subagent roles. An observed count
   reflects unique server names observed in lifecycle spans (deduplicated across repeated
   spans), distinct from `ready` (servers with a recent successful observation within TTL).
+  When no explicit role partition exists, both cards use the global observed count while
+  retaining unattributed/unknown buckets in `/status`.
   MCP telemetry is partitioned across `byRole`, `byWorkspace`, `byModel`, and `byAgent`.
   The same canonical dimensions are available under
   `status.codexTelemetry.dimensions` for MCP, tool, hook, skill, and bridge event families.
