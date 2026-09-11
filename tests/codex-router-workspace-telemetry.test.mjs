@@ -333,7 +333,7 @@ test("persists and restores per-workspace tool/skill counters and bridge observa
 
     await persistRouterStateNow(stateFile);
     const raw = JSON.parse(await readFile(stateFile, "utf8"));
-    assert.equal(raw.usage.schemaVersion, 6);
+    assert.equal(raw.usage.schemaVersion, 7);
     const persistedWs = raw.usage.byWorkspace[ "SimulatorLife/AutoDev" ];
     assert.equal(persistedWs.toolsExecuted, 1);
     assert.equal(persistedWs.skillsExposed, 1);

@@ -1279,7 +1279,7 @@ test("attributes named tools, skills, and skillUses across two distinct workspac
               sum: {
                 aggregationTemporality: 1,
                 dataPoints: [
-                  point([ [ "skill", "ccc" ], [ "status", "ok" ] ], 2, "10", "20"),
+                  point([ [ "skill", "ccc" ], [ "status", "ok" ], [ "invoke_type", "explicit" ] ], 2, "10", "20"),
                 ],
               },
             },
@@ -1305,7 +1305,7 @@ test("attributes named tools, skills, and skillUses across two distinct workspac
               sum: {
                 aggregationTemporality: 1,
                 dataPoints: [
-                  point([ [ "skill", "lsp-mcp-server" ], [ "status", "ok" ] ], 5, "10", "20"),
+                  point([ [ "skill", "lsp-mcp-server" ], [ "status", "ok" ], [ "invoke_type", "explicit" ] ], 5, "10", "20"),
                 ],
               },
             },
@@ -1714,7 +1714,7 @@ test("persists and restores per-workspace tool and skill attribution across rout
                 name: "codex.skill.injected",
                 sum: {
                   aggregationTemporality: 1,
-                  dataPoints: [ point([ [ "skill", "ccc" ], [ "status", "ok" ] ], 3, 0, 100) ],
+                  dataPoints: [ point([ [ "skill", "ccc" ], [ "status", "ok" ], [ "invoke_type", "explicit" ] ], 3, 0, 100) ],
                 },
               },
             ],
@@ -1727,7 +1727,7 @@ test("persists and restores per-workspace tool and skill attribution across rout
 
     // Verify persisted schema
     const raw = JSON.parse(await readFile(stateFile, "utf8"));
-    assert.equal(raw.usage.schemaVersion, 6);
+    assert.equal(raw.usage.schemaVersion, 7);
     assert.ok(Array.isArray(raw.usage.workspaceRegistry));
     const savedWs = raw.usage.byWorkspace[ "OwnerA/ProjectA" ];
     assert.equal(savedWs.skillUses, 3);
@@ -2131,6 +2131,39 @@ test("ingests Codex OTEL turn and MCP lifecycle telemetry without prompt content
   assert.equal(playwright.averageDurationMs, 6);
   assert.equal(JSON.stringify(telemetry).includes("do-not-store-this"), false);
   assert.equal(codexTelemetryStatus(Date.now() + 121_000).mcpServers.find((server) => server.name === "playwright").health, "stale");
+  resetOtelTelemetry();
+});
+
+test("counts explicit skill activations separately from injected contexts and bridge exposure", () => {
+  resetOtelTelemetry();
+  resetRouterTelemetry();
+  registerWorkspaceId("ws-skill-use", "SkillRepo");
+  const attrs = (entries) => entries.map(([key, value]) => ({ key, value: { stringValue: String(value) } }));
+  const point = (entries, value, time) => ({ attributes: attrs(entries), startTimeUnixNano: "1", timeUnixNano: String(time), asInt: String(value) });
+  ingestOtelSignal("metrics", { resourceMetrics: [{ resource: { attributes: attrs([["workspace_id", "ws-skill-use"]]) }, scopeMetrics: [{ metrics: [{
+    name: "codex.skill.injected",
+    sum: { aggregationTemporality: 1, dataPoints: [
+      point([["skill", "ccc"], ["status", "injected"], ["invoke_type", "explicit"]], 1, 2),
+      point([["skill", "ccc"], ["status", "injected"], ["invoke_type", "implicit"]], 2, 3),
+      point([["skill", "ccc"], ["status", "skipped"], ["invoke_type", "explicit"]], 1, 4),
+    ] },
+  }] }] }] });
+  noteBridgeRequest("req-skill-use", { provider: "claude", model: "sonnet", role: "worker", workspace: "SkillRepo" });
+  const bridge = ingestAgentEvents({ requestId: "req-skill-use", events: [
+    { type: "skill_exposed", skill: "ccc" },
+    { type: "skill_used", skill: "ccc", eventId: "skill-call-1" },
+    { type: "skill_used", skill: "ccc", eventId: "skill-call-1" },
+  ] });
+  assert.equal(bridge.accepted, 1);
+  const status = getRouterStatus();
+  const ws = status.usage.byWorkspace.SkillRepo;
+  assert.equal(ws.skillUses, 2);
+  assert.equal(ws.skillContextsInjected, 4);
+  assert.equal(status.codexTelemetry.skills.used.total, 2);
+  assert.equal(status.codexTelemetry.skills.injected.total, 4);
+  assert.equal(status.codexTelemetry.bridgeEvents.skillExposed.total, 1);
+  assert.equal(status.codexTelemetry.bridgeEvents.skillUsed.total, 1);
+  resetRouterTelemetry();
   resetOtelTelemetry();
 });
 
@@ -3846,7 +3879,7 @@ test("graceful shutdown drains in-flight requests, persists state, and stops acc
       // the test path with the precondition event and let beginShutdown
       // perform its own flush; both paths are covered.
       const persisted = JSON.parse(await readFile(stateFile, "utf8"));
-      assert.equal(persisted.schema, "autodev-router-persisted-state-v2");
+      assert.equal(persisted.schema, "autodev-router-persisted-state-v3");
       assert.equal(persisted.recentEvents.some((event) => event.requestId === "shutdown-precondition"), true);
       assert.ok(typeof persisted.updatedAt === "string" && persisted.updatedAt.length > 0);
       assert.equal(upstreamCalls, 1, `the in-flight request must complete cleanly without a new upstream call; got ${upstreamCalls}`);

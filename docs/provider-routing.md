@@ -554,6 +554,10 @@ The router makes its effective choice visible in two ways:
   MCP telemetry is partitioned across `byRole`, `byWorkspace`, `byModel`, and `byAgent`.
   The same canonical dimensions are available under
   `status.codexTelemetry.dimensions` for MCP, tool, hook, skill, and bridge event families.
+  Skill usage is split explicitly: `skillContextsInjected` records loaded context,
+  while `skillUses` and `codexTelemetry.skills.used` count successful explicit
+  activations (`invoke_type=explicit`) or verified opt-in `skill_used` bridge events.
+  Exposure events remain availability telemetry and are never treated as usage.
   Per-workspace `byMcp` attribution and model-level MCP counts and breakdowns are
   embedded directly in existing workspace and model views (following fail-closed
   unavailable vs empty semantics); no standalone MCP panel exists. Per-workspace

@@ -304,9 +304,11 @@ have ranked the invoked skill (`hit`/`rank`), and increments once per selector
 method ([source](https://github.com/openai/codex/blob/21cfd369efca2df70c904c580b2e7e2e3eddb3c3/codex-rs/ext/skills/src/shadow_selection_experiment/mod.rs#L232-L266))—not a total of skills used. The router therefore ignores the entire
 family, including the bare `codex.skills.shadow_selection` name emitted by
 current Codex builds, its older dotted sub-metric names, native metric inventory,
-and persisted cumulative cursors. The dashboard's Skills table reports
-`codex.skill.injected` context outcomes only; it does not label shadow-selection
-activity as skill invocations.
+and persisted cumulative cursors. The dashboard separates skill context injection from actual activation. The
+`codex.skill.injected` table reports injected context outcomes; explicit
+`invoke_type=explicit` events populate `skills.used` and
+`usage.byWorkspace[*].skillUses`. Implicit selection, exposure, and skipped or
+failed injection events do not count as actual uses.
 
 The table also shows root-vs-subagent agent kind, model, and plugin where native
 metadata is present. Agent kind is derived from `session_source`: a
@@ -319,9 +321,11 @@ counts. No prompt or skill content is exported or stored; only metric
 attributes and numeric aggregates are retained.
 
 These are Codex-native metrics, not a generic audit stream for every provider
-behind the router. A zero `codexTelemetry.skills.injected` value means that no
-Codex skill-context injection metric was received; it does not prove that no
-skill was available or used.
+behind the router. `skillContextsInjected` measures context loading, while
+`skillUses` measures explicit activations only. A zero injected or used value
+does not prove that no skill was available or informally followed. Providers
+without explicit activation events remain exposure-only and are not inferred
+from prompts or tool calls.
 
 The dashboard labels MCP state as an observation (`ready`, `error`, or `stale`),
 not as an authoritative process-health guarantee. Codex currently emits MCP

@@ -416,6 +416,7 @@ function workspaceBucket(collection, key, cwd = null) {
       ...emptyUsageBucket(),
       cwd,
       skillUses: 0,
+      skillContextsInjected: 0,
       byRole: {},
       byModel: {},
       byProvider: {},
@@ -448,6 +449,7 @@ function workspaceBucket(collection, key, cwd = null) {
   if (!bucket.tools) bucket.tools = new Map();
   if (!bucket.skills) bucket.skills = new Map();
   if (typeof bucket.skillUses !== "number") bucket.skillUses = 0;
+  if (typeof bucket.skillContextsInjected !== "number") bucket.skillContextsInjected = 0;
   if (typeof bucket.toolsUnattributed !== "number") bucket.toolsUnattributed = 0;
   if (typeof bucket.skillsUnattributed !== "number") bucket.skillsUnattributed = 0;
   if (typeof bucket.toolsExecuted !== "number") bucket.toolsExecuted = 0;
@@ -478,6 +480,7 @@ function workspaceSkillBucket(wsBucket, skillName) {
     wsBucket.skills.set(skillName, {
       skill: skillName,
       total: 0,
+      uses: 0,
       byStatus: {},
       byInvokeType: {},
       byAgentKind: {},
@@ -582,6 +585,7 @@ function usageStatus() {
         ...publicBucket,
         averageDurationMs: bucket.successes + bucket.failures > 0 ? Math.round(bucket.durationMs / (bucket.successes + bucket.failures)) : 0,
         skillUses: bucket.skillUses ?? 0,
+        skillContextsInjected: bucket.skillContextsInjected ?? 0,
         byRole: usageSnapshot(bucket.byRole),
         byModel: usageSnapshot(bucket.byModel),
         byProvider: usageSnapshot(bucket.byProvider),
@@ -636,6 +640,7 @@ const otelTelemetry = {
   },
   skills: {
     injected: { total: 0, byStatus: {}, byInvokeType: {}, byAgentKind: {}, byModel: {}, byPlugin: {}, bySkill: new Map() },
+    used: { total: 0, bySkill: new Map(), byRole: {}, byWorkspace: {}, byModel: {}, byAgent: {}, lastSeenAt: null },
     turnDuration: { durationSeconds: { count: 0, sum: 0 } },
     threads: {
       enabled: { count: 0, sum: 0 },
@@ -660,6 +665,7 @@ const otelTelemetry = {
     toolRequested: { total: 0, byTool: new Map(), byWorkspace: new Map() },
     toolUnavailable: { total: 0, byTool: new Map(), byWorkspace: new Map(), byReason: {} },
     skillExposed: { total: 0, bySkill: new Map(), byWorkspace: new Map() },
+    skillUsed: { total: 0, bySkill: new Map(), byWorkspace: new Map(), seenKeys: new Set() },
   },
 };
 // Cumulative OTLP metric points resend the running total on every export, so
@@ -1215,6 +1221,39 @@ function resolveDatapointWorkspace(dataPointAttributes, resourceAttributes = {})
   return { status: "unattributed", workspaceKey: null, workspaceId, reason: "unknown_workspace_id", source };
 }
 
+function skillUsedBucket(name) {
+  const used = otelTelemetry.skills.used;
+  if (!used.bySkill.has(name)) {
+    used.bySkill.set(name, { skill: name, total: 0, byRole: {}, byWorkspace: {}, byModel: {}, byAgent: {}, lastSeenAt: null });
+  }
+  return used.bySkill.get(name);
+}
+
+function recordSkillUse(skill, context, count = 1, timestamp = null) {
+  if (!skill || !Number.isFinite(count) || count <= 0) return;
+  const used = otelTelemetry.skills.used;
+  const at = timestamp ?? context.timestamp ?? new Date().toISOString();
+  used.total += count;
+  used.lastSeenAt = at;
+  const bucket = skillUsedBucket(skill);
+  bucket.total += count;
+  bucket.lastSeenAt = at;
+  for (const [field, key] of [["byRole", context.role], ["byWorkspace", context.workspace], ["byModel", context.model], ["byAgent", context.agent]]) {
+    used[field][key] = (used[field][key] ?? 0) + count;
+    bucket[field][key] = (bucket[field][key] ?? 0) + count;
+  }
+  if (context.workspace !== UNATTRIBUTED_DIMENSION) {
+    const workspace = workspaceBucket(usageTelemetry.byWorkspace, context.workspace);
+    workspace.skillUses = (workspace.skillUses ?? 0) + count;
+    const wsSkill = workspaceSkillBucket(workspace, skill);
+    wsSkill.uses = (wsSkill.uses ?? 0) + count;
+  }
+}
+
+function skillActivationStatus(status) {
+  return !["skipped", "error", "failure", "unavailable"].includes(String(status).toLowerCase());
+}
+
 function noteSkillInjected(metricName, attributes, dataPoint, temporality, dpAttributes = null, resourceAttributes = {}) {
   const wsResolution = resolveDatapointWorkspace(dpAttributes ?? attributes, resourceAttributes);
   if (wsResolution.workspaceId) workspaceAttributionCapabilities.skills = true;
@@ -1248,7 +1287,11 @@ function noteSkillInjected(metricName, attributes, dataPoint, temporality, dpAtt
 
   if (wsResolution.status === "attributed") {
     const wsBucket = workspaceBucket(usageTelemetry.byWorkspace, wsResolution.workspaceKey);
-    wsBucket.skillUses = (wsBucket.skillUses ?? 0) + delta;
+    wsBucket.skillContextsInjected = (wsBucket.skillContextsInjected ?? 0) + delta;
+    const explicitUse = invokeType === "explicit" && skillActivationStatus(status);
+    if (explicitUse) {
+      recordSkillUse(skill, context, delta, context.timestamp);
+    }
     const wsSkill = workspaceSkillBucket(wsBucket, skill);
     wsSkill.total += delta;
     wsSkill.byStatus[status] = (wsSkill.byStatus[status] ?? 0) + delta;
@@ -1256,6 +1299,9 @@ function noteSkillInjected(metricName, attributes, dataPoint, temporality, dpAtt
     wsSkill.byAgentKind[agentKind] = (wsSkill.byAgentKind[agentKind] ?? 0) + delta;
     wsSkill.byModel[model] = (wsSkill.byModel[model] ?? 0) + delta;
     wsSkill.byPlugin[plugin] = (wsSkill.byPlugin[plugin] ?? 0) + delta;
+  }
+  if (wsResolution.status !== "attributed" && invokeType === "explicit" && skillActivationStatus(status)) {
+    recordSkillUse(skill, context, delta, context.timestamp);
   }
   if (wsResolution.status === "attributed" && (!skill || skill === "unknown")) {
     const wsBucket = workspaceBucket(usageTelemetry.byWorkspace, wsResolution.workspaceKey);
@@ -1766,6 +1812,7 @@ function resetOtelTelemetry() {
   otelTelemetry.threads = { started: { total: 0, bySource: {} }, spawns: { total: 0, byStatus: {}, byRole: {}, byModel: {} } };
   otelTelemetry.sqlite = { init: new Map(), initDurationMs: new Map(), fallbacks: new Map() };
   otelTelemetry.skills.injected = { total: 0, byStatus: {}, byInvokeType: {}, byAgentKind: {}, byModel: {}, byPlugin: {}, bySkill: new Map() };
+  otelTelemetry.skills.used = { total: 0, bySkill: new Map(), byRole: {}, byWorkspace: {}, byModel: {}, byAgent: {}, lastSeenAt: null };
   otelTelemetry.skills.turnDuration = { durationSeconds: { count: 0, sum: 0 } };
   otelTelemetry.skills.threads = {
     enabled: { count: 0, sum: 0 },
@@ -1789,6 +1836,7 @@ function resetOtelTelemetry() {
     toolRequested: { total: 0, byTool: new Map(), byWorkspace: new Map() },
     toolUnavailable: { total: 0, byTool: new Map(), byWorkspace: new Map(), byReason: {} },
     skillExposed: { total: 0, bySkill: new Map(), byWorkspace: new Map() },
+    skillUsed: { total: 0, bySkill: new Map(), byWorkspace: new Map(), seenKeys: new Set() },
   };
   otelMetricSeries.clear();
   workspaceAttributionCapabilities.tools = false;
@@ -1903,6 +1951,21 @@ function codexTelemetryStatus(now = Date.now()) {
       fallbacks: { byDbStatus: sqliteBuckets(otelTelemetry.sqlite.fallbacks), total: [...otelTelemetry.sqlite.fallbacks.values()].reduce((sum, bucket) => sum + bucket.count, 0) },
     },
     skills: {
+      used: {
+        total: otelTelemetry.skills.used.total,
+        lastSeenAt: otelTelemetry.skills.used.lastSeenAt,
+        byRole: { ...otelTelemetry.skills.used.byRole },
+        byWorkspace: { ...otelTelemetry.skills.used.byWorkspace },
+        byModel: { ...otelTelemetry.skills.used.byModel },
+        byAgent: { ...otelTelemetry.skills.used.byAgent },
+        bySkill: [...otelTelemetry.skills.used.bySkill.values()].map((entry) => ({
+          ...entry,
+          byRole: { ...entry.byRole },
+          byWorkspace: { ...entry.byWorkspace },
+          byModel: { ...entry.byModel },
+          byAgent: { ...entry.byAgent },
+        })).sort((a, b) => a.skill.localeCompare(b.skill)),
+      },
       injected: {
         total: skillsInjected.total,
         byStatus: { ...skillsInjected.byStatus },
@@ -1980,6 +2043,11 @@ function formatBridgeEvents(events) {
           bySkill: [...row.bySkill.entries()].map(([skill, count]) => ({ skill, count })).sort((a, b) => a.skill.localeCompare(b.skill)),
         }))
         .sort((a, b) => a.workspaceKey.localeCompare(b.workspaceKey)),
+    },
+    skillUsed: {
+      total: events.skillUsed.total,
+      bySkill: [...events.skillUsed.bySkill.values()].map((entry) => ({ ...entry })).sort((a, b) => a.skill.localeCompare(b.skill)),
+      byWorkspace: [...events.skillUsed.byWorkspace.entries()].map(([workspaceKey, row]) => ({ workspaceKey, count: row.count, bySkill: [...row.bySkill.entries()].map(([skill, count]) => ({ skill, count })) })),
     },
   };
 }
@@ -2441,7 +2509,7 @@ function subagentStatus() {
 // Ingests a provider bridge's report that its CLI invoked a subagent spawn
 // tool. Only reports naming a request id this router actually issued are
 // counted; anything else is a caller that never served a router request.
-const INGESTED_AGENT_EVENTS = new Set(["subagent_spawn", "subagent_result", "subagent_tools_unavailable", "tool_executed", "tool_requested", "tool_unavailable", "skill_exposed"]);
+const INGESTED_AGENT_EVENTS = new Set(["subagent_spawn", "subagent_result", "subagent_tools_unavailable", "tool_executed", "tool_requested", "tool_unavailable", "skill_exposed", "skill_used"]);
 
 let anonymousChildSequence = 0;
 
@@ -2495,6 +2563,10 @@ function ingestAgentEvents(payload) {
     }
     if (event.type === "skill_exposed") {
       recordBridgeSkillExposure({ event, context });
+      continue;
+    }
+    if (event.type === "skill_used") {
+      if (recordBridgeSkillUsed({ event, context })) accepted += 1;
       continue;
     }
     const role = typeof event.role === "string" && event.role.trim() ? safeMetricLabel(event.role) : null;
@@ -2639,6 +2711,32 @@ function recordBridgeSkillExposure({ event, context }) {
     wsBucket.skillsExposed = (wsBucket.skillsExposed ?? 0) + 1;
     wsBucket.bridgeObservations.skills.set(skill, (wsBucket.bridgeObservations.skills.get(skill) ?? 0) + 1);
   }
+}
+
+function recordBridgeSkillUsed({ event, context }) {
+  const skill = typeof event.skill === "string" && event.skill.trim() ? safeMetricLabel(event.skill) : null;
+  if (!skill) return false;
+  const source = typeof event.source === "string" && event.source.trim() ? safeMetricLabel(event.source) : "";
+  const pluginId = typeof event.pluginId === "string" && event.pluginId.trim() ? safeMetricLabel(event.pluginId) : "";
+  const workspace = typeof context.workspace === "string" && context.workspace.trim() ? context.workspace : UNATTRIBUTED_DIMENSION;
+  const eventId = event.eventId ?? event.event_id ?? event.turnId ?? event.turn_id ?? event.callId ?? event.call_id ?? "";
+  const key = [eventId || "no-id", skill, source, pluginId, workspace].join("\0");
+  const store = otelTelemetry.bridgeEvents.skillUsed;
+  if (store.seenKeys.has(key)) return false;
+  store.seenKeys.add(key);
+  while (store.seenKeys.size > 5000) store.seenKeys.delete(store.seenKeys.values().next().value);
+  const ctx = resolveTelemetryContext(event, {}, { context });
+  const timestamp = ctx.timestamp;
+  store.total += 1;
+  const skillRow = store.bySkill.get(skill) ?? { skill, source, pluginId, count: 0 };
+  skillRow.count += 1;
+  store.bySkill.set(skill, skillRow);
+  const wsRow = store.byWorkspace.get(ctx.workspace) ?? { workspaceKey: ctx.workspace, count: 0, bySkill: new Map() };
+  wsRow.count += 1;
+  wsRow.bySkill.set(skill, (wsRow.bySkill.get(skill) ?? 0) + 1);
+  store.byWorkspace.set(ctx.workspace, wsRow);
+  recordSkillUse(skill, ctx, 1, timestamp);
+  return true;
 }
 
 function providerState(provider) {
@@ -2879,7 +2977,7 @@ function usagePersistenceSnapshot() {
     return copy;
   };
   return {
-    schemaVersion: 6,
+    schemaVersion: 7,
     totals: withoutActive(usageTelemetry.totals),
     byRole: Object.fromEntries(Object.entries(usageTelemetry.byRole).map(([key, bucket]) => [key, withoutActive(bucket)])),
     byModel: Object.fromEntries(Object.entries(usageTelemetry.byModel).map(([key, bucket]) => [key, withoutActive(bucket)])),
@@ -2887,6 +2985,7 @@ function usagePersistenceSnapshot() {
     byWorkspace: Object.fromEntries(Object.entries(usageTelemetry.byWorkspace).map(([key, bucket]) => [key, {
       ...withoutActive(bucket),
       skillUses: bucket.skillUses ?? 0,
+      skillContextsInjected: bucket.skillContextsInjected ?? 0,
       toolsUnattributed: bucket.toolsUnattributed ?? 0,
       skillsUnattributed: bucket.skillsUnattributed ?? 0,
       toolsExecuted: bucket.toolsExecuted ?? 0,
@@ -2914,7 +3013,7 @@ function usagePersistenceSnapshot() {
   };
 }
 
-const OTEL_PERSISTENCE_SCHEMA_VERSION = 5;
+const OTEL_PERSISTENCE_SCHEMA_VERSION = 6;
 
 function otelPersistenceSnapshot() {
   const telemetry = codexTelemetryStatus();
@@ -2969,6 +3068,16 @@ function restoreOtelCounters(snapshot) {
       const destination = target[family];
       if (!source || typeof source !== "object") continue;
       if (Number.isFinite(source.total) && source.total >= 0) destination.total = source.total;
+      if (family === "skillUsed") {
+        for (const entry of source.bySkill ?? []) {
+          if (!entry || typeof entry.skill !== "string" || !Number.isFinite(entry.count)) continue;
+          destination.bySkill.set(safeMetricLabel(entry.skill), { skill: safeMetricLabel(entry.skill), source: safeMetricLabel(entry.source, ""), pluginId: safeMetricLabel(entry.pluginId, ""), count: entry.count });
+        }
+        for (const row of source.byWorkspace ?? []) {
+          if (!row || typeof row.workspaceKey !== "string" || !Number.isFinite(row.count)) continue;
+          destination.byWorkspace.set(safeMetricLabel(row.workspaceKey), { workspaceKey: safeMetricLabel(row.workspaceKey), count: row.count, bySkill: new Map(Object.entries(Object.fromEntries((row.bySkill ?? []).filter((entry) => entry && typeof entry.skill === "string" && Number.isFinite(entry.count)).map((entry) => [safeMetricLabel(entry.skill), entry.count])))) });
+        }
+      }
       if (source.byReason && typeof source.byReason === "object") {
         for (const [k, v] of Object.entries(source.byReason)) if (Number.isFinite(v) && v >= 0) destination.byReason[safeMetricLabel(k)] = v;
       }
@@ -3056,6 +3165,23 @@ function restoreOtelTelemetry(snapshot) {
       for (const [plugin, count] of Object.entries(entry.byPlugin ?? {})) if (isFiniteNonnegative(count)) bucket.byPlugin[safeMetricLabel(plugin)] = count;
     }
   }
+  const used = snapshot.skills?.used;
+  if (used && typeof used === "object") {
+    restoreNumberFields(otelTelemetry.skills.used, used, ["total"]);
+    if (typeof used.lastSeenAt === "string") otelTelemetry.skills.used.lastSeenAt = used.lastSeenAt;
+    for (const dimension of ["byRole", "byWorkspace", "byModel", "byAgent"]) {
+      for (const [key, count] of Object.entries(used[dimension] ?? {})) if (isFiniteNonnegative(count)) otelTelemetry.skills.used[dimension][safeMetricLabel(key)] = count;
+    }
+    for (const entry of Array.isArray(used.bySkill) ? used.bySkill : []) {
+      if (!entry || typeof entry.skill !== "string") continue;
+      const bucket = skillUsedBucket(safeMetricLabel(entry.skill));
+      restoreNumberFields(bucket, entry, ["total"]);
+      if (typeof entry.lastSeenAt === "string") bucket.lastSeenAt = entry.lastSeenAt;
+      for (const dimension of ["byRole", "byWorkspace", "byModel", "byAgent"]) {
+        for (const [key, count] of Object.entries(entry[dimension] ?? {})) if (isFiniteNonnegative(count)) bucket[dimension][safeMetricLabel(key)] = count;
+      }
+    }
+  }
   for (const [targetKey, sourceKey] of [["enabled", "enabledTotal"], ["kept", "keptTotal"], ["truncated", "truncated"], ["descriptionTruncatedChars", "descriptionTruncatedChars"]]) {
     restoreNumberFields(otelTelemetry.skills.threads[targetKey], skills?.threads?.[sourceKey], ["count", "sum"]);
   }
@@ -3118,7 +3244,7 @@ const PERSISTED_STATE_SCHEMA = "autodev-router-persisted-state";
 
 function serializeRouterState() {
   return JSON.stringify({
-    schema: `${PERSISTED_STATE_SCHEMA}-v2`,
+    schema: `${PERSISTED_STATE_SCHEMA}-v3`,
     updatedAt: new Date().toISOString(),
     providerTelemetry: Object.fromEntries(providerTelemetry),
     usage: usagePersistenceSnapshot(),
@@ -3166,7 +3292,7 @@ function loadRouterState(file = STATE_FILE) {
       }
       if (saved.lastFailure === null || (saved.lastFailure && typeof saved.lastFailure === "object")) current.lastFailure = saved.lastFailure;
     }
-    if (parsed.usage && typeof parsed.usage === "object") {
+    if (parsed.usage && typeof parsed.usage === "object" && parsed.usage.schemaVersion === 7) {
       if (parsed.usage.workspaceAttributionCapabilities && typeof parsed.usage.workspaceAttributionCapabilities === "object") {
         for (const key of ["tools", "skills"]) {
           if (parsed.usage.workspaceAttributionCapabilities[key] === true) workspaceAttributionCapabilities[key] = true;
@@ -3194,6 +3320,9 @@ function loadRouterState(file = STATE_FILE) {
           restoreUsageBucket(current, saved);
           if (Number.isInteger(saved.skillUses) && saved.skillUses >= 0) {
             current.skillUses = saved.skillUses;
+          }
+          if (Number.isInteger(saved.skillContextsInjected) && saved.skillContextsInjected >= 0) {
+            current.skillContextsInjected = saved.skillContextsInjected;
           }
           for (const counter of ["toolsUnattributed", "skillsUnattributed", "toolsExecuted", "toolsRequested", "toolsUnavailable", "skillsExposed"]) {
             if (Number.isInteger(saved[counter]) && saved[counter] >= 0) {
@@ -3260,6 +3389,7 @@ function loadRouterState(file = STATE_FILE) {
                 const restoredSkill = {
                   skill: safeMetricLabel(skill.skill),
                   total: 0,
+                  uses: 0,
                   byStatus: {},
                   byInvokeType: {},
                   byAgentKind: {},
@@ -3267,6 +3397,7 @@ function loadRouterState(file = STATE_FILE) {
                   byPlugin: {},
                 };
                 if (typeof skill.total === "number" && skill.total >= 0) restoredSkill.total = skill.total;
+                if (typeof skill.uses === "number" && skill.uses >= 0) restoredSkill.uses = skill.uses;
                 for (const dict of ["byStatus", "byInvokeType", "byAgentKind", "byModel", "byPlugin"]) {
                   if (skill[dict] && typeof skill[dict] === "object") {
                     for (const [k, cnt] of Object.entries(skill[dict])) {

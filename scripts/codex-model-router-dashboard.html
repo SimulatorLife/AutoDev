@@ -605,7 +605,7 @@
               <th>Avg turn</th>
               <th title="Response-output tool-call count, not the OTLP-named tool rows shown when a row is expanded">
                 Tool calls (response output)</th>
-              <th>Skill uses</th>
+              <th>Skill uses / injected</th>
             </tr>
           </thead>
           <tbody id="workspace-usage">
@@ -1745,7 +1745,7 @@
           if (!name) return null;
           const ok = Number(entry.byStatus?.ok ?? entry.byStatus?.success ?? entry.byStatus?.ready ?? entry.successes ?? entry.ready ?? 0);
           const err = Number(entry.byStatus?.error ?? entry.byStatus?.failure ?? entry.byStatus?.stale ?? entry.failures ?? entry.error ?? 0);
-          const count = Number(entry.count ?? entry.total ?? entry.observed ?? entry.attempts ?? entry.toolCalls ?? entry.skillUses ?? 0) || (ok + err);
+          const count = Number(entry.uses ?? entry.count ?? entry.total ?? entry.observed ?? entry.attempts ?? entry.toolCalls ?? entry.skillUses ?? 0) || (ok + err);
           return {
             name,
             count,
@@ -1762,7 +1762,7 @@
           const bucket = value && typeof value === "object" ? value : {};
           const ok = Number(bucket.byStatus?.ok ?? bucket.byStatus?.success ?? bucket.byStatus?.ready ?? bucket.successes ?? bucket.ready ?? 0);
           const err = Number(bucket.byStatus?.error ?? bucket.byStatus?.failure ?? bucket.byStatus?.stale ?? bucket.failures ?? bucket.error ?? 0);
-          const count = Number(bucket.count ?? bucket.total ?? bucket.observed ?? bucket.attempts ?? bucket.toolCalls ?? bucket.skillUses ?? (typeof value === "number" ? value : 0)) || (ok + err);
+          const count = Number(bucket.uses ?? bucket.count ?? bucket.total ?? bucket.observed ?? bucket.attempts ?? bucket.toolCalls ?? bucket.skillUses ?? (typeof value === "number" ? value : 0)) || (ok + err);
           return {
             name,
             count,
@@ -1931,9 +1931,10 @@
         toolOk = toolCount;
       }
 
-      const skillUsesTotal = Number(status.codexTelemetry?.skills?.injected?.total ?? 0);
-      const skillRowsList = status.codexTelemetry?.skills?.injected?.bySkill ?? [];
-      const observedSkillsCount = skillRowsList.length;
+      const skillUsesTotal = Number(status.codexTelemetry?.skills?.used?.total ?? 0);
+      const skillContextsInjectedTotal = Number(status.codexTelemetry?.skills?.injected?.total ?? 0);
+      const skillRowsList = status.codexTelemetry?.skills?.used?.bySkill ?? [];
+      const observedSkillsCount = skillRowsList.length || (status.codexTelemetry?.skills?.injected?.bySkill ?? []).length;
 
       const avgTurnMs = Number(status.usage?.totals?.averageDurationMs ?? 0);
       const avgTurnSec = (avgTurnMs / 1000).toFixed(1);
@@ -1956,7 +1957,7 @@
       const kpiSkills = document.getElementById("kpi-skills");
       if (kpiSkills) {
         kpiSkills.setAttribute("value", skillUsesTotal.toLocaleString());
-        kpiSkills.textContent = `${observedSkillsCount} observed skills`;
+        kpiSkills.textContent = `${observedSkillsCount} skills · ${skillContextsInjectedTotal.toLocaleString()} contexts injected`;
       }
       const kpiTurn = document.getElementById("kpi-turn");
       if (kpiTurn) {
@@ -2250,6 +2251,7 @@
             const failures = Number(w.failures ?? 0);
             const toolCalls = Number(w.toolCalls ?? 0);
             const skillUses = Number(w.skillUses ?? 0);
+            const skillContextsInjected = Number(w.skillContextsInjected ?? 0);
             const avgDurationMs = Number(w.averageDurationMs ?? 0);
 
             wsTotalActive += active;
@@ -2339,7 +2341,7 @@
                 <td class="attempts"><outcome-bar fail="${failures}" no-bar="" rate="" success="${successes}"></outcome-bar></td>
                 <td>${durationText(avgDurationMs)}</td>
                 <td class="attempts"><outcome-bar fail="0" no-bar="" success="${toolCalls}"></outcome-bar></td>
-                <td>${skillUses.toLocaleString()}</td>
+                <td>${skillUses.toLocaleString()} / ${skillContextsInjected.toLocaleString()}</td>
               </tr>
               <tr class="details-row" ${isExpanded ? '' : 'hidden=""'}>
                 <td colspan="6">
@@ -2391,7 +2393,7 @@
       }
 
       // 5. Skill Telemetry
-      syncPanel(document.getElementById("panel-skills"), "Skill telemetry", `${skillUsesTotal.toLocaleString()} uses · ${skillRowsList.length} skills`);
+      syncPanel(document.getElementById("panel-skills"), "Skill telemetry", `${skillUsesTotal.toLocaleString()} uses · ${skillContextsInjectedTotal.toLocaleString()} contexts injected`);
 
       const skillsTbody = document.getElementById("skills-usage-tbody");
       const skillsTfoot = document.getElementById("skills-usage-tfoot");
@@ -2408,7 +2410,7 @@
             const skillName = s.skill;
             const isExpanded = expandedRows.has(skillName);
             const total = Number(s.total ?? 0);
-            const ok = Number(s.byStatus?.ok ?? s.byStatus?.success ?? (s.byStatus?.failure || s.byStatus?.error ? total - Number(s.byStatus?.error ?? s.byStatus?.failure ?? 0) : total));
+            const ok = Number(s.byStatus?.ok ?? s.byStatus?.success ?? total);
             const err = Number(s.byStatus?.error ?? s.byStatus?.failure ?? 0);
 
             skillsTotalSuccess += ok;

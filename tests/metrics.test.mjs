@@ -46,6 +46,8 @@ test('router dashboard exposes the component hierarchy and explicit workspace at
   assert.match(dashboard, /bridgeEvents\.toolRequested/);
   assert.match(dashboard, /bridgeEvents\.toolUnavailable/);
   assert.match(dashboard, /bridgeEvents\.skillExposed/);
+  assert.match(dashboard, /skills\?\.used\?\.total/);
+  assert.match(dashboard, /skillContextsInjected/);
   assert.match(dashboard, /codex-state-tool-results-card/);
   assert.match(dashboard, /codex-state-tool-unattributed-card/);
   assert.match(dashboard, /codex-state-tbody/);
