@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
-import { readFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
+import { tmpdir } from 'node:os';
 import test from 'node:test';
 
 const root = path.resolve(new URL('..', import.meta.url).pathname);
@@ -102,6 +103,32 @@ test('router dashboard exposes the component hierarchy and explicit workspace at
   assert.match(dashboard, /btn-provider-toggle/);
   assert.match(dashboard, /\/v1\/providers\//);
   assert.match(dashboard, /toggleProvider/);
+});
+
+
+test('router dashboard inline JavaScript has no unresolved identifiers', async () => {
+  const rawDashboard = await readFile(path.join(root, 'scripts', 'codex-model-router-dashboard.html'), 'utf8');
+  const source = [...rawDashboard.matchAll(/<script(?:\s[^>]*)?>(.*?)<\/script>/gis)].map((match) => match[1]).join('\n\n');
+  const tempDir = await mkdtemp(path.join(tmpdir(), 'autodev-dashboard-'));
+  const sourceFile = path.join(tempDir, 'dashboard.js');
+  try {
+    await writeFile(sourceFile, source, 'utf8');
+    const typescript = require('typescript');
+    const program = typescript.createProgram([sourceFile], {
+      allowJs: true,
+      checkJs: true,
+      noEmit: true,
+      target: typescript.ScriptTarget.ES2022,
+      lib: ['lib.es2022.d.ts', 'lib.dom.d.ts'],
+      skipLibCheck: true,
+    });
+    const diagnostics = typescript.getPreEmitDiagnostics(program)
+      .filter((diagnostic) => diagnostic.code === 2304 || diagnostic.code === 2552)
+      .map((diagnostic) => typescript.flattenDiagnosticMessageText(diagnostic.messageText, ' '));
+    assert.deepEqual(diagnostics, [], `dashboard has unresolved identifiers: ${diagnostics.join('; ')}`);
+  } finally {
+    await rm(tempDir, { recursive: true, force: true });
+  }
 });
 
 test('router dashboard provider health panel renders routing priorities, limits, disabled state, and toggle controls', async () => {

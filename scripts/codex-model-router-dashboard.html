@@ -2968,7 +2968,7 @@
             <h3>Concurrency</h3>
             <div class="kv-list">
               <div class="kv"><span>Admission scope</span><span>${escapeHtml(concurrency.scope ?? "router-admitted-child-requests")}</span></div>
-              <div class="kv"><span>Per-session limit</span><span>${escapeHtml(String(perSessionLimit))}</span></div>
+              <div class="kv"><span>Per-session limit</span><span>${escapeHtml(String(concurrency.effectivePerSessionLimit ?? concurrency.maxConcurrentThreadsPerSession ?? "none"))}</span></div>
               <div class="kv"><span>Active sessions</span><span>${Number(concurrency.activeSessions ?? 0)}</span></div>
               <div class="kv"><span>In-flight requests</span><span>${inFlightRequests}</span></div>
               <div class="kv"><span>Active subagents</span><span>${Number(concurrency.activeSubagentThreads ?? 0)}</span></div>
