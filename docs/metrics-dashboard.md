@@ -284,14 +284,26 @@ separately.
 The [official OpenAI Codex skills documentation](https://developers.openai.com/codex/skills)
 describes explicit `$skill`
 invocation and implicit prompt-based selection, but does not document the
-`codex.skills.shadow_selection.*` metric family. The metric names and values
-show that family is selector instrumentation: catalog size, selected-entry
-size, query-term count, reduction, selector duration, and a shadow-selector
-invocation count. None is a reliable count of a skill being loaded or used by
-the task. The router therefore ignores the entire family, including its native
-metric inventory and persisted cumulative cursors. The dashboard's Skills
-table reports `codex.skill.injected` context outcomes only; it does not label
-shadow-selection activity as skill invocations.
+`codex.skills.shadow_selection.*` metric family. The upstream Codex source
+provides stronger evidence about its meaning: [PR #39008](https://github.com/openai/codex/pull/39008)
+adds `task_context_fusion_v1` to the existing shadow-selection experiment, and
+the source labels the module “temporary” and says it “should be removed after
+evaluation” ([source](https://github.com/openai/codex/blob/21cfd369efca2df70c904c580b2e7e2e3eddb3c3/codex-rs/ext/skills/src/shadow_selection_experiment/mod.rs#L1-L1)).
+Most importantly, the public `SkillsExtensionConfig` comment defines
+`shadow_selection_enabled` as “Whether cheap skill selectors run in shadow mode
+without changing prompt contents” ([source](https://github.com/openai/codex/blob/21cfd369efca2df70c904c580b2e7e2e3eddb3c3/codex-rs/ext/skills/src/config.rs#L14-L15)).
+
+This distinction matters for telemetry. The shadow family measures selector
+experiments: catalog size, selected-entry size, query-term count, reduction,
+and selector duration. Its `.invocation` metric is an evaluation signal: the
+source records actual implicit invocations to test whether each selector would
+have ranked the invoked skill (`hit`/`rank`), and increments once per selector
+method ([source](https://github.com/openai/codex/blob/21cfd369efca2df70c904c580b2e7e2e3eddb3c3/codex-rs/ext/skills/src/shadow_selection_experiment/mod.rs#L232-L266))—not a total of skills used. The router therefore ignores the entire
+family, including the bare `codex.skills.shadow_selection` name emitted by
+current Codex builds, its older dotted sub-metric names, native metric inventory,
+and persisted cumulative cursors. The dashboard's Skills table reports
+`codex.skill.injected` context outcomes only; it does not label shadow-selection
+activity as skill invocations.
 
 The table also shows root-vs-subagent agent kind, model, and plugin where native
 metadata is present. Agent kind is derived from `session_source`: a

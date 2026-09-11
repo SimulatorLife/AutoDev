@@ -1379,6 +1379,9 @@ function noteThreadSpawn(metricName, attributes, dataPoint, temporality) {
 // skill usage; `codex.skill.injected` remains the authoritative skill-context
 // signal owned by this router.
 const REMOVED_SHADOW_SELECTION_METRICS = new Set([
+  // Current Codex exports the aggregate under the bare name; older builds
+  // exposed the diagnostic sub-metrics as separate names.
+  "codex.skills.shadow_selection",
   "codex.skills.shadow_selection.invocation",
   "codex.skills.shadow_selection.catalog_entries",
   "codex.skills.shadow_selection.selected_entries",

@@ -2337,6 +2337,7 @@ test("ignores shadow-selection diagnostics instead of treating them as skill usa
   });
   const ingest = (metrics) => ingestOtelSignal("metrics", { resourceMetrics: [ { scopeMetrics: [ { metrics } ] } ] });
   const removed = [
+    "codex.skills.shadow_selection",
     "codex.skills.shadow_selection.invocation",
     "codex.skills.shadow_selection.catalog_entries",
     "codex.skills.shadow_selection.selected_entries",
@@ -2821,13 +2822,16 @@ test("drops removed shadow-selection telemetry from persisted state", async () =
     const state = JSON.parse(serializeRouterState());
     state.otelTelemetry.skills.usage = { total: 7, bySkill: [ { skill: "orchestration", total: 7 } ] };
     state.otelTelemetry.skills.selection = { catalogEntries: { count: 1, sum: 20 } };
-    state.otelTelemetry.metrics = { observed: [ { name: "codex.skills.shadow_selection.invocation", exports: 1, dataPoints: 1 } ] };
+    state.otelTelemetry.metrics = { observed: [
+      { name: "codex.skills.shadow_selection", exports: 1, dataPoints: 1 },
+      { name: "codex.skills.shadow_selection.invocation", exports: 1, dataPoints: 1 },
+    ] };
     await writeFile(stateFile, JSON.stringify(state), "utf8");
     assert.equal(loadRouterState(stateFile), true);
     const telemetry = getRouterStatus().codexTelemetry;
     assert.equal(telemetry.skills.usage, undefined);
     assert.equal(telemetry.skills.selection, undefined);
-    assert.equal(telemetry.metrics.observed.some(({ name }) => name === "codex.skills.shadow_selection.invocation"), false);
+    assert.equal(telemetry.metrics.observed.some(({ name }) => name.startsWith("codex.skills.shadow_selection")), false);
   } finally {
     resetRouterTelemetry();
     await rm(directory, { recursive: true, force: true });
