@@ -653,11 +653,7 @@
 
     <!-- 4. Usage by Workspace -->
     <dashboard-panel id="workspace-usage-section" open="" summary="" title="Usage by workspace">
-      <div class="section-note">Click a workspace to expand roles, models, named tool attribution, skill usage, and MCP servers.
-        <strong>Tool calls</strong> here is a response-output count inferred from Responses API tool-call items on
-        this workspace's turns; it is a different measurement from the OTLP-named runtime tool rows shown per
-        workspace when expanded, and the two are not expected to match.
-      </div>
+      <div class="section-note">Click a workspace to expand roles, models, named tool attribution, skill usage, and MCP servers.</div>
       <div class="table-wrap">
         <table id="workspace-usage-table">
           <thead>
@@ -666,8 +662,7 @@
               <th>Active</th>
               <th>Attempts</th>
               <th>Avg turn</th>
-              <th title="Response-output tool-call count, not the OTLP-named tool rows shown when a row is expanded">
-                Tool calls (response output)</th>
+              <th>Tool calls</th>
               <th>Skill uses / injected</th>
             </tr>
           </thead>
@@ -2146,10 +2141,6 @@
         toolErr += err;
         toolCount += (t.count != null ? Number(t.count) : ok + err);
       }
-      if (toolCount === 0) {
-        toolCount = Number(status.usage?.totals?.toolCalls ?? 0);
-        toolOk = toolCount;
-      }
 
       const skillUsesTotal = Number(status.codexTelemetry?.skills?.used?.total ?? 0);
       const skillContextsInjectedTotal = Number(status.codexTelemetry?.skills?.injected?.total ?? 0);
@@ -2504,13 +2495,13 @@
           let wsTotalDuration = 0;
           let wsTotalTools = 0;
           let wsTotalSkills = 0;
+          let hasWsTools = false;
 
           wsTbody.innerHTML = sortedWorkspaces.map(([ wsKey, w ]) => {
             const active = Number(w.active ?? 0);
             const attempts = Number(w.attempts ?? 0);
             const successes = Number(w.successes ?? 0);
             const failures = Number(w.failures ?? 0);
-            const toolCalls = Number(w.toolCalls ?? 0);
             const skillUses = Number(w.skillUses ?? 0);
             const skillContextsInjected = Number(w.skillContextsInjected ?? 0);
             const avgDurationMs = Number(w.averageDurationMs ?? 0);
@@ -2520,7 +2511,6 @@
             wsTotalSuccess += successes;
             wsTotalFail += failures;
             wsTotalDuration += (successes + failures) * avgDurationMs;
-            wsTotalTools += toolCalls;
             wsTotalSkills += skillUses;
 
             const isExpanded = expandedRows.has(wsKey);
@@ -2584,6 +2574,13 @@
               unavailableLabel: "Named tool telemetry is unavailable per-workspace",
               emptyLabel: "No named tool calls observed for this workspace yet",
             });
+            let wsToolCell = `<td class="attempts"><span class="dim">—</span></td>`;
+            if (wsToolRows !== null) {
+              const toolCalls = wsToolRows.reduce((sum, r) => sum + Number(r.count ?? 0), 0);
+              hasWsTools = true;
+              wsTotalTools += toolCalls;
+              wsToolCell = `<td class="attempts"><outcome-bar fail="0" no-bar="" success="${toolCalls}"></outcome-bar></td>`;
+            }
             const wsSkillRows = normalizeWorkspaceNamedUsage(w.bySkill, ["skill", "name"]);
             const wsSkillsHtml = renderWorkspaceNamedUsage(wsSkillRows, {
               unavailableLabel: "Named skill attribution is unavailable per-workspace",
@@ -2601,7 +2598,7 @@
                 <td><status-badge ${active > 0 ? 'active=""' : ''}>${active}</status-badge></td>
                 <td class="attempts"><outcome-bar fail="${failures}" no-bar="" rate="" success="${successes}"></outcome-bar></td>
                 <td>${durationText(avgDurationMs)}</td>
-                <td class="attempts"><outcome-bar fail="0" no-bar="" success="${toolCalls}"></outcome-bar></td>
+                ${wsToolCell}
                 <td>${skillUses.toLocaleString()} / ${skillContextsInjected.toLocaleString()}</td>
               </tr>
               <tr class="details-row" ${isExpanded ? '' : 'hidden=""'}>
@@ -2619,9 +2616,6 @@
                     </section>
                     <section class="detail-group">
                       <h2>Tools</h2>
-                      <div class="section-note">OTLP-named runtime tool rows joined to this workspace; distinct
-                        from the response-output tool-call count (${toolCalls.toLocaleString()}) shown in the
-                        summary row above.</div>
                       ${wsToolsHtml}
                     </section>
                     <section class="detail-group">
@@ -2640,13 +2634,16 @@
 
           const wsTurns = wsTotalSuccess + wsTotalFail;
           const wsAvgTurnSec = wsTurns > 0 ? (wsTotalDuration / wsTurns / 1000).toFixed(1) : "0.0";
+          const wsTotalToolsCell = hasWsTools
+            ? `<td class="attempts"><outcome-bar fail="0" no-bar="" success="${wsTotalTools}"></outcome-bar></td>`
+            : `<td class="attempts"><span class="dim">—</span></td>`;
           wsTfoot.innerHTML = `
             <tr>
               <th>Totals</th>
               <td><status-badge ${wsTotalActive > 0 ? 'active=""' : ''}>${wsTotalActive}</status-badge></td>
               <td class="attempts"><outcome-bar fail="${wsTotalFail}" no-bar="" rate="" success="${wsTotalSuccess}"></outcome-bar></td>
               <td>${wsAvgTurnSec}s</td>
-              <td class="attempts"><outcome-bar fail="0" no-bar="" success="${wsTotalTools}"></outcome-bar></td>
+              ${wsTotalToolsCell}
               <td>${wsTotalSkills.toLocaleString()}</td>
             </tr>
           `;

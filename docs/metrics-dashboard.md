@@ -79,15 +79,12 @@ connectivity, ordering, or that the field will appear in a given rollout
 stage -- the fallback path is exercised whenever the field is missing, which
 is also what today's status responses produce.
 
-The workspace table's scalar **Tool calls** column is unrelated to the named
-`byTool` breakdown: it is a response-output count inferred from Responses API
-tool-call items across that workspace's turns (see "Usage is also aggregated
-under `status.usage.byWorkspace`" in `docs/provider-routing.md`), not a count
-of OTLP-named runtime tool invocations. The column header and an expanded-row
-note both label it explicitly as "response output" so the two measurements
-are never conflated; they are not expected to match, since Responses
-tool-call items and Codex's own OTLP `codex.tool.call` events are independent
-instrumentation with different coverage.
+The workspace table's **Tool calls** column and totals use the same source of
+truth as each workspace's expanded "Tools" section: they sum the rendered named
+tool row counts from `w.byTool` (normalized via `normalizeWorkspaceNamedUsage`).
+When per-workspace tool telemetry is unavailable (`byTool` is null or missing),
+the dashboard handles this explicitly (displaying `—`) without inventing
+unrelated counts or falling back to response-output tool-call counts (`w.toolCalls`).
 
 ## Reported metrics
 

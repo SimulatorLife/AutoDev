@@ -84,13 +84,16 @@ test('router dashboard exposes the component hierarchy and explicit workspace at
   // Model view embeds MCP counts and server details
   assert.match(dashboard, /getModelMcpDetails/);
   assert.match(dashboard, /model-mcp-details/);
-  // The workspace table's scalar toolCalls is a response-output count
-  // (Responses API tool-call items), which the dashboard labels explicitly
-  // as distinct from the OTLP-named runtime tool rows shown per workspace.
-  assert.match(dashboard, /Tool calls \(response output\)/);
-  assert.match(dashboard, /response-output tool-call count/);
-  assert.match(dashboard, /OTLP-named runtime tool rows/);
-  assert.match(dashboard, /OTLP-named runtime tool rows joined to this workspace/);
+  // The workspace table's Tool calls column and totals use the same source of
+  // truth as each workspace's expanded Tools section (sum of rendered named
+  // tool rows from w.byTool via normalizeWorkspaceNamedUsage), without contrasting
+  // response-output counts or leaving stale notes asserting the old distinction.
+  assert.doesNotMatch(dashboard, /Tool calls \(response output\)/);
+  assert.doesNotMatch(dashboard, /response-output tool-call count/);
+  assert.doesNotMatch(dashboard, /OTLP-named runtime tool rows/);
+  assert.doesNotMatch(dashboard, /OTLP-named runtime tool rows joined to this workspace/);
+  assert.match(dashboard, /<th>Tool calls<\/th>/);
+  assert.match(dashboard, /wsToolRows\.reduce\(/);
   assert.match(dashboard, /MCP servers/);
   assert.doesNotMatch(dashboard, /<(?:dashboard-panel|sub-panel)[^>]*(?:id="[^"]*mcp|title="[^"]*MCP)/i);
   // Provider health panel renders routing priorities, effective/live limits and cooldowns,
@@ -224,4 +227,42 @@ test('metrics workflow publishes an issue dashboard and artifact', async () => {
   assert.match(source, /autodev-metrics-dashboard-v1/);
   assert.match(source, /upload-artifact@v4/);
   assert.match(source, /metrics-snapshot\.json/);
+});
+
+test('router dashboard workspace table derives Tool calls and totals from byTool normalization and handles unavailable states', async () => {
+  const rawDashboard = await readFile(path.join(root, 'scripts', 'codex-model-router-dashboard.html'), 'utf8');
+
+  // Verify that the table header and notes have no stale response-output references
+  assert.doesNotMatch(rawDashboard, /OTLP-named runtime tool rows/);
+  assert.doesNotMatch(rawDashboard, /response-output tool-call count/);
+  assert.doesNotMatch(rawDashboard, /Tool calls \(response output\)/);
+  assert.match(rawDashboard, /<th>Tool calls<\/th>/);
+
+  // Extract normalizeWorkspaceNamedUsage to test normalization logic and summing
+  const match = rawDashboard.match(/function normalizeWorkspaceNamedUsage\([\s\S]*?\n    \}/);
+  assert.ok(match, 'normalizeWorkspaceNamedUsage should be present in dashboard script');
+  const normalizeWorkspaceNamedUsage = new Function(`${match[0]}; return normalizeWorkspaceNamedUsage;`)();
+
+  // Unavailable byTool returns null and is handled without inventing counts
+  assert.equal(normalizeWorkspaceNamedUsage(null, ["tool", "name"]), null);
+  assert.equal(normalizeWorkspaceNamedUsage(undefined, ["tool", "name"]), null);
+
+  // Empty byTool returns empty array (sum = 0)
+  const emptyRows = normalizeWorkspaceNamedUsage([], ["tool", "name"]);
+  assert.deepEqual(emptyRows, []);
+  assert.equal(emptyRows.reduce((sum, r) => sum + Number(r.count ?? 0), 0), 0);
+
+  // Array of named tool entries sums counts correctly
+  const arrayRows = normalizeWorkspaceNamedUsage([
+    { tool: 'bash', count: 5 },
+    { tool: 'read_file', count: 2 },
+  ], ["tool", "name"]);
+  assert.equal(arrayRows.reduce((sum, r) => sum + Number(r.count ?? 0), 0), 7);
+
+  // Object-shaped named tool entries sums counts correctly
+  const objectRows = normalizeWorkspaceNamedUsage({
+    bash: { count: 4 },
+    exec_command: { uses: 3 },
+  }, ["tool", "name"]);
+  assert.equal(objectRows.reduce((sum, r) => sum + Number(r.count ?? 0), 0), 7);
 });
