@@ -288,11 +288,46 @@ const workspaceAttributionCapabilities = { tools: false, skills: false };
 function safeWorkspaceId(value) {
   if (typeof value !== "string" || !value.trim()) return "unknown";
   const trimmed = value.trim();
-  if (trimmed.startsWith("/") || trimmed.startsWith("~") || trimmed.includes("\\") || trimmed.includes("/Users/") || trimmed.includes("/home/")) {
+  if (trimmed.startsWith("/") || trimmed.startsWith("~") || trimmed.includes("\\") || trimmed.includes("/Users/") || trimmed.includes("/home/") || trimmed.includes("CODEX_HOME")) {
     const digest = createHash("sha256").update(trimmed).digest("hex").slice(0, 12);
     return `ws_${digest}`;
   }
   return safeMetricLabel(trimmed);
+}
+
+const UNATTRIBUTED_DIMENSION = "unattributed";
+
+function safeAgentIdentity(value, fallback = UNATTRIBUTED_DIMENSION) {
+  if (typeof value !== "string" || !value.trim()) return fallback;
+  const trimmed = value.trim();
+  if (trimmed.startsWith("/") || trimmed.startsWith("~") || trimmed.includes("\\") || trimmed.includes("/Users/") || trimmed.includes("/home/") || trimmed.includes("CODEX_HOME")) {
+    return `agent_${createHash("sha256").update(trimmed).digest("hex").slice(0, 12)}`;
+  }
+  return safeMetricLabel(trimmed, fallback);
+}
+
+function safePrivacyWorkspace(value, fallback = UNATTRIBUTED_DIMENSION) {
+  if (typeof value !== "string" || !value.trim()) return fallback;
+  const trimmed = value.trim();
+  if (trimmed.startsWith("/") || trimmed.startsWith("~") || trimmed.includes("\\") || trimmed.includes("/Users/") || trimmed.includes("/home/") || trimmed.includes("CODEX_HOME")) {
+    const digest = createHash("sha256").update(trimmed).digest("hex").slice(0, 12);
+    return `ws_${digest}`;
+  }
+  return safeMetricLabel(trimmed, fallback);
+}
+
+function extractWorkspaceIdWithAmbiguity(attributes) {
+  if (!attributes || typeof attributes !== "object") return { id: null, ambiguous: false };
+  const found = [];
+  for (const key of ["workspace_id", "workspace.id", "workspaceId"]) {
+    const val = attributes[key];
+    if (typeof val === "string" && val.trim()) {
+      found.push(val.trim());
+    }
+  }
+  const unique = [...new Set(found)];
+  if (unique.length > 1) return { id: null, ambiguous: true };
+  return { id: unique[0] ?? null, ambiguous: false };
 }
 
 function registerWorkspaceId(workspaceId, workspaceKey) {
@@ -384,6 +419,7 @@ function workspaceBucket(collection, key, cwd = null) {
       byRole: {},
       byModel: {},
       byProvider: {},
+      byMcp: {},
       tools: new Map(),
       skills: new Map(),
       // Public-facing tool/skill counters that always exist on the bucket
@@ -408,6 +444,7 @@ function workspaceBucket(collection, key, cwd = null) {
   }
   const bucket = collection[key];
   if (cwd && !bucket.cwd) bucket.cwd = cwd;
+  if (!bucket.byMcp) bucket.byMcp = {};
   if (!bucket.tools) bucket.tools = new Map();
   if (!bucket.skills) bucket.skills = new Map();
   if (typeof bucket.skillUses !== "number") bucket.skillUses = 0;
@@ -548,6 +585,7 @@ function usageStatus() {
         byRole: usageSnapshot(bucket.byRole),
         byModel: usageSnapshot(bucket.byModel),
         byProvider: usageSnapshot(bucket.byProvider),
+        byMcp: { ...bucket.byMcp },
         toolsUnattributed: bucket.toolsUnattributed ?? 0,
         skillsUnattributed: bucket.skillsUnattributed ?? 0,
         toolsExecuted: bucket.toolsExecuted ?? 0,
@@ -581,6 +619,7 @@ const otelTelemetry = {
   receiver: { logs: 0, traces: 0, metrics: 0, invalid: 0, lastReceivedAt: null },
   sessions: new Map(),
   mcpServers: new Map(),
+  dimensions: { mcp: emptyContextDimensions(), tools: emptyContextDimensions(), hooks: emptyContextDimensions(), skills: emptyContextDimensions(), bridge: emptyContextDimensions() },
   turns: { prompts: 0, completed: 0, promptLength: 0, ttftMs: 0, ttftCount: 0 },
   tokens: { input: 0, output: 0, cached: 0, reasoning: 0, tool: 0 },
   metricInventory: new Map(),
@@ -671,32 +710,24 @@ function numberAttribute(attributes, ...keys) {
 }
 
 function mcpServer(name) {
-  if (!otelTelemetry.mcpServers.has(name)) {
-    otelTelemetry.mcpServers.set(name, { name, lastSeenAt: null, initAttempts: 0, toolDiscoveryAttempts: 0, failures: 0, durationMs: 0, durationCount: 0, lastStatus: "unknown" });
+  const cleanName = safeMetricLabel(name, "unknown");
+  if (!otelTelemetry.mcpServers.has(cleanName)) {
+    otelTelemetry.mcpServers.set(cleanName, {
+      name: cleanName,
+      lastSeenAt: null,
+      initAttempts: 0,
+      toolDiscoveryAttempts: 0,
+      failures: 0,
+      durationMs: 0,
+      durationCount: 0,
+      lastStatus: "unknown",
+      byRole: {},
+      byWorkspace: {},
+      byModel: {},
+      byAgent: {},
+    });
   }
-  return otelTelemetry.mcpServers.get(name);
-}
-
-function noteMcpServer(name, span, attributes) {
-  if (typeof name !== "string" || !name.trim()) return;
-  const server = mcpServer(name.trim());
-  const durationMs = otelDurationMs(span);
-  const timestamp = otelTimestamp(span.endTimeUnixNano) ?? otelTimestamp(span.startTimeUnixNano) ?? new Date().toISOString();
-  const statusCode = span.status?.code;
-  server.lastSeenAt = timestamp;
-  server.durationMs += durationMs;
-  server.durationCount += 1;
-  if (span.name === "make_rmcp_client" || span.name === "start_server_task" || span.name === "new") server.initAttempts += 1;
-  if (span.name === "list_tools_for_client_uncached" || span.name === "list_tools_with_connector_ids") server.toolDiscoveryAttempts += 1;
-  if (statusCode === 2 || statusCode === "ERROR") {
-    server.failures += 1;
-    server.lastStatus = "error";
-  } else if (span.name === "list_tools_for_client_uncached" || span.name === "list_tools_with_connector_ids" || span.name === "initialize") {
-    server.lastStatus = "ready";
-  } else if (server.lastStatus === "unknown") {
-    server.lastStatus = "observed";
-  }
-  if (attributes["error.type"] || attributes["error.message"]) server.lastStatus = "error";
+  return otelTelemetry.mcpServers.get(cleanName);
 }
 
 function noteConversation(attributes, resourceAttributes = {}) {
@@ -711,6 +742,12 @@ function noteConversation(attributes, resourceAttributes = {}) {
       session.mcpServers.add(name);
       const server = mcpServer(name);
       if (server.lastStatus === "unknown") server.lastStatus = "configured";
+      const context = resolveTelemetryContext(attributes, resourceAttributes, { conversationId: id, timestamp: attributes["event.timestamp"] });
+      noteMcpDimension(server, "byRole", context.role, context, "configured");
+      noteMcpDimension(server, "byWorkspace", context.workspace, context, "configured");
+      noteMcpDimension(server, "byModel", context.model, context, "configured");
+      noteMcpDimension(server, "byAgent", context.agent, context, "configured");
+      noteContextDimension("mcp", context);
     }
   }
   otelTelemetry.sessions.set(id, session);
@@ -723,6 +760,236 @@ function localWorkspaceForConversation(attributes, resourceAttributes = {}) {
   const thread = codexState.lastSnapshot?.conversationThreads?.[conversationId.trim()];
   if (!thread || typeof (thread.projectKey ?? thread.workspaceKey) !== "string" || !(thread.projectKey ?? thread.workspaceKey).trim()) return null;
   return thread;
+}
+
+function resolveTelemetryContext(attributes = {}, resourceAttributes = {}, options = {}) {
+  const reqContext = options?.context
+    ?? (options?.requestId ? bridgeRequestContext.get(options.requestId) : null)
+    ?? (attributes?.requestId ? bridgeRequestContext.get(attributes.requestId) : null)
+    ?? (attributes?.request_id ? bridgeRequestContext.get(attributes.request_id) : null);
+
+  const convId = attributes?.["conversation.id"]
+    ?? attributes?.conversation_id
+    ?? attributes?.conversationId
+    ?? resourceAttributes?.["conversation.id"]
+    ?? resourceAttributes?.conversation_id
+    ?? resourceAttributes?.conversationId
+    ?? options?.conversationId;
+  const conversationId = typeof convId === "string" ? convId.trim() : null;
+  const thread = conversationId ? (codexState.lastSnapshot?.conversationThreads?.[conversationId] ?? null) : null;
+  const session = conversationId ? (otelTelemetry.sessions?.get(conversationId) ?? null) : null;
+
+  // 1. Workspace
+  let resolvedWorkspace = null;
+  const dpWs = extractWorkspaceIdWithAmbiguity(attributes);
+  if (!dpWs.ambiguous && dpWs.id) {
+    const safeId = safeWorkspaceId(dpWs.id);
+    resolvedWorkspace = workspaceIdRegistry.get(safeId) ?? safePrivacyWorkspace(dpWs.id);
+  }
+  if (!resolvedWorkspace) {
+    const directWs = attributes?.workspace ?? attributes?.workspace_key ?? attributes?.workspaceKey ?? attributes?.project_key ?? attributes?.projectKey;
+    if (typeof directWs === "string" && directWs.trim()) {
+      resolvedWorkspace = safePrivacyWorkspace(directWs);
+    }
+  }
+  if (!resolvedWorkspace && reqContext?.workspace) {
+    resolvedWorkspace = safePrivacyWorkspace(reqContext.workspace);
+  }
+  if (!resolvedWorkspace && thread) {
+    const key = thread.projectKey ?? thread.workspaceKey ?? thread.cwdBasename;
+    if (typeof key === "string" && key.trim()) {
+      resolvedWorkspace = safePrivacyWorkspace(key);
+    }
+  }
+  if (!resolvedWorkspace) {
+    const resWs = extractWorkspaceIdWithAmbiguity(resourceAttributes);
+    if (!resWs.ambiguous && resWs.id) {
+      const safeId = safeWorkspaceId(resWs.id);
+      resolvedWorkspace = workspaceIdRegistry.get(safeId) ?? safePrivacyWorkspace(resWs.id);
+    }
+  }
+  if (!resolvedWorkspace && typeof resourceAttributes?.workspace === "string" && resourceAttributes.workspace.trim()) {
+    resolvedWorkspace = safePrivacyWorkspace(resourceAttributes.workspace);
+  }
+  const workspace = resolvedWorkspace || UNATTRIBUTED_DIMENSION;
+
+  // 2. Role
+  let resolvedRole = null;
+  const directRole = attributes?.role ?? attributes?.agent_role ?? attributes?.["agent.role"];
+  if (typeof directRole === "string" && directRole.trim()) {
+    resolvedRole = safeMetricLabel(directRole);
+  }
+  if (!resolvedRole && reqContext?.role) {
+    resolvedRole = safeMetricLabel(reqContext.role);
+  }
+  if (!resolvedRole && (thread?.agentRole ?? thread?.role)) {
+    resolvedRole = safeMetricLabel(thread.agentRole ?? thread.role);
+  }
+  if (!resolvedRole) {
+    const resRole = resourceAttributes?.role ?? resourceAttributes?.agent_role ?? resourceAttributes?.["agent.role"];
+    if (typeof resRole === "string" && resRole.trim()) {
+      resolvedRole = safeMetricLabel(resRole);
+    }
+  }
+  const role = resolvedRole || UNATTRIBUTED_DIMENSION;
+
+  // 3. Model
+  let resolvedModel = null;
+  const directModel = attributes?.model ?? attributes?.requested_model ?? attributes?.["requested.model"] ?? attributes?.model_slug ?? attributes?.["model.slug"];
+  if (typeof directModel === "string" && directModel.trim()) {
+    resolvedModel = safeMetricLabel(directModel);
+  }
+  if (!resolvedModel && (reqContext?.model ?? reqContext?.requestedModel)) {
+    resolvedModel = safeMetricLabel(reqContext.model ?? reqContext.requestedModel);
+  }
+  if (!resolvedModel && session?.model) {
+    resolvedModel = safeMetricLabel(session.model);
+  }
+  if (!resolvedModel && thread?.model) {
+    resolvedModel = safeMetricLabel(thread.model);
+  }
+  if (!resolvedModel) {
+    const resModel = resourceAttributes?.model ?? resourceAttributes?.requested_model ?? resourceAttributes?.model_slug;
+    if (typeof resModel === "string" && resModel.trim()) {
+      resolvedModel = safeMetricLabel(resModel);
+    }
+  }
+  const model = resolvedModel || UNATTRIBUTED_DIMENSION;
+
+  // 4. Agent identity and kind
+  let resolvedAgent = null;
+  let resolvedAgentKind = null;
+  const directAgent = attributes?.agent_id ?? attributes?.["agent.id"] ?? attributes?.agentId ?? attributes?.child_id ?? attributes?.childId ?? attributes?.agent_name ?? attributes?.["agent.name"] ?? attributes?.agentName;
+  if (typeof directAgent === "string" && directAgent.trim()) {
+    resolvedAgent = safeAgentIdentity(directAgent);
+  }
+  if (!resolvedAgent && (reqContext?.childId ?? reqContext?.agentId ?? reqContext?.agent)) {
+    resolvedAgent = safeAgentIdentity(reqContext.childId ?? reqContext.agentId ?? reqContext.agent);
+  }
+  if (!resolvedAgent && (thread?.agentId ?? thread?.agent_id ?? thread?.threadId)) {
+    resolvedAgent = safeAgentIdentity(thread.agentId ?? thread.agent_id ?? thread.threadId);
+  }
+  if (!resolvedAgent && conversationId) {
+    resolvedAgent = safeAgentIdentity(conversationId);
+  }
+  if (!resolvedAgent) {
+    const resAgent = resourceAttributes?.agent_id ?? resourceAttributes?.["agent.id"] ?? resourceAttributes?.agentId ?? resourceAttributes?.agent_name;
+    if (typeof resAgent === "string" && resAgent.trim()) {
+      resolvedAgent = safeAgentIdentity(resAgent);
+    }
+  }
+  const agent = resolvedAgent || UNATTRIBUTED_DIMENSION;
+  const directAgentKind = attributes?.agent_kind ?? attributes?.agentKind ?? attributes?.["agent.kind"];
+  if (typeof directAgentKind === "string" && directAgentKind.trim()) resolvedAgentKind = safeMetricLabel(directAgentKind);
+  if (!resolvedAgentKind && reqContext?.agentKind) resolvedAgentKind = safeMetricLabel(reqContext.agentKind);
+  const sessionSource = attributes?.session_source ?? resourceAttributes?.session_source ?? thread?.threadSource ?? thread?.source;
+  if (!resolvedAgentKind && typeof sessionSource === "string" && sessionSource.trim()) {
+    resolvedAgentKind = sessionSource.trim().startsWith("subagent_thread_spawn_") ? "subagent" : "root";
+  }
+  if (!resolvedAgentKind && thread?.agentRole) resolvedAgentKind = thread.agentRole === "orchestrator" ? "root" : "subagent";
+  const agentKind = resolvedAgentKind || UNATTRIBUTED_DIMENSION;
+
+  // 5. Timestamp (source or fallback to ingestion time)
+  let timestamp = null;
+  let timestampSource = "ingestion";
+  if (options?.timestamp && typeof options.timestamp === "string") {
+    timestamp = options.timestamp;
+    timestampSource = "source";
+  } else if (attributes?.["event.timestamp"]) {
+    timestamp = String(attributes["event.timestamp"]);
+    timestampSource = "source";
+  } else if (attributes?.timestamp) {
+    timestamp = String(attributes.timestamp);
+    timestampSource = "source";
+  } else if (options?.timeUnixNano) {
+    timestamp = otelTimestamp(options.timeUnixNano);
+    timestampSource = "source";
+  }
+  if (!timestamp) {
+    timestamp = new Date().toISOString();
+  }
+
+  return {
+    workspace,
+    role,
+    model,
+    agent,
+    agentKind,
+    timestamp,
+    timestampSource,
+  };
+}
+
+function emptyContextDimensions() {
+  return { byRole: {}, byWorkspace: {}, byModel: {}, byAgent: {} };
+}
+
+function noteContextDimension(family, context, count = 1) {
+  if (!Number.isFinite(count) || count <= 0) return;
+  const target = otelTelemetry.dimensions[family] ?? (otelTelemetry.dimensions[family] = emptyContextDimensions());
+  const timestamp = context.timestamp ?? new Date().toISOString();
+  for (const [dimension, key] of [["byRole", context.role], ["byWorkspace", context.workspace], ["byModel", context.model], ["byAgent", context.agent]]) {
+    const bucket = target[dimension][key] ?? { count: 0, lastSeenAt: null, ...(dimension === "byAgent" ? { agentKind: context.agentKind } : {}) };
+    bucket.count += count;
+    if (!bucket.lastSeenAt || Date.parse(timestamp) >= Date.parse(bucket.lastSeenAt)) bucket.lastSeenAt = timestamp;
+    if (dimension === "byAgent") bucket.agentKind = context.agentKind;
+    target[dimension][key] = bucket;
+  }
+}
+
+function formatContextDimensions(dimensions) {
+  return Object.fromEntries(Object.entries(dimensions ?? {}).map(([family, value]) => [family, {
+    byRole: { ...(value?.byRole ?? {}) },
+    byWorkspace: { ...(value?.byWorkspace ?? {}) },
+    byModel: { ...(value?.byModel ?? {}) },
+    byAgent: { ...(value?.byAgent ?? {}) },
+  }]));
+}
+
+function noteMcpDimension(server, dimension, key, context, status) {
+  const bucket = server[dimension][key] ?? { observed: 1, lastSeenAt: null, lastStatus: "observed" };
+  bucket.observed = 1;
+  bucket.lastSeenAt = context.timestamp;
+  bucket.lastStatus = status ?? bucket.lastStatus;
+  if (dimension === "byAgent") bucket.agentKind = context.agentKind;
+  server[dimension][key] = bucket;
+}
+
+function noteMcpServer(name, span, attributes = {}, resourceAttributes = {}) {
+  const serverName = name ?? attributes.server_name ?? attributes.server ?? attributes.mcp_server;
+  if (typeof serverName !== "string" || !serverName.trim()) return;
+  const server = mcpServer(serverName.trim());
+  const durationMs = span ? otelDurationMs(span) : 0;
+  const timestamp = span ? (otelTimestamp(span.endTimeUnixNano) ?? otelTimestamp(span.startTimeUnixNano)) : null;
+  const context = resolveTelemetryContext(attributes, resourceAttributes, { timestamp });
+  const statusCode = span?.status?.code;
+  server.lastSeenAt = context.timestamp;
+  if (span) {
+    server.durationMs += durationMs;
+    server.durationCount += 1;
+    if (span.name === "make_rmcp_client" || span.name === "start_server_task" || span.name === "new") server.initAttempts += 1;
+    if (span.name === "list_tools_for_client_uncached" || span.name === "list_tools_with_connector_ids") server.toolDiscoveryAttempts += 1;
+    if (statusCode === 2 || statusCode === "ERROR") {
+      server.failures += 1;
+      server.lastStatus = "error";
+    } else if (span.name === "list_tools_for_client_uncached" || span.name === "list_tools_with_connector_ids" || span.name === "initialize") {
+      server.lastStatus = "ready";
+    } else if (server.lastStatus === "unknown") {
+      server.lastStatus = "observed";
+    }
+    if (attributes["error.type"] || attributes["error.message"]) server.lastStatus = "error";
+  }
+
+  noteMcpDimension(server, "byRole", context.role, context, server.lastStatus);
+  noteMcpDimension(server, "byWorkspace", context.workspace, context, server.lastStatus);
+  noteMcpDimension(server, "byModel", context.model, context, server.lastStatus);
+  noteMcpDimension(server, "byAgent", context.agent, context, server.lastStatus);
+  noteContextDimension("mcp", context);
+
+  if (context.workspace !== UNATTRIBUTED_DIMENSION) {
+    const wsBucket = workspaceBucket(usageTelemetry.byWorkspace, context.workspace);
+    wsBucket.byMcp[server.name] = (wsBucket.byMcp[server.name] ?? 0) + 1;
+  }
 }
 
 function noteCodexToolResultLog(attributes, resourceAttributes = {}) {
@@ -755,8 +1022,19 @@ function noteCodexToolResultLog(attributes, resourceAttributes = {}) {
   row.byStatus[status] = (row.byStatus[status] ?? 0) + count;
   otelTelemetry.toolResults.byTool.set(rowKey, row);
   const duration = Number(attributes.duration_ms);
+
+  const context = resolveTelemetryContext(attributes, resourceAttributes, { timestamp: attributes["event.timestamp"] });
+  noteContextDimension("tools", context, count);
+  if (server) {
+    const mcp = mcpServer(server);
+    noteMcpDimension(mcp, "byRole", context.role, context, "observed");
+    noteMcpDimension(mcp, "byWorkspace", context.workspace, context, "observed");
+    noteMcpDimension(mcp, "byModel", context.model, context, "observed");
+    noteMcpDimension(mcp, "byAgent", context.agent, context, "observed");
+  }
+
   const thread = localWorkspaceForConversation(attributes, resourceAttributes);
-  if (!thread) {
+  if (!thread && context.workspace === UNATTRIBUTED_DIMENSION) {
     attributionDiagnostics.total += 1;
     attributionDiagnostics.unattributed += 1;
     attributionDiagnostics.byReason.missing_workspace += 1;
@@ -766,13 +1044,17 @@ function noteCodexToolResultLog(attributes, resourceAttributes = {}) {
   attributionDiagnostics.total += 1;
   attributionDiagnostics.attributed += 1;
   attributionDiagnostics.bySource.datapoint += 1;
-  const wsBucket = workspaceBucket(usageTelemetry.byWorkspace, thread.projectKey ?? thread.workspaceKey, thread.cwdBasename);
+  const wsKey = (thread?.projectKey ?? thread?.workspaceKey) || (context.workspace !== UNATTRIBUTED_DIMENSION ? context.workspace : null);
+  const wsBucket = workspaceBucket(usageTelemetry.byWorkspace, wsKey, thread?.cwdBasename ?? null);
   const wsTool = workspaceToolBucket(wsBucket, { tool, source, server });
   wsTool.count += count;
   wsTool.byStatus[status] = (wsTool.byStatus[status] ?? 0) + count;
   if (Number.isFinite(duration) && duration >= 0) {
     wsTool.durationCount += 1;
     wsTool.durationMs += duration;
+  }
+  if (server) {
+    wsBucket.byMcp[server] = (wsBucket.byMcp[server] ?? 0) + count;
   }
 }
 
@@ -815,7 +1097,8 @@ function ingestOtelTraces(payload) {
       for (const span of scopeSpan.spans ?? []) {
         const attributes = otelAttributes(span.attributes);
         noteConversation(attributes, resource);
-        noteMcpServer(attributes.server_name, span, attributes);
+        const serverName = attributes.server_name ?? attributes.server ?? attributes.mcp_server;
+        noteMcpServer(serverName, span, attributes, resource);
       }
     }
   }
@@ -892,19 +1175,6 @@ function readNamedAttribute(attributes, fallback, ...keys) {
   }
   return fallback;
 }
-function extractWorkspaceIdWithAmbiguity(attributes) {
-  if (!attributes || typeof attributes !== "object") return { id: null, ambiguous: false };
-  const found = [];
-  for (const key of ["workspace_id", "workspace.id", "workspaceId"]) {
-    const val = attributes[key];
-    if (typeof val === "string" && val.trim()) {
-      found.push(val.trim());
-    }
-  }
-  const unique = [...new Set(found)];
-  if (unique.length > 1) return { id: null, ambiguous: true };
-  return { id: unique[0] ?? null, ambiguous: false };
-}
 
 function resolveDatapointWorkspace(dataPointAttributes, resourceAttributes = {}) {
   const dp = extractWorkspaceIdWithAmbiguity(dataPointAttributes);
@@ -951,13 +1221,15 @@ function noteSkillInjected(metricName, attributes, dataPoint, temporality, dpAtt
   const seriesAttributes = { ...attributes, workspace_id: wsResolution.workspaceId || "" };
   const delta = otelSeriesDelta(otelSeriesKey(metricName, seriesAttributes, dataPoint.startTimeUnixNano), dataPoint.timeUnixNano, otelSumDataPointValue(dataPoint), temporality);
   if (delta === 0) return;
+  const context = resolveTelemetryContext({ ...attributes, ...dpAttributes }, resourceAttributes, { timeUnixNano: dataPoint.timeUnixNano });
+  noteContextDimension("skills", context, delta);
   const skill = readNamedAttribute(attributes, "unknown", "skillName", "skill", "skill_name");
   const status = safeMetricLabel(attributes.status);
   // Some Codex versions attach `invoke_type` instead of, or alongside,
   // `status`; tolerate its absence and aggregate it separately when present.
   const invokeType = typeof attributes.invoke_type === "string" && attributes.invoke_type ? safeMetricLabel(attributes.invoke_type) : null;
-  const agentKind = skillAgentKind(attributes);
-  const model = safeMetricLabel(attributes.model_slug ?? attributes.model, "unknown");
+  const agentKind = context.agentKind;
+  const model = context.model;
   const plugin = safeMetricLabel(attributes.plugin_id, "none");
   const injected = otelTelemetry.skills.injected;
   injected.total += delta;
@@ -996,6 +1268,8 @@ function noteThreadSkillsHistogram(bucket, metricName, attributes, dataPoint, te
   const sumDelta = otelSeriesDelta(otelSeriesKey(`${metricName}#sum`, attributes, dataPoint.startTimeUnixNano), dataPoint.timeUnixNano, numberAttribute({ sum: dataPoint.sum }, "sum"), temporality);
   bucket.count += countDelta;
   bucket.sum += sumDelta;
+  const context = resolveTelemetryContext(attributes, {}, { timeUnixNano: dataPoint.timeUnixNano });
+  noteContextDimension("skills", context, countDelta);
 }
 
 function metricDataPointCount(metric) {
@@ -1103,6 +1377,8 @@ function noteToolCounter(metricName, attributes, dataPoint, temporality, resourc
   const delta = otelSeriesDelta(otelSeriesKey(metricName, identity, dataPoint.startTimeUnixNano), dataPoint.timeUnixNano, otelSumDataPointValue(dataPoint), temporality);
   if (delta === 0) return;
   const bucket = toolBucket(attributes);
+  const context = resolveTelemetryContext(attributes, resourceAttributes, { timeUnixNano: dataPoint.timeUnixNano });
+  noteContextDimension("tools", context, delta);
   const status = toolStatusAttribute(attributes);
   bucket.count += delta;
   bucket.byStatus[status] = (bucket.byStatus[status] ?? 0) + delta;
@@ -1122,6 +1398,8 @@ function noteToolDuration(metricName, attributes, dataPoint, temporality, resour
   const count = otelSeriesDelta(otelSeriesKey(`${metricName}#count`, identity, dataPoint.startTimeUnixNano), dataPoint.timeUnixNano, numberAttribute({ count: dataPoint.count }, "count"), temporality);
   const sum = otelSeriesDelta(otelSeriesKey(`${metricName}#sum`, identity, dataPoint.startTimeUnixNano), dataPoint.timeUnixNano, numberAttribute({ sum: dataPoint.sum }, "sum"), temporality);
   const bucket = toolBucket(attributes);
+  const context = resolveTelemetryContext(attributes, resourceAttributes, { timeUnixNano: dataPoint.timeUnixNano });
+  noteContextDimension("tools", context, count);
   bucket.durationCount += count;
   bucket.durationMs += sum;
 
@@ -1238,6 +1516,19 @@ function noteToolResultCounter(metricName, resourceAttributes, dataPoints, tempo
       resultBucket.byStatus[status] = (resultBucket.byStatus[status] ?? 0) + delta;
       otelTelemetry.toolResults.byTool.set(resultBucketKey, resultBucket);
     }
+    if (server && delta > 0 && !duplicateMetric) {
+      const context = resolveTelemetryContext(attributes, resourceAttributes, { timeUnixNano: dataPoint.timeUnixNano });
+      const mcp = mcpServer(server);
+      noteMcpDimension(mcp, "byRole", context.role, context, "observed");
+      noteMcpDimension(mcp, "byWorkspace", context.workspace, context, "observed");
+      noteMcpDimension(mcp, "byModel", context.model, context, "observed");
+      noteMcpDimension(mcp, "byAgent", context.agent, context, "observed");
+      noteContextDimension("tools", context, delta);
+      if (context.workspace !== UNATTRIBUTED_DIMENSION) {
+        const wsBucket = workspaceBucket(usageTelemetry.byWorkspace, context.workspace);
+        wsBucket.byMcp[server] = (wsBucket.byMcp[server] ?? 0) + delta;
+      }
+    }
   }
 }
 
@@ -1252,6 +1543,8 @@ function noteToolResultDuration(metricName, resourceAttributes, dataPoints, temp
     if (count === 0 && sum === 0) continue;
     otelTelemetry.toolResults.executionDurationMs.count += count;
     otelTelemetry.toolResults.executionDurationMs.sum += sum;
+    const context = resolveTelemetryContext(attributes, resourceAttributes, { timeUnixNano: dataPoint.timeUnixNano });
+    noteContextDimension("tools", context, count);
   }
 }
 
@@ -1268,30 +1561,49 @@ function hookBucket(attributes) {
   return otelTelemetry.hooks.get(key);
 }
 
-function noteHookCounter(metricName, attributes, dataPoint, temporality) {
+function noteHookCounter(metricName, attributes, dataPoint, temporality, resourceAttributes = {}) {
   const identity = { hook_name: safeMetricLabel(attributes.hook_name, "unknown-hook"), source: safeMetricLabel(attributes.source), handler_type: safeMetricLabel(attributes.handler_type, "") };
   const delta = otelSeriesDelta(otelSeriesKey(metricName, identity, dataPoint.startTimeUnixNano), dataPoint.timeUnixNano, otelSumDataPointValue(dataPoint), temporality);
   if (delta === 0) return;
   const bucket = hookBucket(attributes);
+  const context = resolveTelemetryContext(attributes, resourceAttributes, { timeUnixNano: dataPoint.timeUnixNano });
+  noteContextDimension("hooks", context, delta);
   const status = safeMetricLabel(attributes.status);
   bucket.count += delta;
   bucket.byStatus[status] = (bucket.byStatus[status] ?? 0) + delta;
+  const server = toolServerAttribute(attributes);
+  if (server) {
+    const context = resolveTelemetryContext(attributes, resourceAttributes, { timeUnixNano: dataPoint.timeUnixNano });
+    const mcp = mcpServer(server);
+    mcp.byRole[context.role] = (mcp.byRole[context.role] ?? 0) + delta;
+    mcp.byWorkspace[context.workspace] = (mcp.byWorkspace[context.workspace] ?? 0) + delta;
+    mcp.byModel[context.model] = (mcp.byModel[context.model] ?? 0) + delta;
+    mcp.byAgent[context.agent] = (mcp.byAgent[context.agent] ?? 0) + delta;
+    if (context.workspace !== UNATTRIBUTED_DIMENSION) {
+      const wsBucket = workspaceBucket(usageTelemetry.byWorkspace, context.workspace);
+      wsBucket.byMcp[server] = (wsBucket.byMcp[server] ?? 0) + delta;
+    }
+  }
 }
 
-function noteHookDuration(metricName, attributes, dataPoint, temporality) {
+function noteHookDuration(metricName, attributes, dataPoint, temporality, resourceAttributes = {}) {
   const identity = { hook_name: safeMetricLabel(attributes.hook_name, "unknown-hook"), source: safeMetricLabel(attributes.source), handler_type: safeMetricLabel(attributes.handler_type, "") };
   const count = otelSeriesDelta(otelSeriesKey(`${metricName}#count`, identity, dataPoint.startTimeUnixNano), dataPoint.timeUnixNano, numberAttribute({ count: dataPoint.count }, "count"), temporality);
   const sum = otelSeriesDelta(otelSeriesKey(`${metricName}#sum`, identity, dataPoint.startTimeUnixNano), dataPoint.timeUnixNano, numberAttribute({ sum: dataPoint.sum }, "sum"), temporality);
   const bucket = hookBucket(attributes);
+  const context = resolveTelemetryContext(attributes, resourceAttributes, { timeUnixNano: dataPoint.timeUnixNano });
+  noteContextDimension("hooks", context, count);
   bucket.durationCount += count;
   bucket.durationMs += sum;
 }
 
-function noteHookHistogramCount(metricName, attributes, dataPoint, temporality) {
+function noteHookHistogramCount(metricName, attributes, dataPoint, temporality, resourceAttributes = {}) {
   const identity = { hook_name: safeMetricLabel(attributes.hook_name, "unknown-hook"), source: safeMetricLabel(attributes.source), handler_type: safeMetricLabel(attributes.handler_type, "") };
   const delta = otelSeriesDelta(otelSeriesKey(`${metricName}#count`, identity, dataPoint.startTimeUnixNano), dataPoint.timeUnixNano, numberAttribute({ count: dataPoint.count }, "count"), temporality);
   if (delta === 0) return;
   const bucket = hookBucket(attributes);
+  const context = resolveTelemetryContext(attributes, resourceAttributes, { timeUnixNano: dataPoint.timeUnixNano });
+  noteContextDimension("hooks", context, delta);
   const status = safeMetricLabel(attributes.status);
   bucket.count += delta;
   bucket.byStatus[status] = (bucket.byStatus[status] ?? 0) + delta;
@@ -1408,12 +1720,14 @@ function ingestOtelMetrics(payload) {
           for (const dataPoint of metric.histogram?.dataPoints ?? []) noteToolDuration(metric.name, otelAttributes(dataPoint.attributes), dataPoint, temporality, resourceAttributes);
         } else if (metric.name === "codex.hooks.run") {
           const temporality = metric.sum?.aggregationTemporality;
-          for (const dataPoint of metric.sum?.dataPoints ?? []) noteHookCounter(metric.name, otelAttributes(dataPoint.attributes), dataPoint, temporality);
+          const resourceAttributes = otelAttributes(resourceMetric.resource?.attributes);
+          for (const dataPoint of metric.sum?.dataPoints ?? []) noteHookCounter(metric.name, otelAttributes(dataPoint.attributes), dataPoint, temporality, resourceAttributes);
           const histogramTemporality = metric.histogram?.aggregationTemporality;
-          for (const dataPoint of metric.histogram?.dataPoints ?? []) noteHookHistogramCount(metric.name, otelAttributes(dataPoint.attributes), dataPoint, histogramTemporality);
+          for (const dataPoint of metric.histogram?.dataPoints ?? []) noteHookHistogramCount(metric.name, otelAttributes(dataPoint.attributes), dataPoint, histogramTemporality, resourceAttributes);
         } else if (metric.name === "codex.hooks.run.duration_ms") {
           const temporality = metric.histogram?.aggregationTemporality;
-          for (const dataPoint of metric.histogram?.dataPoints ?? []) noteHookDuration(metric.name, otelAttributes(dataPoint.attributes), dataPoint, temporality);
+          const resourceAttributes = otelAttributes(resourceMetric.resource?.attributes);
+          for (const dataPoint of metric.histogram?.dataPoints ?? []) noteHookDuration(metric.name, otelAttributes(dataPoint.attributes), dataPoint, temporality, resourceAttributes);
         } else if (metric.name === "codex.thread.started") {
           const temporality = metric.sum?.aggregationTemporality;
           for (const dataPoint of metric.sum?.dataPoints ?? []) noteThreadStarted(metric.name, otelAttributes(dataPoint.attributes), dataPoint, temporality);
@@ -1443,6 +1757,7 @@ function resetOtelTelemetry() {
   otelTelemetry.receiver = { logs: 0, traces: 0, metrics: 0, invalid: 0, lastReceivedAt: null };
   otelTelemetry.sessions.clear();
   otelTelemetry.mcpServers.clear();
+  otelTelemetry.dimensions = { mcp: emptyContextDimensions(), tools: emptyContextDimensions(), hooks: emptyContextDimensions(), skills: emptyContextDimensions(), bridge: emptyContextDimensions() };
   otelTelemetry.turns = { prompts: 0, completed: 0, promptLength: 0, ttftMs: 0, ttftCount: 0 };
   otelTelemetry.tokens = { input: 0, output: 0, cached: 0, reasoning: 0, tool: 0 };
   otelTelemetry.metricInventory.clear();
@@ -1486,13 +1801,54 @@ function resetOtelTelemetry() {
   }
 }
 
+function formatMcpDimensionBuckets(dimensions, now) {
+  return Object.fromEntries(Object.entries(dimensions ?? {}).map(([key, bucket]) => {
+    const lastSeenMs = bucket.lastSeenAt ? Date.parse(bucket.lastSeenAt) : NaN;
+    const health = Number.isFinite(lastSeenMs) && now - lastSeenMs <= OTEL_HEALTH_TTL_MS ? bucket.lastStatus : "stale";
+    return [key, {
+      ...bucket,
+      observed: 1,
+      ready: health === "ready" ? 1 : 0,
+      error: health === "error" ? 1 : 0,
+      stale: health === "stale" ? 1 : 0,
+      health,
+    }];
+  }));
+}
+
 function codexTelemetryStatus(now = Date.now()) {
   const mcpServers = [...otelTelemetry.mcpServers.values()].map((server) => {
     const lastSeenMs = server.lastSeenAt ? Date.parse(server.lastSeenAt) : NaN;
     const fresh = Number.isFinite(lastSeenMs) && now - lastSeenMs <= OTEL_HEALTH_TTL_MS;
-    return { ...server, health: fresh ? server.lastStatus : "stale", averageDurationMs: server.durationCount ? Math.round(server.durationMs / server.durationCount) : 0 };
+    return {
+      ...server,
+      health: fresh ? server.lastStatus : "stale",
+      averageDurationMs: server.durationCount ? Math.round(server.durationMs / server.durationCount) : 0,
+      byRole: formatMcpDimensionBuckets(server.byRole, now),
+      byWorkspace: formatMcpDimensionBuckets(server.byWorkspace, now),
+      byModel: formatMcpDimensionBuckets(server.byModel, now),
+      byAgent: formatMcpDimensionBuckets(server.byAgent, now),
+    };
   }).sort((a, b) => a.name.localeCompare(b.name));
   const sessions = [...otelTelemetry.sessions.values()];
+  const summarizeDimension = (dimension) => {
+    const summary = {};
+    for (const server of mcpServers) {
+      for (const [key, bucket] of Object.entries(server[dimension] ?? {})) {
+        const lastSeenMs = bucket.lastSeenAt ? Date.parse(bucket.lastSeenAt) : NaN;
+        const fresh = Number.isFinite(lastSeenMs) && now - lastSeenMs <= OTEL_HEALTH_TTL_MS;
+        const health = fresh ? bucket.lastStatus : "stale";
+        const target = summary[key] ?? { observed: 0, ready: 0, error: 0, stale: 0, lastSeenAt: null };
+        target.observed += 1;
+        if (health === "ready") target.ready += 1;
+        if (health === "error") target.error += 1;
+        if (health === "stale") target.stale += 1;
+        if (!target.lastSeenAt || (bucket.lastSeenAt && Date.parse(bucket.lastSeenAt) > Date.parse(target.lastSeenAt))) target.lastSeenAt = bucket.lastSeenAt;
+        summary[key] = target;
+      }
+    }
+    return summary;
+  };
   const mcpSummary = mcpServers.reduce((summary, server) => {
     summary.observed += 1;
     if (server.health === "ready") summary.ready += 1;
@@ -1500,6 +1856,10 @@ function codexTelemetryStatus(now = Date.now()) {
     if (server.health === "stale") summary.stale += 1;
     return summary;
   }, { observed: 0, ready: 0, error: 0, stale: 0 });
+  mcpSummary.byRole = summarizeDimension("byRole");
+  mcpSummary.byWorkspace = summarizeDimension("byWorkspace");
+  mcpSummary.byModel = summarizeDimension("byModel");
+  mcpSummary.byAgent = summarizeDimension("byAgent");
   const skillsInjected = otelTelemetry.skills.injected;
   const globalSkillInvokeTypes = Object.entries(skillsInjected.byInvokeType);
   const skillRows = [...skillsInjected.bySkill.values()].map((bucket) => {
@@ -1523,6 +1883,7 @@ function codexTelemetryStatus(now = Date.now()) {
     tokens: { ...otelTelemetry.tokens, total: Object.values(otelTelemetry.tokens).reduce((sum, value) => sum + value, 0) },
     mcpSummary,
     mcpServers,
+    dimensions: formatContextDimensions(otelTelemetry.dimensions),
     metrics: {
       observed: [...otelTelemetry.metricInventory.values()].sort((a, b) => a.name.localeCompare(b.name)),
     },
@@ -2195,6 +2556,19 @@ function recordBridgeToolObservation({ event, context }) {
   else if (event.type === "tool_requested") bucket = otelTelemetry.bridgeEvents.toolRequested;
   else bucket = otelTelemetry.bridgeEvents.toolUnavailable;
   bucket.total += 1;
+  const ctx = resolveTelemetryContext(event, {}, { context });
+  noteContextDimension("bridge", ctx);
+  if (server) {
+    const mcp = mcpServer(server);
+    noteMcpDimension(mcp, "byRole", ctx.role, ctx, "observed");
+    noteMcpDimension(mcp, "byWorkspace", ctx.workspace, ctx, "observed");
+    noteMcpDimension(mcp, "byModel", ctx.model, ctx, "observed");
+    noteMcpDimension(mcp, "byAgent", ctx.agent, ctx, "observed");
+    if (ctx.workspace !== UNATTRIBUTED_DIMENSION) {
+      const wsBucket = workspaceBucket(usageTelemetry.byWorkspace, ctx.workspace);
+      wsBucket.byMcp[server] = (wsBucket.byMcp[server] ?? 0) + 1;
+    }
+  }
   const toolBucketKey = callId ? `${tool}::${callId}` : tool;
   const toolRow = bucket.byTool.get(toolBucketKey) ?? { tool, server: server ?? "", callId: callId ?? null, count: 0, byStatus: {} };
   toolRow.count += 1;
@@ -2246,6 +2620,8 @@ function recordBridgeSkillExposure({ event, context }) {
   const pluginId = typeof event.pluginId === "string" && event.pluginId.trim() ? safeMetricLabel(event.pluginId) : null;
   const workspaceKey = typeof context.workspace === "string" ? context.workspace : null;
   const bucket = otelTelemetry.bridgeEvents.skillExposed;
+  const skillContext = resolveTelemetryContext(event, {}, { context });
+  noteContextDimension("bridge", skillContext);
   bucket.total += 1;
   const skillKey = `${skill}::${source ?? ""}::${pluginId ?? ""}`;
   const skillRow = bucket.bySkill.get(skillKey) ?? { skill, source: source ?? "", pluginId: pluginId ?? "", count: 0, byWorkspace: new Map() };
@@ -2517,6 +2893,7 @@ function usagePersistenceSnapshot() {
       toolsRequested: bucket.toolsRequested ?? 0,
       toolsUnavailable: bucket.toolsUnavailable ?? 0,
       skillsExposed: bucket.skillsExposed ?? 0,
+      byMcp: { ...bucket.byMcp },
       byRole: Object.fromEntries(Object.entries(bucket.byRole).map(([name, value]) => [name, withoutActive(value)])),
       byModel: Object.fromEntries(Object.entries(bucket.byModel).map(([name, value]) => [name, withoutActive(value)])),
       byProvider: Object.fromEntries(Object.entries(bucket.byProvider).map(([name, value]) => [name, withoutActive(value)])),
@@ -2537,7 +2914,7 @@ function usagePersistenceSnapshot() {
   };
 }
 
-const OTEL_PERSISTENCE_SCHEMA_VERSION = 3;
+const OTEL_PERSISTENCE_SCHEMA_VERSION = 5;
 
 function otelPersistenceSnapshot() {
   const telemetry = codexTelemetryStatus();
@@ -2546,7 +2923,14 @@ function otelPersistenceSnapshot() {
     receiver: telemetry.receiver,
     turns: telemetry.turns,
     tokens: telemetry.tokens,
-    mcpServers: [...otelTelemetry.mcpServers.values()],
+    dimensions: formatContextDimensions(otelTelemetry.dimensions),
+    mcpServers: [...otelTelemetry.mcpServers.values()].map((server) => ({
+      ...server,
+      byRole: { ...server.byRole },
+      byWorkspace: { ...server.byWorkspace },
+      byModel: { ...server.byModel },
+      byAgent: { ...server.byAgent },
+    })),
     skills: telemetry.skills,
     metrics: telemetry.metrics,
     tools: telemetry.tools,
@@ -2603,10 +2987,54 @@ function restoreOtelTelemetry(snapshot) {
   if (snapshot.receiver?.lastReceivedAt === null || typeof snapshot.receiver?.lastReceivedAt === "string") otelTelemetry.receiver.lastReceivedAt = snapshot.receiver.lastReceivedAt;
   restoreNumberFields(otelTelemetry.turns, snapshot.turns, ["prompts", "completed", "promptLength", "ttftMs", "ttftCount"]);
   restoreNumberFields(otelTelemetry.tokens, snapshot.tokens, ["input", "output", "cached", "reasoning", "tool"]);
+  if (snapshot.dimensions && typeof snapshot.dimensions === "object") {
+    for (const [family, value] of Object.entries(snapshot.dimensions)) {
+      if (!otelTelemetry.dimensions[family] || !value || typeof value !== "object") continue;
+      for (const dimension of ["byRole", "byWorkspace", "byModel", "byAgent"]) {
+        for (const [key, bucket] of Object.entries(value[dimension] ?? {})) {
+          if (!bucket || typeof bucket !== "object" || !isFiniteNonnegative(bucket.count)) continue;
+          otelTelemetry.dimensions[family][dimension][safeMetricLabel(key)] = {
+            count: bucket.count,
+            lastSeenAt: typeof bucket.lastSeenAt === "string" ? bucket.lastSeenAt : null,
+            ...(dimension === "byAgent" ? { agentKind: safeMetricLabel(bucket.agentKind, UNATTRIBUTED_DIMENSION) } : {}),
+          };
+        }
+      }
+    }
+  }
   for (const server of Array.isArray(snapshot.mcpServers) ? snapshot.mcpServers : []) {
     if (!server || typeof server !== "object" || typeof server.name !== "string" || !server.name) continue;
-    const restored = { name: safeMetricLabel(server.name), lastSeenAt: typeof server.lastSeenAt === "string" ? server.lastSeenAt : null, initAttempts: 0, toolDiscoveryAttempts: 0, failures: 0, durationMs: 0, durationCount: 0, lastStatus: safeMetricLabel(server.lastStatus) };
+    const restored = {
+      name: safeMetricLabel(server.name),
+      lastSeenAt: typeof server.lastSeenAt === "string" ? server.lastSeenAt : null,
+      initAttempts: 0,
+      toolDiscoveryAttempts: 0,
+      failures: 0,
+      durationMs: 0,
+      durationCount: 0,
+      lastStatus: safeMetricLabel(server.lastStatus),
+      byRole: {},
+      byWorkspace: {},
+      byModel: {},
+      byAgent: {},
+    };
     restoreNumberFields(restored, server, ["initAttempts", "toolDiscoveryAttempts", "failures", "durationMs", "durationCount"]);
+    for (const dim of ["byRole", "byWorkspace", "byModel", "byAgent"]) {
+      if (server[dim] && typeof server[dim] === "object") {
+        for (const [k, v] of Object.entries(server[dim])) {
+          if (isFiniteNonnegative(v)) {
+            restored[dim][safeMetricLabel(k)] = { observed: 1, lastSeenAt: null, lastStatus: "observed" };
+          } else if (v && typeof v === "object" && isFiniteNonnegative(v.observed)) {
+            restored[dim][safeMetricLabel(k)] = {
+              observed: 1,
+              lastSeenAt: typeof v.lastSeenAt === "string" ? v.lastSeenAt : null,
+              lastStatus: safeMetricLabel(v.lastStatus, "observed"),
+              ...(dim === "byAgent" ? { agentKind: safeMetricLabel(v.agentKind, UNATTRIBUTED_DIMENSION) } : {}),
+            };
+          }
+        }
+      }
+    }
     otelTelemetry.mcpServers.set(restored.name, restored);
   }
   const skills = snapshot.skills;
@@ -2772,6 +3200,13 @@ function loadRouterState(file = STATE_FILE) {
               current[counter] = saved[counter];
             }
           }
+          if (saved.byMcp && typeof saved.byMcp === "object") {
+            for (const [mcp, cnt] of Object.entries(saved.byMcp)) {
+              if (typeof cnt === "number" && Number.isFinite(cnt) && cnt >= 0) {
+                current.byMcp[safeMetricLabel(mcp)] = cnt;
+              }
+            }
+          }
           if (Array.isArray(saved.bridgeTools)) {
             for (const tool of saved.bridgeTools) {
               if (tool && typeof tool.tool === "string") {
@@ -2910,10 +3345,6 @@ function loadRouterState(file = STATE_FILE) {
           if (event.provider && event.model && event.phase) recordUsageEvent(event);
         }
         inFlightUsage.clear();
-      } else if ((parsed.usage.schemaVersion ?? 1) < 3) {
-        for (const event of recentRouterEvents) {
-          if (event.provider && event.model && event.phase === "skipped") recordUsageEvent(event);
-        }
       }
     }
     persistedStateUpdatedAt = typeof parsed.updatedAt === "string" ? parsed.updatedAt : null;
@@ -4946,6 +5377,12 @@ export {
   registerWorkspaceId,
   attributionDiagnosticsStatus,
   resetAttributionDiagnostics,
+  OTEL_PERSISTENCE_SCHEMA_VERSION,
+  resolveTelemetryContext,
+  safeAgentIdentity,
+  safePrivacyWorkspace,
+  otelPersistenceSnapshot,
+  restoreOtelTelemetry,
 };
 
 if (IS_MAIN) {

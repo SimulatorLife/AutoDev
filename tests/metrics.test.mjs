@@ -55,8 +55,8 @@ test('router dashboard exposes the component hierarchy and explicit workspace at
   assert.match(dashboard, /<dashboard-panel id="panel-orchestrator"[\s\S]*?<sub-panel id="panel-spawn-breakdown"/);
   assert.match(dashboard, /<dashboard-panel id="panel-skills"[\s\S]*?<sub-panel id="panel-skill-context"/);
   assert.match(dashboard, /<dashboard-panel id="panel-ops"[\s\S]*?<sub-panel id="panel-native-metrics"/);
-  // Per-workspace named tool/skill attribution is rendered conditionally from
-  // status.usage.byWorkspace[*].byTool/bySkill: a fail-closed "unavailable"
+  // Per-workspace named tool/skill/mcp attribution is rendered conditionally from
+  // status.usage.byWorkspace[*].byTool/bySkill/byMcp: a fail-closed "unavailable"
   // state when the backend omits the field entirely, distinct from a
   // "no data yet" state when the backend reports the dimension but nothing
   // was observed for that workspace.
@@ -64,11 +64,23 @@ test('router dashboard exposes the component hierarchy and explicit workspace at
   assert.match(dashboard, /function renderWorkspaceNamedUsage\(rows, \{ unavailableLabel, emptyLabel \}\)/);
   assert.match(dashboard, /normalizeWorkspaceNamedUsage\(w\.byTool, \["tool", "name"\]\)/);
   assert.match(dashboard, /normalizeWorkspaceNamedUsage\(w\.bySkill, \["skill", "name"\]\)/);
+  assert.match(dashboard, /normalizeWorkspaceNamedUsage\(w\.byMcp \?\? w\.mcpServers, \["server", "name", "mcp"\]\)/);
   assert.match(dashboard, /if \(rows === null\) return `<div class="empty-state">\$\{escapeHtml\(unavailableLabel\)\}<\/div>`;/);
   assert.match(dashboard, /Named tool telemetry is unavailable per-workspace/);
   assert.match(dashboard, /Named skill attribution is unavailable per-workspace/);
   assert.match(dashboard, /No named tool calls observed for this workspace yet/);
   assert.match(dashboard, /No named skill uses observed for this workspace yet/);
+  assert.match(dashboard, /MCP server telemetry is unavailable per-workspace/);
+  assert.match(dashboard, /No MCP servers observed for this workspace yet/);
+  // Both route cards show observed MCP server counts with role-specific union
+  // semantics using /status partitions (orchestrator role union vs explicit subagent roles union).
+  assert.match(dashboard, /orchMcpCount/);
+  assert.match(dashboard, /subMcpCount/);
+  assert.match(dashboard, /<mini-stat label="MCP servers" value="\$\{orchMcpCount\}"><\/mini-stat>/);
+  assert.match(dashboard, /<mini-stat label="MCP servers" value="\$\{subMcpCount\}"><\/mini-stat>/);
+  // Model view embeds MCP counts and server details
+  assert.match(dashboard, /getModelMcpDetails/);
+  assert.match(dashboard, /model-mcp-details/);
   // The workspace table's scalar toolCalls is a response-output count
   // (Responses API tool-call items), which the dashboard labels explicitly
   // as distinct from the OTLP-named runtime tool rows shown per workspace.

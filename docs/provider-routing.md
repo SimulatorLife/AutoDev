@@ -504,14 +504,18 @@ The router makes its effective choice visible in two ways:
   the top-level `usage.totals.toolCalls` uses -- it is not a count of
   OTLP-named tool invocations, and the dashboard labels the column
   accordingly rather than implying the two are the same measurement.
-- A workspace bucket may additionally carry `byTool`, `bySkill`, and
+- A workspace bucket may additionally carry `byTool`, `bySkill`, `byMcp`, and
   coverage counters. These rows come from local causally-linked evidence:
   AutoDev request context, verified hooks, semantic OTLP `codex.tool_result`
   records joined by `conversation.id` to the local Codex thread database, and
-  authenticated provider-bridge reports. The router does not require Codex
-  to emit `workspace_id`, does not distribute global metrics by guesswork,
-  and leaves conflicting or missing joins unattributed. Requested and
-  executed provider events remain separate.
+  authenticated provider-bridge reports. When resolving telemetry context across
+  MCP, tool, hook, skill, and bridge events, the router applies canonical precedence:
+  (1) explicit event or resource attributes, (2) verified provider bridge or request context,
+  (3) verified `conversation.id` -> session/thread-state join, and (4) `unattributed`.
+  The router does not require Codex to emit `workspace_id`, does not distribute
+  global metrics by guesswork, never infers ownership from static configurations or
+  ambient concurrency, and attributes events lacking verified metadata to explicit
+  `unattributed` dimensions. Requested and executed provider events remain separate.
 - The dashboard's usage table collapses this into exactly two top-level rows,
   Orchestrator and Subagents, because roleless requests only carry an origin
   and role-attributed requests only carry a role: origin and role are not two
@@ -538,13 +542,23 @@ The router makes its effective choice visible in two ways:
   failures), Usage by workspace, Skill telemetry (with Skill context
   telemetry), Hooks & runtime telemetry, Operational summary (with Native
   metrics observed), and Recent routing events. The renderer escapes live
-  labels and uses text-only updates for logs and status metadata. MCP lifecycle
-  observations appear in the relevant usage cards and operational summary; no
-  standalone MCP panel exists. Per-workspace named tool and skill attribution
-  is sourced from local request context, verified hooks, semantic OTLP joins,
-  and authenticated bridge events. The dashboard distinguishes unavailable,
-  no-data, partial, executed, and requested states rather than fabricating a
-  workspace join or treating requested calls as executed.
+  labels and uses text-only updates for logs and status metadata.
+  Both route cards display **observed** MCP server counts with role-specific union
+  semantics using `/status` partitions: the Orchestrator card shows the unique
+  observed-server union for the orchestrator role, while the Subagents card shows
+  the unique observed-server union across explicit subagent roles. An observed count
+  reflects unique server names observed in lifecycle spans (deduplicated across repeated
+  spans), distinct from `ready` (servers with a recent successful observation within TTL).
+  MCP telemetry is partitioned across `byRole`, `byWorkspace`, `byModel`, and `byAgent`.
+  The same canonical dimensions are available under
+  `status.codexTelemetry.dimensions` for MCP, tool, hook, skill, and bridge event families.
+  Per-workspace `byMcp` attribution and model-level MCP counts and breakdowns are
+  embedded directly in existing workspace and model views (following fail-closed
+  unavailable vs empty semantics); no standalone MCP panel exists. Per-workspace
+  named tool and skill attribution is sourced from local request context, verified hooks,
+  semantic OTLP joins, and authenticated bridge events. The dashboard distinguishes
+  unavailable, no-data, partial, executed, and requested states rather than fabricating
+  a workspace join or treating requested calls as executed.
 `GET /status` always
   returns raw JSON regardless of the `Accept` header, including the current
   router instance, active requests, configured models, cooldown countdowns,

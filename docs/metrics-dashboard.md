@@ -43,22 +43,25 @@ are shown in the relevant usage cards and operational summary; there is no
 standalone MCP panel.
 
 Per-workspace usage always has reliable totals, role, and model dimensions.
-Named tool and named skill attribution at that same workspace granularity --
-`status.usage.byWorkspace[*].byTool` and `...bySkill` -- are optional fields:
+Named tool, named skill, and MCP server attribution at that same workspace granularity --
+`status.usage.byWorkspace[*].byTool`, `...bySkill`, and `...byMcp` -- are optional fields:
 the dashboard renders them when the status payload includes them and falls
 back to an explicit unavailable state when it does not, rather than inventing
 a join from unrelated telemetry or silently showing a zero that would be
 indistinguishable from "observed, but nothing happened." Expanded workspace
-rows show **"Named tool telemetry is unavailable per-workspace"** and
-**"Named skill attribution is unavailable per-workspace"** only when the
+rows show **"Named tool telemetry is unavailable per-workspace"**,
+**"Named skill attribution is unavailable per-workspace"**, and
+**"MCP server telemetry is unavailable per-workspace"** only when the
 corresponding field is entirely absent from that workspace's bucket; once the
 router starts populating it, the same rows show **"No named tool calls
-observed for this workspace yet"** / **"No named skill uses observed for
-this workspace yet"** if the field is present but empty, and the actual
-per-tool/per-skill breakdown otherwise. This is a fail-closed distinction on
+observed for this workspace yet"**, **"No named skill uses observed for
+this workspace yet"**, and **"No MCP servers observed for this workspace yet"**
+if the field is present but empty, and the actual per-tool/per-skill/per-MCP
+breakdown otherwise. This is a fail-closed distinction on
 purpose: "unavailable" must never be collapsed into "zero," because the two
 mean different things to an operator debugging a workspace with no visible
-tool activity.
+tool or server activity. Model views inside expanded workspaces also embed
+model-level MCP counts and server breakdowns.
 
 When present, each `byTool`/`bySkill` entry is attributed under the exact
 same project/workspace bucket as its parent `usage.byWorkspace` entry. The
@@ -324,12 +327,55 @@ The dashboard labels MCP state as an observation (`ready`, `error`, or `stale`),
 not as an authoritative process-health guarantee. Codex currently emits MCP
 lifecycle spans rather than a persistent MCP health gauge. The router continues
 to own provider selection, fallback, cooldown, concurrency, and origin
-telemetry because Codex does not emit those AutoDev-specific semantics. The
-dashboard's `MCP ready` count is the number of servers with a recent successful
-lifecycle observation, not a count of statically enabled servers or a guarantee
-that every server is currently connected. The per-origin and per-role tables
-remain router-owned request telemetry; OTEL does not provide a reliable
-conversation-to-origin/role join for those rows.
+telemetry because Codex does not emit those AutoDev-specific semantics.
+
+The dashboard's route cards show **observed** MCP counts, not `ready` counts.
+An `observed` count measures the number of unique MCP server names observed
+through lifecycle spans in that route or partition scope; repeated lifecycle
+spans do not inflate it. In contrast, `ready` counts only servers whose most
+recent lifecycle observation was successful and occurred within the freshness
+TTL (`OTEL_HEALTH_TTL_MS`). In the Operational summary, the ratio of ready to
+observed servers is displayed as operational health context (`MCP ready / observed`).
+
+Both route cards apply role-specific union semantics using `/status` partitions:
+- The **Orchestrator** card displays the unique observed-server union for the orchestrator role.
+- The **Subagents** card displays the unique observed-server union across explicit subagent roles.
+
+MCP server entries (`status.codexTelemetry.mcpServers`) and summaries
+(`status.codexTelemetry.mcpSummary`) are partitioned into independently
+aggregated buckets:
+- `byRole`
+- `byWorkspace`
+- `byModel`
+- `byAgent`
+
+Each bucket retains `observed`, `ready`, `error`, `stale`, and `lastSeenAt`.
+At the workspace granularity, `status.usage.byWorkspace[*].byMcp` provides
+workspace-level MCP breakdown, following the same fail-closed semantics as
+`byTool` and `bySkill`. Existing model views embed model-level MCP counts and
+server breakdowns directly without creating a standalone MCP panel.
+
+When resolving context across MCP, tool, hook, skill, and bridge telemetry,
+the router applies canonical precedence in this order:
+1. Explicit event or resource attributes
+2. Verified provider bridge / request context
+3. Verified `conversation.id` -> session/thread-state join
+4. `unattributed` fallback
+
+Ownership is never inferred from static MCP configuration, ambient active
+requests, tool names, or concurrent activity. Native Codex events that lack
+causal metadata are attributed to explicit `unattributed` dimensions rather
+than guessed. MCP lifecycle spans that lack a verified conversation or request
+identity remain globally observed in `mcpSummary` and `mcpServers`, but are
+not assigned to a role, workspace, model, or agent. The same canonical context partitions are exposed under
+`status.codexTelemetry.dimensions` for `mcp`, `tools`, `hooks`, `skills`, and
+`bridge` telemetry. These are event-count dimensions (not unique-server
+counts), and every family carries the same `byRole`, `byWorkspace`, `byModel`,
+and `byAgent` keys with `lastSeenAt` timestamps.
+
+Strict privacy guarantees
+are preserved: prompts, credentials, absolute filesystem paths, and unbounded
+raw identifiers are excluded from telemetry.
 
 Validate the active rules and telemetry receiver without running a model turn:
 

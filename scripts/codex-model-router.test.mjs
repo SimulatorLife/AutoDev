@@ -2116,7 +2116,14 @@ test("ingests Codex OTEL turn and MCP lifecycle telemetry without prompt content
   assert.equal(telemetry.turns.completed, 1);
   assert.equal(telemetry.turns.averageTtftMs, 321);
   assert.deepEqual(telemetry.tokens, { input: 100, output: 25, cached: 5, reasoning: 10, tool: 3, total: 143 });
-  assert.deepEqual(telemetry.mcpSummary, { observed: 3, ready: 1, error: 0, stale: 1 });
+  assert.deepEqual(
+    { observed: telemetry.mcpSummary.observed, ready: telemetry.mcpSummary.ready, error: telemetry.mcpSummary.error, stale: telemetry.mcpSummary.stale },
+    { observed: 3, ready: 1, error: 0, stale: 1 },
+  );
+  assert.equal(telemetry.mcpSummary.byModel["gpt-5.6-luna"].observed, 3);
+  assert.equal(telemetry.mcpSummary.byRole.unattributed.observed, 3);
+  assert.equal(telemetry.mcpSummary.byWorkspace.unattributed.observed, 3);
+  assert.equal(telemetry.mcpSummary.byAgent["conversation-otel"].observed, 3);
   const playwright = telemetry.mcpServers.find((server) => server.name === "playwright");
   assert.equal(playwright.health, "ready");
   assert.equal(playwright.initAttempts, 1);
@@ -2124,6 +2131,30 @@ test("ingests Codex OTEL turn and MCP lifecycle telemetry without prompt content
   assert.equal(playwright.averageDurationMs, 6);
   assert.equal(JSON.stringify(telemetry).includes("do-not-store-this"), false);
   assert.equal(codexTelemetryStatus(Date.now() + 121_000).mcpServers.find((server) => server.name === "playwright").health, "stale");
+  resetOtelTelemetry();
+});
+
+test("normalizes canonical context across tool, hook, and skill telemetry", () => {
+  resetOtelTelemetry();
+  const attrs = (entries) => entries.map(([key, value]) => ({ key, value: typeof value === "boolean" ? { boolValue: value } : { stringValue: String(value) } }));
+  const point = (entries, value) => ({ attributes: attrs(entries), startTimeUnixNano: "1000000000", timeUnixNano: "2000000000", asInt: String(value) });
+  const common = [["role", "worker"], ["model", "gpt-worker"], ["agent_id", "agent-1"], ["agent_kind", "subagent"], ["session_source", "subagent_thread_spawn_worker"], ["workspace_id", "ws-ctx"]];
+  ingestOtelSignal("metrics", {
+    resourceMetrics: [{
+      scopeMetrics: [{ metrics: [
+        { name: "codex.tool.call", sum: { aggregationTemporality: 1, dataPoints: [point([["tool", "exec"], ["source", "builtin"], ...common, ["success", true]], 1)] } },
+        { name: "codex.hooks.run", sum: { aggregationTemporality: 1, dataPoints: [point([["hook_name", "SessionStart"], ["source", "user"], ["handler_type", "command"], ...common, ["status", "ok"]], 1)] } },
+        { name: "codex.skill.injected", sum: { aggregationTemporality: 1, dataPoints: [point([["skill", "orchestration"], ["status", "injected"], ...common], 1)] } },
+      ] }],
+    }],
+  });
+  const dimensions = codexTelemetryStatus().dimensions;
+  assert.equal(dimensions.tools.byRole.worker.count, 1);
+  assert.equal(dimensions.tools.byWorkspace["ws-ctx"].count, 1);
+  assert.equal(dimensions.hooks.byModel["gpt-worker"].count, 1);
+  assert.equal(dimensions.skills.byAgent["agent-1"].agentKind, "subagent");
+  assert.equal(dimensions.skills.byAgent["agent-1"].count, 1);
+  assert.equal(typeof dimensions.tools.byRole.worker.lastSeenAt, "string");
   resetOtelTelemetry();
 });
 
@@ -2754,8 +2785,8 @@ test("persists provider telemetry and recent events across router restarts", asy
     assert.deepEqual(restored.codexTelemetry.skills.turnDuration.durationSeconds, { count: 0, sum: 0, average: 0 });
     assert.equal(restored.codexTelemetry.skills.injected.bySkill[ 0 ].skill, "orchestration");
     assert.deepEqual(restored.codexTelemetry.skills.injected.bySkill[ 0 ].byInvokeType, { implicit: 2 });
-    assert.deepEqual(restored.codexTelemetry.skills.injected.byAgentKind, { unknown: 2 });
-    assert.deepEqual(restored.codexTelemetry.skills.injected.byModel, { unknown: 2 });
+    assert.deepEqual(restored.codexTelemetry.skills.injected.byAgentKind, { unattributed: 2 });
+    assert.deepEqual(restored.codexTelemetry.skills.injected.byModel, { unattributed: 2 });
     assert.deepEqual(restored.codexTelemetry.skills.injected.byPlugin, { none: 2 });
     assert.equal(restored.codexTelemetry.receiver.metrics, 1);
     assert.equal(restored.codexTelemetry.hooks.byHook[ 0 ].count, 1);

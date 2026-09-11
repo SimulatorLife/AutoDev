@@ -153,7 +153,27 @@
     }
 
     .details-grid {
-      grid-template-columns: 1fr 1.25fr 1.15fr .9fr;
+      grid-template-columns: 1fr 1.25fr 1.15fr .9fr 1fr;
+    }
+
+    .model-row {
+      display: grid;
+      gap: 2px;
+    }
+
+    .model-mcp-details {
+      font-size: var(--font-xs);
+      color: var(--text-muted);
+      padding-left: var(--gap-xs);
+      margin-top: 1px;
+      margin-bottom: 3px;
+    }
+
+    .model-mcp-details code {
+      font-size: inherit;
+      padding: 1px 4px;
+      background: var(--bg-surface-2);
+      border-radius: var(--radius-sm);
     }
 
     .skill-breakdown-grid {
@@ -570,7 +590,7 @@
 
     <!-- 4. Usage by Workspace -->
     <dashboard-panel id="workspace-usage-section" open="" summary="" title="Usage by workspace">
-      <div class="section-note">Click a workspace to expand roles, models, named tool attribution, and skill usage.
+      <div class="section-note">Click a workspace to expand roles, models, named tool attribution, skill usage, and MCP servers.
         <strong>Tool calls</strong> here is a response-output count inferred from Responses API tool-call items on
         this workspace's turns; it is a different measurement from the OTLP-named runtime tool rows shown per
         workspace when expanded, and the two are not expected to match.
@@ -1723,9 +1743,9 @@
           if (!entry || typeof entry !== "object") return null;
           const name = identityKeys.map((key) => entry[ key ]).find((value) => typeof value === "string" && value.trim());
           if (!name) return null;
-          const ok = Number(entry.byStatus?.ok ?? entry.byStatus?.success ?? entry.successes ?? 0);
-          const err = Number(entry.byStatus?.error ?? entry.byStatus?.failure ?? entry.failures ?? 0);
-          const count = Number(entry.count ?? entry.total ?? entry.attempts ?? entry.toolCalls ?? entry.skillUses ?? 0) || (ok + err);
+          const ok = Number(entry.byStatus?.ok ?? entry.byStatus?.success ?? entry.byStatus?.ready ?? entry.successes ?? entry.ready ?? 0);
+          const err = Number(entry.byStatus?.error ?? entry.byStatus?.failure ?? entry.byStatus?.stale ?? entry.failures ?? entry.error ?? 0);
+          const count = Number(entry.count ?? entry.total ?? entry.observed ?? entry.attempts ?? entry.toolCalls ?? entry.skillUses ?? 0) || (ok + err);
           return {
             name,
             count,
@@ -1740,9 +1760,9 @@
       if (raw && typeof raw === "object") {
         return Object.entries(raw).filter(([ name ]) => typeof name === "string" && name.trim()).map(([ name, value ]) => {
           const bucket = value && typeof value === "object" ? value : {};
-          const ok = Number(bucket.byStatus?.ok ?? bucket.byStatus?.success ?? bucket.successes ?? 0);
-          const err = Number(bucket.byStatus?.error ?? bucket.byStatus?.failure ?? bucket.failures ?? 0);
-          const count = Number(bucket.count ?? bucket.total ?? bucket.attempts ?? bucket.toolCalls ?? bucket.skillUses ?? (typeof value === "number" ? value : 0)) || (ok + err);
+          const ok = Number(bucket.byStatus?.ok ?? bucket.byStatus?.success ?? bucket.byStatus?.ready ?? bucket.successes ?? bucket.ready ?? 0);
+          const err = Number(bucket.byStatus?.error ?? bucket.byStatus?.failure ?? bucket.byStatus?.stale ?? bucket.failures ?? bucket.error ?? 0);
+          const count = Number(bucket.count ?? bucket.total ?? bucket.observed ?? bucket.attempts ?? bucket.toolCalls ?? bucket.skillUses ?? (typeof value === "number" ? value : 0)) || (ok + err);
           return {
             name,
             count,
@@ -1755,6 +1775,80 @@
         });
       }
       return null;
+    }
+
+    function extractServerRoles(server) {
+      if (!server || typeof server !== "object") return new Set();
+      const roles = new Set();
+      if (server.byRole && typeof server.byRole === "object") {
+        if (Array.isArray(server.byRole)) {
+          for (const r of server.byRole) {
+            if (typeof r === "string" && r.trim()) roles.add(r.trim());
+            else if (r && typeof r.role === "string" && r.role.trim()) roles.add(r.role.trim());
+          }
+        } else {
+          for (const [ r, v ] of Object.entries(server.byRole)) {
+            if (v && (typeof v !== "object" || (Number(v.observed ?? 1) > 0))) {
+              roles.add(r);
+            }
+          }
+        }
+      }
+      if (Array.isArray(server.roles)) {
+        for (const r of server.roles) {
+          if (typeof r === "string" && r.trim()) roles.add(r.trim());
+          else if (r && typeof r.role === "string" && r.role.trim()) roles.add(r.role.trim());
+        }
+      }
+      if (typeof server.role === "string" && server.role.trim()) roles.add(server.role.trim());
+      return roles;
+    }
+
+    function getModelMcpDetails(stats, modelKey, modelName, codexTelemetry) {
+      let count = 0;
+      let servers = [];
+
+      if (Array.isArray(stats?.mcpServers)) {
+        servers = stats.mcpServers.map((s) => typeof s === "string" ? s : (s?.name ?? s?.server)).filter(Boolean);
+        count = servers.length;
+      } else if (stats?.mcpServers && typeof stats.mcpServers === "object") {
+        servers = Object.keys(stats.mcpServers);
+        count = Number(stats.mcpServers.observed ?? servers.length);
+      } else if (Array.isArray(stats?.byMcp)) {
+        servers = stats.byMcp.map((s) => typeof s === "string" ? s : (s?.name ?? s?.server)).filter(Boolean);
+        count = servers.length;
+      } else if (stats?.byMcp && typeof stats.byMcp === "object") {
+        servers = Object.keys(stats.byMcp);
+        count = servers.length;
+      } else if (stats?.mcpCount != null) {
+        count = Number(stats.mcpCount);
+      }
+
+      if (count === 0 && servers.length === 0 && codexTelemetry) {
+        const summaryModel = codexTelemetry.mcpSummary?.byModel?.[ modelKey ] ?? codexTelemetry.mcpSummary?.byModel?.[ modelName ];
+        if (summaryModel) {
+          count = Number(summaryModel.observed ?? summaryModel.ready ?? 0);
+        }
+        if (Array.isArray(codexTelemetry.mcpServers)) {
+          for (const s of codexTelemetry.mcpServers) {
+            const sName = s.name ?? s.server;
+            if (!sName) continue;
+            const byModel = s.byModel;
+            if (byModel) {
+              if (Array.isArray(byModel) && (byModel.includes(modelKey) || byModel.includes(modelName))) {
+                servers.push(sName);
+              } else if (typeof byModel === "object" && (byModel[ modelKey ] || byModel[ modelName ])) {
+                servers.push(sName);
+              }
+            }
+          }
+          if (servers.length > 0 && count === 0) {
+            count = servers.length;
+          }
+        }
+      }
+
+      return { count, servers: [ ...new Set(servers) ] };
     }
 
     // Renders a normalized per-workspace named-attribution row list, with
@@ -1961,7 +2055,44 @@
       const subTurns = subSuccess + subFail;
       const subAvgTurn = subTurns > 0 ? `${(subDuration / subTurns / 1000).toFixed(1)}s` : "0.0s";
 
-      const mcpServersCount = status.codexTelemetry?.mcpSummary?.ready ?? status.codexTelemetry?.mcpSummary?.observed ?? 0;
+      // Observed MCP counts with role-specific union semantics using /status partitions:
+      // Orchestrator shows the unique observed-server union for the orchestrator role.
+      // Subagents show the unique union across explicit subagent roles.
+      const mcpServersList = Array.isArray(status.codexTelemetry?.mcpServers) ? status.codexTelemetry.mcpServers : [];
+      const mcpSummary = status.codexTelemetry?.mcpSummary;
+      const mcpByRoleSummary = mcpSummary?.byRole && typeof mcpSummary.byRole === "object" ? mcpSummary.byRole : null;
+
+      const orchMcpServerNames = new Set();
+      const subMcpServerNames = new Set();
+
+      for (const s of mcpServersList) {
+        const sName = s.name ?? s.server ?? s.id;
+        if (!sName) continue;
+        const roles = extractServerRoles(s);
+        if (roles.has("orchestrator")) {
+          orchMcpServerNames.add(sName);
+        }
+        for (const r of roles) {
+          if (r !== "orchestrator" && r !== "unattributed" && r !== "unknown") {
+            subMcpServerNames.add(sName);
+            break;
+          }
+        }
+      }
+
+      let orchMcpCount = orchMcpServerNames.size;
+      if (orchMcpCount === 0 && mcpByRoleSummary) {
+        orchMcpCount = Number(mcpByRoleSummary.orchestrator?.observed ?? mcpByRoleSummary.unattributed?.observed ?? 0);
+      }
+
+      const subMcpCount = subMcpServerNames.size;
+
+      // Missing role metadata is intentionally not assigned to either card.
+      // The operational summary and byRole.unattributed retain that evidence.
+      if (orchMcpCount === 0 && mcpByRoleSummary?.orchestrator) {
+        orchMcpCount = Number(mcpByRoleSummary.orchestrator.observed ?? 0);
+      }
+
       const skillsCount = observedSkillsCount;
 
       const routeGrid = document.getElementById("route-grid");
@@ -1975,7 +2106,7 @@
             <div class="route-stats">
               <mini-stat label="Avg turn" value="${orchAvgTurn}"></mini-stat>
               <mini-stat label="Tool calls" value="${orchToolCalls.toLocaleString()}"></mini-stat>
-              <mini-stat label="MCP servers" value="${mcpServersCount}"></mini-stat>
+              <mini-stat label="MCP servers" value="${orchMcpCount}"></mini-stat>
               <mini-stat label="Skills" value="${skillsCount}"></mini-stat>
             </div>
             <div class="route-outcome">
@@ -1990,7 +2121,7 @@
             <div class="route-stats">
               <mini-stat label="Avg turn" value="${subAvgTurn}"></mini-stat>
               <mini-stat label="Tool calls" value="${subToolCalls.toLocaleString()}"></mini-stat>
-              <mini-stat label="MCP servers" value="${mcpServersCount}"></mini-stat>
+              <mini-stat label="MCP servers" value="${subMcpCount}"></mini-stat>
               <mini-stat label="Skills" value="${skillsCount}"></mini-stat>
             </div>
             <div class="route-outcome">
@@ -2143,34 +2274,52 @@
               const prov = slashIdx >= 0 ? mKey.slice(0, slashIdx) : "default";
               const model = slashIdx >= 0 ? mKey.slice(slashIdx + 1) : mKey;
               if (!providerModelGroups.has(prov)) providerModelGroups.set(prov, []);
-              providerModelGroups.get(prov).push({ model, stats: m });
+              providerModelGroups.get(prov).push({ model, stats: m, key: mKey });
             }
 
             const modelsHtml = providerModelGroups.size ? [ ...providerModelGroups.entries() ].map(([ prov, models ]) => `
               <div class="provider-block">
                 <div class="provider-name">${escapeHtml(prov)}</div>
-                ${models.map(({ model, stats }) => {
+                ${models.map(({ model, stats, key }) => {
               const mAttempts = Number(stats.attempts ?? 0);
               const mSuccess = Number(stats.successes ?? 0);
               const mFail = Number(stats.failures ?? 0);
               const mActive = Number(stats.active ?? 0);
               const fill = (mAttempts / maxModelAttempts * 100).toFixed(1);
-              return `<metric-bar fill="${fill}" label="${escapeHtml(model)}" success="${mSuccess}" fail="${mFail}" value="${mAttempts}" ${mActive > 0 ? `active="${mActive}"` : ''}></metric-bar>`;
+              const { count: modelMcpCount, servers: modelMcpServers } = getModelMcpDetails(stats, key, model, status.codexTelemetry);
+              const mcpLabelSuffix = modelMcpCount > 0 ? ` · ${modelMcpCount} MCP` : "";
+              const modelLabel = `${model}${mcpLabelSuffix}`;
+              const mcpDetailsHtml = modelMcpServers.length > 0 ? `
+                <div class="model-mcp-details">
+                  <span class="dim">MCP:</span> ${modelMcpServers.map((s) => `<code>${escapeHtml(s)}</code>`).join(" ")}
+                </div>
+              ` : "";
+              return `
+                <div class="model-row">
+                  <metric-bar fill="${fill}" label="${escapeHtml(modelLabel)}" success="${mSuccess}" fail="${mFail}" value="${mAttempts}" ${mActive > 0 ? `active="${mActive}"` : ''}></metric-bar>
+                  ${mcpDetailsHtml}
+                </div>
+              `;
             }).join("")}
               </div>
             `).join("") : `<div class="empty-state">No models observed</div>`;
 
-            // Named tool/skill attribution: status.usage.byWorkspace[*].byTool
-            // and bySkill, when the backend reports them.
-            const wsToolRows = normalizeWorkspaceNamedUsage(w.byTool, [ "tool", "name" ]);
+            // Named tool/skill/mcp attribution: status.usage.byWorkspace[*].byTool,
+            // bySkill, and byMcp, when the backend reports them.
+            const wsToolRows = normalizeWorkspaceNamedUsage(w.byTool, ["tool", "name"]);
             const wsToolsHtml = renderWorkspaceNamedUsage(wsToolRows, {
               unavailableLabel: "Named tool telemetry is unavailable per-workspace",
               emptyLabel: "No named tool calls observed for this workspace yet",
             });
-            const wsSkillRows = normalizeWorkspaceNamedUsage(w.bySkill, [ "skill", "name" ]);
+            const wsSkillRows = normalizeWorkspaceNamedUsage(w.bySkill, ["skill", "name"]);
             const wsSkillsHtml = renderWorkspaceNamedUsage(wsSkillRows, {
               unavailableLabel: "Named skill attribution is unavailable per-workspace",
               emptyLabel: "No named skill uses observed for this workspace yet",
+            });
+            const wsMcpRows = normalizeWorkspaceNamedUsage(w.byMcp ?? w.mcpServers, ["server", "name", "mcp"]);
+            const wsMcpHtml = renderWorkspaceNamedUsage(wsMcpRows, {
+              unavailableLabel: "MCP server telemetry is unavailable per-workspace",
+              emptyLabel: "No MCP servers observed for this workspace yet",
             });
 
             return `
@@ -2205,6 +2354,10 @@
                     <section class="detail-group">
                       <h2>Skill usage</h2>
                       ${wsSkillsHtml}
+                    </section>
+                    <section class="detail-group">
+                      <h2>MCP servers</h2>
+                      ${wsMcpHtml}
                     </section>
                   </div>
                 </td>
