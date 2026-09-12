@@ -321,23 +321,43 @@ test('router dashboard combines skill usage and exposure into one Skills section
   assert.ok(escapeMatch, 'escapeHtml should be present in dashboard script');
   const renderSkillsMatch = rawDashboard.match(/function renderWorkspaceSkills\([\s\S]*?\n    \}/);
   assert.ok(renderSkillsMatch, 'renderWorkspaceSkills should be present in dashboard script');
+  const summarizeSkillsMatch = rawDashboard.match(/function summarizeWorkspaceSkills\([\s\S]*?\n    \}/);
+  assert.ok(summarizeSkillsMatch, 'summarizeWorkspaceSkills should be present in dashboard script');
   const normalizeMatch = rawDashboard.match(/function normalizeWorkspaceNamedUsage\([\s\S]*?\n    \}/);
   assert.ok(normalizeMatch, 'normalizeWorkspaceNamedUsage should be present in dashboard script');
 
-  const fnScope = `${escapeMatch[0]}; ${normalizeMatch[0]}; ${renderSkillsMatch[0]}; return { normalizeWorkspaceNamedUsage, renderWorkspaceSkills };`;
-  const { normalizeWorkspaceNamedUsage, renderWorkspaceSkills } = new Function(fnScope)();
+  const fnScope = `${escapeMatch[0]}; ${normalizeMatch[0]}; ${summarizeSkillsMatch[0]}; ${renderSkillsMatch[0]}; return { normalizeWorkspaceNamedUsage, summarizeWorkspaceSkills, renderWorkspaceSkills };`;
+  const { normalizeWorkspaceNamedUsage, summarizeWorkspaceSkills, renderWorkspaceSkills } = new Function(fnScope)();
 
-  // 1. RacingGame-style payload: skill exposed but 0 confirmed uses.
-  // Shows `uses / exposed` as `0 / 1`.
-  const racingGame = { skillUses: 0, bySkill: [], bridgeSkills: [ { skill: "orchestration", count: 1 } ] };
+  // 1. RacingGame-style payload: skills exposed but 0 confirmed uses.
+  // The collapsed row must total the same exposed counts shown below it: 0 / 37.
+  const racingGame = {
+    skillUses: 0,
+    bySkill: [],
+    bridgeSkills: [
+      { skill: "ccc", count: 16 },
+      { skill: "lsp-mcp-server", count: 16 },
+      { skill: "orchestration", count: 5 },
+    ],
+  };
   const wsSkillRows = normalizeWorkspaceNamedUsage(racingGame.bySkill, ["skill", "name"]);
   const wsExposedSkillRows = normalizeWorkspaceNamedUsage(racingGame.bridgeSkills, ["skill", "name"]);
   assert.deepEqual(wsSkillRows, []);
-  assert.deepEqual(wsExposedSkillRows.map((r) => r.name), [ "orchestration" ]);
+  assert.deepEqual(wsExposedSkillRows.map((r) => r.name), [ "ccc", "lsp-mcp-server", "orchestration" ]);
 
+  const racingGameSummary = summarizeWorkspaceSkills(wsSkillRows, wsExposedSkillRows);
+  assert.deepEqual(racingGameSummary, { uses: 0, exposed: 37 });
   const racingGameHtml = renderWorkspaceSkills(wsSkillRows, wsExposedSkillRows);
+  assert.match(racingGameHtml, /label="ccc"/);
+  assert.match(racingGameHtml, /label="lsp-mcp-server"/);
   assert.match(racingGameHtml, /label="orchestration"/);
-  assert.match(racingGameHtml, /value="0 \/ 1"/);
+  assert.match(racingGameHtml, /value="0 \/ 16"/);
+  assert.match(racingGameHtml, /value="0 \/ 5"/);
+
+  // The collapsed workspace row must use the same named rows as the expanded
+  // Skills section, rather than the unrelated context-injection counter.
+  assert.match(rawDashboard, /const wsSkillSummary = summarizeWorkspaceSkills\(wsSkillRows, wsExposedSkillRows\)/);
+  assert.match(rawDashboard, /<td>\$\{wsSkillUsesText\} \/ \$\{wsSkillExposedText\}<\/td>/);
 
   // 2. Confirmed skill use alongside exposure keeps counts distinct: e.g. 5 uses / 10 exposed.
   const lspMcpServer = {
@@ -346,6 +366,8 @@ test('router dashboard combines skill usage and exposure into one Skills section
   };
   const lspSkillRows = normalizeWorkspaceNamedUsage(lspMcpServer.bySkill, ["skill", "name"]);
   const lspExposedRows = normalizeWorkspaceNamedUsage(lspMcpServer.bridgeSkills, ["skill", "name"]);
+  const lspSummary = summarizeWorkspaceSkills(lspSkillRows, lspExposedRows);
+  assert.deepEqual(lspSummary, { uses: 5, exposed: 10 });
   const lspHtml = renderWorkspaceSkills(lspSkillRows, lspExposedRows);
   assert.match(lspHtml, /label="lsp-mcp-server"/);
   assert.match(lspHtml, /value="5 \/ 10"/);
@@ -356,11 +378,15 @@ test('router dashboard combines skill usage and exposure into one Skills section
     '<div class="empty-state">Named skill attribution is unavailable per-workspace</div>',
   );
 
-  // 4. Fail-closed unavailable state on individual dimensions (e.g. bySkill is null -> — / 1)
+  // 4. Fail-closed unavailable state on individual dimensions (e.g. bySkill is null -> — / 5)
+  const unavailUsesSummary = summarizeWorkspaceSkills(null, wsExposedSkillRows);
+  assert.deepEqual(unavailUsesSummary, { uses: null, exposed: 37 });
   const unavailUsesHtml = renderWorkspaceSkills(null, wsExposedSkillRows);
   assert.match(unavailUsesHtml, /label="orchestration"/);
-  assert.match(unavailUsesHtml, /value="— \/ 1"/);
+  assert.match(unavailUsesHtml, /value="— \/ 5"/);
 
+  const unavailExposedSummary = summarizeWorkspaceSkills(lspSkillRows, null);
+  assert.deepEqual(unavailExposedSummary, { uses: 5, exposed: null });
   const unavailExposedHtml = renderWorkspaceSkills(lspSkillRows, null);
   assert.match(unavailExposedHtml, /label="lsp-mcp-server"/);
   assert.match(unavailExposedHtml, /value="5 \/ —"/);

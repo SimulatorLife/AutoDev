@@ -113,9 +113,12 @@ unavailable from both sources, the dashboard handles this explicitly
 response-output tool-call counts (`w.toolCalls`).
 
 The workspace table's **Skill uses / exposed** header reflects confirmed skill
-uses alongside context exposure, matching the combined **"Skills"** section in
+uses alongside skill exposure, matching the combined **"Skills"** section in
 expanded workspace details where confirmed uses and exposed counts are rendered
-together as `uses / exposed` per skill name.
+together as `uses / exposed` per skill name. Each workspace cell and the totals
+footer sum the normalized `bySkill` and `bridgeSkills` rows that the expanded
+section renders; they do not use the separate `skillContextsInjected` counter
+as an exposure total.
 
 ## Reported metrics
 

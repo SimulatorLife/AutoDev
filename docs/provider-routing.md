@@ -586,7 +586,7 @@ The router makes its effective choice visible in two ways:
   unavailable, no-data, partial, executed, and requested states rather than fabricating
   a workspace join or treating requested calls as executed. In expanded workspace details,
   confirmed uses and skill exposure are unified into a single "Skills" section showing
-  `uses / exposed` per skill name, and the workspace table header reads `Skill uses / exposed`.
+  `uses / exposed` per skill name, and the workspace table header reads `Skill uses / exposed`. The workspace row and totals use sums of those same normalized `bySkill` and `bridgeSkills` rows; `skillContextsInjected` remains a separate context-loading metric.
 `GET /status` always
   returns raw JSON regardless of the `Accept` header, including the current
   router instance, live agent activity, in-flight requests (`inFlightRequests`), configured models, cooldown countdowns,

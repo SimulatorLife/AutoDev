@@ -1943,6 +1943,20 @@
       return { rows: usingBridgeToolFallback ? bridgeRows : otlpRows, usingBridgeToolFallback };
     }
 
+    // Summarizes the exact normalized rows rendered by the per-workspace Skills
+    // section. Keeping this calculation beside the renderer prevents the table
+    // row from drifting back to the legacy workspace counters, which describe
+    // different metrics than the named uses / exposure rows.
+    function summarizeWorkspaceSkills(skillRows, exposedSkillRows) {
+      const sumRows = (rows) => rows === null
+        ? null
+        : rows.reduce((total, row) => total + Number(row.count ?? 0), 0);
+      return {
+        uses: sumRows(skillRows),
+        exposed: sumRows(exposedSkillRows),
+      };
+    }
+
     // Renders the combined per-workspace Skills section showing confirmed uses
     // and exposed count together as `uses / exposed` (e.g. `lsp-mcp-server 5 / 10`),
     // keeping confirmed uses (`bySkill`) and exposure (`bridgeSkills`) distinct
@@ -2615,7 +2629,12 @@
           let wsTotalFail = 0;
           let wsTotalDuration = 0;
           let wsTotalTools = 0;
-          let wsTotalSkills = 0;
+          let wsTotalSkillUses = 0;
+          let wsTotalSkillExposed = 0;
+          let hasWsSkillUses = false;
+          let hasWsSkillExposed = false;
+          let hasUnavailableSkillUses = false;
+          let hasUnavailableSkillExposed = false;
           let hasWsTools = false;
 
           wsTbody.innerHTML = sortedWorkspaces.map(([ wsKey, w ]) => {
@@ -2623,8 +2642,6 @@
             const attempts = Number(w.attempts ?? 0);
             const successes = Number(w.successes ?? 0);
             const failures = Number(w.failures ?? 0);
-            const skillUses = Number(w.skillUses ?? 0);
-            const skillContextsInjected = Number(w.skillContextsInjected ?? 0);
             const avgDurationMs = Number(w.averageDurationMs ?? 0);
 
             wsTotalActive += active;
@@ -2632,7 +2649,6 @@
             wsTotalSuccess += successes;
             wsTotalFail += failures;
             wsTotalDuration += (successes + failures) * avgDurationMs;
-            wsTotalSkills += skillUses;
 
             const isExpanded = expandedRows.has(wsKey);
             const subtitle = w.cwd ? `CWD · ${w.cwd}` : "";
@@ -2717,6 +2733,19 @@
             // preserving fail-closed unavailable states.
             const wsSkillRows = normalizeWorkspaceNamedUsage(w.bySkill, ["skill", "name"]);
             const wsExposedSkillRows = normalizeWorkspaceNamedUsage(w.bridgeSkills, ["skill", "name"]);
+            const wsSkillSummary = summarizeWorkspaceSkills(wsSkillRows, wsExposedSkillRows);
+            if (wsSkillSummary.uses === null) hasUnavailableSkillUses = true;
+            else {
+              hasWsSkillUses = true;
+              wsTotalSkillUses += wsSkillSummary.uses;
+            }
+            if (wsSkillSummary.exposed === null) hasUnavailableSkillExposed = true;
+            else {
+              hasWsSkillExposed = true;
+              wsTotalSkillExposed += wsSkillSummary.exposed;
+            }
+            const wsSkillUsesText = wsSkillSummary.uses === null ? "—" : wsSkillSummary.uses.toLocaleString();
+            const wsSkillExposedText = wsSkillSummary.exposed === null ? "—" : wsSkillSummary.exposed.toLocaleString();
             const wsSkillsHtml = renderWorkspaceSkills(wsSkillRows, wsExposedSkillRows);
             const wsMcpRows = normalizeWorkspaceNamedUsage(w.byMcp ?? w.mcpServers, ["server", "name", "mcp"]);
             const wsMcpHtml = renderWorkspaceNamedUsage(wsMcpRows, {
@@ -2731,7 +2760,7 @@
                 <td class="attempts"><outcome-bar fail="${failures}" no-bar="" rate="" success="${successes}"></outcome-bar></td>
                 <td>${durationText(avgDurationMs)}</td>
                 ${wsToolCell}
-                <td>${skillUses.toLocaleString()} / ${skillContextsInjected.toLocaleString()}</td>
+                <td>${wsSkillUsesText} / ${wsSkillExposedText}</td>
               </tr>
               <tr class="details-row" ${isExpanded ? '' : 'hidden=""'}>
                 <td colspan="6">
@@ -2769,6 +2798,8 @@
           const wsTotalToolsCell = hasWsTools
             ? `<td class="attempts"><outcome-bar fail="0" no-bar="" success="${wsTotalTools}"></outcome-bar></td>`
             : `<td class="attempts"><span class="dim">—</span></td>`;
+          const wsTotalSkillUsesText = hasUnavailableSkillUses || !hasWsSkillUses ? "—" : wsTotalSkillUses.toLocaleString();
+          const wsTotalSkillExposedText = hasUnavailableSkillExposed || !hasWsSkillExposed ? "—" : wsTotalSkillExposed.toLocaleString();
           wsTfoot.innerHTML = shouldRenderTotals(sortedWorkspaces.length) ? `
             <tr>
               <th>Totals</th>
@@ -2776,7 +2807,7 @@
               <td class="attempts"><outcome-bar fail="${wsTotalFail}" no-bar="" rate="" success="${wsTotalSuccess}"></outcome-bar></td>
               <td>${wsAvgTurnSec}s</td>
               ${wsTotalToolsCell}
-              <td>${wsTotalSkills.toLocaleString()}</td>
+              <td>${wsTotalSkillUsesText} / ${wsTotalSkillExposedText}</td>
             </tr>
           ` : "";
         }
