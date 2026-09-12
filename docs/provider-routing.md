@@ -629,6 +629,11 @@ The router cleanly separates user-facing agent workflow activity from transport-
   `usage.totals.active`, so it stays consistent with (sums to) that
   canonical total. One subagent active in one workspace renders as exactly
   `1` agent, `1` subagent, and `1` workspace.
+- **Parent orchestrators remain live while children work:** If a live
+  subagent is attributed to a workspace but its parent orchestrator record has
+  already settled its most recent model request, the router infers one active
+  orchestrator for that workspace. The inferred parent remains only while
+  child activity is live or fresh and does not add another count per slot.
 - **Workspace attribution is non-additive context, not a KPI component:**
   The KPI's `workspaces with active agents` count is derived from the live
   `status.usage.activity.byWorkspace` snapshot (live states only, excluding

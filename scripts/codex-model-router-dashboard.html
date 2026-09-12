@@ -26,11 +26,10 @@
       --skip: #d29922;
 
       /* typography */
-      --font-base: 14px;
+      --font-base: 16px;
       --font-title: 24px;
-      --font-code: 12px;
-      --font-sm: 11px;
-      --font-xs: 10px;
+      --font-code: 14px;
+      --font-sm: 12px;
       --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
       --caps-spacing: .05em;
 
@@ -162,7 +161,7 @@
     }
 
     .model-mcp-details {
-      font-size: var(--font-xs);
+      font-size: var(--font-sm);
       color: var(--text-muted);
       padding-left: var(--gap-xs);
       margin-top: 1px;
@@ -319,7 +318,7 @@
     .skill-breakdown-group h3,
     .ops-group h3 {
       color: var(--muted);
-      font-size: var(--font-xs);
+      font-size: var(--font-sm);
       font-weight: 700;
       text-transform: uppercase;
       letter-spacing: var(--caps-spacing);
@@ -573,13 +572,13 @@
     }
 
     .cooldown-badge {
-      font-size: var(--font-xs);
+      font-size: var(--font-sm);
       font-family: var(--font-mono);
       white-space: nowrap;
     }
 
     .limit-details {
-      font-size: var(--font-xs);
+      font-size: var(--font-sm);
       margin-top: 2px;
     }
   </style>
@@ -690,7 +689,8 @@
 
     <!-- 4. Usage by Workspace -->
     <dashboard-panel id="workspace-usage-section" open="" summary="" title="Usage by workspace">
-      <div class="section-note">Click a workspace to expand roles, models, named tool attribution, skill usage, and MCP servers.</div>
+      <div class="section-note">Click a workspace to expand roles, models, named tool attribution, skill usage, and MCP
+        servers.</div>
       <div class="table-wrap">
         <table id="workspace-usage-table">
           <thead>
@@ -945,7 +945,7 @@
       .label {
         margin-bottom: 5px;
         color: var(--muted);
-        font-size: var(--font-xs);
+        font-size: var(--font-sm);
         font-weight: 700;
         letter-spacing: var(--caps-spacing);
         text-transform: uppercase;
@@ -1105,7 +1105,7 @@
         gap: var(--gap-lg);
         margin: -3px 0 9px;
         color: var(--muted);
-        font-size: var(--font-xs);
+        font-size: var(--font-sm);
       }
 
       span {
@@ -1270,7 +1270,7 @@
       .chevron {
         width: 12px;
         color: var(--subtle);
-        font-size: var(--font-xs);
+        font-size: var(--font-sm);
         transition: var(--transition-fast);
       }
 
@@ -1287,7 +1287,7 @@
         padding-left: 20px;
         margin-top: 3px;
         color: var(--subtle);
-        font-size: var(--font-xs);
+        font-size: var(--font-sm);
         line-height: 1.2;
       }
 
@@ -1333,7 +1333,7 @@
       .caret {
         width: 12px;
         color: var(--subtle);
-        font-size: var(--font-xs);
+        font-size: var(--font-sm);
         transition: var(--transition-fast);
       }
 
@@ -2009,8 +2009,8 @@
       }
 
       const statusPriorities = status?.routing?.priorities;
-      if (statusPriorities && statusPriorities[providerName] != null) {
-        const val = statusPriorities[providerName];
+      if (statusPriorities && statusPriorities[ providerName ] != null) {
+        const val = statusPriorities[ providerName ];
         if (typeof val === "object" && !Array.isArray(val)) {
           return Object.entries(val).map(([ tier, prio ]) => `${tier}: ${prio}`).join(" · ");
         }
@@ -2023,7 +2023,7 @@
         for (const [ tier, groups ] of Object.entries(providerGroups)) {
           if (Array.isArray(groups)) {
             for (let gIdx = 0; gIdx < groups.length; gIdx++) {
-              const group = groups[gIdx];
+              const group = groups[ gIdx ];
               if (Array.isArray(group) && group.some((name) => typeof name === "string" && name.toLowerCase() === providerName.toLowerCase())) {
                 tierPrios.push(`${tier}: P${gIdx + 1}`);
                 break;
@@ -2061,7 +2061,7 @@
       if (rawLimits != null) {
         if (typeof rawLimits === "object" && !Array.isArray(rawLimits)) {
           const entries = Object.entries(rawLimits)
-            .filter(([ k ]) => !["cooldownKind", "cooldownFailureClass", "cooldownResetsAt", "cooldownUntil", "cooldownRemainingMs", "lastResortEligible"].includes(k))
+            .filter(([ k ]) => ![ "cooldownKind", "cooldownFailureClass", "cooldownResetsAt", "cooldownUntil", "cooldownRemainingMs", "lastResortEligible" ].includes(k))
             .filter(([ , v ]) => v != null && v !== "")
             .map(([ k, v ]) => `${escapeHtml(k)}: ${escapeHtml(String(v))}`);
           if (entries.length) {
@@ -2110,7 +2110,7 @@
           try {
             const data = await response.json();
             errDetail = data?.error?.message ?? data?.message ?? data?.error ?? errDetail;
-          } catch {}
+          } catch { }
           throw new Error(`Failed to ${shouldEnable ? "enable" : "disable"} provider "${providerName}": ${errDetail}`);
         }
 
@@ -2192,11 +2192,11 @@
     function countActiveWorkspaces(status) {
       const activityByWorkspace = status?.usage?.activity?.byWorkspace;
       if (activityByWorkspace && typeof activityByWorkspace === "object") {
-        const liveStates = ["active", "resumed", "tool_wait", "user_wait", "subagent_wait"];
-        return Object.entries(activityByWorkspace).filter(([workspace, states]) =>
+        const liveStates = [ "active", "resumed", "tool_wait", "user_wait", "subagent_wait" ];
+        return Object.entries(activityByWorkspace).filter(([ workspace, states ]) =>
           workspace !== "unattributed" && workspace !== "unknown" &&
           states && typeof states === "object" &&
-          liveStates.some((state) => Number(states[state] ?? 0) > 0)
+          liveStates.some((state) => Number(states[ state ] ?? 0) > 0)
         ).length;
       }
       return Object.values(status?.usage?.byWorkspace ?? {}).filter((workspace) => Number(workspace?.active ?? 0) > 0).length;
@@ -2422,7 +2422,7 @@
       // they exist; unattributed/unknown buckets remain visible in /status.
       const hasExplicitRolePartition = mcpServersList.some((server) => {
         const roles = extractServerRoles(server);
-        return [...roles].some((role) => role !== "orchestrator" && role !== "unattributed" && role !== "unknown");
+        return [ ...roles ].some((role) => role !== "orchestrator" && role !== "unattributed" && role !== "unknown");
       }) || Object.keys(mcpByRoleSummary ?? {}).some((role) => role !== "orchestrator" && role !== "unattributed" && role !== "unknown");
       if (!hasExplicitRolePartition) {
         const observed = Number(mcpSummary?.observed ?? 0);
@@ -2650,8 +2650,8 @@
             // bridge's `tool_executed` observations (`bridgeTools`) only fill
             // in when that join is unavailable or empty, so a workspace never
             // has both sources summed into the same total (no double-count).
-            const otlpToolRows = normalizeWorkspaceNamedUsage(w.byTool, ["tool", "name"]);
-            const bridgeToolRows = normalizeWorkspaceNamedUsage(w.bridgeTools, ["tool", "name"]);
+            const otlpToolRows = normalizeWorkspaceNamedUsage(w.byTool, [ "tool", "name" ]);
+            const bridgeToolRows = normalizeWorkspaceNamedUsage(w.bridgeTools, [ "tool", "name" ]);
             const { rows: wsToolRows } = resolveWorkspaceToolRows(otlpToolRows, bridgeToolRows);
             const wsToolsHtml = renderWorkspaceNamedUsage(wsToolRows, {
               unavailableLabel: "Named tool telemetry is unavailable per-workspace",
@@ -2675,8 +2675,8 @@
             // instead of rendering the generic "nothing observed" empty
             // state, which would otherwise read as if nothing happened here
             // at all.
-            const wsSkillRows = normalizeWorkspaceNamedUsage(w.bySkill, ["skill", "name"]);
-            const wsExposedSkillRows = normalizeWorkspaceNamedUsage(w.bridgeSkills, ["skill", "name"]);
+            const wsSkillRows = normalizeWorkspaceNamedUsage(w.bySkill, [ "skill", "name" ]);
+            const wsExposedSkillRows = normalizeWorkspaceNamedUsage(w.bridgeSkills, [ "skill", "name" ]);
             const hasExposedSkills = Array.isArray(wsExposedSkillRows) && wsExposedSkillRows.length > 0;
             const wsSkillsHtml = renderWorkspaceNamedUsage(wsSkillRows, {
               unavailableLabel: "Named skill attribution is unavailable per-workspace",
@@ -2686,7 +2686,7 @@
               unavailableLabel: "Skill exposure telemetry is unavailable per-workspace",
               emptyLabel: "No skills exposed to this workspace yet",
             });
-            const wsMcpRows = normalizeWorkspaceNamedUsage(w.byMcp ?? w.mcpServers, ["server", "name", "mcp"]);
+            const wsMcpRows = normalizeWorkspaceNamedUsage(w.byMcp ?? w.mcpServers, [ "server", "name", "mcp" ]);
             const wsMcpHtml = renderWorkspaceNamedUsage(wsMcpRows, {
               unavailableLabel: "MCP server telemetry is unavailable per-workspace",
               emptyLabel: "No MCP servers observed for this workspace yet",

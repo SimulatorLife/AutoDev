@@ -5370,7 +5370,7 @@ test("agent activity: a matured wait state expires to stale under a fake clock, 
   assert.equal(terminal.getState("s2"), "failed");
 });
 
-test("agent activity: duplicate terminal events are idempotent and never reopen a settled record", () => {
+test("agent activity: duplicate terminal events are idempotent while later turns reopen the session", () => {
   const tracker = createAgentActivityTracker({ ttlMs: 60000, now: () => 1000 });
   tracker.beginRequest("session-a", { requestId: "req-1", provider: "codex", model: "gpt-5" });
   tracker.endRequest("session-a", { requestId: "req-1", outcome: "failure" });
@@ -5378,10 +5378,10 @@ test("agent activity: duplicate terminal events are idempotent and never reopen 
   // Redelivering the same result (same requestId) is a no-op.
   tracker.endRequest("session-a", { requestId: "req-1", outcome: "success", hasToolCalls: true });
   assert.equal(tracker.getState("session-a"), "failed", "a settled requestId cannot flip a terminal record");
-  // A later begin for a *different* requestId also cannot reopen a terminal record.
+  // A different requestId is a new turn for the same identified session.
   const afterBegin = tracker.beginRequest("session-a", { requestId: "req-2", provider: "codex", model: "gpt-5" });
-  assert.equal(afterBegin.state, "failed");
-  assert.equal(tracker.countLive({}), 0);
+  assert.equal(afterBegin.state, "active");
+  assert.equal(tracker.countLive({}), 1);
 
   // The same guarantee holds for explicit lifecycle events: a duplicated
   // "finished" (matched by eventId) does not double-apply, and a "failed"
@@ -5710,7 +5710,7 @@ test("agent activity: subagent_slot records do not inflate liveActivity or snaps
   assert.equal(tracker.countLive({ kind: "subagent_slot", tag: "agent-session" }), 2);
 });
 
-test("router: one subagent active in one workspace produces exactly one active agent", () => {
+test("router: a live subagent keeps its workspace orchestrator active", () => {
   resetRouterTelemetry();
   agentActivity.reset();
   resetConcurrencyTelemetry();
@@ -5722,6 +5722,7 @@ test("router: one subagent active in one workspace produces exactly one active a
     provider: "minimax",
     model: "MiniMax-M3",
     role: "worker",
+    origin: "subagent",
     workspace: "AutoDev",
   });
 
@@ -5729,14 +5730,16 @@ test("router: one subagent active in one workspace produces exactly one active a
   assert.equal(tryAcquireSubagentSlot("subagent-session"), null);
 
   const status = getRouterStatus();
-  // Canonical liveActivity count must be 1, not 2 (slot excluded)
-  assert.equal(status.liveActivity, 1);
+  // The subagent is one agent and its inferred parent orchestrator is another;
+  // the admission slot itself is still excluded from both counts.
+  assert.equal(status.liveActivity, 2);
 
   const usage = usageStatus();
-  assert.equal(usage.totals.active, 1);
+  assert.equal(usage.totals.active, 2);
   assert.equal(usage.activity.byRole.worker.active, 1);
-  assert.equal(usage.activity.byRole.orchestrator?.active ?? 0, 0);
-  // Workspace dimension has 1 active agent working in it, which is the same 1 agent
+  assert.equal(usage.byRole.orchestrator.active, 1);
+  // Workspace dimension still has 1 active agent working in it; it is not
+  // added to the two-agent total.
   assert.equal(usage.activity.byWorkspace.AutoDev.active, 1);
 
   agentActivity.reset();

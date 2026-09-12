@@ -53,3 +53,7 @@ pnpm run test:python
 AutoDev owns the organization workflows and local AI/provider setup. RacingGame intentionally retains only product-specific tooling such as build, performance, CSS-token, and source-boundary scripts; those are not organization automation and are not duplicated here.
 
 See the [live metrics dashboard](https://github.com/SimulatorLife/AutoDev/issues/2), [`docs/organization-routing.md`](docs/organization-routing.md) for routing, and [`docs/merge-conflict-handling.md`](docs/merge-conflict-handling.md) for conflict recovery, [`docs/private-target-validation.md`](docs/private-target-validation.md) for private-repository validation, and [`docs/provider-routing.md`](docs/provider-routing.md) plus [`docs/local-setup.md`](docs/local-setup.md) for local AI/provider setup.
+
+## TODO
+
+- [ ] **FEAT**: Allow for enabling/disabling a model-provider at finer granularity: (1) as an orchestrator and (2) as a subagent. We current;y only have one global toggle for each provider, we need two separate toggles for each provider. Should use the same ios-like toggle switch as the existing one.

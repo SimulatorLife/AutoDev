@@ -202,10 +202,26 @@ export function createAgentActivityTracker({ ttlMs = resolveAgentActivityTtlMs()
       return snapshotRecord(rec, at);
     }
     if (TERMINAL_STATES.has(rec.state)) {
-      // A terminal record never reopens implicitly; a caller that wants a
-      // fresh activity span for the same subject key must be explicit about
-      // it (there is no such method by design -- callers mint a new subject,
-      // e.g. by including the requestId, when they mean a new span).
+      // A terminal record is closed for the request that settled it, but an
+      // identified session can receive a later turn under the same subject.
+      // A different requestId starts that new activity span; the same id
+      // remains an idempotent duplicate and never reopens.
+      if (requestId && requestId !== rec.requestId) {
+        const at = Number.isFinite(timestamp) ? timestamp : now();
+        rec.state = "active";
+        rec.startedAt = at;
+        rec.updatedAt = at;
+        rec.provider = provider ?? rec.provider;
+        rec.model = model ?? rec.model;
+        rec.role = role ?? rec.role;
+        rec.origin = origin ?? rec.origin;
+        rec.workspace = workspace ?? rec.workspace;
+        rec.requestId = requestId;
+        rec.openRequestId = requestId;
+        rec.settledRequestIds.clear();
+        rec.lifecycleEventIds.clear();
+        return snapshotRecord(rec, at);
+      }
       return snapshotRecord(rec, timestamp ?? now());
     }
     const wasWaiting = WAIT_STATES.has(rec.state);

@@ -509,16 +509,15 @@ test('dashboard KPI agent total uses the canonical live-agent count and never ma
     `${countMatch[0]}; ${kpiSection[0]}; return computeKpiAgentTotals;`
   )();
 
-  // One subagent active in one workspace must count as exactly one agent,
-  // one subagent, and one workspace -- not inflated by an unrelated
-  // per-provider or concurrency-slot counter that happens to report a
-  // larger (or smaller) number for the same moment in time.
+  // One subagent active in one workspace keeps its inferred orchestrator
+  // active too: two agents, one subagent, and one workspace. The workspace
+  // dimension is still not added to the agent total.
   const oneSubagentOneWorkspaceStatus = {
-    liveActivity: 1,
+    liveActivity: 2,
     usage: {
-      totals: { active: 1 },
+      totals: { active: 2 },
       byRole: {
-        orchestrator: { active: 0 },
+        orchestrator: { active: 1 },
         worker: { active: 1 },
       },
       byWorkspace: {
@@ -534,8 +533,8 @@ test('dashboard KPI agent total uses the canonical live-agent count and never ma
     },
   };
   assert.deepEqual(computeKpiAgentTotals(oneSubagentOneWorkspaceStatus), {
-    totalActive: 1,
-    orchActive: 0,
+    totalActive: 2,
+    orchActive: 1,
     subActive: 1,
     activeWorkspaces: 1,
   });

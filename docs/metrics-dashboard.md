@@ -305,6 +305,11 @@ The router and dashboard cleanly separate **live agent activity** from **in-flig
   total above rather than being independently maxed against a different
   counter (e.g. a concurrency-slot count that can under- or over-count
   relative to role-attributed activity).
+- **Parent orchestrators remain live while children work:** When a live
+  subagent is attributed to a workspace without a currently live orchestrator
+  record, the router infers one active orchestrator for that workspace. This
+  prevents the parent from dropping to zero during a child turn; the inferred
+  parent disappears when child activity ends or becomes stale.
 - **Concurrency slot counts (`status.concurrency.activeSubagentThreads`,
   `activeSessions`) are scheduling context, not agent counts:** These
   fields describe how many subagent execution slots or session slots are

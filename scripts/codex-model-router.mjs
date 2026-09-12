@@ -24,7 +24,7 @@ import { CodexStateCollector, loadCodexStateCollectorConfig } from "./codex/lib/
 // A single shared state machine backs both the usage-table "live activity"
 // view and the concurrency table's subagent-slot accounting so the two never
 // disagree about what "still active" means.
-import { AGENT_ACTIVITY_STATES, createAgentActivityTracker, resolveAgentActivityTtlMs } from "./codex/lib/agent-activity.mjs";
+import { AGENT_ACTIVITY_KINDS, AGENT_ACTIVITY_STATES, createAgentActivityTracker, resolveAgentActivityTtlMs } from "./codex/lib/agent-activity.mjs";
 
 const HOST = process.env.CODEX_MODEL_ROUTER_HOST ?? "127.0.0.1";
 const PORT = Number.parseInt(process.env.CODEX_MODEL_ROUTER_PORT ?? "4100", 10);
@@ -604,23 +604,67 @@ function activityFilter(dimension, key, extra = {}) {
   return filter;
 }
 
+function countLiveAgentActivity(filter = {}, at = Date.now()) {
+  return AGENT_ACTIVITY_KINDS.reduce((total, kind) => total + agentActivity.countLive({ ...filter, kind }, at), 0);
+}
+
+/**
+ * A role-based child request proves that an orchestrator is still managing
+ * work even when the parent's last model turn has already settled. The
+ * router does not receive a trustworthy parent-thread id for every native
+ * spawn, so workspace is the conservative correlation boundary: infer one
+ * orchestrator for each workspace containing live subagent-origin activity
+ * without a live orchestrator record of its own.
+ */
+function inferredOrchestratorCount({ workspace, at = Date.now() } = {}) {
+  const activity = agentActivity.snapshot(at);
+  const workspaces = workspace !== undefined
+    ? [workspace]
+    : [...new Set([
+      ...Object.keys(activity.byWorkspace ?? {}).filter((key) => key !== "unattributed" && key !== "unknown"),
+      null,
+    ])];
+  return workspaces.reduce((total, key) => {
+    const workspaceFilter = key === null ? { workspace: null } : { workspace: key };
+    const hasOrchestrator = countLiveAgentActivity({ origin: "orchestrator", ...workspaceFilter }, at) > 0;
+    const roleChildActivity = ROLE_NAMES
+      .filter((role) => role !== "orchestrator")
+      .some((role) => countLiveAgentActivity({ role, ...workspaceFilter }, at) > 0);
+    const hasChildActivity = countLiveAgentActivity({ origin: "subagent", ...workspaceFilter }, at) > 0 || roleChildActivity;
+    return total + (hasChildActivity && !hasOrchestrator ? 1 : 0);
+  }, 0);
+}
+
+function canonicalLiveAgentCount(at = Date.now()) {
+  return countLiveAgentActivity({}, at) + inferredOrchestratorCount({ at });
+}
+
 function usageSnapshot(collection, dimension, extraFilter = {}) {
   return Object.fromEntries(Object.entries(collection).map(([key, bucket]) => [key, {
     ...bucket,
-    active: agentActivity.countLive(activityFilter(dimension, key, extraFilter)),
+    active: countLiveAgentActivity(activityFilter(dimension, key, extraFilter))
+      + (dimension === "role" && key === "orchestrator" ? inferredOrchestratorCount({ workspace: extraFilter.workspace, at: Date.now() }) : 0),
     averageDurationMs: bucket.successes + bucket.failures > 0 ? Math.round(bucket.durationMs / (bucket.successes + bucket.failures)) : 0,
   }]));
 }
 
 
 function usageStatus() {
+  const at = Date.now();
+  const rawActivity = agentActivity.snapshot(at);
+  const inferredOrchestrators = inferredOrchestratorCount({ at });
+  const byRole = usageSnapshot(usageTelemetry.byRole, "role");
+  byRole.orchestrator = {
+    ...(byRole.orchestrator ?? emptyUsageBucket()),
+    active: Number(byRole.orchestrator?.active ?? 0) + inferredOrchestrators,
+  };
   return {
     // Live activity that spans request gaps (tool_wait/user_wait/
     // subagent_wait), grouped by provider, model, role, origin, and workspace.
     // Every public bucket's `active` field is derived from this snapshot.
-    activity: agentActivity.snapshot(),
-    totals: { ...usageTelemetry.totals, active: agentActivity.countLive(), averageDurationMs: usageTelemetry.totals.successes + usageTelemetry.totals.failures > 0 ? Math.round(usageTelemetry.totals.durationMs / (usageTelemetry.totals.successes + usageTelemetry.totals.failures)) : 0 },
-    byRole: usageSnapshot(usageTelemetry.byRole, "role"),
+    activity: { ...rawActivity, live: rawActivity.live + inferredOrchestrators, inferredOrchestrators },
+    totals: { ...usageTelemetry.totals, active: canonicalLiveAgentCount(at), averageDurationMs: usageTelemetry.totals.successes + usageTelemetry.totals.failures > 0 ? Math.round(usageTelemetry.totals.durationMs / (usageTelemetry.totals.successes + usageTelemetry.totals.failures)) : 0 },
+    byRole,
     byModel: usageSnapshot(usageTelemetry.byModel, "model"),
     byOrigin: usageSnapshot(usageTelemetry.byOrigin, "origin"),
     byWorkspace: Object.fromEntries(Object.entries(usageTelemetry.byWorkspace).map(([key, bucket]) => {
@@ -637,7 +681,7 @@ function usageStatus() {
       const formatBridgeSkills = (map) => [...map.entries()].map(([skill, value]) => ({ skill, count: value })).sort((a, b) => a.skill.localeCompare(b.skill));
       return [key, {
         ...publicBucket,
-        active: agentActivity.countLive({ workspace: key }),
+        active: countLiveAgentActivity({ workspace: key }),
         averageDurationMs: bucket.successes + bucket.failures > 0 ? Math.round(bucket.durationMs / (bucket.successes + bucket.failures)) : 0,
         skillUses: bucket.skillUses ?? 0,
         skillContextsInjected: bucket.skillContextsInjected ?? 0,
@@ -3134,7 +3178,7 @@ function getRouterStatus(now = Date.now()) {
     const state = providerState(route.provider);
     const cooldown = providerCooldown(route.provider, now);
     const inFlightRequests = getActiveRequests(route.provider);
-    const active = agentActivity.countLive({ provider: route.provider });
+    const active = countLiveAgentActivity({ provider: route.provider });
     const coolingDown = cooldown !== null;
     const enabled = isProviderEnabled(route.provider);
     const tierPrios = [];
@@ -3218,7 +3262,7 @@ function getRouterStatus(now = Date.now()) {
     inFlightRequests: Object.fromEntries(activeProviderRequests),
     // Total live agent activity (spans request gaps), independent of role/
     // provider dimension -- the same count usage.activity.live reports.
-    liveActivity: agentActivity.countLive(),
+    liveActivity: canonicalLiveAgentCount(),
     providers,
     recentEvents: [...recentRouterEvents].reverse(),
     codexState: codexStateStatus(),
@@ -4020,7 +4064,7 @@ function shuffleGroup(group, random = Math.random) {
   }
   items.sort((a, b) => {
     const failureDifference = (providerFailureStreaks.get(a) ?? 0) - (providerFailureStreaks.get(b) ?? 0);
-    return failureDifference || agentActivity.countLive({ provider: a }) - agentActivity.countLive({ provider: b });
+    return failureDifference || countLiveAgentActivity({ provider: a }) - countLiveAgentActivity({ provider: b });
   });
   return items;
 }
@@ -5264,7 +5308,7 @@ async function proxyFallbackChain(response, { candidates, role = null, origin = 
   // the same cooling provider at once.
   if (!deadlineReached) {
     const eligible = skipped
-      .filter((route) => isProviderEnabled(route.provider) && !attempted.has(route.provider) && cooldownAllowsLastResort(providerCooldown(route.provider)) && agentActivity.countLive({ provider: route.provider }) === 0)
+      .filter((route) => isProviderEnabled(route.provider) && !attempted.has(route.provider) && cooldownAllowsLastResort(providerCooldown(route.provider)) && countLiveAgentActivity({ provider: route.provider }) === 0)
       .sort((a, b) => (providerCooldown(a.provider)?.until ?? 0) - (providerCooldown(b.provider)?.until ?? 0))
       .slice(0, LAST_RESORT_MAX_ATTEMPTS);
     for (const route of eligible) {
