@@ -520,7 +520,7 @@
 
     .btn-provider-toggle[data-action="disable"],
     .btn-provider-toggle[aria-checked="true"] {
-      background: var(--good);
+      background: #34c759;
     }
 
     .btn-provider-toggle[data-action="disable"]::after,
@@ -683,7 +683,7 @@
 
     <!-- 4. Usage by Workspace -->
     <dashboard-panel id="workspace-usage-section" open="" summary="" title="Usage by workspace">
-      <div class="section-note">Click a workspace to expand roles, models, named tool attribution, skill usage, and MCP
+      <div class="section-note">Click a workspace to expand roles, models, named tool attribution, skills, and MCP
         servers.</div>
       <div class="table-wrap">
         <table id="workspace-usage-table">
@@ -694,7 +694,7 @@
               <th>Attempts</th>
               <th>Avg turn</th>
               <th>Tool calls</th>
-              <th>Skill uses / injected</th>
+              <th>Skill uses / exposed</th>
             </tr>
           </thead>
           <tbody id="workspace-usage">
@@ -1550,7 +1550,10 @@
       updateContent() {
         if (!this.shadowRoot) return;
         const root = this.shadowRoot;
-        const value = Number(this.getAttribute("value") ?? 0);
+        const rawValue = this.getAttribute("value") ?? "";
+        const numValue = Number(rawValue);
+        const isNumeric = rawValue !== "" && !Number.isNaN(numValue);
+        const value = isNumeric ? numValue : 0;
         const success = Number(this.getAttribute("success") ?? value);
         const fail = Number(this.getAttribute("fail") ?? 0);
         const total = success + fail;
@@ -1563,7 +1566,7 @@
         const activeSlot = root.querySelector(".active-slot");
 
         if (labelEl) labelEl.textContent = this.getAttribute("label") ?? "";
-        if (valueEl) valueEl.textContent = value.toLocaleString();
+        if (valueEl) valueEl.textContent = isNumeric ? numValue.toLocaleString() : rawValue;
         if (fillEl) fillEl.style.setProperty("--fill", `${this.getAttribute("fill") ?? 100}%`);
 
         const successPct = total > 0 ? (success / total * 100) : 0;
@@ -1940,14 +1943,73 @@
       return { rows: usingBridgeToolFallback ? bridgeRows : otlpRows, usingBridgeToolFallback };
     }
 
-    // The confirmed-use empty state must not read as if nothing happened on
-    // this workspace when skills were in fact exposed to it (bridge
-    // `skill_exposed`) but none have a confirmed use yet -- it points at the
-    // Skills exposed section instead of the generic empty-state copy.
-    function workspaceSkillUsageEmptyLabel(hasExposedSkills) {
-      return hasExposedSkills
-        ? "No confirmed skill uses yet for this workspace -- see Skills exposed below"
-        : "No named skill uses observed for this workspace yet";
+    // Renders the combined per-workspace Skills section showing confirmed uses
+    // and exposed count together as `uses / exposed` (e.g. `lsp-mcp-server 5 / 10`),
+    // keeping confirmed uses (`bySkill`) and exposure (`bridgeSkills`) distinct
+    // while preserving fail-closed unavailable states.
+    function renderWorkspaceSkills(skillRows, exposedSkillRows) {
+      if (skillRows === null && exposedSkillRows === null) {
+        return `<div class="empty-state">Named skill attribution is unavailable per-workspace</div>`;
+      }
+      const skillMap = new Map();
+      if (Array.isArray(skillRows)) {
+        for (const r of skillRows) {
+          skillMap.set(r.name, {
+            name: r.name,
+            uses: r.count,
+            exposed: exposedSkillRows === null ? null : 0,
+            ok: r.ok,
+            err: r.err,
+            hasOutcomes: r.hasOutcomes,
+            source: r.source,
+            server: r.server,
+          });
+        }
+      }
+      if (Array.isArray(exposedSkillRows)) {
+        for (const r of exposedSkillRows) {
+          const existing = skillMap.get(r.name);
+          if (existing) {
+            existing.exposed = r.count;
+            if (!existing.source && r.source) existing.source = r.source;
+            if (!existing.server && r.server) existing.server = r.server;
+          } else {
+            skillMap.set(r.name, {
+              name: r.name,
+              uses: skillRows === null ? null : 0,
+              exposed: r.count,
+              ok: 0,
+              err: 0,
+              hasOutcomes: false,
+              source: r.source,
+              server: r.server,
+            });
+          }
+        }
+      }
+      if (!skillMap.size) {
+        return `<div class="empty-state">No named skill uses observed for this workspace yet</div>`;
+      }
+      const sorted = [ ...skillMap.values() ].sort((a, b) => {
+        const usesA = a.uses ?? 0;
+        const usesB = b.uses ?? 0;
+        if (usesB !== usesA) return usesB - usesA;
+        const expA = a.exposed ?? 0;
+        const expB = b.exposed ?? 0;
+        if (expB !== expA) return expB - expA;
+        return a.name.localeCompare(b.name);
+      });
+      const maxCount = Math.max(...sorted.map((s) => Math.max(s.uses ?? 0, s.exposed ?? 0)), 1);
+      return `<div class="metric-list">${sorted.map((s) => {
+        const usesText = s.uses === null ? "—" : s.uses.toLocaleString();
+        const expText = s.exposed === null ? "—" : s.exposed.toLocaleString();
+        const valueStr = `${usesText} / ${expText}`;
+        const fill = (Math.max(s.uses ?? 0, s.exposed ?? 0) / maxCount * 100).toFixed(1);
+        const originSuffix = [ s.source, s.server ].filter(Boolean).join(" · ");
+        const label = originSuffix ? `${s.name} (${originSuffix})` : s.name;
+        const outcomeAttrs = s.hasOutcomes ? `success="${s.ok}" fail="${s.err}"` : `success="${s.uses ?? 0}" fail="0" neutral=""`;
+        return `<metric-bar fill="${fill}" label="${escapeHtml(label)}" value="${escapeHtml(valueStr)}" ${outcomeAttrs}></metric-bar>`;
+      }).join("")}</div>`;
     }
 
     // Renders a normalized per-workspace named-attribution row list, with
@@ -2633,8 +2695,8 @@
             // bridge's `tool_executed` observations (`bridgeTools`) only fill
             // in when that join is unavailable or empty, so a workspace never
             // has both sources summed into the same total (no double-count).
-            const otlpToolRows = normalizeWorkspaceNamedUsage(w.byTool, [ "tool", "name" ]);
-            const bridgeToolRows = normalizeWorkspaceNamedUsage(w.bridgeTools, [ "tool", "name" ]);
+            const otlpToolRows = normalizeWorkspaceNamedUsage(w.byTool, ["tool", "name"]);
+            const bridgeToolRows = normalizeWorkspaceNamedUsage(w.bridgeTools, ["tool", "name"]);
             const { rows: wsToolRows } = resolveWorkspaceToolRows(otlpToolRows, bridgeToolRows);
             const wsToolsHtml = renderWorkspaceNamedUsage(wsToolRows, {
               unavailableLabel: "Named tool telemetry is unavailable per-workspace",
@@ -2649,27 +2711,14 @@
             }
             // Skills: `bySkill` is the confirmed-use join (OTLP `skill_used` /
             // deduplicated bridge `skill_used`); `bridgeSkills` is the
-            // exposure join (bridge `skill_exposed`). These are two different
-            // claims -- a workspace can have a skill exposed to it long
-            // before (or without ever) confirming a use -- so they are kept
-            // as distinct sections rather than merged into one count. When
-            // there are no confirmed uses yet but skills were exposed, the
-            // confirmed-use panel says so and points at the exposure panel
-            // instead of rendering the generic "nothing observed" empty
-            // state, which would otherwise read as if nothing happened here
-            // at all.
-            const wsSkillRows = normalizeWorkspaceNamedUsage(w.bySkill, [ "skill", "name" ]);
-            const wsExposedSkillRows = normalizeWorkspaceNamedUsage(w.bridgeSkills, [ "skill", "name" ]);
-            const hasExposedSkills = Array.isArray(wsExposedSkillRows) && wsExposedSkillRows.length > 0;
-            const wsSkillsHtml = renderWorkspaceNamedUsage(wsSkillRows, {
-              unavailableLabel: "Named skill attribution is unavailable per-workspace",
-              emptyLabel: workspaceSkillUsageEmptyLabel(hasExposedSkills),
-            });
-            const wsExposedSkillsHtml = renderWorkspaceNamedUsage(wsExposedSkillRows, {
-              unavailableLabel: "Skill exposure telemetry is unavailable per-workspace",
-              emptyLabel: "No skills exposed to this workspace yet",
-            });
-            const wsMcpRows = normalizeWorkspaceNamedUsage(w.byMcp ?? w.mcpServers, [ "server", "name", "mcp" ]);
+            // exposure join (bridge `skill_exposed`). These two distinct
+            // claims are rendered together in the Skills section as `uses / exposed`
+            // per skill name, keeping the underlying semantics distinct and
+            // preserving fail-closed unavailable states.
+            const wsSkillRows = normalizeWorkspaceNamedUsage(w.bySkill, ["skill", "name"]);
+            const wsExposedSkillRows = normalizeWorkspaceNamedUsage(w.bridgeSkills, ["skill", "name"]);
+            const wsSkillsHtml = renderWorkspaceSkills(wsSkillRows, wsExposedSkillRows);
+            const wsMcpRows = normalizeWorkspaceNamedUsage(w.byMcp ?? w.mcpServers, ["server", "name", "mcp"]);
             const wsMcpHtml = renderWorkspaceNamedUsage(wsMcpRows, {
               unavailableLabel: "MCP server telemetry is unavailable per-workspace",
               emptyLabel: "No MCP servers observed for this workspace yet",
@@ -2702,12 +2751,8 @@
                       ${wsToolsHtml}
                     </section>
                     <section class="detail-group">
-                      <h2>Skill usage</h2>
+                      <h2>Skills</h2>
                       ${wsSkillsHtml}
-                    </section>
-                    <section class="detail-group">
-                      <h2>Skills exposed</h2>
-                      ${wsExposedSkillsHtml}
                     </section>
                     <section class="detail-group">
                       <h2>MCP servers</h2>

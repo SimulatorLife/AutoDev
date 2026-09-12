@@ -63,25 +63,20 @@ mean different things to an operator debugging a workspace with no visible
 tool or server activity. Model views inside expanded workspaces also embed
 model-level MCP counts and server breakdowns.
 
-Expanded workspace rows render a separate **"Skills exposed"** section from
-**"Skill usage"**: `status.usage.byWorkspace[*].bySkill` is the confirmed-use
-join (explicit `invoke_type=explicit` activations and verified `SKILL.md`
-reads -- the same source as `skillUses`), while `...bridgeSkills` is the
-exposure join, populated from bridge `skill_exposed` events (a skill made
-available to a session, e.g. via a role contract, with no claim that it was
-ever read or invoked). These are two different facts about a workspace and
-are never merged into one count or one section: a workspace can have skills
-exposed to it long before -- or without ever -- confirming a use. When
-`bySkill` is empty for a workspace that does have `bridgeSkills` entries, the
-"Skill usage" section says **"No confirmed skill uses yet for this workspace
--- see Skills exposed below"** instead of the generic **"No named skill uses
-observed for this workspace yet"** empty state, so an operator does not read
-"no skill uses" as "nothing skill-related happened here" when the exposure
-row already tells a different story. The "Skills exposed" section shows the
-actual exposed-skill breakdown from `bridgeSkills` (`{ skill, count }`) and
-falls back to **"No skills exposed to this workspace yet"** or **"Skill
-exposure telemetry is unavailable per-workspace"** using the same
-availability-vs-empty distinction as every other per-workspace join.
+Expanded workspace rows render a combined **"Skills"** section that brings
+together confirmed uses (`status.usage.byWorkspace[*].bySkill` -- explicit
+activations and verified `SKILL.md` reads, the same source as `skillUses`) and
+exposure (`...bridgeSkills`, populated from bridge `skill_exposed` events where
+a skill was made available to a session via a role contract or plugin). For
+every skill name, confirmed uses and exposed count are displayed together as
+`uses / exposed` (e.g. `lsp-mcp-server 5 / 10`). The underlying semantics
+remain distinct: a workspace can have skills exposed to it without confirming a
+use (rendered as `0 / <exposed>`, e.g. `orchestration 0 / 1`), keeping exposure
+visible without fabricating confirmed uses. If a dimension is absent, the
+dashboard preserves fail-closed unavailable states (`—` for the missing count,
+or **"Named skill attribution is unavailable per-workspace"** if both joins are
+absent). When no skills have been observed or exposed, the section displays
+**"No named skill uses observed for this workspace yet"**.
 
 The workspace Tools section prefers the OTLP-sourced `byTool` join. When that
 join is unavailable (`null`) or reports zero rows, the dashboard falls back to
@@ -116,6 +111,11 @@ through `normalizeWorkspaceNamedUsage`). When per-workspace tool telemetry is
 unavailable from both sources, the dashboard handles this explicitly
 (displaying `—`) without inventing unrelated counts or falling back to
 response-output tool-call counts (`w.toolCalls`).
+
+The workspace table's **Skill uses / exposed** header reflects confirmed skill
+uses alongside context exposure, matching the combined **"Skills"** section in
+expanded workspace details where confirmed uses and exposed counts are rendered
+together as `uses / exposed` per skill name.
 
 ## Reported metrics
 
@@ -481,9 +481,9 @@ session cannot be attributed to a workspace. Exposure, prompt mentions, and
 arbitrary files do not count as uses. Exposure is not discarded, though: a
 bridge `skill_exposed` event (a role contract or plugin making a skill
 available to a session) is recorded separately as
-`status.usage.byWorkspace[*].bridgeSkills`, rendered in the workspace's
-"Skills exposed" section, distinct from and never added into `skillUses` or
-`bySkill`.
+`status.usage.byWorkspace[*].bridgeSkills` and rendered alongside confirmed
+uses in the workspace's "Skills" section as `uses / exposed`, distinct from
+and never added into `skillUses` or `bySkill`.
 
 The dashboard labels MCP state as an observation (`ready`, `error`, or `stale`),
 not as an authoritative process-health guarantee. Codex currently emits MCP

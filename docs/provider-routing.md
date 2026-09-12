@@ -584,7 +584,9 @@ The router makes its effective choice visible in two ways:
   named tool and skill attribution is sourced from local request context, verified hooks,
   semantic OTLP joins, and authenticated bridge events. The dashboard distinguishes
   unavailable, no-data, partial, executed, and requested states rather than fabricating
-  a workspace join or treating requested calls as executed.
+  a workspace join or treating requested calls as executed. In expanded workspace details,
+  confirmed uses and skill exposure are unified into a single "Skills" section showing
+  `uses / exposed` per skill name, and the workspace table header reads `Skill uses / exposed`.
 `GET /status` always
   returns raw JSON regardless of the `Accept` header, including the current
   router instance, live agent activity, in-flight requests (`inFlightRequests`), configured models, cooldown countdowns,
@@ -871,10 +873,11 @@ The new fields on every `usage.byWorkspace[*]` bucket are:
   workspace (`{ skill, count }`) -- evidence a skill was made available to the
   workspace, not that it was used. This is a distinct claim from `bySkill`
   (confirmed uses, the same source as `skillUses`): a workspace can have
-  `bridgeSkills` entries with zero `bySkill` entries, and the dashboard
-  renders them in a separate "Skills exposed" section rather than folding
-  them into "Skill usage" or treating a workspace with exposure-but-no-use as
-  if nothing were observed there.
+  `bridgeSkills` entries with zero `bySkill` entries. The dashboard displays
+  them together in the "Skills" section as `uses / exposed` (e.g.
+  `orchestration 0 / 1` or `lsp-mcp-server 5 / 10`) rather than folding
+  exposure into confirmed uses or treating an exposed workspace as if nothing
+  were observed there.
 
 The companion OTLP metric `codex.tool_result` is the runtime-causal "the
 tool call landed" signal. Each datapoint carries a `call_id` (the same id

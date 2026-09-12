@@ -302,63 +302,84 @@ test('router dashboard workspace table derives Tool calls and totals from byTool
   assert.equal(objectRows.reduce((sum, r) => sum + Number(r.count ?? 0), 0), 7);
 });
 
-test('router dashboard keeps confirmed skill uses distinct from exposed bridgeSkills and shows exposure instead of a misleading no-uses empty state', async () => {
+test('router dashboard combines skill usage and exposure into one Skills section showing uses / exposed while keeping semantics distinct', async () => {
   const rawDashboard = await readFile(path.join(root, 'scripts', 'codex-model-router-dashboard.html'), 'utf8');
 
   // Source-level checks: the two joins are read from distinct backend fields
-  // and rendered into distinct sections, never merged.
+  // and rendered into a single "Skills" section as `uses / exposed`, never merged into one sum.
+  assert.match(rawDashboard, /<th>Skill uses \/ exposed<\/th>/);
   assert.match(rawDashboard, /normalizeWorkspaceNamedUsage\(w\.bySkill, \["skill", "name"\]\)/);
   assert.match(rawDashboard, /normalizeWorkspaceNamedUsage\(w\.bridgeSkills, \["skill", "name"\]\)/);
-  assert.match(rawDashboard, /<h2>Skill usage<\/h2>/);
-  assert.match(rawDashboard, /<h2>Skills exposed<\/h2>/);
-  assert.match(rawDashboard, /workspaceSkillUsageEmptyLabel\(hasExposedSkills\)/);
-  assert.match(rawDashboard, /No skills exposed to this workspace yet/);
-  assert.match(rawDashboard, /Skill exposure telemetry is unavailable per-workspace/);
+  assert.match(rawDashboard, /<h2>Skills<\/h2>/);
+  assert.doesNotMatch(rawDashboard, /<h2>Skill usage<\/h2>/);
+  assert.doesNotMatch(rawDashboard, /<h2>Skills exposed<\/h2>/);
+  assert.match(rawDashboard, /Named skill attribution is unavailable per-workspace/);
+  assert.match(rawDashboard, /No named skill uses observed for this workspace yet/);
 
-  // Extract the pure label helper and prove the empty-state copy differs
-  // once exposure is present, using a RacingGame-style bridgeSkills payload:
-  // a workspace where a skill (e.g. "orchestration") was exposed via a
-  // role-contract bridge event but has zero confirmed skill_used events --
-  // the exact shape backend tests exercise for
-  // usage.byWorkspace.RacingGame.{bySkill,bridgeSkills}.
-  const labelMatch = rawDashboard.match(/function workspaceSkillUsageEmptyLabel\([\s\S]*?\n    \}/);
-  assert.ok(labelMatch, 'workspaceSkillUsageEmptyLabel should be present in dashboard script');
-  const workspaceSkillUsageEmptyLabel = new Function(`${labelMatch[0]}; return workspaceSkillUsageEmptyLabel;`)();
-
+  // Extract the pure helpers and verify combined uses / exposed rendering
+  const escapeMatch = rawDashboard.match(/function escapeHtml\([\s\S]*?\n    \}/);
+  assert.ok(escapeMatch, 'escapeHtml should be present in dashboard script');
+  const renderSkillsMatch = rawDashboard.match(/function renderWorkspaceSkills\([\s\S]*?\n    \}/);
+  assert.ok(renderSkillsMatch, 'renderWorkspaceSkills should be present in dashboard script');
   const normalizeMatch = rawDashboard.match(/function normalizeWorkspaceNamedUsage\([\s\S]*?\n    \}/);
   assert.ok(normalizeMatch, 'normalizeWorkspaceNamedUsage should be present in dashboard script');
-  const normalizeWorkspaceNamedUsage = new Function(`${normalizeMatch[0]}; return normalizeWorkspaceNamedUsage;`)();
 
+  const fnScope = `${escapeMatch[0]}; ${normalizeMatch[0]}; ${renderSkillsMatch[0]}; return { normalizeWorkspaceNamedUsage, renderWorkspaceSkills };`;
+  const { normalizeWorkspaceNamedUsage, renderWorkspaceSkills } = new Function(fnScope)();
+
+  // 1. RacingGame-style payload: skill exposed but 0 confirmed uses.
+  // Shows `uses / exposed` as `0 / 1`.
   const racingGame = { skillUses: 0, bySkill: [], bridgeSkills: [ { skill: "orchestration", count: 1 } ] };
   const wsSkillRows = normalizeWorkspaceNamedUsage(racingGame.bySkill, ["skill", "name"]);
   const wsExposedSkillRows = normalizeWorkspaceNamedUsage(racingGame.bridgeSkills, ["skill", "name"]);
-  const hasExposedSkills = Array.isArray(wsExposedSkillRows) && wsExposedSkillRows.length > 0;
-
-  // Confirmed uses are genuinely empty (distinct fact from exposure).
   assert.deepEqual(wsSkillRows, []);
-  // Exposure is surfaced, not swallowed: the exposed skill still renders.
   assert.deepEqual(wsExposedSkillRows.map((r) => r.name), [ "orchestration" ]);
-  assert.equal(hasExposedSkills, true);
-  // The confirmed-use panel points at exposure instead of the generic
-  // "nothing observed here" copy.
+
+  const racingGameHtml = renderWorkspaceSkills(wsSkillRows, wsExposedSkillRows);
+  assert.match(racingGameHtml, /label="orchestration"/);
+  assert.match(racingGameHtml, /value="0 \/ 1"/);
+
+  // 2. Confirmed skill use alongside exposure keeps counts distinct: e.g. 5 uses / 10 exposed.
+  const lspMcpServer = {
+    bySkill: [ { skill: "lsp-mcp-server", count: 5 } ],
+    bridgeSkills: [ { skill: "lsp-mcp-server", count: 10 } ],
+  };
+  const lspSkillRows = normalizeWorkspaceNamedUsage(lspMcpServer.bySkill, ["skill", "name"]);
+  const lspExposedRows = normalizeWorkspaceNamedUsage(lspMcpServer.bridgeSkills, ["skill", "name"]);
+  const lspHtml = renderWorkspaceSkills(lspSkillRows, lspExposedRows);
+  assert.match(lspHtml, /label="lsp-mcp-server"/);
+  assert.match(lspHtml, /value="5 \/ 10"/);
+
+  // 3. Fail-closed unavailable state when both dimensions are unavailable (null)
   assert.equal(
-    workspaceSkillUsageEmptyLabel(hasExposedSkills),
-    "No confirmed skill uses yet for this workspace -- see Skills exposed below",
-  );
-  assert.equal(
-    workspaceSkillUsageEmptyLabel(false),
-    "No named skill uses observed for this workspace yet",
+    renderWorkspaceSkills(null, null),
+    '<div class="empty-state">Named skill attribution is unavailable per-workspace</div>',
   );
 
-  // A workspace with a confirmed use (skillUses: 1, bySkill: [{skill, uses:
-  // 1}]) alongside its originating exposure keeps both counts distinct --
-  // the confirmed list is non-empty on its own terms, not derived from or
-  // capped by the exposure count.
-  const racingGameConfirmed = { skillUses: 1, bySkill: [ { skill: "orchestration", uses: 1 } ], bridgeSkills: [ { skill: "orchestration", count: 1 } ] };
-  const confirmedRows = normalizeWorkspaceNamedUsage(racingGameConfirmed.bySkill, ["skill", "name"]);
-  const exposedRows = normalizeWorkspaceNamedUsage(racingGameConfirmed.bridgeSkills, ["skill", "name"]);
-  assert.deepEqual(confirmedRows.map((r) => ({ name: r.name, count: r.count })), [ { name: "orchestration", count: 1 } ]);
-  assert.deepEqual(exposedRows.map((r) => ({ name: r.name, count: r.count })), [ { name: "orchestration", count: 1 } ]);
+  // 4. Fail-closed unavailable state on individual dimensions (e.g. bySkill is null -> — / 1)
+  const unavailUsesHtml = renderWorkspaceSkills(null, wsExposedSkillRows);
+  assert.match(unavailUsesHtml, /label="orchestration"/);
+  assert.match(unavailUsesHtml, /value="— \/ 1"/);
+
+  const unavailExposedHtml = renderWorkspaceSkills(lspSkillRows, null);
+  assert.match(unavailExposedHtml, /label="lsp-mcp-server"/);
+  assert.match(unavailExposedHtml, /value="5 \/ —"/);
+
+  // 5. Empty state when both dimensions are present but empty
+  assert.equal(
+    renderWorkspaceSkills([], []),
+    '<div class="empty-state">No named skill uses observed for this workspace yet</div>',
+  );
+
+  // 6. Documentation describes combined Skills section and workspace table header
+  const metricsDoc = await readFile(path.join(root, 'docs', 'metrics-dashboard.md'), 'utf8');
+  assert.match(metricsDoc, /combined \*\*"Skills"\*\* section/);
+  assert.match(metricsDoc, /uses \/ exposed/);
+  assert.match(metricsDoc, /\*\*Skill uses \/ exposed\*\*/);
+
+  const routingDoc = await readFile(path.join(root, 'docs', 'provider-routing.md'), 'utf8');
+  assert.match(routingDoc, /"Skills" section as `uses \/ exposed`/);
+  assert.match(routingDoc, /Skill uses \/ exposed/);
 });
 
 test('router dashboard falls back to bridgeTools when OTLP named-tool rows are unavailable or empty, without double-counting', async () => {
