@@ -627,8 +627,9 @@ The router cleanly separates user-facing agent workflow activity from transport-
   The orchestrator/subagent breakdown shown alongside the KPI is read from
   the same `status.usage.byRole` partition the router sums into
   `usage.totals.active`, so it stays consistent with (sums to) that
-  canonical total. One subagent active in one workspace renders as exactly
-  `1` agent, `1` subagent, and `1` workspace.
+  canonical total. One subagent active in one workspace keeps its inferred
+  parent visible as `2` agents (`1` orchestrator and `1` subagent), while the
+  workspace context remains `1` workspace.
 - **Parent orchestrators remain live while children work:** If a live
   subagent is attributed to a workspace but its parent orchestrator record has
   already settled its most recent model request, the router infers one active

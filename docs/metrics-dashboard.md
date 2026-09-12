@@ -304,7 +304,10 @@ The router and dashboard cleanly separate **live agent activity** from **in-flig
   `usage.totals.active`, so the breakdown's components sum to the canonical
   total above rather than being independently maxed against a different
   counter (e.g. a concurrency-slot count that can under- or over-count
-  relative to role-attributed activity).
+  relative to role-attributed activity). When a subagent is live without a
+  live parent record, the breakdown includes one inferred orchestrator for
+  that workspace, so one child turn renders as `1` orchestrator and `1`
+  subagent, while the workspace context remains `1`.
 - **Parent orchestrators remain live while children work:** When a live
   subagent is attributed to a workspace without a currently live orchestrator
   record, the router infers one active orchestrator for that workspace. This
