@@ -533,17 +533,11 @@ The router makes its effective choice visible in two ways:
   global metrics by guesswork, never infers ownership from static configurations or
   ambient concurrency, and attributes events lacking verified metadata to explicit
   `unattributed` dimensions. Requested and executed provider events remain separate.
-- The dashboard's usage table collapses this into exactly two top-level rows,
-  Orchestrator and Subagents, because roleless requests only carry an origin
-  and role-attributed requests only carry a role: origin and role are not two
-  independent dimensions to cross-tabulate. The Subagents row is the only one
-  with a caret; expanding it reveals one child row per explicit role bucket
-  (`usage.byRole`, excluding `orchestrator` and `unattributed`), and those
-  child rows always sum to the Subagents parent totals because every subagent
-  request is role-attributed. The Orchestrator row is now
-  `usage.byRole.orchestrator`; direct non-Codex requests remain in
-  `usage.byRole.unattributed` instead of being mislabeled as orchestrator
-  traffic.
+- The dashboard's Orchestrator & subagent usage panel shows Orchestrator and
+  Subagents cards from their explicit role buckets. Any role-less activity is
+  shown in a separate `Unattributed` card rather than guessed into either
+  role. The three visible role categories always reconcile to
+  `usage.totals.active`.
 - `status.subagents` counts every subagent spawned behind the router,
   regardless of which provider spawned it and by which mechanism. This is
   distinct from `usage.byRole`, which counts *router requests* made by
@@ -623,6 +617,8 @@ CLI view is:
 
 ### Live agent activity vs. in-flight requests transport diagnostics
 
+The `/status` provider projection includes a transient synthetic `unattributed` row when active-agent attribution cannot prove a provider. It participates in provider active totals but is not routable and has no provider administration controls.
+
 The router cleanly separates user-facing agent workflow activity from transport-level network requests:
 
 - **Live agent activity (`Active` badges, KPIs, provider rows):**
@@ -643,6 +639,10 @@ The router cleanly separates user-facing agent workflow activity from transport-
   canonical total. One subagent active in one workspace keeps its inferred
   parent visible as `2` agents (`1` orchestrator and `1` subagent), while the
   workspace context remains `1` workspace.
+  Role-less activity (the `unattributed` bucket of `usage.byRole`) remains
+  an explicit residual rather than being guessed into a role. The dashboard
+  renders it as a separate `Unattributed` card when nonzero, and the
+  orchestrator, subagent, and residual counts sum exactly to `totalActive`.
 - **Parent orchestrators remain live while children work:** If a live
   subagent is attributed to a workspace but its parent orchestrator record has
   already settled its most recent model request, the router infers one active

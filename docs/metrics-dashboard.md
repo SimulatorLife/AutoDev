@@ -260,7 +260,8 @@ The **Provider health** table renders the operational state, routing priority, e
 
 - **Routing priority:** Formatted by `formatRoutingPriority(providerName, p, status)`, this column maps the provider's configured priority groups across capability tiers (`default`, `smart`, `orchestrator`) from `status.routing.providerGroups`, displaying priority tiers such as `default: P1 · smart: P1 · orchestrator: P2`.
 - **Effective limits & cooldowns:** Formatted by `formatEffectiveLimitsAndCooldowns(p)`, this column displays active cooldown badges with cooldown kind (`transient`, `hard`, `probe`, `config`), failure class, remaining countdown duration, declared reset time (`resets <timestamp>`), and any live provider limit details (`p.effectiveLimits`, `p.liveLimits`, `p.limits`). This replaces the redundant `Last failure` column with comprehensive, real-time cooldown and limit diagnostics.
-- **Active:** Displays live agent workflow activity for the provider (`<status-badge>`), retaining non-zero counts and active styling during tool, user, and subagent waits. The table keeps only the `Active` column (transport-level in-flight requests are omitted from this table and surfaced separately under **Operational summary** and the Status CLI).
+- **Active:** Displays live agent workflow activity for the provider (`<status-badge>`), retaining non-zero counts and active styling during tool, user, and subagent waits. The table keeps only the `Active` column (transport-level in-flight requests are omitted from this table and surfaced separately under **Operational summary** and the Status CLI). Both the per-row badge and the panel header's `N active` summary read `status.providers[*].active` directly with no artificial floor: `isProviderLiveActive(p)` is defined as `active > 0`, so a live provider's `active` field is already `>= 1`, and the panel total (`activeReqSum`) is a plain sum of the same field the rows render -- it reconciles exactly with the sum of the visible per-row counts.
+- **Unattributed active bucket:** When a live agent cannot be assigned to a verified provider (for example, an inferred parent), the router adds a synthetic `unattributed` row with the same `active` semantics. It participates in the active total but has no readiness, routing, or enable/disable controls.
 - **Administrative toggle controls:** The **Control** column features an interactive iOS-like toggle switch (`.btn-provider-toggle`) to dynamically enable or disable a provider:
   - Designed as a wordless iOS-style toggle switch: displays a green background (`#34c759`) when enabled and a grey background (`#48484a`) when disabled, with no text labels.
   - Features `role="switch"`, `aria-checked`, dynamic `aria-label`, and `title` tooltip for accessibility.
@@ -316,11 +317,26 @@ The router and dashboard cleanly separate **live agent activity** from **in-flig
   live parent record, the breakdown includes one inferred orchestrator for
   that workspace, so one child turn renders as `1` orchestrator and `1`
   subagent, while the workspace context remains `1`.
+- **Role-less (`unattributed`) activity remains an explicit residual:** The
+  router does not guess whether activity without a verified role is an
+  orchestrator or subagent. `computeKpiAgentTotals` reports explicit
+  orchestrators, explicit subagents, and the unattributed residual
+  separately; all three components sum exactly to `totalActive`. The
+  Orchestrator & subagent panel renders the residual as an `Unattributed`
+  card when present.
 - **Parent orchestrators remain live while children work:** When a live
   subagent is attributed to a workspace without a currently live orchestrator
   record, the router infers one active orchestrator for that workspace. This
   prevents the parent from dropping to zero during a child turn; the inferred
   parent disappears when child activity ends or becomes stale.
+- **Usage-by-workspace rows and footer reconcile from the same canonical
+  field, with no artificial floor:** Each workspace row's `Active` badge and
+  the `wsTotalActive` running total accumulated for the table footer both
+  read `usage.byWorkspace[*].active` directly (`Number(w.active ?? 0)`),
+  including the `unattributed` workspace bucket. There is no `Math.max`
+  floor on either the per-row value or the footer sum, so the footer badge
+  is exactly the sum of every rendered row's badge -- it never diverges from
+  what an operator can already add up by eye.
 - **Concurrency slot counts (`status.concurrency.activeSubagentThreads`,
   `activeSessions`) are scheduling context, not agent counts:** These
   fields describe how many subagent execution slots or session slots are

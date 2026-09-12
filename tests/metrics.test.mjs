@@ -583,6 +583,7 @@ test('dashboard KPI agent total uses the canonical live-agent count and never ma
     totalActive: 2,
     orchActive: 1,
     subActive: 1,
+    unattributedActive: 0,
     activeWorkspaces: 1,
   });
 
@@ -598,6 +599,112 @@ test('dashboard KPI agent total uses the canonical live-agent count and never ma
   // context ("workspaces with active agents"), not a component summed into
   // the agent total.
   assert.match(dashboard, /workspaces with active agents/);
+});
+
+test('dashboard keeps role-less ("unattributed") activity explicit instead of guessing a role', async () => {
+  const dashboard = await readFile(path.join(root, 'scripts', 'codex-model-router-dashboard.html'), 'utf8');
+
+  const kpiSection = dashboard.match(/function computeKpiAgentTotals\([\s\S]*?\n    \}/);
+  assert.ok(kpiSection, 'computeKpiAgentTotals should be present in dashboard script');
+  const countMatch = dashboard.match(/function countActiveWorkspaces\([\s\S]*?\n    \}/);
+  assert.ok(countMatch, 'countActiveWorkspaces should be present in dashboard script');
+  const computeKpiAgentTotals = new Function(
+    `${countMatch[0]}; ${kpiSection[0]}; return computeKpiAgentTotals;`
+  )();
+
+  // "unattributed" is an explicit residual: it may represent direct or
+  // role-less activity, so it must not be guessed into the subagent bucket.
+  // The residual remains visible and completes the canonical total.
+  const status = {
+    liveActivity: 3,
+    usage: {
+      totals: { active: 3 },
+      byRole: {
+        orchestrator: { active: 1 },
+        unattributed: { active: 2 },
+      },
+      byWorkspace: {},
+    },
+  };
+  const totals = computeKpiAgentTotals(status);
+  assert.deepEqual(totals, { totalActive: 3, orchActive: 1, subActive: 0, unattributedActive: 2, activeWorkspaces: 0 });
+  assert.equal(totals.orchActive + totals.subActive + totals.unattributedActive, totals.totalActive, 'all role buckets must reconcile to totalActive');
+
+  // computeKpiAgentTotals itself must never special-case "unattributed" as a
+  // stand-in for the orchestrator bucket.
+  assert.doesNotMatch(kpiSection[0], /orchRole\s*=\s*status\?\.usage\?\.byRole\?\.unattributed/, 'orchActive must not fall back to the unattributed bucket');
+
+  // The orchestrator/subagent usage panel reads the same "orchestrator"
+  // bucket directly (no unattributed fallback) and only excludes
+  // "orchestrator" from its subagent roll-up, so unattributed activity is
+  // visible in the subagent totals there too.
+  assert.doesNotMatch(dashboard, /byRole\?\.orchestrator \?\? status\.usage\?\.byRole\?\.unattributed/);
+  assert.match(dashboard, /if \(role === "orchestrator"\) continue;/);
+
+  // The KPI headline surfaces the unattributed residual explicitly instead
+  // of letting it disappear into the "subagents" figure unexplained.
+  assert.match(dashboard, /unattributedActive/);
+  assert.match(dashboard, /Unattributed/);
+});
+
+test('dashboard provider active totals derive directly from the canonical per-provider active field, with no Math.max floor', async () => {
+  const dashboard = await readFile(path.join(root, 'scripts', 'codex-model-router-dashboard.html'), 'utf8');
+
+  const activeReqSumMatch = dashboard.match(/const activeReqSum = providersEntries\.reduce\([^;]*\);/);
+  assert.ok(activeReqSumMatch, 'activeReqSum computation should be present in dashboard script');
+  assert.doesNotMatch(activeReqSumMatch[0], /Math\.max/, 'provider active total must not be floored via Math.max');
+
+  const displayActiveMatch = dashboard.match(/const displayActive = [^;]*;/);
+  assert.ok(displayActiveMatch, 'displayActive computation should be present in dashboard script');
+  assert.doesNotMatch(displayActiveMatch[0], /Math\.max/, 'per-provider displayed active count must not be floored via Math.max');
+  assert.match(displayActiveMatch[0], /const displayActive = liveActive;/, 'displayActive should read the canonical liveActive field directly');
+
+  // The provider panel summary and each row's badge both read the same
+  // getProviderLiveActivity(p) field, so the panel total reconciles exactly
+  // with the sum of the rendered per-row values.
+  const providersEntries = [
+    ['codex', { active: 2 }],
+    ['anthropic', { active: 0 }],
+    ['openai', { active: 1 }],
+  ];
+  const getProviderLiveActivity = (p) => Number(p?.active ?? 0);
+  const activeReqSum = providersEntries.reduce((sum, [ , p ]) => sum + getProviderLiveActivity(p), 0);
+  assert.equal(activeReqSum, 3);
+});
+
+test('dashboard workspace usage rows and footer reconcile from the canonical per-workspace active field, with no Math.max floor', async () => {
+  const dashboard = await readFile(path.join(root, 'scripts', 'codex-model-router-dashboard.html'), 'utf8');
+
+  // Each workspace row's active count is read straight off `w.active`
+  // (the same canonical field `usage.byWorkspace[*].active` the backend
+  // already reconciles against `usage.totals.active`), with no artificial
+  // floor -- so the footer, which is a plain running sum of that same
+  // per-row value, reconciles exactly with the sum of the rendered rows.
+  const activeDeclMatch = dashboard.match(/const active = Number\(w\.active \?\? 0\);/);
+  assert.ok(activeDeclMatch, 'workspace row active value should be read directly off w.active');
+
+  const totalAccumMatch = dashboard.match(/wsTotalActive \+= active;/);
+  assert.ok(totalAccumMatch, 'workspace footer total should accumulate the same per-row active value');
+  assert.doesNotMatch(totalAccumMatch[0], /Math\.max/, 'workspace footer total must not be floored via Math.max');
+
+  const rowBadgeMatch = dashboard.match(/<td><status-badge \$\{active > 0 [^<]*<\/status-badge><\/td>/);
+  assert.ok(rowBadgeMatch, 'workspace row badge should render the unfloored per-row active value');
+  assert.doesNotMatch(rowBadgeMatch[0], /Math\.max/, 'workspace row badge must not be floored via Math.max');
+
+  const footerBadgeMatch = dashboard.match(/<td><status-badge \$\{wsTotalActive > 0[^<]*<\/status-badge><\/td>/);
+  assert.ok(footerBadgeMatch, 'workspace footer badge should render the unfloored running total');
+  assert.doesNotMatch(footerBadgeMatch[0], /Math\.max/, 'workspace footer badge must not be floored via Math.max');
+
+  // Simulate the row loop's accumulation to confirm the footer reconciles
+  // exactly with the sum of the per-row values for a representative payload.
+  const byWorkspace = {
+    AutoDev: { active: 2 },
+    'codex-runtime': { active: 0 },
+    unattributed: { active: 1 },
+  };
+  let wsTotalActive = 0;
+  for (const w of Object.values(byWorkspace)) wsTotalActive += Number(w.active ?? 0);
+  assert.equal(wsTotalActive, 3, 'workspace footer must reconcile to the sum of every rendered row, including unattributed');
 });
 
 test('router dashboard renders workspace MCP servers with confirmed uses and exposure rows', async () => {

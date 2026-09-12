@@ -591,7 +591,7 @@
     <!-- 1. KPI Grid -->
     <section class="kpi-grid" id="kpi-grid">
       <stat-card id="kpi-agents" label="Active agents" value="—">—</stat-card>
-      <stat-card id="kpi-attempts" label="Attempts" value="—">—</stat-card>
+      <stat-card id="kpi-attempts" label="Spawns" value="—">—</stat-card>
       <stat-card id="kpi-tools" label="Tool calls" value="—">—</stat-card>
       <stat-card id="kpi-skills" label="Skill uses" value="—">—</stat-card>
       <stat-card id="kpi-turn" label="Average turn" value="—">—</stat-card>
@@ -609,9 +609,9 @@
             <tr>
               <th>Provider</th>
               <th>Routing priority</th>
-              <th>Configured models</th>
+              <th>Models</th>
               <th>Status</th>
-              <th>Effective limits &amp; cooldowns</th>
+              <th>Errors &amp; cooldowns</th>
               <th>Active</th>
               <th>Avg turn</th>
               <th>Outcomes</th>
@@ -689,9 +689,9 @@
         <table id="workspace-usage-table">
           <thead>
             <tr>
-              <th>Repository / workspace</th>
+              <th>Workspace</th>
               <th>Active</th>
-              <th>Attempts</th>
+              <th>Spawns</th>
               <th>Avg turn</th>
               <th>Tool calls</th>
               <th>Skill uses / exposed</th>
@@ -2305,16 +2305,22 @@
     // context, not a component of the agent total: one agent is attributed
     // to one workspace, so it is never summed into `totalActive` -- it is
     // only ever rendered alongside it as non-additive context.
+    //
+    // Role-attributed subagents are summed separately from the explicit
+    // unattributed residual. The residual is not guessed into a role: it is
+    // surfaced as its own breakdown so every role bucket remains honest while
+    // all displayed components still reconcile to totalActive.
     function computeKpiAgentTotals(status) {
       const totalActive = Number(status?.liveActivity ?? status?.usage?.totals?.active ?? 0);
-      const orchRole = status?.usage?.byRole?.orchestrator ?? status?.usage?.byRole?.unattributed ?? {};
+      const orchRole = status?.usage?.byRole?.orchestrator ?? {};
       const orchActive = Number(orchRole.active ?? 0);
       let subActive = 0;
       for (const [ role, b ] of Object.entries(status?.usage?.byRole ?? {})) {
-        if (role !== "unattributed" && role !== "orchestrator") subActive += Number(b?.active ?? 0);
+        if (role !== "orchestrator" && role !== "unattributed") subActive += Number(b?.active ?? 0);
       }
+      const unattributedActive = Number(status?.usage?.byRole?.unattributed?.active ?? 0);
       const activeWorkspaces = countActiveWorkspaces(status);
-      return { totalActive, orchActive, subActive, activeWorkspaces };
+      return { totalActive, orchActive, subActive, unattributedActive, activeWorkspaces };
     }
 
     function countActiveWorkspaces(status) {
@@ -2327,7 +2333,9 @@
           liveStates.some((state) => Number(states[ state ] ?? 0) > 0)
         ).length;
       }
-      return Object.values(status?.usage?.byWorkspace ?? {}).filter((workspace) => Number(workspace?.active ?? 0) > 0).length;
+      return Object.entries(status?.usage?.byWorkspace ?? {}).filter(([ workspace, value ]) =>
+        workspace !== "unattributed" && workspace !== "unknown" && Number(value?.active ?? 0) > 0
+      ).length;
     }
 
     function render(status) {
@@ -2342,7 +2350,7 @@
       if (errorEl && !lastControlError) errorEl.textContent = "";
 
       // 1. KPI Grid
-      const { totalActive, orchActive, subActive, activeWorkspaces } = computeKpiAgentTotals(status);
+      const { totalActive, orchActive, subActive, unattributedActive, activeWorkspaces } = computeKpiAgentTotals(status);
       const workspacesList = Object.entries(status.usage?.byWorkspace ?? {});
 
       const attemptsTotal = Number(status.usage?.totals?.attempts ?? 0);
@@ -2372,7 +2380,8 @@
       const kpiAgents = document.getElementById("kpi-agents");
       if (kpiAgents) {
         kpiAgents.setAttribute("value", String(totalActive));
-        kpiAgents.innerHTML = `<strong>${orchActive}</strong> orchestrators · <strong>${subActive}</strong> subagents · <strong>${activeWorkspaces}</strong> workspaces with active agents`;
+        const unattributedSuffix = unattributedActive > 0 ? ` · <strong>${unattributedActive}</strong> unattributed` : "";
+        kpiAgents.innerHTML = `<strong>${orchActive}</strong> orchestrators · <strong>${subActive}</strong> subagents${unattributedSuffix} · <strong>${activeWorkspaces}</strong> workspaces with active agents`;
       }
       const kpiAttempts = document.getElementById("kpi-attempts");
       if (kpiAttempts) {
@@ -2397,13 +2406,19 @@
 
       // 2. Provider health
       const providersEntries = Object.entries(status.providers ?? {});
-      const readyProvidersCount = providersEntries.filter(([ , p ]) => p.status === "ready").length;
-      const activeReqSum = providersEntries.reduce((sum, [ , p ]) => sum + (isProviderLiveActive(p) ? Math.max(1, getProviderLiveActivity(p)) : 0), 0);
-      const disabledProvidersCount = providersEntries.filter(([ providerName, p ]) =>
+      const configuredProvidersEntries = providersEntries.filter(([ , p ]) => p.synthetic !== true);
+      const readyProvidersCount = configuredProvidersEntries.filter(([ , p ]) => p.status === "ready").length;
+      // Sum the same canonical `active` field the per-provider rows render
+      // (via getProviderLiveActivity) directly -- no artificial floor. Each
+      // provider's `active` is already >= 1 whenever it is live, so flooring
+      // it against 1 was a no-op that only obscured the real reconciliation
+      // between this sum and the individual rows below.
+      const activeReqSum = providersEntries.reduce((sum, [ , p ]) => sum + getProviderLiveActivity(p), 0);
+      const disabledProvidersCount = configuredProvidersEntries.filter(([ providerName, p ]) =>
         Boolean(p.disabled || p.enabled === false || p.status === "disabled" || (Array.isArray(status.disabledProviders) && status.disabledProviders.includes(providerName)))
       ).length;
       const disabledSummary = disabledProvidersCount > 0 ? ` · ${disabledProvidersCount} disabled` : "";
-      syncPanel(document.getElementById("panel-providers"), "Provider health", `${readyProvidersCount} / ${providersEntries.length} ready · ${activeReqSum} active${disabledSummary}`);
+      syncPanel(document.getElementById("panel-providers"), "Provider health", `${readyProvidersCount} / ${configuredProvidersEntries.length} ready · ${activeReqSum} active${disabledSummary}`);
 
       const providersTbody = document.getElementById("providers-tbody");
       if (providersTbody) {
@@ -2435,17 +2450,21 @@
 
             const priorityText = formatRoutingPriority(providerName, p, status);
             const limitsCooldownHtml = formatEffectiveLimitsAndCooldowns(p);
+            const isSynthetic = p.synthetic === true;
 
             const isDisabled = Boolean(
-              p.disabled ||
-              p.enabled === false ||
-              p.status === "disabled" ||
-              (Array.isArray(status.disabledProviders) && status.disabledProviders.includes(providerName))
+              !isSynthetic && (
+                p.disabled ||
+                p.enabled === false ||
+                p.status === "disabled" ||
+                (Array.isArray(status.disabledProviders) && status.disabledProviders.includes(providerName))
+              )
             );
-            const isPending = pendingProviderToggles.has(providerName);
+            const isPending = !isSynthetic && pendingProviderToggles.has(providerName);
             const statusLabel = isDisabled ? "disabled" : p.status;
-            const stateAttr = isDisabled ? "error" : (p.status === "ready" ? "ready" : ((p.status === "cooldown" || (p.cooldownRemainingMs ?? 0) > 0) ? "limited" : "error"));
-            const cooldownSuffix = (!isDisabled && p.cooldownRemainingMs > 0) ? ` (${Math.ceil(p.cooldownRemainingMs / 1000)}s)` : "";
+            const renderedStatusLabel = isSynthetic ? "unattributed" : statusLabel;
+            const stateAttr = isSynthetic ? "limited" : (isDisabled ? "error" : (p.status === "ready" ? "ready" : ((p.status === "cooldown" || (p.cooldownRemainingMs ?? 0) > 0) ? "limited" : "error")));
+            const cooldownSuffix = (!isSynthetic && !isDisabled && p.cooldownRemainingMs > 0) ? ` (${Math.ceil(p.cooldownRemainingMs / 1000)}s)` : "";
 
             const actionTarget = isDisabled ? "enable" : "disable";
             const toggleTitle = `${isDisabled ? "Enable" : "Disable"} ${providerName}`;
@@ -2467,19 +2486,22 @@
 
             const liveActive = getProviderLiveActivity(p);
             const isActive = isProviderLiveActive(p);
-            const displayActive = liveActive > 0 ? liveActive : (isActive ? 1 : 0);
+            // isProviderLiveActive is defined as liveActive > 0, so the
+            // displayed count is just the canonical field itself -- no
+            // fallback floor is needed or correct here.
+            const displayActive = liveActive;
 
             return `<tr class="${isDisabled ? "provider-disabled" : (isActive ? "provider-active" : "")}">
               <td><code>${escapeHtml(providerName)}</code></td>
               <td class="cell-center"><code>${escapeHtml(priorityText)}</code></td>
               <td>${modelsHtml}</td>
-              <td><health-badge state="${stateAttr}">${escapeHtml(statusLabel)}${cooldownSuffix}</health-badge></td>
+              <td><health-badge state="${stateAttr}">${escapeHtml(renderedStatusLabel)}${cooldownSuffix}</health-badge></td>
               <td class="cell-left">${limitsCooldownHtml}</td>
               <td><status-badge ${isActive ? 'active=""' : ''}>${displayActive}</status-badge></td>
               <td>${escapeHtml(avgTurn)}</td>
               <td class="outcome-cell"><outcome-bar fail="${Number(p.failures ?? 0)}" skip="${Number(p.skipped ?? 0)}" success="${Number(p.successes ?? 0)}"></outcome-bar></td>
               <td class="cell-center">
-                <button type="button" class="btn-provider-toggle" data-provider="${escapeHtml(providerName)}" data-action="${actionTarget}" role="switch" aria-checked="${!isDisabled}" aria-label="${escapeHtml(toggleTitle)}" title="${escapeHtml(toggleTitle)}" ${isPending ? 'disabled=""' : ''}></button>
+                ${isSynthetic ? '<span class="dim">—</span>' : `<button type="button" class="btn-provider-toggle" data-provider="${escapeHtml(providerName)}" data-action="${actionTarget}" role="switch" aria-checked="${!isDisabled}" aria-label="${escapeHtml(toggleTitle)}" title="${escapeHtml(toggleTitle)}" ${isPending ? 'disabled=""' : ''}></button>`}
               </td>
             </tr>`;
           }).join("");
@@ -2487,9 +2509,13 @@
       }
 
       // 3. Orchestrator & subagent usage
-      syncPanel(document.getElementById("panel-orchestrator"), "Orchestrator & subagent usage", `${attemptsTotal.toLocaleString()} attempts`);
+      syncPanel(document.getElementById("panel-orchestrator"), "Agent usage", `${attemptsTotal.toLocaleString()} attempts`);
 
-      const orch = status.usage?.byRole?.orchestrator ?? status.usage?.byRole?.unattributed ?? {};
+      // "orchestrator" is always the router's own bucket for orchestrator-
+      // origin traffic (see recordUsageEvent's roleKey derivation); it is
+      // never a stand-in for "unattributed", which is role-less *subagent*
+      // traffic and belongs in the subagent totals below instead.
+      const orch = status.usage?.byRole?.orchestrator ?? {};
       const orchTurns = Number(orch.successes ?? 0) + Number(orch.failures ?? 0);
       const orchAvgTurn = orchTurns > 0 ? `${((orch.durationMs ?? 0) / orchTurns / 1000).toFixed(1)}s` : "0.0s";
       const orchToolCalls = Number(orch.toolCalls ?? 0);
@@ -2501,7 +2527,8 @@
       let subToolCalls = 0;
       let subDuration = 0;
       for (const [ role, b ] of Object.entries(status.usage?.byRole ?? {})) {
-        if (role === "unattributed" || role === "orchestrator") continue;
+        if (role === "orchestrator") continue;
+        if (role === "unattributed") continue;
         subAttempts += Number(b.attempts ?? 0);
         subSuccess += Number(b.successes ?? 0);
         subFail += Number(b.failures ?? 0);
@@ -2511,6 +2538,10 @@
       }
       const subTurns = subSuccess + subFail;
       const subAvgTurn = subTurns > 0 ? `${(subDuration / subTurns / 1000).toFixed(1)}s` : "0.0s";
+      const unattributed = status.usage?.byRole?.unattributed ?? {};
+      const unattributedTurns = Number(unattributed.successes ?? 0) + Number(unattributed.failures ?? 0);
+      const unattributedAvgTurn = unattributedTurns > 0 ? `${((unattributed.durationMs ?? 0) / unattributedTurns / 1000).toFixed(1)}s` : "0.0s";
+      const unattributedToolCalls = Number(unattributed.toolCalls ?? 0);
 
       // Observed MCP counts with role-specific union semantics using /status partitions:
       // Orchestrator shows the unique observed-server union for the orchestrator role.
@@ -2595,6 +2626,22 @@
               <outcome-bar align="left" fail="${subFail}" skip="${subSkip}" success="${subSuccess}"></outcome-bar>
             </div>
           </div>
+          ${unattributedActive > 0 ? `
+          <div class="route-card">
+            <div class="route-title">
+              <code>Unattributed</code>
+              <status-badge active="">${unattributedActive}</status-badge>
+            </div>
+            <div class="route-stats">
+              <mini-stat label="Avg turn" value="${unattributedAvgTurn}"></mini-stat>
+              <mini-stat label="Tool calls" value="${unattributedToolCalls.toLocaleString()}"></mini-stat>
+              <mini-stat label="MCP servers" value="—"></mini-stat>
+              <mini-stat label="Skills" value="—"></mini-stat>
+            </div>
+            <div class="route-outcome">
+              <outcome-bar align="left" fail="${unattributed.failures ?? 0}" skip="${unattributed.skipped ?? 0}" success="${unattributed.successes ?? 0}"></outcome-bar>
+            </div>
+          </div>` : ""}
         `;
       }
 
@@ -2780,8 +2827,8 @@
             // bridge's `tool_executed` observations (`bridgeTools`) only fill
             // in when that join is unavailable or empty, so a workspace never
             // has both sources summed into the same total (no double-count).
-            const otlpToolRows = normalizeWorkspaceNamedUsage(w.byTool, ["tool", "name"]);
-            const bridgeToolRows = normalizeWorkspaceNamedUsage(w.bridgeTools, ["tool", "name"]);
+            const otlpToolRows = normalizeWorkspaceNamedUsage(w.byTool, [ "tool", "name" ]);
+            const bridgeToolRows = normalizeWorkspaceNamedUsage(w.bridgeTools, [ "tool", "name" ]);
             const { rows: wsToolRows } = resolveWorkspaceToolRows(otlpToolRows, bridgeToolRows);
             const wsToolsHtml = renderWorkspaceNamedUsage(wsToolRows, {
               unavailableLabel: "Named tool telemetry is unavailable per-workspace",
@@ -2800,8 +2847,8 @@
             // claims are rendered together in the Skills section as `uses / exposed`
             // per skill name, keeping the underlying semantics distinct and
             // preserving fail-closed unavailable states.
-            const wsSkillRows = normalizeWorkspaceNamedUsage(w.bySkill, ["skill", "name"]);
-            const wsExposedSkillRows = normalizeWorkspaceNamedUsage(w.bridgeSkills, ["skill", "name"]);
+            const wsSkillRows = normalizeWorkspaceNamedUsage(w.bySkill, [ "skill", "name" ]);
+            const wsExposedSkillRows = normalizeWorkspaceNamedUsage(w.bridgeSkills, [ "skill", "name" ]);
             const wsSkillSummary = summarizeWorkspaceSkills(wsSkillRows, wsExposedSkillRows);
             if (wsSkillSummary.uses === null) hasUnavailableSkillUses = true;
             else {
@@ -2816,8 +2863,8 @@
             const wsSkillUsesText = wsSkillSummary.uses === null ? "—" : wsSkillSummary.uses.toLocaleString();
             const wsSkillExposedText = wsSkillSummary.exposed === null ? "—" : wsSkillSummary.exposed.toLocaleString();
             const wsSkillsHtml = renderWorkspaceSkills(wsSkillRows, wsExposedSkillRows);
-            const wsMcpRows = normalizeWorkspaceNamedUsage(w.mcpUses ?? w.byMcp ?? w.mcpServers, ["server", "name", "mcp"]);
-            const wsExposedMcpRows = normalizeWorkspaceNamedUsage(w.mcpExposed, ["server", "name", "mcp"]);
+            const wsMcpRows = normalizeWorkspaceNamedUsage(w.mcpUses ?? w.byMcp ?? w.mcpServers, [ "server", "name", "mcp" ]);
+            const wsExposedMcpRows = normalizeWorkspaceNamedUsage(w.mcpExposed, [ "server", "name", "mcp" ]);
             const wsMcpHtml = renderWorkspaceMcp(wsMcpRows, wsExposedMcpRows);
 
             return `

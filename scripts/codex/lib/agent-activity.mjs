@@ -414,6 +414,18 @@ export function createAgentActivityTracker({ ttlMs = resolveAgentActivityTtlMs()
     return Math.max(0, count);
   }
 
+  /** List of subjects currently in a live (non-terminal, non-stale) state, optionally filtered. Excludes bookkeeping kinds (e.g. subagent_slot) unless kind is explicitly filtered. */
+  function listLive(filter = {}, at = now()) {
+    sweep(at);
+    const live = [];
+    for (const rec of subjects.values()) {
+      if (!LIVE_STATES.has(rec.state)) continue;
+      if (!matches(rec, filter)) continue;
+      live.push(snapshotRecord(rec, at));
+    }
+    return live;
+  }
+
   /** Count of subjects grouped by state, optionally filtered. */
   function countByState(filter = {}, at = now()) {
     sweep(at);
@@ -455,8 +467,8 @@ export function createAgentActivityTracker({ ttlMs = resolveAgentActivityTtlMs()
       // would otherwise fall into the "unattributed" bucket of byRole/
       // byOrigin/byWorkspace and inflate them with bookkeeping, not agents.
       if (!AGENT_ACTIVITY_KINDS.includes(rec.kind)) continue;
-      if (rec.provider) add(byProvider, rec.provider, rec);
-      if (rec.provider && rec.model) add(byModel, `${rec.provider}/${rec.model}`, rec);
+      add(byProvider, rec.provider, rec);
+      add(byModel, rec.provider && rec.model ? `${rec.provider}/${rec.model}` : null, rec);
       add(byRole, rec.role, rec);
       add(byOrigin, rec.origin, rec);
       add(byWorkspace, rec.workspace, rec);
@@ -494,6 +506,7 @@ export function createAgentActivityTracker({ ttlMs = resolveAgentActivityTtlMs()
     getRecord,
     sweep,
     countLive,
+    listLive,
     countByState,
     distinctTags,
     snapshot,

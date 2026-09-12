@@ -629,12 +629,116 @@ function activityFilter(dimension, key, extra = {}) {
   if (dimension === "role" && key === "unattributed") filter.role = null;
   else if (dimension === "origin" && key === "unattributed") filter.origin = null;
   else if (dimension === "workspace" && key === "unattributed") filter.workspace = null;
+  else if (dimension === "provider" && key === "unattributed") filter.provider = null;
+  else if (dimension === "model" && key === "unattributed") filter.model = null;
   else filter[dimension] = key;
   return filter;
 }
 
+function emptyStateCounts() {
+  return Object.fromEntries(AGENT_ACTIVITY_STATES.map((state) => [state, 0]));
+}
+
 function countLiveAgentActivity(filter = {}, at = Date.now()) {
   return AGENT_ACTIVITY_KINDS.reduce((total, kind) => total + agentActivity.countLive({ ...filter, kind }, at), 0);
+}
+
+/**
+ * Timestamp-consistent live-agent projection.
+ * Evaluates live activity at a single point in time `at` across all dimensions.
+ * Produces a unified projection of direct live agents and inferred orchestrators,
+ * which serves as the single source of truth for:
+ * - canonical total (liveActivity, usage.totals.active)
+ * - status.providers[*].active
+ * - usage dimensions: byRole, byOrigin, byModel, byWorkspace, and their nested buckets
+ * - usage.activity state breakdowns
+ */
+function projectLiveAgents(at = Date.now()) {
+  const directAgents = agentActivity.listLive({}, at);
+
+  // Discover distinct workspaces among direct live agents
+  const workspaces = new Set();
+  for (const agent of directAgents) {
+    workspaces.add(agent.workspace ?? null);
+  }
+
+  const inferredOrchestrators = [];
+  for (const ws of workspaces) {
+    const wsAgents = directAgents.filter((a) => (a.workspace ?? null) === ws);
+    const hasOrchestrator = wsAgents.some(
+      (a) => a.origin === "orchestrator" || a.role === "orchestrator"
+    );
+    const roleChildActivity = ROLE_NAMES
+      .filter((role) => role !== "orchestrator")
+      .some((role) => wsAgents.some((a) => a.role === role));
+    const hasChildActivity =
+      wsAgents.some((a) => a.origin === "subagent" || a.kind === "bridge_subagent") ||
+      roleChildActivity;
+
+    if (hasChildActivity && !hasOrchestrator) {
+      inferredOrchestrators.push({
+        subject: `inferred:orchestrator:${ws ?? UNATTRIBUTED_DIMENSION}`,
+        kind: "session",
+        tag: null,
+        state: "subagent_wait",
+        provider: null, // Unproven provider -> explicit unattributed residual
+        model: null,    // Unproven model -> explicit unattributed residual
+        role: "orchestrator",
+        origin: "orchestrator",
+        workspace: ws,
+        isInferred: true,
+      });
+    }
+  }
+
+  const allLiveAgents = [
+    ...directAgents.map((a) => ({
+      ...a,
+      origin: a.origin ?? usageOrigin(a.role, a.provider),
+      isInferred: false,
+    })),
+    ...inferredOrchestrators,
+  ];
+
+  const byProvider = {};
+  const byModel = {};
+  const byRole = {};
+  const byOrigin = {};
+  const byWorkspace = {};
+
+  for (const agent of allLiveAgents) {
+    const pKey = agent.provider ?? UNATTRIBUTED_DIMENSION;
+    byProvider[pKey] = (byProvider[pKey] ?? 0) + 1;
+
+    const mKey = !agent.model
+      ? UNATTRIBUTED_DIMENSION
+      : (agent.provider && !agent.model.startsWith(`${agent.provider}/`)
+        ? `${agent.provider}/${agent.model}`
+        : agent.model);
+    byModel[mKey] = (byModel[mKey] ?? 0) + 1;
+
+    const rKey = agent.role ?? UNATTRIBUTED_DIMENSION;
+    byRole[rKey] = (byRole[rKey] ?? 0) + 1;
+
+    const oKey = agent.origin ?? UNATTRIBUTED_DIMENSION;
+    byOrigin[oKey] = (byOrigin[oKey] ?? 0) + 1;
+
+    const wKey = agent.workspace ?? UNATTRIBUTED_DIMENSION;
+    byWorkspace[wKey] = (byWorkspace[wKey] ?? 0) + 1;
+  }
+
+  return {
+    at,
+    directAgents,
+    inferredOrchestrators,
+    allLiveAgents,
+    canonicalTotal: allLiveAgents.length,
+    byProvider,
+    byModel,
+    byRole,
+    byOrigin,
+    byWorkspace,
+  };
 }
 
 /**
@@ -646,103 +750,214 @@ function countLiveAgentActivity(filter = {}, at = Date.now()) {
  * without a live orchestrator record of its own.
  */
 function inferredOrchestratorCount({ workspace, at = Date.now() } = {}) {
-  const activity = agentActivity.snapshot(at);
-  const workspaces = workspace !== undefined
-    ? [workspace]
-    : [...new Set([
-      ...Object.keys(activity.byWorkspace ?? {}).filter((key) => key !== "unattributed" && key !== "unknown"),
-      null,
-    ])];
-  return workspaces.reduce((total, key) => {
-    const workspaceFilter = key === null ? { workspace: null } : { workspace: key };
-    const hasOrchestrator = countLiveAgentActivity({ origin: "orchestrator", ...workspaceFilter }, at) > 0;
-    const roleChildActivity = ROLE_NAMES
-      .filter((role) => role !== "orchestrator")
-      .some((role) => countLiveAgentActivity({ role, ...workspaceFilter }, at) > 0);
-    const hasChildActivity = countLiveAgentActivity({ origin: "subagent", ...workspaceFilter }, at) > 0 || roleChildActivity;
-    return total + (hasChildActivity && !hasOrchestrator ? 1 : 0);
-  }, 0);
+  const projection = projectLiveAgents(at);
+  if (workspace !== undefined) {
+    return projection.inferredOrchestrators.filter(
+      (inf) => (inf.workspace ?? null) === (workspace ?? null)
+    ).length;
+  }
+  return projection.inferredOrchestrators.length;
 }
 
 function canonicalLiveAgentCount(at = Date.now()) {
-  return countLiveAgentActivity({}, at) + inferredOrchestratorCount({ at });
+  return projectLiveAgents(at).canonicalTotal;
 }
 
-function usageSnapshot(collection, dimension, extraFilter = {}) {
-  return Object.fromEntries(Object.entries(collection).map(([key, bucket]) => [key, {
-    ...bucket,
-    active: countLiveAgentActivity(activityFilter(dimension, key, extraFilter))
-      + (dimension === "role" && key === "orchestrator" ? inferredOrchestratorCount({ workspace: extraFilter.workspace, at: Date.now() }) : 0),
-    averageDurationMs: bucket.successes + bucket.failures > 0 ? Math.round(bucket.durationMs / (bucket.successes + bucket.failures)) : 0,
-  }]));
+function matchesProjectedAgent(agent, dimension, key, extraFilter = {}) {
+  if (extraFilter.workspace !== undefined) {
+    const wsTarget = extraFilter.workspace ?? UNATTRIBUTED_DIMENSION;
+    const wsAgent = agent.workspace ?? UNATTRIBUTED_DIMENSION;
+    if (wsAgent !== wsTarget) return false;
+  }
+  if (dimension === "role") {
+    const rKey = agent.role ?? UNATTRIBUTED_DIMENSION;
+    return rKey === key;
+  }
+  if (dimension === "origin") {
+    const oKey = agent.origin ?? UNATTRIBUTED_DIMENSION;
+    return oKey === key;
+  }
+  if (dimension === "provider") {
+    const pKey = agent.provider ?? UNATTRIBUTED_DIMENSION;
+    return pKey === key;
+  }
+  if (dimension === "model") {
+    const mKey = !agent.model
+      ? UNATTRIBUTED_DIMENSION
+      : (agent.provider && !agent.model.startsWith(`${agent.provider}/`)
+        ? `${agent.provider}/${agent.model}`
+        : agent.model);
+    return mKey === key;
+  }
+  if (dimension === "workspace") {
+    const wKey = agent.workspace ?? UNATTRIBUTED_DIMENSION;
+    return wKey === key;
+  }
+  return false;
+}
+
+function usageSnapshot(collection, dimension, projection = projectLiveAgents(), extraFilter = {}) {
+  const activeProj = projection ?? projectLiveAgents();
+  const result = {};
+
+  for (const [key, bucket] of Object.entries(collection ?? {})) {
+    result[key] = {
+      ...bucket,
+      active: activeProj.allLiveAgents.filter((a) => matchesProjectedAgent(a, dimension, key, extraFilter)).length,
+      averageDurationMs: bucket.successes + bucket.failures > 0 ? Math.round(bucket.durationMs / (bucket.successes + bucket.failures)) : 0,
+    };
+  }
+
+  // Ensure relevant keys with active live agents (or orchestrator for role) are present
+  const liveKeys = new Set();
+  if (dimension === "role") {
+    liveKeys.add("orchestrator");
+  }
+  for (const agent of activeProj.allLiveAgents) {
+    if (extraFilter.workspace !== undefined) {
+      const wsTarget = extraFilter.workspace ?? UNATTRIBUTED_DIMENSION;
+      const wsAgent = agent.workspace ?? UNATTRIBUTED_DIMENSION;
+      if (wsAgent !== wsTarget) continue;
+    }
+    if (dimension === "role") liveKeys.add(agent.role ?? UNATTRIBUTED_DIMENSION);
+    else if (dimension === "origin") liveKeys.add(agent.origin ?? UNATTRIBUTED_DIMENSION);
+    else if (dimension === "provider") liveKeys.add(agent.provider ?? UNATTRIBUTED_DIMENSION);
+    else if (dimension === "model") {
+      const mKey = !agent.model
+        ? UNATTRIBUTED_DIMENSION
+        : (agent.provider && !agent.model.startsWith(`${agent.provider}/`)
+          ? `${agent.provider}/${agent.model}`
+          : agent.model);
+      liveKeys.add(mKey);
+    }
+    else if (dimension === "workspace") liveKeys.add(agent.workspace ?? UNATTRIBUTED_DIMENSION);
+  }
+
+  for (const key of liveKeys) {
+    if (!result[key]) {
+      const active = activeProj.allLiveAgents.filter((a) => matchesProjectedAgent(a, dimension, key, extraFilter)).length;
+      if (active > 0 || (dimension === "role" && key === "orchestrator")) {
+        result[key] = {
+          ...emptyUsageBucket(),
+          active,
+          averageDurationMs: 0,
+        };
+      }
+    }
+  }
+
+  return result;
 }
 
 
-function usageStatus() {
-  const at = Date.now();
+function usageStatus(now = Date.now(), projection = projectLiveAgents(now)) {
+  const at = projection.at;
   const rawActivity = agentActivity.snapshot(at);
-  const inferredOrchestrators = inferredOrchestratorCount({ at });
-  const byRole = usageSnapshot(usageTelemetry.byRole, "role");
-  byRole.orchestrator = {
-    ...(byRole.orchestrator ?? emptyUsageBucket()),
-    active: Number(byRole.orchestrator?.active ?? 0) + inferredOrchestrators,
+  const byRole = usageSnapshot(usageTelemetry.byRole, "role", projection);
+  const byModel = usageSnapshot(usageTelemetry.byModel, "model", projection);
+  const byOrigin = usageSnapshot(usageTelemetry.byOrigin, "origin", projection);
+
+  // In rawActivity, reconcile inferred orchestrators across all dimensions
+  const activity = {
+    ...rawActivity,
+    live: projection.canonicalTotal,
+    inferredOrchestrators: projection.inferredOrchestrators.length,
+    byState: { ...rawActivity.byState },
+    byRole: { ...rawActivity.byRole },
+    byOrigin: { ...rawActivity.byOrigin },
+    byWorkspace: { ...rawActivity.byWorkspace },
+    byProvider: { ...rawActivity.byProvider },
+    byModel: { ...rawActivity.byModel },
   };
+
+  if (projection.inferredOrchestrators.length > 0) {
+    activity.byState.subagent_wait = (activity.byState.subagent_wait ?? 0) + projection.inferredOrchestrators.length;
+    activity.total = Object.values(activity.byState).reduce((s, c) => s + c, 0);
+
+    activity.byRole.orchestrator = { ...(activity.byRole.orchestrator ?? emptyStateCounts()) };
+    activity.byRole.orchestrator.subagent_wait = (activity.byRole.orchestrator.subagent_wait ?? 0) + projection.inferredOrchestrators.length;
+
+    activity.byOrigin.orchestrator = { ...(activity.byOrigin.orchestrator ?? emptyStateCounts()) };
+    activity.byOrigin.orchestrator.subagent_wait = (activity.byOrigin.orchestrator.subagent_wait ?? 0) + projection.inferredOrchestrators.length;
+
+    for (const inf of projection.inferredOrchestrators) {
+      const wsKey = inf.workspace ?? UNATTRIBUTED_DIMENSION;
+      activity.byWorkspace[wsKey] = { ...(activity.byWorkspace[wsKey] ?? emptyStateCounts()) };
+      activity.byWorkspace[wsKey].subagent_wait = (activity.byWorkspace[wsKey].subagent_wait ?? 0) + 1;
+    }
+
+    activity.byProvider[UNATTRIBUTED_DIMENSION] = { ...(activity.byProvider[UNATTRIBUTED_DIMENSION] ?? emptyStateCounts()) };
+    activity.byProvider[UNATTRIBUTED_DIMENSION].subagent_wait = (activity.byProvider[UNATTRIBUTED_DIMENSION].subagent_wait ?? 0) + projection.inferredOrchestrators.length;
+
+    activity.byModel[UNATTRIBUTED_DIMENSION] = { ...(activity.byModel[UNATTRIBUTED_DIMENSION] ?? emptyStateCounts()) };
+    activity.byModel[UNATTRIBUTED_DIMENSION].subagent_wait = (activity.byModel[UNATTRIBUTED_DIMENSION].subagent_wait ?? 0) + projection.inferredOrchestrators.length;
+  }
+
+  const workspaceKeys = new Set([
+    ...Object.keys(usageTelemetry.byWorkspace),
+    ...Object.keys(projection.byWorkspace).filter((k) => (projection.byWorkspace[k] ?? 0) > 0),
+  ]);
+
+  const byWorkspace = Object.fromEntries([...workspaceKeys].map((key) => {
+    const bucket = usageTelemetry.byWorkspace[key] ?? {
+      attempts: 0,
+      successes: 0,
+      failures: 0,
+      skipped: 0,
+      durationMs: 0,
+      maxDurationMs: 0,
+      toolCalls: 0,
+      lastUsedAt: null,
+      lastFailure: null,
+      byRole: {},
+      byModel: {},
+      byProvider: {},
+    };
+    const { tools, skills, workspace_id: _workspaceId, bridgeObservations, mcpExposed, toolsCapable: _toolsCapable, skillsCapable: _skillsCapable, mcpCapable: _mcpCapable, ...publicBucket } = bucket;
+    const toolsCapable = bucket.toolsCapable === true || (bucket.toolsExecuted ?? 0) > 0 || (bucket.toolsRequested ?? 0) > 0 || (bucket.toolsUnavailable ?? 0) > 0;
+    const skillsCapable = bucket.skillsCapable === true || (bucket.skillsExposed ?? 0) > 0;
+    const formatBridgeTools = (map) => map ? [...map.values()].map((entry) => ({ ...entry, byStatus: { ...entry.byStatus } })).sort((a, b) => a.tool.localeCompare(b.tool)) : [];
+    const formatBridgeSkills = (map) => map ? [...map.entries()].map(([skill, value]) => ({ skill, count: value })).sort((a, b) => a.skill.localeCompare(b.skill)) : [];
+    return [key, {
+      ...publicBucket,
+      active: projection.byWorkspace[key] ?? 0,
+      averageDurationMs: bucket.successes + bucket.failures > 0 ? Math.round(bucket.durationMs / (bucket.successes + bucket.failures)) : 0,
+      skillUses: bucket.skillUses ?? 0,
+      skillContextsInjected: bucket.skillContextsInjected ?? 0,
+      byRole: usageSnapshot(bucket.byRole, "role", projection, { workspace: key }),
+      byModel: usageSnapshot(bucket.byModel, "model", projection, { workspace: key }),
+      byProvider: usageSnapshot(bucket.byProvider, "provider", projection, { workspace: key }),
+      byMcp: bucket.mcpCapable ? { ...bucket.byMcp } : null,
+      mcpExposed: bucket.mcpCapable ? formatWorkspaceMcpExposed(mcpExposed) : null,
+      mcpUses: bucket.mcpCapable ? formatWorkspaceMcpUses(bucket.byMcp) : null,
+      toolsUnattributed: bucket.toolsUnattributed ?? 0,
+      skillsUnattributed: bucket.skillsUnattributed ?? 0,
+      toolsExecuted: bucket.toolsExecuted ?? 0,
+      toolsRequested: bucket.toolsRequested ?? 0,
+      toolsUnavailable: bucket.toolsUnavailable ?? 0,
+      skillsExposed: bucket.skillsExposed ?? 0,
+      ...(toolsCapable ? { byTool: formatWorkspaceTools(tools) } : { byTool: null }),
+      ...(skillsCapable ? { bySkill: formatWorkspaceSkills(skills) } : { bySkill: null }),
+      ...(bridgeObservations && (bridgeObservations.tools?.size > 0 || bridgeObservations.skills?.size > 0)
+        ? {
+          bridgeTools: formatBridgeTools(bridgeObservations.tools),
+          bridgeSkills: formatBridgeSkills(bridgeObservations.skills),
+        }
+        : {}),
+    }];
+  }));
+
   return {
-    // Live activity that spans request gaps (tool_wait/user_wait/
-    // subagent_wait), grouped by provider, model, role, origin, and workspace.
-    // Every public bucket's `active` field is derived from this snapshot.
-    activity: { ...rawActivity, live: rawActivity.live + inferredOrchestrators, inferredOrchestrators },
-    totals: { ...usageTelemetry.totals, active: canonicalLiveAgentCount(at), averageDurationMs: usageTelemetry.totals.successes + usageTelemetry.totals.failures > 0 ? Math.round(usageTelemetry.totals.durationMs / (usageTelemetry.totals.successes + usageTelemetry.totals.failures)) : 0 },
+    activity,
+    totals: {
+      ...usageTelemetry.totals,
+      active: projection.canonicalTotal,
+      averageDurationMs: usageTelemetry.totals.successes + usageTelemetry.totals.failures > 0 ? Math.round(usageTelemetry.totals.durationMs / (usageTelemetry.totals.successes + usageTelemetry.totals.failures)) : 0,
+    },
     byRole,
-    byModel: usageSnapshot(usageTelemetry.byModel, "model"),
-    byOrigin: usageSnapshot(usageTelemetry.byOrigin, "origin"),
-    byWorkspace: Object.fromEntries(Object.entries(usageTelemetry.byWorkspace).map(([key, bucket]) => {
-      const { tools, skills, workspace_id: _workspaceId, bridgeObservations, mcpExposed, toolsCapable: _toolsCapable, skillsCapable: _skillsCapable, mcpCapable: _mcpCapable, ...publicBucket } = bucket;
-      // Workspace-scoped tool/skill coverage. Each bucket carries its own
-      // capability flag -- set only by first-class evidence this specific
-      // workspace produced -- so a workspace with no tool/skill evidence of
-      // its own always reports `unavailable` regardless of what any other
-      // workspace has proven. We emit `byTool`/`bySkill` when this
-      // workspace's own bucket has been proven to carry that dimension
-      // (either through OTLP attribution or through a bridge report) and a
-      // `null` marker otherwise.
-      const toolsCapable = bucket.toolsCapable === true || (bucket.toolsExecuted ?? 0) > 0 || (bucket.toolsRequested ?? 0) > 0 || (bucket.toolsUnavailable ?? 0) > 0;
-      const skillsCapable = bucket.skillsCapable === true || (bucket.skillsExposed ?? 0) > 0;
-      const formatBridgeTools = (map) => [...map.values()].map((entry) => ({ ...entry, byStatus: { ...entry.byStatus } })).sort((a, b) => a.tool.localeCompare(b.tool));
-      const formatBridgeSkills = (map) => [...map.entries()].map(([skill, value]) => ({ skill, count: value })).sort((a, b) => a.skill.localeCompare(b.skill));
-      return [key, {
-        ...publicBucket,
-        active: countLiveAgentActivity({ workspace: key }),
-        averageDurationMs: bucket.successes + bucket.failures > 0 ? Math.round(bucket.durationMs / (bucket.successes + bucket.failures)) : 0,
-        skillUses: bucket.skillUses ?? 0,
-        skillContextsInjected: bucket.skillContextsInjected ?? 0,
-        byRole: usageSnapshot(bucket.byRole, "role", { workspace: key }),
-        byModel: usageSnapshot(bucket.byModel, "model", { workspace: key }),
-        byProvider: usageSnapshot(bucket.byProvider, "provider", { workspace: key }),
-        byMcp: bucket.mcpCapable ? { ...bucket.byMcp } : null,
-        // Per-workspace MCP exposed/uses rows. `mcpExposed` is normalized
-        // from the bridge's `mcp_exposed` observations (a server was made
-        // available to the model this turn); `mcpUses` is the same discovery
-        // + executed-tool coverage `byMcp` already tracks, reshaped into rows
-        // so it lines up with `mcpExposed` for a workspace's MCP panel.
-        mcpExposed: bucket.mcpCapable ? formatWorkspaceMcpExposed(mcpExposed) : null,
-        mcpUses: bucket.mcpCapable ? formatWorkspaceMcpUses(bucket.byMcp) : null,
-        toolsUnattributed: bucket.toolsUnattributed ?? 0,
-        skillsUnattributed: bucket.skillsUnattributed ?? 0,
-        toolsExecuted: bucket.toolsExecuted ?? 0,
-        toolsRequested: bucket.toolsRequested ?? 0,
-        toolsUnavailable: bucket.toolsUnavailable ?? 0,
-        skillsExposed: bucket.skillsExposed ?? 0,
-        ...(toolsCapable ? { byTool: formatWorkspaceTools(tools) } : { byTool: null }),
-        ...(skillsCapable ? { bySkill: formatWorkspaceSkills(skills) } : { bySkill: null }),
-        ...(bridgeObservations && (bridgeObservations.tools.size > 0 || bridgeObservations.skills.size > 0)
-          ? {
-            bridgeTools: formatBridgeTools(bridgeObservations.tools),
-            bridgeSkills: formatBridgeSkills(bridgeObservations.skills),
-          }
-          : {}),
-      }];
-    })),
+    byModel,
+    byOrigin,
+    byWorkspace,
   };
 }
 
@@ -3306,11 +3521,12 @@ function limitsStatus() {
 }
 
 function getRouterStatus(now = Date.now()) {
+  const projection = projectLiveAgents(now);
   const providers = Object.fromEntries(ROUTES.map((route) => {
     const state = providerState(route.provider);
     const cooldown = providerCooldown(route.provider, now);
     const inFlightRequests = getActiveRequests(route.provider);
-    const active = countLiveAgentActivity({ provider: route.provider });
+    const active = projection.byProvider[route.provider] ?? 0;
     const coolingDown = cooldown !== null;
     const enabled = isProviderEnabled(route.provider);
     const tierPrios = [];
@@ -3361,6 +3577,50 @@ function getRouterStatus(now = Date.now()) {
       lastFailure: state.lastFailure,
     }];
   }));
+
+  for (const [providerName, activeCount] of Object.entries(projection.byProvider)) {
+    if (activeCount > 0 && !providers[providerName]) {
+      const state = providerState(providerName);
+      providers[providerName] = {
+        // This is a live-agent attribution bucket, not a routable provider.
+        // Keep it visible for reconciliation but never present it as ready or
+        // expose provider administration controls for it.
+        enabled: false,
+        synthetic: true,
+        status: "unattributed",
+        routingPriority: "—",
+        limits: {
+          cooldownKind: null,
+          cooldownFailureClass: null,
+          cooldownResetsAt: null,
+          cooldownUntil: null,
+          cooldownRemainingMs: 0,
+          lastResortEligible: true,
+        },
+        active: activeCount,
+        inFlightRequests: getActiveRequests(providerName),
+        cooldownUntil: null,
+        cooldownRemainingMs: 0,
+        cooldownKind: null,
+        cooldownFailureClass: null,
+        cooldownResetsAt: null,
+        lastResortEligible: true,
+        failureStreak: 0,
+        probeFailureStreak: 0,
+        configuredModels: {},
+        capabilities: {},
+        attempts: state.attempts,
+        successes: state.successes,
+        failures: state.failures,
+        skipped: state.skipped,
+        lastAttemptAt: state.lastAttemptAt,
+        lastSuccessAt: state.lastSuccessAt,
+        lastFailureAt: state.lastFailureAt,
+        lastFailure: state.lastFailure,
+      };
+    }
+  }
+
   return {
     schema: "autodev-router-status-v2",
     router: "codex-model-router",
@@ -3381,7 +3641,7 @@ function getRouterStatus(now = Date.now()) {
     routing: routingStatus(),
     limits: limitsStatus(),
     disabledProviders: [...disabledProviders].sort(),
-    usage: usageStatus(),
+    usage: usageStatus(now, projection),
     attributionDiagnostics: attributionDiagnosticsStatus(),
     codexTelemetry: codexTelemetryStatus(),
     concurrency: concurrencyStatus(),
@@ -3394,7 +3654,7 @@ function getRouterStatus(now = Date.now()) {
     inFlightRequests: Object.fromEntries(activeProviderRequests),
     // Total live agent activity (spans request gaps), independent of role/
     // provider dimension -- the same count usage.activity.live reports.
-    liveActivity: canonicalLiveAgentCount(),
+    liveActivity: projection.canonicalTotal,
     providers,
     recentEvents: [...recentRouterEvents].reverse(),
     codexState: codexStateStatus(),
@@ -6233,6 +6493,8 @@ export {
   agentActivity,
   AGENT_ACTIVITY_TTL_MS,
   usageStatus,
+  projectLiveAgents,
+  inferredOrchestratorCount,
 };
 
 if (IS_MAIN) {
