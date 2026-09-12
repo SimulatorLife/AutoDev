@@ -162,7 +162,7 @@ statusMessage = "Applying root delegation policy"
 # in-flight parent turn (see scripts/codex/skill-read-telemetry.mjs). It is
 # fail-open and only counts canonical SKILL.md reads under approved roots.
 [[hooks.PreToolUse]]
-matcher = "read_file|exec_command"
+matcher = "(?i)read[_ -]?file|read|exec[_ -]?command|bash"
 
 [[hooks.PreToolUse.hooks]]
 type = "command"
@@ -185,6 +185,9 @@ trusted_hash = "sha256:07139ded17bd6a0567b6131e2c98f2d570c5d5fca5888261a467d7d52
 
 [hooks.state."/Users/henrykirk/.codex/config.toml:session_start:0:0"]
 trusted_hash = "sha256:73544f44bcd549b209b5f53b231741c87b856430ebf555eb7f7d69f92d13c36b"
+
+[hooks.state."/Users/henrykirk/.codex/config.toml:pre_tool_use:0:0"]
+trusted_hash = "sha256:3553f2d17418fe9c5f53fa38c83a64e15b3752b4d6b9e33935ebbef654d0d8a0"
 
 [analytics]
 enabled = true

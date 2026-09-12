@@ -2173,6 +2173,23 @@ function releaseSubagentSlot(sessionKey) {
   agentActivity.finish(subject, { requestId: subject, outcome: "success" });
 }
 
+/**
+ * Refreshes every subagent slot a session currently holds. A slot's own
+ * lifecycle only ever calls beginRequest (acquire) and finish (release) --
+ * nothing updates it in between -- so a slot held across a session's own
+ * long-running turn (streaming heartbeats above) would otherwise go stale
+ * purely from the TTL elapsing, even though the session obviously has not
+ * abandoned it: the router just observed the session serving a live turn.
+ * Called from that heartbeat, not on a timer of its own, so a slot whose
+ * session genuinely stops producing signal still ages out on the existing
+ * TTL rather than being kept alive forever.
+ */
+function touchOpenSubagentSlots(sessionKey) {
+  const stack = openSubagentSlots.get(sessionKey);
+  if (!stack) return;
+  for (const subject of stack) agentActivity.touch(subject);
+}
+
 function resetConcurrencyTelemetry() {
   openSubagentSlots.clear();
   agentActivity.reset();
@@ -2634,13 +2651,13 @@ function subagentStatus() {
 // Ingests a provider bridge's report that its CLI invoked a subagent spawn
 // tool. Only reports naming a request id this router actually issued are
 // counted; anything else is a caller that never served a router request.
-const INGESTED_AGENT_EVENTS = new Set(["subagent_spawn", "subagent_result", "subagent_tools_unavailable", "tool_executed", "tool_requested", "tool_unavailable", "skill_exposed", "skill_used", "activity"]);
+const INGESTED_AGENT_EVENTS = new Set(["subagent_spawn", "subagent_result", "subagent_tools_unavailable", "tool_executed", "tool_requested", "tool_unavailable", "skill_exposed", "skill_used", "activity", "heartbeat"]);
 
 // States a bridge may report directly over the agent-events channel. This is
 // deliberately narrower than AGENT_ACTIVITY_STATES: "active" and "stale" are
 // derived by the router itself (from a request being served, and from the
 // TTL) and are never something an external report can set.
-const REPORTABLE_AGENT_ACTIVITY_STATES = new Set(["tool_wait", "user_wait", "subagent_wait", "resumed", "finished", "failed"]);
+const REPORTABLE_AGENT_ACTIVITY_STATES = new Set(["tool_wait", "user_wait", "subagent_wait", "resumed", "finished", "failed", "heartbeat"]);
 
 let anonymousChildSequence = 0;
 
@@ -2703,6 +2720,9 @@ function ingestAgentEvents(payload) {
     }
     if (event.type === "tool_executed" || event.type === "tool_requested" || event.type === "tool_unavailable") {
       recordBridgeToolObservation({ event, context });
+      const subject = context.sessionKey || `req:${requestId}`;
+      agentActivity.touch(subject);
+      if (context.sessionKey) touchOpenSubagentSlots(context.sessionKey);
       continue;
     }
     if (event.type === "skill_exposed") {
@@ -2711,6 +2731,13 @@ function ingestAgentEvents(payload) {
     }
     if (event.type === "skill_used") {
       if (recordBridgeSkillUsed({ event, context })) accepted += 1;
+      continue;
+    }
+    if (event.type === "heartbeat" || (event.type === "activity" && (event.state === "heartbeat" || event.state?.trim?.() === "heartbeat"))) {
+      const subject = context.sessionKey || `req:${requestId}`;
+      agentActivity.touch(subject);
+      if (context.sessionKey) touchOpenSubagentSlots(context.sessionKey);
+      accepted += 1;
       continue;
     }
     if (event.type === "activity") {
@@ -4384,7 +4411,7 @@ function incompleteFromResponse(parsed) {
   };
 }
 
-async function writeResponseStream(response, upstream, publicModel, signal = null) {
+async function writeResponseStream(response, upstream, publicModel, signal = null, onHeartbeat = null) {
   const decoder = new TextDecoder();
   const seenToolCalls = new Set();
   let toolCalls = 0;
@@ -4412,6 +4439,11 @@ async function writeResponseStream(response, upstream, publicModel, signal = nul
   };
   const keepAlive = setInterval(() => {
     safeWrite(": codex-router keep-alive\n\n");
+    // The wire is still producing bytes for this turn -- a live heartbeat,
+    // not a new transition -- so the caller's activity record must not go
+    // stale out from under a genuinely long single turn (a slow model, a
+    // large output) that simply outlasts the TTL between its begin and end.
+    onHeartbeat?.();
   }, 2000);
   const inspectEvent = (event) => {
     for (const line of event.split(/\r?\n/)) {
@@ -4792,7 +4824,7 @@ async function fetchUpstream(route, payload, wantsStream, turnMetadataHeader, cl
   return { ok: true, upstream, signal };
 }
 
-async function writeSuccessfulResponse(response, route, result, wantsStream, publicModel, requestId, resolvedModel) {
+async function writeSuccessfulResponse(response, route, result, wantsStream, publicModel, requestId, resolvedModel, onHeartbeat = null) {
   const responseHeaders = {
     "x-autodev-provider": route.provider,
     "x-autodev-model": resolvedModel,
@@ -4802,7 +4834,7 @@ async function writeSuccessfulResponse(response, route, result, wantsStream, pub
   const upstream = result.upstream;
   if (wantsStream) {
     response.writeHead(upstream.status, { ...responseHeaders, "content-type": upstream.headers.get("content-type") ?? "text/event-stream", "cache-control": "no-cache", connection: "close" });
-    const streamResult = await writeResponseStream(response, upstream, publicModel, result.signal);
+    const streamResult = await writeResponseStream(response, upstream, publicModel, result.signal, onHeartbeat);
     if (!response.writableEnded && !response.destroyed && !response.closed) {
       try { response.end(); } catch {}
     }
@@ -4985,7 +5017,7 @@ async function proxyConcreteResponse(response, route, payload, wantsStream, requ
           sendFailureResponse(result.status, failureClass);
           return;
         }
-        const responseResult = await writeSuccessfulResponse(response, route, result, wantsStream, payload.model, requestId, payload.model);
+        const responseResult = await writeSuccessfulResponse(response, route, result, wantsStream, payload.model, requestId, payload.model, () => agentActivity.touch(activitySubject));
         recordRouterEvent({ phase: "result", requestId, requestedModel: payload.model, provider: route.provider, model: payload.model, workspace, outcome: responseResult.failed ? "failure" : "success", status: result.upstream.status, failureClass: responseResult.failed ? "upstream_error" : null, elapsedMs: Date.now() - startedAt, toolCalls: responseResult.toolCalls });
         agentActivity.endRequest(activitySubject, { requestId, outcome: responseResult.failed ? "failure" : "success", hasToolCalls: responseResult.toolCalls > 0, inputRequired: Boolean(responseResult.inputRequired) });
         return;
@@ -5102,6 +5134,11 @@ async function proxyFallbackChain(response, { candidates, role = null, origin = 
     recordRouterEvent({ phase: "selected", requestId, role, origin, requestedModel: payload.model, provider: route.provider, model: route.model, workspace, selection });
     const activityRole = role ?? ((origin ?? usageOrigin(role, route.provider)) === "orchestrator" ? "orchestrator" : null);
     agentActivity.beginRequest(activitySubject, { requestId, provider: route.provider, model: route.model, role: activityRole, origin: origin ?? usageOrigin(role, route.provider), workspace: workspace?.key ?? null });
+    // The session just proved itself alive by starting a new attempt, which
+    // is signal for any concurrency slot it is still holding too -- refresh
+    // it here so the non-streaming response path (no keep-alive heartbeat)
+    // also keeps a session's slots fresh.
+    touchOpenSubagentSlots(sessionKey);
     // A bridge report names only the request id, so record which provider and
     // workspace this attempt resolved to before the upstream call begins.
     const bridgeContext = { provider: route.provider, model: route.model, role: role ?? (origin === "orchestrator" ? "orchestrator" : null), workspace: workspace?.key ?? null, sessionKey };
@@ -5118,7 +5155,10 @@ async function proxyFallbackChain(response, { candidates, role = null, origin = 
       const result = await fetchUpstream(route, payloadForCandidate(payload, route), wantsStream, turnMetadataHeader, clientSignal, agentRole, requestId, session);
       if (result.ok) {
         try {
-          const responseResult = await writeSuccessfulResponse(response, route, result, wantsStream, payload.model, requestId, route.model);
+          const responseResult = await writeSuccessfulResponse(response, route, result, wantsStream, payload.model, requestId, route.model, () => {
+            agentActivity.touch(activitySubject);
+            touchOpenSubagentSlots(sessionKey);
+          });
           if (responseResult.failed) {
             // A turn the provider closed as incomplete already said why, and for
             // a limit, until when. Cool it on what it reported rather than on a

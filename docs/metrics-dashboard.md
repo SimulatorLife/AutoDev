@@ -63,6 +63,35 @@ mean different things to an operator debugging a workspace with no visible
 tool or server activity. Model views inside expanded workspaces also embed
 model-level MCP counts and server breakdowns.
 
+Expanded workspace rows render a separate **"Skills exposed"** section from
+**"Skill usage"**: `status.usage.byWorkspace[*].bySkill` is the confirmed-use
+join (explicit `invoke_type=explicit` activations and verified `SKILL.md`
+reads -- the same source as `skillUses`), while `...bridgeSkills` is the
+exposure join, populated from bridge `skill_exposed` events (a skill made
+available to a session, e.g. via a role contract, with no claim that it was
+ever read or invoked). These are two different facts about a workspace and
+are never merged into one count or one section: a workspace can have skills
+exposed to it long before -- or without ever -- confirming a use. When
+`bySkill` is empty for a workspace that does have `bridgeSkills` entries, the
+"Skill usage" section says **"No confirmed skill uses yet for this workspace
+-- see Skills exposed below"** instead of the generic **"No named skill uses
+observed for this workspace yet"** empty state, so an operator does not read
+"no skill uses" as "nothing skill-related happened here" when the exposure
+row already tells a different story. The "Skills exposed" section shows the
+actual exposed-skill breakdown from `bridgeSkills` (`{ skill, count }`) and
+falls back to **"No skills exposed to this workspace yet"** or **"Skill
+exposure telemetry is unavailable per-workspace"** using the same
+availability-vs-empty distinction as every other per-workspace join.
+
+The workspace Tools section prefers the OTLP-sourced `byTool` join. When that
+join is unavailable (`null`) or reports zero rows, the dashboard falls back to
+`status.usage.byWorkspace[*].bridgeTools` -- a bridge's `tool_executed`
+observations (`{ tool, server, count, byStatus }`) -- as the sole source for
+that render; the two are never summed together, so a tool call a bridge
+reports and an OTLP `codex.tool.call` datapoint later confirms is not counted
+twice. The **Tool calls** column and its totals footer are derived from
+whichever source the Tools section actually rendered.
+
 When present, each `byTool`/`bySkill` entry is attributed under the exact
 same project/workspace bucket as its parent `usage.byWorkspace` entry. The
 router derives that attribution from local request context, verified hooks,
@@ -81,10 +110,12 @@ is also what today's status responses produce.
 
 The workspace table's **Tool calls** column and totals use the same source of
 truth as each workspace's expanded "Tools" section: they sum the rendered named
-tool row counts from `w.byTool` (normalized via `normalizeWorkspaceNamedUsage`).
-When per-workspace tool telemetry is unavailable (`byTool` is null or missing),
-the dashboard handles this explicitly (displaying `—`) without inventing
-unrelated counts or falling back to response-output tool-call counts (`w.toolCalls`).
+tool rows, preferring `w.byTool` and falling back to `w.bridgeTools` only when
+`w.byTool` is null or empty (via `resolveWorkspaceToolRows`, both normalized
+through `normalizeWorkspaceNamedUsage`). When per-workspace tool telemetry is
+unavailable from both sources, the dashboard handles this explicitly
+(displaying `—`) without inventing unrelated counts or falling back to
+response-output tool-call counts (`w.toolCalls`).
 
 ## Reported metrics
 
@@ -253,11 +284,46 @@ The router and dashboard cleanly separate **live agent activity** from **in-flig
 
 - **Live agent activity (`Active` badges, KPIs, provider rows):**
   Measures active agent workflow turns currently being executed by the orchestrator, subagents, or user sessions. Crucially, an agent does **not** stop being active when an intermediate model HTTP request finishes: during tool execution (`tool_executed`, `tool_requested`), user input waits, or child subagent waits, the agent and provider remain live. When `/status` indicates an active or waiting state (e.g. `status` or `state` is `"active"`, `"waiting"`, `"waiting_tool"`, `"waiting_user"`, `"waiting_subagent"`), the dashboard's `Active agents` KPI, provider table `Active` column, and `<status-badge active="">` remain visibly active and non-zero rather than flickering to zero between model invocations.
-- **Active workspaces:** The KPI's workspace count is derived from the live
-  `status.usage.activity.byWorkspace` state snapshot, not only from persisted
-  workspace usage buckets. It counts known workspaces with a live state
-  (`active`, `resumed`, `tool_wait`, `user_wait`, or `subagent_wait`) and excludes
-  `unattributed`/`unknown` activity that cannot be safely assigned to a workspace.
+- **`Active agents` KPI total is the canonical live-agent count, not a max
+  of unrelated counters:** The headline number is read directly from
+  `status.liveActivity` (falling back to `status.usage.totals.active` for an
+  older payload) -- both are the same unfiltered `agentActivity.countLive()`
+  call the router makes internally, so it is the single source of truth for
+  "how many agents are live right now." The dashboard's
+  `computeKpiAgentTotals(status)` helper computes this value and **never**
+  takes a `Math.max()` against per-provider active-request counts
+  (`status.providers[*].active`) or subagent concurrency-slot counts
+  (`status.concurrency.activeSubagentThreads` / `activeSessions`) --
+  those measure transport-layer requests and scheduling slots, not live
+  agent identities, and folding them into the headline via `Math.max` used
+  to silently inflate the total above the number of agents actually live.
+  One subagent active in one workspace renders as exactly `1`.
+- **Orchestrator/subagent role breakdown stays consistent with the total:**
+  The `N orchestrators · N subagents` breakdown shown under the KPI is read
+  from the same `status.usage.byRole` partition the router sums to produce
+  `usage.totals.active`, so the breakdown's components sum to the canonical
+  total above rather than being independently maxed against a different
+  counter (e.g. a concurrency-slot count that can under- or over-count
+  relative to role-attributed activity).
+- **Concurrency slot counts (`status.concurrency.activeSubagentThreads`,
+  `activeSessions`) are scheduling context, not agent counts:** These
+  fields describe how many subagent execution slots or session slots are
+  currently occupied for concurrency-limiting purposes. They are shown in
+  the Operational summary's Concurrency rows for that purpose, but are
+  deliberately excluded from the `Active agents` KPI total and its role
+  breakdown, since a slot and a live agent identity are not always in a
+  1:1 relationship.
+- **`workspaces with active agents` is non-additive context, not a KPI
+  component:** The KPI's workspace count -- labeled `workspaces with active
+  agents` -- is derived from the live `status.usage.activity.byWorkspace`
+  state snapshot, not only from persisted workspace usage buckets. It counts
+  known workspaces with a live state (`active`, `resumed`, `tool_wait`,
+  `user_wait`, or `subagent_wait`) and excludes `unattributed`/`unknown`
+  activity that cannot be safely assigned to a workspace. This count is
+  rendered alongside the agent total purely for attribution context (how
+  many distinct workspaces the live agents belong to); it is never summed
+  into `Active agents`, since one agent is attributed to exactly one
+  workspace and a workspace can host more than one live agent.
 - **In-flight requests (`inFlightRequests`):**
   A distinct, transport-level diagnostic metric measuring active HTTP requests currently open between the router daemon and upstream provider model APIs. Incremented upon socket dispatch and decremented upon response completion or cancellation. The dashboard's **Operational summary** labels in-flight requests separately under Concurrency (`In-flight requests`), and `scripts/codex-model-router-status.mjs` displays both `Active` (live agent activity) and `In-Flight` (transport requests) side-by-side in its provider table.
 
@@ -265,9 +331,19 @@ The router and dashboard cleanly separate **live agent activity** from **in-flig
 
 The router integrates with upstream agent runtimes through explicit agent activity events:
 
-- **Lifecycle events:** Provider bridges emit `{ type: "activity", state, childIds? }` events for `tool_wait`, `user_wait`, `subagent_wait`, `resumed`, `finished`, and `failed`; router-visible response tool calls and continuations supply the native path.
+- **Lifecycle events:** Provider bridges emit `{ type: "activity", state, childIds? }` events for `tool_wait`, `user_wait`, `subagent_wait`, `resumed`, `finished`, `failed`, and non-transitioning `heartbeat` refreshes; router-visible response tool calls and continuations supply the native path.
 - **Configurable freshness TTL (`CODEX_ROUTER_AGENT_ACTIVITY_TTL_MS`):** Defaults to `300000` ms / 5 minutes.
-- **Live states:** `active`, `resumed`, `tool_wait`, `user_wait`, and `subagent_wait` count as live; `finished` and `failed` are terminal. Non-terminal activity older than the TTL becomes `stale` and is removed from live counts without killing or restarting processes.
+- **Live states:** `active`, `resumed`, `tool_wait`, `user_wait`, and `subagent_wait` count as live; `finished` and `failed` are terminal. An open agent request remains live until it settles; non-terminal wait activity older than the TTL becomes `stale` and is removed from live counts without killing or restarting processes.
+- **Heartbeat freshness drives the `Active agents` KPI:** Every lifecycle
+  event refreshes that agent's last-seen timestamp, acting as a heartbeat.
+  `status.liveActivity` (and therefore the `Active agents` KPI total,
+  role breakdown, and `workspaces with active agents` context count) only
+  ever counts entries whose heartbeat is still within the TTL window above.
+  If a bridge stops emitting lifecycle events for an agent (e.g. it crashed
+  without emitting `finished`/`failed`), that agent silently ages out of
+  every one of those counts once its heartbeat exceeds the TTL -- there is
+  no separate "stale but still counted" state surfaced in the KPI; stale
+  activity simply stops contributing to the canonical live count.
 
 The dashboard's Operational summary groups Codex receiver, state-database,
 and concurrency values as category/metric/value rows instead of embedding those
@@ -394,7 +470,12 @@ skill once per turn, and sends a privacy-safe `skill_used` event correlated to
 the parent session. It never records skill contents, prompts, command text, or
 absolute paths. The hook fails open and the router fails closed when the
 session cannot be attributed to a workspace. Exposure, prompt mentions, and
-arbitrary files do not count as uses.
+arbitrary files do not count as uses. Exposure is not discarded, though: a
+bridge `skill_exposed` event (a role contract or plugin making a skill
+available to a session) is recorded separately as
+`status.usage.byWorkspace[*].bridgeSkills`, rendered in the workspace's
+"Skills exposed" section, distinct from and never added into `skillUses` or
+`bySkill`.
 
 The dashboard labels MCP state as an observation (`ready`, `error`, or `stale`),
 not as an authoritative process-health guarantee. Codex currently emits MCP

@@ -332,6 +332,9 @@ def tool_server(name: Any) -> str | None:
     return parts[1] if len(parts) >= 3 and parts[1] else None
 
 
+DEFAULT_HEARTBEAT_THROTTLE_SECONDS = 15.0
+
+
 class AgentEventReporter:
     """Posts what the Claude CLI did inside its own runtime to the router.
 
@@ -342,7 +345,14 @@ class AgentEventReporter:
     docstrings carry the full rationale for each event type.
     """
 
-    def __init__(self, url: str, request_id: str, spawn_tools: frozenset[str]) -> None:
+    def __init__(
+        self,
+        url: str,
+        request_id: str,
+        spawn_tools: frozenset[str],
+        *,
+        heartbeat_throttle_seconds: float | None = None,
+    ) -> None:
         self.url = url
         self.request_id = request_id
         self.spawn_tools = spawn_tools
@@ -354,6 +364,17 @@ class AgentEventReporter:
         self._worker_lock = threading.Lock()
         self._worker: threading.Thread | None = None
         self.last_activity_state: str | None = None
+        self.last_heartbeat_at: float = 0.0
+        env_throttle = os.environ.get("CODEX_AGENT_HEARTBEAT_THROTTLE_SECONDS")
+        if heartbeat_throttle_seconds is not None:
+            self.heartbeat_throttle_seconds = max(0.0, float(heartbeat_throttle_seconds))
+        elif env_throttle:
+            try:
+                self.heartbeat_throttle_seconds = max(0.0, float(env_throttle))
+            except (ValueError, TypeError):
+                self.heartbeat_throttle_seconds = DEFAULT_HEARTBEAT_THROTTLE_SECONDS
+        else:
+            self.heartbeat_throttle_seconds = DEFAULT_HEARTBEAT_THROTTLE_SECONDS
 
     def is_spawn_tool(self, name: Any) -> bool:
         return isinstance(name, str) and name in self.spawn_tools
@@ -515,25 +536,105 @@ class AgentEventReporter:
             "pluginId": normalized_label(effective_plugin_id),
         }])
 
+    def report_skill_used_async(
+        self,
+        skill: Any,
+        source: Any = None,
+        plugin_id: Any = None,
+        event_id: Any = None,
+        *,
+        pluginId: Any = None,
+        eventId: Any = None,
+    ) -> None:
+        """A skill this turn actually used, as opposed to merely exposed.
+
+        The router keys dedupe on (requestId, skill, source, pluginId,
+        workspace, eventId), so a retried tool call or a repeated read of the
+        same skill in one turn collapses into one attributed use rather than
+        overcounting. Mirrors `reportSkillUsed` in
+        scripts/codex/lib/agent-events.mjs.
+        """
+        effective_plugin_id = plugin_id if plugin_id is not None else pluginId
+        effective_event_id = event_id if event_id is not None else eventId
+        effective_source = source
+        if isinstance(skill, dict):
+            if effective_source is None:
+                effective_source = skill.get("source")
+            if effective_plugin_id is None:
+                effective_plugin_id = skill.get("pluginId") if "pluginId" in skill else skill.get("plugin_id")
+            if effective_event_id is None:
+                effective_event_id = skill.get("eventId") if "eventId" in skill else skill.get("event_id")
+            skill = skill.get("skill")
+        name = normalized_label(skill)
+        if name is None:
+            return
+        event: dict[str, Any] = {
+            "type": "skill_used",
+            "skill": name,
+            "source": normalized_label(effective_source),
+            "pluginId": normalized_label(effective_plugin_id),
+        }
+        event_id_label = normalized_label(effective_event_id)
+        if event_id_label is not None:
+            event["eventId"] = event_id_label[:128]
+        self.post_async([event])
+
+    def report_heartbeat_async(
+        self,
+        min_interval_seconds: float = 0.0,
+        *,
+        minIntervalMs: float | None = None,
+        min_interval_ms: float | None = None,
+    ) -> None:
+        """Report a non-transitioning heartbeat activity event to keep active turns live."""
+        min_sec = min_interval_seconds
+        ms = minIntervalMs if minIntervalMs is not None else min_interval_ms
+        if ms is not None:
+            min_sec = max(min_sec, float(ms) / 1000.0)
+        now = time.monotonic()
+        if min_sec > 0.0 and self.last_heartbeat_at > 0.0 and (now - self.last_heartbeat_at) < min_sec:
+            return
+        self.last_heartbeat_at = now
+        self.report_activity_async("heartbeat")
+
     def report_activity_async(
         self,
         state: Any,
         child_ids: Any = None,
         *,
         childIds: Any = None,
+        timestamp: Any = None,
     ) -> None:
         """Report a normalized activity lifecycle observation."""
         effective_child_ids = child_ids if child_ids is not None else childIds
         effective_state = state
+        effective_timestamp = timestamp
         if isinstance(state, dict):
             if effective_child_ids is None:
                 effective_child_ids = state.get("childIds") if "childIds" in state else state.get("child_ids")
+            if effective_timestamp is None:
+                effective_timestamp = state.get("timestamp")
             effective_state = state.get("state")
         state_str = normalized_label(effective_state)
-        valid_states = ("tool_wait", "user_wait", "subagent_wait", "resumed", "finished", "failed")
+        valid_states = ("tool_wait", "user_wait", "subagent_wait", "resumed", "finished", "failed", "heartbeat")
         if state_str not in valid_states:
             return
         if self.last_activity_state in ("finished", "failed"):
+            return
+        if state_str == "heartbeat":
+            min_sec = 0.0
+            if isinstance(state, dict):
+                if "min_interval_seconds" in state:
+                    min_sec = float(state["min_interval_seconds"])
+                elif "minIntervalMs" in state:
+                    min_sec = float(state["minIntervalMs"]) / 1000.0
+                elif "min_interval_ms" in state:
+                    min_sec = float(state["min_interval_ms"]) / 1000.0
+            now = effective_timestamp if isinstance(effective_timestamp, (int, float)) and math.isfinite(effective_timestamp) else time.monotonic()
+            if min_sec > 0.0 and self.last_heartbeat_at > 0.0 and (now - self.last_heartbeat_at) < min_sec:
+                return
+            self.last_heartbeat_at = now
+            self.post_async([{"type": "activity", "state": "heartbeat"}])
             return
         if self.last_activity_state == state_str and state_str != "resumed":
             return
@@ -549,11 +650,15 @@ class AgentEventReporter:
     reportToolRequested = report_tool_requested_async
     reportToolUnavailable = report_tool_unavailable_async
     reportSkillExposed = report_skill_exposed_async
+    reportSkillUsed = report_skill_used_async
+    reportHeartbeat = report_heartbeat_async
     reportActivity = report_activity_async
     report_tool_executed = report_tool_executed_async
     report_tool_requested = report_tool_requested_async
     report_tool_unavailable = report_tool_unavailable_async
     report_skill_exposed = report_skill_exposed_async
+    report_skill_used = report_skill_used_async
+    report_heartbeat = report_heartbeat_async
     report_activity = report_activity_async
 
     def post_async(self, events: list[dict[str, Any]]) -> None:
@@ -1132,6 +1237,100 @@ def role_contract_for(role: Any = None) -> dict[str, Any]:
 # every `skill_exposed` event so the router's rows say which mechanism made
 # the skill available rather than only that something did.
 CLAUDE_SKILL_EXPOSURE_SOURCE = "claude_skill_view"
+
+# Source tag for a verified `SKILL.md` read, as opposed to a mere exposure.
+# Matches SKILL_READ_SOURCE in scripts/codex/lib/agent-events.mjs so the
+# router's dashboard shows one meaning for the tag across every provider.
+CLAUDE_SKILL_READ_SOURCE = "skill_read"
+
+# Canonical skill roots whose `SKILL.md` a successful `Read` counts as actual
+# usage, mirroring the approved roots `scripts/codex/skill-read-telemetry.mjs`
+# uses for Codex's own PreToolUse hook. The Claude CLI's own `Read` tool runs
+# entirely inside its runtime and never reaches that hook, so this bridge is
+# the only place a read of one of these files is observable at all.
+_HOME = Path(os.path.expanduser("~"))
+_REPO_ROOT = Path(os.environ["AUTODEV_REPO_ROOT"]) if os.environ.get("AUTODEV_REPO_ROOT", "").strip() else Path(__file__).resolve().parent.parent
+_SKILL_ROOTS = [
+    root for root in (
+        _HOME / ".agents" / "skills",
+        _HOME / ".codex" / "skills",
+        _HOME / "AutoDev" / ".agents" / "skills",
+        _HOME / "AutoDev" / "scripts" / "codex" / "skills",
+        _REPO_ROOT / ".agents" / "skills",
+        _REPO_ROOT / "scripts" / "codex" / "skills",
+    )
+    if root.is_dir()
+]
+
+# Only Claude's own file-reading tool counts as a read; `Bash` may also read a
+# skill file via a shell command, matched separately below. Anything else --
+# `Write`, `Edit`, `Task` -- is deliberately excluded: a mutation or an
+# unrelated call must never be counted as a skill activation just because its
+# arguments happen to name a path.
+_EXEC_READ_PATTERN = re.compile(
+    r"(?:^|\s)(?:cat|head|tail|less|more|sed\s+-n|awk|grep)(?:\s+\S+){0,8}\s+((?:/|~)\S+)"
+)
+
+
+def _normalise_skill_read_path(raw: Any) -> Path | None:
+    if not isinstance(raw, str):
+        return None
+    trimmed = raw.strip().strip("'\"")
+    if not trimmed:
+        return None
+    if trimmed.startswith("~"):
+        trimmed = str(_HOME / trimmed[1:].lstrip("/"))
+    path = Path(trimmed)
+    if not path.is_absolute():
+        path = Path.cwd() / path
+    return path
+
+
+def _match_exec_read_path(command: Any) -> str | None:
+    """A cat/head/less/sed -n/awk/grep read of an absolute path inside a
+    shell command, or None. Bounded and deliberately narrow: a command that
+    does not spell out an absolute path is not treated as a read of anything
+    in particular."""
+    if not isinstance(command, str) or len(command) > 4096:
+        return None
+    match = _EXEC_READ_PATTERN.search(command)
+    return match.group(1) if match else None
+
+
+def extract_skill_read_path(tool_name: Any, tool_input: Any) -> str | None:
+    """The path a `Read` call or a shell read of one names, if any."""
+    name = normalized_label(tool_name) or ""
+    payload = tool_input if isinstance(tool_input, dict) else {}
+    if name == "Read":
+        for key in ("file_path", "filePath", "path"):
+            value = payload.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+        return None
+    if name == "Bash":
+        return _match_exec_read_path(payload.get("command"))
+    return None
+
+
+def match_skill_read_path(path: Path | None) -> str | None:
+    """The skill name when `path` resolves to `<root>/<skill>/SKILL.md` for
+    one of the approved roots, else None. Never returns the absolute path --
+    that is not what the router retains."""
+    if path is None:
+        return None
+    for root in _SKILL_ROOTS:
+        try:
+            relative = path.relative_to(root)
+        except ValueError:
+            continue
+        segments = relative.parts
+        if len(segments) != 2 or segments[1] != "SKILL.md":
+            continue
+        skill = segments[0]
+        if not skill or ".." in skill:
+            continue
+        return skill
+    return None
 
 
 def claude_skill_view_for_role(role: Any = None) -> str | None:
@@ -2021,7 +2220,11 @@ class Handler(BaseHTTPRequestHandler):
             offered_tools: set[str] = set()
             # Tool calls the model opened, keyed by the id their result names,
             # so a result can be attributed to the tool and timed against it.
-            pending_tool_calls: dict[str, tuple[str, float]] = {}
+            pending_tool_calls: dict[str, tuple[str, Any, float]] = {}
+            # Per-turn dedupe for skill reads: keyed on the skill name, not the
+            # call, so re-reading the same SKILL.md from a second tool call in
+            # the same turn still reports one use, not two.
+            seen_skill_reads: set[str] = set()
 
             def note_tool_use(block: dict[str, Any]) -> None:
                 name = block.get("name")
@@ -2045,7 +2248,7 @@ class Handler(BaseHTTPRequestHandler):
                     agent_events.report_tool_unavailable_async(name, call_id=call_id, reason="not_offered", server=tool_server(name))
                     return
                 if call_id is not None:
-                    pending_tool_calls[call_id] = (name, time.monotonic())
+                    pending_tool_calls[call_id] = (name, block.get("input"), time.monotonic())
                 agent_events.report_tool_requested_async(name, call_id=call_id, server=tool_server(name))
 
             def note_tool_result(block: dict[str, Any]) -> None:
@@ -2059,7 +2262,7 @@ class Handler(BaseHTTPRequestHandler):
                 # and the router cannot attribute an unnamed one.
                 if opened is None:
                     return
-                name, started_at = opened
+                name, tool_input, started_at = opened
                 kind, detail = classify_tool_result(block)
                 if kind == "unavailable":
                     agent_events.report_tool_unavailable_async(name, call_id=call_id, reason=detail, server=tool_server(name))
@@ -2072,6 +2275,18 @@ class Handler(BaseHTTPRequestHandler):
                     server=tool_server(name),
                     duration_ms=(time.monotonic() - started_at) * 1000,
                 )
+                # A failed call proves nothing was actually read, so only a
+                # call the CLI itself reports as successful can surface a
+                # skill_used event.
+                if detail == "ok":
+                    skill = match_skill_read_path(_normalise_skill_read_path(extract_skill_read_path(name, tool_input)))
+                    if skill is not None and skill not in seen_skill_reads:
+                        seen_skill_reads.add(skill)
+                        agent_events.report_skill_used_async(
+                            skill,
+                            source=CLAUDE_SKILL_READ_SOURCE,
+                            event_id=f"skill_read:{call_id or 'no-call-id'}:{skill}",
+                        )
                 agent_events.report_activity_async("resumed")
 
             def note_available_tools(tools: Any) -> None:
@@ -2189,9 +2404,13 @@ class Handler(BaseHTTPRequestHandler):
                     start_stream()
                     reasoning_text += value
                     self.send_sse("response.reasoning_summary_text.delta", {"type": "response.reasoning_summary_text.delta", "item_id": reasoning_id, "output_index": 0, "summary_index": 0, "delta": value})
+                    if agent_events is not None:
+                        agent_events.report_heartbeat_async(min_interval_seconds=5.0)
                 elif kind == "heartbeat":
                     if stream_headers_sent:
                         self.send_heartbeat()
+                    if agent_events is not None:
+                        agent_events.report_heartbeat_async(min_interval_seconds=5.0)
                 elif kind == "complete":
                     text, metadata = value
 

@@ -37,7 +37,10 @@ import { resolveCwd, WorkspaceResolutionError } from "./codex/lib/resolve-worksp
 import { composeProviderPrompt, isOrchestratorRole, resolveAgentRole } from "./codex/lib/bridge-role.mjs";
 import { roleContract } from "./codex/lib/execution-contract.mjs";
 import { classifyCliLimit, INCOMPLETE_REASON_CLIENT_DISCONNECTED, INCOMPLETE_REASON_INTERRUPTED, INCOMPLETE_REASON_PROVIDER_LIMIT, limitPayload, limitResponseHeaders, retryAfterSecondsFromLimit, terminalIncompleteEvents } from "./codex/lib/provider-limits.mjs";
-import { REQUEST_ID_HEADER, resolveAgentEventReporter } from "./codex/lib/agent-events.mjs";
+import { REQUEST_ID_HEADER, SKILL_READ_SOURCE, resolveAgentEventReporter } from "./codex/lib/agent-events.mjs";
+import { existsSync } from "node:fs";
+import { homedir } from "node:os";
+import { isAbsolute, join, resolve, sep } from "node:path";
 import { SpawnSessionRegistry } from "./codex/lib/bridge-spawn-session.mjs";
 import { buildSpawnScript, execToolCallSseEvents, mintCallId, mintCallItemId } from "./codex/lib/codex-spawn-tools.mjs";
 
@@ -203,6 +206,105 @@ function isSpawnToolName(agentEvents, toolName) {
 // mechanism made the skill available rather than only that something did.
 const ANTIGRAVITY_SKILL_EXPOSURE_SOURCE = "role_contract";
 
+// Canonical skill roots whose `SKILL.md` a successful read counts as actual
+// usage, mirroring the approved roots `scripts/codex/skill-read-telemetry.mjs`
+// uses for Codex's own PreToolUse hook. agy's own tool calls never reach that
+// hook -- its CLI runs entirely inside its own runtime -- so this bridge is
+// the only place a `read_file`/`view_file` or shell read of one of these
+// files is observable at all.
+const HOME = homedir();
+const REPO_ROOT = process.env.AUTODEV_REPO_ROOT || resolve(join(import.meta.dirname, ".."));
+const SKILL_ROOTS = [
+  join(HOME, ".agents", "skills"),
+  join(HOME, ".codex", "skills"),
+  join(HOME, "AutoDev", ".agents", "skills"),
+  join(HOME, "AutoDev", "scripts", "codex", "skills"),
+  join(REPO_ROOT, ".agents", "skills"),
+  join(REPO_ROOT, "scripts", "codex", "skills"),
+].filter((path) => existsSync(path));
+
+// Tool names agy uses to read a file's contents outright, versus the shell
+// tools whose command line may contain a read of one. Anything else --
+// `write_file`, `edit_file`, `str_replace`, agy's own delegation tool -- is
+// deliberately excluded: a mutation or an unrelated call must never be
+// counted as a skill activation just because its arguments happen to name a
+// path.
+const AGY_READ_TOOL_NAMES = new Set([ "read_file", "view_file", "cat_file" ]);
+const AGY_EXEC_TOOL_NAMES = new Set([ "run_command", "exec_command", "execute_command", "bash" ]);
+
+function normaliseSkillReadPath(raw) {
+  if (typeof raw !== "string") return null;
+  const trimmed = raw.trim().replace(/^['"]|['"]$/g, "");
+  if (!trimmed) return null;
+  let path = trimmed;
+  if (path.startsWith("~")) path = join(HOME, path.slice(1));
+  if (!isAbsolute(path)) path = resolve(path);
+  return path;
+}
+
+// A cat/head/less/sed -n/awk/grep read of an absolute path inside a shell
+// command. Bounded and deliberately narrow: a command that does not spell
+// out an absolute path is not treated as a read of anything in particular.
+function matchExecReadPath(cmd) {
+  if (typeof cmd !== "string" || cmd.length > 4096) return null;
+  const re = /(?:^|\s)(?:cat|head|tail|less|more|sed\s+-n|awk|grep)(?:\s+\S+){0,8}\s+((?:\/|~)[^\s'"]+)/;
+  const match = re.exec(cmd);
+  return match ? match[ 1 ] : null;
+}
+
+/** The path a `read_file`-shaped or shell-read tool call names, if any. */
+function extractSkillReadPath(toolName, argsObject) {
+  const name = String(toolName ?? "").trim().toLowerCase();
+  const args = argsObject && typeof argsObject === "object" ? argsObject : {};
+  if (AGY_READ_TOOL_NAMES.has(name)) {
+    for (const key of [ "file_path", "filePath", "path", "filepath" ]) {
+      const value = args[ key ];
+      if (typeof value === "string" && value.trim()) return value.trim();
+    }
+    return null;
+  }
+  if (AGY_EXEC_TOOL_NAMES.has(name)) {
+    const cmd = args.command ?? args.cmd;
+    return typeof cmd === "string" ? matchExecReadPath(cmd) : null;
+  }
+  return null;
+}
+
+// True when `path` resolves to `<root>/<skill-name>/SKILL.md` for one of the
+// approved roots. Returns the skill's directory name -- never the absolute
+// path -- because that is all the router retains.
+function matchSkillReadPath(path) {
+  if (!path) return null;
+  const normalised = path.replace(/[\\/]+/g, sep);
+  for (const rootRaw of SKILL_ROOTS) {
+    const root = rootRaw.replace(/[\\/]+/g, sep);
+    const rootWithSep = root.endsWith(sep) ? root : root + sep;
+    if (!normalised.startsWith(rootWithSep)) continue;
+    const relative = normalised.slice(root.length).replace(/^[\\/]+/, "");
+    if (!relative.endsWith(`${sep}SKILL.md`) && relative !== "SKILL.md") continue;
+    const segments = relative.split(sep).filter(Boolean);
+    if (segments.length !== 2) continue;
+    const [ skill ] = segments;
+    if (!skill || skill.includes("..")) continue;
+    return skill;
+  }
+  return null;
+}
+
+/** Report a successful, canonical `SKILL.md` read as `skill_used`, once per skill per turn. */
+function reportSkillReadIfMatched({ agentEvents, seenSkills, toolName, args, callId }) {
+  if (!agentEvents || typeof agentEvents.reportSkillUsed !== "function") return;
+  const candidate = extractSkillReadPath(toolName, args);
+  if (!candidate) return;
+  const normalised = normaliseSkillReadPath(candidate);
+  const skill = matchSkillReadPath(normalised);
+  if (!skill) return;
+  if (seenSkills.has(skill)) return;
+  seenSkills.add(skill);
+  const eventId = `skill_read:${callId ?? "no-call-id"}:${skill}`;
+  void agentEvents.reportSkillUsed({ skill, source: SKILL_READ_SOURCE, eventId });
+}
+
 // Where agy puts a tool call's output. Its own changelog describes `tool_info`
 // as carrying "canonical tool name, parameters, and output", and which key
 // holds the payload has moved between CLI versions, so any of these counts as
@@ -303,6 +405,10 @@ function toolCallId(update) {
 function createToolObserver(agentEvents) {
   const requested = new Set();
   const settled = new Set();
+  // Per-turn dedupe for skill reads: keyed on the skill name, not the call,
+  // so re-reading the same SKILL.md from a second tool call in the same turn
+  // still reports one use rather than two.
+  const seenSkills = new Set();
   const observeToolStep = (update) => {
     if (!agentEvents) return;
     if (String(update?.step_type ?? "").toLowerCase() !== "tool") return;
@@ -332,6 +438,12 @@ function createToolObserver(agentEvents) {
     if (evidence.kind !== "executed" || settled.has(key)) return;
     settled.add(key);
     void agentEvents.reportToolExecuted({ tool, callId, status: evidence.status, durationMs: evidence.durationMs, server });
+    // A denied or failed call proves nothing was actually read, so only a
+    // call agy itself reports as `ok` can ever surface a skill_used event.
+    if (evidence.status === "ok") {
+      const args = structured(update?.tool_info?.args) ?? structured(update?.tool_input) ?? {};
+      reportSkillReadIfMatched({ agentEvents, seenSkills, toolName: tool, args, callId });
+    }
     if (typeof agentEvents.reportActivity === "function") void agentEvents.reportActivity({ state: "resumed" });
   };
   // agy auto-denies a tool whose permission the run was not granted and says
@@ -1044,12 +1156,25 @@ async function handle(request, response) {
 
   if (!payload.stream) {
     try {
-      const result = await runAgy(prompt, model, effort, cwd, (event) => {
-        if (event.event === "step_update") {
-          observeSpawnStep(event.step_update ?? {});
-          observeToolStep(event.step_update ?? {});
+      const nonStreamHeartbeat = setInterval(() => {
+        if (agentEvents && typeof agentEvents.reportHeartbeat === "function") {
+          void agentEvents.reportHeartbeat({ minIntervalMs: 5000 });
         }
-      }, spawnSession, agentRole);
+      }, 5000);
+      let result;
+      try {
+        result = await runAgy(prompt, model, effort, cwd, (event) => {
+          if (agentEvents && typeof agentEvents.reportHeartbeat === "function") {
+            void agentEvents.reportHeartbeat({ minIntervalMs: 5000 });
+          }
+          if (event.event === "step_update") {
+            observeSpawnStep(event.step_update ?? {});
+            observeToolStep(event.step_update ?? {});
+          }
+        }, spawnSession, agentRole);
+      } finally {
+        clearInterval(nonStreamHeartbeat);
+      }
       const spawnChildren = spawnSession ? spawnSessions.close(spawnSession) : [];
       const output = [ responseMessageItem(result.text, `msg_${randomBytes(10).toString("hex")}`) ];
       if (spawnChildren.length > 0) {
@@ -1169,6 +1294,9 @@ async function handle(request, response) {
     if (delegationHeartbeat) return;
     let tick = 0;
     delegationHeartbeat = setInterval(() => {
+      if (typeof agentEvents?.reportHeartbeat === "function") {
+        void agentEvents.reportHeartbeat({ minIntervalMs: 5000 });
+      }
       if (!isDelegationActive(delegation) || !streamStarted || !isWritable()) return;
       tick += 1;
       try {
@@ -1217,6 +1345,9 @@ async function handle(request, response) {
   response.on("error", onResponseError);
 
   const keepAlive = setInterval(() => {
+    if (typeof agentEvents?.reportHeartbeat === "function") {
+      void agentEvents.reportHeartbeat({ minIntervalMs: 5000 });
+    }
     if (streamStarted && isWritable()) {
       try { response.write(": agy-bridge keep-alive\n\n"); } catch { }
     }
@@ -1247,6 +1378,9 @@ async function handle(request, response) {
   });
   try {
     const result = await runAgy(prompt, model, effort, cwd, (event) => {
+      if (agentEvents && typeof agentEvents.reportHeartbeat === "function") {
+        void agentEvents.reportHeartbeat({ minIntervalMs: 5000 });
+      }
       if (event.type === "process") { child = event.child; return; }
       if (event.type === "text_delta") {
         startStream();
@@ -1445,4 +1579,4 @@ if (IS_MAIN) {
   });
 }
 
-export { ANTIGRAVITY_SKILL_EXPOSURE_SOURCE, ANTIGRAVITY_WEB_RESEARCH_TOOLS, agyArgs, agyErrorDetails, agyFailureMessage, agyPermissionFailure, antigravityToolServer, createSpawnTracker, createToolObserver, decideCloseOnDelegation, isCommandStep, isDelegationActive, isWaitStep, modelEffort, promptFromInput, resolveEffort, resolveModel, spawnedChildren, subagentModel, toolStepEvidence, updateDelegationState };
+export { ANTIGRAVITY_SKILL_EXPOSURE_SOURCE, ANTIGRAVITY_WEB_RESEARCH_TOOLS, agyArgs, agyErrorDetails, agyFailureMessage, agyPermissionFailure, antigravityToolServer, createSpawnTracker, createToolObserver, decideCloseOnDelegation, extractSkillReadPath, isCommandStep, isDelegationActive, isWaitStep, matchSkillReadPath, modelEffort, promptFromInput, resolveEffort, resolveModel, spawnedChildren, subagentModel, toolStepEvidence, updateDelegationState };

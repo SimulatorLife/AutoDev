@@ -302,6 +302,107 @@ test('router dashboard workspace table derives Tool calls and totals from byTool
   assert.equal(objectRows.reduce((sum, r) => sum + Number(r.count ?? 0), 0), 7);
 });
 
+test('router dashboard keeps confirmed skill uses distinct from exposed bridgeSkills and shows exposure instead of a misleading no-uses empty state', async () => {
+  const rawDashboard = await readFile(path.join(root, 'scripts', 'codex-model-router-dashboard.html'), 'utf8');
+
+  // Source-level checks: the two joins are read from distinct backend fields
+  // and rendered into distinct sections, never merged.
+  assert.match(rawDashboard, /normalizeWorkspaceNamedUsage\(w\.bySkill, \["skill", "name"\]\)/);
+  assert.match(rawDashboard, /normalizeWorkspaceNamedUsage\(w\.bridgeSkills, \["skill", "name"\]\)/);
+  assert.match(rawDashboard, /<h2>Skill usage<\/h2>/);
+  assert.match(rawDashboard, /<h2>Skills exposed<\/h2>/);
+  assert.match(rawDashboard, /workspaceSkillUsageEmptyLabel\(hasExposedSkills\)/);
+  assert.match(rawDashboard, /No skills exposed to this workspace yet/);
+  assert.match(rawDashboard, /Skill exposure telemetry is unavailable per-workspace/);
+
+  // Extract the pure label helper and prove the empty-state copy differs
+  // once exposure is present, using a RacingGame-style bridgeSkills payload:
+  // a workspace where a skill (e.g. "orchestration") was exposed via a
+  // role-contract bridge event but has zero confirmed skill_used events --
+  // the exact shape backend tests exercise for
+  // usage.byWorkspace.RacingGame.{bySkill,bridgeSkills}.
+  const labelMatch = rawDashboard.match(/function workspaceSkillUsageEmptyLabel\([\s\S]*?\n    \}/);
+  assert.ok(labelMatch, 'workspaceSkillUsageEmptyLabel should be present in dashboard script');
+  const workspaceSkillUsageEmptyLabel = new Function(`${labelMatch[0]}; return workspaceSkillUsageEmptyLabel;`)();
+
+  const normalizeMatch = rawDashboard.match(/function normalizeWorkspaceNamedUsage\([\s\S]*?\n    \}/);
+  assert.ok(normalizeMatch, 'normalizeWorkspaceNamedUsage should be present in dashboard script');
+  const normalizeWorkspaceNamedUsage = new Function(`${normalizeMatch[0]}; return normalizeWorkspaceNamedUsage;`)();
+
+  const racingGame = { skillUses: 0, bySkill: [], bridgeSkills: [ { skill: "orchestration", count: 1 } ] };
+  const wsSkillRows = normalizeWorkspaceNamedUsage(racingGame.bySkill, ["skill", "name"]);
+  const wsExposedSkillRows = normalizeWorkspaceNamedUsage(racingGame.bridgeSkills, ["skill", "name"]);
+  const hasExposedSkills = Array.isArray(wsExposedSkillRows) && wsExposedSkillRows.length > 0;
+
+  // Confirmed uses are genuinely empty (distinct fact from exposure).
+  assert.deepEqual(wsSkillRows, []);
+  // Exposure is surfaced, not swallowed: the exposed skill still renders.
+  assert.deepEqual(wsExposedSkillRows.map((r) => r.name), [ "orchestration" ]);
+  assert.equal(hasExposedSkills, true);
+  // The confirmed-use panel points at exposure instead of the generic
+  // "nothing observed here" copy.
+  assert.equal(
+    workspaceSkillUsageEmptyLabel(hasExposedSkills),
+    "No confirmed skill uses yet for this workspace -- see Skills exposed below",
+  );
+  assert.equal(
+    workspaceSkillUsageEmptyLabel(false),
+    "No named skill uses observed for this workspace yet",
+  );
+
+  // A workspace with a confirmed use (skillUses: 1, bySkill: [{skill, uses:
+  // 1}]) alongside its originating exposure keeps both counts distinct --
+  // the confirmed list is non-empty on its own terms, not derived from or
+  // capped by the exposure count.
+  const racingGameConfirmed = { skillUses: 1, bySkill: [ { skill: "orchestration", uses: 1 } ], bridgeSkills: [ { skill: "orchestration", count: 1 } ] };
+  const confirmedRows = normalizeWorkspaceNamedUsage(racingGameConfirmed.bySkill, ["skill", "name"]);
+  const exposedRows = normalizeWorkspaceNamedUsage(racingGameConfirmed.bridgeSkills, ["skill", "name"]);
+  assert.deepEqual(confirmedRows.map((r) => ({ name: r.name, count: r.count })), [ { name: "orchestration", count: 1 } ]);
+  assert.deepEqual(exposedRows.map((r) => ({ name: r.name, count: r.count })), [ { name: "orchestration", count: 1 } ]);
+});
+
+test('router dashboard falls back to bridgeTools when OTLP named-tool rows are unavailable or empty, without double-counting', async () => {
+  const rawDashboard = await readFile(path.join(root, 'scripts', 'codex-model-router-dashboard.html'), 'utf8');
+
+  assert.match(rawDashboard, /normalizeWorkspaceNamedUsage\(w\.byTool, \["tool", "name"\]\)/);
+  assert.match(rawDashboard, /normalizeWorkspaceNamedUsage\(w\.bridgeTools, \["tool", "name"\]\)/);
+  assert.match(rawDashboard, /resolveWorkspaceToolRows\(otlpToolRows, bridgeToolRows\)/);
+
+  const resolverMatch = rawDashboard.match(/function resolveWorkspaceToolRows\([\s\S]*?\n    \}/);
+  assert.ok(resolverMatch, 'resolveWorkspaceToolRows should be present in dashboard script');
+  const resolveWorkspaceToolRows = new Function(`${resolverMatch[0]}; return resolveWorkspaceToolRows;`)();
+
+  const normalizeMatch = rawDashboard.match(/function normalizeWorkspaceNamedUsage\([\s\S]*?\n    \}/);
+  const normalizeWorkspaceNamedUsage = new Function(`${normalizeMatch[0]}; return normalizeWorkspaceNamedUsage;`)();
+
+  // OTLP join absent entirely (fail-closed `null`): bridge's tool_executed
+  // observations (bridgeTools, the RacingGame-style bridge payload shape
+  // { tool, server, count, byStatus }) fill in as the sole source.
+  const otlpAbsent = normalizeWorkspaceNamedUsage(undefined, ["tool", "name"]);
+  const bridgeRows = normalizeWorkspaceNamedUsage([ { tool: "apply_patch", server: "codex-builtin", count: 2, byStatus: { ok: 1, error: 1 } } ], ["tool", "name"]);
+  const fallback = resolveWorkspaceToolRows(otlpAbsent, bridgeRows);
+  assert.equal(fallback.usingBridgeToolFallback, true);
+  assert.deepEqual(fallback.rows.map((r) => ({ name: r.name, count: r.count })), [ { name: "apply_patch", count: 2 } ]);
+
+  // OTLP join present but reports zero rows: still falls back to bridgeTools.
+  const otlpEmpty = normalizeWorkspaceNamedUsage([], ["tool", "name"]);
+  const fallbackFromEmpty = resolveWorkspaceToolRows(otlpEmpty, bridgeRows);
+  assert.equal(fallbackFromEmpty.usingBridgeToolFallback, true);
+  assert.deepEqual(fallbackFromEmpty.rows.map((r) => r.name), [ "apply_patch" ]);
+
+  // OTLP join present and non-empty: bridgeTools is not merged in, so the
+  // same tool observed by both sources is never double-counted.
+  const otlpPresent = normalizeWorkspaceNamedUsage([ { tool: "apply_patch", count: 5 } ], ["tool", "name"]);
+  const noFallback = resolveWorkspaceToolRows(otlpPresent, bridgeRows);
+  assert.equal(noFallback.usingBridgeToolFallback, false);
+  assert.deepEqual(noFallback.rows.map((r) => ({ name: r.name, count: r.count })), [ { name: "apply_patch", count: 5 } ]);
+
+  // Both sources unavailable: no invented rows, stays fail-closed `null`.
+  const bothAbsent = resolveWorkspaceToolRows(null, null);
+  assert.equal(bothAbsent.rows, null);
+  assert.equal(bothAbsent.usingBridgeToolFallback, false);
+});
+
 test('dashboard hides totals rows for sections with 0 or 1 populated row and shows them for 2+ via the shared shouldRenderTotals helper', async () => {
   const rawDashboard = await readFile(path.join(root, 'scripts', 'codex-model-router-dashboard.html'), 'utf8');
 
@@ -385,4 +486,70 @@ test('dashboard counts active workspaces from live activity states and excludes 
   assert.equal(countActiveWorkspaces({
     usage: { byWorkspace: { AutoDev: { active: 1 } } },
   }), 1, 'legacy status payloads fall back to workspace active values');
+});
+
+test('dashboard KPI agent total uses the canonical live-agent count and never maxes it against unrelated counters', async () => {
+  const dashboard = await readFile(path.join(root, 'scripts', 'codex-model-router-dashboard.html'), 'utf8');
+
+  // The KPI total must not be inflated via Math.max against per-provider
+  // active-request counts, subagent concurrency-slot counts, or any other
+  // unrelated counter -- it is read directly off the router's single
+  // canonical live-agent count.
+  const kpiSection = dashboard.match(/function computeKpiAgentTotals\([\s\S]*?\n    \}/);
+  assert.ok(kpiSection, 'computeKpiAgentTotals should be present in dashboard script');
+  assert.doesNotMatch(kpiSection[0], /Math\.max/, 'KPI total must not be maxed against unrelated counters');
+  assert.doesNotMatch(kpiSection[0], /activeSubagentThreads/, 'KPI total must not fold in subagent concurrency-slot counts');
+  assert.doesNotMatch(kpiSection[0], /activeSessions/, 'KPI total must not fold in concurrency session-slot counts');
+  assert.doesNotMatch(kpiSection[0], /providerActiveTotal/, 'KPI total must not fold in per-provider active-request counts');
+  assert.match(kpiSection[0], /status\?\.liveActivity/, 'KPI total should read the canonical liveActivity field');
+
+  const countMatch = dashboard.match(/function countActiveWorkspaces\([\s\S]*?\n    \}/);
+  assert.ok(countMatch, 'countActiveWorkspaces should be present in dashboard script');
+  const computeKpiAgentTotals = new Function(
+    `${countMatch[0]}; ${kpiSection[0]}; return computeKpiAgentTotals;`
+  )();
+
+  // One subagent active in one workspace must count as exactly one agent,
+  // one subagent, and one workspace -- not inflated by an unrelated
+  // per-provider or concurrency-slot counter that happens to report a
+  // larger (or smaller) number for the same moment in time.
+  const oneSubagentOneWorkspaceStatus = {
+    liveActivity: 1,
+    usage: {
+      totals: { active: 1 },
+      byRole: {
+        orchestrator: { active: 0 },
+        worker: { active: 1 },
+      },
+      byWorkspace: {
+        AutoDev: { active: 1 },
+      },
+    },
+    providers: {
+      codex: { active: 4 },
+    },
+    concurrency: {
+      activeSubagentThreads: 9,
+      activeSessions: 9,
+    },
+  };
+  assert.deepEqual(computeKpiAgentTotals(oneSubagentOneWorkspaceStatus), {
+    totalActive: 1,
+    orchActive: 0,
+    subActive: 1,
+    activeWorkspaces: 1,
+  });
+
+  // When `liveActivity` is absent (an older status payload), the canonical
+  // fallback is `usage.totals.active` -- the same agentActivity.countLive()
+  // call with no filter -- never an unrelated counter.
+  assert.equal(computeKpiAgentTotals({
+    usage: { totals: { active: 1 }, byRole: {}, byWorkspace: {} },
+    providers: { codex: { active: 4 } },
+  }).totalActive, 1);
+
+  // The rendered label calls out that the workspace count is non-additive
+  // context ("workspaces with active agents"), not a component summed into
+  // the agent total.
+  assert.match(dashboard, /workspaces with active agents/);
 });

@@ -5604,3 +5604,185 @@ test("agent-events endpoint accepts normalized activity lifecycle events, idempo
   agentActivity.reset();
   resetRouterTelemetry();
 });
+
+test("agent activity: heartbeat touch keeps active, tool_wait, and subagent_wait records live past the original TTL", () => {
+  let clock = 0;
+  const tracker = createAgentActivityTracker({ ttlMs: 5000, now: () => clock });
+
+  // 1. An active record kept alive via touch()
+  // No request id models an active lifecycle span whose liveness is supplied
+  // by explicit heartbeat touches rather than an open HTTP request.
+  tracker.beginRequest("sess-active", { provider: "codex", model: "gpt-5" });
+  assert.equal(tracker.getState("sess-active"), "active");
+
+  // 2. A tool_wait record kept alive via touch()
+  tracker.beginRequest("sess-tool", { requestId: "req-tool", provider: "codex", model: "gpt-5" });
+  tracker.endRequest("sess-tool", { requestId: "req-tool", outcome: "success", hasToolCalls: true });
+  assert.equal(tracker.getState("sess-tool"), "tool_wait");
+
+  // 3. A subagent_wait record kept alive via touch()
+  tracker.noteSubagentWait("sess-sub", { kind: "session" });
+  assert.equal(tracker.getState("sess-sub"), "subagent_wait");
+
+  // 4. A silent record that will receive no touches and expire to stale
+  tracker.beginRequest("sess-silent", { requestId: "req-silent", provider: "codex", model: "gpt-5" });
+  tracker.endRequest("sess-silent", { requestId: "req-silent", outcome: "success", hasToolCalls: true });
+  assert.equal(tracker.getState("sess-silent"), "tool_wait");
+
+  assert.equal(tracker.countLive({}), 4);
+
+  // Advance time to 4000ms (within 5000ms TTL) and touch the first three
+  clock = 4000;
+  tracker.touch("sess-active");
+  tracker.touch("sess-tool");
+  tracker.touch("sess-sub");
+
+  // Advance clock past the original 5000ms mark to 7000ms
+  clock = 7000;
+
+  // Touched records remain live and retain their exact state
+  assert.equal(tracker.getState("sess-active"), "active");
+  assert.equal(tracker.getState("sess-tool"), "tool_wait");
+  assert.equal(tracker.getState("sess-sub"), "subagent_wait");
+
+  // Silent record expired to stale, releasing its capacity
+  assert.equal(tracker.getState("sess-silent"), "stale");
+  assert.equal(tracker.countLive({}), 3);
+
+  // Once a record goes silent and exceeds its touched TTL, it also goes stale
+  clock = 9001; // 5001ms after clock=4000 touch
+  assert.equal(tracker.getState("sess-active"), "stale");
+  assert.equal(tracker.getState("sess-tool"), "stale");
+  assert.equal(tracker.getState("sess-sub"), "stale");
+  assert.equal(tracker.countLive({}), 0);
+});
+
+test("agent activity: a heartbeat cannot revive a record that already exceeded the TTL", () => {
+  let clock = 0;
+  const tracker = createAgentActivityTracker({ ttlMs: 5000, now: () => clock });
+  tracker.beginRequest("silent", { requestId: "req-silent" });
+  tracker.endRequest("silent", { requestId: "req-silent", outcome: "success", hasToolCalls: true });
+  clock = 5001;
+
+  // A delayed heartbeat must not resurrect abandoned work and leak a slot.
+  assert.equal(tracker.touch("silent").state, "stale");
+  assert.equal(tracker.getState("silent"), "stale");
+  assert.equal(tracker.countLive({}), 0);
+});
+
+test("agent activity: subagent_slot records do not inflate liveActivity or snapshot totals", () => {
+  const tracker = createAgentActivityTracker({ ttlMs: 60000, now: () => 1000 });
+  // One real agent working in one workspace
+  tracker.beginRequest("agent-session", {
+    requestId: "req-1",
+    kind: "session",
+    provider: "codex",
+    model: "gpt-5",
+    role: "worker",
+    workspace: "AutoDev",
+  });
+
+  // Concurrency slots held for the session
+  tracker.beginRequest("subagent_slot:agent-session:1", {
+    requestId: "subagent_slot:agent-session:1",
+    kind: "subagent_slot",
+    tag: "agent-session",
+  });
+  tracker.beginRequest("subagent_slot:agent-session:2", {
+    requestId: "subagent_slot:agent-session:2",
+    kind: "subagent_slot",
+    tag: "agent-session",
+  });
+
+  // Canonical live count must be exactly 1 (only the real agent, slots excluded)
+  assert.equal(tracker.countLive({}), 1);
+
+  // Snapshot totals and breakdowns must reflect exactly 1 agent
+  const snapshot = tracker.snapshot();
+  assert.equal(snapshot.total, 1);
+  assert.equal(snapshot.live, 1);
+  assert.equal(snapshot.byRole.worker.active, 1);
+  assert.equal(snapshot.byRole.unattributed, undefined);
+  assert.equal(snapshot.byWorkspace.AutoDev.active, 1);
+
+  // Concurrency queries with explicit kind filter still see the slot tickets
+  assert.equal(tracker.countLive({ kind: "subagent_slot" }), 2);
+  assert.equal(tracker.countLive({ kind: "subagent_slot", tag: "agent-session" }), 2);
+});
+
+test("router: one subagent active in one workspace produces exactly one active agent", () => {
+  resetRouterTelemetry();
+  agentActivity.reset();
+  resetConcurrencyTelemetry();
+
+  // One subagent active in workspace AutoDev
+  agentActivity.beginRequest("subagent-session", {
+    requestId: "req-sub-1",
+    kind: "session",
+    provider: "minimax",
+    model: "MiniMax-M3",
+    role: "worker",
+    workspace: "AutoDev",
+  });
+
+  // Session acquires a subagent slot
+  assert.equal(tryAcquireSubagentSlot("subagent-session"), null);
+
+  const status = getRouterStatus();
+  // Canonical liveActivity count must be 1, not 2 (slot excluded)
+  assert.equal(status.liveActivity, 1);
+
+  const usage = usageStatus();
+  assert.equal(usage.totals.active, 1);
+  assert.equal(usage.activity.byRole.worker.active, 1);
+  assert.equal(usage.activity.byRole.orchestrator?.active ?? 0, 0);
+  // Workspace dimension has 1 active agent working in it, which is the same 1 agent
+  assert.equal(usage.activity.byWorkspace.AutoDev.active, 1);
+
+  agentActivity.reset();
+  resetConcurrencyTelemetry();
+  resetRouterTelemetry();
+});
+
+test("router: bridge heartbeat and tool observation events touch activity and slots without altering lifecycle state", () => {
+  resetRouterTelemetry();
+  agentActivity.reset();
+  resetConcurrencyTelemetry();
+
+  const requestId = "req-bridge-heartbeat";
+  noteBridgeRequest(requestId, {
+    provider: "claude",
+    model: "sonnet",
+    role: "worker",
+    workspace: "AutoDev",
+    sessionKey: "session-hb",
+  });
+
+  // Begin session and slot
+  agentActivity.beginRequest("session-hb", { requestId, provider: "claude", model: "sonnet", role: "worker", workspace: "AutoDev" });
+  assert.equal(tryAcquireSubagentSlot("session-hb"), null);
+
+  // Bridge reports tool_wait
+  const waitReport = ingestAgentEvents({ requestId, events: [ { type: "activity", state: "tool_wait" } ] });
+  assert.equal(waitReport.accepted, 1);
+  assert.equal(agentActivity.getState("session-hb"), "tool_wait");
+
+  // Bridge emits a heartbeat event
+  const hbReport = ingestAgentEvents({ requestId, events: [ { type: "activity", state: "heartbeat" } ] });
+  assert.equal(hbReport.accepted, 1);
+  // State remains tool_wait -- non-transitioning
+  assert.equal(agentActivity.getState("session-hb"), "tool_wait");
+
+  // Tool execution observation also touches without state change
+  ingestAgentEvents({ requestId, events: [ { type: "tool_executed", tool: "read_file", callId: "c1", status: "ok" } ] });
+  assert.equal(agentActivity.getState("session-hb"), "tool_wait");
+
+  // Resumed event transitions normally
+  const resumeReport = ingestAgentEvents({ requestId, events: [ { type: "activity", state: "resumed" } ] });
+  assert.equal(resumeReport.accepted, 1);
+  assert.equal(agentActivity.getState("session-hb"), "resumed");
+
+  agentActivity.reset();
+  resetConcurrencyTelemetry();
+  resetRouterTelemetry();
+});

@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { createServer } from "node:http";
 import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import test from "node:test";
@@ -27,6 +28,8 @@ import {
   antigravityToolServer,
   createSpawnTracker,
   createToolObserver,
+  extractSkillReadPath as agySkillReadPath,
+  matchSkillReadPath as agyMatchSkillReadPath,
   modelEffort,
   resolveEffort,
   resolveModel,
@@ -36,6 +39,10 @@ import {
 } from "../scripts/codex-antigravity-cli-responses-proxy.mjs";
 import {
   copilotToolOutcome,
+  extractSkillReadPath as copilotSkillReadPath,
+  matchSkillReadPath as copilotMatchSkillReadPath,
+  reportToolObservation,
+  skillReadEvent,
   SKILL_EXPOSURE_SOURCE as COPILOT_SKILL_EXPOSURE_SOURCE,
 } from "../scripts/codex-copilot-cli-responses-proxy.mjs";
 import {
@@ -318,7 +325,7 @@ test("the router's request id reaches agyErrorDetails and logTurnEnd without any
   // AgentEventReporter is authorized from) is what closes that gap -- it
   // carries no prompt text, only an id the router itself assigned.
   const source = read("scripts/codex-antigravity-cli-responses-proxy.mjs");
-  assert.match(source, /import \{ REQUEST_ID_HEADER, resolveAgentEventReporter \} from "\.\/codex\/lib\/agent-events\.mjs";/);
+  assert.match(source, /import \{ REQUEST_ID_HEADER, SKILL_READ_SOURCE, resolveAgentEventReporter \} from "\.\/codex\/lib\/agent-events\.mjs";/);
   assert.match(source, /const requestId = headerValue\(request\.headers, REQUEST_ID_HEADER\);/);
   // Both places agyErrorDetails is called for an upstream failure (the
   // non-streaming 502 path and the stream-not-yet-started 429/503 path) pass
@@ -1195,6 +1202,7 @@ test("activity reporting rejects invalid states and drops unapproved names", asy
   assert.deepEqual(Array.from(VALID_ACTIVITY_STATES).sort(), [
     "failed",
     "finished",
+    "heartbeat",
     "resumed",
     "subagent_wait",
     "tool_wait",
@@ -1331,6 +1339,92 @@ reporter.flush()
   }
 });
 
+test("AgentEventReporter delivers repeated heartbeat activity events without dropping them", async () => {
+  const received = [];
+  const server = createServer((request, response) => {
+    let body = "";
+    request.on("data", (chunk) => { body += chunk; });
+    request.on("end", () => {
+      received.push(JSON.parse(body));
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end("{}");
+    });
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const port = server.address().port;
+  try {
+    const reporter = resolveAgentEventReporter({
+      [ AGENT_EVENTS_URL_HEADER ]: `http://127.0.0.1:${port}/v1/agent-events`,
+      [ REQUEST_ID_HEADER ]: "req-heartbeat-js",
+      [ SUBAGENT_SPAWN_TOOLS_HEADER ]: "invoke_subagent",
+    });
+
+    await reporter.reportActivity({ state: "tool_wait" });
+    // Repeated heartbeats are delivered
+    await reporter.reportHeartbeat({ minIntervalMs: 0 });
+    await reporter.reportHeartbeat({ minIntervalMs: 0 });
+    // Throttled heartbeat with minIntervalMs > 0 drops immediate repeat
+    await reporter.reportHeartbeat({ minIntervalMs: 60000 });
+    // Resumed still works after heartbeats because heartbeat did not overwrite lifecycle state
+    await reporter.reportActivity("resumed");
+    await reporter.reportActivity({ state: "finished" });
+
+    assert.equal(received.length, 5);
+    assert.deepEqual(received[ 0 ].events[ 0 ], { type: "activity", state: "tool_wait" });
+    assert.deepEqual(received[ 1 ].events[ 0 ], { type: "activity", state: "heartbeat" });
+    assert.deepEqual(received[ 2 ].events[ 0 ], { type: "activity", state: "heartbeat" });
+    assert.deepEqual(received[ 3 ].events[ 0 ], { type: "activity", state: "resumed" });
+    assert.deepEqual(received[ 4 ].events[ 0 ], { type: "activity", state: "finished" });
+  } finally {
+    await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+  }
+});
+
+test("the Claude bridge AgentEventReporter delivers repeated heartbeats to the router", async () => {
+  const repoRoot = fileURLToPath(new URL("..", import.meta.url));
+  const received = [];
+  const server = createServer((request, response) => {
+    let body = "";
+    request.on("data", (chunk) => { body += chunk; });
+    request.on("end", () => {
+      received.push(JSON.parse(body));
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end("{}");
+    });
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const port = server.address().port;
+  try {
+    const pythonScript = `
+import importlib.util
+from pathlib import Path
+
+bridge_path = Path("scripts/codex-claude-cli-responses-proxy.py").resolve()
+spec = importlib.util.spec_from_file_location("claude_bridge", bridge_path)
+mod = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(mod)
+
+reporter = mod.AgentEventReporter("http://127.0.0.1:${port}/v1/agent-events", "req-claude-hb", frozenset(["Agent"]))
+reporter.reportActivity("tool_wait")
+reporter.reportHeartbeat(min_interval_seconds=0.0)
+reporter.reportHeartbeat(min_interval_seconds=0.0)
+reporter.reportHeartbeat(min_interval_seconds=60.0)
+reporter.reportActivity("resumed")
+reporter.reportActivity("finished")
+reporter.flush()
+`;
+    await execFileAsync("python3", [ "-c", pythonScript ], { cwd: repoRoot });
+    assert.equal(received.length, 5);
+    assert.deepEqual(received[ 0 ].events[ 0 ], { type: "activity", state: "tool_wait" });
+    assert.deepEqual(received[ 1 ].events[ 0 ], { type: "activity", state: "heartbeat" });
+    assert.deepEqual(received[ 2 ].events[ 0 ], { type: "activity", state: "heartbeat" });
+    assert.deepEqual(received[ 3 ].events[ 0 ], { type: "activity", state: "resumed" });
+    assert.deepEqual(received[ 4 ].events[ 0 ], { type: "activity", state: "finished" });
+  } finally {
+    await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+  }
+});
+
 test("the provider bridges wire activity lifecycle telemetry", () => {
   // Antigravity bridge source assertions
   const agySource = read("scripts/codex-antigravity-cli-responses-proxy.mjs");
@@ -1363,4 +1457,145 @@ test("the provider bridges wire activity lifecycle telemetry", () => {
   assert.match(minimaxSource, /void agentEvents\.reportActivity\(\{ state: "resumed" \}\)/);
   assert.match(minimaxSource, /void agentEvents\.reportActivity\(\{ state: "finished" \}\)/);
   assert.match(minimaxSource, /void agentEvents\.reportActivity\(\{ state: "failed" \}\)/);
+});
+
+// A canonical SKILL.md this checkout actually ships, so the matching logic
+// below is exercised against a real approved root instead of a synthetic one.
+const REPO_ROOT = fileURLToPath(new URL("..", import.meta.url));
+const CANONICAL_SKILL_PATH = join(REPO_ROOT, "scripts", "codex", "skills", "ccc", "SKILL.md");
+const OTHER_FILE_PATH = join(REPO_ROOT, "AGENTS.md");
+
+test("the Antigravity bridge detects a successful canonical SKILL.md read", async () => {
+  assert.equal(SKILL_READ_SOURCE, "skill_read");
+  // A read_file call naming the canonical path resolves to the skill name.
+  assert.equal(agySkillReadPath("read_file", { file_path: CANONICAL_SKILL_PATH }), CANONICAL_SKILL_PATH);
+  assert.equal(agyMatchSkillReadPath(CANONICAL_SKILL_PATH), "ccc");
+  // A shell read of the same file is recognised too.
+  assert.equal(agySkillReadPath("exec_command", { command: `cat ${CANONICAL_SKILL_PATH}` }), CANONICAL_SKILL_PATH);
+  // A write-shaped tool and an arbitrary file are not reads of a skill.
+  assert.equal(agySkillReadPath("write_file", { file_path: CANONICAL_SKILL_PATH }), null);
+  assert.equal(agyMatchSkillReadPath(OTHER_FILE_PATH), null);
+
+  const events = [];
+  const fakeReporter = {
+    reportToolRequested: async () => {},
+    reportToolExecuted: async () => {},
+    reportToolUnavailable: async () => {},
+    reportSkillUsed: async (e) => events.push(e),
+  };
+  const { observeToolStep } = createToolObserver(fakeReporter);
+
+  // A successful read reports skill_used, correlated to the tool call id.
+  observeToolStep({ step_index: 1, state: "ACTIVE", step_type: "tool", tool_name: "read_file", tool_info: { args: { file_path: CANONICAL_SKILL_PATH } } });
+  observeToolStep({ step_index: 1, state: "DONE", step_type: "tool", tool_name: "read_file", tool_info: { args: { file_path: CANONICAL_SKILL_PATH }, output: "skill body" } });
+  await Promise.resolve();
+  assert.equal(events.length, 1);
+  assert.deepEqual(events[ 0 ], { skill: "ccc", source: "skill_read", eventId: "skill_read:s1:ccc" });
+
+  // A denied read of the same file never counts as a use.
+  observeToolStep({ step_index: 2, state: "ACTIVE", step_type: "tool", tool_name: "read_file", tool_info: { args: { file_path: CANONICAL_SKILL_PATH } } });
+  observeToolStep({ step_index: 2, state: "ERROR", step_type: "tool", tool_name: "read_file", tool_info: { args: { file_path: CANONICAL_SKILL_PATH } }, error: "permission denied" });
+  await Promise.resolve();
+  assert.equal(events.length, 1);
+
+  // A second successful read of the same skill in the same turn is deduped.
+  observeToolStep({ step_index: 3, state: "ACTIVE", step_type: "tool", tool_name: "read_file", tool_info: { args: { file_path: CANONICAL_SKILL_PATH } } });
+  observeToolStep({ step_index: 3, state: "DONE", step_type: "tool", tool_name: "read_file", tool_info: { args: { file_path: CANONICAL_SKILL_PATH }, output: "skill body" } });
+  await Promise.resolve();
+  assert.equal(events.length, 1);
+
+  // A successful read of an arbitrary, non-skill file reports nothing.
+  observeToolStep({ step_index: 4, state: "ACTIVE", step_type: "tool", tool_name: "read_file", tool_info: { args: { file_path: OTHER_FILE_PATH } } });
+  observeToolStep({ step_index: 4, state: "DONE", step_type: "tool", tool_name: "read_file", tool_info: { args: { file_path: OTHER_FILE_PATH }, output: "not a skill" } });
+  await Promise.resolve();
+  assert.equal(events.length, 1);
+});
+
+test("the Copilot bridge detects a successful canonical SKILL.md read", () => {
+  assert.equal(copilotSkillReadPath("read_file", { file_path: CANONICAL_SKILL_PATH }), CANONICAL_SKILL_PATH);
+  assert.equal(copilotMatchSkillReadPath(CANONICAL_SKILL_PATH), "ccc");
+  assert.equal(copilotSkillReadPath("bash", { command: `cat ${CANONICAL_SKILL_PATH}` }), CANONICAL_SKILL_PATH);
+  assert.equal(copilotSkillReadPath("write_file", { file_path: CANONICAL_SKILL_PATH }), null);
+  assert.equal(copilotMatchSkillReadPath(OTHER_FILE_PATH), null);
+
+  const seenSkills = new Set();
+  const first = skillReadEvent({ seenSkills, toolName: "read_file", args: { file_path: CANONICAL_SKILL_PATH }, callId: "call_1" });
+  assert.deepEqual(first, { type: "skill_used", skill: "ccc", eventId: "skill_read:call_1:ccc" });
+  // A second read of the same skill, from a different call id, is deduped.
+  const second = skillReadEvent({ seenSkills, toolName: "read_file", args: { file_path: CANONICAL_SKILL_PATH }, callId: "call_2" });
+  assert.equal(second, null);
+  // A read of a non-skill file reports nothing.
+  const third = skillReadEvent({ seenSkills, toolName: "read_file", args: { file_path: OTHER_FILE_PATH }, callId: "call_3" });
+  assert.equal(third, null);
+
+  // A denied/failed call never reaches skillReadEvent at all: the bridge only
+  // calls it from the `executed`+`ok` branch of copilotToolOutcome.
+  assert.deepEqual(copilotToolOutcome({ permissionDenied: true }), { kind: "unavailable", reason: "denied" });
+  assert.deepEqual(copilotToolOutcome({ output: "fail", success: false }), { kind: "executed", status: "error" });
+
+  // Wiring: a skill_used event is forwarded to the router with the read source.
+  const events = [];
+  const fakeReporter = { reportSkillUsed: async (e) => events.push(e) };
+  reportToolObservation(fakeReporter, { type: "skill_used", skill: "ccc", eventId: "skill_read:call_1:ccc" });
+  assert.deepEqual(events, [ { skill: "ccc", source: "skill_read", eventId: "skill_read:call_1:ccc" } ]);
+
+  const source = read("scripts/codex-copilot-cli-responses-proxy.mjs");
+  assert.match(source, /if \(outcome\.kind === "executed" && outcome\.status === "ok"\) \{/);
+  assert.match(source, /const skillEvent = skillReadEvent\(\{ seenSkills, toolName, args: open\?\.args \?\? data\.arguments, callId \}\);/);
+});
+
+test("the Claude bridge detects a successful canonical SKILL.md read", async () => {
+  const source = read("scripts/codex-claude-cli-responses-proxy.py");
+  assert.match(source, /CLAUDE_SKILL_READ_SOURCE = "skill_read"/);
+  assert.match(source, /if detail == "ok":/);
+  assert.match(source, /skill = match_skill_read_path\(_normalise_skill_read_path\(extract_skill_read_path\(name, tool_input\)\)\)/);
+  assert.match(source, /if skill is not None and skill not in seen_skill_reads:/);
+  assert.match(source, /reportSkillUsed = report_skill_used_async/);
+
+  const repoRoot = fileURLToPath(new URL("..", import.meta.url));
+  const received = [];
+  const server = createServer((request, response) => {
+    let body = "";
+    request.on("data", (chunk) => { body += chunk; });
+    request.on("end", () => {
+      received.push(JSON.parse(body));
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end("{}");
+    });
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const port = server.address().port;
+  try {
+    const pythonScript = `
+import importlib.util
+from pathlib import Path
+
+bridge_path = Path("scripts/codex-claude-cli-responses-proxy.py").resolve()
+spec = importlib.util.spec_from_file_location("claude_bridge", bridge_path)
+mod = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(mod)
+
+skill_path = str(Path("${CANONICAL_SKILL_PATH}"))
+other_path = str(Path("${OTHER_FILE_PATH}"))
+
+# Only Claude's own Read tool -- and a shell read of the same path -- counts.
+assert mod.extract_skill_read_path("Read", {"file_path": skill_path}) == skill_path
+assert mod.extract_skill_read_path("Bash", {"command": f"cat {skill_path}"}) == skill_path
+assert mod.extract_skill_read_path("Write", {"file_path": skill_path}) is None
+assert mod.match_skill_read_path(mod._normalise_skill_read_path(skill_path)) == "ccc"
+assert mod.match_skill_read_path(mod._normalise_skill_read_path(other_path)) is None
+
+reporter = mod.AgentEventReporter("http://127.0.0.1:${port}/v1/agent-events", "req-claude-skill-read", frozenset(["Agent"]))
+reporter.reportSkillUsed("ccc", source=mod.CLAUDE_SKILL_READ_SOURCE, eventId="skill_read:c1:ccc")
+reporter.flush()
+`;
+    await execFileAsync("python3", [ "-c", pythonScript ], { cwd: repoRoot });
+    assert.equal(received.length, 1);
+    assert.deepEqual(received[ 0 ], {
+      requestId: "req-claude-skill-read",
+      events: [ { type: "skill_used", skill: "ccc", source: "skill_read", pluginId: null, eventId: "skill_read:c1:ccc" } ],
+    });
+  } finally {
+    await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+  }
 });

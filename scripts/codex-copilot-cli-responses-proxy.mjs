@@ -20,13 +20,115 @@ import { resolveCwd, WorkspaceResolutionError } from "./codex/lib/resolve-worksp
 import { composeProviderPrompt, isOrchestratorRole, resolveAgentRole } from "./codex/lib/bridge-role.mjs";
 import { roleContract } from "./codex/lib/execution-contract.mjs";
 import { classifyCliLimit, INCOMPLETE_REASON_INTERRUPTED, INCOMPLETE_REASON_PROVIDER_LIMIT, limitPayload, limitResponseHeaders, retryAfterSecondsFromLimit, terminalIncompleteEvents } from "./codex/lib/provider-limits.mjs";
-import { resolveAgentEventReporter } from "./codex/lib/agent-events.mjs";
+import { resolveAgentEventReporter, SKILL_READ_SOURCE } from "./codex/lib/agent-events.mjs";
+import { existsSync } from "node:fs";
+import { homedir } from "node:os";
+import { isAbsolute, join, resolve, sep } from "node:path";
 
 // How a Copilot turn comes by the skills its role contract grants it: the CLI
 // has no per-invocation skill flag, so the contract rendered into the turn's
 // prompt is the exposure. Carried on every `skill_exposed` event so the
 // router's rows say which mechanism made the skill available.
 const SKILL_EXPOSURE_SOURCE = "role_contract";
+
+// Canonical skill roots whose `SKILL.md` a successful read counts as actual
+// usage, mirroring the approved roots `scripts/codex/skill-read-telemetry.mjs`
+// uses for Codex's own PreToolUse hook. The Copilot CLI's tool calls never
+// reach that hook -- it runs entirely inside its own runtime -- so this
+// bridge is the only place a read of one of these files is observable at all.
+const HOME = homedir();
+const REPO_ROOT = process.env.AUTODEV_REPO_ROOT || resolve(join(import.meta.dirname, ".."));
+const SKILL_ROOTS = [
+  join(HOME, ".agents", "skills"),
+  join(HOME, ".codex", "skills"),
+  join(HOME, "AutoDev", ".agents", "skills"),
+  join(HOME, "AutoDev", "scripts", "codex", "skills"),
+  join(REPO_ROOT, ".agents", "skills"),
+  join(REPO_ROOT, "scripts", "codex", "skills"),
+].filter((path) => existsSync(path));
+
+// Tool names the Copilot CLI uses to read a file's contents outright, versus
+// the shell tools whose command line may contain a read of one. Anything
+// else -- a write, an edit, `report_intent` -- is deliberately excluded: a
+// mutation or an unrelated call must never be counted as a skill activation
+// just because its arguments happen to name a path.
+const COPILOT_READ_TOOL_NAMES = new Set([ "read_file", "view_file", "cat_file", "view" ]);
+const COPILOT_EXEC_TOOL_NAMES = new Set([ "bash", "shell", "execute", "exec_command", "run_command" ]);
+
+function normaliseSkillReadPath(raw) {
+  if (typeof raw !== "string") return null;
+  const trimmed = raw.trim().replace(/^['"]|['"]$/g, "");
+  if (!trimmed) return null;
+  let path = trimmed;
+  if (path.startsWith("~")) path = join(HOME, path.slice(1));
+  if (!isAbsolute(path)) path = resolve(path);
+  return path;
+}
+
+// A cat/head/less/sed -n/awk/grep read of an absolute path inside a shell
+// command. Bounded and deliberately narrow: a command that does not spell
+// out an absolute path is not treated as a read of anything in particular.
+function matchExecReadPath(cmd) {
+  if (typeof cmd !== "string" || cmd.length > 4096) return null;
+  const re = /(?:^|\s)(?:cat|head|tail|less|more|sed\s+-n|awk|grep)(?:\s+\S+){0,8}\s+((?:\/|~)[^\s'"]+)/;
+  const match = re.exec(cmd);
+  return match ? match[ 1 ] : null;
+}
+
+/** The path a `read_file`-shaped or shell-read tool call names, if any. */
+function extractSkillReadPath(toolName, argsObject) {
+  const name = String(toolName ?? "").trim().toLowerCase();
+  const args = argsObject && typeof argsObject === "object" ? argsObject : {};
+  if (COPILOT_READ_TOOL_NAMES.has(name)) {
+    for (const key of [ "file_path", "filePath", "path", "filepath" ]) {
+      const value = args[ key ];
+      if (typeof value === "string" && value.trim()) return value.trim();
+    }
+    return null;
+  }
+  if (COPILOT_EXEC_TOOL_NAMES.has(name)) {
+    const cmd = args.command ?? args.cmd;
+    return typeof cmd === "string" ? matchExecReadPath(cmd) : null;
+  }
+  return null;
+}
+
+// True when `path` resolves to `<root>/<skill-name>/SKILL.md` for one of the
+// approved roots. Returns the skill's directory name -- never the absolute
+// path -- because that is all the router retains.
+function matchSkillReadPath(path) {
+  if (!path) return null;
+  const normalised = path.replace(/[\\/]+/g, sep);
+  for (const rootRaw of SKILL_ROOTS) {
+    const root = rootRaw.replace(/[\\/]+/g, sep);
+    const rootWithSep = root.endsWith(sep) ? root : root + sep;
+    if (!normalised.startsWith(rootWithSep)) continue;
+    const relative = normalised.slice(root.length).replace(/^[\\/]+/, "");
+    if (!relative.endsWith(`${sep}SKILL.md`) && relative !== "SKILL.md") continue;
+    const segments = relative.split(sep).filter(Boolean);
+    if (segments.length !== 2) continue;
+    const [ skill ] = segments;
+    if (!skill || skill.includes("..")) continue;
+    return skill;
+  }
+  return null;
+}
+
+/**
+ * The `skill_used` event for a successful, canonical `SKILL.md` read, or null.
+ * `seenSkills` dedupes per turn: re-reading the same file from a second tool
+ * call in the same turn reports one use, not two.
+ */
+function skillReadEvent({ seenSkills, toolName, args, callId }) {
+  const candidate = extractSkillReadPath(toolName, args);
+  if (!candidate) return null;
+  const normalised = normaliseSkillReadPath(candidate);
+  const skill = matchSkillReadPath(normalised);
+  if (!skill) return null;
+  if (seenSkills.has(skill)) return null;
+  seenSkills.add(skill);
+  return { type: "skill_used", skill, eventId: `skill_read:${callId ?? "no-call-id"}:${skill}` };
+}
 
 // What the bridge posts back to the router about one tool call. The CLI's
 // JSONL stream is the only place a Copilot tool call is visible at all: the
@@ -114,6 +216,8 @@ function reportToolObservation(agentEvents, event) {
   } else if (event.type === "tool_unavailable") {
     void agentEvents.reportToolUnavailable({ tool: event.tool, callId: event.callId, reason: event.reason, server: event.server });
     if (typeof agentEvents.reportActivity === "function") void agentEvents.reportActivity({ state: "resumed" });
+  } else if (event.type === "skill_used" && typeof agentEvents.reportSkillUsed === "function") {
+    void agentEvents.reportSkillUsed({ skill: event.skill, source: SKILL_READ_SOURCE, eventId: event.eventId });
   }
 }
 
@@ -193,6 +297,8 @@ function runCopilot(prompt, model, cwd, onEvent, agentRole = null) {
     // Tool calls the CLI opened, keyed by the id its terminal event names, so
     // a result can be attributed to the tool and timed against its start.
     const toolCalls = new Map();
+    // Per-turn dedupe for skill reads: keyed on the skill name, not the call.
+    const seenSkills = new Set();
     let stderr = "";
     let answer = "";
     let terminalResult = null;
@@ -247,7 +353,7 @@ function runCopilot(prompt, model, cwd, onEvent, agentRole = null) {
               ? data.serverName.trim()
               : (toolName.startsWith("mcp__") ? toolName.split("__")[1] : null));
           if (toolName) {
-            if (callId) toolCalls.set(callId, { tool: toolName, startedAt: Date.now(), server });
+            if (callId) toolCalls.set(callId, { tool: toolName, startedAt: Date.now(), server, args: data.arguments ?? null });
             // The model asking is not the tool running: this call is upgraded
             // to `tool_executed` only when its terminal event carries a result.
             onEvent?.({ type: "tool_requested", tool: toolName, callId, server });
@@ -281,6 +387,13 @@ function runCopilot(prompt, model, cwd, onEvent, agentRole = null) {
           onEvent?.(outcome.kind === "unavailable"
             ? { type: "tool_unavailable", tool: toolName, callId, reason: outcome.reason, server }
             : { type: "tool_executed", tool: toolName, callId, status: outcome.status, durationMs: open ? Date.now() - open.startedAt : null, server });
+          // A denied or failed call proves nothing was actually read, so only
+          // a call the CLI itself reports as successful can surface a
+          // skill_used event.
+          if (outcome.kind === "executed" && outcome.status === "ok") {
+            const skillEvent = skillReadEvent({ seenSkills, toolName, args: open?.args ?? data.arguments, callId });
+            if (skillEvent) onEvent?.(skillEvent);
+          }
           break;
         }
       }
@@ -351,7 +464,22 @@ async function handle(request, response) {
 
   if (payload.stream === false) {
     try {
-      const result = await runCopilot(prompt, payload.model, cwd, (event) => reportToolObservation(agentEvents, event), agentRole);
+      const nonStreamHeartbeat = setInterval(() => {
+        if (agentEvents && typeof agentEvents.reportHeartbeat === "function") {
+          void agentEvents.reportHeartbeat({ minIntervalMs: 5000 });
+        }
+      }, 5000);
+      let result;
+      try {
+        result = await runCopilot(prompt, payload.model, cwd, (event) => {
+          if (agentEvents && typeof agentEvents.reportHeartbeat === "function") {
+            void agentEvents.reportHeartbeat({ minIntervalMs: 5000 });
+          }
+          reportToolObservation(agentEvents, event);
+        }, agentRole);
+      } finally {
+        clearInterval(nonStreamHeartbeat);
+      }
       if (typeof agentEvents?.reportActivity === "function") void agentEvents.reportActivity({ state: "finished" });
       sendJson(response, 200, responsePayload(payload.model, result.text, result.result));
     } catch (error) {
@@ -418,6 +546,9 @@ async function handle(request, response) {
   response.on("error", onResponseError);
 
   const keepAlive = setInterval(() => {
+    if (typeof agentEvents?.reportHeartbeat === "function") {
+      void agentEvents.reportHeartbeat({ minIntervalMs: 5000 });
+    }
     if (streamStarted && isWritable()) {
       try { response.write(": copilot-bridge keep-alive\n\n"); } catch {}
     }
@@ -431,6 +562,9 @@ async function handle(request, response) {
   });
   try {
     const result = await runCopilot(prompt, payload.model, cwd, (event) => {
+      if (agentEvents && typeof agentEvents.reportHeartbeat === "function") {
+        void agentEvents.reportHeartbeat({ minIntervalMs: 5000 });
+      }
       if (event.type === "process") { child = event.child; return; }
       // Telemetry only: a tool observation says nothing to the parent, and the
       // activity line the CLI emits alongside it is what commits the stream.
@@ -511,4 +645,4 @@ if (IS_MAIN) {
   });
 }
 
-export { copilotToolOutcome, inputText, isResearchRole, runCopilot, RESEARCH_CAPABLE_ROLES, SKILL_EXPOSURE_SOURCE };
+export { copilotToolOutcome, extractSkillReadPath, inputText, isResearchRole, matchSkillReadPath, reportToolObservation, runCopilot, skillReadEvent, RESEARCH_CAPABLE_ROLES, SKILL_EXPOSURE_SOURCE };

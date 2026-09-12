@@ -250,11 +250,14 @@ exit 0
         )
         self.assertRegex(language_server.stdout.strip(), r"^\d+\.\d+\.\d+$")
 
+        env = os.environ.copy()
+        env["PATH"] = f"{Path.home()}/.local/bin:{env.get('PATH', '')}"
         python_language_server = subprocess.run(
             ["pylsp", "--version"],
             cwd=REPO_ROOT,
             text=True,
             capture_output=True,
+            env=env,
         )
         self.assertEqual(
             python_language_server.returncode,
@@ -690,7 +693,7 @@ exit 0
         config = tomllib.loads((REPO_ROOT / "scripts/codex/config.toml").read_text())
         pre_tool_hooks = config["hooks"]["PreToolUse"]
         self.assertTrue(any(
-            hook.get("matcher") == "read_file|exec_command"
+            hook.get("matcher") == "(?i)read[_ -]?file|read|exec[_ -]?command|bash"
             and hook["hooks"][0]["command"] == "node ~/.codex/hooks/codex/skill-read-telemetry.mjs"
             for hook in pre_tool_hooks
         ))

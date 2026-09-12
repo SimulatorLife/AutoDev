@@ -244,6 +244,51 @@ test("records bridge tool_executed / tool_requested / tool_unavailable observati
   resetSubagentTelemetry();
 });
 
+test("tracks confirmed RacingGame skill reads separately from exposed skills", () => {
+  resetOtelTelemetry();
+  resetRouterTelemetry();
+  noteBridgeRequest("req-racing-skill", {
+    provider: "antigravity",
+    model: "gemini-3.8-flash-medium",
+    role: "orchestrator",
+    workspace: "RacingGame",
+  });
+
+  ingestAgentEvents({
+    requestId: "req-racing-skill",
+    events: [
+      { type: "skill_exposed", skill: "orchestration", source: "role_contract" },
+      { type: "skill_used", skill: "orchestration", source: "skill_read", eventId: "read-1" },
+      { type: "skill_used", skill: "orchestration", source: "skill_read", eventId: "read-1" },
+    ],
+  });
+
+  let racingGame = getRouterStatus().usage.byWorkspace.RacingGame;
+  assert.equal(racingGame.skillUses, 1);
+  assert.equal(racingGame.bySkill.find((row) => row.skill === "orchestration")?.uses, 1);
+  assert.deepEqual(racingGame.bridgeSkills.map((row) => row.skill), [ "orchestration" ]);
+
+  resetOtelTelemetry();
+  resetRouterTelemetry();
+  noteBridgeRequest("req-racing-exposure", {
+    provider: "antigravity",
+    model: "gemini-3.8-flash-medium",
+    role: "orchestrator",
+    workspace: "RacingGame",
+  });
+  ingestAgentEvents({
+    requestId: "req-racing-exposure",
+    events: [ { type: "skill_exposed", skill: "orchestration", source: "role_contract" } ],
+  });
+  racingGame = getRouterStatus().usage.byWorkspace.RacingGame;
+  assert.equal(racingGame.skillUses, 0);
+  assert.equal(racingGame.bySkill.length, 0);
+  assert.deepEqual(racingGame.bridgeSkills, [ { skill: "orchestration", count: 1 } ]);
+
+  resetOtelTelemetry();
+  resetRouterTelemetry();
+});
+
 test("rejects unknown bridge event types while keeping accepted observations intact", () => {
   resetOtelTelemetry();
   resetRouterTelemetry();

@@ -1946,6 +1946,27 @@
       return { count, servers: [ ...new Set(servers) ] };
     }
 
+    // Chooses which tool-row source a workspace's Tools section renders from.
+    // The OTLP-sourced `byTool` join is the primary source; a bridge's
+    // `tool_executed` observations (`bridgeTools`) only fill in when that
+    // join is unavailable (`null`) or reports zero rows, so a workspace never
+    // sums both sources into the same total.
+    function resolveWorkspaceToolRows(otlpRows, bridgeRows) {
+      const usingBridgeToolFallback = (otlpRows === null || otlpRows.length === 0)
+        && bridgeRows !== null && bridgeRows.length > 0;
+      return { rows: usingBridgeToolFallback ? bridgeRows : otlpRows, usingBridgeToolFallback };
+    }
+
+    // The confirmed-use empty state must not read as if nothing happened on
+    // this workspace when skills were in fact exposed to it (bridge
+    // `skill_exposed`) but none have a confirmed use yet -- it points at the
+    // Skills exposed section instead of the generic empty-state copy.
+    function workspaceSkillUsageEmptyLabel(hasExposedSkills) {
+      return hasExposedSkills
+        ? "No confirmed skill uses yet for this workspace -- see Skills exposed below"
+        : "No named skill uses observed for this workspace yet";
+    }
+
     // Renders a normalized per-workspace named-attribution row list, with
     // distinct fallbacks for "dimension unavailable" (fail closed -- the
     // backend does not yet report this join) versus "dimension available,
@@ -2138,6 +2159,36 @@
       return Number(populatedRowCount ?? 0) >= 2;
     }
 
+    // The KPI headline is the router's single canonical live-agent count --
+    // `status.liveActivity`, falling back to `usage.totals.active` when an
+    // older status payload omits it -- both are the same
+    // agentActivity.countLive() call the router makes with no filter. It
+    // must NOT be maxed against unrelated counters (per-provider active
+    // request counts, subagent concurrency-slot counts, or workspace
+    // attribution) -- those measure different things (transport-layer
+    // requests, scheduling slots, workspace context) and mixing them in
+    // only ever inflates the headline above the number of agents actually
+    // live. One subagent active in one workspace must render as exactly 1.
+    //
+    // The orchestrator/subagent split is read from the same `usage.byRole`
+    // partition the router sums to produce `usage.totals.active`, so it
+    // stays consistent with (sums to) the canonical total rather than being
+    // independently maxed against a different counter. Workspace count is
+    // context, not a component of the agent total: one agent is attributed
+    // to one workspace, so it is never summed into `totalActive` -- it is
+    // only ever rendered alongside it as non-additive context.
+    function computeKpiAgentTotals(status) {
+      const totalActive = Number(status?.liveActivity ?? status?.usage?.totals?.active ?? 0);
+      const orchRole = status?.usage?.byRole?.orchestrator ?? status?.usage?.byRole?.unattributed ?? {};
+      const orchActive = Number(orchRole.active ?? 0);
+      let subActive = 0;
+      for (const [ role, b ] of Object.entries(status?.usage?.byRole ?? {})) {
+        if (role !== "unattributed" && role !== "orchestrator") subActive += Number(b?.active ?? 0);
+      }
+      const activeWorkspaces = countActiveWorkspaces(status);
+      return { totalActive, orchActive, subActive, activeWorkspaces };
+    }
+
     function countActiveWorkspaces(status) {
       const activityByWorkspace = status?.usage?.activity?.byWorkspace;
       if (activityByWorkspace && typeof activityByWorkspace === "object") {
@@ -2163,31 +2214,8 @@
       if (errorEl && !lastControlError) errorEl.textContent = "";
 
       // 1. KPI Grid
-      const orchRole = status.usage?.byRole?.orchestrator ?? status.usage?.byRole?.unattributed ?? {};
-      const orchActive = Number(orchRole.active ?? 0);
-      let subActive = 0;
-      for (const [ role, b ] of Object.entries(status.usage?.byRole ?? {})) {
-        if (role !== "unattributed" && role !== "orchestrator") subActive += Number(b?.active ?? 0);
-      }
-      const concurrency = status.concurrency ?? {};
-      if (concurrency.activeSubagentThreads != null) {
-        subActive = Math.max(subActive, Number(concurrency.activeSubagentThreads));
-      }
-      let providerActiveTotal = 0;
-      for (const [ , p ] of Object.entries(status.providers ?? {})) {
-        if (isProviderLiveActive(p)) {
-          providerActiveTotal += Math.max(1, getProviderLiveActivity(p));
-        }
-      }
-      const totalActive = Math.max(
-        orchActive + subActive,
-        providerActiveTotal,
-        Number(concurrency.activeSessions ?? 0),
-        Number(status.activeAgents ?? 0),
-        Number(status.liveActivity ?? 0)
-      );
+      const { totalActive, orchActive, subActive, activeWorkspaces } = computeKpiAgentTotals(status);
       const workspacesList = Object.entries(status.usage?.byWorkspace ?? {});
-      const activeWorkspaces = countActiveWorkspaces(status);
 
       const attemptsTotal = Number(status.usage?.totals?.attempts ?? 0);
       const attemptsSuccess = Number(status.usage?.totals?.successes ?? 0);
@@ -2216,7 +2244,7 @@
       const kpiAgents = document.getElementById("kpi-agents");
       if (kpiAgents) {
         kpiAgents.setAttribute("value", String(totalActive));
-        kpiAgents.innerHTML = `<strong>${orchActive}</strong> orchestrators · <strong>${subActive}</strong> subagents · <strong>${activeWorkspaces}</strong> workspaces active`;
+        kpiAgents.innerHTML = `<strong>${orchActive}</strong> orchestrators · <strong>${subActive}</strong> subagents · <strong>${activeWorkspaces}</strong> workspaces with active agents`;
       }
       const kpiAttempts = document.getElementById("kpi-attempts");
       if (kpiAttempts) {
@@ -2617,7 +2645,14 @@
 
             // Named tool/skill/mcp attribution: status.usage.byWorkspace[*].byTool,
             // bySkill, and byMcp, when the backend reports them.
-            const wsToolRows = normalizeWorkspaceNamedUsage(w.byTool, ["tool", "name"]);
+            //
+            // Tools: the OTLP-sourced `byTool` join is the primary source. A
+            // bridge's `tool_executed` observations (`bridgeTools`) only fill
+            // in when that join is unavailable or empty, so a workspace never
+            // has both sources summed into the same total (no double-count).
+            const otlpToolRows = normalizeWorkspaceNamedUsage(w.byTool, ["tool", "name"]);
+            const bridgeToolRows = normalizeWorkspaceNamedUsage(w.bridgeTools, ["tool", "name"]);
+            const { rows: wsToolRows } = resolveWorkspaceToolRows(otlpToolRows, bridgeToolRows);
             const wsToolsHtml = renderWorkspaceNamedUsage(wsToolRows, {
               unavailableLabel: "Named tool telemetry is unavailable per-workspace",
               emptyLabel: "No named tool calls observed for this workspace yet",
@@ -2629,10 +2664,27 @@
               wsTotalTools += toolCalls;
               wsToolCell = `<td class="attempts"><outcome-bar fail="0" no-bar="" success="${toolCalls}"></outcome-bar></td>`;
             }
+            // Skills: `bySkill` is the confirmed-use join (OTLP `skill_used` /
+            // deduplicated bridge `skill_used`); `bridgeSkills` is the
+            // exposure join (bridge `skill_exposed`). These are two different
+            // claims -- a workspace can have a skill exposed to it long
+            // before (or without ever) confirming a use -- so they are kept
+            // as distinct sections rather than merged into one count. When
+            // there are no confirmed uses yet but skills were exposed, the
+            // confirmed-use panel says so and points at the exposure panel
+            // instead of rendering the generic "nothing observed" empty
+            // state, which would otherwise read as if nothing happened here
+            // at all.
             const wsSkillRows = normalizeWorkspaceNamedUsage(w.bySkill, ["skill", "name"]);
+            const wsExposedSkillRows = normalizeWorkspaceNamedUsage(w.bridgeSkills, ["skill", "name"]);
+            const hasExposedSkills = Array.isArray(wsExposedSkillRows) && wsExposedSkillRows.length > 0;
             const wsSkillsHtml = renderWorkspaceNamedUsage(wsSkillRows, {
               unavailableLabel: "Named skill attribution is unavailable per-workspace",
-              emptyLabel: "No named skill uses observed for this workspace yet",
+              emptyLabel: workspaceSkillUsageEmptyLabel(hasExposedSkills),
+            });
+            const wsExposedSkillsHtml = renderWorkspaceNamedUsage(wsExposedSkillRows, {
+              unavailableLabel: "Skill exposure telemetry is unavailable per-workspace",
+              emptyLabel: "No skills exposed to this workspace yet",
             });
             const wsMcpRows = normalizeWorkspaceNamedUsage(w.byMcp ?? w.mcpServers, ["server", "name", "mcp"]);
             const wsMcpHtml = renderWorkspaceNamedUsage(wsMcpRows, {
@@ -2669,6 +2721,10 @@
                     <section class="detail-group">
                       <h2>Skill usage</h2>
                       ${wsSkillsHtml}
+                    </section>
+                    <section class="detail-group">
+                      <h2>Skills exposed</h2>
+                      ${wsExposedSkillsHtml}
                     </section>
                     <section class="detail-group">
                       <h2>MCP servers</h2>

@@ -499,7 +499,7 @@ function upstreamHeaders(response, upstream) {
   }
 }
 
-async function streamSse(body, response, coerce = null, observe = null) {
+async function streamSse(body, response, coerce = null, observe = null, agentEvents = null) {
   const reader = body.getReader();
   const decoder = new TextDecoder();
   let bufferedLine = "";
@@ -509,6 +509,12 @@ async function streamSse(body, response, coerce = null, observe = null) {
   // is known -- otherwise a dropped delta leaves an orphaned header and a
   // rewritten one contradicts it. Hold it and re-derive it from the result.
   let pendingEventLine = null;
+
+  const keepAlive = setInterval(() => {
+    if (agentEvents && typeof agentEvents.reportHeartbeat === "function") {
+      void agentEvents.reportHeartbeat({ minIntervalMs: 5000 });
+    }
+  }, 5000);
 
   const writeLine = (line, terminated) => {
     const suffix = terminated ? "\n" : "";
@@ -562,6 +568,10 @@ async function streamSse(body, response, coerce = null, observe = null) {
       return;
     }
 
+    if (typeof agentEvents?.reportHeartbeat === "function") {
+      void agentEvents.reportHeartbeat({ minIntervalMs: 5000 });
+    }
+
     bufferedLine += decoder.decode(result.value, { stream: true });
     const lines = bufferedLine.split("\n");
     bufferedLine = lines.pop() ?? "";
@@ -571,7 +581,11 @@ async function streamSse(body, response, coerce = null, observe = null) {
     await readNextChunk();
   };
 
-  await readNextChunk();
+  try {
+    await readNextChunk();
+  } finally {
+    clearInterval(keepAlive);
+  }
 }
 
 function proxyError(response, error) {
@@ -642,7 +656,7 @@ async function forward(request, response) {
 
     const contentType = upstream.headers.get("content-type") ?? "";
     if (contentType.toLowerCase().includes("text/event-stream")) {
-      await streamSse(upstream.body, response, coerce, observe);
+      await streamSse(upstream.body, response, coerce, observe, agentEvents);
       if (typeof agentEvents?.reportActivity === "function") void agentEvents.reportActivity({ state: "finished" });
       return;
     }

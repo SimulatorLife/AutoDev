@@ -36,10 +36,20 @@
  * never reopens.
  *
  * Records are grouped by an optional `kind` (what this activity represents --
- * e.g. "session" for an orchestrator/role turn, "subagent_slot" for a held
- * concurrency slot) and an optional `tag` (a grouping key within that kind,
- * e.g. a session key), so a caller can count "how many subagent slots are
- * live for this session" without maintaining a parallel counter of its own.
+ * e.g. "session" for an orchestrator/role turn, "bridge_subagent" for a
+ * bridge-reported child turn, "subagent_slot" for a held concurrency slot)
+ * and an optional `tag` (a grouping key within that kind, e.g. a session
+ * key), so a caller can count "how many subagent slots are live for this
+ * session" without maintaining a parallel counter of its own.
+ *
+ * `subagent_slot` records describe *admission accounting* (a held
+ * concurrency slot), not an agent doing work that should show up in
+ * agent-facing counts -- a session already accounts for the work its slots
+ * gate. Every counting/aggregation method in this module (`countLive`,
+ * `countByState`, `snapshot`) therefore defaults to only the agent kinds
+ * (`AGENT_ACTIVITY_KINDS`: "session" and "bridge_subagent") unless a caller passes an
+ * explicit `kind` filter, which is how concurrency accounting opts back in to
+ * see its own `subagent_slot` records.
  */
 
 export const AGENT_ACTIVITY_TTL_ENV = "CODEX_ROUTER_AGENT_ACTIVITY_TTL_MS";
@@ -61,6 +71,13 @@ const WAIT_STATES = new Set(["tool_wait", "user_wait", "subagent_wait"]);
 // "Live" is every state that represents activity still in progress -- the
 // complement of terminal (finished/failed) and stale (abandoned).
 const LIVE_STATES = new Set(["active", "tool_wait", "user_wait", "subagent_wait", "resumed"]);
+
+// The kinds that represent an agent actually doing work, as opposed to
+// bookkeeping records (e.g. `subagent_slot`, a held concurrency admission)
+// that ride the same tracker for TTL/staleness reuse but must not inflate
+// agent-facing live/usage/provider/top-level counts. See the module doc for
+// how this interacts with `matches()` and `snapshot()`.
+export const AGENT_ACTIVITY_KINDS = Object.freeze(["session", "bridge_subagent"]);
 
 const LIFECYCLE_EVENT_STATES = new Set(["user_wait", "subagent_wait", "tool_wait", "resumed", "finished", "failed"]);
 
@@ -102,7 +119,13 @@ function snapshotRecord(rec, at) {
 }
 
 function isStale(rec, at) {
-  return !TERMINAL_STATES.has(rec.state) && at - rec.updatedAt > rec.ttlMs;
+  if (TERMINAL_STATES.has(rec.state)) return false;
+  // An agent-kind record with an open request has a stronger liveness signal
+  // than its last timestamp: the request/stream itself is still in flight.
+  // It will settle through endRequest/finish, while admission-slot records
+  // intentionally remain TTL-bound so an abandoned slot cannot leak forever.
+  if (AGENT_ACTIVITY_KINDS.includes(rec.kind) && rec.openRequestId) return false;
+  return at - rec.updatedAt > rec.ttlMs;
 }
 
 function emptyStateCounts() {
@@ -165,8 +188,18 @@ export function createAgentActivityTracker({ ttlMs = resolveAgentActivityTtlMs()
     if (!subject) return null;
     const rec = ensure(subject, { kind, tag });
     if (requestId && rec.openRequestId === requestId && !TERMINAL_STATES.has(rec.state)) {
-      // Exact duplicate of the currently open attempt; nothing changes.
-      return snapshotRecord(rec, timestamp ?? now());
+      // Exact duplicate of the currently open attempt: not a new transition,
+      // but proof the same request is still genuinely open, so it refreshes
+      // the staleness clock exactly as an explicit touch() would -- the open
+      // leg stays live until it actually settles rather than going stale out
+      // from under a request the router knows perfectly well is still going.
+      const at = Number.isFinite(timestamp) ? timestamp : now();
+      if (isStale(rec, at)) {
+        rec.state = "stale";
+        return snapshotRecord(rec, at);
+      }
+      rec.updatedAt = at;
+      return snapshotRecord(rec, at);
     }
     if (TERMINAL_STATES.has(rec.state)) {
       // A terminal record never reopens implicitly; a caller that wants a
@@ -240,6 +273,34 @@ export function createAgentActivityTracker({ ttlMs = resolveAgentActivityTtlMs()
     return snapshotRecord(rec, timestamp ?? now());
   }
 
+  /**
+   * A heartbeat: `subject` is confirmed still genuinely in progress, so its
+   * staleness clock is postponed without otherwise changing anything. This is
+   * distinct from every other mutator here, which all describe *something
+   * happened* (a request began, ended, a lifecycle event arrived); `touch`
+   * describes *nothing happened, and that is expected* -- a long single
+   * upstream turn whose only signal is still-open bytes on the wire, or a
+   * held concurrency slot whose owning session was just observed to still be
+   * making requests. Without it, the TTL has no way to distinguish "legitimately
+   * still running" from "abandoned" for activity that can outlast the TTL, and
+   * either the TTL has to be weakened for everyone or genuine long-running
+   * work gets misreported as stale. A no-op for an unknown subject and never
+   * reopens or otherwise touches a terminal record -- a terminal record's
+   * staleness is moot, and touching it would misreport when it actually ended.
+   */
+  function touch(subject, { timestamp } = {}) {
+    const rec = subjects.get(subject);
+    if (!rec) return null;
+    const at = timestamp ?? now();
+    if (TERMINAL_STATES.has(rec.state)) return snapshotRecord(rec, at);
+    if (isStale(rec, at)) {
+      rec.state = "stale";
+      return snapshotRecord(rec, at);
+    }
+    rec.updatedAt = Number.isFinite(timestamp) ? timestamp : at;
+    return snapshotRecord(rec, at);
+  }
+
   /** The subject just spawned a subagent it is now waiting on. Idempotent (re-applying while already waiting is a no-op). */
   function noteSubagentWait(subject, { timestamp, kind = "session", tag = null } = {}) {
     if (!subject) return null;
@@ -308,7 +369,16 @@ export function createAgentActivityTracker({ ttlMs = resolveAgentActivityTtlMs()
   }
 
   function matches(rec, filter = {}) {
-    for (const field of ["kind", "tag", "provider", "model", "role", "origin", "workspace"]) {
+    if (Object.hasOwn(filter, "kind")) {
+      if (rec.kind !== filter.kind) return false;
+    } else if (!AGENT_ACTIVITY_KINDS.includes(rec.kind)) {
+      // No explicit kind requested: default every count to agent kinds only,
+      // so a held `subagent_slot` never inflates a provider/usage/top-level
+      // count. A caller that actually wants slot accounting passes `kind`
+      // explicitly (see activeSubagentThreads() and friends in the router).
+      return false;
+    }
+    for (const field of ["tag", "provider", "model", "role", "origin", "workspace"]) {
       if (!Object.hasOwn(filter, field)) continue;
       if (rec[field] !== filter[field]) return false;
     }
@@ -365,17 +435,25 @@ export function createAgentActivityTracker({ ttlMs = resolveAgentActivityTtlMs()
       collection[normalized][rec.state] = (collection[normalized][rec.state] ?? 0) + 1;
     };
     for (const rec of subjects.values()) {
+      // A held `subagent_slot` has no provider/model/role of its own -- it
+      // would otherwise fall into the "unattributed" bucket of byRole/
+      // byOrigin/byWorkspace and inflate them with bookkeeping, not agents.
+      if (!AGENT_ACTIVITY_KINDS.includes(rec.kind)) continue;
       if (rec.provider) add(byProvider, rec.provider, rec);
       if (rec.provider && rec.model) add(byModel, `${rec.provider}/${rec.model}`, rec);
       add(byRole, rec.role, rec);
       add(byOrigin, rec.origin, rec);
       add(byWorkspace, rec.workspace, rec);
     }
+    const byState = countByState({}, at);
     return {
       ttlMs: effectiveTtlMs,
-      total: subjects.size,
+      // Agent-kind subjects only (see AGENT_ACTIVITY_KINDS); a held
+      // subagent_slot is admission bookkeeping, not an agent, and must not
+      // inflate this top-level total.
+      total: Object.values(byState).reduce((sum, count) => sum + count, 0),
       live: countLive({}, at),
-      byState: countByState({}, at),
+      byState,
       byProvider,
       byModel,
       byRole,
@@ -392,6 +470,7 @@ export function createAgentActivityTracker({ ttlMs = resolveAgentActivityTtlMs()
     beginRequest,
     endRequest,
     finish,
+    touch,
     noteSubagentWait,
     noteSubagentResolved,
     applyLifecycleEvent,

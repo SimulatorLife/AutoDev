@@ -61,6 +61,7 @@ const ARGUMENT_KEYS = [ "arguments", "args", "input", "params", "tool_input", "t
 const SESSION_ID_KEYS = [ "session_id", "sessionId" ];
 const TURN_ID_KEYS = [ "turn_id", "turnId" ];
 const CODEX_SESSION_KEY = "x-codex-session-id";
+const SKILL_READ_TOOL_NAMES = new Set(["read_file", "readfile", "read", "exec_command", "execcommand", "bash"]);
 
 async function readStdin() {
   const chunks = [];
@@ -80,8 +81,20 @@ function pickObject(payload, keys) {
   for (const key of keys) {
     const value = payload?.[key];
     if (value && typeof value === "object" && !Array.isArray(value)) return value;
+    if (typeof value === "string" && value.trim().startsWith("{")) {
+      try {
+        const parsed = JSON.parse(value);
+        if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) return parsed;
+      } catch {
+        // A non-JSON argument string is handled by the command matcher below.
+      }
+    }
   }
   return null;
+}
+
+function normaliseToolName(name) {
+  return typeof name === "string" ? name.trim().toLowerCase().replace(/[\s-]+/g, "_") : "";
 }
 
 // The payload Codex sends uses different spellings across versions; this
@@ -288,7 +301,7 @@ async function run() {
   }
   const tool = extractToolCall(payload);
   if (!tool) return;
-  if (!["read_file", "exec_command"].includes(tool.toolName)) return;
+  if (!SKILL_READ_TOOL_NAMES.has(normaliseToolName(tool.toolName))) return;
   const candidatePath = extractReadPath(tool.args);
   if (!candidatePath) return;
   const normalised = normalisePath(candidatePath);
