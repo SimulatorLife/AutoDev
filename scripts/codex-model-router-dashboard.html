@@ -2026,6 +2026,75 @@
       }).join("")}</div>`;
     }
 
+    // Renders the per-workspace MCP servers section showing confirmed uses
+    // (discovery spans + executed MCP tools) and exposed count together as `uses / exposed`
+    // when exposure telemetry is available, keeping uses and exposure distinct while
+    // preserving fail-closed unavailable states.
+    function renderWorkspaceMcp(mcpRows, exposedMcpRows) {
+      if (mcpRows === null && exposedMcpRows === null) {
+        return `<div class="empty-state">MCP server telemetry is unavailable per-workspace</div>`;
+      }
+      const mcpMap = new Map();
+      if (Array.isArray(mcpRows)) {
+        for (const r of mcpRows) {
+          mcpMap.set(r.name, {
+            name: r.name,
+            uses: r.count,
+            exposed: exposedMcpRows === null ? null : 0,
+            ok: r.ok,
+            err: r.err,
+            hasOutcomes: r.hasOutcomes,
+            source: r.source,
+            server: r.server,
+          });
+        }
+      }
+      if (Array.isArray(exposedMcpRows)) {
+        for (const r of exposedMcpRows) {
+          const existing = mcpMap.get(r.name);
+          if (existing) {
+            existing.exposed = r.count;
+            if (!existing.source && r.source) existing.source = r.source;
+            if (!existing.server && r.server) existing.server = r.server;
+          } else {
+            mcpMap.set(r.name, {
+              name: r.name,
+              uses: mcpRows === null ? null : 0,
+              exposed: r.count,
+              ok: 0,
+              err: 0,
+              hasOutcomes: false,
+              source: r.source,
+              server: r.server,
+            });
+          }
+        }
+      }
+      if (!mcpMap.size) {
+        return `<div class="empty-state">No MCP servers observed for this workspace yet</div>`;
+      }
+      const sorted = [ ...mcpMap.values() ].sort((a, b) => {
+        const usesA = a.uses ?? 0;
+        const usesB = b.uses ?? 0;
+        if (usesB !== usesA) return usesB - usesA;
+        const expA = a.exposed ?? 0;
+        const expB = b.exposed ?? 0;
+        if (expB !== expA) return expB - expA;
+        return a.name.localeCompare(b.name);
+      });
+      const maxCount = Math.max(...sorted.map((s) => Math.max(s.uses ?? 0, s.exposed ?? 0)), 1);
+      return `<div class="metric-list">${sorted.map((s) => {
+        const usesText = s.uses === null ? "—" : s.uses.toLocaleString();
+        const expText = s.exposed === null ? "—" : s.exposed.toLocaleString();
+        const valueStr = exposedMcpRows !== null ? `${usesText} / ${expText}` : usesText;
+        const fill = (Math.max(s.uses ?? 0, s.exposed ?? 0) / maxCount * 100).toFixed(1);
+        const originSuffix = [ s.source, s.server && s.server !== s.name ? s.server : null ].filter(Boolean).join(" · ");
+        const label = originSuffix ? `${s.name} (${originSuffix})` : s.name;
+        const outcomeAttrs = s.hasOutcomes ? `success="${s.ok}" fail="${s.err}"` : `success="${s.uses ?? 0}" fail="0" neutral=""`;
+        return `<metric-bar fill="${fill}" label="${escapeHtml(label)}" value="${escapeHtml(valueStr)}" ${outcomeAttrs}></metric-bar>`;
+      }).join("")}</div>`;
+    }
+
     // Renders a normalized per-workspace named-attribution row list, with
     // distinct fallbacks for "dimension unavailable" (fail closed -- the
     // backend does not yet report this join) versus "dimension available,
@@ -2747,11 +2816,9 @@
             const wsSkillUsesText = wsSkillSummary.uses === null ? "—" : wsSkillSummary.uses.toLocaleString();
             const wsSkillExposedText = wsSkillSummary.exposed === null ? "—" : wsSkillSummary.exposed.toLocaleString();
             const wsSkillsHtml = renderWorkspaceSkills(wsSkillRows, wsExposedSkillRows);
-            const wsMcpRows = normalizeWorkspaceNamedUsage(w.byMcp ?? w.mcpServers, ["server", "name", "mcp"]);
-            const wsMcpHtml = renderWorkspaceNamedUsage(wsMcpRows, {
-              unavailableLabel: "MCP server telemetry is unavailable per-workspace",
-              emptyLabel: "No MCP servers observed for this workspace yet",
-            });
+            const wsMcpRows = normalizeWorkspaceNamedUsage(w.mcpUses ?? w.byMcp ?? w.mcpServers, ["server", "name", "mcp"]);
+            const wsExposedMcpRows = normalizeWorkspaceNamedUsage(w.mcpExposed, ["server", "name", "mcp"]);
+            const wsMcpHtml = renderWorkspaceMcp(wsMcpRows, wsExposedMcpRows);
 
             return `
               <tr class="workspace-row" ${isExpanded ? 'aria-expanded="true"' : ''}>

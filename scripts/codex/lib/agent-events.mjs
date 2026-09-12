@@ -246,6 +246,24 @@ class AgentEventReporter {
   }
 
   /**
+   * Post a single mcp_exposed observation. The bridge just made an MCP
+   * server available to the model -- either by resolving it from the
+   * selected role's MCP list or by surfacing it in the runtime's tool
+   * inventory. This is the first-class event the router needs to mark the
+   * server as exposed per workspace; it is distinct from actually using the
+   * server (a discovery call or an executed tool), which the router derives
+   * from `tool_executed` and its own OTLP discovery-span telemetry instead.
+   */
+  async reportMcpExposed({ server, source = null } = {}) {
+    if (typeof server !== "string" || !server.trim()) return;
+    await this.post([ {
+      type: "mcp_exposed",
+      server: server.trim(),
+      source: typeof source === "string" && source.trim() ? source.trim() : null,
+    } ]);
+  }
+
+  /**
    * Post a single skill_used observation. The bridge (or a Codex hook
    * observing a SKILL.md read) just saw the agent actually use a skill.
    * The router keys dedupe on (requestId, skill, source, pluginId,
@@ -343,15 +361,23 @@ class AgentEventReporter {
 
 /**
  * A reporter for this request, or null when the router asked for no reporting
- * (a provider with no spawn tools, or a caller that is not the router).
+ * (a caller that is not the router).
+ *
+ * Spawn-tool availability is not a precondition for this channel: a provider
+ * with no spawn tools (minimax, copilot) still runs tools, exposes skills,
+ * and reaches MCP servers over the same request, and those observations must
+ * be reportable even when `spawnTools` is empty. Only the events URL and
+ * request id -- both router-issued -- authorize a post; the spawn-tool
+ * header is optional and, when absent, this reporter simply never
+ * recognizes a tool call as a spawn.
  */
 export function resolveAgentEventReporter(headers) {
   const url = headerValue(headers, AGENT_EVENTS_URL_HEADER);
   const requestId = headerValue(headers, REQUEST_ID_HEADER);
+  if (!url || !requestId) return null;
   const tools = headerValue(headers, SUBAGENT_SPAWN_TOOLS_HEADER);
-  if (!url || !requestId || !tools) return null;
-  const spawnTools = new Set(tools.split(",").map((tool) => tool.trim()).filter(Boolean));
-  return spawnTools.size > 0 ? new AgentEventReporter(url, requestId, spawnTools) : null;
+  const spawnTools = new Set(tools ? tools.split(",").map((tool) => tool.trim()).filter(Boolean) : []);
+  return new AgentEventReporter(url, requestId, spawnTools);
 }
 
 /**

@@ -87,9 +87,12 @@ import {
   flattenOutboundTools,
   rewriteToolNamespaces,
   bridgeTelemetryHeaders,
+  mcpContractForRole,
+  recordNativeMcpExposure,
   ingestAgentEvents,
   noteBridgeRequest,
   noteBridgeSession,
+  lookupBridgeSessionContext,
   closeBridgeSubagentsForRequest,
   UNATTRIBUTED_SUBAGENT_ROLE,
   noteOrchestratorSession,
@@ -111,7 +114,7 @@ import {
   AGENT_ACTIVITY_TTL_MS,
   usageStatus,
 } from "./codex-model-router.mjs";
-import { resolveAgentEventReporter } from "./codex/lib/agent-events.mjs";
+import { resolveAgentEventReporter, REQUEST_ID_HEADER as AGENT_EVENTS_REQUEST_ID_HEADER } from "./codex/lib/agent-events.mjs";
 import { spawnedChildren } from "./codex-antigravity-cli-responses-proxy.mjs";
 import {
   AGENT_ACTIVITY_STATES,
@@ -718,7 +721,7 @@ test("an exec tool call carrying a spawn script reaches Codex byte for byte", as
   );
 });
 
-test("only bridges that spawn inside their own runtime are told what to report", () => {
+test("agent-events reporting is decoupled from spawn-tool availability", () => {
   const forAntigravity = bridgeTelemetryHeaders({ provider: "antigravity" }, "request-1");
   assert.deepEqual(forAntigravity, {
     [ "x-autodev-request-id" ]: "request-1",
@@ -726,14 +729,40 @@ test("only bridges that spawn inside their own runtime are told what to report",
     [ AGENT_EVENTS_URL_HEADER ]: `http://127.0.0.1:4100${AGENT_EVENTS_PATH}`,
   });
   assert.equal(bridgeTelemetryHeaders({ provider: "claude" }, "request-1")[ SUBAGENT_SPAWN_TOOLS_HEADER ], "Agent,Task");
-  // Codex and MiniMax spawn through the router's own role aliases, so the
-  // router already sees those children and asks for no report. Copilot cannot
-  // spawn at all.
-  for (const provider of [ "codex", "minimax", "copilot" ]) {
-    assert.deepEqual(bridgeTelemetryHeaders({ provider }, "request-1"), {}, provider);
+  // Native Codex is observed through OTLP and the router-side role contract,
+  // so local agent-events headers must not be sent to the remote Codex API.
+  assert.deepEqual(bridgeTelemetryHeaders({ provider: "codex" }, "request-1"), {});
+  // MiniMax and Copilot still run tools, expose skills, and reach MCP servers
+  // over the same request -- those observations must not go unreported just
+  // because the spawn watchlist is empty.
+  for (const provider of [ "minimax", "copilot" ]) {
+    assert.deepEqual(bridgeTelemetryHeaders({ provider }, "request-1"), {
+      [ "x-autodev-request-id" ]: "request-1",
+      [ AGENT_EVENTS_URL_HEADER ]: `http://127.0.0.1:4100${AGENT_EVENTS_PATH}`,
+    }, provider);
+    assert.equal(SUBAGENT_SPAWN_TOOLS_HEADER in bridgeTelemetryHeaders({ provider }, "request-1"), false, provider);
   }
   // Without a request id there is nothing to correlate a report against.
   assert.deepEqual(bridgeTelemetryHeaders({ provider: "claude" }, null), {});
+});
+
+test("a provider with no spawn tools still gets an agent-events reporter", () => {
+  // The headers a spawn-tool-less provider (minimax, copilot) actually
+  // receives: no SUBAGENT_SPAWN_TOOLS_HEADER, but the events URL and request
+  // id are present. resolveAgentEventReporter must not fail this caller
+  // closed just because the spawn watchlist header is absent -- tool
+  // execution and skill/MCP exposure are unrelated to whether this runtime
+  // can spawn subagents.
+  const headers = bridgeTelemetryHeaders({ provider: "copilot" }, "request-decoupled");
+  assert.equal(SUBAGENT_SPAWN_TOOLS_HEADER in headers, false);
+  const reporter = resolveAgentEventReporter(headers);
+  assert.ok(reporter);
+  assert.equal(reporter.isSpawnTool("anything"), false);
+
+  // Still fails closed when the router did not authorize this request at all.
+  assert.equal(resolveAgentEventReporter({}), null);
+  assert.equal(resolveAgentEventReporter({ [ AGENT_EVENTS_URL_HEADER ]: headers[ AGENT_EVENTS_URL_HEADER ] }), null);
+  assert.equal(resolveAgentEventReporter({ [ AGENT_EVENTS_REQUEST_ID_HEADER ]: "request-decoupled" }), null);
 });
 
 test("subagent telemetry counts both spawn mechanisms and attributes each to a provider", () => {
@@ -1745,7 +1774,7 @@ test("persists and restores per-workspace tool and skill attribution across rout
 
     // Verify persisted schema
     const raw = JSON.parse(await readFile(stateFile, "utf8"));
-    assert.equal(raw.usage.schemaVersion, 7);
+    assert.equal(raw.usage.schemaVersion, 8);
     assert.ok(Array.isArray(raw.usage.workspaceRegistry));
     const savedWs = raw.usage.byWorkspace[ "OwnerA/ProjectA" ];
     assert.equal(savedWs.skillUses, 3);
@@ -3443,6 +3472,67 @@ test("x-autodev-router-instance-id correlates every JSON response with the route
     await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
     globalThis.fetch = originalFetch;
   }
+});
+
+test("a direct concrete request registers its real session, not sessionKey: null, so a session-scoped bridge report can still correlate to it", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (url, options) => {
+    if (String(url) === "http://127.0.0.1:4000/v1/responses") {
+      return new Response(JSON.stringify({ id: "concrete-session", model: "sonnet", output_text: "ok" }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }
+    return originalFetch(url, options);
+  };
+  const server = createServer((request, response) => { void handle(request, response); });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  try {
+    const address = server.address();
+    const response = await fetch(`http://127.0.0.1:${address.port}/v1/responses`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-session-id": "session-concrete-1" },
+      body: JSON.stringify({ model: "sonnet", stream: false }),
+    });
+    assert.equal(response.status, 200);
+    // Before the fix, a direct/pinned-model request always registered
+    // `sessionKey: null`, so a Codex hook or bridge report that only knows
+    // the session id (skill-read telemetry, mcp_exposed, ...) could never be
+    // attributed back to a concrete-model turn's provider/model/workspace.
+    const sessionContext = lookupBridgeSessionContext("session-concrete-1");
+    assert.ok(sessionContext, "a concrete-model request must register its session, not drop it as null");
+    assert.equal(sessionContext.provider, "claude");
+    assert.equal(sessionContext.model, "sonnet");
+  } finally {
+    await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    globalThis.fetch = originalFetch;
+    activeProviderRequests.clear();
+    clearProviderCooldown("claude");
+    resetRouterTelemetry();
+  }
+});
+
+test("native Codex requests record MCP exposure from the role contract without leaking bridge telemetry headers", () => {
+  const codexHeaders = bridgeTelemetryHeaders({ provider: "codex" }, "request-native");
+  assert.deepEqual(codexHeaders, {});
+  assert.deepEqual(mcpContractForRole("default"), ["lsp", "cocoindex-code"]);
+  resetOtelTelemetry();
+  resetRouterTelemetry();
+  recordNativeMcpExposure({
+    route: { provider: "codex", model: "gpt-5.6-luna" },
+    agentRole: "default",
+    workspace: { key: "SimulatorLife/NativeCodex" },
+    requestId: "request-native",
+    sessionKey: "native-session",
+  });
+  const ws = getRouterStatus().usage.byWorkspace["SimulatorLife/NativeCodex"];
+  assert.deepEqual(ws.mcpExposed, [
+    { server: "cocoindex-code", count: 1 },
+    { server: "lsp", count: 1 },
+  ]);
+  assert.deepEqual(ws.mcpUses, []);
+  resetOtelTelemetry();
+  resetRouterTelemetry();
 });
 
 test("direct concrete request retries once on HTTP 503 then succeeds without rerouting", async () => {

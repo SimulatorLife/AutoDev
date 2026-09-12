@@ -44,12 +44,14 @@ standalone MCP panel.
 
 Per-workspace usage always has reliable totals, role, and model dimensions.
 Named tool, named skill, and MCP server attribution at that same workspace granularity --
-`status.usage.byWorkspace[*].byTool`, `...bySkill`, and `...byMcp` -- are optional fields:
+`status.usage.byWorkspace[*].byTool`, `...bySkill`, `...byMcp`, `...mcpUses`, and `...mcpExposed` -- are optional fields:
 the dashboard renders them when the status payload includes them and falls
 back to an explicit unavailable state when it does not, rather than inventing
 a join from unrelated telemetry or silently showing a zero that would be
-indistinguishable from "observed, but nothing happened." Expanded workspace
-rows show **"Named tool telemetry is unavailable per-workspace"**,
+indistinguishable from "observed, but nothing happened." Attribution capability
+is strictly workspace-scoped: a workspace without its own verified tool or skill evidence
+stays unavailable rather than inheriting capability from other workspaces.
+Expanded workspace rows show **"Named tool telemetry is unavailable per-workspace"**,
 **"Named skill attribution is unavailable per-workspace"**, and
 **"MCP server telemetry is unavailable per-workspace"** only when the
 corresponding field is entirely absent from that workspace's bucket; once the
@@ -57,7 +59,10 @@ router starts populating it, the same rows show **"No named tool calls
 observed for this workspace yet"**, **"No named skill uses observed for
 this workspace yet"**, and **"No MCP servers observed for this workspace yet"**
 if the field is present but empty, and the actual per-tool/per-skill/per-MCP
-breakdown otherwise. This is a fail-closed distinction on
+breakdown otherwise. In expanded workspace details, MCP servers render confirmed
+uses (from discovery spans and executed MCP tools only) alongside exposure
+(`mcpExposed`) as `uses / exposed` (e.g. `playwright 1 / 2`) while keeping uses and
+exposure distinct. This is a fail-closed distinction on
 purpose: "unavailable" must never be collapsed into "zero," because the two
 mean different things to an operator debugging a workspace with no visible
 tool or server activity. Model views inside expanded workspaces also embed
@@ -516,10 +521,15 @@ aggregated buckets:
 - `byAgent`
 
 Each bucket retains `observed`, `ready`, `error`, `stale`, and `lastSeenAt`.
-At the workspace granularity, `status.usage.byWorkspace[*].byMcp` provides
-workspace-level MCP breakdown, following the same fail-closed semantics as
-`byTool` and `bySkill`. Existing model views embed model-level MCP counts and
-server breakdowns directly without creating a standalone MCP panel.
+At the workspace granularity, `status.usage.byWorkspace[*].byMcp` and `...mcpUses`
+provide workspace-level MCP breakdown, following the same fail-closed semantics as
+`byTool` and `bySkill`. MCP uses are counted strictly from discovery spans
+(`list_tools_for_client_uncached`, `list_tools_with_connector_ids`) and executed MCP tools,
+never bare init/health spans or requested/unavailable calls, preserving server health
+states (`observed`, `ready`, `error`, `stale`). Exposure events (`mcpExposed`)
+track servers made available to the model this turn without inflating uses.
+Existing model views embed model-level MCP counts and server breakdowns directly without
+creating a standalone MCP panel.
 
 When resolving context across MCP, tool, hook, skill, and bridge telemetry,
 the router applies canonical precedence in this order:

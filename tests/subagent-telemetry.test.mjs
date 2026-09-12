@@ -20,6 +20,7 @@ import {
   resolveSkillReadReporter,
 } from "../scripts/codex/lib/agent-events.mjs";
 import {
+  ANTIGRAVITY_MCP_EXPOSURE_SOURCE,
   ANTIGRAVITY_SKILL_EXPOSURE_SOURCE,
   agyArgs,
   agyErrorDetails,
@@ -44,8 +45,10 @@ import {
   reportToolObservation,
   skillReadEvent,
   SKILL_EXPOSURE_SOURCE as COPILOT_SKILL_EXPOSURE_SOURCE,
+  MCP_EXPOSURE_SOURCE as COPILOT_MCP_EXPOSURE_SOURCE,
 } from "../scripts/codex-copilot-cli-responses-proxy.mjs";
 import {
+  MCP_EXPOSURE_SOURCE as MINIMAX_MCP_EXPOSURE_SOURCE,
   observeResponseEvent,
   reportExecutedToolCalls,
   reportRequestedToolCall,
@@ -77,16 +80,25 @@ test("a bridge reports spawns only when the router asked it to", () => {
     "X-Autodev-Subagent-Spawn-Tools": "Agent,Task",
   }));
 
-  // A provider with no spawn tools, or a caller that is not the router, gets
-  // no reporter at all rather than a reporter that posts nowhere.
+  // A caller that is not the router gets no reporter at all rather than a
+  // reporter that posts nowhere.
   assert.equal(resolveAgentEventReporter({}), null);
   assert.equal(resolveAgentEventReporter(null), null);
-  for (const missing of [ AGENT_EVENTS_URL_HEADER, REQUEST_ID_HEADER, SUBAGENT_SPAWN_TOOLS_HEADER ]) {
+  for (const missing of [ AGENT_EVENTS_URL_HEADER, REQUEST_ID_HEADER ]) {
     const partial = { ...routerHeaders };
     delete partial[ missing ];
     assert.equal(resolveAgentEventReporter(partial), null, `missing ${missing} must disable reporting`);
   }
-  assert.equal(resolveAgentEventReporter({ ...routerHeaders, [ SUBAGENT_SPAWN_TOOLS_HEADER ]: " , " }), null);
+  // Missing or empty spawn tools still yields a reporter for providers without
+  // delegation (copilot, minimax) so they can report tool and skill observations.
+  const noSpawnTools = { ...routerHeaders };
+  delete noSpawnTools[ SUBAGENT_SPAWN_TOOLS_HEADER ];
+  const noSpawnReporter = resolveAgentEventReporter(noSpawnTools);
+  assert.ok(noSpawnReporter);
+  assert.equal(noSpawnReporter.isSpawnTool("invoke_subagent"), false);
+  const emptySpawnReporter = resolveAgentEventReporter({ ...routerHeaders, [ SUBAGENT_SPAWN_TOOLS_HEADER ]: " , " });
+  assert.ok(emptySpawnReporter);
+  assert.equal(emptySpawnReporter.isSpawnTool("invoke_subagent"), false);
 });
 
 test("a reported spawn names the request that authorizes it", async () => {
@@ -857,9 +869,12 @@ test("the Antigravity bridge observes and reports tool requests, executions, and
 
 test("the Antigravity bridge reports skill exposure from actual role contract", () => {
   assert.equal(ANTIGRAVITY_SKILL_EXPOSURE_SOURCE, "role_contract");
+  assert.equal(ANTIGRAVITY_MCP_EXPOSURE_SOURCE, "role_contract");
   const source = read("scripts/codex-antigravity-cli-responses-proxy.mjs");
   assert.match(source, /for \(const skill of bootstrapContract\.skills \?\? \[\]\)/);
   assert.match(source, /agentEvents\.reportSkillExposed\(\{ skill, source: ANTIGRAVITY_SKILL_EXPOSURE_SOURCE \}\)/);
+  assert.match(source, /for \(const server of bootstrapContract\.mcp \?\? \[\]\)/);
+  assert.match(source, /reportMcpExposed\(\{ server, source: ANTIGRAVITY_MCP_EXPOSURE_SOURCE \}\)/);
 });
 
 test("the Copilot bridge evaluates tool outcomes and reports telemetry", () => {
@@ -879,8 +894,11 @@ test("the Copilot bridge evaluates tool outcomes and reports telemetry", () => {
   // Source assertions for Copilot bridge telemetry wiring
   const source = read("scripts/codex-copilot-cli-responses-proxy.mjs");
   assert.equal(COPILOT_SKILL_EXPOSURE_SOURCE, "role_contract");
+  assert.equal(COPILOT_MCP_EXPOSURE_SOURCE, "role_contract");
   assert.match(source, /for \(const skill of bootstrapContract\.skills \?\? \[\]\)/);
   assert.match(source, /agentEvents\.reportSkillExposed\(\{ skill, source: SKILL_EXPOSURE_SOURCE \}\)/);
+  assert.match(source, /for \(const server of bootstrapContract\.mcp \?\? \[\]\)/);
+  assert.match(source, /reportMcpExposed\(\{ server, source: MCP_EXPOSURE_SOURCE \}\)/);
   assert.match(source, /agentEvents\.reportToolRequested\(\{ tool: event\.tool, callId: event\.callId, server: event\.server \}\)/);
   assert.match(source, /agentEvents\.reportToolExecuted\(\{ tool: event\.tool, callId: event\.callId, status: event\.status, durationMs: event\.durationMs, server: event\.server \}\)/);
   assert.match(source, /agentEvents\.reportToolUnavailable\(\{ tool: event\.tool, callId: event\.callId, reason: event\.reason, server: event\.server \}\)/);
@@ -892,11 +910,15 @@ test("the Claude bridge exposes telemetry API methods and wires tool reporting",
   assert.match(source, /reportToolRequested = report_tool_requested_async/);
   assert.match(source, /reportToolUnavailable = report_tool_unavailable_async/);
   assert.match(source, /reportSkillExposed = report_skill_exposed_async/);
+  assert.match(source, /reportMcpExposed = report_mcp_exposed_async/);
 
-  // Skill exposure from role contract
+  // Skill and MCP exposure from role contract
   assert.match(source, /CLAUDE_SKILL_EXPOSURE_SOURCE = "claude_skill_view"/);
+  assert.match(source, /CLAUDE_MCP_EXPOSURE_SOURCE = "role_contract"/);
   assert.match(source, /for exposed_skill in contract\.get\("skills", \[\]\) or \[\]:/);
   assert.match(source, /agent_events\.report_skill_exposed_async\(exposed_skill, source=CLAUDE_SKILL_EXPOSURE_SOURCE\)/);
+  assert.match(source, /for exposed_mcp in contract\.get\("mcp", \[\]\) or \[\]:/);
+  assert.match(source, /agent_events\.report_mcp_exposed_async\(exposed_mcp, source=CLAUDE_MCP_EXPOSURE_SOURCE\)/);
 
   // Tool requested on tool_use, unavailable if not offered
   assert.match(source, /if offered_tools and name not in offered_tools:/);
@@ -916,6 +938,12 @@ test("the MiniMax proxy reports tool calls requested and executed or unavailable
   assert.deepEqual(minimaxToolOutputOutcome({ output: JSON.stringify({ metadata: { exit_code: 1, duration_seconds: 0.2 } }) }), { kind: "executed", status: "error", durationMs: 200 });
   assert.deepEqual(minimaxToolOutputOutcome({ status: "denied" }), { kind: "unavailable", reason: "denied" });
   assert.deepEqual(minimaxToolOutputOutcome({ output: "Permission denied by workspace" }), { kind: "unavailable", reason: "denied" });
+
+  // MCP exposure from role contract
+  assert.equal(MINIMAX_MCP_EXPOSURE_SOURCE, "role_contract");
+  const source = read("scripts/codex-minimax-responses-proxy.mjs");
+  assert.match(source, /for \(const server of contract\.mcp \?\? \[\]\)/);
+  assert.match(source, /reportMcpExposed\(\{ server, source: MCP_EXPOSURE_SOURCE \}\)/);
 
   // Reporting requested tool call from upstream event
   const events = [];
@@ -976,10 +1004,19 @@ reporter.reportToolUnavailable("write_file", callId="c2", reason="denied", serve
 reporter.reportSkillExposed("ccc", source="claude_skill_view")
 reporter.reportToolExecuted({"tool": "bash", "callId": "c3", "status": "error", "durationMs": 45})
 reporter.reportSkillExposed({"skill": "lsp-mcp-server", "source": "claude_skill_view"})
+reporter.reportMcpExposed("lsp", source="role_contract")
+reporter.reportMcpExposed({"server": "cocoindex-code", "source": "role_contract"})
 reporter.flush()
+
+r_no_spawn = mod.resolve_agent_event_reporter({
+    "x-autodev-agent-events-url": "http://127.0.0.1:${port}/v1/agent-events",
+    "x-autodev-request-id": "req-no-spawn",
+})
+assert r_no_spawn is not None
+assert r_no_spawn.is_spawn_tool("Agent") is False
 `;
     await execFileAsync("python3", [ "-c", pythonScript ], { cwd: repoRoot });
-    assert.equal(received.length, 6);
+    assert.equal(received.length, 8);
     assert.deepEqual(received[ 0 ], {
       requestId: "req-claude-1",
       events: [ { type: "tool_requested", tool: "read_file", callId: "c1", server: "builtin" } ],
@@ -1003,6 +1040,14 @@ reporter.flush()
     assert.deepEqual(received[ 5 ], {
       requestId: "req-claude-1",
       events: [ { type: "skill_exposed", skill: "lsp-mcp-server", source: "claude_skill_view", pluginId: null } ],
+    });
+    assert.deepEqual(received[ 6 ], {
+      requestId: "req-claude-1",
+      events: [ { type: "mcp_exposed", server: "lsp", source: "role_contract" } ],
+    });
+    assert.deepEqual(received[ 7 ], {
+      requestId: "req-claude-1",
+      events: [ { type: "mcp_exposed", server: "cocoindex-code", source: "role_contract" } ],
     });
   } finally {
     await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
@@ -1469,6 +1514,10 @@ test("the Antigravity bridge detects a successful canonical SKILL.md read", asyn
   assert.equal(SKILL_READ_SOURCE, "skill_read");
   // A read_file call naming the canonical path resolves to the skill name.
   assert.equal(agySkillReadPath("read_file", { file_path: CANONICAL_SKILL_PATH }), CANONICAL_SKILL_PATH);
+  assert.equal(agySkillReadPath("view_file", { AbsolutePath: CANONICAL_SKILL_PATH }), CANONICAL_SKILL_PATH);
+  assert.equal(agySkillReadPath("view_file", { absolutePath: CANONICAL_SKILL_PATH }), CANONICAL_SKILL_PATH);
+  assert.equal(agySkillReadPath("view_file", { TargetFile: CANONICAL_SKILL_PATH }), CANONICAL_SKILL_PATH);
+  assert.equal(agySkillReadPath("view_file", { targetFile: CANONICAL_SKILL_PATH }), CANONICAL_SKILL_PATH);
   assert.equal(agyMatchSkillReadPath(CANONICAL_SKILL_PATH), "ccc");
   // A shell read of the same file is recognised too.
   assert.equal(agySkillReadPath("exec_command", { command: `cat ${CANONICAL_SKILL_PATH}` }), CANONICAL_SKILL_PATH);
@@ -1513,6 +1562,10 @@ test("the Antigravity bridge detects a successful canonical SKILL.md read", asyn
 
 test("the Copilot bridge detects a successful canonical SKILL.md read", () => {
   assert.equal(copilotSkillReadPath("read_file", { file_path: CANONICAL_SKILL_PATH }), CANONICAL_SKILL_PATH);
+  assert.equal(copilotSkillReadPath("view_file", { AbsolutePath: CANONICAL_SKILL_PATH }), CANONICAL_SKILL_PATH);
+  assert.equal(copilotSkillReadPath("view_file", { absolutePath: CANONICAL_SKILL_PATH }), CANONICAL_SKILL_PATH);
+  assert.equal(copilotSkillReadPath("read_file", { file: CANONICAL_SKILL_PATH }), CANONICAL_SKILL_PATH);
+  assert.equal(copilotSkillReadPath("read_file", { targetFile: CANONICAL_SKILL_PATH }), CANONICAL_SKILL_PATH);
   assert.equal(copilotMatchSkillReadPath(CANONICAL_SKILL_PATH), "ccc");
   assert.equal(copilotSkillReadPath("bash", { command: `cat ${CANONICAL_SKILL_PATH}` }), CANONICAL_SKILL_PATH);
   assert.equal(copilotSkillReadPath("write_file", { file_path: CANONICAL_SKILL_PATH }), null);
@@ -1580,6 +1633,9 @@ other_path = str(Path("${OTHER_FILE_PATH}"))
 
 # Only Claude's own Read tool -- and a shell read of the same path -- counts.
 assert mod.extract_skill_read_path("Read", {"file_path": skill_path}) == skill_path
+assert mod.extract_skill_read_path("Read", {"AbsolutePath": skill_path}) == skill_path
+assert mod.extract_skill_read_path("Read", {"absolutePath": skill_path}) == skill_path
+assert mod.extract_skill_read_path("Read", {"targetFile": skill_path}) == skill_path
 assert mod.extract_skill_read_path("Bash", {"command": f"cat {skill_path}"}) == skill_path
 assert mod.extract_skill_read_path("Write", {"file_path": skill_path}) is None
 assert mod.match_skill_read_path(mod._normalise_skill_read_path(skill_path)) == "ccc"

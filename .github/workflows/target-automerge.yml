@@ -82,7 +82,7 @@ jobs:
               });
               for (const pull of pulls) {
                 const labels = new Set((pull.labels || []).map((label) => label.name));
-                const agentBranch = /^(copilot|claude|codex|gemini|qwen|mini-max)(?:\/|$)/.test(pull.head?.ref || '');
+                const agentBranch = /^(copilot|claude|codex|gemini|qwen|mini-max|dependabot)(?:\/|$)/.test(pull.head?.ref || '');
                 if (!pull.draft && (labels.has('agent') || agentBranch)) targets.push({ repository: repository.name, pr: pull.number });
               }
             }

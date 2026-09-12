@@ -67,7 +67,7 @@ test('router dashboard exposes the component hierarchy and explicit workspace at
   assert.match(dashboard, /function renderWorkspaceNamedUsage\(rows, \{ unavailableLabel, emptyLabel \}\)/);
   assert.match(dashboard, /normalizeWorkspaceNamedUsage\(w\.byTool, \["tool", "name"\]\)/);
   assert.match(dashboard, /normalizeWorkspaceNamedUsage\(w\.bySkill, \["skill", "name"\]\)/);
-  assert.match(dashboard, /normalizeWorkspaceNamedUsage\(w\.byMcp \?\? w\.mcpServers, \["server", "name", "mcp"\]\)/);
+  assert.match(dashboard, /normalizeWorkspaceNamedUsage\((?:w\.mcpUses \?\? )?w\.byMcp \?\? w\.mcpServers, \["server", "name", "mcp"\]\)/);
   assert.match(dashboard, /if \(rows === null\) return `<div class="empty-state">\$\{escapeHtml\(unavailableLabel\)\}<\/div>`;/);
   assert.match(dashboard, /Named tool telemetry is unavailable per-workspace/);
   assert.match(dashboard, /Named skill attribution is unavailable per-workspace/);
@@ -598,4 +598,56 @@ test('dashboard KPI agent total uses the canonical live-agent count and never ma
   // context ("workspaces with active agents"), not a component summed into
   // the agent total.
   assert.match(dashboard, /workspaces with active agents/);
+});
+
+test('router dashboard renders workspace MCP servers with confirmed uses and exposure rows', async () => {
+  const rawDashboard = await readFile(path.join(root, 'scripts', 'codex-model-router-dashboard.html'), 'utf8');
+  const escapeMatch = rawDashboard.match(/function escapeHtml\([\s\S]*?\n    \}/);
+  assert.ok(escapeMatch, 'escapeHtml should be present in dashboard script');
+  const renderMcpMatch = rawDashboard.match(/function renderWorkspaceMcp\([\s\S]*?\n    \}/);
+  assert.ok(renderMcpMatch, 'renderWorkspaceMcp should be present in dashboard script');
+  const normalizeMatch = rawDashboard.match(/function normalizeWorkspaceNamedUsage\([\s\S]*?\n    \}/);
+  assert.ok(normalizeMatch, 'normalizeWorkspaceNamedUsage should be present in dashboard script');
+
+  const fnScope = `${escapeMatch[0]}; ${normalizeMatch[0]}; ${renderMcpMatch[0]}; return { normalizeWorkspaceNamedUsage, renderWorkspaceMcp };`;
+  const { normalizeWorkspaceNamedUsage, renderWorkspaceMcp } = new Function(fnScope)();
+
+  // 1. Uses and exposure present: e.g. playwright 1 / 2, lsp 0 / 1
+  const ws = {
+    mcpUses: [ { server: "playwright", count: 1 } ],
+    mcpExposed: [
+      { server: "playwright", count: 2 },
+      { server: "lsp", count: 1 },
+    ],
+  };
+  const wsMcpRows = normalizeWorkspaceNamedUsage(ws.mcpUses, ["server", "name", "mcp"]);
+  const wsExposedMcpRows = normalizeWorkspaceNamedUsage(ws.mcpExposed, ["server", "name", "mcp"]);
+  assert.deepEqual(wsMcpRows.map((r) => ({ name: r.name, count: r.count })), [ { name: "playwright", count: 1 } ]);
+  assert.deepEqual(wsExposedMcpRows.map((r) => ({ name: r.name, count: r.count })), [
+    { name: "playwright", count: 2 },
+    { name: "lsp", count: 1 },
+  ]);
+
+  const html = renderWorkspaceMcp(wsMcpRows, wsExposedMcpRows);
+  assert.match(html, /label="playwright"/);
+  assert.match(html, /value="1 \/ 2"/);
+  assert.match(html, /label="lsp"/);
+  assert.match(html, /value="0 \/ 1"/);
+
+  // 2. Fail-closed unavailable when both are null
+  assert.equal(
+    renderWorkspaceMcp(null, null),
+    '<div class="empty-state">MCP server telemetry is unavailable per-workspace</div>',
+  );
+
+  // 3. Empty state when both are empty arrays
+  assert.equal(
+    renderWorkspaceMcp([], []),
+    '<div class="empty-state">No MCP servers observed for this workspace yet</div>',
+  );
+
+  // 4. Backward-compatible when exposure is null
+  const legacyHtml = renderWorkspaceMcp(wsMcpRows, null);
+  assert.match(legacyHtml, /label="playwright"/);
+  assert.match(legacyHtml, /value="1"/);
 });

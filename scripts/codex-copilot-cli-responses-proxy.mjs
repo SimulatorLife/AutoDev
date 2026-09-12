@@ -30,6 +30,7 @@ import { isAbsolute, join, resolve, sep } from "node:path";
 // prompt is the exposure. Carried on every `skill_exposed` event so the
 // router's rows say which mechanism made the skill available.
 const SKILL_EXPOSURE_SOURCE = "role_contract";
+const MCP_EXPOSURE_SOURCE = "role_contract";
 
 // Canonical skill roots whose `SKILL.md` a successful read counts as actual
 // usage, mirroring the approved roots `scripts/codex/skill-read-telemetry.mjs`
@@ -80,7 +81,7 @@ function extractSkillReadPath(toolName, argsObject) {
   const name = String(toolName ?? "").trim().toLowerCase();
   const args = argsObject && typeof argsObject === "object" ? argsObject : {};
   if (COPILOT_READ_TOOL_NAMES.has(name)) {
-    for (const key of [ "file_path", "filePath", "path", "filepath" ]) {
+    for (const key of [ "file_path", "filePath", "path", "filepath", "AbsolutePath", "absolutePath", "targetFile", "TargetFile", "file", "filename", "fileName" ]) {
       const value = args[ key ];
       if (typeof value === "string" && value.trim()) return value.trim();
     }
@@ -460,6 +461,13 @@ async function handle(request, response) {
     for (const skill of bootstrapContract.skills ?? []) {
       void agentEvents.reportSkillExposed({ skill, source: SKILL_EXPOSURE_SOURCE });
     }
+    for (const server of bootstrapContract.mcp ?? []) {
+      if (typeof agentEvents.reportMcpExposed === "function") {
+        void agentEvents.reportMcpExposed({ server, source: MCP_EXPOSURE_SOURCE });
+      } else if (typeof agentEvents.post === "function") {
+        void agentEvents.post([ { type: "mcp_exposed", server, source: MCP_EXPOSURE_SOURCE } ]);
+      }
+    }
   }
 
   if (payload.stream === false) {
@@ -645,4 +653,4 @@ if (IS_MAIN) {
   });
 }
 
-export { copilotToolOutcome, extractSkillReadPath, inputText, isResearchRole, matchSkillReadPath, reportToolObservation, runCopilot, skillReadEvent, RESEARCH_CAPABLE_ROLES, SKILL_EXPOSURE_SOURCE };
+export { copilotToolOutcome, extractSkillReadPath, inputText, isResearchRole, matchSkillReadPath, reportToolObservation, runCopilot, skillReadEvent, RESEARCH_CAPABLE_ROLES, SKILL_EXPOSURE_SOURCE, MCP_EXPOSURE_SOURCE };

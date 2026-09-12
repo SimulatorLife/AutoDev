@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import test from "node:test";
@@ -19,6 +19,7 @@ import {
   persistRouterStateNow,
   loadRouterState,
   noteBridgeRequest,
+  proxyConcreteResponse,
   setCodexStateSnapshotForTests,
 } from "../scripts/codex-model-router.mjs";
 
@@ -378,7 +379,7 @@ test("persists and restores per-workspace tool/skill counters and bridge observa
 
     await persistRouterStateNow(stateFile);
     const raw = JSON.parse(await readFile(stateFile, "utf8"));
-    assert.equal(raw.usage.schemaVersion, 7);
+    assert.equal(raw.usage.schemaVersion, 8);
     const persistedWs = raw.usage.byWorkspace[ "SimulatorLife/AutoDev" ];
     assert.equal(persistedWs.toolsExecuted, 1);
     assert.equal(persistedWs.skillsExposed, 1);
@@ -464,4 +465,245 @@ test("deduplicates one tool result reported through both semantic logs and metri
   setCodexStateSnapshotForTests(null);
   resetOtelTelemetry();
   resetRouterTelemetry();
+});
+
+test("tool/skill attribution capability is workspace-scoped, not a single process-wide flag", () => {
+  resetOtelTelemetry();
+  resetRouterTelemetry();
+  resetAttributionDiagnostics();
+
+  // One workspace proves both dimensions with first-class bridge events.
+  noteBridgeRequest("req-has-evidence", { provider: "claude", model: "sonnet", role: "default", workspace: "SimulatorLife/HasEvidence" });
+  ingestAgentEvents({
+    requestId: "req-has-evidence",
+    events: [
+      { type: "tool_executed", tool: "apply_patch", status: "ok" },
+      { type: "skill_exposed", skill: "ccc" },
+    ],
+  });
+
+  // A second workspace with zero tool/skill evidence of its own must not
+  // inherit "capable" from the first workspace's proof.
+  recordRouterEvent({ phase: "selected", requestId: "req-blank", provider: "claude", model: "sonnet", workspace: { key: "SimulatorLife/NoEvidence" } });
+  recordRouterEvent({ phase: "result", requestId: "req-blank", provider: "claude", model: "sonnet", workspace: { key: "SimulatorLife/NoEvidence" }, outcome: "success", elapsedMs: 1 });
+
+  const usage = getRouterStatus().usage.byWorkspace;
+  const capable = usage[ "SimulatorLife/HasEvidence" ];
+  const blank = usage[ "SimulatorLife/NoEvidence" ];
+  assert.ok(Array.isArray(capable.byTool), "the workspace with its own evidence must report byTool rows");
+  assert.ok(Array.isArray(capable.bySkill), "the workspace with its own evidence must report bySkill rows");
+  assert.equal(blank.byTool, null, "a workspace with no evidence of its own must stay unavailable regardless of other workspaces");
+  assert.equal(blank.bySkill, null, "a workspace with no evidence of its own must stay unavailable regardless of other workspaces");
+
+  resetOtelTelemetry();
+  resetRouterTelemetry();
+  resetAttributionDiagnostics();
+});
+
+test("mcp_exposed bridge observations populate per-workspace exposed rows without inflating uses", () => {
+  resetOtelTelemetry();
+  resetRouterTelemetry();
+  noteBridgeRequest("req-mcp-exposed", { provider: "claude", model: "sonnet", role: "default", workspace: "SimulatorLife/AutoDev" });
+  ingestAgentEvents({
+    requestId: "req-mcp-exposed",
+    events: [
+      { type: "mcp_exposed", server: "playwright", source: "role_contract" },
+      { type: "mcp_exposed", server: "playwright", source: "role_contract" },
+      { type: "mcp_exposed", server: "lsp", source: "role_contract" },
+    ],
+  });
+
+  const telemetry = codexTelemetryStatus();
+  // Duplicate observations for the same request/workspace/server are idempotent.
+  assert.equal(telemetry.bridgeEvents.mcpExposed.total, 2);
+  const playwrightRow = telemetry.bridgeEvents.mcpExposed.byServer.find((row) => row.server === "playwright");
+  assert.equal(playwrightRow?.count, 1);
+
+  const ws = getRouterStatus().usage.byWorkspace[ "SimulatorLife/AutoDev" ];
+  assert.deepEqual(ws.mcpExposed, [
+    { server: "lsp", count: 1 },
+    { server: "playwright", count: 1 },
+  ]);
+  // Exposure alone (the model was handed the server) is not a use.
+  assert.deepEqual(ws.mcpUses, []);
+  assert.deepEqual(ws.byMcp, {});
+
+  // A workspace with no MCP evidence must remain explicitly unavailable.
+  recordRouterEvent({ phase: "selected", requestId: "req-no-mcp", provider: "claude", model: "sonnet", workspace: { key: "SimulatorLife/NoMcpEvidence" } });
+  const noMcp = getRouterStatus().usage.byWorkspace[ "SimulatorLife/NoMcpEvidence" ];
+  assert.equal(noMcp.byMcp, null);
+  assert.equal(noMcp.mcpUses, null);
+  assert.equal(noMcp.mcpExposed, null);
+
+  resetOtelTelemetry();
+  resetRouterTelemetry();
+});
+
+test("mcp uses are counted only from discovery spans and executed tool calls, never init/health spans", () => {
+  resetOtelTelemetry();
+  resetRouterTelemetry();
+  const mcpSpan = (name) => ({
+    name,
+    startTimeUnixNano: "1",
+    endTimeUnixNano: "2",
+    attributes: attrs([ [ "server_name", "playwright" ], [ "workspace", "SimulatorLife/RacingGame" ] ]),
+  });
+  ingestOtelSignal("traces", { resourceSpans: [ {
+    scopeSpans: [ { spans: [
+      // An init/health span proves the server is reachable, not that it was used.
+      mcpSpan("make_rmcp_client"),
+      // A discovery span is a genuine "use".
+      mcpSpan("list_tools_for_client_uncached"),
+    ] } ],
+  } ] });
+
+  const ws = getRouterStatus().usage.byWorkspace[ "SimulatorLife/RacingGame" ];
+  assert.equal(ws.byMcp.playwright, 1, "only the discovery span should count as a use");
+  assert.deepEqual(ws.mcpUses, [ { server: "playwright", count: 1 } ]);
+
+  resetOtelTelemetry();
+  resetRouterTelemetry();
+});
+
+test("bridge tool_requested/tool_unavailable observations do not count as MCP uses, only tool_executed does", () => {
+  resetOtelTelemetry();
+  resetRouterTelemetry();
+  noteBridgeRequest("req-mcp-uses", { provider: "claude", model: "sonnet", role: "default", workspace: "SimulatorLife/AutoDev" });
+  ingestAgentEvents({
+    requestId: "req-mcp-uses",
+    events: [
+      { type: "tool_requested", tool: "browser_navigate", server: "playwright" },
+      { type: "tool_unavailable", tool: "browser_navigate", server: "playwright", reason: "denied" },
+      { type: "tool_executed", tool: "browser_navigate", server: "playwright", status: "ok" },
+    ],
+  });
+
+  const ws = getRouterStatus().usage.byWorkspace[ "SimulatorLife/AutoDev" ];
+  assert.equal(ws.byMcp.playwright, 1, "requested/unavailable must not count as uses, only the executed call does");
+  assert.deepEqual(ws.mcpUses, [ { server: "playwright", count: 1 } ]);
+
+  resetOtelTelemetry();
+  resetRouterTelemetry();
+});
+
+test("concrete-model request session correlation resolves session-scoped agent events to the workspace", async () => {
+  resetOtelTelemetry();
+  resetRouterTelemetry();
+
+  const originalFetch = globalThis.fetch;
+  const fakeResponse = {
+    writeHead() { },
+    write() { },
+    end() { },
+    on() { },
+    once() { },
+    removeListener() { },
+    headersSent: false,
+  };
+  const route = {
+    provider: "claude",
+    baseUrl: "http://127.0.0.1:4011",
+    model: "claude-3-5-sonnet",
+  };
+  globalThis.fetch = async () => ({
+    ok: true,
+    status: 200,
+    text: async () => JSON.stringify({ id: "resp_123", object: "response", status: "completed", output: [] }),
+  });
+
+  try {
+    const session = { key: "session-concrete-turn", scope: "identified" };
+    const workspace = { key: "SimulatorLife/ConcreteWorkspace", cwd: null };
+    await proxyConcreteResponse(
+      fakeResponse,
+      route,
+      { model: "claude-3-5-sonnet", stream: false },
+      false,
+      "req-concrete-1",
+      null,
+      workspace,
+      null,
+      session,
+    );
+
+    const result = ingestAgentEvents({
+      requestId: "session-concrete-turn",
+      events: [
+        { type: "mcp_exposed", server: "playwright", source: "role_contract" },
+        { type: "tool_executed", tool: "browser_click", server: "playwright", status: "ok" },
+      ],
+    });
+
+    assert.equal(result.reason, null, "session-keyed event must be accepted via concrete session correlation");
+    const ws = getRouterStatus().usage.byWorkspace["SimulatorLife/ConcreteWorkspace"];
+    assert.ok(ws, "workspace must receive the attributed activity");
+    assert.equal(ws.byMcp.playwright, 1);
+    assert.deepEqual(ws.mcpUses, [{ server: "playwright", count: 1 }]);
+    assert.deepEqual(ws.mcpExposed, [{ server: "playwright", count: 1 }]);
+  } finally {
+    globalThis.fetch = originalFetch;
+    resetOtelTelemetry();
+    resetRouterTelemetry();
+  }
+});
+
+test("persisted state with schemaVersion 7 restores usage backward-safely without shims", async () => {
+  resetOtelTelemetry();
+  resetRouterTelemetry();
+
+  const tempDir = await mkdtemp(join(tmpdir(), "router-v7-test-"));
+  const stateFile = join(tempDir, "state-v7.json");
+
+  const v7State = {
+    schema: "autodev-router-persisted-state-v3",
+    savedAt: "2026-09-12T12:00:00.000Z",
+    usage: {
+      schemaVersion: 7,
+      workspaceAttributionCapabilities: { tools: true, skills: true },
+      byWorkspace: {
+        "SimulatorLife/LegacyProject": {
+          attempts: 5,
+          successes: 4,
+          failures: 1,
+          skipped: 0,
+          durationMs: 500,
+          maxDurationMs: 200,
+          toolCalls: 3,
+          toolsExecuted: 2,
+          skillsExposed: 1,
+          skillUses: 1,
+          byMcp: { lsp: 2 },
+          byTool: [
+            { tool: "exec_command", source: "builtin", server: null, count: 2, byStatus: { ok: 2 }, durationCount: 2, durationMs: 100 }
+          ],
+          bySkill: [
+            { skill: "ccc", total: 1, byStatus: { ok: 1 }, byInvokeType: {}, byAgentKind: {}, byModel: {}, byPlugin: {} }
+          ],
+        },
+      },
+      workspaceRegistry: [["ws_legacy12345", "SimulatorLife/LegacyProject"]],
+    },
+  };
+
+  try {
+    await writeFile(stateFile, JSON.stringify(v7State), "utf8");
+    const loaded = loadRouterState(stateFile);
+    assert.equal(loaded, true, "schemaVersion 7 state must load successfully");
+
+    const ws = getRouterStatus().usage.byWorkspace["SimulatorLife/LegacyProject"];
+    assert.ok(ws, "legacy workspace must be restored");
+    assert.equal(ws.successes, 4);
+    assert.equal(ws.failures, 1);
+    assert.equal(ws.toolsExecuted, 2);
+    assert.equal(ws.skillsExposed, 1);
+    assert.equal(ws.skillUses, 1);
+    assert.equal(ws.byMcp.lsp, 2);
+    assert.deepEqual(ws.mcpUses, [{ server: "lsp", count: 2 }]);
+    assert.ok(Array.isArray(ws.byTool), "byTool should be restored");
+    assert.ok(Array.isArray(ws.bySkill), "bySkill should be restored");
+  } finally {
+    await rm(tempDir, { recursive: true, force: true });
+    resetOtelTelemetry();
+    resetRouterTelemetry();
+  }
 });

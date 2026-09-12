@@ -578,15 +578,26 @@ The router makes its effective choice visible in two ways:
   deduplicates by skill and turn, and fails closed when the parent session cannot
   be attributed to a workspace. Exposure events remain availability telemetry
   and are never treated as usage.
-  Per-workspace `byMcp` attribution and model-level MCP counts and breakdowns are
+  Per-workspace `byMcp`, `mcpUses`, and `mcpExposed` attribution and model-level MCP counts and breakdowns are
   embedded directly in existing workspace and model views (following fail-closed
   unavailable vs empty semantics); no standalone MCP panel exists. Per-workspace
-  named tool and skill attribution is sourced from local request context, verified hooks,
-  semantic OTLP joins, and authenticated bridge events. The dashboard distinguishes
-  unavailable, no-data, partial, executed, and requested states rather than fabricating
-  a workspace join or treating requested calls as executed. In expanded workspace details,
-  confirmed uses and skill exposure are unified into a single "Skills" section showing
-  `uses / exposed` per skill name, and the workspace table header reads `Skill uses / exposed`. The workspace row and totals use sums of those same normalized `bySkill` and `bridgeSkills` rows; `skillContextsInjected` remains a separate context-loading metric.
+  named tool, skill, and MCP attribution is sourced from local request context, verified hooks,
+  semantic OTLP joins, and authenticated bridge events. Attribution capability is strictly
+  workspace-scoped rather than a process-wide flag: a workspace without its own verified
+  evidence stays unavailable. Direct concrete-model requests register their session context,
+  enabling session-scoped telemetry (such as `PreToolUse` skill-read hooks) to correlate back
+  to the turn's provider, model, and workspace. Agent-event reporting is decoupled from
+  spawn-tool availability: providers without spawn tools (such as MiniMax and Copilot) still
+  report tool executions, skill exposures, and normalized `mcp_exposed` events authorized by
+  the router-issued request ID. Per-workspace MCP uses count discovery spans and executed MCP
+  tools only, never bare init/health spans or requested/unavailable calls, preserving server
+  health states (`observed`, `ready`, `error`, `stale`). Native Codex requests record the
+  same role-contract MCP exposure through the router because they do not use a bridge event
+  channel. In expanded workspace details,
+  confirmed uses and exposure are displayed together for both Skills and MCP servers as
+  `uses / exposed` per name, keeping uses and exposure semantically distinct. The workspace table
+  header reads `Skill uses / exposed`, and the workspace row and totals use sums of those same
+  normalized `bySkill` and `bridgeSkills` rows; `skillContextsInjected` remains a separate context-loading metric.
 `GET /status` always
   returns raw JSON regardless of the `Accept` header, including the current
   router instance, live agent activity, in-flight requests (`inFlightRequests`), configured models, cooldown countdowns,

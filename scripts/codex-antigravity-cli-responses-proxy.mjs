@@ -205,6 +205,7 @@ function isSpawnToolName(agentEvents, toolName) {
 // Carried on every `skill_exposed` event so the router's rows say which
 // mechanism made the skill available rather than only that something did.
 const ANTIGRAVITY_SKILL_EXPOSURE_SOURCE = "role_contract";
+const ANTIGRAVITY_MCP_EXPOSURE_SOURCE = "role_contract";
 
 // Canonical skill roots whose `SKILL.md` a successful read counts as actual
 // usage, mirroring the approved roots `scripts/codex/skill-read-telemetry.mjs`
@@ -257,7 +258,7 @@ function extractSkillReadPath(toolName, argsObject) {
   const name = String(toolName ?? "").trim().toLowerCase();
   const args = argsObject && typeof argsObject === "object" ? argsObject : {};
   if (AGY_READ_TOOL_NAMES.has(name)) {
-    for (const key of [ "file_path", "filePath", "path", "filepath" ]) {
+    for (const key of [ "file_path", "filePath", "path", "filepath", "AbsolutePath", "absolutePath", "targetFile", "TargetFile" ]) {
       const value = args[ key ];
       if (typeof value === "string" && value.trim()) return value.trim();
     }
@@ -1143,6 +1144,13 @@ async function handle(request, response) {
     for (const skill of bootstrapContract.skills ?? []) {
       void agentEvents.reportSkillExposed({ skill, source: ANTIGRAVITY_SKILL_EXPOSURE_SOURCE });
     }
+    for (const server of bootstrapContract.mcp ?? []) {
+      if (typeof agentEvents.reportMcpExposed === "function") {
+        void agentEvents.reportMcpExposed({ server, source: ANTIGRAVITY_MCP_EXPOSURE_SOURCE });
+      } else if (typeof agentEvents.post === "function") {
+        void agentEvents.post([ { type: "mcp_exposed", server, source: ANTIGRAVITY_MCP_EXPOSURE_SOURCE } ]);
+      }
+    }
   }
   // A turn logged its start and nothing else, so a failed one left only the
   // step lines that happened to precede it -- the reason it died reached the
@@ -1579,4 +1587,4 @@ if (IS_MAIN) {
   });
 }
 
-export { ANTIGRAVITY_SKILL_EXPOSURE_SOURCE, ANTIGRAVITY_WEB_RESEARCH_TOOLS, agyArgs, agyErrorDetails, agyFailureMessage, agyPermissionFailure, antigravityToolServer, createSpawnTracker, createToolObserver, decideCloseOnDelegation, extractSkillReadPath, isCommandStep, isDelegationActive, isWaitStep, matchSkillReadPath, modelEffort, promptFromInput, resolveEffort, resolveModel, spawnedChildren, subagentModel, toolStepEvidence, updateDelegationState };
+export { ANTIGRAVITY_MCP_EXPOSURE_SOURCE, ANTIGRAVITY_SKILL_EXPOSURE_SOURCE, ANTIGRAVITY_WEB_RESEARCH_TOOLS, agyArgs, agyErrorDetails, agyFailureMessage, agyPermissionFailure, antigravityToolServer, createSpawnTracker, createToolObserver, decideCloseOnDelegation, extractSkillReadPath, isCommandStep, isDelegationActive, isWaitStep, matchSkillReadPath, modelEffort, promptFromInput, resolveEffort, resolveModel, spawnedChildren, subagentModel, toolStepEvidence, updateDelegationState };

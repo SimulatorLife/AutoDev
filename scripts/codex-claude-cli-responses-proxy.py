@@ -646,6 +646,26 @@ class AgentEventReporter:
                 event["childIds"] = clean_ids
         self.post_async([event])
 
+    def report_mcp_exposed_async(
+        self,
+        server: Any,
+        source: Any = None,
+    ) -> None:
+        """Post a single mcp_exposed observation from role contract or runtime inventory."""
+        effective_source = source
+        if isinstance(server, dict):
+            if effective_source is None:
+                effective_source = server.get("source")
+            server = server.get("server")
+        name = normalized_label(server)
+        if name is None:
+            return
+        self.post_async([{
+            "type": "mcp_exposed",
+            "server": name,
+            "source": normalized_label(effective_source),
+        }])
+
     reportToolExecuted = report_tool_executed_async
     reportToolRequested = report_tool_requested_async
     reportToolUnavailable = report_tool_unavailable_async
@@ -653,6 +673,7 @@ class AgentEventReporter:
     reportSkillUsed = report_skill_used_async
     reportHeartbeat = report_heartbeat_async
     reportActivity = report_activity_async
+    reportMcpExposed = report_mcp_exposed_async
     report_tool_executed = report_tool_executed_async
     report_tool_requested = report_tool_requested_async
     report_tool_unavailable = report_tool_unavailable_async
@@ -660,6 +681,7 @@ class AgentEventReporter:
     report_skill_used = report_skill_used_async
     report_heartbeat = report_heartbeat_async
     report_activity = report_activity_async
+    report_mcp_exposed = report_mcp_exposed_async
 
     def post_async(self, events: list[dict[str, Any]]) -> None:
         """Hand a report to the worker. Never blocks the stream loop."""
@@ -717,11 +739,11 @@ def resolve_agent_event_reporter(headers: Any) -> AgentEventReporter | None:
 
     url = value(AGENT_EVENTS_URL_HEADER)
     request_id = value(REQUEST_ID_HEADER)
-    tools = value(SUBAGENT_SPAWN_TOOLS_HEADER)
-    if not url or not request_id or not tools:
+    if not url or not request_id:
         return None
-    spawn_tools = frozenset(tool.strip() for tool in tools.split(",") if tool.strip())
-    return AgentEventReporter(url, request_id, spawn_tools) if spawn_tools else None
+    tools = value(SUBAGENT_SPAWN_TOOLS_HEADER)
+    spawn_tools = frozenset(tool.strip() for tool in tools.split(",") if tool.strip()) if tools else frozenset()
+    return AgentEventReporter(url, request_id, spawn_tools)
 
 
 def resolve_agent_role(headers: Any) -> str | None:
@@ -1237,6 +1259,7 @@ def role_contract_for(role: Any = None) -> dict[str, Any]:
 # every `skill_exposed` event so the router's rows say which mechanism made
 # the skill available rather than only that something did.
 CLAUDE_SKILL_EXPOSURE_SOURCE = "claude_skill_view"
+CLAUDE_MCP_EXPOSURE_SOURCE = "role_contract"
 
 # Source tag for a verified `SKILL.md` read, as opposed to a mere exposure.
 # Matches SKILL_READ_SOURCE in scripts/codex/lib/agent-events.mjs so the
@@ -1302,7 +1325,7 @@ def extract_skill_read_path(tool_name: Any, tool_input: Any) -> str | None:
     name = normalized_label(tool_name) or ""
     payload = tool_input if isinstance(tool_input, dict) else {}
     if name == "Read":
-        for key in ("file_path", "filePath", "path"):
+        for key in ("file_path", "filePath", "path", "AbsolutePath", "absolutePath", "targetFile", "TargetFile"):
             value = payload.get(key)
             if isinstance(value, str) and value.strip():
                 return value.strip()
@@ -2335,6 +2358,8 @@ class Handler(BaseHTTPRequestHandler):
             if agent_events is not None:
                 for exposed_skill in contract.get("skills", []) or []:
                     agent_events.report_skill_exposed_async(exposed_skill, source=CLAUDE_SKILL_EXPOSURE_SOURCE)
+                for exposed_mcp in contract.get("mcp", []) or []:
+                    agent_events.report_mcp_exposed_async(exposed_mcp, source=CLAUDE_MCP_EXPOSURE_SOURCE)
             if not request.get("stream"):
                 for kind, value, _ in run_claude_stream(prompt, claude_model, claude_effort, cwd=cwd, agent_role=agent_role, spawn_session=spawn_session):
                     if kind == "tools":

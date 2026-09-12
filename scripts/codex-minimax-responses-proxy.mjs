@@ -13,6 +13,10 @@ import { createServer } from "node:http";
 import { pathToFileURL } from "node:url";
 
 import { resolveAgentEventReporter } from "./codex/lib/agent-events.mjs";
+import { resolveAgentRole } from "./codex/lib/bridge-role.mjs";
+import { roleContract } from "./codex/lib/execution-contract.mjs";
+
+const MCP_EXPOSURE_SOURCE = "role_contract";
 
 // Bind the port only when run as a program. The rewriting helpers below are
 // pure and worth testing directly; importing this file must not take the port
@@ -611,6 +615,17 @@ async function forward(request, response) {
   // The router authorizes reporting per request; a caller that is not the
   // router, or a request the router sent no telemetry headers on, gets none.
   const agentEvents = resolveAgentEventReporter(request.headers);
+  const agentRole = resolveAgentRole(request.headers);
+  const contract = roleContract(agentRole);
+  if (agentEvents) {
+    for (const server of contract.mcp ?? []) {
+      if (typeof agentEvents.reportMcpExposed === "function") {
+        void agentEvents.reportMcpExposed({ server, source: MCP_EXPOSURE_SOURCE });
+      } else if (typeof agentEvents.post === "function") {
+        void agentEvents.post([ { type: "mcp_exposed", server, source: MCP_EXPOSURE_SOURCE } ]);
+      }
+    }
+  }
   const abortController = new AbortController();
   const abortUpstream = () => abortController.abort();
   request.once("aborted", abortUpstream);
@@ -694,6 +709,7 @@ if (IS_MAIN) {
 }
 
 export {
+  MCP_EXPOSURE_SOURCE,
   observeResponseEvent,
   reportExecutedToolCalls,
   reportRequestedToolCall,

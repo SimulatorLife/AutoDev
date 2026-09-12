@@ -321,10 +321,6 @@ function usageKey(requestId, provider, model) {
 
 const workspaceIdRegistry = new Map();
 const workspaceIdConflicts = new Set();
-// These flags describe whether the current/persisted OTLP stream has supplied
-// workspace identity for each named signal. They intentionally reset with
-// telemetry so an exporter downgrade returns the dashboard to "unavailable".
-const workspaceAttributionCapabilities = { tools: false, skills: false };
 
 function safeWorkspaceId(value) {
   if (typeof value !== "string" || !value.trim()) return "unknown";
@@ -478,6 +474,16 @@ function workspaceBucket(collection, key, cwd = null) {
       toolsRequested: 0,
       toolsUnavailable: 0,
       skillsExposed: 0,
+      // Whether *this* workspace has first-class evidence of a tool/skill
+      // dimension, independent of every other workspace. A dashboard reading
+      // `byTool`/`bySkill` as `null` must mean "this workspace never proved
+      // it", not "no workspace anywhere has proved it yet" -- so the flag
+      // lives on the bucket it describes rather than a single process-wide
+      // toggle every workspace shared.
+      toolsCapable: false,
+      skillsCapable: false,
+      mcpCapable: false,
+      mcpExposed: new Map(),
       bridgeObservations: {
         tools: new Map(),
         skills: new Map(),
@@ -489,6 +495,7 @@ function workspaceBucket(collection, key, cwd = null) {
   if (!bucket.byMcp) bucket.byMcp = {};
   if (!bucket.tools) bucket.tools = new Map();
   if (!bucket.skills) bucket.skills = new Map();
+  if (!bucket.mcpExposed) bucket.mcpExposed = new Map();
   if (typeof bucket.skillUses !== "number") bucket.skillUses = 0;
   if (typeof bucket.skillContextsInjected !== "number") bucket.skillContextsInjected = 0;
   if (typeof bucket.toolsUnattributed !== "number") bucket.toolsUnattributed = 0;
@@ -497,10 +504,34 @@ function workspaceBucket(collection, key, cwd = null) {
   if (typeof bucket.toolsRequested !== "number") bucket.toolsRequested = 0;
   if (typeof bucket.toolsUnavailable !== "number") bucket.toolsUnavailable = 0;
   if (typeof bucket.skillsExposed !== "number") bucket.skillsExposed = 0;
+  if (typeof bucket.toolsCapable !== "boolean") bucket.toolsCapable = false;
+  if (typeof bucket.skillsCapable !== "boolean") bucket.skillsCapable = false;
+  if (typeof bucket.mcpCapable !== "boolean") bucket.mcpCapable = false;
   if (!bucket.bridgeObservations) bucket.bridgeObservations = { tools: new Map(), skills: new Map() };
   if (!bucket.bridgeObservations.tools) bucket.bridgeObservations.tools = new Map();
   if (!bucket.bridgeObservations.skills) bucket.bridgeObservations.skills = new Map();
   return bucket;
+}
+
+function workspaceMcpBucket(wsBucket, server) {
+  if (!wsBucket.mcpExposed) wsBucket.mcpExposed = new Map();
+  if (!wsBucket.mcpExposed.has(server)) wsBucket.mcpExposed.set(server, { server, count: 0 });
+  return wsBucket.mcpExposed.get(server);
+}
+
+function formatWorkspaceMcpExposed(mcpExposedMap) {
+  if (!mcpExposedMap) return [];
+  return [...mcpExposedMap.values()].map((row) => ({ ...row })).sort((a, b) => a.server.localeCompare(b.server));
+}
+
+// MCP "uses" is deliberately narrower than every span or event that mentions
+// a server: it counts only a discovery span (the runtime asked the server
+// what tools it has) or an executed MCP tool call, never a bare init/health
+// span or a tool call the runtime merely requested/denied. `byMcp` already
+// carries exactly that count per workspace, so the row form is a plain
+// reshape rather than a second source of truth.
+function formatWorkspaceMcpUses(byMcp) {
+  return Object.entries(byMcp ?? {}).map(([server, count]) => ({ server, count })).sort((a, b) => a.server.localeCompare(b.server));
 }
 
 function workspaceToolBucket(wsBucket, attributes) {
@@ -590,8 +621,6 @@ function resetUsageTelemetry() {
   inFlightUsage.clear();
   workspaceIdRegistry.clear();
   workspaceIdConflicts.clear();
-  workspaceAttributionCapabilities.tools = false;
-  workspaceAttributionCapabilities.skills = false;
   resetAttributionDiagnostics();
 }
 
@@ -668,15 +697,17 @@ function usageStatus() {
     byModel: usageSnapshot(usageTelemetry.byModel, "model"),
     byOrigin: usageSnapshot(usageTelemetry.byOrigin, "origin"),
     byWorkspace: Object.fromEntries(Object.entries(usageTelemetry.byWorkspace).map(([key, bucket]) => {
-      const { tools, skills, workspace_id: _workspaceId, bridgeObservations, ...publicBucket } = bucket;
-      // Workspace-scoped tool/skill coverage. The capability flags were
-      // historically global; per-workspace attribution now depends on
-      // `bridgeEvents` as the first-class event source. We emit `byTool`
-      // and `bySkill` when the workspace has been proven to carry that
-      // dimension (either through OTLP attribution or through a bridge
-      // report) and an `unavailable` marker otherwise.
-      const toolsCapable = workspaceAttributionCapabilities.tools || (bucket.toolsExecuted ?? 0) > 0 || (bucket.toolsRequested ?? 0) > 0 || (bucket.toolsUnavailable ?? 0) > 0;
-      const skillsCapable = workspaceAttributionCapabilities.skills || (bucket.skillsExposed ?? 0) > 0;
+      const { tools, skills, workspace_id: _workspaceId, bridgeObservations, mcpExposed, toolsCapable: _toolsCapable, skillsCapable: _skillsCapable, mcpCapable: _mcpCapable, ...publicBucket } = bucket;
+      // Workspace-scoped tool/skill coverage. Each bucket carries its own
+      // capability flag -- set only by first-class evidence this specific
+      // workspace produced -- so a workspace with no tool/skill evidence of
+      // its own always reports `unavailable` regardless of what any other
+      // workspace has proven. We emit `byTool`/`bySkill` when this
+      // workspace's own bucket has been proven to carry that dimension
+      // (either through OTLP attribution or through a bridge report) and a
+      // `null` marker otherwise.
+      const toolsCapable = bucket.toolsCapable === true || (bucket.toolsExecuted ?? 0) > 0 || (bucket.toolsRequested ?? 0) > 0 || (bucket.toolsUnavailable ?? 0) > 0;
+      const skillsCapable = bucket.skillsCapable === true || (bucket.skillsExposed ?? 0) > 0;
       const formatBridgeTools = (map) => [...map.values()].map((entry) => ({ ...entry, byStatus: { ...entry.byStatus } })).sort((a, b) => a.tool.localeCompare(b.tool));
       const formatBridgeSkills = (map) => [...map.entries()].map(([skill, value]) => ({ skill, count: value })).sort((a, b) => a.skill.localeCompare(b.skill));
       return [key, {
@@ -688,7 +719,14 @@ function usageStatus() {
         byRole: usageSnapshot(bucket.byRole, "role", { workspace: key }),
         byModel: usageSnapshot(bucket.byModel, "model", { workspace: key }),
         byProvider: usageSnapshot(bucket.byProvider, "provider", { workspace: key }),
-        byMcp: { ...bucket.byMcp },
+        byMcp: bucket.mcpCapable ? { ...bucket.byMcp } : null,
+        // Per-workspace MCP exposed/uses rows. `mcpExposed` is normalized
+        // from the bridge's `mcp_exposed` observations (a server was made
+        // available to the model this turn); `mcpUses` is the same discovery
+        // + executed-tool coverage `byMcp` already tracks, reshaped into rows
+        // so it lines up with `mcpExposed` for a workspace's MCP panel.
+        mcpExposed: bucket.mcpCapable ? formatWorkspaceMcpExposed(mcpExposed) : null,
+        mcpUses: bucket.mcpCapable ? formatWorkspaceMcpUses(bucket.byMcp) : null,
         toolsUnattributed: bucket.toolsUnattributed ?? 0,
         skillsUnattributed: bucket.skillsUnattributed ?? 0,
         toolsExecuted: bucket.toolsExecuted ?? 0,
@@ -765,6 +803,7 @@ const otelTelemetry = {
     toolUnavailable: { total: 0, byTool: new Map(), byWorkspace: new Map(), byReason: {} },
     skillExposed: { total: 0, bySkill: new Map(), byWorkspace: new Map() },
     skillUsed: { total: 0, bySkill: new Map(), byWorkspace: new Map(), seenKeys: new Set() },
+    mcpExposed: { total: 0, byServer: new Map(), byWorkspace: new Map(), seenKeys: new Set() },
   },
 };
 // Cumulative OTLP metric points resend the running total on every export, so
@@ -1051,6 +1090,14 @@ function formatContextDimensions(dimensions) {
   }]));
 }
 
+// The spans that constitute an MCP "use" for workspace attribution: the
+// runtime asking a server what tools it has. `make_rmcp_client`/
+// `start_server_task`/`new` are init/health spans -- they prove the server
+// was configured and reachable, not that anything was used through it -- so
+// they update `initAttempts`/health below but never the per-workspace
+// exposed/uses rows.
+const MCP_DISCOVERY_SPAN_NAMES = new Set(["list_tools_for_client_uncached", "list_tools_with_connector_ids"]);
+
 function noteMcpDimension(server, dimension, key, context, status) {
   const bucket = server[dimension][key] ?? { observed: 1, lastSeenAt: null, lastStatus: "observed" };
   bucket.observed = 1;
@@ -1091,8 +1138,15 @@ function noteMcpServer(name, span, attributes = {}, resourceAttributes = {}) {
   noteMcpDimension(server, "byAgent", context.agent, context, server.lastStatus);
   noteContextDimension("mcp", context);
 
+  // Per-workspace "uses" is discovery-span coverage only -- an init/health
+  // span (make_rmcp_client/start_server_task/new) already moved
+  // `initAttempts` and the health dimensions above, but it is not itself a
+  // use of the server. Executed MCP tool calls are counted separately, in
+  // `noteCodexToolResultLog`/`noteToolResultCounter`/bridge `tool_executed`.
   if (context.workspace !== UNATTRIBUTED_DIMENSION) {
     const wsBucket = workspaceBucket(usageTelemetry.byWorkspace, context.workspace);
+    wsBucket.mcpCapable = true;
+    if (!span || !MCP_DISCOVERY_SPAN_NAMES.has(span.name)) return;
     wsBucket.byMcp[server.name] = (wsBucket.byMcp[server.name] ?? 0) + 1;
   }
 }
@@ -1145,12 +1199,12 @@ function noteCodexToolResultLog(attributes, resourceAttributes = {}) {
     attributionDiagnostics.byReason.missing_workspace += 1;
     return;
   }
-  workspaceAttributionCapabilities.tools = true;
   attributionDiagnostics.total += 1;
   attributionDiagnostics.attributed += 1;
   attributionDiagnostics.bySource.datapoint += 1;
   const wsKey = (thread?.projectKey ?? thread?.workspaceKey) || (context.workspace !== UNATTRIBUTED_DIMENSION ? context.workspace : null);
   const wsBucket = workspaceBucket(usageTelemetry.byWorkspace, wsKey, thread?.cwdBasename ?? null);
+  wsBucket.toolsCapable = true;
   const wsTool = workspaceToolBucket(wsBucket, { tool, source, server });
   wsTool.count += count;
   wsTool.byStatus[status] = (wsTool.byStatus[status] ?? 0) + count;
@@ -1159,6 +1213,7 @@ function noteCodexToolResultLog(attributes, resourceAttributes = {}) {
     wsTool.durationMs += duration;
   }
   if (server) {
+    wsBucket.mcpCapable = true;
     wsBucket.byMcp[server] = (wsBucket.byMcp[server] ?? 0) + count;
   }
 }
@@ -1355,7 +1410,6 @@ function skillActivationStatus(status) {
 
 function noteSkillInjected(metricName, attributes, dataPoint, temporality, dpAttributes = null, resourceAttributes = {}) {
   const wsResolution = resolveDatapointWorkspace(dpAttributes ?? attributes, resourceAttributes);
-  if (wsResolution.workspaceId) workspaceAttributionCapabilities.skills = true;
   const seriesAttributes = { ...attributes, workspace_id: wsResolution.workspaceId || "" };
   const delta = otelSeriesDelta(otelSeriesKey(metricName, seriesAttributes, dataPoint.startTimeUnixNano), dataPoint.timeUnixNano, otelSumDataPointValue(dataPoint), temporality);
   if (delta === 0) return;
@@ -1386,6 +1440,7 @@ function noteSkillInjected(metricName, attributes, dataPoint, temporality, dpAtt
 
   if (wsResolution.status === "attributed") {
     const wsBucket = workspaceBucket(usageTelemetry.byWorkspace, wsResolution.workspaceKey);
+    wsBucket.skillsCapable = true;
     wsBucket.skillContextsInjected = (wsBucket.skillContextsInjected ?? 0) + delta;
     const explicitUse = invokeType === "explicit" && skillActivationStatus(status);
     if (explicitUse) {
@@ -1517,7 +1572,6 @@ function toolSeriesIdentity(attributes, workspaceId = "") {
 
 function noteToolCounter(metricName, attributes, dataPoint, temporality, resourceAttributes = {}) {
   const wsResolution = resolveDatapointWorkspace(attributes, resourceAttributes);
-  if (wsResolution.workspaceId) workspaceAttributionCapabilities.tools = true;
   const identity = toolSeriesIdentity(attributes, wsResolution.workspaceId);
   const delta = otelSeriesDelta(otelSeriesKey(metricName, identity, dataPoint.startTimeUnixNano), dataPoint.timeUnixNano, otelSumDataPointValue(dataPoint), temporality);
   if (delta === 0) return;
@@ -1530,6 +1584,7 @@ function noteToolCounter(metricName, attributes, dataPoint, temporality, resourc
 
   if (wsResolution.status === "attributed") {
     const wsBucket = workspaceBucket(usageTelemetry.byWorkspace, wsResolution.workspaceKey);
+    wsBucket.toolsCapable = true;
     const wsTool = workspaceToolBucket(wsBucket, attributes);
     wsTool.count += delta;
     wsTool.byStatus[status] = (wsTool.byStatus[status] ?? 0) + delta;
@@ -1538,7 +1593,6 @@ function noteToolCounter(metricName, attributes, dataPoint, temporality, resourc
 
 function noteToolDuration(metricName, attributes, dataPoint, temporality, resourceAttributes = {}) {
   const wsResolution = resolveDatapointWorkspace(attributes, resourceAttributes);
-  if (wsResolution.workspaceId) workspaceAttributionCapabilities.tools = true;
   const identity = toolSeriesIdentity(attributes, wsResolution.workspaceId);
   const count = otelSeriesDelta(otelSeriesKey(`${metricName}#count`, identity, dataPoint.startTimeUnixNano), dataPoint.timeUnixNano, numberAttribute({ count: dataPoint.count }, "count"), temporality);
   const sum = otelSeriesDelta(otelSeriesKey(`${metricName}#sum`, identity, dataPoint.startTimeUnixNano), dataPoint.timeUnixNano, numberAttribute({ sum: dataPoint.sum }, "sum"), temporality);
@@ -1550,6 +1604,7 @@ function noteToolDuration(metricName, attributes, dataPoint, temporality, resour
 
   if (wsResolution.status === "attributed") {
     const wsBucket = workspaceBucket(usageTelemetry.byWorkspace, wsResolution.workspaceKey);
+    wsBucket.toolsCapable = true;
     const wsTool = workspaceToolBucket(wsBucket, attributes);
     wsTool.durationCount += count;
     wsTool.durationMs += sum;
@@ -1591,7 +1646,9 @@ function noteToolResultCounter(metricName, resourceAttributes, dataPoints, tempo
   for (const dataPoint of dataPoints ?? []) {
     const attributes = otelAttributes(dataPoint.attributes);
     const wsResolution = resolveDatapointWorkspace(attributes, resourceAttributes);
-    if (wsResolution.workspaceId) workspaceAttributionCapabilities.tools = true;
+    if (wsResolution.status === "attributed") {
+      workspaceBucket(usageTelemetry.byWorkspace, wsResolution.workspaceKey).toolsCapable = true;
+    }
     const identity = toolSeriesIdentity(attributes, wsResolution.workspaceId);
     const tool = toolNameAttribute(attributes);
     const source = safeMetricLabel(attributes.source);
@@ -1671,6 +1728,7 @@ function noteToolResultCounter(metricName, resourceAttributes, dataPoints, tempo
       noteContextDimension("tools", context, delta);
       if (context.workspace !== UNATTRIBUTED_DIMENSION) {
         const wsBucket = workspaceBucket(usageTelemetry.byWorkspace, context.workspace);
+        wsBucket.mcpCapable = true;
         wsBucket.byMcp[server] = (wsBucket.byMcp[server] ?? 0) + delta;
       }
     }
@@ -1681,7 +1739,6 @@ function noteToolResultDuration(metricName, resourceAttributes, dataPoints, temp
   for (const dataPoint of dataPoints ?? []) {
     const attributes = otelAttributes(dataPoint.attributes);
     const wsResolution = resolveDatapointWorkspace(attributes, resourceAttributes);
-    if (wsResolution.workspaceId) workspaceAttributionCapabilities.tools = true;
     const identity = toolSeriesIdentity(attributes, wsResolution.workspaceId);
     const count = otelSeriesDelta(otelSeriesKey(`${metricName}#count`, identity, dataPoint.startTimeUnixNano), dataPoint.timeUnixNano, numberAttribute({ count: dataPoint.count }, "count"), temporality);
     const sum = otelSeriesDelta(otelSeriesKey(`${metricName}#sum`, identity, dataPoint.startTimeUnixNano), dataPoint.timeUnixNano, numberAttribute({ sum: dataPoint.sum }, "sum"), temporality);
@@ -1720,14 +1777,18 @@ function noteHookCounter(metricName, attributes, dataPoint, temporality, resourc
   if (server) {
     const context = resolveTelemetryContext(attributes, resourceAttributes, { timeUnixNano: dataPoint.timeUnixNano });
     const mcp = mcpServer(server);
-    mcp.byRole[context.role] = (mcp.byRole[context.role] ?? 0) + delta;
-    mcp.byWorkspace[context.workspace] = (mcp.byWorkspace[context.workspace] ?? 0) + delta;
-    mcp.byModel[context.model] = (mcp.byModel[context.model] ?? 0) + delta;
-    mcp.byAgent[context.agent] = (mcp.byAgent[context.agent] ?? 0) + delta;
-    if (context.workspace !== UNATTRIBUTED_DIMENSION) {
-      const wsBucket = workspaceBucket(usageTelemetry.byWorkspace, context.workspace);
-      wsBucket.byMcp[server] = (wsBucket.byMcp[server] ?? 0) + delta;
-    }
+    // A hook firing around a server proves it is reachable (health), not
+    // that a use happened -- the same distinction `noteMcpServer` draws for
+    // init/health spans. Use the shared dimension helper so this dimension
+    // keeps the `{observed, lastSeenAt, lastStatus}` shape every other MCP
+    // health bucket has, instead of a bare number `formatMcpDimensionBuckets`
+    // cannot read back out. Never touches the per-workspace uses/exposed
+    // rows.
+    noteMcpDimension(mcp, "byRole", context.role, context, "observed");
+    noteMcpDimension(mcp, "byWorkspace", context.workspace, context, "observed");
+    noteMcpDimension(mcp, "byModel", context.model, context, "observed");
+    noteMcpDimension(mcp, "byAgent", context.agent, context, "observed");
+    if (context.workspace !== UNATTRIBUTED_DIMENSION) workspaceBucket(usageTelemetry.byWorkspace, context.workspace).mcpCapable = true;
   }
 }
 
@@ -1936,15 +1997,18 @@ function resetOtelTelemetry() {
     toolUnavailable: { total: 0, byTool: new Map(), byWorkspace: new Map(), byReason: {} },
     skillExposed: { total: 0, bySkill: new Map(), byWorkspace: new Map() },
     skillUsed: { total: 0, bySkill: new Map(), byWorkspace: new Map(), seenKeys: new Set() },
+    mcpExposed: { total: 0, byServer: new Map(), byWorkspace: new Map(), seenKeys: new Set() },
   };
   otelMetricSeries.clear();
-  workspaceAttributionCapabilities.tools = false;
-  workspaceAttributionCapabilities.skills = false;
   resetAttributionDiagnostics();
   for (const bucket of Object.values(usageTelemetry.byWorkspace)) {
     bucket.tools?.clear();
     bucket.skills?.clear();
+    bucket.mcpExposed?.clear();
     bucket.skillUses = 0;
+    bucket.toolsCapable = false;
+    bucket.skillsCapable = false;
+    bucket.mcpCapable = false;
   }
 }
 
@@ -2147,6 +2211,17 @@ function formatBridgeEvents(events) {
       total: events.skillUsed.total,
       bySkill: [...events.skillUsed.bySkill.values()].map((entry) => ({ ...entry })).sort((a, b) => a.skill.localeCompare(b.skill)),
       byWorkspace: [...events.skillUsed.byWorkspace.entries()].map(([workspaceKey, row]) => ({ workspaceKey, count: row.count, bySkill: [...row.bySkill.entries()].map(([skill, count]) => ({ skill, count })) })),
+    },
+    mcpExposed: {
+      total: events.mcpExposed.total,
+      byServer: [...events.mcpExposed.byServer.values()].map((entry) => ({ ...entry })).sort((a, b) => a.server.localeCompare(b.server)),
+      byWorkspace: [...events.mcpExposed.byWorkspace.entries()]
+        .map(([workspaceKey, row]) => ({
+          workspaceKey,
+          count: row.count,
+          byServer: [...row.byServer.entries()].map(([server, count]) => ({ server, count })).sort((a, b) => a.server.localeCompare(b.server)),
+        }))
+        .sort((a, b) => a.workspaceKey.localeCompare(b.workspaceKey)),
     },
   };
 }
@@ -2695,7 +2770,7 @@ function subagentStatus() {
 // Ingests a provider bridge's report that its CLI invoked a subagent spawn
 // tool. Only reports naming a request id this router actually issued are
 // counted; anything else is a caller that never served a router request.
-const INGESTED_AGENT_EVENTS = new Set(["subagent_spawn", "subagent_result", "subagent_tools_unavailable", "tool_executed", "tool_requested", "tool_unavailable", "skill_exposed", "skill_used", "activity", "heartbeat"]);
+const INGESTED_AGENT_EVENTS = new Set(["subagent_spawn", "subagent_result", "subagent_tools_unavailable", "tool_executed", "tool_requested", "tool_unavailable", "skill_exposed", "skill_used", "mcp_exposed", "activity", "heartbeat"]);
 
 // States a bridge may report directly over the agent-events channel. This is
 // deliberately narrower than AGENT_ACTIVITY_STATES: "active" and "stale" are
@@ -2775,6 +2850,10 @@ function ingestAgentEvents(payload) {
     }
     if (event.type === "skill_used") {
       if (recordBridgeSkillUsed({ event, context })) accepted += 1;
+      continue;
+    }
+    if (event.type === "mcp_exposed") {
+      recordBridgeMcpExposure({ event, context, requestId });
       continue;
     }
     if (event.type === "heartbeat" || (event.type === "activity" && (event.state === "heartbeat" || event.state?.trim?.() === "heartbeat"))) {
@@ -2869,9 +2948,12 @@ function recordBridgeToolObservation({ event, context }) {
     noteMcpDimension(mcp, "byWorkspace", ctx.workspace, ctx, "observed");
     noteMcpDimension(mcp, "byModel", ctx.model, ctx, "observed");
     noteMcpDimension(mcp, "byAgent", ctx.agent, ctx, "observed");
-    if (ctx.workspace !== UNATTRIBUTED_DIMENSION) {
+    // Per-workspace "uses" is executed-only: a requested-but-not-run or
+    // denied tool call reached the bridge, but it never used the server.
+    if (ctx.workspace !== UNATTRIBUTED_DIMENSION && event.type === "tool_executed") {
       const wsBucket = workspaceBucket(usageTelemetry.byWorkspace, ctx.workspace);
-      wsBucket.byMcp[server] = (wsBucket.byMcp[server] ?? 0) + 1;
+      wsBucket.mcpCapable = true;
+      if (event.type === "tool_executed") wsBucket.byMcp[server] = (wsBucket.byMcp[server] ?? 0) + 1;
     }
   }
   const toolBucketKey = callId ? `${tool}::${callId}` : tool;
@@ -2899,8 +2981,8 @@ function recordBridgeToolObservation({ event, context }) {
   // capability flag so a subsequent OTLP `codex.tool.call` datapoint carrying
   // the same workspace_id can be attributed to that workspace.
   if (workspaceKey && event.type === "tool_executed") {
-    workspaceAttributionCapabilities.tools = true;
     const wsBucket = workspaceBucket(usageTelemetry.byWorkspace, workspaceKey);
+    wsBucket.toolsCapable = true;
     wsBucket.toolsExecuted = (wsBucket.toolsExecuted ?? 0) + 1;
     const toolBucket = wsBucket.bridgeObservations.tools.get(tool) ?? { tool, server: server ?? "", count: 0, byStatus: {} };
     toolBucket.count += 1;
@@ -2916,6 +2998,54 @@ function recordBridgeToolObservation({ event, context }) {
     const wsBucket = workspaceBucket(usageTelemetry.byWorkspace, workspaceKey);
     wsBucket.toolsUnavailable = (wsBucket.toolsUnavailable ?? 0) + 1;
   }
+}
+
+/**
+ * Post a single `mcp_exposed` observation. The bridge just made an MCP
+ * server available to the model -- either by resolving it from the role's
+ * MCP list or by surfacing it in the runtime's tool inventory. This is the
+ * first-class event the router needs to mark a server as exposed per
+ * workspace; it is deliberately distinct from a "use" (`byMcp`/`mcpUses`),
+ * which requires a discovery span or an executed tool call, so a server the
+ * model was merely given never inflates the uses row.
+ */
+function recordMcpExposure({ server, source = null, context, requestId = null }) {
+  if (typeof server !== "string" || !server.trim()) return false;
+  const cleanServer = safeMetricLabel(server);
+  const mcpContext = resolveTelemetryContext({}, {}, { context });
+  const workspaceKey = typeof mcpContext.workspace === "string" ? mcpContext.workspace : null;
+  const store = otelTelemetry.bridgeEvents.mcpExposed;
+  const dedupeKey = requestId ? `${requestId}\0${workspaceKey ?? UNATTRIBUTED_DIMENSION}\0${cleanServer}` : null;
+  if (dedupeKey && store.seenKeys.has(dedupeKey)) return false;
+  if (dedupeKey) store.seenKeys.add(dedupeKey);
+  const cleanSource = typeof source === "string" && source.trim() ? safeMetricLabel(source) : null;
+  noteContextDimension("bridge", mcpContext);
+  store.total += 1;
+  const serverRow = store.byServer.get(cleanServer) ?? { server: cleanServer, source: cleanSource ?? "", count: 0 };
+  serverRow.count += 1;
+  if (cleanSource && !serverRow.source) serverRow.source = cleanSource;
+  store.byServer.set(cleanServer, serverRow);
+  if (workspaceKey) {
+    const wsRow = store.byWorkspace.get(workspaceKey) ?? { workspaceKey, count: 0, byServer: new Map() };
+    wsRow.count += 1;
+    wsRow.byServer.set(cleanServer, (wsRow.byServer.get(cleanServer) ?? 0) + 1);
+    store.byWorkspace.set(workspaceKey, wsRow);
+    const wsBucket = workspaceBucket(usageTelemetry.byWorkspace, workspaceKey);
+    wsBucket.mcpCapable = true;
+    const mcpRow = workspaceMcpBucket(wsBucket, cleanServer);
+    mcpRow.count += 1;
+  }
+  const mcp = mcpServer(cleanServer);
+  if (mcp.lastStatus === "unknown") mcp.lastStatus = "configured";
+  noteMcpDimension(mcp, "byRole", mcpContext.role, mcpContext, "configured");
+  noteMcpDimension(mcp, "byWorkspace", mcpContext.workspace, mcpContext, "configured");
+  noteMcpDimension(mcp, "byModel", mcpContext.model, mcpContext, "configured");
+  noteMcpDimension(mcp, "byAgent", mcpContext.agent, mcpContext, "configured");
+  return true;
+}
+
+function recordBridgeMcpExposure({ event, context, requestId = null }) {
+  return recordMcpExposure({ server: event?.server, source: event?.source, context, requestId });
 }
 
 function recordBridgeSkillExposure({ event, context }) {
@@ -2939,8 +3069,8 @@ function recordBridgeSkillExposure({ event, context }) {
     bucket.byWorkspace.set(workspaceKey, wsRow);
   }
   if (workspaceKey) {
-    workspaceAttributionCapabilities.skills = true;
     const wsBucket = workspaceBucket(usageTelemetry.byWorkspace, workspaceKey);
+    wsBucket.skillsCapable = true;
     wsBucket.skillsExposed = (wsBucket.skillsExposed ?? 0) + 1;
     wsBucket.bridgeObservations.skills.set(skill, (wsBucket.bridgeObservations.skills.get(skill) ?? 0) + 1);
   }
@@ -2960,7 +3090,9 @@ function recordBridgeSkillUsed({ event, context }) {
   while (store.seenKeys.size > 5000) store.seenKeys.delete(store.seenKeys.values().next().value);
   const ctx = resolveTelemetryContext(event, {}, { context });
   const timestamp = ctx.timestamp;
-  if (ctx.workspace !== UNATTRIBUTED_DIMENSION) workspaceAttributionCapabilities.skills = true;
+  if (ctx.workspace !== UNATTRIBUTED_DIMENSION) {
+    workspaceBucket(usageTelemetry.byWorkspace, ctx.workspace).skillsCapable = true;
+  }
   store.total += 1;
   const skillRow = store.bySkill.get(skill) ?? { skill, source, pluginId, count: 0 };
   skillRow.count += 1;
@@ -3309,10 +3441,11 @@ function usagePersistenceSnapshot() {
     delete copy.tools;
     delete copy.skills;
     delete copy.bridgeObservations;
+    delete copy.mcpExposed;
     return copy;
   };
   return {
-    schemaVersion: 7,
+    schemaVersion: 8,
     totals: withoutActive(usageTelemetry.totals),
     byRole: Object.fromEntries(Object.entries(usageTelemetry.byRole).map(([key, bucket]) => [key, withoutActive(bucket)])),
     byModel: Object.fromEntries(Object.entries(usageTelemetry.byModel).map(([key, bucket]) => [key, withoutActive(bucket)])),
@@ -3328,6 +3461,7 @@ function usagePersistenceSnapshot() {
       toolsUnavailable: bucket.toolsUnavailable ?? 0,
       skillsExposed: bucket.skillsExposed ?? 0,
       byMcp: { ...bucket.byMcp },
+      mcpExposed: formatWorkspaceMcpExposed(bucket.mcpExposed),
       byRole: Object.fromEntries(Object.entries(bucket.byRole).map(([name, value]) => [name, withoutActive(value)])),
       byModel: Object.fromEntries(Object.entries(bucket.byModel).map(([name, value]) => [name, withoutActive(value)])),
       byProvider: Object.fromEntries(Object.entries(bucket.byProvider).map(([name, value]) => [name, withoutActive(value)])),
@@ -3344,7 +3478,6 @@ function usagePersistenceSnapshot() {
       bridgeSkills: [...(bucket.bridgeObservations?.skills?.entries() ?? [])].map(([skill, count]) => ({ skill, count })),
     }])),
     workspaceRegistry: [...workspaceIdRegistry.entries()],
-    workspaceAttributionCapabilities: { ...workspaceAttributionCapabilities },
   };
 }
 
@@ -3398,7 +3531,7 @@ function restoreOtelCounters(snapshot) {
   }
   if (snapshot.bridgeEvents && typeof snapshot.bridgeEvents === "object") {
     const target = otelTelemetry.bridgeEvents;
-    for (const family of ["toolExecuted", "toolRequested", "toolUnavailable", "skillExposed", "skillUsed"]) {
+    for (const family of ["toolExecuted", "toolRequested", "toolUnavailable", "skillExposed", "skillUsed", "mcpExposed"]) {
       const source = snapshot.bridgeEvents[family];
       const destination = target[family];
       if (!source || typeof source !== "object") continue;
@@ -3411,6 +3544,16 @@ function restoreOtelCounters(snapshot) {
         for (const row of source.byWorkspace ?? []) {
           if (!row || typeof row.workspaceKey !== "string" || !Number.isFinite(row.count)) continue;
           destination.byWorkspace.set(safeMetricLabel(row.workspaceKey), { workspaceKey: safeMetricLabel(row.workspaceKey), count: row.count, bySkill: new Map(Object.entries(Object.fromEntries((row.bySkill ?? []).filter((entry) => entry && typeof entry.skill === "string" && Number.isFinite(entry.count)).map((entry) => [safeMetricLabel(entry.skill), entry.count])))) });
+        }
+      }
+      if (family === "mcpExposed") {
+        for (const entry of source.byServer ?? []) {
+          if (!entry || typeof entry.server !== "string" || !Number.isFinite(entry.count)) continue;
+          destination.byServer.set(safeMetricLabel(entry.server), { server: safeMetricLabel(entry.server), source: safeMetricLabel(entry.source, ""), count: entry.count });
+        }
+        for (const row of source.byWorkspace ?? []) {
+          if (!row || typeof row.workspaceKey !== "string" || !Number.isFinite(row.count)) continue;
+          destination.byWorkspace.set(safeMetricLabel(row.workspaceKey), { workspaceKey: safeMetricLabel(row.workspaceKey), count: row.count, byServer: new Map(Object.entries(Object.fromEntries((row.byServer ?? []).filter((entry) => entry && typeof entry.server === "string" && Number.isFinite(entry.count)).map((entry) => [safeMetricLabel(entry.server), entry.count])))) });
         }
       }
       if (source.byReason && typeof source.byReason === "object") {
@@ -3628,12 +3771,7 @@ function loadRouterState(file = effectiveStateFile()) {
       }
       if (saved.lastFailure === null || (saved.lastFailure && typeof saved.lastFailure === "object")) current.lastFailure = saved.lastFailure;
     }
-    if (parsed.usage && typeof parsed.usage === "object" && parsed.usage.schemaVersion === 7) {
-      if (parsed.usage.workspaceAttributionCapabilities && typeof parsed.usage.workspaceAttributionCapabilities === "object") {
-        for (const key of ["tools", "skills"]) {
-          if (parsed.usage.workspaceAttributionCapabilities[key] === true) workspaceAttributionCapabilities[key] = true;
-        }
-      }
+    if (parsed.usage && typeof parsed.usage === "object" && (parsed.usage.schemaVersion === 7 || parsed.usage.schemaVersion === 8)) {
       if (Array.isArray(parsed.usage.workspaceRegistry)) {
         for (const [id, key] of parsed.usage.workspaceRegistry) {
           if (typeof id === "string" && typeof key === "string") {
@@ -3665,10 +3803,24 @@ function loadRouterState(file = effectiveStateFile()) {
               current[counter] = saved[counter];
             }
           }
+          for (const flag of ["toolsCapable", "skillsCapable", "mcpCapable"]) {
+            if (saved[flag] === true) current[flag] = true;
+          }
           if (saved.byMcp && typeof saved.byMcp === "object") {
             for (const [mcp, cnt] of Object.entries(saved.byMcp)) {
               if (typeof cnt === "number" && Number.isFinite(cnt) && cnt >= 0) {
                 current.byMcp[safeMetricLabel(mcp)] = cnt;
+                current.mcpCapable = true;
+              }
+            }
+          }
+          if (Array.isArray(saved.mcpExposed)) {
+            for (const row of saved.mcpExposed) {
+              if (row && typeof row.server === "string" && row.server.trim() && typeof row.count === "number" && row.count >= 0) {
+                const server = safeMetricLabel(row.server);
+                const restored = workspaceMcpBucket(current, server);
+                restored.count = row.count;
+                current.mcpCapable = true;
               }
             }
           }
@@ -4693,18 +4845,47 @@ async function requestBody(request) {
   return body.toString("utf8");
 }
 
+function mcpContractForRole(agentRole) {
+  const requested = typeof agentRole === "string" && agentRole.trim() ? agentRole.trim().toLowerCase() : "default";
+  const key = requested === ORCHESTRATOR_AGENT_ROLE ? "orchestrator" : requested;
+  return Array.isArray(EXECUTION_CONTRACT.roles?.[key]?.mcp) ? EXECUTION_CONTRACT.roles[key].mcp : [];
+}
+
+function recordNativeMcpExposure({ route, agentRole, workspace, requestId, sessionKey }) {
+  if (route?.provider !== "codex") return;
+  const context = {
+    provider: route.provider,
+    model: route.model,
+    role: agentRole === ORCHESTRATOR_AGENT_ROLE ? "orchestrator" : (agentRole ?? "default"),
+    workspace: workspace?.key ?? UNATTRIBUTED_DIMENSION,
+    agent: sessionKey ?? UNATTRIBUTED_DIMENSION,
+    sessionKey,
+  };
+  for (const server of mcpContractForRole(agentRole)) {
+    recordMcpExposure({ server, source: "role_contract", context, requestId });
+  }
+}
+
 function bridgeTelemetryHeaders(route, requestId) {
-  // Only a bridge that can spawn inside its own runtime has anything to
-  // report, and only the orchestrator-capable ones ever do. Sending the
-  // watchlist and the report endpoint per request means a bridge needs no
-  // routing config, no provider identity, and no router address of its own.
+  // Reporting tool_executed/skill_exposed/mcp_exposed observations does not
+  // depend on the bridge's runtime being able to spawn subagents -- a
+  // provider with no spawn tools (minimax, copilot) still runs tools, exposes
+  // skills, and reaches MCP servers, and those observations must not go
+  // unreported just because the spawn watchlist is empty. Only requestId
+  // authorizes the channel; the spawn-tool watchlist is sent alongside it
+  // when this provider has one, so a bridge that can spawn also learns which
+  // tool names count as a spawn.
+  // Native Codex is observed through its OTLP receiver and router-side role
+  // contract path; never leak the local agent-events URL or correlation id to
+  // the remote Codex API. Only local provider bridges consume these headers.
+  if (!requestId || route.provider === "codex") return {};
   const spawnTools = subagentSpawnToolsFor(route.provider);
-  if (spawnTools.length === 0 || !requestId) return {};
-  return {
+  const headers = {
     [REQUEST_ID_HEADER]: requestId,
-    [SUBAGENT_SPAWN_TOOLS_HEADER]: spawnTools.join(","),
     [AGENT_EVENTS_URL_HEADER]: AGENT_EVENTS_URL,
   };
+  if (spawnTools.length > 0) headers[SUBAGENT_SPAWN_TOOLS_HEADER] = spawnTools.join(",");
+  return headers;
 }
 
 function downstreamHeaders(route, auth, turnMetadataHeader, agentRole = null, requestId = null, session = null) {
@@ -4961,9 +5142,14 @@ async function providerAvailable(route) {
   }
 }
 
-async function proxyConcreteResponse(response, route, payload, wantsStream, requestId, turnMetadataHeader, workspace, clientSignal = null) {
-  // A direct concrete request has no session to correlate a later
-  // continuation against, so its activity is scoped to this one request.
+async function proxyConcreteResponse(response, route, payload, wantsStream, requestId, turnMetadataHeader, workspace, clientSignal = null, session = null) {
+  // A direct concrete request's *activity* is still scoped to this one
+  // request -- a pinned-model caller proves nothing about a later
+  // continuation sharing the same session the way a role/orchestrator
+  // request's session key does (see proxyFallbackChain). Its *session* is
+  // still real, though, and is registered below so a bridge-side hook that
+  // only knows the session id (skill-read telemetry, mcp_exposed, ...) can
+  // still correlate back to this turn's provider/model/workspace.
   const activitySubject = `req:${requestId}`;
   if (!isProviderEnabled(route.provider)) {
     recordRouterEvent({ phase: "skipped", requestId, requestedModel: payload.model, provider: route.provider, model: payload.model, workspace, failureClass: "provider_disabled" });
@@ -5036,11 +5222,22 @@ async function proxyConcreteResponse(response, route, payload, wantsStream, requ
   // CLI has no flag that removes its subagent tools, so even a leaf turn there
   // can delegate; register the attribution context so such a spawn is counted
   // rather than rejected as an unknown request.
-  noteBridgeRequest(requestId, { provider: route.provider, model: payload.model, role: null, workspace: workspace?.key ?? null, sessionKey: null });
+  const sessionKey = session?.key ?? null;
+  const bridgeContext = { provider: route.provider, model: payload.model, role: null, workspace: workspace?.key ?? null, sessionKey };
+  noteBridgeRequest(requestId, bridgeContext);
+  // A Codex hook (PreToolUse) or a bridge-side session-scoped report (e.g.
+  // skill-read telemetry) only knows the session id, never the request id a
+  // direct concrete request was actually served under. Registering the same
+  // context by session here -- exactly as proxyFallbackChain does for role
+  // and orchestrator requests -- is what lets that report resolve back to
+  // this turn's provider, model, and workspace instead of being dropped as
+  // an unknown session.
+  noteBridgeSession(sessionKey, { ...bridgeContext, requestId });
+  recordNativeMcpExposure({ route, agentRole: null, workspace, requestId, sessionKey });
   try {
     while (attempts < maxAttempts) {
       try {
-        const result = await fetchUpstream(route, payload, wantsStream, turnMetadataHeader, clientSignal, null, requestId);
+        const result = await fetchUpstream(route, payload, wantsStream, turnMetadataHeader, clientSignal, null, requestId, session);
         if (!result.ok) {
           const failureClass = classifyProviderFailure(result.status, result.body);
           const canRetry = result.retryable && attempts < CONCRETE_STATUS_MAX_ATTEMPTS - 1 && !clientSignal?.aborted && !response.headersSent;
@@ -5193,6 +5390,7 @@ async function proxyFallbackChain(response, { candidates, role = null, origin = 
     // the middle of the turn submit a skill_used post that the router can
     // attribute to the turn's provider, model, role, and workspace.
     noteBridgeSession(sessionKey, { ...bridgeContext, requestId });
+    recordNativeMcpExposure({ route, agentRole, workspace, requestId, sessionKey });
     if (agentRole === ORCHESTRATOR_AGENT_ROLE) noteOrchestratorSession(sessionKey, route.provider);
     incrementActiveRequests(route.provider);
     try {
@@ -5877,7 +6075,7 @@ async function handleRequest(request, response) {
       sendJson(response, 400, errorBody(`No local route is configured for model ${String(payload.model)}`));
       return;
     }
-    await proxyConcreteResponse(response, route, payload, wantsStream, requestId, effectiveTurnMetadataHeader, workspace, clientAbort.signal);
+    await proxyConcreteResponse(response, route, payload, wantsStream, requestId, effectiveTurnMetadataHeader, workspace, clientAbort.signal, session);
   } finally {
     unregisterActiveRequest(clientAbort);
     request.removeListener("aborted", abortForRequest);
@@ -5999,6 +6197,8 @@ export {
   providerCapabilities,
   subagentSpawnToolsFor,
   bridgeTelemetryHeaders,
+  mcpContractForRole,
+  recordNativeMcpExposure,
   recordSubagentSpawn,
   resetSubagentTelemetry,
   subagentStatus,
