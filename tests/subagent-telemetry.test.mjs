@@ -11,9 +11,12 @@ const execFileAsync = promisify(execFile);
 import {
   AGENT_EVENTS_URL_HEADER,
   REQUEST_ID_HEADER,
+  SESSION_ID_HEADER,
+  SKILL_READ_SOURCE,
   SUBAGENT_SPAWN_TOOLS_HEADER,
   VALID_ACTIVITY_STATES,
   resolveAgentEventReporter,
+  resolveSkillReadReporter,
 } from "../scripts/codex/lib/agent-events.mjs";
 import {
   ANTIGRAVITY_SKILL_EXPOSURE_SOURCE,
@@ -996,6 +999,147 @@ reporter.flush()
     });
   } finally {
     await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+  }
+});
+
+test("AgentEventReporter posts skill_used events with the same request-correlated shape as skill_exposed", async () => {
+  const received = [];
+  const server = createServer((request, response) => {
+    let body = "";
+    request.on("data", (chunk) => { body += chunk; });
+    request.on("end", () => {
+      received.push(JSON.parse(body));
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end("{}");
+    });
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  try {
+    const reporter = resolveAgentEventReporter({
+      ...routerHeaders,
+      [ AGENT_EVENTS_URL_HEADER ]: `http://127.0.0.1:${server.address().port}/v1/agent-events`,
+    });
+    await reporter.reportSkillUsed({ skill: "ccc", source: "role_contract" });
+    await reporter.reportSkillUsed({ skill: "ccc", eventId: "explicit-call-1", pluginId: "autodev" });
+    await reporter.reportSkillUsed({ skill: "   " });
+    assert.equal(received.length, 2);
+    assert.deepEqual(received[ 0 ], {
+      requestId: "request-1",
+      events: [ { type: "skill_used", skill: "ccc", source: "role_contract", pluginId: null } ],
+    });
+    assert.deepEqual(received[ 1 ], {
+      requestId: "request-1",
+      events: [ { type: "skill_used", skill: "ccc", source: null, pluginId: "autodev", eventId: "explicit-call-1" } ],
+    });
+  } finally {
+    await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+  }
+});
+
+test("resolveSkillReadReporter resolves a session-keyed reporter only when both URL and session are present", () => {
+  const url = "http://127.0.0.1:4100/v1/agent-events";
+  assert.equal(resolveSkillReadReporter({}), null);
+  assert.equal(resolveSkillReadReporter({ [ AGENT_EVENTS_URL_HEADER ]: url }), null);
+  // Session id is required because a hook without one cannot be tied to a
+  // router-issued request, and the router fails closed on unattributed posts.
+  assert.equal(resolveSkillReadReporter({ [ SESSION_ID_HEADER ]: "session-only" }), null);
+  const reporter = resolveSkillReadReporter({
+    [ AGENT_EVENTS_URL_HEADER ]: url,
+    [ SESSION_ID_HEADER ]: "session-1",
+  });
+  assert.ok(reporter);
+});
+
+test("resolveSkillReadReporter posts skill_used with the SKILL_READ_SOURCE tag and the session id as request id", async () => {
+  const received = [];
+  const server = createServer((request, response) => {
+    let body = "";
+    request.on("data", (chunk) => { body += chunk; });
+    request.on("end", () => {
+      received.push(JSON.parse(body));
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end("{}");
+    });
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  try {
+    const reporter = resolveSkillReadReporter({
+      [ AGENT_EVENTS_URL_HEADER ]: `http://127.0.0.1:${server.address().port}/v1/agent-events`,
+      [ SESSION_ID_HEADER ]: "session-1",
+    });
+    assert.equal(SKILL_READ_SOURCE, "skill_read");
+    await reporter.reportSkillUsed({ skill: "ccc", source: SKILL_READ_SOURCE, eventId: "read:session-1:t1" });
+    assert.equal(received.length, 1);
+    assert.deepEqual(received[ 0 ], {
+      requestId: "session-1",
+      events: [ { type: "skill_used", skill: "ccc", source: "skill_read", pluginId: null, eventId: "read:session-1:t1" } ],
+    });
+  } finally {
+    await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+  }
+});
+
+test("the skill-read telemetry hook dedupes per turn and emits one skill_used per skill", async () => {
+  const tempHome = await import("node:fs/promises").then(({ mkdtemp, rm }) => mkdtemp(`${import.meta.dirname}/skill-read-home-`).then(async (dir) => ({ dir, rm })));
+  process.env.HOME = tempHome.dir;
+  // Force the hook to read fresh roots via a stable repo root.
+  process.env.AUTODEV_REPO_ROOT = fileURLToPath(new URL("..", import.meta.url));
+  try {
+    const received = [];
+    const server = createServer((request, response) => {
+      let body = "";
+      request.on("data", (chunk) => { body += chunk; });
+      request.on("end", () => {
+        received.push(JSON.parse(body));
+        response.writeHead(200, { "content-type": "application/json" });
+        response.end("{}");
+      });
+    });
+    await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const port = server.address().port;
+    process.env.AUTODEV_AGENT_EVENTS_URL = `http://127.0.0.1:${port}/v1/agent-events`;
+    try {
+      const scriptPath = fileURLToPath(new URL("../scripts/codex/skill-read-telemetry.mjs", import.meta.url));
+      const skillPath = `${process.env.AUTODEV_REPO_ROOT}/scripts/codex/skills/orchestration/SKILL.md`;
+      const otherSkillPath = `${process.env.AUTODEV_REPO_ROOT}/scripts/codex/skills/ccc/SKILL.md`;
+      const sessionId = `session-${Date.now()}`;
+      const turnId = "turn-1";
+      const input = JSON.stringify({
+        session_id: sessionId,
+        turn_id: turnId,
+        tool_name: "read_file",
+        tool_input: { file_path: skillPath },
+      });
+      const run = (customInput = input) => new Promise((resolve, reject) => {
+        const child = execFile("node", [ scriptPath ], { env: process.env }, (error, stdout, stderr) => {
+          if (error) reject(new Error(stderr || error.message)); else resolve({ stdout, stderr });
+        });
+        child.stdin.end(typeof customInput === "string" ? customInput : JSON.stringify(customInput));
+      });
+      // First read of `orchestration` in turn-1 emits a skill_used.
+      await run();
+      // Second read of the same skill in the same turn is deduped (no extra post).
+      await run();
+      // A different skill in the same turn still posts.
+      await run({ session_id: sessionId, turn_id: turnId, tool_name: "read_file", arguments: { file_path: otherSkillPath } });
+      // Same skill in a fresh turn re-emits because turnId was different.
+      await run({ session_id: sessionId, turn_id: "turn-2", tool_name: "read_file", arguments: { file_path: skillPath } });
+      // Arbitrary mentions, writes, and non-canonical paths must not post.
+      await run({ session_id: sessionId, turn_id: "turn-3", tool_name: "read_file", arguments: { file_path: `${process.env.AUTODEV_REPO_ROOT}/AGENTS.md` } });
+      assert.equal(received.length, 3, `expected 3 posts (orchestration turn-1, ccc turn-1, orchestration turn-2); got ${received.length}`);
+      assert.deepEqual(received[ 0 ].events[ 0 ], { type: "skill_used", skill: "orchestration", source: "skill_read", pluginId: null, eventId: received[ 0 ].events[ 0 ].eventId });
+      assert.equal(received[ 0 ].events[ 0 ].eventId.startsWith("read:"), true);
+      assert.equal(received[ 0 ].requestId, sessionId);
+      assert.equal(received[ 1 ].events[ 0 ].skill, "ccc");
+      assert.equal(received[ 2 ].events[ 0 ].skill, "orchestration");
+    } finally {
+      await new Promise((resolve) => server.close(() => resolve()));
+    }
+  } finally {
+    delete process.env.HOME;
+    delete process.env.AUTODEV_AGENT_EVENTS_URL;
+    delete process.env.AUTODEV_REPO_ROOT;
+    await tempHome.rm(tempHome.dir, { recursive: true, force: true });
   }
 });
 

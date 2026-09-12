@@ -309,6 +309,7 @@ function usageBucket(collection, key) {
 }
 
 function usageOrigin(role, provider) {
+  if (role === "orchestrator") return "orchestrator";
   if (role) return "subagent";
   if (provider === "codex") return "orchestrator";
   return "direct";
@@ -542,7 +543,7 @@ function workspaceDimensionBuckets(bucket, { role, provider, model }) {
 function recordUsageEvent({ phase, requestId, role, provider, model, workspace = null, outcome, failureClass = null, status = null, elapsedMs, toolCalls = 0, timestamp, origin: originOverride = null }) {
   const workspaceContext = typeof workspace === "string" ? { key: workspace, cwd: null } : workspace;
   const origin = originOverride ?? usageOrigin(role, provider);
-  const roleKey = role ?? "unattributed";
+  const roleKey = role ?? (origin === "orchestrator" ? "orchestrator" : "unattributed");
   const modelKey = `${provider}/${model}`;
   const buckets = [usageTelemetry.totals, usageBucket(usageTelemetry.byRole, roleKey), usageBucket(usageTelemetry.byModel, modelKey), usageBucket(usageTelemetry.byOrigin, origin)];
   if (workspaceContext?.key) {
@@ -550,7 +551,7 @@ function recordUsageEvent({ phase, requestId, role, provider, model, workspace =
       registerWorkspaceId(workspaceContext.workspace_id, workspaceContext.key);
     }
     const workspaceUsage = workspaceBucket(usageTelemetry.byWorkspace, workspaceContext.key, workspaceContext.cwd);
-    buckets.push(workspaceUsage, ...workspaceDimensionBuckets(workspaceUsage, { role, provider, model }));
+    buckets.push(workspaceUsage, ...workspaceDimensionBuckets(workspaceUsage, { role: role ?? (origin === "orchestrator" ? "orchestrator" : null), provider, model }));
   }
   const key = usageKey(requestId, provider, model);
   if (phase === "selected") {
@@ -2369,6 +2370,46 @@ function noteBridgeRequest(requestId, context) {
   }
 }
 
+// Some Codex-side telemetry cannot name the request id a bridge would carry:
+// a `PreToolUse` hook observing a SKILL.md read runs in the same session as a
+// parent /v1/responses request the router already opened, but the hook itself
+// only sees the Codex session id. The router keeps a parallel sessionKey ->
+// bridge context map so the hook's skill_read post can be attributed to the
+// in-flight parent turn instead of an unattributed workspace fallback. A
+// session with no open parent is reported back as such and dropped, so a hook
+// firing between requests -- or on a session the router never saw -- never
+// fabricates an `unattributed` workspace count. The session map is *not* a
+// second authorization channel; it is a correlation key the router derives
+// from the same parent request that authorized the agent.
+const MAX_TRACKED_BRIDGE_SESSIONS = 256;
+const bridgeSessionContext = new Map();
+
+function noteBridgeSession(sessionKey, context) {
+  if (!sessionKey || sessionKey === PROCESS_FALLBACK_SESSION_KEY) return;
+  const requestId = typeof context?.requestId === "string" ? context.requestId : null;
+  // Strip the request id before storing -- a session lookup should re-find
+  // the session via its own id, not by reconstructing the parent request.
+  const persisted = context ? { ...context } : {};
+  delete persisted.requestId;
+  bridgeSessionContext.delete(sessionKey);
+  bridgeSessionContext.set(sessionKey, { requestId, context: persisted });
+  while (bridgeSessionContext.size > MAX_TRACKED_BRIDGE_SESSIONS) {
+    bridgeSessionContext.delete(bridgeSessionContext.keys().next().value);
+  }
+}
+
+function lookupBridgeSessionContext(sessionKey) {
+  if (!sessionKey || sessionKey === PROCESS_FALLBACK_SESSION_KEY) return null;
+  const entry = bridgeSessionContext.get(sessionKey);
+  if (!entry) return null;
+  return entry.context;
+}
+
+function recallBridgeSessionRequestId(sessionKey) {
+  if (!sessionKey || sessionKey === PROCESS_FALLBACK_SESSION_KEY) return null;
+  return bridgeSessionContext.get(sessionKey)?.requestId ?? null;
+}
+
 // Usage accounting for `bridge_native` children.
 //
 // A CLI-delegated child never reaches the router as a request, so it used to
@@ -2570,6 +2611,7 @@ function resetSubagentTelemetry() {
   subagentTelemetry.recent = [];
   orchestratorProviderBySession.clear();
   bridgeRequestContext.clear();
+  bridgeSessionContext.clear();
   bridgeSubagentUsage.clear();
 }
 
@@ -2622,7 +2664,20 @@ function reportedChildren(event) {
 
 function ingestAgentEvents(payload) {
   const requestId = typeof payload?.requestId === "string" ? payload.requestId.trim() : "";
-  const context = requestId ? bridgeRequestContext.get(requestId) : undefined;
+  let context = requestId ? bridgeRequestContext.get(requestId) : undefined;
+  // A Codex hook (PreToolUse) only carries a session id; resolve it to the
+  // active parent request's context when one is open. Sessions with no
+  // open request are rejected so a hook running between turns (or on a
+  // session the router never served) cannot invent an unattributed
+  // workspace row.
+  if (!context && requestId) {
+    const sessionKey = requestId;
+    const sessionContext = lookupBridgeSessionContext(sessionKey);
+    const sessionRequestId = recallBridgeSessionRequestId(sessionKey);
+    if (sessionContext && sessionRequestId) {
+      context = sessionContext;
+    }
+  }
   if (!context) return { accepted: 0, closed: 0, unavailable: 0, rejected: Array.isArray(payload?.events) ? payload.events.length : 0, reason: "unknown_request_id" };
   const events = Array.isArray(payload.events) ? payload.events : [];
   // `accepted` and `closed` count subagents; `rejected` counts events the
@@ -2671,8 +2726,9 @@ function ingestAgentEvents(payload) {
         continue;
       }
       const subject = context.sessionKey || `req:${requestId}`;
+      const activityRole = context.role ?? (context.provider === "codex" ? "orchestrator" : null);
       const eventId = typeof event.eventId === "string" && event.eventId.trim() ? event.eventId.trim() : null;
-      if (agentActivity.applyLifecycleEvent(subject, { state, eventId, provider: context.provider, model: context.model, role: context.role, origin: context.role ? "subagent" : (context.provider === "codex" ? "orchestrator" : "direct"), workspace: context.workspace })) accepted += 1;
+      if (agentActivity.applyLifecycleEvent(subject, { state, eventId, provider: context.provider, model: context.model, role: activityRole, origin: activityRole === "orchestrator" ? "orchestrator" : (context.role ? "subagent" : "direct"), workspace: context.workspace })) accepted += 1;
       continue;
     }
     const role = typeof event.role === "string" && event.role.trim() ? safeMetricLabel(event.role) : null;
@@ -2833,6 +2889,7 @@ function recordBridgeSkillUsed({ event, context }) {
   while (store.seenKeys.size > 5000) store.seenKeys.delete(store.seenKeys.values().next().value);
   const ctx = resolveTelemetryContext(event, {}, { context });
   const timestamp = ctx.timestamp;
+  if (ctx.workspace !== UNATTRIBUTED_DIMENSION) workspaceAttributionCapabilities.skills = true;
   store.total += 1;
   const skillRow = store.bySkill.get(skill) ?? { skill, source, pluginId, count: 0 };
   skillRow.count += 1;
@@ -2887,13 +2944,15 @@ function classifyProviderFailure(status, body = "") {
 function recordRouterEvent({ phase, requestId, role = null, requestedModel, provider, model, workspace = null, outcome = null, status = null, failureClass = null, denialReason = null, spawnFailureReason = null, elapsedMs = null, toolCalls = 0, errorName = null, errorCode = null, syscall = null, origin = null, selection = null, normalizedItemIds = 0, droppedReasoningItems = 0 }) {
   const timestamp = new Date().toISOString();
   const workspaceContext = typeof workspace === "string" ? { key: workspace, cwd: null } : workspace;
+  const effectiveOrigin = origin ?? usageOrigin(role, provider);
+  const effectiveRole = role ?? (effectiveOrigin === "orchestrator" ? "orchestrator" : null);
   const event = {
     schema: "autodev-router-event-v1",
     timestamp,
     routerInstanceId: ROUTER_INSTANCE_ID,
     requestId,
     phase,
-    role,
+    role: effectiveRole,
     requestedModel,
     provider,
     model,
@@ -2924,7 +2983,7 @@ function recordRouterEvent({ phase, requestId, role = null, requestedModel, prov
   while (recentRouterEvents.length > Math.max(1, MAX_RECENT_EVENTS)) recentRouterEvents.shift();
 
   if (provider && model && ["selected", "skipped", "result"].includes(phase)) {
-    recordUsageEvent({ phase, requestId, role, provider, model, workspace: workspaceContext, outcome, failureClass, status, elapsedMs, toolCalls, timestamp, origin });
+    recordUsageEvent({ phase, requestId, role: effectiveRole, provider, model, workspace: workspaceContext, outcome, failureClass, status, elapsedMs, toolCalls, timestamp, origin: effectiveOrigin });
   }
   // Any CLI child still open under this request ends with it; see
   // closeBridgeSubagentsForRequest.
@@ -3268,7 +3327,7 @@ function restoreOtelCounters(snapshot) {
   }
   if (snapshot.bridgeEvents && typeof snapshot.bridgeEvents === "object") {
     const target = otelTelemetry.bridgeEvents;
-    for (const family of ["toolExecuted", "toolRequested", "toolUnavailable", "skillExposed"]) {
+    for (const family of ["toolExecuted", "toolRequested", "toolUnavailable", "skillExposed", "skillUsed"]) {
       const source = snapshot.bridgeEvents[family];
       const destination = target[family];
       if (!source || typeof source !== "object") continue;
@@ -4851,7 +4910,7 @@ async function proxyConcreteResponse(response, route, payload, wantsStream, requ
   }
   const startedAt = Date.now();
   recordRouterEvent({ phase: "selected", requestId, requestedModel: payload.model, provider: route.provider, model: payload.model, workspace });
-  agentActivity.beginRequest(activitySubject, { requestId, provider: route.provider, model: payload.model, origin: usageOrigin(null, route.provider), workspace: workspace?.key ?? null });
+  agentActivity.beginRequest(activitySubject, { requestId, provider: route.provider, model: payload.model, role: usageOrigin(null, route.provider) === "orchestrator" ? "orchestrator" : null, origin: usageOrigin(null, route.provider), workspace: workspace?.key ?? null });
   incrementActiveRequests(route.provider);
   // Direct concrete requests must not silently reroute to another provider.
   // A single bounded retry is permitted for HTTP 502/503/504 from the
@@ -5041,10 +5100,18 @@ async function proxyFallbackChain(response, { candidates, role = null, origin = 
     const attemptStartedAt = Date.now();
     attempted.add(route.provider);
     recordRouterEvent({ phase: "selected", requestId, role, origin, requestedModel: payload.model, provider: route.provider, model: route.model, workspace, selection });
-    agentActivity.beginRequest(activitySubject, { requestId, provider: route.provider, model: route.model, role, origin: origin ?? usageOrigin(role, route.provider), workspace: workspace?.key ?? null });
+    const activityRole = role ?? ((origin ?? usageOrigin(role, route.provider)) === "orchestrator" ? "orchestrator" : null);
+    agentActivity.beginRequest(activitySubject, { requestId, provider: route.provider, model: route.model, role: activityRole, origin: origin ?? usageOrigin(role, route.provider), workspace: workspace?.key ?? null });
     // A bridge report names only the request id, so record which provider and
     // workspace this attempt resolved to before the upstream call begins.
-    noteBridgeRequest(requestId, { provider: route.provider, model: route.model, role, workspace: workspace?.key ?? null, sessionKey });
+    const bridgeContext = { provider: route.provider, model: route.model, role: role ?? (origin === "orchestrator" ? "orchestrator" : null), workspace: workspace?.key ?? null, sessionKey };
+    noteBridgeRequest(requestId, bridgeContext);
+    // A Codex hook (PreToolUse) only knows the session id, so also record the
+    // same context keyed by it. The two maps stay in sync for the duration of
+    // the parent request, and the session lookup is what lets a hook fire in
+    // the middle of the turn submit a skill_used post that the router can
+    // attribute to the turn's provider, model, role, and workspace.
+    noteBridgeSession(sessionKey, { ...bridgeContext, requestId });
     if (agentRole === ORCHESTRATOR_AGENT_ROLE) noteOrchestratorSession(sessionKey, route.provider);
     incrementActiveRequests(route.provider);
     try {
@@ -5853,6 +5920,9 @@ export {
   subagentStatus,
   ingestAgentEvents,
   noteBridgeRequest,
+  noteBridgeSession,
+  lookupBridgeSessionContext,
+  recallBridgeSessionRequestId,
   closeBridgeSubagentsForRequest,
   UNATTRIBUTED_SUBAGENT_ROLE,
   noteOrchestratorSession,

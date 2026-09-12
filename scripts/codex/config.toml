@@ -158,6 +158,17 @@ type = "command"
 command = "bash ~/.codex/hooks/enforce-root-delegation.sh"
 statusMessage = "Applying root delegation policy"
 
+# Observe pre-tool calls so the router can attribute a SKILL.md read to the
+# in-flight parent turn (see scripts/codex/skill-read-telemetry.mjs). It is
+# fail-open and only counts canonical SKILL.md reads under approved roots.
+[[hooks.PreToolUse]]
+matcher = "read_file|exec_command"
+
+[[hooks.PreToolUse.hooks]]
+type = "command"
+command = "node ~/.codex/hooks/codex/skill-read-telemetry.mjs"
+statusMessage = "Recording skill-read telemetry"
+
 [hooks.state]
 
 [hooks.state."/Users/henrykirk/.codex/config.toml:user_prompt_submit:0:0"]

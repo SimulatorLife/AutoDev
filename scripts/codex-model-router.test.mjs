@@ -89,6 +89,7 @@ import {
   bridgeTelemetryHeaders,
   ingestAgentEvents,
   noteBridgeRequest,
+  noteBridgeSession,
   closeBridgeSubagentsForRequest,
   UNATTRIBUTED_SUBAGENT_ROLE,
   noteOrchestratorSession,
@@ -1004,9 +1005,8 @@ test("an Antigravity batch spawn contributes measured turns to the usage tables"
 
     const usageOpen = getRouterStatus().usage;
     assert.equal(roleAttempts(usageOpen, "explorer") - roleAttempts(usageBefore, "explorer"), 2);
-    // A roleless child must not land in the `unattributed` bucket: that key is
-    // roleless orchestrator traffic, which the dashboard renders as the
-    // Orchestrator row, so a delegation would be credited to its parent.
+    // A roleless child must not land in the `unattributed` bucket: it has its
+    // own subagent role bucket, so a delegation is not credited to its parent.
     assert.equal(roleAttempts(usageOpen, UNATTRIBUTED_SUBAGENT_ROLE) - roleAttempts(usageBefore, UNATTRIBUTED_SUBAGENT_ROLE), 1);
     assert.equal(roleAttempts(usageOpen, "unattributed"), roleAttempts(usageBefore, "unattributed"));
     // `inherit` is agy naming the parent's model rather than choosing one.
@@ -2185,6 +2185,25 @@ test("counts explicit skill activations separately from injected contexts and br
   resetOtelTelemetry();
 });
 
+test("attributes session-keyed skill reads to the parent workspace", () => {
+  resetRouterTelemetry();
+  noteBridgeSession("session-skill-read", {
+    requestId: "parent-request",
+    provider: "codex",
+    model: "gpt-5.6-luna",
+    role: null,
+    workspace: "AutoDev",
+  });
+  const result = ingestAgentEvents({
+    requestId: "session-skill-read",
+    events: [{ type: "skill_used", skill: "ccc", source: "skill_read", eventId: "read-1" }],
+  });
+  assert.equal(result.accepted, 1);
+  assert.equal(getRouterStatus().usage.byWorkspace.AutoDev.skillUses, 1);
+  assert.equal(getRouterStatus().usage.byWorkspace.AutoDev.bySkill.find((row) => row.skill === "ccc")?.uses, 1);
+  resetRouterTelemetry();
+});
+
 test("normalizes canonical context across tool, hook, and skill telemetry", () => {
   resetOtelTelemetry();
   const attrs = (entries) => entries.map(([key, value]) => ({ key, value: typeof value === "boolean" ? { boolValue: value } : { stringValue: String(value) } }));
@@ -2932,7 +2951,7 @@ test("aggregates usage by role, resolved model, origin, duration, and tool calls
   resetRouterTelemetry();
 });
 
-test("folds roleless orchestrator and direct traffic into a single unattributed bucket that sums to the Subagents role totals", () => {
+test("keeps orchestrator role attribution separate from direct and subagent traffic", () => {
   resetRouterTelemetry();
   // Orchestrator-origin: a direct Codex model request (no role).
   recordRouterEvent({ phase: "selected", requestId: "req-orchestrator", requestedModel: "gpt-5.6-sol", provider: "codex", model: "gpt-5.6-sol" });
@@ -2952,11 +2971,15 @@ test("folds roleless orchestrator and direct traffic into a single unattributed 
   assert.equal(usage.byOrigin.direct.successes, 1);
   assert.equal(usage.byOrigin.subagent.successes, 1);
   assert.equal(usage.byOrigin.subagent.failures, 1);
-  // The dashboard's Orchestrator row folds both roleless origins into byRole.unattributed.
-  assert.equal(usage.byRole.unattributed.attempts, 2);
-  assert.equal(usage.byRole.unattributed.successes, 2);
+  // Root Codex traffic has a canonical orchestrator role; direct non-Codex
+  // traffic remains unattributed because it has no role contract.
+  assert.equal(usage.byRole.orchestrator.attempts, 1);
+  assert.equal(usage.byRole.orchestrator.successes, 1);
+  assert.equal(getRouterStatus().recentEvents.find((event) => event.requestId === "req-orchestrator" && event.phase === "selected").role, "orchestrator");
+  assert.equal(usage.byRole.unattributed.attempts, 1);
+  assert.equal(usage.byRole.unattributed.successes, 1);
 
-  const roleEntries = Object.entries(usage.byRole).filter(([ role ]) => role !== "unattributed");
+  const roleEntries = Object.entries(usage.byRole).filter(([ role ]) => role !== "unattributed" && role !== "orchestrator");
   const subagentTotal = roleEntries.reduce((total, [ , bucket ]) => ({
     attempts: total.attempts + bucket.attempts,
     successes: total.successes + bucket.successes,

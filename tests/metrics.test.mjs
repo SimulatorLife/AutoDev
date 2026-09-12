@@ -140,7 +140,33 @@ test('router dashboard provider health panel renders routing priorities, limits,
   assert.match(rawDashboard, /<dashboard-panel id="panel-providers"[^>]*title="Provider health"/);
   assert.match(rawDashboard, /<th>Routing priority<\/th>/);
   assert.match(rawDashboard, /<th>Effective limits &amp; cooldowns<\/th>/);
+  assert.match(rawDashboard, /<th>Active<\/th>/);
+  assert.doesNotMatch(rawDashboard, /<th>In-flight<\/th>/);
+  assert.doesNotMatch(rawDashboard, /<th>Last failure<\/th>/);
   assert.match(rawDashboard, /<th>Control<\/th>/);
+
+  // Table column alignment: exactly 9 headers and matching colspan in loading and empty rows
+  const providerPanel = rawDashboard.match(/<dashboard-panel id="panel-providers"[\s\S]*?<\/dashboard-panel>/)?.[0] ?? '';
+  const providerHeaders = (providerPanel.match(/<th>.*?<\/th>/g) ?? []).map((h) => h.replace(/<[^>]+>/g, '').trim());
+  assert.deepEqual(providerHeaders, [
+    'Provider',
+    'Routing priority',
+    'Configured models',
+    'Status',
+    'Effective limits &amp; cooldowns',
+    'Active',
+    'Avg turn',
+    'Outcomes',
+    'Control',
+  ]);
+  assert.match(rawDashboard, /<td colspan="9" class="dim" style="text-align:center">Loading providers\.\.\.<\/td>/);
+  assert.match(rawDashboard, /<td colspan="9" class="dim" style="text-align:center">No providers configured<\/td>/);
+  const rowTemplateMatch = rawDashboard.match(/providersTbody\.innerHTML = providersEntries\.map\([\s\S]*?return `<tr[\s\S]*?<\/tr>`;/);
+  assert.ok(rowTemplateMatch, 'provider row template must be present');
+  const tdCount = (rowTemplateMatch[0].match(/<td\b/g) ?? []).length;
+  assert.equal(tdCount, 9, 'provider row template should have exactly 9 td cells to align with headers');
+  assert.doesNotMatch(rowTemplateMatch[0], /p\.inFlightRequests/, 'provider row template must not include inFlightRequests cell');
+  assert.doesNotMatch(rowTemplateMatch[0], /failureHtml/, 'provider row template must not include failureHtml cell');
   // Routing priority helper and status handling
   assert.match(rawDashboard, /function formatRoutingPriority\(/);
   assert.match(rawDashboard, /formatRoutingPriority\(providerName, p, status\)/);
@@ -160,6 +186,15 @@ test('router dashboard provider health panel renders routing priorities, limits,
   assert.match(rawDashboard, /buttonEl\.disabled = true/);
   assert.match(rawDashboard, /await refresh\(\)/);
   assert.match(rawDashboard, /errorEl\.textContent = err\.message/);
+  // Wordless iOS-like toggle switch: green when enabled, grey when disabled, no text inside button
+  assert.match(rawDashboard, /\.btn-provider-toggle\s*\{[^}]*border-radius:\s*var\(--radius-pill\);/s);
+  assert.match(rawDashboard, /\.btn-provider-toggle::after\s*\{/);
+  assert.match(rawDashboard, /\.btn-provider-toggle\[data-action="disable"\][^}]*background:\s*#34c759;/s);
+  assert.match(rawDashboard, /\.btn-provider-toggle\[data-action="enable"\][^}]*background:\s*#48484a;/s);
+  assert.match(rawDashboard, /<button type="button" class="btn-provider-toggle"[^>]*role="switch"[^>]*aria-checked="\$\{!(?:isDisabled)\}"[^>]*><\/button>/);
+  assert.doesNotMatch(rawDashboard, /buttonEl\.textContent/);
+  assert.doesNotMatch(rawDashboard, /Enabling…/);
+  assert.doesNotMatch(rawDashboard, /Disabling…/);
 });
 
 test('router dashboard and status CLI contract separates live agent activity from in-flight requests and documents lifecycle TTL', async () => {
@@ -265,4 +300,89 @@ test('router dashboard workspace table derives Tool calls and totals from byTool
     exec_command: { uses: 3 },
   }, ["tool", "name"]);
   assert.equal(objectRows.reduce((sum, r) => sum + Number(r.count ?? 0), 0), 7);
+});
+
+test('dashboard hides totals rows for sections with 0 or 1 populated row and shows them for 2+ via the shared shouldRenderTotals helper', async () => {
+  const rawDashboard = await readFile(path.join(root, 'scripts', 'codex-model-router-dashboard.html'), 'utf8');
+
+  // 1. The helper exists in the dashboard script with a stable signature so
+  // it can drive every totals-footer site through one rule.
+  const match = rawDashboard.match(/function shouldRenderTotals\([\s\S]*?\n    \}/);
+  assert.ok(match, 'shouldRenderTotals should be present in dashboard script');
+  const shouldRenderTotals = new Function(`${match[0]}; return shouldRenderTotals;`)();
+
+  // Boundary behavior: 0, 1, 2, 5 populated rows.
+  assert.equal(shouldRenderTotals(0), false, 'zero populated rows must hide totals');
+  assert.equal(shouldRenderTotals(1), false, 'single populated row must hide totals (it would just echo the row above)');
+  assert.equal(shouldRenderTotals(2), true, 'two populated rows must reveal totals');
+  assert.equal(shouldRenderTotals(5), true, 'more than two populated rows must keep totals visible');
+  // Defensive coercion: null/undefined/strings still resolve correctly without
+  // throwing, so totals never render on placeholder/loading tbody contents.
+  assert.equal(shouldRenderTotals(null), false);
+  assert.equal(shouldRenderTotals(undefined), false);
+  assert.equal(shouldRenderTotals(''), false);
+  assert.equal(shouldRenderTotals('1'), false, 'string "1" coerces to 1 and still hides totals');
+  assert.equal(shouldRenderTotals('2'), true, 'string "2" coerces to 2 and reveals totals');
+
+  // 2. Every homogeneous roll-up footer wraps its content in the helper,
+  // measured against the populated-row variable each site already uses to
+  // build the tbody.
+  assert.match(rawDashboard, /spawnTfoot\.innerHTML = shouldRenderTotals\(spawnList\.length\)/);
+  assert.match(rawDashboard, /failuresTfoot\.innerHTML = shouldRenderTotals\(byReason\.length\)/);
+  assert.match(rawDashboard, /wsTfoot\.innerHTML = shouldRenderTotals\(sortedWorkspaces\.length\)/);
+  assert.match(rawDashboard, /skillsTfoot\.innerHTML = shouldRenderTotals\(sortedSkills\.length\)/);
+  assert.match(rawDashboard, /hooksTfoot\.innerHTML = shouldRenderTotals\(rows\.length\)/);
+  assert.match(rawDashboard, /metricsTfoot\.innerHTML = shouldRenderTotals\(metricsList\.length\)/);
+
+  // 3. The six Totals header cells remain so the totals template still renders
+  // when the populated-row count crosses the threshold. Removing the headings
+  // would silently drop the totals without any test catching it.
+  const totalsHeaderCount = (rawDashboard.match(/<th>Totals<\/th>/g) ?? []).length;
+  assert.equal(totalsHeaderCount, 6, 'all six homogeneous roll-up sections should still define a Totals header');
+
+  // 4. Empty/unavailable branches still clear the footer before any helper is
+  // consulted; "No X observed yet" placeholder colspan rows must never be
+  // counted toward the populated total. Each homogeneous roll-up tfoot has
+  // exactly two innerHTML assignments: `""` in the empty branch and the
+  // helper-wrapped template in the populated branch.
+  for (const footerId of [
+    'spawnTfoot',
+    'failuresTfoot',
+    'wsTfoot',
+    'skillsTfoot',
+    'hooksTfoot',
+    'metricsTfoot',
+  ]) {
+    const emptyBranch = rawDashboard.match(new RegExp(`\\b${footerId}\\.innerHTML = "";`));
+    assert.ok(emptyBranch, `empty/unavailable branch for ${footerId} must still clear the footer before any totals render`);
+    const populatedBranch = rawDashboard.match(new RegExp(`\\b${footerId}\\.innerHTML = shouldRenderTotals\\(`));
+    assert.ok(populatedBranch, `populated branch for ${footerId} must gate the totals render on shouldRenderTotals`);
+  }
+
+  // 5. Documentation explains the new threshold-based rule so the totals-row
+  // policy has a single source of truth between renderer and docs.
+  const metricsDoc = await readFile(path.join(root, 'docs', 'metrics-dashboard.md'), 'utf8');
+  assert.match(metricsDoc, /Totals footers are shown only when the section has at least 2 populated,\s*non-total data rows/);
+  assert.match(metricsDoc, /loading\/placeholder\/empty colspan rows/);
+});
+
+test('dashboard counts active workspaces from live activity states and excludes unattributed slots', async () => {
+  const dashboard = await readFile(path.join(root, 'scripts', 'codex-model-router-dashboard.html'), 'utf8');
+  const match = dashboard.match(/function countActiveWorkspaces\([\s\S]*?\n    \}/);
+  assert.ok(match, 'countActiveWorkspaces should be present in dashboard script');
+  const countActiveWorkspaces = new Function(`${match[0]}; return countActiveWorkspaces;`)();
+
+  assert.equal(countActiveWorkspaces({
+    usage: { activity: { byWorkspace: {
+      AutoDev: { active: 0, tool_wait: 1 },
+      unattributed: { active: 1 },
+      unknown: { active: 1 },
+    } } },
+  }), 1);
+  assert.equal(countActiveWorkspaces({
+    usage: { activity: { byWorkspace: { AutoDev: { finished: 1 } } } },
+  }), 0);
+  assert.equal(countActiveWorkspaces({
+    usage: { byWorkspace: { AutoDev: { active: 1 } } },
+  }), 1, 'legacy status payloads fall back to workspace active values');
 });

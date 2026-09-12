@@ -35,6 +35,18 @@
 export const REQUEST_ID_HEADER = "x-autodev-request-id";
 export const SUBAGENT_SPAWN_TOOLS_HEADER = "x-autodev-subagent-spawn-tools";
 export const AGENT_EVENTS_URL_HEADER = "x-autodev-agent-events-url";
+// A Codex hook that runs before a native tool call has no router-issued
+// request id to authorize a post. The router proves the post is from this
+// runtime -- not an out-of-tree caller -- by matching an in-flight session
+// it already opened via the parent /v1/responses request. Sessions without
+// a tracked server-side context are rejected, so this header is not a new
+// authorization token; it is a soft correlation key.
+export const SESSION_ID_HEADER = "x-autodev-session-id";
+// Source tag the skill-read telemetry hook attaches to every report. The
+// router uses it to distinguish explicit skill activations (still counted
+// as `skillUses`) from observed file reads, so the dashboard can show both
+// without inflating or undercounting either.
+export const SKILL_READ_SOURCE = "skill_read";
 
 function headerValue(headers, name) {
   if (!headers || typeof headers !== "object") return null;
@@ -226,6 +238,26 @@ class AgentEventReporter {
   }
 
   /**
+   * Post a single skill_used observation. The bridge (or a Codex hook
+   * observing a SKILL.md read) just saw the agent actually use a skill.
+   * The router keys dedupe on (requestId, skill, source, pluginId,
+   * workspace, eventId) so a tool retry, a citation in a chat reply, and
+   * repeated reads of the same skill in one turn collapse into one
+   * attributed use rather than overcounting.
+   */
+  async reportSkillUsed({ skill, source = null, pluginId = null, eventId = null } = {}) {
+    if (typeof skill !== "string" || !skill.trim()) return;
+    const payload = {
+      type: "skill_used",
+      skill: skill.trim(),
+      source: typeof source === "string" && source.trim() ? source.trim() : null,
+      pluginId: typeof pluginId === "string" && pluginId.trim() ? pluginId.trim() : null,
+    };
+    if (typeof eventId === "string" && eventId.trim()) payload.eventId = eventId.trim().slice(0, 128);
+    await this.post([ payload ]);
+  }
+
+  /**
    * Post a single normalized activity observation.
    *
    * { type: "activity", state: "tool_wait" | "user_wait" | "subagent_wait" | "resumed" | "finished" | "failed", childIds? }
@@ -286,4 +318,31 @@ export function resolveAgentEventReporter(headers) {
   if (!url || !requestId || !tools) return null;
   const spawnTools = new Set(tools.split(",").map((tool) => tool.trim()).filter(Boolean));
   return spawnTools.size > 0 ? new AgentEventReporter(url, requestId, spawnTools) : null;
+}
+
+/**
+ * A reporter used by Codex PreToolUse hooks that observe SKILL.md reads.
+ *
+ * Hooks run on the Codex side and so do not have a router-issued request id
+ * to authorize an agent-events post the way a bridge does. The router still
+ * receives them: a PreToolUse hook fires inside a session whose
+ * /v1/responses parent request the router already issued, and the
+ * orchestrator forwards the parent session id into the hook context
+ * (`x-codex-session-id`). The router keeps a short-lived session -> bridge
+ * context map for exactly this purpose; sessions that never opened a parent
+ * request resolve to no context and the router fails closed by dropping the
+ * post instead of inventing a workspace key.
+ *
+ * Returns null when the caller did not provide both an events URL and a
+ * session id, so a misconfigured hook is a no-op rather than a shadow
+ * authorization path.
+ */
+export function resolveSkillReadReporter(headers) {
+  const url = headerValue(headers, AGENT_EVENTS_URL_HEADER);
+  const sessionId = headerValue(headers, SESSION_ID_HEADER);
+  if (!url || !sessionId) return null;
+  // The session id is used in place of the request id. The router records
+  // the post with the same request/bridge correlation machinery a bridge
+  // would use, attributed to whichever active request owns the session.
+  return new AgentEventReporter(url, sessionId, new Set());
 }

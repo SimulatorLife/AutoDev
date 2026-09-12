@@ -538,13 +538,12 @@ The router makes its effective choice visible in two ways:
   and role-attributed requests only carry a role: origin and role are not two
   independent dimensions to cross-tabulate. The Subagents row is the only one
   with a caret; expanding it reveals one child row per explicit role bucket
-  (`usage.byRole`, excluding `unattributed`), and those child rows always sum
-  to the Subagents parent totals because every subagent request is
-  role-attributed. The Orchestrator row is `usage.byRole.unattributed`, which
-  folds together *both* roleless origins (`orchestrator` and `direct`) so that
-  no traffic is dropped from the table; it is not a strict proxy for
-  Codex-origin traffic, since roleless non-Codex ("direct") requests land in
-  the same bucket.
+  (`usage.byRole`, excluding `orchestrator` and `unattributed`), and those
+  child rows always sum to the Subagents parent totals because every subagent
+  request is role-attributed. The Orchestrator row is now
+  `usage.byRole.orchestrator`; direct non-Codex requests remain in
+  `usage.byRole.unattributed` instead of being mislabeled as orchestrator
+  traffic.
 - `status.subagents` counts every subagent spawned behind the router,
   regardless of which provider spawned it and by which mechanism. This is
   distinct from `usage.byRole`, which counts *router requests* made by
@@ -573,8 +572,12 @@ The router makes its effective choice visible in two ways:
   `status.codexTelemetry.dimensions` for MCP, tool, hook, skill, and bridge event families.
   Skill usage is split explicitly: `skillContextsInjected` records loaded context,
   while `skillUses` and `codexTelemetry.skills.used` count successful explicit
-  activations (`invoke_type=explicit`) or verified opt-in `skill_used` bridge events.
-  Exposure events remain availability telemetry and are never treated as usage.
+  activations (`invoke_type=explicit`), verified `skill_used` bridge events, or
+  privacy-safe `skill_used` events from the Codex `PreToolUse` skill-read hook.
+  The hook only recognizes canonical `SKILL.md` reads under approved roots,
+  deduplicates by skill and turn, and fails closed when the parent session cannot
+  be attributed to a workspace. Exposure events remain availability telemetry
+  and are never treated as usage.
   Per-workspace `byMcp` attribution and model-level MCP counts and breakdowns are
   embedded directly in existing workspace and model views (following fail-closed
   unavailable vs empty semantics); no standalone MCP panel exists. Per-workspace
@@ -771,18 +774,18 @@ Disabling a provider takes effect immediately across all routing mechanisms:
 The local HTML dashboard at `http://127.0.0.1:4100/dashboard` provides operational controls in the
 **Provider health** panel:
 
-- **Toggle button:** Each provider row contains an interactive action button (`.btn-provider-toggle`)
-  labeled "Disable" when the provider is active or "Enable" when disabled.
-- **In-flight protection:** Clicking the button disables it and displays "Enabling…" or "Disabling…"
-  while the request is in flight. A client-side `pendingProviderToggles` set prevents concurrent duplicate
+- **Toggle switch:** Each provider row contains an interactive iOS-like toggle switch (`.btn-provider-toggle`)
+  with no text words: green background when enabled, grey background when disabled.
+- **In-flight protection:** Clicking the toggle disables it and dims the switch while the request is in
+  flight without text changes. A client-side `pendingProviderToggles` set prevents concurrent duplicate
   toggles for the same provider.
 - **Immediate refresh:** On successful `POST /v1/providers/:provider`, the dashboard triggers an immediate
   call to `refresh()`, updating the table, health badges, routing priority, and panel header without waiting
   for the next 3-second poll interval.
 - **Error feedback:** If the mutation request fails, the error message is rendered in the dashboard's
-  top-level `#error` container, and the button reverts to its active state.
+  top-level `#error` container, and the toggle reverts to its active state.
 - **Visual styling:** Rows for disabled providers receive the `.provider-disabled` class, an error-styled
-  `<health-badge state="error">disabled</health-badge>`, and an "Enable" action button. The panel
+  `<health-badge state="error">disabled</health-badge>`, and an off/grey toggle switch. The panel
   header summarizes disabled providers alongside ready and active counts (e.g. `4 / 5 ready · 0 active · 1 disabled`).
 
 ### Local, provider-controlled workspace telemetry

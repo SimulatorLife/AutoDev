@@ -686,6 +686,19 @@ exit 0
                 (REPO_ROOT / "scripts/codex/lib/resolve-workspace.mjs").read_bytes(),
             )
 
+    def test_root_config_installs_skill_read_telemetry_hook(self):
+        config = tomllib.loads((REPO_ROOT / "scripts/codex/config.toml").read_text())
+        pre_tool_hooks = config["hooks"]["PreToolUse"]
+        self.assertTrue(any(
+            hook.get("matcher") == "read_file|exec_command"
+            and hook["hooks"][0]["command"] == "node ~/.codex/hooks/codex/skill-read-telemetry.mjs"
+            for hook in pre_tool_hooks
+        ))
+        hook_source = REPO_ROOT / "scripts/codex/skill-read-telemetry.mjs"
+        self.assertTrue(hook_source.is_file())
+        installer = (REPO_ROOT / "scripts/codex/install-codex-integration.sh").read_text()
+        self.assertIn("codex/skill-read-telemetry.mjs", installer)
+
     def test_root_config_enables_canonical_orchestration_skill(self):
         config = tomllib.loads((REPO_ROOT / "scripts/codex/config.toml").read_text())
         self.assertTrue(config["mcp_servers"]["cocoindex-code"]["enabled"])

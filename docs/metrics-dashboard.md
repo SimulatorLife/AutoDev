@@ -193,8 +193,9 @@ Those turns are counted in the usage buckets only, never through the router's
 event path: provider health, cooldown, and the fallback chain describe routing
 decisions the router made, and a child it never routed must not move them. A
 child whose CLI exported no role is counted under `unattributed-subagent` in
-`usage.byRole` -- the bare `unattributed` key is roleless orchestrator traffic,
-which the dashboard renders as the Orchestrator row. The line above the usage
+`usage.byRole.orchestrator` contains root/orchestrator turns, while direct
+requests without a role contract remain under `unattributed`. The dashboard
+renders the former as the Orchestrator row. The line above the usage
 table names how many CLI-delegated turns are included. See
 `docs/provider-routing.md` -> "Counting subagents across providers".
 
@@ -219,11 +220,14 @@ the totals row beneath them.
 The **Provider health** table renders the operational state, routing priority, effective limits, and administration controls for every configured provider:
 
 - **Routing priority:** Formatted by `formatRoutingPriority(providerName, p, status)`, this column maps the provider's configured priority groups across capability tiers (`default`, `smart`, `orchestrator`) from `status.routing.providerGroups`, displaying priority tiers such as `default: P1 · smart: P1 · orchestrator: P2`.
-- **Effective limits & cooldowns:** Formatted by `formatEffectiveLimitsAndCooldowns(p)`, this column displays active cooldown badges with cooldown kind (`transient`, `hard`, `probe`, `config`), failure class, remaining countdown duration, declared reset time (`resets <timestamp>`), and any live provider limit details (`p.effectiveLimits`, `p.liveLimits`, `p.limits`).
-- **Administrative toggle controls:** The **Control** column features an interactive button (`.btn-provider-toggle`) to dynamically enable or disable a provider:
+- **Effective limits & cooldowns:** Formatted by `formatEffectiveLimitsAndCooldowns(p)`, this column displays active cooldown badges with cooldown kind (`transient`, `hard`, `probe`, `config`), failure class, remaining countdown duration, declared reset time (`resets <timestamp>`), and any live provider limit details (`p.effectiveLimits`, `p.liveLimits`, `p.limits`). This replaces the redundant `Last failure` column with comprehensive, real-time cooldown and limit diagnostics.
+- **Active:** Displays live agent workflow activity for the provider (`<status-badge>`), retaining non-zero counts and active styling during tool, user, and subagent waits. The table keeps only the `Active` column (transport-level in-flight requests are omitted from this table and surfaced separately under **Operational summary** and the Status CLI).
+- **Administrative toggle controls:** The **Control** column features an interactive iOS-like toggle switch (`.btn-provider-toggle`) to dynamically enable or disable a provider:
+  - Designed as a wordless iOS-style toggle switch: displays a green background (`#34c759`) when enabled and a grey background (`#48484a`) when disabled, with no text labels.
+  - Features `role="switch"`, `aria-checked`, dynamic `aria-label`, and `title` tooltip for accessibility.
   - Clicking invokes `toggleProvider(providerName, shouldEnable, buttonEl)`.
-  - While pending, the button is disabled and displays "Enabling…" or "Disabling…", tracked in `pendingProviderToggles` to prevent duplicate concurrent submissions.
-  - The browser issues a `POST /v1/providers/:provider` request with JSON payload `{ "enabled": shouldEnable, "disabled": !shouldEnable }`.
+  - While pending, the button is disabled and dimmed, tracked in `pendingProviderToggles` to prevent duplicate concurrent submissions without misleading text transitions.
+  - The browser issues a `POST /v1/providers/:provider` request with JSON payload `{ "enabled": shouldEnable }`.
   - Upon success, the dashboard triggers an immediate `refresh()` to re-fetch `/status` and re-render table state.
   - If the request fails, the error message is displayed in the dashboard `#error` element and the button re-enables.
   - Disabled providers are marked with `.provider-disabled` styling and an error-state health badge displaying `disabled`. The panel header displays a disabled provider count (e.g. `4 / 5 ready · 0 active · 1 disabled`) when nonzero.
@@ -249,6 +253,11 @@ The router and dashboard cleanly separate **live agent activity** from **in-flig
 
 - **Live agent activity (`Active` badges, KPIs, provider rows):**
   Measures active agent workflow turns currently being executed by the orchestrator, subagents, or user sessions. Crucially, an agent does **not** stop being active when an intermediate model HTTP request finishes: during tool execution (`tool_executed`, `tool_requested`), user input waits, or child subagent waits, the agent and provider remain live. When `/status` indicates an active or waiting state (e.g. `status` or `state` is `"active"`, `"waiting"`, `"waiting_tool"`, `"waiting_user"`, `"waiting_subagent"`), the dashboard's `Active agents` KPI, provider table `Active` column, and `<status-badge active="">` remain visibly active and non-zero rather than flickering to zero between model invocations.
+- **Active workspaces:** The KPI's workspace count is derived from the live
+  `status.usage.activity.byWorkspace` state snapshot, not only from persisted
+  workspace usage buckets. It counts known workspaces with a live state
+  (`active`, `resumed`, `tool_wait`, `user_wait`, or `subagent_wait`) and excludes
+  `unattributed`/`unknown` activity that cannot be safely assigned to a workspace.
 - **In-flight requests (`inFlightRequests`):**
   A distinct, transport-level diagnostic metric measuring active HTTP requests currently open between the router daemon and upstream provider model APIs. Incremented upon socket dispatch and decremented upon response completion or cancellation. The dashboard's **Operational summary** labels in-flight requests separately under Concurrency (`In-flight requests`), and `scripts/codex-model-router-status.mjs` displays both `Active` (live agent activity) and `In-Flight` (transport requests) side-by-side in its provider table.
 
@@ -276,6 +285,19 @@ reasons. Operational summary and Skill context telemetry intentionally have no
 totals because their rows mix incompatible units; recent routing events are an
 event view rather than an additive measurement. MCP observations likewise do
 not form a standalone table or panel.
+
+Totals footers are shown only when the section has at least 2 populated,
+non-total data rows. The renderer drives that policy through a single helper
+(`shouldRenderTotals(populatedRowCount)`) used by every totals footer, so a
+section with 0 or 1 populated body rows never renders a totals row -- a
+single-row totals footer would only echo the row above it. The empty/unavailable
+branches (`No subagent spawns recorded yet`, `No spawn failures observed`,
+`No workspace usage observed yet.`, `No skill telemetry recorded yet`,
+`No hooks or runtime events recorded yet`, `No native metrics observed`)
+and the loading/placeholder/empty colspan rows that show before the first
+response arrives are not counted as populated rows: those branches clear the
+footer directly and only reach the helper once real data rows have been
+rendered.
 
 
 
@@ -365,10 +387,14 @@ attributes and numeric aggregates are retained.
 
 These are Codex-native metrics, not a generic audit stream for every provider
 behind the router. `skillContextsInjected` measures context loading, while
-`skillUses` measures explicit activations only. A zero injected or used value
-does not prove that no skill was available or informally followed. Providers
-without explicit activation events remain exposure-only and are not inferred
-from prompts or tool calls.
+`skillUses` measures explicit activations and verified `SKILL.md` reads. A
+`PreToolUse` hook (`scripts/codex/skill-read-telemetry.mjs`) recognizes only
+canonical `SKILL.md` reads under the approved skill roots, deduplicates each
+skill once per turn, and sends a privacy-safe `skill_used` event correlated to
+the parent session. It never records skill contents, prompts, command text, or
+absolute paths. The hook fails open and the router fails closed when the
+session cannot be attributed to a workspace. Exposure, prompt mentions, and
+arbitrary files do not count as uses.
 
 The dashboard labels MCP state as an observation (`ready`, `error`, or `stale`),
 not as an authoritative process-health guarantee. Codex currently emits MCP

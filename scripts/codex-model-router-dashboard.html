@@ -494,25 +494,64 @@
     }
 
     .btn-provider-toggle {
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      padding: 3px 10px;
-      font-family: inherit;
-      font-size: var(--font-sm);
-      font-weight: 600;
-      color: var(--text);
-      background: var(--border-soft);
-      border: var(--line);
-      border-radius: var(--radius-sm);
+      position: relative;
+      display: inline-block;
+      width: 36px;
+      height: 20px;
+      padding: 0;
+      margin: 0;
+      border: none;
+      border-radius: var(--radius-pill);
+      background: #34c759;
       cursor: pointer;
-      white-space: nowrap;
-      transition: background .12s, border-color .12s, opacity .12s;
+      outline: none;
+      vertical-align: middle;
+      transition: background-color .2s ease, opacity .15s ease;
+      -webkit-appearance: none;
+      appearance: none;
+      flex-shrink: 0;
+    }
+
+    .btn-provider-toggle::after {
+      content: "";
+      position: absolute;
+      top: 2px;
+      left: 2px;
+      width: 16px;
+      height: 16px;
+      border-radius: 50%;
+      background: #ffffff;
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.35);
+      transition: transform .2s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+
+    .btn-provider-toggle[data-action="disable"],
+    .btn-provider-toggle[aria-checked="true"] {
+      background: #34c759;
+    }
+
+    .btn-provider-toggle[data-action="disable"]::after,
+    .btn-provider-toggle[aria-checked="true"]::after {
+      transform: translateX(16px);
+    }
+
+    .btn-provider-toggle[data-action="enable"],
+    .btn-provider-toggle[aria-checked="false"] {
+      background: #48484a;
+    }
+
+    .btn-provider-toggle[data-action="enable"]::after,
+    .btn-provider-toggle[aria-checked="false"]::after {
+      transform: translateX(0);
     }
 
     .btn-provider-toggle:hover:not(:disabled) {
-      background: var(--border);
-      border-color: var(--subtle);
+      filter: brightness(1.08);
+    }
+
+    .btn-provider-toggle:focus-visible {
+      outline: 2px solid var(--active);
+      outline-offset: 2px;
     }
 
     .btn-provider-toggle:disabled {
@@ -581,16 +620,14 @@
               <th>Status</th>
               <th>Effective limits &amp; cooldowns</th>
               <th>Active</th>
-              <th>In-flight</th>
               <th>Avg turn</th>
               <th>Outcomes</th>
-              <th>Last failure</th>
               <th>Control</th>
             </tr>
           </thead>
           <tbody id="providers-tbody">
             <tr>
-              <td colspan="11" class="dim" style="text-align:center">Loading providers...</td>
+              <td colspan="9" class="dim" style="text-align:center">Loading providers...</td>
             </tr>
           </tbody>
         </table>
@@ -2033,7 +2070,6 @@
 
       if (buttonEl) {
         buttonEl.disabled = true;
-        buttonEl.textContent = shouldEnable ? "Enabling…" : "Disabling…";
       }
 
       try {
@@ -2066,7 +2102,6 @@
         }
         if (buttonEl) {
           buttonEl.disabled = false;
-          buttonEl.textContent = shouldEnable ? "Enable" : "Disable";
         }
       } finally {
         pendingProviderToggles.delete(providerName);
@@ -2089,6 +2124,33 @@
     window.getProviderLiveActivity = getProviderLiveActivity;
     window.isProviderLiveActive = isProviderLiveActive;
 
+    // Totals/footer rows on the homogeneous roll-up tables (provider/usage,
+    // Skills injections, hook/runtime calls, observed metric counts, and
+    // spawn-failure reasons) are rendered through this single helper. A
+    // single populated body row makes a totals footer redundant - it would
+    // just echo that one row - so we hide the footer whenever the section
+    // has 0 or 1 populated, non-total rows and reveal it for 2 or more.
+    // Loading/placeholder/"no X observed yet" colspan rows never count
+    // toward the populated total: the outer "empty/unavailable" branch
+    // already clears the footer before this helper is consulted, so only
+    // real, rendered data rows drive the decision.
+    function shouldRenderTotals(populatedRowCount) {
+      return Number(populatedRowCount ?? 0) >= 2;
+    }
+
+    function countActiveWorkspaces(status) {
+      const activityByWorkspace = status?.usage?.activity?.byWorkspace;
+      if (activityByWorkspace && typeof activityByWorkspace === "object") {
+        const liveStates = ["active", "resumed", "tool_wait", "user_wait", "subagent_wait"];
+        return Object.entries(activityByWorkspace).filter(([workspace, states]) =>
+          workspace !== "unattributed" && workspace !== "unknown" &&
+          states && typeof states === "object" &&
+          liveStates.some((state) => Number(states[state] ?? 0) > 0)
+        ).length;
+      }
+      return Object.values(status?.usage?.byWorkspace ?? {}).filter((workspace) => Number(workspace?.active ?? 0) > 0).length;
+    }
+
     function render(status) {
       if (!status || typeof status !== "object") return;
 
@@ -2101,10 +2163,11 @@
       if (errorEl && !lastControlError) errorEl.textContent = "";
 
       // 1. KPI Grid
-      const orchActive = Number(status.usage?.byRole?.unattributed?.active ?? 0);
+      const orchRole = status.usage?.byRole?.orchestrator ?? status.usage?.byRole?.unattributed ?? {};
+      const orchActive = Number(orchRole.active ?? 0);
       let subActive = 0;
       for (const [ role, b ] of Object.entries(status.usage?.byRole ?? {})) {
-        if (role !== "unattributed") subActive += Number(b?.active ?? 0);
+        if (role !== "unattributed" && role !== "orchestrator") subActive += Number(b?.active ?? 0);
       }
       const concurrency = status.concurrency ?? {};
       if (concurrency.activeSubagentThreads != null) {
@@ -2124,7 +2187,7 @@
         Number(status.liveActivity ?? 0)
       );
       const workspacesList = Object.entries(status.usage?.byWorkspace ?? {});
-      const activeWorkspaces = workspacesList.filter(([ , w ]) => Number(w?.active ?? 0) > 0).length;
+      const activeWorkspaces = countActiveWorkspaces(status);
 
       const attemptsTotal = Number(status.usage?.totals?.attempts ?? 0);
       const attemptsSuccess = Number(status.usage?.totals?.successes ?? 0);
@@ -2202,7 +2265,7 @@
         }
 
         if (!providersEntries.length) {
-          providersTbody.innerHTML = `<tr><td colspan="11" class="dim" style="text-align:center">No providers configured</td></tr>`;
+          providersTbody.innerHTML = `<tr><td colspan="9" class="dim" style="text-align:center">No providers configured</td></tr>`;
         } else {
           providersTbody.innerHTML = providersEntries.map(([ providerName, p ]) => {
             const configuredModels = Object.values(p.configuredModels ?? {});
@@ -2229,7 +2292,7 @@
             const cooldownSuffix = (!isDisabled && p.cooldownRemainingMs > 0) ? ` (${Math.ceil(p.cooldownRemainingMs / 1000)}s)` : "";
 
             const actionTarget = isDisabled ? "enable" : "disable";
-            const actionLabel = isPending ? (isDisabled ? "Enabling…" : "Disabling…") : (isDisabled ? "Enable" : "Disable");
+            const toggleTitle = `${isDisabled ? "Enable" : "Disable"} ${providerName}`;
 
             let avgTurn = "—";
             let modelSumDuration = 0;
@@ -2246,19 +2309,6 @@
               avgTurn = `${((p.durationMs / (p.successes + p.failures || 1)) / 1000).toFixed(1)}s`;
             }
 
-            let failureHtml = '<span class="muted">-</span>';
-            if (p.lastFailure) {
-              let fText = "";
-              if (typeof p.lastFailure === "string") {
-                fText = p.lastFailure;
-              } else if (typeof p.lastFailure === "object") {
-                const fClass = p.lastFailure.class ?? p.lastFailure.error ?? p.lastFailureClass ?? "error";
-                const fStatus = p.lastFailure.status ? ` (HTTP ${p.lastFailure.status})` : "";
-                fText = `${fClass}${fStatus}`;
-              }
-              failureHtml = `<code>${escapeHtml(fText)}</code>`;
-            }
-
             const liveActive = getProviderLiveActivity(p);
             const isActive = isProviderLiveActive(p);
             const displayActive = liveActive > 0 ? liveActive : (isActive ? 1 : 0);
@@ -2270,12 +2320,10 @@
               <td><health-badge state="${stateAttr}">${escapeHtml(statusLabel)}${cooldownSuffix}</health-badge></td>
               <td class="cell-left">${limitsCooldownHtml}</td>
               <td><status-badge ${isActive ? 'active=""' : ''}>${displayActive}</status-badge></td>
-              <td>${Number(p.inFlightRequests ?? 0)}</td>
               <td>${escapeHtml(avgTurn)}</td>
               <td class="outcome-cell"><outcome-bar fail="${Number(p.failures ?? 0)}" skip="${Number(p.skipped ?? 0)}" success="${Number(p.successes ?? 0)}"></outcome-bar></td>
-              <td>${failureHtml}</td>
               <td class="cell-center">
-                <button type="button" class="btn-provider-toggle" data-provider="${escapeHtml(providerName)}" data-action="${actionTarget}" ${isPending ? 'disabled=""' : ''}>${escapeHtml(actionLabel)}</button>
+                <button type="button" class="btn-provider-toggle" data-provider="${escapeHtml(providerName)}" data-action="${actionTarget}" role="switch" aria-checked="${!isDisabled}" aria-label="${escapeHtml(toggleTitle)}" title="${escapeHtml(toggleTitle)}" ${isPending ? 'disabled=""' : ''}></button>
               </td>
             </tr>`;
           }).join("");
@@ -2285,7 +2333,7 @@
       // 3. Orchestrator & subagent usage
       syncPanel(document.getElementById("panel-orchestrator"), "Orchestrator & subagent usage", `${attemptsTotal.toLocaleString()} attempts`);
 
-      const orch = status.usage?.byRole?.unattributed ?? {};
+      const orch = status.usage?.byRole?.orchestrator ?? status.usage?.byRole?.unattributed ?? {};
       const orchTurns = Number(orch.successes ?? 0) + Number(orch.failures ?? 0);
       const orchAvgTurn = orchTurns > 0 ? `${((orch.durationMs ?? 0) / orchTurns / 1000).toFixed(1)}s` : "0.0s";
       const orchToolCalls = Number(orch.toolCalls ?? 0);
@@ -2297,7 +2345,7 @@
       let subToolCalls = 0;
       let subDuration = 0;
       for (const [ role, b ] of Object.entries(status.usage?.byRole ?? {})) {
-        if (role === "unattributed") continue;
+        if (role === "unattributed" || role === "orchestrator") continue;
         subAttempts += Number(b.attempts ?? 0);
         subSuccess += Number(b.successes ?? 0);
         subFail += Number(b.failures ?? 0);
@@ -2429,7 +2477,7 @@
               <td>${item.count.toLocaleString()}</td>
             </tr>
           `).join("");
-          spawnTfoot.innerHTML = `
+          spawnTfoot.innerHTML = shouldRenderTotals(spawnList.length) ? `
             <tr>
               <th>Totals</th>
               <td>-</td>
@@ -2437,7 +2485,7 @@
               <td>-</td>
               <td>${totalSpawns.toLocaleString()}</td>
             </tr>
-          `;
+          ` : "";
         }
       }
 
@@ -2466,13 +2514,13 @@
             `;
           }).join("");
           const latestTs = recentFailures.length ? formatTimestamp(recentFailures[ 0 ].timestamp) : "—";
-          failuresTfoot.innerHTML = `
+          failuresTfoot.innerHTML = shouldRenderTotals(byReason.length) ? `
             <tr>
               <th>Totals</th>
               <td>${failuresTotal.toLocaleString()}</td>
               <td>${escapeHtml(latestTs)}</td>
             </tr>
-          `;
+          ` : "";
         }
       }
 
@@ -2637,7 +2685,7 @@
           const wsTotalToolsCell = hasWsTools
             ? `<td class="attempts"><outcome-bar fail="0" no-bar="" success="${wsTotalTools}"></outcome-bar></td>`
             : `<td class="attempts"><span class="dim">—</span></td>`;
-          wsTfoot.innerHTML = `
+          wsTfoot.innerHTML = shouldRenderTotals(sortedWorkspaces.length) ? `
             <tr>
               <th>Totals</th>
               <td><status-badge ${wsTotalActive > 0 ? 'active=""' : ''}>${wsTotalActive}</status-badge></td>
@@ -2646,7 +2694,7 @@
               ${wsTotalToolsCell}
               <td>${wsTotalSkills.toLocaleString()}</td>
             </tr>
-          `;
+          ` : "";
         }
       }
 
@@ -2731,13 +2779,13 @@
             `;
           }).join("");
 
-          skillsTfoot.innerHTML = `
+          skillsTfoot.innerHTML = shouldRenderTotals(sortedSkills.length) ? `
             <tr>
               <th>Totals</th>
               <td class="attempts"><outcome-bar fail="${skillsTotalFail}" no-bar="" rate="" success="${skillsTotalSuccess}"></outcome-bar></td>
               <td><strong>100%</strong></td>
             </tr>
-          `;
+          ` : "";
         }
       }
 
@@ -2905,7 +2953,7 @@
         } else {
           hooksTbody.innerHTML = rows.join("");
           const avgDurText = durationCount > 0 ? `${Math.round(totalDuration / durationCount)}ms` : "—";
-          hooksTfoot.innerHTML = `
+          hooksTfoot.innerHTML = shouldRenderTotals(rows.length) ? `
             <tr>
               <th>Totals</th>
               <td>—</td>
@@ -2913,7 +2961,7 @@
               <td class="outcome-cell"><outcome-bar fail="${totalErr}" success="${totalOk}"></outcome-bar></td>
               <td>${avgDurText}</td>
             </tr>
-          `;
+          ` : "";
         }
       }
 
@@ -3005,13 +3053,13 @@
             </tr>
           `;
           }).join("");
-          metricsTfoot.innerHTML = `
+          metricsTfoot.innerHTML = shouldRenderTotals(metricsList.length) ? `
             <tr>
               <th>Totals</th>
               <td>${totalExports.toLocaleString()}</td>
               <td>${totalPoints.toLocaleString()}</td>
             </tr>
-          `;
+          ` : "";
         }
       }
 

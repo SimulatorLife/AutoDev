@@ -17,6 +17,7 @@ agy_settings_file="$HOME/.gemini/antigravity-cli/settings.json"
 legacy_skills_dirs=("$codex_home/skills" "$codex_home/agents/skills")
 
 hook_names=(
+  codex/skill-read-telemetry.mjs
   codex-antigravity-cli-responses-proxy.mjs
   codex-claude-cli-responses-proxy.py
   codex-copilot-cli-responses-proxy.mjs
