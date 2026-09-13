@@ -96,6 +96,17 @@ launchagent_labels=(
 custom_provider_names=(local_model_router claude_code_subscription minimax antigravity_cli)
 cocoindex_code_package="cocoindex-code[full]==0.2.41"
 python_language_server_package="python-lsp-server==1.15.0"
+# AutoDev-owned portable source for the user-level Codex configuration. The
+# composer in scripts/codex/compose-user-config.py merges it with the existing
+# installed config.toml so AutoDev-owned settings win conflicts, while machine-
+# local state (notify, hooks.state trusted hashes, projects, marketplaces, TUI/
+# desktop/apps/plugins/memories, non-AutoDev MCP servers, user-added skills) is
+# preserved semantically. The legacy scripts/codex/config.toml is retained as
+# a one-time migration seed and is no longer authoritative for AutoDev-owned
+# keys; new installs and updates compose from config.autodev.toml instead.
+user_config_portable_source="$repo_root/scripts/codex/config.autodev.toml"
+user_config_seed="$repo_root/scripts/codex/config.toml"
+user_config_composer="$repo_root/scripts/codex/compose-user-config.py"
 tracked_sources=""
 router_auth_requested=0
 # Set by check_router_auth_state when the boundary needs a manual step
@@ -175,6 +186,55 @@ check_one() {
   local source="$1"
   local target="$2"
   [[ "$source" == /* && -L "$target" && "$(readlink "$target")" == "$source" ]]
+}
+
+# Compose the user-level Codex config from the AutoDev-owned portable source
+# and the existing machine-local state. Called by the install path (and by
+# check_user_config below for the --check path) so the regular-file output
+# is always produced by the same composer that --check validates against.
+# Reads from the existing target if present (so user-added MCP/skill/skills
+# are preserved) and writes a regular file, never a symlink, because Codex
+# resolves config.toml at startup and a stale symlink would re-route the
+# whole user-level configuration back to the legacy seed.
+compose_user_config() {
+  local existing="$1"
+  local output="$2"
+  # The composer reads through a legacy symlink before atomically replacing
+  # it with a regular file. Keeping that read-and-replace operation inside the
+  # composer ensures malformed input cannot alter the existing target first.
+  python3 "$user_config_composer" \
+    --portable-source "$user_config_portable_source" \
+    --existing-config "$existing" \
+    --output "$output"
+}
+
+# Validate that the installed user config matches the composed portable
+# source + existing machine-local state without writing. Used by --check;
+# the install path uses compose_user_config above to do the real write.
+check_user_config() {
+  local failed=0
+  local target="$codex_home/config.toml"
+  if [[ -L "$target" ]]; then
+    printf 'obsolete-user-config-symlink %s (the composer writes a regular file, not a symlink)\n' "$target"
+    return 1
+  fi
+  if [[ ! -e "$target" ]]; then
+    # Bootstrap: no existing target. --check must not fail solely because the
+    # user has not run the installer yet; the composer would create it on
+    # the next install. Report the would-be path so the operator sees why
+    # nothing is being compared.
+    printf 'ok user config bootstrap target absent: %s\n' "$target"
+    return 0
+  fi
+  if ! python3 "$user_config_composer" \
+    --portable-source "$user_config_portable_source" \
+    --existing-config "$target" \
+    --output "$target" \
+    --check; then
+    printf 'missing-or-drifted %s -> %s\n' "$target" "$user_config_portable_source"
+    failed=1
+  fi
+  return "$failed"
 }
 # Resolve the list of filesystem roots the Antigravity CLI must be able to
 # read across headless subagent turns. The variable is colon-separated to
@@ -331,7 +391,7 @@ check_versioned_sources() {
       failed=1
     fi
   done
-  for source in "$repo_root/scripts/codex/config.toml" "$repo_root/scripts/codex/install-codex-integration.sh" \
+  for source in "$user_config_portable_source" "$user_config_seed" "$user_config_composer" "$repo_root/scripts/codex/install-codex-integration.sh" \
     "$repo_root/scripts/codex/launchagents/com.codex.model-router.plist" \
     "$repo_root/scripts/codex/launchagents/com.codex.claude-bridge.plist" \
     "$repo_root/scripts/codex/launchagents/com.codex.minimax-proxy.plist" \
@@ -385,8 +445,8 @@ check_agent_registry() {
       printf 'project-agent-registration-not-allowed %s\n' "$role"
       failed=1
     fi
-    if ! grep -Fq "$user_section" "$repo_root/scripts/codex/config.toml" || \
-      ! grep -Fq "config_file = \"./agents/$role.toml\"" "$repo_root/scripts/codex/config.toml"; then
+    if ! grep -Fq "$user_section" "$user_config_portable_source" || \
+      ! grep -Fq "config_file = \"./agents/$role.toml\"" "$user_config_portable_source"; then
       printf 'missing-user-agent-registration %s\n' "$role"
       failed=1
     fi
@@ -457,7 +517,7 @@ check_execution_contract() {
   generated="$generated_dir/execution-contract.json"
   if ! python3 "$repo_root/$execution_contract_builder_name" \
     --source-dir "$repo_root/scripts/codex/agents" \
-    --root-config "$repo_root/scripts/codex/config.toml" \
+    --root-config "$user_config_portable_source" \
     --contract "$repo_root/scripts/codex/execution-contract.json" \
     --output "$generated" >/dev/null; then
     rm -rf -- "$generated_dir"
@@ -780,7 +840,7 @@ check_copilot_code_mcp() {
 }
 
 check_cocoindex_code_config() {
-  local config="$repo_root/scripts/codex/config.toml"
+  local config="$user_config_portable_source"
   local failed=0
   grep -Fq '[mcp_servers."cocoindex-code"]' "$config" || {
     printf 'missing-user-mcp-registration cocoindex-code\n'
@@ -809,7 +869,7 @@ check_custom_provider_config() {
   local provider profile
 
   for provider in "${custom_provider_names[@]}"; do
-    if ! grep -Fq "[model_providers.$provider]" "$repo_root/scripts/codex/config.toml"; then
+    if ! grep -Fq "[model_providers.$provider]" "$user_config_portable_source"; then
       printf 'missing-user-provider-registration %s\n' "$provider"
       failed=1
     fi
@@ -824,8 +884,8 @@ check_custom_provider_config() {
     fi
   done
 
-  if ! grep -Fq 'requires_openai_auth = false' "$repo_root/scripts/codex/config.toml"; then
-    printf 'missing-user-provider-auth-boundary %s\n' "$repo_root/scripts/codex/config.toml"
+  if ! grep -Fq 'requires_openai_auth = false' "$user_config_portable_source"; then
+    printf 'missing-user-provider-auth-boundary %s\n' "$user_config_portable_source"
     failed=1
   fi
 
@@ -1047,12 +1107,9 @@ check_links() {
       failed=1
     fi
   done
-  source="$repo_root/scripts/codex/config.toml"
-  target="$codex_home/config.toml"
-  if check_one "$source" "$target"; then
-    printf 'ok %s -> %s\n' "$target" "$source"
+  if check_user_config; then
+    printf 'ok %s composed from %s\n' "$codex_home/config.toml" "$user_config_portable_source"
   else
-    printf 'missing-or-drifted %s -> %s\n' "$target" "$source"
     failed=1
   fi
   source="$repo_root/scripts/codex/model-routing.json"
@@ -1466,7 +1523,16 @@ for role in "${agent_role_names[@]}"; do
 done
 rm -rf -- "$rendered_agents_dir"
 render_claude_skill_views
-link_one "$repo_root/scripts/codex/config.toml" "$codex_home/config.toml"
+if ! compose_user_config "$codex_home/config.toml" "$codex_home/config.toml"; then
+  exit 1
+fi
+# Belt-and-braces: ensure the installed config is a regular file. Codex
+# resolves config.toml at startup and would silently follow a symlink to
+# whatever the symlink target is; that has to be the composed regular file.
+if [[ -L "$codex_home/config.toml" ]]; then
+  printf 'refusing-symlinked-user-config %s\n' "$codex_home/config.toml" >&2
+  exit 1
+fi
 link_one "$repo_root/scripts/codex/model-routing.json" "$codex_home/codex-model-routing.json"
 # The registration consumes the installed spawn shim, so it must happen after
 # runtime modules are materialized. agy permissions and skills are registered in

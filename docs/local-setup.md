@@ -12,6 +12,17 @@ bash scripts/codex/install-codex-integration.sh
 
 Provider-specific `ensure-*` and `run-*` scripts are intentionally separate so a machine can enable only the providers it has credentials for. Use environment variables documented in each script to override local binary paths and project roots; do not add machine secrets or generated logs to this repository.
 
+### User configuration composition
+
+Codex user-level configuration is managed via a composed model rather than a direct symlink:
+
+- **Authoritative portable source (`scripts/codex/config.autodev.toml`):** Contains the versioned, portable slice of configuration owned by AutoDev (model defaults, provider definitions, telemetry, feature flags, native agents, declared hooks, AutoDev MCP servers `lsp`/`cocoindex-code`/`playwright`, skills, and shell environment policy).
+- **Composer (`scripts/codex/compose-user-config.py`):** Deterministically merges the portable source with existing machine-local state at `$CODEX_HOME/config.toml`. AutoDev-owned settings win conflicts, while operator-specific keys (such as `notify`, `projects`, `marketplaces`, desktop/TUI preferences, custom non-AutoDev MCP servers, and user-added skills) are preserved.
+- **Hook and state handling:** Declared hook event arrays (`SessionStart`, `SubagentStart`, `UserPromptSubmit`, `PreToolUse`) are replaced from the portable source so hooks match the current runtime code, while `hooks.state` (Codex-managed trusted execution hashes) is preserved from the existing file.
+- **Regular file output:** Writes an atomic regular file to `$CODEX_HOME/config.toml` (never a symlink). Codex resolves configuration at startup, and symlinking would cause local overrides to be overwritten or lost.
+- **Legacy seed retirement:** `scripts/codex/config.toml` is retired from being authoritative and is retained solely as a one-time migration seed for upgrades from previous installations.
+- **Drift detection:** `bash scripts/codex/install-codex-integration.sh --check` invokes the composer in `--check` mode to detect any drift between the installed configuration and the composed portable source without writing changes.
+
 The tracked Codex role files under `scripts/codex/agents/` contain role-specific
 configuration plus shared-prompt composition markers. The installer renders
 `base.md`, `leaf.md`, and the optional `code-search.md` piece into regular files

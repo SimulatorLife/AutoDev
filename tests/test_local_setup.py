@@ -4,6 +4,7 @@ import json
 import re
 import os
 import subprocess
+import sys
 import threading
 from unittest.mock import patch
 import urllib.error
@@ -18,6 +19,8 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 BRIDGE_PATH = REPO_ROOT / "scripts/codex-claude-cli-responses-proxy.py"
 INSTALLER_PATH = REPO_ROOT / "scripts/codex/install-codex-integration.sh"
 AUTODEV_CONFIG_PATH = REPO_ROOT / "scripts/codex/config.autodev.toml"
+AUTODEV_LEGACY_CONFIG_PATH = REPO_ROOT / "scripts/codex/config.toml"
+COMPOSE_USER_CONFIG_PATH = REPO_ROOT / "scripts/codex/compose-user-config.py"
 AGENT_RENDERER_PATH = REPO_ROOT / "scripts/codex/render-agent-configs.py"
 PROVIDER_SKILL_VIEW_RENDERER_PATH = REPO_ROOT / "scripts/codex/render-provider-skill-views.py"
 EXECUTION_CONTRACT_RENDERER_PATH = REPO_ROOT / "scripts/codex/render-execution-contract.py"
@@ -650,13 +653,57 @@ exit 0
                 msg="installer run failed: STDOUT=" + run.stdout + " STDERR=" + run.stderr,
             )
             installed_config = Path(codex_home) / "config.toml"
-            self.assertTrue(installed_config.is_symlink())
-            self.assertTrue(os.path.isabs(os.readlink(installed_config)))
-            self.assertEqual(
-                Path(os.readlink(installed_config)),
-                REPO_ROOT / "scripts/codex/config.toml",
+            # The user-level config is no longer a symlink to the versioned
+            # source: it is a regular file composed from config.autodev.toml
+            # + the previous machine-local state. Codex resolves config.toml
+            # at startup, so a symlink to a versioned seed would silently
+            # re-route the user-level configuration away from the operator's
+            # edits (notify, hooks.state trusted hashes, projects, plugins,
+            # marketplaces, desktop/tui state, non-AutoDev MCP servers and
+            # skills) on every fresh process.
+            self.assertTrue(installed_config.is_file())
+            self.assertFalse(installed_config.is_symlink())
+            installed = tomllib.loads(installed_config.read_text())
+            self.assertTrue(installed["mcp_servers"]["lsp"]["enabled"])
+            initial_bytes = installed_config.read_bytes()
+            # Compose is the only writer; --check on the freshly composed
+            # output must succeed without a write.
+            check_run = subprocess.run(
+                ["bash", str(INSTALLER_PATH), "--check"],
+                text=True,
+                capture_output=True,
+                env={
+                    **os.environ,
+                    "HOME": str(home),
+                    "CODEX_HOME": str(codex_home),
+                    "AUTODEV_SKIP_COCOINDEX_INSTALL": "1",
+                    "AUTODEV_SKIP_LSP_INSTALL": "1",
+                    "AUTODEV_SKIP_AGY_MCP": "1",
+                    "AUTODEV_SKIP_COPILOT_MCP": "1",
+                },
             )
-            self.assertTrue(tomllib.loads(installed_config.read_text())["mcp_servers"]["lsp"]["enabled"])
+            self.assertEqual(
+                check_run.returncode,
+                0,
+                msg="--check rejected the freshly composed user config: STDOUT=" + check_run.stdout + " STDERR=" + check_run.stderr,
+            )
+            self.assertEqual(
+                installed_config.read_bytes(),
+                initial_bytes,
+                msg="--check must not modify the composed user config",
+            )
+            # Idempotency: re-running the installer must not change the file.
+            second_run = self._run_installer(home, codex_home)
+            self.assertEqual(
+                second_run.returncode,
+                0,
+                msg="re-run installer failed: STDOUT=" + second_run.stdout + " STDERR=" + second_run.stderr,
+            )
+            self.assertEqual(
+                installed_config.read_bytes(),
+                initial_bytes,
+                msg="re-running the installer must not change the composed user config",
+            )
 
             installed_agents = Path(codex_home) / "agents"
             with tempfile.TemporaryDirectory() as rendered_dir:
@@ -670,6 +717,76 @@ exit 0
                             role_file.read_bytes(),
                             (Path(rendered_dir) / f"{role}.toml").read_bytes(),
                         )
+
+    def test_installer_migrates_symlinked_config_to_composed_regular_file(self):
+        with tempfile.TemporaryDirectory() as home, tempfile.TemporaryDirectory() as codex_home:
+            legacy_config = Path(home) / "legacy_seed_config.toml"
+            legacy_config.write_text(
+                'notify = ["/Applications/Notify.app", "turn-ended"]\n'
+                '\n'
+                '[projects]\n'
+                '"/Users/operator/work" = { trust_level = "trusted" }\n'
+                '\n'
+                '[mcp_servers.custom_local_server]\n'
+                'command = "/usr/local/bin/custom-mcp"\n'
+                'args = ["--stdio"]\n'
+                '\n'
+                '[hooks.state]\n'
+                '"legacy-hash-key" = { trusted_hash = "sha256:preserve" }\n',
+                encoding="utf-8",
+            )
+            installed_config = Path(codex_home) / "config.toml"
+            installed_config.parent.mkdir(parents=True, exist_ok=True)
+            installed_config.symlink_to(legacy_config)
+            self.assertTrue(installed_config.is_symlink())
+
+            run = self._run_installer(home, codex_home)
+            self.assertEqual(
+                run.returncode,
+                0,
+                msg="installer migration run failed: STDOUT=" + run.stdout + " STDERR=" + run.stderr,
+            )
+            self.assertTrue(installed_config.is_file())
+            self.assertFalse(installed_config.is_symlink())
+            composed = tomllib.loads(installed_config.read_text())
+            self.assertEqual(composed["model"], "autodev/orchestrator")
+            self.assertTrue(composed["mcp_servers"]["lsp"]["enabled"])
+            self.assertEqual(
+                composed["notify"],
+                ["/Applications/Notify.app", "turn-ended"],
+            )
+            self.assertEqual(
+                composed["projects"],
+                {"/Users/operator/work": {"trust_level": "trusted"}},
+            )
+            self.assertEqual(
+                composed["mcp_servers"]["custom_local_server"]["command"],
+                "/usr/local/bin/custom-mcp",
+            )
+            self.assertEqual(
+                composed["hooks"]["state"],
+                {"legacy-hash-key": {"trusted_hash": "sha256:preserve"}},
+            )
+
+            check_run = subprocess.run(
+                ["bash", str(INSTALLER_PATH), "--check"],
+                text=True,
+                capture_output=True,
+                env={
+                    **os.environ,
+                    "HOME": str(home),
+                    "CODEX_HOME": str(codex_home),
+                    "AUTODEV_SKIP_COCOINDEX_INSTALL": "1",
+                    "AUTODEV_SKIP_LSP_INSTALL": "1",
+                    "AUTODEV_SKIP_AGY_MCP": "1",
+                    "AUTODEV_SKIP_COPILOT_MCP": "1",
+                },
+            )
+            self.assertEqual(
+                check_run.returncode,
+                0,
+                msg="--check failed after migration: STDOUT=" + check_run.stdout + " STDERR=" + check_run.stderr,
+            )
 
     def test_installer_materializes_the_current_dashboard_copy(self):
         with tempfile.TemporaryDirectory() as home, tempfile.TemporaryDirectory() as codex_home:
@@ -3089,6 +3206,337 @@ class PortableAutodevConfigTests(unittest.TestCase):
         for needle in ("/Users/henrykirk", "/Applications/ChatGPT.app"):
             with self.subTest(needle=needle):
                 self.assertNotIn(needle, rendered)
+
+
+
+class ComposeUserConfigTests(unittest.TestCase):
+    """Phase 1 of docs/AUTODEV_PLATFORM_MIGRATION.md defines a portable,
+    AutoDev-owned slice of the user-level Codex configuration. The composer
+    in scripts/codex/compose-user-config.py merges that portable source with
+    whatever machine-local state the existing $CODEX_HOME/config.toml carries
+    and writes the result back as a regular file. These tests pin every
+    documented property of that composer against its public CLI."""
+
+    @staticmethod
+    def _run_composer(portable, existing, output, *extra_args):
+        """Invoke the composer with isolated paths and return the result."""
+        return subprocess.run(
+            [
+                sys.executable,
+                str(COMPOSE_USER_CONFIG_PATH),
+                "--portable-source", str(portable),
+                "--existing-config", str(existing),
+                "--output", str(output),
+                *extra_args,
+            ],
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+
+    def test_portable_source_loads_and_composes_into_a_regular_file(self):
+        with tempfile.TemporaryDirectory() as home:
+            codex_home = Path(home) / "codex"
+            codex_home.mkdir()
+            output = codex_home / "config.toml"
+            run = self._run_composer(AUTODEV_CONFIG_PATH, codex_home / "absent.toml", output)
+            self.assertEqual(
+                run.returncode,
+                0,
+                msg="composer failed: STDOUT=" + run.stdout + " STDERR=" + run.stderr,
+            )
+            self.assertTrue(output.is_file())
+            self.assertFalse(output.is_symlink())
+            composed = tomllib.loads(output.read_text())
+            self.assertTrue(composed["mcp_servers"]["lsp"]["enabled"])
+            self.assertTrue(composed["mcp_servers"]["cocoindex-code"]["enabled"])
+            self.assertIn("SessionStart", composed["hooks"])
+            self.assertNotIn("state", composed["hooks"])
+
+    def test_bootstrap_writes_a_regular_file_at_the_target_path(self):
+        with tempfile.TemporaryDirectory() as home:
+            output = Path(home) / "config.toml"
+            run = self._run_composer(AUTODEV_CONFIG_PATH, Path(home) / "missing.toml", output)
+            self.assertEqual(run.returncode, 0, msg=run.stdout + run.stderr)
+            self.assertTrue(output.is_file())
+            self.assertFalse(output.is_symlink())
+
+    def test_machine_local_unknown_sections_are_preserved(self):
+        with tempfile.TemporaryDirectory() as home:
+            existing = Path(home) / "existing.toml"
+            existing.write_text(
+                'notify = ["/Applications/Notify.app/Contents/MacOS/Notify", "turn-ended"]\n'
+                '\n'
+                '[projects]\n'
+                '"/Users/operator/work" = { trust_level = "trusted" }\n'
+                '\n'
+                '[plugins]\n'
+                '"custom-plugin@local" = { enabled = true }\n',
+                encoding="utf-8",
+            )
+            output = Path(home) / "config.toml"
+            run = self._run_composer(AUTODEV_CONFIG_PATH, existing, output)
+            self.assertEqual(run.returncode, 0, msg=run.stdout + run.stderr)
+            composed = tomllib.loads(output.read_text())
+            self.assertEqual(
+                composed["notify"],
+                ["/Applications/Notify.app/Contents/MacOS/Notify", "turn-ended"],
+            )
+            self.assertEqual(
+                composed["projects"],
+                {"/Users/operator/work": {"trust_level": "trusted"}},
+            )
+            self.assertEqual(
+                composed["plugins"],
+                {"custom-plugin@local": {"enabled": True}},
+            )
+
+    def test_portable_autodev_owned_settings_win_conflicts(self):
+        with tempfile.TemporaryDirectory() as home:
+            existing = Path(home) / "existing.toml"
+            existing.write_text(
+                'model = "WRONG/PORTABLE"\n'
+                'model_provider = "wrong_provider"\n'
+                'openai_base_url = "http://127.0.0.1:9999/v1"\n',
+                encoding="utf-8",
+            )
+            output = Path(home) / "config.toml"
+            self._run_composer(AUTODEV_CONFIG_PATH, existing, output)
+            composed = tomllib.loads(output.read_text())
+            self.assertEqual(composed["model"], "autodev/orchestrator")
+            self.assertEqual(composed["model_provider"], "local_model_router")
+            self.assertEqual(composed["openai_base_url"], "http://127.0.0.1:4100/v1")
+
+    def test_declared_hooks_are_replaced_and_state_is_preserved(self):
+        with tempfile.TemporaryDirectory() as home:
+            existing = Path(home) / "existing.toml"
+            existing.write_text(
+                '[[hooks.SessionStart]]\n'
+                'matcher = ".*"\n'
+                '\n'
+                '[[hooks.SessionStart.hooks]]\n'
+                'type = "command"\n'
+                'command = "bash /stale/legacy-hook.sh"\n'
+                '\n'
+                '[hooks.state]\n'
+                '"$CODEX_HOME/config.toml:session_start:0:0" = { trusted_hash = "sha256:stale-but-keep" }\n'
+                '\n'
+                '[[hooks.UserPromptSubmit]]\n'
+                '\n'
+                '[[hooks.UserPromptSubmit.hooks]]\n'
+                'type = "command"\n'
+                'command = "bash /stale/legacy-prompt-hook.sh"\n',
+                encoding="utf-8",
+            )
+            output = Path(home) / "config.toml"
+            self._run_composer(AUTODEV_CONFIG_PATH, existing, output)
+            composed = tomllib.loads(output.read_text())
+            commands = [
+                entry["hooks"][0]["command"]
+                for entry in composed["hooks"]["SessionStart"]
+            ]
+            self.assertTrue(
+                any("ensure-codex-model-router.sh" in c for c in commands),
+                msg=f"expected portable SessionStart hook to win, got {commands}",
+            )
+            self.assertFalse(
+                any("/stale/legacy-hook.sh" in c for c in commands),
+                msg=f"legacy hook must be replaced, got {commands}",
+            )
+            self.assertEqual(
+                composed["hooks"]["state"],
+                {"$CODEX_HOME/config.toml:session_start:0:0": {"trusted_hash": "sha256:stale-but-keep"}},
+            )
+
+    def test_mcp_servers_are_merged_by_name_with_portable_winning(self):
+        with tempfile.TemporaryDirectory() as home:
+            existing = Path(home) / "existing.toml"
+            existing.write_text(
+                '[mcp_servers.cocoindex-code]\n'
+                'enabled = false\n'
+                'command = "WRONG"\n'
+                '\n'
+                '[mcp_servers.custom_user_server]\n'
+                'command = "/usr/local/bin/custom-user-mcp"\n'
+                'args = ["--stdio"]\n',
+                encoding="utf-8",
+            )
+            output = Path(home) / "config.toml"
+            self._run_composer(AUTODEV_CONFIG_PATH, existing, output)
+            composed = tomllib.loads(output.read_text())
+            cocoindex = composed["mcp_servers"]["cocoindex-code"]
+            self.assertTrue(cocoindex["enabled"])
+            self.assertEqual(cocoindex["command"], "bash")
+            self.assertEqual(
+                composed["mcp_servers"]["custom_user_server"]["command"],
+                "/usr/local/bin/custom-user-mcp",
+            )
+
+    def test_skills_config_is_merged_by_name_with_portable_winning(self):
+        with tempfile.TemporaryDirectory() as home:
+            existing = Path(home) / "existing.toml"
+            existing.write_text(
+                '[[skills.config]]\n'
+                'name = "ccc"\n'
+                'enabled = false\n'
+                '\n'
+                '[[skills.config]]\n'
+                'name = "operator:custom-skill"\n'
+                'enabled = true\n',
+                encoding="utf-8",
+            )
+            output = Path(home) / "config.toml"
+            self._run_composer(AUTODEV_CONFIG_PATH, existing, output)
+            composed = tomllib.loads(output.read_text())
+            by_name = {entry["name"]: entry for entry in composed["skills"]["config"]}
+            self.assertTrue(by_name["ccc"]["enabled"])
+            self.assertTrue(by_name["lsp-mcp-server"]["enabled"])
+            self.assertTrue(by_name["orchestration"]["enabled"])
+            self.assertTrue(by_name["operator:custom-skill"]["enabled"])
+
+    def test_malformed_portable_source_fails_without_writing_output(self):
+        with tempfile.TemporaryDirectory() as home:
+            bad = Path(home) / "bad.toml"
+            bad.write_text("this is = not toml\n[unclosed\n", encoding="utf-8")
+            output = Path(home) / "out.toml"
+            run = self._run_composer(bad, output, output)
+            self.assertEqual(run.returncode, 2, msg=run.stdout + run.stderr)
+            self.assertFalse(output.exists())
+
+    def test_malformed_existing_config_fails_without_writing_output(self):
+        with tempfile.TemporaryDirectory() as home:
+            bad = Path(home) / "bad.toml"
+            bad.write_text("model =\nfoo\n", encoding="utf-8")
+            output = Path(home) / "out.toml"
+            run = self._run_composer(AUTODEV_CONFIG_PATH, bad, output)
+            self.assertEqual(run.returncode, 2, msg=run.stdout + run.stderr)
+            self.assertFalse(output.exists())
+
+    def test_repeated_composition_is_byte_stable(self):
+        with tempfile.TemporaryDirectory() as home:
+            existing = Path(home) / "existing.toml"
+            existing.write_text(
+                'notify = ["foo"]\n[projects]\n"/work" = { trust_level = "trusted" }\n',
+                encoding="utf-8",
+            )
+            output = Path(home) / "config.toml"
+            self._run_composer(AUTODEV_CONFIG_PATH, existing, output)
+            first = output.read_bytes()
+            self._run_composer(AUTODEV_CONFIG_PATH, existing, output)
+            self.assertEqual(output.read_bytes(), first)
+            # Re-composing from the just-written output must also be stable.
+            self._run_composer(AUTODEV_CONFIG_PATH, output, output)
+            self.assertEqual(output.read_bytes(), first)
+
+    def test_check_detects_drift_without_writing(self):
+        with tempfile.TemporaryDirectory() as home:
+            existing = Path(home) / "existing.toml"
+            existing.write_text(
+                'model = "autodev/orchestrator"\nnotify = ["foo"]\n',
+                encoding="utf-8",
+            )
+            output = Path(home) / "config.toml"
+            self._run_composer(AUTODEV_CONFIG_PATH, existing, output)
+            clean_bytes = output.read_bytes()
+            output.write_bytes(clean_bytes + b"\n# operator hand-edit\n")
+            run = self._run_composer(AUTODEV_CONFIG_PATH, output, output, "--check")
+            self.assertEqual(run.returncode, 1, msg=run.stdout + run.stderr)
+            self.assertIn(b"operator hand-edit", output.read_bytes())
+
+    def test_check_passes_when_output_already_matches_composition(self):
+        with tempfile.TemporaryDirectory() as home:
+            existing = Path(home) / "existing.toml"
+            existing.write_text(
+                'model = "autodev/orchestrator"\nnotify = ["foo"]\n',
+                encoding="utf-8",
+            )
+            output = Path(home) / "config.toml"
+            self._run_composer(AUTODEV_CONFIG_PATH, existing, output)
+            run = self._run_composer(AUTODEV_CONFIG_PATH, output, output, "--check")
+            self.assertEqual(run.returncode, 0, msg=run.stdout + run.stderr)
+
+    def test_check_passes_when_output_absent(self):
+        with tempfile.TemporaryDirectory() as home:
+            absent = Path(home) / "absent.toml"
+            output = Path(home) / "out.toml"
+            run = self._run_composer(AUTODEV_CONFIG_PATH, absent, output, "--check")
+            self.assertEqual(run.returncode, 0, msg=run.stdout + run.stderr)
+            self.assertFalse(output.exists())
+
+    def test_check_rejects_symlinked_output_as_drift(self):
+        with tempfile.TemporaryDirectory() as home:
+            existing = Path(home) / "existing.toml"
+            existing.write_text('notify = ["x"]\n', encoding="utf-8")
+            output = Path(home) / "config.toml"
+            self._run_composer(AUTODEV_CONFIG_PATH, existing, output)
+            output.unlink()
+            output.symlink_to(existing)
+            run = self._run_composer(AUTODEV_CONFIG_PATH, existing, output, "--check")
+            self.assertEqual(run.returncode, 1, msg=run.stdout + run.stderr)
+            self.assertIn("symlink", run.stderr.lower())
+
+    def test_migration_from_legacy_symlink_seed_replaces_with_regular_file(self):
+        with tempfile.TemporaryDirectory() as home, tempfile.TemporaryDirectory() as codex_home:
+            legacy_target = Path(home) / "config.toml"
+            legacy_target.write_text(
+                'notify = ["/Applications/Notify.app", "turn-ended"]\n'
+                '\n'
+                '[projects]\n'
+                '"/Users/operator/work" = { trust_level = "trusted" }\n'
+                '\n'
+                '[[hooks.SessionStart]]\n'
+                'matcher = ".*"\n'
+                '\n'
+                '[[hooks.SessionStart.hooks]]\n'
+                'type = "command"\n'
+                'command = "bash /legacy/hook.sh"\n'
+                '\n'
+                '[hooks.state]\n'
+                '"legacy-state-key" = { trusted_hash = "sha256:keep" }\n',
+                encoding="utf-8",
+            )
+            installed = Path(codex_home) / "config.toml"
+            installed.symlink_to(legacy_target)
+            self.assertTrue(installed.is_symlink())
+            legacy_parsed = tomllib.loads(legacy_target.read_text())
+            self.assertNotIn("cocoindex-code", legacy_parsed.get("mcp_servers", {}))
+            run = subprocess.run(
+                [
+                    sys.executable,
+                    str(COMPOSE_USER_CONFIG_PATH),
+                    "--portable-source", str(AUTODEV_CONFIG_PATH),
+                    "--existing-config", str(installed),
+                    "--output", str(installed),
+                ],
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+            self.assertEqual(run.returncode, 0, msg=run.stdout + run.stderr)
+            self.assertFalse(installed.is_symlink())
+            self.assertTrue(installed.is_file())
+            migrated = tomllib.loads(installed.read_text())
+            self.assertTrue(migrated["mcp_servers"]["cocoindex-code"]["enabled"])
+            self.assertEqual(migrated["mcp_servers"]["cocoindex-code"]["command"], "bash")
+            self.assertEqual(
+                migrated["notify"],
+                ["/Applications/Notify.app", "turn-ended"],
+            )
+            self.assertEqual(
+                migrated["projects"],
+                {"/Users/operator/work": {"trust_level": "trusted"}},
+            )
+            self.assertEqual(
+                migrated["hooks"]["state"],
+                {"legacy-state-key": {"trusted_hash": "sha256:keep"}},
+            )
+            self.assertTrue(
+                any("ensure-codex-model-router.sh" in h["command"]
+                    for entry in migrated["hooks"]["SessionStart"]
+                    for h in entry["hooks"]),
+                msg=f"portable SessionStart must replace the legacy hook, got {migrated['hooks']['SessionStart']}",
+            )
+
 
 
 if __name__ == "__main__":

@@ -36,8 +36,9 @@ For the `default` capability tier, the router randomizes Claude, Gemini/Antigrav
 
 The root Codex orchestrator is not a leaf role, but it uses the same
 `providerGroups` fallback machinery through a dedicated `autodev/orchestrator`
-alias. `scripts/codex/config.toml` sets the parent `model` to that alias, and
-`scripts/codex/model-routing.json` defines its chain under the top-level
+alias. `scripts/codex/config.autodev.toml` sets the parent `model` to that alias
+(composed into `$CODEX_HOME/config.toml`), and `scripts/codex/model-routing.json`
+defines its chain under the top-level
 `orchestrator` block (`alias`, `tier`, and an optional per-provider
 `reasoningEffort` map) plus a `providerGroups.orchestrator` tier and an
 `orchestrator` entry in each provider's `models`.
@@ -82,7 +83,7 @@ logs, then classify the first failing boundary:
 - **Native spawn admission:** Codex's `multi_agent_v1__spawn_agent` can be
   rejected by the app's available-thread limit or the configured
   `max_concurrent_threads_per_session` (currently `2` in
-  `scripts/codex/config.toml`). This is an admission/configuration failure, not
+  `scripts/codex/config.autodev.toml`). This is an admission/configuration failure, not
   a child code failure. A batch uses `Promise.allSettled`, so a rejected entry is
   returned as `Spawn failed: ...` and successful siblings remain trackable.
 - **Antigravity process startup/transport:** `agy` can exit without a terminal
@@ -1722,14 +1723,18 @@ installer is the only supported materialization path into
   or duplicated role definition.
 - `.codex/config.toml` is project execution configuration only. It does not
   register agents or own provider role definitions.
-- User-level provider/role configuration: `scripts/codex/config.toml`, which
-  is symlinked to `/Users/henrykirk/.codex/config.toml`. This is required by
-  Codex because project-local config cannot override provider/auth keys. The
-  user layer registers the same codebase-agnostic roles with paths relative to
-  `$CODEX_HOME/agents/` for use from any repository. Every custom provider must set
-  `model_provider` at the active user/profile layer, define a matching
-  `[model_providers.<id>]` entry with `wire_api = "responses"`, and set
-  `requires_openai_auth = false` when it uses its own credential or local
+- User-level provider/role configuration: `scripts/codex/config.autodev.toml` is
+  the authoritative portable configuration, composed into `$CODEX_HOME/config.toml`
+  as an atomic regular file by `scripts/codex/compose-user-config.py`. The legacy
+  `scripts/codex/config.toml` is retained only as a one-time migration seed.
+  Composition is required because Codex loads user-level settings at startup and
+  project-local config cannot override provider/auth keys. The user layer registers
+  the same codebase-agnostic roles with paths relative to `$CODEX_HOME/agents/` for
+  use from any repository while preserving machine-local settings (notify targets,
+  trusted hook hashes, project trust entries, non-AutoDev MCP servers and skills).
+  Every custom provider must set `model_provider` at the active user/profile layer,
+  define a matching `[model_providers.<id>]` entry with `wire_api = "responses"`,
+  and set `requires_openai_auth = false` when it uses its own credential or local
   gateway.
 - CLI profiles: `scripts/codex/profiles/*.config.toml`; these remain useful for
   direct turns and provider-specific defaults, while the role registry remains
