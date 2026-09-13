@@ -457,7 +457,8 @@ export function createAgentActivityTracker({ ttlMs = resolveAgentActivityTtlMs()
     const byRole = {};
     const byOrigin = {};
     const byWorkspace = {};
-    const add = (collection, key, rec) => {
+    const add = (collection, key, rec, { skipMissing = false } = {}) => {
+      if (skipMissing && (key === null || key === undefined || key === "")) return;
       const normalized = key ?? "unattributed";
       collection[normalized] ??= emptyStateCounts();
       collection[normalized][rec.state] = (collection[normalized][rec.state] ?? 0) + 1;
@@ -467,8 +468,8 @@ export function createAgentActivityTracker({ ttlMs = resolveAgentActivityTtlMs()
       // would otherwise fall into the "unattributed" bucket of byRole/
       // byOrigin/byWorkspace and inflate them with bookkeeping, not agents.
       if (!AGENT_ACTIVITY_KINDS.includes(rec.kind)) continue;
-      add(byProvider, rec.provider, rec);
-      add(byModel, rec.provider && rec.model ? `${rec.provider}/${rec.model}` : null, rec);
+      add(byProvider, rec.provider, rec, { skipMissing: true });
+      add(byModel, rec.provider && rec.model ? `${rec.provider}/${rec.model}` : null, rec, { skipMissing: true });
       add(byRole, rec.role, rec);
       add(byOrigin, rec.origin, rec);
       add(byWorkspace, rec.workspace, rec);

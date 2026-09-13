@@ -2405,8 +2405,11 @@
       }
 
       // 2. Provider health
-      const providersEntries = Object.entries(status.providers ?? {});
-      const configuredProvidersEntries = providersEntries.filter(([ , p ]) => p.synthetic !== true);
+      // Provider health is a closed projection of configured router routes.
+      // Attribution gaps are diagnostics, never synthetic provider rows.
+      const providersEntries = Object.entries(status.providers ?? {})
+        .filter(([ providerName, p ]) => providerName !== "unattributed" && p.synthetic !== true);
+      const configuredProvidersEntries = providersEntries;
       const readyProvidersCount = configuredProvidersEntries.filter(([ , p ]) => p.status === "ready").length;
       // Sum the same canonical `active` field the per-provider rows render
       // (via getProviderLiveActivity) directly -- no artificial floor. Each
@@ -2450,21 +2453,16 @@
 
             const priorityText = formatRoutingPriority(providerName, p, status);
             const limitsCooldownHtml = formatEffectiveLimitsAndCooldowns(p);
-            const isSynthetic = p.synthetic === true;
-
             const isDisabled = Boolean(
-              !isSynthetic && (
-                p.disabled ||
-                p.enabled === false ||
-                p.status === "disabled" ||
-                (Array.isArray(status.disabledProviders) && status.disabledProviders.includes(providerName))
-              )
+              p.disabled ||
+              p.enabled === false ||
+              p.status === "disabled" ||
+              (Array.isArray(status.disabledProviders) && status.disabledProviders.includes(providerName))
             );
-            const isPending = !isSynthetic && pendingProviderToggles.has(providerName);
+            const isPending = pendingProviderToggles.has(providerName);
             const statusLabel = isDisabled ? "disabled" : p.status;
-            const renderedStatusLabel = isSynthetic ? "unattributed" : statusLabel;
-            const stateAttr = isSynthetic ? "limited" : (isDisabled ? "error" : (p.status === "ready" ? "ready" : ((p.status === "cooldown" || (p.cooldownRemainingMs ?? 0) > 0) ? "limited" : "error")));
-            const cooldownSuffix = (!isSynthetic && !isDisabled && p.cooldownRemainingMs > 0) ? ` (${Math.ceil(p.cooldownRemainingMs / 1000)}s)` : "";
+            const stateAttr = isDisabled ? "error" : (p.status === "ready" ? "ready" : ((p.status === "cooldown" || (p.cooldownRemainingMs ?? 0) > 0) ? "limited" : "error"));
+            const cooldownSuffix = (!isDisabled && p.cooldownRemainingMs > 0) ? ` (${Math.ceil(p.cooldownRemainingMs / 1000)}s)` : "";
 
             const actionTarget = isDisabled ? "enable" : "disable";
             const toggleTitle = `${isDisabled ? "Enable" : "Disable"} ${providerName}`;
@@ -2495,13 +2493,13 @@
               <td><code>${escapeHtml(providerName)}</code></td>
               <td class="cell-center"><code>${escapeHtml(priorityText)}</code></td>
               <td>${modelsHtml}</td>
-              <td><health-badge state="${stateAttr}">${escapeHtml(renderedStatusLabel)}${cooldownSuffix}</health-badge></td>
+              <td><health-badge state="${stateAttr}">${escapeHtml(statusLabel)}${cooldownSuffix}</health-badge></td>
               <td class="cell-left">${limitsCooldownHtml}</td>
               <td><status-badge ${isActive ? 'active=""' : ''}>${displayActive}</status-badge></td>
               <td>${escapeHtml(avgTurn)}</td>
               <td class="outcome-cell"><outcome-bar fail="${Number(p.failures ?? 0)}" skip="${Number(p.skipped ?? 0)}" success="${Number(p.successes ?? 0)}"></outcome-bar></td>
               <td class="cell-center">
-                ${isSynthetic ? '<span class="dim">—</span>' : `<button type="button" class="btn-provider-toggle" data-provider="${escapeHtml(providerName)}" data-action="${actionTarget}" role="switch" aria-checked="${!isDisabled}" aria-label="${escapeHtml(toggleTitle)}" title="${escapeHtml(toggleTitle)}" ${isPending ? 'disabled=""' : ''}></button>`}
+                <button type="button" class="btn-provider-toggle" data-provider="${escapeHtml(providerName)}" data-action="${actionTarget}" role="switch" aria-checked="${!isDisabled}" aria-label="${escapeHtml(toggleTitle)}" title="${escapeHtml(toggleTitle)}" ${isPending ? 'disabled=""' : ''}></button>
               </td>
             </tr>`;
           }).join("");

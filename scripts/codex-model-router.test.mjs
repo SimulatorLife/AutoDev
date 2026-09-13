@@ -114,7 +114,6 @@ import {
   AGENT_ACTIVITY_TTL_MS,
   usageStatus,
   projectLiveAgents,
-  inferredOrchestratorCount,
 } from "./codex-model-router.mjs";
 import { resolveAgentEventReporter, REQUEST_ID_HEADER as AGENT_EVENTS_REQUEST_ID_HEADER } from "./codex/lib/agent-events.mjs";
 import { spawnedChildren } from "./codex-antigravity-cli-responses-proxy.mjs";
@@ -1044,6 +1043,9 @@ test("an Antigravity batch spawn contributes measured turns to the usage tables"
     assert.equal(modelAttempts(usageOpen, "antigravity/gemini-3.8-flash-medium") - modelAttempts(usageBefore, "antigravity/gemini-3.8-flash-medium"), 2);
     assert.equal(modelAttempts(usageOpen, "antigravity/gemini-3.8-flash-high") - modelAttempts(usageBefore, "antigravity/gemini-3.8-flash-high"), 1);
     assert.equal(Number(usageOpen.byOrigin?.subagent?.active ?? 0) - Number(usageBefore.byOrigin?.subagent?.active ?? 0), 3, "children are in flight until they are closed");
+    const liveWithParent = getRouterStatus();
+    assert.equal(liveWithParent.providers.antigravity.active, 4, "the explicitly tracked parent and three children share the selected provider");
+    assert.equal(liveWithParent.providers.unattributed, undefined, "bridge activity must never create an unattributed provider");
 
     // A close carries the duration the CLI spent on the child, which is the
     // only per-child turn measurement that exists.
@@ -1064,6 +1066,7 @@ test("an Antigravity batch spawn contributes measured turns to the usage tables"
     const usageSwept = getRouterStatus().usage;
     assert.equal(roleSuccesses(usageSwept, UNATTRIBUTED_SUBAGENT_ROLE) - roleSuccesses(usageBefore, UNATTRIBUTED_SUBAGENT_ROLE), 1);
     assert.equal(Number(usageSwept.byOrigin?.subagent?.active ?? 0) - Number(usageBefore.byOrigin?.subagent?.active ?? 0), 0);
+    assert.equal(getRouterStatus().providers.antigravity.active, 0, "parent and child activity settle together");
   } finally {
     resetSubagentTelemetry();
   }
@@ -5802,7 +5805,7 @@ test("agent activity: subagent_slot records do not inflate liveActivity or snaps
   assert.equal(tracker.countLive({ kind: "subagent_slot", tag: "agent-session" }), 2);
 });
 
-test("router: a live subagent keeps its workspace orchestrator active", () => {
+test("router: a live subagent is counted only when its activity is explicitly tracked", () => {
   resetRouterTelemetry();
   agentActivity.reset();
   resetConcurrencyTelemetry();
@@ -5822,14 +5825,13 @@ test("router: a live subagent keeps its workspace orchestrator active", () => {
   assert.equal(tryAcquireSubagentSlot("subagent-session"), null);
 
   const status = getRouterStatus();
-  // The subagent is one agent and its inferred parent orchestrator is another;
-  // the admission slot itself is still excluded from both counts.
-  assert.equal(status.liveActivity, 2);
+  // The admission slot is excluded and no workspace-based parent is invented.
+  assert.equal(status.liveActivity, 1);
 
   const usage = usageStatus();
-  assert.equal(usage.totals.active, 2);
+  assert.equal(usage.totals.active, 1);
   assert.equal(usage.activity.byRole.worker.active, 1);
-  assert.equal(usage.byRole.orchestrator.active, 1);
+  assert.equal(usage.byRole.orchestrator.active, 0);
   // Workspace dimension still has 1 active agent working in it; it is not
   // added to the two-agent total.
   assert.equal(usage.activity.byWorkspace.AutoDev.active, 1);
@@ -5882,7 +5884,7 @@ test("router: bridge heartbeat and tool observation events touch activity and sl
   resetRouterTelemetry();
 });
 
-test("active-agent reconciliation: inferred parent orchestrator counted exactly once without double-add", () => {
+test("active-agent reconciliation: only explicitly tracked parent and children are counted", () => {
   resetRouterTelemetry();
   agentActivity.reset();
   resetConcurrencyTelemetry();
@@ -5917,43 +5919,42 @@ test("active-agent reconciliation: inferred parent orchestrator counted exactly 
   });
 
   const status = getRouterStatus();
-  // 2 subagents + exactly 1 inferred parent = 3 live agents
-  assert.equal(status.liveActivity, 3);
-  assert.equal(status.usage.totals.active, 3);
+  // The settled parent is not reconstructed from workspace activity.
+  assert.equal(status.liveActivity, 2);
+  assert.equal(status.usage.totals.active, 2);
 
-  // Inferred orchestrator must be exactly 1, not 2 (no double-add)
-  assert.equal(status.usage.byRole.orchestrator.active, 1);
+  assert.equal(status.usage.byRole.orchestrator.active, 0);
   assert.equal(status.usage.byRole.worker.active, 1);
   assert.equal(status.usage.byRole.validator.active, 1);
 
   // Total of byRole active equals canonical total
   const roleSum = Object.values(status.usage.byRole).reduce((sum, b) => sum + Number(b?.active ?? 0), 0);
-  assert.equal(roleSum, 3);
+  assert.equal(roleSum, 2);
 
-  // Workspace total includes inferred parent exactly once: 2 subagents + 1 inferred orchestrator = 3
-  assert.equal(status.usage.byWorkspace.AutoDev.active, 3);
-  assert.equal(status.usage.byWorkspace.AutoDev.byRole.orchestrator.active, 1);
+  // Workspace total contains only the two explicitly tracked subagents.
+  assert.equal(status.usage.byWorkspace.AutoDev.active, 2);
+  assert.equal(status.usage.byWorkspace.AutoDev.byRole.orchestrator.active, 0);
   assert.equal(status.usage.byWorkspace.AutoDev.byRole.worker.active, 1);
   assert.equal(status.usage.byWorkspace.AutoDev.byRole.validator.active, 1);
 
-  // Provider breakdown inside workspace: verified providers preserved, unproven inferred parent in unattributed residual
+  // Provider breakdown contains only concrete routed providers.
   assert.equal(status.usage.byWorkspace.AutoDev.byProvider.minimax.active, 1);
   assert.equal(status.usage.byWorkspace.AutoDev.byProvider.claude.active, 1);
-  assert.equal(status.usage.byWorkspace.AutoDev.byProvider.unattributed.active, 1);
+  assert.equal(status.usage.byWorkspace.AutoDev.byProvider.unattributed, undefined);
 
-  // Status providers: verified providers preserved, inferred parent represented in synthetic unattributed row
+  // Status providers contain only configured providers.
   assert.equal(status.providers.minimax.active, 1);
   assert.equal(status.providers.claude.active, 1);
   assert.equal(status.providers.codex.active, 0);
-  assert.equal(status.providers.unattributed.active, 1);
+  assert.equal(status.providers.unattributed, undefined);
   const providerSum = Object.values(status.providers).reduce((sum, p) => sum + Number(p.active ?? 0), 0);
-  assert.equal(providerSum, 3);
+  assert.equal(providerSum, 2);
 
   // Activity snapshot breakdown
-  assert.equal(status.usage.activity.live, 3);
-  assert.equal(status.usage.activity.inferredOrchestrators, 1);
-  assert.equal(status.usage.activity.byRole.orchestrator.subagent_wait, 1);
-  assert.equal(status.usage.activity.byProvider.unattributed.subagent_wait, 1);
+  assert.equal(status.usage.activity.live, 2);
+  assert.equal(status.usage.activity.inferredOrchestrators, undefined);
+  assert.equal(status.usage.activity.byRole.orchestrator?.subagent_wait ?? 0, 0);
+  assert.equal(status.usage.activity.byProvider.unattributed, undefined);
 
   agentActivity.reset();
   resetConcurrencyTelemetry();
@@ -5965,7 +5966,7 @@ test("active-agent reconciliation: multi-provider and multi-workspace reconcilia
   agentActivity.reset();
   resetConcurrencyTelemetry();
 
-  // Workspace A: 2 subagents on different providers (minimax, claude) -> 1 inferred orchestrator
+  // Workspace A: 2 explicitly tracked subagents on different providers.
   agentActivity.beginRequest("sub-a1", {
     requestId: "req-a1",
     provider: "minimax",
@@ -6011,52 +6012,52 @@ test("active-agent reconciliation: multi-provider and multi-workspace reconcilia
     workspace: "RepoGamma",
   });
 
-  // Total canonical count: RepoAlpha (2 sub + 1 inf = 3) + RepoBeta (1 orch + 1 sub = 2) + RepoGamma (1 = 1) = 6
+  // Total canonical count: RepoAlpha (2) + RepoBeta (1 orch + 1 sub = 2) + RepoGamma (1) = 5
   const status = getRouterStatus();
-  assert.equal(status.liveActivity, 6);
-  assert.equal(status.usage.totals.active, 6);
+  assert.equal(status.liveActivity, 5);
+  assert.equal(status.usage.totals.active, 5);
 
   // 1. Workspace dimension totals reconcile
-  assert.equal(status.usage.byWorkspace.RepoAlpha.active, 3);
+  assert.equal(status.usage.byWorkspace.RepoAlpha.active, 2);
   assert.equal(status.usage.byWorkspace.RepoBeta.active, 2);
   assert.equal(status.usage.byWorkspace.RepoGamma.active, 1);
   const workspaceSum = Object.values(status.usage.byWorkspace).reduce((s, b) => s + Number(b?.active ?? 0), 0);
-  assert.equal(workspaceSum, 6);
+  assert.equal(workspaceSum, 5);
 
   // 2. Role dimension totals reconcile
   assert.equal(status.usage.byRole.worker.active, 1);
   assert.equal(status.usage.byRole["docs-researcher"].active, 1);
-  assert.equal(status.usage.byRole.orchestrator.active, 2); // 1 inferred in Alpha + 1 live in Beta
+  assert.equal(status.usage.byRole.orchestrator.active, 1);
   assert.equal(status.usage.byRole.explorer.active, 1);
   assert.equal(status.usage.byRole.unattributed.active, 1); // roleless in Gamma
   const roleSum = Object.values(status.usage.byRole).reduce((s, b) => s + Number(b?.active ?? 0), 0);
-  assert.equal(roleSum, 6);
+  assert.equal(roleSum, 5);
 
   // 3. Origin dimension totals reconcile
   assert.equal(status.usage.byOrigin.subagent.active, 3);
-  assert.equal(status.usage.byOrigin.orchestrator.active, 2);
+  assert.equal(status.usage.byOrigin.orchestrator.active, 1);
   assert.equal(status.usage.byOrigin.direct.active, 1);
   const originSum = Object.values(status.usage.byOrigin).reduce((s, b) => s + Number(b?.active ?? 0), 0);
-  assert.equal(originSum, 6);
+  assert.equal(originSum, 5);
 
-  // 4. Status providers active counts reflect verified attribution plus synthetic unattributed row
+  // 4. Status providers active counts reflect only verified attribution.
   assert.equal(status.providers.minimax.active, 1);
   assert.equal(status.providers.claude.active, 1);
   assert.equal(status.providers.codex.active, 1);
   assert.equal(status.providers.antigravity.active, 1);
   assert.equal(status.providers.copilot.active, 1);
-  assert.equal(status.providers.unattributed.active, 1);
+  assert.equal(status.providers.unattributed, undefined);
   const providerSum = Object.values(status.providers).reduce((s, p) => s + Number(p.active ?? 0), 0);
-  assert.equal(providerSum, 6);
+  assert.equal(providerSum, 5);
 
-  // 5. Activity provider breakdown accounts for unproven inferred orchestrator in unattributed residual
-  assert.equal(status.usage.activity.byProvider.unattributed.subagent_wait, 1);
+  // 5. No provider residual is fabricated for the missing parent.
+  assert.equal(status.usage.activity.byProvider.unattributed, undefined);
 
   // 6. Per-workspace internal consistency
   const alphaByRoleSum = Object.values(status.usage.byWorkspace.RepoAlpha.byRole).reduce((s, b) => s + Number(b?.active ?? 0), 0);
-  assert.equal(alphaByRoleSum, 3);
+  assert.equal(alphaByRoleSum, 2);
   const alphaByProviderSum = Object.values(status.usage.byWorkspace.RepoAlpha.byProvider).reduce((s, b) => s + Number(b?.active ?? 0), 0);
-  assert.equal(alphaByProviderSum, 3);
+  assert.equal(alphaByProviderSum, 2);
 
   const betaByRoleSum = Object.values(status.usage.byWorkspace.RepoBeta.byRole).reduce((s, b) => s + Number(b?.active ?? 0), 0);
   assert.equal(betaByRoleSum, 2);
@@ -6104,7 +6105,7 @@ test("active-agent reconciliation: roleless activity reconciles to unattributed 
   resetRouterTelemetry();
 });
 
-test("active-agent reconciliation: wait states keep agents and inferred parents live, while stale/terminal states clear them", () => {
+test("active-agent reconciliation: wait states keep explicitly tracked agents live, while stale/terminal states clear them", () => {
   resetRouterTelemetry();
   agentActivity.reset();
   resetConcurrencyTelemetry();
@@ -6120,10 +6121,10 @@ test("active-agent reconciliation: wait states keep agents and inferred parents 
     timestamp: now,
   });
 
-  // Initially active: 1 subagent + 1 inferred parent = 2
+  // Initially active: one explicitly tracked subagent.
   let status = getRouterStatus(now);
-  assert.equal(status.liveActivity, 2);
-  assert.equal(status.usage.totals.active, 2);
+  assert.equal(status.liveActivity, 1);
+  assert.equal(status.usage.totals.active, 1);
 
   // Settle request with tool wait (clears openRequestId so it can mature to stale past TTL)
   agentActivity.endRequest("subagent-wait-sess", {
@@ -6132,23 +6133,23 @@ test("active-agent reconciliation: wait states keep agents and inferred parents 
     timestamp: now + 500,
   });
   status = getRouterStatus(now + 500);
-  assert.equal(status.liveActivity, 2);
-  assert.equal(status.usage.totals.active, 2);
+  assert.equal(status.liveActivity, 1);
+  assert.equal(status.usage.totals.active, 1);
 
   // Transition through each wait state: tool_wait, user_wait, subagent_wait, resumed
   for (const state of ["tool_wait", "user_wait", "subagent_wait", "resumed"]) {
     agentActivity.applyLifecycleEvent("subagent-wait-sess", { state, timestamp: now + 1000 });
     status = getRouterStatus(now + 1000);
-    assert.equal(status.liveActivity, 2, `liveActivity should be 2 in state ${state}`);
-    assert.equal(status.usage.totals.active, 2, `usage.totals.active should be 2 in state ${state}`);
-    assert.equal(status.usage.byWorkspace.AutoDev.active, 2);
+    assert.equal(status.liveActivity, 1, `liveActivity should be 1 in state ${state}`);
+    assert.equal(status.usage.totals.active, 1, `usage.totals.active should be 1 in state ${state}`);
+    assert.equal(status.usage.byWorkspace.AutoDev.active, 1);
   }
 
   // Matured past TTL: becomes stale
   const ttlMs = AGENT_ACTIVITY_TTL_MS;
   const staleTime = now + 1000 + ttlMs + 5000;
   status = getRouterStatus(staleTime);
-  // Stale child stops being live, so inferred parent also drops to 0
+  // Stale child stops being live; no workspace-based parent is fabricated.
   assert.equal(status.liveActivity, 0);
   assert.equal(status.usage.totals.active, 0);
   assert.equal(status.usage.byRole.orchestrator.active, 0);
@@ -6164,7 +6165,7 @@ test("active-agent reconciliation: wait states keep agents and inferred parents 
     workspace: "AutoDev",
     timestamp: staleTime + 1000,
   });
-  assert.equal(getRouterStatus(staleTime + 1000).liveActivity, 2);
+  assert.equal(getRouterStatus(staleTime + 1000).liveActivity, 1);
 
   // Terminal finish
   agentActivity.finish("subagent-wait-sess", { requestId: "req-terminal-1", outcome: "success", timestamp: staleTime + 2000 });
@@ -6212,9 +6213,9 @@ test("active-agent reconciliation: subagent slots and in-flight requests are tra
   });
 
   status = getRouterStatus();
-  // Live activity is exactly 2 (1 subagent + 1 inferred parent)
-  assert.equal(status.liveActivity, 2);
-  assert.equal(status.usage.totals.active, 2);
+  // Live activity is exactly one explicitly tracked subagent.
+  assert.equal(status.liveActivity, 1);
+  assert.equal(status.usage.totals.active, 1);
   assert.equal(status.providers.minimax.active, 1); // 1 real agent on minimax
   assert.equal(status.providers.claude.active, 0);  // claude still has 0 live agents, only in-flight transport
 
@@ -6226,14 +6227,14 @@ test("active-agent reconciliation: subagent slots and in-flight requests are tra
   assert.equal(status.inFlightRequests.claude ?? 0, 0);
   assert.equal(status.providers.minimax.inFlightRequests, 0);
   assert.equal(status.providers.claude.inFlightRequests, 0);
-  assert.equal(status.liveActivity, 2, "settling in-flight transport does not close agent-level gap activity");
+  assert.equal(status.liveActivity, 1, "settling in-flight transport does not close agent-level gap activity");
 
   // Release slots
   releaseSubagentSlot("session-slot-1");
   releaseSubagentSlot("session-slot-2");
   status = getRouterStatus();
   assert.equal(status.concurrency.activeSubagentThreads, 0);
-  assert.equal(status.liveActivity, 2, "releasing concurrency slots does not close agent activity");
+  assert.equal(status.liveActivity, 1, "releasing concurrency slots does not close agent activity");
 
   agentActivity.reset();
   resetConcurrencyTelemetry();
@@ -6259,18 +6260,13 @@ test("active-agent reconciliation: residual active provider and workspace bucket
   assert.equal(status.liveActivity, 1);
   assert.equal(status.usage.totals.active, 1);
 
-  // Synthetic unattributed provider row exists with neutral metadata
-  assert.ok(status.providers.unattributed, "synthetic unattributed provider row must be present");
-  assert.equal(status.providers.unattributed.active, 1);
-  assert.equal(status.providers.unattributed.status, "unattributed");
-  assert.equal(status.providers.unattributed.enabled, false);
-  assert.equal(status.providers.unattributed.synthetic, true);
-  assert.equal(status.providers.unattributed.routingPriority, "—");
-  assert.equal(status.providers.unattributed.inFlightRequests, 0);
+  // Missing provider identity is a diagnostic, never a synthetic provider row.
+  assert.equal(status.providers.unattributed, undefined);
+  assert.equal(status.liveAgentAttribution.missingProvider, 1);
 
   // Provider health total matches canonical total exactly
   let providerSum = Object.values(status.providers).reduce((sum, p) => sum + Number(p.active ?? 0), 0);
-  assert.equal(providerSum, 1);
+  assert.equal(providerSum, 0);
 
   // Unattributed workspace bucket exists and includes the roleless agent
   assert.ok(status.usage.byWorkspace.unattributed, "unattributed workspace bucket must be present");
@@ -6288,28 +6284,28 @@ test("active-agent reconciliation: residual active provider and workspace bucket
     model: "sonnet",
   });
 
-  // Total: 1 direct roleless + 1 subagent + 1 inferred parent = 3
+  // Total: one direct roleless agent plus one explicitly tracked subagent.
   status = getRouterStatus();
-  assert.equal(status.liveActivity, 3);
-  assert.equal(status.usage.totals.active, 3);
+  assert.equal(status.liveActivity, 2);
+  assert.equal(status.usage.totals.active, 2);
 
-  // Provider health accounts for both claude (1) and unattributed residual (2: direct + inferred parent)
+  // Provider health reports only the concrete routed provider.
   assert.equal(status.providers.claude.active, 1);
-  assert.equal(status.providers.unattributed.active, 2);
+  assert.equal(status.providers.unattributed, undefined);
   providerSum = Object.values(status.providers).reduce((sum, p) => sum + Number(p.active ?? 0), 0);
-  assert.equal(providerSum, 3);
+  assert.equal(providerSum, 1);
 
   // Workspace usage includes all 3 in the unattributed workspace bucket
-  assert.equal(status.usage.byWorkspace.unattributed.active, 3);
+  assert.equal(status.usage.byWorkspace.unattributed.active, 2);
   workspaceSum = Object.values(status.usage.byWorkspace).reduce((sum, w) => sum + Number(w.active ?? 0), 0);
-  assert.equal(workspaceSum, 3);
+  assert.equal(workspaceSum, 2);
 
   // Internal workspace breakdown reconciles
   assert.equal(status.usage.byWorkspace.unattributed.byRole.worker.active, 1);
-  assert.equal(status.usage.byWorkspace.unattributed.byRole.orchestrator.active, 1);
+  assert.equal(status.usage.byWorkspace.unattributed.byRole.orchestrator.active, 0);
   assert.equal(status.usage.byWorkspace.unattributed.byRole.unattributed.active, 1);
   assert.equal(status.usage.byWorkspace.unattributed.byProvider.claude.active, 1);
-  assert.equal(status.usage.byWorkspace.unattributed.byProvider.unattributed.active, 2);
+  assert.equal(status.usage.byWorkspace.unattributed.byProvider.unattributed, undefined);
 
   // 3. Settle and finish all agents -> active counts clear cleanly
   agentActivity.finish("sess-residual-direct", { requestId: "req-res-1", outcome: "success" });
@@ -6318,7 +6314,7 @@ test("active-agent reconciliation: residual active provider and workspace bucket
   status = getRouterStatus();
   assert.equal(status.liveActivity, 0);
   assert.equal(status.usage.totals.active, 0);
-  assert.equal(status.providers.unattributed, undefined, "synthetic provider row should not linger when active is 0");
+  assert.equal(status.providers.unattributed, undefined, "unattributed provider rows are never rendered");
   providerSum = Object.values(status.providers).reduce((sum, p) => sum + Number(p.active ?? 0), 0);
   assert.equal(providerSum, 0);
   assert.equal(status.usage.byWorkspace.unattributed?.active ?? 0, 0);

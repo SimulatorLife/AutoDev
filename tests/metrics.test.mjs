@@ -197,6 +197,14 @@ test('router dashboard provider health panel renders routing priorities, limits,
   assert.doesNotMatch(rawDashboard, /Disabling…/);
 });
 
+test('dashboard provider health excludes synthetic and unattributed provider rows', async () => {
+  const rawDashboard = await readFile(path.join(root, 'scripts', 'codex-model-router-dashboard.html'), 'utf8');
+  assert.match(rawDashboard, /const providersEntries = Object\.entries\(status\.providers \?\? \{\}\)/);
+  assert.match(rawDashboard, /providerName !== "unattributed"/);
+  assert.match(rawDashboard, /p\.synthetic !== true/);
+  assert.match(rawDashboard, /const configuredProvidersEntries = providersEntries;/);
+});
+
 test('router dashboard and status CLI contract separates live agent activity from in-flight requests and documents lifecycle TTL', async () => {
   const rawDashboard = await readFile(path.join(root, 'scripts', 'codex-model-router-dashboard.html'), 'utf8');
   // Helper functions for live agent activity and wait status

@@ -391,6 +391,8 @@ const attributionDiagnostics = {
     missing_workspace: 0,
     unknown_workspace_id: 0,
     ambiguous_resource: 0,
+    missing_provider: 0,
+    missing_model: 0,
   },
   bySource: {
     datapoint: 0,
@@ -418,6 +420,8 @@ function resetAttributionDiagnostics() {
     missing_workspace: 0,
     unknown_workspace_id: 0,
     ambiguous_resource: 0,
+    missing_provider: 0,
+    missing_model: 0,
   };
   attributionDiagnostics.bySource = {
     datapoint: 0,
@@ -635,70 +639,40 @@ function activityFilter(dimension, key, extra = {}) {
   return filter;
 }
 
-function emptyStateCounts() {
-  return Object.fromEntries(AGENT_ACTIVITY_STATES.map((state) => [state, 0]));
-}
-
 function countLiveAgentActivity(filter = {}, at = Date.now()) {
   return AGENT_ACTIVITY_KINDS.reduce((total, kind) => total + agentActivity.countLive({ ...filter, kind }, at), 0);
+}
+
+function emptyStateCounts() {
+  return Object.fromEntries(AGENT_ACTIVITY_STATES.map((state) => [state, 0]));
 }
 
 /**
  * Timestamp-consistent live-agent projection.
  * Evaluates live activity at a single point in time `at` across all dimensions.
- * Produces a unified projection of direct live agents and inferred orchestrators,
- * which serves as the single source of truth for:
+ * Produces a unified projection of every directly-tracked live agent, which
+ * serves as the single source of truth for:
  * - canonical total (liveActivity, usage.totals.active)
  * - status.providers[*].active
  * - usage dimensions: byRole, byOrigin, byModel, byWorkspace, and their nested buckets
  * - usage.activity state breakdowns
+ *
+ * A parent orchestrator whose own turn has already settled while a subagent it
+ * spawned is still running is represented here only through its own explicit
+ * activity record: `noteSubagentWait`/`noteSubagentResolved` transition that
+ * record (see `openBridgeSubagentUsage` / `closeBridgeSubagentUsage`) using
+ * the router's own proven parent/child context -- the request that actually
+ * carried the spawn. Nothing here fabricates a stand-in parent from a
+ * workspace guess: a workspace containing subagent activity with no live
+ * orchestrator record of its own genuinely has none, and is reported as such.
  */
 function projectLiveAgents(at = Date.now()) {
   const directAgents = agentActivity.listLive({}, at);
 
-  // Discover distinct workspaces among direct live agents
-  const workspaces = new Set();
-  for (const agent of directAgents) {
-    workspaces.add(agent.workspace ?? null);
-  }
-
-  const inferredOrchestrators = [];
-  for (const ws of workspaces) {
-    const wsAgents = directAgents.filter((a) => (a.workspace ?? null) === ws);
-    const hasOrchestrator = wsAgents.some(
-      (a) => a.origin === "orchestrator" || a.role === "orchestrator"
-    );
-    const roleChildActivity = ROLE_NAMES
-      .filter((role) => role !== "orchestrator")
-      .some((role) => wsAgents.some((a) => a.role === role));
-    const hasChildActivity =
-      wsAgents.some((a) => a.origin === "subagent" || a.kind === "bridge_subagent") ||
-      roleChildActivity;
-
-    if (hasChildActivity && !hasOrchestrator) {
-      inferredOrchestrators.push({
-        subject: `inferred:orchestrator:${ws ?? UNATTRIBUTED_DIMENSION}`,
-        kind: "session",
-        tag: null,
-        state: "subagent_wait",
-        provider: null, // Unproven provider -> explicit unattributed residual
-        model: null,    // Unproven model -> explicit unattributed residual
-        role: "orchestrator",
-        origin: "orchestrator",
-        workspace: ws,
-        isInferred: true,
-      });
-    }
-  }
-
-  const allLiveAgents = [
-    ...directAgents.map((a) => ({
-      ...a,
-      origin: a.origin ?? usageOrigin(a.role, a.provider),
-      isInferred: false,
-    })),
-    ...inferredOrchestrators,
-  ];
+  const allLiveAgents = directAgents.map((a) => ({
+    ...a,
+    origin: a.origin ?? usageOrigin(a.role, a.provider),
+  }));
 
   const byProvider = {};
   const byModel = {};
@@ -707,15 +681,17 @@ function projectLiveAgents(at = Date.now()) {
   const byWorkspace = {};
 
   for (const agent of allLiveAgents) {
-    const pKey = agent.provider ?? UNATTRIBUTED_DIMENSION;
-    byProvider[pKey] = (byProvider[pKey] ?? 0) + 1;
+    if (agent.provider) {
+      const pKey = agent.provider;
+      byProvider[pKey] = (byProvider[pKey] ?? 0) + 1;
+    }
 
-    const mKey = !agent.model
-      ? UNATTRIBUTED_DIMENSION
-      : (agent.provider && !agent.model.startsWith(`${agent.provider}/`)
+    if (agent.provider && agent.model) {
+      const mKey = !agent.model.startsWith(`${agent.provider}/`)
         ? `${agent.provider}/${agent.model}`
-        : agent.model);
-    byModel[mKey] = (byModel[mKey] ?? 0) + 1;
+        : agent.model;
+      byModel[mKey] = (byModel[mKey] ?? 0) + 1;
+    }
 
     const rKey = agent.role ?? UNATTRIBUTED_DIMENSION;
     byRole[rKey] = (byRole[rKey] ?? 0) + 1;
@@ -730,33 +706,16 @@ function projectLiveAgents(at = Date.now()) {
   return {
     at,
     directAgents,
-    inferredOrchestrators,
     allLiveAgents,
     canonicalTotal: allLiveAgents.length,
+    missingProvider: allLiveAgents.filter((agent) => !agent.provider).length,
+    missingModel: allLiveAgents.filter((agent) => !agent.model).length,
     byProvider,
     byModel,
     byRole,
     byOrigin,
     byWorkspace,
   };
-}
-
-/**
- * A role-based child request proves that an orchestrator is still managing
- * work even when the parent's last model turn has already settled. The
- * router does not receive a trustworthy parent-thread id for every native
- * spawn, so workspace is the conservative correlation boundary: infer one
- * orchestrator for each workspace containing live subagent-origin activity
- * without a live orchestrator record of its own.
- */
-function inferredOrchestratorCount({ workspace, at = Date.now() } = {}) {
-  const projection = projectLiveAgents(at);
-  if (workspace !== undefined) {
-    return projection.inferredOrchestrators.filter(
-      (inf) => (inf.workspace ?? null) === (workspace ?? null)
-    ).length;
-  }
-  return projection.inferredOrchestrators.length;
 }
 
 function canonicalLiveAgentCount(at = Date.now()) {
@@ -778,15 +737,13 @@ function matchesProjectedAgent(agent, dimension, key, extraFilter = {}) {
     return oKey === key;
   }
   if (dimension === "provider") {
-    const pKey = agent.provider ?? UNATTRIBUTED_DIMENSION;
-    return pKey === key;
+    return Boolean(agent.provider) && agent.provider === key;
   }
   if (dimension === "model") {
-    const mKey = !agent.model
-      ? UNATTRIBUTED_DIMENSION
-      : (agent.provider && !agent.model.startsWith(`${agent.provider}/`)
-        ? `${agent.provider}/${agent.model}`
-        : agent.model);
+    if (!agent.provider || !agent.model) return false;
+    const mKey = !agent.model.startsWith(`${agent.provider}/`)
+      ? `${agent.provider}/${agent.model}`
+      : agent.model;
     return mKey === key;
   }
   if (dimension === "workspace") {
@@ -801,6 +758,7 @@ function usageSnapshot(collection, dimension, projection = projectLiveAgents(), 
   const result = {};
 
   for (const [key, bucket] of Object.entries(collection ?? {})) {
+    if ((dimension === "provider" || dimension === "model") && key === UNATTRIBUTED_DIMENSION) continue;
     result[key] = {
       ...bucket,
       active: activeProj.allLiveAgents.filter((a) => matchesProjectedAgent(a, dimension, key, extraFilter)).length,
@@ -821,14 +779,14 @@ function usageSnapshot(collection, dimension, projection = projectLiveAgents(), 
     }
     if (dimension === "role") liveKeys.add(agent.role ?? UNATTRIBUTED_DIMENSION);
     else if (dimension === "origin") liveKeys.add(agent.origin ?? UNATTRIBUTED_DIMENSION);
-    else if (dimension === "provider") liveKeys.add(agent.provider ?? UNATTRIBUTED_DIMENSION);
+    else if (dimension === "provider" && agent.provider) liveKeys.add(agent.provider);
     else if (dimension === "model") {
-      const mKey = !agent.model
-        ? UNATTRIBUTED_DIMENSION
-        : (agent.provider && !agent.model.startsWith(`${agent.provider}/`)
+      if (agent.provider && agent.model) {
+        const mKey = !agent.model.startsWith(`${agent.provider}/`)
           ? `${agent.provider}/${agent.model}`
-          : agent.model);
-      liveKeys.add(mKey);
+          : agent.model;
+        liveKeys.add(mKey);
+      }
     }
     else if (dimension === "workspace") liveKeys.add(agent.workspace ?? UNATTRIBUTED_DIMENSION);
   }
@@ -857,41 +815,11 @@ function usageStatus(now = Date.now(), projection = projectLiveAgents(now)) {
   const byModel = usageSnapshot(usageTelemetry.byModel, "model", projection);
   const byOrigin = usageSnapshot(usageTelemetry.byOrigin, "origin", projection);
 
-  // In rawActivity, reconcile inferred orchestrators across all dimensions
-  const activity = {
-    ...rawActivity,
-    live: projection.canonicalTotal,
-    inferredOrchestrators: projection.inferredOrchestrators.length,
-    byState: { ...rawActivity.byState },
-    byRole: { ...rawActivity.byRole },
-    byOrigin: { ...rawActivity.byOrigin },
-    byWorkspace: { ...rawActivity.byWorkspace },
-    byProvider: { ...rawActivity.byProvider },
-    byModel: { ...rawActivity.byModel },
-  };
-
-  if (projection.inferredOrchestrators.length > 0) {
-    activity.byState.subagent_wait = (activity.byState.subagent_wait ?? 0) + projection.inferredOrchestrators.length;
-    activity.total = Object.values(activity.byState).reduce((s, c) => s + c, 0);
-
-    activity.byRole.orchestrator = { ...(activity.byRole.orchestrator ?? emptyStateCounts()) };
-    activity.byRole.orchestrator.subagent_wait = (activity.byRole.orchestrator.subagent_wait ?? 0) + projection.inferredOrchestrators.length;
-
-    activity.byOrigin.orchestrator = { ...(activity.byOrigin.orchestrator ?? emptyStateCounts()) };
-    activity.byOrigin.orchestrator.subagent_wait = (activity.byOrigin.orchestrator.subagent_wait ?? 0) + projection.inferredOrchestrators.length;
-
-    for (const inf of projection.inferredOrchestrators) {
-      const wsKey = inf.workspace ?? UNATTRIBUTED_DIMENSION;
-      activity.byWorkspace[wsKey] = { ...(activity.byWorkspace[wsKey] ?? emptyStateCounts()) };
-      activity.byWorkspace[wsKey].subagent_wait = (activity.byWorkspace[wsKey].subagent_wait ?? 0) + 1;
-    }
-
-    activity.byProvider[UNATTRIBUTED_DIMENSION] = { ...(activity.byProvider[UNATTRIBUTED_DIMENSION] ?? emptyStateCounts()) };
-    activity.byProvider[UNATTRIBUTED_DIMENSION].subagent_wait = (activity.byProvider[UNATTRIBUTED_DIMENSION].subagent_wait ?? 0) + projection.inferredOrchestrators.length;
-
-    activity.byModel[UNATTRIBUTED_DIMENSION] = { ...(activity.byModel[UNATTRIBUTED_DIMENSION] ?? emptyStateCounts()) };
-    activity.byModel[UNATTRIBUTED_DIMENSION].subagent_wait = (activity.byModel[UNATTRIBUTED_DIMENSION].subagent_wait ?? 0) + projection.inferredOrchestrators.length;
-  }
+  // `rawActivity` already reflects every explicitly-tracked record -- a
+  // parent orchestrator waiting on a subagent it proveably spawned is a real
+  // `subagent_wait` record here (see `openBridgeSubagentUsage` /
+  // `closeBridgeSubagentUsage`), not a fabricated addition layered on top.
+  const activity = rawActivity;
 
   const workspaceKeys = new Set([
     ...Object.keys(usageTelemetry.byWorkspace),
@@ -2778,6 +2706,13 @@ function recallBridgeSessionRequestId(sessionKey) {
 const MAX_TRACKED_BRIDGE_SUBAGENTS = 512;
 const bridgeSubagentUsage = new Map();
 
+// A bridge-native spawn is the router's explicit parent/child boundary. Keep
+// one synthetic activity record for the parent request that authorized the
+// report, carrying the concrete provider/model selected for that request.
+// This replaces the old workspace-wide parent inference: a child can keep its
+// actual parent live only when the router can prove which request spawned it.
+const bridgeParentActivity = new Map();
+
 // A roleless CLI child cannot share the `unattributed` role bucket: that key is
 // the roleless *orchestrator* traffic the dashboard renders as the Orchestrator
 // row, and folding children into it would credit a delegation to its parent.
@@ -2790,11 +2725,52 @@ function bridgeSubagentKey(requestId, childId) {
   return `${requestId}\u0000${childId}`;
 }
 
+function openBridgeParentActivity(requestId, context) {
+  if (!requestId || !context?.provider || !context?.model) return null;
+  let parent = bridgeParentActivity.get(requestId);
+  if (parent) return parent;
+  const subject = `bridge-parent:${requestId}`;
+  agentActivity.beginRequest(subject, {
+    requestId: subject,
+    provider: context.provider,
+    model: context.model,
+    role: "orchestrator",
+    origin: "orchestrator",
+    workspace: context.workspace ?? null,
+    tag: context.sessionKey ?? null,
+  });
+  agentActivity.applyLifecycleEvent(subject, {
+    state: "subagent_wait",
+    eventId: `${subject}:subagent_wait`,
+    provider: context.provider,
+    model: context.model,
+    role: "orchestrator",
+    origin: "orchestrator",
+    workspace: context.workspace ?? null,
+  });
+  parent = { subject, children: new Set(), context };
+  bridgeParentActivity.set(requestId, parent);
+  return parent;
+}
+
+function closeBridgeParentActivity(requestId) {
+  const parent = bridgeParentActivity.get(requestId);
+  if (!parent || parent.children.size > 0) return false;
+  agentActivity.finish(parent.subject, { requestId: parent.subject, outcome: "success" });
+  bridgeParentActivity.delete(requestId);
+  return true;
+}
+
 function openBridgeSubagentUsage({ requestId, context, role, childId, model }) {
   const key = bridgeSubagentKey(requestId, childId);
   // Both name the bucket, so neither can be missing; the spawn itself is
   // already counted whether or not a turn can be measured for it.
-  if (!context.provider || !context.model || bridgeSubagentUsage.has(key)) return;
+  if (bridgeSubagentUsage.has(key)) return;
+  if (!context.provider || !context.model) {
+    if (!context.provider) attributionDiagnostics.byReason.missing_provider += 1;
+    if (!context.model) attributionDiagnostics.byReason.missing_model += 1;
+    return;
+  }
   // A bridge posts its report without awaiting it, so one can arrive after the
   // parent turn already ended. Such a child is still real work: open it and
   // settle it at once against the parent turn it ran inside.
@@ -2811,6 +2787,8 @@ function openBridgeSubagentUsage({ requestId, context, role, childId, model }) {
     startedAt: Date.now(),
   };
   bridgeSubagentUsage.set(key, entry);
+  const parent = openBridgeParentActivity(requestId, context);
+  if (parent) parent.children.add(key);
   agentActivity.beginRequest(`bridge:${key}`, {
     requestId: key,
     provider: entry.provider,
@@ -2890,6 +2868,11 @@ function closeBridgeSubagentUsage(key, { outcome = "success", failureClass = nul
     toolCalls,
     timestamp: new Date().toISOString(),
   });
+  const parent = bridgeParentActivity.get(entry.requestId);
+  if (parent) {
+    parent.children.delete(key);
+    closeBridgeParentActivity(entry.requestId);
+  }
   return true;
 }
 
@@ -2920,10 +2903,12 @@ function bumpCount(collection, key, amount) {
 
 function recordSubagentSpawn({ mechanism, provider = null, role = null, status = "started", tool = null, requestId = null, workspace = null, count = 1 }) {
   if (!SUBAGENT_MECHANISMS.includes(mechanism) || !Number.isInteger(count) || count < 1) return null;
+  const resolvedProvider = typeof provider === "string" && provider.trim() ? safeMetricLabel(provider) : null;
+  if (!resolvedProvider) attributionDiagnostics.byReason.missing_provider += count;
   const entry = {
     timestamp: new Date().toISOString(),
     mechanism,
-    provider: provider ?? "unattributed",
+    provider: resolvedProvider,
     role: role ?? "unattributed",
     status,
     tool,
@@ -2934,7 +2919,7 @@ function recordSubagentSpawn({ mechanism, provider = null, role = null, status =
   };
   subagentTelemetry.total += count;
   bumpCount(subagentTelemetry.byMechanism, mechanism, count);
-  bumpCount(subagentTelemetry.byProvider, entry.provider, count);
+  if (entry.provider) bumpCount(subagentTelemetry.byProvider, entry.provider, count);
   bumpCount(subagentTelemetry.byRole, entry.role, count);
   bumpCount(subagentTelemetry.byStatus, entry.status, count);
   subagentTelemetry.recent.push(entry);
@@ -2944,7 +2929,7 @@ function recordSubagentSpawn({ mechanism, provider = null, role = null, status =
     requestId,
     role,
     requestedModel: null,
-    provider: entry.provider === "unattributed" ? null : entry.provider,
+    provider: entry.provider,
     model: null,
     workspace,
     outcome: status,
@@ -2963,7 +2948,13 @@ function resetSubagentTelemetry() {
   orchestratorProviderBySession.clear();
   bridgeRequestContext.clear();
   bridgeSessionContext.clear();
-  bridgeSubagentUsage.clear();
+  for (const key of [...bridgeSubagentUsage.keys()]) {
+    closeBridgeSubagentUsage(key, { outcome: "failure", failureClass: "telemetry_reset" });
+  }
+  for (const parent of bridgeParentActivity.values()) {
+    agentActivity.finish(parent.subject, { requestId: parent.subject, outcome: "failure" });
+  }
+  bridgeParentActivity.clear();
 }
 
 function subagentStatus() {
@@ -3578,49 +3569,6 @@ function getRouterStatus(now = Date.now()) {
     }];
   }));
 
-  for (const [providerName, activeCount] of Object.entries(projection.byProvider)) {
-    if (activeCount > 0 && !providers[providerName]) {
-      const state = providerState(providerName);
-      providers[providerName] = {
-        // This is a live-agent attribution bucket, not a routable provider.
-        // Keep it visible for reconciliation but never present it as ready or
-        // expose provider administration controls for it.
-        enabled: false,
-        synthetic: true,
-        status: "unattributed",
-        routingPriority: "—",
-        limits: {
-          cooldownKind: null,
-          cooldownFailureClass: null,
-          cooldownResetsAt: null,
-          cooldownUntil: null,
-          cooldownRemainingMs: 0,
-          lastResortEligible: true,
-        },
-        active: activeCount,
-        inFlightRequests: getActiveRequests(providerName),
-        cooldownUntil: null,
-        cooldownRemainingMs: 0,
-        cooldownKind: null,
-        cooldownFailureClass: null,
-        cooldownResetsAt: null,
-        lastResortEligible: true,
-        failureStreak: 0,
-        probeFailureStreak: 0,
-        configuredModels: {},
-        capabilities: {},
-        attempts: state.attempts,
-        successes: state.successes,
-        failures: state.failures,
-        skipped: state.skipped,
-        lastAttemptAt: state.lastAttemptAt,
-        lastSuccessAt: state.lastSuccessAt,
-        lastFailureAt: state.lastFailureAt,
-        lastFailure: state.lastFailure,
-      };
-    }
-  }
-
   return {
     schema: "autodev-router-status-v2",
     router: "codex-model-router",
@@ -3643,6 +3591,10 @@ function getRouterStatus(now = Date.now()) {
     disabledProviders: [...disabledProviders].sort(),
     usage: usageStatus(now, projection),
     attributionDiagnostics: attributionDiagnosticsStatus(),
+    liveAgentAttribution: {
+      missingProvider: projection.missingProvider,
+      missingModel: projection.missingModel,
+    },
     codexTelemetry: codexTelemetryStatus(),
     concurrency: concurrencyStatus(),
     subagents: subagentStatus(),
@@ -6494,7 +6446,6 @@ export {
   AGENT_ACTIVITY_TTL_MS,
   usageStatus,
   projectLiveAgents,
-  inferredOrchestratorCount,
 };
 
 if (IS_MAIN) {

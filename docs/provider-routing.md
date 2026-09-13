@@ -617,7 +617,11 @@ CLI view is:
 
 ### Live agent activity vs. in-flight requests transport diagnostics
 
-The `/status` provider projection includes a transient synthetic `unattributed` row when active-agent attribution cannot prove a provider. It participates in provider active totals but is not routable and has no provider administration controls.
+The `/status` provider projection is limited to configured router routes. A
+missing provider identity is an attribution defect surfaced through
+`liveAgentAttribution`, not a synthetic `unattributed` provider row. Provider
+and model dimensions therefore contain only concrete router-selected values;
+`unattributed` remains reserved for non-provider residual dimensions.
 
 The router cleanly separates user-facing agent workflow activity from transport-level network requests:
 
@@ -636,18 +640,17 @@ The router cleanly separates user-facing agent workflow activity from transport-
   The orchestrator/subagent breakdown shown alongside the KPI is read from
   the same `status.usage.byRole` partition the router sums into
   `usage.totals.active`, so it stays consistent with (sums to) that
-  canonical total. One subagent active in one workspace keeps its inferred
-  parent visible as `2` agents (`1` orchestrator and `1` subagent), while the
-  workspace context remains `1` workspace.
+  canonical total. Parent activity is included only when the router has an
+  explicit provider/session relationship for it; child activity alone never
+  fabricates a parent or provider row.
   Role-less activity (the `unattributed` bucket of `usage.byRole`) remains
   an explicit residual rather than being guessed into a role. The dashboard
   renders it as a separate `Unattributed` card when nonzero, and the
   orchestrator, subagent, and residual counts sum exactly to `totalActive`.
-- **Parent orchestrators remain live while children work:** If a live
-  subagent is attributed to a workspace but its parent orchestrator record has
-  already settled its most recent model request, the router infers one active
-  orchestrator for that workspace. The inferred parent remains only while
-  child activity is live or fresh and does not add another count per slot.
+- **Parent orchestrators remain live while children work:** Authenticated
+  bridge spawn events may keep the explicitly identified parent request live,
+  carrying the concrete provider/model selected for that request. A workspace
+  containing children is not sufficient evidence to create a parent.
 - **Workspace attribution is non-additive context, not a KPI component:**
   The KPI's `workspaces with active agents` count is derived from the live
   `status.usage.activity.byWorkspace` snapshot (live states only, excluding
