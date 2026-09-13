@@ -245,8 +245,7 @@
       padding: var(--pad-cell);
     }
 
-    .compact-table tfoot :is(th, td),
-    #workspace-usage-table tfoot :is(th, td) {
+    .compact-table tfoot :is(th, td) {
       background: var(--panel-alt);
       border-top: var(--line);
       border-bottom: 0;
@@ -702,8 +701,6 @@
               <td colspan="6" class="dim" style="text-align:center">Loading workspace usage...</td>
             </tr>
           </tbody>
-          <tfoot id="workspace-usage-tfoot">
-          </tfoot>
         </table>
       </div>
     </dashboard-panel>
@@ -711,7 +708,11 @@
     <!-- 5. Skill Telemetry -->
     <dashboard-panel id="panel-skills" open="" summary="" title="Skill telemetry">
       <div class="section-note">Click a skill to expand its usage context. Top-level rows show outcome and
-        overall share; details show where and how that skill was used.</div>
+        overall share; details show where and how that skill was used. A confirmed use includes a canonical
+        <code>SKILL.md</code> read via a shell command (<code>cat</code>, <code>head</code>, <code>tail</code>,
+        <code>sed -n</code>, <code>awk</code>, or <code>grep</code>) just as it does a dedicated file-read tool
+        call -- both report the same <code>skill_used</code>/<code>skill_read</code> event and are counted here
+        together, not as a separate metric.</div>
       <div class="table-wrap">
         <table class="compact-table skills-usage-table">
           <thead>
@@ -2729,40 +2730,17 @@
       syncPanel(document.getElementById("workspace-usage-section"), "Usage by workspace", `${workspacesList.length} workspaces`);
 
       const wsTbody = document.getElementById("workspace-usage");
-      const wsTfoot = document.getElementById("workspace-usage-tfoot");
-      if (wsTbody && wsTfoot) {
+      if (wsTbody) {
         if (!workspacesList.length) {
           wsTbody.innerHTML = `<tr><td colspan="6" class="dim" style="text-align:center">No workspace usage observed yet.</td></tr>`;
-          wsTfoot.innerHTML = "";
         } else {
           const sortedWorkspaces = [ ...workspacesList ].sort(([ , a ], [ , b ]) => (Number(b.attempts ?? 0) - Number(a.attempts ?? 0)));
 
-          let wsTotalActive = 0;
-          let wsTotalAttempts = 0;
-          let wsTotalSuccess = 0;
-          let wsTotalFail = 0;
-          let wsTotalDuration = 0;
-          let wsTotalTools = 0;
-          let wsTotalSkillUses = 0;
-          let wsTotalSkillExposed = 0;
-          let hasWsSkillUses = false;
-          let hasWsSkillExposed = false;
-          let hasUnavailableSkillUses = false;
-          let hasUnavailableSkillExposed = false;
-          let hasWsTools = false;
-
           wsTbody.innerHTML = sortedWorkspaces.map(([ wsKey, w ]) => {
             const active = Number(w.active ?? 0);
-            const attempts = Number(w.attempts ?? 0);
             const successes = Number(w.successes ?? 0);
             const failures = Number(w.failures ?? 0);
             const avgDurationMs = Number(w.averageDurationMs ?? 0);
-
-            wsTotalActive += active;
-            wsTotalAttempts += attempts;
-            wsTotalSuccess += successes;
-            wsTotalFail += failures;
-            wsTotalDuration += (successes + failures) * avgDurationMs;
 
             const isExpanded = expandedRows.has(wsKey);
             const subtitle = w.cwd ? `CWD · ${w.cwd}` : "";
@@ -2835,8 +2813,6 @@
             let wsToolCell = `<td class="attempts"><span class="dim">—</span></td>`;
             if (wsToolRows !== null) {
               const toolCalls = wsToolRows.reduce((sum, r) => sum + Number(r.count ?? 0), 0);
-              hasWsTools = true;
-              wsTotalTools += toolCalls;
               wsToolCell = `<td class="attempts"><outcome-bar fail="0" no-bar="" success="${toolCalls}"></outcome-bar></td>`;
             }
             // Skills: `bySkill` is the confirmed-use join (OTLP `skill_used` /
@@ -2848,16 +2824,6 @@
             const wsSkillRows = normalizeWorkspaceNamedUsage(w.bySkill, [ "skill", "name" ]);
             const wsExposedSkillRows = normalizeWorkspaceNamedUsage(w.bridgeSkills, [ "skill", "name" ]);
             const wsSkillSummary = summarizeWorkspaceSkills(wsSkillRows, wsExposedSkillRows);
-            if (wsSkillSummary.uses === null) hasUnavailableSkillUses = true;
-            else {
-              hasWsSkillUses = true;
-              wsTotalSkillUses += wsSkillSummary.uses;
-            }
-            if (wsSkillSummary.exposed === null) hasUnavailableSkillExposed = true;
-            else {
-              hasWsSkillExposed = true;
-              wsTotalSkillExposed += wsSkillSummary.exposed;
-            }
             const wsSkillUsesText = wsSkillSummary.uses === null ? "—" : wsSkillSummary.uses.toLocaleString();
             const wsSkillExposedText = wsSkillSummary.exposed === null ? "—" : wsSkillSummary.exposed.toLocaleString();
             const wsSkillsHtml = renderWorkspaceSkills(wsSkillRows, wsExposedSkillRows);
@@ -2904,24 +2870,6 @@
               </tr>
             `;
           }).join("");
-
-          const wsTurns = wsTotalSuccess + wsTotalFail;
-          const wsAvgTurnSec = wsTurns > 0 ? (wsTotalDuration / wsTurns / 1000).toFixed(1) : "0.0";
-          const wsTotalToolsCell = hasWsTools
-            ? `<td class="attempts"><outcome-bar fail="0" no-bar="" success="${wsTotalTools}"></outcome-bar></td>`
-            : `<td class="attempts"><span class="dim">—</span></td>`;
-          const wsTotalSkillUsesText = hasUnavailableSkillUses || !hasWsSkillUses ? "—" : wsTotalSkillUses.toLocaleString();
-          const wsTotalSkillExposedText = hasUnavailableSkillExposed || !hasWsSkillExposed ? "—" : wsTotalSkillExposed.toLocaleString();
-          wsTfoot.innerHTML = shouldRenderTotals(sortedWorkspaces.length) ? `
-            <tr>
-              <th>Totals</th>
-              <td><status-badge ${wsTotalActive > 0 ? 'active=""' : ''}>${wsTotalActive}</status-badge></td>
-              <td class="attempts"><outcome-bar fail="${wsTotalFail}" no-bar="" rate="" success="${wsTotalSuccess}"></outcome-bar></td>
-              <td>${wsAvgTurnSec}s</td>
-              ${wsTotalToolsCell}
-              <td>${wsTotalSkillUsesText} / ${wsTotalSkillExposedText}</td>
-            </tr>
-          ` : "";
         }
       }
 

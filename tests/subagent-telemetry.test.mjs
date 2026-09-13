@@ -1134,6 +1134,7 @@ test("resolveSkillReadReporter posts skill_used with the SKILL_READ_SOURCE tag a
 test("the skill-read telemetry hook dedupes per turn and emits one skill_used per skill", async () => {
   const tempHome = await import("node:fs/promises").then(({ mkdtemp, rm }) => mkdtemp(`${import.meta.dirname}/skill-read-home-`).then(async (dir) => ({ dir, rm })));
   process.env.HOME = tempHome.dir;
+  await import("node:fs/promises").then(({ mkdir }) => mkdir(join(tempHome.dir, ".agents", "skills"), { recursive: true }));
   // Force the hook to read fresh roots via a stable repo root.
   process.env.AUTODEV_REPO_ROOT = fileURLToPath(new URL("..", import.meta.url));
   try {
@@ -1154,6 +1155,7 @@ test("the skill-read telemetry hook dedupes per turn and emits one skill_used pe
       const scriptPath = fileURLToPath(new URL("../scripts/codex/skill-read-telemetry.mjs", import.meta.url));
       const skillPath = `${process.env.AUTODEV_REPO_ROOT}/scripts/codex/skills/orchestration/SKILL.md`;
       const otherSkillPath = `${process.env.AUTODEV_REPO_ROOT}/scripts/codex/skills/ccc/SKILL.md`;
+      const userSkillPath = `${tempHome.dir}/.agents/skills/orchestration/SKILL.md`;
       const sessionId = `session-${Date.now()}`;
       const turnId = "turn-1";
       const input = JSON.stringify({
@@ -1178,12 +1180,17 @@ test("the skill-read telemetry hook dedupes per turn and emits one skill_used pe
       await run({ session_id: sessionId, turn_id: "turn-2", tool_name: "read_file", arguments: { file_path: skillPath } });
       // Arbitrary mentions, writes, and non-canonical paths must not post.
       await run({ session_id: sessionId, turn_id: "turn-3", tool_name: "read_file", arguments: { file_path: `${process.env.AUTODEV_REPO_ROOT}/AGENTS.md` } });
-      assert.equal(received.length, 3, `expected 3 posts (orchestration turn-1, ccc turn-1, orchestration turn-2); got ${received.length}`);
+      // Raw shell arguments and nested command objects are both accepted for
+      // user-level skills, matching the payload shapes emitted by providers.
+      await run({ session_id: sessionId, turn_id: "turn-4", tool_name: "exec_command", arguments: `cat ${userSkillPath}` });
+      await run({ session_id: sessionId, turn_id: "turn-4", tool_name: "bash", input: { command: { cmd: `cat ${userSkillPath}` } } });
+      assert.equal(received.length, 4, `expected 4 posts including the user-level shell read; got ${received.length}`);
       assert.deepEqual(received[ 0 ].events[ 0 ], { type: "skill_used", skill: "orchestration", source: "skill_read", pluginId: null, eventId: received[ 0 ].events[ 0 ].eventId });
       assert.equal(received[ 0 ].events[ 0 ].eventId.startsWith("read:"), true);
       assert.equal(received[ 0 ].requestId, sessionId);
       assert.equal(received[ 1 ].events[ 0 ].skill, "ccc");
       assert.equal(received[ 2 ].events[ 0 ].skill, "orchestration");
+      assert.equal(received[ 3 ].events[ 0 ].skill, "orchestration");
     } finally {
       await new Promise((resolve) => server.close(() => resolve()));
     }
@@ -1521,6 +1528,8 @@ test("the Antigravity bridge detects a successful canonical SKILL.md read", asyn
   assert.equal(agyMatchSkillReadPath(CANONICAL_SKILL_PATH), "ccc");
   // A shell read of the same file is recognised too.
   assert.equal(agySkillReadPath("exec_command", { command: `cat ${CANONICAL_SKILL_PATH}` }), CANONICAL_SKILL_PATH);
+  assert.equal(agySkillReadPath("exec_command", `cat ${CANONICAL_SKILL_PATH}`), CANONICAL_SKILL_PATH);
+  assert.equal(agySkillReadPath("exec_command", { command: { cmd: `cat ${CANONICAL_SKILL_PATH}` } }), CANONICAL_SKILL_PATH);
   // A write-shaped tool and an arbitrary file are not reads of a skill.
   assert.equal(agySkillReadPath("write_file", { file_path: CANONICAL_SKILL_PATH }), null);
   assert.equal(agyMatchSkillReadPath(OTHER_FILE_PATH), null);
@@ -1568,6 +1577,8 @@ test("the Copilot bridge detects a successful canonical SKILL.md read", () => {
   assert.equal(copilotSkillReadPath("read_file", { targetFile: CANONICAL_SKILL_PATH }), CANONICAL_SKILL_PATH);
   assert.equal(copilotMatchSkillReadPath(CANONICAL_SKILL_PATH), "ccc");
   assert.equal(copilotSkillReadPath("bash", { command: `cat ${CANONICAL_SKILL_PATH}` }), CANONICAL_SKILL_PATH);
+  assert.equal(copilotSkillReadPath("bash", `cat ${CANONICAL_SKILL_PATH}`), CANONICAL_SKILL_PATH);
+  assert.equal(copilotSkillReadPath("bash", { command: { cmd: `cat ${CANONICAL_SKILL_PATH}` } }), CANONICAL_SKILL_PATH);
   assert.equal(copilotSkillReadPath("write_file", { file_path: CANONICAL_SKILL_PATH }), null);
   assert.equal(copilotMatchSkillReadPath(OTHER_FILE_PATH), null);
 
@@ -1637,6 +1648,8 @@ assert mod.extract_skill_read_path("Read", {"AbsolutePath": skill_path}) == skil
 assert mod.extract_skill_read_path("Read", {"absolutePath": skill_path}) == skill_path
 assert mod.extract_skill_read_path("Read", {"targetFile": skill_path}) == skill_path
 assert mod.extract_skill_read_path("Bash", {"command": f"cat {skill_path}"}) == skill_path
+assert mod.extract_skill_read_path("Bash", f"cat {skill_path}") == skill_path
+assert mod.extract_skill_read_path("Bash", {"command": {"cmd": f"cat {skill_path}"}}) == skill_path
 assert mod.extract_skill_read_path("Write", {"file_path": skill_path}) is None
 assert mod.match_skill_read_path(mod._normalise_skill_read_path(skill_path)) == "ccc"
 assert mod.match_skill_read_path(mod._normalise_skill_read_path(other_path)) is None

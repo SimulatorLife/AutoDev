@@ -93,6 +93,13 @@ function pickObject(payload, keys) {
   return null;
 }
 
+function pickValue(payload, keys) {
+  for (const key of keys) {
+    if (payload?.[key] !== undefined && payload?.[key] !== null) return payload[key];
+  }
+  return null;
+}
+
 function normaliseToolName(name) {
   return typeof name === "string" ? name.trim().toLowerCase().replace(/[\s-]+/g, "_") : "";
 }
@@ -104,8 +111,9 @@ function normaliseToolName(name) {
 function extractToolCall(payload) {
   const toolName = pickString(payload, TOOL_NAME_KEYS);
   if (!toolName) return null;
-  const argsObject = pickObject(payload, ARGUMENT_KEYS) ?? {};
-  return { toolName, args: argsObject };
+  const rawArguments = pickValue(payload, ARGUMENT_KEYS);
+  const args = pickObject(payload, ARGUMENT_KEYS) ?? rawArguments ?? {};
+  return { toolName, args };
 }
 
 // Extract a single path-like argument from a tool call. The shape varies
@@ -115,6 +123,8 @@ function extractToolCall(payload) {
 // from the helper means "this tool call is not a SKILL.md read"; the hook
 // drops it silently rather than logging anything.
 function extractReadPath(argsObject) {
+  if (typeof argsObject === "string") return matchExecCommandPaths(argsObject)[0] ?? null;
+  if (!argsObject || typeof argsObject !== "object") return null;
   const directKeys = [ "file_path", "filePath", "path", "filepath" ];
   for (const key of directKeys) {
     const value = argsObject[key];
@@ -128,27 +138,100 @@ function extractReadPath(argsObject) {
       if (typeof first === "string") return first.trim();
     }
   }
-  const cmd = argsObject.cmd ?? argsObject.command;
-  if (typeof cmd === "string") {
-    const match = matchExecCommandPath(cmd);
-    if (match) return match;
+  const candidates = matchExecCommandPaths(argsObject.cmd ?? argsObject.command);
+  if (candidates.length === 0) return null;
+  // Several read tools take more than one file argument (`grep pat a b`,
+  // `rg pat a b`); the canonical SKILL.md is not guaranteed to be the first
+  // one on the line, so every candidate is checked against the approved
+  // roots and the first that actually resolves to one wins. Falling back to
+  // the first candidate when none match keeps prior behaviour for callers
+  // that only care about "a path was named", not whether it was a skill.
+  for (const candidate of candidates) {
+    if (matchSkillPath(normalisePath(candidate))) return candidate;
   }
+  return candidates[0];
+}
+
+// Shell tool names whose command line is treated as a read when it names a
+// file argument. `sed` only counts in its `-n` (suppress-output, print via
+// explicit `p`) form, matching the print-a-range idiom Codex itself favours;
+// a plain `sed 's/a/b/' file` mutates output rather than dumping the file, so
+// it is intentionally excluded.
+const SKILL_READ_COMMANDS = new Set([ "cat", "head", "tail", "less", "more", "awk", "grep" ]);
+const SHELL_CONTROL_TOKENS = new Set([ "|", "&&", "||", ";", "&" ]);
+
+// Splits a shell command into words, honouring single- and double-quoted
+// spans so a quoted path containing a space (`cat "/a b/SKILL.md"`) is not
+// broken across two tokens. This is not a full shell grammar -- backslash
+// escapes and `$()`/backtick substitution are not unwound -- but it is
+// enough to recover the plain file arguments Codex's own tool calls put on
+// these command lines.
+function tokenizeShellWords(cmd) {
+  const tokens = [];
+  const re = /'[^']*'|"(?:[^"\\]|\\.)*"|\S+/g;
+  let match;
+  while ((match = re.exec(cmd)) !== null) {
+    let token = match[0];
+    if ((token.startsWith("'") && token.endsWith("'")) || (token.startsWith('"') && token.endsWith('"'))) {
+      token = token.slice(1, -1);
+    }
+    tokens.push(token);
+  }
+  return tokens;
+}
+
+// A word counts as a path argument, not a flag or a search pattern, only when
+// it is absolute or home-relative. Relative shell paths remain excluded so a
+// command cannot be attributed to the wrong working directory.
+function isPathLikeToken(token) {
+  if (typeof token !== "string" || !token || token.startsWith("-")) return null;
+  if (token.startsWith("/") || token.startsWith("~")) return token;
   return null;
 }
 
-// Look for a cat/head/sed/less/awk/grep/< redirect of an absolute path inside
-// a free-form command. We deliberately do not parse the whole shell grammar --
-// a path the user didn't quote as an absolute filename is not a SKILL.md read
-// signal. The matches are bounded, so a long command cannot blow up the hook
-// runtime.
-function matchExecCommandPath(cmd) {
-  if (cmd.length > 4096) return null;
-  const re = /(?:^|\s)(?:cat|head|tail|less|more|sed\s+-n|awk|grep)(?:\s+\S+){0,8}\s+((?:\/|\~)[^\s'"]+)/g;
-  let match;
-  while ((match = re.exec(cmd)) !== null) {
-    return match[1];
+// Resolves the raw value of a `cmd`/`command` argument to a single shell
+// string. Providers vary in how they shape this: a plain string, an argv
+// array (`["bash", "-lc", "cat file"]` or `["cat", "file"]`), or a nested
+// object carrying the real command one level down (`{ command: { cmd: "..." } }`).
+// Only one level of object nesting is unwrapped -- deeper nesting is not a
+// shape any tool call here actually uses, and unwrapping arbitrarily deep
+// objects would risk treating unrelated nested strings as commands.
+function flattenCommandValue(raw) {
+  let value = raw;
+  if (value && typeof value === "object" && !Array.isArray(value)) {
+    value = value.cmd ?? value.command ?? value.script ?? value.value ?? null;
   }
-  return null;
+  if (Array.isArray(value)) {
+    return value.filter((entry) => typeof entry === "string").join(" ");
+  }
+  return typeof value === "string" ? value : null;
+}
+
+// Every path-like argument following a recognised read command on `cmd`'s
+// command line, in the order they appear. Bounded on both axes: overlong
+// commands are rejected outright, and only the next 8 words after a read
+// command are scanned for a path so a command with a long option list cannot
+// make this walk unbounded. Returning every candidate -- not just the first
+// -- lets the caller pick out whichever one actually names a SKILL.md when a
+// command reads more than one file.
+function matchExecCommandPaths(raw) {
+  const cmd = flattenCommandValue(raw);
+  if (!cmd || cmd.length > 4096) return [];
+  const tokens = tokenizeShellWords(cmd);
+  const candidates = [];
+  for (let i = 0; i < tokens.length; i++) {
+    const word = tokens[i];
+    const isSedPrint = word === "sed" && tokens[i + 1] === "-n";
+    if (!SKILL_READ_COMMANDS.has(word) && !isSedPrint) continue;
+    const start = isSedPrint ? i + 2 : i + 1;
+    for (let j = start; j < tokens.length && j < start + 8; j++) {
+      const next = tokens[j];
+      if (SHELL_CONTROL_TOKENS.has(next)) break;
+      const path = isPathLikeToken(next);
+      if (path) candidates.push(path);
+    }
+  }
+  return candidates;
 }
 
 function normalisePath(raw) {

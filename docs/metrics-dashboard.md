@@ -42,7 +42,7 @@ logs, metadata, and errors use text-only DOM updates. MCP lifecycle observations
 are shown in the relevant usage cards and operational summary; there is no
 standalone MCP panel.
 
-Per-workspace usage always has reliable totals, role, and model dimensions.
+Per-workspace usage always has reliable usage, role, and model dimensions.
 Named tool, named skill, and MCP server attribution at that same workspace granularity --
 `status.usage.byWorkspace[*].byTool`, `...bySkill`, `...byMcp`, `...mcpUses`, and `...mcpExposed` -- are optional fields:
 the dashboard renders them when the status payload includes them and falls
@@ -89,8 +89,8 @@ join is unavailable (`null`) or reports zero rows, the dashboard falls back to
 observations (`{ tool, server, count, byStatus }`) -- as the sole source for
 that render; the two are never summed together, so a tool call a bridge
 reports and an OTLP `codex.tool.call` datapoint later confirms is not counted
-twice. The **Tool calls** column and its totals footer are derived from
-whichever source the Tools section actually rendered.
+twice. The **Tool calls** column is derived from whichever source the Tools
+section actually rendered.
 
 When present, each `byTool`/`bySkill` entry is attributed under the exact
 same project/workspace bucket as its parent `usage.byWorkspace` entry. The
@@ -108,7 +108,7 @@ connectivity, ordering, or that the field will appear in a given rollout
 stage -- the fallback path is exercised whenever the field is missing, which
 is also what today's status responses produce.
 
-The workspace table's **Tool calls** column and totals use the same source of
+The workspace table's **Tool calls** column uses the same source of
 truth as each workspace's expanded "Tools" section: they sum the rendered named
 tool rows, preferring `w.byTool` and falling back to `w.bridgeTools` only when
 `w.byTool` is null or empty (via `resolveWorkspaceToolRows`, both normalized
@@ -120,10 +120,10 @@ response-output tool-call counts (`w.toolCalls`).
 The workspace table's **Skill uses / exposed** header reflects confirmed skill
 uses alongside skill exposure, matching the combined **"Skills"** section in
 expanded workspace details where confirmed uses and exposed counts are rendered
-together as `uses / exposed` per skill name. Each workspace cell and the totals
-footer sum the normalized `bySkill` and `bridgeSkills` rows that the expanded
-section renders; they do not use the separate `skillContextsInjected` counter
-as an exposure total.
+together as `uses / exposed` per skill name. Each workspace cell sums the
+normalized `bySkill` and `bridgeSkills` rows that the expanded section renders;
+it does not use the separate `skillContextsInjected` counter as an exposure
+total.
 
 ## Reported metrics
 
@@ -327,14 +327,11 @@ The router and dashboard cleanly separate **live agent activity** from **in-flig
   bridge spawn events may keep an explicitly identified parent request live
   with its concrete provider/model. Child activity without that relationship
   does not create an inferred parent.
-- **Usage-by-workspace rows and footer reconcile from the same canonical
-  field, with no artificial floor:** Each workspace row's `Active` badge and
-  the `wsTotalActive` running total accumulated for the table footer both
-  read `usage.byWorkspace[*].active` directly (`Number(w.active ?? 0)`),
-  including the `unattributed` workspace bucket. There is no `Math.max`
-  floor on either the per-row value or the footer sum, so the footer badge
-  is exactly the sum of every rendered row's badge -- it never diverges from
-  what an operator can already add up by eye.
+- **Usage-by-workspace rows use the canonical active field with no artificial
+  floor:** Each workspace row's `Active` badge reads
+  `usage.byWorkspace[*].active` directly (`Number(w.active ?? 0)`), including
+  the `unattributed` workspace bucket. There is no `Math.max` floor on the
+  per-row value.
 - **Concurrency slot counts (`status.concurrency.activeSubagentThreads`,
   `activeSessions`) are scheduling context, not agent counts:** These
   fields describe how many subagent execution slots or session slots are
@@ -497,7 +494,11 @@ behind the router. `skillContextsInjected` measures context loading, while
 `PreToolUse` hook (`scripts/codex/skill-read-telemetry.mjs`) recognizes only
 canonical `SKILL.md` reads under the approved skill roots, deduplicates each
 skill once per turn, and sends a privacy-safe `skill_used` event correlated to
-the parent session. It never records skill contents, prompts, command text, or
+the parent session. Shell commands such as `cat /.../SKILL.md` supplied to a
+Bash/`exec_command` tool are matched through the same approved-root check and
+folded into the identical `source: skill_read` event and `skillUses`/`bySkill`/
+`skills.used` counters; there is no separate shell-read metric. It never records
+skill contents, prompts, command text, or
 absolute paths. The hook fails open and the router fails closed when the
 session cannot be attributed to a workspace. Exposure, prompt mentions, and
 arbitrary files do not count as uses. Exposure is not discarded, though: a

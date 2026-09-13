@@ -84,7 +84,7 @@ test('router dashboard exposes the component hierarchy and explicit workspace at
   // Model view embeds MCP counts and server details
   assert.match(dashboard, /getModelMcpDetails/);
   assert.match(dashboard, /model-mcp-details/);
-  // The workspace table's Tool calls column and totals use the same source of
+  // The workspace table's Tool calls column uses the same source of
   // truth as each workspace's expanded Tools section (sum of rendered named
   // tool rows from w.byTool via normalizeWorkspaceNamedUsage), without contrasting
   // response-output counts or leaving stale notes asserting the old distinction.
@@ -272,7 +272,7 @@ test('metrics workflow publishes an issue dashboard and artifact', async () => {
   assert.match(source, /metrics-snapshot\.json/);
 });
 
-test('router dashboard workspace table derives Tool calls and totals from byTool normalization and handles unavailable states', async () => {
+test('router dashboard workspace table derives Tool calls from byTool normalization and handles unavailable states', async () => {
   const rawDashboard = await readFile(path.join(root, 'scripts', 'codex-model-router-dashboard.html'), 'utf8');
 
   // Verify that the table header and notes have no stale response-output references
@@ -416,6 +416,20 @@ test('router dashboard combines skill usage and exposure into one Skills section
   assert.match(routingDoc, /Skill uses \/ exposed/);
 });
 
+test('router dashboard documents shell cat-style SKILL.md reads as ordinary skill uses', async () => {
+  const dashboard = await readFile(path.join(root, 'scripts', 'codex-model-router-dashboard.html'), 'utf8');
+  assert.match(dashboard, /shell command[\s\S]*?<code>cat<\/code>[\s\S]*?skill_used<\/code>\/\s*<code>skill_read<\/code>/);
+  assert.doesNotMatch(dashboard, /shellReadUses|shell_read_total|panel-shell-read/);
+
+  const metricsDoc = await readFile(path.join(root, 'docs', 'metrics-dashboard.md'), 'utf8');
+  assert.match(metricsDoc, /Shell commands such as `cat \/\.\.\.\/SKILL\.md`/);
+  assert.match(metricsDoc, /there is no separate shell-read metric/);
+
+  const routingDoc = await readFile(path.join(root, 'docs', 'provider-routing.md'), 'utf8');
+  assert.match(routingDoc, /Shell commands such as `cat \/\.\.\.\/SKILL\.md`/);
+  assert.match(routingDoc, /identical `source: skill_read` event/);
+});
+
 test('router dashboard falls back to bridgeTools when OTLP named-tool rows are unavailable or empty, without double-counting', async () => {
   const rawDashboard = await readFile(path.join(root, 'scripts', 'codex-model-router-dashboard.html'), 'utf8');
 
@@ -458,7 +472,7 @@ test('router dashboard falls back to bridgeTools when OTLP named-tool rows are u
   assert.equal(bothAbsent.usingBridgeToolFallback, false);
 });
 
-test('dashboard hides totals rows for sections with 0 or 1 populated row and shows them for 2+ via the shared shouldRenderTotals helper', async () => {
+test('dashboard hides totals rows for sections with 0 or 1 populated row and shows the five supported footers for 2+ via the shared shouldRenderTotals helper', async () => {
   const rawDashboard = await readFile(path.join(root, 'scripts', 'codex-model-router-dashboard.html'), 'utf8');
 
   // 1. The helper exists in the dashboard script with a stable signature so
@@ -485,16 +499,18 @@ test('dashboard hides totals rows for sections with 0 or 1 populated row and sho
   // build the tbody.
   assert.match(rawDashboard, /spawnTfoot\.innerHTML = shouldRenderTotals\(spawnList\.length\)/);
   assert.match(rawDashboard, /failuresTfoot\.innerHTML = shouldRenderTotals\(byReason\.length\)/);
-  assert.match(rawDashboard, /wsTfoot\.innerHTML = shouldRenderTotals\(sortedWorkspaces\.length\)/);
   assert.match(rawDashboard, /skillsTfoot\.innerHTML = shouldRenderTotals\(sortedSkills\.length\)/);
   assert.match(rawDashboard, /hooksTfoot\.innerHTML = shouldRenderTotals\(rows\.length\)/);
   assert.match(rawDashboard, /metricsTfoot\.innerHTML = shouldRenderTotals\(metricsList\.length\)/);
 
-  // 3. The six Totals header cells remain so the totals template still renders
+  // 3. The five Totals header cells remain so the totals template still renders
   // when the populated-row count crosses the threshold. Removing the headings
   // would silently drop the totals without any test catching it.
   const totalsHeaderCount = (rawDashboard.match(/<th>Totals<\/th>/g) ?? []).length;
-  assert.equal(totalsHeaderCount, 6, 'all six homogeneous roll-up sections should still define a Totals header');
+  assert.equal(totalsHeaderCount, 5, 'the five homogeneous roll-up sections should still define a Totals header');
+  const workspaceTable = rawDashboard.match(/<table id="workspace-usage-table">[\s\S]*?<\/table>/)?.[0];
+  assert.ok(workspaceTable, 'workspace usage table should remain present');
+  assert.doesNotMatch(workspaceTable, /<tfoot/, 'workspace usage must not define or render a totals footer');
 
   // 4. Empty/unavailable branches still clear the footer before any helper is
   // consulted; "No X observed yet" placeholder colspan rows must never be
@@ -504,7 +520,6 @@ test('dashboard hides totals rows for sections with 0 or 1 populated row and sho
   for (const footerId of [
     'spawnTfoot',
     'failuresTfoot',
-    'wsTfoot',
     'skillsTfoot',
     'hooksTfoot',
     'metricsTfoot',
@@ -680,39 +695,29 @@ test('dashboard provider active totals derive directly from the canonical per-pr
   assert.equal(activeReqSum, 3);
 });
 
-test('dashboard workspace usage rows and footer reconcile from the canonical per-workspace active field, with no Math.max floor', async () => {
+test('dashboard workspace usage rows read the canonical per-workspace active field without a Math.max floor', async () => {
   const dashboard = await readFile(path.join(root, 'scripts', 'codex-model-router-dashboard.html'), 'utf8');
 
   // Each workspace row's active count is read straight off `w.active`
   // (the same canonical field `usage.byWorkspace[*].active` the backend
   // already reconciles against `usage.totals.active`), with no artificial
-  // floor -- so the footer, which is a plain running sum of that same
-  // per-row value, reconciles exactly with the sum of the rendered rows.
+  // floor. Workspace usage intentionally has no totals footer.
   const activeDeclMatch = dashboard.match(/const active = Number\(w\.active \?\? 0\);/);
   assert.ok(activeDeclMatch, 'workspace row active value should be read directly off w.active');
-
-  const totalAccumMatch = dashboard.match(/wsTotalActive \+= active;/);
-  assert.ok(totalAccumMatch, 'workspace footer total should accumulate the same per-row active value');
-  assert.doesNotMatch(totalAccumMatch[0], /Math\.max/, 'workspace footer total must not be floored via Math.max');
 
   const rowBadgeMatch = dashboard.match(/<td><status-badge \$\{active > 0 [^<]*<\/status-badge><\/td>/);
   assert.ok(rowBadgeMatch, 'workspace row badge should render the unfloored per-row active value');
   assert.doesNotMatch(rowBadgeMatch[0], /Math\.max/, 'workspace row badge must not be floored via Math.max');
 
-  const footerBadgeMatch = dashboard.match(/<td><status-badge \$\{wsTotalActive > 0[^<]*<\/status-badge><\/td>/);
-  assert.ok(footerBadgeMatch, 'workspace footer badge should render the unfloored running total');
-  assert.doesNotMatch(footerBadgeMatch[0], /Math\.max/, 'workspace footer badge must not be floored via Math.max');
-
-  // Simulate the row loop's accumulation to confirm the footer reconciles
-  // exactly with the sum of the per-row values for a representative payload.
+  // Simulate the row values for a representative payload to retain coverage
+  // for zero and non-zero workspace activity without a totals row.
   const byWorkspace = {
     AutoDev: { active: 2 },
     'codex-runtime': { active: 0 },
     unattributed: { active: 1 },
   };
-  let wsTotalActive = 0;
-  for (const w of Object.values(byWorkspace)) wsTotalActive += Number(w.active ?? 0);
-  assert.equal(wsTotalActive, 3, 'workspace footer must reconcile to the sum of every rendered row, including unattributed');
+  const renderedActive = Object.values(byWorkspace).map((w) => Number(w.active ?? 0));
+  assert.deepEqual(renderedActive, [ 2, 0, 1 ], 'workspace rows must preserve each canonical active value, including unattributed');
 });
 
 test('router dashboard renders workspace MCP servers with confirmed uses and exposure rows', async () => {

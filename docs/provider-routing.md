@@ -570,8 +570,11 @@ The router makes its effective choice visible in two ways:
   privacy-safe `skill_used` events from the Codex `PreToolUse` skill-read hook.
   The hook only recognizes canonical `SKILL.md` reads under approved roots,
   deduplicates by skill and turn, and fails closed when the parent session cannot
-  be attributed to a workspace. Exposure events remain availability telemetry
-  and are never treated as usage.
+  be attributed to a workspace. Shell commands such as `cat /.../SKILL.md`
+  supplied to Bash/`exec_command` are matched through the same check and report
+  the identical `source: skill_read` event, folded into the same `skillUses`,
+  `bySkill`, and `codexTelemetry.skills.used` counters. Exposure events remain
+  availability telemetry and are never treated as usage.
   Per-workspace `byMcp`, `mcpUses`, and `mcpExposed` attribution and model-level MCP counts and breakdowns are
   embedded directly in existing workspace and model views (following fail-closed
   unavailable vs empty semantics); no standalone MCP panel exists. Per-workspace
@@ -590,7 +593,7 @@ The router makes its effective choice visible in two ways:
   channel. In expanded workspace details,
   confirmed uses and exposure are displayed together for both Skills and MCP servers as
   `uses / exposed` per name, keeping uses and exposure semantically distinct. The workspace table
-  header reads `Skill uses / exposed`, and the workspace row and totals use sums of those same
+  header reads `Skill uses / exposed`, and each workspace row uses sums of those same
   normalized `bySkill` and `bridgeSkills` rows; `skillContextsInjected` remains a separate context-loading metric.
 `GET /status` always
   returns raw JSON regardless of the `Accept` header, including the current

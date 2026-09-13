@@ -1,8 +1,26 @@
 import assert from "node:assert/strict";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { join, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
 import { tmpdir } from "node:os";
 import test from "node:test";
+
+const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
+const DASHBOARD_PATH = join(REPO_ROOT, "scripts", "codex-model-router-dashboard.html");
+
+// Extracts the dashboard's pure workspace-skills rendering helpers straight
+// out of the shipped HTML/script, so this test exercises the exact functions
+// the dashboard runs in the browser rather than a reimplementation of them.
+async function loadDashboardSkillHelpers() {
+  const rawDashboard = await readFile(DASHBOARD_PATH, "utf8");
+  const escapeMatch = rawDashboard.match(/function escapeHtml\([\s\S]*?\n    \}/);
+  const normalizeMatch = rawDashboard.match(/function normalizeWorkspaceNamedUsage\([\s\S]*?\n    \}/);
+  const summarizeSkillsMatch = rawDashboard.match(/function summarizeWorkspaceSkills\([\s\S]*?\n    \}/);
+  const renderSkillsMatch = rawDashboard.match(/function renderWorkspaceSkills\([\s\S]*?\n    \}/);
+  assert.ok(escapeMatch && normalizeMatch && summarizeSkillsMatch && renderSkillsMatch, "dashboard workspace-skills helpers must be present");
+  const fnScope = `${escapeMatch[0]}; ${normalizeMatch[0]}; ${summarizeSkillsMatch[0]}; ${renderSkillsMatch[0]}; return { normalizeWorkspaceNamedUsage, summarizeWorkspaceSkills, renderWorkspaceSkills };`;
+  return new Function(fnScope)();
+}
 
 import {
   ingestOtelSignal,
@@ -288,6 +306,73 @@ test("tracks confirmed RacingGame skill reads separately from exposed skills", (
 
   resetOtelTelemetry();
   resetRouterTelemetry();
+});
+
+test("a skill_used/skill_read event from a shell cat-style read updates global skill telemetry, workspace skillUses/bySkill, and dashboard-backed status data end-to-end", async () => {
+  resetOtelTelemetry();
+  resetRouterTelemetry();
+  resetSubagentTelemetry();
+
+  noteBridgeRequest("req-shell-skill-read", {
+    provider: "claude",
+    model: "sonnet",
+    role: "default",
+    workspace: "SimulatorLife/AutoDev",
+  });
+
+  // The router's `skill_used` schema does not distinguish a Read-tool hit
+  // from a shell `cat SKILL.md` hit: both the Codex JS hook's exec_command
+  // matcher and the Claude proxy's Bash-command matcher report the exact
+  // same event shape, with `eventId` following the `skill_read:<call-id>:<skill>`
+  // convention used for a Bash-detected read. There is no separate
+  // "shell read" metric or schema field -- a cat-style read is simply
+  // another confirmed `skill_read` source folded into the same counters.
+  ingestAgentEvents({
+    requestId: "req-shell-skill-read",
+    events: [
+      { type: "skill_exposed", skill: "ccc", source: "role_contract" },
+      { type: "skill_used", skill: "ccc", source: "skill_read", eventId: "skill_read:call-shell-1:ccc" },
+      // A duplicate post for the same call/skill (e.g. a retried hook) must
+      // stay idempotent rather than double-counting the read.
+      { type: "skill_used", skill: "ccc", source: "skill_read", eventId: "skill_read:call-shell-1:ccc" },
+    ],
+  });
+
+  // 1. Global skill telemetry (status.codexTelemetry.skills.used) is what the
+  // dashboard KPI tile reads its total from.
+  const telemetry = codexTelemetryStatus();
+  assert.equal(telemetry.skills.used.total, 1);
+  assert.equal(telemetry.skills.used.byWorkspace["SimulatorLife/AutoDev"], 1);
+  const globalSkillRow = telemetry.skills.used.bySkill.find((row) => row.skill === "ccc");
+  assert.ok(globalSkillRow, "the global skills.used.bySkill breakdown must include the shell-read skill");
+  assert.equal(globalSkillRow.total, 1);
+  assert.equal(globalSkillRow.byWorkspace["SimulatorLife/AutoDev"], 1);
+
+  // 2. Per-workspace skillUses/bySkill (status.usage.byWorkspace[*]) is what
+  // the workspace usage table renders per-workspace.
+  const workspace = getRouterStatus().usage.byWorkspace["SimulatorLife/AutoDev"];
+  assert.equal(workspace.skillUses, 1);
+  const wsSkillRow = workspace.bySkill.find((row) => row.skill === "ccc");
+  assert.ok(wsSkillRow, "workspace bySkill must include the shell-read skill");
+  assert.equal(wsSkillRow.uses, 1);
+  assert.deepEqual(workspace.bridgeSkills.map((row) => row.skill), [ "ccc" ]);
+
+  // 3. Dashboard-backed status data: feed the exact same router status
+  // through the dashboard's own rendering helpers and confirm the shell
+  // cat-style read surfaces as a normal confirmed use (1 / 1), not as an
+  // exposure-only or unavailable row.
+  const { normalizeWorkspaceNamedUsage, summarizeWorkspaceSkills, renderWorkspaceSkills } = await loadDashboardSkillHelpers();
+  const wsSkillRows = normalizeWorkspaceNamedUsage(workspace.bySkill, [ "skill", "name" ]);
+  const wsExposedSkillRows = normalizeWorkspaceNamedUsage(workspace.bridgeSkills, [ "skill", "name" ]);
+  const summary = summarizeWorkspaceSkills(wsSkillRows, wsExposedSkillRows);
+  assert.deepEqual(summary, { uses: 1, exposed: 1 });
+  const html = renderWorkspaceSkills(wsSkillRows, wsExposedSkillRows);
+  assert.match(html, /label="ccc"/);
+  assert.match(html, /value="1 \/ 1"/);
+
+  resetOtelTelemetry();
+  resetRouterTelemetry();
+  resetSubagentTelemetry();
 });
 
 test("rejects unknown bridge event types while keeping accepted observations intact", () => {

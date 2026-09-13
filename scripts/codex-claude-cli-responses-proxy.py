@@ -14,6 +14,7 @@ import os
 import queue
 import re
 import secrets
+import shlex
 import subprocess
 import sys
 import threading
@@ -1290,9 +1291,72 @@ _SKILL_ROOTS = [
 # `Write`, `Edit`, `Task` -- is deliberately excluded: a mutation or an
 # unrelated call must never be counted as a skill activation just because its
 # arguments happen to name a path.
-_EXEC_READ_PATTERN = re.compile(
-    r"(?:^|\s)(?:cat|head|tail|less|more|sed\s+-n|awk|grep)(?:\s+\S+){0,8}\s+((?:/|~)\S+)"
-)
+#
+# `sed` only counts in its `-n` (suppress-output, print via explicit `p`)
+# form; a plain `sed 's/a/b/' file` mutates output rather than dumping the
+# file, so it is intentionally excluded.
+_SKILL_READ_COMMANDS = {"cat", "head", "tail", "less", "more", "awk", "grep"}
+_SHELL_CONTROL_TOKENS = {"|", "&&", "||", ";", "&"}
+
+
+def _is_path_like_token(token: Any) -> str | None:
+    """A word counts as a path argument, not a flag or a search pattern, once
+    it contains a path separator or starts with `~`. This deliberately
+    accepts only absolute or home-relative paths so a command cannot be
+    attributed to the wrong working directory."""
+    if not isinstance(token, str) or not token or token.startswith("-"):
+        return None
+    if token.startswith("/") or token.startswith("~"):
+        return token
+    return None
+
+
+def _flatten_command_value(raw: Any) -> str | None:
+    """Resolves the raw value of a `command`/`cmd` argument to a single
+    shell string. Providers vary in how they shape this: a plain string, an
+    argv array (`["bash", "-lc", "cat file"]` or `["cat", "file"]`), or a
+    nested object carrying the real command one level down
+    (`{"command": {"cmd": "..."}}`). Only one level of object nesting is
+    unwrapped -- deeper nesting is not a shape any tool call here actually
+    uses."""
+    value = raw
+    if isinstance(value, dict):
+        value = value.get("cmd") or value.get("command") or value.get("script") or value.get("value")
+    if isinstance(value, list):
+        return " ".join(entry for entry in value if isinstance(entry, str))
+    return value if isinstance(value, str) else None
+
+
+def _match_exec_read_paths(raw: Any) -> list[str]:
+    """Every path-like argument following a recognised read command on the
+    command line, in the order they appear. Bounded on both axes: overlong
+    commands are rejected outright, and only the next 8 words after a read
+    command are scanned for a path. Returning every candidate -- not just
+    the first -- lets the caller pick out whichever one actually names a
+    SKILL.md when a command reads more than one file
+    (`grep pattern a.md SKILL.md`)."""
+    command = _flatten_command_value(raw)
+    if not command or len(command) > 4096:
+        return []
+    try:
+        tokens = shlex.split(command)
+    except ValueError:
+        # Unbalanced quotes: fall back to plain whitespace splitting rather
+        # than dropping the command entirely.
+        tokens = command.split()
+    candidates: list[str] = []
+    for index, word in enumerate(tokens):
+        is_sed_print = word == "sed" and index + 1 < len(tokens) and tokens[index + 1] == "-n"
+        if word not in _SKILL_READ_COMMANDS and not is_sed_print:
+            continue
+        start = index + 2 if is_sed_print else index + 1
+        for next_token in tokens[start:start + 8]:
+            if next_token in _SHELL_CONTROL_TOKENS:
+                break
+            path = _is_path_like_token(next_token)
+            if path:
+                candidates.append(path)
+    return candidates
 
 
 def _normalise_skill_read_path(raw: Any) -> Path | None:
@@ -1309,17 +1373,6 @@ def _normalise_skill_read_path(raw: Any) -> Path | None:
     return path
 
 
-def _match_exec_read_path(command: Any) -> str | None:
-    """A cat/head/less/sed -n/awk/grep read of an absolute path inside a
-    shell command, or None. Bounded and deliberately narrow: a command that
-    does not spell out an absolute path is not treated as a read of anything
-    in particular."""
-    if not isinstance(command, str) or len(command) > 4096:
-        return None
-    match = _EXEC_READ_PATTERN.search(command)
-    return match.group(1) if match else None
-
-
 def extract_skill_read_path(tool_name: Any, tool_input: Any) -> str | None:
     """The path a `Read` call or a shell read of one names, if any."""
     name = normalized_label(tool_name) or ""
@@ -1331,7 +1384,12 @@ def extract_skill_read_path(tool_name: Any, tool_input: Any) -> str | None:
                 return value.strip()
         return None
     if name == "Bash":
-        return _match_exec_read_path(payload.get("command"))
+        command = tool_input if isinstance(tool_input, str) else payload.get("command", payload.get("cmd"))
+        candidates = _match_exec_read_paths(command)
+        for candidate in candidates:
+            if match_skill_read_path(_normalise_skill_read_path(candidate)):
+                return candidate
+        return candidates[0] if candidates else None
     return None
 
 
