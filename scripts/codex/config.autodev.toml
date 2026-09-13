@@ -1,0 +1,227 @@
+# Portable, AutoDev-owned slice of the Codex user-level configuration.
+#
+# This file is the Phase 1 "portable source" described in
+# docs/AUTODEV_PLATFORM_MIGRATION.md: it holds only the AutoDev-owned scalars,
+# provider definitions, and declarations that are safe to regenerate on any
+# machine. It intentionally excludes machine-local state (notify targets,
+# hooks.state trusted hashes, projects trust entries, marketplaces, TUI/
+# notice/desktop/apps/plugins/memories settings, node_repl/cua_repl servers,
+# and non-AutoDev skills). The installer/renderer still read
+# scripts/codex/config.toml directly; this file is not yet composed into the
+# installed config (see Phase 1 status note in the migration doc).
+model = "autodev/orchestrator"
+model_provider = "local_model_router"
+openai_base_url = "http://127.0.0.1:4100/v1"
+model_verbosity = "low"
+approval_policy = "never"
+model_reasoning_effort = "high"
+personality = "pragmatic"
+sandbox_mode = "workspace-write"
+suppress_unstable_features_warning = true
+service_tier = "default"
+model_catalog_json = "./codex-model-catalog.json"
+approvals_reviewer = "user"
+background_terminal_max_timeout = 600000
+
+[sandbox_workspace_write]
+# Permit diagnostics against localhost services from workspace-write sessions.
+# External filesystem inspection for read-only roles is granted explicitly by
+# those roles' danger-full-access policy and read-only instructions.
+network_access = true
+
+[otel]
+environment = "autodev"
+exporter = { otlp-http = { endpoint = "http://127.0.0.1:4100/v1/logs", protocol = "json" } }
+trace_exporter = { otlp-http = { endpoint = "http://127.0.0.1:4100/v1/traces", protocol = "json" } }
+metrics_exporter = { otlp-http = { endpoint = "http://127.0.0.1:4100/v1/metrics", protocol = "json" } }
+log_user_prompt = false
+
+[analytics]
+enabled = true
+
+[features]
+shell_snapshot = true
+unified_exec = true
+steer = true
+multi_agent = true
+multi_agent_v2 = false
+js_repl = false
+memories = false
+respect_system_proxy = true
+chronicle = false
+goals = true
+hooks = true
+fast_mode = false
+prevent_idle_sleep = true
+personality = true
+image_generation = false
+
+[tools]
+# Website research is a native Codex capability. Browser automation is not a
+# root-turn tool; browser-tester/smart role configs enable Playwright only when
+# their bounded UI-testing work requires it.
+web_search = true
+
+[model_providers.claude_code_subscription]
+name = "Claude Code OAuth subscription bridge"
+base_url = "http://127.0.0.1:4000/v1"
+env_key = "LITELLM_API_KEY"
+wire_api = "responses"
+requires_openai_auth = false
+request_max_retries = 1
+stream_max_retries = 2
+stream_idle_timeout_ms = 300000
+
+[model_providers.local_model_router]
+name = "Local model-aware Codex Responses router"
+base_url = "http://127.0.0.1:4100/v1"
+env_key = "CODEX_ROUTER_AUTH_TOKEN"
+wire_api = "responses"
+requires_openai_auth = false
+request_max_retries = 1
+stream_max_retries = 2
+stream_idle_timeout_ms = 300000
+
+[model_providers.minimax]
+name = "MiniMax"
+base_url = "http://127.0.0.1:18765/v1"
+env_key = "MINIMAX_API_KEY"
+wire_api = "responses"
+requires_openai_auth = false
+request_max_retries = 4
+stream_max_retries = 10
+stream_idle_timeout_ms = 300000
+
+[model_providers.antigravity_cli]
+name = "Antigravity CLI subscription through the local Responses adapter"
+base_url = "http://127.0.0.1:4002/v1"
+env_key = "LITELLM_API_KEY"
+wire_api = "responses"
+requires_openai_auth = false
+request_max_retries = 1
+stream_max_retries = 2
+stream_idle_timeout_ms = 300000
+
+[agents]
+enabled = true
+max_concurrent_threads_per_session = 2
+max_depth = 1
+default_subagent_model = "autodev/default"
+default_subagent_reasoning_effort = "medium"
+
+[agents.explorer]
+description = "Read-only codebase explorer."
+config_file = "./agents/explorer.toml"
+[agents.worker]
+description = "General-purpose worker/coder."
+config_file = "./agents/worker.toml"
+[agents.validator]
+description = "Validation agent."
+config_file = "./agents/validator.toml"
+[agents.smart]
+description = "Full-capability smart agent with browser, documentation, and workspace-write access."
+config_file = "./agents/smart.toml"
+[agents.default]
+description = "General-purpose developer."
+config_file = "./agents/default.toml"
+[agents."docs-researcher"]
+description = "Documentation researcher with authoritative website access."
+config_file = "./agents/docs-researcher.toml"
+[agents."browser-tester"]
+description = "Read-only browser tester."
+config_file = "./agents/browser-tester.toml"
+
+[[hooks.SessionStart]]
+matcher = ".*"
+
+[[hooks.SessionStart.hooks]]
+type = "command"
+command = "bash ~/.codex/hooks/ensure-codex-model-router.sh"
+prevent_idle_sleep = true
+
+[[hooks.SubagentStart]]
+matcher = ".*"
+
+[[hooks.SubagentStart.hooks]]
+type = "command"
+command = "bash ~/.codex/hooks/ensure-codex-claude-bridge.sh"
+prevent_idle_sleep = true
+
+[[hooks.SubagentStart]]
+matcher = ".*"
+
+[[hooks.SubagentStart.hooks]]
+type = "command"
+command = "bash ~/.codex/hooks/ensure-codex-minimax-proxy.sh"
+prevent_idle_sleep = true
+
+[[hooks.SubagentStart]]
+matcher = ".*"
+
+[[hooks.SubagentStart.hooks]]
+type = "command"
+command = "bash ~/.codex/hooks/ensure-codex-antigravity-proxy.sh"
+prevent_idle_sleep = true
+
+[[hooks.UserPromptSubmit]]
+[[hooks.UserPromptSubmit.hooks]]
+type = "command"
+command = "bash ~/.codex/hooks/enforce-root-delegation.sh"
+statusMessage = "Applying root delegation policy"
+
+# Observe pre-tool calls so the router can attribute a SKILL.md read to the
+# in-flight parent turn (see scripts/codex/skill-read-telemetry.mjs). It is
+# fail-open and only counts canonical SKILL.md reads under approved roots.
+[[hooks.PreToolUse]]
+matcher = "(?i)read[_ -]?file|read|exec[_ -]?command|bash"
+
+[[hooks.PreToolUse.hooks]]
+type = "command"
+command = "node ~/.codex/hooks/codex/skill-read-telemetry.mjs"
+statusMessage = "Recording skill-read telemetry"
+
+# Both servers resolve their binary from the active project's own node_modules
+# via `pnpm exec`, so every repository gets the version its lockfile pins. Never
+# use `pnpm dlx <pkg>@latest` here: that ignores the pinned devDependency and
+# refetches an unpinned build that can drift away from the repository's own
+# Playwright/LSP versions.
+[mcp_servers.lsp]
+enabled = true
+command = "bash"
+args = ["-lc", "exec \"${CODEX_HOME:-$HOME/.codex}/hooks/run-autodev-mcp.sh\" lsp"]
+default_tools_approval_mode = "approve"
+
+# Registered once at the Codex user level. No cwd is specified: Codex starts
+# stdio MCP servers from the active session workspace, so CocoIndex Code keeps a
+# separate .cocoindex_code index for each repository.
+[mcp_servers."cocoindex-code"]
+# This user-level entry is available to the root orchestrator as well as
+# code-capable child roles; role contracts decide which prompts may use it.
+enabled = true
+command = "bash"
+args = ["-lc", "exec \"${CODEX_HOME:-$HOME/.codex}/hooks/run-autodev-mcp.sh\" cocoindex-code"]
+default_tools_approval_mode = "approve"
+
+[mcp_servers.playwright]
+enabled = false
+command = "bash"
+args = ["-lc", "exec \"${CODEX_HOME:-$HOME/.codex}/hooks/run-autodev-mcp.sh\" playwright"]
+default_tools_approval_mode = "approve"
+
+[[skills.config]]
+name = "lsp-mcp-server"
+enabled = true
+
+[[skills.config]]
+name = "ccc"
+enabled = true
+[[skills.config]]
+name = "orchestration"
+enabled = true
+
+[shell_environment_policy.set]
+NODE_OPTIONS = "--disable-warning=ExperimentalWarning"
+
+[shell_environment_policy.filters]
+"PATH" = "include"
+"HOME" = "include"

@@ -630,6 +630,10 @@ Current tracked `scripts/codex/config.toml` includes portable AutoDev settings a
 
 Fresh install and update can converge AutoDev-owned configuration without deleting or committing machine-local state
 
+### Status
+
+The portable source is staged at `scripts/codex/config.autodev.toml`: it carries the AutoDev-owned portable scalars, provider definitions, `sandbox_workspace_write`, `otel`, `analytics`, `features`, `tools`, `agents`, the declared hooks (without `hooks.state`), the AutoDev MCP servers (`lsp`, `cocoindex-code`, `playwright`), the AutoDev-owned skills (`ccc`, `lsp-mcp-server`, `orchestration`), and `shell_environment_policy`. It excludes `notify`, `hooks.state`, `projects`, `marketplaces`, TUI/notice/desktop/apps/plugins/memories, `node_repl`/`cua_repl`, non-AutoDev skills, and absolute user/application paths. `tests/test_local_setup.py::PortableAutodevConfigTests` pins its contents against the current tracked `scripts/codex/config.toml` and asserts the excluded sections stay absent. The installer and `render-*` scripts are unchanged and still read `scripts/codex/config.toml` directly; composing the portable source with machine-local state into the installed config is the next step.
+
 ---
 
 ## Phase 2 — Adopt Rulesync for shared configuration

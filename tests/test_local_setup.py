@@ -17,6 +17,7 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[1]
 BRIDGE_PATH = REPO_ROOT / "scripts/codex-claude-cli-responses-proxy.py"
 INSTALLER_PATH = REPO_ROOT / "scripts/codex/install-codex-integration.sh"
+AUTODEV_CONFIG_PATH = REPO_ROOT / "scripts/codex/config.autodev.toml"
 AGENT_RENDERER_PATH = REPO_ROOT / "scripts/codex/render-agent-configs.py"
 PROVIDER_SKILL_VIEW_RENDERER_PATH = REPO_ROOT / "scripts/codex/render-provider-skill-views.py"
 EXECUTION_CONTRACT_RENDERER_PATH = REPO_ROOT / "scripts/codex/render-execution-contract.py"
@@ -2973,6 +2974,121 @@ PY
         self.assertIn("chmod 0600 \"" + chr(0x24) + "router_log\"", installer)
         self.assertIn("http://127.0.0.1:4100/health/readiness", installer)
 
+
+
+class PortableAutodevConfigTests(unittest.TestCase):
+    """Phase 1 of docs/AUTODEV_PLATFORM_MIGRATION.md stages a portable,
+    AutoDev-owned slice of scripts/codex/config.toml at
+    scripts/codex/config.autodev.toml. These tests pin its contents against
+    the current config and guard against machine-local state leaking in."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.full_config = tomllib.loads((REPO_ROOT / "scripts/codex/config.toml").read_text())
+        cls.autodev_config = tomllib.loads(AUTODEV_CONFIG_PATH.read_text())
+
+    def test_autodev_config_parses_as_toml(self):
+        self.assertIsInstance(self.autodev_config, dict)
+        self.assertGreater(len(self.autodev_config), 0)
+
+    def test_portable_scalars_match_current_config(self):
+        portable_scalar_keys = (
+            "model",
+            "model_provider",
+            "openai_base_url",
+            "model_verbosity",
+            "approval_policy",
+            "model_reasoning_effort",
+            "personality",
+            "sandbox_mode",
+            "suppress_unstable_features_warning",
+            "service_tier",
+            "model_catalog_json",
+            "approvals_reviewer",
+            "background_terminal_max_timeout",
+        )
+        for key in portable_scalar_keys:
+            with self.subTest(key=key):
+                self.assertEqual(self.autodev_config[key], self.full_config[key])
+
+    def test_provider_definitions_match_current_config(self):
+        provider_names = ("claude_code_subscription", "local_model_router", "minimax", "antigravity_cli")
+        for name in provider_names:
+            with self.subTest(provider=name):
+                self.assertEqual(
+                    self.autodev_config["model_providers"][name],
+                    self.full_config["model_providers"][name],
+                )
+
+    def test_required_sections_match_current_config(self):
+        matching_sections = (
+            "sandbox_workspace_write",
+            "otel",
+            "analytics",
+            "features",
+            "tools",
+            "agents",
+            "shell_environment_policy",
+        )
+        for section in matching_sections:
+            with self.subTest(section=section):
+                self.assertIn(section, self.autodev_config)
+                self.assertEqual(self.autodev_config[section], self.full_config[section])
+
+    def test_declared_hooks_match_current_config_without_state(self):
+        self.assertIn("hooks", self.autodev_config)
+        declared_hook_events = ("SessionStart", "SubagentStart", "UserPromptSubmit", "PreToolUse")
+        for event in declared_hook_events:
+            with self.subTest(event=event):
+                self.assertEqual(self.autodev_config["hooks"][event], self.full_config["hooks"][event])
+        self.assertNotIn("state", self.autodev_config["hooks"])
+
+    def test_autodev_mcp_servers_match_current_config(self):
+        for name in ("lsp", "cocoindex-code", "playwright"):
+            with self.subTest(server=name):
+                self.assertEqual(
+                    self.autodev_config["mcp_servers"][name],
+                    self.full_config["mcp_servers"][name],
+                )
+
+    def test_only_autodev_skills_are_included(self):
+        autodev_skill_names = {"ccc", "lsp-mcp-server", "orchestration"}
+        included_names = {entry["name"] for entry in self.autodev_config["skills"]["config"]}
+        self.assertEqual(included_names, autodev_skill_names)
+        for entry in self.autodev_config["skills"]["config"]:
+            with self.subTest(skill=entry["name"]):
+                matching = next(
+                    e for e in self.full_config["skills"]["config"] if e["name"] == entry["name"]
+                )
+                self.assertEqual(entry, matching)
+
+    def test_excludes_machine_local_and_non_autodev_sections(self):
+        excluded_top_level_keys = (
+            "notify",
+            "projects",
+            "marketplaces",
+            "tui",
+            "notice",
+            "desktop",
+            "apps",
+            "plugins",
+            "memories",
+            "feedback",
+        )
+        for key in excluded_top_level_keys:
+            with self.subTest(key=key):
+                self.assertNotIn(key, self.autodev_config)
+
+    def test_excludes_non_autodev_mcp_servers(self):
+        for name in ("node_repl", "cua_repl"):
+            with self.subTest(server=name):
+                self.assertNotIn(name, self.autodev_config.get("mcp_servers", {}))
+
+    def test_excludes_absolute_user_and_application_paths(self):
+        rendered = AUTODEV_CONFIG_PATH.read_text()
+        for needle in ("/Users/henrykirk", "/Applications/ChatGPT.app"):
+            with self.subTest(needle=needle):
+                self.assertNotIn(needle, rendered)
 
 
 if __name__ == "__main__":
