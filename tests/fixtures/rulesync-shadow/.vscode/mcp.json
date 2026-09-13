@@ -1,0 +1,18 @@
+{
+  "servers": {
+    "lsp": {
+      "command": "bash",
+      "args": [
+        "-lc",
+        "exec \"${CODEX_HOME:-$HOME/.codex}/hooks/run-autodev-mcp.sh\" lsp"
+      ]
+    },
+    "cocoindex-code": {
+      "command": "bash",
+      "args": [
+        "-lc",
+        "exec \"${CODEX_HOME:-$HOME/.codex}/hooks/run-autodev-mcp.sh\" cocoindex-code"
+      ]
+    }
+  }
+}

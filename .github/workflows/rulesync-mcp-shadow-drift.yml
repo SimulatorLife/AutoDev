@@ -1,0 +1,56 @@
+name: "Rulesync MCP Shadow Drift"
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - ".rulesync/**"
+      - "rulesync.jsonc"
+      - "tests/fixtures/rulesync-shadow/**"
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - ".github/workflows/rulesync-mcp-shadow-drift.yml"
+  pull_request:
+    paths:
+      - ".rulesync/**"
+      - "rulesync.jsonc"
+      - "tests/fixtures/rulesync-shadow/**"
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - ".github/workflows/rulesync-mcp-shadow-drift.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  rulesync-mcp-shadow-drift:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v6
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+
+      - name: Install AutoDev dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Detect Rulesync drift against tracked shadow fixtures
+        run: |
+          pnpm exec rulesync generate \
+            --config rulesync.jsonc \
+            --targets codexcli,claudecode,copilot,antigravity-cli \
+            --features mcp \
+            --output-roots tests/fixtures/rulesync-shadow \
+            --check \
+            --silent

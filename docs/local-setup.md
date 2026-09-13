@@ -286,6 +286,34 @@ name is rejected as an explicit conflict rather than silently choosing precedenc
 this keeps user-level provider routing deterministic while allowing repository-
 specific agents, MCPs, and skills to coexist under distinct names.
 
+### Rulesync MCP shadow fixtures and refresh
+
+AutoDev tracks isolated MCP shadow fixtures for supported providers (`codexcli`, `claudecode`, `copilot`, `antigravity-cli`) under `tests/fixtures/rulesync-shadow/` to detect upstream drift without mutating live configuration.
+
+To check for drift between `.rulesync/` source configuration and the tracked shadow fixtures:
+
+```bash
+pnpm exec rulesync generate \
+  --config rulesync.jsonc \
+  --targets codexcli,claudecode,copilot,antigravity-cli \
+  --features mcp \
+  --output-roots tests/fixtures/rulesync-shadow \
+  --check \
+  --silent
+```
+
+To refresh the tracked shadow fixtures after making intentional changes to `.rulesync/` or `rulesync.jsonc`:
+
+```bash
+pnpm exec rulesync generate \
+  --config rulesync.jsonc \
+  --targets codexcli,claudecode,copilot,antigravity-cli \
+  --features mcp \
+  --output-roots tests/fixtures/rulesync-shadow \
+  --delete \
+  --silent
+```
+
 To enable the router authentication boundary during a planned restart, run:
 
 ```bash

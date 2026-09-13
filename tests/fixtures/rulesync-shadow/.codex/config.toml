@@ -1,0 +1,12 @@
+[mcp_servers.lsp]
+command = "bash"
+args = [ "-lc", "exec \"${CODEX_HOME:-$HOME/.codex}/hooks/run-autodev-mcp.sh\" lsp" ]
+
+[mcp_servers.cocoindex-code]
+command = "bash"
+args = [ "-lc", "exec \"${CODEX_HOME:-$HOME/.codex}/hooks/run-autodev-mcp.sh\" cocoindex-code" ]
+
+[mcp_servers.playwright]
+command = "bash"
+args = [ "-lc", "exec \"${CODEX_HOME:-$HOME/.codex}/hooks/run-autodev-mcp.sh\" playwright" ]
+enabled = false

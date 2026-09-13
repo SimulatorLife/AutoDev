@@ -641,12 +641,48 @@ Complete. The portable source is authoritative at `scripts/codex/config.autodev.
 ### Status
 
 The first Phase 2 slice is shadow-only MCP translation. Rulesync is pinned to
-`16.30.2` and generates into temporary output roots for `codexcli`,
-`claudecode`, `copilot`, and `antigravity-cli`. The shadow source covers only
+`16.30.2` and generates into tracked shadow fixtures under `tests/fixtures/rulesync-shadow/`
+for `codexcli`, `claudecode`, `copilot`, and `antigravity-cli`. The shadow source covers only
 shared MCP declarations and target-specific transport differences; it does not
 write live Codex, Claude, Copilot, or Antigravity configuration. AutoDev role
 TOMLs, the execution contract, the MCP launcher, provider bridges, hooks,
 permissions, and skills remain authoritative outside Rulesync.
+
+CI drift protection is enforced by `.github/workflows/rulesync-mcp-shadow-drift.yml`, a
+read-only workflow triggered on `push` to `main`, `pull_request`, and `workflow_dispatch`
+(path-filtered to `.rulesync/**`, `rulesync.jsonc`, `tests/fixtures/rulesync-shadow/**`,
+`package.json`, `pnpm-lock.yaml`, and the workflow file itself). The workflow installs frozen
+dependencies and detects drift using:
+
+```bash
+pnpm exec rulesync generate \
+  --config rulesync.jsonc \
+  --targets codexcli,claudecode,copilot,antigravity-cli \
+  --features mcp \
+  --output-roots tests/fixtures/rulesync-shadow \
+  --check \
+  --silent
+```
+
+### Remediation
+
+When the CI drift check or local `--check` reports drift due to intentional updates to `.rulesync/` or `rulesync.jsonc`:
+
+1. Refresh the tracked shadow fixtures using the pinned generation command:
+   ```bash
+   pnpm exec rulesync generate \
+     --config rulesync.jsonc \
+     --targets codexcli,claudecode,copilot,antigravity-cli \
+     --features mcp \
+     --output-roots tests/fixtures/rulesync-shadow \
+     --delete \
+     --silent
+   ```
+2. Verify that focused tests pass:
+   ```bash
+   python3 -m unittest tests/test_rulesync_mcp_shadow.py
+   ```
+3. Commit the refreshed fixtures under `tests/fixtures/rulesync-shadow/`.
 
 Pin an exact tested Rulesync version rather than tracking `latest`
 
@@ -665,7 +701,7 @@ Pin an exact tested Rulesync version rather than tracking `latest`
 3. Diff against current Codex/Claude/Copilot/Antigravity outputs
 4. Test global and project scopes separately
 5. Verify unrelated user config survives
-6. Add CI drift checks
+6. Add CI drift checks (enforced via `.github/workflows/rulesync-mcp-shadow-drift.yml`)
 7. Switch one generated surface at a time
 
 ### Keep outside Rulesync initially
