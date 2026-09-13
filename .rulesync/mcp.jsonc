@@ -1,0 +1,37 @@
+{
+  "$schema": "https://raw.githubusercontent.com/dyoshikawa/rulesync/v16.30.2/schemas/mcp.json",
+  "mcpServers": {
+    "lsp": {
+      "command": "bash",
+      "args": ["-lc", "exec \"${CODEX_HOME:-$HOME/.codex}/hooks/run-autodev-mcp.sh\" lsp"]
+    },
+    "cocoindex-code": {
+      "command": "bash",
+      "args": ["-lc", "exec \"${CODEX_HOME:-$HOME/.codex}/hooks/run-autodev-mcp.sh\" cocoindex-code"]
+    },
+    "openaiDeveloperDocs": {
+      "url": "https://developers.openai.com/mcp"
+    }
+  },
+  "codexcli": {
+    "mcpServers": {
+      "openaiDeveloperDocs": null,
+      "playwright": {
+        "command": "bash",
+        "args": ["-lc", "exec \"${CODEX_HOME:-$HOME/.codex}/hooks/run-autodev-mcp.sh\" playwright"],
+        "disabled": true
+      }
+    }
+  },
+  "copilot": {
+    "mcpServers": {
+      "openaiDeveloperDocs": null,
+      "playwright": null
+    }
+  },
+  "antigravity-cli": {
+    "mcpServers": {
+      "playwright": null
+    }
+  }
+}

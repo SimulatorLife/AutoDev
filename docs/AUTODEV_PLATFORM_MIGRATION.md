@@ -638,6 +638,16 @@ Complete. The portable source is authoritative at `scripts/codex/config.autodev.
 
 ## Phase 2 — Adopt Rulesync for shared configuration
 
+### Status
+
+The first Phase 2 slice is shadow-only MCP translation. Rulesync is pinned to
+`16.30.2` and generates into temporary output roots for `codexcli`,
+`claudecode`, `copilot`, and `antigravity-cli`. The shadow source covers only
+shared MCP declarations and target-specific transport differences; it does not
+write live Codex, Claude, Copilot, or Antigravity configuration. AutoDev role
+TOMLs, the execution contract, the MCP launcher, provider bridges, hooks,
+permissions, and skills remain authoritative outside Rulesync.
+
 Pin an exact tested Rulesync version rather than tracking `latest`
 
 ### Migrate first
