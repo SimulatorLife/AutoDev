@@ -786,6 +786,65 @@ exit 0
                 self.assertCountEqual(role_contract["mcp"], enabled_mcp)
                 self.assertCountEqual(role_contract["skills"], enabled_skills)
 
+    def test_execution_contract_matches_frozen_phase0_baseline_fixture(self):
+        """Phase 0 of the platform migration freezes the execution contract as
+        an observable baseline (see docs/AUTODEV_PLATFORM_MIGRATION.md). Both
+        the tracked generated artifact and a fresh render from the role TOML
+        sources must match the frozen fixture byte-for-byte (as parsed JSON)
+        so that any future refactor (e.g. adopting Rulesync) can be verified
+        against this baseline instead of against whatever the renderer
+        happens to currently produce.
+        """
+        fixture_path = REPO_ROOT / "tests/fixtures/contracts/execution-contract.json"
+        contract_path = REPO_ROOT / "scripts/codex/execution-contract.json"
+        role_dir = REPO_ROOT / "scripts/codex/agents"
+
+        fixture = json.loads(fixture_path.read_text())
+        tracked = json.loads(contract_path.read_text())
+        self.assertEqual(
+            tracked,
+            fixture,
+            msg=(
+                "tracked scripts/codex/execution-contract.json has drifted from the "
+                "frozen Phase 0 baseline fixture at "
+                f"{fixture_path.relative_to(REPO_ROOT)}. If this drift is intentional, "
+                "regenerate the fixture from the newly rendered contract and document "
+                "why the baseline moved."
+            ),
+        )
+
+        with tempfile.TemporaryDirectory() as output_dir:
+            generated = Path(output_dir) / "execution-contract.json"
+            subprocess.run(
+                [
+                    "python3",
+                    str(EXECUTION_CONTRACT_RENDERER_PATH),
+                    "--source-dir",
+                    str(role_dir),
+                    "--root-config",
+                    str(REPO_ROOT / "scripts/codex/config.toml"),
+                    "--contract",
+                    str(contract_path),
+                    "--output",
+                    str(generated),
+                ],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            rendered = json.loads(generated.read_text())
+        self.assertEqual(
+            rendered,
+            fixture,
+            msg=(
+                "render-execution-contract.py output has drifted from the frozen "
+                f"Phase 0 baseline fixture at {fixture_path.relative_to(REPO_ROOT)}. "
+                "The renderer's role-TOML-derived output must remain stable for "
+                "the frozen baseline; update the fixture only alongside a documented, "
+                "intentional contract change."
+            ),
+        )
+
     def test_role_mcp_http_servers_use_codex_native_url_configuration(self):
         """Codex role TOMLs use ``url`` + ``transport = "streamable_http"`` for
         streamable HTTP MCP servers. The hardened renderer rejects a ``url``

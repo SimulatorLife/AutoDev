@@ -577,10 +577,25 @@ provider bridges OTel --/             |
 
 Inventory and test the behavior before replacing anything
 
+### Status
+
+The first Phase 0 slice is landed: the generated execution contract
+(`scripts/codex/execution-contract.json`) is frozen against a canonical
+fixture at `tests/fixtures/contracts/execution-contract.json`.
+`tests/test_local_setup.py::LocalSetupTests::test_execution_contract_matches_frozen_phase0_baseline_fixture`
+asserts that both the tracked artifact and a fresh render from the role TOML
+sources match that fixture byte-for-byte (as parsed JSON), so any future
+refactor of role rendering (including a Rulesync migration) has an executable
+baseline to diff against instead of "whatever the renderer currently
+produces." Updating the fixture is itself the documented, intentional signal
+that the contract's shape was meant to change.
+
+All other Phase 0 capture areas listed below remain future work.
+
 ### Capture
 
 - Role TOML inputs and rendered role outputs
-- Generated execution contract
+- Generated execution contract (frozen — see Status above)
 - Provider request/response fixtures
 - Streaming event sequences
 - Namespace/custom/freeform tool behavior

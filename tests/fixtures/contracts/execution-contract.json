@@ -1,0 +1,141 @@
+{
+  "version": 1,
+  "roles": {
+    "browser-tester": {
+      "kind": "leaf",
+      "readOnly": true,
+      "mcp": [
+        "playwright"
+      ],
+      "skills": []
+    },
+    "default": {
+      "kind": "leaf",
+      "readOnly": false,
+      "mcp": [
+        "lsp",
+        "cocoindex-code"
+      ],
+      "skills": [
+        "ccc",
+        "lsp-mcp-server"
+      ]
+    },
+    "docs-researcher": {
+      "kind": "leaf",
+      "readOnly": true,
+      "mcp": [
+        "openaiDeveloperDocs"
+      ],
+      "skills": [],
+      "webResearch": {
+        "search": true,
+        "fetch": true,
+        "optionalMcp": []
+      }
+    },
+    "explorer": {
+      "kind": "leaf",
+      "readOnly": true,
+      "mcp": [
+        "lsp",
+        "cocoindex-code"
+      ],
+      "skills": [
+        "ccc",
+        "lsp-mcp-server"
+      ]
+    },
+    "orchestrator": {
+      "kind": "orchestrator",
+      "readOnly": false,
+      "mcp": [
+        "lsp",
+        "cocoindex-code",
+        "autodev_spawn"
+      ],
+      "skills": [
+        "orchestration",
+        "ccc",
+        "lsp-mcp-server"
+      ],
+      "webResearch": {
+        "search": true,
+        "fetch": true,
+        "optionalMcp": []
+      }
+    },
+    "smart": {
+      "kind": "leaf",
+      "readOnly": false,
+      "mcp": [
+        "lsp",
+        "cocoindex-code",
+        "playwright",
+        "openaiDeveloperDocs"
+      ],
+      "skills": [
+        "ccc",
+        "lsp-mcp-server"
+      ],
+      "webResearch": {
+        "search": true,
+        "fetch": true,
+        "optionalMcp": [
+          "playwright"
+        ]
+      }
+    },
+    "validator": {
+      "kind": "leaf",
+      "readOnly": true,
+      "mcp": [
+        "lsp",
+        "cocoindex-code"
+      ],
+      "skills": [
+        "ccc",
+        "lsp-mcp-server"
+      ]
+    },
+    "worker": {
+      "kind": "leaf",
+      "readOnly": false,
+      "mcp": [
+        "lsp",
+        "cocoindex-code"
+      ],
+      "skills": [
+        "ccc",
+        "lsp-mcp-server"
+      ]
+    }
+  },
+  "providers": {
+    "claude": {
+      "spawnTools": [
+        "Agent",
+        "Task"
+      ],
+      "permissionMode": "configured"
+    },
+    "antigravity": {
+      "spawnTools": [
+        "invoke_subagent"
+      ],
+      "permissionMode": "configured"
+    },
+    "minimax": {
+      "spawnTools": [],
+      "permissionMode": "upstream"
+    },
+    "copilot": {
+      "spawnTools": [],
+      "permissionMode": "configured"
+    },
+    "codex": {
+      "spawnTools": [],
+      "permissionMode": "native"
+    }
+  }
+}
