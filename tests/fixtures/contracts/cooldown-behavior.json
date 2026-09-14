@@ -1,0 +1,386 @@
+{
+  "schema": "autodev-cooldown-behavior-v1",
+  "description": "Deterministic boundary for the router cooldown model exercised by `cooldownProvider`, `clearProviderCooldown`, `cooldownAllowsLastResort`, `providerCooldownSummary`, and `nextProviderRetryMs`. The scenarios below pin every observable shape that the router produces today: config/probe/transient/hard cooldown classes, stated reset handling (future, past, far, missing), ladder escalation, the non-shortening rule that prevents a shorter failure from pulling a longer one back, last-resort eligibility, retry-after derivation, and the structured provider summary. Updating the fixture is itself the documented, intentional signal that cooldown behavior, ladder ceilings, or summary shape is meant to change.",
+  "now": 1700000000000,
+  "constants": {
+    "providerCooldownMs": 30000,
+    "providerCooldownMaxMs": 600000,
+    "hardCooldownMs": 900000,
+    "hardCooldownMaxMs": 21600000,
+    "probeCooldownMs": 5000,
+    "probeCooldownMaxMs": 30000
+  },
+  "scenarios": {
+    "config_authentication": {
+      "setup": [
+        { "provider": "claude", "args": { "failureClass": "authentication" } }
+      ],
+      "expected": {
+        "kind": "config",
+        "streak": 0,
+        "durationMs": 30000,
+        "cooldownUntilDeltaMs": 30000,
+        "resetsAt": null
+      }
+    },
+    "config_invalid_model": {
+      "setup": [
+        { "provider": "claude", "args": { "failureClass": "invalid_model" } }
+      ],
+      "expected": {
+        "kind": "config",
+        "streak": 0,
+        "durationMs": 30000,
+        "cooldownUntilDeltaMs": 30000,
+        "resetsAt": null
+      }
+    },
+    "config_does_not_escalate_on_repeat": {
+      "setup": [
+        { "provider": "claude", "args": { "failureClass": "authentication" } },
+        { "provider": "claude", "args": { "failureClass": "authentication" } },
+        { "provider": "claude", "args": { "failureClass": "authentication" } }
+      ],
+      "expected": {
+        "kind": "config",
+        "streak": 0,
+        "durationMs": 30000,
+        "cooldownUntilDeltaMs": 30000,
+        "resetsAt": null
+      }
+    },
+    "probe_ladder_first_through_fifth": {
+      "setup": [
+        { "provider": "antigravity", "args": { "failureClass": "probe_unavailable" } },
+        { "provider": "antigravity", "args": { "failureClass": "probe_unavailable" } },
+        { "provider": "antigravity", "args": { "failureClass": "probe_unavailable" } },
+        { "provider": "antigravity", "args": { "failureClass": "probe_unavailable" } },
+        { "provider": "antigravity", "args": { "failureClass": "probe_unavailable" } }
+      ],
+      "expectedStreaks": [
+        { "kind": "probe", "streak": 1, "durationMs": 5000 },
+        { "kind": "probe", "streak": 2, "durationMs": 10000 },
+        { "kind": "probe", "streak": 3, "durationMs": 20000 },
+        { "kind": "probe", "streak": 4, "durationMs": 30000 },
+        { "kind": "probe", "streak": 5, "durationMs": 30000 }
+      ]
+    },
+    "transient_ladder_first_through_seventh": {
+      "setup": [
+        { "provider": "claude", "args": {} },
+        { "provider": "claude", "args": {} },
+        { "provider": "claude", "args": {} },
+        { "provider": "claude", "args": {} },
+        { "provider": "claude", "args": {} },
+        { "provider": "claude", "args": {} },
+        { "provider": "claude", "args": {} }
+      ],
+      "expectedStreaks": [
+        { "kind": "transient", "streak": 1, "durationMs": 30000 },
+        { "kind": "transient", "streak": 2, "durationMs": 60000 },
+        { "kind": "transient", "streak": 3, "durationMs": 120000 },
+        { "kind": "transient", "streak": 4, "durationMs": 240000 },
+        { "kind": "transient", "streak": 5, "durationMs": 480000 },
+        { "kind": "transient", "streak": 6, "durationMs": 600000 },
+        { "kind": "transient", "streak": 7, "durationMs": 600000 }
+      ]
+    },
+    "hard_with_future_reset_held_until_reset": {
+      "setup": [
+        { "provider": "claude", "args": { "failureClass": "quota_exhausted", "structured": true, "resetsAt": "2023-11-14T23:13:20.000Z" } }
+      ],
+      "expected": {
+        "kind": "hard",
+        "streak": 0,
+        "durationMs": 3600000,
+        "cooldownUntilDeltaMs": 3600000,
+        "resetsAt": "2023-11-14T23:13:20.000Z"
+      }
+    },
+    "hard_with_session_limit_class_also_holds_until_reset": {
+      "setup": [
+        { "provider": "claude", "args": { "failureClass": "session_limit", "structured": true, "resetsAt": "2023-11-14T23:13:20.000Z" } }
+      ],
+      "expected": {
+        "kind": "hard",
+        "streak": 0,
+        "durationMs": 3600000,
+        "cooldownUntilDeltaMs": 3600000,
+        "resetsAt": "2023-11-14T23:13:20.000Z"
+      }
+    },
+    "hard_with_past_reset_falls_back_to_short_transient": {
+      "setup": [
+        { "provider": "claude", "args": { "failureClass": "quota_exhausted", "structured": true, "resetsAt": "2023-11-14T22:12:20.000Z" } }
+      ],
+      "expected": {
+        "kind": "hard",
+        "streak": 0,
+        "durationMs": 30000,
+        "cooldownUntilDeltaMs": 30000,
+        "resetsAt": "2023-11-14T22:12:20.000Z"
+      }
+    },
+    "hard_without_reset_uses_floor": {
+      "setup": [
+        { "provider": "claude", "args": { "failureClass": "quota_exhausted", "structured": true } }
+      ],
+      "expected": {
+        "kind": "hard",
+        "streak": 0,
+        "durationMs": 900000,
+        "cooldownUntilDeltaMs": 900000,
+        "resetsAt": null
+      }
+    },
+    "hard_with_far_reset_clamped_to_ceiling": {
+      "setup": [
+        { "provider": "claude", "args": { "failureClass": "quota_exhausted", "structured": true, "resetsAt": "2023-12-14T22:13:20.000Z" } }
+      ],
+      "expected": {
+        "kind": "hard",
+        "streak": 0,
+        "durationMs": 21600000,
+        "cooldownUntilDeltaMs": 21600000,
+        "resetsAt": "2023-12-14T22:13:20.000Z"
+      }
+    },
+    "hard_unstructured_stays_on_transient_ladder": {
+      "setup": [
+        { "provider": "claude", "args": { "failureClass": "quota_exhausted", "structured": false } }
+      ],
+      "expected": {
+        "kind": "transient",
+        "streak": 1,
+        "durationMs": 30000,
+        "cooldownUntilDeltaMs": 30000,
+        "resetsAt": null
+      }
+    },
+    "non_shortening_probe_does_not_pull_back_hard": {
+      "setup": [
+        { "provider": "claude", "args": { "failureClass": "quota_exhausted", "structured": true, "resetsAt": "2023-11-14T23:13:20.000Z" } },
+        { "provider": "claude", "args": { "failureClass": "probe_unavailable" } }
+      ],
+      "expected": {
+        "provider": "claude",
+        "state": "hard",
+        "failureClass": "quota_exhausted",
+        "resetsAt": "2023-11-14T23:13:20.000Z",
+        "retryAfterMs": 3599999
+      }
+    },
+    "non_shortening_transient_does_not_pull_back_hard": {
+      "setup": [
+        { "provider": "claude", "args": { "failureClass": "quota_exhausted", "structured": true, "resetsAt": "2023-11-14T23:13:20.000Z" } },
+        { "provider": "claude", "args": { "failureClass": "upstream_error" } }
+      ],
+      "expected": {
+        "provider": "claude",
+        "state": "hard",
+        "failureClass": "quota_exhausted",
+        "resetsAt": "2023-11-14T23:13:20.000Z",
+        "retryAfterMs": 3599999
+      }
+    },
+    "non_shortening_config_does_not_pull_back_hard": {
+      "setup": [
+        { "provider": "claude", "args": { "failureClass": "quota_exhausted", "structured": true, "resetsAt": "2023-11-14T23:13:20.000Z" } },
+        { "provider": "claude", "args": { "failureClass": "authentication" } }
+      ],
+      "expected": {
+        "provider": "claude",
+        "state": "hard",
+        "failureClass": "quota_exhausted",
+        "resetsAt": "2023-11-14T23:13:20.000Z",
+        "retryAfterMs": 3599999
+      }
+    },
+    "non_shortening_hard_keeps_its_own_reset_after_subsequent_step": {
+      "setup": [
+        { "provider": "claude", "args": { "failureClass": "quota_exhausted", "structured": true, "resetsAt": "2023-11-14T23:13:20.000Z" } },
+        { "provider": "claude", "args": {} }
+      ],
+      "expected": {
+        "provider": "claude",
+        "state": "hard",
+        "failureClass": "quota_exhausted",
+        "resetsAt": "2023-11-14T23:13:20.000Z",
+        "retryAfterMs": 3599999
+      }
+    },
+    "last_resort_eligible_when_no_entry": {
+      "setup": [],
+      "entry": null,
+      "atDeltaMs": 0,
+      "expected": true
+    },
+    "last_resort_blocked_for_config": {
+      "setup": [
+        { "provider": "claude", "args": { "failureClass": "authentication" } }
+      ],
+      "entry": { "kind": "config", "resetsAt": null },
+      "atDeltaMs": 1,
+      "expected": false
+    },
+    "last_resort_eligible_for_probe": {
+      "setup": [
+        { "provider": "claude", "args": { "failureClass": "probe_unavailable" } }
+      ],
+      "entry": { "kind": "probe", "resetsAt": null },
+      "atDeltaMs": 1,
+      "expected": true
+    },
+    "last_resort_eligible_for_transient": {
+      "setup": [
+        { "provider": "claude", "args": {} }
+      ],
+      "entry": { "kind": "transient", "resetsAt": null },
+      "atDeltaMs": 1,
+      "expected": true
+    },
+    "last_resort_blocked_for_hard_with_future_reset": {
+      "setup": [
+        { "provider": "claude", "args": { "failureClass": "quota_exhausted", "structured": true, "resetsAt": "2023-11-14T23:13:20.000Z" } }
+      ],
+      "entry": { "kind": "hard", "resetsAt": "2023-11-14T23:13:20.000Z" },
+      "atDeltaMs": 1,
+      "expected": false
+    },
+    "last_resort_eligible_for_hard_with_past_reset": {
+      "setup": [
+        { "provider": "claude", "args": { "failureClass": "quota_exhausted", "structured": true, "resetsAt": "2023-11-14T22:12:20.000Z" } }
+      ],
+      "entry": { "kind": "hard", "resetsAt": "2023-11-14T22:12:20.000Z" },
+      "atDeltaMs": 1,
+      "expected": true
+    },
+    "last_resort_eligible_for_hard_without_reset": {
+      "setup": [
+        { "provider": "claude", "args": { "failureClass": "quota_exhausted", "structured": true } }
+      ],
+      "entry": { "kind": "hard", "resetsAt": null },
+      "atDeltaMs": 1,
+      "expected": true
+    },
+    "retry_returns_earliest_remaining_ms": {
+      "setup": [
+        { "provider": "claude", "args": { "failureClass": "probe_unavailable" } },
+        { "provider": "antigravity", "args": {} }
+      ],
+      "atDeltaMs": 0,
+      "providers": ["claude", "antigravity", "minimax"],
+      "expected": 5000
+    },
+    "retry_returns_ms_for_single_cooling_provider": {
+      "setup": [
+        { "provider": "claude", "args": { "failureClass": "probe_unavailable" } }
+      ],
+      "atDeltaMs": 0,
+      "providers": ["claude"],
+      "expected": 5000
+    },
+    "retry_returns_zero_when_none_cooling": {
+      "setup": [],
+      "atDeltaMs": 0,
+      "providers": ["claude", "antigravity", "minimax"],
+      "expected": 0
+    },
+    "retry_skips_expired_entries_at_future_time": {
+      "setup": [
+        { "provider": "claude", "args": { "failureClass": "probe_unavailable" } },
+        { "provider": "antigravity", "args": {} }
+      ],
+      "atDeltaMs": 6000,
+      "providers": ["claude", "antigravity"],
+      "expected": 24000
+    },
+    "summary_disabled_provider_reports_disabled_state": {
+      "setup": [{ "disable": "antigravity" }],
+      "providers": ["antigravity"],
+      "expected": [
+        {
+          "provider": "antigravity",
+          "state": "disabled",
+          "failureClass": "provider_disabled",
+          "resetsAt": null,
+          "retryAfterMs": 0
+        }
+      ]
+    },
+    "summary_cooling_provider_reports_kind_failure_and_reset": {
+      "setup": [
+        { "provider": "claude", "args": { "failureClass": "quota_exhausted", "structured": true, "resetsAt": "2023-11-14T23:13:20.000Z" } }
+      ],
+      "providers": ["claude"],
+      "atDeltaMs": 1,
+      "expected": [
+        {
+          "provider": "claude",
+          "state": "hard",
+          "failureClass": "quota_exhausted",
+          "resetsAt": "2023-11-14T23:13:20.000Z",
+          "retryAfterMs": 3599999
+        }
+      ]
+    },
+    "summary_provider_with_no_entry_reports_available": {
+      "setup": [],
+      "providers": ["claude"],
+      "atDeltaMs": 1,
+      "expected": [
+        {
+          "provider": "claude",
+          "state": "available",
+          "failureClass": null,
+          "resetsAt": null,
+          "retryAfterMs": 0
+        }
+      ]
+    },
+    "summary_dedupes_repeated_providers": {
+      "setup": [],
+      "providers": ["claude", "claude", "claude"],
+      "atDeltaMs": 1,
+      "expected": [
+        {
+          "provider": "claude",
+          "state": "available",
+          "failureClass": null,
+          "resetsAt": null,
+          "retryAfterMs": 0
+        }
+      ]
+    },
+    "summary_mixed_list_reports_each_provider_state": {
+      "setup": [
+        { "provider": "claude", "args": { "failureClass": "quota_exhausted", "structured": true, "resetsAt": "2023-11-14T23:13:20.000Z" } }
+      ],
+      "providers": ["claude", "antigravity", "minimax"],
+      "atDeltaMs": 1,
+      "expected": [
+        {
+          "provider": "claude",
+          "state": "hard",
+          "failureClass": "quota_exhausted",
+          "resetsAt": "2023-11-14T23:13:20.000Z",
+          "retryAfterMs": 3599999
+        },
+        {
+          "provider": "antigravity",
+          "state": "available",
+          "failureClass": null,
+          "resetsAt": null,
+          "retryAfterMs": 0
+        },
+        {
+          "provider": "minimax",
+          "state": "available",
+          "failureClass": null,
+          "resetsAt": null,
+          "retryAfterMs": 0
+        }
+      ]
+    }
+  }
+}

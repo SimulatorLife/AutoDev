@@ -592,6 +592,41 @@ that the contract's shape was meant to change.
 
 Copilot direct-file and shell-based skill-read paths are frozen (`tests/fixtures/contracts/copilot-responses-contract.json` exercised via `tests/copilot-responses-contract.test.mjs`), while remaining provider contracts remain pending.
 
+The Phase 0 "provider selection order and randomization" capture is landed
+as a deterministic fixture. The fixture at
+`tests/fixtures/contracts/provider-selection-order.json` records the eight
+non-empty `providerPriority` listings the router produces under seeded
+randomness (`mulberry32(0xC0FFEE)`) for the `default`, `smart`, and
+`orchestrator` tiers, plus the second eight listings for `default`, and the
+live tier membership that each listing must stay within.
+`tests/provider-selection-order.test.mjs` drives those listings through the
+exported `providerPriority`, `tierCandidates`, and `roleCandidates` helpers
+and asserts every listing stays within its tier membership. Refreshing the
+fixture is the documented, intentional signal that ordering, group layout,
+or randomization is meant to change.
+
+The Phase 0 "cooldown and provider-limit behavior" capture is landed as a
+deterministic fixture. The fixture at
+`tests/fixtures/contracts/cooldown-behavior.json` records the observable
+shape the router produces today at a fixed `now` (epoch ms `1700000000000`)
+for every cooldown slice: `config` (authentication/invalid_model), `probe`
+(local bridge health failures on their own short ladder), `transient`
+(everything else on the 30s-doubling ladder), and `hard` (provider-reported
+limits held until the stated reset, with floor/ceiling/clamp rules);
+escalation rungs for both ladders; stated-reset handling for future, past,
+absent, and far-past-reset cases; the non-shortening rule that prevents a
+shorter failure from pulling a longer one back; `cooldownAllowsLastResort`
+decisions for every entry shape; `nextProviderRetryMs` for the earliest
+remaining retry window; and `providerCooldownSummary` for disabled,
+cooling, available, deduplicated, and mixed-provider lists.
+`tests/cooldown-behavior.test.mjs` drives those scenarios through the
+exported `cooldownProvider`, `clearProviderCooldown`,
+`cooldownAllowsLastResort`, `providerCooldownSummary`, and
+`nextProviderRetryMs` helpers and asserts every shape against the fixture.
+Refreshing the fixture is the documented, intentional signal that cooldown
+classes, ladder ceilings, last-resort policy, or summary shape is meant to
+change.
+
 All other Phase 0 capture areas listed below remain future work.
 
 ### Capture
@@ -602,8 +637,8 @@ All other Phase 0 capture areas listed below remain future work.
 - Streaming event sequences
 - Namespace/custom/freeform tool behavior
 - Responses item-ID continuation behavior
-- Provider selection order and randomization
-- Cooldown and provider-limit behavior
+- Provider selection order and randomization (frozen — see Status above)
+- Cooldown and provider-limit behavior (frozen — see Status above)
 - Root versus subagent provider selection
 - Workspace attribution
 - Tool/skill/MCP attribution
