@@ -3,6 +3,7 @@ set -euo pipefail
 
 if [[ -f "${CODEX_ENV_FILE:-$HOME/.codex/.env}" ]]; then
   set -a
+  # shellcheck disable=SC1090
   source "${CODEX_ENV_FILE:-$HOME/.codex/.env}"
   set +a
 fi

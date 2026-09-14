@@ -133,6 +133,28 @@ test('AutoDev CI is repository-native and pnpm-native', async () => {
   assert.match(source, /node-version-file: \.nvmrc/);
 });
 
+test('AutoDev CI makes actionlint and ShellCheck mandatory', async () => {
+  const packageJson = JSON.parse(await readFile(path.join(root, 'package.json'), 'utf8'));
+  assert.equal(packageJson.scripts['validate:actionlint'], 'actionlint');
+  assert.equal(
+    packageJson.scripts['validate:shell'],
+    "find scripts -type f -name '*.sh' -exec shellcheck --severity=warning {} +"
+  );
+
+  const workflow = await readWorkflow('copilot-setup-steps.yml');
+  assert.match(workflow, /Install actionlint and ShellCheck/);
+  assert.match(workflow, /ACTIONLINT_VERSION: 1\.7\.12/);
+  assert.match(workflow, /ACTIONLINT_SHA256: [0-9a-f]{64}/);
+  assert.match(workflow, /apt-get install --no-install-recommends -y shellcheck/);
+  assert.match(workflow, /pnpm run validate:actionlint/);
+  assert.match(workflow, /pnpm run validate:shell/);
+
+  const actionlintConfig = await readFile(path.join(root, '.github', 'actionlint.yaml'), 'utf8');
+  assert.match(actionlintConfig, /paths:/);
+  assert.match(actionlintConfig, /SC2016/);
+  assert.match(actionlintConfig, /SC2129/);
+});
+
 test('central target PR janitor owns empty stale PR cleanup', async () => {
   const source = await readWorkflow('target-pr-janitor.yml');
   assert.match(source, /workflow_dispatch:/);

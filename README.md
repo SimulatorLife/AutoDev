@@ -42,13 +42,21 @@ Edit `.github/workflows/weights.json` and add one `repositories` record per targ
 
 The migrated policy keeps the source repository's agent weights unchanged; a zero agent weight is an intentional disable switch. Set a positive weight for at least one configured provider before enabling the scheduler.
 
-Run the focused policy and local setup tests locally with:
+Run the focused policy, workflow, shell, and local setup checks locally with:
 
 ```bash
 pnpm install --frozen-lockfile
 pnpm test
 pnpm run test:python
+pnpm run validate:actionlint
+pnpm run validate:shell
 ```
+
+The GitHub Actions validation job installs pinned actionlint and the runner's
+ShellCheck package, then runs both checks as mandatory gates. actionlint also
+passes embedded workflow shell through ShellCheck; the repository config ignores
+only the existing SC2016 and SC2129 style-only findings in workflow snippets.
+Install `actionlint` and `shellcheck` locally before running those commands.
 
 AutoDev owns the organization workflows and local AI/provider setup. RacingGame intentionally retains only product-specific tooling such as build, performance, CSS-token, and source-boundary scripts; those are not organization automation and are not duplicated here.
 

@@ -103,6 +103,7 @@ fi
 bash "$router_ensure"
 if [[ -f "${CODEX_ENV_FILE:-$codex_home/.env}" ]]; then
   set -a
+  # shellcheck disable=SC1090
   source "${CODEX_ENV_FILE:-$codex_home/.env}"
   set +a
 fi

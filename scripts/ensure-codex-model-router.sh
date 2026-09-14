@@ -200,7 +200,7 @@ ensure_via_fallback() {
 
   if [[ -f "$fallback_pid_file" ]]; then
     local existing_pid
-    existing_pid="$(<"$fallback_pid_file" 2>/dev/null || true)"
+    existing_pid="$(cat "$fallback_pid_file" 2>/dev/null || true)"
     if [[ "$existing_pid" =~ ^[0-9]+$ ]] && kill -0 "$existing_pid" 2>/dev/null; then
       if fallback_pid_is_owned "$existing_pid"; then
         if probe_ok; then return 0; fi

@@ -1,0 +1,8 @@
+# Existing workflow scripts intentionally use grouped JavaScript snippets and
+# repeated GITHUB_OUTPUT redirects. Keep actionlint focused on workflow and
+# shell correctness issues beyond these style-only findings.
+paths:
+  ".github/workflows/**/*.yml":
+    ignore:
+      - 'SC2016'
+      - 'SC2129'
