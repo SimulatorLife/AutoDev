@@ -643,22 +643,27 @@ Complete. The portable source is authoritative at `scripts/codex/config.autodev.
 ### Status
 
 The Phase 2 slices are shadow-only MCP translation, shared-instruction
-translation, and canonical-skill translation. Rulesync is pinned to `16.30.2`
-and generates into tracked fixtures under `tests/fixtures/rulesync-shadow/` for
-`codexcli`, `claudecode`, `copilot`, and `antigravity-cli`.
+translation, canonical-skill translation, and hook translation. Rulesync is
+pinned to `16.30.2` and generates into tracked fixtures under
+`tests/fixtures/rulesync-shadow/` for `codexcli`, `claudecode`, `copilot`, and
+`antigravity-cli`.
 
 The Rulesync source covers shared MCP declarations, the common repository
-instructions represented by `AGENTS.md`, and the three portable AutoDev-owned
-skills (`ccc`, `lsp-mcp-server`, and `orchestration`). It produces target-shaped
-shadow files for rules plus skill trees under `.agents/skills/`,
-`.claude/skills/`, and `.github/skills/` without writing live provider or user
-configuration. Existing live instructions remain unchanged so target-specific
-guidance is not silently removed during this parity phase.
+instructions represented by `AGENTS.md`, the three portable AutoDev-owned
+skills (`ccc`, `lsp-mcp-server`, and `orchestration`), and the six existing
+command hooks across `SessionStart`, `SubagentStart`, `UserPromptSubmit`, and
+`PreToolUse`. It produces target-shaped shadow files without writing live
+provider or user configuration. Rulesync currently emits only `PreToolUse` for
+Antigravity, and Codex-only fields such as `prevent_idle_sleep` remain outside
+the portable source as explicit parity limitations.
 
-Role-specific skill assignment and exposure remain AutoDev-owned: the execution
-contract, provider skill-view renderer, Claude role views, Antigravity
-`include_only` registration, symlink installer, MCP launcher, provider
-bridges, hooks, and permissions remain outside Rulesync.
+Existing live instructions and hooks remain unchanged so target-specific
+guidance and AutoDev runtime enforcement are not silently removed during this
+parity phase. Role-specific skill assignment and exposure remain AutoDev-owned:
+the execution contract, provider skill-view renderer, Claude role views,
+Antigravity `include_only` registration, symlink installer, MCP launcher,
+provider bridges, hooks, and permissions remain outside Rulesync. Permissions
+migration is deferred pending a complete portable source inventory.
 
 CI drift protection is enforced by `.github/workflows/rulesync-mcp-shadow-drift.yml`, a
 read-only workflow triggered on `push` to `main`, `pull_request`, and `workflow_dispatch`
@@ -670,7 +675,7 @@ dependencies and detects drift using:
 pnpm exec rulesync generate \
   --config rulesync.jsonc \
   --targets codexcli,claudecode,copilot,antigravity-cli \
-  --features mcp,rules,skills \
+  --features mcp,rules,skills,hooks \
   --output-roots tests/fixtures/rulesync-shadow \
   --check \
   --silent
@@ -685,7 +690,7 @@ When the CI drift check or local `--check` reports drift due to intentional upda
    pnpm exec rulesync generate \
      --config rulesync.jsonc \
      --targets codexcli,claudecode,copilot,antigravity-cli \
-     --features mcp,rules,skills \
+     --features mcp,rules,skills,hooks \
      --output-roots tests/fixtures/rulesync-shadow \
      --delete \
      --silent
@@ -694,6 +699,7 @@ When the CI drift check or local `--check` reports drift due to intentional upda
    ```bash
    python3 -m unittest tests/test_rulesync_mcp_shadow.py
    python3 -m unittest tests/test_rulesync_skills_shadow.py
+   python3 -m unittest tests/test_rulesync_hooks_shadow.py
    ```
 3. Commit the refreshed fixtures under `tests/fixtures/rulesync-shadow/`.
 
@@ -704,8 +710,8 @@ Pin an exact tested Rulesync version rather than tracking `latest`
 - Root/shared instructions
 - Canonical skills
 - Shared MCP declarations
-- Hook declarations
-- Permissions declarations
+- Hook declarations (shadow-only translation complete; target limitations documented)
+- Permissions declarations (deferred pending a portable source inventory)
 
 ### Process
 

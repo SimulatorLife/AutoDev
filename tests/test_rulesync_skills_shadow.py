@@ -107,8 +107,8 @@ class RulesyncSkillsShadowTests(unittest.TestCase):
         features = match.group(1).replace(" ", "")
         self.assertEqual(
             features,
-            "mcp,rules,skills",
-            msg="drift workflow must generate mcp,rules,skills so shadows stay in lockstep",
+            "mcp,rules,skills,hooks",
+            msg="drift workflow must generate mcp,rules,skills,hooks so shadows stay in lockstep",
         )
 
     def test_pinned_rulesync_generates_per_target_skill_paths(self):

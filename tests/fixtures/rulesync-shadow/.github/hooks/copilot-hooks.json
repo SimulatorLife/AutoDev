@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "hooks": {
+    "userPromptSubmitted": [
+      {
+        "type": "command",
+        "command": "bash ~/.codex/hooks/enforce-root-delegation.sh"
+      }
+    ]
+  }
+}

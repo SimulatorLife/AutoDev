@@ -288,7 +288,7 @@ specific agents, MCPs, and skills to coexist under distinct names.
 
 ### Rulesync shared-configuration shadow fixtures and refresh
 
-AutoDev tracks isolated MCP, shared-instruction, and canonical-skill shadow fixtures for supported providers (`codexcli`, `claudecode`, `copilot`, `antigravity-cli`) under `tests/fixtures/rulesync-shadow/` to detect upstream drift without mutating live configuration. Rule fixtures are generated from `.rulesync/rules/overview.md`; skill fixtures cover only `ccc`, `lsp-mcp-server`, and `orchestration` (with portable references) from `.rulesync/skills/`. All remain shadow-only; existing live instructions and target-specific guidance are unchanged.
+AutoDev tracks isolated MCP, shared-instruction, canonical-skill, and hook shadow fixtures for supported providers (`codexcli`, `claudecode`, `copilot`, `antigravity-cli`) under `tests/fixtures/rulesync-shadow/` to detect upstream drift without mutating live configuration. Rule fixtures are generated from `.rulesync/rules/overview.md`; skill fixtures cover only `ccc`, `lsp-mcp-server`, and `orchestration` (with portable references) from `.rulesync/skills/`. Hook shadows cover the six existing command hooks across SessionStart, SubagentStart, UserPromptSubmit, and PreToolUse. Rulesync currently emits only the supported PreToolUse hook for Antigravity and omits Codex-only fields such as prevent_idle_sleep. All remain shadow-only; existing live instructions, hooks, and target-specific guidance are unchanged. Rulesync permissions translation remains deferred until AutoDev has a complete portable permission source inventory.
 
 To check for drift between `.rulesync/` source configuration and the tracked shadow fixtures:
 
@@ -296,13 +296,13 @@ To check for drift between `.rulesync/` source configuration and the tracked sha
 pnpm exec rulesync generate \
   --config rulesync.jsonc \
   --targets codexcli,claudecode,copilot,antigravity-cli \
-  --features mcp,rules,skills \
+  --features mcp,rules,skills,hooks \
   --output-roots tests/fixtures/rulesync-shadow \
   --check \
   --silent
 ```
 
-Rulesync does not replace AutoDev's live skill installation or role filtering. The installer continues to symlink canonical skills from `scripts/codex/skills/`, `render-provider-skill-views.py` continues to project role-specific Claude views from the execution contract, and Antigravity continues to use its explicit `include_only` registration. Rulesync skill output is only a portable format/parity shadow until those boundaries are separately proven equivalent.
+Rulesync does not replace AutoDev's live hook enforcement, skill installation, or role filtering. The installer continues to symlink canonical skills from `scripts/codex/skills/`, `render-provider-skill-views.py` continues to project role-specific Claude views from the execution contract, and Antigravity continues to use its explicit `include_only` registration. Rulesync skill output is only a portable format/parity shadow until those boundaries are separately proven equivalent.
 
 To refresh the tracked shadow fixtures after making intentional changes to `.rulesync/` or `rulesync.jsonc`:
 
@@ -310,7 +310,7 @@ To refresh the tracked shadow fixtures after making intentional changes to `.rul
 pnpm exec rulesync generate \
   --config rulesync.jsonc \
   --targets codexcli,claudecode,copilot,antigravity-cli \
-  --features mcp,rules,skills \
+  --features mcp,rules,skills,hooks \
   --output-roots tests/fixtures/rulesync-shadow \
   --delete \
   --silent

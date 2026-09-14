@@ -1,0 +1,43 @@
+{
+  "hooks": {
+    "sessionStart": [
+      {
+        "type": "command",
+        "matcher": ".*",
+        "command": "bash ~/.codex/hooks/ensure-codex-model-router.sh"
+      }
+    ],
+    "subagentStart": [
+      {
+        "type": "command",
+        "matcher": ".*",
+        "command": "bash ~/.codex/hooks/ensure-codex-claude-bridge.sh"
+      },
+      {
+        "type": "command",
+        "matcher": ".*",
+        "command": "bash ~/.codex/hooks/ensure-codex-minimax-proxy.sh"
+      },
+      {
+        "type": "command",
+        "matcher": ".*",
+        "command": "bash ~/.codex/hooks/ensure-codex-antigravity-proxy.sh"
+      }
+    ],
+    "beforeSubmitPrompt": [
+      {
+        "type": "command",
+        "command": "bash ~/.codex/hooks/enforce-root-delegation.sh",
+        "statusMessage": "Applying root delegation policy"
+      }
+    ],
+    "preToolUse": [
+      {
+        "type": "command",
+        "matcher": "(?i)read[_ -]?file|read|exec[_ -]?command|bash",
+        "command": "node ~/.codex/hooks/codex/skill-read-telemetry.mjs",
+        "statusMessage": "Recording skill-read telemetry"
+      }
+    ]
+  }
+}

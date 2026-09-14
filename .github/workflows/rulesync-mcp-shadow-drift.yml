@@ -52,7 +52,7 @@ jobs:
           pnpm exec rulesync generate \
             --config rulesync.jsonc \
             --targets codexcli,claudecode,copilot,antigravity-cli \
-            --features mcp,rules,skills \
+            --features mcp,rules,skills,hooks \
             --output-roots tests/fixtures/rulesync-shadow \
             --check \
             --silent
