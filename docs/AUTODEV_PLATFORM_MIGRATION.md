@@ -888,6 +888,8 @@ deliberate `unattributed` residual on role/origin/workspace but not
 on provider/model -- so any future change to those shapes is an
 intentional contract change rather than a silent drift.
 
+The Phase 0 "workspace attribution and tool/skill/MCP attribution" capture is now frozen as a deterministic contract. **Finding.** Existing behavioral tests covered workspace-local named tool/skill/MCP evidence, fail-closed unavailable-versus-empty rendering, workspace-id joins, privacy normalization, and attribution diagnostics, but no fixture pinned the public `status.usage.byWorkspace` rows or diagnostic reasons. **Slice.** `tests/fixtures/contracts/workspace-attribution-contract.json` (schema `autodev-workspace-attribution-v1`) and `tests/workspace-attribution-contract.test.mjs` now freeze empty dimensions, workspace-local bridge evidence, skill exposure versus use, MCP exposure versus confirmed use, registered/unknown/ambiguous workspace identifiers, privacy hashing, deterministic named rows, and additive privacy-safe OTel attributes. The fixture registers slot/telemetry inputs directly where needed so it is host-independent; admission limits remain covered by the separate concurrency contract. **Completed slice only after verification.** The focused contract reports 8 passing tests; existing workspace telemetry and OTel attribute suites remain green. `Workspace attribution` and `Tool/skill/MCP attribution` are marked frozen below. Native-versus-bridge child counts and dashboard/status snapshots remain the next Phase 0 capture slice before provider-retirement pilots.
+
 All other Phase 0 capture areas listed below remain future work.
 
 ### Capture
@@ -903,8 +905,8 @@ All other Phase 0 capture areas listed below remain future work.
 - Root versus subagent provider selection (frozen — see Status above)
 - Per-session concurrency contract (frozen — see Status above)
 - Active-agent reconciliation (frozen — see Status above)
-- Workspace attribution
-- Tool/skill/MCP attribution
+- Workspace attribution (frozen — see Status above)
+- Tool/skill/MCP attribution (frozen — see Status above)
 - Native versus bridge-native child counts
 - Dashboard/status snapshots
 

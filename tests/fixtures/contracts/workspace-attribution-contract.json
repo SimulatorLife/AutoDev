@@ -1,0 +1,100 @@
+{
+  "schema": "autodev-workspace-attribution-v1",
+  "description": "Deterministic contract for workspace-scoped tool, skill, and MCP attribution. It freezes fail-closed unavailable-versus-empty behavior, explicit workspace identity resolution, privacy normalization, bridge and OTLP evidence, deduplication, and sorted public rows. Refreshing this fixture is the intentional signal that attribution ownership or wire shape changed.",
+  "scenarios": {
+    "empty_workspace_is_unavailable": {
+      "operations": [
+        { "op": "record", "requestId": "empty", "phase": "selected", "workspace": "SimulatorLife/Empty" },
+        { "op": "assert", "workspace": "SimulatorLife/Empty", "field": "byTool", "expected": null },
+        { "op": "assert", "workspace": "SimulatorLife/Empty", "field": "bySkill", "expected": null },
+        { "op": "assert", "workspace": "SimulatorLife/Empty", "field": "byMcp", "expected": null },
+        { "op": "assert", "workspace": "SimulatorLife/Empty", "field": "mcpUses", "expected": null },
+        { "op": "assert", "workspace": "SimulatorLife/Empty", "field": "mcpExposed", "expected": null },
+        { "op": "assert", "workspace": "SimulatorLife/Empty", "field": "toolsExecuted", "expected": 0 },
+        { "op": "assert", "workspace": "SimulatorLife/Empty", "field": "skillsExposed", "expected": 0 }
+      ]
+    },
+    "bridge_tool_capability_is_workspace_local": {
+      "operations": [
+        { "op": "bridgeRequest", "requestId": "tool-1", "workspace": "SimulatorLife/Tools", "provider": "claude", "model": "sonnet", "role": "default" },
+        { "op": "bridgeEvents", "requestId": "tool-1", "events": [
+          { "type": "tool_executed", "tool": "apply_patch", "callId": "call-1", "status": "ok", "server": "codex-builtin" },
+          { "type": "tool_executed", "tool": "apply_patch", "callId": "call-2", "status": "error", "server": "codex-builtin" },
+          { "type": "tool_requested", "tool": "web_search", "callId": "call-3" },
+          { "type": "tool_unavailable", "tool": "manage_subagents", "reason": "denied" }
+        ] },
+        { "op": "record", "requestId": "blank", "phase": "selected", "workspace": "SimulatorLife/Blank" },
+        { "op": "assert", "workspace": "SimulatorLife/Tools", "field": "toolsExecuted", "expected": 2 },
+        { "op": "assert", "workspace": "SimulatorLife/Tools", "field": "toolsRequested", "expected": 1 },
+        { "op": "assert", "workspace": "SimulatorLife/Tools", "field": "toolsUnavailable", "expected": 1 },
+        { "op": "assert", "workspace": "SimulatorLife/Tools", "field": "byTool", "expected": [] },
+        { "op": "assert", "workspace": "SimulatorLife/Tools", "field": "bridgeTools", "expected": [ { "tool": "apply_patch", "server": "codex-builtin", "count": 2, "byStatus": { "ok": 1, "error": 1 } } ] },
+        { "op": "assert", "workspace": "SimulatorLife/Blank", "field": "byTool", "expected": null }
+      ]
+    },
+    "skill_exposure_and_use_are_distinct": {
+      "operations": [
+        { "op": "bridgeRequest", "requestId": "skill-1", "workspace": "SimulatorLife/Skills", "provider": "claude", "model": "sonnet", "role": "default" },
+        { "op": "bridgeEvents", "requestId": "skill-1", "events": [
+          { "type": "skill_exposed", "skill": "ccc", "source": "role_contract", "pluginId": "plugin-ccc" },
+          { "type": "skill_used", "skill": "ccc", "source": "skill_read", "eventId": "read-1" },
+          { "type": "skill_used", "skill": "ccc", "source": "skill_read", "eventId": "read-1" }
+        ] },
+        { "op": "assert", "workspace": "SimulatorLife/Skills", "field": "skillsExposed", "expected": 1 },
+        { "op": "assert", "workspace": "SimulatorLife/Skills", "field": "skillUses", "expected": 1 },
+        { "op": "assert", "workspace": "SimulatorLife/Skills", "field": "bySkill", "expected": [ { "skill": "ccc", "total": 0, "uses": 1, "byStatus": {}, "byInvokeType": {}, "byAgentKind": {}, "byModel": {}, "byPlugin": {} } ] },
+        { "op": "assert", "workspace": "SimulatorLife/Skills", "field": "bridgeSkills", "expected": [ { "skill": "ccc", "count": 1 } ] }
+      ]
+    },
+    "mcp_exposure_and_use_are_distinct": {
+      "operations": [
+        { "op": "bridgeRequest", "requestId": "mcp-1", "workspace": "SimulatorLife/Mcp", "provider": "claude", "model": "sonnet", "role": "default" },
+        { "op": "bridgeEvents", "requestId": "mcp-1", "events": [
+          { "type": "mcp_exposed", "server": "playwright", "source": "role_contract" },
+          { "type": "mcp_exposed", "server": "playwright", "source": "role_contract" },
+          { "type": "tool_requested", "tool": "browser_navigate", "server": "playwright" },
+          { "type": "tool_unavailable", "tool": "browser_navigate", "server": "playwright", "reason": "denied" },
+          { "type": "tool_executed", "tool": "browser_navigate", "server": "playwright", "status": "ok" }
+        ] },
+        { "op": "trace", "workspace": "SimulatorLife/Mcp", "spans": [
+          { "name": "make_rmcp_client", "server": "playwright" },
+          { "name": "list_tools_for_client_uncached", "server": "playwright" }
+        ] },
+        { "op": "assert", "workspace": "SimulatorLife/Mcp", "field": "mcpExposed", "expected": [ { "server": "playwright", "count": 1 } ] },
+        { "op": "assert", "workspace": "SimulatorLife/Mcp", "field": "mcpUses", "expected": [ { "server": "playwright", "count": 2 } ] },
+        { "op": "assert", "workspace": "SimulatorLife/Mcp", "field": "byMcp", "expected": { "playwright": 2 } }
+      ]
+    },
+    "registered_workspace_id_resolves": {
+      "operations": [
+        { "op": "register", "id": "ws-alpha", "workspace": "SimulatorLife/Alpha" },
+        { "op": "metric", "workspaceId": "ws-alpha", "tool": "exec_command", "value": 2 },
+        { "op": "assert", "workspace": "SimulatorLife/Alpha", "field": "toolsUnattributed", "expected": 2 },
+        { "op": "diagnostics", "field": "attributed", "expected": 1 },
+        { "op": "diagnostics", "field": "unattributed", "expected": 0 }
+      ]
+    },
+    "unknown_and_ambiguous_workspace_ids_fail_closed": {
+      "operations": [
+        { "op": "metric", "workspaceId": "ws-unknown", "tool": "exec_command", "value": 1 },
+        { "op": "ambiguousMetric", "first": "ws-one", "second": "ws-two", "tool": "exec_command", "value": 1 },
+        { "op": "diagnostics", "field": "byReason.unknown_workspace_id", "expected": 1 },
+        { "op": "diagnostics", "field": "byReason.ambiguous_resource", "expected": 1 },
+        { "op": "assertAbsentWorkspace", "workspace": "ws-unknown" },
+        { "op": "assertAbsentWorkspace", "workspace": "ws-one" },
+        { "op": "assertAbsentWorkspace", "workspace": "ws-two" }
+      ]
+    },
+    "absolute_workspace_paths_are_hashed": {
+      "operations": [
+        { "op": "privacyHelper", "path": "/Users/operator/private-repo", "expected": "ws_40eee6443c21" }
+      ]
+    },
+    "otel_attributes_are_additive_and_private": {
+      "operations": [
+        { "op": "enrich", "payload": { "logs": { "resourceLogs": [ { "resource": { "attributes": [ { "key": "role", "value": { "stringValue": "worker" } }, { "key": "workspace_id", "value": { "stringValue": "ws-alpha" } }, { "key": "provider", "value": { "stringValue": "codex" } }, { "key": "model", "value": { "stringValue": "gpt-5" } } ] }, "scopeLogs": [ { "logRecords": [ { "attributes": [ { "key": "event.name", "value": { "stringValue": "codex.skill_invoke" } }, { "key": "skill", "value": { "stringValue": "ccc" } }, { "key": "prompt_text", "value": { "stringValue": "secret" } } ] } ] } ] } ] } } },
+        { "op": "assertEnrichedNoPrompt", "expectedWorkspace": "ws-alpha" }
+      ]
+    }
+  }
+}
