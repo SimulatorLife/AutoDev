@@ -734,6 +734,43 @@ Rulesync-generated portable surfaces are behaviorally equivalent and preserve un
 
 Pin an exact tested Collector build
 
+### Status
+
+The Phase 3 slices are contract-only. `config/otel/collector.version`
+pins the audited build at `v0.160.0`, and `config/otel/collector.yaml`
+describes an inactive OTLP HTTP ingress on `127.0.0.1:4318` forwarding JSON
+batches to the existing AutoDev receiver at `http://127.0.0.1:4100`.
+
+The HTTP-level contract is also frozen by
+`tests/fixtures/otel/collector-forwarded-otlp.json` and focused router tests:
+real loopback POSTs to `/v1/logs`, `/v1/traces`, and `/v1/metrics` must accept
+Collector-shaped OTLP JSON batches, preserve existing semantic aggregation,
+reject malformed JSON, and avoid prompt-content leakage. A repeated-batch
+regression test also confirms receiver transport counters may advance while
+cumulative metrics, tool results, sessions, and semantic rows do not double-count.
+
+The additive semantic attribute contract is frozen in
+`tests/fixtures/otel/autodev-attributes-schema.json`. It defines the seven
+`autodev.*` keys, their resource/event scope, and signal applicability without
+changing the existing unprefixed attribute lookup behavior; emission remains
+opt-in and disabled by default.
+The corresponding emission mapping is frozen separately in
+`tests/fixtures/otel/autodev-attributes-emission-contract.json`: it specifies
+how semantic enrichment adds optional namespaced attributes while preserving
+the existing wire keys and omitting unknown values. The router-side emitter is
+implemented behind `AUTODEV_OTEL_ATTRIBUTES=v1` and remains disabled by default.
+
+No Collector binary is installed or launched, Codex still exports directly to
+port `4100`, and no default/release-mode provider, launch-agent, SQLite,
+dashboard, or semantic-enrichment behavior changes. The Collector configuration
+remains a validated contract fixture only. Any future exporter targeting the current
+AutoDev receiver must set `encoding: json`; the receiver currently parses OTLP
+JSON and does not accept the Collector exporter's protobuf default.
+
+Rollback for this slice is limited to removing the version/config fixture,
+HTTP fixture, semantic-attribute schemas, and contract tests; no runtime rollback
+is required.
+
 ### First deployment
 
 ```text
@@ -772,6 +809,16 @@ Existing AutoDev metrics remain identical in meaning and do not double-count aft
 ---
 
 ## Phase 4 — LiteLLM pilot 1: GitHub Copilot
+
+### Status
+
+The initial Phase 4 slice is an offline golden-fixture contract for the
+incumbent Copilot Responses boundary. It freezes representative JSONL tool,
+skill-read, normal-turn, permission-denied, and provider-limit inputs plus the
+expected SSE lifecycle and error-shape invariants without installing LiteLLM,
+contacting GitHub, or changing the current Copilot proxy. It is a parity
+baseline only; it does not authorize proxy deletion or claim live LiteLLM
+compatibility.
 
 This is the strongest current transport-replacement candidate
 

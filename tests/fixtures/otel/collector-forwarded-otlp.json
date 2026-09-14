@@ -1,0 +1,209 @@
+{
+  "_comment": "Realistic OTLP JSON batches as they would be forwarded by the Phase 3 contract-only Collector's otlphttp/autodev exporter (encoding: json) described in config/otel/collector.yaml. Each top-level key is the exact request body the Collector would POST to the corresponding AutoDev OTLP endpoint (/v1/logs, /v1/traces, /v1/metrics). No Collector process is launched to produce this fixture; it is a hand-authored, schema-accurate stand-in used to freeze the HTTP ingress contract at the router boundary.",
+  "logs": {
+    "resourceLogs": [
+      {
+        "resource": {
+          "attributes": [
+            { "key": "service.name", "value": { "stringValue": "codex-cli" } },
+            { "key": "service.version", "value": { "stringValue": "1.2.3" } },
+            { "key": "mcp_servers", "value": { "stringValue": "playwright, codex_apps" } }
+          ]
+        },
+        "scopeLogs": [
+          {
+            "scope": { "name": "codex", "version": "1.2.3" },
+            "logRecords": [
+              {
+                "timeUnixNano": "__OTEL_T0__",
+                "attributes": [
+                  { "key": "event.name", "value": { "stringValue": "codex.conversation_starts" } },
+                  { "key": "conversation.id", "value": { "stringValue": "collector-forwarded-conversation-1" } },
+                  { "key": "model", "value": { "stringValue": "gpt-5.6-luna" } }
+                ]
+              },
+              {
+                "timeUnixNano": "__OTEL_T500MS__",
+                "attributes": [
+                  { "key": "event.name", "value": { "stringValue": "codex.user_prompt" } },
+                  { "key": "conversation.id", "value": { "stringValue": "collector-forwarded-conversation-1" } },
+                  { "key": "prompt_length", "value": { "intValue": "57" } },
+                  { "key": "prompt_text", "value": { "stringValue": "do-not-store-this-collector-forwarded-secret" } }
+                ]
+              },
+              {
+                "timeUnixNano": "__OTEL_T900MS__",
+                "attributes": [
+                  { "key": "event.name", "value": { "stringValue": "codex.turn_ttft" } },
+                  { "key": "conversation.id", "value": { "stringValue": "collector-forwarded-conversation-1" } },
+                  { "key": "duration_ms", "value": { "intValue": "410" } }
+                ]
+              },
+              {
+                "timeUnixNano": "__OTEL_T1200MS__",
+                "attributes": [
+                  { "key": "event.name", "value": { "stringValue": "codex.tool_result" } },
+                  { "key": "conversation.id", "value": { "stringValue": "collector-forwarded-conversation-1" } },
+                  { "key": "tool", "value": { "stringValue": "exec_command" } },
+                  { "key": "tool_origin", "value": { "stringValue": "builtin" } },
+                  { "key": "call_id", "value": { "stringValue": "call-collector-1" } },
+                  { "key": "status", "value": { "stringValue": "success" } }
+                ]
+              },
+              {
+                "timeUnixNano": "__OTEL_T2S__",
+                "attributes": [
+                  { "key": "event.name", "value": { "stringValue": "codex.sse_event" } },
+                  { "key": "event.kind", "value": { "stringValue": "response.completed" } },
+                  { "key": "conversation.id", "value": { "stringValue": "collector-forwarded-conversation-1" } },
+                  { "key": "input_token_count", "value": { "intValue": "200" } },
+                  { "key": "output_token_count", "value": { "intValue": "40" } },
+                  { "key": "cached_token_count", "value": { "intValue": "10" } },
+                  { "key": "reasoning_token_count", "value": { "intValue": "15" } },
+                  { "key": "tool_token_count", "value": { "intValue": "5" } }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "traces": {
+    "resourceSpans": [
+      {
+        "resource": {
+          "attributes": [
+            { "key": "service.name", "value": { "stringValue": "codex-cli" } },
+            { "key": "service.version", "value": { "stringValue": "1.2.3" } }
+          ]
+        },
+        "scopeSpans": [
+          {
+            "scope": { "name": "codex", "version": "1.2.3" },
+            "spans": [
+              {
+                "name": "make_rmcp_client",
+                "startTimeUnixNano": "__OTEL_T0__",
+                "endTimeUnixNano": "__OTEL_T6MS__",
+                "attributes": [
+                  { "key": "server_name", "value": { "stringValue": "playwright" } },
+                  { "key": "conversation.id", "value": { "stringValue": "collector-forwarded-conversation-1" } }
+                ],
+                "status": { "code": 1 }
+              },
+              {
+                "name": "list_tools_for_client_uncached",
+                "startTimeUnixNano": "__OTEL_T6MS__",
+                "endTimeUnixNano": "__OTEL_T13MS__",
+                "attributes": [
+                  { "key": "server_name", "value": { "stringValue": "playwright" } },
+                  { "key": "conversation.id", "value": { "stringValue": "collector-forwarded-conversation-1" } }
+                ],
+                "status": { "code": 1 }
+              },
+              {
+                "name": "initialize",
+                "startTimeUnixNano": "__OTEL_T13MS__",
+                "endTimeUnixNano": "__OTEL_T20MS__",
+                "attributes": [
+                  { "key": "server_name", "value": { "stringValue": "codex_apps" } },
+                  { "key": "conversation.id", "value": { "stringValue": "collector-forwarded-conversation-1" } },
+                  { "key": "error.type", "value": { "stringValue": "timeout" } }
+                ],
+                "status": { "code": 2, "message": "mcp server initialize timed out" }
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "metrics": {
+    "resourceMetrics": [
+      {
+        "resource": {
+          "attributes": [
+            { "key": "service.name", "value": { "stringValue": "codex-cli" } },
+            { "key": "workspace_id", "value": { "stringValue": "ws-collector-forwarded" } }
+          ]
+        },
+        "scopeMetrics": [
+          {
+            "scope": { "name": "codex", "version": "1.2.3" },
+            "metrics": [
+              {
+                "name": "codex.tool.call",
+                "sum": {
+                  "aggregationTemporality": 1,
+                  "isMonotonic": true,
+                  "dataPoints": [
+                    {
+                      "attributes": [
+                        { "key": "tool", "value": { "stringValue": "exec_command" } },
+                        { "key": "source", "value": { "stringValue": "builtin" } },
+                        { "key": "status", "value": { "stringValue": "ok" } }
+                      ],
+                      "startTimeUnixNano": "__OTEL_T0__",
+                      "timeUnixNano": "__OTEL_T2S__",
+                      "asInt": "6"
+                    },
+                    {
+                      "attributes": [
+                        { "key": "tool", "value": { "stringValue": "read_file" } },
+                        { "key": "source", "value": { "stringValue": "builtin" } },
+                        { "key": "status", "value": { "stringValue": "ok" } }
+                      ],
+                      "startTimeUnixNano": "__OTEL_T0__",
+                      "timeUnixNano": "__OTEL_T2S__",
+                      "asInt": "3"
+                    }
+                  ]
+                }
+              },
+              {
+                "name": "codex.skill.injected",
+                "sum": {
+                  "aggregationTemporality": 1,
+                  "isMonotonic": true,
+                  "dataPoints": [
+                    {
+                      "attributes": [
+                        { "key": "skill", "value": { "stringValue": "ccc" } },
+                        { "key": "status", "value": { "stringValue": "injected" } },
+                        { "key": "invoke_type", "value": { "stringValue": "explicit" } }
+                      ],
+                      "startTimeUnixNano": "__OTEL_T0__",
+                      "timeUnixNano": "__OTEL_T2S__",
+                      "asInt": "2"
+                    }
+                  ]
+                }
+              },
+              {
+                "name": "codex.hooks.run",
+                "sum": {
+                  "aggregationTemporality": 1,
+                  "isMonotonic": true,
+                  "dataPoints": [
+                    {
+                      "attributes": [
+                        { "key": "hook_name", "value": { "stringValue": "SessionStart" } },
+                        { "key": "source", "value": { "stringValue": "user" } },
+                        { "key": "handler_type", "value": { "stringValue": "command" } },
+                        { "key": "status", "value": { "stringValue": "ok" } }
+                      ],
+                      "startTimeUnixNano": "__OTEL_T0__",
+                      "timeUnixNano": "__OTEL_T2S__",
+                      "asInt": "1"
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}

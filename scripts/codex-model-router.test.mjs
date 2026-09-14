@@ -38,6 +38,8 @@ import {
   codexTelemetryStatus,
   ingestOtelSignal,
   incrementActiveRequests,
+  autodevEnrichOtlpPayload,
+  isAutodevAttributesEnabled,
   isClientDisconnectError,
   isDraining,
   isProviderCoolingDown,
@@ -2184,6 +2186,240 @@ test("ingests Codex OTEL turn and MCP lifecycle telemetry without prompt content
   assert.equal(JSON.stringify(telemetry).includes("do-not-store-this"), false);
   assert.equal(codexTelemetryStatus(Date.now() + 121_000).mcpServers.find((server) => server.name === "playwright").health, "stale");
   resetOtelTelemetry();
+});
+
+test("accepts Collector-forwarded OTLP JSON batches over HTTP at /v1/logs, /v1/traces, and /v1/metrics", async () => {
+  // Freezes the HTTP ingress contract for Phase 3 ("Insert OpenTelemetry
+  // Collector as OTLP ingress"): the fixture is a realistic OTLP JSON batch
+  // shaped exactly as config/otel/collector.yaml's otlphttp/autodev exporter
+  // (encoding: json) would forward it, POSTed straight at the router's
+  // existing receiver over a real loopback HTTP connection. No Collector
+  // process is launched; this only proves the receiver's HTTP contract
+  // tolerates a Collector-shaped payload end to end.
+  resetOtelTelemetry();
+  // The fixture's OTLP timestamps are placeholder tokens rather than literal
+  // nanoseconds: MCP server health is computed relative to wall-clock time
+  // (see codexTelemetryStatus's OTEL_HEALTH_TTL_MS freshness window), so a
+  // frozen literal timestamp would read as permanently stale no matter when
+  // this test runs. The tokens are substituted with real, currently-fresh
+  // nanosecond offsets here, exactly as a live Collector export would carry
+  // its own current timestamps.
+  const base = BigInt(Date.now()) * 1_000_000n;
+  const fixtureTokens = {
+    __OTEL_T0__: base,
+    __OTEL_T500MS__: base + 500_000_000n,
+    __OTEL_T900MS__: base + 900_000_000n,
+    __OTEL_T1200MS__: base + 1_200_000_000n,
+    __OTEL_T2S__: base + 2_000_000_000n,
+    __OTEL_T6MS__: base + 6_000_000n,
+    __OTEL_T13MS__: base + 13_000_000n,
+    __OTEL_T20MS__: base + 20_000_000n,
+  };
+  let fixtureText = await readFile(new URL("../tests/fixtures/otel/collector-forwarded-otlp.json", import.meta.url), "utf8");
+  for (const [token, value] of Object.entries(fixtureTokens)) fixtureText = fixtureText.replaceAll(token, String(value));
+  const fixture = JSON.parse(fixtureText);
+  const server = createServer((request, response) => { void handle(request, response); });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  try {
+    const address = server.address();
+    const post = (path, body) => fetch(`http://127.0.0.1:${address.port}${path}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    });
+
+    const logsResponse = await post("/v1/logs", fixture.logs);
+    assert.equal(logsResponse.status, 200);
+    assert.deepEqual(await logsResponse.json(), {});
+
+    const tracesResponse = await post("/v1/traces", fixture.traces);
+    assert.equal(tracesResponse.status, 200);
+    assert.deepEqual(await tracesResponse.json(), {});
+
+    const metricsResponse = await post("/v1/metrics", fixture.metrics);
+    assert.equal(metricsResponse.status, 200);
+    assert.deepEqual(await metricsResponse.json(), {});
+
+    // The receiver counted exactly one export per signal, with no malformed
+    // requests, no matter that the batches arrived via an HTTP round trip
+    // rather than a direct in-process call.
+    const telemetry = codexTelemetryStatus(Date.now());
+    assert.deepEqual(
+      { logs: telemetry.receiver.logs, traces: telemetry.receiver.traces, metrics: telemetry.receiver.metrics, invalid: telemetry.receiver.invalid },
+      { logs: 1, traces: 1, metrics: 1, invalid: 0 },
+    );
+    assert.equal(typeof telemetry.receiver.lastReceivedAt, "string");
+
+    // The fixture's logs batch carries the same conversation/turn/token shape
+    // as the direct-ingestion test above; the HTTP path must derive identical
+    // telemetry semantics from it.
+    assert.equal(telemetry.sessionsObserved, 1);
+    assert.equal(telemetry.turns.prompts, 1);
+    assert.equal(telemetry.turns.completed, 1);
+    assert.equal(telemetry.turns.averageTtftMs, 410);
+    assert.deepEqual(telemetry.tokens, { input: 200, output: 40, cached: 10, reasoning: 15, tool: 5, total: 270 });
+
+    // The fixture's traces batch reports one healthy MCP server and one that
+    // errored during initialize; both must be observed from the HTTP path.
+    const playwright = telemetry.mcpServers.find((entry) => entry.name === "playwright");
+    const codexApps = telemetry.mcpServers.find((entry) => entry.name === "codex_apps");
+    assert.equal(playwright.health, "ready");
+    assert.equal(codexApps.health, "error");
+
+    // The fixture's metrics batch reports tool, skill, and hook activity that
+    // must land in the corresponding dimensions.
+    assert.equal(telemetry.skills.injected.total, 2);
+    assert.equal(telemetry.toolResults.total, 1);
+
+    // No prompt content anywhere in either exposed telemetry surface, and no
+    // request was ever counted as malformed.
+    const status = getRouterStatus();
+    assert.equal(JSON.stringify(telemetry).includes("do-not-store-this-collector-forwarded-secret"), false);
+    assert.equal(JSON.stringify(status).includes("do-not-store-this-collector-forwarded-secret"), false);
+  } finally {
+    await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    resetOtelTelemetry();
+  }
+});
+
+test("dedupes repeated Collector-forwarded OTLP JSON batches so receiver counts climb but semantic aggregates stay stable", async () => {
+  // Phase 3 no-double-counting HTTP contract: a misbehaving Collector that
+  // redelivers the exact same OTLP JSON batch (the body the otlphttp/autodev
+  // exporter emits, encoded as json) must increment the receiver's transport
+  // counters, yet its cumulative-metric timestamps and tool-result call ids
+  // collapse at the receiver so the semantic surface stays identical to a
+  // single forward. The fixture is reused from tests/fixtures/otel/ so the
+  // shape stays in lockstep with the single-POST contract test above.
+  resetOtelTelemetry();
+  const base = BigInt(Date.now()) * 1_000_000n;
+  const fixtureTokens = {
+    __OTEL_T0__: base,
+    __OTEL_T500MS__: base + 500_000_000n,
+    __OTEL_T900MS__: base + 900_000_000n,
+    __OTEL_T1200MS__: base + 1_200_000_000n,
+    __OTEL_T2S__: base + 2_000_000_000n,
+    __OTEL_T6MS__: base + 6_000_000n,
+    __OTEL_T13MS__: base + 13_000_000n,
+    __OTEL_T20MS__: base + 20_000_000n,
+  };
+  let fixtureText = await readFile(new URL("../tests/fixtures/otel/collector-forwarded-otlp.json", import.meta.url), "utf8");
+  for (const [token, value] of Object.entries(fixtureTokens)) fixtureText = fixtureText.replaceAll(token, String(value));
+  const fixture = JSON.parse(fixtureText);
+  const server = createServer((request, response) => { void handle(request, response); });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  try {
+    const address = server.address();
+    const post = (path, body) => fetch(`http://127.0.0.1:${address.port}${path}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    });
+
+    // First forward.
+    const logsResponse = await post("/v1/logs", fixture.logs);
+    assert.equal(logsResponse.status, 200);
+    assert.deepEqual(await logsResponse.json(), {});
+    const tracesResponse = await post("/v1/traces", fixture.traces);
+    assert.equal(tracesResponse.status, 200);
+    assert.deepEqual(await tracesResponse.json(), {});
+    const metricsResponse = await post("/v1/metrics", fixture.metrics);
+    assert.equal(metricsResponse.status, 200);
+    assert.deepEqual(await metricsResponse.json(), {});
+
+    // Redelivered identical body, simulating a Collector retry/export
+    // resend of the very same batch.
+    const secondLogs = await post("/v1/logs", fixture.logs);
+    assert.equal(secondLogs.status, 200);
+    assert.deepEqual(await secondLogs.json(), {});
+    const secondTraces = await post("/v1/traces", fixture.traces);
+    assert.equal(secondTraces.status, 200);
+    assert.deepEqual(await secondTraces.json(), {});
+    const secondMetrics = await post("/v1/metrics", fixture.metrics);
+    assert.equal(secondMetrics.status, 200);
+    assert.deepEqual(await secondMetrics.json(), {});
+
+    // The receiver counted each HTTP POST exactly once per signal, so the
+    // redelivery is observable at the transport boundary; the malformed
+    // counter stays at zero.
+    const telemetry = codexTelemetryStatus(Date.now());
+    assert.deepEqual(
+      { logs: telemetry.receiver.logs, traces: telemetry.receiver.traces, metrics: telemetry.receiver.metrics, invalid: telemetry.receiver.invalid },
+      { logs: 2, traces: 2, metrics: 2, invalid: 0 },
+    );
+
+    // Cumulative metric dedupe: the redelivered fixture reuses the same
+    // OTLP timestamps, so otelSeriesDelta yields zero deltas for every
+    // codex.tool.call / codex.skill.injected / codex.hooks.run point and
+    // the per-tool, per-skill, and per-hook counts stay at the single-
+    // forward baseline.
+    assert.equal(telemetry.skills.injected.total, 2);
+    assert.equal(telemetry.tools.byTool.find((row) => row.tool === "exec_command")?.count, 6);
+    assert.equal(telemetry.tools.byTool.find((row) => row.tool === "read_file")?.count, 3);
+    assert.equal(telemetry.hooks.byHook.find((row) => row.hook === "SessionStart")?.count, 1);
+
+    // Tool-result dedupe: the fixture's codex.tool_result log carries a
+    // call_id that the receiver's seenKeys collapses, so re-arrival does
+    // not move the executed counter.
+    assert.equal(telemetry.toolResults.total, 1);
+
+    // Stable semantic row counts: every per-key aggregation surface has
+    // exactly the same set of keys it would after a single forward, so
+    // dashboards and alerts keyed on these arrays do not multiply.
+    assert.equal(telemetry.skills.injected.bySkill.length, 1);
+    assert.equal(telemetry.tools.byTool.length, 2);
+    assert.equal(telemetry.hooks.byHook.length, 1);
+    assert.equal(telemetry.mcpServers.length, 2);
+
+    // Same session observed end to end: both forwards converge on the
+    // single conversation id the fixture carries.
+    assert.equal(telemetry.sessionsObserved, 1);
+
+    // MCP server health is derived from lastStatus within the freshness
+    // window, so the redelivered traces do not flip either server's
+    // health classification.
+    const playwright = telemetry.mcpServers.find((entry) => entry.name === "playwright");
+    const codexApps = telemetry.mcpServers.find((entry) => entry.name === "codex_apps");
+    assert.equal(playwright.health, "ready");
+    assert.equal(codexApps.health, "error");
+
+    // No prompt content anywhere in either exposed telemetry surface, and
+    // no request was ever counted as malformed.
+    const status = getRouterStatus();
+    assert.equal(JSON.stringify(telemetry).includes("do-not-store-this-collector-forwarded-secret"), false);
+    assert.equal(JSON.stringify(status).includes("do-not-store-this-collector-forwarded-secret"), false);
+  } finally {
+    await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    resetOtelTelemetry();
+  }
+});
+
+test("rejects malformed OTLP HTTP bodies at /v1/logs, /v1/traces, and /v1/metrics without leaking receiver state", async () => {
+  // The Collector's otlphttp exporter always sends valid JSON, but the
+  // receiver's HTTP contract must still reject a body that fails to parse
+  // (e.g. a truncated export from a misbehaving forwarder) with a 400 and
+  // count it as invalid rather than as a successful signal.
+  resetOtelTelemetry();
+  const server = createServer((request, response) => { void handle(request, response); });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  try {
+    const address = server.address();
+    for (const path of [ "/v1/logs", "/v1/traces", "/v1/metrics" ]) {
+      const response = await fetch(`http://127.0.0.1:${address.port}${path}`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: "{not-valid-json",
+      });
+      assert.equal(response.status, 400);
+    }
+    const telemetry = codexTelemetryStatus(Date.now());
+    assert.deepEqual(
+      { logs: telemetry.receiver.logs, traces: telemetry.receiver.traces, metrics: telemetry.receiver.metrics, invalid: telemetry.receiver.invalid },
+      { logs: 0, traces: 0, metrics: 0, invalid: 3 },
+    );
+  } finally {
+    await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    resetOtelTelemetry();
+  }
 });
 
 test("counts explicit skill activations separately from injected contexts and bridge exposure", () => {
@@ -6324,4 +6560,395 @@ test("active-agent reconciliation: residual active provider and workspace bucket
   agentActivity.reset();
   resetConcurrencyTelemetry();
   resetRouterTelemetry();
+});
+
+// Phase 3 in-repo slice: opt-in autodev.* attribute emission. Each assertion
+// line quotes a property of the frozen contract (resources only carry resource
+// keys; events only carry event keys; unknown values are omitted; no prompt
+// content may be carried). The flag stays off by default so all of the
+// pre-existing tests run on the unchanged default path.
+const autodevAttr = (entries) => entries.map(([ key, value ]) => ({ key, value: { stringValue: String(value) } }));
+
+function autodevBuildPayload() {
+  return {
+    logs: {
+      resourceLogs: [ {
+        resource: {
+          attributes: autodevAttr([
+            [ "service.name", "codex-cli" ],
+            [ "service.version", "1.2.3" ],
+            [ "role", "orchestrator" ],
+            [ "workspace_id", "ws-autodev-test" ],
+            [ "provider", "openai" ],
+            [ "model", "gpt-5.6-luna" ],
+          ]),
+        },
+        scopeLogs: [ {
+          scope: { name: "codex", version: "1.2.3" },
+          logRecords: [
+            {
+              timeUnixNano: "1",
+              attributes: autodevAttr([
+                [ "event.name", "codex.user_prompt" ],
+                [ "conversation.id", "c-autodev-test" ],
+                [ "prompt_length", 17 ],
+                [ "prompt_text", "do-not-store-this-secret" ],
+              ]),
+            },
+            {
+              timeUnixNano: "2",
+              attributes: autodevAttr([
+                [ "event.name", "codex.subagent_spawn" ],
+                [ "conversation.id", "c-autodev-test" ],
+                [ "spawn_mechanism", "task-tool" ],
+              ]),
+            },
+            {
+              timeUnixNano: "3",
+              attributes: autodevAttr([
+                [ "event.name", "codex.skill_invoke" ],
+                [ "conversation.id", "c-autodev-test" ],
+                [ "skill", "ccc" ],
+              ]),
+            },
+            {
+              timeUnixNano: "4",
+              attributes: autodevAttr([
+                [ "event.name", "codex.mcp_tool_call" ],
+                [ "conversation.id", "c-autodev-test" ],
+                [ "server_name", "playwright" ],
+              ]),
+            },
+            {
+              timeUnixNano: "5",
+              attributes: autodevAttr([
+                [ "event.name", "codex.tool_result" ],
+                [ "conversation.id", "c-autodev-test" ],
+                [ "tool", "exec_command" ],
+                [ "status", "success" ],
+              ]),
+            },
+          ],
+        } ],
+      } ],
+    },
+    traces: {
+      resourceSpans: [ {
+        resource: {
+          attributes: autodevAttr([
+            [ "service.name", "codex-cli" ],
+            [ "role", "orchestrator" ],
+            [ "workspace_id", "ws-autodev-test" ],
+            [ "provider", "openai" ],
+            [ "model", "gpt-5.6-luna" ],
+          ]),
+        },
+        scopeSpans: [ {
+          scope: { name: "codex", version: "1.2.3" },
+          spans: [
+            {
+              name: "make_rmcp_client",
+              startTimeUnixNano: "1",
+              endTimeUnixNano: "2",
+              attributes: autodevAttr([
+                [ "server_name", "playwright" ],
+                [ "conversation.id", "c-autodev-test" ],
+              ]),
+              status: { code: 1 },
+            },
+            {
+              name: "internal_unattributed_step",
+              startTimeUnixNano: "3",
+              endTimeUnixNano: "4",
+              attributes: autodevAttr([
+                [ "conversation.id", "c-autodev-test" ],
+              ]),
+              status: { code: 1 },
+            },
+          ],
+        } ],
+      } ],
+    },
+    metrics: {
+      resourceMetrics: [ {
+        resource: {
+          attributes: autodevAttr([
+            [ "service.name", "codex-cli" ],
+            [ "role", "orchestrator" ],
+            [ "workspace_id", "ws-autodev-test" ],
+            [ "provider", "openai" ],
+            [ "model", "gpt-5.6-luna" ],
+          ]),
+        },
+        scopeMetrics: [ {
+          scope: { name: "codex", version: "1.2.3" },
+          metrics: [ {
+            name: "codex.skill.injected",
+            sum: {
+              aggregationTemporality: 1,
+              isMonotonic: true,
+              dataPoints: [
+                {
+                  attributes: autodevAttr([
+                    [ "skill", "ccc" ],
+                    [ "status", "injected" ],
+                  ]),
+                  startTimeUnixNano: "1",
+                  timeUnixNano: "2",
+                  asInt: "3",
+                },
+              ],
+            },
+          } ],
+        } ],
+      } ],
+    },
+  };
+}
+
+function autodevAttrMap(attributes) {
+  const map = {};
+  for (const entry of attributes ?? []) map[entry.key] = entry.value?.stringValue;
+  return map;
+}
+
+test("autodev attributes are off by default and require AUTODEV_OTEL_ATTRIBUTES=v1", () => {
+  // The helper itself is always callable, but ingestOtelSignal must not call
+  // it unless the opt-in flag is set. Default-off is the entire contract.
+  const previous = process.env.AUTODEV_OTEL_ATTRIBUTES;
+  delete process.env.AUTODEV_OTEL_ATTRIBUTES;
+  try {
+    assert.equal(isAutodevAttributesEnabled(), false);
+    resetOtelTelemetry();
+    const payload = autodevBuildPayload();
+    const before = JSON.parse(JSON.stringify(payload));
+    ingestOtelSignal("logs", payload.logs);
+    ingestOtelSignal("traces", payload.traces);
+    ingestOtelSignal("metrics", payload.metrics);
+    // Default path leaves payload untouched and emits zero autodev keys.
+    assert.deepEqual(payload, before);
+    const enriched = autodevEnrichOtlpPayload("logs", payload.logs);
+    assert.notEqual(enriched, payload.logs, "the helper returns a fresh clone, not the input");
+  } finally {
+    if (previous === undefined) delete process.env.AUTODEV_OTEL_ATTRIBUTES;
+    else process.env.AUTODEV_OTEL_ATTRIBUTES = previous;
+  }
+});
+
+test("AUTODEV_OTEL_ATTRIBUTES=v1 enriches resource and event keys without changing routing state", () => {
+  const previous = process.env.AUTODEV_OTEL_ATTRIBUTES;
+  process.env.AUTODEV_OTEL_ATTRIBUTES = "v1";
+  try {
+    assert.equal(isAutodevAttributesEnabled(), true);
+    resetOtelTelemetry();
+    const payload = autodevBuildPayload();
+    const beforeSnapshot = JSON.parse(JSON.stringify(payload));
+    ingestOtelSignal("logs", payload.logs);
+    ingestOtelSignal("traces", payload.traces);
+    ingestOtelSignal("metrics", payload.metrics);
+    // ingestOtelSignal must not mutate its inputs even when enrichment is on.
+    assert.deepEqual(payload, beforeSnapshot, "the input payload must be untouched");
+    // All three signals were counted: the receiver counter is the only
+    // route-visible side effect and must be preserved.
+    const status = codexTelemetryStatus(Date.now());
+    assert.equal(status.receiver.logs, 1);
+    assert.equal(status.receiver.traces, 1);
+    assert.equal(status.receiver.metrics, 1);
+  } finally {
+    if (previous === undefined) delete process.env.AUTODEV_OTEL_ATTRIBUTES;
+    else process.env.AUTODEV_OTEL_ATTRIBUTES = previous;
+  }
+});
+
+test("autodevEnrichOtlpPayload places resource keys only on resource.attributes", () => {
+  const payload = autodevBuildPayload();
+  const enriched = autodevEnrichOtlpPayload("logs", payload.logs);
+  const resource = enriched.resourceLogs[0].resource;
+  const resourceMap = autodevAttrMap(resource.attributes);
+  // Resource-scope keys from the frozen contract map directly from their aliases.
+  assert.equal(resourceMap["autodev.role"], "orchestrator");
+  assert.equal(resourceMap["autodev.workspace"], "ws-autodev-test");
+  assert.equal(resourceMap["autodev.provider"], "openai");
+  assert.equal(resourceMap["autodev.model"], "gpt-5.6-luna");
+  // Originals are still there.
+  assert.equal(resourceMap["service.name"], "codex-cli");
+  assert.equal(resourceMap["role"], "orchestrator");
+  assert.equal(resourceMap["workspace_id"], "ws-autodev-test");
+  // Resource-scope keys never leak into event/span/datapoint attributes.
+  for (const scopeLog of enriched.resourceLogs[0].scopeLogs) {
+    for (const record of scopeLog.logRecords) {
+      const eventMap = autodevAttrMap(record.attributes);
+      assert.equal(eventMap["autodev.role"], undefined);
+      assert.equal(eventMap["autodev.workspace"], undefined);
+      assert.equal(eventMap["autodev.provider"], undefined);
+      assert.equal(eventMap["autodev.model"], undefined);
+    }
+  }
+});
+
+test("autodevEnrichOtlpPayload places event keys only on the right event types", () => {
+  const payload = autodevBuildPayload();
+  const logsEnriched = autodevEnrichOtlpPayload("logs", payload.logs);
+  const records = logsEnriched.resourceLogs[0].scopeLogs[0].logRecords;
+  const byName = Object.fromEntries(records.map((r) => [ r.attributes.find((a) => a.key === "event.name")?.value?.stringValue, autodevAttrMap(r.attributes) ]));
+  assert.equal(byName["codex.subagent_spawn"]["autodev.spawn.mechanism"], "task-tool");
+  assert.equal(byName["codex.skill_invoke"]["autodev.skill"], "ccc");
+  assert.equal(byName["codex.mcp_tool_call"]["autodev.mcp.server"], "playwright");
+  // Records that don't carry the relevant alias get no autodev key.
+  assert.equal(byName["codex.user_prompt"]["autodev.skill"], undefined);
+  assert.equal(byName["codex.user_prompt"]["autodev.mcp.server"], undefined);
+  assert.equal(byName["codex.tool_result"]["autodev.skill"], undefined);
+
+  const tracesEnriched = autodevEnrichOtlpPayload("traces", payload.traces);
+  const spans = tracesEnriched.resourceSpans[0].scopeSpans[0].spans;
+  assert.equal(spans[0].attributes.find((a) => a.key === "autodev.mcp.server")?.value?.stringValue, "playwright");
+  // No server_name alias → no autodev.mcp.server decoration on the unattributed span.
+  assert.equal(spans[1].attributes.find((a) => a.key === "autodev.mcp.server"), undefined);
+
+  const metricsEnriched = autodevEnrichOtlpPayload("metrics", payload.metrics);
+  const dataPointAttributes = metricsEnriched.resourceMetrics[0].scopeMetrics[0].metrics[0].sum.dataPoints[0].attributes;
+  assert.equal(dataPointAttributes.find((a) => a.key === "autodev.skill")?.value?.stringValue, "ccc");
+});
+
+test("autodevEnrichOtlpPayload is non-mutating: the input is left untouched", () => {
+  // Source-of-truth check that the helper never rewrites caller data: every
+  // nested array/object on the input must be identical post-call. The helper
+  // returns a brand new top-level object; comparing identity alone is not
+  // enough because structuredClone always produces a fresh tree.
+  const payload = autodevBuildPayload();
+  const inputLogs = JSON.parse(JSON.stringify(payload.logs));
+  const inputTraces = JSON.parse(JSON.stringify(payload.traces));
+  const inputMetrics = JSON.parse(JSON.stringify(payload.metrics));
+  const enrichedLogs = autodevEnrichOtlpPayload("logs", payload.logs);
+  const enrichedTraces = autodevEnrichOtlpPayload("traces", payload.traces);
+  const enrichedMetrics = autodevEnrichOtlpPayload("metrics", payload.metrics);
+  assert.notEqual(enrichedLogs, payload.logs, "logs helper returns a new object");
+  assert.notEqual(enrichedTraces, payload.traces, "traces helper returns a new object");
+  assert.notEqual(enrichedMetrics, payload.metrics, "metrics helper returns a new object");
+  assert.deepEqual(payload.logs, inputLogs, "the input logs payload is untouched");
+  assert.deepEqual(payload.traces, inputTraces, "the input traces payload is untouched");
+  assert.deepEqual(payload.metrics, inputMetrics, "the input metrics payload is untouched");
+  // Mutating the cloned enriched result must not touch the original input.
+  enrichedLogs.resourceLogs[0].resource.attributes.push({ key: "autodev.injected", value: { stringValue: "marker" } });
+  assert.equal(payload.logs.resourceLogs[0].resource.attributes.find((a) => a.key === "autodev.injected"), undefined);
+});
+
+test("autodevEnrichOtlpPayload never carries prompt or response content", () => {
+  // The frozen contract forbids prompt/response content in any autodev.* key.
+  // The user_prompt record carries a prompt_text value the helper must ignore;
+  // the original prompt_text entry must remain on the record so the rest of
+  // the pipeline keeps working, but no autodev.* attribute value may equal it.
+  const payload = autodevBuildPayload();
+  const enriched = autodevEnrichOtlpPayload("logs", payload.logs);
+  const promptSecret = "do-not-store-this-secret";
+  let inspectedAutodevEntries = 0;
+  for (const resourceLog of enriched.resourceLogs) {
+    for (const entry of resourceLog.resource.attributes) {
+      if (entry.key.startsWith("autodev.")) {
+        inspectedAutodevEntries += 1;
+        assert.notEqual(entry.value?.stringValue, promptSecret, `no autodev.* key may equal the prompt text (${entry.key})`);
+      }
+    }
+    for (const scopeLog of resourceLog.scopeLogs ?? []) {
+      for (const record of scopeLog.logRecords ?? []) {
+        for (const entry of record.attributes) {
+          if (entry.key.startsWith("autodev.")) {
+            inspectedAutodevEntries += 1;
+            assert.notEqual(entry.value?.stringValue, promptSecret, `no autodev.* key may equal the prompt text (${entry.key})`);
+          }
+        }
+      }
+    }
+  }
+  // Defensive: ensure something was actually inspected so a no-op helper
+  // cannot pass the test by accident.
+  assert.ok(inspectedAutodevEntries > 0, "at least one autodev.* attribute must be inspected");
+  // prompt_text is preserved verbatim on its record (the helper never edits
+  // existing non-autodev keys) so the rest of the pipeline keeps working.
+  const userPromptRecord = enriched.resourceLogs[0].scopeLogs[0].logRecords
+    .find((r) => r.attributes.find((a) => a.key === "event.name")?.value?.stringValue === "codex.user_prompt");
+  assert.ok(userPromptRecord, "the user_prompt record must still be present");
+  const promptText = userPromptRecord.attributes.find((a) => a.key === "prompt_text")?.value?.stringValue;
+  assert.equal(promptText, promptSecret, "prompt_text is preserved on its record (not modified by the helper)");
+});
+
+test("autodevEnrichOtlpPayload omits unknown values and avoids duplicate keys", () => {
+  // Empty / whitespace / oversized alias values must produce no autodev.* key
+  // and calling the helper twice must never double-add an autodev.* entry.
+  const logsPayload = {
+    resourceLogs: [ {
+      resource: {
+        attributes: autodevAttr([
+          [ "service.name", "codex-cli" ],
+          [ "role", "" ],
+          [ "workspace_id", "   " ],
+          [ "provider", "openai" ],
+          [ "model", "gpt-5.6-luna" ],
+        ]),
+      },
+      scopeLogs: [ {
+        scope: { name: "codex", version: "1.2.3" },
+        logRecords: [
+          {
+            timeUnixNano: "1",
+            attributes: autodevAttr([
+              [ "event.name", "codex.heartbeat" ],
+              [ "conversation.id", "c-autodev-test" ],
+            ]),
+          },
+        ],
+      } ],
+    } ],
+  };
+  const once = autodevEnrichOtlpPayload("logs", logsPayload);
+  const onceResource = autodevAttrMap(once.resourceLogs[0].resource.attributes);
+  assert.equal(onceResource["autodev.role"], undefined, "empty role alias produces no key");
+  assert.equal(onceResource["autodev.workspace"], undefined, "whitespace workspace_id alias produces no key");
+  assert.equal(onceResource["autodev.provider"], "openai");
+  assert.equal(onceResource["autodev.model"], "gpt-5.6-luna");
+  // Heartbeat has no skill / spawn_mechanism / server_name alias: nothing added.
+  const heartBeat = once.resourceLogs[0].scopeLogs[0].logRecords[0];
+  assert.equal(autodevAttrMap(heartBeat.attributes)["autodev.skill"], undefined);
+  assert.equal(autodevAttrMap(heartBeat.attributes)["autodev.spawn.mechanism"], undefined);
+  assert.equal(autodevAttrMap(heartBeat.attributes)["autodev.mcp.server"], undefined);
+
+  // Duplicate stability: re-running the helper on already-enriched data must
+  // not add a second copy of any autodev.* key, and must leave existing values
+  // verbatim (the helper treats presence as "do not touch").
+  const twice = autodevEnrichOtlpPayload("logs", once);
+  const twiceResourceAttributes = twice.resourceLogs[0].resource.attributes;
+  const providerOccurrences = twiceResourceAttributes.filter((a) => a.key === "autodev.provider");
+  const modelOccurrences = twiceResourceAttributes.filter((a) => a.key === "autodev.model");
+  assert.equal(providerOccurrences.length, 1, "autodev.provider must appear exactly once after a second enrichment pass");
+  assert.equal(modelOccurrences.length, 1, "autodev.model must appear exactly once after a second enrichment pass");
+  assert.equal(providerOccurrences[0].value.stringValue, "openai");
+  assert.equal(modelOccurrences[0].value.stringValue, "gpt-5.6-luna");
+  // Pre-existing autodev.* entries with a non-empty value must survive a
+  // second enrichment untouched (the helper does not overwrite).
+  once.resourceLogs[0].resource.attributes.unshift({ key: "autodev.provider", value: { stringValue: "pinned-openai" } });
+  const thrice = autodevEnrichOtlpPayload("logs", once);
+  const providerValues = thrice.resourceLogs[0].resource.attributes
+    .filter((a) => a.key === "autodev.provider")
+    .map((a) => a.value.stringValue);
+  assert.deepEqual(providerValues, [ "pinned-openai", "openai" ], "pre-existing autodev.* entries are preserved verbatim");
+});
+
+test("autodevEnrichOtlpPayload preserves aggregation semantics on metrics", () => {
+  // The opt-in emission must not change aggregations: number values, start/end
+  // timestamps, temporality flags, and data point identity stay exactly the same.
+  const payload = autodevBuildPayload();
+  const before = JSON.parse(JSON.stringify(payload.metrics));
+  const enriched = autodevEnrichOtlpPayload("metrics", payload.metrics);
+  const dataPointBefore = before.resourceMetrics[0].scopeMetrics[0].metrics[0].sum.dataPoints[0];
+  const dataPointAfter = enriched.resourceMetrics[0].scopeMetrics[0].metrics[0].sum.dataPoints[0];
+  assert.equal(dataPointAfter.asInt, dataPointBefore.asInt);
+  assert.equal(dataPointAfter.startTimeUnixNano, dataPointBefore.startTimeUnixNano);
+  assert.equal(dataPointAfter.timeUnixNano, dataPointBefore.timeUnixNano);
+  assert.equal(enriched.resourceMetrics[0].scopeMetrics[0].metrics[0].sum.aggregationTemporality,
+    before.resourceMetrics[0].scopeMetrics[0].metrics[0].sum.aggregationTemporality);
+  assert.equal(enriched.resourceMetrics[0].scopeMetrics[0].metrics[0].sum.isMonotonic,
+    before.resourceMetrics[0].scopeMetrics[0].metrics[0].sum.isMonotonic);
+  // Pre-existing data-point attributes are still there untouched.
+  const afterKeys = dataPointAfter.attributes.map((a) => a.key);
+  for (const key of [ "skill", "status", "autodev.skill" ]) assert.equal(afterKeys.includes(key), true);
 });

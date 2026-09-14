@@ -2093,12 +2093,150 @@ function ingestOtelMetrics(payload) {
   }
 }
 
+// Frozen Phase 3 attribute contract: tests/fixtures/otel/autodev-attributes-schema.json
+// freezes the seven additive autodev.* keys (autodev.role, autodev.workspace,
+// autodev.provider, autodev.model on the resource; autodev.spawn.mechanism,
+// autodev.skill, autodev.mcp.server on the event). This module only emits
+// them when the operator sets AUTODEV_OTEL_ATTRIBUTES=v1; the default ingestion
+// path is left exactly as it was. The emitter is therefore "opt-in": off by
+// default, additive when on, and it must never carry prompt/response content.
+const AUTODEV_ATTRIBUTES_FLAG = "AUTODEV_OTEL_ATTRIBUTES";
+const AUTODEV_ATTRIBUTES_VERSION = "v1";
+const AUTODEV_ATTRIBUTE_VALUE_MAX_LENGTH = 64;
+const AUTODEV_RESOURCE_ROLE_ALIASES = ["role", "agent_role", "agent.role"];
+const AUTODEV_RESOURCE_WORKSPACE_ALIASES = ["workspace_id", "workspace.id", "workspaceId", "workspace"];
+const AUTODEV_RESOURCE_PROVIDER_ALIASES = ["provider", "provider_id", "provider.id"];
+const AUTODEV_RESOURCE_MODEL_ALIASES = ["model", "model_slug", "model.slug", "requested_model", "requested.model"];
+const AUTODEV_SPAWN_MECHANISM_ALIASES = ["spawn_mechanism", "spawn.mechanism"];
+const AUTODEV_SKILL_ALIASES = ["skill", "skill_name", "skill.name"];
+const AUTODEV_MCP_SERVER_ALIASES = ["server_name", "serverName", "server", "mcp_server"];
+// `codex.subagent_spawn` and `codex.subagent_spawned` are the two log-event
+// shapes the router already recognises for spawn telemetry; the contract
+// restricts autodev.spawn.mechanism to those events so a stray spawn_mechanism
+// attribute on an unrelated log record does not leak into the event-scope key.
+const AUTODEV_SPAWN_LOG_EVENTS = new Set(["codex.subagent_spawn", "codex.subagent_spawned"]);
+
+function isAutodevAttributesEnabled() {
+  return process.env[AUTODEV_ATTRIBUTES_FLAG] === AUTODEV_ATTRIBUTES_VERSION;
+}
+
+function readAutodevAliasValue(attributes, aliases) {
+  if (!Array.isArray(attributes) || !Array.isArray(aliases)) return null;
+  for (const alias of aliases) {
+    if (typeof alias !== "string" || !alias) continue;
+    const entry = attributes.find((item) => item && typeof item === "object" && item.key === alias);
+    if (!entry) continue;
+    const value = otelAttributeValue(entry.value);
+    if (typeof value !== "string") continue;
+    const trimmed = value.trim();
+    if (!trimmed) continue;
+    if (trimmed.length > AUTODEV_ATTRIBUTE_VALUE_MAX_LENGTH) continue;
+    return trimmed;
+  }
+  return null;
+}
+
+function pushAutodevStringAttr(attributes, key, value) {
+  if (!Array.isArray(attributes)) return false;
+  if (typeof value !== "string") return false;
+  const trimmed = value.trim();
+  if (!trimmed || trimmed.length > AUTODEV_ATTRIBUTE_VALUE_MAX_LENGTH) return false;
+  if (attributes.some((entry) => entry && typeof entry === "object" && entry.key === key)) return false;
+  attributes.push({ key, value: { stringValue: trimmed } });
+  return true;
+}
+
+function isAutodevSpawnLogAttributes(attributes) {
+  if (!Array.isArray(attributes)) return false;
+  const eventName = readAutodevAliasValue(attributes, ["event.name"]);
+  return typeof eventName === "string" && AUTODEV_SPAWN_LOG_EVENTS.has(eventName);
+}
+
+function enrichAutodevResourceAttributes(resource) {
+  if (!resource || !Array.isArray(resource.attributes)) return;
+  pushAutodevStringAttr(resource.attributes, "autodev.role",
+    readAutodevAliasValue(resource.attributes, AUTODEV_RESOURCE_ROLE_ALIASES));
+  pushAutodevStringAttr(resource.attributes, "autodev.workspace",
+    readAutodevAliasValue(resource.attributes, AUTODEV_RESOURCE_WORKSPACE_ALIASES));
+  pushAutodevStringAttr(resource.attributes, "autodev.provider",
+    readAutodevAliasValue(resource.attributes, AUTODEV_RESOURCE_PROVIDER_ALIASES));
+  pushAutodevStringAttr(resource.attributes, "autodev.model",
+    readAutodevAliasValue(resource.attributes, AUTODEV_RESOURCE_MODEL_ALIASES));
+}
+
+function enrichAutodevLogRecord(record) {
+  if (!record || !Array.isArray(record.attributes)) return;
+  if (isAutodevSpawnLogAttributes(record.attributes)) {
+    pushAutodevStringAttr(record.attributes, "autodev.spawn.mechanism",
+      readAutodevAliasValue(record.attributes, AUTODEV_SPAWN_MECHANISM_ALIASES));
+  }
+  pushAutodevStringAttr(record.attributes, "autodev.skill",
+    readAutodevAliasValue(record.attributes, AUTODEV_SKILL_ALIASES));
+  pushAutodevStringAttr(record.attributes, "autodev.mcp.server",
+    readAutodevAliasValue(record.attributes, AUTODEV_MCP_SERVER_ALIASES));
+}
+
+function enrichAutodevSpan(span) {
+  if (!span || !Array.isArray(span.attributes)) return;
+  pushAutodevStringAttr(span.attributes, "autodev.mcp.server",
+    readAutodevAliasValue(span.attributes, AUTODEV_MCP_SERVER_ALIASES));
+}
+
+function enrichAutodevDataPoint(dataPoint) {
+  if (!dataPoint || !Array.isArray(dataPoint.attributes)) return;
+  pushAutodevStringAttr(dataPoint.attributes, "autodev.skill",
+    readAutodevAliasValue(dataPoint.attributes, AUTODEV_SKILL_ALIASES));
+}
+
+function autodevEnrichOtlpPayload(signal, payload) {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) return null;
+  let clone;
+  try { clone = structuredClone(payload); }
+  catch { return null; }
+  if (signal === "logs") {
+    for (const resourceLog of clone.resourceLogs ?? []) {
+      enrichAutodevResourceAttributes(resourceLog.resource);
+      for (const scopeLog of resourceLog.scopeLogs ?? []) {
+        for (const record of scopeLog.logRecords ?? []) enrichAutodevLogRecord(record);
+      }
+    }
+  } else if (signal === "traces") {
+    for (const resourceSpan of clone.resourceSpans ?? []) {
+      enrichAutodevResourceAttributes(resourceSpan.resource);
+      for (const scopeSpan of resourceSpan.scopeSpans ?? []) {
+        for (const span of scopeSpan.spans ?? []) enrichAutodevSpan(span);
+      }
+    }
+  } else if (signal === "metrics") {
+    for (const resourceMetric of clone.resourceMetrics ?? []) {
+      enrichAutodevResourceAttributes(resourceMetric.resource);
+      for (const scopeMetric of resourceMetric.scopeMetrics ?? []) {
+        for (const metric of scopeMetric.metrics ?? []) {
+          for (const dataPoint of metric.sum?.dataPoints ?? []) enrichAutodevDataPoint(dataPoint);
+          for (const dataPoint of metric.histogram?.dataPoints ?? []) enrichAutodevDataPoint(dataPoint);
+          for (const dataPoint of metric.gauge?.dataPoints ?? []) enrichAutodevDataPoint(dataPoint);
+        }
+      }
+    }
+  }
+  return clone;
+}
+
 function ingestOtelSignal(signal, payload) {
   otelTelemetry.receiver[signal] += 1;
   otelTelemetry.receiver.lastReceivedAt = new Date().toISOString();
-  if (signal === "logs") ingestOtelLogs(payload);
-  if (signal === "traces") ingestOtelTraces(payload);
-  if (signal === "metrics") ingestOtelMetrics(payload);
+  let ingestPayload = payload;
+  // Opt-in emission of the frozen autodev.* attribute contract. The helper
+  // never mutates the incoming payload: it returns either a new enriched
+  // clone or the original payload untouched when nothing applies. The
+  // default path (flag unset) keeps using the inbound payload directly.
+  if (isAutodevAttributesEnabled()) {
+    const enriched = autodevEnrichOtlpPayload(signal, payload);
+    if (enriched) ingestPayload = enriched;
+  }
+  if (signal === "logs") ingestOtelLogs(ingestPayload);
+  if (signal === "traces") ingestOtelTraces(ingestPayload);
+  if (signal === "metrics") ingestOtelMetrics(ingestPayload);
   scheduleRouterStatePersist();
 }
 
@@ -6362,6 +6500,8 @@ export {
   ingestOtelMetrics,
   ingestOtelSignal,
   ingestOtelTraces,
+  autodevEnrichOtlpPayload,
+  isAutodevAttributesEnabled,
   isClientDisconnectError,
   isDraining,
   isProviderCoolingDown,
