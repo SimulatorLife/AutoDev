@@ -15,6 +15,7 @@ on:
       - "AGENTS.md"
       - "CLAUDE.md"
       - ".github/copilot-instructions.md"
+      - ".github/skills/**"
   pull_request:
     paths:
       - ".rulesync/**"
@@ -26,6 +27,7 @@ on:
       - "AGENTS.md"
       - "CLAUDE.md"
       - ".github/copilot-instructions.md"
+      - ".github/skills/**"
 
 permissions:
   contents: read
@@ -69,6 +71,46 @@ jobs:
             --output-roots tests/fixtures/rulesync-shadow \
             --check \
             --silent
+
+      - name: Check live Copilot skills from an ephemeral Rulesync output root
+        run: |
+          set -euo pipefail
+          temp_root="$(mktemp -d)"
+          trap 'rm -rf "$temp_root"' EXIT
+          pnpm exec rulesync generate \
+            --input-roots .rulesync \
+            --targets copilot \
+            --features skills \
+            --output-roots "$temp_root/generated" \
+            --delete \
+            --silent
+          pnpm exec rulesync generate \
+            --input-roots .rulesync \
+            --targets copilot \
+            --features skills \
+            --output-roots "$temp_root/generated" \
+            --check \
+            --silent
+          python3 - "$temp_root/generated" .github/skills <<'PY'
+          from pathlib import Path
+          import sys
+
+          generated, live = map(Path, sys.argv[1:])
+          skills = ("ccc", "lsp-mcp-server", "orchestration")
+          expected = {Path(name) / "SKILL.md" for name in skills}
+          actual = {
+              path.relative_to(live)
+              for path in live.rglob("*")
+              if path.is_file()
+          }
+          if actual != expected:
+              raise SystemExit(f"unexpected live Copilot skill files: {sorted(actual)}")
+          for skill in skills:
+              relative = Path(skill) / "SKILL.md"
+              output = generated / ".github" / "skills" / relative
+              if output.read_bytes() != (live / relative).read_bytes():
+                  raise SystemExit(f"live Copilot skill drift: {relative}")
+          PY
 
       - name: Check live rules from an ephemeral Rulesync input root
         run: |

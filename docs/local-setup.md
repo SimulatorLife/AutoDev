@@ -310,7 +310,7 @@ pnpm exec rulesync generate \
   --silent
 ```
 
-Rulesync does not replace AutoDev's live hook enforcement, skill installation, or role filtering. The installer continues to symlink canonical skills from `scripts/codex/skills/`, `render-provider-skill-views.py` continues to project role-specific Claude views from the execution contract, and Antigravity continues to use its explicit `include_only` registration. Rulesync skill output is only a portable format/parity shadow until those boundaries are separately proven equivalent.
+Rulesync does not replace AutoDev's live hook enforcement, MCP configuration, or role filtering. The first canonical-skill cutover is limited to the Copilot repository surface at `.github/skills/` (`ccc`, `lsp-mcp-server`, and `orchestration`); its `SKILL.md` bodies and generated frontmatter are drift-checked. The installer continues to symlink Codex/user-level canonical skills from `scripts/codex/skills/`, `render-provider-skill-views.py` continues to project role-specific Claude views from the execution contract, and Antigravity continues to use its explicit `include_only` registration. `ccc` reference files, MCP, hooks, and permissions remain shadow-only or deferred until those boundaries are separately proven equivalent.
 
 To refresh the tracked shadow fixtures after making intentional changes to `.rulesync/` or `rulesync.jsonc`:
 

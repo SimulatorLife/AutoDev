@@ -1045,6 +1045,26 @@ ephemeral all-target generation, and the live workflow boundary; the existing
 for rules generation. This is a Rulesync compatibility seam, not a second
 source of instructions.
 
+**Completed second incremental live surface — Copilot canonical skills.** The
+Rulesync-generated Copilot skill surface at `.github/skills/` now contains
+exactly `ccc`, `lsp-mcp-server`, and `orchestration`, with generated
+frontmatter and bodies checked against `.rulesync/skills/`. The focused
+`tests/test_rulesync_live_skills.py` contract and the workflow's read-only
+Copilot `skills` drift check freeze that surface; `ccc` reference files remain
+shadow-only because the first cutover is intentionally limited to the three
+canonical `SKILL.md` files. Codex's user-level `scripts/codex/skills/` links,
+Claude's role-filtered provider views, and Antigravity's explicit skill
+registry remain AutoDev-owned and were not cut over. MCP, hooks, and permissions
+remain shadow-only/deferred. Validation is complete: the six Rulesync suites
+(`test_rulesync_live_rules`, `test_rulesync_live_skills`,
+`test_rulesync_mcp_shadow`, `test_rulesync_skills_shadow`,
+`test_rulesync_hooks_shadow`, and `test_rulesync_permissions_inventory`) report
+33 passing tests; `pnpm test` reports 582 passing tests; actionlint and
+ShellCheck exit 0; `git diff --check` is clean; and LSP diagnostics for the
+new live-skills test and updated Rulesync tests report no issues. The next
+incremental candidate is shared MCP; Codex, Claude, and Antigravity skill
+surfaces remain explicitly out of this cutover.
+
 The Rulesync source covers shared MCP declarations, the common repository
 instructions represented by `AGENTS.md`, the three portable AutoDev-owned
 skills (`ccc`, `lsp-mcp-server`, and `orchestration`), and the six existing
@@ -1054,10 +1074,11 @@ provider or user configuration. Rulesync currently emits only `PreToolUse` for
 Antigravity, and Codex-only fields such as `prevent_idle_sleep` remain outside
 the portable source as explicit parity limitations.
 
-The shared instruction rules cutover is the only live Rulesync surface so
-far. Existing live hooks, MCP configuration, and role-specific skill assignment
-remain AutoDev-owned so target-specific guidance and runtime enforcement are not
-silently removed during this parity phase. Role-specific skill assignment and
+The shared instruction rules cutover and the Copilot canonical-skill slice are
+the only live Rulesync surfaces so far. Existing live hooks, MCP configuration,
+Codex/user-level skills, Claude role-specific skill views, and Antigravity skill
+registration remain AutoDev-owned so target-specific guidance and runtime
+enforcement are not silently removed during this parity phase. Role-specific skill assignment and
 exposure remain AutoDev-owned:
 the execution contract, provider skill-view renderer, Claude role views,
 Antigravity `include_only` registration, symlink installer, MCP launcher,
@@ -1145,7 +1166,7 @@ Pin an exact tested Rulesync version rather than tracking `latest`
 ### Migrate first
 
 - Root/shared instructions (live cutover complete; byte-identity and ephemeral-generation checks frozen above)
-- Canonical skills
+- Canonical skills (Copilot `.github/skills/` live cutover complete; Codex, Claude, and Antigravity remain AutoDev-owned)
 - Shared MCP declarations
 - Hook declarations (shadow-only translation complete; target limitations documented)
 - Permissions declarations (inventory complete, see Status above; generation deferred while provider-CLI-specific permission layers still exist)
@@ -1158,7 +1179,7 @@ Pin an exact tested Rulesync version rather than tracking `latest`
 4. Test global and project scopes separately
 5. Verify unrelated user config survives
 6. Add CI drift checks (enforced via `.github/workflows/rulesync-mcp-shadow-drift.yml`)
-7. Switch one generated surface at a time (shared instruction rules complete; canonical skills are the next candidate)
+7. Switch one generated surface at a time (shared instruction rules and the Copilot canonical-skill slice complete; shared MCP is the next candidate)
 
 ### Keep outside Rulesync initially
 
