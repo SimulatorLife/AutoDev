@@ -746,6 +746,77 @@ Refreshing the fixture is the documented, intentional signal that the
 prefix map, the SHA-256 truncation length, item-id continuator
 behavior, or `dropUnresolvableReasoning` policy is meant to change.
 
+The Phase 0 "per-session concurrency contract" capture is landed as a
+deterministic fixture. **Finding.** The router's concurrency parser
+(`parseConcurrencyConfig` in `scripts/codex-model-router.mjs`) only
+matched a key/value pair at the start of a line, so the canonical Codex
+key `max_concurrent_threads_per_session` was unreachable when it
+appeared inside a composer-emitted inline `agents = { ... }` table --
+the form `$CODEX_HOME/config.toml` now ships. That left the router with
+`maxConcurrentThreadsPerSession = null`, so admission reported the
+documented over-denial risk on every denied request and accepted every
+request it should have denied; the sanitized `/status` payload
+(`status.limits.maxConcurrentThreadsPerSession` and
+`status.concurrency.effectivePerSessionLimit`) reported `null` as well,
+masking the bug behind what looked like an explicit operator choice. The
+legacy `max_threads` alias was also being parsed into the same object
+and surfaced through `effectivePerSessionLimit()` as a fallback, which
+would have hidden the parser bug behind a second source of truth the
+moment the inline form was repaired. **Slice.** The parser now extracts
+the agents context first (multiline `[agents]` table OR composer-emitted
+inline `agents = { ... }` table with nested role braces tracked by a
+small depth counter), then looks for the canonical key inside that
+context with the existing integer match. The `maxThreads` field is
+removed from the parsed object; `effectivePerSessionLimit()` reads only
+the canonical key; `concurrencyStatus()` and `limitsStatus()` no longer
+expose the legacy alias and never leak the absolute config path;
+admission denial continues to carry the canonical reason
+`max_concurrent_threads_per_session`. Missing or invalid canonical
+values still surface as `null`, which `tryAcquireSubagentSlot` reads as
+"no configured cap" so a missing file never silently disables
+enforcement and a present-but-unparseable file never silently enables
+it. An explicit `0` is preserved verbatim and feeds admission as a
+literal zero cap (`sessionActive >= 0` is always true, so every acquire
+is denied with the canonical reason); that is the same behaviour the
+previous parser produced, and the fixture pins it so any future change
+is intentional. **Fixture / tracking rationale.** The fixture at
+`tests/fixtures/contracts/concurrency-contract.json` records the
+parser-shape scenarios (multiline, inline, inline-with-nested-roles,
+compact inline, comments/blanks, indented block, missing key, alias-only,
+alias-plus-canonical, sibling-section bleed, string value, bareword
+value, missing file), the admission scenarios (under-limit admit,
+over-limit deny, identified-session independence, process-fallback shared
+bucket, release drops counts, denial records sanitized status), and the
+sanitized-status shape (the exact key set returned by `concurrencyStatus`
+and the absence of the `maxThreads` alias). `tests/concurrency-contract.test.mjs` drives every parser scenario and drives
+admission scenarios when the host's effective configured limit matches the
+fixture's declared limit; mismatches are explicitly skipped rather than
+faked. It drives every scenario through the exported `parseConcurrencyConfig`,
+`tryAcquireSubagentSlot`, `releaseSubagentSlot`, `recordConcurrencyDenial`,
+`resetConcurrencyTelemetry`, and `concurrencyStatus` helpers and asserts
+every shape against the fixture, including the schema tag
+(`autodev-concurrency-contract-v1`). The focused router test
+`"parseConcurrencyConfig accepts multiline [agents] and inline agents={...} but ignores the legacy max_threads alias"`
+covers the same parser scenarios against temp files, and the focused
+router test `"admission enforces the canonical limit, surfaces the same value on /status, and never reports the legacy alias"`
+covers the sanitized-status assertions in isolation; both are gated on
+the module-level `CONCURRENCY_CONFIG` so a host without a configured
+`$CODEX_HOME/config.toml` still exercises the no-cap branch. **Completed
+slice only after verification.** `node --test tests/concurrency-contract.test.mjs`
+reports 25 passing scenarios (parser + admission + constants) and
+`node --test scripts/codex-model-router.test.mjs` reports 181 passing
+tests with no failures; the parser fix also clears the three unrelated
+baseline failures (`scripts/codex-model-router.test.mjs` lines 3313,
+3367, and 5255) that were caused by the same root cause and previously
+inlined the `maxThreads` field in their expectations. **Commands / results.**
+`node --test tests/concurrency-contract.test.mjs` -> 25 pass, 0 fail;
+`node --test scripts/codex-model-router.test.mjs` -> 181 pass, 0 fail
+(3 baseline failures resolved). **Next telemetry-contract step.**
+Extend the fixture with the active-agents projection the status payload
+exposes once the existing Phase 0 "active agent reconciliation" slice is
+frozen, so `status.concurrency` and `status.agents` agree on the same
+underlying tracker rather than two parallel counters.
+
 All other Phase 0 capture areas listed below remain future work.
 
 ### Capture
@@ -759,10 +830,12 @@ All other Phase 0 capture areas listed below remain future work.
 - Provider selection order and randomization (frozen — see Status above)
 - Cooldown and provider-limit behavior (frozen — see Status above)
 - Root versus subagent provider selection (frozen — see Status above)
+- Per-session concurrency contract (frozen — see Status above)
 - Workspace attribution
 - Tool/skill/MCP attribution
 - Native versus bridge-native child counts
 - Dashboard/status snapshots
+- Active-agent reconciliation (queued behind the per-session concurrency slice above)
 
 ### Exit gate
 

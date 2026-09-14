@@ -491,7 +491,11 @@ The router makes its effective choice visible in two ways:
   local configuration permits one active subagent per session; callers must
   serialize additional work or deliberately raise the
   configured limit after checking provider capacity. The deprecated `max_threads`
-  alias is not surfaced. Role requests are gated before provider selection;
+  alias is no longer parsed, surfaced, or used as a fallback (see
+  Phase 0 concurrency slice in `docs/AUTODEV_PLATFORM_MIGRATION.md`); only
+  the canonical Codex key `max_concurrent_threads_per_session` -- multiline
+  `[agents]` block or composer-generated inline `agents = { ... }` table --
+  feeds admission. Role requests are gated before provider selection;
   direct concrete model requests
   are not counted as subagent slots. If a session ID is not supplied by the
   client, the router uses a process-wide fallback scope and reports that scope.

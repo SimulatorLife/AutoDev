@@ -2508,19 +2508,63 @@ function formatBridgeEvents(events) {
 }
 
 function parseConcurrencyConfig(file = CODEX_CONFIG_FILE) {
-  const result = { file, maxConcurrentThreadsPerSession: null, maxThreads: null };
+  // The only authority for the per-session limit is the canonical Codex key
+  // `max_concurrent_threads_per_session`. Anything else -- including the old
+  // `max_threads` alias, free-form keys, or values that do not parse as a
+  // non-negative integer -- is ignored, so admission falls back to the documented
+  // null-limit behaviour (deny when the configured cap is reached, accept
+  // otherwise). The legacy alias is intentionally not surfaced in this object,
+  // the `concurrencyStatus()` projection, or the `/status` payload: a wrapper
+  // would just hide a parser bug behind a second source of truth.
+  const result = { file, maxConcurrentThreadsPerSession: null };
   if (!existsSync(file)) return result;
   try {
     const source = readFileSync(file, "utf8");
-    for (const match of source.matchAll(/^\s*(max_concurrent_threads_per_session|max_threads)\s*=\s*(\d+)\s*$/gm)) {
-      const value = Number.parseInt(match[2], 10);
-      if (match[1] === "max_concurrent_threads_per_session") result.maxConcurrentThreadsPerSession = value;
-      if (match[1] === "max_threads") result.maxThreads = value;
-    }
+    // Codex ships the [agents] block two ways: a multiline table and the
+    // composer's inline `agents = { ... }` form. The previous regex only
+    // matched the multiline shape, so an inline-emitted config was silently
+    // treated as absent and the router ran with no configured limit. Pick
+    // the agents context first, then look for the canonical key inside it
+    // within that context so a stray key in an unrelated section cannot bleed
+    // into the capture.
+    const agentsContext = matchAgentsContext(source);
+    const keyMatch = agentsContext.match(/(?:^|[\s,])max_concurrent_threads_per_session\s*=\s*(\d+)/);
+    if (keyMatch) result.maxConcurrentThreadsPerSession = Number.parseInt(keyMatch[1], 10);
   } catch (error) {
     console.error(`Warning: could not read Codex concurrency config from ${file}: ${error instanceof Error ? error.message : String(error)}`);
   }
   return result;
+}
+
+function matchAgentsContext(source) {
+  // Multiline `[agents]` table: capture every line up to the next `[section]`
+  // header or end of input. Anchored on `[agents]` rather than a key prefix so
+  // a misindented file cannot accidentally capture siblings like
+  // `[agents.explorer]`. `(?![\s\S])` is the JS idiom for end-of-string,
+  // which the engine satisfies whether or not the multiline flag is set;
+  // using `$` here would match every line end and truncate the capture at the
+  // first newline.
+  const multiline = source.match(/^\s*\[agents\]\s*(?:\r?\n|;)([\s\S]*?)(?=^\s*\[|(?![\s\S]))/m);
+  if (multiline) return multiline[1];
+  // Composer-emitted inline table. We hand-roll brace tracking rather than
+  // `[^{}]` because the composer inlines every registered role as
+  // `agents = { ..., explorer = { ... }, worker = { ... }, ... }` and the
+  // naive character class would stop at the first nested role's `{` and
+  // miss `max_concurrent_threads_per_session` declared above it.
+  const start = source.search(/(?:^|\n)\s*agents\s*=\s*\{/);
+  if (start === -1) return "";
+  const open = source.indexOf("{", start);
+  if (open === -1) return "";
+  let depth = 0;
+  for (let i = open; i < source.length; i += 1) {
+    const ch = source[i];
+    if (ch === "{") depth += 1;
+    else if (ch === "}") {
+      depth -= 1;
+      if (depth === 0) return source.slice(open + 1, i);
+    }
+  }
+  return "";
 }
 
 const CODEX_CONFIG_FILE = process.env.CODEX_ROUTER_CODEX_CONFIG_FILE ?? `${CODEX_HOME}/config.toml`;
@@ -2545,7 +2589,11 @@ const concurrencyTelemetry = { denials: 0, denialsByReason: {}, lastDenial: null
 const spawnFailureTelemetry = { total: 0, byReason: {}, recent: [] };
 
 function effectivePerSessionLimit() {
-  return CONCURRENCY_CONFIG.maxConcurrentThreadsPerSession ?? CONCURRENCY_CONFIG.maxThreads;
+  // Only the canonical Codex key feeds admission. A missing or invalid value
+  // surfaces as `null`, which `tryAcquireSubagentSlot` interprets as "no
+  // configured cap". A missing or invalid file therefore does not silently
+  // impose a limit, while a valid canonical value is enforced directly.
+  return CONCURRENCY_CONFIG.maxConcurrentThreadsPerSession;
 }
 
 function activeSubagentThreads() {

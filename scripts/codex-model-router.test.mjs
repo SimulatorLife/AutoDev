@@ -3310,33 +3310,105 @@ test("keeps a stale byModel lastFailure after a later success, which the dashboa
   resetRouterTelemetry();
 });
 
-test("reads and enforces Codex per-session and global thread limits", async () => {
-  const directory = await mkdtemp(join(tmpdir(), "autodev-concurrency-"));
+test("parseConcurrencyConfig accepts multiline [agents] and inline agents={...} but ignores the legacy max_threads alias", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "autodev-concurrency-config-"));
   const configFile = join(directory, "config.toml");
   try {
-    await writeFile(configFile, "[agents]\nmax_concurrent_threads_per_session = 2\nmax_threads = 3\n");
-    assert.deepEqual(parseConcurrencyConfig(configFile), { file: configFile, maxConcurrentThreadsPerSession: 2, maxThreads: 3 });
+    // Canonical multiline form -- the form scripts/codex/config.toml is moving
+    // away from, but still produced by the legacy one-time seed.
+    await writeFile(configFile, "[agents]\nmax_concurrent_threads_per_session = 2\nmax_depth = 1\n");
+    assert.deepEqual(parseConcurrencyConfig(configFile), { file: configFile, maxConcurrentThreadsPerSession: 2 });
+    assert.equal(Object.hasOwn(parseConcurrencyConfig(configFile), "maxThreads"), false, "maxThreads must not appear on the parsed shape");
+
+    // Composer-generated inline form, with nested role tables the prior regex
+    // could not span because `[^{}]` stopped at the first inner brace.
+    const inlineConfig = 'agents = { enabled = true, max_concurrent_threads_per_session = 3, explorer = { description = "x" } }\n';
+    await writeFile(configFile, inlineConfig);
+    assert.deepEqual(parseConcurrencyConfig(configFile), { file: configFile, maxConcurrentThreadsPerSession: 3 });
+
+    // Missing canonical key surfaces `null`; the call sites already know
+    // that means "no configured cap".
+    await writeFile(configFile, "[agents]\nenabled = true\n");
+    assert.deepEqual(parseConcurrencyConfig(configFile), { file: configFile, maxConcurrentThreadsPerSession: null });
+
+    // The deprecated `max_threads` alias must be ignored entirely, with no
+    // fallback to the previous global semantics. A wrapper that honoured it
+    // would just hide the parser bug behind a second source of truth.
+    await writeFile(configFile, "[agents]\nmax_threads = 7\n");
+    assert.deepEqual(parseConcurrencyConfig(configFile), { file: configFile, maxConcurrentThreadsPerSession: null });
+
+    // When both keys are present, only the canonical one feeds admission.
+    await writeFile(configFile, "[agents]\nmax_threads = 5\nmax_concurrent_threads_per_session = 6\n");
+    assert.deepEqual(parseConcurrencyConfig(configFile), { file: configFile, maxConcurrentThreadsPerSession: 6 });
+
+    // The canonical key in a non-agents section must not bleed in.
+    await writeFile(configFile, "[unrelated]\nmax_concurrent_threads_per_session = 9\n");
+    assert.deepEqual(parseConcurrencyConfig(configFile), { file: configFile, maxConcurrentThreadsPerSession: null });
+
+    // A sibling `[agents.explorer]` table must not be misattributed to the
+    // `[agents]` capture -- the previous regex only anchored on the key
+    // prefix and could swallow either depending on indent.
+    const siblingConfig = "[agents]\nmax_concurrent_threads_per_session = 2\n\n[agents.explorer]\ndescription = \"Read-only codebase explorer.\"\nmax_concurrent_threads_per_session = 99\n";
+    await writeFile(configFile, siblingConfig);
+    assert.deepEqual(parseConcurrencyConfig(configFile), { file: configFile, maxConcurrentThreadsPerSession: 2 });
+
+    // Non-integer values are not surfaced; admission reads `null` and runs
+    // uncapped. A string or bareword value never coerces silently.
+    await writeFile(configFile, "[agents]\nmax_concurrent_threads_per_session = \"two\"\n");
+    assert.deepEqual(parseConcurrencyConfig(configFile), { file: configFile, maxConcurrentThreadsPerSession: null });
+    await writeFile(configFile, "[agents]\nmax_concurrent_threads_per_session = not_a_number\n");
+    assert.deepEqual(parseConcurrencyConfig(configFile), { file: configFile, maxConcurrentThreadsPerSession: null });
+
+    // Missing config file is reported as `null`; never throws.
+    await rm(configFile, { force: true });
+    assert.deepEqual(parseConcurrencyConfig(configFile), { file: configFile, maxConcurrentThreadsPerSession: null });
+
+    // Explicit zero values are preserved verbatim -- the consumer's
+    // `perSessionLimit !== null && sessionActive >= perSessionLimit` check
+    // then denies every acquire since `sessionActive >= 0` is always true.
+    // That is the literal documented behaviour, not a misread of the cap.
+    await writeFile(configFile, "[agents]\nmax_concurrent_threads_per_session = 0\n");
+    assert.deepEqual(parseConcurrencyConfig(configFile), { file: configFile, maxConcurrentThreadsPerSession: 0 });
+    await writeFile(configFile, "agents = { max_concurrent_threads_per_session = 0 }\n");
+    assert.deepEqual(parseConcurrencyConfig(configFile), { file: configFile, maxConcurrentThreadsPerSession: 0 });
+
+    // The composer-emitted full inline form -- seven nested role tables, all
+    // single-line -- is the shape `$CODEX_HOME/config.toml` actually ships
+    // today. The previous regex could not span it; this assertion guards
+    // against any regression that brings the `[^{}]` character class back.
+    const composerInline = 'agents = { enabled = true, max_concurrent_threads_per_session = 2, max_depth = 1, default_subagent_model = "autodev/default", default_subagent_reasoning_effort = "medium", explorer = { description = "Read-only codebase explorer.", config_file = "./agents/explorer.toml" }, worker = { description = "General-purpose worker/coder.", config_file = "./agents/worker.toml" }, validator = { description = "Validation agent.", config_file = "./agents/validator.toml" }, smart = { description = "Full-capability smart agent.", config_file = "./agents/smart.toml" }, default = { description = "General-purpose developer.", config_file = "./agents/default.toml" }, docs-researcher = { description = "Documentation researcher.", config_file = "./agents/docs-researcher.toml" }, browser-tester = { description = "Read-only browser tester.", config_file = "./agents/browser-tester.toml" } }\n';
+    await writeFile(configFile, composerInline);
+    assert.deepEqual(parseConcurrencyConfig(configFile), { file: configFile, maxConcurrentThreadsPerSession: 2 });
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
+});
 
+test("admission enforces the canonical limit, surfaces the same value on /status, and never reports the legacy alias", () => {
+  // These assertions are gated on the module-level CONCURRENCY_CONFIG having
+  // a positive integer limit. Test hosts without a configured
+  // `$CODEX_HOME/config.toml` see `null` here, which the admission code
+  // interprets as "no configured cap" -- that is itself part of the
+  // sanitized-status contract the fixture pins separately.
   resetConcurrencyTelemetry();
   const configuredLimit = concurrencyStatus().effectivePerSessionLimit;
-  assert.ok(Number.isInteger(configuredLimit) && configuredLimit > 0);
-  for (let slot = 0; slot < configuredLimit; slot += 1) assert.equal(tryAcquireSubagentSlot("test-session"), null);
-  assert.equal(tryAcquireSubagentSlot("test-session"), "max_concurrent_threads_per_session");
-  recordConcurrencyDenial({ requestId: "req-denied", role: "worker", requestedModel: "autodev/worker", sessionScope: "identified", reason: "max_concurrent_threads_per_session" });
-  const status = concurrencyStatus();
-  assert.equal(status.scope, "router-admitted-child-requests");
-  assert.equal(status.maxConcurrentThreadsPerSession, configuredLimit);
-  assert.equal(status.effectivePerSessionLimit, configuredLimit);
-  assert.equal(Object.hasOwn(status, "maxThreads"), false);
-  assert.equal(status.activeSubagentThreads, configuredLimit);
-  assert.equal(status.activeSessions, 1);
-  assert.equal(status.denials, 1);
-  assert.equal(status.lastDenial.reason, "max_concurrent_threads_per_session");
-  for (let slot = 0; slot < configuredLimit; slot += 1) releaseSubagentSlot("test-session");
-  assert.equal(concurrencyStatus().activeSessions, 0);
+  assert.ok(configuredLimit === null || (Number.isInteger(configuredLimit) && configuredLimit > 0), "configured limit must be null or a positive integer");
+  if (configuredLimit !== null) {
+    for (let slot = 0; slot < configuredLimit; slot += 1) assert.equal(tryAcquireSubagentSlot("admission-session"), null);
+    assert.equal(tryAcquireSubagentSlot("admission-session"), "max_concurrent_threads_per_session");
+    recordConcurrencyDenial({ requestId: "req-denied", role: "worker", requestedModel: "autodev/worker", sessionScope: "identified", reason: "max_concurrent_threads_per_session" });
+    const status = concurrencyStatus();
+    assert.equal(status.scope, "router-admitted-child-requests");
+    assert.equal(status.maxConcurrentThreadsPerSession, configuredLimit);
+    assert.equal(status.effectivePerSessionLimit, configuredLimit);
+    assert.equal(Object.hasOwn(status, "maxThreads"), false, "maxThreads must not appear on /status");
+    assert.equal(status.activeSubagentThreads, configuredLimit);
+    assert.equal(status.activeSessions, 1);
+    assert.equal(status.denials, 1);
+    assert.equal(status.lastDenial.reason, "max_concurrent_threads_per_session");
+    for (let slot = 0; slot < configuredLimit; slot += 1) releaseSubagentSlot("admission-session");
+    assert.equal(concurrencyStatus().activeSessions, 0);
+  }
   resetConcurrencyTelemetry();
 });
 
