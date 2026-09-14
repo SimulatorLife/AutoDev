@@ -65,9 +65,9 @@ test('router dashboard exposes the component hierarchy and explicit workspace at
   // was observed for that workspace.
   assert.match(dashboard, /function normalizeWorkspaceNamedUsage\(raw, identityKeys\)/);
   assert.match(dashboard, /function renderWorkspaceNamedUsage\(rows, \{ unavailableLabel, emptyLabel \}\)/);
-  assert.match(dashboard, /normalizeWorkspaceNamedUsage\(w\.byTool, \["tool", "name"\]\)/);
-  assert.match(dashboard, /normalizeWorkspaceNamedUsage\(w\.bySkill, \["skill", "name"\]\)/);
-  assert.match(dashboard, /normalizeWorkspaceNamedUsage\((?:w\.mcpUses \?\? )?w\.byMcp \?\? w\.mcpServers, \["server", "name", "mcp"\]\)/);
+  assert.match(dashboard, /normalizeWorkspaceNamedUsage\(w\.byTool, \[\s*"tool",\s*"name"\s*\]\)/);
+  assert.match(dashboard, /normalizeWorkspaceNamedUsage\(w\.bySkill, \[\s*"skill",\s*"name"\s*\]\)/);
+  assert.match(dashboard, /normalizeWorkspaceNamedUsage\((?:w\.mcpUses \?\? )?w\.byMcp \?\? w\.mcpServers, \[\s*"server",\s*"name",\s*"mcp"\s*\]\)/);
   assert.match(dashboard, /if \(rows === null\) return `<div class="empty-state">\$\{escapeHtml\(unavailableLabel\)\}<\/div>`;/);
   assert.match(dashboard, /Named tool telemetry is unavailable per-workspace/);
   assert.match(dashboard, /Named skill attribution is unavailable per-workspace/);
@@ -99,7 +99,7 @@ test('router dashboard exposes the component hierarchy and explicit workspace at
   // Provider health panel renders routing priorities, effective/live limits and cooldowns,
   // disabled state, and one enable/disable control per provider.
   assert.match(dashboard, /Routing priority/);
-  assert.match(dashboard, /Effective limits &amp; cooldowns/);
+  assert.match(dashboard, /Errors &amp; cooldowns/);
   assert.match(dashboard, /formatRoutingPriority/);
   assert.match(dashboard, /formatEffectiveLimitsAndCooldowns/);
   assert.match(dashboard, /isDisabled/);
@@ -139,7 +139,7 @@ test('router dashboard provider health panel renders routing priorities, limits,
   // Panel header and table columns
   assert.match(rawDashboard, /<dashboard-panel id="panel-providers"[^>]*title="Provider health"/);
   assert.match(rawDashboard, /<th>Routing priority<\/th>/);
-  assert.match(rawDashboard, /<th>Effective limits &amp; cooldowns<\/th>/);
+  assert.match(rawDashboard, /<th>Errors &amp; cooldowns<\/th>/);
   assert.match(rawDashboard, /<th>Active<\/th>/);
   assert.doesNotMatch(rawDashboard, /<th>In-flight<\/th>/);
   assert.doesNotMatch(rawDashboard, /<th>Last failure<\/th>/);
@@ -151,9 +151,9 @@ test('router dashboard provider health panel renders routing priorities, limits,
   assert.deepEqual(providerHeaders, [
     'Provider',
     'Routing priority',
-    'Configured models',
+    'Models',
     'Status',
-    'Effective limits &amp; cooldowns',
+    'Errors &amp; cooldowns',
     'Active',
     'Avg turn',
     'Outcomes',
@@ -316,8 +316,8 @@ test('router dashboard combines skill usage and exposure into one Skills section
   // Source-level checks: the two joins are read from distinct backend fields
   // and rendered into a single "Skills" section as `uses / exposed`, never merged into one sum.
   assert.match(rawDashboard, /<th>Skill uses \/ exposed<\/th>/);
-  assert.match(rawDashboard, /normalizeWorkspaceNamedUsage\(w\.bySkill, \["skill", "name"\]\)/);
-  assert.match(rawDashboard, /normalizeWorkspaceNamedUsage\(w\.bridgeSkills, \["skill", "name"\]\)/);
+  assert.match(rawDashboard, /normalizeWorkspaceNamedUsage\(w\.bySkill, \[\s*"skill",\s*"name"\s*\]\)/);
+  assert.match(rawDashboard, /normalizeWorkspaceNamedUsage\(w\.bridgeSkills, \[\s*"skill",\s*"name"\s*\]\)/);
   assert.match(rawDashboard, /<h2>Skills<\/h2>/);
   assert.doesNotMatch(rawDashboard, /<h2>Skill usage<\/h2>/);
   assert.doesNotMatch(rawDashboard, /<h2>Skills exposed<\/h2>/);
@@ -433,8 +433,8 @@ test('router dashboard documents shell cat-style SKILL.md reads as ordinary skil
 test('router dashboard falls back to bridgeTools when OTLP named-tool rows are unavailable or empty, without double-counting', async () => {
   const rawDashboard = await readFile(path.join(root, 'scripts', 'codex-model-router-dashboard.html'), 'utf8');
 
-  assert.match(rawDashboard, /normalizeWorkspaceNamedUsage\(w\.byTool, \["tool", "name"\]\)/);
-  assert.match(rawDashboard, /normalizeWorkspaceNamedUsage\(w\.bridgeTools, \["tool", "name"\]\)/);
+  assert.match(rawDashboard, /normalizeWorkspaceNamedUsage\(w\.byTool, \[\s*"tool",\s*"name"\s*\]\)/);
+  assert.match(rawDashboard, /normalizeWorkspaceNamedUsage\(w\.bridgeTools, \[\s*"tool",\s*"name"\s*\]\)/);
   assert.match(rawDashboard, /resolveWorkspaceToolRows\(otlpToolRows, bridgeToolRows\)/);
 
   const resolverMatch = rawDashboard.match(/function resolveWorkspaceToolRows\([\s\S]*?\n    \}/);
