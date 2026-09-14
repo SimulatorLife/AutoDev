@@ -13,6 +13,8 @@ on:
       - "pnpm-lock.yaml"
       - ".github/workflows/rulesync-mcp-shadow-drift.yml"
       - "AGENTS.md"
+      - "CLAUDE.md"
+      - ".github/copilot-instructions.md"
   pull_request:
     paths:
       - ".rulesync/**"
@@ -22,6 +24,8 @@ on:
       - "pnpm-lock.yaml"
       - ".github/workflows/rulesync-mcp-shadow-drift.yml"
       - "AGENTS.md"
+      - "CLAUDE.md"
+      - ".github/copilot-instructions.md"
 
 permissions:
   contents: read
@@ -49,10 +53,60 @@ jobs:
 
       - name: Detect Rulesync drift against tracked shadow fixtures
         run: |
+          set -euo pipefail
+          temp_root="$(mktemp -d)"
+          trap 'rm -rf "$temp_root"' EXIT
+          mkdir -p "$temp_root/input"
+          cp -R .rulesync/. "$temp_root/input/"
+          {
+            printf '%s\n' '---' 'root: true' 'targets: ["*"]' 'description: "AutoDev shared workspace instructions for all AI tooling"' 'globs: ["**/*"]' '---'
+            cat .rulesync/rules/overview.md
+          } > "$temp_root/input/rules/overview.md"
           pnpm exec rulesync generate \
-            --config rulesync.jsonc \
+            --input-roots "$temp_root/input" \
             --targets codexcli,claudecode,copilot,antigravity-cli \
             --features mcp,rules,skills,hooks \
             --output-roots tests/fixtures/rulesync-shadow \
             --check \
             --silent
+
+      - name: Check live rules from an ephemeral Rulesync input root
+        run: |
+          set -euo pipefail
+          temp_root="$(mktemp -d)"
+          trap 'rm -rf "$temp_root"' EXIT
+          mkdir -p "$temp_root/input/rules" "$temp_root/live/.github"
+          {
+            printf '%s\n' '---' 'root: true' 'targets: ["*"]' 'description: "AutoDev shared workspace instructions for all AI tooling"' 'globs: ["**/*"]' '---'
+            cat .rulesync/rules/overview.md
+          } > "$temp_root/input/rules/overview.md"
+          cp AGENTS.md "$temp_root/live/AGENTS.md"
+          cp CLAUDE.md "$temp_root/live/CLAUDE.md"
+          cp .github/copilot-instructions.md "$temp_root/live/.github/copilot-instructions.md"
+          pnpm exec rulesync generate \
+            --input-roots "$temp_root/input" \
+            --targets codexcli,claudecode,copilot,antigravity-cli \
+            --features rules \
+            --output-roots "$temp_root/generated" \
+            --delete \
+            --silent
+          pnpm exec rulesync generate \
+            --input-roots "$temp_root/input" \
+            --targets codexcli,claudecode,copilot,antigravity-cli \
+            --features rules \
+            --output-roots "$temp_root/generated" \
+            --check \
+            --silent
+          python3 - "$temp_root/generated" "$temp_root/live" <<'PY'
+          from pathlib import Path
+          import sys
+
+          generated, live = map(Path, sys.argv[1:])
+          paths = ("AGENTS.md", "CLAUDE.md", ".github/copilot-instructions.md")
+          for relative in paths:
+              output = generated / relative
+              normalized = output.read_bytes().removesuffix(b"\n")
+              output.write_bytes(normalized)
+              if normalized != (live / relative).read_bytes():
+                  raise SystemExit(f"live rule drift: {relative}")
+          PY

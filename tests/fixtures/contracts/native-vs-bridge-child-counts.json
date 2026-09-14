@@ -1,0 +1,998 @@
+{
+  "schema": "autodev-native-vs-bridge-child-counts-v1",
+  "description": "Deterministic boundary for the router's native-vs-bridge child count contract. The fixture pins every observable shape `subagentStatus()` produces today: the canonical projection keys (`total`, `byMechanism` covering `router_alias` and `bridge_native`, `byProvider`, `byRole`, `byStatus`, `codexNativeSpawns`, `spawnCapableProviders`, `recent`), the newest-first ordering of `recent`, the 50-entry cap on `recent`, the per-child bridge batch counting rule (one batch event with N children contributes N to `total`/`byMechanism.bridge_native` and one row to `recent`), the `started -> success|failure` settlement that moves a child out of `byStatus.started` and updates the originating row's `settled` tally, the roleless bridge attribution to `byRole.unattributed-subagent`, the inherited-child-model collapse (`inherit`/`self`/`default`/`parent` resolve to the parent turn's model), the rejection of unknown spawn mechanisms by `recordSubagentSpawn`, the late-arriving bridge report (after the parent turn has finished) being opened and settled against the parent turn, the overflow failure path that closes the oldest tracked bridge child when `MAX_TRACKED_BRIDGE_SUBAGENTS` is exceeded, the non-additive `codexNativeSpawns` (Codex's OTLP `codex.multi_agent.spawn` counter is kept beside the router's count rather than merged into it), and the spawn-failure exclusion (a `subagent_tools_unavailable` event records a `spawn_tool_unavailable` failure but does not move any spawn counter). Refreshing the fixture is the documented, intentional signal that the projection shape, the canonical mechanism list, the row-settled semantics, the cap, or the spawn-failure boundary are meant to change.",
+  "canonicalMechanisms": [
+    "router_alias",
+    "bridge_native"
+  ],
+  "unattributedSubagentRole": "unattributed-subagent",
+  "inheritedChildModels": [
+    "inherit",
+    "self",
+    "default",
+    "parent"
+  ],
+  "recentCap": 50,
+  "scenarios": {
+    "empty_projection_has_exact_key_set_and_zero_tallies": {
+      "operations": [
+        {
+          "op": "assert_keys",
+          "expected": [
+            "byMechanism",
+            "byProvider",
+            "byRole",
+            "byStatus",
+            "codexNativeSpawns",
+            "recent",
+            "spawnCapableProviders",
+            "total"
+          ]
+        },
+        {
+          "op": "assert_field",
+          "field": "total",
+          "expected": 0
+        },
+        {
+          "op": "assert_field",
+          "field": "codexNativeSpawns",
+          "expected": 0
+        },
+        {
+          "op": "assert_deep_equal",
+          "field": "byMechanism",
+          "expected": {
+            "bridge_native": 0,
+            "router_alias": 0
+          }
+        },
+        {
+          "op": "assert_deep_equal",
+          "field": "byStatus",
+          "expected": {}
+        },
+        {
+          "op": "assert_deep_equal",
+          "field": "byProvider",
+          "expected": {}
+        },
+        {
+          "op": "assert_deep_equal",
+          "field": "byRole",
+          "expected": {}
+        },
+        {
+          "op": "assert_deep_equal",
+          "field": "recent",
+          "expected": []
+        }
+      ]
+    },
+    "bridge_batch_with_multiple_children_counts_per_child": {
+      "operations": [
+        {
+          "op": "bridge_request",
+          "requestId": "batch-1",
+          "provider": "antigravity",
+          "model": "gemini-3.8-flash-high",
+          "role": null,
+          "workspace": "SimulatorLife/RacingGame"
+        },
+        {
+          "op": "ingest_events",
+          "requestId": "batch-1",
+          "events": [
+            {
+              "type": "subagent_spawn",
+              "tool": "invoke_subagent",
+              "role": "explorer",
+              "count": 3,
+              "children": [
+                {
+                  "id": "b1.0"
+                },
+                {
+                  "id": "b1.1"
+                },
+                {
+                  "id": "b1.2"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "op": "assert_field",
+          "field": "total",
+          "expected": 3
+        },
+        {
+          "op": "assert_deep_equal",
+          "field": "byMechanism",
+          "expected": {
+            "bridge_native": 3,
+            "router_alias": 0
+          }
+        },
+        {
+          "op": "assert_deep_equal",
+          "field": "byProvider",
+          "expected": {
+            "antigravity": 3
+          }
+        },
+        {
+          "op": "assert_deep_equal",
+          "field": "byRole",
+          "expected": {
+            "explorer": 3
+          }
+        },
+        {
+          "op": "assert_deep_equal",
+          "field": "byStatus",
+          "expected": {
+            "started": 3
+          }
+        },
+        {
+          "op": "assert_recent_length",
+          "expected": 1
+        },
+        {
+          "op": "assert_recent_field",
+          "index": 0,
+          "field": "count",
+          "expected": 3
+        },
+        {
+          "op": "assert_recent_field",
+          "index": 0,
+          "field": "mechanism",
+          "expected": "bridge_native"
+        },
+        {
+          "op": "assert_recent_field",
+          "index": 0,
+          "field": "provider",
+          "expected": "antigravity"
+        },
+        {
+          "op": "assert_recent_field",
+          "index": 0,
+          "field": "role",
+          "expected": "explorer"
+        },
+        {
+          "op": "assert_recent_field",
+          "index": 0,
+          "field": "requestId",
+          "expected": "batch-1"
+        },
+        {
+          "op": "assert_recent_deep_equal",
+          "index": 0,
+          "field": "settled",
+          "expected": {
+            "success": 0,
+            "failure": 0
+          }
+        }
+      ]
+    },
+    "native_router_alias_spawn_counts_separately_from_bridge": {
+      "operations": [
+        {
+          "op": "bridge_request",
+          "requestId": "router-1",
+          "provider": "claude",
+          "model": "claude-opus-5",
+          "role": null,
+          "workspace": "AutoDev"
+        },
+        {
+          "op": "ingest_events",
+          "requestId": "router-1",
+          "events": [
+            {
+              "type": "subagent_spawn",
+              "tool": "Agent",
+              "role": "explorer"
+            }
+          ]
+        },
+        {
+          "op": "record_subagent_spawn",
+          "mechanism": "router_alias",
+          "provider": "codex",
+          "model": "gpt-5.6-luna",
+          "role": "worker",
+          "tool": "multi_agent_v1.spawn",
+          "requestId": "router-native-1",
+          "workspace": "AutoDev",
+          "count": 2
+        },
+        {
+          "op": "assert_field",
+          "field": "total",
+          "expected": 3
+        },
+        {
+          "op": "assert_deep_equal",
+          "field": "byMechanism",
+          "expected": {
+            "bridge_native": 1,
+            "router_alias": 2
+          }
+        },
+        {
+          "op": "assert_deep_equal",
+          "field": "byProvider",
+          "expected": {
+            "claude": 1,
+            "codex": 2
+          }
+        },
+        {
+          "op": "assert_deep_equal",
+          "field": "byRole",
+          "expected": {
+            "explorer": 1,
+            "worker": 2
+          }
+        },
+        {
+          "op": "assert_deep_equal",
+          "field": "byStatus",
+          "expected": {
+            "started": 3
+          }
+        }
+      ]
+    },
+    "settle_moves_child_from_started_to_success_and_updates_row": {
+      "operations": [
+        {
+          "op": "bridge_request",
+          "requestId": "settle-1",
+          "provider": "antigravity",
+          "model": "gemini-3.8-flash-high",
+          "role": null,
+          "workspace": "SimulatorLife/RacingGame"
+        },
+        {
+          "op": "ingest_events",
+          "requestId": "settle-1",
+          "events": [
+            {
+              "type": "subagent_spawn",
+              "tool": "invoke_subagent",
+              "role": "explorer",
+              "count": 2,
+              "children": [
+                {
+                  "id": "s1.0"
+                },
+                {
+                  "id": "s1.1"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "op": "assert_deep_equal",
+          "field": "byStatus",
+          "expected": {
+            "started": 2
+          }
+        },
+        {
+          "op": "ingest_events",
+          "requestId": "settle-1",
+          "events": [
+            {
+              "type": "subagent_result",
+              "tool": "invoke_subagent",
+              "role": "explorer",
+              "outcome": "success",
+              "durationMs": 4000,
+              "children": [
+                {
+                  "id": "s1.0"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "op": "assert_deep_equal",
+          "field": "byStatus",
+          "expected": {
+            "started": 1,
+            "success": 1
+          }
+        },
+        {
+          "op": "assert_recent_deep_equal",
+          "index": 0,
+          "field": "settled",
+          "expected": {
+            "success": 1,
+            "failure": 0
+          }
+        },
+        {
+          "op": "assert_field",
+          "field": "total",
+          "expected": 2,
+          "note": "settling is not a new spawn"
+        }
+      ]
+    },
+    "settle_failure_transitions_started_to_failure": {
+      "operations": [
+        {
+          "op": "bridge_request",
+          "requestId": "settle-2",
+          "provider": "antigravity",
+          "model": "gemini-3.8-flash-high",
+          "role": null,
+          "workspace": "SimulatorLife/RacingGame"
+        },
+        {
+          "op": "ingest_events",
+          "requestId": "settle-2",
+          "events": [
+            {
+              "type": "subagent_spawn",
+              "tool": "invoke_subagent",
+              "role": "explorer",
+              "count": 2,
+              "children": [
+                {
+                  "id": "s2.0"
+                },
+                {
+                  "id": "s2.1"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "op": "ingest_events",
+          "requestId": "settle-2",
+          "events": [
+            {
+              "type": "subagent_result",
+              "tool": "invoke_subagent",
+              "role": "explorer",
+              "outcome": "failure",
+              "children": [
+                {
+                  "id": "s2.1"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "op": "assert_deep_equal",
+          "field": "byStatus",
+          "expected": {
+            "started": 1,
+            "failure": 1
+          }
+        },
+        {
+          "op": "assert_recent_deep_equal",
+          "index": 0,
+          "field": "settled",
+          "expected": {
+            "success": 0,
+            "failure": 1
+          }
+        }
+      ]
+    },
+    "recent_list_is_newest_first": {
+      "operations": [
+        {
+          "op": "bridge_request",
+          "requestId": "order-1",
+          "provider": "claude",
+          "model": "claude-opus-5",
+          "role": null,
+          "workspace": "AutoDev"
+        },
+        {
+          "op": "ingest_events",
+          "requestId": "order-1",
+          "events": [
+            {
+              "type": "subagent_spawn",
+              "tool": "Agent",
+              "role": "first"
+            }
+          ]
+        },
+        {
+          "op": "bridge_request",
+          "requestId": "order-2",
+          "provider": "claude",
+          "model": "claude-opus-5",
+          "role": null,
+          "workspace": "AutoDev"
+        },
+        {
+          "op": "ingest_events",
+          "requestId": "order-2",
+          "events": [
+            {
+              "type": "subagent_spawn",
+              "tool": "Agent",
+              "role": "second"
+            }
+          ]
+        },
+        {
+          "op": "bridge_request",
+          "requestId": "order-3",
+          "provider": "claude",
+          "model": "claude-opus-5",
+          "role": null,
+          "workspace": "AutoDev"
+        },
+        {
+          "op": "ingest_events",
+          "requestId": "order-3",
+          "events": [
+            {
+              "type": "subagent_spawn",
+              "tool": "Agent",
+              "role": "third"
+            }
+          ]
+        },
+        {
+          "op": "assert_recent_length",
+          "expected": 3
+        },
+        {
+          "op": "assert_recent_field",
+          "index": 0,
+          "field": "requestId",
+          "expected": "order-3"
+        },
+        {
+          "op": "assert_recent_field",
+          "index": 1,
+          "field": "requestId",
+          "expected": "order-2"
+        },
+        {
+          "op": "assert_recent_field",
+          "index": 2,
+          "field": "requestId",
+          "expected": "order-1"
+        }
+      ]
+    },
+    "recent_list_caps_at_50_oldest_dropped": {
+      "operations": [
+        {
+          "op": "record_subagent_spawn",
+          "mechanism": "router_alias",
+          "provider": "claude",
+          "model": "claude-opus-5",
+          "role": "worker",
+          "tool": "multi_agent_v1.spawn",
+          "requestId": "cap-1",
+          "workspace": "AutoDev",
+          "count": 1
+        },
+        {
+          "op": "record_subagent_spawn_repeat",
+          "count": 49,
+          "prefix": "cap-",
+          "role": "worker",
+          "provider": "claude",
+          "model": "claude-opus-5",
+          "tool": "multi_agent_v1.spawn",
+          "mechanism": "router_alias",
+          "workspace": "AutoDev",
+          "startIndex": 2
+        },
+        {
+          "op": "record_subagent_spawn",
+          "mechanism": "router_alias",
+          "provider": "claude",
+          "model": "claude-opus-5",
+          "role": "worker",
+          "tool": "multi_agent_v1.spawn",
+          "requestId": "cap-final",
+          "workspace": "AutoDev",
+          "count": 1
+        },
+        {
+          "op": "assert_recent_length",
+          "expected": 50
+        },
+        {
+          "op": "assert_recent_field",
+          "index": 0,
+          "field": "requestId",
+          "expected": "cap-final"
+        },
+        {
+          "op": "assert_recent_absent",
+          "requestId": "cap-1",
+          "note": "oldest entry is evicted past the cap"
+        },
+        {
+          "op": "assert_field",
+          "field": "total",
+          "expected": 51,
+          "note": "the cap bounds recent only; the cumulative counter is unaffected"
+        }
+      ]
+    },
+    "roleless_bridge_child_is_unattributed_subagent": {
+      "operations": [
+        {
+          "op": "bridge_request",
+          "requestId": "roleless-1",
+          "provider": "antigravity",
+          "model": "gemini-3.8-flash-high",
+          "role": null,
+          "workspace": "SimulatorLife/RacingGame"
+        },
+        {
+          "op": "ingest_events",
+          "requestId": "roleless-1",
+          "events": [
+            {
+              "type": "subagent_spawn",
+              "tool": "invoke_subagent",
+              "count": 2,
+              "children": [
+                {
+                  "id": "r.0"
+                },
+                {
+                  "id": "r.1"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "op": "assert_deep_equal",
+          "field": "byRole",
+          "expected": {
+            "unattributed": 2
+          }
+        },
+        {
+          "op": "assert_recent_field",
+          "index": 0,
+          "field": "role",
+          "expected": "unattributed"
+        }
+      ]
+    },
+    "inherited_child_models_collapse_to_parent_model": {
+      "operations": [
+        {
+          "op": "bridge_request",
+          "requestId": "inherit-1",
+          "provider": "antigravity",
+          "model": "gemini-3.8-flash-medium",
+          "role": null,
+          "workspace": "SimulatorLife/RacingGame"
+        },
+        {
+          "op": "ingest_events",
+          "requestId": "inherit-1",
+          "events": [
+            {
+              "type": "subagent_spawn",
+              "tool": "invoke_subagent",
+              "role": "explorer",
+              "count": 4,
+              "children": [
+                {
+                  "id": "i.0",
+                  "model": "inherit"
+                },
+                {
+                  "id": "i.1",
+                  "model": "self"
+                },
+                {
+                  "id": "i.2",
+                  "model": "default"
+                },
+                {
+                  "id": "i.3",
+                  "model": "parent"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "op": "assert_deep_equal",
+          "field": "byProvider",
+          "expected": {
+            "antigravity": 4
+          }
+        },
+        {
+          "op": "assert_field",
+          "field": "total",
+          "expected": 4
+        }
+      ]
+    },
+    "concrete_child_model_is_attributed_not_collapsed": {
+      "operations": [
+        {
+          "op": "bridge_request",
+          "requestId": "concrete-1",
+          "provider": "antigravity",
+          "model": "gemini-3.8-flash-medium",
+          "role": null,
+          "workspace": "SimulatorLife/RacingGame"
+        },
+        {
+          "op": "ingest_events",
+          "requestId": "concrete-1",
+          "events": [
+            {
+              "type": "subagent_spawn",
+              "tool": "invoke_subagent",
+              "role": "explorer",
+              "count": 1,
+              "children": [
+                {
+                  "id": "c.0",
+                  "model": "gemini-3.8-flash-high"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "op": "assert_field",
+          "field": "total",
+          "expected": 1
+        },
+        {
+          "op": "assert_deep_equal",
+          "field": "byProvider",
+          "expected": {
+            "antigravity": 1
+          }
+        }
+      ]
+    },
+    "unknown_mechanism_is_rejected_without_inflating_counts": {
+      "operations": [
+        {
+          "op": "record_subagent_spawn_returns_null",
+          "mechanism": "made_up",
+          "provider": "claude",
+          "model": "claude-opus-5",
+          "role": "worker",
+          "tool": "x",
+          "requestId": "unknown-1",
+          "workspace": "AutoDev",
+          "count": 5
+        },
+        {
+          "op": "record_subagent_spawn_returns_null",
+          "mechanism": "router_alias",
+          "provider": "claude",
+          "model": "claude-opus-5",
+          "role": "worker",
+          "tool": "x",
+          "requestId": "bad-count-1",
+          "workspace": "AutoDev",
+          "count": 0
+        },
+        {
+          "op": "assert_field",
+          "field": "total",
+          "expected": 0
+        },
+        {
+          "op": "assert_deep_equal",
+          "field": "byMechanism",
+          "expected": {
+            "bridge_native": 0,
+            "router_alias": 0
+          }
+        },
+        {
+          "op": "assert_deep_equal",
+          "field": "recent",
+          "expected": []
+        }
+      ]
+    },
+    "late_bridge_report_after_parent_turn_ended_is_settled": {
+      "operations": [
+        {
+          "op": "bridge_request",
+          "requestId": "late-1",
+          "provider": "antigravity",
+          "model": "gemini-3.8-flash-high",
+          "role": null,
+          "workspace": "SimulatorLife/RacingGame"
+        },
+        {
+          "op": "close_bridge_for_request",
+          "requestId": "late-1",
+          "outcome": "success",
+          "elapsedMs": 45000
+        },
+        {
+          "op": "ingest_events",
+          "requestId": "late-1",
+          "events": [
+            {
+              "type": "subagent_spawn",
+              "tool": "invoke_subagent",
+              "role": "explorer",
+              "count": 1,
+              "children": [
+                {
+                  "id": "late.0"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "op": "assert_field",
+          "field": "total",
+          "expected": 1
+        },
+        {
+          "op": "assert_deep_equal",
+          "field": "byStatus",
+          "expected": {
+            "started": 0,
+            "success": 1
+          }
+        },
+        {
+          "op": "assert_recent_deep_equal",
+          "index": 0,
+          "field": "settled",
+          "expected": {
+            "success": 1,
+            "failure": 0
+          }
+        }
+      ]
+    },
+    "overflow_oldest_bridge_child_is_closed_as_failure": {
+      "operations": [
+        {
+          "op": "seed_bridge_children_overflow",
+          "requestId": "overflow-1",
+          "provider": "antigravity",
+          "model": "gemini-3.8-flash-high",
+          "workspace": "SimulatorLife/RacingGame",
+          "role": "explorer",
+          "totalChildren": 514,
+          "oldestChildId": "oldest"
+        },
+        {
+          "op": "assert_field",
+          "field": "total",
+          "expected": 514
+        },
+        {
+          "op": "assert_deep_equal",
+          "field": "byStatus",
+          "expected": {
+            "failure": 2,
+            "started": 512
+          }
+        },
+        {
+          "op": "assert_recent_field",
+          "index": 0,
+          "field": "mechanism",
+          "expected": "bridge_native"
+        }
+      ]
+    },
+    "codex_native_spawns_counter_is_kept_beside_router_total": {
+      "operations": [
+        {
+          "op": "ingest_otel_multi_agent_spawn",
+          "total": 4
+        },
+        {
+          "op": "assert_field",
+          "field": "codexNativeSpawns",
+          "expected": 4
+        },
+        {
+          "op": "assert_field",
+          "field": "total",
+          "expected": 0,
+          "note": "router counter is not additive with the codex OTLP counter"
+        },
+        {
+          "op": "assert_deep_equal",
+          "field": "byMechanism",
+          "expected": {
+            "bridge_native": 0,
+            "router_alias": 0
+          }
+        }
+      ]
+    },
+    "router_alias_and_codex_native_coexist_without_double_counting": {
+      "operations": [
+        {
+          "op": "ingest_otel_multi_agent_spawn",
+          "total": 7
+        },
+        {
+          "op": "record_subagent_spawn",
+          "mechanism": "router_alias",
+          "provider": "codex",
+          "model": "gpt-5.6-luna",
+          "role": "orchestrator",
+          "tool": "multi_agent_v1.spawn",
+          "requestId": "coexist-1",
+          "workspace": "AutoDev",
+          "count": 3
+        },
+        {
+          "op": "assert_field",
+          "field": "codexNativeSpawns",
+          "expected": 7
+        },
+        {
+          "op": "assert_field",
+          "field": "total",
+          "expected": 3,
+          "note": "codexNativeSpawns is not added to total"
+        },
+        {
+          "op": "assert_deep_equal",
+          "field": "byMechanism",
+          "expected": {
+            "bridge_native": 0,
+            "router_alias": 3
+          }
+        }
+      ]
+    },
+    "subagent_tools_unavailable_records_spawn_failure_without_inflating_spawn_count": {
+      "operations": [
+        {
+          "op": "bridge_request",
+          "requestId": "no-spawn-1",
+          "provider": "claude",
+          "model": "claude-opus-5",
+          "role": null,
+          "workspace": "SimulatorLife/RacingGame"
+        },
+        {
+          "op": "ingest_events",
+          "requestId": "no-spawn-1",
+          "events": [
+            {
+              "type": "subagent_tools_unavailable",
+              "expected": [
+                "Agent",
+                "Task"
+              ],
+              "available": [
+                "Read",
+                "Bash",
+                "Write"
+              ]
+            }
+          ]
+        },
+        {
+          "op": "assert_field",
+          "field": "total",
+          "expected": 0,
+          "note": "spawn failure is not a spawn"
+        },
+        {
+          "op": "assert_deep_equal",
+          "field": "byMechanism",
+          "expected": {
+            "bridge_native": 0,
+            "router_alias": 0
+          }
+        },
+        {
+          "op": "assert_deep_equal",
+          "field": "byStatus",
+          "expected": {}
+        },
+        {
+          "op": "assert_deep_equal",
+          "field": "recent",
+          "expected": []
+        },
+        {
+          "op": "assert_spawn_failure_total_at_least",
+          "value": 1,
+          "note": "the absence is recorded in spawnFailures, not in subagents"
+        },
+        {
+          "op": "assert_spawn_failure_by_reason",
+          "reason": "spawn_tool_unavailable",
+          "value": 1
+        }
+      ]
+    },
+    "spawn_failures_do_not_pollute_subagent_recent": {
+      "operations": [
+        {
+          "op": "bridge_request",
+          "requestId": "mix-1",
+          "provider": "claude",
+          "model": "claude-opus-5",
+          "role": null,
+          "workspace": "SimulatorLife/RacingGame"
+        },
+        {
+          "op": "ingest_events",
+          "requestId": "mix-1",
+          "events": [
+            {
+              "type": "subagent_tools_unavailable",
+              "expected": [
+                "Agent"
+              ],
+              "available": []
+            },
+            {
+              "type": "subagent_spawn",
+              "tool": "Agent",
+              "role": "explorer"
+            }
+          ]
+        },
+        {
+          "op": "assert_field",
+          "field": "total",
+          "expected": 1
+        },
+        {
+          "op": "assert_recent_length",
+          "expected": 1,
+          "note": "only the spawn contributes a recent row"
+        },
+        {
+          "op": "assert_recent_field",
+          "index": 0,
+          "field": "requestId",
+          "expected": "mix-1"
+        },
+        {
+          "op": "assert_recent_field",
+          "index": 0,
+          "field": "role",
+          "expected": "explorer"
+        }
+      ]
+    }
+  }
+}

@@ -288,13 +288,21 @@ specific agents, MCPs, and skills to coexist under distinct names.
 
 ### Rulesync shared-configuration shadow fixtures and refresh
 
-AutoDev tracks isolated MCP, shared-instruction, canonical-skill, and hook shadow fixtures for supported providers (`codexcli`, `claudecode`, `copilot`, `antigravity-cli`) under `tests/fixtures/rulesync-shadow/` to detect upstream drift without mutating live configuration. Rule fixtures are generated from `.rulesync/rules/overview.md`; skill fixtures cover only `ccc`, `lsp-mcp-server`, and `orchestration` (with portable references) from `.rulesync/skills/`. Hook shadows cover the six existing command hooks across SessionStart, SubagentStart, UserPromptSubmit, and PreToolUse. Rulesync currently emits only the supported PreToolUse hook for Antigravity and omits Codex-only fields such as prevent_idle_sleep. All remain shadow-only; existing live instructions, hooks, and target-specific guidance are unchanged. Rulesync permissions translation remains deferred until AutoDev has a complete portable permission source inventory.
+AutoDev tracks isolated MCP, canonical-skill, and hook shadow fixtures for supported providers (`codexcli`, `claudecode`, `copilot`, `antigravity-cli`) under `tests/fixtures/rulesync-shadow/` to detect upstream drift without mutating live configuration. The shared instruction rules surface is now the first live Rulesync cutover: `.rulesync/rules/overview.md`, `AGENTS.md`, `CLAUDE.md`, and `.github/copilot-instructions.md` are byte-identical. Rule generation uses a temporary frontmatter wrapper around the canonical source because pinned Rulesync `16.30.2` requires frontmatter; no duplicate tracked instruction source is introduced. Skill fixtures cover only `ccc`, `lsp-mcp-server`, and `orchestration` (with portable references) from `.rulesync/skills/`. Hook shadows cover the six existing command hooks across SessionStart, SubagentStart, UserPromptSubmit, and PreToolUse. Rulesync currently emits only the supported PreToolUse hook for Antigravity and omits Codex-only fields such as prevent_idle_sleep. Live hooks, MCP configuration, skills, and target-specific guidance remain AutoDev-owned. Rulesync permissions translation remains deferred until AutoDev has a complete portable permission source inventory.
 
-To check for drift between `.rulesync/` source configuration and the tracked shadow fixtures:
+To check for drift between `.rulesync/` source configuration and the tracked shadow fixtures, use an ephemeral input root so the canonical rules file remains byte-identical to `AGENTS.md` while Rulesync receives its required metadata:
 
 ```bash
+temp_root="$(mktemp -d)"
+trap 'rm -rf "$temp_root"' EXIT
+mkdir -p "$temp_root/input"
+cp -R .rulesync/. "$temp_root/input/"
+{
+  printf '%s\n' '---' 'root: true' 'targets: ["*"]' 'description: "AutoDev shared workspace instructions for all AI tooling"' 'globs: ["**/*"]' '---'
+  cat .rulesync/rules/overview.md
+} > "$temp_root/input/rules/overview.md"
 pnpm exec rulesync generate \
-  --config rulesync.jsonc \
+  --input-roots "$temp_root/input" \
   --targets codexcli,claudecode,copilot,antigravity-cli \
   --features mcp,rules,skills,hooks \
   --output-roots tests/fixtures/rulesync-shadow \
@@ -307,8 +315,16 @@ Rulesync does not replace AutoDev's live hook enforcement, skill installation, o
 To refresh the tracked shadow fixtures after making intentional changes to `.rulesync/` or `rulesync.jsonc`:
 
 ```bash
+temp_root="$(mktemp -d)"
+trap 'rm -rf "$temp_root"' EXIT
+mkdir -p "$temp_root/input"
+cp -R .rulesync/. "$temp_root/input/"
+{
+  printf '%s\n' '---' 'root: true' 'targets: ["*"]' 'description: "AutoDev shared workspace instructions for all AI tooling"' 'globs: ["**/*"]' '---'
+  cat .rulesync/rules/overview.md
+} > "$temp_root/input/rules/overview.md"
 pnpm exec rulesync generate \
-  --config rulesync.jsonc \
+  --input-roots "$temp_root/input" \
   --targets codexcli,claudecode,copilot,antigravity-cli \
   --features mcp,rules,skills,hooks \
   --output-roots tests/fixtures/rulesync-shadow \

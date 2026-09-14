@@ -23,65 +23,52 @@ EXPECTED_RULE_PATH = {
 }
 
 
-def _strip_frontmatter(text: str) -> str:
-    if not text.startswith("---"):
-        return text.strip()
-    end = text.find("\n---", 3)
-    if end == -1:
-        return text.strip()
-    return text[end + 4 :].lstrip("\n").rstrip()
-
-
-def _rule_source_body() -> str:
-    rule_path = SOURCE_ROOT / "rules" / "overview.md"
-    text = rule_path.read_text()
-    if not text.startswith("---\n"):
-        raise AssertionError(
-            f"Rulesync rule source must start with YAML frontmatter: {rule_path}"
-        )
-    end = text.find("\n---\n", 3)
-    if end == -1:
-        raise AssertionError(
-            f"Rulesync rule source missing closing frontmatter delimiter: {rule_path}"
-        )
-    frontmatter = text[4:end]
-    if "root: true" not in frontmatter:
-        raise AssertionError(
-            f"Rulesync rule source must declare root: true: {rule_path}"
-        )
-    if "targets:" not in frontmatter:
-        raise AssertionError(
-            f"Rulesync rule source must declare targets: {rule_path}"
-        )
-    return text[end + 5 :].strip()
+def _rule_source_bytes() -> bytes:
+    return (SOURCE_ROOT / "rules" / "overview.md").read_bytes()
 
 
 class RulesyncMcpShadowTests(unittest.TestCase):
     targets = ("codexcli", "claudecode", "copilot", "antigravity-cli")
 
     def _generate(self, target: str, output_root: Path, features: str = "mcp") -> None:
-        result = subprocess.run(
-            [
-                "pnpm",
-                "exec",
-                "rulesync",
-                "generate",
-                "--input-roots",
-                str(SOURCE_ROOT),
-                "--targets",
-                target,
-                "--features",
-                features,
-                "--output-roots",
-                str(output_root),
-                "--delete",
-                "--silent",
-            ],
-            cwd=REPO_ROOT,
-            capture_output=True,
-            text=True,
-            timeout=60,
-        )
+        with tempfile.TemporaryDirectory() as temp:
+            input_root = SOURCE_ROOT
+            if features == "rules":
+                input_root = Path(temp)
+                rule_path = input_root / "rules" / "overview.md"
+                rule_path.parent.mkdir(parents=True)
+                rule_path.write_bytes(
+                    b"---\n"
+                    b"root: true\n"
+                    b"targets: [\"*\"]\n"
+                    b"description: \"AutoDev shared workspace instructions for all AI tooling\"\n"
+                    b"globs: [\"**/*\"]\n"
+                    b"---\n"
+                    + _rule_source_bytes()
+                )
+
+            result = subprocess.run(
+                [
+                    "pnpm",
+                    "exec",
+                    "rulesync",
+                    "generate",
+                    "--input-roots",
+                    str(input_root),
+                    "--targets",
+                    target,
+                    "--features",
+                    features,
+                    "--output-roots",
+                    str(output_root),
+                    "--delete",
+                    "--silent",
+                ],
+                cwd=REPO_ROOT,
+                capture_output=True,
+                text=True,
+                timeout=60,
+            )
         self.assertEqual(
             result.returncode,
             0,
@@ -99,9 +86,9 @@ class RulesyncMcpShadowTests(unittest.TestCase):
         return json.loads((output_root / ".mcp.json").read_text())["mcpServers"]
 
     @staticmethod
-    def _read_rule(target: str, output_root: Path) -> str:
+    def _read_rule(target: str, output_root: Path) -> bytes:
         rule_rel = EXPECTED_RULE_PATH[target]
-        return _strip_frontmatter((output_root / rule_rel).read_text())
+        return (output_root / rule_rel).read_bytes()
 
     def test_pinned_rulesync_generates_isolated_provider_outputs(self):
         before = PORTABLE_CONFIG.read_bytes()
@@ -138,7 +125,7 @@ class RulesyncMcpShadowTests(unittest.TestCase):
         self.assertEqual(PORTABLE_CONFIG.read_bytes(), before)
 
     def test_pinned_rulesync_generates_root_rule_per_target(self):
-        expected = _rule_source_body()
+        expected = (REPO_ROOT / "AGENTS.md").read_bytes()
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             for target in self.targets:
@@ -149,30 +136,29 @@ class RulesyncMcpShadowTests(unittest.TestCase):
                         rule_path.is_file(),
                         msg=f"Rulesync {target} missing rule output at {rule_path}",
                     )
-                    self.assertEqual(self._read_rule(target, root / target), expected)
+                    self.assertEqual(self._read_rule(target, root / target), expected + b"\n")
 
     def test_tracked_shadow_rule_fixtures_match_agents_md(self):
-        expected = _rule_source_body()
+        expected = (REPO_ROOT / "AGENTS.md").read_bytes()
         self.assertTrue(
             (SHADOW_ROOT / "AGENTS.md").is_file(),
             msg="Shadow AGENTS.md must exist for codexcli/antigravity-cli rule parity",
         )
-        self.assertEqual(_strip_frontmatter((SHADOW_ROOT / "AGENTS.md").read_text()), expected)
+        self.assertEqual((SHADOW_ROOT / "AGENTS.md").read_bytes(), expected + b"\n")
         self.assertTrue(
             (SHADOW_ROOT / "CLAUDE.md").is_file(),
             msg="Shadow CLAUDE.md must exist for claudecode rule parity",
         )
-        self.assertEqual(_strip_frontmatter((SHADOW_ROOT / "CLAUDE.md").read_text()), expected)
+        self.assertEqual((SHADOW_ROOT / "CLAUDE.md").read_bytes(), expected + b"\n")
         copilot_path = SHADOW_ROOT / ".github" / "copilot-instructions.md"
         self.assertTrue(
             copilot_path.is_file(),
             msg="Shadow .github/copilot-instructions.md must exist for copilot rule parity",
         )
-        self.assertEqual(_strip_frontmatter(copilot_path.read_text()), expected)
+        self.assertEqual(copilot_path.read_bytes(), expected + b"\n")
 
-    def test_rulesync_rule_source_matches_repo_agents_md_body(self):
-        expected = (REPO_ROOT / "AGENTS.md").read_text().strip()
-        self.assertEqual(_rule_source_body(), expected)
+    def test_rulesync_rule_source_matches_repo_agents_md_bytes(self):
+        self.assertEqual(_rule_source_bytes(), (REPO_ROOT / "AGENTS.md").read_bytes())
 
     def test_rulesync_config_is_mcp_and_rules_non_global(self):
         config_text = (REPO_ROOT / "rulesync.jsonc").read_text()

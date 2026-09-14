@@ -138,7 +138,8 @@ for (const [provider, state] of Object.entries(body.providers ?? {})) {
 
 const subagents = body.subagents ?? {};
 console.log("");
-console.log(`Subagents spawned: ${subagents.total ?? 0} (${counts(subagents.byMechanism)})`);
+const recentSubagentCount = Array.isArray(subagents.recent) ? subagents.recent.length : 0;
+console.log(`Subagents spawned: ${recentSubagentCount} recent / ${subagents.total ?? 0} total (${counts(subagents.byMechanism)})`);
 console.log(`  by provider: ${counts(subagents.byProvider)}`);
 console.log(`  by role: ${counts(subagents.byRole)}`);
 console.log(`  by outcome: ${counts(subagents.byStatus)}`);

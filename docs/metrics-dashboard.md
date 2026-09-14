@@ -238,15 +238,19 @@ renders the former as the Orchestrator row. The line above the usage
 table names how many CLI-delegated turns are included. See
 `docs/provider-routing.md` -> "Counting subagents across providers".
 
-The totals row is the all-time count; the table rows roll up only the 50 most
-recent spawns retained in `subagents.recent`, which is what carries the
-provider/mechanism/role/tool combination. The summary line also reports
-Codex's own OTLP spawn counter separately, because adding it to the router's
-count would double-count every `router_alias` spawn. Attribution of a
-`router_alias` spawn to a provider is a session join -- which provider served
-that session's `autodev/orchestrator` turn -- and reads `unattributed` when the
-router never saw that session's parent turn. See
-`docs/provider-routing.md` -> "Counting subagents across providers".
+The cumulative `total` is the all-time count; `subagents.recent` is a bounded
+newest-first window capped at 50 and is the only source for the table's recent
+rows and provider/mechanism/role/tool details. When that window cannot cover
+all-time history, the panel summary and totals footer explicitly read
+`X recent / Y total`; they do not inflate the recent subtotal to make it match
+the cumulative total. If all records fit in the window, the total is shown
+without a misleading recent qualifier. Codex's own OTLP spawn counter remains
+separate because adding it to the router's count would double-count every
+`router_alias` spawn. Attribution of a `router_alias` spawn to a provider is a
+session join -- which provider served that session's `autodev/orchestrator`
+turn -- and reads `unattributed` when the router never saw that session's
+parent turn. See `docs/provider-routing.md` -> "Counting subagents across
+providers".
 
 A provider's row in **Provider health** sums every model observed for
 that provider, not only the models its tiers configure. A directly pinned model

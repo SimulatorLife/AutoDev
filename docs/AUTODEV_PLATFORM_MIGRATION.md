@@ -888,9 +888,51 @@ deliberate `unattributed` residual on role/origin/workspace but not
 on provider/model -- so any future change to those shapes is an
 intentional contract change rather than a silent drift.
 
-The Phase 0 "workspace attribution and tool/skill/MCP attribution" capture is now frozen as a deterministic contract. **Finding.** Existing behavioral tests covered workspace-local named tool/skill/MCP evidence, fail-closed unavailable-versus-empty rendering, workspace-id joins, privacy normalization, and attribution diagnostics, but no fixture pinned the public `status.usage.byWorkspace` rows or diagnostic reasons. **Slice.** `tests/fixtures/contracts/workspace-attribution-contract.json` (schema `autodev-workspace-attribution-v1`) and `tests/workspace-attribution-contract.test.mjs` now freeze empty dimensions, workspace-local bridge evidence, skill exposure versus use, MCP exposure versus confirmed use, registered/unknown/ambiguous workspace identifiers, privacy hashing, deterministic named rows, and additive privacy-safe OTel attributes. The fixture registers slot/telemetry inputs directly where needed so it is host-independent; admission limits remain covered by the separate concurrency contract. **Completed slice only after verification.** The focused contract reports 8 passing tests; existing workspace telemetry and OTel attribute suites remain green. `Workspace attribution` and `Tool/skill/MCP attribution` are marked frozen below. Native-versus-bridge child counts and dashboard/status snapshots remain the next Phase 0 capture slice before provider-retirement pilots.
+The final two Phase 0 capture contracts are now frozen. The native-versus-
+bridge-native child-count fixture at
+`tests/fixtures/contracts/native-vs-bridge-child-counts.json` (schema
+`autodev-native-vs-bridge-child-counts-v1`) and its executable suite at
+`tests/native-vs-bridge-child-counts.test.mjs` drive the existing router
+helpers and `ingestAgentEvents` with deterministic IDs and timestamps. They
+pin mechanism ordering, exact empty/non-empty projection keys, per-child
+bridge batch counts, started-to-settled outcomes and row settlement tallies,
+newest-first 50-row recency, roleless bridge attribution,
+inherited-child-model resolution, ignored unknown mechanisms, late-report
+settlement, overflow failure, and the non-additive Codex-native spawn counter
+with spawn failures kept outside `status.subagents.total`. The dashboard/status
+snapshot fixture at `tests/fixtures/contracts/dashboard-status-snapshot.json`
+(schema `autodev-dashboard-status-snapshot-v1`) and
+`tests/dashboard-status-snapshot.test.mjs` freeze exact `/status` field
+presence, privacy-safe metadata, pending/populated `codexState`, provider rows,
+dashboard grouping and empty states, totals-footer visibility, the status CLI
+`byMechanism` summary, and extract-and-evaluate HTML rendering without prompt,
+response, credential, or absolute-path leakage. The dashboard now distinguishes
+its bounded recent-window subtotal from the cumulative all-time total as
+`X recent / Y total` when the 50-row window cannot cover history; the totals
+footer and status CLI use the same distinction without fallback inflation.
+These two contracts mark `Native versus bridge-native child counts` and
+`Dashboard/status snapshots` frozen. **Validation.** The focused contracts
+pass exactly: `node --test tests/native-vs-bridge-child-counts.test.mjs` ->
+24 pass, 0 fail; `node --test tests/dashboard-status-snapshot.test.mjs` ->
+5 pass, 0 fail. The requested regression commands also pass: agent
+reconciliation 16, workspace attribution 8, concurrency 25, router 182,
+metrics 19, workspace telemetry 18, and router state snapshot 3, all with
+0 failures. The full `pnpm test` run reports 575 pass, 0 fail; both
+`pnpm run validate:actionlint` and `pnpm run validate:shell` exit 0;
+`python3 -m unittest tests.test_otel_autodev_attributes tests.test_otel_autodev_attributes_emission`
+reports 44 pass, 0 fail; and `git diff --check` is clean. LSP diagnostics
+for `scripts/codex-model-router-status.mjs`,
+`tests/native-vs-bridge-child-counts.test.mjs`, and
+`tests/dashboard-status-snapshot.test.mjs` report 0 errors, warnings, info,
+and hints. An independent validator reproduced 29/29 focused passes and
+reported no privacy, determinism, labeling, or documentation blockers.
 
-All other Phase 0 capture areas listed below remain future work.
+The Phase 0 "workspace attribution and tool/skill/MCP attribution" capture is now frozen as a deterministic contract. **Finding.** Existing behavioral tests covered workspace-local named tool/skill/MCP evidence, fail-closed unavailable-versus-empty rendering, workspace-id joins, privacy normalization, and attribution diagnostics, but no fixture pinned the public `status.usage.byWorkspace` rows or diagnostic reasons. **Slice.** `tests/fixtures/contracts/workspace-attribution-contract.json` (schema `autodev-workspace-attribution-v1`) and `tests/workspace-attribution-contract.test.mjs` now freeze empty dimensions, workspace-local bridge evidence, skill exposure versus use, MCP exposure versus confirmed use, registered/unknown/ambiguous workspace identifiers, privacy hashing, deterministic named rows, and additive privacy-safe OTel attributes. The fixture registers slot/telemetry inputs directly where needed so it is host-independent; admission limits remain covered by the separate concurrency contract. **Completed slice only after verification.** The focused contract reports 8 passing tests; existing workspace telemetry and OTel attribute suites remain green. `Workspace attribution` and `Tool/skill/MCP attribution` are marked frozen below; the final child-count and dashboard/status slices are documented immediately below.
+
+With these two contracts complete, the entire Phase 0 capture list is frozen
+except for provider and CLI parity gaps that explicitly require provider
+contact. Phase 0 is complete; no additional Phase 0 contract is required to
+begin Phase 1.
 
 ### Capture
 
@@ -907,8 +949,8 @@ All other Phase 0 capture areas listed below remain future work.
 - Active-agent reconciliation (frozen — see Status above)
 - Workspace attribution (frozen — see Status above)
 - Tool/skill/MCP attribution (frozen — see Status above)
-- Native versus bridge-native child counts
-- Dashboard/status snapshots
+- Native versus bridge-native child counts (frozen — see Status above)
+- Dashboard/status snapshots (frozen — see Status above)
 
 ### Exit gate
 
@@ -917,6 +959,12 @@ Every behavior being migrated has an executable fixture or an explicit documente
 ---
 
 ## Phase 1 — Separate portable versus machine-local configuration
+
+Phase 0 is complete. The next step is to separate portable versus machine-local
+configuration using the existing portable source
+`scripts/codex/config.autodev.toml`, the existing composer, and the existing
+rulesync-pinned fixtures. No additional Phase 0 contract is required before
+starting this work.
 
 Current tracked `scripts/codex/config.toml` includes portable AutoDev settings and machine-specific state such as absolute user paths, trusted hook hashes, project trust entries, and local marketplace paths
 
@@ -936,17 +984,66 @@ Fresh install and update can converge AutoDev-owned configuration without deleti
 
 Complete. The portable source is authoritative at `scripts/codex/config.autodev.toml`: it carries the AutoDev-owned portable scalars, provider definitions, `sandbox_workspace_write`, `otel`, `analytics`, `features`, `tools`, `agents`, the declared hooks (without `hooks.state`), the AutoDev MCP servers (`lsp`, `cocoindex-code`, `playwright`), the AutoDev-owned skills (`ccc`, `lsp-mcp-server`, `orchestration`), and `shell_environment_policy`. It excludes `notify`, `hooks.state`, `projects`, `marketplaces`, TUI/notice/desktop/apps/plugins/memories, `node_repl`/`cua_repl`, non-AutoDev skills, and absolute user/application paths. `scripts/codex/compose-user-config.py` deterministically merges the portable source with existing machine-local configuration into `$CODEX_HOME/config.toml` as an atomic regular file, resolving conflicts in favor of AutoDev while semantically preserving machine-local and user-owned values. The installer (`install-codex-integration.sh`), `--check` drift validation, and `render-execution-contract.py` consume `config.autodev.toml` and the composer. Legacy `scripts/codex/config.toml` is retired from being authoritative and remains only as a one-time migration seed.
 
+### Hardening slice
+
+The Phase 1 portable-source boundary is now hardened. The stale caveat in
+`scripts/codex/config.autodev.toml` claiming that the source was not yet
+composed into the installed config was removed; the source now states that it
+is composed into `$CODEX_HOME/config.toml` by
+`scripts/codex/compose-user-config.py`. The frozen contract fixture
+`tests/fixtures/contracts/portable-autodev-config-contract.json` (schema
+`autodev-portable-autodev-config-v1`) and
+`tests/portable-autodev-config-contract.test.mjs` pin the portable scalar set,
+four model providers, seven required sections, declared hook events without
+`hooks.state`, and the exact AutoDev MCP and skill-name sets byte-for-byte
+using the same Python `tomllib` parser as the composer.
+
+The installer convergence regression
+`LocalSetupTests.test_installer_converges_after_operator_edits_operator_state`
+proves that a fresh install followed by operator edits to `notify`, `projects`,
+and a custom MCP server, a second installer run, and a final `--check` all
+preserve machine-local state while restoring portable `model` and
+`model_provider` values, retaining a regular non-symlink config file, and
+leaving the checked bytes unchanged. Validation is recorded exactly: the
+portable-source contract reports 7 passing tests; the focused Python composer,
+portable-source, and convergence tests report 26 passing tests; the native,
+dashboard, agent-reconciliation, workspace-attribution, concurrency, router,
+metrics, workspace-telemetry, and router-state regression suites report 24,
+5, 16, 8, 25, 182, 19, 18, and 3 passing tests respectively; `pnpm test`
+reports 582 passing tests; actionlint and ShellCheck exit 0; the required OTel
+Python tests report 44 passing tests; LSP diagnostics report 0 errors, warnings,
+info, or hints for the changed JavaScript and Python files; and `git diff --check` is clean. Phase 1 is now both correct and stable enough to begin
+Phase 2 (Adopt Rulesync for shared configuration). Before any shadow surface
+graduates to live output, the first live cutover must make
+`.rulesync/rules/overview.md` byte-identical to `AGENTS.md`.
+
+
 ---
 
 ## Phase 2 — Adopt Rulesync for shared configuration
 
 ### Status
 
-The Phase 2 slices are shadow-only MCP translation, shared-instruction
-translation, canonical-skill translation, and hook translation. Rulesync is
-pinned to `16.30.2` and generates into tracked fixtures under
+Phase 2 remains shadow-only for MCP, canonical skills, and hooks; the shared
+instruction rules surface is the first completed live cutover. Rulesync is
+pinned to `16.30.2` and continues to generate tracked shadow fixtures under
 `tests/fixtures/rulesync-shadow/` for `codexcli`, `claudecode`, `copilot`, and
 `antigravity-cli`.
+
+**Completed first live surface — shared instruction rules.**
+`.rulesync/rules/overview.md` is now byte-identical to `AGENTS.md`; the live
+`CLAUDE.md` and `.github/copilot-instructions.md` artifacts are also byte-
+identical to that canonical body. Rulesync `16.30.2` requires YAML frontmatter
+in input rule files, so the live-generation workflow and focused tests build an
+ephemeral frontmatter input root around the canonical bytes instead of adding a
+second tracked instruction source or changing `AGENTS.md`. The workflow performs
+an isolated `rules` generation and compares all three live outputs, while the
+existing shadow drift job continues to validate `mcp,rules,skills,hooks` in its
+isolated fixture root. `tests/test_rulesync_live_rules.py` freezes byte identity,
+ephemeral all-target generation, and the live workflow boundary; the existing
+`tests/test_rulesync_mcp_shadow.py` now uses the same ephemeral input technique
+for rules generation. This is a Rulesync compatibility seam, not a second
+source of instructions.
 
 The Rulesync source covers shared MCP declarations, the common repository
 instructions represented by `AGENTS.md`, the three portable AutoDev-owned
@@ -957,9 +1054,11 @@ provider or user configuration. Rulesync currently emits only `PreToolUse` for
 Antigravity, and Codex-only fields such as `prevent_idle_sleep` remain outside
 the portable source as explicit parity limitations.
 
-Existing live instructions and hooks remain unchanged so target-specific
-guidance and AutoDev runtime enforcement are not silently removed during this
-parity phase. Role-specific skill assignment and exposure remain AutoDev-owned:
+The shared instruction rules cutover is the only live Rulesync surface so
+far. Existing live hooks, MCP configuration, and role-specific skill assignment
+remain AutoDev-owned so target-specific guidance and runtime enforcement are not
+silently removed during this parity phase. Role-specific skill assignment and
+exposure remain AutoDev-owned:
 the execution contract, provider skill-view renderer, Claude role views,
 Antigravity `include_only` registration, symlink installer, MCP launcher,
 provider bridges, hooks, and permissions remain outside Rulesync.
@@ -1000,18 +1099,16 @@ These bridge/CLI-specific permission layers become removable only if a validated
 CI drift protection is enforced by `.github/workflows/rulesync-mcp-shadow-drift.yml`, a
 read-only workflow triggered on `push` to `main`, `pull_request`, and `workflow_dispatch`
 (path-filtered to `.rulesync/**`, `rulesync.jsonc`, `tests/fixtures/rulesync-shadow/**`,
-`package.json`, `pnpm-lock.yaml`, and the workflow file itself). The workflow installs frozen
-dependencies and detects drift using:
-
-```bash
-pnpm exec rulesync generate \
-  --config rulesync.jsonc \
-  --targets codexcli,claudecode,copilot,antigravity-cli \
-  --features mcp,rules,skills,hooks \
-  --output-roots tests/fixtures/rulesync-shadow \
-  --check \
-  --silent
-```
+`AGENTS.md`, `CLAUDE.md`, `.github/copilot-instructions.md`, `package.json`,
+`pnpm-lock.yaml`, and the workflow file itself). Because pinned Rulesync `16.30.2`
+requires frontmatter while the canonical `.rulesync/rules/overview.md` must remain
+byte-identical to `AGENTS.md`, the workflow copies the full `.rulesync` tree to a
+temporary input root and replaces only the temporary rule file with a generated
+frontmatter wrapper around the canonical bytes. It then runs the pinned generation
+with `--input-roots` and `--check`; no duplicate tracked instruction source is used.
+The workflow performs this ephemeral rules check for the live instruction files and
+uses the same temporary-input technique for the isolated `mcp,rules,skills,hooks`
+shadow check.
 
 ### Remediation
 
@@ -1019,8 +1116,16 @@ When the CI drift check or local `--check` reports drift due to intentional upda
 
 1. Refresh the tracked shadow fixtures using the pinned generation command:
    ```bash
+   temp_root="$(mktemp -d)"
+   trap 'rm -rf "$temp_root"' EXIT
+   mkdir -p "$temp_root/input"
+   cp -R .rulesync/. "$temp_root/input/"
+   {
+     printf '%s\n' '---' 'root: true' 'targets: ["*"]' 'description: "AutoDev shared workspace instructions for all AI tooling"' 'globs: ["**/*"]' '---'
+     cat .rulesync/rules/overview.md
+   } > "$temp_root/input/rules/overview.md"
    pnpm exec rulesync generate \
-     --config rulesync.jsonc \
+     --input-roots "$temp_root/input" \
      --targets codexcli,claudecode,copilot,antigravity-cli \
      --features mcp,rules,skills,hooks \
      --output-roots tests/fixtures/rulesync-shadow \
@@ -1039,7 +1144,7 @@ Pin an exact tested Rulesync version rather than tracking `latest`
 
 ### Migrate first
 
-- Root/shared instructions
+- Root/shared instructions (live cutover complete; byte-identity and ephemeral-generation checks frozen above)
 - Canonical skills
 - Shared MCP declarations
 - Hook declarations (shadow-only translation complete; target limitations documented)
@@ -1053,7 +1158,7 @@ Pin an exact tested Rulesync version rather than tracking `latest`
 4. Test global and project scopes separately
 5. Verify unrelated user config survives
 6. Add CI drift checks (enforced via `.github/workflows/rulesync-mcp-shadow-drift.yml`)
-7. Switch one generated surface at a time
+7. Switch one generated surface at a time (shared instruction rules complete; canonical skills are the next candidate)
 
 ### Keep outside Rulesync initially
 

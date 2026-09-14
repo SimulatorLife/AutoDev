@@ -296,17 +296,31 @@ class RulesyncSkillsShadowTests(unittest.TestCase):
             )
 
     def test_tracked_rulesync_generate_passes_check(self):
-        result = subprocess.run(
-            [
-                "pnpm", "exec", "rulesync", "generate",
-                "--config", str(RULESYNC_CONFIG_PATH.relative_to(REPO_ROOT)),
-                "--check", "--silent",
-            ],
-            cwd=REPO_ROOT,
-            capture_output=True,
-            text=True,
-            timeout=60,
-        )
+        with tempfile.TemporaryDirectory() as temp:
+            input_root = Path(temp)
+            rule_path = input_root / "rules" / "overview.md"
+            rule_path.parent.mkdir(parents=True)
+            rule_path.write_bytes(
+                b"---\n"
+                b"root: true\n"
+                b"targets: [\"*\"]\n"
+                b"description: \"AutoDev shared workspace instructions for all AI tooling\"\n"
+                b"globs: [\"**/*\"]\n"
+                b"---\n"
+                + (SOURCE_ROOT / "rules" / "overview.md").read_bytes()
+            )
+            result = subprocess.run(
+                [
+                    "pnpm", "exec", "rulesync", "generate",
+                    "--config", str(RULESYNC_CONFIG_PATH.relative_to(REPO_ROOT)),
+                    "--input-roots", str(input_root),
+                    "--check", "--silent",
+                ],
+                cwd=REPO_ROOT,
+                capture_output=True,
+                text=True,
+                timeout=60,
+            )
         self.assertEqual(
             result.returncode,
             0,

@@ -1,10 +1,3 @@
----
-root: true
-targets: ["*"]
-description: "AutoDev shared workspace instructions for all AI tooling"
-globs: ["**/*"]
----
-
 You have access to skills; read them and use those applicable.
 
 Ensure to update any documentation and tests accordingly to your changes.

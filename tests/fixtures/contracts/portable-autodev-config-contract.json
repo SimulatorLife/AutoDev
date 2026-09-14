@@ -1,0 +1,212 @@
+{
+  "schema": "autodev-portable-autodev-config-v1",
+  "description": "Deterministic Phase 1 portable-source contract for scripts/codex/config.autodev.toml. The fixture pins every byte-for-byte portable scalar, the four [model_providers.*] entries, the seven required top-level sections (sandbox_workspace_write, otel, analytics, features, tools, skills, shell_environment_policy), the declared hooks event arrays (SessionStart, SubagentStart, UserPromptSubmit, PreToolUse) and the explicit absence of hooks.state, the AutoDev-owned mcp_servers name set (lsp, cocoindex-code, playwright), and the [[skills.config]] name set (lsp-mcp-server, ccc, orchestration). composer scripts/codex/compose-user-config.py merges this portable source into $CODEX_HOME/config.toml, resolving conflicts in favor of AutoDev-owned keys while preserving machine-local state (notify, projects, marketplaces, TUI/desktop/apps/plugins/memories, node_repl/cua_repl, non-AutoDev skills, hooks.state trusted hashes). Refreshing this fixture is itself the documented, intentional signal that the portable-source shape, schema tag, or AutoDev-owned key set has changed.",
+  "source": "scripts/codex/config.autodev.toml",
+  "portableScalars": [
+    "approval_policy",
+    "approvals_reviewer",
+    "background_terminal_max_timeout",
+    "model",
+    "model_catalog_json",
+    "model_provider",
+    "model_reasoning_effort",
+    "model_verbosity",
+    "openai_base_url",
+    "personality",
+    "sandbox_mode",
+    "service_tier",
+    "suppress_unstable_features_warning"
+  ],
+  "scalars": {
+    "model": "autodev/orchestrator",
+    "model_provider": "local_model_router",
+    "openai_base_url": "http://127.0.0.1:4100/v1",
+    "model_verbosity": "low",
+    "approval_policy": "never",
+    "model_reasoning_effort": "high",
+    "personality": "pragmatic",
+    "sandbox_mode": "workspace-write",
+    "suppress_unstable_features_warning": true,
+    "service_tier": "default",
+    "model_catalog_json": "./codex-model-catalog.json",
+    "approvals_reviewer": "user",
+    "background_terminal_max_timeout": 600000
+  },
+  "requiredSections": [
+    "sandbox_workspace_write",
+    "otel",
+    "analytics",
+    "features",
+    "tools",
+    "skills",
+    "shell_environment_policy"
+  ],
+  "sectionShapes": {
+    "sandbox_workspace_write": {
+      "network_access": true
+    },
+    "otel": {
+      "environment": "autodev",
+      "exporter": {
+        "otlp-http": {
+          "endpoint": "http://127.0.0.1:4100/v1/logs",
+          "protocol": "json"
+        }
+      },
+      "trace_exporter": {
+        "otlp-http": {
+          "endpoint": "http://127.0.0.1:4100/v1/traces",
+          "protocol": "json"
+        }
+      },
+      "metrics_exporter": {
+        "otlp-http": {
+          "endpoint": "http://127.0.0.1:4100/v1/metrics",
+          "protocol": "json"
+        }
+      },
+      "log_user_prompt": false
+    },
+    "analytics": {
+      "enabled": true
+    },
+    "features": {
+      "shell_snapshot": true,
+      "unified_exec": true,
+      "steer": true,
+      "multi_agent": true,
+      "multi_agent_v2": false,
+      "js_repl": false,
+      "memories": false,
+      "respect_system_proxy": true,
+      "chronicle": false,
+      "goals": true,
+      "hooks": true,
+      "fast_mode": false,
+      "prevent_idle_sleep": true,
+      "personality": true,
+      "image_generation": false
+    },
+    "tools": {
+      "web_search": true
+    },
+    "skills": {
+      "config": [
+        {
+          "name": "lsp-mcp-server",
+          "enabled": true
+        },
+        {
+          "name": "ccc",
+          "enabled": true
+        },
+        {
+          "name": "orchestration",
+          "enabled": true
+        }
+      ]
+    },
+    "shell_environment_policy": {
+      "set": {
+        "NODE_OPTIONS": "--disable-warning=ExperimentalWarning"
+      },
+      "filters": {
+        "PATH": "include",
+        "HOME": "include"
+      }
+    }
+  },
+  "modelProviders": [
+    {
+      "name": "claude_code_subscription",
+      "attributes": {
+        "name": "Claude Code OAuth subscription bridge",
+        "base_url": "http://127.0.0.1:4000/v1",
+        "env_key": "LITELLM_API_KEY",
+        "wire_api": "responses",
+        "requires_openai_auth": false,
+        "request_max_retries": 1,
+        "stream_max_retries": 2,
+        "stream_idle_timeout_ms": 300000
+      }
+    },
+    {
+      "name": "local_model_router",
+      "attributes": {
+        "name": "Local model-aware Codex Responses router",
+        "base_url": "http://127.0.0.1:4100/v1",
+        "env_key": "CODEX_ROUTER_AUTH_TOKEN",
+        "wire_api": "responses",
+        "requires_openai_auth": false,
+        "request_max_retries": 1,
+        "stream_max_retries": 2,
+        "stream_idle_timeout_ms": 300000
+      }
+    },
+    {
+      "name": "minimax",
+      "attributes": {
+        "name": "MiniMax",
+        "base_url": "http://127.0.0.1:18765/v1",
+        "env_key": "MINIMAX_API_KEY",
+        "wire_api": "responses",
+        "requires_openai_auth": false,
+        "request_max_retries": 4,
+        "stream_max_retries": 10,
+        "stream_idle_timeout_ms": 300000
+      }
+    },
+    {
+      "name": "antigravity_cli",
+      "attributes": {
+        "name": "Antigravity CLI subscription through the local Responses adapter",
+        "base_url": "http://127.0.0.1:4002/v1",
+        "env_key": "LITELLM_API_KEY",
+        "wire_api": "responses",
+        "requires_openai_auth": false,
+        "request_max_retries": 1,
+        "stream_max_retries": 2,
+        "stream_idle_timeout_ms": 300000
+      }
+    }
+  ],
+  "modelProviderOrder": [
+    "claude_code_subscription",
+    "local_model_router",
+    "minimax",
+    "antigravity_cli"
+  ],
+  "hooksEvents": [
+    "SessionStart",
+    "SubagentStart",
+    "UserPromptSubmit",
+    "PreToolUse"
+  ],
+  "hooksEventsRequired": [
+    "SessionStart",
+    "SubagentStart",
+    "UserPromptSubmit",
+    "PreToolUse"
+  ],
+  "hooksStateOmitted": true,
+  "mcpServers": [
+    "cocoindex-code",
+    "lsp",
+    "playwright"
+  ],
+  "mcpServersRequired": [
+    "lsp",
+    "cocoindex-code",
+    "playwright"
+  ],
+  "skillsConfigNames": [
+    "ccc",
+    "lsp-mcp-server",
+    "orchestration"
+  ],
+  "skillsConfigNamesRequired": [
+    "ccc",
+    "lsp-mcp-server",
+    "orchestration"
+  ]
+}

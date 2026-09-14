@@ -2288,6 +2288,17 @@
       return Number(populatedRowCount ?? 0) >= 2;
     }
 
+    // Recent spawn rows are a bounded view of the full subagent history. Keep
+    // the two ownership boundaries visible instead of padding the recent view
+    // up to the lifetime total (or padding the lifetime total down to it).
+    function formatRecentTotalLabel(recentCount, totalCount) {
+      const recent = Number(recentCount ?? 0);
+      const total = Number(totalCount ?? 0);
+      return recent < total
+        ? `${recent.toLocaleString()} recent / ${total.toLocaleString()} total`
+        : `${total.toLocaleString()} total`;
+    }
+
     // The KPI headline is the router's single canonical live-agent count,
     // sourced exclusively from the frozen `status.agents` reconciliation
     // projection (`autodev-agent-status-v1`). The router now exposes the
@@ -2677,8 +2688,10 @@
         spawnGroups.set(key, current);
       }
       const spawnList = [ ...spawnGroups.values() ].sort((a, b) => b.count - a.count);
-      const totalSpawns = Number(status.subagents?.total ?? spawnList.reduce((sum, item) => sum + item.count, 0));
-      syncPanel(document.getElementById("panel-spawn-breakdown"), "Spawn breakdown", `${totalSpawns.toLocaleString()} total`);
+      const recentSpawns = spawnList.reduce((sum, item) => sum + item.count, 0);
+      const totalSpawns = Number(status.subagents?.total ?? 0);
+      const spawnCoverageLabel = formatRecentTotalLabel(recentSpawns, totalSpawns);
+      syncPanel(document.getElementById("panel-spawn-breakdown"), "Spawn breakdown", spawnCoverageLabel);
 
       const spawnTbody = document.getElementById("spawn-breakdown-tbody");
       const spawnTfoot = document.getElementById("spawn-breakdown-tfoot");
@@ -2702,7 +2715,7 @@
               <td>-</td>
               <td>-</td>
               <td>-</td>
-              <td>${totalSpawns.toLocaleString()}</td>
+              <td>${spawnCoverageLabel}</td>
             </tr>
           ` : "";
         }

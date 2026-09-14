@@ -1,0 +1,525 @@
+{
+  "schema": "autodev-dashboard-status-snapshot-v1",
+  "description": "Deterministic dashboard/status boundary for the public /status key set, privacy-safe metadata, Codex state pending/populated projections, provider rows, spawn grouping, CLI summaries, and HTML empty/totals rendering. Request IDs, state IDs, and state timestamps are fixed; process identity and router timestamps remain type-checked runtime metadata.",
+  "fixedNow": "2026-09-14T12:00:00.000Z",
+  "expectedStatusKeys": [
+    "schema",
+    "router",
+    "routerInstanceId",
+    "startedAt",
+    "pid",
+    "telemetryPersistence",
+    "authentication",
+    "routing",
+    "limits",
+    "disabledProviders",
+    "usage",
+    "attributionDiagnostics",
+    "liveAgentAttribution",
+    "codexTelemetry",
+    "agents",
+    "concurrency",
+    "subagents",
+    "spawnFailures",
+    "inFlightRequests",
+    "liveActivity",
+    "providers",
+    "recentEvents",
+    "codexState"
+  ],
+  "expectedShapes": {
+    "telemetryPersistence": [
+      "enabled",
+      "source",
+      "exists",
+      "updatedAt"
+    ],
+    "authentication": [
+      "responseRequests"
+    ],
+    "routing": [
+      "configSource",
+      "configFileExists",
+      "orchestrator",
+      "roles",
+      "providerGroups",
+      "priorities",
+      "configuredProviders",
+      "enabledProviders",
+      "disabledProviders",
+      "routes"
+    ],
+    "routingOrchestrator": [
+      "alias",
+      "tier",
+      "reasoningEffort"
+    ],
+    "routingRoutes": [
+      "claude",
+      "minimax",
+      "antigravity",
+      "codex",
+      "copilot"
+    ],
+    "limits": [
+      "providerCooldownMs",
+      "providerCooldownMaxMs",
+      "hardCooldownMs",
+      "hardCooldownMaxMs",
+      "probeCooldownMs",
+      "probeCooldownMaxMs",
+      "probeTimeoutMs",
+      "lastResortMaxAttempts",
+      "exhaustionWaitMs",
+      "chainSelectionDeadlineMs",
+      "upstreamTimeoutMs",
+      "concreteRetryBaseMs",
+      "concreteRetryMaxMs",
+      "concreteStatusMaxAttempts",
+      "concreteTransportMaxAttempts",
+      "shutdownDrainTimeoutMs",
+      "maxConcurrentThreadsPerSession"
+    ],
+    "usage": [
+      "activity",
+      "totals",
+      "byRole",
+      "byModel",
+      "byOrigin",
+      "byWorkspace"
+    ],
+    "usageTotals": [
+      "attempts",
+      "successes",
+      "failures",
+      "skipped",
+      "active",
+      "durationMs",
+      "maxDurationMs",
+      "toolCalls",
+      "lastUsedAt",
+      "lastFailure",
+      "averageDurationMs"
+    ],
+    "usageActivity": [
+      "ttlMs",
+      "total",
+      "live",
+      "byState",
+      "byProvider",
+      "byModel",
+      "byRole",
+      "byOrigin",
+      "byWorkspace"
+    ],
+    "attributionDiagnostics": [
+      "total",
+      "attributed",
+      "unattributed",
+      "byReason",
+      "bySource",
+      "unknownWorkspaceIds"
+    ],
+    "liveAgentAttribution": [
+      "missingProvider",
+      "missingModel"
+    ],
+    "codexTelemetry": [
+      "receiver",
+      "sessionsObserved",
+      "sessionsRecent",
+      "turns",
+      "tokens",
+      "mcpSummary",
+      "mcpServers",
+      "dimensions",
+      "metrics",
+      "tools",
+      "hooks",
+      "threads",
+      "sqlite",
+      "skills",
+      "toolResults",
+      "bridgeEvents"
+    ],
+    "codexReceiver": [
+      "logs",
+      "traces",
+      "metrics",
+      "invalid",
+      "lastReceivedAt"
+    ],
+    "codexTurns": [
+      "prompts",
+      "completed",
+      "promptLength",
+      "ttftMs",
+      "ttftCount",
+      "averageTtftMs"
+    ],
+    "codexTokens": [
+      "input",
+      "output",
+      "cached",
+      "reasoning",
+      "tool",
+      "total"
+    ],
+    "codexMcpSummary": [
+      "observed",
+      "ready",
+      "error",
+      "stale",
+      "byRole",
+      "byWorkspace",
+      "byModel",
+      "byAgent"
+    ],
+    "agents": [
+      "schema",
+      "canonicalLiveCount",
+      "byState",
+      "liveByKind",
+      "liveByRole",
+      "liveByOrigin",
+      "liveByProvider",
+      "liveByModel",
+      "liveByWorkspace",
+      "missingProvider",
+      "missingModel",
+      "slotVsAgent",
+      "reconciledWithConcurrency"
+    ],
+    "agentsByState": [
+      "active",
+      "tool_wait",
+      "user_wait",
+      "subagent_wait",
+      "resumed",
+      "finished",
+      "failed",
+      "stale"
+    ],
+    "agentsSlotVsAgent": [
+      "agentLive",
+      "admissionSlots",
+      "activeAdmissionSessions",
+      "processFallbackActiveThreads"
+    ],
+    "concurrency": [
+      "scope",
+      "configSource",
+      "configFileExists",
+      "maxConcurrentThreadsPerSession",
+      "effectivePerSessionLimit",
+      "activeSubagentThreads",
+      "activeSessions",
+      "processFallbackActiveThreads",
+      "processFallbackEnforcement",
+      "denials",
+      "denialsByReason",
+      "lastDenial"
+    ],
+    "subagents": [
+      "total",
+      "byMechanism",
+      "byProvider",
+      "byRole",
+      "byStatus",
+      "codexNativeSpawns",
+      "spawnCapableProviders",
+      "recent"
+    ],
+    "spawnFailures": [
+      "scope",
+      "total",
+      "byReason",
+      "recent"
+    ],
+    "provider": [
+      "enabled",
+      "status",
+      "routingPriority",
+      "limits",
+      "active",
+      "inFlightRequests",
+      "cooldownUntil",
+      "cooldownRemainingMs",
+      "cooldownKind",
+      "cooldownFailureClass",
+      "cooldownResetsAt",
+      "lastResortEligible",
+      "failureStreak",
+      "probeFailureStreak",
+      "configuredModels",
+      "capabilities",
+      "attempts",
+      "successes",
+      "failures",
+      "skipped",
+      "lastAttemptAt",
+      "lastSuccessAt",
+      "lastFailureAt",
+      "lastFailure"
+    ],
+    "providerLimits": [
+      "cooldownKind",
+      "cooldownFailureClass",
+      "cooldownResetsAt",
+      "cooldownUntil",
+      "cooldownRemainingMs",
+      "lastResortEligible"
+    ],
+    "providerCapabilities": [
+      "subagentSpawn",
+      "subagentSpawnTools",
+      "normalizeItemIds"
+    ],
+    "codexStatePending": [
+      "localTelemetry"
+    ],
+    "codexStateLocalTelemetry": [
+      "status",
+      "pathConfigured",
+      "schema",
+      "capabilities",
+      "threadCount",
+      "projectCount",
+      "edgeCount",
+      "collectedAt",
+      "reason"
+    ],
+    "codexStatePopulated": [
+      "localTelemetry",
+      "recentThreads",
+      "projects",
+      "conversationThreads",
+      "spawnEdges",
+      "schema"
+    ]
+  },
+  "expectedProviderNames": [
+    "claude",
+    "minimax",
+    "antigravity",
+    "codex",
+    "copilot"
+  ],
+  "pendingCodexState": {
+    "localTelemetry": {
+      "status": "pending",
+      "pathConfigured": true,
+      "schema": null,
+      "capabilities": {
+        "tables": {},
+        "columnCount": 0
+      },
+      "threadCount": 0,
+      "projectCount": 0,
+      "edgeCount": 0,
+      "collectedAt": null,
+      "reason": "collector_initializing"
+    }
+  },
+  "populatedCodexStateInput": {
+    "path": "/private/example/.codex/state_5.sqlite",
+    "schema": "state_5",
+    "localTelemetry": {
+      "path": "/private/example/.codex/state_5.sqlite",
+      "status": "ok",
+      "schema": "state_5",
+      "capabilities": {
+        "tables": {
+          "projects": 1,
+          "threads": 1
+        },
+        "columnCount": 2
+      },
+      "threadCount": 2,
+      "projectCount": 1,
+      "edgeCount": 1,
+      "collectedAt": "2026-09-14T00:00:00.000Z",
+      "reason": null
+    },
+    "recentThreads": [
+      {
+        "id": "thread-001",
+        "updatedAt": "2026-09-13T23:00:00.000Z"
+      }
+    ],
+    "projects": [
+      {
+        "id": "project-001",
+        "name": "AutoDev"
+      }
+    ],
+    "conversationThreads": {
+      "conversation-001": "thread-001"
+    },
+    "spawnEdges": [
+      {
+        "parent": "thread-001",
+        "child": "thread-002"
+      }
+    ]
+  },
+  "populatedCodexState": {
+    "localTelemetry": {
+      "status": "ok",
+      "schema": "state_5",
+      "capabilities": {
+        "tables": {
+          "projects": 1,
+          "threads": 1
+        },
+        "columnCount": 2
+      },
+      "threadCount": 2,
+      "projectCount": 1,
+      "edgeCount": 1,
+      "collectedAt": "2026-09-14T00:00:00.000Z",
+      "reason": null,
+      "pathConfigured": true
+    },
+    "recentThreads": [
+      {
+        "id": "thread-001",
+        "updatedAt": "2026-09-13T23:00:00.000Z"
+      }
+    ],
+    "projects": [
+      {
+        "id": "project-001",
+        "name": "AutoDev"
+      }
+    ],
+    "conversationThreads": {
+      "conversation-001": "thread-001"
+    },
+    "spawnEdges": [
+      {
+        "parent": "thread-001",
+        "child": "thread-002"
+      }
+    ],
+    "schema": "state_5"
+  },
+  "spawnGrouping": {
+    "operations": [
+      {
+        "op": "bridgeRequest",
+        "requestId": "req-bridge-001",
+        "provider": "claude",
+        "model": "sonnet",
+        "role": "orchestrator",
+        "workspace": "AutoDev"
+      },
+      {
+        "op": "bridgeEvents",
+        "requestId": "req-bridge-001",
+        "events": [
+          {
+            "type": "subagent_spawn",
+            "tool": "Agent",
+            "role": "worker",
+            "count": 2
+          },
+          {
+            "type": "subagent_spawn",
+            "tool": "Agent",
+            "role": "validator",
+            "count": 1
+          }
+        ]
+      },
+      {
+        "op": "routerSession",
+        "session": "session-router-001",
+        "provider": "minimax"
+      },
+      {
+        "op": "routerSpawn",
+        "mechanism": "router_alias",
+        "role": "explorer",
+        "tool": "multi_agent_v1.spawn"
+      }
+    ],
+    "total": 4,
+    "byMechanism": {
+      "router_alias": 1,
+      "bridge_native": 3
+    },
+    "byProvider": {
+      "claude": 3,
+      "minimax": 1
+    },
+    "byRole": {
+      "worker": 2,
+      "validator": 1,
+      "explorer": 1
+    },
+    "groupedRows": [
+      {
+        "provider": "claude",
+        "mechanism": "bridge_native",
+        "role": "worker",
+        "tool": "Agent",
+        "count": 2
+      },
+      {
+        "provider": "minimax",
+        "mechanism": "router_alias",
+        "role": "explorer",
+        "tool": "multi_agent_v1.spawn",
+        "count": 1
+      },
+      {
+        "provider": "claude",
+        "mechanism": "bridge_native",
+        "role": "validator",
+        "tool": "Agent",
+        "count": 1
+      }
+    ],
+    "cliSummary": "Subagents spawned: 2 recent / 4 total (router_alias: 1, bridge_native: 3)"
+  },
+  "dashboard": {
+    "panels": [
+      "panel-providers",
+      "panel-orchestrator",
+      "workspace-usage-section",
+      "panel-skills",
+      "panel-hooks",
+      "panel-ops",
+      "panel-codex-state",
+      "panel-events"
+    ],
+    "emptyStates": [
+      "No providers configured",
+      "No subagent spawns recorded yet",
+      "No spawn failures observed",
+      "No skill telemetry recorded yet",
+      "No hooks or runtime events recorded yet",
+      "No native metrics observed",
+      "No workspaces observed yet",
+      "Awaiting collector snapshot"
+    ],
+    "recentTotalLabels": [
+      {
+        "recent": 0,
+        "total": 0,
+        "expected": "0 total"
+      },
+      {
+        "recent": 2,
+        "total": 2,
+        "expected": "2 total"
+      },
+      {
+        "recent": 4,
+        "total": 9,
+        "expected": "4 recent / 9 total"
+      }
+    ]
+  }
+}

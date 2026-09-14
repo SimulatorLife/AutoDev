@@ -718,6 +718,80 @@ exit 0
                             (Path(rendered_dir) / f"{role}.toml").read_bytes(),
                         )
 
+    def test_installer_converges_after_operator_edits_operator_state(self):
+        """A subsequent install preserves operator state while reapplying the
+        portable AutoDev-owned configuration boundary."""
+        with tempfile.TemporaryDirectory() as home, tempfile.TemporaryDirectory() as codex_home:
+            first_run = self._run_installer(home, codex_home)
+            self.assertEqual(
+                first_run.returncode,
+                0,
+                msg="initial installer run failed: STDOUT=" + first_run.stdout + " STDERR=" + first_run.stderr,
+            )
+            installed_config = Path(codex_home) / "config.toml"
+            self.assertTrue(installed_config.is_file())
+            self.assertFalse(installed_config.is_symlink())
+
+            # Simulate operator edits to the composed user-level file. Keep
+            # top-level `notify` before the first table; the composer emits
+            # mcp_servers as an inline table, so add the custom server to that
+            # same TOML value rather than redeclaring the table later.
+            original = installed_config.read_text(encoding="utf-8")
+            mcp_match = re.search(r"(?m)^mcp_servers = .*\n", original)
+            self.assertIsNotNone(mcp_match, "composed config must contain inline mcp_servers")
+            mcp_line = mcp_match.group(0).rstrip("\n")
+            self.assertTrue(mcp_line.endswith(" }"), mcp_line)
+            mcp_line = (
+                mcp_line[:-2]
+                + ', operator_custom_server = { command = "/usr/local/bin/operator-mcp", args = ["--stdio"] } }'
+                + "\n"
+            )
+            hand_edited = original[:mcp_match.start()] + mcp_line + original[mcp_match.end():]
+            installed_config.write_text(
+                'notify = ["/Applications/Notify.app", "turn-ended"]\n'
+                + hand_edited
+                + '\n[projects]\n'
+                + '"/work" = { trust_level = "trusted" }\n',
+                encoding="utf-8",
+            )
+
+            second_run = self._run_installer(home, codex_home)
+            self.assertEqual(
+                second_run.returncode,
+                0,
+                msg="convergence installer run failed: STDOUT=" + second_run.stdout + " STDERR=" + second_run.stderr,
+            )
+            self.assertTrue(installed_config.is_file())
+            self.assertFalse(installed_config.is_symlink())
+            composed = tomllib.loads(installed_config.read_text(encoding="utf-8"))
+            self.assertEqual(
+                composed["notify"],
+                ["/Applications/Notify.app", "turn-ended"],
+            )
+            self.assertEqual(
+                composed["projects"],
+                {"/work": {"trust_level": "trusted"}},
+            )
+            self.assertEqual(
+                composed["mcp_servers"]["operator_custom_server"],
+                {"command": "/usr/local/bin/operator-mcp", "args": ["--stdio"]},
+            )
+            self.assertEqual(composed["model"], "autodev/orchestrator")
+            self.assertEqual(composed["model_provider"], "local_model_router")
+
+            converged_bytes = installed_config.read_bytes()
+            check_run = self._run_installer(home, codex_home, "--check")
+            self.assertEqual(
+                check_run.returncode,
+                0,
+                msg="--check rejected converged config: STDOUT=" + check_run.stdout + " STDERR=" + check_run.stderr,
+            )
+            self.assertEqual(
+                installed_config.read_bytes(),
+                converged_bytes,
+                msg="--check must not modify the converged user config",
+            )
+
     def test_installer_migrates_symlinked_config_to_composed_regular_file(self):
         with tempfile.TemporaryDirectory() as home, tempfile.TemporaryDirectory() as codex_home:
             legacy_config = Path(home) / "legacy_seed_config.toml"
@@ -3536,7 +3610,6 @@ class ComposeUserConfigTests(unittest.TestCase):
                     for h in entry["hooks"]),
                 msg=f"portable SessionStart must replace the legacy hook, got {migrated['hooks']['SessionStart']}",
             )
-
 
 
 if __name__ == "__main__":

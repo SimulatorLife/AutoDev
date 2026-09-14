@@ -1502,7 +1502,11 @@ Two details follow from that:
   to, which is not a model id, so the router resolves it to the parent's model.
   A concrete child model that no tier configures still reaches the provider's
   row: the dashboard sums every model observed for a provider, not only the
-  configured ones.
+  configured ones. The cumulative `status.subagents.total` is distinct from
+  the bounded newest-first `status.subagents.recent` window (capped at 50).
+  When recent history cannot cover the cumulative count, the dashboard and
+  status CLI label the summary and totals as `X recent / Y total`; they never
+  inflate the recent subtotal to match all-time history.
 
 The shared reporter is `scripts/codex/lib/agent-events.mjs`; the Claude bridge
 mirrors it in Python. The installer ships the module beside the bridges that
