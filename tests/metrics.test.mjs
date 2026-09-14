@@ -543,19 +543,34 @@ test('dashboard counts active workspaces from live activity states and excludes 
   assert.ok(match, 'countActiveWorkspaces should be present in dashboard script');
   const countActiveWorkspaces = new Function(`${match[0]}; return countActiveWorkspaces;`)();
 
+  // The dashboard reads active workspaces directly off the frozen
+  // status.agents.liveByWorkspace partition (the same partition the
+  // canonicalLiveCount is derived from) and excludes unattributed/unknown
+  // residuals -- which is what keeps the workspace count from inflating the
+  // canonical live-agent total.
   assert.equal(countActiveWorkspaces({
-    usage: { activity: { byWorkspace: {
-      AutoDev: { active: 0, tool_wait: 1 },
-      unattributed: { active: 1 },
-      unknown: { active: 1 },
-    } } },
-  }), 1);
+    agents: {
+      schema: 'autodev-agent-status-v1',
+      canonicalLiveCount: 3,
+      liveByWorkspace: {
+        AutoDev: 1,
+        'codex-runtime': 1,
+        unattributed: 1,
+        unknown: 1,
+      },
+    },
+  }), 2);
   assert.equal(countActiveWorkspaces({
-    usage: { activity: { byWorkspace: { AutoDev: { finished: 1 } } } },
+    agents: {
+      schema: 'autodev-agent-status-v1',
+      canonicalLiveCount: 0,
+      liveByWorkspace: {},
+    },
   }), 0);
-  assert.equal(countActiveWorkspaces({
-    usage: { byWorkspace: { AutoDev: { active: 1 } } },
-  }), 1, 'legacy status payloads fall back to workspace active values');
+  // Missing or wrong-schema status.agents fails closed rather than falling
+  // back to legacy usage partitions, since the dashboard now requires the
+  // frozen reconciliation projection.
+  assert.throws(() => countActiveWorkspaces({}), /status.agents.liveByWorkspace/);
 });
 
 test('dashboard KPI agent total uses the canonical live-agent count and never maxes it against unrelated counters', async () => {
@@ -571,7 +586,8 @@ test('dashboard KPI agent total uses the canonical live-agent count and never ma
   assert.doesNotMatch(kpiSection[0], /activeSubagentThreads/, 'KPI total must not fold in subagent concurrency-slot counts');
   assert.doesNotMatch(kpiSection[0], /activeSessions/, 'KPI total must not fold in concurrency session-slot counts');
   assert.doesNotMatch(kpiSection[0], /providerActiveTotal/, 'KPI total must not fold in per-provider active-request counts');
-  assert.match(kpiSection[0], /status\?\.liveActivity/, 'KPI total should read the canonical liveActivity field');
+  assert.match(kpiSection[0], /agents\.schema/, 'KPI total should require the frozen status.agents projection');
+  assert.match(kpiSection[0], /canonicalLiveCount/, 'KPI total should read canonicalLiveCount off status.agents');
 
   const countMatch = dashboard.match(/function countActiveWorkspaces\([\s\S]*?\n    \}/);
   assert.ok(countMatch, 'countActiveWorkspaces should be present in dashboard script');
@@ -581,17 +597,21 @@ test('dashboard KPI agent total uses the canonical live-agent count and never ma
 
   // One subagent active in one workspace keeps its inferred orchestrator
   // active too: two agents, one subagent, and one workspace. The workspace
-  // dimension is still not added to the agent total.
+  // dimension is still not added to the agent total. The router no longer
+  // ships a legacy top-level liveActivity / usage.totals.active alias the
+  // dashboard folds in; the canonical total is read directly off
+  // status.agents.canonicalLiveCount and the breakdowns from
+  // status.agents.liveByRole / liveByWorkspace.
   const oneSubagentOneWorkspaceStatus = {
-    liveActivity: 2,
-    usage: {
-      totals: { active: 2 },
-      byRole: {
-        orchestrator: { active: 1 },
-        worker: { active: 1 },
+    agents: {
+      schema: 'autodev-agent-status-v1',
+      canonicalLiveCount: 2,
+      liveByRole: {
+        orchestrator: 1,
+        worker: 1,
       },
-      byWorkspace: {
-        AutoDev: { active: 1 },
+      liveByWorkspace: {
+        AutoDev: 2,
       },
     },
     providers: {
@@ -610,13 +630,14 @@ test('dashboard KPI agent total uses the canonical live-agent count and never ma
     activeWorkspaces: 1,
   });
 
-  // When `liveActivity` is absent (an older status payload), the canonical
-  // fallback is `usage.totals.active` -- the same agentActivity.countLive()
-  // call with no filter -- never an unrelated counter.
-  assert.equal(computeKpiAgentTotals({
+  // When `status.agents` is absent (a pre-reconciliation status payload
+  // the dashboard no longer supports), the dashboard surfaces a loud
+  // failure rather than silently re-deriving the total from an unrelated
+  // counter -- there is no fallback path.
+  assert.throws(() => computeKpiAgentTotals({
     usage: { totals: { active: 1 }, byRole: {}, byWorkspace: {} },
     providers: { codex: { active: 4 } },
-  }).totalActive, 1);
+  }), /status\.agents/);
 
   // The rendered label calls out that the workspace count is non-additive
   // context ("workspaces with active agents"), not a component summed into
@@ -635,18 +656,19 @@ test('dashboard keeps role-less ("unattributed") activity explicit instead of gu
     `${countMatch[0]}; ${kpiSection[0]}; return computeKpiAgentTotals;`
   )();
 
-  // "unattributed" is an explicit residual: it may represent direct or
+  // "unattributed" is an explicit residual in the frozen
+  // status.agents.liveByRole partition: it may represent direct or
   // role-less activity, so it must not be guessed into the subagent bucket.
   // The residual remains visible and completes the canonical total.
   const status = {
-    liveActivity: 3,
-    usage: {
-      totals: { active: 3 },
-      byRole: {
-        orchestrator: { active: 1 },
-        unattributed: { active: 2 },
+    agents: {
+      schema: 'autodev-agent-status-v1',
+      canonicalLiveCount: 3,
+      liveByRole: {
+        orchestrator: 1,
+        unattributed: 2,
       },
-      byWorkspace: {},
+      liveByWorkspace: {},
     },
   };
   const totals = computeKpiAgentTotals(status);
@@ -655,7 +677,7 @@ test('dashboard keeps role-less ("unattributed") activity explicit instead of gu
 
   // computeKpiAgentTotals itself must never special-case "unattributed" as a
   // stand-in for the orchestrator bucket.
-  assert.doesNotMatch(kpiSection[0], /orchRole\s*=\s*status\?\.usage\?\.byRole\?\.unattributed/, 'orchActive must not fall back to the unattributed bucket');
+  assert.doesNotMatch(kpiSection[0], /orchRole\s*=\s*status\?\.agents\?\.liveByRole\?\.unattributed/, 'orchActive must not fall back to the unattributed bucket');
 
   // The orchestrator/subagent usage panel reads the same "orchestrator"
   // bucket directly (no unattributed fallback) and only excludes

@@ -6634,6 +6634,130 @@ test("active-agent reconciliation: residual active provider and workspace bucket
   resetRouterTelemetry();
 });
 
+test("active-agent reconciliation: /status exposes status.agents (autodev-agent-status-v1) with canonical live count, liveBy partitions, and slot-vs-agent reconciliation", () => {
+  resetRouterTelemetry();
+  agentActivity.reset();
+  resetConcurrencyTelemetry();
+
+  // A mix of routed agents and roleless activity to exercise every
+  // status.agents partition.
+  agentActivity.beginRequest("session:parent", {
+    requestId: "req-agent-parent",
+    provider: "codex",
+    model: "gpt-5.6-luna",
+    role: "orchestrator",
+    origin: "orchestrator",
+    workspace: "AutoDev",
+  });
+  agentActivity.beginRequest("session:child-worker", {
+    requestId: "req-agent-worker",
+    provider: "minimax",
+    model: "MiniMax-M3",
+    role: "worker",
+    origin: "subagent",
+    workspace: "AutoDev",
+  });
+  agentActivity.beginRequest("bridge:child-validator", {
+    requestId: "req-agent-validator",
+    kind: "bridge_subagent",
+    provider: "claude",
+    model: "sonnet",
+    role: "validator",
+    origin: "subagent",
+    workspace: "codex-runtime",
+  });
+  agentActivity.beginRequest("session:roleless", {
+    requestId: "req-agent-rl",
+    role: null,
+    origin: "direct",
+    workspace: "AutoDev",
+  });
+
+  // Two admission slots on an identified session to exercise slotVsAgent.
+  tryAcquireSubagentSlot("reconcile-status-identified");
+  tryAcquireSubagentSlot("reconcile-status-identified");
+
+  const status = getRouterStatus();
+
+  // status.agents is the canonical home for live-agent reconciliation
+  // and must expose the frozen schema tag.
+  assert.equal(status.agents.schema, "autodev-agent-status-v1");
+  assert.equal(status.agents.canonicalLiveCount, 4);
+
+  // liveBy partitions reflect the projection's role/origin/workspace
+  // distributions and retain the explicit unattributed residual.
+  assert.deepEqual(status.agents.liveByKind, { session: 3, bridge_subagent: 1 });
+  assert.deepEqual(status.agents.liveByRole, {
+    orchestrator: 1,
+    worker: 1,
+    validator: 1,
+    unattributed: 1,
+  });
+  assert.deepEqual(status.agents.liveByOrigin, {
+    orchestrator: 1,
+    subagent: 2,
+    direct: 1,
+  });
+  assert.deepEqual(status.agents.liveByWorkspace, {
+    AutoDev: 3,
+    "codex-runtime": 1,
+  });
+
+  // Provider/model dimensions contain concrete routed values; the diagnostic
+  // missingProvider / missingModel flags surface the roleless residual.
+  assert.deepEqual(status.agents.liveByProvider, { codex: 1, minimax: 1, claude: 1 });
+  assert.deepEqual(status.agents.liveByModel, {
+    "codex/gpt-5.6-luna": 1,
+    "minimax/MiniMax-M3": 1,
+    "claude/sonnet": 1,
+  });
+  assert.equal(status.agents.missingProvider, 1);
+  assert.equal(status.agents.missingModel, 1);
+
+  // byState covers the full tracker state histogram; "active" holds the
+  // four live agents we just seeded and every other state is zero.
+  assert.equal(status.agents.byState.active, 4);
+  assert.equal(status.agents.byState.finished, 0);
+  assert.equal(status.agents.byState.failed, 0);
+  assert.equal(status.agents.byState.stale, 0);
+
+  // slotVsAgent reconciles the agent projection against the slot tracker
+  // and the process-fallback admission count is reported separately.
+  assert.equal(status.agents.slotVsAgent.agentLive, 4);
+  assert.equal(status.agents.slotVsAgent.admissionSlots, 2);
+  assert.equal(status.agents.slotVsAgent.activeAdmissionSessions, 1);
+  assert.equal(status.agents.slotVsAgent.processFallbackActiveThreads, 0);
+
+  // The agent and concurrency projections must agree on the slot counters,
+  // confirming reconciledWithConcurrency was evaluated at the same instant.
+  assert.equal(status.agents.slotVsAgent.admissionSlots, status.concurrency.activeSubagentThreads);
+  assert.equal(status.agents.slotVsAgent.activeAdmissionSessions, status.concurrency.activeSessions);
+  assert.equal(status.agents.slotVsAgent.processFallbackActiveThreads, status.concurrency.processFallbackActiveThreads);
+  assert.equal(status.agents.reconciledWithConcurrency, true);
+
+  // status.agents.canonicalLiveCount must agree with every other live
+  // count that has historically described "how many agents are live".
+  assert.equal(status.agents.canonicalLiveCount, status.liveActivity);
+  assert.equal(status.agents.canonicalLiveCount, status.usage.totals.active);
+  assert.equal(status.agents.canonicalLiveCount, status.usage.activity.live);
+
+  // Settle every agent and confirm the canonical live count clears while
+  // terminal entries remain visible in byState.
+  agentActivity.finish("session:parent", { requestId: "req-agent-parent", outcome: "success" });
+  agentActivity.finish("session:child-worker", { requestId: "req-agent-worker", outcome: "success" });
+  agentActivity.finish("bridge:child-validator", { requestId: "req-agent-validator", outcome: "success" });
+  agentActivity.finish("session:roleless", { requestId: "req-agent-rl", outcome: "success" });
+
+  const settled = getRouterStatus();
+  assert.equal(settled.agents.canonicalLiveCount, 0);
+  assert.equal(settled.agents.byState.finished, 4);
+  assert.equal(settled.agents.slotVsAgent.admissionSlots, 2, "admission slots outlive agent finishes -- they only release on releaseSubagentSlot");
+
+  agentActivity.reset();
+  resetConcurrencyTelemetry();
+  resetRouterTelemetry();
+});
+
 // Phase 3 in-repo slice: opt-in autodev.* attribute emission. Each assertion
 // line quotes a property of the frozen contract (resources only carry resource
 // keys; events only carry event keys; unknown values are omitted; no prompt

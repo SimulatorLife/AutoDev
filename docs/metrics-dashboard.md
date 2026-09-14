@@ -292,37 +292,44 @@ The model router exposes provider state and administrative controls via the foll
 The router and dashboard cleanly separate **live agent activity** from **in-flight transport diagnostics**:
 
 - **Live agent activity (`Active` badges, KPIs, provider rows):**
-  Measures active agent workflow turns currently being executed by the orchestrator, subagents, or user sessions. Crucially, an agent does **not** stop being active when an intermediate model HTTP request finishes: during tool execution (`tool_executed`, `tool_requested`), user input waits, or child subagent waits, the agent and provider remain live. When `/status` indicates an active or waiting state (e.g. `status` or `state` is `"active"`, `"waiting"`, `"waiting_tool"`, `"waiting_user"`, `"waiting_subagent"`), the dashboard's `Active agents` KPI, provider table `Active` column, and `<status-badge active="">` remain visibly active and non-zero rather than flickering to zero between model invocations.
+- **Frozen `status.agents` reconciliation projection:** The dashboard
+  reads the canonical live-agent count, the role/origin/workspace
+  partitions, and the slot-vs-agent reconciliation block from the
+  router's frozen `status.agents` projection (`autodev-agent-status-v1`).
+  `canonicalLiveCount` is the canonical `Active agents` KPI total;
+  `liveByRole` / `liveByOrigin` / `liveByWorkspace` are the live-only
+  numeric partitions; `liveByKind` distinguishes `session` from
+  `bridge_subagent` records; `slotVsAgent` reconciles `agentLive`,
+  `admissionSlots`, `activeAdmissionSessions`, and
+  `processFallbackActiveThreads` against `status.concurrency` at the
+  same timestamp (`reconciledWithConcurrency: true`). The dashboard
+  throws when `status.agents` is absent or carries a non-frozen schema
+  tag; there is no compatibility fallback to `status.liveActivity` or
+  `status.usage.totals.active` for an older payload. Provider and model
+  dimensions contain only concrete routed values; records without
+  attribution are surfaced through `missingProvider` and `missingModel`.
 - **`Active agents` KPI total is the canonical live-agent count, not a max
   of unrelated counters:** The headline number is read directly from
-  `status.liveActivity` (falling back to `status.usage.totals.active` for an
-  older payload) -- both are the same unfiltered `agentActivity.countLive()`
-  call the router makes internally, so it is the single source of truth for
-  "how many agents are live right now." The dashboard's
-  `computeKpiAgentTotals(status)` helper computes this value and **never**
-  takes a `Math.max()` against per-provider active-request counts
-  (`status.providers[*].active`) or subagent concurrency-slot counts
-  (`status.concurrency.activeSubagentThreads` / `activeSessions`) --
-  those measure transport-layer requests and scheduling slots, not live
-  agent identities, and folding them into the headline via `Math.max` used
-  to silently inflate the total above the number of agents actually live.
-  One subagent active in one workspace renders as exactly `1`.
+  `status.agents.canonicalLiveCount` -- the router's single unfiltered
+  `agentActivity.countLive()` result evaluated at the same `now` as the
+  rest of `/status`. The dashboard's `computeKpiAgentTotals(status)`
+  helper computes this value and **never** takes a `Math.max()` against
+  per-provider active-request counts (`status.providers[*].active`),
+  subagent concurrency-slot counts
+  (`status.concurrency.activeSubagentThreads` / `activeSessions`), or
+  the slot-vs-agent block -- those measure transport-layer requests and
+  scheduling slots, not live agent identities, and folding them into the
+  headline via `Math.max` used to silently inflate the total above the
+  number of agents actually live. One subagent active in one workspace
+  renders as exactly `1`.
 - **Orchestrator/subagent role breakdown stays consistent with the total:**
-  The `N orchestrators · N subagents` breakdown shown under the KPI is read
-  from the same `status.usage.byRole` partition the router sums to produce
-  `usage.totals.active`, so the breakdown's components sum to the canonical
-  total above rather than being independently maxed against a different
-  counter (e.g. a concurrency-slot count that can under- or over-count
-  relative to role-attributed activity). Explicit parent/child records remain
+  The `N orchestrators · N subagents` breakdown shown under the KPI is
+  read from `status.agents.liveByRole` (the same partition the router
+  sums to produce `canonicalLiveCount`), so the breakdown's components
+  sum to the canonical total above rather than being independently maxed
+  against a different counter. Explicit parent/child records remain
   attributable, while child activity without a proven parent does not
   fabricate an orchestrator or provider.
-- **Role-less (`unattributed`) activity remains an explicit residual:** The
-  router does not guess whether activity without a verified role is an
-  orchestrator or subagent. `computeKpiAgentTotals` reports explicit
-  orchestrators, explicit subagents, and the unattributed residual
-  separately; all three components sum exactly to `totalActive`. The
-  Orchestrator & subagent panel renders the residual as an `Unattributed`
-  card when present.
 - **Parent orchestrators remain live while children work:** Authenticated
   bridge spawn events may keep an explicitly identified parent request live
   with its concrete provider/model. Child activity without that relationship
@@ -342,15 +349,13 @@ The router and dashboard cleanly separate **live agent activity** from **in-flig
   1:1 relationship.
 - **`workspaces with active agents` is non-additive context, not a KPI
   component:** The KPI's workspace count -- labeled `workspaces with active
-  agents` -- is derived from the live `status.usage.activity.byWorkspace`
-  state snapshot, not only from persisted workspace usage buckets. It counts
-  known workspaces with a live state (`active`, `resumed`, `tool_wait`,
-  `user_wait`, or `subagent_wait`) and excludes `unattributed`/`unknown`
-  activity that cannot be safely assigned to a workspace. This count is
-  rendered alongside the agent total purely for attribution context (how
-  many distinct workspaces the live agents belong to); it is never summed
-  into `Active agents`, since one agent is attributed to exactly one
-  workspace and a workspace can host more than one live agent.
+  agents` -- is read directly from `status.agents.liveByWorkspace` and
+  excludes `unattributed`/`unknown` activity that cannot be safely
+  assigned to a workspace. This count is rendered alongside the agent
+  total purely for attribution context (how many distinct workspaces the
+  live agents belong to); it is never summed into `Active agents`, since
+  one agent is attributed to exactly one workspace and a workspace can
+  host more than one live agent.
 - **In-flight requests (`inFlightRequests`):**
   A distinct, transport-level diagnostic metric measuring active HTTP requests currently open between the router daemon and upstream provider model APIs. Incremented upon socket dispatch and decremented upon response completion or cancellation. The dashboard's **Operational summary** labels in-flight requests separately under Concurrency (`In-flight requests`), and `scripts/codex-model-router-status.mjs` displays both `Active` (live agent activity) and `In-Flight` (transport requests) side-by-side in its provider table.
 
@@ -363,14 +368,16 @@ The router integrates with upstream agent runtimes through explicit agent activi
 - **Live states:** `active`, `resumed`, `tool_wait`, `user_wait`, and `subagent_wait` count as live; `finished` and `failed` are terminal. An open agent request remains live until it settles; non-terminal wait activity older than the TTL becomes `stale` and is removed from live counts without killing or restarting processes.
 - **Heartbeat freshness drives the `Active agents` KPI:** Every lifecycle
   event refreshes that agent's last-seen timestamp, acting as a heartbeat.
-  `status.liveActivity` (and therefore the `Active agents` KPI total,
-  role breakdown, and `workspaces with active agents` context count) only
-  ever counts entries whose heartbeat is still within the TTL window above.
-  If a bridge stops emitting lifecycle events for an agent (e.g. it crashed
-  without emitting `finished`/`failed`), that agent silently ages out of
-  every one of those counts once its heartbeat exceeds the TTL -- there is
-  no separate "stale but still counted" state surfaced in the KPI; stale
-  activity simply stops contributing to the canonical live count.
+  `status.agents.canonicalLiveCount` (and therefore the `Active agents`
+  KPI total, role breakdown, and `workspaces with active agents` context
+  count) only ever counts entries whose heartbeat is still within the TTL
+  window above. If a bridge stops emitting lifecycle events for an agent
+  (e.g. it crashed without emitting `finished`/`failed`), that agent
+  silently ages out of every one of those counts once its heartbeat
+  exceeds the TTL -- there is no separate "stale but still counted" state
+  surfaced in the KPI; stale activity simply stops contributing to the
+  canonical live count, and the abandoned count is reported separately
+  through `status.agents.byState.stale` for diagnostic visibility.
 
 The dashboard's Operational summary groups Codex receiver, state-database,
 and concurrency values as category/metric/value rows instead of embedding those

@@ -811,11 +811,82 @@ baseline failures (`scripts/codex-model-router.test.mjs` lines 3313,
 inlined the `maxThreads` field in their expectations. **Commands / results.**
 `node --test tests/concurrency-contract.test.mjs` -> 25 pass, 0 fail;
 `node --test scripts/codex-model-router.test.mjs` -> 181 pass, 0 fail
-(3 baseline failures resolved). **Next telemetry-contract step.**
-Extend the fixture with the active-agents projection the status payload
-exposes once the existing Phase 0 "active agent reconciliation" slice is
-frozen, so `status.concurrency` and `status.agents` agree on the same
-underlying tracker rather than two parallel counters.
+(3 baseline failures resolved). The Phase 0 "active-agent reconciliation" capture is landed as a
+deterministic fixture. **Finding.** The router exposed live-agent counts
+through three projections that did not formally agree: the canonical
+`status.liveActivity` / `usage.totals.active` /
+`usage.activity.live` triple (each a single `agentActivity.countLive()`
+call with no filter), the `status.usage.byRole` /
+`status.usage.byOrigin` / `status.usage.byWorkspace` partitions the
+dashboard read for breakdowns and workspace context, and the
+`status.concurrency.activeSubagentThreads` / `activeSessions` /
+`processFallbackActiveThreads` slot counters. Nothing tied them
+together: a held concurrency slot and the live agent it gated could
+each be reported from a separate counter that drifted over time, and a
+roleless agent reconciled to `unattributed` in role/origin/workspace but
+no provider/model dimension ever surfaced that same residual
+explicitly. **Slice.** The router now derives a single frozen
+`status.agents` projection (`autodev-agent-status-v1`) from
+`agentsStatus(at)` evaluated at the same `now` the rest of
+`getRouterStatus(now)` evaluates. `status.agents.canonicalLiveCount`
+is the canonical live-agent count the dashboard reads (it agrees with
+`status.liveActivity`, `usage.totals.active`, and
+`usage.activity.live` by construction -- they are all the same
+`agentActivity.countLive()` call). `status.agents.byState` is the
+full tracker state histogram (including `stale`, `finished`,
+`failed`) so an operator can see the activity backlog. `liveByKind` / `liveByRole` / `liveByOrigin` / `liveByProvider` /
+`liveByModel` / `liveByWorkspace` are the live-only partitions the
+dashboard reads; `liveByRole`, `liveByOrigin`, and
+`liveByWorkspace` retain the explicit `unattributed` residual while
+`liveByKind` distinguishes between `session` and `bridge_subagent`
+records (held `subagent_slot` admission bookkeeping never inflates any
+live-by partition). The provider and model dimensions contain only concrete routed values;
+records without attribution are omitted from those maps and surfaced through
+`missingProvider` / `missingModel`, so `status.providers` continues to list
+only concrete routed values.
+`status.agents.slotVsAgent` reconciles the agent and slot projections
+in one block: `agentLive` (the canonical live count),
+`admissionSlots` (active subagent_slot count held anywhere),
+`activeAdmissionSessions` (distinct session-key tags holding slots),
+and `processFallbackActiveThreads` (the shared process-fallback
+admission count, a subset of `admissionSlots`);
+`reconciledWithConcurrency` is the `true` flag confirming
+`agentsStatus(at)` and `concurrencyStatus(at)` evaluated the tracker
+at the same instant. **Fixture / tracking rationale.** The fixture at
+`tests/fixtures/contracts/agent-reconciliation-contract.json` records
+the schema tag (`autodev-agent-status-v1`), the exact field set the
+router exposes, the full tracker `byState` histogram, the live-only
+`liveByKind` / `liveByRole` / `liveByOrigin` / `liveByProvider` /
+`liveByModel` / `liveByWorkspace` partitions, the slot-vs-agent
+reconciliation block, the explicit
+`unattributed` residual on role/origin/workspace, and the concrete-only `liveByProvider` / `liveByModel` partitions
+(matching `status.providers`). `tests/agent-reconciliation-contract.test.mjs`
+drives every scenario through the exported `agentsStatus`,
+`agentActivity`, `tryAcquireSubagentSlot`, `releaseSubagentSlot`,
+`recordConcurrencyDenial`, and `resetConcurrencyTelemetry` helpers
+and asserts every shape against the fixture, including the schema tag
+(`autodev-agent-reconciliation-contract-v1`). The fixture registers slot records directly for host-independent
+reconciliation; admission-limit behavior remains frozen separately by the
+per-session concurrency contract.
+**Dashboard update.** `scripts/codex-model-router-dashboard.html`
+`computeKpiAgentTotals(status)` and `countActiveWorkspaces(status)`
+now read exclusively from `status.agents` -- `canonicalLiveCount`,
+`liveByRole`, and `liveByWorkspace` -- and throw when `status.agents`
+is absent or has a non-frozen schema. The legacy top-level
+`status.liveActivity` / `status.usage.totals.active` fallback paths
+are removed; the dashboard no longer tolerates a pre-reconciliation
+status payload, since the router now guarantees the frozen
+`autodev-agent-status-v1` projection on every `getRouterStatus()`
+response. **Completed slice only after verification.**
+`node --test tests/agent-reconciliation-contract.test.mjs` reports
+16 passing scenarios (constants + scenarios + role-residual regression)
+and the existing `scripts/codex-model-router.test.mjs` "active-agent
+reconciliation" suite still passes (181 + 1 new = 182 passing tests).
+The fixture pins the canonical live count, every liveBy partition, the
+`byState` histogram, the slot-vs-agent reconciliation, and the
+deliberate `unattributed` residual on role/origin/workspace but not
+on provider/model -- so any future change to those shapes is an
+intentional contract change rather than a silent drift.
 
 All other Phase 0 capture areas listed below remain future work.
 
@@ -831,11 +902,11 @@ All other Phase 0 capture areas listed below remain future work.
 - Cooldown and provider-limit behavior (frozen — see Status above)
 - Root versus subagent provider selection (frozen — see Status above)
 - Per-session concurrency contract (frozen — see Status above)
+- Active-agent reconciliation (frozen — see Status above)
 - Workspace attribution
 - Tool/skill/MCP attribution
 - Native versus bridge-native child counts
 - Dashboard/status snapshots
-- Active-agent reconciliation (queued behind the per-session concurrency slice above)
 
 ### Exit gate
 

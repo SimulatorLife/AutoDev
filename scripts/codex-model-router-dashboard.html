@@ -2288,54 +2288,71 @@
       return Number(populatedRowCount ?? 0) >= 2;
     }
 
-    // The KPI headline is the router's single canonical live-agent count --
-    // `status.liveActivity`, falling back to `usage.totals.active` when an
-    // older status payload omits it -- both are the same
-    // agentActivity.countLive() call the router makes with no filter. It
-    // must NOT be maxed against unrelated counters (per-provider active
-    // request counts, subagent concurrency-slot counts, or workspace
-    // attribution) -- those measure different things (transport-layer
-    // requests, scheduling slots, workspace context) and mixing them in
-    // only ever inflates the headline above the number of agents actually
-    // live. One subagent active in one workspace must render as exactly 1.
+    // The KPI headline is the router's single canonical live-agent count,
+    // sourced exclusively from the frozen `status.agents` reconciliation
+    // projection (`autodev-agent-status-v1`). The router now exposes the
+    // full reconciliation shape on /status: `status.agents.canonicalLiveCount`
+    // is the headline KPI number; `status.agents.liveByRole` /
+    // `liveByOrigin` / `liveByWorkspace` are the partitions the breakdown
+    // reads; and `status.agents.slotVsAgent` reconciles against the
+    // admission-slot counters on `status.concurrency` so the two
+    // projections are guaranteed to describe the same instant. The dashboard
+    // never falls back to legacy `status.liveActivity` or
+    // `usage.totals.active` -- if `status.agents` is missing, the router
+    // is on a contract the dashboard cannot render, and the failure must be
+    // surfaced loudly rather than silently re-derived from incompatible
+    // counters.
     //
-    // The orchestrator/subagent split is read from the same `usage.byRole`
-    // partition the router sums to produce `usage.totals.active`, so it
-    // stays consistent with (sums to) the canonical total rather than being
-    // independently maxed against a different counter. Workspace count is
-    // context, not a component of the agent total: one agent is attributed
-    // to one workspace, so it is never summed into `totalActive` -- it is
-    // only ever rendered alongside it as non-additive context.
+    // The dashboard does NOT max the canonical count against per-provider
+    // active-request counts, subagent concurrency-slot counts, or workspace
+    // attribution -- those measure transport-layer requests, scheduling
+    // slots, and workspace context respectively, and folding them in used to
+    // silently inflate the headline above the number of agents actually
+    // live. One subagent active in one workspace renders as exactly 1.
+    //
+    // The orchestrator/subagent split is read from the same
+    // `status.agents.liveByRole` partition the router sums to produce
+    // `status.agents.canonicalLiveCount`, so it stays consistent with
+    // (sums to) the canonical total rather than being independently maxed
+    // against a different counter. Workspace count is non-additive context
+    // (one agent attributed to one workspace), not a component of the agent
+    // total -- it is only ever rendered alongside `totalActive`.
     //
     // Role-attributed subagents are summed separately from the explicit
     // unattributed residual. The residual is not guessed into a role: it is
     // surfaced as its own breakdown so every role bucket remains honest while
     // all displayed components still reconcile to totalActive.
     function computeKpiAgentTotals(status) {
-      const totalActive = Number(status?.liveActivity ?? status?.usage?.totals?.active ?? 0);
-      const orchRole = status?.usage?.byRole?.orchestrator ?? {};
-      const orchActive = Number(orchRole.active ?? 0);
-      let subActive = 0;
-      for (const [ role, b ] of Object.entries(status?.usage?.byRole ?? {})) {
-        if (role !== "orchestrator" && role !== "unattributed") subActive += Number(b?.active ?? 0);
+      const agents = status?.agents;
+      if (!agents || agents.schema !== "autodev-agent-status-v1") {
+        throw new Error("dashboard requires status.agents (autodev-agent-status-v1); received payload without the reconciliation projection");
       }
-      const unattributedActive = Number(status?.usage?.byRole?.unattributed?.active ?? 0);
+      const totalActive = Number(agents.canonicalLiveCount ?? 0);
+      const liveByRole = agents.liveByRole ?? {};
+      const orchActive = Number(liveByRole.orchestrator ?? 0);
+      let subActive = 0;
+      for (const [ role, count ] of Object.entries(liveByRole)) {
+        if (role !== "orchestrator" && role !== "unattributed") subActive += Number(count ?? 0);
+      }
+      const unattributedActive = Number(liveByRole.unattributed ?? 0);
       const activeWorkspaces = countActiveWorkspaces(status);
       return { totalActive, orchActive, subActive, unattributedActive, activeWorkspaces };
     }
 
+    // The active workspace count is derived directly from
+    // `status.agents.liveByWorkspace` -- the same partition the
+    // canonicalLiveCount reads from -- excluding the `unattributed` and
+    // `unknown` residuals. The dashboard never reaches for the legacy
+    // `status.usage.activity.byWorkspace` or `status.usage.byWorkspace`
+    // sources: if `status.agents` is missing, the dashboard surfaces an
+    // error rather than silently substituting a different counter.
     function countActiveWorkspaces(status) {
-      const activityByWorkspace = status?.usage?.activity?.byWorkspace;
-      if (activityByWorkspace && typeof activityByWorkspace === "object") {
-        const liveStates = [ "active", "resumed", "tool_wait", "user_wait", "subagent_wait" ];
-        return Object.entries(activityByWorkspace).filter(([ workspace, states ]) =>
-          workspace !== "unattributed" && workspace !== "unknown" &&
-          states && typeof states === "object" &&
-          liveStates.some((state) => Number(states[ state ] ?? 0) > 0)
-        ).length;
+      const liveByWorkspace = status?.agents?.liveByWorkspace;
+      if (!liveByWorkspace || typeof liveByWorkspace !== "object") {
+        throw new Error("dashboard requires status.agents.liveByWorkspace for active workspace reconciliation");
       }
-      return Object.entries(status?.usage?.byWorkspace ?? {}).filter(([ workspace, value ]) =>
-        workspace !== "unattributed" && workspace !== "unknown" && Number(value?.active ?? 0) > 0
+      return Object.entries(liveByWorkspace).filter(([ workspace, count ]) =>
+        workspace !== "unattributed" && workspace !== "unknown" && Number(count ?? 0) > 0
       ).length;
     }
 

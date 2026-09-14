@@ -2646,11 +2646,15 @@ function resetConcurrencyTelemetry() {
   concurrencyTelemetry.lastDenial = null;
 }
 
-function concurrencyStatus() {
+function concurrencyStatus(at = Date.now()) {
   // Exposed unconditionally (not only after a denial) so an operator can see the
   // per-session limit is currently being enforced as a single process-wide bucket
   // for any unidentified caller, rather than discovering it only once denials occur.
-  const processFallbackActiveThreads = agentActivity.countLive({ kind: SUBAGENT_SLOT_KIND, tag: PROCESS_FALLBACK_SESSION_KEY });
+  // Evaluate every slot-derived counter at the same `at` as the agent
+  // projection in getRouterStatus(now): agentsStatus(at) and this
+  // concurrencyStatus(at) share a single sweep, so status.agents and
+  // status.concurrency describe the same instant.
+  const processFallbackActiveThreads = agentActivity.countLive({ kind: SUBAGENT_SLOT_KIND, tag: PROCESS_FALLBACK_SESSION_KEY }, at);
   return {
     // This is the router's request-admission view. Codex app child handles are
     // owned by the parent session and are not observable here.
@@ -2662,13 +2666,100 @@ function concurrencyStatus() {
     configFileExists: existsSync(CONCURRENCY_CONFIG.file),
     maxConcurrentThreadsPerSession: effectivePerSessionLimit(),
     effectivePerSessionLimit: effectivePerSessionLimit(),
-    activeSubagentThreads: activeSubagentThreads(),
-    activeSessions: agentActivity.distinctTags({ kind: SUBAGENT_SLOT_KIND }).length,
+    activeSubagentThreads: agentActivity.countLive({ kind: SUBAGENT_SLOT_KIND }, at),
+    activeSessions: agentActivity.distinctTags({ kind: SUBAGENT_SLOT_KIND }, at).length,
     processFallbackActiveThreads,
     processFallbackEnforcement: processFallbackActiveThreads > 0,
     denials: concurrencyTelemetry.denials,
     denialsByReason: { ...concurrencyTelemetry.denialsByReason },
     lastDenial: concurrencyTelemetry.lastDenial,
+  };
+}
+
+
+/**
+ * Derive the frozen `status.agents` reconciliation projection evaluated at
+ * `at`. The dashboard and `getRouterStatus(now)` consume this exact shape;
+ * see `tests/fixtures/contracts/agent-reconciliation-contract.json` for the
+ * complete contract.
+ *
+ * `status.agents` is the canonical home for live-agent reconciliation:
+ *   - `canonicalLiveCount` is the single live-agent count the dashboard's
+ *     `Active agents` KPI reads -- `projection.canonicalTotal` evaluated at
+ *     the same `at` the rest of the status payload was evaluated at.
+ *   - `byState` is the full tracker state histogram including stale and
+ *     terminal states, so an operator can see the activity backlog.
+ *   - `liveBy*` partitions only count live (`AGENT_ACTIVITY_KINDS`) records
+ *     and never include held `subagent_slot` admission bookkeeping.
+ *   - `liveByProvider` / `liveByModel` include only concrete routed values;
+ *     missing provider/model records are omitted from those maps and counted
+ *     separately by `missingProvider` / `missingModel`.
+ *   - `liveByRole`, `liveByOrigin`, and `liveByWorkspace` retain the
+ *     `unattributed` residual as an explicit bucket.
+ *   - `missingProvider` / `missingModel` are diagnostic counts of live
+ *     agents that lack an attributed provider or model -- a known defect
+ *     class already surfaced through `liveAgentAttribution`.
+ *   - `slotVsAgent` reconciles the agent-tracking and admission-slot
+ *     counters in one place so `status.agents` and `status.concurrency`
+ *     can be compared directly:
+ *       - `agentLive`           = projection.canonicalTotal
+ *       - `admissionSlots`      = active subagent_slot count held anywhere
+ *       - `activeAdmissionSessions` = distinct session-key tags holding
+ *         admission slots
+ *       - `processFallbackActiveThreads` = the shared process-fallback
+ *         admission count (subset of `admissionSlots`)
+ *   - `reconciledWithConcurrency` flags that the helper evaluated the
+ *     agent tracker, the slot tracker, and the stale/terminal sweep at
+ *     the same `at`, so downstream readers do not need to re-time the
+ *     two projections themselves.
+ */
+function agentsStatus(at = Date.now()) {
+  const projection = projectLiveAgents(at);
+  const liveAgents = projection.allLiveAgents;
+  const byState = agentActivity.snapshot(at).byState;
+  const liveByKind = {};
+  const liveByRole = {};
+  const liveByOrigin = {};
+  const liveByProvider = {};
+  const liveByModel = {};
+  const liveByWorkspace = {};
+  for (const agent of liveAgents) {
+    const kind = agent.kind ?? "session";
+    liveByKind[kind] = (liveByKind[kind] ?? 0) + 1;
+    if (agent.provider) liveByProvider[agent.provider] = (liveByProvider[agent.provider] ?? 0) + 1;
+    if (agent.provider && agent.model) {
+      const modelKey = agent.model.startsWith(`${agent.provider}/`) ? agent.model : `${agent.provider}/${agent.model}`;
+      liveByModel[modelKey] = (liveByModel[modelKey] ?? 0) + 1;
+    }
+    const rKey = agent.role ?? UNATTRIBUTED_DIMENSION;
+    liveByRole[rKey] = (liveByRole[rKey] ?? 0) + 1;
+    const oKey = agent.origin ?? UNATTRIBUTED_DIMENSION;
+    liveByOrigin[oKey] = (liveByOrigin[oKey] ?? 0) + 1;
+    const wKey = agent.workspace ?? UNATTRIBUTED_DIMENSION;
+    liveByWorkspace[wKey] = (liveByWorkspace[wKey] ?? 0) + 1;
+  }
+  // Provider/model dimensions reserve themselves for concrete routed
+  // values: a missing provider/model is a diagnostic surfaced separately
+  // (missingProvider / missingModel), never a bucket in the live-by map.
+  return {
+    schema: "autodev-agent-status-v1",
+    canonicalLiveCount: projection.canonicalTotal,
+    byState,
+    liveByKind,
+    liveByRole,
+    liveByOrigin,
+    liveByProvider,
+    liveByModel,
+    liveByWorkspace,
+    missingProvider: projection.missingProvider,
+    missingModel: projection.missingModel,
+    slotVsAgent: {
+      agentLive: projection.canonicalTotal,
+      admissionSlots: agentActivity.countLive({ kind: SUBAGENT_SLOT_KIND }, at),
+      activeAdmissionSessions: agentActivity.distinctTags({ kind: SUBAGENT_SLOT_KIND }, at).length,
+      processFallbackActiveThreads: agentActivity.countLive({ kind: SUBAGENT_SLOT_KIND, tag: PROCESS_FALLBACK_SESSION_KEY }, at),
+    },
+    reconciledWithConcurrency: true,
   };
 }
 
@@ -3782,7 +3873,12 @@ function getRouterStatus(now = Date.now()) {
       missingModel: projection.missingModel,
     },
     codexTelemetry: codexTelemetryStatus(),
-    concurrency: concurrencyStatus(),
+    // status.agents and status.concurrency share the same `now` so the two
+    // projections describe the same instant: agentsStatus(now) and
+    // concurrencyStatus(now) both pass it through to the tracker so slot
+    // counts and the stale/terminal sweep agree with live agents.
+    agents: agentsStatus(now),
+    concurrency: concurrencyStatus(now),
     subagents: subagentStatus(),
     spawnFailures: spawnFailureStatus(),
     // Transport-layer counters only: how many upstream calls are literally
@@ -3792,6 +3888,10 @@ function getRouterStatus(now = Date.now()) {
     inFlightRequests: Object.fromEntries(activeProviderRequests),
     // Total live agent activity (spans request gaps), independent of role/
     // provider dimension -- the same count usage.activity.live reports.
+    // The dashboard's canonical KPI count comes from
+    // status.agents.canonicalLiveCount; this existing top-level field remains
+    // emitted for status consumers while the dashboard uses the frozen agent
+    // projection directly.
     liveActivity: projection.canonicalTotal,
     providers,
     recentEvents: [...recentRouterEvents].reverse(),
@@ -6538,6 +6638,7 @@ export {
   countToolCallsFromSse,
   countToolCallsInResponse,
   concurrencyStatus,
+  agentsStatus,
   decrementActiveRequests,
   downstreamHeaders,
   fallbackable,

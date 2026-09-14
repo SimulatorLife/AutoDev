@@ -1,0 +1,464 @@
+{
+  "schema": "autodev-agent-reconciliation-contract-v1",
+  "statusAgentsSchema": "autodev-agent-status-v1",
+  "description": "Deterministic boundary for the router's frozen `status.agents` active-agent reconciliation projection (`autodev-agent-status-v1`). The fixture pins every observable shape the router produces today: the canonical live count derived from a single `projectLiveAgents(at)` projection (the same source `usage.totals.active`, `usage.activity.live`, and the legacy top-level `liveActivity` are derived from), the full tracker `byState` histogram including stale/terminal states, the live-only `liveByKind`/`liveByRole`/`liveByOrigin`/`liveByProvider`/`liveByModel`/`liveByWorkspace` partitions (with the explicit `unattributed` residual on role/origin/workspace only), the provider/model live partitions which include only concrete routed values, the `missingProvider` / `missingModel` diagnostic counters, the `slotVsAgent` reconciliation block that lines up live agents against admission-slot counters from `status.concurrency`, and the `reconciledWithConcurrency` flag confirming `agentsStatus(at)` and `concurrencyStatus(at)` evaluated the tracker at the same instant. The contract registers slot records directly for host-independent reconciliation; admission-limit behavior remains frozen separately by the concurrency contract. Refreshing the fixture is the documented, intentional signal that the `status.agents` shape, the schema tag, the partition naming, or the slot-vs-agent reconciliation is meant to change.",
+  "canonicalLiveCountSource": "agentsStatus(at).canonicalLiveCount === projectLiveAgents(at).canonicalTotal === agentActivity.countLive({}, at)",
+  "scenarios": {
+    "empty_tracker_reports_zero_canonical_and_by_state_only_holds_zeros": {
+      "operations": [
+        {
+          "op": "status_field",
+          "field": "schema",
+          "expected": "autodev-agent-status-v1"
+        },
+        {
+          "op": "status_field",
+          "field": "canonicalLiveCount",
+          "expected": 0
+        },
+        {
+          "op": "status_field",
+          "field": "missingProvider",
+          "expected": 0
+        },
+        {
+          "op": "status_field",
+          "field": "missingModel",
+          "expected": 0
+        },
+        {
+          "op": "status_field",
+          "field": "reconciledWithConcurrency",
+          "expected": true
+        },
+        {
+          "op": "status_field",
+          "field": "slotVsAgent.agentLive",
+          "expected": 0
+        },
+        {
+          "op": "status_field",
+          "field": "slotVsAgent.admissionSlots",
+          "expected": 0
+        },
+        {
+          "op": "status_field",
+          "field": "slotVsAgent.activeAdmissionSessions",
+          "expected": 0
+        },
+        {
+          "op": "status_field",
+          "field": "slotVsAgent.processFallbackActiveThreads",
+          "expected": 0
+        },
+        {
+          "op": "status_field",
+          "field": "byState.active",
+          "expected": 0
+        },
+        {
+          "op": "status_field",
+          "field": "byState.tool_wait",
+          "expected": 0
+        },
+        {
+          "op": "status_field",
+          "field": "byState.user_wait",
+          "expected": 0
+        },
+        {
+          "op": "status_field",
+          "field": "byState.subagent_wait",
+          "expected": 0
+        },
+        {
+          "op": "status_field",
+          "field": "byState.resumed",
+          "expected": 0
+        },
+        {
+          "op": "status_field",
+          "field": "byState.finished",
+          "expected": 0
+        },
+        {
+          "op": "status_field",
+          "field": "byState.failed",
+          "expected": 0
+        },
+        {
+          "op": "status_field",
+          "field": "byState.stale",
+          "expected": 0
+        },
+        {
+          "op": "status_deep_equal",
+          "field": "liveByKind",
+          "expected": {}
+        },
+        {
+          "op": "status_deep_equal",
+          "field": "liveByRole",
+          "expected": {}
+        },
+        {
+          "op": "status_deep_equal",
+          "field": "liveByOrigin",
+          "expected": {}
+        },
+        {
+          "op": "status_deep_equal",
+          "field": "liveByWorkspace",
+          "expected": {}
+        }
+      ]
+    },
+    "mixed_session_and_bridge_subagent_reconcile_across_role_origin_workspace_provider_model": {
+      "operations": [
+        {
+          "op": "beginAgent",
+          "subject": "session:parent",
+          "kind": "session",
+          "requestId": "req-parent",
+          "provider": "codex",
+          "model": "gpt-5.6-luna",
+          "role": "orchestrator",
+          "origin": "orchestrator",
+          "workspace": "AutoDev"
+        },
+        {
+          "op": "beginAgent",
+          "subject": "session:child-worker",
+          "kind": "session",
+          "requestId": "req-worker",
+          "provider": "minimax",
+          "model": "MiniMax-M3",
+          "role": "worker",
+          "origin": "subagent",
+          "workspace": "AutoDev"
+        },
+        {
+          "op": "beginAgent",
+          "subject": "bridge:child-validator",
+          "kind": "bridge_subagent",
+          "requestId": "req-validator",
+          "provider": "claude",
+          "model": "sonnet",
+          "role": "validator",
+          "origin": "subagent",
+          "workspace": "codex-runtime"
+        },
+        {
+          "op": "beginAgent",
+          "subject": "session:direct-unattributed",
+          "kind": "session",
+          "requestId": "req-direct",
+          "role": null,
+          "origin": "direct",
+          "workspace": "AutoDev"
+        },
+        {
+          "op": "status_field",
+          "field": "canonicalLiveCount",
+          "expected": 4
+        },
+        {
+          "op": "status_field",
+          "field": "byState.active",
+          "expected": 4
+        },
+        {
+          "op": "status_field",
+          "field": "missingProvider",
+          "expected": 1
+        },
+        {
+          "op": "status_field",
+          "field": "missingModel",
+          "expected": 1
+        },
+        {
+          "op": "status_deep_equal",
+          "field": "liveByKind",
+          "expected": {
+            "session": 3,
+            "bridge_subagent": 1
+          }
+        },
+        {
+          "op": "status_deep_equal",
+          "field": "liveByRole",
+          "expected": {
+            "orchestrator": 1,
+            "worker": 1,
+            "validator": 1,
+            "unattributed": 1
+          }
+        },
+        {
+          "op": "status_deep_equal",
+          "field": "liveByOrigin",
+          "expected": {
+            "orchestrator": 1,
+            "subagent": 2,
+            "direct": 1
+          }
+        },
+        {
+          "op": "status_deep_equal",
+          "field": "liveByProvider",
+          "expected": {
+            "codex": 1,
+            "minimax": 1,
+            "claude": 1
+          }
+        },
+        {
+          "op": "status_deep_equal",
+          "field": "liveByModel",
+          "expected": {
+            "codex/gpt-5.6-luna": 1,
+            "minimax/MiniMax-M3": 1,
+            "claude/sonnet": 1
+          }
+        },
+        {
+          "op": "status_deep_equal",
+          "field": "liveByWorkspace",
+          "expected": {
+            "AutoDev": 3,
+            "codex-runtime": 1
+          }
+        }
+      ]
+    },
+    "subagent_slot_records_do_not_inflate_canonical_live_count_or_live_by_partitions": {
+      "operations": [
+        {
+          "op": "beginSlot",
+          "sessionKey": "reconcile-slot-a"
+        },
+        {
+          "op": "beginSlot",
+          "sessionKey": "reconcile-slot-b"
+        },
+        {
+          "op": "status_field",
+          "field": "canonicalLiveCount",
+          "expected": 0
+        },
+        {
+          "op": "status_field",
+          "field": "slotVsAgent.agentLive",
+          "expected": 0
+        },
+        {
+          "op": "status_field",
+          "field": "slotVsAgent.admissionSlots",
+          "expected": 2
+        },
+        {
+          "op": "status_field",
+          "field": "slotVsAgent.activeAdmissionSessions",
+          "expected": 2
+        },
+        {
+          "op": "status_deep_equal",
+          "field": "liveByKind",
+          "expected": {}
+        },
+        {
+          "op": "status_deep_equal",
+          "field": "liveByRole",
+          "expected": {}
+        }
+      ]
+    },
+    "wait_state_keeps_agent_live_while_stale_and_terminal_clear_live_count": {
+      "operations": [
+        {
+          "op": "beginAgent",
+          "subject": "session:wait-agent",
+          "kind": "session",
+          "requestId": "req-wait",
+          "provider": "codex",
+          "model": "gpt-5.6-luna",
+          "role": "worker",
+          "origin": "subagent",
+          "workspace": "AutoDev"
+        },
+        {
+          "op": "applyLifecycle",
+          "subject": "session:wait-agent",
+          "state": "tool_wait"
+        },
+        {
+          "op": "status_field",
+          "field": "canonicalLiveCount",
+          "expected": 1
+        },
+        {
+          "op": "status_field",
+          "field": "byState.tool_wait",
+          "expected": 1
+        },
+        {
+          "op": "applyLifecycle",
+          "subject": "session:wait-agent",
+          "state": "finished"
+        },
+        {
+          "op": "status_field",
+          "field": "canonicalLiveCount",
+          "expected": 0
+        },
+        {
+          "op": "status_field",
+          "field": "byState.finished",
+          "expected": 1
+        },
+        {
+          "op": "status_field",
+          "field": "byState.tool_wait",
+          "expected": 0
+        }
+      ]
+    },
+    "process_fallback_admission_session_is_visible_in_slot_vs_agent_reconciliation": {
+      "operations": [
+        {
+          "op": "beginSlot",
+          "sessionKey": "process-scope"
+        },
+        {
+          "op": "beginSlot",
+          "sessionKey": "process-scope"
+        },
+        {
+          "op": "beginAgent",
+          "subject": "session:fallback-direct",
+          "kind": "session",
+          "requestId": "req-fallback",
+          "provider": "minimax",
+          "model": "MiniMax-M3",
+          "role": null,
+          "origin": "direct",
+          "workspace": "AutoDev"
+        },
+        {
+          "op": "status_field",
+          "field": "canonicalLiveCount",
+          "expected": 1
+        },
+        {
+          "op": "status_field",
+          "field": "slotVsAgent.agentLive",
+          "expected": 1
+        },
+        {
+          "op": "status_field",
+          "field": "slotVsAgent.admissionSlots",
+          "expected": 2
+        },
+        {
+          "op": "status_field",
+          "field": "slotVsAgent.activeAdmissionSessions",
+          "expected": 1
+        },
+        {
+          "op": "status_field",
+          "field": "slotVsAgent.processFallbackActiveThreads",
+          "expected": 2
+        }
+      ]
+    },
+    "live_by_provider_and_live_by_model_partitions_omit_unattributed_residual": {
+      "operations": [
+        {
+          "op": "beginAgent",
+          "subject": "session:routed-minimax",
+          "kind": "session",
+          "requestId": "req-mm",
+          "provider": "minimax",
+          "model": "MiniMax-M3",
+          "role": "worker",
+          "origin": "subagent",
+          "workspace": "AutoDev"
+        },
+        {
+          "op": "beginAgent",
+          "subject": "session:routed-claude",
+          "kind": "session",
+          "requestId": "req-cl",
+          "provider": "claude",
+          "model": "sonnet",
+          "role": "validator",
+          "origin": "subagent",
+          "workspace": "AutoDev"
+        },
+        {
+          "op": "beginAgent",
+          "subject": "session:role-less",
+          "kind": "session",
+          "requestId": "req-rl",
+          "role": null,
+          "origin": "direct",
+          "workspace": "AutoDev"
+        },
+        {
+          "op": "status_field",
+          "field": "missingProvider",
+          "expected": 1
+        },
+        {
+          "op": "status_deep_equal",
+          "field": "liveByProvider",
+          "expected": {
+            "minimax": 1,
+            "claude": 1
+          }
+        },
+        {
+          "op": "status_deep_equal",
+          "field": "liveByModel",
+          "expected": {
+            "minimax/MiniMax-M3": 1,
+            "claude/sonnet": 1
+          }
+        }
+      ]
+    },
+    "sanitized_status_shape_pins_exact_key_set_and_order_independence": {
+      "operations": [
+        {
+          "op": "status_shape",
+          "expected": [
+            "schema",
+            "canonicalLiveCount",
+            "byState",
+            "liveByKind",
+            "liveByRole",
+            "liveByOrigin",
+            "liveByProvider",
+            "liveByModel",
+            "liveByWorkspace",
+            "missingProvider",
+            "missingModel",
+            "slotVsAgent",
+            "reconciledWithConcurrency"
+          ]
+        },
+        {
+          "op": "status_shape",
+          "field": "slotVsAgent",
+          "expected": [
+            "agentLive",
+            "admissionSlots",
+            "activeAdmissionSessions",
+            "processFallbackActiveThreads"
+          ]
+        }
+      ]
+    }
+  }
+}
