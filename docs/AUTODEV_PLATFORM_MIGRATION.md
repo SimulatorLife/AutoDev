@@ -18,16 +18,16 @@ The corrected target is:
 | Provider transport/Responses normalization | Pilot per provider | LiteLLM |
 | Stateful workspace/skill/subagent telemetry enrichment | Keep | AutoDev |
 | Codex/OpenAI subscription access | Keep OAuth-native | Codex native model provider |
-| Claude subscription access | Migrate from Claude CLI to OAuth-native provider | Codex model provider + LiteLLM/Anthropic transport if needed |
-| Antigravity subscription access | Migrate from Antigravity CLI to OAuth-native provider when a compatible transport is proven | Codex model provider + direct/shared adapter |
-| Copilot subscription access | Migrate from Copilot CLI/proxy to OAuth-native provider | Codex model provider + LiteLLM Copilot transport |
-| MiniMax access | Keep API-key-backed | Existing Codex model provider; remove bespoke proxy if parity passes |
-| Provider CLIs in the steady-state model path | Eliminate | Temporary compatibility only |
+| Claude subscription access | Prefer OAuth-native Codex provider if parity is proven | Current Claude CLI bridge until a replacement passes all gates |
+| Antigravity subscription access | Prefer OAuth-native Codex provider if parity is proven | Current Antigravity CLI bridge until a replacement passes all gates |
+| Copilot subscription access | Prefer OAuth-native Codex provider if parity is proven | Current Copilot CLI/proxy until a replacement passes all gates |
+| MiniMax access | Keep API-key-backed | Existing Codex model provider; remove bespoke proxy only if parity passes |
+| Provider CLIs in the model path | Evaluate for retirement provider-by-provider | Retain any CLI/bridge that is not fully replaced by a proven alternative |
 | Generic GenAI instrumentation | Do not add initially | Native OTel first; OpenLLMetry only if a gap remains |
 | Alternative gateway | Contingency only | Bifrost |
 | Agent-config package distribution | Defer | Grimoire if later needed |
 
-**Architectural rule:** Codex is the agent runtime. AutoDev owns **GitHub orchestration, capability/policy semantics, Codex-specific invariants, workspace/session attribution, and cross-provider subagent semantics**. Upstream dependencies own **portable provider configuration, standard provider transports where proven, and standard telemetry transport**. Provider CLIs are migration-only compatibility mechanisms; they should not remain in the steady-state request path solely to obtain OAuth/subscription usage.
+**Architectural rule:** Codex is the agent runtime. AutoDev owns **GitHub orchestration, capability/policy semantics, Codex-specific invariants, workspace/session attribution, and cross-provider subagent semantics**. Upstream dependencies own **portable provider configuration, standard provider transports where proven, and standard telemetry transport**. Direct OAuth/API-backed Codex model providers are the preferred simplification target, but provider CLIs and bridges remain supported incumbent paths until a candidate replacement has been verified against AutoDev's full contract. CLI removal is an outcome of successful validation, not an assumption of the migration.
 
 ---
 
@@ -123,7 +123,7 @@ Source: [`docs/provider-routing.md`](https://github.com/SimulatorLife/AutoDev/bl
 
 `scripts/codex/config.autodev.toml` already exposes the external routes through Codex's `[model_providers.*]` mechanism. MiniMax is already represented as `[model_providers.minimax]` and uses `MINIMAX_API_KEY`, but its current `base_url` still points at the bespoke local MiniMax Responses proxy. Claude and Antigravity are likewise represented as Codex model providers, but those entries currently point at CLI-backed local bridges
 
-**Conclusion:** the desired migration is not to introduce a second agent runtime. It is to keep Codex as the harness and simplify each `[model_providers.*]` endpoint until it reaches the provider through OAuth or API credentials without invoking that provider's CLI
+**Conclusion:** the preferred simplification is to keep Codex as the harness and test whether each `[model_providers.*]` endpoint can reach the provider through OAuth or API credentials without invoking that provider's CLI. The existing CLI-backed endpoint remains authoritative for that provider unless and until a replacement proves equivalent behavior
 
 ## Telemetry semantics
 
@@ -200,7 +200,7 @@ The previous plan listed provider skill-view rendering and large portions of age
 
 ---
 
-## LiteLLM — **conditional transport/auth layer, not assumed platform owner**
+## LiteLLM — **conditional transport/auth candidate, not assumed platform owner**
 
 Repository: [`BerriAI/litellm`](https://github.com/BerriAI/litellm)
 
@@ -229,25 +229,27 @@ Relevant sources:
 - [`litellm/responses/litellm_completion_transformation/transformation.py`](https://github.com/BerriAI/litellm/blob/main/litellm/responses/litellm_completion_transformation/transformation.py)
 - [`litellm/integrations/otel/`](https://github.com/BerriAI/litellm/tree/main/litellm/integrations/otel)
 
+These capabilities make LiteLLM worth testing, but they do not establish AutoDev parity by themselves. A provider is migrated only after the exact AutoDev boundary contract passes against the candidate transport
+
 ### GitHub Copilot
 
 Current LiteLLM has a native GitHub Copilot OAuth authenticator and a dedicated Responses implementation that normalizes streaming item IDs and preserves Copilot reasoning state across turns
 
-That makes the current AutoDev Copilot CLI/proxy path a strong deletion candidate
+That makes the current AutoDev Copilot CLI/proxy path a strong candidate for simplification
 
 LiteLLM's authenticator currently uses GitHub's `copilot_internal/v2/token` endpoint, and its Responses implementation explicitly says it was based on analysis of the external `copilot-api` project
 
-**Target:** Codex should use a normal `[model_providers.*]` route backed by Copilot OAuth and Responses translation, with no Copilot CLI in the steady-state request path. Keep the incumbent path only until stability, policy, and compatibility are accepted
+**Preferred target, conditional on validation:** expose Copilot through a normal `[model_providers.*]` route backed by Copilot OAuth and Responses translation, without a Copilot CLI in the request path. If stability, policy, authentication, or Responses/tool parity is not acceptable, retain the incumbent Copilot CLI/proxy path
 
 ### Claude Code Max / Anthropic OAuth
 
-The earlier plan was too conservative here. LiteLLM does more than forward a Claude Code client's headers: its Anthropic provider can use `ANTHROPIC_AUTH_TOKEN` as `Authorization: Bearer ...`, recognizes Anthropic OAuth token handling, and adds the required OAuth beta header
+The earlier plan was too conservative in treating Claude Code itself as inherently required. LiteLLM does more than forward a Claude Code client's headers: its Anthropic provider can use `ANTHROPIC_AUTH_TOKEN` as `Authorization: Bearer ...`, recognizes Anthropic OAuth token handling, and adds the required OAuth beta header
 
-More importantly, AutoDev's current Claude bridge explicitly disables Claude Code's `Agent`/`Task` tools and states that the parent Codex process remains responsible for orchestration. The bridge is therefore not required because AutoDev wants Claude Code to be a second agent harness; it is primarily a compatibility path for subscription-backed Claude access plus protocol/tool translation
+More importantly, AutoDev's current Claude bridge explicitly disables Claude Code's `Agent`/`Task` tools and states that the parent Codex process remains responsible for orchestration. The bridge is therefore not required merely because AutoDev needs Claude Code to be a second agent harness; today it also serves subscription authentication, protocol/tool translation, limits, permissions, and telemetry behavior that a replacement must reproduce or make unnecessary
 
-**Target:** retire the Claude Code CLI bridge and configure Claude as a normal Codex model provider using Claude subscription OAuth, with LiteLLM providing Responses↔Anthropic translation/authentication if direct Codex-to-Anthropic transport is insufficient. Codex continues to own roles, tools, MCP, skills, sandboxing, and orchestration
+**Preferred target, conditional on validation:** configure Claude as a normal Codex model provider using Claude subscription OAuth, with LiteLLM providing Responses↔Anthropic translation/authentication if it proves sufficient. Codex continues to own roles, tools, MCP, skills, sandboxing, and orchestration. Retain the Claude Code CLI bridge if the replacement does not fully satisfy the contract
 
-The migration still requires parity tests for Responses streaming, namespace/custom/freeform tools, multi-turn tool continuation, reasoning, rate limits, OAuth refresh/expiry, and model selection before deleting the bridge
+The migration requires parity tests for Responses streaming, namespace/custom/freeform tools, multi-turn tool continuation, reasoning, rate limits, OAuth bootstrap/refresh/expiry, model selection, error fidelity, permissions, and telemetry before deleting the bridge
 
 ### MiniMax
 
@@ -255,15 +257,15 @@ LiteLLM has a MiniMax provider and generic Responses-to-chat transformation code
 
 AutoDev already exposes MiniMax through Codex's native model-provider configuration and authenticates it with `MINIMAX_API_KEY`; the remaining custom part is that the provider entry currently targets `codex-minimax-responses-proxy.mjs` rather than the MiniMax API or a shared gateway directly
 
-**Target:** keep MiniMax API-key usage. Remove the bespoke MiniMax proxy if direct provider support or LiteLLM can preserve the exact Codex Responses/tool contract. MiniMax does not need an OAuth/subscription migration
+**Preferred target, conditional on validation:** keep MiniMax API-key usage and remove the bespoke MiniMax proxy only if direct provider support or LiteLLM can preserve the exact Codex Responses/tool contract. MiniMax does not need an OAuth/subscription migration, and the current proxy remains valid if no simpler path reaches parity
 
 ### Antigravity
 
 The audit found LiteLLM guidance for tracking Antigravity traffic, but no equivalent native Antigravity OAuth provider that has been proven to replace AutoDev's CLI bridge today
 
-That is a current capability gap, not the desired steady state
+That means the replacement path is unproven, not predetermined
 
-**Target:** Antigravity should ultimately be another Codex `[model_providers.*]` entry using its OAuth/subscription credential through a compatible direct or shared protocol adapter, without launching the Antigravity CLI. Keep the CLI bridge only until a supported OAuth transport and equivalent Responses/tool semantics are demonstrated
+**Preferred target, conditional on validation:** expose Antigravity through a normal Codex `[model_providers.*]` entry using OAuth/subscription credentials through a compatible direct or shared protocol adapter, without launching the Antigravity CLI. Retain the current CLI bridge unless a supported OAuth transport and equivalent Responses/tool/permission/telemetry semantics are demonstrated
 
 ### Codex/OpenAI
 
@@ -273,7 +275,7 @@ Codex itself should remain on its native subscription/OAuth path. AutoDev should
 
 LiteLLM supports generic routing primitives, but AutoDev's current provider policy contains additional semantics such as provider groups, role-specific ordering, multiple cooldown kinds, corroborated hard limits, last-resort passes, and bounded waits
 
-**Correction:** initially let AutoDev select the concrete provider/model. Use LiteLLM as the shared protocol/auth transport where it lets Codex address a provider natively without a bespoke provider CLI or proxy
+**Correction:** initially let AutoDev select the concrete provider/model. Test LiteLLM as a shared protocol/auth transport only where it may let Codex address a provider without a bespoke provider CLI or proxy
 
 Move selection policy into LiteLLM only if either:
 
@@ -284,7 +286,7 @@ Move selection policy into LiteLLM only if either:
 
 Do not deploy LiteLLM merely as another hop
 
-A LiteLLM migration is successful only when it deletes meaningful AutoDev-owned CLI/proxy/protocol code or materially simplifies maintenance
+A LiteLLM migration is successful only when it passes the provider's full parity gates and deletes meaningful AutoDev-owned CLI/proxy/protocol code or materially simplifies maintenance. If it fails those gates, keep the incumbent provider path
 
 ---
 
@@ -441,10 +443,11 @@ Its own FAQ points broader project-level rule generation toward tools such as Ru
 | Add `apps/`, `packages/`, `pnpm-workspace.yaml` immediately | Unjustified churn | Keep one package until multiple independently packageable JS components exist |
 | Rulesync likely removes role renderers early | Overstated | Use Rulesync for portable config first; retain AutoDev role/execution semantics |
 | Rulesync likely removes Claude role skill views immediately | Unproven | Retain until per-role skill filtering parity is demonstrated |
-| LiteLLM pilot starts with a generic API provider | Too vague | Prioritize provider paths that delete real CLI/proxy layers: Claude, Copilot, MiniMax, then Antigravity as direct OAuth support becomes provable |
-| Copilot likely remains a CLI adapter | Outdated | LiteLLM has direct OAuth + Responses support; target no Copilot CLI |
-| Claude Code must remain because it is the agent runtime | Incorrect | Current bridge disables Claude `Agent`/`Task`; Codex remains the harness, so direct Claude OAuth is the preferred target |
-| Antigravity CLI is a permanent provider boundary | Wrong target | Keep it only until a direct OAuth model-provider transport is available and proven |
+| LiteLLM pilot starts with a generic API provider | Too vague | Prioritize provider paths that could delete real CLI/proxy layers, but only after provider-specific parity testing |
+| Copilot likely remains a CLI adapter | Outdated capability assumption | LiteLLM has direct OAuth + Responses support; test it, but retain the CLI/proxy unless parity passes |
+| Claude Code must remain because it is the agent runtime | Incorrect rationale | Current bridge disables Claude `Agent`/`Task`; Codex remains the harness, so direct Claude OAuth is worth testing, not presumed sufficient |
+| Antigravity CLI is a permanent provider boundary | Too deterministic | Test for an OAuth-native model-provider replacement; retain the CLI if no candidate reaches parity |
+| Provider CLIs are migration-only compatibility mechanisms | Too strong | They are incumbent supported paths and become removable only after a replacement is proven |
 | MiniMax needs a subscription-style migration | Incorrect | Keep API-key usage; only remove the bespoke Responses proxy if upstream parity permits |
 | Generic routing moves to LiteLLM after pilot | Too deterministic | Keep AutoDev selection policy unless exact parity or deliberate simplification is approved |
 | OTel Collector can replace OTLP + “storage routing” | Partly wrong | Collector replaces receive/process/export plumbing, not storage or stateful semantic enrichment |
@@ -492,15 +495,15 @@ AutoDev/
 │   │   └── execution-contract.json# Generated AutoDev semantic projection
 │   ├── otel/
 │   │   └── collector.yaml
-│   └── litellm/                   # Shared transport/auth config after provider pilots pass
+│   └── litellm/                   # Shared transport/auth config only after provider pilots pass
 │       └── config.yaml
 ├── runtime/
 │   ├── edge/                      # Shrinking Codex/AutoDev compatibility edge
-│   ├── providers/                 # Temporary provider-specific compatibility only
-│   │   ├── claude/                # Delete after OAuth-native provider parity
-│   │   ├── antigravity/           # Delete after OAuth-native provider parity
-│   │   ├── copilot/               # Delete after OAuth-native provider parity
-│   │   └── minimax/               # Delete if shared/direct API transport reaches parity
+│   ├── providers/                 # Incumbent provider-specific paths, removed only after proven replacement
+│   │   ├── claude/                # Candidate for deletion after OAuth-native parity
+│   │   ├── antigravity/           # Candidate for deletion after OAuth-native parity
+│   │   ├── copilot/               # Candidate for deletion after OAuth-native parity
+│   │   └── minimax/               # Candidate for deletion if shared/direct API transport reaches parity
 │   └── telemetry/                 # Stateful AutoDev semantic enrichment/status
 ├── scripts/
 │   ├── install/                   # Bootstrap, install/check, service lifecycle
@@ -527,13 +530,11 @@ AutoDev/
 
 ---
 
-# 5. Correct target runtime architecture
+# 5. Preferred provider target architecture — conditional on parity
 
-## Provider target state
+A **native Codex model provider** here means a normal Codex `[model_providers.*]` entry. Its endpoint may be the provider directly or a shared LiteLLM compatibility endpoint when protocol translation is required. Avoiding a provider CLI in the request path is the preferred simplification, not a precondition or predetermined end state
 
-A **native Codex model provider** here means a normal Codex `[model_providers.*]` entry. Its endpoint may be the provider directly or a shared LiteLLM compatibility endpoint when protocol translation is required, but steady-state model execution must not depend on spawning the provider's CLI
-
-Codex remains the sole agent harness and therefore owns tools, MCP, skills, sandboxing, orchestration, and child-agent behavior
+Codex remains the sole intended agent harness and therefore owns tools, MCP, skills, sandboxing, orchestration, and child-agent behavior
 
 ```text
 Codex CLI / Desktop
@@ -549,28 +550,43 @@ AutoDev edge
         |
         +--> Codex/OpenAI model provider ---- OAuth/subscription ----> OpenAI/Codex backend
         |
-        +--> Claude model provider ---------- OAuth ---------------> LiteLLM/Anthropic -> Claude
+        +--> Claude model provider ---------- OAuth ---------------> direct or LiteLLM/Anthropic -> Claude
         |
-        +--> Copilot model provider --------- OAuth ---------------> LiteLLM/Copilot -> GitHub Copilot
+        +--> Copilot model provider --------- OAuth ---------------> direct or LiteLLM/Copilot -> GitHub Copilot
         |
         +--> Antigravity model provider ----- OAuth ---------------> compatible direct/shared adapter -> Antigravity
         |
         +--> MiniMax model provider --------- API key -------------> direct/shared adapter -> MiniMax API
 ```
 
-The preferred endpoint is the provider itself when Codex and the provider share a compatible wire protocol. LiteLLM is justified where it supplies the protocol/auth translation needed to keep the provider exposed as a normal Codex model provider
+Each non-incumbent path in this diagram is a **candidate target** until it passes the provider migration gate below. The current Claude, Antigravity, Copilot, and MiniMax bridges/proxies remain valid supported paths during evaluation and remain in place indefinitely if no simpler implementation proves equivalent
 
-Provider CLIs such as `claude`, `agy`, or a Copilot CLI are temporary migration fallbacks, not part of the target architecture
+### Provider migration gate
 
-### Authentication target
+A provider CLI/bridge/proxy may be retired only after its candidate replacement proves all applicable requirements against the frozen incumbent contract:
 
-| Provider | Target authentication | Target execution path |
-|---|---|---|
-| Codex/OpenAI | OAuth/subscription | Native Codex provider |
-| Claude | OAuth/subscription | Codex model provider → direct or LiteLLM Anthropic transport |
-| Antigravity | OAuth/subscription | Codex model provider → compatible direct/shared transport |
-| GitHub Copilot | OAuth/subscription | Codex model provider → LiteLLM Copilot transport |
-| MiniMax | API key | Existing Codex model provider → direct/shared API transport |
+- Authentication bootstrap, refresh/expiry, secure storage, and subscription/API billing semantics
+- Responses request and SSE streaming fidelity
+- Function, namespace, MCP, custom, and freeform tool behavior
+- Tool-call → tool-result → continuation behavior and item-ID fidelity
+- Reasoning effort, model selection, context limits, and provider-specific parameters
+- Provider-limit classification, reset timing, retry behavior, cancellation, and long-running turns
+- Role/capability, read-only, permission, workspace, and orchestration invariants
+- Usage, tool, skill, MCP, workspace, spawn, and provider telemetry semantics
+- Operational stability, supported upstream behavior, upgrade risk, and acceptable policy/API dependencies
+- Equal-or-lower maintenance complexity with a clear rollback path
+
+Failure of any required gate means **retain the incumbent provider path** unless AutoDev explicitly accepts a documented behavior change
+
+### Preferred authentication shape
+
+| Provider | Preferred authentication | Candidate execution path if parity passes | Incumbent fallback |
+|---|---|---|---|
+| Codex/OpenAI | OAuth/subscription | Native Codex provider | Existing native path |
+| Claude | OAuth/subscription | Codex model provider → direct or LiteLLM Anthropic transport | Claude Code bridge |
+| Antigravity | OAuth/subscription | Codex model provider → compatible direct/shared transport | Antigravity CLI bridge |
+| GitHub Copilot | OAuth/subscription | Codex model provider → direct or LiteLLM Copilot transport | Copilot CLI/proxy |
+| MiniMax | API key | Existing Codex model provider → direct/shared API transport | MiniMax Responses proxy |
 
 ## Optional later routing simplification
 
@@ -586,7 +602,7 @@ LiteLLM routing
 native provider endpoints
 ```
 
-This is an option, not a required end state. Native provider setup and removal of provider CLIs do **not** require LiteLLM to own AutoDev's provider-selection policy
+This is an option, not a required end state. Native/provider-direct setup and removal of a provider CLI do **not** require LiteLLM to own AutoDev's provider-selection policy
 
 ## Telemetry path
 
@@ -802,10 +818,7 @@ not), not a static file Rulesync could diff against; and Antigravity's current C
 are appended idempotently to a machine-local settings file
 (`$HOME/.gemini/antigravity-cli/settings.json`) keyed off install-time
 environment (`AUTODEV_AGY_READ_ROOTS`), not a repository-tracked artifact.
-These bridge/CLI-specific permission layers are migration constraints, not
-steady-state requirements: if Claude and Antigravity become normal Codex model
-providers, Codex's own role/tool/MCP permission boundary becomes authoritative
-and the provider-CLI permission machinery should disappear with the CLI bridges.
+These bridge/CLI-specific permission layers become removable only if a validated replacement moves the corresponding enforcement cleanly into Codex or another accepted boundary. Until then they remain part of the incumbent provider contract
 
 CI drift protection is enforced by `.github/workflows/rulesync-mcp-shadow-drift.yml`, a
 read-only workflow triggered on `push` to `main`, `pull_request`, and `workflow_dispatch`
@@ -872,7 +885,7 @@ Pin an exact tested Rulesync version rather than tracking `latest`
 - Role-specific MCP/skill capability decisions
 - Prompt composition
 - MCP runtime launcher
-- Temporary provider bridge behavior
+- Provider bridge behavior that remains necessary after validation
 
 ### Exit gate
 
@@ -931,7 +944,7 @@ Codex -> Collector -> existing AutoDev OTLP aggregator
 ### Then
 
 - Point LiteLLM telemetry at Collector during provider pilots
-- Point remaining temporary compatibility paths at Collector
+- Point remaining provider bridges/adapters at Collector
 - Move generic batching/filtering/retry/export behavior out of AutoDev
 - Define AutoDev semantic attributes under an `autodev.*` namespace
 
@@ -949,7 +962,7 @@ Suggested attributes:
 
 - SQLite/workspace enrichment
 - Rollout/skill attribution
-- Compatibility-path spawn accounting
+- Incumbent bridge-native spawn accounting
 - Existing status/dashboard aggregation
 
 ### Exit gate
@@ -958,13 +971,13 @@ Existing AutoDev metrics remain identical in meaning and do not double-count aft
 
 ---
 
-## Phase 4 — Replace subscription CLI paths with OAuth-native Codex model providers
+## Phase 4 — Evaluate OAuth-native Codex model providers against incumbent subscription CLI paths
 
-The provider target is one Codex harness with normal `[model_providers.*]` entries, not nested provider CLIs. Migrate each OAuth-backed provider independently and keep its incumbent bridge only as rollback until parity is demonstrated
+The preferred simplification is one Codex harness with normal `[model_providers.*]` entries, but this phase is explicitly an evaluation. Migrate each OAuth-backed provider independently only after the provider migration gate passes. Until then, its current CLI/bridge remains the supported path and rollback baseline
 
 ### Claude OAuth pilot
 
-This should be a high-priority pilot because the current Claude bridge is large and Claude Code's own `Agent`/`Task` orchestration is already disabled by that bridge
+This is a high-value pilot because the current Claude bridge is large and Claude Code's own `Agent`/`Task` orchestration is already disabled by that bridge
 
 Compare direct/shared Claude OAuth transport against the incumbent bridge for:
 
@@ -975,11 +988,11 @@ Compare direct/shared Claude OAuth transport against the incumbent bridge for:
 - Reasoning effort/model selection
 - Provider rate-limit/reset semantics
 - Cancellation and long-running turns
-- Usage and telemetry attribution
+- Role, permission, workspace, usage, and telemetry attribution
 
 ### Claude exit gate
 
-Delete `codex-claude-cli-responses-proxy.py` and its launch/ensure lifecycle only when a Codex model-provider route using subscription OAuth is behaviorally equivalent. Codex must remain responsible for role instructions, tools, MCP, skills, sandboxing, and orchestration
+Delete `codex-claude-cli-responses-proxy.py` and its launch/ensure lifecycle only when a Codex model-provider route using subscription OAuth is behaviorally equivalent across the full provider migration gate. Otherwise retain the existing bridge
 
 ### GitHub Copilot OAuth pilot
 
@@ -1013,29 +1026,30 @@ LiteLLM currently uses GitHub's internal Copilot token endpoint, so validate ope
 
 ### Copilot exit gate
 
-Delete the AutoDev Copilot CLI/proxy path only if the OAuth-backed Codex model provider is at least behaviorally equivalent and removes more complexity than it introduces
+Delete the AutoDev Copilot CLI/proxy path only if the OAuth-backed Codex model provider passes the full provider migration gate and removes more complexity than it introduces. Otherwise retain the incumbent path
 
 ### Antigravity OAuth pilot
 
-The target is the same even though a replacement transport is not yet proven: Codex should address Antigravity through a normal model-provider entry using OAuth/subscription credentials, not by launching `agy`
+The preferred target is the same, but the replacement transport is not yet proven. Test whether Codex can address Antigravity through a normal model-provider entry using OAuth/subscription credentials without launching `agy`
 
 Use the existing Antigravity boundary fixture from Phase 0 as the incumbent contract. Before deleting the bridge, prove:
 
 - Supported OAuth token acquisition/refresh without the Antigravity CLI in the request path
 - Compatible Responses streaming and continuation
 - Codex tool/namespace/custom/freeform behavior
-- Role/tool/MCP enforcement remains Codex-owned
+- Role/tool/MCP enforcement remains correct
 - Provider-limit/error mapping and telemetry parity
+- Operational supportability and upgrade stability
 
 ### Antigravity exit gate
 
-Delete the Antigravity CLI bridge only after a supported direct/shared OAuth transport reaches parity. Until then the bridge is a temporary compatibility exception, not the architectural target
+Delete the Antigravity CLI bridge only after a supported direct/shared OAuth transport passes the full provider migration gate. If no candidate does, retain the bridge as the supported implementation
 
 ---
 
-## Phase 5 — Simplify the MiniMax API-backed Codex model provider
+## Phase 5 — Evaluate simplification of the MiniMax API-backed Codex model provider
 
-MiniMax remains API-key-backed. The goal is to remove bespoke protocol translation, not to change its authentication model
+MiniMax remains API-key-backed. The goal is to test whether bespoke protocol translation can be removed, not to change its authentication model
 
 ### Status
 
@@ -1073,13 +1087,13 @@ Current configuration already exposes MiniMax as `[model_providers.minimax]` wit
 
 ### Exit gate
 
-Point the existing MiniMax Codex model-provider entry at a direct/shared API transport and retire `codex-minimax-responses-proxy.mjs` only after all required Codex tool patterns pass
+Point the existing MiniMax Codex model-provider entry at a direct/shared API transport and retire `codex-minimax-responses-proxy.mjs` only after all required Codex tool patterns and the applicable provider migration gates pass. Otherwise retain the current proxy
 
 ---
 
 ## Phase 6 — Shrink the AutoDev router around retained semantics
 
-After provider transport migrations, separate router responsibilities into:
+After successful provider transport migrations, separate router responsibilities into:
 
 ### Keep
 
@@ -1090,10 +1104,11 @@ After provider transport migrations, separate router responsibilities into:
 - Workspace/session continuity
 - Required Responses compatibility repairs
 - AutoDev semantic telemetry
+- Any provider-specific behavior for which no validated dependency replacement exists
 
-### Delete where upstream now owns it
+### Delete only where upstream demonstrably owns it
 
-- Provider CLI invocation and lifecycle for migrated OAuth providers
+- Provider CLI invocation and lifecycle for providers whose replacements pass parity
 - Migrated provider HTTP/OAuth transport
 - Duplicated generic response normalization
 - Duplicated generic retry/health code
@@ -1101,7 +1116,7 @@ After provider transport migrations, separate router responsibilities into:
 
 ### Exit gate
 
-Router code size and responsibility are materially reduced while all Phase 0 contracts still pass
+Router code size and responsibility are materially reduced while all Phase 0 contracts still pass. No reduction target justifies deleting a provider path that has not been fully replaced
 
 ---
 
@@ -1140,7 +1155,7 @@ Keep AutoDev selection policy. This is acceptable if it remains small and domain
 Once Collector is stable:
 
 - Make the AutoDev telemetry component consume standard OTel-derived events instead of acting as a generic OTLP server
-- Convert compatibility-path child events to normal OTel logs/spans where practical
+- Convert bridge/adapter child events to normal OTel logs/spans where practical
 - Keep stateful local joins in the AutoDev enricher
 - Select a local telemetry backend separately if generic querying/history is needed
 - Remove generic dashboard panels already better served by LiteLLM or the selected telemetry backend
@@ -1171,7 +1186,7 @@ Only now test whether Rulesync can replace more AutoDev role rendering
 - Per-role MCP exposure
 - Per-role skill exposure
 - Root orchestrator versus leaf distinctions
-- Provider-neutral discovery after Claude/Antigravity CLI removal
+- Provider-neutral discovery where CLI-backed providers were successfully migrated
 
 ### Outcome
 
@@ -1182,8 +1197,8 @@ Only now test whether Rulesync can replace more AutoDev role rendering
 
 ## Phase 10 — Final cleanup
 
-- Remove launch agents and ensure scripts for retired provider CLI/proxy services
-- Keep only the bootstrap/service lifecycle still required by Collector, LiteLLM, any remaining compatibility adapter, MCP runtime, and AutoDev edge
+- Remove launch agents and ensure scripts only for provider CLI/proxy services that have actually been retired
+- Keep bootstrap/service lifecycle for Collector, LiteLLM, retained bridges/adapters, MCP runtime, and AutoDev edge as needed
 - Remove unreachable compatibility shims
 - Update docs and diagrams
 - Keep rollback fixtures as regression tests
@@ -1193,22 +1208,23 @@ Only now test whether Rulesync can replace more AutoDev role rendering
 # 7. Requirements
 
 - Local-first operation with no mandatory hosted control plane
-- Codex is the sole steady-state agent runtime
-- Codex/OpenAI, Claude, Antigravity, and Copilot should use OAuth/subscription credentials through normal Codex model-provider entries wherever supported
-- Provider CLIs must not remain in the steady-state request path solely to obtain subscription authentication
+- Codex is the intended sole agent runtime
+- Prefer OAuth/subscription-backed normal Codex model-provider entries for Codex/OpenAI, Claude, Antigravity, and Copilot only where the replacement is supported and passes the provider migration gate
+- Retain the incumbent provider CLI/bridge whenever a candidate dependency or direct transport does not fully cover AutoDev's use cases
 - MiniMax remains API-key-backed through its Codex model-provider entry
-- Prefer direct provider endpoints when wire-compatible; use LiteLLM/shared adapters only where protocol/auth translation is required
+- Prefer direct provider endpoints when wire-compatible; use LiteLLM/shared adapters only where protocol/auth translation is required and proven
 - Preserve role/capability behavior and read-only isolation
 - Preserve root-orchestrator and child-agent semantics
 - Preserve Codex Responses streaming/tool/item/session behavior
 - Preserve existing provider-selection policy by default
 - Preserve fail-closed telemetry attribution where `unavailable` is not `0`
-- Never double-count native and compatibility-path telemetry
+- Never double-count native and bridge/adapter telemetry
 - Keep machine-local state user-owned
 - Keep generated configuration deterministic and testable
 - Pin upstream dependencies to tested versions
 - Require rollback per subsystem
 - Require net deletion/simplification before adding a permanent infrastructure layer
+- Never delete a working provider path merely because a candidate dependency advertises the relevant feature; prove the actual AutoDev contract first
 
 ---
 
@@ -1217,14 +1233,15 @@ Only now test whether Rulesync can replace more AutoDev role rendering
 ## Rulesync
 
 - Exact fit for AutoDev's per-role MCP/skill capability model
-- Which provider-specific discovery/view generation remains necessary after Claude and Antigravity stop using their CLIs
+- Which provider-specific discovery/view generation remains necessary after any successful Claude/Antigravity provider migration
 - Which current user-level Codex settings should remain outside Rulesync permanently
 
 ## Provider authentication and LiteLLM
 
+- Whether Claude OAuth through LiteLLM or a direct transport matches the current bridge's full Responses/tool/limit/telemetry contract
 - Claude OAuth token acquisition/refresh/expiry behavior when used without the Claude Code CLI
-- GitHub Copilot internal-API stability and policy acceptability
-- The supported direct OAuth transport for Antigravity and whether LiteLLM or another shared adapter can provide it without invoking `agy`
+- Whether GitHub Copilot's LiteLLM path is stable and policy-acceptable enough to replace the incumbent CLI/proxy
+- Whether a supported direct OAuth transport for Antigravity exists and whether LiteLLM or another shared adapter can provide it without invoking `agy`
 - Exact MiniMax-M3 namespace/custom/freeform-tool parity through a direct/shared API transport
 - Whether AutoDev routing semantics can be represented without custom callbacks
 - Whether native Codex/OpenAI OAuth/provider behavior remains fully compatible with the AutoDev routing edge
@@ -1232,24 +1249,24 @@ Only now test whether Rulesync can replace more AutoDev role rendering
 ## Telemetry
 
 - Which local backend, if any, should store/query generic OTel data
-- Whether compatibility-path `/v1/agent-events` can be fully replaced with normal OTel events as CLI bridges disappear
+- Whether incumbent `/v1/agent-events` semantics can be fully replaced with normal OTel events for each provider that successfully migrates away from its bridge
 - Which current dashboard panels remain valuable after generic observability moves upstream
 
 ---
 
 # 9. Expected deletion outcome
 
-## Strong deletion targets
+## Conditional deletion targets
 
-- Repeated cross-provider rules/MCP/hooks/permissions translation
-- Generic OTLP HTTP receive/process/export plumbing
-- Claude Code CLI Responses bridge after OAuth-native provider parity
-- Antigravity CLI Responses bridge after OAuth-native provider parity
-- Copilot CLI/Responses proxy after OAuth-native provider parity
-- MiniMax Responses proxy after direct/shared API parity
-- Provider-specific launch/ensure lifecycle for retired CLI bridges
-- Generic provider metrics already emitted by LiteLLM/OTel
-- Generic provider transport/retry/health code that becomes redundant
+- Repeated cross-provider rules/MCP/hooks/permissions translation where Rulesync reaches parity
+- Generic OTLP HTTP receive/process/export plumbing where Collector reaches parity
+- Claude Code CLI Responses bridge only after OAuth-native provider parity
+- Antigravity CLI Responses bridge only after OAuth-native provider parity
+- Copilot CLI/Responses proxy only after OAuth-native provider parity
+- MiniMax Responses proxy only after direct/shared API parity
+- Provider-specific launch/ensure lifecycle only for retired CLI bridges
+- Generic provider metrics already emitted equivalently by LiteLLM/OTel
+- Generic provider transport/retry/health code that becomes redundant after a validated replacement
 
 ## Likely justified AutoDev code after migration
 
@@ -1262,6 +1279,6 @@ Only now test whether Rulesync can replace more AutoDev role rendering
 - Provider-selection policy if LiteLLM cannot model it cleanly
 - Stateful telemetry enricher
 - AutoDev-specific dashboard/status views
-- Only narrowly scoped provider adapters for capabilities that genuinely cannot yet be expressed as normal Codex model providers
+- Provider CLI bridges or narrow adapters for any provider whose candidate replacement does not satisfy the full contract
 
-The success criterion is therefore **not “delete the router at all costs.”** It is to leave AutoDev with only the code that encodes SimulatorLife/AutoDev-specific semantics, make Codex the sole agent runtime, expose providers through normal Codex model-provider entries, and remove provider CLIs and bespoke transport infrastructure wherever supported OAuth/API transports demonstrably replace them
+The success criterion is therefore **not “delete the router or provider CLIs at all costs.”** It is to leave AutoDev with only the code that is still justified by SimulatorLife/AutoDev-specific semantics or by gaps in available dependencies, while preferring normal Codex model-provider entries and standard OAuth/API transports wherever they have been proven to replace the incumbent implementation safely
