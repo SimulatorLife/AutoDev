@@ -1,0 +1,286 @@
+{
+  "schema": "autodev-responses-item-ids-contract-v1",
+  "description": "Deterministic boundary for the Responses item-id continuator exercised by `normalizeItemId`, `normalizeInputItemIds`, and `dropUnresolvableReasoning` in scripts/codex/lib/responses-item-ids.mjs. The fixture pins every observable shape the router produces today: the prefix map a self-contained item's id must carry, the hash-based rewrite of a non-conforming id (sha256 truncated to 32 hex chars under the type's prefix), every branch that must stay null (already-conforming, absent, empty, non-self-contained `reasoning`, unrecognised types, and the `ctco_` cross-prefix collision that must not be mistaken for a well-formed `ctc_`), the `call_id` invariance and array-return-preserving behaviour of `normalizeInputItemIds` (non-array pass-through including the `undefined` host primitive, identity-preserving all-valid, deterministic hash expectations, idempotence on a repaired input, foreign-field survival), the poisoned-rollout repair (`tests/fixtures/poisoned-rollout-items.json` -- exact item count, exact non-conforming count, deterministic repair of every flagged position, and `call_id` pairing across the 13-call/13-output middle of the fixture), and the `dropUnresolvableReasoning` branches (drop when `encrypted_content` is missing, empty, or wrong type; preserve when populated or absent on non-reasoning; non-array pass-through including the `undefined` host primitive). Updating the fixture is itself the documented, intentional signal that item-id continuator behavior, the prefix map, the SHA-256 truncation length, or `dropUnresolvableReasoning` policy is meant to change.",
+  "prefixes": {
+    "message": "msg_",
+    "reasoning": "rs_",
+    "function_call": "fc_",
+    "custom_tool_call": "ctc_",
+    "function_call_output": "fco_",
+    "custom_tool_call_output": "ctco_"
+  },
+  "normalizeItemId": {
+    "minimax_minted_custom_tool_call_rewrites_with_type_prefix": {
+      "input": { "type": "custom_tool_call", "id": "06ef3bc08924acade1facee14da0af2e_fc_0" },
+      "expected": "ctc_2c932525c8021a5e490c47fdb85fb658"
+    },
+    "minimax_minted_function_call_rewrites_with_type_prefix": {
+      "input": { "type": "function_call", "id": "06a9c3a9e1f7e0da8b8f2979b8775435_fc_1" },
+      "expected": "fc_739e1096bb4cfb5fc916c40f1eb25b56"
+    },
+    "reasoning_item_is_not_self_contained_so_id_is_left_alone": {
+      "input": { "type": "reasoning", "id": "06eea1506b9c37f6f3f4bb02f90abd28_rs" },
+      "expected": null
+    },
+    "already_conforming_id_returns_null_for_every_prefix": {
+      "input": [
+        { "type": "message", "id": "msg_abc123" },
+        { "type": "reasoning", "id": "rs_abc123" },
+        { "type": "function_call", "id": "fc_abc123" },
+        { "type": "custom_tool_call", "id": "ctc_abc123" },
+        { "type": "function_call_output", "id": "fco_abc123" },
+        { "type": "custom_tool_call_output", "id": "ctco_abc123" }
+      ],
+      "expected": [null, null, null, null, null, null]
+    },
+    "ctco_id_is_conforming_for_tool_output_but_not_for_tool_call": {
+      "input": [
+        { "type": "custom_tool_call_output", "id": "ctco_abc" },
+        { "type": "custom_tool_call", "id": "ctco_abc" }
+      ],
+      "expected": [null, "ctc_ee81907d2623edf4cdcf676e91ddf3d5"]
+    },
+    "absent_id_returns_null": {
+      "input": { "type": "custom_tool_call_output", "id": null },
+      "expected": null
+    },
+    "empty_string_id_returns_null": {
+      "input": { "type": "custom_tool_call", "id": "" },
+      "expected": null
+    },
+    "undefined_id_returns_null": {
+      "input": { "type": "custom_tool_call_output" },
+      "expected": null
+    },
+    "unrecognised_item_type_passes_through": {
+      "input": [
+        { "type": "web_search_call", "id": "ws_abc" },
+        { "type": "some_future_item", "id": "whatever" }
+      ],
+      "expected": [null, null]
+    },
+    "distinct_originals_never_collapse_onto_one_id": {
+      "input": [
+        { "type": "custom_tool_call", "id": "06ef3bc08924acade1facee14da0af2e_fc_0" },
+        { "type": "custom_tool_call", "id": "06ef3bc08924acade1facee14da0af2e_fc_1" }
+      ],
+      "expected": [
+        "ctc_2c932525c8021a5e490c47fdb85fb658",
+        "ctc_cd17f0182d37ed46bfa5168b9aa4fe65"
+      ],
+      "note": "Same first 30 hex chars differ only in their final segment; the rewrite must keep them distinct."
+    }
+  },
+  "normalizeInputItemIds": {
+    "all_valid_input_returns_same_array_with_zero_changes": {
+      "input": [{ "type": "message", "id": "msg_1", "role": "user" }],
+      "expected": {
+        "changed": 0,
+        "referenceIdentity": true,
+        "ids": ["msg_1"]
+      }
+    },
+    "non_array_inputs_are_passed_through_untouched": {
+      "input": [null, "text", 7, {}],
+      "expected": [
+        { "input": null, "changed": 0 },
+        { "input": "text", "changed": 0 },
+        { "input": 7, "changed": 0 },
+        { "input": {}, "changed": 0 }
+      ],
+      "note": "JSON cannot represent `undefined`; the test runs an extra case for the `undefined` host primitive against the same expected shape."
+    },
+    "mixed_input_rewrites_only_non_conforming_items": {
+      "input": [
+        { "type": "message", "id": "msg_1", "role": "user" },
+        { "type": "custom_tool_call", "id": "06ef3bc08924acade1facee14da0af2e_fc_0", "call_id": "call_1", "name": "exec" },
+        { "type": "custom_tool_call_output", "call_id": "call_1", "output": "x" },
+        { "type": "reasoning", "id": "06eea1506b9c37f6f3f4bb02f90abd28_rs" }
+      ],
+      "expected": {
+        "changed": 1,
+        "ids": [
+          "msg_1",
+          "ctc_2c932525c8021a5e490c47fdb85fb658",
+          null,
+          "06eea1506b9c37f6f3f4bb02f90abd28_rs"
+        ],
+        "callIds": [
+          null,
+          "call_1",
+          "call_1",
+          null
+        ]
+      }
+    },
+    "deterministic_hash_collapses_replayed_id_to_same_value": {
+      "input": { "type": "custom_tool_call", "id": "06ef3bc08924acade1facee14da0af2e_fc_0" },
+      "expected": {
+        "firstCall": "ctc_2c932525c8021a5e490c47fdb85fb658",
+        "secondCall": "ctc_2c932525c8021a5e490c47fdb85fb658",
+        "equal": true
+      },
+      "note": "Two invocations with the same inputs must produce the same rewrite so a replayed turn hashes the same way."
+    },
+    "call_id_is_preserved_across_the_rewrite": {
+      "input": [
+        {
+          "type": "custom_tool_call",
+          "id": "06ef_fc_0",
+          "call_id": "call_8ec20ad454e0460d9d4b6662",
+          "name": "exec"
+        },
+        {
+          "type": "custom_tool_call_output",
+          "id": "ctco_1",
+          "call_id": "call_8ec20ad454e0460d9d4b6662",
+          "output": "ok"
+        }
+      ],
+      "expected": {
+        "changed": 1,
+        "firstItemNewIdPrefix": "ctc_",
+        "callIds": [
+          "call_8ec20ad454e0460d9d4b6662",
+          "call_8ec20ad454e0460d9d4b6662"
+        ],
+        "callIdsMatchAcrossPair": true
+      }
+    },
+    "unrepaired_input_is_idempotent_on_second_pass": {
+      "input": {
+        "item": { "type": "custom_tool_call", "id": "06ef3bc08924acade1facee14da0af2e_fc_0", "call_id": "call_1", "name": "exec" }
+      },
+      "expected": {
+        "onceChanged": 1,
+        "twiceChanged": 0,
+        "twiceReturnsOnceReference": true,
+        "firstId": "ctc_2c932525c8021a5e490c47fdb85fb658"
+      },
+      "note": "After repair the second pass must return the same array reference with `changed: 0`."
+    },
+    "other_fields_on_a_repaired_item_survive_the_rewrite": {
+      "input": {
+        "item": {
+          "type": "custom_tool_call",
+          "id": "06ef_fc_0",
+          "call_id": "call_1",
+          "name": "exec",
+          "input": "await tools.exec_command({})",
+          "status": "completed"
+        }
+      },
+      "expected": {
+        "changed": 1,
+        "retainedFields": ["call_id", "name", "input", "status"],
+        "originalIdBeforeRewrite": "06ef_fc_0",
+        "rewrittenIdPrefix": "ctc_"
+      }
+    },
+    "poisoned_rollout_fixture_repairs_every_non_conforming_item": {
+      "fixture": "../poisoned-rollout-items.json",
+      "expected": {
+        "itemCount": 38,
+        "nonConformingBeforeRepair": 9,
+        "changed": 9,
+        "nonConformingAfterRepair": 0,
+        "index18Type": "custom_tool_call",
+        "index18NewId": "ctc_e60e73b91d8baea7b1f1d138d2967e27",
+        "upstreamErrorParam": "input[18].id",
+        "upstreamErrorNamedNonConforming": true,
+        "toolCallCount": 13,
+        "toolOutputCount": 13,
+        "callIdsPreservedExactly": true,
+        "reasoningCount": 4,
+        "customToolCallIdsAfterRepair": [
+          "ctc_0252e954049dbf1c016aa00852854887d1adbeb08aad5e9992",
+          "ctc_0252e954049dbf1c016aa008572e0087d1804073be236a8d60",
+          "ctc_0252e954049dbf1c016aa008674bec87d19e3d9b1a767621d7",
+          "ctc_0252e954049dbf1c016aa00879239887d1a34d5a1bec6f1790",
+          "ctc_2c932525c8021a5e490c47fdb85fb658",
+          "ctc_e60e73b91d8baea7b1f1d138d2967e27",
+          "ctc_904434c5087bb3da4f2176f0d52f5007",
+          "ctc_5b369cfa876ae15b0c858de8a10685b7",
+          "ctc_2c547d71cb1918e2a75ddc5606051fe0",
+          "ctc_c0857676a35910663a663f6e215c046a",
+          "ctc_8af7a29b1d846e467fe7bc864d5e56a9",
+          "ctc_5fe23a281092a279618c06aa4eb0790b",
+          "ctc_0c2217a665f94f4725ca0db183c4ea7e"
+        ],
+        "expectedCallIds": [
+          "call_lPRP1ldytrmL0AfnqiBtKccN",
+          "call_B3u5fMXvgTlUwtLcOTcJVScy",
+          "call_gZmSljcWPczIKQO3o6QTJR1e",
+          "call_kDCfiC7qxuTyvwafVROPzOg0",
+          "call_8ec20ad454e0460d9d4b6662",
+          "call_50aa7b6865b74e1a9364482e",
+          "call_44bb24af9c6c42b2bfaced5b",
+          "call_bde9f188952c4e5f833d77da",
+          "call_d710455e75e04729bd2039cf",
+          "call_c17fbd93416d4882b77edd30",
+          "call_a3c88036100641bfb955fd8d",
+          "call_a1b9f121e7a54efaa8bd8f30",
+          "call_a76ec866d00f46289622cdbb"
+        ]
+      }
+    }
+  },
+  "dropUnresolvableReasoning": {
+    "drops_reasoning_items_lacking_encrypted_content": {
+      "input": [
+        { "type": "message", "id": "msg_1", "role": "user" },
+        { "type": "reasoning", "id": "06eea1506b9c37f6f3f4bb02f90abd28_rs" },
+        { "type": "reasoning", "id": "rs_bridge1234567890123456" },
+        { "type": "reasoning", "id": "rs_empty", "encrypted_content": "" },
+        {
+          "type": "reasoning",
+          "id": "rs_0252e954049dbf1c016aa00850d46087d1853ed6aa5cb47915",
+          "encrypted_content": "enc_valid"
+        },
+        { "type": "custom_tool_call", "id": "ctc_1", "call_id": "call_1", "name": "exec" }
+      ],
+      "expected": {
+        "dropped": 3,
+        "length": 3,
+        "ids": [
+          "msg_1",
+          "rs_0252e954049dbf1c016aa00850d46087d1853ed6aa5cb47915",
+          "ctc_1"
+        ]
+      }
+    },
+    "preserves_inputs_with_only_valid_encrypted_reasoning_or_no_reasoning": {
+      "input": [
+        { "type": "message", "id": "msg_1" },
+        { "type": "reasoning", "id": "rs_1", "encrypted_content": "valid" }
+      ],
+      "expected": {
+        "dropped": 0,
+        "referenceIdentity": true,
+        "ids": ["msg_1", "rs_1"]
+      }
+    },
+    "non_array_inputs_are_passed_through_untouched": {
+      "input": [null, "text", 7, {}],
+      "expected": [
+        { "input": null, "dropped": 0 },
+        { "input": "text", "dropped": 0 },
+        { "input": 7, "dropped": 0 },
+        { "input": {}, "dropped": 0 }
+      ],
+      "note": "JSON cannot represent `undefined`; the test runs an extra case for the `undefined` host primitive against the same expected shape."
+    },
+    "non_string_encrypted_content_also_drops_the_reasoning_item": {
+      "input": [
+        { "type": "reasoning", "id": "rs_wrong_type", "encrypted_content": 42 },
+        { "type": "reasoning", "id": "rs_missing_key" },
+        { "type": "message", "id": "msg_1" }
+      ],
+      "expected": {
+        "dropped": 2,
+        "length": 1,
+        "ids": ["msg_1"]
+      }
+    }
+  }
+}

@@ -627,6 +627,46 @@ Refreshing the fixture is the documented, intentional signal that cooldown
 classes, ladder ceilings, last-resort policy, or summary shape is meant to
 change.
 
+The Phase 0 "Responses item-ID continuation behavior" capture is landed
+as a deterministic fixture. The fixture at
+`tests/fixtures/contracts/responses-item-ids-contract.json` records the
+observable shape the router produces today through the four exports of
+`scripts/codex/lib/responses-item-ids.mjs`: the frozen
+`RESPONSES_ITEM_ID_PREFIXES` map (the type -> prefix table every self-
+contained item's id must match); every `normalizeItemId` branch
+(MiniMax-minted `custom_tool_call` and `function_call` ids rewritten to
+their type's prefix, already-conforming ids left alone across all six
+prefixes, the `ctco_` cross-prefix collision that is well-formed for a
+tool output but not for a tool call, the non-self-contained `reasoning`
+branch that always returns `null`, an absent/empty/undefined id, an
+unrecognised item type passed through untouched, and the distinct-
+originals invariant that prevents two items collapsing onto one id); every
+`normalizeInputItemIds` branch (all-valid input returned as the same
+array reference with `changed: 0`, non-array pass-through including the
+`undefined` host primitive that JSON cannot represent, mixed inputs
+rewriting only non-conforming items, deterministic hash expectations for
+the exact MiniMax-minted ids the router sees, `call_id` preservation
+across the call/output pair that is what makes a tool result attach to
+its call, idempotence on a repaired input that returns the same array
+reference on the second pass, and foreign-field survival on a rewritten
+item); the poisoned-rollout repair driven through
+`tests/fixtures/poisoned-rollout-items.json` (38 items, 9 non-conforming
+before repair, exact deterministic hash for `input[18].id` which is
+the field the upstream reported, every other non-conforming item
+rewritten, all 13 `call_id` values preserved exactly across the
+tool-call/tool-output middle, and 4 reasoning items surviving without
+id rewriting or drop on the OpenAI route); and every
+`dropUnresolvableReasoning` branch (drop when `encrypted_content` is
+absent, the empty string, or a non-string; preserve when populated; and
+the non-array pass-through including the `undefined` host primitive).
+`tests/responses-item-ids-contract.test.mjs` drives every scenario
+through the exported `normalizeItemId`, `normalizeInputItemIds`, and
+`dropUnresolvableReasoning` helpers and asserts every shape against the
+fixture, including the schema tag (`autodev-responses-item-ids-contract-v1`).
+Refreshing the fixture is the documented, intentional signal that the
+prefix map, the SHA-256 truncation length, item-id continuator
+behavior, or `dropUnresolvableReasoning` policy is meant to change.
+
 All other Phase 0 capture areas listed below remain future work.
 
 ### Capture
@@ -636,7 +676,7 @@ All other Phase 0 capture areas listed below remain future work.
 - Provider request/response fixtures
 - Streaming event sequences
 - Namespace/custom/freeform tool behavior
-- Responses item-ID continuation behavior
+- Responses item-ID continuation behavior (frozen — see Status above)
 - Provider selection order and randomization (frozen — see Status above)
 - Cooldown and provider-limit behavior (frozen — see Status above)
 - Root versus subagent provider selection
