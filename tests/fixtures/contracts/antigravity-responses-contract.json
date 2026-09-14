@@ -1,0 +1,417 @@
+{
+  "schema": "autodev-antigravity-responses-contract-v1",
+  "description": "Offline stream-json inputs and expected boundary invariants for the Antigravity Responses bridge.",
+  "cases": {
+    "normal_stream": {
+      "request": {
+        "stream": true
+      },
+      "cli": {
+        "events": [
+          {
+            "event": "step_update",
+            "step_update": {
+              "step_index": 1,
+              "step_type": "tool",
+              "tool_name": "search_web",
+              "state": "ACTIVE",
+              "tool_info": {
+                "args": {
+                  "query": "contract query"
+                }
+              }
+            }
+          },
+          {
+            "event": "step_update",
+            "step_update": {
+              "step_index": 1,
+              "step_type": "tool",
+              "tool_name": "search_web",
+              "state": "DONE",
+              "duration_seconds": 0.01,
+              "tool_info": {
+                "output": "search result"
+              }
+            }
+          },
+          {
+            "event": "step_update",
+            "step_index": 2,
+            "step_type": "agent_response",
+            "state": "ACTIVE"
+          },
+          {
+            "event": "step_update",
+            "step_index": 2,
+            "step_type": "agent_response",
+            "state": "DONE",
+            "text_delta": "contract answer"
+          },
+          {
+            "event": "result",
+            "result": {
+              "status": "SUCCESS",
+              "response": "contract answer"
+            }
+          }
+        ],
+        "exitCode": 0,
+        "stderr": ""
+      },
+      "expected": {
+        "status": 200,
+        "eventTypes": [
+          "response.created",
+          "response.output_item.added",
+          "response.reasoning_summary_part.added",
+          "response.output_item.added",
+          "response.content_part.added",
+          "response.reasoning_summary_text.delta",
+          "response.reasoning_summary_text.delta",
+          "response.reasoning_summary_text.delta",
+          "response.output_text.delta",
+          "response.reasoning_summary_text.done",
+          "response.reasoning_summary_part.done",
+          "response.output_item.done",
+          "response.output_text.done",
+          "response.content_part.done",
+          "response.output_item.done",
+          "response.completed",
+          "[DONE]"
+        ],
+        "outputText": "contract answer",
+        "completedStatus": "completed",
+        "telemetryTypes": [
+          "skill_exposed",
+          "mcp_exposed",
+          "tool_requested",
+          "tool_executed",
+          "activity"
+        ],
+        "tool": "search_web",
+        "privacyToken": "contract task"
+      }
+    },
+    "skill_read_via_read_file": {
+      "request": {
+        "stream": true
+      },
+      "cli": {
+        "events": [
+          {
+            "event": "step_update",
+            "step_update": {
+              "step_index": 1,
+              "step_type": "tool",
+              "tool_name": "read_file",
+              "state": "ACTIVE",
+              "tool_info": {
+                "args": {
+                  "file_path": "<REPO_ROOT>/scripts/codex/skills/ccc/SKILL.md"
+                }
+              }
+            }
+          },
+          {
+            "event": "step_update",
+            "step_update": {
+              "step_index": 1,
+              "step_type": "tool",
+              "tool_name": "read_file",
+              "state": "DONE",
+              "duration_seconds": 0.01,
+              "tool_info": {
+                "args": {
+                  "file_path": "<REPO_ROOT>/scripts/codex/skills/ccc/SKILL.md"
+                },
+                "output": "skill body"
+              }
+            }
+          },
+          {
+            "event": "step_update",
+            "step_update": {
+              "step_index": 2,
+              "step_type": "agent_response",
+              "state": "DONE",
+              "text_delta": "skill inspected"
+            }
+          },
+          {
+            "event": "result",
+            "result": {
+              "status": "SUCCESS",
+              "response": "skill inspected"
+            }
+          }
+        ],
+        "exitCode": 0,
+        "stderr": ""
+      },
+      "expected": {
+        "status": 200,
+        "outputText": "skill inspected",
+        "completedStatus": "completed",
+        "telemetryTypes": [
+          "tool_requested",
+          "tool_executed",
+          "skill_used"
+        ],
+        "tool": "read_file",
+        "skill": "ccc",
+        "directRead": true,
+        "eventTypes": [
+          "response.created",
+          "response.output_item.added",
+          "response.reasoning_summary_part.added",
+          "response.output_item.added",
+          "response.content_part.added",
+          "response.reasoning_summary_text.delta",
+          "response.reasoning_summary_text.delta",
+          "response.reasoning_summary_text.delta",
+          "response.reasoning_summary_text.delta",
+          "response.output_text.delta",
+          "response.reasoning_summary_text.done",
+          "response.reasoning_summary_part.done",
+          "response.output_item.done",
+          "response.output_text.done",
+          "response.content_part.done",
+          "response.output_item.done",
+          "response.completed",
+          "[DONE]"
+        ],
+        "privacyToken": "contract task"
+      }
+    },
+    "skill_read_via_shell_cat": {
+      "request": {
+        "stream": true
+      },
+      "cli": {
+        "events": [
+          {
+            "event": "step_update",
+            "step_update": {
+              "step_index": 1,
+              "step_type": "tool",
+              "tool_name": "bash",
+              "state": "ACTIVE",
+              "tool_info": {
+                "args": {
+                  "command": "cat <REPO_ROOT>/scripts/codex/skills/ccc/SKILL.md"
+                }
+              }
+            }
+          },
+          {
+            "event": "step_update",
+            "step_update": {
+              "step_index": 1,
+              "step_type": "tool",
+              "tool_name": "bash",
+              "state": "DONE",
+              "duration_seconds": 0.01,
+              "tool_info": {
+                "args": {
+                  "command": "cat <REPO_ROOT>/scripts/codex/skills/ccc/SKILL.md"
+                },
+                "output": "skill body"
+              }
+            }
+          },
+          {
+            "event": "step_update",
+            "step_update": {
+              "step_index": 2,
+              "step_type": "agent_response",
+              "state": "DONE",
+              "text_delta": "shell skill inspected"
+            }
+          },
+          {
+            "event": "result",
+            "result": {
+              "status": "SUCCESS",
+              "response": "shell skill inspected"
+            }
+          }
+        ],
+        "exitCode": 0,
+        "stderr": ""
+      },
+      "expected": {
+        "status": 200,
+        "outputText": "shell skill inspected",
+        "completedStatus": "completed",
+        "telemetryTypes": [
+          "tool_requested",
+          "tool_executed",
+          "skill_used"
+        ],
+        "tool": "bash",
+        "skill": "ccc",
+        "directRead": false,
+        "eventTypes": [
+          "response.created",
+          "response.output_item.added",
+          "response.reasoning_summary_part.added",
+          "response.output_item.added",
+          "response.content_part.added",
+          "response.reasoning_summary_text.delta",
+          "response.reasoning_summary_text.delta",
+          "response.reasoning_summary_text.delta",
+          "response.reasoning_summary_text.delta",
+          "response.output_text.delta",
+          "response.reasoning_summary_text.done",
+          "response.reasoning_summary_part.done",
+          "response.output_item.done",
+          "response.output_text.done",
+          "response.content_part.done",
+          "response.output_item.done",
+          "response.completed",
+          "[DONE]"
+        ],
+        "privacyToken": "contract task"
+      }
+    },
+    "permission_denied": {
+      "request": {
+        "stream": true
+      },
+      "cli": {
+        "events": [
+          {
+            "event": "step_update",
+            "step_update": {
+              "step_index": 1,
+              "step_type": "tool",
+              "tool_name": "bash",
+              "state": "ACTIVE",
+              "tool_info": {
+                "args": {
+                  "command": "cat /private/secret"
+                }
+              }
+            }
+          },
+          {
+            "event": "step_update",
+            "step_update": {
+              "step_index": 1,
+              "step_type": "tool",
+              "tool_name": "bash",
+              "state": "ERROR",
+              "status_message": "permission denied",
+              "tool_info": {
+                "error": "permission denied"
+              }
+            }
+          },
+          {
+            "event": "step_update",
+            "step_update": {
+              "step_index": 2,
+              "step_type": "agent_response",
+              "state": "DONE",
+              "text_delta": "permission handled"
+            }
+          },
+          {
+            "event": "result",
+            "result": {
+              "status": "SUCCESS",
+              "response": "permission handled"
+            }
+          }
+        ],
+        "exitCode": 0,
+        "stderr": ""
+      },
+      "expected": {
+        "status": 200,
+        "outputText": "permission handled",
+        "completedStatus": "completed",
+        "telemetryTypes": [
+          "tool_requested",
+          "tool_unavailable"
+        ],
+        "tool": "bash",
+        "unavailableReason": "permission_denied",
+        "eventTypes": [
+          "response.created",
+          "response.output_item.added",
+          "response.reasoning_summary_part.added",
+          "response.output_item.added",
+          "response.content_part.added",
+          "response.reasoning_summary_text.delta",
+          "response.reasoning_summary_text.delta",
+          "response.reasoning_summary_text.delta",
+          "response.reasoning_summary_text.delta",
+          "response.output_text.delta",
+          "response.reasoning_summary_text.done",
+          "response.reasoning_summary_part.done",
+          "response.output_item.done",
+          "response.output_text.done",
+          "response.content_part.done",
+          "response.output_item.done",
+          "response.completed",
+          "[DONE]"
+        ],
+        "privacyToken": "contract task"
+      }
+    },
+    "provider_limit_incomplete": {
+      "request": {
+        "stream": true
+      },
+      "cli": {
+        "events": [
+          {
+            "event": "step_update",
+            "step_update": {
+              "step_index": 1,
+              "step_type": "agent_response",
+              "state": "DONE",
+              "text_delta": "partial answer"
+            }
+          }
+        ],
+        "exitCode": 1,
+        "stderr": "Antigravity usage limit reached; reset at 2099-01-02T03:04:05Z"
+      },
+      "expected": {
+        "status": 200,
+        "outputTextPrefix": "partial answer",
+        "completedStatus": "incomplete",
+        "incompleteReason": "provider_limit",
+        "limit": {
+          "class": "quota_exhausted",
+          "type": "quota",
+          "resets_at": "2099-01-02T03:04:05.000Z",
+          "source": "inferred"
+        },
+        "eventTypes": [
+          "response.created",
+          "response.output_item.added",
+          "response.reasoning_summary_part.added",
+          "response.output_item.added",
+          "response.content_part.added",
+          "response.reasoning_summary_text.delta",
+          "response.reasoning_summary_text.delta",
+          "response.output_text.delta",
+          "response.output_text.delta",
+          "response.reasoning_summary_text.done",
+          "response.reasoning_summary_part.done",
+          "response.output_item.done",
+          "response.output_text.done",
+          "response.content_part.done",
+          "response.output_item.done",
+          "response.completed",
+          "[DONE]"
+        ],
+        "privacyToken": "contract task"
+      }
+    }
+  }
+}

@@ -590,7 +590,7 @@ baseline to diff against instead of "whatever the renderer currently
 produces." Updating the fixture is itself the documented, intentional signal
 that the contract's shape was meant to change.
 
-Copilot direct-file and shell-based skill-read paths are frozen (`tests/fixtures/contracts/copilot-responses-contract.json` exercised via `tests/copilot-responses-contract.test.mjs`), while remaining provider contracts remain pending.
+Copilot direct-file and shell-based skill-read paths are frozen (`tests/fixtures/contracts/copilot-responses-contract.json` exercised via `tests/copilot-responses-contract.test.mjs`). Antigravity's Responses boundary is now frozen as well: `tests/fixtures/contracts/antigravity-responses-contract.json` and `tests/antigravity-responses-contract.test.mjs` exercise normal stream/SSE completion, direct and shell-based skill reads, permission denial, and provider-limit incomplete output through a fake local `agy` executable and temporary loopback telemetry server. The contract also asserts sanitized response IDs/timestamps, prompt-content privacy, telemetry observations, and fixture immutability; it does not contact a provider or require credentials. Remaining provider contracts remain pending.
 
 The Phase 0 "provider selection order and randomization" capture is landed
 as a deterministic fixture. The fixture at
