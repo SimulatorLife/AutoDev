@@ -812,13 +812,18 @@ Existing AutoDev metrics remain identical in meaning and do not double-count aft
 
 ### Status
 
-The initial Phase 4 slice is an offline golden-fixture contract for the
-incumbent Copilot Responses boundary. It freezes representative JSONL tool,
-skill-read, normal-turn, permission-denied, and provider-limit inputs plus the
-expected SSE lifecycle and error-shape invariants without installing LiteLLM,
-contacting GitHub, or changing the current Copilot proxy. It is a parity
-baseline only; it does not authorize proxy deletion or claim live LiteLLM
-compatibility.
+The initial Phase 4 slice is now landed as an offline golden-fixture contract
+for the incumbent Copilot Responses boundary. The fixture at
+`tests/fixtures/contracts/copilot-responses-contract.json` and the boundary
+suite at `tests/copilot-responses-contract.test.mjs` replay representative JSONL
+normal-turn, tool-plus-skill-read, permission-denied, and provider-limit inputs
+through a fake local Copilot CLI. They freeze the SSE lifecycle, item/status
+shape, `[DONE]` termination, telemetry observations, and provider-limit
+incomplete payload without installing LiteLLM, contacting GitHub, or changing
+the current Copilot proxy. The test normalizes generated IDs and timestamps,
+verifies the tracked fixture remains unchanged, and checks prompt-content
+privacy. This is still a parity baseline only; live LiteLLM compatibility,
+operational/policy review, and proxy deletion remain pending.
 
 This is the strongest current transport-replacement candidate
 

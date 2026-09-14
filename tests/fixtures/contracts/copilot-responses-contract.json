@@ -1,0 +1,275 @@
+{
+  "schema": "autodev-copilot-responses-contract-v1",
+  "description": "Offline JSONL inputs and expected boundary invariants for the incumbent Copilot Responses bridge.",
+  "cases": {
+    "normal_stream": {
+      "request": {
+        "stream": true
+      },
+      "cli": {
+        "events": [
+          {
+            "type": "assistant.message_start",
+            "data": {
+              "messageId": "message-1",
+              "phase": "final_answer"
+            }
+          },
+          {
+            "type": "assistant.message_delta",
+            "data": {
+              "messageId": "message-1",
+              "phase": "final_answer",
+              "deltaContent": "contract answer"
+            }
+          },
+          {
+            "type": "result",
+            "data": {
+              "exitCode": 0
+            }
+          }
+        ],
+        "exitCode": 0,
+        "stderr": ""
+      },
+      "expected": {
+        "status": 200,
+        "eventTypes": [
+          "response.created",
+          "response.output_item.added",
+          "response.reasoning_summary_part.added",
+          "response.output_item.added",
+          "response.content_part.added",
+          "response.output_text.delta",
+          "response.reasoning_summary_text.done",
+          "response.reasoning_summary_part.done",
+          "response.output_item.done",
+          "response.output_text.done",
+          "response.content_part.done",
+          "response.output_item.done",
+          "response.completed",
+          "[DONE]"
+        ],
+        "outputText": "contract answer",
+        "completedStatus": "completed"
+      }
+    },
+    "tool_and_skill_read": {
+      "request": {
+        "stream": true
+      },
+      "cli": {
+        "events": [
+          {
+            "type": "tool.execution_start",
+            "data": {
+              "toolCallId": "tool-1",
+              "toolName": "read_file",
+              "arguments": {
+                "file_path": "<REPO_ROOT>/scripts/codex/skills/ccc/SKILL.md"
+              }
+            }
+          },
+          {
+            "type": "tool.execution_complete",
+            "data": {
+              "toolCallId": "tool-1",
+              "toolName": "read_file",
+              "success": true,
+              "output": "skill body"
+            }
+          },
+          {
+            "type": "assistant.message_start",
+            "data": {
+              "messageId": "message-2",
+              "phase": "final_answer"
+            }
+          },
+          {
+            "type": "assistant.message_delta",
+            "data": {
+              "messageId": "message-2",
+              "phase": "final_answer",
+              "deltaContent": "skill inspected"
+            }
+          },
+          {
+            "type": "result",
+            "data": {
+              "exitCode": 0
+            }
+          }
+        ],
+        "exitCode": 0,
+        "stderr": ""
+      },
+      "expected": {
+        "status": 200,
+        "outputText": "skill inspected",
+        "completedStatus": "completed",
+        "telemetryTypes": [
+          "tool_requested",
+          "tool_executed"
+        ],
+        "tool": "read_file",
+        "skill": "ccc",
+        "eventTypes": [
+          "response.created",
+          "response.output_item.added",
+          "response.reasoning_summary_part.added",
+          "response.output_item.added",
+          "response.content_part.added",
+          "response.reasoning_summary_text.delta",
+          "response.output_text.delta",
+          "response.reasoning_summary_text.done",
+          "response.reasoning_summary_part.done",
+          "response.output_item.done",
+          "response.output_text.done",
+          "response.content_part.done",
+          "response.output_item.done",
+          "response.completed",
+          "[DONE]"
+        ],
+        "directEventTypes": [
+          "skill_used"
+        ]
+      }
+    },
+    "permission_denied": {
+      "request": {
+        "stream": true
+      },
+      "cli": {
+        "events": [
+          {
+            "type": "tool.execution_start",
+            "data": {
+              "toolCallId": "tool-2",
+              "toolName": "bash",
+              "arguments": {
+                "cmd": "cat /private/secret"
+              }
+            }
+          },
+          {
+            "type": "tool.execution_complete",
+            "data": {
+              "toolCallId": "tool-2",
+              "toolName": "bash",
+              "permissionDenied": true,
+              "error": "permission denied"
+            }
+          },
+          {
+            "type": "assistant.message_start",
+            "data": {
+              "messageId": "message-3",
+              "phase": "final_answer"
+            }
+          },
+          {
+            "type": "assistant.message_delta",
+            "data": {
+              "messageId": "message-3",
+              "phase": "final_answer",
+              "deltaContent": "permission handled"
+            }
+          },
+          {
+            "type": "result",
+            "data": {
+              "exitCode": 0
+            }
+          }
+        ],
+        "exitCode": 0,
+        "stderr": ""
+      },
+      "expected": {
+        "status": 200,
+        "outputText": "permission handled",
+        "completedStatus": "completed",
+        "telemetryTypes": [
+          "tool_requested",
+          "tool_unavailable"
+        ],
+        "tool": "bash",
+        "unavailableReason": "denied",
+        "eventTypes": [
+          "response.created",
+          "response.output_item.added",
+          "response.reasoning_summary_part.added",
+          "response.output_item.added",
+          "response.content_part.added",
+          "response.reasoning_summary_text.delta",
+          "response.output_text.delta",
+          "response.reasoning_summary_text.done",
+          "response.reasoning_summary_part.done",
+          "response.output_item.done",
+          "response.output_text.done",
+          "response.content_part.done",
+          "response.output_item.done",
+          "response.completed",
+          "[DONE]"
+        ]
+      }
+    },
+    "provider_limit_incomplete": {
+      "request": {
+        "stream": true
+      },
+      "cli": {
+        "events": [
+          {
+            "type": "assistant.message_start",
+            "data": {
+              "messageId": "message-4",
+              "phase": "final_answer"
+            }
+          },
+          {
+            "type": "assistant.message_delta",
+            "data": {
+              "messageId": "message-4",
+              "phase": "final_answer",
+              "deltaContent": "partial answer"
+            }
+          }
+        ],
+        "exitCode": 1,
+        "stderr": "Copilot usage limit reached; reset at 2099-01-02T03:04:05Z"
+      },
+      "expected": {
+        "status": 200,
+        "eventTypes": [
+          "response.created",
+          "response.output_item.added",
+          "response.reasoning_summary_part.added",
+          "response.output_item.added",
+          "response.content_part.added",
+          "response.output_text.delta",
+          "response.output_text.delta",
+          "response.reasoning_summary_text.done",
+          "response.reasoning_summary_part.done",
+          "response.output_item.done",
+          "response.output_text.done",
+          "response.content_part.done",
+          "response.output_item.done",
+          "response.completed",
+          "[DONE]"
+        ],
+        "outputTextPrefix": "partial answer",
+        "completedStatus": "incomplete",
+        "incompleteReason": "provider_limit",
+        "limit": {
+          "class": "quota_exhausted",
+          "type": "quota",
+          "resets_at": "2099-01-02T03:04:05.000Z",
+          "source": "inferred"
+        }
+      }
+    }
+  }
+}
