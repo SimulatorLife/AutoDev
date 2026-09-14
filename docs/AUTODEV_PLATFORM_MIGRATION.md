@@ -590,6 +590,8 @@ baseline to diff against instead of "whatever the renderer currently
 produces." Updating the fixture is itself the documented, intentional signal
 that the contract's shape was meant to change.
 
+Copilot direct-file and shell-based skill-read paths are frozen (`tests/fixtures/contracts/copilot-responses-contract.json` exercised via `tests/copilot-responses-contract.test.mjs`), while remaining provider contracts remain pending.
+
 All other Phase 0 capture areas listed below remain future work.
 
 ### Capture
@@ -816,8 +818,8 @@ The initial Phase 4 slice is now landed as an offline golden-fixture contract
 for the incumbent Copilot Responses boundary. The fixture at
 `tests/fixtures/contracts/copilot-responses-contract.json` and the boundary
 suite at `tests/copilot-responses-contract.test.mjs` replay representative JSONL
-normal-turn, tool-plus-skill-read, permission-denied, and provider-limit inputs
-through a fake local Copilot CLI. They freeze the SSE lifecycle, item/status
+normal-turn, direct-file and shell-based skill-read, permission-denied, and
+provider-limit inputs through a fake local Copilot CLI. They freeze the SSE lifecycle, item/status
 shape, `[DONE]` termination, telemetry observations, and provider-limit
 incomplete payload without installing LiteLLM, contacting GitHub, or changing
 the current Copilot proxy. The test normalizes generated IDs and timestamps,

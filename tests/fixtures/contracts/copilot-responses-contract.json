@@ -137,6 +137,88 @@
         ]
       }
     },
+    "shell_skill_read": {
+      "request": {
+        "stream": true
+      },
+      "cli": {
+        "events": [
+          {
+            "type": "tool.execution_start",
+            "data": {
+              "toolCallId": "tool-shell-1",
+              "toolName": "bash",
+              "arguments": {
+                "cmd": "cat <REPO_ROOT>/scripts/codex/skills/ccc/SKILL.md"
+              }
+            }
+          },
+          {
+            "type": "tool.execution_complete",
+            "data": {
+              "toolCallId": "tool-shell-1",
+              "toolName": "bash",
+              "success": true,
+              "output": "skill body"
+            }
+          },
+          {
+            "type": "assistant.message_start",
+            "data": {
+              "messageId": "message-shell-1",
+              "phase": "final_answer"
+            }
+          },
+          {
+            "type": "assistant.message_delta",
+            "data": {
+              "messageId": "message-shell-1",
+              "phase": "final_answer",
+              "deltaContent": "shell skill inspected"
+            }
+          },
+          {
+            "type": "result",
+            "data": {
+              "exitCode": 0
+            }
+          }
+        ],
+        "exitCode": 0,
+        "stderr": ""
+      },
+      "expected": {
+        "status": 200,
+        "outputText": "shell skill inspected",
+        "completedStatus": "completed",
+        "telemetryTypes": [
+          "tool_requested",
+          "tool_executed"
+        ],
+        "tool": "bash",
+        "skill": "ccc",
+        "eventTypes": [
+          "response.created",
+          "response.output_item.added",
+          "response.reasoning_summary_part.added",
+          "response.output_item.added",
+          "response.content_part.added",
+          "response.reasoning_summary_text.delta",
+          "response.output_text.delta",
+          "response.reasoning_summary_text.done",
+          "response.reasoning_summary_part.done",
+          "response.output_item.done",
+          "response.output_text.done",
+          "response.content_part.done",
+          "response.output_item.done",
+          "response.completed",
+          "[DONE]"
+        ],
+        "directEventTypes": [
+          "skill_used"
+        ]
+      }
+    },
     "permission_denied": {
       "request": {
         "stream": true
