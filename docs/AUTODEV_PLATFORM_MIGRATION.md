@@ -640,13 +640,23 @@ Complete. The portable source is authoritative at `scripts/codex/config.autodev.
 
 ### Status
 
-The first Phase 2 slice is shadow-only MCP translation. Rulesync is pinned to
-`16.30.2` and generates into tracked shadow fixtures under `tests/fixtures/rulesync-shadow/`
-for `codexcli`, `claudecode`, `copilot`, and `antigravity-cli`. The shadow source covers only
-shared MCP declarations and target-specific transport differences; it does not
-write live Codex, Claude, Copilot, or Antigravity configuration. AutoDev role
-TOMLs, the execution contract, the MCP launcher, provider bridges, hooks,
-permissions, and skills remain authoritative outside Rulesync.
+The Phase 2 slices are shadow-only MCP translation, shared-instruction
+translation, and canonical-skill translation. Rulesync is pinned to `16.30.2`
+and generates into tracked fixtures under `tests/fixtures/rulesync-shadow/` for
+`codexcli`, `claudecode`, `copilot`, and `antigravity-cli`.
+
+The Rulesync source covers shared MCP declarations, the common repository
+instructions represented by `AGENTS.md`, and the three portable AutoDev-owned
+skills (`ccc`, `lsp-mcp-server`, and `orchestration`). It produces target-shaped
+shadow files for rules plus skill trees under `.agents/skills/`,
+`.claude/skills/`, and `.github/skills/` without writing live provider or user
+configuration. Existing live instructions remain unchanged so target-specific
+guidance is not silently removed during this parity phase.
+
+Role-specific skill assignment and exposure remain AutoDev-owned: the execution
+contract, provider skill-view renderer, Claude role views, Antigravity
+`include_only` registration, symlink installer, MCP launcher, provider
+bridges, hooks, and permissions remain outside Rulesync.
 
 CI drift protection is enforced by `.github/workflows/rulesync-mcp-shadow-drift.yml`, a
 read-only workflow triggered on `push` to `main`, `pull_request`, and `workflow_dispatch`
@@ -658,7 +668,7 @@ dependencies and detects drift using:
 pnpm exec rulesync generate \
   --config rulesync.jsonc \
   --targets codexcli,claudecode,copilot,antigravity-cli \
-  --features mcp \
+  --features mcp,rules,skills \
   --output-roots tests/fixtures/rulesync-shadow \
   --check \
   --silent
@@ -673,7 +683,7 @@ When the CI drift check or local `--check` reports drift due to intentional upda
    pnpm exec rulesync generate \
      --config rulesync.jsonc \
      --targets codexcli,claudecode,copilot,antigravity-cli \
-     --features mcp \
+     --features mcp,rules,skills \
      --output-roots tests/fixtures/rulesync-shadow \
      --delete \
      --silent
@@ -681,6 +691,7 @@ When the CI drift check or local `--check` reports drift due to intentional upda
 2. Verify that focused tests pass:
    ```bash
    python3 -m unittest tests/test_rulesync_mcp_shadow.py
+   python3 -m unittest tests/test_rulesync_skills_shadow.py
    ```
 3. Commit the refreshed fixtures under `tests/fixtures/rulesync-shadow/`.
 

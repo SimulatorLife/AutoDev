@@ -1,4 +1,4 @@
-name: "Rulesync MCP Shadow Drift"
+name: "Rulesync Shared Shadow Drift"
 
 on:
   workflow_dispatch:
@@ -12,6 +12,7 @@ on:
       - "package.json"
       - "pnpm-lock.yaml"
       - ".github/workflows/rulesync-mcp-shadow-drift.yml"
+      - "AGENTS.md"
   pull_request:
     paths:
       - ".rulesync/**"
@@ -20,12 +21,13 @@ on:
       - "package.json"
       - "pnpm-lock.yaml"
       - ".github/workflows/rulesync-mcp-shadow-drift.yml"
+      - "AGENTS.md"
 
 permissions:
   contents: read
 
 jobs:
-  rulesync-mcp-shadow-drift:
+  rulesync-shared-shadow-drift:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -50,7 +52,7 @@ jobs:
           pnpm exec rulesync generate \
             --config rulesync.jsonc \
             --targets codexcli,claudecode,copilot,antigravity-cli \
-            --features mcp \
+            --features mcp,rules,skills \
             --output-roots tests/fixtures/rulesync-shadow \
             --check \
             --silent

@@ -1,7 +1,7 @@
 {
   "$schema": "https://github.com/dyoshikawa/rulesync/releases/latest/download/config-schema.json",
   "targets": ["codexcli", "claudecode", "copilot", "antigravity-cli"],
-  "features": ["mcp"],
+  "features": ["mcp", "rules", "skills"],
   "outputRoots": ["tests/fixtures/rulesync-shadow"],
   "delete": false,
   "global": false
