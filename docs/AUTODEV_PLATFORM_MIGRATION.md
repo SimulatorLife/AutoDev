@@ -192,11 +192,7 @@ Keep initially:
 - Role-specific provider skill filtering/views
 - Provider-specific exceptions that Rulesync cannot express losslessly
 
-### Why the previous plan was too aggressive
-
-The previous plan listed provider skill-view rendering and large portions of agent-config rendering as likely immediate removals. Rulesync supports Codex subagent serialization, but there is no audited Rulesync abstraction equivalent to AutoDev's generated execution contract linking `readOnly`, MCP sets, skill sets, web-research capability, provider-native spawn tools, and bridge behavior
-
-**Correction:** migrate common configuration first and evaluate role migration only after the shared configuration surfaces are stable
+Migrate common configuration first and evaluate role migration only after the shared configuration surfaces are stable.
 
 ---
 
@@ -653,6 +649,41 @@ and asserts every listing stays within its tier membership. Refreshing the
 fixture is the documented, intentional signal that ordering, group layout,
 or randomization is meant to change.
 
+The Phase 0 "root versus subagent provider selection" capture is landed as
+a deterministic fixture that freezes the semantic boundary the router
+maintains between the root orchestrator and every leaf subagent. The
+fixture at `tests/fixtures/contracts/root-subagent-provider-selection.json`
+records, under schema `autodev-root-subagent-provider-selection-v1` and
+seed `0xC0FFEE`, the alias map the router distinguishes from one another
+(`autodev/orchestrator` plus the seven `autodev/<role>` aliases), the
+seeded `roleCandidates` listing for every leaf role (the default-tier
+roles all share one listing, smart has its own), the seeded
+`orchestratorCandidates` listing with both the unpreferred ordering and
+the preferred-provider continuation ordering for every tier member, the
+`payloadForCandidate` projection for the orchestrator primary, the
+orchestrator fallback, and a leaf candidate (so the root-only fallback
+reasoning override is captured distinctly from the caller's effort that
+leaves are required to preserve), and the tier membership each listing
+must stay within. `tests/root-subagent-provider-selection.test.mjs` drives
+those scenarios through the exported `roleForModel`,
+`orchestratorCandidates`, `roleCandidates`, and `payloadForCandidate`
+helpers and asserts every shape against the fixture, including the schema
+tag, the root alias being declared a leaf (`roleForModel` returns
+`null`), every subagent alias resolving to its role, concrete model names
+and unknown aliases remaining role-less, the root-only continuation
+preference being a preference (never a pin), and the leaf effort remaining
+untouched under `payloadForCandidate`. The test is
+fully offline and deterministic and is distinct from the existing
+`tests/provider-selection-order.test.mjs`, which freezes only the
+generic `providerPriority` tier listings the router produces under the
+same seed: this fixture is the one that locks down which alias resolves
+to which tier, which concrete model each provider must use for it, and
+which reasoning-effort override the root orchestrator is allowed to
+pin. Refreshing the fixture is the documented, intentional signal that
+root-versus-subagent aliasing, tier membership, concrete models, fallback
+reasoning overrides, or preferred-provider continuation ordering is
+meant to change.
+
 The Phase 0 "cooldown and provider-limit behavior" capture is landed as a
 deterministic fixture. The fixture at
 `tests/fixtures/contracts/cooldown-behavior.json` records the observable
@@ -727,7 +758,7 @@ All other Phase 0 capture areas listed below remain future work.
 - Responses item-ID continuation behavior (frozen — see Status above)
 - Provider selection order and randomization (frozen — see Status above)
 - Cooldown and provider-limit behavior (frozen — see Status above)
-- Root versus subagent provider selection
+- Root versus subagent provider selection (frozen — see Status above)
 - Workspace attribution
 - Tool/skill/MCP attribution
 - Native versus bridge-native child counts

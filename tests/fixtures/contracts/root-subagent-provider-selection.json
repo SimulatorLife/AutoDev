@@ -1,0 +1,79 @@
+{
+  "schema": "autodev-root-subagent-provider-selection-v1",
+  "description": "Deterministic boundary for root-orchestrator versus leaf/subagent alias resolution, provider tiers, concrete models, fallback reasoning, and continuation preference.",
+  "seed": "0xC0FFEE",
+  "aliases": {
+    "orchestrator": {
+      "model": "autodev/orchestrator",
+      "roleForModel": null
+    },
+    "subagents": {
+      "default": "autodev/default",
+      "docs-researcher": "autodev/docs-researcher",
+      "browser-tester": "autodev/browser-tester",
+      "explorer": "autodev/explorer",
+      "worker": "autodev/worker",
+      "validator": "autodev/validator",
+      "smart": "autodev/smart"
+    },
+    "nonAliases": {
+      "concreteModels": ["sonnet", "MiniMax-M3", "gpt-5.6-luna"],
+      "unknownModels": ["autodev/not-a-role", "not-a-model"]
+    }
+  },
+  "tiers": {
+    "default": ["minimax", "antigravity", "claude", "copilot", "codex"],
+    "smart": ["antigravity", "claude", "codex"],
+    "orchestrator": ["codex", "antigravity", "minimax", "claude"]
+  },
+  "subagentCandidates": {
+    "default": [
+      { "provider": "minimax", "model": "MiniMax-M3" },
+      { "provider": "antigravity", "model": "gemini-3.8-flash-medium" },
+      { "provider": "claude", "model": "sonnet" },
+      { "provider": "copilot", "model": "copilot" },
+      { "provider": "codex", "model": "gpt-5.6-luna" }
+    ],
+    "smart": [
+      { "provider": "antigravity", "model": "gemini-3.8-flash-high" },
+      { "provider": "claude", "model": "claude-opus-5" },
+      { "provider": "codex", "model": "gpt-5.6-sol" }
+    ]
+  },
+  "orchestratorCandidates": {
+    "unpreferred": [
+      { "provider": "codex", "model": "gpt-5.6-luna", "reasoningEffort": null },
+      { "provider": "antigravity", "model": "gemini-3.8-flash-high", "reasoningEffort": "high" },
+      { "provider": "minimax", "model": "MiniMax-M3", "reasoningEffort": "high" },
+      { "provider": "claude", "model": "claude-opus-5", "reasoningEffort": "medium" }
+    ],
+    "preferred": {
+      "claude": [
+        { "provider": "claude", "model": "claude-opus-5", "reasoningEffort": "medium" },
+        { "provider": "codex", "model": "gpt-5.6-luna", "reasoningEffort": null },
+        { "provider": "antigravity", "model": "gemini-3.8-flash-high", "reasoningEffort": "high" },
+        { "provider": "minimax", "model": "MiniMax-M3", "reasoningEffort": "high" }
+      ],
+      "minimax": [
+        { "provider": "minimax", "model": "MiniMax-M3", "reasoningEffort": "high" },
+        { "provider": "codex", "model": "gpt-5.6-luna", "reasoningEffort": null },
+        { "provider": "antigravity", "model": "gemini-3.8-flash-high", "reasoningEffort": "high" },
+        { "provider": "claude", "model": "claude-opus-5", "reasoningEffort": "medium" }
+      ]
+    }
+  },
+  "payloads": {
+    "orchestratorPrimary": {
+      "model": "gpt-5.6-luna",
+      "reasoning": { "effort": "xhigh" }
+    },
+    "orchestratorFallback": {
+      "model": "claude-opus-5",
+      "reasoning": { "effort": "medium" }
+    },
+    "subagent": {
+      "model": "MiniMax-M3",
+      "reasoning": { "effort": "xhigh" }
+    }
+  }
+}
