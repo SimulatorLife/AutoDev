@@ -1,0 +1,153 @@
+{
+  "cases": {
+    "freeform_coercion_non_streaming": {
+      "expected": {
+        "coercedType": "custom_tool_call",
+        "inputSource": {
+          "mentions": "wc -l README.md",
+          "startsWith": "const result = await tools.exec_command("
+        }
+      },
+      "request": {
+        "input": [
+          "exec with {'cmd':'wc -l README.md'}"
+        ],
+        "stream": false,
+        "tools": [
+          {
+            "name": "exec",
+            "type": "custom"
+          }
+        ]
+      },
+      "upstreamResponse": {
+        "response": {
+          "output": [
+            {
+              "arguments": "{\"cmd\":\"wc -l README.md\"}",
+              "call_id": "call-2",
+              "id": "call-2",
+              "name": "exec",
+              "type": "function_call"
+            }
+          ]
+        }
+      }
+    },
+    "normal_stream_flatten": {
+      "expected": {
+        "proxyRequestTools": [
+          {
+            "name": "multi_agent_v1__spawn_agent",
+            "type": "function"
+          },
+          {
+            "name": "collaboration__send_message",
+            "type": "function"
+          },
+          {
+            "name": "read_file",
+            "type": "function"
+          }
+        ],
+        "responseOutputNamespaces": [
+          "multi_agent_v1"
+        ]
+      },
+      "request": {
+        "input": "hello",
+        "stream": true,
+        "tools": [
+          {
+            "name": "multi_agent_v1",
+            "tools": [
+              {
+                "name": "spawn_agent",
+                "type": "function"
+              }
+            ],
+            "type": "namespace"
+          },
+          {
+            "name": "send_message",
+            "namespace": "collaboration",
+            "type": "function"
+          },
+          {
+            "name": "read_file",
+            "type": "function"
+          }
+        ]
+      },
+      "upstreamRequest": {
+        "model": "MiniMax-M3",
+        "tools": [
+          {
+            "name": "multi_agent_v1__spawn_agent",
+            "type": "function"
+          },
+          {
+            "name": "collaboration__send_message",
+            "type": "function"
+          },
+          {
+            "name": "read_file",
+            "type": "function"
+          }
+        ]
+      },
+      "upstreamResponse": {
+        "output": [
+          {
+            "call_id": "call-1",
+            "id": "call-1",
+            "name": "multi_agent_v1__spawn_agent",
+            "type": "function_call"
+          },
+          {
+            "content": [
+              {
+                "text": "ack",
+                "type": "output_text"
+              }
+            ],
+            "type": "message"
+          }
+        ]
+      }
+    },
+    "web_search_preserved": {
+      "expected": {
+        "proxyRequestTools": [
+          {
+            "name": "web_search",
+            "type": "web_search"
+          },
+          {
+            "name": "web_fetch",
+            "type": "web_fetch"
+          }
+        ]
+      },
+      "request": {
+        "input": "summarize",
+        "stream": false,
+        "tools": [
+          {
+            "name": "web_search",
+            "type": "web_search"
+          },
+          {
+            "name": "web_fetch",
+            "type": "web_fetch"
+          }
+        ]
+      },
+      "upstreamResponse": {
+        "output": []
+      }
+    }
+  },
+  "description": "Offline boundary invariants for the MiniMax Responses pass-through proxy: namespace flattening, freeform tool coercion, and streaming/non-streaming parity.",
+  "schema": "autodev-minimax-responses-contract-v1"
+}

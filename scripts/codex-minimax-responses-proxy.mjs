@@ -70,7 +70,7 @@ function rewrite(value) {
 
 const WEB_RESEARCH_TOOL_NAMES = new Set([ "web_search", "web_fetch" ]);
 
-export function isWebResearchTool(tool) {
+function isWebResearchTool(tool) {
   if (!tool || typeof tool !== "object") return false;
   if (WEB_RESEARCH_TOOL_NAMES.has(tool.type) || WEB_RESEARCH_TOOL_NAMES.has(tool.name)) return true;
   if (tool.function && typeof tool.function.name === "string" && WEB_RESEARCH_TOOL_NAMES.has(tool.function.name)) return true;
@@ -180,7 +180,7 @@ function collectFreeformToolNames(payload, names = new Set()) {
 // the intent is not clear enough to rewrite. Guessing wrong would swap one
 // broken call for a different broken call, so anything unrecognised is left
 // alone and fails the way it already did, visibly.
-export function freeformInputFromArguments(argumentsText) {
+function freeformInputFromArguments(argumentsText) {
   const raw = typeof argumentsText === "string" ? argumentsText.trim() : "";
   if (!raw) return null;
 
@@ -297,7 +297,7 @@ function createFreeformCoercion(freeformNames) {
  * The same coercion for a non-streaming response, where the whole item is
  * present at once and no cross-line state is needed.
  */
-export function coerceResponseBody(body, freeformNames) {
+function coerceResponseBody(body, freeformNames) {
   if (!body || typeof body !== "object" || !(freeformNames instanceof Set) || freeformNames.size === 0) return body;
   const output = body.response?.output ?? body.output;
   if (!Array.isArray(output)) return body;
@@ -710,8 +710,13 @@ if (IS_MAIN) {
 
 export {
   MCP_EXPOSURE_SOURCE,
+  coerceResponseBody,
+  flattenOutboundTools,
+  freeformInputFromArguments,
+  isWebResearchTool,
   observeResponseEvent,
   reportExecutedToolCalls,
   reportRequestedToolCall,
+  rewrite,
   toolOutputOutcome,
 };

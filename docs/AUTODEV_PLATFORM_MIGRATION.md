@@ -662,8 +662,46 @@ guidance and AutoDev runtime enforcement are not silently removed during this
 parity phase. Role-specific skill assignment and exposure remain AutoDev-owned:
 the execution contract, provider skill-view renderer, Claude role views,
 Antigravity `include_only` registration, symlink installer, MCP launcher,
-provider bridges, hooks, and permissions remain outside Rulesync. Permissions
-migration is deferred pending a complete portable source inventory.
+provider bridges, hooks, and permissions remain outside Rulesync.
+
+The permission source inventory is complete:
+`tests/test_rulesync_permissions_inventory.py` snapshots and contract-tests
+the three live permission sources without writing to any of them —
+Codex's `approval_policy`/`sandbox_mode`/`sandbox_workspace_write.network_access`
+scalars and per-server `default_tools_approval_mode` in
+`scripts/codex/config.autodev.toml`, the role-dependent
+`--disallowed-tools`/`--allowed-tools` construction (`DISALLOWED_CLAUDE_TOOLS`,
+`CROSS_SESSION_CLAUDE_TOOLS`, `PLAYWRIGHT_AGENT_ROLES`,
+`PLAYWRIGHT_DISALLOWED_TOOLS`, `RESEARCH_CAPABLE_ROLES`,
+`CLAUDE_RESEARCH_ALLOWED_TOOLS`, and the `readOnly` role-contract deny list) in
+`scripts/codex-claude-cli-responses-proxy.py`, and the dynamic
+`mcp(...)`/`read_file(...)`/`unsandboxed(...)` grant markers that
+`grant_agy_code_mcp_permissions`/`check_agy_code_mcp_permissions` compute
+against the machine-local `$HOME/.gemini/antigravity-cli/settings.json` in
+`scripts/codex/install-codex-integration.sh`. The test also asserts no
+`.rulesync/permissions.jsonc` source exists and that `permissions` is absent
+from both `rulesync.jsonc`'s `features` array and the CI drift workflow's
+`--features` list.
+
+Permissions *generation* through Rulesync remains deferred, not because the
+inventory is incomplete but because each source resists a single portable
+translation: Codex's scalars are composed at the user level against
+whatever machine-local `scripts/codex/config.toml` already exists (global,
+not per-project, and merged rather than overwritten — see
+`scripts/codex/compose-user-config.py`); Claude's tool boundary is computed
+per request from the agent role (orchestrator-with-shim vs. leaf,
+read-only vs. mutating, Playwright-eligible vs. not, research-capable vs.
+not), not a static file Rulesync could diff against; and Antigravity's grants
+are appended idempotently to a machine-local settings file
+(`$HOME/.gemini/antigravity-cli/settings.json`) keyed off install-time
+environment (`AUTODEV_AGY_READ_ROOTS`), not a repository-tracked artifact.
+These three enforcement layers are also independent of each other — a
+Rulesync `permissions` feature would have to either flatten them into a
+single lowest-common-denominator model (losing the role- and
+machine-specific behavior each currently depends on) or grow
+target-specific escape hatches (recreating the compatibility-shim problem
+this migration exists to avoid). Revisit once Rulesync's permissions
+feature supports per-target dynamic/role-scoped grants natively.
 
 CI drift protection is enforced by `.github/workflows/rulesync-mcp-shadow-drift.yml`, a
 read-only workflow triggered on `push` to `main`, `pull_request`, and `workflow_dispatch`
@@ -711,7 +749,9 @@ Pin an exact tested Rulesync version rather than tracking `latest`
 - Canonical skills
 - Shared MCP declarations
 - Hook declarations (shadow-only translation complete; target limitations documented)
-- Permissions declarations (deferred pending a portable source inventory)
+- Permissions declarations (inventory complete, see Status above; generation
+  deferred — global/composed Codex scope, role-dependent Claude policy,
+  machine-local Antigravity paths, and separate enforcement layers)
 
 ### Process
 
@@ -861,6 +901,24 @@ Delete the AutoDev Copilot proxy only if LiteLLM is at least behaviorally equiva
 ## Phase 5 — LiteLLM pilot 2: MiniMax-M3
 
 Test the exact AutoDev contract, not just basic text generation
+
+### Status
+
+The Phase 5 slice is now landed as an offline boundary contract for the
+incumbent MiniMax Responses pass-through proxy. The fixture at
+`tests/fixtures/contracts/minimax-responses-contract.json` and the boundary
+suite `tests/minimax-responses-contract.test.mjs` exercise the proxy's pure
+helpers (`rewrite`, `flattenOutboundTools`, `isWebResearchTool`,
+`freeformInputFromArguments`, `coerceResponseBody`) against normal-stream
+namespace flattening, freeform tool coercion, and preserved web-research
+tools, without contacting the remote API, deploying LiteLLM, or changing the
+live proxy. `coerceResponseBody`/`freeformInputFromArguments`/`isWebResearchTool`
+were promoted from `export function` to the consolidated export block so the
+test can drive the same logic the live proxy runs. The test asserts the
+request tool shape the proxy sends upstream, the response namespace the
+proxy hands back to the caller, and the `function_call -> custom_tool_call`
+rewriting Codex needs to run freeform `exec`. Live LiteLLM compatibility,
+operational/policy review, and proxy deletion remain pending.
 
 ### Required parity
 
