@@ -84,6 +84,7 @@ mcp_launcher_names=(run-autodev-mcp.sh)
 agent_renderer_name=scripts/codex/render-agent-configs.py
 execution_contract_builder_name=scripts/codex/render-execution-contract.py
 provider_skill_view_renderer_name=scripts/codex/render-provider-skill-views.py
+bridge_mcp_catalogue_renderer_name=scripts/codex/render-bridge-mcp-catalogue.py
 runtime_module_names=(
   scripts/codex/lib/resolve-workspace.mjs
   scripts/codex/lib/bridge-role.mjs
@@ -564,7 +565,7 @@ check_versioned_sources() {
       failed=1
     fi
   done
-  for source in "$repo_root/scripts/codex/agents/orchestrator.toml" "$repo_root/$execution_contract_builder_name" "$repo_root/$provider_skill_view_renderer_name" "$repo_root/.rulesync/mcp.jsonc"; do
+  for source in "$repo_root/scripts/codex/agents/orchestrator.toml" "$repo_root/$execution_contract_builder_name" "$repo_root/$provider_skill_view_renderer_name" "$repo_root/$bridge_mcp_catalogue_renderer_name" "$repo_root/.rulesync/mcp.jsonc"; do
     if ! check_versioned_source "$source"; then
       failed=1
     fi
@@ -722,6 +723,19 @@ check_claude_skill_views() {
   fi
   printf 'missing-or-drifted Claude role skill views\n'
   return 1
+}
+
+# The launch definitions the Claude and Copilot bridges hand each role, derived
+# from the Codex projection of `.rulesync/mcp.jsonc`.
+render_bridge_mcp_catalogue() {
+  python3 "$repo_root/$bridge_mcp_catalogue_renderer_name" \
+    --mcp-source "$codex_mcp_source" \
+    --output "$codex_home/provider-runtime/mcp-servers.json" \
+    "$@"
+}
+
+check_bridge_mcp_catalogue() {
+  render_bridge_mcp_catalogue --check
 }
 
 check_execution_contract() {
@@ -1348,6 +1362,9 @@ check_links() {
   if ! check_claude_skill_views; then
     failed=1
   fi
+  if ! check_bridge_mcp_catalogue; then
+    failed=1
+  fi
   if ! check_repository_skills; then
     failed=1
   fi
@@ -1691,6 +1708,9 @@ for role in "${agent_role_names[@]}"; do
 done
 rm -rf -- "$rendered_agents_dir"
 render_claude_skill_views
+if ! render_bridge_mcp_catalogue >/dev/null; then
+  exit 1
+fi
 if ! generate_repository_skills; then
   exit 1
 fi

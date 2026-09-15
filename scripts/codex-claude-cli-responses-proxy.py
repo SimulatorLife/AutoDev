@@ -19,7 +19,6 @@ import subprocess
 import sys
 import threading
 import time
-import tomllib
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -1431,20 +1430,20 @@ def claude_skill_view_for_role(role: Any = None) -> str | None:
     return view
 
 
-def codex_mcp_servers() -> dict[str, Any]:
-    """The MCP servers in the composed Codex user config.
+def bridge_mcp_servers() -> dict[str, Any]:
+    """The launch definition of every AutoDev MCP server.
 
-    The installer composes them from ``.rulesync/mcp.jsonc``, the one place each
-    server's launch definition is declared, so the bridge reuses them instead of
-    restating commands and URLs.
+    The installer renders this catalogue from ``.rulesync/mcp.jsonc``, the one
+    place each server is declared, so the Claude and Copilot bridges reuse it
+    instead of restating commands and URLs.
     """
     codex_home = os.environ.get("CODEX_HOME", os.path.expanduser("~/.codex"))
-    path = os.path.join(codex_home, "config.toml")
+    path = os.path.join(codex_home, "provider-runtime", "mcp-servers.json")
     try:
-        with open(path, "rb") as stream:
-            servers = tomllib.load(stream).get("mcp_servers", {})
-    except FileNotFoundError as error:
-        raise RuntimeError(f"Codex user config is missing: {path}; rerun install-codex-integration.sh") from error
+        with open(path, encoding="utf-8") as stream:
+            servers = json.load(stream)
+    except (FileNotFoundError, json.JSONDecodeError) as error:
+        raise RuntimeError(f"bridge MCP catalogue is missing or invalid: {path}; rerun install-codex-integration.sh") from error
     return servers if isinstance(servers, dict) else {}
 
 
@@ -1455,18 +1454,18 @@ def mcp_config_for_role(role: Any = None, spawn_session: str | None = None) -> s
     bridge always passes ``--strict-mcp-config``, so these are the only servers a
     bridged turn sees: user-level ``~/.claude.json`` servers and a workspace's
     own ``.mcp.json`` never widen a role's contract. Launch definitions come
-    from the composed Codex config; only the delegation shim is built here,
+    from the bridge MCP catalogue; only the delegation shim is built here,
     because it carries this turn's session.
     """
     servers: dict[str, Any] = {}
-    available = codex_mcp_servers()
+    available = bridge_mcp_servers()
     for name in role_contract_for(role).get("mcp", []):
         if name == "autodev_spawn":
             continue
         server = available.get(name)
         if not isinstance(server, dict):
             raise RuntimeError(
-                f"MCP server {name!r} granted to role {role!r} is not in the Codex user config; "
+                f"MCP server {name!r} granted to role {role!r} is not in the bridge MCP catalogue; "
                 "rerun install-codex-integration.sh"
             )
         servers[name] = (

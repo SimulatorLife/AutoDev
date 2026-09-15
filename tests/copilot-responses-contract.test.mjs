@@ -8,8 +8,17 @@ import test from "node:test";
 
 import { classifyCliLimit, limitPayload } from "../scripts/codex/lib/provider-limits.mjs";
 import { runCopilot } from "../scripts/codex-copilot-cli-responses-proxy.mjs";
+import { createBridgeMcpHomes } from "./bridge-mcp-fixture.mjs";
 
 const REPO_ROOT = resolve(import.meta.dirname, "..");
+// The bridge reads the MCP catalogue and user-level Copilot MCP file an install
+// materializes; give it hermetic copies instead of this machine's install.
+const homes = createBridgeMcpHomes();
+process.env.CODEX_HOME = homes.codexHome;
+process.env.COPILOT_HOME = homes.copilotHome;
+test.after(async () => {
+  await rm(homes.root, { recursive: true, force: true });
+});
 const PROXY = join(REPO_ROOT, "scripts/codex-copilot-cli-responses-proxy.mjs");
 const CONTRACT_PATH = join(REPO_ROOT, "tests/fixtures/contracts/copilot-responses-contract.json");
 const contract = JSON.parse(await readFile(CONTRACT_PATH, "utf8"));

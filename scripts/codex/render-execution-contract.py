@@ -19,7 +19,7 @@ MCP_ORDER = {"lsp": 0, "cocoindex-code": 1, "playwright": 2, "openaiDeveloperDoc
 SKILL_ORDER = {"orchestration": 0, "ccc": 1, "lsp-mcp-server": 2}
 
 
-def read_role(source: Path) -> tuple[str, list[str], list[str], bool, dict[str, bool] | None]:
+def read_role(source: Path) -> tuple[str, list[str], dict[str, list[str]], list[str], bool, dict[str, bool] | None]:
     config = tomllib.loads(source.read_text(encoding="utf-8"))
     kind = "orchestrator" if any(line.strip() == "# role-kind: orchestrator" for line in source.read_text().splitlines()) else "leaf"
     mcp = [
@@ -27,6 +27,15 @@ def read_role(source: Path) -> tuple[str, list[str], list[str], bool, dict[str, 
         for name, settings in config.get("mcp_servers", {}).items()
         if isinstance(settings, dict) and settings.get("enabled") is True
     ]
+    # A role's per-server tool allowlist (`enabled_tools`), so every provider
+    # bridge can grant the same tools a native Codex child receives.
+    mcp_tools = {
+        name: list(settings["enabled_tools"])
+        for name, settings in sorted(config.get("mcp_servers", {}).items())
+        if isinstance(settings, dict)
+        and settings.get("enabled") is True
+        and isinstance(settings.get("enabled_tools"), list)
+    }
     skills = [
         entry["name"]
         for entry in config.get("skills", {}).get("config", [])
@@ -48,7 +57,7 @@ def read_role(source: Path) -> tuple[str, list[str], list[str], bool, dict[str, 
             # provider-neutral role capability in the generated contract.
             web_research = {"search": True, "fetch": True, "optionalMcp": []}
 
-    return kind, mcp, skills, config.get("sandbox_mode") == "read-only", web_research
+    return kind, mcp, mcp_tools, skills, config.get("sandbox_mode") == "read-only", web_research
 
 
 def render(source_dir: Path, root_config_path: Path, contract_path: Path) -> dict:
@@ -66,13 +75,15 @@ def render(source_dir: Path, root_config_path: Path, contract_path: Path) -> dic
     }
     roles = contract["roles"]
     for source in sorted(source_dir.glob("*.toml")):
-        kind, mcp, skills, read_only, web_research = read_role(source)
+        kind, mcp, mcp_tools, skills, read_only, web_research = read_role(source)
         role_entry = {
             "kind": kind,
             "readOnly": read_only,
             "mcp": mcp,
             "skills": skills,
         }
+        if mcp_tools:
+            role_entry["mcpTools"] = mcp_tools
         if web_research is not None:
             if source.stem == "smart":
                 web_research["optionalMcp"] = ["playwright"]

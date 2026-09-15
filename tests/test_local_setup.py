@@ -24,6 +24,7 @@ COMPOSE_USER_CONFIG_PATH = REPO_ROOT / "scripts/codex/compose-user-config.py"
 AGENT_RENDERER_PATH = REPO_ROOT / "scripts/codex/render-agent-configs.py"
 PROVIDER_SKILL_VIEW_RENDERER_PATH = REPO_ROOT / "scripts/codex/render-provider-skill-views.py"
 EXECUTION_CONTRACT_RENDERER_PATH = REPO_ROOT / "scripts/codex/render-execution-contract.py"
+BRIDGE_MCP_CATALOGUE_RENDERER_PATH = REPO_ROOT / "scripts/codex/render-bridge-mcp-catalogue.py"
 SKILL_NAMES = ("ccc", "code-simplification", "lsp-mcp-server", "orchestration", "remove-legacy-shims")
 LSP_AGENT_NAMES = ("default", "explorer", "smart", "validator", "worker")
 NON_LSP_AGENT_NAMES = ("browser-tester", "docs-researcher")
@@ -68,13 +69,26 @@ def generated_codex_mcp_servers() -> dict:
     return tomllib.loads(codex_mcp_source().read_text())["mcp_servers"]
 
 
+def render_bridge_mcp_catalogue(codex_home: Path, *extra: str) -> subprocess.CompletedProcess:
+    return subprocess.run(
+        [
+            "python3", str(BRIDGE_MCP_CATALOGUE_RENDERER_PATH),
+            "--mcp-source", str(codex_mcp_source()),
+            "--output", str(Path(codex_home) / "provider-runtime" / "mcp-servers.json"),
+            *extra,
+        ],
+        capture_output=True,
+        text=True,
+    )
+
+
 def setUpModule():
     """Give the Claude bridge a hermetic CODEX_HOME holding what an install
-    materializes for it: the composed MCP servers and the role skill views."""
+    materializes for it: the bridge MCP catalogue and the role skill views."""
     global _bridge_codex_home, _saved_codex_home
     _bridge_codex_home = tempfile.TemporaryDirectory()
     home = Path(_bridge_codex_home.name)
-    (home / "config.toml").write_bytes(codex_mcp_source().read_bytes())
+    render_bridge_mcp_catalogue(home).check_returncode()
     subprocess.run(
         [
             "python3", str(PROVIDER_SKILL_VIEW_RENDERER_PATH),
@@ -880,9 +894,14 @@ exit 0
             antigravity = json.loads((Path(home) / ".gemini/config/mcp_config.json").read_text())["mcpServers"]
             self.assertEqual(set(antigravity), {"lsp", "cocoindex-code", "openaiDeveloperDocs", "autodev_spawn"})
             composed = tomllib.loads((Path(codex_home) / "config.toml").read_text())["mcp_servers"]
+            catalogue = json.loads((Path(codex_home) / "provider-runtime/mcp-servers.json").read_text())
             for name, server in generated_codex_mcp_servers().items():
                 with self.subTest(codex_server=name):
                     self.assertEqual(composed[name], server)
+                    self.assertEqual(
+                        catalogue[name],
+                        {key: server[key] for key in ("command", "args", "url") if key in server},
+                    )
 
             check = self._run_installer(home, codex_home, "--check", PATH=path)
             self.assertIn(f"ok user-level MCP (claudecode,copilotcli,antigravity-cli) generated from {REPO_ROOT}/.rulesync/mcp.jsonc", check.stdout)
@@ -1932,6 +1951,21 @@ exit 0
         # user-level ~/.claude.json servers or a workspace's own .mcp.json.
         self.assertIn("--strict-mcp-config", args)
 
+    def test_bridge_mcp_catalogue_keeps_only_launch_keys_and_detects_drift(self):
+        with tempfile.TemporaryDirectory() as codex_home:
+            self.assertNotEqual(render_bridge_mcp_catalogue(Path(codex_home), "--check").returncode, 0)
+            render_bridge_mcp_catalogue(Path(codex_home)).check_returncode()
+            catalogue_path = Path(codex_home) / "provider-runtime/mcp-servers.json"
+            catalogue = json.loads(catalogue_path.read_text())
+            expected = {
+                name: {key: server[key] for key in ("command", "args", "url") if key in server}
+                for name, server in generated_codex_mcp_servers().items()
+            }
+            self.assertEqual(catalogue, expected)
+            self.assertEqual(render_bridge_mcp_catalogue(Path(codex_home), "--check").returncode, 0)
+            catalogue_path.write_text(json.dumps({**catalogue, "stale": {"command": "stale"}}))
+            self.assertNotEqual(render_bridge_mcp_catalogue(Path(codex_home), "--check").returncode, 0)
+
     def test_claude_bridge_grants_each_role_exactly_its_contract_servers(self):
         contract = json.loads((REPO_ROOT / "scripts/codex/execution-contract.json").read_text())
         generated = generated_codex_mcp_servers()
@@ -2214,7 +2248,7 @@ exit 0
                 capture_output=True,
                 text=True,
             )
-            (Path(codex_home) / "config.toml").write_bytes(codex_mcp_source().read_bytes())
+            render_bridge_mcp_catalogue(Path(codex_home)).check_returncode()
             with patch.dict(os.environ, {"CODEX_HOME": codex_home}):
                 args = claude_bridge.claude_cli_args("prompt", "sonnet", "medium", "explorer", "/tmp/workspace")
             add_dir_index = args.index("--add-dir")

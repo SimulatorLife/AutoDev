@@ -278,8 +278,9 @@ test('Antigravity workspace customizations expose the code skills', async () => 
 
 test('provider bridges explicitly expose code MCP capabilities', async () => {
   const copilot = await readFile(path.join(root, 'scripts', 'codex-copilot-cli-responses-proxy.mjs'), 'utf8');
-  assert.match(copilot, /--allow-tool=cocoindex-code/);
-  assert.match(copilot, /--allow-tool=lsp/);
+  // Copilot MCP exposure follows the role contract (see copilot-mcp-scope.test.mjs).
+  assert.match(copilot, /--additional-mcp-config/);
+  assert.match(copilot, /--disable-mcp-server/);
   assert.match(copilot, /--allow-tool=web_search/);
   assert.match(copilot, /--allow-tool=web_fetch/);
   const claude = await readFile(path.join(root, 'scripts', 'codex-claude-cli-responses-proxy.py'), 'utf8');

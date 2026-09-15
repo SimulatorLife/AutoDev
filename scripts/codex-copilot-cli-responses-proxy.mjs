@@ -21,7 +21,7 @@ import { composeProviderPrompt, isOrchestratorRole, resolveAgentRole } from "./c
 import { roleContract } from "./codex/lib/execution-contract.mjs";
 import { classifyCliLimit, INCOMPLETE_REASON_INTERRUPTED, INCOMPLETE_REASON_PROVIDER_LIMIT, limitPayload, limitResponseHeaders, retryAfterSecondsFromLimit, terminalIncompleteEvents } from "./codex/lib/provider-limits.mjs";
 import { resolveAgentEventReporter, SKILL_READ_SOURCE } from "./codex/lib/agent-events.mjs";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { isAbsolute, join, resolve, sep } from "node:path";
 
@@ -356,12 +356,69 @@ function isResearchRole(role) {
   return typeof role === "string" && RESEARCH_CAPABLE_ROLES.has(role.trim().toLowerCase());
 }
 
+/** The launch definition of every AutoDev MCP server, rendered by the installer from `.rulesync/mcp.jsonc`. */
+function bridgeMcpCatalogue() {
+  const path = join(process.env.CODEX_HOME ?? join(homedir(), ".codex"), "provider-runtime", "mcp-servers.json");
+  try {
+    const catalogue = JSON.parse(readFileSync(path, "utf8"));
+    if (catalogue && typeof catalogue === "object" && !Array.isArray(catalogue)) return catalogue;
+  } catch { /* reported below */ }
+  throw new Error(`bridge MCP catalogue is missing or invalid: ${path}; rerun install-codex-integration.sh`);
+}
+
+/** Server names in the user-level Copilot MCP file that Rulesync writes. */
+function userMcpServerNames() {
+  const path = join(process.env.COPILOT_HOME ?? join(homedir(), ".copilot"), "mcp-config.json");
+  if (!existsSync(path)) return [];
+  const servers = JSON.parse(readFileSync(path, "utf8"))?.mcpServers;
+  return servers && typeof servers === "object" ? Object.keys(servers) : [];
+}
+
+/**
+ * Copilot CLI arguments that give this turn exactly its role contract's MCP
+ * servers, as the Claude bridge does with `--strict-mcp-config`:
+ * - user-level servers outside the contract, and the built-in GitHub server,
+ *   are disabled for the session;
+ * - contract servers the user-level file lacks are added with the role's tool
+ *   allowlist (`mcpTools`, from the role TOML's `enabled_tools`);
+ * - every contract server's tools are approved.
+ * User-level servers in the contract stay as Rulesync wrote them: they come
+ * from the same `.rulesync/mcp.jsonc` declaration as the catalogue.
+ */
+function copilotMcpArgs(agentRole) {
+  const contract = roleContract(agentRole);
+  const granted = (contract.mcp ?? []).filter((name) => name !== "autodev_spawn");
+  const catalogue = bridgeMcpCatalogue();
+  const userServers = new Set(userMcpServerNames());
+  const args = [ "--disable-builtin-mcps" ];
+  for (const name of userServers) {
+    if (!granted.includes(name)) args.push("--disable-mcp-server", name);
+  }
+  const additional = {};
+  for (const name of granted) {
+    const server = catalogue[name];
+    if (!server || typeof server !== "object") {
+      throw new Error(`MCP server ${name} granted to role ${agentRole ?? "default"} is not in the bridge MCP catalogue; rerun install-codex-integration.sh`);
+    }
+    const tools = contract.mcpTools?.[name];
+    if (userServers.has(name)) {
+      if (tools) throw new Error(`MCP server ${name} has a role tool allowlist but is registered at user level; it cannot be narrowed per session`);
+      continue;
+    }
+    additional[name] = server.url
+      ? { type: "http", url: server.url, tools: tools ?? [ "*" ] }
+      : { type: "stdio", command: server.command, args: server.args ?? [], tools: tools ?? [ "*" ] };
+  }
+  if (Object.keys(additional).length > 0) args.push("--additional-mcp-config", JSON.stringify({ mcpServers: additional }));
+  for (const name of granted) args.push(`--allow-tool=${name}`);
+  return args;
+}
+
 function runCopilot(prompt, model, cwd, onEvent, agentRole = null) {
   return new Promise((resolve, reject) => {
     const args = [ "--no-auto-update", "--no-color", "--output-format", "json", "--prompt", prompt ];
     const contract = roleContract(agentRole);
-    if (contract.mcp.includes("cocoindex-code")) args.push("--allow-tool=cocoindex-code");
-    if (contract.mcp.includes("lsp")) args.push("--allow-tool=lsp");
+    args.push(...copilotMcpArgs(agentRole));
     if (isResearchRole(agentRole)) args.push("--allow-tool=web_search", "--allow-tool=web_fetch");
     if (!contract.readOnly) args.splice(4, 0, "--allow-all-tools", "--allow-all-paths", "--allow-all-urls", "--no-ask-user");
     if (model && model !== "copilot" && model !== "auto") args.push("--model", model);
@@ -725,4 +782,4 @@ if (IS_MAIN) {
   });
 }
 
-export { copilotToolOutcome, extractSkillReadPath, inputText, isResearchRole, matchSkillReadPath, reportToolObservation, runCopilot, skillReadEvent, RESEARCH_CAPABLE_ROLES, SKILL_EXPOSURE_SOURCE, MCP_EXPOSURE_SOURCE };
+export { copilotMcpArgs, copilotToolOutcome, extractSkillReadPath, inputText, isResearchRole, matchSkillReadPath, reportToolObservation, runCopilot, skillReadEvent, RESEARCH_CAPABLE_ROLES, SKILL_EXPOSURE_SOURCE, MCP_EXPOSURE_SOURCE };

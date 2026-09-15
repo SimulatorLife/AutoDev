@@ -7,7 +7,29 @@
       "mcp": [
         "playwright"
       ],
-      "skills": []
+      "skills": [],
+      "mcpTools": {
+        "playwright": [
+          "browser_navigate",
+          "browser_tabs",
+          "browser_snapshot",
+          "browser_take_screenshot",
+          "browser_click",
+          "browser_type",
+          "browser_fill_form",
+          "browser_press_key",
+          "browser_wait_for",
+          "browser_console_messages",
+          "browser_network_requests",
+          "browser_find",
+          "browser_hover",
+          "browser_select_option",
+          "browser_drag",
+          "browser_handle_dialog",
+          "browser_resize",
+          "browser_close"
+        ]
+      }
     },
     "default": {
       "kind": "leaf",
@@ -78,6 +100,28 @@
         "ccc",
         "lsp-mcp-server"
       ],
+      "mcpTools": {
+        "playwright": [
+          "browser_navigate",
+          "browser_tabs",
+          "browser_snapshot",
+          "browser_take_screenshot",
+          "browser_click",
+          "browser_type",
+          "browser_fill_form",
+          "browser_press_key",
+          "browser_wait_for",
+          "browser_console_messages",
+          "browser_network_requests",
+          "browser_find",
+          "browser_hover",
+          "browser_select_option",
+          "browser_drag",
+          "browser_handle_dialog",
+          "browser_resize",
+          "browser_close"
+        ]
+      },
       "webResearch": {
         "search": true,
         "fetch": true,
