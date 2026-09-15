@@ -973,7 +973,11 @@ configuration using the existing portable source
 rulesync-pinned fixtures. No additional Phase 0 contract is required before
 starting this work.
 
-Current tracked `scripts/codex/config.toml` includes portable AutoDev settings and machine-specific state such as absolute user paths, trusted hook hashes, project trust entries, and local marketplace paths
+The former tracked `scripts/codex/config.toml` was a legacy migration seed. Older
+installations may still point a user config symlink at it; the supported upgrade
+path reads an existing target and atomically materializes a regular composed
+file. A broken legacy symlink fails closed rather than overwriting the target
+with a configuration that could discard machine-local state.
 
 ### Change
 
@@ -989,7 +993,20 @@ Fresh install and update can converge AutoDev-owned configuration without deleti
 
 ### Status
 
-Complete. The portable source is authoritative at `scripts/codex/config.autodev.toml`: it carries the AutoDev-owned portable scalars, provider definitions, `sandbox_workspace_write`, `otel`, `analytics`, `features`, `tools`, `agents`, the declared hooks (without `hooks.state`), the AutoDev MCP servers (`lsp`, `cocoindex-code`, `playwright`), the AutoDev-owned skills (`ccc`, `lsp-mcp-server`, `orchestration`), and `shell_environment_policy`. It excludes `notify`, `hooks.state`, `projects`, `marketplaces`, TUI/notice/desktop/apps/plugins/memories, `node_repl`/`cua_repl`, non-AutoDev skills, and absolute user/application paths. `scripts/codex/compose-user-config.py` deterministically merges the portable source with existing machine-local configuration into `$CODEX_HOME/config.toml` as an atomic regular file, resolving conflicts in favor of AutoDev while semantically preserving machine-local and user-owned values. The installer (`install-codex-integration.sh`), `--check` drift validation, and `render-execution-contract.py` consume `config.autodev.toml` and the composer. Legacy `scripts/codex/config.toml` is retired from being authoritative and remains only as a one-time migration seed.
+Complete. The portable source is authoritative at `scripts/codex/config.autodev.toml`: it carries the AutoDev-owned portable scalars, provider definitions, `sandbox_workspace_write`, `otel`, `analytics`, `features`, `tools`, `agents`, the declared hooks (without `hooks.state`), the AutoDev-owned skills (`ccc`, `lsp-mcp-server`, `orchestration`), and `shell_environment_policy`. MCP declarations come from the live Rulesync source `.rulesync/mcp.jsonc` and are projected into the composer. The source excludes `notify`, `hooks.state`, `projects`, `marketplaces`, TUI/notice/desktop/apps/plugins/memories, `node_repl`/`cua_repl`, non-AutoDev skills, and absolute user/application paths. `scripts/codex/compose-user-config.py` deterministically merges the portable source and Rulesync MCP projection with existing machine-local configuration into `$CODEX_HOME/config.toml` as an atomic regular file, resolving conflicts in favor of AutoDev while semantically preserving machine-local and user-owned values. The installer (`install-codex-integration.sh`), `--check` drift validation, and `render-execution-contract.py` consume `config.autodev.toml` and the composer. The former `scripts/codex/config.toml` seed is removed from the repository and no longer participates in validation.
+
+### Seed-retirement acceptance
+
+The retirement is accepted when an upgrade materializes a regular (not
+symlinked) `$CODEX_HOME/config.toml` through the supported installer/composer,
+reads a valid legacy symlink target only during migration from an older
+installation, and keeps
+existing machine-local state such as projects, notifications, custom MCP
+servers, and trusted hook state. A second install must be idempotent and
+`bash scripts/codex/install-codex-integration.sh --check` must pass without
+rewriting the composed file. The focused composer/convergence tests and the
+Rulesync MCP and generated-skills checks are the validation evidence for this
+boundary.
 
 ### Hardening slice
 
@@ -1057,7 +1074,7 @@ instructions. `.rulesync/rules/overview.md`, `.github/copilot-instructions.md`,
 and `tests/test_rulesync_live_rules.py` are gone. See "Completed single-source
 instructions and source-derived MCP checks" below.
 
-**Completed second incremental live surface — Copilot canonical skills.** The
+**Historical record (superseded 2026-09-15) — Copilot canonical skills.** The
 Rulesync-generated Copilot skill surface at `.github/skills/` now contains
 exactly `ccc`, `lsp-mcp-server`, and `orchestration`, with generated
 frontmatter and bodies checked against `.rulesync/skills/`. The focused
@@ -1323,8 +1340,10 @@ bridged turn therefore sees exactly its contract's servers, never
   drafted but not filed.
 - A Rulesync config file with `global: true` generates nothing, so MCP
   generation passes flags.
-- The legacy seed `scripts/codex/config.toml` still holds MCP copies. Removing
-  it is a separate change.
+- At the time of this cutover, the former legacy seed `scripts/codex/config.toml`
+  still held MCP copies. The seed-retirement slice removed that tracked file;
+  valid legacy symlink targets are materialized during upgrade, while broken
+  targets fail closed.
 
 *Live effect of the next install.*
 - `~/.copilot/mcp-config.json` loses `playwright`, which AutoDev never
@@ -1343,7 +1362,8 @@ bridged turn therefore sees exactly its contract's servers, never
   enabled, and `playwright` and `openaiDeveloperDocs` (streamable HTTP)
   disabled.
 
-**Completed shared-MCP evaluation and hardening — no live cutover.** The
+**Historical record (superseded 2026-09-15) — shared-MCP evaluation and
+hardening; no live cutover at that time.** The
 contract fixture `tests/fixtures/contracts/rulesync-mcp-boundary.json` (schema
 `autodev-rulesync-mcp-boundary-v1`) and
 `tests/test_rulesync_mcp_boundary.py` now freeze Rulesync `16.30.2` projections
@@ -1360,7 +1380,8 @@ owners are not yet one behaviorally equivalent surface. *Superseded
 2026-09-15:* the contract fixture and its test were removed, and MCP went live
 through Rulesync; see "Completed MCP live cutover to Rulesync" below.
 
-**Target-by-target MCP behavioral-equivalence decision — no promotion approved.**
+**Historical record (superseded 2026-09-15) — target-by-target MCP
+behavioral-equivalence decision; no promotion approved at that time.**
 The decision gate now covers server names and launcher arguments, enabled/
 disabled state, URL placement, approval semantics, forbidden-server absence,
 project versus global scope, role-sensitive exposure, permissions, lifecycle,
@@ -1380,11 +1401,10 @@ merge/preservation behavior, smoke validation, and rollback. The result is
   registration, machine-local permission grants, and launchd/bridge lifecycle;
   a project `.agents/mcp_config.json` cannot represent those semantics.
 
-Keep all four MCP projections shadow-only. The rollback baseline is unchanged:
-retain `scripts/codex/config.autodev.toml`/composer, installer-managed Copilot
-and Antigravity registries, and Claude/Copilot/Antigravity bridge-owned MCP
-construction. Reopen promotion only after target-specific tests prove the full
-decision gate rather than only matching names and launcher strings.
+At that time, all four MCP projections were kept shadow-only. The decision was
+superseded by the tested live cutover documented above; the rollback baseline
+remains the Rulesync source plus the installer/composer and provider bridge
+owners.
 
 *Superseded 2026-09-15 by tested evidence; see "Completed MCP live cutover to
 Rulesync" below.* This decision rested on assumptions that were never tested,
@@ -1436,7 +1456,7 @@ from `rulesync.jsonc`'s `features` array.
 Permissions *generation* through Rulesync remains deferred, not because the
 inventory is incomplete but because each source resists a single portable
 translation: Codex's scalars are composed at the user level against
-whatever machine-local `scripts/codex/config.toml` already exists (global,
+whatever machine-local `$CODEX_HOME/config.toml` already exists (global,
 not per-project, and merged rather than overwritten — see
 `scripts/codex/compose-user-config.py`); Claude's current bridge tool boundary is computed
 per request from the agent role (orchestrator-with-shim vs. leaf,
@@ -1488,7 +1508,9 @@ Pin an exact tested Rulesync version rather than tracking `latest`
 4. Test global and project scopes separately
 5. Verify unrelated user config survives
 6. Add CI drift checks (enforced via `.github/workflows/rulesync-mcp-shadow-drift.yml`)
-7. Switch one generated surface at a time (shared instruction rules and the Copilot canonical-skill slice complete; shared-MCP boundary hardening complete, with live cutover still deferred)
+7. Switch one generated surface at a time (MCP and generated repository skills
+   are now live; hooks and permissions remain deferred or AutoDev-owned, and
+   role rendering remains AutoDev-owned)
 
 ### Keep outside Rulesync initially
 

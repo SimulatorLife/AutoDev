@@ -174,7 +174,10 @@ class RulesyncSkillsTests(unittest.TestCase):
         self.assertIn('repository_skill_exclude_entry="/.agents/skills/"', installer)
         generation = installer.split("run_repository_skill_generation() {", 1)[1].split("\n}\n", 1)[0]
         self.assertIn('(cd -- "$repo_root" && "$rulesync_bin" generate --config "$repo_root/rulesync.jsonc" "$@" --silent)', generation)
-        self.assertRegex(installer, r"\nrender_claude_skill_views\nif ! generate_repository_skills; then\n  exit 1\nfi\n")
+        self.assertRegex(
+            installer,
+            r"\nrender_claude_skill_views\nif ! render_bridge_mcp_catalogue >/dev/null; then\n  exit 1\nfi\nif ! generate_repository_skills; then\n  exit 1\nfi\n",
+        )
         check_links = installer.split("check_links() {", 1)[1].split("\n}\n", 1)[0]
         self.assertIn("check_repository_skills", check_links)
 

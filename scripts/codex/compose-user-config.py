@@ -118,6 +118,11 @@ def _load_existing(path: Path) -> dict:
     A present but malformed file is fatal because we cannot distinguish
     "preserved machine-local state" from "garbage we must not overwrite".
     """
+    if path.is_symlink() and not path.exists():
+        raise ComposeError(
+            f"existing config symlink target is missing: {path}; "
+            "restore the legacy config target before retrying migration"
+        )
     if not path.exists():
         return {}
     try:

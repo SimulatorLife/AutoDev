@@ -130,11 +130,10 @@ python_language_server_package="python-lsp-server==1.15.0"
 # installed config.toml so AutoDev-owned settings win conflicts, while machine-
 # local state (notify, hooks.state trusted hashes, projects, marketplaces, TUI/
 # desktop/apps/plugins/memories, non-AutoDev MCP servers, user-added skills) is
-# preserved semantically. The legacy scripts/codex/config.toml is retained as
-# a one-time migration seed and is no longer authoritative for AutoDev-owned
-# keys; new installs and updates compose from config.autodev.toml instead.
+# preserved semantically. Existing installations that still point
+# config.toml at the retired seed are read through that symlink and atomically
+# replaced with a regular composed file; new installs never reference a seed.
 user_config_portable_source="$repo_root/scripts/codex/config.autodev.toml"
-user_config_seed="$repo_root/scripts/codex/config.toml"
 user_config_composer="$repo_root/scripts/codex/compose-user-config.py"
 otel_artifact_manifest="$repo_root/config/otel/collector-artifacts.json"
 tracked_sources=""
@@ -269,7 +268,7 @@ check_one() {
 # Reads from the existing target if present (so user-added MCP/skill/skills
 # are preserved) and writes a regular file, never a symlink, because Codex
 # resolves config.toml at startup and a stale symlink would re-route the
-# whole user-level configuration back to the legacy seed.
+# whole user-level configuration back to an obsolete checkout path.
 compose_user_config() {
   local existing="$1"
   local output="$2"
@@ -600,7 +599,7 @@ check_versioned_sources() {
       failed=1
     fi
   done
-  for source in "$user_config_portable_source" "$user_config_seed" "$user_config_composer" "$repo_root/scripts/codex/install-codex-integration.sh" \
+  for source in "$user_config_portable_source" "$user_config_composer" "$repo_root/scripts/codex/install-codex-integration.sh" \
     "$repo_root/scripts/codex/launchagents/com.codex.model-router.plist" \
     "$repo_root/scripts/codex/launchagents/com.codex.claude-bridge.plist" \
     "$repo_root/scripts/codex/launchagents/com.codex.minimax-proxy.plist" \
@@ -809,7 +808,7 @@ ensure_pipx() {
     fi
   else
     printf 'cannot install pipx automatically: no Homebrew, and this Python is externally managed (PEP 668)\n' >&2
-    printf 'Install pipx yourself (e.g. `brew install pipx`, or your distro package), then rerun %s\n' "${BASH_SOURCE[0]##*/}" >&2
+    printf 'Install pipx yourself (e.g. brew install pipx, or your distro package), then rerun %s\n' "${BASH_SOURCE[0]##*/}" >&2
     return 1
   fi
 
@@ -829,8 +828,8 @@ ensure_pipx() {
 }
 
 install_cocoindex_code() {
-  # The MCP entry is versioned in config.toml; this step owns only the user-level
-  # executable. A missing ccc is fatal unless a caller explicitly opts out (the
+  # The MCP entry is versioned in .rulesync/mcp.jsonc; this step owns only the
+  # user-level executable. A missing ccc is fatal unless a caller explicitly opts out (the
   # opt-out is used by isolated installer tests and is not a production path).
   if [[ "${AUTODEV_SKIP_COCOINDEX_INSTALL:-0}" == "1" ]]; then
     printf 'skipping CocoIndex Code installation (AUTODEV_SKIP_COCOINDEX_INSTALL=1)\n' >&2

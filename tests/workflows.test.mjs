@@ -211,10 +211,7 @@ test('local provider tooling resolves the playwright MCP from a pinned devDepend
   const playwright = mcpSource.codexcli.mcpServers.playwright;
   assert.equal(playwright.command, 'bash');
   assert.match(playwright.args.at(-1), /run-autodev-mcp\.sh" playwright$/);
-  const configs = [
-    path.join(root, 'scripts', 'codex', 'config.toml'),
-    path.join(root, '.rulesync', 'mcp.jsonc'),
-  ];
+  const configs = [path.join(root, '.rulesync', 'mcp.jsonc')];
   for (const configFile of configs) {
     const source = await readFile(configFile, 'utf8');
     assert.match(source, /run-autodev-mcp\.sh\\" playwright/);
@@ -240,27 +237,26 @@ test('local provider tooling resolves the playwright MCP from a pinned devDepend
 });
 
 test('the user-level MCP servers are self-sufficient, so no repository needs to redeclare them', async () => {
-  const config = await readFile(path.join(root, 'scripts', 'codex', 'config.toml'), 'utf8');
+  const source = JSON.parse(await readFile(path.join(root, '.rulesync', 'mcp.jsonc'), 'utf8'));
+  const config = source.codexcli.mcpServers;
   // Each server must carry every setting a project would otherwise re-add
   // locally. A project-local block shadows the user-level one by name, which is
   // how an unpinned `dlx @latest` override silently replaced the pinned
   // devDependency in a target repository.
   for (const server of ['lsp', 'playwright']) {
-    const block = config.slice(config.indexOf(`[mcp_servers.${server}]`)).split('\n\n')[0];
-    if (server === 'lsp' || server === 'playwright') {
-      assert.match(block, /command = "bash"/, server);
-      assert.match(block, /run-autodev-mcp\.sh/, server);
-    }
-    assert.match(block, /default_tools_approval_mode = "approve"/, server);
-    assert.match(block, server === 'playwright' ? /enabled = false/ : /enabled = true/, server);
+    const settings = config[server];
+    assert.equal(settings.command, 'bash', server);
+    assert.match(settings.args.at(-1), /run-autodev-mcp\.sh\"/, server);
+    assert.equal(settings.default_tools_approval_mode, 'approve', server);
+    assert.equal(Boolean(settings.disabled), server === 'playwright', server);
   }
 });
 
 test('root website research uses native search while Playwright stays role-scoped', async () => {
-  const config = await readFile(path.join(root, 'scripts', 'codex', 'config.toml'), 'utf8');
+  const config = await readFile(path.join(root, 'scripts', 'codex', 'config.autodev.toml'), 'utf8');
   assert.match(config, /\[tools\][\s\S]*web_search = true/);
-  const playwright = config.slice(config.indexOf('[mcp_servers.playwright]')).split('\n\n')[0];
-  assert.match(playwright, /enabled = false/);
+  const mcp = JSON.parse(await readFile(path.join(root, '.rulesync', 'mcp.jsonc'), 'utf8'));
+  assert.equal(Boolean(mcp.codexcli.mcpServers.playwright.disabled), true);
   for (const role of ['docs-researcher', 'smart', 'orchestrator']) {
     const source = await readFile(path.join(root, 'scripts', 'codex', 'agents', `${role}.toml`), 'utf8');
     assert.match(source, /web_search = true/, role);

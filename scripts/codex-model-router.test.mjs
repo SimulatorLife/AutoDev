@@ -3405,8 +3405,8 @@ test("parseConcurrencyConfig accepts multiline [agents] and inline agents={...} 
   const directory = await mkdtemp(join(tmpdir(), "autodev-concurrency-config-"));
   const configFile = join(directory, "config.toml");
   try {
-    // Canonical multiline form -- the form scripts/codex/config.toml is moving
-    // away from, but still produced by the legacy one-time seed.
+    // Canonical multiline form -- older user configs used this form before the
+    // composer switched to its canonical inline output.
     await writeFile(configFile, "[agents]\nmax_concurrent_threads_per_session = 2\nmax_depth = 1\n");
     assert.deepEqual(parseConcurrencyConfig(configFile), { file: configFile, maxConcurrentThreadsPerSession: 2 });
     assert.equal(Object.hasOwn(parseConcurrencyConfig(configFile), "maxThreads"), false, "maxThreads must not appear on the parsed shape");

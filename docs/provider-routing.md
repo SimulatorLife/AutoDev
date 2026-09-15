@@ -1753,8 +1753,9 @@ installer is the only supported materialization path into
     generated output.
 - User-level provider/role configuration: `scripts/codex/config.autodev.toml` is
   the authoritative portable configuration, composed into `$CODEX_HOME/config.toml`
-  as an atomic regular file by `scripts/codex/compose-user-config.py`. The legacy
-  `scripts/codex/config.toml` is retained only as a one-time migration seed.
+  as an atomic regular file by `scripts/codex/compose-user-config.py`. The former
+  `scripts/codex/config.toml` seed is retired; valid legacy symlink
+  targets are migrated once and broken targets fail closed.
   Composition is required because Codex loads user-level settings at startup and
   project-local config cannot override provider/auth keys. The user layer registers
   the same codebase-agnostic roles with paths relative to `$CODEX_HOME/agents/` for

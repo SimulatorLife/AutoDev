@@ -7,6 +7,8 @@ import { spawn } from "node:child_process";
 import { tmpdir } from "node:os";
 import test from "node:test";
 
+import { createBridgeMcpHomes } from "./bridge-mcp-fixture.mjs";
+
 const REPO_ROOT = resolve(import.meta.dirname, "..");
 const PROXY = join(REPO_ROOT, "scripts/codex-claude-cli-responses-proxy.py");
 const CONTRACT_PATH = join(REPO_ROOT, "tests/fixtures/contracts/claude-responses-contract.json");
@@ -14,6 +16,14 @@ const contract = JSON.parse(await readFile(CONTRACT_PATH, "utf8"));
 
 const BRIDGE_ROLE = "browser-tester";
 const PRIVACY_TOKEN = "contract task";
+// The bridge reads the MCP catalogue an install materializes. Keep this
+// contract hermetic and derive the catalogue from the canonical Rulesync
+// source rather than depending on the operator's installed CODEX_HOME.
+const homes = createBridgeMcpHomes();
+process.env.CODEX_HOME = homes.codexHome;
+test.after(async () => {
+  await rm(homes.root, { recursive: true, force: true });
+});
 
 function replaceTokens(value) {
   if (typeof value === "string") return value.replaceAll("<REPO_ROOT>", REPO_ROOT);

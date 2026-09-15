@@ -19,7 +19,6 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 BRIDGE_PATH = REPO_ROOT / "scripts/codex-claude-cli-responses-proxy.py"
 INSTALLER_PATH = REPO_ROOT / "scripts/codex/install-codex-integration.sh"
 AUTODEV_CONFIG_PATH = REPO_ROOT / "scripts/codex/config.autodev.toml"
-AUTODEV_LEGACY_CONFIG_PATH = REPO_ROOT / "scripts/codex/config.toml"
 COMPOSE_USER_CONFIG_PATH = REPO_ROOT / "scripts/codex/compose-user-config.py"
 AGENT_RENDERER_PATH = REPO_ROOT / "scripts/codex/render-agent-configs.py"
 PROVIDER_SKILL_VIEW_RENDERER_PATH = REPO_ROOT / "scripts/codex/render-provider-skill-views.py"
@@ -67,6 +66,12 @@ def codex_mcp_source() -> Path:
 
 def generated_codex_mcp_servers() -> dict:
     return tomllib.loads(codex_mcp_source().read_text())["mcp_servers"]
+
+
+def autodev_config_with_rulesync_mcp() -> dict:
+    config = tomllib.loads(AUTODEV_CONFIG_PATH.read_text())
+    config["mcp_servers"] = generated_codex_mcp_servers()
+    return config
 
 
 def render_bridge_mcp_catalogue(codex_home: Path, *extra: str) -> subprocess.CompletedProcess:
@@ -654,9 +659,9 @@ exit 0
         self.assertTrue({"lsp_find_symbol", "lsp_diagnostics", "lsp_rename"} <= advertised_tools)
 
     def test_user_level_cocoindex_mcp_and_skill_contract(self):
-        config = tomllib.loads((REPO_ROOT / "scripts/codex/config.toml").read_text())
+        config = autodev_config_with_rulesync_mcp()
         server = config["mcp_servers"]["cocoindex-code"]
-        self.assertTrue(server["enabled"])
+        self.assertTrue(server.get("enabled", True))
         self.assertEqual(server["command"], "bash")
         self.assertEqual(server["args"], ["-lc", 'exec "${CODEX_HOME:-$HOME/.codex}/hooks/run-autodev-mcp.sh" cocoindex-code'])
         self.assertNotIn("cwd", server)
@@ -962,12 +967,11 @@ exit 0
         self.assertIn('sandbox_mode = "read-only"', (REPO_ROOT / "scripts/codex/agents/docs-researcher.toml").read_text())
 
     def test_user_level_lsp_server_and_role_skill_contract(self):
-        config_path = REPO_ROOT / "scripts/codex/config.toml"
-        config = tomllib.loads(config_path.read_text())
+        config = autodev_config_with_rulesync_mcp()
         lsp_server = config["mcp_servers"]["lsp"]
         self.assertEqual(lsp_server["command"], "bash")
         self.assertEqual(lsp_server["args"], ["-lc", 'exec "${CODEX_HOME:-$HOME/.codex}/hooks/run-autodev-mcp.sh" lsp'])
-        self.assertTrue(lsp_server["enabled"])
+        self.assertTrue(lsp_server.get("enabled", True))
         user_skill_config = {
             entry["name"]: entry["enabled"]
             for entry in config["skills"]["config"]
@@ -1236,7 +1240,7 @@ exit 0
             )
 
     def test_root_config_installs_skill_read_telemetry_hook(self):
-        config = tomllib.loads((REPO_ROOT / "scripts/codex/config.toml").read_text())
+        config = tomllib.loads(AUTODEV_CONFIG_PATH.read_text())
         pre_tool_hooks = config["hooks"]["PreToolUse"]
         self.assertTrue(any(
             hook.get("matcher") == "(?i)read[_ -]?file|read|exec[_ -]?command|bash"
@@ -1249,9 +1253,9 @@ exit 0
         self.assertIn("codex/skill-read-telemetry.mjs", installer)
 
     def test_root_config_enables_canonical_orchestration_skill(self):
-        config = tomllib.loads((REPO_ROOT / "scripts/codex/config.toml").read_text())
-        self.assertTrue(config["mcp_servers"]["cocoindex-code"]["enabled"])
-        self.assertTrue(config["mcp_servers"]["lsp"]["enabled"])
+        config = autodev_config_with_rulesync_mcp()
+        self.assertTrue(config["mcp_servers"]["cocoindex-code"].get("enabled", True))
+        self.assertTrue(config["mcp_servers"]["lsp"].get("enabled", True))
         skill_config = {
             entry["name"]: entry["enabled"]
             for entry in config["skills"]["config"]
@@ -1306,7 +1310,7 @@ exit 0
                     "--source-dir",
                     str(role_dir),
                     "--root-config",
-                    str(REPO_ROOT / "scripts/codex/config.toml"),
+                    str(codex_mcp_source()),
                     "--contract",
                     str(contract_path),
                     "--output",
@@ -1368,7 +1372,7 @@ exit 0
                     "--source-dir",
                     str(role_dir),
                     "--root-config",
-                    str(REPO_ROOT / "scripts/codex/config.toml"),
+                    str(codex_mcp_source()),
                     "--contract",
                     str(contract_path),
                     "--output",
@@ -1585,7 +1589,7 @@ exit 0
         self.assertNotIn("RacingGame", skill)
 
     def test_codex_otel_is_configured_without_raw_prompt_export(self):
-        config = (REPO_ROOT / "scripts/codex/config.toml").read_text()
+        config = (AUTODEV_CONFIG_PATH).read_text()
         self.assertIn("[otel]", config)
         self.assertIn('environment = "autodev"', config)
         self.assertIn('exporter = { otlp-http = {', config)
@@ -1600,14 +1604,14 @@ exit 0
         self.assertIn("[analytics]\nenabled = true", config)
 
     def test_workspace_write_agents_can_query_local_diagnostics(self):
-        config = (REPO_ROOT / "scripts/codex/config.toml").read_text()
+        config = (AUTODEV_CONFIG_PATH).read_text()
         self.assertIn("[sandbox_workspace_write]", config)
         self.assertIn("network_access = true", config)
 
     def test_native_codex_rules_are_tracked_and_deny_destructive_git_commands(self):
         rules = REPO_ROOT / "scripts/codex/rules/default.rules"
         installer = (REPO_ROOT / "scripts/codex/install-codex-integration.sh").read_text()
-        config = (REPO_ROOT / "scripts/codex/config.toml").read_text()
+        config = (AUTODEV_CONFIG_PATH).read_text()
         self.assertTrue(rules.is_file())
         rule_text = rules.read_text()
         self.assertIn('decision = "forbidden"', rule_text)
@@ -2712,7 +2716,7 @@ exit 0
         self.assertIn("# Root orchestrator bootstrap", result.stdout)
 
     def test_orchestrator_uses_router_fallback_alias(self):
-        config = (REPO_ROOT / "scripts/codex/config.toml").read_text()
+        config = (AUTODEV_CONFIG_PATH).read_text()
         self.assertIn('model = "autodev/orchestrator"', config)
         routing = json.loads(
             (REPO_ROOT / "scripts/codex/model-routing.json").read_text()
@@ -2725,7 +2729,7 @@ exit 0
         )
 
     def test_default_native_subagents_use_router_role_alias(self):
-        config = (REPO_ROOT / "scripts/codex/config.toml").read_text()
+        config = (AUTODEV_CONFIG_PATH).read_text()
         self.assertIn('default_subagent_model = "autodev/default"', config)
 
     def test_provider_role_runner_applies_role_execution_settings(self):
@@ -2812,7 +2816,7 @@ PY
         # bridges. The name is vestigial, but renaming a live credential is a
         # separate change from removing the hop, so only the service references
         # are asserted gone here.
-        for relative_path in ("scripts/codex/config.toml", "scripts/codex/profiles/antigravity.config.toml"):
+        for relative_path in ("scripts/codex/config.autodev.toml", "scripts/codex/profiles/antigravity.config.toml"):
             source = (REPO_ROOT / relative_path).read_text()
             self.assertNotIn("LiteLLM", source)
             self.assertNotIn("4001", source)
@@ -2822,7 +2826,7 @@ PY
         self.assertNotIn("4001", ensure)
         self.assertIn('proxy_probe="http://127.0.0.1:4002/health/liveliness"', ensure)
 
-        for relative_path in ("scripts/codex/config.toml", "scripts/codex/profiles/antigravity.config.toml"):
+        for relative_path in ("scripts/codex/config.autodev.toml", "scripts/codex/profiles/antigravity.config.toml"):
             source = (REPO_ROOT / relative_path).read_text()
             self.assertIn('base_url = "http://127.0.0.1:4002/v1"', source)
 
@@ -3147,7 +3151,7 @@ PY
         self.assertIn('sendJson(response, 503', proxy)
 
     def test_obsolete_subagent_start_logging_hook_is_removed(self):
-        config = (REPO_ROOT / "scripts/codex/config.toml").read_text()
+        config = (AUTODEV_CONFIG_PATH).read_text()
         installer = (REPO_ROOT / "scripts/codex/install-codex-integration.sh").read_text()
         self.assertFalse((REPO_ROOT / "scripts/log-subagent-model.sh").exists())
         self.assertNotIn('command = "bash ~/.codex/hooks/log-subagent-model.sh"', config)
@@ -3614,18 +3618,24 @@ PY
 
 class PortableAutodevConfigTests(unittest.TestCase):
     """Phase 1 of docs/AUTODEV_PLATFORM_MIGRATION.md stages a portable,
-    AutoDev-owned slice of scripts/codex/config.toml at
+    AutoDev-owned slice of scripts/codex/config.autodev.toml at
     scripts/codex/config.autodev.toml. These tests pin its contents against
     the current config and guard against machine-local state leaking in."""
 
     @classmethod
     def setUpClass(cls):
-        cls.full_config = tomllib.loads((REPO_ROOT / "scripts/codex/config.toml").read_text())
+        cls.full_config = autodev_config_with_rulesync_mcp()
         cls.autodev_config = tomllib.loads(AUTODEV_CONFIG_PATH.read_text())
 
     def test_autodev_config_parses_as_toml(self):
         self.assertIsInstance(self.autodev_config, dict)
         self.assertGreater(len(self.autodev_config), 0)
+
+    def test_legacy_codex_seed_is_retired_from_the_repository_and_installer(self):
+        self.assertFalse((REPO_ROOT / "scripts/codex/config.toml").exists())
+        installer = INSTALLER_PATH.read_text()
+        self.assertNotIn("user_config_seed", installer)
+        self.assertNotIn("$repo_root/scripts/codex/config.toml", installer)
 
     def test_portable_scalars_match_current_config(self):
         portable_scalar_keys = (
@@ -4055,6 +4065,19 @@ class ComposeUserConfigTests(unittest.TestCase):
             run = self._run_composer(AUTODEV_CONFIG_PATH, existing, output, "--check")
             self.assertEqual(run.returncode, 1, msg=run.stdout + run.stderr)
             self.assertIn("symlink", run.stderr.lower())
+
+    def test_migration_rejects_broken_legacy_seed_symlink_without_overwriting_it(self):
+        with tempfile.TemporaryDirectory() as home:
+            missing_seed = Path(home) / "scripts/codex/config.toml"
+            missing_seed.parent.mkdir(parents=True)
+            existing = Path(home) / "config.toml"
+            existing.symlink_to(missing_seed)
+            output_before = existing.readlink()
+            run = self._run_composer(AUTODEV_CONFIG_PATH, existing, existing)
+            self.assertEqual(run.returncode, 2, msg=run.stdout + run.stderr)
+            self.assertIn("symlink target is missing", run.stderr)
+            self.assertTrue(existing.is_symlink())
+            self.assertEqual(existing.readlink(), output_before)
 
     def test_migration_from_legacy_symlink_seed_replaces_with_regular_file(self):
         with tempfile.TemporaryDirectory() as home, tempfile.TemporaryDirectory() as codex_home:
