@@ -19,6 +19,7 @@ import subprocess
 import sys
 import threading
 import time
+import tomllib
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -73,8 +74,6 @@ CROSS_SESSION_CLAUDE_TOOLS = ("SendMessage", "ListAgents")
 # falls back to shell-only investigation. The prefixed names are the tool names
 # Claude Code assigns to an MCP server's tools.
 PLAYWRIGHT_AGENT_ROLES = frozenset({"browser-tester", "smart"})
-PLAYWRIGHT_COMMAND = "pnpm"
-PLAYWRIGHT_ARGS = ("exec", "playwright-mcp")
 PLAYWRIGHT_DISALLOWED_TOOLS = tuple(
     f"mcp__playwright__{name}"
     for name in (
@@ -1432,39 +1431,49 @@ def claude_skill_view_for_role(role: Any = None) -> str | None:
     return view
 
 
-def mcp_config_for_role(role: Any = None, spawn_session: str | None = None) -> str | None:
-    """Return bridge-owned MCP servers needed by this role.
+def codex_mcp_servers() -> dict[str, Any]:
+    """The MCP servers in the composed Codex user config.
 
-    The Claude CLI accepts an inline JSON string with ``--mcp-config``. Do not
-    write a shared ``~/.claude`` setting: that would expose a browser server to
-    unrelated sessions and would leave the provider dependent on mutable user
-    state. Without ``--strict-mcp-config`` these entries augment the project's
-    own servers.
+    The installer composes them from ``.rulesync/mcp.jsonc``, the one place each
+    server's launch definition is declared, so the bridge reuses them instead of
+    restating commands and URLs.
+    """
+    codex_home = os.environ.get("CODEX_HOME", os.path.expanduser("~/.codex"))
+    path = os.path.join(codex_home, "config.toml")
+    try:
+        with open(path, "rb") as stream:
+            servers = tomllib.load(stream).get("mcp_servers", {})
+    except FileNotFoundError as error:
+        raise RuntimeError(f"Codex user config is missing: {path}; rerun install-codex-integration.sh") from error
+    return servers if isinstance(servers, dict) else {}
+
+
+def mcp_config_for_role(role: Any = None, spawn_session: str | None = None) -> str | None:
+    """Return exactly the MCP servers this role's contract grants.
+
+    The Claude CLI accepts an inline JSON string with ``--mcp-config``, and the
+    bridge always passes ``--strict-mcp-config``, so these are the only servers a
+    bridged turn sees: user-level ``~/.claude.json`` servers and a workspace's
+    own ``.mcp.json`` never widen a role's contract. Launch definitions come
+    from the composed Codex config; only the delegation shim is built here,
+    because it carries this turn's session.
     """
     servers: dict[str, Any] = {}
-    role_contract = role_contract_for(role)
-    if "lsp" in role_contract.get("mcp", []):
-        servers["lsp"] = {
-            "command": "bash",
-            "args": ["-lc", 'exec "${CODEX_HOME:-$HOME/.codex}/hooks/run-autodev-mcp.sh" lsp'],
-        }
-    if "cocoindex-code" in role_contract.get("mcp", []):
-        servers["cocoindex-code"] = {
-            "command": "bash",
-            "args": ["-lc", 'exec "${CODEX_HOME:-$HOME/.codex}/hooks/run-autodev-mcp.sh" cocoindex-code'],
-        }
-    if "openaiDeveloperDocs" in role_contract.get("mcp", []):
-        # The role TOMLs identify this server by contract name; the endpoint is
-        # a stable provider-owned service and is materialized here just like
-        # the other explicit Claude MCP entries.
-        servers["openaiDeveloperDocs"] = {
-            "url": "https://developers.openai.com/mcp",
-        }
-    if role in PLAYWRIGHT_AGENT_ROLES:
-        servers["playwright"] = {
-            "command": PLAYWRIGHT_COMMAND,
-            "args": list(PLAYWRIGHT_ARGS),
-        }
+    available = codex_mcp_servers()
+    for name in role_contract_for(role).get("mcp", []):
+        if name == "autodev_spawn":
+            continue
+        server = available.get(name)
+        if not isinstance(server, dict):
+            raise RuntimeError(
+                f"MCP server {name!r} granted to role {role!r} is not in the Codex user config; "
+                "rerun install-codex-integration.sh"
+            )
+        servers[name] = (
+            {"url": server["url"]}
+            if "url" in server
+            else {"command": server["command"], "args": list(server.get("args", []))}
+        )
     if is_orchestrator_role(role) and spawn_session:
         shim = os.path.join(os.path.dirname(os.path.abspath(__file__)), "codex", "lib", "spawn-shim-mcp.mjs")
         servers["autodev_spawn"] = {
@@ -1535,7 +1544,7 @@ def claude_cli_args(prompt: str, model: str, effort: str, agent_role: Any = None
         denied.extend(["Bash", "Edit", "Write", "NotebookEdit"])
     if agent_role in PLAYWRIGHT_AGENT_ROLES:
         denied.extend(PLAYWRIGHT_DISALLOWED_TOOLS)
-    subagent_boundary = ["--disallowed-tools", ",".join(denied)]
+    subagent_boundary = ["--disallowed-tools", ",".join(denied), "--strict-mcp-config"]
     mcp_config = mcp_config_for_role(agent_role, spawn_session if shim_available else None)
     if mcp_config:
         subagent_boundary += ["--mcp-config", mcp_config]

@@ -15,14 +15,10 @@ developer_instructions = """
 """
 
 [mcp_servers.lsp]
-command = "bash"
-args = ["-lc", "exec \"${CODEX_HOME:-$HOME/.codex}/hooks/run-autodev-mcp.sh\" lsp"]
 enabled = false
 
 [mcp_servers.playwright]
 enabled = true
-command = "bash"
-args = ["-lc", "exec \"${CODEX_HOME:-$HOME/.codex}/hooks/run-autodev-mcp.sh\" playwright"]
 default_tools_approval_mode = "approve"
 enabled_tools = [
   "browser_navigate",
@@ -47,8 +43,6 @@ enabled_tools = [
 
 [mcp_servers."cocoindex-code"]
 enabled = false
-command = "bash"
-args = ["-lc", "exec \"${CODEX_HOME:-$HOME/.codex}/hooks/run-autodev-mcp.sh\" cocoindex-code"]
 
 [skills]
 include_instructions = false

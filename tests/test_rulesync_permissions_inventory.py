@@ -10,9 +10,8 @@ AUTODEV_CONFIG = REPO_ROOT / "scripts/codex/config.autodev.toml"
 CLAUDE_BRIDGE = REPO_ROOT / "scripts/codex-claude-cli-responses-proxy.py"
 INSTALLER = REPO_ROOT / "scripts/codex/install-codex-integration.sh"
 RULESYNC_CONFIG = REPO_ROOT / "rulesync.jsonc"
-RULESYNC_WORKFLOW = REPO_ROOT / ".github/workflows/rulesync-mcp-shadow-drift.yml"
+RULESYNC_MCP_SOURCE = REPO_ROOT / ".rulesync/mcp.jsonc"
 RULESYNC_PERMISSION_SOURCE = REPO_ROOT / ".rulesync/permissions.jsonc"
-SHADOW_ROOT = REPO_ROOT / "tests/fixtures/rulesync-shadow"
 
 
 class RulesyncPermissionsInventoryTests(unittest.TestCase):
@@ -27,8 +26,12 @@ class RulesyncPermissionsInventoryTests(unittest.TestCase):
         self.assertNotIn("permissions", config["features"])
         for provider in config["model_providers"].values():
             self.assertEqual(provider["wire_api"], "responses")
-        for server in config["mcp_servers"].values():
-            self.assertEqual(server["default_tools_approval_mode"], "approve")
+        self.assertNotIn("mcp_servers", config)
+        codex_servers = json.loads(RULESYNC_MCP_SOURCE.read_text())["codexcli"]["mcpServers"]
+        for name, server in codex_servers.items():
+            if "command" in server:
+                with self.subTest(server=name):
+                    self.assertEqual(server["default_tools_approval_mode"], "approve")
 
     def test_claude_bridge_permission_policy_is_role_aware(self):
         tree = ast.parse(CLAUDE_BRIDGE.read_text())
@@ -90,14 +93,6 @@ class RulesyncPermissionsInventoryTests(unittest.TestCase):
         self.assertFalse(RULESYNC_PERMISSION_SOURCE.exists())
         config = json.loads(RULESYNC_CONFIG.read_text())
         self.assertNotIn("permissions", config["features"])
-        workflow = RULESYNC_WORKFLOW.read_text()
-        self.assertNotIn("--features mcp,rules,hooks,permissions", workflow)
-        self.assertNotIn("--features permissions", workflow)
-        shadow_permissions = [
-            path for path in SHADOW_ROOT.rglob("*")
-            if "permission" in path.name.lower()
-        ]
-        self.assertEqual(shadow_permissions, [])
 
     def test_inventory_is_read_only(self):
         paths = (
@@ -105,7 +100,7 @@ class RulesyncPermissionsInventoryTests(unittest.TestCase):
             CLAUDE_BRIDGE,
             INSTALLER,
             RULESYNC_CONFIG,
-            RULESYNC_WORKFLOW,
+            RULESYNC_MCP_SOURCE,
         )
         before = {path: path.read_bytes() for path in paths}
         # The inventory intentionally performs no generation, subprocess calls,

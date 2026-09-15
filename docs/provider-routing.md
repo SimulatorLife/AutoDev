@@ -190,10 +190,13 @@ delegation paths:
   the child. Watched spawn tool names are defined in the execution contract
   (`providers.<provider>.spawnTools`); see "Counting subagents across providers".
 
-    Browser-capable bridge roles are configured independently of native Codex
-    role TOML. The Claude bridge injects the pinned `playwright-mcp` command
-    through an inline `--mcp-config` only for `browser-tester` and `smart`, and
-    denies unneeded browser tools. Claude explicitly allows `WebSearch` and `WebFetch`
+    Browser-capable bridge roles follow the same role contract as native Codex
+    roles. The Claude bridge passes `--strict-mcp-config` and an inline
+    `--mcp-config` holding exactly the role contract's servers. Their launch
+    definitions come from the composed `$CODEX_HOME/config.toml`, which is
+    generated from `.rulesync/mcp.jsonc`. Only `browser-tester` and `smart`
+    receive Playwright, through the pinned launcher, and the bridge denies
+    unneeded browser tools. Claude explicitly allows `WebSearch` and `WebFetch`
     for research-capable roles (`docs-researcher`, `smart`, `orchestrator`).
     Playwright is strictly reserved for UI and browser testing and is never exposed
     to the orchestrator. Because Antigravity's MCP configuration is global, registering
@@ -1275,10 +1278,10 @@ Two consequences of replacement are load-bearing:
   is built per request rather than read from one static file.
 - **`AGENTS.md` is not injected either way.** Claude Code auto-loads `CLAUDE.md`
   (this survives prompt replacement) but not `AGENTS.md`, so a repository whose
-  guidance lives only in `AGENTS.md` — AutoDev included — never had it in
-  context. `base.md` tells the agent to read both from the workspace root.
-  Symlinking `CLAUDE.md` to `AGENTS.md` in a target repository restores
-  automatic injection.
+  guidance lives only in `AGENTS.md` never has it in context. `base.md` tells
+  the agent to read both from the workspace root. Symlinking `CLAUDE.md` to
+  `AGENTS.md` restores automatic injection; AutoDev's own `CLAUDE.md` is that
+  symlink.
 
 The bridge also exports `CLAUDE_CODE_DISABLE_BUNDLED_SKILLS=1`. Claude Code's
 bundled skill catalogue is a second, unversioned source of instructions that no
@@ -1742,6 +1745,12 @@ installer is the only supported materialization path into
   or duplicated role definition.
 - `.codex/config.toml` is project execution configuration only. It does not
   register agents or own provider role definitions.
+- MCP servers: `.rulesync/mcp.jsonc` is the only source.
+  - The installer writes `~/.claude.json`, `~/.copilot/mcp-config.json`, and
+    `~/.gemini/config/mcp_config.json` from it with `rulesync generate --global`.
+  - It merges the Codex projection into `$CODEX_HOME/config.toml`.
+  - Role TOMLs and the Claude bridge take their launch definitions from that
+    generated output.
 - User-level provider/role configuration: `scripts/codex/config.autodev.toml` is
   the authoritative portable configuration, composed into `$CODEX_HOME/config.toml`
   as an atomic regular file by `scripts/codex/compose-user-config.py`. The legacy

@@ -45,7 +45,6 @@ const EXPECTED_HOOKS_EVENTS = Object.freeze([
   "UserPromptSubmit",
   "PreToolUse",
 ]);
-const EXPECTED_MCP_SERVERS = Object.freeze(["lsp", "cocoindex-code", "playwright"]);
 const EXPECTED_SKILLS = Object.freeze(["lsp-mcp-server", "ccc", "orchestration"]);
 
 function loadPortable(absoluteTomlPath) {
@@ -149,13 +148,12 @@ test("seven required sections are present and shaped", async () => {
   const sourceTopLevelSections = new Set(EXPECTED_SECTIONS);
   for (const [key, value] of Object.entries(portable)) {
     if (!value || typeof value !== "object" || Array.isArray(value)) continue;
-    // model_providers, agents, hooks, mcp_servers are containers of named
-    // entries tested separately; skip them here.
+    // model_providers, agents, hooks are containers of named entries tested
+    // separately; skip them here.
     if (
       key === "model_providers" ||
       key === "agents" ||
-      key === "hooks" ||
-      key === "mcp_servers"
+      key === "hooks"
     ) {
       continue;
     }
@@ -226,25 +224,17 @@ test("hooks events declared without hooks.state", async () => {
   );
 });
 
-test("mcp_servers and skills.config.name sets are pinned", async () => {
+test("MCP servers stay out of the portable source and skills.config.name is pinned", async () => {
   const fixture = await readFixture();
   const portable = loadPortable(PORTABLE_PATH);
 
-  assert.deepEqual(fixture.mcpServersRequired, EXPECTED_MCP_SERVERS);
   assert.deepEqual(fixture.skillsConfigNamesRequired, [...EXPECTED_SKILLS].sort());
 
-  const servers = portable.mcp_servers ?? {};
-  assert.ok(servers && !Array.isArray(servers), "mcp_servers must be a TOML table");
-  for (const name of EXPECTED_MCP_SERVERS) {
-    assert.ok(
-      Object.prototype.hasOwnProperty.call(servers, name),
-      `portable source missing mcp_servers entry: ${name}`,
-    );
-  }
-  assert.deepEqual(
-    Object.keys(servers).sort(),
-    [...EXPECTED_MCP_SERVERS].sort(),
-    `portable source must declare exactly ${EXPECTED_MCP_SERVERS.length} mcp_servers entries`,
+  // `.rulesync/mcp.jsonc` is the only MCP source; the installer composes its
+  // Codex projection into the user config.
+  assert.ok(
+    !Object.prototype.hasOwnProperty.call(portable, "mcp_servers"),
+    "portable source must not declare mcp_servers",
   );
 
   const skillsConfig = portable.skills?.config ?? [];

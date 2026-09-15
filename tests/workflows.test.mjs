@@ -205,14 +205,18 @@ test('MiniMax invocation configures headless OpenAI-compatible authentication', 
 });
 
 test('local provider tooling resolves the playwright MCP from a pinned devDependency', async () => {
+  // `.rulesync/mcp.jsonc` is the only place the Playwright launch is declared;
+  // role TOMLs carry only per-role settings and are rendered with it.
+  const mcpSource = JSON.parse(await readFile(path.join(root, '.rulesync', 'mcp.jsonc'), 'utf8'));
+  const playwright = mcpSource.codexcli.mcpServers.playwright;
+  assert.equal(playwright.command, 'bash');
+  assert.match(playwright.args.at(-1), /run-autodev-mcp\.sh" playwright$/);
   const configs = [
     path.join(root, 'scripts', 'codex', 'config.toml'),
-    path.join(root, 'scripts', 'codex', 'agents', 'smart.toml'),
-    path.join(root, 'scripts', 'codex', 'agents', 'browser-tester.toml'),
+    path.join(root, '.rulesync', 'mcp.jsonc'),
   ];
   for (const configFile of configs) {
     const source = await readFile(configFile, 'utf8');
-    assert.match(source, /command = "bash"/);
     assert.match(source, /run-autodev-mcp\.sh\\" playwright/);
     // Assert against configuration, not prose: a comment may name the forbidden
     // runners in order to warn about them.
@@ -288,7 +292,8 @@ test('provider bridges explicitly expose code MCP capabilities', async () => {
   assert.match(antigravity, /read_url_content/);
   const installer = await readFile(path.join(root, 'scripts', 'codex', 'install-codex-integration.sh'), 'utf8');
   assert.match(installer, /read_url\(\*\)/);
-  assert.match(installer, /agy mcp remove playwright/);
+  // Rulesync writes the user-level MCP server lists from .rulesync/mcp.jsonc.
+  assert.doesNotMatch(installer, /\b(agy|copilot|claude) mcp (add|remove)\b/);
 });
 
 test('provider CLI versions are pinned in one AutoDev manifest', async () => {

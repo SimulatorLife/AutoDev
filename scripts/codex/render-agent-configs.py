@@ -5,12 +5,19 @@ Codex role TOML has no prompt-file include primitive. The tracked role files
 therefore contain only role configuration plus explicit base/leaf/role prompt
 markers; this renderer materializes the complete developer instructions that
 native child threads actually receive.
+
+Role TOMLs declare only per-role MCP settings (``enabled``, approval, tool
+filters). How each server launches is declared once, in
+``.rulesync/mcp.jsonc``; the renderer copies those launch keys from the Codex
+projection Rulesync generates from it (``--mcp-source``).
 """
 
 from __future__ import annotations
 
 import argparse
+import json
 import os
+import re
 import tempfile
 import tomllib
 from pathlib import Path
@@ -19,6 +26,9 @@ BASE_MARKER = "{{AUTODEV_BASE_PROMPT}}"
 LEAF_MARKER = "{{AUTODEV_LEAF_PROMPT}}"
 CODE_SEARCH_MARKER = "{{AUTODEV_CODE_SEARCH_PROMPT}}"
 ROLE_MARKER = "{{AUTODEV_ROLE_PROMPT}}"
+# The keys that say how a server launches, as opposed to per-role settings.
+LAUNCH_KEYS = ("command", "args", "url")
+MCP_TABLE_HEADER = re.compile(r'^\[mcp_servers\.(?:"(?P<quoted>[^"]+)"|(?P<bare>[A-Za-z0-9_-]+))\]\s*$', re.MULTILINE)
 
 
 def validate_mcp_servers(config: dict, source: Path) -> None:
@@ -44,6 +54,47 @@ def validate_mcp_servers(config: dict, source: Path) -> None:
                 "(command + args) nor a valid streamable HTTP transport "
                 '(url + transport = "streamable_http")'
             )
+
+
+def load_mcp_servers(path: Path) -> dict:
+    """The MCP servers in the Codex projection of ``.rulesync/mcp.jsonc``."""
+    try:
+        servers = tomllib.loads(path.read_text(encoding="utf-8")).get("mcp_servers")
+    except (OSError, tomllib.TOMLDecodeError) as error:
+        raise RuntimeError(f"unable to read MCP source {path}: {error}") from error
+    if not isinstance(servers, dict) or not servers:
+        raise RuntimeError(f"MCP source declares no mcp_servers: {path}")
+    return servers
+
+
+def fill_launch_keys(text: str, mcp_servers: dict, source: Path) -> str:
+    """Insert each role MCP table's launch keys from the generated servers.
+
+    A key the role sets itself is left alone. A role naming a server that
+    ``.rulesync/mcp.jsonc`` does not declare is an error rather than a stub.
+    JSON strings and string arrays are valid TOML values, so ``json.dumps``
+    renders them.
+    """
+    role_servers = tomllib.loads(text).get("mcp_servers", {})
+
+    def with_launch_keys(match: re.Match) -> str:
+        name = match.group("quoted") or match.group("bare")
+        generated = mcp_servers.get(name)
+        if not isinstance(generated, dict):
+            raise RuntimeError(f"{source}: mcp_servers.{name} is not declared in .rulesync/mcp.jsonc")
+        role_server = role_servers.get(name, {})
+        lines = [
+            f"{key} = {json.dumps(generated[key])}"
+            for key in LAUNCH_KEYS
+            if key in generated and key not in role_server
+        ]
+        if "url" in generated and "transport" not in role_server:
+            # Codex's role loader requires an explicit transport for a URL
+            # server; the user-level projection leaves it to inference.
+            lines.append('transport = "streamable_http"')
+        return "\n".join([match.group(0), *lines])
+
+    return MCP_TABLE_HEADER.sub(with_launch_keys, text)
 
 
 def validate_reasoning_effort(config: dict, source: Path) -> None:
@@ -77,6 +128,7 @@ def render_role(
     base: str,
     leaf: str,
     code_search: str,
+    mcp_servers: dict,
 ) -> None:
     text = source.read_text(encoding="utf-8")
     if any(text.count(marker) != 1 for marker in (BASE_MARKER, LEAF_MARKER, ROLE_MARKER)):
@@ -95,6 +147,7 @@ def render_role(
     if any(marker in rendered for marker in (BASE_MARKER, LEAF_MARKER, CODE_SEARCH_MARKER, ROLE_MARKER)):
         raise RuntimeError(f"unrendered prompt marker remains in {source}")
     try:
+        rendered = fill_launch_keys(rendered, mcp_servers, source)
         rendered_config = tomllib.loads(rendered)
     except tomllib.TOMLDecodeError as error:
         raise RuntimeError(f"rendered role config is invalid TOML: {source}: {error}") from error
@@ -117,7 +170,8 @@ def render_role(
             pass
 
 
-def render_directory(source_dir: Path, prompt_dir: Path, output_dir: Path) -> list[Path]:
+def render_directory(source_dir: Path, prompt_dir: Path, output_dir: Path, mcp_source: Path) -> list[Path]:
+    mcp_servers = load_mcp_servers(mcp_source)
     base = read_prompt(prompt_dir / "base.md", "base")
     leaf = read_prompt(prompt_dir / "leaf.md", "leaf")
     code_search = read_prompt(prompt_dir / "code-search.md", "code search")
@@ -129,7 +183,7 @@ def render_directory(source_dir: Path, prompt_dir: Path, output_dir: Path) -> li
     rendered = []
     for source in sources:
         output = output_dir / source.name
-        render_role(source, output, prompt_dir, base, leaf, code_search)
+        render_role(source, output, prompt_dir, base, leaf, code_search, mcp_servers)
         rendered.append(output)
     return rendered
 
@@ -139,9 +193,15 @@ def main() -> int:
     parser.add_argument("--source-dir", type=Path, required=True)
     parser.add_argument("--prompt-dir", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
+    parser.add_argument(
+        "--mcp-source",
+        type=Path,
+        required=True,
+        help="Codex config.toml that Rulesync generated from .rulesync/mcp.jsonc.",
+    )
     args = parser.parse_args()
     try:
-        rendered = render_directory(args.source_dir, args.prompt_dir, args.output_dir)
+        rendered = render_directory(args.source_dir, args.prompt_dir, args.output_dir, args.mcp_source)
     except (OSError, RuntimeError) as error:
         parser.error(str(error))
     print(f"rendered {len(rendered)} native role configs into {args.output_dir}")

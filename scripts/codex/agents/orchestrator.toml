@@ -11,8 +11,6 @@ enabled = true
 
 [mcp_servers.playwright]
 enabled = false
-command = "bash"
-args = ["-lc", "exec \"${CODEX_HOME:-$HOME/.codex}/hooks/run-autodev-mcp.sh\" playwright"]
 
 [mcp_servers.autodev_spawn]
 enabled = true

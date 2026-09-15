@@ -21,9 +21,13 @@ Keep tokens in GitHub Secrets or the local credential store. Never commit them t
 
 ## Repository guidance
 
-`AGENTS.md` at the repository root is the canonical, version-controlled source for
-this workspace's agent instructions. The local `~/.codex/AGENTS.md` path should
-remain a symlink to this file so local and repository guidance stay in sync.
+`AGENTS.md` at the repository root is the only source for this workspace's agent
+instructions. Codex, Antigravity, and Copilot (cloud agent, code review, CLI, and
+VS Code chat) read it natively. `CLAUDE.md` is a symlink to it for Claude Code,
+and there is no `.github/copilot-instructions.md` copy, so Copilot Chat on
+github.com does not receive these instructions. The local `~/.codex/AGENTS.md`
+path should remain a symlink to this file so local and repository guidance stay
+in sync.
 
 ## Local validation toolchain
 

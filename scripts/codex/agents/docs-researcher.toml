@@ -15,27 +15,19 @@ developer_instructions = """
 """
 
 [mcp_servers.lsp]
-command = "bash"
-args = ["-lc", "exec \"${CODEX_HOME:-$HOME/.codex}/hooks/run-autodev-mcp.sh\" lsp"]
 enabled = false
 
 [mcp_servers.openaiDeveloperDocs]
 enabled = true
-url = "https://developers.openai.com/mcp"
-transport = "streamable_http"
 
 # General documentation research uses Codex's native web_search tool. The
 # browser automation MCP is for UI testing/debugging and is intentionally not
 # exposed to this role.
 [mcp_servers.playwright]
 enabled = false
-command = "bash"
-args = ["-lc", "exec \"${CODEX_HOME:-$HOME/.codex}/hooks/run-autodev-mcp.sh\" playwright"]
 
 [mcp_servers."cocoindex-code"]
 enabled = false
-command = "bash"
-args = ["-lc", "exec \"${CODEX_HOME:-$HOME/.codex}/hooks/run-autodev-mcp.sh\" cocoindex-code"]
 default_tools_approval_mode = "approve"
 
 [tools]

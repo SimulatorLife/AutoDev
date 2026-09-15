@@ -8,26 +8,18 @@ on:
     paths:
       - ".rulesync/**"
       - "rulesync.jsonc"
-      - "tests/fixtures/rulesync-shadow/**"
+      - "tests/test_rulesync_*.py"
       - "package.json"
       - "pnpm-lock.yaml"
       - ".github/workflows/rulesync-mcp-shadow-drift.yml"
-      - "AGENTS.md"
-      - "CLAUDE.md"
-      - ".github/copilot-instructions.md"
-      - "tests/test_rulesync_skills.py"
   pull_request:
     paths:
       - ".rulesync/**"
       - "rulesync.jsonc"
-      - "tests/fixtures/rulesync-shadow/**"
+      - "tests/test_rulesync_*.py"
       - "package.json"
       - "pnpm-lock.yaml"
       - ".github/workflows/rulesync-mcp-shadow-drift.yml"
-      - "AGENTS.md"
-      - "CLAUDE.md"
-      - ".github/copilot-instructions.md"
-      - "tests/test_rulesync_skills.py"
 
 permissions:
   contents: read
@@ -53,67 +45,8 @@ jobs:
       - name: Install AutoDev dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Detect Rulesync drift against tracked shadow fixtures
-        run: |
-          set -euo pipefail
-          temp_root="$(mktemp -d)"
-          trap 'rm -rf "$temp_root"' EXIT
-          mkdir -p "$temp_root/input"
-          cp -R .rulesync/. "$temp_root/input/"
-          {
-            printf '%s\n' '---' 'root: true' 'targets: ["*"]' 'description: "AutoDev shared workspace instructions for all AI tooling"' 'globs: ["**/*"]' '---'
-            cat .rulesync/rules/overview.md
-          } > "$temp_root/input/rules/overview.md"
-          pnpm exec rulesync generate \
-            --input-roots "$temp_root/input" \
-            --targets codexcli,claudecode,copilot,antigravity-cli \
-            --features mcp,rules,hooks \
-            --output-roots tests/fixtures/rulesync-shadow \
-            --check \
-            --silent
-
-      # Skills have no tracked fixtures or copies: `.rulesync/skills/` is the
-      # only source, and every repository skill surface is generated fresh.
-      - name: Check repository skills generate from the canonical source
-        run: python3 -m unittest tests/test_rulesync_skills.py
-
-      - name: Check live rules from an ephemeral Rulesync input root
-        run: |
-          set -euo pipefail
-          temp_root="$(mktemp -d)"
-          trap 'rm -rf "$temp_root"' EXIT
-          mkdir -p "$temp_root/input/rules" "$temp_root/live/.github"
-          {
-            printf '%s\n' '---' 'root: true' 'targets: ["*"]' 'description: "AutoDev shared workspace instructions for all AI tooling"' 'globs: ["**/*"]' '---'
-            cat .rulesync/rules/overview.md
-          } > "$temp_root/input/rules/overview.md"
-          cp AGENTS.md "$temp_root/live/AGENTS.md"
-          cp CLAUDE.md "$temp_root/live/CLAUDE.md"
-          cp .github/copilot-instructions.md "$temp_root/live/.github/copilot-instructions.md"
-          pnpm exec rulesync generate \
-            --input-roots "$temp_root/input" \
-            --targets codexcli,claudecode,copilot,antigravity-cli \
-            --features rules \
-            --output-roots "$temp_root/generated" \
-            --delete \
-            --silent
-          pnpm exec rulesync generate \
-            --input-roots "$temp_root/input" \
-            --targets codexcli,claudecode,copilot,antigravity-cli \
-            --features rules \
-            --output-roots "$temp_root/generated" \
-            --check \
-            --silent
-          python3 - "$temp_root/generated" "$temp_root/live" <<'PY'
-          from pathlib import Path
-          import sys
-
-          generated, live = map(Path, sys.argv[1:])
-          paths = ("AGENTS.md", "CLAUDE.md", ".github/copilot-instructions.md")
-          for relative in paths:
-              output = generated / relative
-              normalized = output.read_bytes().removesuffix(b"\n")
-              output.write_bytes(normalized)
-              if normalized != (live / relative).read_bytes():
-                  raise SystemExit(f"live rule drift: {relative}")
-          PY
+      # Nothing Rulesync generates is tracked as a fixture. Every suite generates
+      # its projections from `.rulesync` into temporary roots with the pinned
+      # Rulesync and asserts them, so the canonical source stays the only copy.
+      - name: Check Rulesync projections generated from the canonical source
+        run: python3 -m unittest tests/test_rulesync_*.py

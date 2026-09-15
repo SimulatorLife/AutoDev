@@ -178,33 +178,9 @@ type = "command"
 command = "node ~/.codex/hooks/codex/skill-read-telemetry.mjs"
 statusMessage = "Recording skill-read telemetry"
 
-# Both servers resolve their binary from the active project's own node_modules
-# via `pnpm exec`, so every repository gets the version its lockfile pins. Never
-# use `pnpm dlx <pkg>@latest` here: that ignores the pinned devDependency and
-# refetches an unpinned build that can drift away from the repository's own
-# Playwright/LSP versions.
-[mcp_servers.lsp]
-enabled = true
-command = "bash"
-args = ["-lc", "exec \"${CODEX_HOME:-$HOME/.codex}/hooks/run-autodev-mcp.sh\" lsp"]
-default_tools_approval_mode = "approve"
-
-# Registered once at the Codex user level. No cwd is specified: Codex starts
-# stdio MCP servers from the active session workspace, so CocoIndex Code keeps a
-# separate .cocoindex_code index for each repository.
-[mcp_servers."cocoindex-code"]
-# This user-level entry is available to the root orchestrator as well as
-# code-capable child roles; role contracts decide which prompts may use it.
-enabled = true
-command = "bash"
-args = ["-lc", "exec \"${CODEX_HOME:-$HOME/.codex}/hooks/run-autodev-mcp.sh\" cocoindex-code"]
-default_tools_approval_mode = "approve"
-
-[mcp_servers.playwright]
-enabled = false
-command = "bash"
-args = ["-lc", "exec \"${CODEX_HOME:-$HOME/.codex}/hooks/run-autodev-mcp.sh\" playwright"]
-default_tools_approval_mode = "approve"
+# MCP servers are not declared here. `.rulesync/mcp.jsonc` is their only source;
+# the installer generates the Codex projection from it and the composer merges
+# those servers into the user config.
 
 [[skills.config]]
 name = "lsp-mcp-server"

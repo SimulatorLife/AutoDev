@@ -8,7 +8,6 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SOURCE_ROOT = REPO_ROOT / ".rulesync" / "skills"
-SHADOW_ROOT = REPO_ROOT / "tests" / "fixtures" / "rulesync-shadow"
 INSTALLER = REPO_ROOT / "scripts" / "codex" / "install-codex-integration.sh"
 RULESYNC_CONFIG = REPO_ROOT / "rulesync.jsonc"
 DRIFT_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "rulesync-mcp-shadow-drift.yml"
@@ -41,14 +40,13 @@ REPOSITORY_SKILLS = {
 
 
 def _rulesync(output_root, *mode):
+    # The live configuration itself, redirected to a temporary output root.
     return subprocess.run(
         [
             "pnpm", "exec", "rulesync", "generate",
-            "--input-roots", ".rulesync",
-            "--targets", ",".join(TARGETS),
-            "--features", "skills",
+            "--config", "rulesync.jsonc",
             "--output-roots", str(output_root),
-            "--delete", *mode, "--silent",
+            *mode, "--silent",
         ],
         cwd=REPO_ROOT,
         capture_output=True,
@@ -107,7 +105,7 @@ class RulesyncSkillsTests(unittest.TestCase):
 
     def test_only_the_canonical_source_is_tracked(self):
         tracked = subprocess.run(
-            ["git", "ls-files", "--", ".github/skills", ".claude/skills", ".agents/skills", str(SHADOW_ROOT)],
+            ["git", "ls-files", "--", ".github/skills", ".claude/skills", ".agents/skills"],
             cwd=REPO_ROOT,
             capture_output=True,
             text=True,
@@ -120,7 +118,6 @@ class RulesyncSkillsTests(unittest.TestCase):
         # Antigravity skips a gitignored `.agents/skills/`; the installer
         # excludes it through `.git/info/exclude` instead.
         self.assertEqual([line for line in ignored if ".agents/skills" in line and not line.startswith("#")], [])
-        self.assertFalse(any(path.name == "skills" for path in SHADOW_ROOT.rglob("*") if path.is_dir()))
 
     def test_each_tool_folder_receives_exactly_its_repository_skills_with_bundled_files(self):
         for folder, skills in REPOSITORY_SKILLS.items():
@@ -173,12 +170,10 @@ class RulesyncSkillsTests(unittest.TestCase):
 
     def test_installer_generates_and_checks_repository_skills(self):
         installer = INSTALLER.read_text()
-        self.assertIn('repository_skill_targets="copilot,claudecode,codexcli,antigravity-cli"', installer)
         self.assertIn('rulesync_bin="$repo_root/node_modules/.bin/rulesync"', installer)
         self.assertIn('repository_skill_exclude_entry="/.agents/skills/"', installer)
         generation = installer.split("run_repository_skill_generation() {", 1)[1].split("\n}\n", 1)[0]
-        for fragment in ('--input-roots "$repo_root/.rulesync"', "--features skills", '--output-roots "$repo_root"', "--delete"):
-            self.assertIn(fragment, generation)
+        self.assertIn('(cd -- "$repo_root" && "$rulesync_bin" generate --config "$repo_root/rulesync.jsonc" "$@" --silent)', generation)
         self.assertRegex(installer, r"\nrender_claude_skill_views\nif ! generate_repository_skills; then\n  exit 1\nfi\n")
         check_links = installer.split("check_links() {", 1)[1].split("\n}\n", 1)[0]
         self.assertIn("check_repository_skills", check_links)
@@ -186,18 +181,25 @@ class RulesyncSkillsTests(unittest.TestCase):
     def test_copilot_cloud_agent_generates_its_skills_during_setup(self):
         workflow = COPILOT_SETUP_WORKFLOW.read_text()
         install = workflow.index("pnpm install --frozen-lockfile")
-        generate = workflow.index(
-            "pnpm exec rulesync generate --input-roots .rulesync --targets copilot --features skills --output-roots . --delete --silent"
-        )
+        generate = workflow.index("pnpm exec rulesync generate --targets copilot --silent")
         self.assertLess(install, generate)
         self.assertIn('- ".rulesync/**"', workflow)
 
-    def test_shadow_fixtures_and_drift_workflow_leave_skills_to_fresh_generation(self):
-        self.assertNotIn("skills", json.loads(RULESYNC_CONFIG.read_text())["features"])
+    def test_config_generates_only_repository_skills_and_ci_runs_every_rulesync_suite(self):
+        # rulesync.jsonc is the only Rulesync configuration and drives the one
+        # live projection; MCP, rules, and hooks projections are generated only
+        # into temporary roots by their suites, never tracked as fixtures.
+        config = json.loads(RULESYNC_CONFIG.read_text())
+        self.assertEqual(tuple(config["targets"]), TARGETS)
+        self.assertEqual(config["features"], ["skills"])
+        self.assertEqual(config["outputRoots"], ["."])
+        self.assertIs(config["delete"], True)
+        self.assertIs(config["global"], False)
         workflow = DRIFT_WORKFLOW.read_text()
-        self.assertEqual(re.findall(r"--features\s+(\S+)", workflow), ["mcp,rules,hooks", "rules", "rules"])
-        self.assertIn("python3 -m unittest tests/test_rulesync_skills.py", workflow)
-        self.assertNotIn(".github/skills", workflow)
+        self.assertIn("run: python3 -m unittest tests/test_rulesync_*.py", workflow)
+        self.assertEqual(workflow.count('- "tests/test_rulesync_*.py"'), 2)
+        self.assertNotIn("rulesync generate", workflow)
+        self.assertFalse(list(REPO_ROOT.glob("tests/fixtures/rulesync-*")))
 
 
 if __name__ == "__main__":

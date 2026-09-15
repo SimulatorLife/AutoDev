@@ -16,8 +16,6 @@ developer_instructions = """
 """
 
 [mcp_servers.lsp]
-command = "bash"
-args = ["-lc", "exec \"${CODEX_HOME:-$HOME/.codex}/hooks/run-autodev-mcp.sh\" lsp"]
 enabled = true
 
 [[skills.config]]
@@ -30,8 +28,6 @@ enabled = true
 
 [mcp_servers."cocoindex-code"]
 enabled = true
-command = "bash"
-args = ["-lc", "exec \"${CODEX_HOME:-$HOME/.codex}/hooks/run-autodev-mcp.sh\" cocoindex-code"]
 default_tools_approval_mode = "approve"
 
 [[skills.config]]

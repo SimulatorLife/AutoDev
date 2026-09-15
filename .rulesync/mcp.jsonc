@@ -15,23 +15,39 @@
   },
   "codexcli": {
     "mcpServers": {
-      "openaiDeveloperDocs": null,
+      "lsp": {
+        "command": "bash",
+        "args": ["-lc", "exec \"${CODEX_HOME:-$HOME/.codex}/hooks/run-autodev-mcp.sh\" lsp"],
+        "default_tools_approval_mode": "approve"
+      },
+      "cocoindex-code": {
+        "command": "bash",
+        "args": ["-lc", "exec \"${CODEX_HOME:-$HOME/.codex}/hooks/run-autodev-mcp.sh\" cocoindex-code"],
+        "default_tools_approval_mode": "approve"
+      },
+      "openaiDeveloperDocs": {
+        "url": "https://developers.openai.com/mcp",
+        "disabled": true
+      },
       "playwright": {
         "command": "bash",
         "args": ["-lc", "exec \"${CODEX_HOME:-$HOME/.codex}/hooks/run-autodev-mcp.sh\" playwright"],
-        "disabled": true
+        "disabled": true,
+        "default_tools_approval_mode": "approve"
       }
     }
   },
-  "copilot": {
+  "copilotcli": {
     "mcpServers": {
-      "openaiDeveloperDocs": null,
-      "playwright": null
+      "openaiDeveloperDocs": null
     }
   },
   "antigravity-cli": {
     "mcpServers": {
-      "playwright": null
+      "autodev_spawn": {
+        "command": "bash",
+        "args": ["-lc", "exec node \"${CODEX_HOME:-$HOME/.codex}/hooks/codex/lib/spawn-shim-mcp.mjs\""]
+      }
     }
   }
 }

@@ -176,7 +176,7 @@ Use Rulesync for **portable configuration translation**:
 
 - Shared/root instructions
 - Canonical Agent Skills
-- Shared MCP declarations (boundary hardening complete; live cutover remains deferred pending target-equivalence decision)
+- Shared MCP declarations (live: `.rulesync/mcp.jsonc` is the only MCP source for Codex, Claude Code, Copilot CLI, and Antigravity)
 - Cross-provider hook declarations
 - Cross-provider permissions declarations
 - Provider filesystem/config-format translation
@@ -485,7 +485,6 @@ AutoDev/
 ├── .agents/
 │   └── prompts/                   # Existing GitHub-workflow prompt sources
 ├── .rulesync/
-│   ├── rules/                     # Portable shared/root instructions
 │   ├── skills/                    # Portable canonical Agent Skills
 │   ├── mcp.jsonc                  # Shared/provider-scoped MCP declarations
 │   ├── hooks.jsonc                # Portable hook declarations
@@ -1032,11 +1031,13 @@ graduates to live output, the first live cutover must make
 
 ### Status
 
-Phase 2 remains shadow-only for MCP, canonical skills, and hooks; the shared
-instruction rules surface is the first completed live cutover. Rulesync is
-pinned to `16.30.2` and continues to generate tracked shadow fixtures under
-`tests/fixtures/rulesync-shadow/` for `codexcli`, `claudecode`, `copilot`, and
-`antigravity-cli`.
+Phase 2 remains shadow-only for hooks. MCP servers and the repository skill
+folders are live (see "Completed MCP live cutover to Rulesync" below). Shared instructions need no Rulesync projection: every tool
+reads `AGENTS.md` natively (see "Completed single-source instructions and
+source-derived MCP checks" below). Rulesync is pinned to `16.30.2` for
+`codexcli`, `claudecode`, `copilot`, and `antigravity-cli`. Its output is never
+tracked as a fixture: the tests generate every projection into temporary roots
+(see "Completed removal of Rulesync shadow fixtures" below).
 
 **Completed first live surface — shared instruction rules.**
 `.rulesync/rules/overview.md` is now byte-identical to `AGENTS.md`; the live
@@ -1051,7 +1052,10 @@ isolated fixture root. `tests/test_rulesync_live_rules.py` freezes byte identity
 ephemeral all-target generation, and the live workflow boundary; the existing
 `tests/test_rulesync_mcp_shadow.py` now uses the same ephemeral input technique
 for rules generation. This is a Rulesync compatibility seam, not a second
-source of instructions.
+source of instructions. *Superseded 2026-09-15:* Rulesync no longer handles
+instructions. `.rulesync/rules/overview.md`, `.github/copilot-instructions.md`,
+and `tests/test_rulesync_live_rules.py` are gone. See "Completed single-source
+instructions and source-derived MCP checks" below.
 
 **Completed second incremental live surface — Copilot canonical skills.** The
 Rulesync-generated Copilot skill surface at `.github/skills/` now contains
@@ -1153,11 +1157,12 @@ single source:
     Copilot's cloud agent has no user level;
   - the other seven declare `[]`. They already reach local tools at user level,
     and Codex lists a same-named repository skill a second time.
-- The installer runs the pinned `node_modules/.bin/rulesync generate --targets
-  copilot,claudecode,codexcli,antigravity-cli --features skills --output-roots
-  <repo> --delete` right after rendering the Claude role views. `--check` runs
-  the same command with `--check`; together with `--delete` that also reports
-  a stale generated skill. The installer therefore needs
+- `rulesync.jsonc` is the only Rulesync configuration. It sets the four
+  targets, the `skills` feature, the repository root as output, and `delete`.
+  The installer runs the pinned `node_modules/.bin/rulesync generate --config
+  rulesync.jsonc` right after rendering the Claude role views. `--check` adds
+  `--check`, and the configured `delete` makes that also report a stale
+  generated skill. The installer therefore needs
   `pnpm install --frozen-lockfile`.
 - `.gitignore` lists `/.github/skills/` and `/.claude/skills/`. The installer
   writes `/.agents/skills/` to `.git/info/exclude` instead, because Antigravity
@@ -1168,8 +1173,6 @@ single source:
 - Removed:
   - the tracked `.github/skills` copies and the repository-only symlinks;
   - the skill shadow fixtures;
-  - `skills` from `rulesync.jsonc` and the drift workflow's `--features`, now
-    `mcp,rules,hooks`;
   - `test_rulesync_skills_shadow.py` and `test_rulesync_live_skills.py`.
 - `tests/test_rulesync_skills.py` generates the folders fresh and checks:
   - each folder gets exactly its skills, with bundled files byte-identical;
@@ -1185,6 +1188,161 @@ single source:
   generated, gitignored `.github/skills/` is confirmed on its first run after
   this lands.
 
+**Completed removal of Rulesync shadow fixtures (added item, 2026-09-15).**
+`tests/fixtures/rulesync-shadow/` tracked 11 generated files: MCP and hook
+projections for each target, plus three copies of `AGENTS.md`. That contradicts
+the single-source requirement. Every suite already generated the same output
+into temporary roots, so the fixtures only added a byte-for-byte golden
+comparison. They are deleted, and nothing Rulesync generates is tracked as a
+fixture:
+- `test_rulesync_mcp_shadow.py`, `test_rulesync_mcp_boundary.py`,
+  `test_rulesync_hooks_shadow.py`, `test_rulesync_live_rules.py`, and
+  `test_rulesync_skills.py` generate from `.rulesync` into temporary roots with
+  the pinned Rulesync.
+- They assert what matters instead of comparing golden bytes:
+  - MCP: each target's server set and commands, plus the boundary contract;
+  - hooks: one output file per target, all six commands with their matchers
+    and status messages for Codex and Claude, and the Copilot and Antigravity
+    parity limits;
+  - rules: output byte-identical to `AGENTS.md`;
+  - skills: exposure and bundled files.
+- `rulesync.jsonc` stopped pointing at the fixture root. It is now the live
+  skills configuration used by the installer, Copilot's setup steps, and
+  `test_rulesync_skills.py`.
+- The drift workflow keeps its name and job id, so required checks are
+  unaffected. It no longer runs inline Rulesync generation. Instead it runs
+  `python3 -m unittest tests/test_rulesync_*.py`, filtered on `.rulesync/**`,
+  `rulesync.jsonc`, those tests, the MCP boundary contract, the live rule
+  files, and the dependency manifests.
+- An upgrade that changes Rulesync output is caught by those assertions, not by
+  a fixture refresh.
+- *Superseded 2026-09-15 for MCP:* see "Completed MCP live cutover to Rulesync"
+  below.
+
+**Completed single-source instructions and source-derived MCP checks (added
+item, 2026-09-15).** Two duplications remained after the fixtures went.
+
+*Instructions.* Four byte-identical files were tracked: `AGENTS.md`,
+`CLAUDE.md`, `.github/copilot-instructions.md`, and `.rulesync/rules/overview.md`.
+Rulesync generated none of them live; tests only kept them identical. Every
+consumer now reads the one source natively:
+- Codex and Antigravity read `AGENTS.md`.
+- Copilot reads `AGENTS.md` in its cloud agent, code review, CLI, and VS Code
+  chat, per GitHub's and VS Code's custom-instruction support documentation.
+- Claude Code reads `CLAUDE.md`, now a symlink to `AGENTS.md`. Its docs endorse
+  both a symlink and an `@AGENTS.md` import. The symlink was chosen because an
+  import that resolves outside a session's working directory, such as a session
+  started in a subdirectory, needs interactive approval that headless bridge
+  runs cannot give.
+- `.github/copilot-instructions.md`, `.rulesync/rules/`, and
+  `tests/test_rulesync_live_rules.py` are deleted.
+- Trade-off: Copilot Chat on github.com reads only
+  `.github/copilot-instructions.md`, so it no longer receives these
+  instructions.
+- Copilot and VS Code read both `AGENTS.md` and `CLAUDE.md`, so they see the
+  text twice; before this change they saw it three times.
+- `tests/test_agent_instructions.py` asserts that `AGENTS.md` is the only regular
+  instruction file, that `CLAUDE.md` links to it, and that no tracked file
+  duplicates it.
+
+*MCP.* `tests/fixtures/contracts/rulesync-mcp-boundary.json` held a frozen copy
+of every target's generated servers and of the live Codex MCP servers, and
+`tests/test_rulesync_mcp_boundary.py` compared against it. Both are deleted and
+folded into `tests/test_rulesync_mcp_shadow.py`, which derives expectations from
+the tracked sources:
+- each target writes only its project MCP file;
+- each target projects exactly the servers `.rulesync/mcp.jsonc` declares for
+  it, with matching commands, arguments, URLs, and disabled state;
+- no forbidden server is declared;
+- `scripts/codex/config.autodev.toml` owns exactly `lsp`, `cocoindex-code`, and
+  `playwright`, with the same commands, arguments, and enabled state as the
+  Codex declaration;
+- Rulesync stays pinned to an exact version.
+
+The live Codex config and `.rulesync/mcp.jsonc` remain two tracked MCP
+declarations. The MCP behavioural-equivalence decision above keeps the live
+owner, so the test enforces that they agree rather than merging them.
+*Superseded 2026-09-15:* the live Codex config no longer declares MCP servers;
+see "Completed MCP live cutover to Rulesync" below.
+
+**Completed MCP live cutover to Rulesync (added item, 2026-09-15).** The
+behavioural-equivalence decision below assumed Rulesync could not write
+AutoDev's live MCP files; tests against `16.30.2` in temporary homes disproved
+that. Meanwhile each server's launch definition was repeated in four places:
+- `config.autodev.toml`;
+- eight role TOMLs;
+- the installer's `copilot mcp add` / `agy mcp add` calls;
+- the Claude bridge, whose Playwright even bypassed the pinned launcher.
+
+`.rulesync/mcp.jsonc` is now the only MCP source.
+
+*Source.*
+- The shared servers are `lsp` and `cocoindex-code` (both through
+  `run-autodev-mcp.sh`) and `openaiDeveloperDocs` (by URL).
+- The `codexcli` section adds `default_tools_approval_mode`, a disabled
+  `playwright`, and a disabled `openaiDeveloperDocs` that roles can enable.
+- `copilotcli` drops `openaiDeveloperDocs`.
+- `antigravity-cli` adds `autodev_spawn`, launched through the installed shim.
+- A target section replaces a shared entry whole, so the Codex entries repeat
+  their launch keys; `tests/test_rulesync_mcp.py` keeps them equal.
+
+*Generation.*
+- **Claude Code, Copilot CLI, Antigravity:** for each of `claude`, `copilot`,
+  and `agy` on `PATH`, the installer runs `rulesync generate --global --features
+  mcp`, and `--check` adds `--check`. Rulesync keeps non-MCP keys but owns the
+  server lists, as decided.
+- **Codex:** Rulesync's global output ignores `CODEX_HOME`, so the installer
+  generates the Codex projection into a temporary root.
+  - The composer's new `--mcp-source` merges it, keeping operator-added Codex
+    servers.
+  - A portable source that declares `mcp_servers` is rejected.
+  - The execution-contract builder reads the same projection and treats a
+    missing `enabled` as enabled.
+- **Codex roles:** role TOMLs keep only per-role settings.
+  - The renderer fills launch keys from the projection.
+  - It adds `transport = "streamable_http"` for URL servers, which the Codex
+    role loader requires and Rulesync omits.
+  - A role naming an undeclared server fails to render.
+
+*Claude bridge.* It reads each contract server from the composed
+`$CODEX_HOME/config.toml` and always passes `--strict-mcp-config`, as decided. A
+bridged turn therefore sees exactly its contract's servers, never
+`~/.claude.json`'s or a workspace `.mcp.json`'s.
+
+*Removed.*
+- The installer functions `register_copilot_code_mcp`, `check_copilot_code_mcp`,
+  `register_agy_spawn_shim`, and `check_agy_code_mcp`.
+- `AUTODEV_SKIP_COPILOT_MCP`.
+- The bridge's hardcoded server constants.
+- The `mcp_servers` tables in `config.autodev.toml`.
+
+*Limits.*
+- Rulesync `16.30.2`'s Codex subagent output writes `developer_instructions`
+  after the `mcp_servers` tables, so TOML parses the instructions into the last
+  server. Role files therefore stay AutoDev-rendered; an upstream issue is
+  drafted but not filed.
+- A Rulesync config file with `global: true` generates nothing, so MCP
+  generation passes flags.
+- The legacy seed `scripts/codex/config.toml` still holds MCP copies. Removing
+  it is a separate change.
+
+*Live effect of the next install.*
+- `~/.copilot/mcp-config.json` loses `playwright`, which AutoDev never
+  registered for Copilot.
+- The agy `autodev_spawn` entry switches to the launcher form.
+- `~/.claude.json` keeps the same servers.
+- The Codex user config gains a disabled `openaiDeveloperDocs`.
+
+*Validation.*
+- `pnpm run test:python`: 273 tests, OK (1 skipped: the Collector smoke test).
+- `pnpm test`: 597/597.
+- ShellCheck, actionlint, `py_compile`, and `git diff --check` are clean.
+- Hermetic installs with `CODEX_HOME` inside and outside `HOME` produced
+  byte-identical user-level MCP files and rendered roles, and `--check` passed.
+- `codex mcp list` on the composed config shows `lsp` and `cocoindex-code`
+  enabled, and `playwright` and `openaiDeveloperDocs` (streamable HTTP)
+  disabled.
+
 **Completed shared-MCP evaluation and hardening — no live cutover.** The
 contract fixture `tests/fixtures/contracts/rulesync-mcp-boundary.json` (schema
 `autodev-rulesync-mcp-boundary-v1`) and
@@ -1198,7 +1356,9 @@ registries remain outside Rulesync. Temporary generation roots and fixture/live
 config immutability are asserted. The focused boundary plus existing MCP shadow
 suite reports 8 passing tests. This hardening item is complete, but no MCP live
 cutover is claimed because the target projections and existing installer/bridge
-owners are not yet one behaviorally equivalent surface.
+owners are not yet one behaviorally equivalent surface. *Superseded
+2026-09-15:* the contract fixture and its test were removed, and MCP went live
+through Rulesync; see "Completed MCP live cutover to Rulesync" below.
 
 **Target-by-target MCP behavioral-equivalence decision — no promotion approved.**
 The decision gate now covers server names and launcher arguments, enabled/
@@ -1226,32 +1386,41 @@ and Antigravity registries, and Claude/Copilot/Antigravity bridge-owned MCP
 construction. Reopen promotion only after target-specific tests prove the full
 decision gate rather than only matching names and launcher strings.
 
-The Rulesync source covers shared MCP declarations, the common repository
-instructions represented by `AGENTS.md`, all ten canonical AutoDev skills
-(`.rulesync/skills` is their only source; only `ccc`, `lsp-mcp-server`, and
-`orchestration` are promoted to a live Rulesync surface), and the six existing
-command hooks across `SessionStart`, `SubagentStart`, `UserPromptSubmit`, and
-`PreToolUse`. It produces target-shaped shadow files without writing live
-provider or user configuration. Rulesync currently emits only `PreToolUse` for
-Antigravity, and Codex-only fields such as `prevent_idle_sleep` remain outside
-the portable source as explicit parity limitations.
+*Superseded 2026-09-15 by tested evidence; see "Completed MCP live cutover to
+Rulesync" below.* This decision rested on assumptions that were never tested,
+and tests against Rulesync `16.30.2` showed:
+- `--global` writes the same user-level files the installer maintained:
+  `~/.claude.json`, `~/.copilot/mcp-config.json`, and
+  `~/.gemini/config/mcp_config.json`.
+- It passes Codex's `default_tools_approval_mode` through.
+- Role-sensitive exposure never needed to move: it stays with the role files
+  and bridges, which now take server definitions from the generated output.
 
-The shared instruction rules cutover and the Copilot canonical-skill slice are
-the only live Rulesync surfaces so far. Existing live hooks, MCP configuration,
-Codex/user-level skills, Claude role-specific skill views, and Antigravity skill
-registration remain AutoDev-owned so target-specific guidance and runtime
-enforcement are not silently removed during this parity phase. Role-specific skill assignment and
-exposure remain AutoDev-owned:
-the execution contract, provider skill-view renderer, Claude role views,
-Antigravity `include_only` registration, symlink installer, MCP launcher,
-provider bridges, hooks, and permissions remain outside Rulesync.
+The Rulesync source covers MCP servers, every canonical AutoDev skill, and the
+six existing command hooks across `SessionStart`, `SubagentStart`,
+`UserPromptSubmit`, and `PreToolUse`. Hooks remain a shadow translation: Rulesync
+emits only `PreToolUse` for Antigravity, and Codex-only fields such as
+`prevent_idle_sleep` remain outside the portable source as explicit parity
+limitations.
+
+MCP servers and the repository skill folders are the live Rulesync surfaces.
+Live hooks, Codex user-level skills, Claude role-specific skill views, and
+Antigravity skill registration remain AutoDev-owned, so target-specific guidance
+and runtime enforcement are not silently removed. Per-role skill and MCP
+assignment and exposure remain AutoDev-owned:
+- the role TOMLs and the execution contract;
+- the provider skill-view renderer and the Claude role views;
+- Antigravity `include_only` registration and the symlink installer;
+- the MCP launcher and the provider bridges;
+- hooks and permissions.
 
 The permission source inventory is complete:
 `tests/test_rulesync_permissions_inventory.py` snapshots and contract-tests
 the three live permission sources without writing to any of them —
 Codex's `approval_policy`/`sandbox_mode`/`sandbox_workspace_write.network_access`
-scalars and per-server `default_tools_approval_mode` in
-`scripts/codex/config.autodev.toml`, the role-dependent
+scalars in `scripts/codex/config.autodev.toml` and the per-server
+`default_tools_approval_mode` in the `codexcli` section of
+`.rulesync/mcp.jsonc`, the role-dependent
 `--disallowed-tools`/`--allowed-tools` construction (`DISALLOWED_CLAUDE_TOOLS`,
 `CROSS_SESSION_CLAUDE_TOOLS`, `PLAYWRIGHT_AGENT_ROLES`,
 `PLAYWRIGHT_DISALLOWED_TOOLS`, `RESEARCH_CAPABLE_ROLES`,
@@ -1262,8 +1431,7 @@ scalars and per-server `default_tools_approval_mode` in
 against the machine-local `$HOME/.gemini/antigravity-cli/settings.json` in
 `scripts/codex/install-codex-integration.sh`. The test also asserts no
 `.rulesync/permissions.jsonc` source exists and that `permissions` is absent
-from both `rulesync.jsonc`'s `features` array and the CI drift workflow's
-`--features` list.
+from `rulesync.jsonc`'s `features` array.
 
 Permissions *generation* through Rulesync remains deferred, not because the
 inventory is incomplete but because each source resists a single portable
@@ -1280,59 +1448,35 @@ environment (`AUTODEV_AGY_READ_ROOTS`), not a repository-tracked artifact.
 These bridge/CLI-specific permission layers become removable only if a validated replacement moves the corresponding enforcement cleanly into Codex or another accepted boundary. Until then they remain part of the incumbent provider contract
 
 CI drift protection is enforced by `.github/workflows/rulesync-mcp-shadow-drift.yml`, a
-read-only workflow triggered on `push` to `main`, `pull_request`, and `workflow_dispatch`
-(path-filtered to `.rulesync/**`, `rulesync.jsonc`, `tests/fixtures/rulesync-shadow/**`,
-`tests/test_rulesync_skills.py`,
-`AGENTS.md`, `CLAUDE.md`, `.github/copilot-instructions.md`, `package.json`,
-`pnpm-lock.yaml`, and the workflow file itself). Because pinned Rulesync `16.30.2`
-requires frontmatter while the canonical `.rulesync/rules/overview.md` must remain
-byte-identical to `AGENTS.md`, the workflow copies the full `.rulesync` tree to a
-temporary input root and replaces only the temporary rule file with a generated
-frontmatter wrapper around the canonical bytes. It then runs the pinned generation
-with `--input-roots` and `--check`; no duplicate tracked instruction source is used.
-The workflow performs this ephemeral rules check for the live instruction files and
-uses the same temporary-input technique for the isolated `mcp,rules,hooks`
-shadow check. Skills have no fixtures: the workflow runs
-`tests/test_rulesync_skills.py`, which generates every repository skill folder
-fresh from `.rulesync/skills`.
+read-only workflow triggered on `push` to `main`, `pull_request`, and `workflow_dispatch`.
+It is path-filtered to:
+- `.rulesync/**` and `rulesync.jsonc`;
+- `tests/test_rulesync_*.py`;
+- `package.json`, `pnpm-lock.yaml`, and the workflow file itself.
+
+It runs `python3 -m unittest tests/test_rulesync_*.py`. Those suites generate every
+projection from `.rulesync` into temporary roots with the pinned Rulesync and
+derive their expectations from the tracked sources; no generated output is tracked.
 
 ### Remediation
 
-When the CI drift check or local `--check` reports drift due to intentional updates to `.rulesync/` or `rulesync.jsonc`:
+When a Rulesync suite fails after an intentional change to `.rulesync/`,
+`rulesync.jsonc`, or the pinned Rulesync version:
 
-1. Refresh the tracked shadow fixtures using the pinned generation command:
+1. Run the suites locally:
    ```bash
-   temp_root="$(mktemp -d)"
-   trap 'rm -rf "$temp_root"' EXIT
-   mkdir -p "$temp_root/input"
-   cp -R .rulesync/. "$temp_root/input/"
-   {
-     printf '%s\n' '---' 'root: true' 'targets: ["*"]' 'description: "AutoDev shared workspace instructions for all AI tooling"' 'globs: ["**/*"]' '---'
-     cat .rulesync/rules/overview.md
-   } > "$temp_root/input/rules/overview.md"
-   pnpm exec rulesync generate \
-     --input-roots "$temp_root/input" \
-     --targets codexcli,claudecode,copilot,antigravity-cli \
-     --features mcp,rules,hooks \
-     --output-roots tests/fixtures/rulesync-shadow \
-     --delete \
-     --silent
+   python3 -m unittest tests/test_rulesync_*.py
    ```
-2. Verify that focused tests pass:
-   ```bash
-   python3 -m unittest tests/test_rulesync_mcp_shadow.py
-   python3 -m unittest tests/test_rulesync_skills.py
-   python3 -m unittest tests/test_rulesync_hooks_shadow.py
-   ```
-3. Commit the refreshed fixtures under `tests/fixtures/rulesync-shadow/`
+2. Update the failing assertion only when the new projection is the intended
+   behaviour. There are no fixtures to refresh.
 
 Pin an exact tested Rulesync version rather than tracking `latest`
 
 ### Migrate first
 
-- Root/shared instructions (live cutover complete; byte-identity and ephemeral-generation checks frozen above)
+- Root/shared instructions (complete without Rulesync: `AGENTS.md` is the only source, read natively by Codex, Antigravity, and Copilot; `CLAUDE.md` is a symlink to it)
 - Canonical skills (single tracked `.rulesync/skills` source complete; every repository skill folder is generated, untracked Rulesync output selected by per-skill `targets`; user-level Codex links, Claude role views, and the Antigravity registry remain AutoDev-owned)
-- Shared MCP declarations
+- Shared MCP declarations (live cutover complete; see "Completed MCP live cutover to Rulesync")
 - Hook declarations (shadow-only translation complete; target limitations documented)
 - Permissions declarations (inventory complete, see Status above; generation deferred while provider-CLI-specific permission layers still exist)
 

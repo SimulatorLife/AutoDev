@@ -22,9 +22,11 @@ half-new array that does not match either source. ``hooks.state`` carries the
 Codex-owned per-hook trusted hashes and is preserved from the existing file so
 the installer does not invalidate trust on every run.
 
-``mcp_servers`` entries are merged by server name: the portable source owns
-its declared servers (``lsp``, ``cocoindex-code``, ``playwright``) and wins
-conflicts, while any non-AutoDev server the operator added is retained.
+``mcp_servers`` never come from the portable source. They come from
+``--mcp-source``: the Codex ``config.toml`` Rulesync generates from
+``.rulesync/mcp.jsonc``, the one place AutoDev declares its MCP servers. They
+are merged by server name: generated servers win conflicts, while any
+non-AutoDev server the operator added is retained.
 
 ``skills.config`` entries are merged by ``name`` with the same precedence
 rule: the portable source wins for AutoDev-owned skill names
@@ -66,27 +68,47 @@ class ComposeError(RuntimeError):
     """
 
 
-def _load_portable(path: Path) -> dict:
-    """Read and validate the AutoDev-owned portable source.
+def _load_required(path: Path, label: str) -> dict:
+    """Read and validate an AutoDev-owned TOML input.
 
-    The portable source is authoritative for AutoDev-owned settings; a missing
-    or malformed file is fatal because the composer has nothing to fall back
-    on. Returning ``{}`` here would silently downgrade every AutoDev setting
-    to ``None`` and the installer would happily write that to ``config.toml``.
+    Both inputs are authoritative for AutoDev-owned settings; a missing or
+    malformed file is fatal because the composer has nothing to fall back on.
+    Returning ``{}`` here would silently downgrade every AutoDev setting to
+    ``None`` and the installer would happily write that to ``config.toml``.
     """
     if not path.is_file():
-        raise ComposeError(f"portable source not found: {path}")
+        raise ComposeError(f"{label} not found: {path}")
     try:
         text = path.read_text(encoding="utf-8")
     except OSError as error:
-        raise ComposeError(f"unable to read portable source {path}: {error}") from error
+        raise ComposeError(f"unable to read {label} {path}: {error}") from error
     try:
         loaded = tomllib.loads(text)
     except tomllib.TOMLDecodeError as error:
-        raise ComposeError(f"malformed portable source {path}: {error}") from error
+        raise ComposeError(f"malformed {label} {path}: {error}") from error
     if not isinstance(loaded, dict):
-        raise ComposeError(f"portable source must be a TOML table: {path}")
+        raise ComposeError(f"{label} must be a TOML table: {path}")
     return loaded
+
+
+def _load_portable(portable_path: Path, mcp_source_path: Path) -> dict:
+    """Return the portable source with the generated MCP servers attached.
+
+    A portable source that declares ``mcp_servers`` itself is rejected: MCP
+    servers have one source, ``.rulesync/mcp.jsonc``, and a second copy here
+    would silently win or drift.
+    """
+    portable = _load_required(portable_path, "portable source")
+    if "mcp_servers" in portable:
+        raise ComposeError(
+            f"portable source must not declare mcp_servers: {portable_path} "
+            "(declare MCP servers in .rulesync/mcp.jsonc)"
+        )
+    servers = _load_required(mcp_source_path, "MCP source").get("mcp_servers")
+    if not isinstance(servers, dict) or not servers:
+        raise ComposeError(f"MCP source declares no mcp_servers: {mcp_source_path}")
+    portable["mcp_servers"] = servers
+    return portable
 
 
 def _load_existing(path: Path) -> dict:
@@ -532,13 +554,14 @@ def _read_text(path: Path) -> str:
 
 def run(
     portable_path: Path,
+    mcp_source_path: Path,
     existing_path: Path,
     output_path: Path,
     *,
     check: bool,
     otel_ingress: str,
 ) -> int:
-    portable = _load_portable(portable_path)
+    portable = _load_portable(portable_path, mcp_source_path)
     existing = _load_existing(existing_path)
     composed = compose(portable, existing)
     apply_otel_ingress(composed, otel_ingress)
@@ -586,6 +609,12 @@ def main(argv: list[str] | None = None) -> int:
         help="Path to the AutoDev-owned portable TOML source (config.autodev.toml).",
     )
     parser.add_argument(
+        "--mcp-source",
+        type=Path,
+        required=True,
+        help="Codex config.toml that Rulesync generated from .rulesync/mcp.jsonc; supplies the AutoDev MCP servers.",
+    )
+    parser.add_argument(
         "--existing-config",
         type=Path,
         required=True,
@@ -612,6 +641,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         return run(
             args.portable_source,
+            args.mcp_source,
             args.existing_config,
             args.output,
             check=args.check,

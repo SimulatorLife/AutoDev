@@ -17,7 +17,7 @@ Provider-specific `ensure-*` and `run-*` scripts are intentionally separate so a
 Codex user-level configuration is managed via a composed model rather than a direct symlink:
 
 - **Authoritative portable source (`scripts/codex/config.autodev.toml`):** Contains the versioned, portable slice of configuration owned by AutoDev (model defaults, provider definitions, telemetry, feature flags, native agents, declared hooks, AutoDev MCP servers `lsp`/`cocoindex-code`/`playwright`, skills, and shell environment policy).
-- **Composer (`scripts/codex/compose-user-config.py`):** Deterministically merges the portable source with existing machine-local state at `$CODEX_HOME/config.toml`. AutoDev-owned settings win conflicts, while operator-specific keys (such as `notify`, `projects`, `marketplaces`, desktop/TUI preferences, custom non-AutoDev MCP servers, and user-added skills) are preserved.
+- **Composer (`scripts/codex/compose-user-config.py`):** Deterministically merges the portable source with existing machine-local state at `$CODEX_HOME/config.toml`. AutoDev-owned settings win conflicts, while operator-specific keys (such as `notify`, `projects`, `marketplaces`, desktop/TUI preferences, custom non-AutoDev MCP servers, and user-added skills) are preserved. MCP servers are not in the portable source: the installer generates the Codex projection of `.rulesync/mcp.jsonc` with the pinned Rulesync and passes it as `--mcp-source`.
 - **Hook and state handling:** Declared hook event arrays (`SessionStart`, `SubagentStart`, `UserPromptSubmit`, `PreToolUse`) are replaced from the portable source so hooks match the current runtime code, while `hooks.state` (Codex-managed trusted execution hashes) is preserved from the existing file.
 - **Regular file output:** Writes an atomic regular file to `$CODEX_HOME/config.toml` (never a symlink). Codex resolves configuration at startup, and symlinking would cause local overrides to be overwritten or lost.
 - **Legacy seed retirement:** `scripts/codex/config.toml` is retired from being authoritative and is retained solely as a one-time migration seed for upgrades from previous installations.
@@ -30,15 +30,18 @@ under `$CODEX_HOME/agents/` before Codex loads them; provider identity remains c
 profiles/catalogs, while role names stay stable and codebase-agnostic. Agent
 configurations do not hardcode `model_reasoning_effort` so child
 agents inherit their configured model reasoning effort; this ensures compatibility
-with models like MiniMax-M3 that only support `none` or `high` reasoning. Every
-`[mcp_servers.<name>]` table in a native role must also declare a complete
-transport: stdio servers provide `command` and `args`, while streamable HTTP
-servers provide `url` and `transport = "streamable_http"`, even when the entry
-is disabled. Codex App connectors are native app tools rather than role MCP
+with models like MiniMax-M3 that only support `none` or `high` reasoning. A
+role's `[mcp_servers.<name>]` tables declare only per-role settings (`enabled`,
+`default_tools_approval_mode`, `enabled_tools`). The renderer copies each
+server's launch keys from the Codex projection of `.rulesync/mcp.jsonc`:
+`command` and `args`, or `url` plus `transport = "streamable_http"`. Every
+rendered entry is therefore a complete server even when disabled, and a role
+naming a server `.rulesync/mcp.jsonc` does not declare fails to render. Codex App connectors are native app tools rather than role MCP
 servers and must not be represented as enabled-only role tables.
 
-The user-level config registers the `lsp` and `playwright` MCP servers through the
-installed `run-autodev-mcp.sh` launcher. The launcher resolves binaries from
+`.rulesync/mcp.jsonc` declares the `lsp`, `cocoindex-code`, and `playwright` MCP
+servers through the installed `run-autodev-mcp.sh` launcher, and
+`openaiDeveloperDocs` by URL. The launcher resolves binaries from
 AutoDev's pinned devDependencies while preserving the active workspace as the
 MCP process cwd, so a target repository does not need to duplicate those
 packages. Both resolve from pinned AutoDev devDependencies (`lsp-mcp-server` and `@playwright/mcp`) rather
@@ -64,28 +67,30 @@ manager for the user-level MCP entries to work there. The `docs-researcher`
 role enables the OpenAI Developer Docs MCP and Codex's native `web_search`
 tool, which includes web fetching/opening and is the appropriate search/open/read
 path for authoritative websites. Do not add a separate Codex `web_fetch` tool.
-Its remote MCP entry explicitly sets `transport = "streamable_http"`; this is
-required by the installed Codex 0.153.x role loader even when `url` is present.
+Its rendered remote MCP entry sets `transport = "streamable_http"`, which the
+installed Codex 0.153.x role loader requires even when `url` is present.
 The Playwright MCP remains strictly for UI and browser testing roles and is disabled
 for `docs-researcher`, which must explicitly use web search/fetch tools and never Playwright.
-`smart` and `orchestrator` follow the web-research policy. Provider bridges that run
-Claude Code receive the pinned Playwright server through a per-turn inline `--mcp-config`
-only for `browser-tester` and `smart`; the bridge denies the unneeded evaluate, upload,
-navigation-back, and unsafe code-execution tools rather than relying on mutable `~/.claude`
-settings. Playwright is never exposed to the root orchestrator. Because Antigravity's
+`smart` and `orchestrator` follow the web-research policy. The Claude bridge passes
+`--strict-mcp-config` and a per-turn inline `--mcp-config` holding exactly the role
+contract's servers, with launch definitions read from the composed Codex config. User-level
+`~/.claude.json` servers and a workspace's own `.mcp.json` therefore never reach a bridged
+turn. Only `browser-tester` and `smart` receive Playwright, and the bridge denies the unneeded
+evaluate, upload, navigation-back, and unsafe code-execution tools. Playwright is never
+exposed to the root orchestrator. Because Antigravity's
 MCP configuration is global, registering Playwright globally would expose it across all
 roles including the orchestrator; rather than falsely claiming per-role isolation, Playwright
 registration and `browser-tester` routing are removed for Antigravity. For documentation
 and web research, Antigravity uses its native `search_web` and `read_url_content` tools.
 
 The installer installs CocoIndex Code once at the user level with
-`pipx install 'cocoindex-code[full]==0.2.41'` when `ccc` is not already available. It
-registers the stdio MCP once in the user-level Codex config as `ccc mcp` without
-a `cwd`; Codex therefore starts it from the active session workspace. CocoIndex
-Code keeps each repository's incremental index in that repository's
-`.cocoindex_code/` directory. The installer does not run `codex mcp add` on every
-invocation because that command is not an idempotent upsert; the versioned config
-stanza is the single registration source of truth. Install `pipx` before running
+`pipx install 'cocoindex-code[full]==0.2.41'` when `ccc` is not already available.
+`.rulesync/mcp.jsonc` declares its stdio MCP once, launching `ccc mcp` without a
+`cwd`, so each tool starts it from the active session workspace. CocoIndex Code
+keeps each repository's incremental index in that repository's `.cocoindex_code/`
+directory. The installer runs none of `codex mcp add`, `copilot mcp add`, or
+`agy mcp add`: Rulesync writes every user-level MCP file from that one
+declaration. Install `pipx` before running
 the installer if it is not already present. For a new repository, the installed
 `ccc` skill directs the agent to run `ccc index` from that repository root; later
 searches refresh changed files incrementally.
@@ -287,51 +292,28 @@ name is rejected as an explicit conflict rather than silently choosing precedenc
 this keeps user-level provider routing deterministic while allowing repository-
 specific agents, MCPs, and skills to coexist under distinct names.
 
-### Rulesync shared-configuration shadow fixtures and refresh
+### Rulesync shared configuration
 
-AutoDev tracks isolated MCP and hook shadow fixtures plus a frozen MCP ownership boundary for supported providers (`codexcli`, `claudecode`, `copilot`, `antigravity-cli`) under `tests/fixtures/rulesync-shadow/` to detect upstream drift without mutating live configuration. The shared instruction rules surface is now the first live Rulesync cutover: `.rulesync/rules/overview.md`, `AGENTS.md`, `CLAUDE.md`, and `.github/copilot-instructions.md` are byte-identical. Rule generation uses a temporary frontmatter wrapper around the canonical source because pinned Rulesync `16.30.2` requires frontmatter; no duplicate tracked instruction source is introduced. Skills have no shadow fixtures; their repository folders are generated fresh, as described below. Hook shadows cover the six existing command hooks across SessionStart, SubagentStart, UserPromptSubmit, and PreToolUse. Rulesync currently emits only the supported PreToolUse hook for Antigravity and omits Codex-only fields such as prevent_idle_sleep. Live hooks and MCP configuration remain AutoDev-owned; the MCP boundary contract covers Rulesync projections without approving a live MCP cutover. Rulesync permissions translation remains deferred until AutoDev has a complete portable permission source inventory.
+`.rulesync/` is the only tracked Rulesync input, and nothing Rulesync generates is tracked as a test fixture. The supported providers are `codexcli`, `claudecode`, `copilot`, and `antigravity-cli`. `rulesync.jsonc` is the only Rulesync configuration: it generates the live repository skill folders described below.
 
-To check for drift between `.rulesync/` source configuration and the tracked shadow fixtures, use an ephemeral input root so the canonical rules file remains byte-identical to `AGENTS.md` while Rulesync receives its required metadata:
+Repository agent instructions do not go through Rulesync. `AGENTS.md` is their only source. Codex, Antigravity, and Copilot (cloud agent, code review, CLI, VS Code chat) read it natively, and `CLAUDE.md` is a symlink to it for Claude Code. Copilot Chat on github.com reads only `.github/copilot-instructions.md`, which is intentionally absent. `tests/test_agent_instructions.py` keeps it that way.
 
-```bash
-temp_root="$(mktemp -d)"
-trap 'rm -rf "$temp_root"' EXIT
-mkdir -p "$temp_root/input"
-cp -R .rulesync/. "$temp_root/input/"
-{
-  printf '%s\n' '---' 'root: true' 'targets: ["*"]' 'description: "AutoDev shared workspace instructions for all AI tooling"' 'globs: ["**/*"]' '---'
-  cat .rulesync/rules/overview.md
-} > "$temp_root/input/rules/overview.md"
-pnpm exec rulesync generate \
-  --input-roots "$temp_root/input" \
-  --targets codexcli,claudecode,copilot,antigravity-cli \
-  --features mcp,rules,hooks \
-  --output-roots tests/fixtures/rulesync-shadow \
-  --check \
-  --silent
-```
+`.rulesync/mcp.jsonc` is the only MCP source, and the installer generates every live MCP file from it with the pinned Rulesync `16.30.2`:
+- **Claude Code, Copilot CLI, Antigravity:** for each of `claude`, `copilot`, and `agy` found on `PATH`, `rulesync generate --global --features mcp` writes `~/.claude.json`, `~/.copilot/mcp-config.json`, or `~/.gemini/config/mcp_config.json`. Rulesync keeps every non-MCP key in those files but owns their server lists: a server you add by hand is removed on the next install and reported as drift by `--check`. Add personal servers to `.rulesync/mcp.jsonc` instead.
+- **Codex:** Rulesync's global output ignores `CODEX_HOME`. The installer therefore generates the Codex projection into a temporary root, and the composer merges its servers into `$CODEX_HOME/config.toml`, keeping any server you added there. The role renderer and execution-contract builder read the same projection.
+- MCP generation passes its settings as flags, because a Rulesync config file with `global: true` generates nothing.
 
-Rulesync does not replace AutoDev's live hook enforcement, MCP configuration, or role filtering. `.rulesync/skills/` is the single tracked source for every AutoDev skill. The repository skill folders each tool discovers inside AutoDev (`.github/skills/` for Copilot, `.claude/skills/` for Claude Code, `.agents/skills/` for Codex and Antigravity) are untracked Rulesync output. The installer generates them with the pinned `node_modules/.bin/rulesync` (run `pnpm install --frozen-lockfile` first), and `--check` reports edited, stale, or missing copies. `.gitignore` lists the first two. The installer writes `/.agents/skills/` to `.git/info/exclude` instead, because Antigravity does not load a gitignored `.agents/skills/`. Copilot's cloud agent generates its folder in `copilot-setup-steps.yml`. Each skill's Rulesync `targets` frontmatter selects its folders. Repository-only development skills such as `autodev-codex-request-capture` keep the default and reach every tool, with their bundled scripts. `ccc`, `lsp-mcp-server`, and `orchestration` target only `copilot`, because Copilot's cloud agent has no user level. The remaining skills target nothing, because they already reach local tools at user level and a repository copy would list them twice. Repository-only skills are never installed at user level. Tools that read the repository without running setup, such as github.com Copilot chat and code review, see no repository skills. `tests/test_rulesync_skills.py` generates the folders fresh and freezes that exposure. The installer symlinks Codex/user-level skills from `.rulesync/skills/`, `render-provider-skill-views.py` continues to project role-specific Claude views from the execution contract, and Antigravity continues to use its explicit `include_only` registration. MCP, hooks, and permissions remain shadow-only or deferred until those boundaries are separately proven equivalent.
+The suites generate from `.rulesync/` into temporary roots:
+- `tests/test_rulesync_mcp.py` checks that the Codex projection and each user-level file list exactly the servers `.rulesync/mcp.jsonc` declares for that tool, that non-MCP keys survive, and that `--check` catches edited or extra servers.
+- `tests/test_rulesync_hooks_shadow.py` checks the six command hooks across SessionStart, SubagentStart, UserPromptSubmit, and PreToolUse. Rulesync emits only the supported PreToolUse hook for Antigravity and omits Codex-only fields such as prevent_idle_sleep.
 
-To refresh the tracked shadow fixtures after making intentional changes to `.rulesync/` or `rulesync.jsonc`:
+Live hooks remain AutoDev-owned; the hook checks cover Rulesync projections without approving a live hook cutover. Rulesync permissions translation remains deferred until AutoDev has a complete portable permission source inventory. After changing `.rulesync/`, `rulesync.jsonc`, or the pinned Rulesync version, run the same suites CI runs:
 
 ```bash
-temp_root="$(mktemp -d)"
-trap 'rm -rf "$temp_root"' EXIT
-mkdir -p "$temp_root/input"
-cp -R .rulesync/. "$temp_root/input/"
-{
-  printf '%s\n' '---' 'root: true' 'targets: ["*"]' 'description: "AutoDev shared workspace instructions for all AI tooling"' 'globs: ["**/*"]' '---'
-  cat .rulesync/rules/overview.md
-} > "$temp_root/input/rules/overview.md"
-pnpm exec rulesync generate \
-  --input-roots "$temp_root/input" \
-  --targets codexcli,claudecode,copilot,antigravity-cli \
-  --features mcp,rules,hooks \
-  --output-roots tests/fixtures/rulesync-shadow \
-  --delete \
-  --silent
+python3 -m unittest tests/test_rulesync_*.py
 ```
+
+Rulesync does not replace AutoDev's live hook enforcement or role filtering. `.rulesync/skills/` is the single tracked source for every AutoDev skill. The repository skill folders each tool discovers inside AutoDev (`.github/skills/` for Copilot, `.claude/skills/` for Claude Code, `.agents/skills/` for Codex and Antigravity) are untracked Rulesync output. The installer generates them by running the pinned `node_modules/.bin/rulesync` with `rulesync.jsonc` (run `pnpm install --frozen-lockfile` first). Its `--check` reports edited, stale, or missing copies. `.gitignore` lists the first two. The installer writes `/.agents/skills/` to `.git/info/exclude` instead, because Antigravity does not load a gitignored `.agents/skills/`. Copilot's cloud agent generates its folder in `copilot-setup-steps.yml`. Each skill's Rulesync `targets` frontmatter selects its folders. Repository-only development skills such as `autodev-codex-request-capture` keep the default and reach every tool, with their bundled scripts. `ccc`, `lsp-mcp-server`, and `orchestration` target only `copilot`, because Copilot's cloud agent has no user level. The remaining skills target nothing, because they already reach local tools at user level and a repository copy would list them twice. Repository-only skills are never installed at user level. Tools that read the repository without running setup, such as github.com Copilot chat and code review, see no repository skills. `tests/test_rulesync_skills.py` generates the folders fresh and freezes that exposure. The installer symlinks Codex/user-level skills from `.rulesync/skills/`, `render-provider-skill-views.py` continues to project role-specific Claude views from the execution contract, and Antigravity continues to use its explicit `include_only` registration. Hooks and permissions remain shadow-only or deferred until those boundaries are separately proven equivalent.
 
 To enable the router authentication boundary during a planned restart, run:
 

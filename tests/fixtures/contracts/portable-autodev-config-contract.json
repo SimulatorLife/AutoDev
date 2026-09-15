@@ -189,16 +189,6 @@
     "PreToolUse"
   ],
   "hooksStateOmitted": true,
-  "mcpServers": [
-    "cocoindex-code",
-    "lsp",
-    "playwright"
-  ],
-  "mcpServersRequired": [
-    "lsp",
-    "cocoindex-code",
-    "playwright"
-  ],
   "skillsConfigNames": [
     "ccc",
     "lsp-mcp-server",

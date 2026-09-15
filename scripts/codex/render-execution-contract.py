@@ -92,9 +92,11 @@ def render(source_dir: Path, root_config_path: Path, contract_path: Path) -> dic
         raise RuntimeError("role TOMLs must include the orchestrator capability declaration")
     root_config = tomllib.loads(root_config_path.read_text(encoding="utf-8"))
     orchestrator = roles["orchestrator"]
+    # Codex enables a server unless it says `enabled = false`; the Rulesync
+    # projection omits `enabled = true`.
     enabled_root_mcp = {
         name for name, settings in root_config.get("mcp_servers", {}).items()
-        if isinstance(settings, dict) and settings.get("enabled") is True
+        if isinstance(settings, dict) and settings.get("enabled", True) is True
     }
     missing_root_mcp = set(orchestrator["mcp"]) - enabled_root_mcp - {"autodev_spawn"}
     if missing_root_mcp:

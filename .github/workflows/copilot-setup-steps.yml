@@ -63,8 +63,9 @@ jobs:
 
       # `.github/skills/` is not tracked: `.rulesync/skills/` is the only skill
       # source, so the cloud agent's skills are generated here before it starts.
+      # rulesync.jsonc supplies the feature, output root, and delete behaviour.
       - name: Generate repository skills for Copilot
-        run: pnpm exec rulesync generate --input-roots .rulesync --targets copilot --features skills --output-roots . --delete --silent
+        run: pnpm exec rulesync generate --targets copilot --silent
 
       - name: Validate GitHub workflows
         run: pnpm run validate:actionlint
