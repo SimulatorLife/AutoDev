@@ -317,6 +317,33 @@ def compose(portable: dict, existing: dict) -> dict:
     return composed
 
 
+def apply_otel_ingress(config: dict, ingress: str) -> dict:
+    """Select the local OTLP ingress without changing the model transport.
+
+    The model router remains on port 4100 in every mode.  Only Codex's three
+    OTLP HTTP exporters move to the opt-in Collector port, so telemetry can be
+    rolled back independently of provider routing.
+    """
+    if ingress not in {"direct", "collector"}:
+        raise ComposeError(f"unsupported OTLP ingress: {ingress}")
+    if ingress == "direct":
+        return config
+    otel = config.get("otel")
+    if not isinstance(otel, dict):
+        raise ComposeError("portable config is missing the [otel] table")
+    endpoints = {
+        "exporter": "http://127.0.0.1:4318/v1/logs",
+        "trace_exporter": "http://127.0.0.1:4318/v1/traces",
+        "metrics_exporter": "http://127.0.0.1:4318/v1/metrics",
+    }
+    for key, endpoint in endpoints.items():
+        exporter = otel.get(key)
+        if not isinstance(exporter, dict) or not isinstance(exporter.get("otlp-http"), dict):
+            raise ComposeError(f"portable config is missing [otel].{key}.otlp-http")
+        exporter["otlp-http"]["endpoint"] = endpoint
+    return config
+
+
 # ---------------------------------------------------------------------------
 # Deterministic TOML serializer
 # ---------------------------------------------------------------------------
@@ -509,10 +536,12 @@ def run(
     output_path: Path,
     *,
     check: bool,
+    otel_ingress: str,
 ) -> int:
     portable = _load_portable(portable_path)
     existing = _load_existing(existing_path)
     composed = compose(portable, existing)
+    apply_otel_ingress(composed, otel_ingress)
     rendered = serialize(composed)
 
     if check:
@@ -573,6 +602,12 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Detect drift between the existing output and what would be composed; do not write.",
     )
+    parser.add_argument(
+        "--otel-ingress",
+        choices=("direct", "collector"),
+        default="direct",
+        help="Select direct AutoDev OTLP ingress or the opt-in local Collector.",
+    )
     args = parser.parse_args(argv)
     try:
         return run(
@@ -580,6 +615,7 @@ def main(argv: list[str] | None = None) -> int:
             args.existing_config,
             args.output,
             check=args.check,
+            otel_ingress=args.otel_ingress,
         )
     except ComposeError as error:
         print(f"compose-user-config: {error}", file=sys.stderr)

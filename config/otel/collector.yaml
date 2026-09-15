@@ -1,15 +1,15 @@
-# Phase 3 contract-only OpenTelemetry Collector configuration.
+# Phase 3 pinned OpenTelemetry Collector runtime configuration.
 #
-# This fixture is validated by tests/test_otel_collector_config.py. It is not
-# installed, launched, or wired into any live process. It pins the shape of
+# This configuration is validated by tests/test_otel_collector_config.py and
+# installed/launched only when Collector mode is explicitly enabled. It pins the
 # an OTLP HTTP ingress on 127.0.0.1:4318 that forwards logs, traces, and
 # metrics to the existing AutoDev OTLP receiver at http://127.0.0.1:4100
 # using JSON encoding, because that receiver parses OTLP JSON and does not
 # accept the Collector exporter's protobuf default.
 #
-# No generic backend exporter, no live process wiring, and no tee adapter
-# are part of this slice. See docs/AUTODEV_PLATFORM_MIGRATION.md ("Phase 3
-# — Insert OpenTelemetry Collector as OTLP ingress") for the full contract.
+# No generic backend exporter or multi-exporter tee is part of this slice.
+# See docs/AUTODEV_PLATFORM_MIGRATION.md ("Phase 3 — Insert OpenTelemetry
+# Collector as OTLP ingress") for the runtime and rollback procedure.
 
 receivers:
   otlp:
@@ -18,7 +18,7 @@ receivers:
         endpoint: 127.0.0.1:4318
 
 exporters:
-  otlphttp/autodev:
+  otlp_http/autodev:
     endpoint: http://127.0.0.1:4100
     encoding: json
 
@@ -26,10 +26,10 @@ service:
   pipelines:
     traces:
       receivers: [otlp]
-      exporters: [otlphttp/autodev]
+      exporters: [otlp_http/autodev]
     metrics:
       receivers: [otlp]
-      exporters: [otlphttp/autodev]
+      exporters: [otlp_http/autodev]
     logs:
       receivers: [otlp]
-      exporters: [otlphttp/autodev]
+      exporters: [otlp_http/autodev]

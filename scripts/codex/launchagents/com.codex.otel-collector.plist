@@ -1,0 +1,63 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.codex.otel-collector</string>
+
+  <!-- Phase 3 OpenTelemetry Collector runtime layer. Runs the pinned Collector
+       in the foreground so launchd can supervise it with KeepAlive. The
+       launcher resolves the otelcol binary itself (AUTODEV_OTELCOL_BIN or a
+       host-local CODEX_HOME/otelcol path) and refuses to start on a port that
+       is already serving a duplicate Collector, so launchd does not enter a
+       bind/retry loop. PATH keeps homebrew so the standard otelcol install is
+       resolvable when the installer has not vendored a copy. Invokes the
+       installed hook copy under ~/.codex (outside Desktop) so launchd's TCC
+       prompts on the repo do not block the binary. -->
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+  <string>__CODEX_HOME__/hooks/codex/otel/run-autodev-otel-collector.sh</string>
+  </array>
+
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>ThrottleInterval</key>
+  <integer>5</integer>
+
+  <!-- Bounded drain window: the collector shuts down on SIGTERM in well under
+       a second; 15s gives a launchd-restarted instance enough room to release
+       the listen socket before SIGKILL tears it down. -->
+  <key>ExitTimeOut</key>
+  <integer>15</integer>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    <key>CODEX_HOME</key>
+    <string>__CODEX_HOME__</string>
+    <key>AUTODEV_OTEL_CONFIG</key>
+    <string>__AUTODEV_REPO_ROOT__/config/otel/collector.yaml</string>
+    <key>AUTODEV_OTEL_VERSION_FILE</key>
+    <string>__AUTODEV_REPO_ROOT__/config/otel/collector.version</string>
+  </dict>
+
+  <!-- Separate stdout/stderr so the readiness probe failures (curl 000 from
+       the ensure hook) do not interleave with the Collector's own logs. The
+       installer's ensure hook tails the .err.log on startup failures; keep
+       the .err.log suffix. The files live under CODEX_HOME/run with mode 0700
+       so probe logs and Collector telemetry stay private to the user. -->
+  <key>StandardOutPath</key>
+  <string>__CODEX_HOME__/run/autodev-otel-collector.out.log</string>
+  <key>StandardErrorPath</key>
+  <string>__CODEX_HOME__/run/autodev-otel-collector.err.log</string>
+
+  <!-- process-type=Background keeps launchd from surfacing the Collector as a
+       Dock app during boot, so the desktop session is untouched. -->
+  <key>ProcessType</key>
+  <string>Background</string>
+</dict>
+</plist>

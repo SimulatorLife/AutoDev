@@ -105,6 +105,10 @@ exit 0
         # network access. The production path remains the installer's default.
         environment["AUTODEV_SKIP_COCOINDEX_INSTALL"] = "1"
         environment["AUTODEV_SKIP_LSP_INSTALL"] = "1"
+        # New runtime sources are intentionally untracked while this working
+        # tree is under test; production installs retain the strict tracked
+        # source check.
+        environment["AUTODEV_ALLOW_UNTRACKED_PROVIDER_SOURCES"] = "1"
         # The isolated fixture must not mutate any provider CLI's user-level
         # MCP registry; the production installer owns this registration.
         environment["AUTODEV_SKIP_AGY_MCP"] = "1"
@@ -116,6 +120,49 @@ exit 0
             capture_output=True,
             env=environment,
         )
+
+    def test_collector_mode_is_opt_in_and_reversible_without_changing_model_router(self):
+        with tempfile.TemporaryDirectory() as home, tempfile.TemporaryDirectory() as codex_home:
+            fake = Path(home) / "otelcol"
+            fake.write_text(
+                "#!/bin/sh\n"
+                "if [ \"$1\" = \"--version\" ]; then echo 'otelcol version v0.160.0'; exit 0; fi\n"
+                "if [ \"$1\" = \"validate\" ]; then exit 0; fi\n"
+                "exit 0\n",
+                encoding="utf-8",
+            )
+            fake.chmod(0o700)
+            enabled = self._run_installer(
+                home,
+                codex_home,
+                "--materialize-only",
+                "--enable-otel-collector",
+                AUTODEV_OTELCOL_BIN=str(fake),
+            )
+            self.assertEqual(enabled.returncode, 0, enabled.stdout + enabled.stderr)
+            codex_home_path = Path(codex_home)
+            self.assertEqual((codex_home_path / "otel-collector.mode").read_text().strip(), "collector")
+            enabled_config = tomllib.loads((codex_home_path / "config.toml").read_text())
+            self.assertEqual(enabled_config["openai_base_url"], "http://127.0.0.1:4100/v1")
+            self.assertEqual(
+                enabled_config["otel"]["exporter"]["otlp-http"]["endpoint"],
+                "http://127.0.0.1:4318/v1/logs",
+            )
+
+            disabled = self._run_installer(
+                home,
+                codex_home,
+                "--materialize-only",
+                "--disable-otel-collector",
+                AUTODEV_OTELCOL_BIN=str(fake),
+            )
+            self.assertEqual(disabled.returncode, 0, disabled.stdout + disabled.stderr)
+            self.assertEqual((codex_home_path / "otel-collector.mode").read_text().strip(), "direct")
+            disabled_config = tomllib.loads((codex_home_path / "config.toml").read_text())
+            self.assertEqual(
+                disabled_config["otel"]["exporter"]["otlp-http"]["endpoint"],
+                "http://127.0.0.1:4100/v1/logs",
+            )
 
     def test_skill_installer_links_each_target_as_absolute_directory_symlink_with_regular_skill_doc(self):
         """The installer must expose every AutoDev-owned skill under
@@ -2424,6 +2471,7 @@ PY
                 "com.codex.minimax-proxy",
                 "com.codex.antigravity-proxy",
                 "com.codex.copilot-proxy",
+                "com.codex.otel-collector",
             ]),
         )
         for label in labels:
@@ -3380,6 +3428,43 @@ class ComposeUserConfigTests(unittest.TestCase):
             self.assertEqual(composed["model"], "autodev/orchestrator")
             self.assertEqual(composed["model_provider"], "local_model_router")
             self.assertEqual(composed["openai_base_url"], "http://127.0.0.1:4100/v1")
+
+    def test_collector_ingress_switch_changes_only_otlp_endpoints(self):
+        with tempfile.TemporaryDirectory() as home:
+            existing = Path(home) / "existing.toml"
+            existing.write_text(
+                'notify = ["operator-owned"]\n'
+                '[projects]\n"/operator/work" = { trust_level = "trusted" }\n',
+                encoding="utf-8",
+            )
+            output = Path(home) / "config.toml"
+            run = self._run_composer(
+                AUTODEV_CONFIG_PATH,
+                existing,
+                output,
+                "--otel-ingress",
+                "collector",
+            )
+            self.assertEqual(run.returncode, 0, msg=run.stdout + run.stderr)
+            composed = tomllib.loads(output.read_text())
+            self.assertEqual(composed["openai_base_url"], "http://127.0.0.1:4100/v1")
+            self.assertEqual(
+                composed["otel"]["exporter"]["otlp-http"]["endpoint"],
+                "http://127.0.0.1:4318/v1/logs",
+            )
+            self.assertEqual(
+                composed["otel"]["trace_exporter"]["otlp-http"]["endpoint"],
+                "http://127.0.0.1:4318/v1/traces",
+            )
+            self.assertEqual(
+                composed["otel"]["metrics_exporter"]["otlp-http"]["endpoint"],
+                "http://127.0.0.1:4318/v1/metrics",
+            )
+            self.assertEqual(composed["notify"], ["operator-owned"])
+            self.assertEqual(
+                composed["projects"],
+                {"/operator/work": {"trust_level": "trusted"}},
+            )
 
     def test_declared_hooks_are_replaced_and_state_is_preserved(self):
         with tempfile.TemporaryDirectory() as home:

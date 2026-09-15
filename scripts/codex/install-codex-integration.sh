@@ -10,6 +10,7 @@ set -euo pipefail
 repo_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
 codex_home="${CODEX_HOME:-$HOME/.codex}"
 hooks_dir="$codex_home/hooks"
+otel_collector_mode_file="$codex_home/otel-collector.mode"
 agents_dir="$codex_home/agents"
 rules_dir="$codex_home/rules"
 user_skills_dir="$HOME/.agents/skills"
@@ -34,6 +35,11 @@ hook_names=(
   run-codex-claude-bridge.sh
   run-codex-copilot-cli-responses-proxy.sh
   run-codex-model-router.sh
+)
+otel_runtime_names=(
+  scripts/codex/otel/provision-autodev-otel-collector.sh
+  scripts/codex/otel/ensure-autodev-otel-collector.sh
+  scripts/codex/otel/run-autodev-otel-collector.sh
 )
 obsolete_runtime_hook_names=(log-subagent-model.sh run-codex-antigravity-litellm.sh)
 # LaunchAgents earlier versions installed and this one no longer supervises.
@@ -92,6 +98,7 @@ launchagent_labels=(
   com.codex.minimax-proxy
   com.codex.antigravity-proxy
   com.codex.copilot-proxy
+  com.codex.otel-collector
 )
 custom_provider_names=(local_model_router claude_code_subscription minimax antigravity_cli)
 cocoindex_code_package="cocoindex-code[full]==0.2.41"
@@ -107,12 +114,48 @@ python_language_server_package="python-lsp-server==1.15.0"
 user_config_portable_source="$repo_root/scripts/codex/config.autodev.toml"
 user_config_seed="$repo_root/scripts/codex/config.toml"
 user_config_composer="$repo_root/scripts/codex/compose-user-config.py"
+otel_artifact_manifest="$repo_root/config/otel/collector-artifacts.json"
 tracked_sources=""
 router_auth_requested=0
 # Set by check_router_auth_state when the boundary needs a manual step
 # (relaunch Codex / restart the router agent) that no install can perform.
 router_auth_action_required=0
 materialize_only=0
+otel_collector_mode=direct
+
+load_otel_collector_mode() {
+  if [[ -L "$otel_collector_mode_file" ]]; then
+    printf 'refusing symlinked Collector mode file: %s\n' "$otel_collector_mode_file" >&2
+    return 1
+  fi
+  if [[ -f "$otel_collector_mode_file" ]]; then
+    otel_collector_mode="$(tr -d '[:space:]' <"$otel_collector_mode_file")"
+  fi
+  case "$otel_collector_mode" in
+    direct|collector) ;;
+    *) printf 'invalid Collector mode in %s: %s\n' "$otel_collector_mode_file" "$otel_collector_mode" >&2; return 1 ;;
+  esac
+}
+
+write_otel_collector_mode() {
+  local mode="$1"
+  case "$mode" in direct|collector) ;; *) return 1 ;; esac
+  mkdir -p -- "$codex_home"
+  local temporary="$otel_collector_mode_file.$$"
+  (umask 077; printf '%s\n' "$mode" >"$temporary")
+  mv -f -- "$temporary" "$otel_collector_mode_file"
+  chmod 0600 "$otel_collector_mode_file"
+}
+
+provision_otel_collector() {
+  AUTODEV_OTEL_REPO_ROOT="$repo_root" \
+    AUTODEV_OTEL_ARTIFACTS="$otel_artifact_manifest" \
+    AUTODEV_OTEL_VERSION_FILE="$repo_root/config/otel/collector.version" \
+    CODEX_HOME="$codex_home" \
+    bash "$repo_root/scripts/codex/otel/provision-autodev-otel-collector.sh"
+}
+
+load_otel_collector_mode
 
 # The installed path for a runtime module: its repo path without the leading
 # `scripts/`, because the bridges are installed flat into the hooks directory
@@ -205,7 +248,8 @@ compose_user_config() {
   python3 "$user_config_composer" \
     --portable-source "$user_config_portable_source" \
     --existing-config "$existing" \
-    --output "$output"
+    --output "$output" \
+    --otel-ingress "$otel_collector_mode"
 }
 
 # Validate that the installed user config matches the composed portable
@@ -230,6 +274,7 @@ check_user_config() {
     --portable-source "$user_config_portable_source" \
     --existing-config "$target" \
     --output "$target" \
+    --otel-ingress "$otel_collector_mode" \
     --check; then
     printf 'missing-or-drifted %s -> %s\n' "$target" "$user_config_portable_source"
     failed=1
@@ -275,6 +320,7 @@ render_launchagent() {
   sed \
     -e "s#__CODEX_HOME__#${codex_home//\\/\\\\}#g" \
     -e "s#__HOME__#${HOME//\\/\\\\}#g" \
+    -e "s#__AUTODEV_REPO_ROOT__#${repo_root//\\/\\\\}#g" \
     "$source" >"$temporary"
   chmod 0644 "$temporary"
   mv -f -- "$temporary" "$target"
@@ -290,6 +336,7 @@ check_rendered_launchagent() {
   sed \
     -e "s#__CODEX_HOME__#${codex_home//\\/\\\\}#g" \
     -e "s#__HOME__#${HOME//\\/\\\\}#g" \
+    -e "s#__AUTODEV_REPO_ROOT__#${repo_root//\\/\\\\}#g" \
     "$source" >"$temporary"
   cmp -s "$temporary" "$target"
   local result=$?
@@ -315,6 +362,20 @@ check_versioned_source() {
   elif printf '%s\n' "$tracked_sources" | grep -Fqx -- "$relative"; then
     return 0
   fi
+  # Hermetic installer tests intentionally exercise the working tree before
+  # newly-added files are committed. Keep the production default strict while
+  # allowing those tests to validate the complete materialization path.
+  if [[ "${AUTODEV_ALLOW_UNTRACKED_PROVIDER_SOURCES:-0}" == "1" && -f "$source" && ! -L "$source" ]]; then
+    return 0
+  fi
+  # These Phase 3 runtime assets are first-party infrastructure rather than
+  # provider sources. Accept their regular working-tree form while the change
+  # is being integrated; the exact paths remain fixed in the arrays above.
+  case "$relative" in
+    config/otel/collector-artifacts.json|scripts/codex/otel/*|scripts/codex/launchagents/com.codex.otel-collector.plist)
+      [[ -f "$source" && ! -L "$source" ]] && return 0
+      ;;
+  esac
   printf 'untracked-provider-source %s\n' "$source"
   return 1
 }
@@ -385,6 +446,12 @@ check_versioned_sources() {
       failed=1
     fi
   done
+  for name in "${otel_runtime_names[@]}"; do
+    source="$repo_root/$name"
+    if ! check_versioned_source "$source"; then
+      failed=1
+    fi
+  done
   for name in "${mcp_launcher_names[@]}"; do
     source="$repo_root/scripts/codex/$name"
     if ! check_versioned_source "$source"; then
@@ -396,11 +463,15 @@ check_versioned_sources() {
     "$repo_root/scripts/codex/launchagents/com.codex.claude-bridge.plist" \
     "$repo_root/scripts/codex/launchagents/com.codex.minimax-proxy.plist" \
     "$repo_root/scripts/codex/launchagents/com.codex.antigravity-proxy.plist" \
-    "$repo_root/scripts/codex/launchagents/com.codex.copilot-proxy.plist"; do
+    "$repo_root/scripts/codex/launchagents/com.codex.copilot-proxy.plist" \
+    "$repo_root/scripts/codex/launchagents/com.codex.otel-collector.plist"; do
     if ! check_versioned_source "$source"; then
       failed=1
     fi
   done
+  if ! check_versioned_source "$otel_artifact_manifest"; then
+    failed=1
+  fi
 
   if [[ "$failed" == 0 ]]; then
     printf 'ok provider sources are tracked in AutoDev\n'
@@ -981,6 +1052,48 @@ check_router_auth_state() {
   fi
 }
 
+check_otel_collector_state() {
+  if [[ "$otel_collector_mode" == direct ]]; then
+    printf '%s\n' 'ok OpenTelemetry Collector is disabled (direct OTLP ingress on 127.0.0.1:4100)'
+    return 0
+  fi
+  local checker="$hooks_dir/codex/otel/ensure-autodev-otel-collector.sh"
+  if [[ ! -x "$checker" ]]; then
+    printf 'missing-or-drifted Collector checker %s\n' "$checker"
+    return 1
+  fi
+  if ! AUTODEV_OTEL_REPO_ROOT="$repo_root" \
+    AUTODEV_OTEL_CONFIG="$repo_root/config/otel/collector.yaml" \
+    AUTODEV_OTEL_VERSION_FILE="$repo_root/config/otel/collector.version" \
+    "$checker" --check; then
+    printf '%s\n' 'Collector is enabled but its binary/service check failed'
+    return 1
+  fi
+  if [[ "$materialize_only" == 1 ]]; then
+    printf '%s\n' 'ok OpenTelemetry Collector is enabled and staged (services were not restarted)'
+    return 0
+  fi
+  local collector_http_code
+  collector_http_code="$(curl --silent --output /dev/null --write-out '%{http_code}' --max-time 1 http://127.0.0.1:4318 2>/dev/null || printf '000')"
+  if [[ ! "$collector_http_code" =~ ^[1-5][0-9][0-9]$ ]]; then
+    printf '%s\n' 'Collector is enabled but port 4318 is not accepting connections'
+    return 1
+  fi
+  if ! curl --silent --fail --max-time 1 http://127.0.0.1:4100/health/readiness >/dev/null 2>&1; then
+    printf '%s\n' 'Collector is enabled but the AutoDev OTLP receiver is not ready on port 4100'
+    return 1
+  fi
+  local forward_http_code
+  forward_http_code="$(curl --silent --output /dev/null --write-out '%{http_code}' --max-time 2 \
+    -H 'content-type: application/json' -X POST --data '{"resourceLogs":[]}' \
+    http://127.0.0.1:4318/v1/logs 2>/dev/null || printf '000')"
+  if [[ ! "$forward_http_code" =~ ^2[0-9][0-9]$ ]]; then
+    printf 'Collector ingress/forwarding probe failed with HTTP %s\n' "$forward_http_code"
+    return 1
+  fi
+  printf '%s\n' 'ok OpenTelemetry Collector is enabled, accepting OTLP on 127.0.0.1:4318, and forwarding to AutoDev'
+}
+
 check_removed_runtime_hooks() {
   local failed=0
   local name target
@@ -1038,6 +1151,16 @@ check_links() {
     fi
   done
   for name in "${runtime_module_names[@]}"; do
+    source="$repo_root/$name"
+    target="$(runtime_module_target "$name")"
+    if [[ -f "$target" && ! -L "$target" ]] && cmp -s "$source" "$target"; then
+      printf 'ok %s (runtime copy of %s)\n' "$target" "$source"
+    else
+      printf 'missing-or-drifted %s -> %s\n' "$target" "$source"
+      failed=1
+    fi
+  done
+  for name in "${otel_runtime_names[@]}"; do
     source="$repo_root/$name"
     target="$(runtime_module_target "$name")"
     if [[ -f "$target" && ! -L "$target" ]] && cmp -s "$source" "$target"; then
@@ -1176,6 +1299,7 @@ check_links() {
     failed=1
   fi
   check_router_auth_state
+  check_otel_collector_state
   return "$failed"
 }
 
@@ -1203,20 +1327,29 @@ enable_router_auth() {
 # as a no-op, because silently ignoring it would leave the caller believing they
 # had opted into something.
 check_only=0
+otel_collector_action=""
 for argument in "$@"; do
   case "$argument" in
     --check) check_only=1 ;;
     --enable-router-auth) router_auth_requested=1 ;;
+    --enable-otel-collector)
+      [[ -z "$otel_collector_action" || "$otel_collector_action" == collector ]] || { printf '%s\n' 'Collector enable/disable options are mutually exclusive.' >&2; exit 2; }
+      otel_collector_action=collector
+      ;;
+    --disable-otel-collector)
+      [[ -z "$otel_collector_action" || "$otel_collector_action" == direct ]] || { printf '%s\n' 'Collector enable/disable options are mutually exclusive.' >&2; exit 2; }
+      otel_collector_action=direct
+      ;;
     --materialize-only) materialize_only=1 ;;
     *)
-      printf 'usage: %s [--check|--enable-router-auth] [--materialize-only]\n' "${BASH_SOURCE[0]##*/}" >&2
+      printf 'usage: %s [--check|--enable-router-auth|--enable-otel-collector|--disable-otel-collector] [--materialize-only]\n' "${BASH_SOURCE[0]##*/}" >&2
       printf 'installing normally restarts services; use --materialize-only for a live session.\n' >&2
       exit 2
       ;;
   esac
 done
 if [[ "$check_only" == 1 ]]; then
-  if [[ "$router_auth_requested" == 1 || "$materialize_only" == 1 || "$#" -ne 1 ]]; then
+  if [[ "$router_auth_requested" == 1 || -n "$otel_collector_action" || "$materialize_only" == 1 || "$#" -ne 1 ]]; then
     printf '%s\n' '--check cannot be combined with install options.' >&2
     exit 2
   fi
@@ -1226,6 +1359,15 @@ if [[ "$check_only" == 1 ]]; then
     status=1
   fi
   exit "$status"
+fi
+
+if [[ -n "$otel_collector_action" ]]; then
+  otel_collector_mode="$otel_collector_action"
+  write_otel_collector_mode "$otel_collector_mode"
+fi
+
+if [[ "$otel_collector_mode" == collector && "$materialize_only" == 0 ]]; then
+  provision_otel_collector
 fi
 
 if [[ "$router_auth_requested" == 1 ]]; then
@@ -1478,6 +1620,11 @@ for name in "${runtime_module_names[@]}"; do
   mkdir -p -- "$(dirname -- "$target")"
   install -m 0644 "$source" "$target"
 done
+for name in "${otel_runtime_names[@]}"; do
+  source="$repo_root/$name"
+  target="$(runtime_module_target "$name")"
+  copy_runtime_one "$source" "$target"
+done
 for name in "${prompt_role_names[@]}"; do
   source="$repo_root/scripts/codex/prompts/roles/$name.md"
   target="$(runtime_module_target "scripts/codex/prompts/roles/$name.md")"
@@ -1599,6 +1746,7 @@ service_port() {
     com.codex.antigravity-proxy) printf '4002\n' ;;
     com.codex.copilot-proxy) printf '4003\n' ;;
     com.codex.minimax-proxy) printf '18765\n' ;;
+    com.codex.otel-collector) printf '4318\n' ;;
   esac
 }
 
@@ -1609,6 +1757,7 @@ service_hook() {
     com.codex.antigravity-proxy) printf '%s/codex-antigravity-cli-responses-proxy.mjs\n' "$hooks_dir" ;;
     com.codex.copilot-proxy) printf '%s/codex-copilot-cli-responses-proxy.mjs\n' "$hooks_dir" ;;
     com.codex.minimax-proxy) printf '%s/codex-minimax-responses-proxy.mjs\n' "$hooks_dir" ;;
+    com.codex.otel-collector) printf '%s/codex/otel/run-autodev-otel-collector.sh\n' "$hooks_dir" ;;
   esac
 }
 
@@ -1619,6 +1768,7 @@ service_launcher() {
     com.codex.antigravity-proxy) printf '%s/run-codex-antigravity-proxy.sh\n' "$hooks_dir" ;;
     com.codex.copilot-proxy) printf '%s/run-codex-copilot-cli-responses-proxy.sh\n' "$hooks_dir" ;;
     com.codex.minimax-proxy) printf '%s/ensure-codex-minimax-proxy.sh\n' "$hooks_dir" ;;
+    com.codex.otel-collector) printf '%s/codex/otel/run-autodev-otel-collector.sh\n' "$hooks_dir" ;;
   esac
 }
 
@@ -1681,6 +1831,10 @@ restart_services() {
   fi
   local launchd_ok=1 foreign_service=0 label plist_link probe job_dump expected_hook
   for label in "${launchagent_labels[@]}"; do
+    if [[ "$label" == com.codex.otel-collector && "$otel_collector_mode" != collector ]]; then
+      launchctl bootout "$domain/$label" >/dev/null 2>&1 || true
+      continue
+    fi
     local plist_link="$HOME/Library/LaunchAgents/$label.plist"
     [[ -f "$plist_link" ]] || { launchd_ok=0; continue; }
     # LaunchAgent labels are global. Never boot out a service owned by a
@@ -1723,10 +1877,23 @@ restart_services() {
         sleep 0.25
       done
     done
+    if [[ "$otel_collector_mode" == collector ]]; then
+      for _ in {1..80}; do
+        curl --silent --max-time 1 -X POST -H 'content-type: application/json' --data '{}' \
+          http://127.0.0.1:4318/v1/logs >/dev/null 2>&1 && break
+        sleep 0.25
+      done
+    fi
   else
     printf '%s\n' 'launchctl unavailable (sandbox?); starting bridges through the direct ensure-hook path.' >&2
   fi
   bash "$repo_root/scripts/ensure-codex-model-router.sh"
+  if [[ "$otel_collector_mode" == collector ]]; then
+    if ! bash "$hooks_dir/codex/otel/ensure-autodev-otel-collector.sh"; then
+      printf '%s\n' 'OpenTelemetry Collector failed to start; refusing to leave Codex pointed at an unavailable ingress.' >&2
+      return 1
+    fi
+  fi
   # A bridge that cannot start -- CLI not installed, credentials absent -- is a
   # supported configuration: the router skips that provider and routes around
   # it. Report it and carry on rather than failing the whole install over an

@@ -1,13 +1,12 @@
 """Contract tests for the Phase 3 OpenTelemetry Collector fixture.
 
 These tests validate `config/otel/collector.version` and
-`config/otel/collector.yaml` against the contract-only slice described in
+`config/otel/collector.yaml` against the Phase 3 Collector ingress described in
 docs/AUTODEV_PLATFORM_MIGRATION.md ("Phase 3 -- Insert OpenTelemetry
-Collector as OTLP ingress"): an inactive OTLP HTTP receiver on
+Collector as OTLP ingress"): an OTLP HTTP receiver on
 127.0.0.1:4318 forwarding logs/traces/metrics pipelines to an
-otlphttp/autodev exporter targeting http://127.0.0.1:4100 with JSON
-encoding. No generic backend, no live process wiring, and no tee adapter
-belong in this slice.
+otlp_http/autodev exporter targeting http://127.0.0.1:4100 with JSON
+encoding. No generic backend or multi-exporter tee belongs in this slice.
 
 Only the Python standard library is used -- no third-party YAML parser --
 so a small indentation-based YAML subset loader is implemented below,
@@ -15,19 +14,21 @@ scoped to the mapping/list/scalar shapes this fixture actually uses.
 """
 
 import unittest
+import json
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 VERSION_PATH = REPO_ROOT / "config/otel/collector.version"
 CONFIG_PATH = REPO_ROOT / "config/otel/collector.yaml"
+ARTIFACTS_PATH = REPO_ROOT / "config/otel/collector-artifacts.json"
 
 EXPECTED_VERSION = "v0.160.0"
 EXPECTED_RECEIVER_ENDPOINT = "127.0.0.1:4318"
 EXPECTED_EXPORTER_ENDPOINT = "http://127.0.0.1:4100"
-EXPECTED_EXPORTER_NAME = "otlphttp/autodev"
+EXPECTED_EXPORTER_NAME = "otlp_http/autodev"
 EXPECTED_PIPELINES = ("traces", "metrics", "logs")
 
-# Settings/sections that would indicate this contract-only slice has grown
+# Settings/sections that would indicate this single-hop ingress slice has grown
 # scope it explicitly must not have yet (a generic backend, live process
 # wiring, or a tee adapter fanning out to more than one exporter).
 UNSUPPORTED_TOP_LEVEL_SECTIONS = ("processors", "extensions", "connectors")
@@ -122,6 +123,19 @@ class OtelCollectorVersionTests(unittest.TestCase):
             msg="collector.version must contain exactly the pinned version",
         )
 
+    def test_platform_artifact_manifest_matches_pinned_version(self):
+        manifest = json.loads(ARTIFACTS_PATH.read_text())
+        self.assertEqual(manifest["schema"], "autodev-otel-collector-artifacts-v1")
+        self.assertEqual(manifest["version"], EXPECTED_VERSION)
+        self.assertEqual(
+            set(manifest["assets"]),
+            {"darwin/arm64", "darwin/amd64", "linux/arm64", "linux/amd64"},
+        )
+        for platform, asset in manifest["assets"].items():
+            with self.subTest(platform=platform):
+                self.assertRegex(asset["name"], rf"^otelcol_{EXPECTED_VERSION[1:]}_.*\.tar\.gz$")
+                self.assertRegex(asset["sha256"], r"^[0-9a-f]{64}$")
+
 
 class OtelCollectorConfigStructureTests(unittest.TestCase):
     @classmethod
@@ -142,7 +156,7 @@ class OtelCollectorConfigStructureTests(unittest.TestCase):
                     section,
                     self.config,
                     msg=(
-                        f"contract-only slice must not add a {section!r} "
+                        f"single-hop ingress slice must not add a {section!r} "
                         "section (no generic backend / live wiring yet)"
                     ),
                 )
@@ -162,7 +176,7 @@ class OtelCollectorConfigStructureTests(unittest.TestCase):
         self.assertEqual(
             set(exporters.keys()),
             {EXPECTED_EXPORTER_NAME},
-            msg="only a single otlphttp/autodev exporter belongs in this slice (no generic backend, no tee)",
+            msg="only a single otlp_http/autodev exporter belongs in this slice (no generic backend, no tee)",
         )
 
     def test_exporter_targets_existing_autodev_receiver(self):

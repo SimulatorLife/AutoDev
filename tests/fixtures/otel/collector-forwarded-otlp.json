@@ -1,5 +1,5 @@
 {
-  "_comment": "Realistic OTLP JSON batches as they would be forwarded by the Phase 3 contract-only Collector's otlphttp/autodev exporter (encoding: json) described in config/otel/collector.yaml. Each top-level key is the exact request body the Collector would POST to the corresponding AutoDev OTLP endpoint (/v1/logs, /v1/traces, /v1/metrics). No Collector process is launched to produce this fixture; it is a hand-authored, schema-accurate stand-in used to freeze the HTTP ingress contract at the router boundary.",
+  "_comment": "Realistic OTLP JSON batches as they would be forwarded by the Phase 3 Collector's otlp_http/autodev exporter (encoding: json) described in config/otel/collector.yaml. Each top-level key is the exact request body the Collector would POST to the corresponding AutoDev OTLP endpoint (/v1/logs, /v1/traces, /v1/metrics). This fixture is hand-authored rather than produced by a Collector process; it is a hand-authored, schema-accurate stand-in used to freeze the HTTP ingress contract at the router boundary.",
   "logs": {
     "resourceLogs": [
       {
