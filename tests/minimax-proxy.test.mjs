@@ -4,7 +4,7 @@ import { createServer } from "node:http";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 
-import { AGENT_ROLE_HEADER, FORWARDED_REQUEST_HEADERS, routeForModel, upstreamPayload } from "../scripts/codex-model-router.mjs";
+import { AGENT_ROLE_HEADER, FORWARDED_REQUEST_HEADERS, SESSION_ID_HEADER, SESSION_SCOPE_HEADER, downstreamHeaders, routeForModel, upstreamPayload } from "../scripts/codex-model-router.mjs";
 import { coerceResponseBody, freeformInputFromArguments } from "../scripts/codex-minimax-responses-proxy.mjs";
 
 const read = (path) => readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
@@ -26,12 +26,94 @@ test("the MiniMax proxy is an AutoDev-tracked source, not an inline heredoc", ()
   );
 });
 
-test("every local-only routing header the router emits is stripped before it reaches the remote API", () => {
-  const proxy = read("scripts/codex-minimax-responses-proxy.mjs");
-  const stripped = proxy.slice(proxy.indexOf("const strippedRequestHeaders"), proxy.indexOf("const flattenedNamespaces"));
-  for (const header of [ ...FORWARDED_REQUEST_HEADERS, AGENT_ROLE_HEADER ]) {
-    assert.ok(stripped.includes(`"${header}"`), `${header} must never be forwarded to api.minimax.io`);
+async function withProxy(upstreamHandler, run) {
+  const upstream = createServer(upstreamHandler);
+  await new Promise((resolve) => upstream.listen(0, "127.0.0.1", resolve));
+  const proxyPort = await new Promise((resolve) => {
+    const probe = createServer();
+    probe.listen(0, "127.0.0.1", () => { const { port } = probe.address(); probe.close(() => resolve(port)); });
+  });
+  const child = spawn(process.execPath, [ PROXY ], {
+    env: { ...process.env, MINIMAX_PROXY_HOST: "127.0.0.1", MINIMAX_PROXY_PORT: String(proxyPort), MINIMAX_PROXY_UPSTREAM_BASE_URL: `http://127.0.0.1:${upstream.address().port}` },
+    stdio: [ "ignore", "pipe", "pipe" ],
+  });
+  try {
+    await new Promise((resolve, reject) => {
+      child.stderr.on("data", (chunk) => { if (String(chunk).includes("listening")) resolve(); });
+      child.once("error", reject);
+      setTimeout(() => reject(new Error("MiniMax proxy did not start")), 10000).unref();
+    });
+    await run(proxyPort);
+  } finally {
+    child.kill("SIGTERM");
+    await new Promise((resolve) => upstream.close(resolve));
   }
+}
+
+test("only the credential and content negotiation headers leave the machine", async () => {
+  // Built from the router's real outbound header set for the MiniMax route,
+  // plus the headers Codex 0.154.0 was captured sending when a profile points
+  // it at the proxy directly. Every one of them is local correlation, routing,
+  // or workspace metadata with no meaning to a remote API.
+  const previousKey = process.env.MINIMAX_API_KEY;
+  process.env.MINIMAX_API_KEY = "minimax-key";
+  const routerHeaders = downstreamHeaders(
+    routeForModel("MiniMax-M3"),
+    null,
+    JSON.stringify({ workspaces: { "/Users/someone/private-repo": { associated_remote_urls: { origin: "git@example.invalid:private/repo.git" } } } }),
+    "worker",
+    "req-local-1",
+    { key: "session-local-1", scope: "identified" },
+  );
+  if (previousKey === undefined) delete process.env.MINIMAX_API_KEY; else process.env.MINIMAX_API_KEY = previousKey;
+  const codexHeaders = {
+    "session-id": "01a0a60e-local-session",
+    "thread-id": "01a0a60e-local-thread",
+    "x-codex-window-id": "01a0a60e-local-window:0",
+    "x-client-request-id": "01a0a60e-local-request",
+    "x-codex-beta-features": "remote_compaction_v2",
+    "x-openai-internal-codex-responses-lite": "true",
+    originator: "codex_exec",
+  };
+  const localHeaders = [ ...Object.keys(routerHeaders), ...Object.keys(codexHeaders) ].filter((name) => ![ "accept", "authorization", "content-type" ].includes(name));
+  assert.ok(localHeaders.includes(FORWARDED_REQUEST_HEADERS[ 0 ]));
+  assert.ok(localHeaders.includes(AGENT_ROLE_HEADER));
+  assert.ok(localHeaders.includes(SESSION_ID_HEADER));
+  assert.ok(localHeaders.includes(SESSION_SCOPE_HEADER));
+  assert.ok(localHeaders.includes("x-autodev-request-id"));
+  assert.ok(localHeaders.includes("x-autodev-agent-events-url"));
+
+  let upstreamRequest = null;
+  await withProxy((request, response) => {
+    const chunks = [];
+    request.on("data", (chunk) => chunks.push(chunk));
+    request.on("end", () => {
+      upstreamRequest = { headers: request.headers, body: JSON.parse(Buffer.concat(chunks).toString("utf8")) };
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(JSON.stringify({ output: [] }));
+    });
+  }, async (proxyPort) => {
+    const response = await fetch(`http://127.0.0.1:${proxyPort}/v1/responses`, {
+      method: "POST",
+      headers: { ...routerHeaders, ...codexHeaders },
+      body: JSON.stringify({
+        model: "MiniMax-M3",
+        input: "hello",
+        prompt_cache_key: "cache-key",
+        client_metadata: { session_id: "01a0a60e-local-session", "x-codex-turn-metadata": JSON.stringify({ workspaces: { "/Users/someone/private-repo": {} } }) },
+      }),
+    });
+    assert.equal(response.status, 200);
+  });
+
+  assert.equal(upstreamRequest.headers.authorization, "Bearer minimax-key", "the provider credential must still reach the API");
+  assert.equal(upstreamRequest.headers[ "content-type" ], "application/json");
+  for (const name of localHeaders) {
+    assert.equal(upstreamRequest.headers[ name ], undefined, `${name} must never be forwarded to api.minimax.io`);
+  }
+  assert.equal("client_metadata" in upstreamRequest.body, false, "body-embedded turn metadata must not leave the machine");
+  assert.equal(JSON.stringify(upstreamRequest).includes("private-repo"), false);
+  assert.equal(upstreamRequest.body.prompt_cache_key, "cache-key", "the caller's own documented fields are forwarded");
 });
 
 test("the proxy forwards the caller's payload and credential upstream while withholding local routing metadata", async () => {
@@ -42,8 +124,8 @@ test("the proxy forwards the caller's payload and credential upstream while with
     request.on("end", () => {
       upstreamRequest = { headers: request.headers, body: Buffer.concat(chunks).toString("utf8") };
       response.writeHead(200, { "content-type": "application/json" });
-      // MiniMax flattens namespaced tools; the proxy must re-expand them.
-      response.end(JSON.stringify({ output: [ { name: "agents__spawn_agent" } ] }));
+      // MiniMax returns namespace tool calls natively; the proxy passes them on.
+      response.end(JSON.stringify({ output: [ { type: "function_call", name: "spawn_agent", namespace: "multi_agent_v1" } ] }));
     });
   });
   await new Promise((resolve) => upstream.listen(0, "127.0.0.1", resolve));
@@ -84,14 +166,18 @@ test("the proxy forwards the caller's payload and credential upstream while with
     assert.equal(upstreamRequest.headers[ AGENT_ROLE_HEADER ], undefined, "local routing classification must not leave the machine");
 
     const body = await response.json();
-    assert.deepEqual(body.output[ 0 ], { name: "spawn_agent", namespace: "agents" });
+    assert.deepEqual(body.output[ 0 ], { type: "function_call", name: "spawn_agent", namespace: "multi_agent_v1" });
   } finally {
     child.kill("SIGTERM");
     await new Promise((resolve) => upstream.close(resolve));
   }
 });
 
-test("the proxy flattens namespaced tools in outbound HTTP requests sent to MiniMax", async () => {
+// MiniMax's Responses API accepts namespace tools and answers with the
+// namespace set (observed live, 2026-09-15), and the router already flattens
+// and re-expands tools on every provider route. The proxy therefore forwards
+// tools exactly as it receives them.
+test("the proxy forwards namespace tools unchanged instead of flattening them", async () => {
   let upstreamRequestBody = null;
   const upstream = createServer((request, response) => {
     const chunks = [];
@@ -149,8 +235,8 @@ test("the proxy flattens namespaced tools in outbound HTTP requests sent to Mini
     });
     assert.equal(response.status, 200);
     assert.deepEqual(upstreamRequestBody.tools, [
-      { type: "function", name: "multi_agent_v1__spawn_agent", description: "Spawn child agent" },
-      { type: "function", name: "collaboration__send_message" },
+      { type: "namespace", name: "multi_agent_v1", tools: [ { type: "function", name: "spawn_agent", description: "Spawn child agent" } ] },
+      { type: "function", namespace: "collaboration", name: "send_message" },
       { type: "function", name: "read_file" }
     ]);
   } finally {
@@ -354,7 +440,7 @@ test("normalising item ids upstream leaves everything MiniMax relies on intact",
     assert.equal(sent[ 0 ].id, "msg_1");
     assert.deepEqual(sent[ 0 ].content, history[ 0 ].content);
 
-    // The proxy's other outbound rewrite still happens.
+    // The router's tool flattening survives the proxy untouched.
     assert.equal(upstreamRequestBody.tools[ 0 ].name, "multi_agent_v1__spawn_agent");
   } finally {
     child.kill("SIGTERM");

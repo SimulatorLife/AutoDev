@@ -2994,8 +2994,8 @@ function subagentSpawnToolsFor(provider) {
 // router could only see one of them:
 //
 // - `router_alias`: Codex's native `multi_agent_v1` spawn tool (driven by the
-//   Codex provider itself, or by MiniMax through the namespace-flattening
-//   proxy) creates a child thread that asks this router for an
+//   Codex provider itself, or by MiniMax, which calls namespace tools natively
+//   and whose tools this router flattens) creates a child thread that asks this router for an
 //   `autodev/<role>` alias. The router observes that request directly.
 // - `bridge_native`: the Claude and Antigravity bridges delegate inside their
 //   own CLI runtime -- Claude's `Agent` tool, Antigravity's

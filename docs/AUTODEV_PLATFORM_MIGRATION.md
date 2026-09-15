@@ -237,6 +237,8 @@ LiteLLM's authenticator currently uses GitHub's `copilot_internal/v2/token` endp
 
 **Preferred target, conditional on validation:** expose Copilot through a normal `[model_providers.*]` route backed by Copilot OAuth and Responses translation, without a Copilot CLI in the request path. If stability, policy, authentication, or Responses/tool parity is not acceptable, retain the incumbent Copilot CLI/proxy path
 
+**Evaluated 2026-09-15: not acceptable; the incumbent is retained.** See Phase 4, GitHub Copilot OAuth pilot.
+
 ### Claude Code Max / Anthropic OAuth
 
 The earlier plan was too conservative in treating Claude Code itself as inherently required. LiteLLM does more than forward a Claude Code client's headers: its Anthropic provider can use `ANTHROPIC_AUTH_TOKEN` as `Authorization: Bearer ...`, recognizes Anthropic OAuth token handling, and adds the required OAuth beta header
@@ -244,6 +246,8 @@ The earlier plan was too conservative in treating Claude Code itself as inherent
 More importantly, AutoDev's current Claude bridge explicitly disables Claude Code's `Agent`/`Task` tools and states that the parent Codex process remains responsible for orchestration. The bridge is therefore not required merely because AutoDev needs Claude Code to be a second agent harness; today it also serves subscription authentication, protocol/tool translation, limits, permissions, and telemetry behavior that a replacement must reproduce or make unnecessary
 
 **Preferred target, conditional on validation:** configure Claude as a normal Codex model provider using Claude subscription OAuth, with LiteLLM providing Responses↔Anthropic translation/authentication if it proves sufficient. Codex continues to own roles, tools, MCP, skills, sandboxing, and orchestration. Retain the Claude Code CLI bridge if the replacement does not fully satisfy the contract
+
+**Evaluated 2026-09-15: not permitted; the bridge is retained permanently.** See Phase 4, Claude OAuth pilot.
 
 The migration requires parity tests for Responses streaming, namespace/custom/freeform tools, multi-turn tool continuation, reasoning, rate limits, OAuth bootstrap/refresh/expiry, model selection, error fidelity, permissions, and telemetry before deleting the bridge
 
@@ -255,6 +259,8 @@ AutoDev already exposes MiniMax through Codex's native model-provider configurat
 
 **Preferred target, conditional on validation:** keep MiniMax API-key usage and remove the bespoke MiniMax proxy only if direct provider support or LiteLLM can preserve the exact Codex Responses/tool contract. MiniMax does not need an OAuth/subscription migration, and the current proxy remains valid if no simpler path reaches parity
 
+**Evaluated 2026-09-15: MiniMax speaks the Responses contract natively, but a direct transport cannot provide the machine boundary, `exec` coercion, or telemetry. The proxy is retained as a slimmer boundary adapter.** See Phase 5.
+
 ### Antigravity
 
 The audit found LiteLLM guidance for tracking Antigravity traffic, but no equivalent native Antigravity OAuth provider that has been proven to replace AutoDev's CLI bridge today
@@ -262,6 +268,8 @@ The audit found LiteLLM guidance for tracking Antigravity traffic, but no equiva
 That means the replacement path is unproven, not predetermined
 
 **Preferred target, conditional on validation:** expose Antigravity through a normal Codex `[model_providers.*]` entry using OAuth/subscription credentials through a compatible direct or shared protocol adapter, without launching the Antigravity CLI. Retain the current CLI bridge unless a supported OAuth transport and equivalent Responses/tool/permission/telemetry semantics are demonstrated
+
+**Evaluated 2026-09-15: no supported subscription transport without `agy` exists; the bridge is retained.** See Phase 4, Antigravity OAuth pilot.
 
 ### Codex/OpenAI
 
@@ -579,10 +587,10 @@ Failure of any required gate means **retain the incumbent provider path** unless
 | Provider | Preferred authentication | Candidate execution path if parity passes | Incumbent fallback |
 |---|---|---|---|
 | Codex/OpenAI | OAuth/subscription | Native Codex provider | Existing native path |
-| Claude | OAuth/subscription, usable only by Claude Code and native Anthropic apps | None with subscription OAuth (policy gate failed 2026-09-15); an API-key Codex model provider only after the billing change is explicitly accepted | Claude Code bridge (retained) |
-| Antigravity | OAuth/subscription | Codex model provider → compatible direct/shared transport | Antigravity CLI bridge |
-| GitHub Copilot | OAuth/subscription | Codex model provider → direct or LiteLLM Copilot transport | Copilot CLI/proxy |
-| MiniMax | API key | Existing Codex model provider → direct/shared API transport | MiniMax Responses proxy |
+| Claude | OAuth/subscription (hard requirement), usable only by Claude Code and native Anthropic apps | None: subscription OAuth failed the policy gate and API-key billing was rejected (2026-09-15) | Claude Code bridge (permanent) |
+| Antigravity | OAuth/subscription (hard requirement) | None: third-party access with Antigravity OAuth breaches Google's terms, and the non-CLI SDK and Gemini API agent are API-key billed (2026-09-15) | Antigravity CLI bridge (retained; open policy question) |
+| GitHub Copilot | OAuth/subscription (hard requirement) | None without the Copilot CLI: LiteLLM's route depends on an undocumented endpoint and a borrowed editor OAuth client (2026-09-15). A supported Copilot SDK/`--acp` session is an incumbent-simplification candidate | Copilot CLI/proxy (retained) |
+| MiniMax | API key | Direct transport evaluated and rejected (2026-09-15): it would leak workspace metadata, lose `exec` coercion, and lose telemetry | MiniMax Responses boundary adapter (retained, simplified) |
 
 ## Optional later routing simplification
 
@@ -1522,9 +1530,12 @@ bash scripts/codex/install-codex-integration.sh --disable-otel-collector
 bash scripts/codex/install-codex-integration.sh --check
 ```
 
-Phase 4 has started. The Claude OAuth pilot's policy gate was evaluated on
-2026-09-15 and the incumbent bridge is retained (see Phase 4). The next Phase 4
-step is the GitHub Copilot pilot's operational/policy gate evaluation.
+Phase 4's gate evaluations are complete (2026-09-15). The Claude, GitHub
+Copilot, and Antigravity OAuth-native candidates are all closed, and each
+incumbent path is retained (see Phase 4). The next migration step is Phase 5,
+the MiniMax API-transport evaluation (completed 2026-09-15: the adapter was retained and simplified). Two Phase 4 follow-ups remain:
+- the Copilot SDK/ACP incumbent-simplification candidate;
+- the owner's policy decision on headless `agy` automation.
 
 ### First deployment
 
@@ -1602,7 +1613,7 @@ incumbent path has the permitted shape:
 - CI runs the pinned official `@anthropic-ai/claude-code@2.1.263` package.
 
 It stays within policy only for the user's own ordinary, individual use.
-`tests/test_claude_oauth_policy_gate.py` freezes this result. It checks the
+`tests/test_subscription_provider_policy_gates.py` freezes this result. It checks the
 exact set of reviewed files that reference `CLAUDE_CODE_OAUTH_TOKEN`, that the
 bridge runs the Claude Code binary, that CI pins the official package, and
 that no Codex model provider or router route talks to Anthropic directly.
@@ -1611,14 +1622,18 @@ One observation: `.github/workflows/claude-invoke.yml` passes
 `openai_base_url: 'https://api.anthropic.com'`, but the Claude CI provider
 never reads it. It is inert but misleading.
 
-**Remaining Claude option — decision required, not started.** A Codex model
-provider authenticated with an Anthropic API key (Claude Console), over a
-direct or LiteLLM transport, is permitted. It would, however, move Claude
-usage from subscription to pay-as-you-go API billing, which the gate treats as
-a behavior change AutoDev must explicitly accept before any pilot. If it is
-accepted, compare that API-key transport against the incumbent bridge for:
+**API-key alternative — rejected by the owner (2026-09-15); the Claude pilot is
+closed.** A Codex model provider authenticated with an Anthropic API key would
+be permitted, but it would move Claude usage from subscription to pay-as-you-go
+API billing. Subscription/OAuth-based usage and billing is a hard requirement
+(see Requirements), so that route will not be piloted.
 
-- API-key provisioning, rotation, secure storage, and billing attribution
+With both candidates closed, the Claude Code bridge is the permanent supported
+Claude path. Reopen this pilot only if Anthropic permits subscription OAuth for
+a non-Claude-Code model-provider route. The comparison checklist below is
+retained for that case:
+
+- OAuth token bootstrap, refresh, expiry, and secure storage
 - OpenAI Responses request/stream fidelity
 - Function, namespace, custom, and freeform tool behavior
 - Tool-call → tool-result → next-turn continuation
@@ -1631,7 +1646,7 @@ accepted, compare that API-key transport against the incumbent bridge for:
 
 Delete `codex-claude-cli-responses-proxy.py` and its launch/ensure lifecycle only when a Codex model-provider route using subscription OAuth is behaviorally equivalent across the full provider migration gate. Otherwise retain the existing bridge
 
-**Outcome (2026-09-15): retain the existing bridge.** A subscription-OAuth route cannot pass the policy requirement. The bridge becomes a deletion candidate only if an explicitly accepted API-key route passes the full gate.
+**Outcome (2026-09-15): retain the existing bridge permanently.** A subscription-OAuth route cannot pass the policy requirement, and an API-key route violates the subscription-billing hard requirement. The bridge is not a deletion candidate unless Anthropic's policy changes.
 
 ### GitHub Copilot OAuth pilot
 
@@ -1646,7 +1661,65 @@ shape, `[DONE]` termination, telemetry observations, and provider-limit
 incomplete payload without installing LiteLLM, contacting GitHub, or changing
 the current Copilot proxy. The test normalizes generated IDs and timestamps,
 verifies the tracked fixture remains unchanged, and checks prompt-content
-privacy. Live LiteLLM compatibility, operational/policy review, and proxy deletion remain pending.
+privacy.
+
+**Operational/policy gate evaluated (2026-09-15): the LiteLLM candidate is
+closed, and the incumbent Copilot CLI/proxy is retained.** Evidence from the
+installed LiteLLM (`litellm/llms/github_copilot/authenticator.py`,
+`common_utils.py`):
+- The `github_copilot` provider runs a device flow with a hard-coded GitHub
+  OAuth client id, `Iv1.b507a08c87ecfe98`. That is an existing Copilot editor
+  app id, not one registered to LiteLLM or AutoDev.
+- It exchanges the resulting token at the undocumented
+  `https://api.github.com/copilot_internal/v2/token` endpoint.
+- It sends `editor-version: vscode/…` headers. The route therefore presents
+  itself as a first-party Copilot editor client.
+
+GitHub neither documents nor supports that endpoint for other clients; the only
+public community thread asking whether it may be used outside VS Code has no
+GitHub answer
+([discussion #178117](https://github.com/orgs/community/discussions/178117)).
+Anything built on it can break without notice and exposes the account to
+enforcement.
+
+GitHub's published terms add no explicit allowance. The
+[Generative AI Services Terms](https://github.com/customer-terms/github-generative-ai-services-terms)
+that replaced the Copilot Product Specific Terms on 2026-03-05 govern
+volume-licensing customers and defer acceptable use to GitHub's Acceptable Use
+Policies. The general
+[Terms of Service](https://docs.github.com/en/site-policy/github-terms/github-terms-of-service)
+(Section H, "API Terms") allow suspension for "abuse or excessively frequent
+requests" and prohibit sharing tokens to exceed rate limits. The candidate
+therefore fails the gate's "supported upstream
+behavior", "upgrade risk", and "acceptable policy/API dependencies"
+requirements, whatever its technical parity. No LiteLLM Copilot route was
+configured, and no GitHub credential was used.
+
+GitHub does offer supported, subscription-billed programmatic interfaces:
+- The [Copilot SDK](https://github.com/github/copilot-sdk), generally available
+  since [2026-06-02](https://github.blog/changelog/2026-06-02-copilot-sdk-is-now-generally-available/).
+  It is JSON-RPC to the Copilot CLI in server mode, and usage is billed against
+  the Copilot allowance.
+- `copilot --acp`, an Agent Client Protocol server built into the installed
+  Copilot CLI 1.0.80.
+
+Both keep the Copilot agent runtime in the request path and expose an agent
+session, not a plain model endpoint. A CLI-free Codex model provider is
+therefore not available through any supported interface.
+
+**Follow-up candidate (added, not started): replace the incumbent's
+per-request CLI spawn with a supported persistent session.** Today the proxy
+spawns `copilot --prompt … --output-format json` for each request. A Copilot
+SDK or ACP session could replace that spawn and the JSON-line parsing with a
+stable, supported protocol, while keeping subscription billing and the
+retained CLI runtime. It must pass the frozen
+`copilot-responses-contract` baseline and remove more complexity than it adds.
+
+`tests/test_subscription_provider_policy_gates.py` freezes this result. No
+runtime file may use `copilot_internal`, the borrowed client id,
+`api.githubcopilot.com`, or a LiteLLM `github_copilot/` route. The proxy must
+spawn the official `copilot` CLI, and the Copilot route must stay on the local
+proxy.
 
 Compare against the incumbent Copilot path for:
 
@@ -1661,15 +1734,74 @@ Compare against the incumbent Copilot path for:
 - Usage telemetry
 - Long-running turns
 
-LiteLLM currently uses GitHub's internal Copilot token endpoint, so validate operational and policy acceptability before removing the CLI path
+LiteLLM currently uses GitHub's internal Copilot token endpoint, so validate operational and policy acceptability before removing the CLI path (evaluated 2026-09-15: not acceptable, see Status)
 
 ### Copilot exit gate
 
 Delete the AutoDev Copilot CLI/proxy path only if the OAuth-backed Codex model provider passes the full provider migration gate and removes more complexity than it introduces. Otherwise retain the incumbent path
 
+**Outcome (2026-09-15): retain the incumbent path.** No supported subscription-billed Copilot transport exists without the Copilot CLI, and the LiteLLM route failed the policy/operational gate. The proxy is not a deletion candidate; only its CLI invocation may be simplified (see the follow-up candidate).
+
 ### Antigravity OAuth pilot
 
 The preferred target is the same, but the replacement transport is not yet proven. Test whether Codex can address Antigravity through a normal model-provider entry using OAuth/subscription credentials without launching `agy`
+
+#### Status
+
+**Supported-transport question answered (2026-09-15): no supported
+subscription-billed Antigravity transport exists without `agy`. The candidate
+is closed, and the incumbent bridge is retained.**
+
+**1. Antigravity OAuth outside Google's clients is prohibited.** Section 6
+("Prohibited Uses") of the
+[Google Antigravity Additional Terms of Service](https://antigravity.google/terms)
+states: "Using third party software, tools, or services to access the Service
+(e.g. using OpenClaw with Antigravity OAuth) is a breach of this Agreement."
+A gemini-cli maintainer's announcement
+([google-gemini/gemini-cli#20632](https://github.com/google-gemini/gemini-cli/discussions/20632),
+2026-02-27) confirms that "using third-party software, tools, or services to
+harvest or piggyback on Gemini CLI's OAuth authentication to access our
+backend services" is prohibited, after Google suspended accounts (including
+paid Ultra subscribers) for exactly that. A direct or LiteLLM transport that
+reuses `agy` OAuth credentials therefore fails the policy gate outright, and
+using it would risk the account.
+
+**2. Google's supported programmatic paths without the CLI are API-key
+billed.**
+- The [Antigravity SDK](https://antigravity.google/docs/sdk/overview/)
+  (`google-antigravity`, v0.1.x, preview) documents `GEMINI_API_KEY` or Vertex
+  AI Application Default Credentials. The open request to support Google
+  Account OAuth or reuse the CLI's credentials
+  ([antigravity-sdk-python#20](https://github.com/google-antigravity/antigravity-sdk-python/issues/20),
+  opened 2026-05-21) has no maintainer response.
+- The Gemini API
+  [Antigravity agent](https://ai.google.dev/gemini-api/docs/antigravity-agent)
+  (preview) authenticates with `x-goog-api-key` and bills pay-as-you-go by
+  model tokens and tool use. It is a managed agent on the Interactions API,
+  not an OpenAI-compatible model endpoint.
+
+Both violate the subscription-billing hard requirement.
+
+**3. Incumbent shape.** The bridge runs Google's own `agy` CLI with
+`-p … --output-format stream-json` per request. The installed `agy` 1.2.3 also
+offers a persistent `--input-format stream-json` mode, but no server or ACP
+mode.
+
+**Open policy question for the incumbent (owner decision, not a code
+change).** The Additional Terms prohibit third-party software "to access the
+Service" and use "in connection with products not provided by us". The bridge
+only invokes Google's official CLI, which performs all access. But it drives
+`agy` headlessly from AutoDev and Codex orchestration, and Google has not
+published an explicit allowance for that. Unlike Anthropic (which explicitly
+permits the unmodified Claude Code binary with the user's own subscription)
+and GitHub (whose Copilot SDK exists to embed the CLI), this remains an
+unresolved account risk. Confirm acceptability with Google, or accept the risk
+explicitly, before relying on the bridge for heavy automated use.
+
+`tests/test_subscription_provider_policy_gates.py` freezes this result. No
+runtime file may reach `cloudcode-pa.googleapis.com` without `agy`. The bridge
+must spawn the official `agy` CLI, and the Antigravity route must stay on the
+local adapter.
 
 Use the existing Antigravity boundary fixture from Phase 0 as the incumbent contract. Before deleting the bridge, prove:
 
@@ -1683,6 +1815,8 @@ Use the existing Antigravity boundary fixture from Phase 0 as the incumbent cont
 ### Antigravity exit gate
 
 Delete the Antigravity CLI bridge only after a supported direct/shared OAuth transport passes the full provider migration gate. If no candidate does, retain the bridge as the supported implementation
+
+**Outcome (2026-09-15): retain the bridge as the supported implementation.** No supported subscription-billed transport exists without `agy`. Reopen only if Google supports subscription OAuth in the Antigravity SDK or another non-CLI interface.
 
 ---
 
@@ -1705,8 +1839,63 @@ were promoted from `export function` to the consolidated export block so the
 test can drive the same logic the live proxy runs. The test asserts the
 request tool shape the proxy sends upstream, the response namespace the
 proxy hands back to the caller, and the `function_call -> custom_tool_call`
-rewriting Codex needs to run freeform `exec`. Live LiteLLM compatibility,
-operational/policy review, and proxy deletion remain pending.
+rewriting Codex needs to run freeform `exec`.
+
+**✅ Transport evaluation completed (2026-09-15): retain the adapter, simplified; direct and LiteLLM transports rejected.**
+Each proxy responsibility was checked against five kinds of evidence:
+- MiniMax's own documentation;
+- the exact requests Codex 0.154.0 sends, captured by pointing `codex exec` at a
+  local endpoint in an isolated `CODEX_HOME`, for both the `minimax` profile path
+  and the router's `autodev/*` responses-lite path;
+- minimal live MiniMax probes, using synthetic prompts only;
+- a hermetic end-to-end `codex exec` against a fake upstream that returns
+  MiniMax's observed shapes;
+- a scan of all 5,583 local Codex rollouts.
+
+| Responsibility | Evidence | Outcome |
+| --- | --- | --- |
+| Namespace tool flatten / re-expand | The router already flattens outbound tools and re-expands namespaces on every non-Codex route. A live probe showed MiniMax accepts a top-level `namespace` tool and returns `function_call` with `namespace` set, both directly and through the simplified adapter. | **Removed from the proxy (duplicate).** Owned by the router. |
+| Custom/freeform `exec` coercion | The [Create Response](https://platform.minimax.io/docs/api-reference/responses-create.md) reference documents only `function` tools. Live, MiniMax now returns native `custom_tool_call` for `exec`, or calls the nested `exec_command` directly, which Codex executes natively (hermetic test). But `exec` called with JSON arguments still makes Codex abort the turn ("tool exec invoked with incompatible payload"). Rollouts show 1,049 real coercions across 23 sessions (2026-07-14 to 2026-09-10). Every recognisable-shape miss predates the coercion (2026-09-08). | **Retained** as a safety net against a fatal, recently frequent upstream pattern. It has not fired since 2026-09-10. |
+| Request headers | Codex sends `session-id`, `thread-id`, `x-codex-window-id`, `x-client-request-id`, and `x-codex-turn-metadata`. In a git workspace the metadata includes the absolute workspace path, git remote URLs, and the commit hash. The router adds `x-autodev-agent-role`, `x-autodev-session-id`/`-scope`, `x-autodev-request-id`, and `x-autodev-agent-events-url`. The proxy stripped only two of these, so the rest reached `api.minimax.io`. | **Defect fixed:** only `accept`, `authorization`, and `content-type` leave the machine. |
+| Request body | Codex duplicates the full turn metadata into `client_metadata["x-codex-turn-metadata"]` (confirmed with a throwaway git repo and fake remote), and the proxy forwarded the body unchanged. MiniMax does not define the field, and live requests without it succeed. | **Defect fixed:** `client_metadata` is removed before the payload leaves the machine. |
+| Item ids | MiniMax still mints `<hex>_rs`, `<hex>_fc_<n>`, `<hex>_custom_<n>`, and `<hex>_msg`. | Unchanged: the router's normalization remains required. |
+| Reasoning, tool choice, web search | MiniMax accepts `reasoning.effort` `none`/`high` and `reasoning.context`, `tool_choice: auto`, `parallel_tool_calls`, strict `function` tools, and `{"type":"web_search"}` ([Server Tools](https://platform.minimax.io/docs/guides/server-tools.md)). | Pass-through; nothing needed. |
+| Error mapping | An unknown model returns HTTP 400 `{"error":{"message":"invalid params, code: 2013 …","code":"invalid_prompt"}}`, passed through unchanged. | Unchanged: the router classifies failures. |
+| Tool, activity, and MCP exposure telemetry | Only the proxy observes requested/executed/unavailable tool calls on this route. | **Retained.** |
+
+**Why the proxy is not retired.**
+- **Direct Codex → MiniMax** is MiniMax's own documented
+  [Codex setup](https://platform.minimax.io/docs/token-plan/codex.md). It would
+  send workspace paths and git remotes (header and body), lose the fatal-pattern
+  coercion, and lose tool telemetry.
+- **Router → MiniMax** would require moving the header/body boundary, coercion,
+  and telemetry into the router, which contradicts Phase 6's goal of shrinking
+  the router.
+- **LiteLLM** adds nothing: MiniMax needs no protocol translation, and an extra
+  hop would add a daemon and a translation risk without removing any
+  responsibility.
+
+**What changed.**
+- The proxy is now a documented boundary adapter: an allowlisted header set,
+  `client_metadata` removal, freeform coercion, and telemetry.
+- The duplicated flatten/re-expand helpers were deleted.
+- `tests/minimax-proxy.test.mjs` now pushes the router's real `downstreamHeaders`
+  output plus Codex's native headers through the proxy, and requires that none
+  of them, and no workspace path, reaches upstream.
+- The boundary fixture moved to `autodev-minimax-responses-contract-v2`:
+  namespace tools forwarded, `client_metadata` dropped, web search preserved,
+  and coercion retained.
+- The live check through the simplified proxy returned HTTP 200 streams with
+  every `event:` line intact and MiniMax's native namespace preserved.
+- The running proxy keeps the previous code until the next installer run.
+
+**Residual observations.**
+- 134 historical MiniMax `exec` calls carried `{}` and 11 used unrecognised
+  keys. Neither is coercible without guessing, so they are left to fail visibly.
+- The CI `mini-max-codex` workflow points Codex directly at
+  `https://api.minimax.io/v1`. It therefore sends the runner's workspace
+  metadata and has no coercion. It is not routed through this adapter, and none
+  of its recent runs executed.
 
 Current configuration already exposes MiniMax as `[model_providers.minimax]` with `MINIMAX_API_KEY`; its `base_url` points to the local proxy today
 
@@ -1727,6 +1916,8 @@ Current configuration already exposes MiniMax as `[model_providers.minimax]` wit
 ### Exit gate
 
 Point the existing MiniMax Codex model-provider entry at a direct/shared API transport and retire `codex-minimax-responses-proxy.mjs` only after all required Codex tool patterns and the applicable provider migration gates pass. Otherwise retain the current proxy
+
+**Outcome (2026-09-15): retain the proxy, reduced to its boundary, coercion, and telemetry responsibilities.** A direct or LiteLLM transport fails the privacy boundary, the `exec` coercion requirement, and usage-telemetry parity. Reopen only if Codex stops embedding workspace metadata in provider requests and MiniMax's `exec` JSON pattern stays absent long enough for the coercion to be judged obsolete.
 
 ---
 
@@ -1851,6 +2042,7 @@ Only now test whether Rulesync can replace more AutoDev role rendering
 - Prefer OAuth/subscription-backed normal Codex model-provider entries for Codex/OpenAI, Claude, Antigravity, and Copilot only where the replacement is supported and passes the provider migration gate
 - Retain the incumbent provider CLI/bridge whenever a candidate dependency or direct transport does not fully cover AutoDev's use cases
 - MiniMax remains API-key-backed through its Codex model-provider entry
+- Subscription/OAuth-based usage and billing is a hard requirement for the subscription-backed providers: Claude, GitHub Copilot, and Antigravity (owner decision, 2026-09-15). A candidate that moves one of them to API-key or pay-as-you-go billing is rejected rather than piloted
 - Prefer direct provider endpoints when wire-compatible; use LiteLLM/shared adapters only where protocol/auth translation is required and proven
 - Preserve role/capability behavior and read-only isolation
 - Preserve root-orchestrator and child-agent semantics
@@ -1877,9 +2069,9 @@ Only now test whether Rulesync can replace more AutoDev role rendering
 
 ## Provider authentication and LiteLLM
 
-- Resolved 2026-09-15: Claude subscription OAuth may not be used outside Claude Code and native Anthropic apps, so its LiteLLM/direct transport parity is moot. This question reopens only if an API-key route is accepted: would that route match the current bridge's full Responses/tool/limit/telemetry contract?
-- Whether GitHub Copilot's LiteLLM path is stable and policy-acceptable enough to replace the incumbent CLI/proxy
-- Whether a supported direct OAuth transport for Antigravity exists and whether LiteLLM or another shared adapter can provide it without invoking `agy`
+- Resolved 2026-09-15: Claude subscription OAuth may not be used outside Claude Code and native Anthropic apps, and API-key billing was rejected, so no Claude transport replacement remains to evaluate.
+- Resolved 2026-09-15: GitHub Copilot's LiteLLM path is not policy- or operationally acceptable (undocumented `copilot_internal` endpoint, borrowed editor OAuth client). Still open: whether a supported Copilot SDK/ACP session simplifies the incumbent proxy
+- Resolved 2026-09-15: no supported subscription-billed Antigravity transport exists without `agy`. Still open: whether Google accepts headless automation of the official `agy` CLI by AutoDev (owner policy decision)
 - Exact MiniMax-M3 namespace/custom/freeform-tool parity through a direct/shared API transport
 - Whether AutoDev routing semantics can be represented without custom callbacks
 - Whether native Codex/OpenAI OAuth/provider behavior remains fully compatible with the AutoDev routing edge

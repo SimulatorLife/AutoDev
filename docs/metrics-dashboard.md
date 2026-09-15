@@ -224,7 +224,7 @@ measurement, and one a child that spawned but never ran does not contribute to.
 
 Two mechanisms are distinguished. `router_alias` spawns are Codex child threads
 that asked the router for an `autodev/<role>` alias, driven by Codex itself or
-by MiniMax through the namespace-flattening proxy. `bridge_native` spawns
+by MiniMax, whose namespace tool calls the router flattens and re-expands. `bridge_native` spawns
 happen inside a provider CLI -- Claude's `Agent` tool, Antigravity's
 `invoke_subagent` -- where no router request exists, and are
 reported by the bridge to `POST /v1/agent-events`. Before that channel existed,

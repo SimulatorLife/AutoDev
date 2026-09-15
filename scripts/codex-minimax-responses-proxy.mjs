@@ -1,13 +1,21 @@
 #!/usr/bin/env node
 
 /**
- * Responses compatibility proxy for the MiniMax API.
+ * Responses boundary adapter for the MiniMax API.
  *
- * Unlike the Claude, Antigravity, and Copilot bridges, this is a transparent
- * pass-through to a remote API rather than a local CLI gateway: it forwards the
- * parent's own Responses payload upstream and only re-expands the tool
- * namespaces MiniMax flattens. There is no delegated-role prompt to select, so
- * the router's local-only routing headers are stripped instead of honoured.
+ * Unlike the Claude, Antigravity, and Copilot bridges, this is a pass-through
+ * to a remote API rather than a local CLI gateway. MiniMax speaks the Responses
+ * API natively -- custom tools, namespace tools, and web search included -- so
+ * the adapter keeps only what a direct transport cannot provide:
+ *
+ * - the machine boundary: only the credential and content negotiation headers
+ *   leave the machine, and Codex's body-embedded turn metadata is dropped;
+ * - freeform coercion for the `exec` tool when MiniMax answers it with JSON
+ *   arguments, which Codex otherwise aborts as an incompatible payload;
+ * - tool, activity, and MCP exposure telemetry for the router.
+ *
+ * Namespace flattening and item-id normalization belong to the router, which
+ * applies them to every provider route.
  */
 import { createServer } from "node:http";
 import { pathToFileURL } from "node:url";
@@ -26,47 +34,14 @@ const IS_MAIN = process.argv[ 1 ] && import.meta.url === pathToFileURL(process.a
 const host = process.env.MINIMAX_PROXY_HOST ?? "127.0.0.1";
 const port = Number.parseInt(process.env.MINIMAX_PROXY_PORT ?? "18765", 10);
 const upstreamBaseUrl = process.env.MINIMAX_PROXY_UPSTREAM_BASE_URL ?? "https://api.minimax.io";
-// Hop-by-hop headers, plus the router's local-only routing headers. The turn
-// metadata carries absolute workspace paths and git remote URLs, and the agent
-// role is this router's own dispatch classification; both exist for local
-// provider bridges and have no meaning to a remote API, so neither is sent
-// upstream. Kept in sync with the router by tests/bridge-role.test.mjs.
-const strippedRequestHeaders = [
-  "connection",
-  "content-length",
-  "host",
-  "transfer-encoding",
-  "x-codex-turn-metadata",
-  "x-autodev-agent-role"
-];
-const flattenedNamespaces = [
-  ["multi_agent_v1", "multi_agent_v1__"],
-  ["collaboration", "collaboration__"],
-  ["agents", "agents__"]
-];
-
-function rewrite(value) {
-  if (Array.isArray(value)) {
-    return value.map(rewrite);
-  }
-  if (value === null || typeof value !== "object") {
-    return value;
-  }
-
-  const result = {};
-  for (const [key, child] of Object.entries(value)) {
-    result[key] = rewrite(child);
-  }
-
-  if (typeof result.name === "string" && (result.namespace === undefined || result.namespace === null)) {
-    const match = flattenedNamespaces.find(([, prefix]) => result.name.startsWith(prefix));
-    if (match) {
-      result.namespace = match[0];
-      result.name = result.name.slice(match[1].length);
-    }
-  }
-  return result;
-}
+// The only request headers that leave the machine. Codex attaches session,
+// thread, window, and request identifiers plus `x-codex-turn-metadata`
+// (absolute workspace paths, git remote URLs, commit hashes), and the router
+// adds its own agent role, session, request-id, and agent-events URL headers.
+// None of them mean anything to a remote API, so the upstream request is built
+// from an allowlist rather than a denylist that would have to track every new
+// local header. The MiniMax Responses API needs nothing beyond these.
+const forwardedRequestHeaders = [ "accept", "authorization", "content-type" ];
 
 const WEB_RESEARCH_TOOL_NAMES = new Set([ "web_search", "web_fetch" ]);
 
@@ -77,72 +52,14 @@ function isWebResearchTool(tool) {
   return false;
 }
 
-function getNamespacePrefix(ns) {
-  const match = flattenedNamespaces.find(([namespace]) => namespace === ns);
-  return match ? match[1] : `${ns}__`;
-}
-
-function flattenOutboundTool(tool, defaultNamespace = null) {
-  if (isWebResearchTool(tool)) {
-    return { ...tool };
-  }
-  const ns = tool.namespace ?? defaultNamespace;
-  const prefix = ns ? getNamespacePrefix(ns) : "";
-
-  const result = { ...tool };
-  delete result.namespace;
-
-  if (result.type === "namespace") {
-    result.type = "function";
-  }
-
-  if (prefix) {
-    if (typeof result.name === "string" && !result.name.startsWith(prefix)) {
-      result.name = `${prefix}${result.name}`;
-    }
-    if (result.function && typeof result.function.name === "string" && !result.function.name.startsWith(prefix)) {
-      result.function = {
-        ...result.function,
-        name: `${prefix}${result.function.name}`
-      };
-    }
-  }
-  return result;
-}
-
-function flattenOutboundTools(tools) {
-  if (!Array.isArray(tools)) return tools;
-  const flattened = [];
-
-  for (const item of tools) {
-    if (item === null || typeof item !== "object") {
-      flattened.push(item);
-      continue;
-    }
-
-    const ns = item.type === "namespace" ? (item.name ?? item.namespace) : item.namespace;
-
-    if (ns && Array.isArray(item.tools)) {
-      for (const innerTool of item.tools) {
-        if (innerTool && typeof innerTool === "object") {
-          flattened.push(flattenOutboundTool(innerTool, ns));
-        }
-      }
-    } else {
-      flattened.push(flattenOutboundTool(item));
-    }
-  }
-  return flattened;
-}
-
+// Codex duplicates its turn metadata -- absolute workspace paths, git remote
+// URLs, commit hashes, installation and session ids -- into `client_metadata`
+// in the request body. It is Codex-internal correlation that the MiniMax
+// Responses API does not define, so it is removed before the payload leaves
+// the machine. Everything else is the caller's own payload and is forwarded.
 function rewriteOutboundPayload(payload) {
-  if (payload === null || typeof payload !== "object") return payload;
-  const rewritten = { ...payload };
-
-  if (Array.isArray(rewritten.tools)) {
-    rewritten.tools = flattenOutboundTools(rewritten.tools);
-  }
-
+  if (payload === null || typeof payload !== "object" || Array.isArray(payload)) return payload;
+  const { client_metadata: _clientMetadata, ...rewritten } = payload;
   return rewritten;
 }
 
@@ -329,8 +246,8 @@ function coerceResponseBody(body, freeformNames) {
 // ran. The output item is the Codex runtime's own record that it did, which is
 // the execution proof `tool_executed` is defined to carry.
 //
-// No skills are reported here. This proxy strips the router's agent-role
-// header rather than honouring it (see strippedRequestHeaders) and selects no
+// No skills are reported here. This proxy never forwards the router's
+// agent-role header (see forwardedRequestHeaders) and selects no
 // role contract, so it exposes no skills to report; claiming otherwise would
 // put a skill on a workspace that never saw one.
 //
@@ -462,11 +379,11 @@ function rewriteSseLine(line, coerce = null, observe = null) {
     return line;
   }
   try {
-    const rewritten = rewrite(JSON.parse(data));
+    const parsed = JSON.parse(data);
     // Observed before coercion: the tool call's own name and call id are what
     // the router is told about, and coercion only changes the item's shape.
-    observe?.(rewritten);
-    const coerced = coerce ? coerce(rewritten) : rewritten;
+    observe?.(parsed);
+    const coerced = coerce ? coerce(parsed) : parsed;
     if (coerced === null) return null;
     const events = Array.isArray(coerced) ? coerced : [ coerced ];
     return events.map((event) => `data: ${JSON.stringify(event)}${lineEnding}`).join("\n");
@@ -478,7 +395,7 @@ function rewriteSseLine(line, coerce = null, observe = null) {
 function requestHeaders(request) {
   const headers = new Headers();
   for (const [name, value] of Object.entries(request.headers)) {
-    if (value === undefined || strippedRequestHeaders.includes(name.toLowerCase())) {
+    if (value === undefined || !forwardedRequestHeaders.includes(name.toLowerCase())) {
       continue;
     }
     headers.set(name, Array.isArray(value) ? value.join(", ") : value);
@@ -679,11 +596,11 @@ async function forward(request, response) {
     const responseText = await upstream.text();
     if (contentType.toLowerCase().includes("application/json")) {
       try {
-        const rewritten = rewrite(JSON.parse(responseText));
+        const parsed = JSON.parse(responseText);
         // The non-streaming form of the same observation: one whole response
         // rather than the event stream that would have carried it.
-        observe?.(rewritten);
-        response.end(JSON.stringify(coerceResponseBody(rewritten, freeformNames)));
+        observe?.(parsed);
+        response.end(JSON.stringify(coerceResponseBody(parsed, freeformNames)));
         if (typeof agentEvents?.reportActivity === "function") void agentEvents.reportActivity({ state: "finished" });
         return;
       } catch {
@@ -711,12 +628,12 @@ if (IS_MAIN) {
 export {
   MCP_EXPOSURE_SOURCE,
   coerceResponseBody,
-  flattenOutboundTools,
+  forwardedRequestHeaders,
   freeformInputFromArguments,
   isWebResearchTool,
   observeResponseEvent,
   reportExecutedToolCalls,
   reportRequestedToolCall,
-  rewrite,
+  rewriteOutboundPayload,
   toolOutputOutcome,
 };

@@ -202,23 +202,26 @@ delegation paths:
     `browser-tester` routing are removed for Antigravity. Antigravity uses its native
     `search_web` and `read_url_content` tools backed by pre-approved `read_url(*)` permissions.
     Copilot explicitly allows `web_search` and `web_fetch` for research-capable roles
-    without granting blanket `allow-all` permissions. MiniMax preserves `web_search`
-    and `web_fetch` tool payloads in its proxy transformations.
+    without granting blanket `allow-all` permissions. MiniMax's adapter forwards `web_search`
+     tool payloads unchanged; MiniMax's Responses API supports `web_search` natively.
 
   Copilot's CLI has no subagent tool, so it stays out of the orchestrator tier.
 - MiniMax is restored in the orchestrator fallback chain. Codex CLI defines
-  subagent tools in a proprietary `type: "namespace"` structure (`multi_agent_v1`),
-  which generic Responses endpoints drop or reject. The MiniMax Responses
-  proxy (`scripts/codex-minimax-responses-proxy.mjs`) implements outbound
-  request rewriting to flatten namespaced tools into standard `type: "function"`
-  definitions (e.g., `multi_agent_v1__spawn_agent`) and re-expands them in
-  downstream SSE responses. This allows MiniMax to properly receive and invoke
-  `spawn_agent` during orchestrator turns rather than emitting plain text.
+  subagent tools in a `type: "namespace"` structure (`multi_agent_v1`). The
+  router flattens namespaced tools into standard `type: "function"` definitions
+  (e.g., `multi_agent_v1__spawn_agent`) on every non-Codex route and re-expands
+  them in downstream responses. MiniMax's Responses API also accepts namespace
+  tools natively and answers with the `namespace` set (verified live
+  2026-09-15), so the MiniMax adapter forwards tools unchanged.
 
-  That proxy also coerces **freeform tool calls**. MiniMax has no notion of a
-  `"type": "custom"` tool, so it answers Codex's code-mode `exec` with an
-  ordinary `function_call` carrying JSON arguments -- typically the
-  `{cmd, workdir}` shape of `exec_command`. Codex rejects that outright with
+  The MiniMax adapter (`scripts/codex-minimax-responses-proxy.mjs`) also
+  coerces **freeform tool calls**. MiniMax documents only `function` tools. It
+  now usually answers Codex's code-mode `exec` with a native `custom_tool_call`,
+  or calls the nested `exec_command` directly, which Codex executes. But it has
+  also answered `exec` with an ordinary `function_call` carrying JSON arguments
+  -- typically the `{cmd, workdir}` shape of `exec_command`. Local rollouts
+  show 1,049 such calls coerced between 2026-07-14 and 2026-09-10. Codex rejects
+  that outright with
   `tool exec invoked with incompatible payload`, which meant a MiniMax-served
   turn could reason but never actually run anything, and every such turn logged
   a burst of those errors. The proxy now rewrites those calls into a
@@ -1318,9 +1321,11 @@ including its `Bash(git push *)`, `Bash(rm -rf *)`, and `Read(./.env)` rules,
 which under `bypassPermissions` are the only remaining guardrail on an
 autonomous turn. Fix the deny list, not the setting sources.
 
-MiniMax is the exception, and it needs no role prompt: its proxy
-(`scripts/codex-minimax-responses-proxy.mjs`) is a transparent pass-through to
-`https://api.minimax.io` rather than a local CLI gateway. It forwards the
+MiniMax is the exception, and it needs no role prompt: its adapter
+(`scripts/codex-minimax-responses-proxy.mjs`) is a pass-through to
+`https://api.minimax.io` rather than a local CLI gateway. It changes only the
+machine boundary (allowlisted headers, no `client_metadata`) and freeform `exec`
+calls. It forwards the
 parent's own Responses payload, so the root turn arrives with the real Codex
 context and the delegation policy the `UserPromptSubmit` hook already injected;
 there is no bridge-authored prompt that could override it. That proxy therefore
@@ -1355,8 +1360,10 @@ authorizes the report. A report naming an unknown request id is rejected with
 `404 router_unknown_request` and counted nowhere. Reporting is best effort in
 the bridge: a transport failure costs a count, never the model turn.
 
-Codex and MiniMax receive none of these headers -- the router already observes
-their children as role requests, so reporting them again would double-count.
+Codex receives none of these headers, and MiniMax receives no spawn-tool
+watchlist -- the router already observes their children as role requests, so
+reporting them again would double-count. MiniMax's adapter uses the request id
+and events URL only for its tool telemetry and never forwards them upstream.
 
 The watchlist names only tools that actually start a child. Antigravity's
 `manage_subagents` lists and stops existing children and `define_subagent`
@@ -1648,7 +1655,7 @@ intended repository, and inspect the app task/log event for those failures.
 | Provider    | Local path                                                           | Important constraint                                                                                                                                 |
 | ----------- | -------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Claude      | Codex -> Claude Responses bridge on `127.0.0.1:4000` -> Claude CLI   | Uses `CLAUDE_CODE_OAUTH_TOKEN`; the selected role model and reasoning effort are forwarded.                                                          |
-| MiniMax     | Codex -> MiniMax Responses proxy on `127.0.0.1:18765`                | Transparent pass-through to the remote API, not a CLI gateway; local routing headers are stripped. MiniMax-M3 supports only `none` or `high` reasoning effort. Provider quota/rate limits are upstream conditions; inspect the proxy log when diagnosing them. |
+| MiniMax     | Codex -> MiniMax Responses proxy on `127.0.0.1:18765`                | Pass-through to the remote API, not a CLI gateway; only `accept`, `authorization`, and `content-type` headers are forwarded, and `client_metadata` is dropped. MiniMax-M3 supports only `none` or `high` reasoning effort. Provider quota/rate limits are upstream conditions; inspect the proxy log when diagnosing them. |
 | Antigravity | Codex -> Antigravity adapter `:4002` -> `agy` CLI | `useAiCredits=false` and `useG1Credits=false` keep AI-credit overages disabled. Headless runs require the configured noninteractive permission mode. |
 | GitHub Copilot | Codex -> local Copilot Responses adapter `:4003` -> `copilot` CLI | Requires an authenticated local Copilot CLI; unavailable adapters are skipped by fallback. |
 | Local router | Codex Responses -> `127.0.0.1:4100` -> model-based provider dispatch | GPT/Codex models use the stored Codex OAuth; external model names use the existing local bridges. |

@@ -1,5 +1,25 @@
 {
   "cases": {
+    "client_metadata_dropped": {
+      "expected": {
+        "forwardedKeys": [
+          "input",
+          "model",
+          "prompt_cache_key",
+          "stream"
+        ]
+      },
+      "request": {
+        "client_metadata": {
+          "session_id": "local-session",
+          "x-codex-turn-metadata": "{\"workspaces\":{\"/Users/someone/private-repo\":{\"associated_remote_urls\":{\"origin\":\"git@example.invalid:private/repo.git\"}}}}"
+        },
+        "input": "hello",
+        "model": "MiniMax-M3",
+        "prompt_cache_key": "cache-key",
+        "stream": true
+      }
+    },
     "freeform_coercion_non_streaming": {
       "expected": {
         "coercedType": "custom_tool_call",
@@ -34,22 +54,8 @@
         }
       }
     },
-    "normal_stream_flatten": {
+    "namespace_tools_forwarded": {
       "expected": {
-        "proxyRequestTools": [
-          {
-            "name": "multi_agent_v1__spawn_agent",
-            "type": "function"
-          },
-          {
-            "name": "collaboration__send_message",
-            "type": "function"
-          },
-          {
-            "name": "read_file",
-            "type": "function"
-          }
-        ],
         "responseOutputNamespaces": [
           "multi_agent_v1"
         ]
@@ -79,29 +85,14 @@
           }
         ]
       },
-      "upstreamRequest": {
-        "model": "MiniMax-M3",
-        "tools": [
-          {
-            "name": "multi_agent_v1__spawn_agent",
-            "type": "function"
-          },
-          {
-            "name": "collaboration__send_message",
-            "type": "function"
-          },
-          {
-            "name": "read_file",
-            "type": "function"
-          }
-        ]
-      },
       "upstreamResponse": {
         "output": [
           {
+            "arguments": "{}",
             "call_id": "call-1",
-            "id": "call-1",
-            "name": "multi_agent_v1__spawn_agent",
+            "id": "06f8b01ee182095ac82a6ffe1c3604f5_fc_0",
+            "name": "spawn_agent",
+            "namespace": "multi_agent_v1",
             "type": "function_call"
           },
           {
@@ -117,37 +108,18 @@
       }
     },
     "web_search_preserved": {
-      "expected": {
-        "proxyRequestTools": [
-          {
-            "name": "web_search",
-            "type": "web_search"
-          },
-          {
-            "name": "web_fetch",
-            "type": "web_fetch"
-          }
-        ]
-      },
       "request": {
         "input": "summarize",
         "stream": false,
         "tools": [
           {
-            "name": "web_search",
+            "external_web_access": true,
             "type": "web_search"
-          },
-          {
-            "name": "web_fetch",
-            "type": "web_fetch"
           }
         ]
-      },
-      "upstreamResponse": {
-        "output": []
       }
     }
   },
-  "description": "Offline boundary invariants for the MiniMax Responses pass-through proxy: namespace flattening, freeform tool coercion, and streaming/non-streaming parity.",
-  "schema": "autodev-minimax-responses-contract-v1"
+  "description": "Offline boundary invariants for the MiniMax Responses adapter: namespace and web-search tools are forwarded natively (the router owns flattening), body-embedded Codex turn metadata never leaves the machine, and freeform exec calls answered as JSON function calls are coerced.",
+  "schema": "autodev-minimax-responses-contract-v2"
 }

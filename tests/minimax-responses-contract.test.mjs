@@ -3,36 +3,45 @@ import { describe, test } from "node:test";
 
 import {
   coerceResponseBody,
-  flattenOutboundTools,
   freeformInputFromArguments,
   isWebResearchTool,
-  rewrite,
+  rewriteOutboundPayload,
 } from "../scripts/codex-minimax-responses-proxy.mjs";
 
 const contract = await import("../tests/fixtures/contracts/minimax-responses-contract.json", { with: { type: "json" } }).then((m) => m.default ?? m);
 
-assert.equal(contract.schema, "autodev-minimax-responses-contract-v1", "MiniMax boundary contract must match its schema tag");
+assert.equal(contract.schema, "autodev-minimax-responses-contract-v2", "MiniMax boundary contract must match its schema tag");
 
 describe("MiniMax boundary contract", () => {
-  describe("normal_stream_flatten", () => {
-    const entry = contract.cases.normal_stream_flatten;
+  describe("namespace_tools_forwarded", () => {
+    const entry = contract.cases.namespace_tools_forwarded;
 
-    test("rewrite re-expands response output tool namespaces", () => {
-      const rewritten = rewrite(entry.upstreamResponse);
-      assert.equal(rewritten.output[0].namespace, "multi_agent_v1");
-      assert.equal(rewritten.output[0].name, "spawn_agent");
+    test("request tools reach MiniMax exactly as Codex (or the router) sent them", () => {
+      assert.deepEqual(rewriteOutboundPayload(entry.request).tools, entry.request.tools);
     });
 
-    test("flattenOutboundTools rewrites the request tools into the upstream shape", () => {
-      const flattened = flattenOutboundTools(entry.request.tools ?? []);
-      assert.deepEqual(flattened, entry.expected.proxyRequestTools);
+    test("MiniMax's native namespace on a tool call is part of the contract the adapter relies on", () => {
+      assert.deepEqual(
+        entry.upstreamResponse.output.filter((item) => item.type === "function_call").map((item) => item.namespace),
+        entry.expected.responseOutputNamespaces,
+      );
     });
 
-    test("isWebResearchTool keeps Codex-native web research tools untouched", () => {
+    test("isWebResearchTool keeps Codex-native web research tools out of freeform coercion", () => {
       for (const tool of [{ type: "web_search" }, { name: "web_fetch" }]) {
         assert.equal(isWebResearchTool(tool), true);
       }
       assert.equal(isWebResearchTool({ type: "function", name: "read_file" }), false);
+    });
+  });
+
+  describe("client_metadata_dropped", () => {
+    const entry = contract.cases.client_metadata_dropped;
+
+    test("body-embedded Codex turn metadata never leaves the machine", () => {
+      const forwarded = rewriteOutboundPayload(entry.request);
+      assert.deepEqual(Object.keys(forwarded).sort(), entry.expected.forwardedKeys);
+      assert.equal(JSON.stringify(forwarded).includes("private-repo"), false);
     });
   });
 
@@ -63,9 +72,8 @@ describe("MiniMax boundary contract", () => {
   describe("web_search_preserved", () => {
     const entry = contract.cases.web_search_preserved;
 
-    test("web research tools survive flattening unchanged", () => {
-      const flattened = flattenOutboundTools(entry.request.tools ?? []);
-      assert.deepEqual(flattened, entry.expected.proxyRequestTools);
+    test("MiniMax's documented Responses web_search server tool is forwarded unchanged", () => {
+      assert.deepEqual(rewriteOutboundPayload(entry.request).tools, entry.request.tools);
     });
   });
 });
