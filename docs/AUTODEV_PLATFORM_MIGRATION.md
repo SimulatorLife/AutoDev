@@ -579,7 +579,7 @@ Failure of any required gate means **retain the incumbent provider path** unless
 | Provider | Preferred authentication | Candidate execution path if parity passes | Incumbent fallback |
 |---|---|---|---|
 | Codex/OpenAI | OAuth/subscription | Native Codex provider | Existing native path |
-| Claude | OAuth/subscription | Codex model provider → direct or LiteLLM Anthropic transport | Claude Code bridge |
+| Claude | OAuth/subscription, usable only by Claude Code and native Anthropic apps | None with subscription OAuth (policy gate failed 2026-09-15); an API-key Codex model provider only after the billing change is explicitly accepted | Claude Code bridge (retained) |
 | Antigravity | OAuth/subscription | Codex model provider → compatible direct/shared transport | Antigravity CLI bridge |
 | GitHub Copilot | OAuth/subscription | Codex model provider → direct or LiteLLM Copilot transport | Copilot CLI/proxy |
 | MiniMax | API key | Existing Codex model provider → direct/shared API transport | MiniMax Responses proxy |
@@ -1364,8 +1364,9 @@ Validation of this tree (HEAD plus the Phase 3 changes) had these results:
 - The Python suite ran 271 tests after the canonical skill-source
   consolidation, including the opt-in real-binary smoke test with
   `AUTODEV_OTELCOL_BIN`. 269 pass. The live Collector kept the same pid through
-  the whole run. The 2 failures also fail at unmodified HEAD:
-  - The model-router assertion still expects `$(<"$fallback_pid_file")`.
+  the whole run. The 2 failures also failed at unmodified HEAD; both were fixed
+  on 2026-09-15 (see the completed follow-up item below):
+  - The model-router assertion still expected `$(<"$fallback_pid_file")`.
   - `test_claude_cli_exposes_role_specific_skill_view_not_canonical_agents_root`.
 - ShellCheck, actionlint, `git diff --check`, and LSP diagnostics are clean.
 
@@ -1438,17 +1439,76 @@ not preserve cross-signal order, but Codex already exports logs, traces, and
 metrics as separate OTLP requests, so the order sensitivity is a pre-existing
 router property.
 
-**Follow-up item (added): make router OTLP attribution independent of
-cross-signal arrival order.** This item was not in the plan; the Phase 3
-harness surfaced it. `noteMcpServer`/`resolveTelemetryContext` attribute an
-MCP span's model and health from the conversation session that a prior
-`codex.conversation_starts` log created. A span that arrives first is
-permanently recorded as `unattributed`, and its status is not reconciled when
-the session arrives. The fix belongs in the router's session/attribution join,
-for example by resolving or backfilling when the conversation context lands,
-not in Collector ordering. The regression should replay the
-`collector-forwarded-otlp.json` fixture in both orders and require identical
-projections. The frozen workspace-attribution contract must be kept.
+That validation did not cover redelivered log or trace batches; the Phase 3
+harness repeated only a cumulative metrics export. The follow-up work below
+found and fixed a redelivery double count in the router. Collector insertion
+itself was not the cause, since exporter retries resend batches in both modes.
+
+**✅ Follow-up item (added, completed 2026-09-15): router OTLP ingestion is
+independent of arrival order and idempotent under redelivery.** This item was
+not in the plan; the Phase 3 harness surfaced it. An in-process probe replayed
+`collector-forwarded-otlp.json` in all six logs/traces/metrics orders and
+after a full redelivery. It found two classes of source defect in
+`scripts/codex-model-router.mjs`.
+
+**1. Order sensitivity, only when traces precede logs.** Two causes:
+- A later `configured` log overwrote `ready`/`error` MCP dimension statuses.
+- MCP spans ingested before `codex.conversation_starts` were permanently
+  attributed to model `unattributed`.
+
+The fixes:
+- `mergeMcpDimensionBucket` makes `configured` the weakest status. Among
+  observed statuses, the newest source timestamp wins. Server `lastSeenAt` is
+  monotonic.
+- `noteMcpObservation` defers only the model dimension while the conversation
+  is known but its model is not (`pendingMcpModelAttribution`). The deferral is
+  bounded to 1,000 conversations and 200 observations each; on overflow the
+  observations are committed as `unattributed`.
+- `/status` and persistence project deferred observations as `unattributed`,
+  and `noteConversation` attributes them once the model arrives. A restart can
+  therefore leave them unattributed, but never lost or double-counted.
+
+**2. Redelivery double counting.** A resent log batch doubled turns and tokens.
+Resent spans doubled MCP init/discovery attempts, failures, durations, and MCP
+dimension counts. Resent metric points doubled attribution diagnostics.
+
+The fixes:
+- Log records are ingested once per identity: source timestamp plus content
+  hash.
+- Spans are ingested once per `traceId`/`spanId`, or per name, timestamps, and
+  content.
+- Data-point attribution diagnostics are recorded once per exported point.
+- The identity sets are bounded (10,000 entries) and are not persisted.
+  Records without a timestamp are still always counted.
+- The receiver counters and the metric inventory's `exports`/`dataPoints`
+  remain transport counters that count every export by design.
+
+Evidence:
+- The new router test, "Collector-forwarded OTLP semantics do not depend on
+  logs/traces/metrics arrival order", covers every order, two interleaved
+  redelivery sequences, and deferral then attribution.
+- The existing redelivery test was extended to assert that turns, tokens, MCP
+  counters, MCP model counts, and diagnostics stay stable.
+- Both tests fail against the HEAD router and pass now.
+- The real-Collector harness is identical for ordered Collector delivery and
+  for direct traces-before-logs delivery.
+- Router plus attribution-contract tests pass 196/196, and the full JavaScript
+  suite passes 583/583. The frozen workspace-attribution contract is unchanged.
+
+Housekeeping, also completed: the two pre-existing Python failures were fixed
+at their source.
+- **Fallback-pid test:** it asserted the stale `$(<"$fallback_pid_file")`
+  form. The implementation's `cat … 2>/dev/null || true` deliberately
+  tolerates the pid file disappearing between the `-f` check and the read
+  under `set -e`, so the assertion now matches.
+- **Claude skill-view test:** it depended on the live install under
+  `$CODEX_HOME/provider-runtime`. It now renders the role views from
+  `.rulesync/skills` into a temporary `CODEX_HOME`, so it passes without an
+  install.
+
+The running router keeps the previous code until the next installer run
+(`bash scripts/codex/install-codex-integration.sh --enable-otel-collector`),
+which restarts it.
 
 Enable/rollback procedure:
 
@@ -1462,9 +1522,9 @@ bash scripts/codex/install-codex-integration.sh --disable-otel-collector
 bash scripts/codex/install-codex-integration.sh --check
 ```
 
-The next migration step is Phase 4: begin the independently gated Claude
-OAuth-native Codex provider pilot, using the frozen incumbent Claude Responses
-contract as the rollback baseline.
+Phase 4 has started. The Claude OAuth pilot's policy gate was evaluated on
+2026-09-15 and the incumbent bridge is retained (see Phase 4). The next Phase 4
+step is the GitHub Copilot pilot's operational/policy gate evaluation.
 
 ### First deployment
 
@@ -1501,8 +1561,9 @@ Suggested attributes:
 
 Existing AutoDev metrics remain identical in meaning and do not double-count after Collector insertion
 
-**Met (2026-09-15).** See Status. Cross-signal arrival-order sensitivity is a
-pre-existing router property, tracked as a follow-up item.
+**Met (2026-09-15).** See Status. Arrival-order independence and log/trace
+redelivery idempotency were completed the same day; see the completed
+follow-up item.
 
 ---
 
@@ -1516,11 +1577,48 @@ This is a high-value pilot because the current Claude bridge is large and Claude
 
 #### Status
 
-The incumbent Claude Responses boundary is frozen by `tests/fixtures/contracts/claude-responses-contract.json` and `tests/claude-responses-contract.test.mjs`. The suite runs the actual Python bridge with a fake local Claude CLI and loopback telemetry server, covering normal and streaming responses, direct and shell skill reads, tool continuation and item IDs, permission denial, provider-limit incomplete output, authentication failure, privacy sanitization, and telemetry without contacting Anthropic or requiring credentials. This establishes the offline parity baseline only; OAuth bootstrap/refresh/expiry, LiteLLM/direct transport compatibility, operational/policy review, and bridge deletion remain unproven and are still required by the provider migration gate.
+The incumbent Claude Responses boundary is frozen by `tests/fixtures/contracts/claude-responses-contract.json` and `tests/claude-responses-contract.test.mjs`. The suite runs the actual Python bridge with a fake local Claude CLI and loopback telemetry server, covering normal and streaming responses, direct and shell skill reads, tool continuation and item IDs, permission denial, provider-limit incomplete output, authentication failure, privacy sanitization, and telemetry without contacting Anthropic or requiring credentials. This establishes the offline parity baseline only.
 
-Compare direct/shared Claude OAuth transport against the incumbent bridge for:
+**Policy/operational gate evaluated (2026-09-15): the OAuth-native candidate is
+closed, and the incumbent bridge is retained.** Anthropic's Claude Code
+[Legal and compliance](https://code.claude.com/docs/en/legal-and-compliance)
+page ("Authentication and credential use") states:
+- OAuth authentication "is intended exclusively for purchasers of Claude Free,
+  Pro, Max, Team, and Enterprise subscription plans and is designed to support
+  ordinary use of Claude Code and other native Anthropic applications."
+- Developers "should use API key authentication", and Anthropic does not
+  permit them "to route requests through Free, Pro, or Max plan credentials" or
+  to "collect, store, or intermediate Claude.ai credentials or session tokens."
 
-- OAuth token bootstrap, refresh, expiry, and secure storage
+A Codex `[model_providers.*]` route that carries a subscription OAuth token
+over a direct or LiteLLM Anthropic transport is exactly that disallowed use. It
+therefore fails the gate's "acceptable policy/API dependencies" requirement
+whatever its technical parity, and Anthropic enforces this server-side.
+
+No live OAuth transport was built, and no token was sent anywhere. The
+incumbent path has the permitted shape:
+- The bridge runs the unmodified Claude Code binary (`~/.local/bin/claude`)
+  signed in with the user's own subscription token.
+- CI runs the pinned official `@anthropic-ai/claude-code@2.1.263` package.
+
+It stays within policy only for the user's own ordinary, individual use.
+`tests/test_claude_oauth_policy_gate.py` freezes this result. It checks the
+exact set of reviewed files that reference `CLAUDE_CODE_OAUTH_TOKEN`, that the
+bridge runs the Claude Code binary, that CI pins the official package, and
+that no Codex model provider or router route talks to Anthropic directly.
+
+One observation: `.github/workflows/claude-invoke.yml` passes
+`openai_base_url: 'https://api.anthropic.com'`, but the Claude CI provider
+never reads it. It is inert but misleading.
+
+**Remaining Claude option — decision required, not started.** A Codex model
+provider authenticated with an Anthropic API key (Claude Console), over a
+direct or LiteLLM transport, is permitted. It would, however, move Claude
+usage from subscription to pay-as-you-go API billing, which the gate treats as
+a behavior change AutoDev must explicitly accept before any pilot. If it is
+accepted, compare that API-key transport against the incumbent bridge for:
+
+- API-key provisioning, rotation, secure storage, and billing attribution
 - OpenAI Responses request/stream fidelity
 - Function, namespace, custom, and freeform tool behavior
 - Tool-call → tool-result → next-turn continuation
@@ -1532,6 +1630,8 @@ Compare direct/shared Claude OAuth transport against the incumbent bridge for:
 ### Claude exit gate
 
 Delete `codex-claude-cli-responses-proxy.py` and its launch/ensure lifecycle only when a Codex model-provider route using subscription OAuth is behaviorally equivalent across the full provider migration gate. Otherwise retain the existing bridge
+
+**Outcome (2026-09-15): retain the existing bridge.** A subscription-OAuth route cannot pass the policy requirement. The bridge becomes a deletion candidate only if an explicitly accepted API-key route passes the full gate.
 
 ### GitHub Copilot OAuth pilot
 
@@ -1777,8 +1877,7 @@ Only now test whether Rulesync can replace more AutoDev role rendering
 
 ## Provider authentication and LiteLLM
 
-- Whether Claude OAuth through LiteLLM or a direct transport matches the current bridge's full Responses/tool/limit/telemetry contract
-- Claude OAuth token acquisition/refresh/expiry behavior when used without the Claude Code CLI
+- Resolved 2026-09-15: Claude subscription OAuth may not be used outside Claude Code and native Anthropic apps, so its LiteLLM/direct transport parity is moot. This question reopens only if an API-key route is accepted: would that route match the current bridge's full Responses/tool/limit/telemetry contract?
 - Whether GitHub Copilot's LiteLLM path is stable and policy-acceptable enough to replace the incumbent CLI/proxy
 - Whether a supported direct OAuth transport for Antigravity exists and whether LiteLLM or another shared adapter can provide it without invoking `agy`
 - Exact MiniMax-M3 namespace/custom/freeform-tool parity through a direct/shared API transport

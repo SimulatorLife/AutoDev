@@ -185,6 +185,24 @@ It parses the low-cardinality SQLite health metrics into
 `codexTelemetry.tools`. These are intentionally separate from the existing
 log-derived turn/token counters to avoid double-counting.
 
+OTLP ingestion is idempotent for semantic counters. Each item has an identity:
+- a log record: its source timestamp and content;
+- a span: its trace and span ids, or its name, timestamps, and content;
+- a metric data point, for attribution diagnostics: its timestamps and
+  attributes.
+
+An exporter retry or a Collector redelivery of the same batch therefore does not
+re-count turns, tokens, MCP attempts, failures, durations, dimensions, or
+attribution diagnostics. Records without a timestamp are always counted. The
+receiver counters and the metric inventory's `exports`/`dataPoints` count every
+export by design.
+
+Attribution also does not depend on whether logs, traces, or metrics arrive
+first. An MCP observation whose conversation's model is not yet known is shown
+under `unattributed` until the conversation's model-bearing log arrives, and is
+then attributed to that model. A `configured` server entry never overrides an
+observed MCP status.
+
 The dashboard and CLI expose the observed metric-name inventory, SQLite
 initialization/fallback totals and durations, and native tool calls grouped by
 sanitized tool/source/server labels. Native tool metrics use `tool` in current Codex OTLP exports; older

@@ -567,6 +567,9 @@ The router makes its effective choice visible in two ways:
   When no explicit role partition exists, both cards use the global observed count while
   retaining unattributed/unknown buckets in `/status`.
   MCP telemetry is partitioned across `byRole`, `byWorkspace`, `byModel`, and `byAgent`.
+  An MCP span ingested before its conversation's model is known is reported under
+  `byModel.unattributed` until that log arrives, and is then attributed to the model.
+  A `configured` entry never overrides an observed server status.
   The same canonical dimensions are available under
   `status.codexTelemetry.dimensions` for MCP, tool, hook, skill, and bridge event families.
   Skill usage is split explicitly: `skillContextsInjected` records loaded context,

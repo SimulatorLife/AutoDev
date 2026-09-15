@@ -2362,6 +2362,28 @@ test("dedupes repeated Collector-forwarded OTLP JSON batches so receiver counts 
     // not move the executed counter.
     assert.equal(telemetry.toolResults.total, 1);
 
+    // Log-record and span identity dedupe: a redelivered log batch does not
+    // re-count turns or tokens, and redelivered spans do not re-count MCP
+    // attempts, failures, durations, or MCP dimension rows. Data-point
+    // attribution diagnostics are recorded once per exported point.
+    assert.deepEqual(
+      { prompts: telemetry.turns.prompts, completed: telemetry.turns.completed, promptLength: telemetry.turns.promptLength, ttftCount: telemetry.turns.ttftCount },
+      { prompts: 1, completed: 1, promptLength: 57, ttftCount: 1 },
+    );
+    assert.deepEqual(telemetry.tokens, { input: 200, output: 40, cached: 10, reasoning: 15, tool: 5, total: 270 });
+    assert.deepEqual(
+      telemetry.mcpServers.map(({ name, initAttempts, toolDiscoveryAttempts, failures, durationCount }) => ({ name, initAttempts, toolDiscoveryAttempts, failures, durationCount })),
+      [
+        { name: "codex_apps", initAttempts: 0, toolDiscoveryAttempts: 0, failures: 1, durationCount: 1 },
+        { name: "playwright", initAttempts: 1, toolDiscoveryAttempts: 1, failures: 0, durationCount: 2 },
+      ],
+    );
+    assert.equal(telemetry.dimensions.mcp.byModel["gpt-5.6-luna"].count, 15);
+    assert.deepEqual(
+      { total: getRouterStatus().attributionDiagnostics.total, unattributed: getRouterStatus().attributionDiagnostics.unattributed },
+      { total: 4, unattributed: 4 },
+    );
+
     // Stable semantic row counts: every per-key aggregation surface has
     // exactly the same set of keys it would after a single forward, so
     // dashboards and alerts keyed on these arrays do not multiply.
@@ -2389,6 +2411,75 @@ test("dedupes repeated Collector-forwarded OTLP JSON batches so receiver counts 
     assert.equal(JSON.stringify(status).includes("do-not-store-this-collector-forwarded-secret"), false);
   } finally {
     await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    resetOtelTelemetry();
+  }
+});
+
+test("Collector-forwarded OTLP semantics do not depend on logs/traces/metrics arrival order", async () => {
+  // Codex exports logs, traces, and metrics as independent OTLP requests, and
+  // the Collector forwards each signal on its own pipeline, so no cross-signal
+  // order can be relied on. Every order, and a full redelivery, must yield the
+  // same semantic projection as logs -> traces -> metrics. Ingestion-time
+  // stamps (lastSeenAt/lastReceivedAt) are wall-clock and excluded; the
+  // receiver and metric inventory are transport counters and excluded.
+  const base = BigInt(Date.now()) * 1_000_000n;
+  const fixtureTokens = {
+    __OTEL_T0__: base,
+    __OTEL_T500MS__: base + 500_000_000n,
+    __OTEL_T900MS__: base + 900_000_000n,
+    __OTEL_T1200MS__: base + 1_200_000_000n,
+    __OTEL_T2S__: base + 2_000_000_000n,
+    __OTEL_T6MS__: base + 6_000_000n,
+    __OTEL_T13MS__: base + 13_000_000n,
+    __OTEL_T20MS__: base + 20_000_000n,
+  };
+  let fixtureText = await readFile(new URL("../tests/fixtures/otel/collector-forwarded-otlp.json", import.meta.url), "utf8");
+  for (const [token, value] of Object.entries(fixtureTokens)) fixtureText = fixtureText.replaceAll(token, String(value));
+  const fixture = JSON.parse(fixtureText);
+  const now = Number(base / 1_000_000n) + 5_000;
+  const withoutWallClock = (value) => Array.isArray(value)
+    ? value.map(withoutWallClock)
+    : value && typeof value === "object"
+      ? Object.fromEntries(Object.entries(value).filter(([key]) => key !== "lastSeenAt" && key !== "lastReceivedAt").map(([key, entry]) => [key, withoutWallClock(entry)]))
+      : value;
+  const semantics = (signals) => {
+    resetOtelTelemetry();
+    for (const signal of signals) ingestOtelSignal(signal, structuredClone(fixture[signal]));
+    const { receiver: _receiver, metrics: _metrics, ...telemetry } = codexTelemetryStatus(now);
+    const status = getRouterStatus();
+    return withoutWallClock({ telemetry, usage: status.usage, attributionDiagnostics: status.attributionDiagnostics });
+  };
+  try {
+    const canonical = semantics(["logs", "traces", "metrics"]);
+    const byModel = canonical.telemetry.dimensions.mcp.byModel;
+    assert.deepEqual(Object.keys(byModel), ["gpt-5.6-luna"]);
+    assert.equal(byModel["gpt-5.6-luna"].count, 15);
+    const buckets = Object.fromEntries(canonical.telemetry.mcpServers.map((server) => [server.name, server.byModel["gpt-5.6-luna"].lastStatus]));
+    assert.deepEqual(buckets, { codex_apps: "error", playwright: "ready" });
+    for (const signals of [
+      ["logs", "metrics", "traces"],
+      ["traces", "logs", "metrics"],
+      ["traces", "metrics", "logs"],
+      ["metrics", "logs", "traces"],
+      ["metrics", "traces", "logs"],
+      ["logs", "traces", "metrics", "logs", "traces", "metrics"],
+      ["traces", "metrics", "traces", "logs", "metrics", "logs"],
+    ]) {
+      assert.deepEqual(semantics(signals), canonical, signals.join(" -> "));
+    }
+
+    // Spans ingested before the log naming their conversation's model are
+    // projected as unattributed, never dropped, and move once the log lands.
+    resetOtelTelemetry();
+    ingestOtelSignal("traces", structuredClone(fixture.traces));
+    const early = codexTelemetryStatus(now);
+    assert.deepEqual(Object.keys(early.dimensions.mcp.byModel), ["unattributed"]);
+    assert.equal(early.dimensions.mcp.byModel.unattributed.count, 3);
+    ingestOtelSignal("logs", structuredClone(fixture.logs));
+    const late = codexTelemetryStatus(now);
+    assert.deepEqual(Object.keys(late.dimensions.mcp.byModel), ["gpt-5.6-luna"]);
+    assert.equal(late.dimensions.mcp.byModel["gpt-5.6-luna"].count, 15);
+  } finally {
     resetOtelTelemetry();
   }
 });

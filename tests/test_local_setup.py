@@ -2039,13 +2039,29 @@ exit 0
             self.assertIn(str(Path(workspace) / ".agents"), args[add_dir_index + 1:])
 
     def test_claude_cli_exposes_role_specific_skill_view_not_canonical_agents_root(self):
-        args = claude_bridge.claude_cli_args("prompt", "sonnet", "medium", "explorer", "/tmp/workspace")
-        add_dir_index = args.index("--add-dir")
-        directories = args[add_dir_index + 1:]
-        expected = str(Path(claude_bridge.os.environ.get("CODEX_HOME", Path.home() / ".codex")) / "provider-runtime" / "claude" / "explorer")
-        self.assertIn(expected, directories)
-        self.assertNotIn(str(Path.home() / ".agents"), directories)
-        self.assertTrue((Path(expected) / ".claude" / "skills" / "ccc" / "SKILL.md").is_file())
+        # Hermetic: render the role views the installer would materialize into
+        # an isolated CODEX_HOME rather than depending on this machine's install.
+        with tempfile.TemporaryDirectory() as codex_home:
+            subprocess.run(
+                [
+                    "python3", str(PROVIDER_SKILL_VIEW_RENDERER_PATH),
+                    "--contract", str(REPO_ROOT / "scripts/codex/execution-contract.json"),
+                    "--canonical-root", str(REPO_ROOT / ".rulesync/skills"),
+                    "--output-root", str(Path(codex_home) / "provider-runtime" / "claude"),
+                    "--provider", "claude",
+                ],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            with patch.dict(os.environ, {"CODEX_HOME": codex_home}):
+                args = claude_bridge.claude_cli_args("prompt", "sonnet", "medium", "explorer", "/tmp/workspace")
+            add_dir_index = args.index("--add-dir")
+            directories = args[add_dir_index + 1:]
+            expected = str(Path(codex_home) / "provider-runtime" / "claude" / "explorer")
+            self.assertIn(expected, directories)
+            self.assertNotIn(str(Path.home() / ".agents"), directories)
+            self.assertTrue((Path(expected) / ".claude" / "skills" / "ccc" / "SKILL.md").is_file())
 
     def test_claude_roles_without_skills_receive_no_skill_view(self):
         for role in ("browser-tester", "docs-researcher"):
@@ -3261,7 +3277,12 @@ PY
         ensure = (REPO_ROOT / "scripts/ensure-codex-model-router.sh").read_text()
         body_start = ensure.index("ensure_via_fallback() {")
         body = ensure[body_start:ensure.index("\n}\n", body_start)]
-        self.assertIn("existing_pid=\"$(<\"" + chr(0x24) + "fallback_pid_file\"", body)
+        # The pid file can disappear between the -f test and the read (another
+        # ensure run clearing it); the read must tolerate that under set -e.
+        self.assertIn(
+            "existing_pid=\"$(cat \"" + chr(0x24) + "fallback_pid_file\" 2>/dev/null || true)\"",
+            body,
+        )
         self.assertIn("kill -0 \"" + chr(0x24) + "existing_pid\"", body)
         self.assertIn("kill \"" + chr(0x24) + "existing_pid\"", body)
         self.assertIn("kill -KILL \"" + chr(0x24) + "existing_pid\"", body)

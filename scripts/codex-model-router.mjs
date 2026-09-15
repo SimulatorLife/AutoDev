@@ -903,6 +903,9 @@ const otelTelemetry = {
   receiver: { logs: 0, traces: 0, metrics: 0, invalid: 0, lastReceivedAt: null },
   sessions: new Map(),
   mcpServers: new Map(),
+  // Identities of already-ingested log records and spans. An exporter retry or
+  // a Collector redelivery of the same batch must not be counted twice.
+  recordIdentities: { logs: new Set(), spans: new Set(), datapoints: new Set() },
   dimensions: { mcp: emptyContextDimensions(), tools: emptyContextDimensions(), hooks: emptyContextDimensions(), skills: emptyContextDimensions(), bridge: emptyContextDimensions() },
   turns: { prompts: 0, completed: 0, promptLength: 0, ttftMs: 0, ttftCount: 0 },
   tokens: { input: 0, output: 0, cached: 0, reasoning: 0, tool: 0 },
@@ -953,6 +956,16 @@ const otelTelemetry = {
 // each series (metric + attributes + startTimeUnixNano) is tracked here and
 // only the delta since the last observed point/timestamp is applied.
 const otelMetricSeries = new Map();
+// MCP observations whose conversation is known but whose model is not yet. A
+// span or a configured-server record can be ingested before the log that names
+// the conversation's model, because Codex (and the Collector) deliver logs and
+// traces as independent OTLP requests. They are projected as `unattributed`
+// until that log lands and are then attributed to its model, so MCP model
+// attribution does not depend on arrival order.
+const pendingMcpModelAttribution = new Map();
+const PENDING_MCP_MODEL_CONVERSATION_LIMIT = 1000;
+const PENDING_MCP_MODEL_OBSERVATION_LIMIT = 200;
+const OTEL_RECORD_IDENTITY_LIMIT = 10000;
 
 function otelAttributeValue(value) {
   if (!value || typeof value !== "object") return value;
@@ -1030,14 +1043,11 @@ function noteConversation(attributes, resourceAttributes = {}) {
       const server = mcpServer(name);
       if (server.lastStatus === "unknown") server.lastStatus = "configured";
       const context = resolveTelemetryContext(attributes, resourceAttributes, { conversationId: id, timestamp: attributes["event.timestamp"] });
-      noteMcpDimension(server, "byRole", context.role, context, "configured");
-      noteMcpDimension(server, "byWorkspace", context.workspace, context, "configured");
-      noteMcpDimension(server, "byModel", context.model, context, "configured");
-      noteMcpDimension(server, "byAgent", context.agent, context, "configured");
-      noteContextDimension("mcp", context);
+      noteMcpObservation(server, context, telemetryConversationId({}, {}, { conversationId: id }), "configured");
     }
   }
   otelTelemetry.sessions.set(id, session);
+  if (session.model) resolvePendingMcpModelAttribution(id, session.model);
   return session;
 }
 
@@ -1049,12 +1059,7 @@ function localWorkspaceForConversation(attributes, resourceAttributes = {}) {
   return thread;
 }
 
-function resolveTelemetryContext(attributes = {}, resourceAttributes = {}, options = {}) {
-  const reqContext = options?.context
-    ?? (options?.requestId ? bridgeRequestContext.get(options.requestId) : null)
-    ?? (attributes?.requestId ? bridgeRequestContext.get(attributes.requestId) : null)
-    ?? (attributes?.request_id ? bridgeRequestContext.get(attributes.request_id) : null);
-
+function telemetryConversationId(attributes = {}, resourceAttributes = {}, options = {}) {
   const convId = attributes?.["conversation.id"]
     ?? attributes?.conversation_id
     ?? attributes?.conversationId
@@ -1062,7 +1067,16 @@ function resolveTelemetryContext(attributes = {}, resourceAttributes = {}, optio
     ?? resourceAttributes?.conversation_id
     ?? resourceAttributes?.conversationId
     ?? options?.conversationId;
-  const conversationId = typeof convId === "string" ? convId.trim() : null;
+  return typeof convId === "string" && convId.trim() ? convId.trim() : null;
+}
+
+function resolveTelemetryContext(attributes = {}, resourceAttributes = {}, options = {}) {
+  const reqContext = options?.context
+    ?? (options?.requestId ? bridgeRequestContext.get(options.requestId) : null)
+    ?? (attributes?.requestId ? bridgeRequestContext.get(attributes.requestId) : null)
+    ?? (attributes?.request_id ? bridgeRequestContext.get(attributes.request_id) : null);
+
+  const conversationId = telemetryConversationId(attributes, resourceAttributes, options);
   const thread = conversationId ? (codexState.lastSnapshot?.conversationThreads?.[conversationId] ?? null) : null;
   const session = conversationId ? (otelTelemetry.sessions?.get(conversationId) ?? null) : null;
 
@@ -1211,17 +1225,26 @@ function emptyContextDimensions() {
   return { byRole: {}, byWorkspace: {}, byModel: {}, byAgent: {} };
 }
 
-function noteContextDimension(family, context, count = 1) {
+const CONTEXT_DIMENSION_FIELDS = [["byRole", "role"], ["byWorkspace", "workspace"], ["byModel", "model"], ["byAgent", "agent"]];
+const MODEL_CONTEXT_DIMENSIONS = new Set(["byModel"]);
+const NON_MODEL_CONTEXT_DIMENSIONS = new Set(["byRole", "byWorkspace", "byAgent"]);
+
+function noteContextDimension(family, context, count = 1, dimensions = null) {
   if (!Number.isFinite(count) || count <= 0) return;
   const target = otelTelemetry.dimensions[family] ?? (otelTelemetry.dimensions[family] = emptyContextDimensions());
   const timestamp = context.timestamp ?? new Date().toISOString();
-  for (const [dimension, key] of [["byRole", context.role], ["byWorkspace", context.workspace], ["byModel", context.model], ["byAgent", context.agent]]) {
-    const bucket = target[dimension][key] ?? { count: 0, lastSeenAt: null, ...(dimension === "byAgent" ? { agentKind: context.agentKind } : {}) };
-    bucket.count += count;
-    if (!bucket.lastSeenAt || Date.parse(timestamp) >= Date.parse(bucket.lastSeenAt)) bucket.lastSeenAt = timestamp;
-    if (dimension === "byAgent") bucket.agentKind = context.agentKind;
-    target[dimension][key] = bucket;
+  for (const [dimension, field] of CONTEXT_DIMENSION_FIELDS) {
+    if (dimensions && !dimensions.has(dimension)) continue;
+    mergeContextDimensionBucket(target[dimension], dimension, context[field], context, count, timestamp);
   }
+}
+
+function mergeContextDimensionBucket(buckets, dimension, key, context, count, timestamp) {
+  const bucket = buckets[key] ?? { count: 0, lastSeenAt: null, ...(dimension === "byAgent" ? { agentKind: context.agentKind } : {}) };
+  bucket.count += count;
+  if (!bucket.lastSeenAt || Date.parse(timestamp) >= Date.parse(bucket.lastSeenAt)) bucket.lastSeenAt = timestamp;
+  if (dimension === "byAgent") bucket.agentKind = context.agentKind;
+  buckets[key] = bucket;
 }
 
 function formatContextDimensions(dimensions) {
@@ -1242,12 +1265,127 @@ function formatContextDimensions(dimensions) {
 const MCP_DISCOVERY_SPAN_NAMES = new Set(["list_tools_for_client_uncached", "list_tools_with_connector_ids"]);
 
 function noteMcpDimension(server, dimension, key, context, status) {
-  const bucket = server[dimension][key] ?? { observed: 1, lastSeenAt: null, lastStatus: "observed" };
+  mergeMcpDimensionBucket(server[dimension], dimension, key, context, status);
+}
+
+// True unless both timestamps parse and `next` is older than `previous`.
+function timestampNotOlder(next, previous) {
+  const nextMs = Date.parse(next);
+  const previousMs = Date.parse(previous);
+  return !Number.isFinite(nextMs) || !Number.isFinite(previousMs) || nextMs >= previousMs;
+}
+
+// `configured` (a server named in a conversation's MCP list) is the weakest
+// status: it never replaces an observed span/tool status. Among observed
+// statuses the newest source timestamp wins. Both rules keep the bucket
+// independent of the order in which logs and traces are ingested.
+function mergeMcpDimensionBucket(buckets, dimension, key, context, status) {
+  const existing = buckets[key];
+  const bucket = existing ?? { observed: 1, lastSeenAt: null, lastStatus: "observed" };
   bucket.observed = 1;
-  bucket.lastSeenAt = context.timestamp;
-  bucket.lastStatus = status ?? bucket.lastStatus;
+  const nextStatus = status ?? bucket.lastStatus;
+  const replace = !existing || !bucket.lastSeenAt || (nextStatus === "configured"
+    ? bucket.lastStatus === "configured"
+    : bucket.lastStatus === "configured" || timestampNotOlder(context.timestamp, bucket.lastSeenAt));
+  if (replace) {
+    bucket.lastSeenAt = context.timestamp;
+    bucket.lastStatus = nextStatus;
+  }
   if (dimension === "byAgent") bucket.agentKind = context.agentKind;
-  server[dimension][key] = bucket;
+  buckets[key] = bucket;
+}
+
+// One MCP observation across the four MCP dimensions. The model dimension is
+// deferred while the conversation is known but its model is not.
+function noteMcpObservation(server, context, conversationId, status) {
+  noteMcpDimension(server, "byRole", context.role, context, status);
+  noteMcpDimension(server, "byWorkspace", context.workspace, context, status);
+  noteMcpDimension(server, "byAgent", context.agent, context, status);
+  noteContextDimension("mcp", context, 1, NON_MODEL_CONTEXT_DIMENSIONS);
+  if (context.model === UNATTRIBUTED_DIMENSION && conversationId) {
+    deferMcpModelAttribution(conversationId, server.name, context, status);
+    return;
+  }
+  applyMcpModelObservation(server, context.model, context, status);
+}
+
+function applyMcpModelObservation(server, model, context, status) {
+  noteMcpDimension(server, "byModel", model, context, status);
+  noteContextDimension("mcp", { ...context, model }, 1, MODEL_CONTEXT_DIMENSIONS);
+}
+
+function commitMcpModelObservations(observations, model) {
+  for (const { serverName, context, status } of observations) applyMcpModelObservation(mcpServer(serverName), model, context, status);
+}
+
+function deferMcpModelAttribution(conversationId, serverName, context, status) {
+  let observations = pendingMcpModelAttribution.get(conversationId);
+  if (!observations) {
+    observations = [];
+    pendingMcpModelAttribution.set(conversationId, observations);
+    // Bounded: the oldest conversation that never named a model is committed
+    // as unattributed, exactly as it would have been without deferral.
+    while (pendingMcpModelAttribution.size > PENDING_MCP_MODEL_CONVERSATION_LIMIT) {
+      const [oldest, oldestObservations] = pendingMcpModelAttribution.entries().next().value;
+      pendingMcpModelAttribution.delete(oldest);
+      commitMcpModelObservations(oldestObservations, UNATTRIBUTED_DIMENSION);
+    }
+  }
+  observations.push({ serverName, context, status });
+  if (observations.length > PENDING_MCP_MODEL_OBSERVATION_LIMIT) {
+    commitMcpModelObservations(observations.splice(0, observations.length - PENDING_MCP_MODEL_OBSERVATION_LIMIT), UNATTRIBUTED_DIMENSION);
+  }
+}
+
+function resolvePendingMcpModelAttribution(conversationId, model) {
+  const key = conversationId.trim();
+  const observations = pendingMcpModelAttribution.get(key);
+  if (!observations) return;
+  pendingMcpModelAttribution.delete(key);
+  commitMcpModelObservations(observations, safeMetricLabel(model));
+}
+
+// MCP model dimensions as projected and persisted: committed buckets plus the
+// still-deferred observations shown as `unattributed`, without committing them.
+function mcpModelDimensionsView() {
+  const cloneBuckets = (buckets) => Object.fromEntries(Object.entries(buckets ?? {}).map(([key, bucket]) => [key, { ...bucket }]));
+  const serverByModel = new Map();
+  const dimensionByModel = cloneBuckets(otelTelemetry.dimensions.mcp.byModel);
+  for (const observations of pendingMcpModelAttribution.values()) {
+    for (const { serverName, context, status } of observations) {
+      if (!serverByModel.has(serverName)) serverByModel.set(serverName, cloneBuckets(otelTelemetry.mcpServers.get(serverName)?.byModel));
+      mergeMcpDimensionBucket(serverByModel.get(serverName), "byModel", UNATTRIBUTED_DIMENSION, context, status);
+      mergeContextDimensionBucket(dimensionByModel, "byModel", UNATTRIBUTED_DIMENSION, context, 1, context.timestamp ?? new Date().toISOString());
+    }
+  }
+  return { serverByModel, dimensionByModel };
+}
+
+function otelRecordIdentity(kind, parts) {
+  return createHash("sha256").update(JSON.stringify([kind, ...parts])).digest("hex");
+}
+
+// Log records carry no id, so identity is their source timestamp plus content;
+// a record without a timestamp cannot be told apart from a genuine repeat and
+// is always counted. Spans use their trace/span ids when present.
+function otelLogRecordIdentity(record, resourceAttributes, scope) {
+  const time = record.timeUnixNano ?? record.observedTimeUnixNano;
+  if (time === undefined || time === null || String(time) === "" || String(time) === "0") return null;
+  return otelRecordIdentity("log", [String(time), record.severityNumber ?? null, record.body ?? null, record.attributes ?? [], resourceAttributes ?? [], scope?.name ?? null, scope?.version ?? null]);
+}
+
+function otelSpanIdentity(span, resourceAttributes, scope) {
+  if (span.traceId && span.spanId) return `span:${span.traceId}:${span.spanId}`;
+  if (!span.startTimeUnixNano && !span.endTimeUnixNano) return null;
+  return otelRecordIdentity("span", [span.name ?? null, String(span.startTimeUnixNano ?? ""), String(span.endTimeUnixNano ?? ""), span.status ?? null, span.attributes ?? [], resourceAttributes ?? [], scope?.name ?? null]);
+}
+
+function firstOtelRecordObservation(seen, identity) {
+  if (!identity) return true;
+  if (seen.has(identity)) return false;
+  seen.add(identity);
+  while (seen.size > OTEL_RECORD_IDENTITY_LIMIT) seen.delete(seen.values().next().value);
+  return true;
 }
 
 function noteMcpServer(name, span, attributes = {}, resourceAttributes = {}) {
@@ -1258,7 +1396,7 @@ function noteMcpServer(name, span, attributes = {}, resourceAttributes = {}) {
   const timestamp = span ? (otelTimestamp(span.endTimeUnixNano) ?? otelTimestamp(span.startTimeUnixNano)) : null;
   const context = resolveTelemetryContext(attributes, resourceAttributes, { timestamp });
   const statusCode = span?.status?.code;
-  server.lastSeenAt = context.timestamp;
+  if (!server.lastSeenAt || timestampNotOlder(context.timestamp, server.lastSeenAt)) server.lastSeenAt = context.timestamp;
   if (span) {
     server.durationMs += durationMs;
     server.durationCount += 1;
@@ -1275,11 +1413,7 @@ function noteMcpServer(name, span, attributes = {}, resourceAttributes = {}) {
     if (attributes["error.type"] || attributes["error.message"]) server.lastStatus = "error";
   }
 
-  noteMcpDimension(server, "byRole", context.role, context, server.lastStatus);
-  noteMcpDimension(server, "byWorkspace", context.workspace, context, server.lastStatus);
-  noteMcpDimension(server, "byModel", context.model, context, server.lastStatus);
-  noteMcpDimension(server, "byAgent", context.agent, context, server.lastStatus);
-  noteContextDimension("mcp", context);
+  noteMcpObservation(server, context, telemetryConversationId(attributes, resourceAttributes), server.lastStatus);
 
   // Per-workspace "uses" is discovery-span coverage only -- an init/health
   // span (make_rmcp_client/start_server_task/new) already moved
@@ -1366,6 +1500,7 @@ function ingestOtelLogs(payload) {
     const resource = otelAttributes(resourceLog.resource?.attributes);
     for (const scopeLog of resourceLog.scopeLogs ?? []) {
       for (const record of scopeLog.logRecords ?? []) {
+        if (!firstOtelRecordObservation(otelTelemetry.recordIdentities.logs, otelLogRecordIdentity(record, resourceLog.resource?.attributes, scopeLog.scope))) continue;
         const attributes = otelAttributes(record.attributes);
         const eventName = attributes["event.name"];
         noteConversation(attributes, resource);
@@ -1398,6 +1533,7 @@ function ingestOtelTraces(payload) {
     const resource = otelAttributes(resourceSpan.resource?.attributes);
     for (const scopeSpan of resourceSpan.scopeSpans ?? []) {
       for (const span of scopeSpan.spans ?? []) {
+        if (!firstOtelRecordObservation(otelTelemetry.recordIdentities.spans, otelSpanIdentity(span, resourceSpan.resource?.attributes, scopeSpan.scope))) continue;
         const attributes = otelAttributes(span.attributes);
         noteConversation(attributes, resource);
         const serverName = attributes.server_name ?? attributes.server ?? attributes.mcp_server;
@@ -1479,37 +1615,54 @@ function readNamedAttribute(attributes, fallback, ...keys) {
   return fallback;
 }
 
-function resolveDatapointWorkspace(dataPointAttributes, resourceAttributes = {}) {
+// Identity of one exported data point for diagnostics. A redelivered
+// cumulative point repeats its timestamps, so it is diagnosed once; a point
+// without a timestamp cannot be told apart from a genuine repeat.
+function datapointDiagnosticIdentity(kind, metricName, dataPoint, resourceAttributes) {
+  if (!dataPoint?.timeUnixNano) return null;
+  return otelRecordIdentity("datapoint", [kind, metricName, String(dataPoint.startTimeUnixNano ?? ""), String(dataPoint.timeUnixNano), dataPoint.attributes ?? [], resourceAttributes ?? {}]);
+}
+
+function resolveDatapointWorkspace(dataPointAttributes, resourceAttributes = {}, diagnosticIdentity = null) {
+  const record = firstOtelRecordObservation(otelTelemetry.recordIdentities.datapoints, diagnosticIdentity);
   const dp = extractWorkspaceIdWithAmbiguity(dataPointAttributes);
   const resource = extractWorkspaceIdWithAmbiguity(resourceAttributes);
   const dpId = dp.id ? safeWorkspaceId(dp.id) : null;
   const resourceId = resource.id ? safeWorkspaceId(resource.id) : null;
   if (dp.ambiguous || resource.ambiguous || (dpId && resourceId && dpId !== resourceId)) {
-    attributionDiagnostics.total += 1;
-    attributionDiagnostics.unattributed += 1;
-    attributionDiagnostics.byReason.ambiguous_resource += 1;
+    if (record) {
+      attributionDiagnostics.total += 1;
+      attributionDiagnostics.unattributed += 1;
+      attributionDiagnostics.byReason.ambiguous_resource += 1;
+    }
     return { status: "unattributed", workspaceKey: null, workspaceId: null, reason: "ambiguous_resource", source: dp.id ? "datapoint" : "resource" };
   }
 
   const workspaceId = dpId ?? resourceId;
   const source = dpId ? "datapoint" : resourceId ? "resource" : null;
   if (!workspaceId) {
-    attributionDiagnostics.total += 1;
-    attributionDiagnostics.unattributed += 1;
-    attributionDiagnostics.byReason.missing_workspace += 1;
+    if (record) {
+      attributionDiagnostics.total += 1;
+      attributionDiagnostics.unattributed += 1;
+      attributionDiagnostics.byReason.missing_workspace += 1;
+    }
     return { status: "unattributed", workspaceKey: null, workspaceId: null, reason: "missing_workspace", source: null };
   }
 
-  attributionDiagnostics.total += 1;
+  if (record) attributionDiagnostics.total += 1;
   const workspaceKey = workspaceIdConflicts.has(workspaceId) ? null : workspaceIdRegistry.get(workspaceId);
   if (workspaceKey) {
-    attributionDiagnostics.attributed += 1;
-    attributionDiagnostics.bySource[source] += 1;
+    if (record) {
+      attributionDiagnostics.attributed += 1;
+      attributionDiagnostics.bySource[source] += 1;
+    }
     return { status: "attributed", workspaceKey, workspaceId, source };
   }
 
-  attributionDiagnostics.unattributed += 1;
-  attributionDiagnostics.byReason.unknown_workspace_id += 1;
+  if (record) {
+    attributionDiagnostics.unattributed += 1;
+    attributionDiagnostics.byReason.unknown_workspace_id += 1;
+  }
   attributionDiagnostics.unknownWorkspaceIds.delete(workspaceId);
   attributionDiagnostics.unknownWorkspaceIds.add(workspaceId);
   while (attributionDiagnostics.unknownWorkspaceIds.size > MAX_UNKNOWN_WORKSPACE_IDS) {
@@ -1552,7 +1705,7 @@ function skillActivationStatus(status) {
 }
 
 function noteSkillInjected(metricName, attributes, dataPoint, temporality, dpAttributes = null, resourceAttributes = {}) {
-  const wsResolution = resolveDatapointWorkspace(dpAttributes ?? attributes, resourceAttributes);
+  const wsResolution = resolveDatapointWorkspace(dpAttributes ?? attributes, resourceAttributes, datapointDiagnosticIdentity("skill", metricName, dataPoint, resourceAttributes));
   const seriesAttributes = { ...attributes, workspace_id: wsResolution.workspaceId || "" };
   const delta = otelSeriesDelta(otelSeriesKey(metricName, seriesAttributes, dataPoint.startTimeUnixNano), dataPoint.timeUnixNano, otelSumDataPointValue(dataPoint), temporality);
   if (delta === 0) return;
@@ -1714,7 +1867,7 @@ function toolSeriesIdentity(attributes, workspaceId = "") {
 }
 
 function noteToolCounter(metricName, attributes, dataPoint, temporality, resourceAttributes = {}) {
-  const wsResolution = resolveDatapointWorkspace(attributes, resourceAttributes);
+  const wsResolution = resolveDatapointWorkspace(attributes, resourceAttributes, datapointDiagnosticIdentity("tool-counter", metricName, dataPoint, resourceAttributes));
   const identity = toolSeriesIdentity(attributes, wsResolution.workspaceId);
   const delta = otelSeriesDelta(otelSeriesKey(metricName, identity, dataPoint.startTimeUnixNano), dataPoint.timeUnixNano, otelSumDataPointValue(dataPoint), temporality);
   if (delta === 0) return;
@@ -1735,7 +1888,7 @@ function noteToolCounter(metricName, attributes, dataPoint, temporality, resourc
 }
 
 function noteToolDuration(metricName, attributes, dataPoint, temporality, resourceAttributes = {}) {
-  const wsResolution = resolveDatapointWorkspace(attributes, resourceAttributes);
+  const wsResolution = resolveDatapointWorkspace(attributes, resourceAttributes, datapointDiagnosticIdentity("tool-duration", metricName, dataPoint, resourceAttributes));
   const identity = toolSeriesIdentity(attributes, wsResolution.workspaceId);
   const count = otelSeriesDelta(otelSeriesKey(`${metricName}#count`, identity, dataPoint.startTimeUnixNano), dataPoint.timeUnixNano, numberAttribute({ count: dataPoint.count }, "count"), temporality);
   const sum = otelSeriesDelta(otelSeriesKey(`${metricName}#sum`, identity, dataPoint.startTimeUnixNano), dataPoint.timeUnixNano, numberAttribute({ sum: dataPoint.sum }, "sum"), temporality);
@@ -1788,7 +1941,7 @@ function toolResultKey(attributes) {
 function noteToolResultCounter(metricName, resourceAttributes, dataPoints, temporality) {
   for (const dataPoint of dataPoints ?? []) {
     const attributes = otelAttributes(dataPoint.attributes);
-    const wsResolution = resolveDatapointWorkspace(attributes, resourceAttributes);
+    const wsResolution = resolveDatapointWorkspace(attributes, resourceAttributes, datapointDiagnosticIdentity("tool-result-counter", metricName, dataPoint, resourceAttributes));
     if (wsResolution.status === "attributed") {
       workspaceBucket(usageTelemetry.byWorkspace, wsResolution.workspaceKey).toolsCapable = true;
     }
@@ -1881,7 +2034,7 @@ function noteToolResultCounter(metricName, resourceAttributes, dataPoints, tempo
 function noteToolResultDuration(metricName, resourceAttributes, dataPoints, temporality) {
   for (const dataPoint of dataPoints ?? []) {
     const attributes = otelAttributes(dataPoint.attributes);
-    const wsResolution = resolveDatapointWorkspace(attributes, resourceAttributes);
+    const wsResolution = resolveDatapointWorkspace(attributes, resourceAttributes, datapointDiagnosticIdentity("tool-result-duration", metricName, dataPoint, resourceAttributes));
     const identity = toolSeriesIdentity(attributes, wsResolution.workspaceId);
     const count = otelSeriesDelta(otelSeriesKey(`${metricName}#count`, identity, dataPoint.startTimeUnixNano), dataPoint.timeUnixNano, numberAttribute({ count: dataPoint.count }, "count"), temporality);
     const sum = otelSeriesDelta(otelSeriesKey(`${metricName}#sum`, identity, dataPoint.startTimeUnixNano), dataPoint.timeUnixNano, numberAttribute({ sum: dataPoint.sum }, "sum"), temporality);
@@ -2244,6 +2397,10 @@ function resetOtelTelemetry() {
   otelTelemetry.receiver = { logs: 0, traces: 0, metrics: 0, invalid: 0, lastReceivedAt: null };
   otelTelemetry.sessions.clear();
   otelTelemetry.mcpServers.clear();
+  otelTelemetry.recordIdentities.logs.clear();
+  otelTelemetry.recordIdentities.spans.clear();
+  otelTelemetry.recordIdentities.datapoints.clear();
+  pendingMcpModelAttribution.clear();
   otelTelemetry.dimensions = { mcp: emptyContextDimensions(), tools: emptyContextDimensions(), hooks: emptyContextDimensions(), skills: emptyContextDimensions(), bridge: emptyContextDimensions() };
   otelTelemetry.turns = { prompts: 0, completed: 0, promptLength: 0, ttftMs: 0, ttftCount: 0 };
   otelTelemetry.tokens = { input: 0, output: 0, cached: 0, reasoning: 0, tool: 0 };
@@ -2309,6 +2466,7 @@ function formatMcpDimensionBuckets(dimensions, now) {
 }
 
 function codexTelemetryStatus(now = Date.now()) {
+  const mcpModelView = mcpModelDimensionsView();
   const mcpServers = [...otelTelemetry.mcpServers.values()].map((server) => {
     const lastSeenMs = server.lastSeenAt ? Date.parse(server.lastSeenAt) : NaN;
     const fresh = Number.isFinite(lastSeenMs) && now - lastSeenMs <= OTEL_HEALTH_TTL_MS;
@@ -2318,7 +2476,7 @@ function codexTelemetryStatus(now = Date.now()) {
       averageDurationMs: server.durationCount ? Math.round(server.durationMs / server.durationCount) : 0,
       byRole: formatMcpDimensionBuckets(server.byRole, now),
       byWorkspace: formatMcpDimensionBuckets(server.byWorkspace, now),
-      byModel: formatMcpDimensionBuckets(server.byModel, now),
+      byModel: formatMcpDimensionBuckets(mcpModelView.serverByModel.get(server.name) ?? server.byModel, now),
       byAgent: formatMcpDimensionBuckets(server.byAgent, now),
     };
   }).sort((a, b) => a.name.localeCompare(b.name));
@@ -2375,7 +2533,7 @@ function codexTelemetryStatus(now = Date.now()) {
     tokens: { ...otelTelemetry.tokens, total: Object.values(otelTelemetry.tokens).reduce((sum, value) => sum + value, 0) },
     mcpSummary,
     mcpServers,
-    dimensions: formatContextDimensions(otelTelemetry.dimensions),
+    dimensions: mcpDimensionsWithModelView(mcpModelView),
     metrics: {
       observed: [...otelTelemetry.metricInventory.values()].sort((a, b) => a.name.localeCompare(b.name)),
     },
@@ -3981,19 +4139,28 @@ function usagePersistenceSnapshot() {
 
 const OTEL_PERSISTENCE_SCHEMA_VERSION = 6;
 
+// Deferred MCP model observations persist as `unattributed`: after a restart
+// they can no longer be attributed, and they must not be lost or counted twice.
+function mcpDimensionsWithModelView(mcpModelView) {
+  const dimensions = formatContextDimensions(otelTelemetry.dimensions);
+  dimensions.mcp.byModel = mcpModelView.dimensionByModel;
+  return dimensions;
+}
+
 function otelPersistenceSnapshot() {
   const telemetry = codexTelemetryStatus();
+  const mcpModelView = mcpModelDimensionsView();
   return {
     schemaVersion: OTEL_PERSISTENCE_SCHEMA_VERSION,
     receiver: telemetry.receiver,
     turns: telemetry.turns,
     tokens: telemetry.tokens,
-    dimensions: formatContextDimensions(otelTelemetry.dimensions),
+    dimensions: mcpDimensionsWithModelView(mcpModelView),
     mcpServers: [...otelTelemetry.mcpServers.values()].map((server) => ({
       ...server,
       byRole: { ...server.byRole },
       byWorkspace: { ...server.byWorkspace },
-      byModel: { ...server.byModel },
+      byModel: { ...(mcpModelView.serverByModel.get(server.name) ?? server.byModel) },
       byAgent: { ...server.byAgent },
     })),
     skills: telemetry.skills,
