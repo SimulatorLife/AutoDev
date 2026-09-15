@@ -5,7 +5,7 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import { AGENT_ROLE_HEADER, FORWARDED_REQUEST_HEADERS, SESSION_ID_HEADER, SESSION_SCOPE_HEADER, downstreamHeaders, routeForModel, upstreamPayload } from "../scripts/codex-model-router.mjs";
-import { coerceResponseBody, freeformInputFromArguments } from "../scripts/codex-minimax-responses-proxy.mjs";
+import { coerceResponseBody, freeformInputFromArguments, unrecognisedFreeformFeedback } from "../scripts/codex-minimax-responses-proxy.mjs";
 
 const read = (path) => readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
 const PROXY = new URL("../scripts/codex-minimax-responses-proxy.mjs", import.meta.url).pathname;
@@ -446,4 +446,83 @@ test("normalising item ids upstream leaves everything MiniMax relies on intact",
     child.kill("SIGTERM");
     await new Promise((resolve) => upstream.close(resolve));
   }
+});
+
+// --- Unrecognised freeform calls ---------------------------------------------
+//
+// An `exec` call with no recognisable source cannot be translated without
+// guessing. It becomes a script that fails with an explanation instead of a
+// function_call Codex aborts silently -- historically the model then repeated
+// the identical broken call. Only argument keys are named, never values.
+
+test("an unrecognised exec call becomes a failing script that tells the model what exec expects", () => {
+  for (const [ argumentsText, shape ] of [
+    [ "{}", "an empty JSON object" ],
+    [ '{"text":"do-not-echo-this-value"}', 'a JSON object with keys "text"' ],
+    [ "[1,2,3]", "a JSON array" ],
+    [ "", "no arguments" ],
+  ]) {
+    const script = unrecognisedFreeformFeedback("exec", argumentsText);
+    assert.match(script, /^throw new Error\(/);
+    // The message is embedded as a JSON string literal; decode it to read it.
+    const message = JSON.parse(script.slice("throw new Error(".length, script.lastIndexOf(")")));
+    assert.ok(message.includes(shape), `${argumentsText}: ${message}`);
+    assert.ok(message.includes("raw JavaScript source"));
+    assert.ok(message.includes("tools.exec_command({ cmd"));
+    assert.equal(script.includes("do-not-echo-this-value"), false, "argument values must never be echoed");
+    assert.doesNotThrow(() => new Function(`return (async () => {\n${script}\n});`));
+  }
+});
+
+test("a recognised exec call is still translated, not replaced with feedback", () => {
+  const body = { output: [ { type: "function_call", id: "fc_1", call_id: "call_1", name: "exec", arguments: '{"cmd":"ls"}' } ] };
+  const [ item ] = coerceResponseBody(body, new Set([ "exec" ])).output;
+  assert.equal(item.type, "custom_tool_call");
+  assert.match(item.input, /await tools\.exec_command\(/);
+});
+
+test("a non-streaming unrecognised exec call is coerced into the feedback script", () => {
+  const body = { output: [ { type: "function_call", id: "fc_1", call_id: "call_1", name: "exec", namespace: "functions", arguments: "{}" } ] };
+  const [ item ] = coerceResponseBody(body, new Set([ "exec" ])).output;
+  assert.equal(item.type, "custom_tool_call");
+  assert.equal(item.call_id, "call_1");
+  assert.equal(item.arguments, undefined);
+  assert.equal(item.input, unrecognisedFreeformFeedback("exec", "{}"));
+});
+
+test("a streamed unrecognised exec call reaches Codex as a custom tool call carrying the feedback script", async () => {
+  const item = { id: "06f8b0803f8f804f65cab7da91194351_fc_0", type: "function_call", status: "completed", name: "exec", call_id: "call_stream_1", arguments: "{}" };
+  const events = [
+    { type: "response.output_item.added", output_index: 0, item: { ...item, status: "in_progress", arguments: "" } },
+    { type: "response.function_call_arguments.delta", output_index: 0, item_id: item.id, delta: "{}" },
+    { type: "response.function_call_arguments.done", output_index: 0, item_id: item.id, arguments: "{}" },
+    { type: "response.output_item.done", output_index: 0, item },
+    { type: "response.completed", response: { id: "resp_1", status: "completed", output: [ item ] } },
+  ];
+  let streamed = "";
+  await withProxy((request, response) => {
+    request.resume();
+    request.on("end", () => {
+      response.writeHead(200, { "content-type": "text/event-stream" });
+      response.end(events.map((event) => `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`).join(""));
+    });
+  }, async (proxyPort) => {
+    const response = await fetch(`http://127.0.0.1:${proxyPort}/v1/responses`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ model: "MiniMax-M3", stream: true, input: "go", tools: [ { type: "custom", name: "exec" } ] }),
+    });
+    streamed = await response.text();
+  });
+  const received = streamed.split("\n").filter((line) => line.startsWith("data: ")).map((line) => JSON.parse(line.slice(6)));
+  const types = received.map((event) => event.type);
+  assert.equal(types.includes("response.function_call_arguments.delta"), false);
+  assert.ok(types.includes("response.custom_tool_call_input.done"));
+  const feedback = unrecognisedFreeformFeedback("exec", "{}");
+  assert.equal(received.find((event) => event.type === "response.custom_tool_call_input.done").input, feedback);
+  assert.equal(received.find((event) => event.type === "response.output_item.done").item.type, "custom_tool_call");
+  assert.equal(received.find((event) => event.type === "response.completed").response.output[ 0 ].input, feedback);
+  // Every `event:` header matches the rewritten payload it precedes.
+  const headers = streamed.split("\n").filter((line) => line.startsWith("event: ")).map((line) => line.slice(7));
+  assert.deepEqual(headers, types);
 });

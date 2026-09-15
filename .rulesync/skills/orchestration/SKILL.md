@@ -1,6 +1,7 @@
 ---
 name: orchestration
 description: Coordinate independent work across the configured agents and providers. Use when planning parallel implementation, distributing load, choosing a reviewer, or cross-validating a change.
+targets: ["copilot"]
 ---
 
 # Agent orchestration

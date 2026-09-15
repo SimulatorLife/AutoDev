@@ -95,8 +95,8 @@ function collectFreeformToolNames(payload, names = new Set()) {
 
 // JavaScript equivalent to the JSON arguments MiniMax produced, or null when
 // the intent is not clear enough to rewrite. Guessing wrong would swap one
-// broken call for a different broken call, so anything unrecognised is left
-// alone and fails the way it already did, visibly.
+// broken call for a different broken call, so an unrecognised shape is never
+// translated; see unrecognisedFreeformFeedback for what the model is told.
 function freeformInputFromArguments(argumentsText) {
   const raw = typeof argumentsText === "string" ? argumentsText.trim() : "";
   if (!raw) return null;
@@ -135,6 +135,37 @@ function freeformInputFromArguments(argumentsText) {
   return null;
 }
 
+// A freeform call whose arguments carry no recognisable source -- `{}`, or keys
+// this adapter does not know -- cannot be translated without guessing. Left as
+// a function_call, Codex rejects it as an incompatible payload and the model,
+// told nothing, repeats the same call: 121 of 145 such historical MiniMax calls
+// were followed by another identical broken one. The call instead becomes a
+// script that fails with an explanation naming only the argument keys (never
+// their values), so the model learns what the tool expects and can correct it.
+function unrecognisedFreeformFeedback(toolName, argumentsText) {
+  const raw = typeof argumentsText === "string" ? argumentsText.trim() : "";
+  let shape = "no arguments";
+  if (raw) {
+    try {
+      const parsed = JSON.parse(raw);
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+        const keys = Object.keys(parsed);
+        shape = keys.length ? `a JSON object with keys ${keys.map((key) => JSON.stringify(key)).join(", ")}` : "an empty JSON object";
+      } else {
+        shape = `a JSON ${Array.isArray(parsed) ? "array" : parsed === null ? "null" : typeof parsed}`;
+      }
+    } catch {
+      shape = "arguments that are not JSON";
+    }
+  }
+  const message = `${toolName} takes raw JavaScript source, not JSON arguments, and received ${shape}. Call ${toolName} again with a script, for example: const result = await tools.exec_command({ cmd: "ls" }); text(result);`;
+  return `throw new Error(${JSON.stringify(message)});\n`;
+}
+
+function freeformSourceFor(toolName, argumentsText) {
+  return freeformInputFromArguments(argumentsText) ?? unrecognisedFreeformFeedback(toolName, argumentsText);
+}
+
 /**
  * Per-response coercion of freeform tool calls.
  *
@@ -154,7 +185,7 @@ function createFreeformCoercion(freeformNames) {
     if (!event || typeof event !== "object") return event;
 
     if (event.type === "response.output_item.added" && isFreeform(event.item)) {
-      coerced.set(event.item.id, { source: null });
+      coerced.set(event.item.id, { name: event.item.name, source: null });
       const { arguments: _arguments, namespace: _namespace, ...rest } = event.item;
       return { ...event, item: { ...rest, type: "custom_tool_call", input: "" } };
     }
@@ -164,14 +195,9 @@ function createFreeformCoercion(freeformNames) {
     }
 
     if (event.type === "response.function_call_arguments.done" && coerced.has(event.item_id)) {
-      const source = freeformInputFromArguments(event.arguments);
-      if (source === null) {
-        // Unrecognised shape: undo the coercion so the item goes out as the
-        // function_call it was, rather than a custom tool call with no input.
-        coerced.delete(event.item_id);
-        return event;
-      }
-      coerced.set(event.item_id, { source });
+      const entry = coerced.get(event.item_id);
+      const source = freeformSourceFor(entry.name, event.arguments);
+      coerced.set(event.item_id, { ...entry, source });
       return [
         { type: "response.custom_tool_call_input.delta", item_id: event.item_id, output_index: event.output_index, delta: source },
         { type: "response.custom_tool_call_input.done", item_id: event.item_id, output_index: event.output_index, input: source },
@@ -179,11 +205,11 @@ function createFreeformCoercion(freeformNames) {
     }
 
     if (event.type === "response.output_item.done" && coerced.has(event.item?.id)) {
-      const { source } = coerced.get(event.item.id);
+      const entry = coerced.get(event.item.id);
+      const source = entry.source ?? freeformSourceFor(event.item.name, event.item.arguments);
       // Keep the entry: the terminal snapshot below still has to find its
       // source, and `response.completed` arrives after this.
-      coerced.set(event.item.id, { source, closed: true });
-      if (source === null) return event;
+      coerced.set(event.item.id, { ...entry, source, closed: true });
       const { arguments: _arguments, namespace: _namespace, ...rest } = event.item;
       return { ...event, item: { ...rest, type: "custom_tool_call", input: source } };
     }
@@ -197,8 +223,7 @@ function createFreeformCoercion(freeformNames) {
       let changed = false;
       const output = event.response.output.map((item) => {
         if (!isFreeform(item)) return item;
-        const source = coerced.get(item.id)?.source ?? freeformInputFromArguments(item.arguments);
-        if (source === null || source === undefined) return item;
+        const source = coerced.get(item.id)?.source ?? freeformSourceFor(item.name, item.arguments);
         changed = true;
         const { arguments: _arguments, namespace: _namespace, ...rest } = item;
         return { ...rest, type: "custom_tool_call", input: source };
@@ -222,8 +247,7 @@ function coerceResponseBody(body, freeformNames) {
   let changed = false;
   const coercedOutput = output.map((item) => {
     if (item?.type !== "function_call" || typeof item.name !== "string" || !freeformNames.has(item.name) || isWebResearchTool(item)) return item;
-    const source = freeformInputFromArguments(item.arguments);
-    if (source === null) return item;
+    const source = freeformSourceFor(item.name, item.arguments);
     changed = true;
     const { arguments: _arguments, namespace: _namespace, ...rest } = item;
     return { ...rest, type: "custom_tool_call", input: source };
@@ -636,4 +660,5 @@ export {
   reportRequestedToolCall,
   rewriteOutboundPayload,
   toolOutputOutcome,
+  unrecognisedFreeformFeedback,
 };

@@ -69,6 +69,19 @@ describe("MiniMax boundary contract", () => {
     });
   });
 
+  describe("freeform_unrecognised_feedback", () => {
+    const entry = contract.cases.freeform_unrecognised_feedback;
+
+    test("an unrecognisable freeform call becomes an explanatory failing script that never echoes argument values", () => {
+      const [ rewritten ] = coerceResponseBody(entry.upstreamResponse, new Set(["exec"])).output;
+      assert.equal(rewritten.type, entry.expected.coercedType);
+      assert.ok(rewritten.input.startsWith(entry.expected.inputSource.startsWith));
+      const message = JSON.parse(rewritten.input.slice(entry.expected.inputSource.startsWith.length, rewritten.input.lastIndexOf(")")));
+      assert.ok(message.includes(entry.expected.inputSource.mentions));
+      assert.equal(rewritten.input.includes(entry.expected.neverContains), false);
+    });
+  });
+
   describe("web_search_preserved", () => {
     const entry = contract.cases.web_search_preserved;
 

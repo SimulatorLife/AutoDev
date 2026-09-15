@@ -1,6 +1,7 @@
 ---
 name: resolve-merge-conflicts
 description: Resolve in-progress Git merge, rebase, cherry-pick, or stash conflicts by extracting compact conflict context, reconstructing both sides' intent, preserving the intended target behavior, minimizing unrelated churn, and validating the completed integration
+targets: []
 ---
 
 # Resolve Merge Conflicts

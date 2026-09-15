@@ -45,5 +45,4 @@ jobs:
       pr_number: ${{ inputs.pr_number || github.event.issue.number }}
       target_repository: ${{ inputs.target_repository || github.repository }}
       additional_context: ${{ github.event.comment.body }}
-      openai_base_url: 'https://api.minimax.io/v1'
       agent: mini-max-codex

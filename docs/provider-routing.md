@@ -228,10 +228,7 @@ delegation paths:
   `custom_tool_call` whose script performs the same work, keeping the `event:`
   header and the terminal `response.completed` snapshot in step with the
   rewritten payload. Freeform tool names are learned from the request's own
-  `"type": "custom"` declarations rather than hard-coded, and an argument shape
-  the proxy does not recognise is passed through untouched rather than guessed
-  at -- a wrong guess would replace a visible failure with a script that runs
-  and does the wrong thing.
+  `"type": "custom"` declarations rather than hard-coded, and an argument shape the adapter does not recognise is never guessed at -- a wrong guess would replace a visible failure with a script that runs and does the wrong thing. Such a call instead becomes a script that throws an explanation naming only the argument keys, so the model learns what `exec` expects instead of repeating the same broken call.
 
 ### Item ids are corrected at the router, not in the adapters
 
@@ -1323,9 +1320,7 @@ autonomous turn. Fix the deny list, not the setting sources.
 
 MiniMax is the exception, and it needs no role prompt: its adapter
 (`scripts/codex-minimax-responses-proxy.mjs`) is a pass-through to
-`https://api.minimax.io` rather than a local CLI gateway. It changes only the
-machine boundary (allowlisted headers, no `client_metadata`) and freeform `exec`
-calls. It forwards the
+`https://api.minimax.io` rather than a local CLI gateway. It changes only the machine boundary (allowlisted headers, no `client_metadata`) and freeform `exec` calls. CI's `mini-max-codex` workflow starts the same adapter on loopback with the tracked `minimax` profile and catalog, so CI never sends Codex's turn metadata to MiniMax either; CI git authentication uses an env-backed credential helper, never a token in a remote URL. It forwards the
 parent's own Responses payload, so the root turn arrives with the real Codex
 context and the delegation policy the `UserPromptSubmit` hook already injected;
 there is no bridge-authored prompt that could override it. That proxy therefore

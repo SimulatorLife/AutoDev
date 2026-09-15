@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { readFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
@@ -362,6 +363,72 @@ test('agent invocation interface omits unused compatibility inputs', async () =>
   const source = await readWorkflow('agent-invoke.yml');
   assert.doesNotMatch(source, /\n      target_sha:/);
   assert.doesNotMatch(source, /\n      working_branch:/);
+});
+
+test('MiniMax Codex CI runs through the tracked boundary adapter, never straight to MiniMax', async () => {
+  const invoke = await readWorkflow('minimax-codex-invoke.yml');
+  assert.match(invoke, /agent: mini-max-codex/);
+  assert.doesNotMatch(invoke, /openai_base_url/);
+  assert.doesNotMatch(invoke, /api\.minimax\.io/);
+  const agentInvoke = await readWorkflow('agent-invoke.yml');
+  assert.match(agentInvoke, /AUTODEV_ROOT: \$\{\{ github\.workspace \}\}\/\.autodev/);
+  const runner = await readFile(path.join(root, 'scripts', 'codex', 'run-ci-provider.sh'), 'utf8');
+  // Assert against commands, not prose: the comments explain why MiniMax is never called directly.
+  const branch = runner.split('  mini-max-codex)', 2)[1].split(';;', 1)[0].split('\n').filter((line) => !line.trimStart().startsWith('#')).join('\n');
+  assert.match(branch, /export CODEX_HOME="\$runner_temp\/codex-home"/);
+  assert.match(branch, /scripts\/codex\/profiles\/minimax\.config\.toml" "\$CODEX_HOME\/minimax\.config\.toml"/);
+  assert.match(branch, /scripts\/codex\/catalogs\/minimax-model-catalog\.json" "\$CODEX_HOME\/minimax-model-catalog\.json"/);
+  assert.match(branch, /node "\$AUTODEV_ROOT\/scripts\/codex-minimax-responses-proxy\.mjs"/);
+  assert.match(branch, /MINIMAX_PROXY_HOST=127\.0\.0\.1 MINIMAX_PROXY_PORT=18765/);
+  assert.match(branch, /\/health/);
+  assert.match(branch, /export MINIMAX_API_KEY=/);
+  assert.match(branch, /exec --profile=minimax --json -/);
+  assert.doesNotMatch(branch, /api\.minimax\.io/);
+  const profile = await readFile(path.join(root, 'scripts', 'codex', 'profiles', 'minimax.config.toml'), 'utf8');
+  assert.match(profile, /base_url = "http:\/\/127\.0\.0\.1:18765\/v1"/);
+  assert.match(profile, /model_catalog_json = "\.\/minimax-model-catalog\.json"/);
+});
+
+test('CI never stores a GitHub credential in a git remote URL', async () => {
+  for (const name of ['agent-invoke.yml', '_agent-open-pr-and-ping.yml', 'target-validation.yml']) {
+    const source = await readWorkflow(name);
+    assert.doesNotMatch(source, /x-access-token:\$\{/, name);
+    assert.doesNotMatch(source, /https:\/\/[^\s"'/]*:[^\s"'@]*@github\.com/, name);
+  }
+  const invoke = await readWorkflow('agent-invoke.yml');
+  assert.doesNotMatch(invoke, /redact_git_remote_credentials/);
+  assert.match(invoke, /git remote set-url origin "https:\/\/github\.com\/\$\{\{ inputs\.target_repository \}\}\.git"/);
+  assert.match(invoke, /git config --local --unset-all credential\.https:\/\/github\.com\.helper \|\| true/);
+});
+
+test('the CI git credential helper answers from the environment without persisting the token', async () => {
+  const invoke = await readWorkflow('agent-invoke.yml');
+  assert.match(invoke, /git config --local --add credential\.https:\/\/github\.com\.helper ''\n/, 'the helper list must be reset first');
+  const helper = invoke.match(/--add credential\.https:\/\/github\.com\.helper '(![^']+)'/)[1];
+  const repo = await mkdtemp(path.join(tmpdir(), 'autodev-credential-helper-'));
+  // Isolated from this machine's global/system git config and credential
+  // helpers (for example the macOS keychain), so only the workflow's helper can
+  // answer and no real credential is ever read.
+  const isolated = { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1', GIT_TERMINAL_PROMPT: '0', GH_TOKEN: '' };
+  try {
+    const git = (args, options = {}) => spawnSync('git', args, { cwd: repo, encoding: 'utf8', env: isolated, ...options });
+    assert.equal(git(['init', '-q']).status, 0);
+    assert.equal(git(['remote', 'add', 'origin', 'https://github.com/SimulatorLife/AutoDev.git']).status, 0);
+    assert.equal(git(['config', '--local', '--add', 'credential.https://github.com.helper', '']).status, 0);
+    assert.equal(git(['config', '--local', '--add', 'credential.https://github.com.helper', helper]).status, 0);
+    const token = 'ghp_example_token_never_persisted';
+    const fill = git(['credential', 'fill'], { input: 'protocol=https\nhost=github.com\npath=SimulatorLife/AutoDev.git\n\n', env: { ...isolated, GH_TOKEN: token } });
+    assert.equal(fill.status, 0, fill.stderr);
+    assert.match(fill.stdout, /^username=x-access-token$/m);
+    assert.match(fill.stdout, new RegExp(`^password=${token}$`, 'm'));
+    const config = await readFile(path.join(repo, '.git', 'config'), 'utf8');
+    assert.equal(config.includes(token), false);
+    assert.equal(git(['remote', 'get-url', 'origin']).stdout.trim(), 'https://github.com/SimulatorLife/AutoDev.git');
+    const missing = git(['credential', 'fill'], { input: 'protocol=https\nhost=github.com\n\n' });
+    assert.notEqual(missing.status, 0, 'a missing token must fail loudly rather than prompt or push anonymously');
+  } finally {
+    await rm(repo, { recursive: true, force: true });
+  }
 });
 
 test('the canonical CI provider entrypoint is valid bash', () => {

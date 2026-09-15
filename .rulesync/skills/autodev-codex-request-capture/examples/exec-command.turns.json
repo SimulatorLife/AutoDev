@@ -1,0 +1,22 @@
+{
+  "description": "Turn 1 reproduces MiniMax-M3's observed code-mode answer: a reasoning item and a plain function_call to the nested exec_command tool. Turn 2 finishes with a message.",
+  "turns": [
+    [
+      { "type": "response.created", "sequence_number": 0, "response": { "id": "resp_probe_1", "object": "response", "status": "in_progress", "model": "MiniMax-M3", "output": [] } },
+      { "type": "response.output_item.added", "sequence_number": 1, "output_index": 0, "item": { "id": "06f8b0803f8f804f65cab7da91194351_rs", "type": "reasoning", "status": "in_progress", "summary": [], "content": [] } },
+      { "type": "response.output_item.done", "sequence_number": 2, "output_index": 0, "item": { "id": "06f8b0803f8f804f65cab7da91194351_rs", "type": "reasoning", "status": "completed", "summary": [], "content": [ { "type": "reasoning_text", "text": "Run the command." } ] } },
+      { "type": "response.output_item.added", "sequence_number": 3, "output_index": 1, "item": { "id": "06f8b0803f8f804f65cab7da91194351_fc_0", "type": "function_call", "status": "in_progress", "name": "exec_command", "call_id": "call_probe_1", "arguments": "" } },
+      { "type": "response.function_call_arguments.delta", "sequence_number": 4, "output_index": 1, "item_id": "06f8b0803f8f804f65cab7da91194351_fc_0", "delta": "{\"cmd\":\"echo autodev-probe\"}" },
+      { "type": "response.function_call_arguments.done", "sequence_number": 5, "output_index": 1, "item_id": "06f8b0803f8f804f65cab7da91194351_fc_0", "arguments": "{\"cmd\":\"echo autodev-probe\"}" },
+      { "type": "response.output_item.done", "sequence_number": 6, "output_index": 1, "item": { "id": "06f8b0803f8f804f65cab7da91194351_fc_0", "type": "function_call", "status": "completed", "name": "exec_command", "call_id": "call_probe_1", "arguments": "{\"cmd\":\"echo autodev-probe\"}" } },
+      { "type": "response.completed", "sequence_number": 7, "response": { "id": "resp_probe_1", "object": "response", "status": "completed", "model": "MiniMax-M3", "output": [ { "id": "06f8b0803f8f804f65cab7da91194351_rs", "type": "reasoning", "status": "completed", "summary": [], "content": [ { "type": "reasoning_text", "text": "Run the command." } ] }, { "id": "06f8b0803f8f804f65cab7da91194351_fc_0", "type": "function_call", "status": "completed", "name": "exec_command", "call_id": "call_probe_1", "arguments": "{\"cmd\":\"echo autodev-probe\"}" } ], "usage": { "input_tokens": 10, "output_tokens": 5, "total_tokens": 15 } } }
+    ],
+    [
+      { "type": "response.created", "sequence_number": 0, "response": { "id": "resp_probe_2", "object": "response", "status": "in_progress", "model": "MiniMax-M3", "output": [] } },
+      { "type": "response.output_item.added", "sequence_number": 1, "output_index": 0, "item": { "id": "06f8b0803f8f804f65cab7da91194352_msg", "type": "message", "role": "assistant", "status": "in_progress", "content": [] } },
+      { "type": "response.output_text.delta", "sequence_number": 2, "output_index": 0, "item_id": "06f8b0803f8f804f65cab7da91194352_msg", "content_index": 0, "delta": "done" },
+      { "type": "response.output_item.done", "sequence_number": 3, "output_index": 0, "item": { "id": "06f8b0803f8f804f65cab7da91194352_msg", "type": "message", "role": "assistant", "status": "completed", "content": [ { "type": "output_text", "text": "done", "annotations": [] } ] } },
+      { "type": "response.completed", "sequence_number": 4, "response": { "id": "resp_probe_2", "object": "response", "status": "completed", "model": "MiniMax-M3", "output": [ { "id": "06f8b0803f8f804f65cab7da91194352_msg", "type": "message", "role": "assistant", "status": "completed", "content": [ { "type": "output_text", "text": "done", "annotations": [] } ] } ], "usage": { "input_tokens": 10, "output_tokens": 1, "total_tokens": 11 } } }
+    ]
+  ]
+}

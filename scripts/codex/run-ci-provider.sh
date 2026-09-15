@@ -44,6 +44,40 @@ case "$provider" in
   mini-max-codex)
     : "${AUTODEV_CODEX_PACKAGE:?AUTODEV_CODEX_PACKAGE is required}"
     require_pinned_package AUTODEV_CODEX_PACKAGE "$AUTODEV_CODEX_PACKAGE"
+    : "${AUTODEV_ROOT:?AUTODEV_ROOT is required}"
+    # Codex never talks to api.minimax.io directly. It attaches turn metadata --
+    # the workspace path, git remote URLs, the commit hash -- to every provider
+    # request and has no setting to omit it, and MiniMax can answer the freeform
+    # `exec` tool with JSON arguments Codex aborts. The tracked MiniMax boundary
+    # adapter handles both, exactly as it does on a workstation, and Codex runs
+    # with the tracked MiniMax profile and model catalog.
+    export MINIMAX_API_KEY="${OPENAI_API_KEY:?OPENAI_API_KEY is required}"
+    unset OPENAI_API_KEY OPENAI_BASE_URL
+    export CODEX_HOME="$runner_temp/codex-home"
+    mkdir -p "$CODEX_HOME"
+    cp "$AUTODEV_ROOT/scripts/codex/profiles/minimax.config.toml" "$CODEX_HOME/minimax.config.toml"
+    cp "$AUTODEV_ROOT/scripts/codex/catalogs/minimax-model-catalog.json" "$CODEX_HOME/minimax-model-catalog.json"
+    # The profile's provider base_url is the adapter's fixed loopback port. Never
+    # adopt a process already answering there (a leftover from an earlier retry,
+    # or anything else): only the adapter this run starts may carry the traffic.
+    adapter_url="http://127.0.0.1:18765"
+    if curl --silent --fail --max-time 1 "$adapter_url/health" >/dev/null 2>&1; then
+      echo "Port 18765 is already serving; refusing to route MiniMax through an adapter this run did not start" >&2
+      exit 1
+    fi
+    MINIMAX_PROXY_HOST=127.0.0.1 MINIMAX_PROXY_PORT=18765 \
+      node "$AUTODEV_ROOT/scripts/codex-minimax-responses-proxy.mjs" >"$runner_temp/minimax-adapter.log" 2>&1 &
+    adapter_pid=$!
+    trap 'kill "$adapter_pid" 2>/dev/null || true' EXIT
+    for _ in $(seq 1 100); do
+      curl --silent --fail --max-time 1 "$adapter_url/health" >/dev/null 2>&1 && break
+      sleep 0.1
+    done
+    curl --silent --fail --max-time 1 "$adapter_url/health" >/dev/null 2>&1 || {
+      echo "MiniMax boundary adapter did not become ready" >&2
+      cat "$runner_temp/minimax-adapter.log" >&2
+      exit 1
+    }
     command=(pnpm --silent dlx "$AUTODEV_CODEX_PACKAGE" exec --profile=minimax --json -)
     ;;
   *)

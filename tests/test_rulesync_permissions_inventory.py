@@ -91,7 +91,7 @@ class RulesyncPermissionsInventoryTests(unittest.TestCase):
         config = json.loads(RULESYNC_CONFIG.read_text())
         self.assertNotIn("permissions", config["features"])
         workflow = RULESYNC_WORKFLOW.read_text()
-        self.assertNotIn("--features mcp,rules,skills,hooks,permissions", workflow)
+        self.assertNotIn("--features mcp,rules,hooks,permissions", workflow)
         self.assertNotIn("--features permissions", workflow)
         shadow_permissions = [
             path for path in SHADOW_ROOT.rglob("*")

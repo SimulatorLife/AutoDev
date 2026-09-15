@@ -87,7 +87,7 @@ class RulesyncHooksShadowTests(unittest.TestCase):
         workflow = WORKFLOW.read_text()
         match = re.search(r"--features\s+(\S+)", workflow)
         self.assertIsNotNone(match)
-        self.assertEqual(match.group(1), "mcp,rules,skills,hooks")
+        self.assertEqual(match.group(1), "mcp,rules,hooks")
 
     def test_generation_isolated_and_tracked_fixtures_match(self):
         before = PORTABLE_CONFIG.read_bytes()

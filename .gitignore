@@ -10,3 +10,10 @@ tmp/
 .playwright-mcp/
 # CocoIndex Code (ccc)
 /.cocoindex_code/
+# Rulesync-generated repository skill surfaces. `.rulesync/skills/` is the only
+# tracked skill source; the installer (and Copilot's setup steps) generate these.
+# The installer keeps the generated `/.agents/skills/` out of git through
+# `.git/info/exclude` instead, because Antigravity does not load skills from a
+# `.agents/skills/` that .gitignore lists.
+/.claude/skills/
+/.github/skills/

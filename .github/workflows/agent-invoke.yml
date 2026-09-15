@@ -271,15 +271,23 @@ jobs:
           chmod +x "$shim_dir/git"
           echo "PATH=$shim_dir:$PATH" >> "$GITHUB_ENV"
 
-      - name: Use PAT for pushes
+      - name: Authenticate git without a credential in the remote URL
         shell: bash
-        env:
-          GH_USER_TOKEN: ${{ secrets.GH_USER_TOKEN }}
         run: |
           set -euo pipefail
 
+          # Codex copies git remote URLs verbatim into the turn metadata it sends
+          # model providers (openai/codex#31588), and agents print remotes, so a
+          # credential must never live in a remote URL. Git asks this local helper
+          # at use time and it reads the PAT from the step environment (GH_TOKEN);
+          # neither .git/config nor any URL ever contains the token. The empty
+          # entry resets the helper list, so no helper configured elsewhere on the
+          # runner can answer for github.com instead.
           git config --local --unset-all http.https://github.com/.extraheader || true
-          git remote set-url origin "https://x-access-token:${GH_USER_TOKEN}@github.com/${{ inputs.target_repository }}.git"
+          git remote set-url origin "https://github.com/${{ inputs.target_repository }}.git"
+          git config --local --unset-all credential.https://github.com.helper || true
+          git config --local --add credential.https://github.com.helper ''
+          git config --local --add credential.https://github.com.helper '!f() { test "$1" = get || exit 0; echo username=x-access-token; echo "password=${GH_TOKEN:?GH_TOKEN is required for git authentication}"; }; f'
 
       - name: Detect target repository toolchain
         id: toolchain
@@ -498,6 +506,7 @@ jobs:
           MAX_AGENT_RETRIES: ${{ inputs.max_agent_retries }}
           WORKING_BRANCH: ${{ env.WORKING_BRANCH }}
           AUTODEV_CI_PROVIDER: ${{ inputs.agent }}
+          AUTODEV_ROOT: ${{ github.workspace }}/.autodev
         run: |
           set -euo pipefail
 
@@ -530,10 +539,6 @@ jobs:
 
           rm -f "$NO_CHANGE_SENTINEL"
           rm -f "$RETRY_COMMENT_SENTINEL"
-
-          redact_git_remote_credentials() {
-            sed -E 's#(https://)[^/@]+@#\1***@#g'
-          }
 
           is_stageable_untracked_path() {
             local candidate="$1"
@@ -650,7 +655,7 @@ jobs:
             echo "[agent] Attempt working directory before agent command: $(pwd)"
             echo "[agent] Attempt git root before agent command: $(git rev-parse --show-toplevel)"
             echo "[agent] Attempt git remotes before agent command:"
-            git remote -v | redact_git_remote_credentials
+            git remote -v
             echo "[agent] Attempt git branch before agent command: $(git branch --show-current)"
 
             set -x

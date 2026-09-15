@@ -1,6 +1,7 @@
 ---
 name: writing-agent-skills
 description: Design, write, revise, and validate reusable AI agent skills. Use when creating a new SKILL.md, improving an existing skill, deciding whether guidance belongs in a skill, or testing whether a skill triggers correctly and changes agent behavior as intended.
+targets: []
 ---
 
 # Writing Agent Skills

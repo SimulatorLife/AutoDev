@@ -289,7 +289,7 @@ specific agents, MCPs, and skills to coexist under distinct names.
 
 ### Rulesync shared-configuration shadow fixtures and refresh
 
-AutoDev tracks isolated MCP, canonical-skill, and hook shadow fixtures plus a frozen MCP ownership boundary for supported providers (`codexcli`, `claudecode`, `copilot`, `antigravity-cli`) under `tests/fixtures/rulesync-shadow/` to detect upstream drift without mutating live configuration. The shared instruction rules surface is now the first live Rulesync cutover: `.rulesync/rules/overview.md`, `AGENTS.md`, `CLAUDE.md`, and `.github/copilot-instructions.md` are byte-identical. Rule generation uses a temporary frontmatter wrapper around the canonical source because pinned Rulesync `16.30.2` requires frontmatter; no duplicate tracked instruction source is introduced. Skill fixtures cover only `ccc`, `lsp-mcp-server`, and `orchestration` (with portable references) from `.rulesync/skills/`. Hook shadows cover the six existing command hooks across SessionStart, SubagentStart, UserPromptSubmit, and PreToolUse. Rulesync currently emits only the supported PreToolUse hook for Antigravity and omits Codex-only fields such as prevent_idle_sleep. Live hooks and MCP configuration remain AutoDev-owned; the MCP boundary contract covers Rulesync projections without approving a live MCP cutover. Rulesync permissions translation remains deferred until AutoDev has a complete portable permission source inventory.
+AutoDev tracks isolated MCP and hook shadow fixtures plus a frozen MCP ownership boundary for supported providers (`codexcli`, `claudecode`, `copilot`, `antigravity-cli`) under `tests/fixtures/rulesync-shadow/` to detect upstream drift without mutating live configuration. The shared instruction rules surface is now the first live Rulesync cutover: `.rulesync/rules/overview.md`, `AGENTS.md`, `CLAUDE.md`, and `.github/copilot-instructions.md` are byte-identical. Rule generation uses a temporary frontmatter wrapper around the canonical source because pinned Rulesync `16.30.2` requires frontmatter; no duplicate tracked instruction source is introduced. Skills have no shadow fixtures; their repository folders are generated fresh, as described below. Hook shadows cover the six existing command hooks across SessionStart, SubagentStart, UserPromptSubmit, and PreToolUse. Rulesync currently emits only the supported PreToolUse hook for Antigravity and omits Codex-only fields such as prevent_idle_sleep. Live hooks and MCP configuration remain AutoDev-owned; the MCP boundary contract covers Rulesync projections without approving a live MCP cutover. Rulesync permissions translation remains deferred until AutoDev has a complete portable permission source inventory.
 
 To check for drift between `.rulesync/` source configuration and the tracked shadow fixtures, use an ephemeral input root so the canonical rules file remains byte-identical to `AGENTS.md` while Rulesync receives its required metadata:
 
@@ -305,13 +305,13 @@ cp -R .rulesync/. "$temp_root/input/"
 pnpm exec rulesync generate \
   --input-roots "$temp_root/input" \
   --targets codexcli,claudecode,copilot,antigravity-cli \
-  --features mcp,rules,skills,hooks \
+  --features mcp,rules,hooks \
   --output-roots tests/fixtures/rulesync-shadow \
   --check \
   --silent
 ```
 
-Rulesync does not replace AutoDev's live hook enforcement, MCP configuration, or role filtering. The first canonical-skill cutover is limited to the Copilot repository surface at `.github/skills/` (`ccc`, `lsp-mcp-server`, and `orchestration`); its `SKILL.md` bodies and generated frontmatter are drift-checked. `.rulesync/skills/` is the single canonical source for every AutoDev skill; the other canonical skills are projected into the tracked shadow fixtures but are not promoted into `.github/skills/`. The installer symlinks Codex/user-level skills from `.rulesync/skills/`, `render-provider-skill-views.py` continues to project role-specific Claude views from the execution contract, and Antigravity continues to use its explicit `include_only` registration. `ccc` reference files, MCP, hooks, and permissions remain shadow-only or deferred until those boundaries are separately proven equivalent.
+Rulesync does not replace AutoDev's live hook enforcement, MCP configuration, or role filtering. `.rulesync/skills/` is the single tracked source for every AutoDev skill. The repository skill folders each tool discovers inside AutoDev (`.github/skills/` for Copilot, `.claude/skills/` for Claude Code, `.agents/skills/` for Codex and Antigravity) are untracked Rulesync output. The installer generates them with the pinned `node_modules/.bin/rulesync` (run `pnpm install --frozen-lockfile` first), and `--check` reports edited, stale, or missing copies. `.gitignore` lists the first two. The installer writes `/.agents/skills/` to `.git/info/exclude` instead, because Antigravity does not load a gitignored `.agents/skills/`. Copilot's cloud agent generates its folder in `copilot-setup-steps.yml`. Each skill's Rulesync `targets` frontmatter selects its folders. Repository-only development skills such as `autodev-codex-request-capture` keep the default and reach every tool, with their bundled scripts. `ccc`, `lsp-mcp-server`, and `orchestration` target only `copilot`, because Copilot's cloud agent has no user level. The remaining skills target nothing, because they already reach local tools at user level and a repository copy would list them twice. Repository-only skills are never installed at user level. Tools that read the repository without running setup, such as github.com Copilot chat and code review, see no repository skills. `tests/test_rulesync_skills.py` generates the folders fresh and freezes that exposure. The installer symlinks Codex/user-level skills from `.rulesync/skills/`, `render-provider-skill-views.py` continues to project role-specific Claude views from the execution contract, and Antigravity continues to use its explicit `include_only` registration. MCP, hooks, and permissions remain shadow-only or deferred until those boundaries are separately proven equivalent.
 
 To refresh the tracked shadow fixtures after making intentional changes to `.rulesync/` or `rulesync.jsonc`:
 
@@ -327,7 +327,7 @@ cp -R .rulesync/. "$temp_root/input/"
 pnpm exec rulesync generate \
   --input-roots "$temp_root/input" \
   --targets codexcli,claudecode,copilot,antigravity-cli \
-  --features mcp,rules,skills,hooks \
+  --features mcp,rules,hooks \
   --output-roots tests/fixtures/rulesync-shadow \
   --delete \
   --silent

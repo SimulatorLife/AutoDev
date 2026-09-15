@@ -53,6 +53,54 @@ class LocalSetupTests(unittest.TestCase):
                 self.assertIn(f'link_skill "$skill_source_root/$name" "$user_skills_dir/$name"', installer)
                 self.assertIn('legacy_skills_dirs=("$codex_home/skills" "$codex_home/agents/skills")', installer)
 
+    def test_repository_only_skill_is_exposed_only_through_repository_scoped_folders(self):
+        # AutoDev-development skills live in the canonical source but must never
+        # reach user level (every workspace) or the global agy registry: only the
+        # tools' own repository-scoped discovery folders inside AutoDev, which the
+        # installer generates with Rulesync and keeps out of git.
+        name = "autodev-codex-request-capture"
+        source = REPO_ROOT / ".rulesync/skills" / name
+        self.assertTrue((source / "SKILL.md").is_file())
+        installer = INSTALLER_PATH.read_text()
+        skill_names = re.search(r"^skill_names=\(([^)]*)\)", installer, re.MULTILINE).group(1).split()
+        self.assertNotIn(name, skill_names)
+        for registration in re.findall(r'"include_only": \[[^\]]*\]', installer):
+            self.assertNotIn(name, registration)
+        self.assertNotIn(name, (REPO_ROOT / ".agents/skills.json").read_text())
+        bundled = sorted(
+            path.relative_to(source) for path in source.rglob("*") if path.is_file() and path.name != "SKILL.md"
+        )
+        self.assertTrue(bundled, "the repository-only skill bundles its scripts and examples")
+        with tempfile.TemporaryDirectory() as home, tempfile.TemporaryDirectory() as codex_home:
+            result = self._run_installer(home, codex_home, "--materialize-only")
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertTrue((Path(home) / ".agents/skills/ccc").is_symlink())
+            self.assertFalse((Path(home) / ".agents/skills" / name).exists())
+            self.assertFalse((Path(home) / ".agents/skills" / name).is_symlink())
+            for scope in (".agents/skills", ".claude/skills", ".github/skills"):
+                with self.subTest(scope=scope):
+                    generated = REPO_ROOT / scope / name
+                    self.assertFalse(generated.is_symlink(), f"{generated} must be a generated copy")
+                    self.assertTrue((generated / "SKILL.md").is_file())
+                    for relative in bundled:
+                        self.assertEqual((generated / relative).read_bytes(), (source / relative).read_bytes())
+                    ignored = subprocess.run(
+                        ["git", "check-ignore", "--quiet", str(generated / "SKILL.md")],
+                        cwd=REPO_ROOT,
+                    )
+                    self.assertEqual(ignored.returncode, 0, f"{generated} must stay out of git")
+            exclude_file = subprocess.run(
+                ["git", "rev-parse", "--path-format=absolute", "--git-path", "info/exclude"],
+                cwd=REPO_ROOT,
+                capture_output=True,
+                text=True,
+                check=True,
+            ).stdout.strip()
+            self.assertIn("/.agents/skills/", Path(exclude_file).read_text().splitlines())
+            check = self._run_installer(home, codex_home, "--check")
+            self.assertIn("ok repository skills (copilot,claudecode,codexcli,antigravity-cli)", check.stdout)
+            self.assertIn("ok git exclude /.agents/skills/", check.stdout)
+
     @staticmethod
     def _render_agent_configs(output_dir):
         return subprocess.run(

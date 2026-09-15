@@ -6,6 +6,7 @@ on:
     paths:
       - ".agents/prompts/**"
       - ".github/**"
+      - ".rulesync/**"
       - "scripts/**"
       - "tests/**"
       - "package.json"
@@ -14,6 +15,7 @@ on:
     paths:
       - ".agents/prompts/**"
       - ".github/**"
+      - ".rulesync/**"
       - "scripts/**"
       - "tests/**"
       - "package.json"
@@ -58,6 +60,11 @@ jobs:
 
       - name: Install AutoDev dependencies
         run: pnpm install --frozen-lockfile
+
+      # `.github/skills/` is not tracked: `.rulesync/skills/` is the only skill
+      # source, so the cloud agent's skills are generated here before it starts.
+      - name: Generate repository skills for Copilot
+        run: pnpm exec rulesync generate --input-roots .rulesync --targets copilot --features skills --output-roots . --delete --silent
 
       - name: Validate GitHub workflows
         run: pnpm run validate:actionlint

@@ -1,6 +1,7 @@
 ---
 name: doubt-driven-development
 description: Apply adversarial verification during any meaningful code change before the approach hardens. Use for medium or larger changes where regressions, hidden coupling, ownership mistakes, or invalid assumptions are plausible. Skip only for trivial mechanical edits.
+targets: []
 ---
 
 # Doubt-Driven Development

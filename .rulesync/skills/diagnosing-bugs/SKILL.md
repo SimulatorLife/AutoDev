@@ -1,6 +1,7 @@
 ---
 name: diagnosing-bugs
 description: Diagnose bugs, test failures, build failures, performance regressions, flaky behavior, and unexpected runtime results by establishing a reliable failure signal, locating the root cause, testing falsifiable hypotheses, and proving the fix against the original symptom. Use whenever something is broken, failing, unexpectedly slow, or behaving differently than intended.
+targets: []
 ---
 
 # Diagnosing Bugs

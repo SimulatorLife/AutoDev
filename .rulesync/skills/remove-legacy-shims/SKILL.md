@@ -1,6 +1,7 @@
 ---
 name: remove-legacy-shims
 description: Use this skill to remove compatibility shims, legacy behavior wrappers, and import/export pass-through files by migrating call sites to direct ownership APIs.
+targets: []
 ---
 
 # Remove Legacy Shims Skill

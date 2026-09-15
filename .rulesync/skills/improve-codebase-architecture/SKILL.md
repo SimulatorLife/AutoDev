@@ -1,6 +1,7 @@
 ---
 name: improve-codebase-architecture
 description: Analyze and improve codebase architecture by finding structural friction, unclear ownership, shallow modules, leaky seams, and tightly coupled change paths, then propose or implement bounded refactors that increase locality, testability, leverage, and navigability. Use for architecture audits, module-boundary redesign, structural refactors, or when changing one concept requires coordinating too many files or layers.
+targets: []
 ---
 
 # Improve Codebase Architecture

@@ -9,7 +9,6 @@
   "features": [
     "mcp",
     "rules",
-    "skills",
     "hooks"
   ],
   "outputRoots": [

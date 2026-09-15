@@ -93,7 +93,7 @@ class RulesyncLiveRulesTests(unittest.TestCase):
         for feature in ("mcp", "skills", "hooks"):
             self.assertNotIn(f"--features {feature}", live_check)
         shadow = workflow.split("Detect Rulesync drift against tracked shadow fixtures", 1)[1]
-        self.assertIn("--features mcp,rules,skills,hooks", shadow)
+        self.assertIn("--features mcp,rules,hooks", shadow)
 
 
 if __name__ == "__main__":

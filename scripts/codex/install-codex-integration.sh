@@ -17,6 +17,15 @@ user_skills_dir="$HOME/.agents/skills"
 # The single canonical skill source. Every consumer (user-level links, the agy
 # registry, the bridges' orchestrator prompt) reads from this directory.
 skill_source_root="$repo_root/.rulesync/skills"
+# Inside AutoDev each tool also discovers repository skills from its own folder
+# (`.github/skills`, `.claude/skills`, `.agents/skills`). Those folders are
+# untracked Rulesync projections of the canonical source; each skill's `targets`
+# frontmatter decides which tools receive it.
+repository_skill_targets="copilot,claudecode,codexcli,antigravity-cli"
+rulesync_bin="$repo_root/node_modules/.bin/rulesync"
+# Antigravity does not load `.agents/skills/` when .gitignore lists it, so that
+# generated folder is kept out of git through the checkout's exclude file.
+repository_skill_exclude_entry="/.agents/skills/"
 agy_settings_file="$HOME/.gemini/antigravity-cli/settings.json"
 legacy_skills_dirs=("$codex_home/skills" "$codex_home/agents/skills")
 
@@ -367,6 +376,55 @@ check_skill_one() {
   validate_skill_source "$source" || return 1
   [[ -L "$target" && -d "$target" && "$(readlink "$target")" == "$source" ]] &&
     [[ -f "$target/SKILL.md" && ! -L "$target/SKILL.md" ]]
+}
+
+run_repository_skill_generation() {
+  if [[ ! -x "$rulesync_bin" ]]; then
+    printf 'missing-rulesync %s (run pnpm install --frozen-lockfile in %s)\n' "$rulesync_bin" "$repo_root" >&2
+    return 1
+  fi
+  # `--delete` removes skills no longer projected; with `--check` it also makes
+  # a stale generated skill count as drift instead of passing unnoticed.
+  (cd -- "$repo_root" && "$rulesync_bin" generate \
+    --input-roots "$repo_root/.rulesync" \
+    --targets "$repository_skill_targets" \
+    --features skills \
+    --output-roots "$repo_root" \
+    --delete \
+    "$@" \
+    --silent)
+}
+
+repository_skill_exclude_file() {
+  git -C "$repo_root" rev-parse --path-format=absolute --git-path info/exclude
+}
+
+generate_repository_skills() {
+  local exclude_file
+  run_repository_skill_generation || return 1
+  exclude_file="$(repository_skill_exclude_file)" || return 1
+  mkdir -p -- "$(dirname -- "$exclude_file")"
+  if ! grep -qxF -- "$repository_skill_exclude_entry" "$exclude_file" 2>/dev/null; then
+    printf '%s\n' "$repository_skill_exclude_entry" >>"$exclude_file"
+  fi
+}
+
+check_repository_skills() {
+  local failed=0
+  local exclude_file
+  if run_repository_skill_generation --check >/dev/null; then
+    printf 'ok repository skills (%s) generated from %s\n' "$repository_skill_targets" "$skill_source_root"
+  else
+    printf 'missing-or-drifted repository skills (%s) from %s\n' "$repository_skill_targets" "$skill_source_root"
+    failed=1
+  fi
+  if exclude_file="$(repository_skill_exclude_file)" && grep -qxF -- "$repository_skill_exclude_entry" "$exclude_file" 2>/dev/null; then
+    printf 'ok git exclude %s\n' "$repository_skill_exclude_entry"
+  else
+    printf 'missing-git-exclude %s\n' "$repository_skill_exclude_entry"
+    failed=1
+  fi
+  return "$failed"
 }
 
 check_versioned_source() {
@@ -1281,6 +1339,9 @@ check_links() {
   if ! check_claude_skill_views; then
     failed=1
   fi
+  if ! check_repository_skills; then
+    failed=1
+  fi
   if ! check_custom_provider_config; then
     failed=1
   fi
@@ -1699,6 +1760,9 @@ for role in "${agent_role_names[@]}"; do
 done
 rm -rf -- "$rendered_agents_dir"
 render_claude_skill_views
+if ! generate_repository_skills; then
+  exit 1
+fi
 if ! compose_user_config "$codex_home/config.toml" "$codex_home/config.toml"; then
   exit 1
 fi

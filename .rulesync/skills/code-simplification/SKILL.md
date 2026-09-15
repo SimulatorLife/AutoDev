@@ -1,6 +1,7 @@
 ---
 name: code-simplification
 description: Simplify working code without changing supported behavior by reducing unnecessary concepts, duplication, indirection, coupling, fragmentation, and special cases. Use for focused refactors, cleanup passes, architectural simplification, or when code is harder to understand, maintain, or extend than it should be.
+targets: []
 ---
 
 # Code Simplification

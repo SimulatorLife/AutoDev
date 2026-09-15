@@ -54,6 +54,27 @@
         }
       }
     },
+    "freeform_unrecognised_feedback": {
+      "expected": {
+        "coercedType": "custom_tool_call",
+        "inputSource": {
+          "startsWith": "throw new Error(",
+          "mentions": "a JSON object with keys \"text\""
+        },
+        "neverContains": "do-not-echo-this-value"
+      },
+      "upstreamResponse": {
+        "output": [
+          {
+            "arguments": "{\"text\":\"do-not-echo-this-value\"}",
+            "call_id": "call-3",
+            "id": "06f8b0803f8f804f65cab7da91194351_fc_0",
+            "name": "exec",
+            "type": "function_call"
+          }
+        ]
+      }
+    },
     "namespace_tools_forwarded": {
       "expected": {
         "responseOutputNamespaces": [
@@ -120,6 +141,6 @@
       }
     }
   },
-  "description": "Offline boundary invariants for the MiniMax Responses adapter: namespace and web-search tools are forwarded natively (the router owns flattening), body-embedded Codex turn metadata never leaves the machine, and freeform exec calls answered as JSON function calls are coerced.",
+  "description": "Offline boundary invariants for the MiniMax Responses adapter: namespace and web-search tools are forwarded natively (the router owns flattening), body-embedded Codex turn metadata never leaves the machine, freeform exec calls answered as JSON function calls are coerced, and unrecognisable ones become an explanatory failing script that never echoes argument values.",
   "schema": "autodev-minimax-responses-contract-v2"
 }
