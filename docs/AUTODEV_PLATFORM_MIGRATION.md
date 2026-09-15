@@ -176,7 +176,7 @@ Use Rulesync for **portable configuration translation**:
 
 - Shared/root instructions
 - Canonical Agent Skills
-- Shared MCP declarations
+- Shared MCP declarations (boundary hardening complete; live cutover remains deferred pending target-equivalence decision)
 - Cross-provider hook declarations
 - Cross-provider permissions declarations
 - Provider filesystem/config-format translation
@@ -1055,15 +1055,56 @@ shadow-only because the first cutover is intentionally limited to the three
 canonical `SKILL.md` files. Codex's user-level `scripts/codex/skills/` links,
 Claude's role-filtered provider views, and Antigravity's explicit skill
 registry remain AutoDev-owned and were not cut over. MCP, hooks, and permissions
-remain shadow-only/deferred. Validation is complete: the six Rulesync suites
+remain shadow-only/deferred. Validation is complete: the seven Rulesync suites
 (`test_rulesync_live_rules`, `test_rulesync_live_skills`,
 `test_rulesync_mcp_shadow`, `test_rulesync_skills_shadow`,
-`test_rulesync_hooks_shadow`, and `test_rulesync_permissions_inventory`) report
-33 passing tests; `pnpm test` reports 582 passing tests; actionlint and
+`test_rulesync_hooks_shadow`, `test_rulesync_permissions_inventory`, and
+`test_rulesync_mcp_boundary`) report 36 passing tests; `pnpm test` reports
+582 passing tests; actionlint and
 ShellCheck exit 0; `git diff --check` is clean; and LSP diagnostics for the
-new live-skills test and updated Rulesync tests report no issues. The next
-incremental candidate is shared MCP; Codex, Claude, and Antigravity skill
-surfaces remain explicitly out of this cutover.
+new live-skills test and updated Rulesync tests report no issues. Shared MCP remains the next live-equivalence candidate; Codex, Claude, and
+Antigravity skill surfaces remain explicitly out of this cutover.
+
+**Completed shared-MCP evaluation and hardening — no live cutover.** The
+contract fixture `tests/fixtures/contracts/rulesync-mcp-boundary.json` (schema
+`autodev-rulesync-mcp-boundary-v1`) and
+`tests/test_rulesync_mcp_boundary.py` now freeze Rulesync `16.30.2` projections
+for all four targets, including the `lsp`/`cocoindex-code` launcher arguments,
+OpenAI Developer Docs placement, Playwright disabled/absent behavior, and
+forbidden server absence. They also freeze the live ownership boundary:
+`scripts/codex/config.autodev.toml` remains authoritative for `lsp`,
+`cocoindex-code`, and `playwright`, while installer/provider-specific MCP
+registries remain outside Rulesync. Temporary generation roots and fixture/live
+config immutability are asserted. The focused boundary plus existing MCP shadow
+suite reports 8 passing tests. This hardening item is complete, but no MCP live
+cutover is claimed because the target projections and existing installer/bridge
+owners are not yet one behaviorally equivalent surface.
+
+**Target-by-target MCP behavioral-equivalence decision — no promotion approved.**
+The decision gate now covers server names and launcher arguments, enabled/
+disabled state, URL placement, approval semantics, forbidden-server absence,
+project versus global scope, role-sensitive exposure, permissions, lifecycle,
+merge/preservation behavior, smoke validation, and rollback. The result is
+`retain incumbent`/`defer` for all four targets:
+
+- **Codex:** Rulesync emits project `.codex/config.toml`, while the live owner
+  is the user-level `config.autodev.toml` plus atomic composer and role-local
+  overrides; live approval/network metadata is not represented by the Rulesync
+  projection.
+- **Claude:** the bridge constructs per-request inline MCP and role-sensitive
+  tool/permission boundaries, including browser and orchestration behavior;
+  Rulesync's shared `.mcp.json` projection cannot replace that owner.
+- **Copilot:** the installer and bridge own a global `copilot mcp` registry and
+  role-dependent tool flags; a project `.vscode/mcp.json` is not equivalent.
+- **Antigravity:** the installer owns a global `agy` registry, optional spawn
+  registration, machine-local permission grants, and launchd/bridge lifecycle;
+  a project `.agents/mcp_config.json` cannot represent those semantics.
+
+Keep all four MCP projections shadow-only. The rollback baseline is unchanged:
+retain `scripts/codex/config.autodev.toml`/composer, installer-managed Copilot
+and Antigravity registries, and Claude/Copilot/Antigravity bridge-owned MCP
+construction. Reopen promotion only after target-specific tests prove the full
+decision gate rather than only matching names and launcher strings.
 
 The Rulesync source covers shared MCP declarations, the common repository
 instructions represented by `AGENTS.md`, the three portable AutoDev-owned
@@ -1179,7 +1220,7 @@ Pin an exact tested Rulesync version rather than tracking `latest`
 4. Test global and project scopes separately
 5. Verify unrelated user config survives
 6. Add CI drift checks (enforced via `.github/workflows/rulesync-mcp-shadow-drift.yml`)
-7. Switch one generated surface at a time (shared instruction rules and the Copilot canonical-skill slice complete; shared MCP is the next candidate)
+7. Switch one generated surface at a time (shared instruction rules and the Copilot canonical-skill slice complete; shared-MCP boundary hardening complete, with live cutover still deferred)
 
 ### Keep outside Rulesync initially
 
