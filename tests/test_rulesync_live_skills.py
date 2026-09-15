@@ -51,6 +51,35 @@ class RulesyncLiveSkillsTests(unittest.TestCase):
                 msg=f"live {skill} skill must not include generated references or other files",
             )
 
+    def test_non_cutover_canonical_skills_are_generated_but_not_promoted(self):
+        # `.rulesync/skills` is the canonical source for every AutoDev skill,
+        # but the live Copilot cutover stays limited to SKILLS: the rest are
+        # projected for Copilot and deliberately absent from `.github/skills`.
+        canonical = {path.name for path in SOURCE_ROOT.iterdir() if path.is_dir()}
+        self.assertTrue(set(SKILLS) < canonical)
+        with tempfile.TemporaryDirectory() as temp:
+            output = Path(temp) / "generated"
+            result = subprocess.run(
+                [
+                    "pnpm", "exec", "rulesync", "generate",
+                    "--input-roots", ".rulesync",
+                    "--targets", "copilot",
+                    "--features", "skills",
+                    "--output-roots", str(output),
+                    "--delete", "--silent",
+                ],
+                cwd=REPO_ROOT,
+                capture_output=True,
+                text=True,
+                timeout=60,
+            )
+            self.assertEqual(result.returncode, 0, msg=result.stderr)
+            generated = {path.name for path in (output / ".github" / "skills").iterdir() if path.is_dir()}
+        self.assertEqual(generated, canonical)
+        for skill in sorted(canonical - set(SKILLS)):
+            with self.subTest(skill=skill):
+                self.assertFalse((LIVE_ROOT / skill).exists())
+
     def test_live_bodies_and_normalized_frontmatter_match_copilot_generation(self):
         with tempfile.TemporaryDirectory() as temp:
             output = Path(temp) / "generated"

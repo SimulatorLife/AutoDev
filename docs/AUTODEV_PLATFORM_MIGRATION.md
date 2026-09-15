@@ -1052,9 +1052,9 @@ frontmatter and bodies checked against `.rulesync/skills/`. The focused
 `tests/test_rulesync_live_skills.py` contract and the workflow's read-only
 Copilot `skills` drift check freeze that surface; `ccc` reference files remain
 shadow-only because the first cutover is intentionally limited to the three
-canonical `SKILL.md` files. Codex's user-level `scripts/codex/skills/` links,
-Claude's role-filtered provider views, and Antigravity's explicit skill
-registry remain AutoDev-owned and were not cut over. MCP, hooks, and permissions
+canonical `SKILL.md` files. Codex's user-level skill links, Claude's
+role-filtered provider views, and Antigravity's explicit skill registry remain
+AutoDev-owned and were not cut over. MCP, hooks, and permissions
 remain shadow-only/deferred. Validation is complete: the seven Rulesync suites
 (`test_rulesync_live_rules`, `test_rulesync_live_skills`,
 `test_rulesync_mcp_shadow`, `test_rulesync_skills_shadow`,
@@ -1064,6 +1064,51 @@ remain shadow-only/deferred. Validation is complete: the seven Rulesync suites
 ShellCheck exit 0; `git diff --check` is clean; and LSP diagnostics for the
 new live-skills test and updated Rulesync tests report no issues. Shared MCP remains the next live-equivalence candidate; Codex, Claude, and
 Antigravity skill surfaces remain explicitly out of this cutover.
+
+**Completed canonical skill-source consolidation — `.rulesync/skills` is the
+only skill source (added item).** This item was not in the original plan. A
+stalled concurrent change had moved all ten AutoDev skills from
+`scripts/codex/skills/` into `.rulesync/skills/`, dropping
+`orchestration/agents/openai.yaml` and leaving about 30 references on the
+removed path. As a result, the installer exited 71, `--check` failed, about 45
+tests failed, and the Phase 3 installer gates were blocked. HEAD also kept
+duplicate copies of `ccc`, `lsp-mcp-server`, and `orchestration` in both
+directories.
+
+The move was completed rather than reverted, and every consumer now reads the
+single source:
+- The installer uses `skill_source_root` for versioned-source checks,
+  `~/.agents/skills` links, and the agy registry.
+- `runtime_module_target()` installs non-`scripts/` assets under
+  `$CODEX_HOME/<path>`. As a result, one relative specifier reaches the
+  orchestration skill in both a checkout and the hooks copy, for
+  `bridge-role.mjs`, the Claude bridge, and `enforce-root-delegation.sh`.
+- The Claude, Copilot, and Antigravity bridges and `skill-read-telemetry.mjs`
+  recognise `.rulesync/skills` as the canonical skill root.
+- `.agents/skills.json`, the three frozen provider contract fixtures, the tests,
+  and the docs were updated to the new path.
+- The obsolete `$CODEX_HOME/hooks/codex/skills` copy and the agy registry entry
+  for the removed path are cleaned up. `--check` rejects both if they reappear.
+
+`openai.yaml` was restored byte-identical from HEAD, because live Codex reads
+it through the skill symlink. Rulesync `16.30.2` composes the `codexcli`
+sidecar only from a `codexcli:` frontmatter section, so the `codexcli`
+projection omits a raw copy, while the other targets copy it verbatim. This is
+a documented projection limitation, and it has no effect on live Codex.
+Exposure is unchanged:
+- Codex still links the same eight skills.
+- Antigravity still registers only `ccc` and `lsp-mcp-server`.
+- Claude role views still come from the execution contract.
+- Live Copilot `.github/skills` remains exactly `ccc`, `lsp-mcp-server`, and
+  `orchestration`.
+
+The tracked shadow fixtures were regenerated with the pinned Remediation
+command. The only change was additions: the seven other skills in every shadow
+root. `test_rulesync_skills_shadow.py` now freezes all ten skills,
+byte-identical nested files, and per-target `openai.yaml` behavior.
+`test_rulesync_live_skills.py` asserts that the non-cutover skills are
+generated but not promoted. New installer regression tests cover the runtime
+target mapping and obsolete agy registry replacement.
 
 **Completed shared-MCP evaluation and hardening — no live cutover.** The
 contract fixture `tests/fixtures/contracts/rulesync-mcp-boundary.json` (schema
@@ -1107,8 +1152,9 @@ construction. Reopen promotion only after target-specific tests prove the full
 decision gate rather than only matching names and launcher strings.
 
 The Rulesync source covers shared MCP declarations, the common repository
-instructions represented by `AGENTS.md`, the three portable AutoDev-owned
-skills (`ccc`, `lsp-mcp-server`, and `orchestration`), and the six existing
+instructions represented by `AGENTS.md`, all ten canonical AutoDev skills
+(`.rulesync/skills` is their only source; only `ccc`, `lsp-mcp-server`, and
+`orchestration` are promoted to a live Rulesync surface), and the six existing
 command hooks across `SessionStart`, `SubagentStart`, `UserPromptSubmit`, and
 `PreToolUse`. It produces target-shaped shadow files without writing live
 provider or user configuration. Rulesync currently emits only `PreToolUse` for
@@ -1207,7 +1253,7 @@ Pin an exact tested Rulesync version rather than tracking `latest`
 ### Migrate first
 
 - Root/shared instructions (live cutover complete; byte-identity and ephemeral-generation checks frozen above)
-- Canonical skills (Copilot `.github/skills/` live cutover complete; Codex, Claude, and Antigravity remain AutoDev-owned)
+- Canonical skills (single `.rulesync/skills` source complete; Copilot `.github/skills/` live cutover complete; Codex, Claude, and Antigravity exposure remains AutoDev-owned)
 - Shared MCP declarations
 - Hook declarations (shadow-only translation complete; target limitations documented)
 - Permissions declarations (inventory complete, see Status above; generation deferred while provider-CLI-specific permission layers still exist)
@@ -1269,32 +1315,140 @@ enabled. The mode is stored as machine-local state in
 preserve unrelated user configuration. Direct mode is the default and is the
 rollback path.
 
-The focused runtime, configuration, and composer tests pass. A real
-`otelcol v0.160.0` smoke run accepted logs, traces, and metrics, forwarded all
-three JSON signals to a loopback receiver, forwarded a repeated cumulative
-metrics batch, and emitted no prompt marker in Collector stderr. The pinned
-Collector config was also updated from the deprecated `otlphttp` exporter alias
-to `otlp_http` after the real binary surfaced that warning.
+The pinned Collector config uses the `otlp_http` exporter (the real binary
+flagged the deprecated `otlphttp` alias) and sets
+`service.telemetry.metrics.level: none`. Without that setting the upstream
+default also binds `127.0.0.1:8888` for internal Prometheus metrics, which
+gave the Collector a second, unmanaged listener. That listener also blocked
+any other Collector on the host from starting, which is how the live smoke run
+surfaced it.
 
-The full Python suite is otherwise green at 261 passing and 1 skipped live-
-binary test; one pre-existing model-router assertion remains red because it
-still expects `$(<"$fallback_pid_file")` while the current unrelated router
-implementation uses `cat`. The JavaScript suite remains 582/582 green, and
-ShellCheck, actionlint, whitespace checks, and LSP diagnostics for the changed
-Python files are clean.
+**Live exit-gate evidence (2026-09-14, macOS 26 / Darwin 25.5.0 arm64, target
+user account, `otelcol v0.160.0`):**
 
-**Completed implementation slices:** pinned artifact verification; foreground
-runner and ensure lifecycle; launch-agent rendering; opt-in installer mode;
-composer endpoint switching; direct-mode rollback; hermetic runtime tests;
-and real-binary forwarding smoke coverage.
+- *Artifact:* `provision-autodev-otel-collector.sh` downloaded
+  `otelcol_0.160.0_darwin_arm64.tar.gz`, verified the manifest SHA-256, and
+  produced a binary byte-identical to the installed `$CODEX_HOME/otelcol`
+  (`sha256 f4faf10a…d9cc6`).
+- *Ingress ownership:* under `com.codex.otel-collector`, exactly one `otelcol`
+  process owns `127.0.0.1:4318` and nothing else. Codex keeps
+  `openai_base_url = http://127.0.0.1:4100/v1`, and only the three OTLP
+  exporter endpoints use `127.0.0.1:4318`.
+- *Launchd restart:* `launchctl kickstart -k` logged `Shutdown complete`, and a
+  new pid served `4318` within 2s.
+- *Crash restart:* `kill -TERM` respawned in 2s and `kill -KILL` in 6s, which
+  is the 5s `ThrottleInterval`. Each time exactly one process and one listener
+  were present afterwards.
+- *Clean shutdown:* `launchctl bootout` logged `Shutdown complete`, and no
+  process, listener, or respawn remained after 7s. `launchctl bootstrap`
+  restored a single running instance.
+- *Live forwarding:* OTLP log and trace probes to `4318` returned HTTP 200 and
+  reached the router receiver. Over 70s of real Codex traffic through the
+  Collector, the router's logs, traces, and metrics receiver counters all
+  advanced, and `invalid` stayed at its pre-insertion value.
+- *No double counting:* two isolated real routers on throwaway state, fed the
+  same `collector-forwarded-otlp.json` batches (one directly, one through the
+  real Collector running the repository config), produced identical
+  `codexTelemetry`, `usage`, `attributionDiagnostics`, `subagents`,
+  `spawnFailures`, `agents`, and `liveAgentAttribution` projections. That
+  covers one prompt, one completed turn, 270 tokens, and a repeated cumulative
+  metrics export applied once. Receiver counts matched at 1/1/2 with 0
+  invalid, and no prompt marker appeared in Collector output.
+- *Unchanged behavior:* `config.toml`, the `/v1/models` catalog, and the
+  router `/status` routing, limits, provider, and authentication projections
+  are identical to the pre-validation snapshot.
 
-**Phase 3 exit gate remains pending live launch-agent verification.** This
-workspace validation did not load a new user LaunchAgent or alter the active
-Codex session. Before marking Phase 3 fully complete, run the enable/check/
-disable procedure on the target macOS user account, verify launchd restart and
-shutdown behavior, and confirm AutoDev semantic counters remain unchanged and
-do not double-count after a real Collector insertion. Until that evidence is
-recorded, Phase 3 is implemented but not marked fully complete.
+Validation of this tree (HEAD plus the Phase 3 changes) had these results:
+- The JavaScript suite passes 582/582, including
+  `tests/claude-responses-contract.test.mjs`.
+- The Python suite ran 271 tests after the canonical skill-source
+  consolidation, including the opt-in real-binary smoke test with
+  `AUTODEV_OTELCOL_BIN`. 269 pass. The live Collector kept the same pid through
+  the whole run. The 2 failures also fail at unmodified HEAD:
+  - The model-router assertion still expects `$(<"$fallback_pid_file")`.
+  - `test_claude_cli_exposes_role_specific_skill_view_not_canonical_agents_root`.
+- ShellCheck, actionlint, `git diff --check`, and LSP diagnostics are clean.
+
+The installer now persists `$CODEX_HOME/otel-collector.mode` only after the
+install succeeds. Previously an `--enable-otel-collector` or
+`--disable-otel-collector` run that aborted part-way still recorded the
+requested mode. `--check` then reported a mode that did not match the active
+configuration and services, which made rollback unreliable.
+
+The installer also decides launchd ownership before stopping a disabled
+Collector. Launchd labels are global to the user even under an overridden
+`HOME`/`CODEX_HOME`, and the direct-mode `launchctl bootout` used to run
+before the "belongs to another runtime" check. As a result, a hermetic
+direct-mode installer run from the test suite booted out the live
+`com.codex.otel-collector` job during this validation. The job was re-bootstrapped
+and verified serving `4318` again.
+
+**✅ Phase 3 is complete (2026-09-15).** The installer gates were blocked by
+the stalled skills move. They were unblocked by the canonical skill-source
+consolidation recorded under Phase 2, then run live on the target macOS user
+account:
+
+1. `install-codex-integration.sh --enable-otel-collector` exited 0 and
+   deployed the consolidation. Evidence:
+   - all eight `~/.agents/skills` links now point into `.rulesync/skills`;
+   - the agy registry holds only the new managed entry;
+   - the obsolete `$CODEX_HOME/hooks/codex/skills` copy was removed;
+   - the router and all four bridges returned 200.
+
+   `--check` then exited 0.
+2. `--disable-otel-collector` exited 0 and rolled back to direct mode:
+   - the mode file reads `direct`;
+   - no `otelcol` process or `4318` listener remains, and
+     `com.codex.otel-collector` is unloaded;
+   - all three OTLP endpoints are `127.0.0.1:4100`, with
+     `openai_base_url` unchanged;
+   - the only `config.toml` change against the pre-validation snapshot is that
+     single `otel = { … }` line;
+   - router routing, limits, provider, and authentication projections and the
+     `/v1/models` catalog are identical, and every service returned 200.
+
+   `--check` exited 0 and reported
+   `OpenTelemetry Collector is disabled (direct OTLP ingress on 127.0.0.1:4100)`.
+3. `--enable-otel-collector` exited 0:
+   - exactly one `otelcol` owns `127.0.0.1:4318`;
+   - the endpoints are back on `4318`, and `config.toml` is byte-identical to
+     the snapshot;
+   - router projections are unchanged;
+   - a forward probe returned 200 and the router receiver advanced, with
+     `invalid` unchanged.
+
+   `--check` exited 0 with the Collector validating and forwarding.
+
+The machine was left in **Collector mode**, the state found before
+validation. Direct mode remains the documented, verified rollback.
+
+**No-double-counting and delivery order.** A later rerun of the isolated
+direct-versus-Collector harness showed a `codexTelemetry` difference. Totals
+matched, but 3 of 15 MCP-by-model counts and MCP health/status landed on
+`unattributed`. A controlled follow-up separated the two variables:
+- **Collector with ordered delivery:** each signal is sent through the real
+  Collector only after the router ingested the previous one. All seven
+  semantic sections are identical to direct delivery.
+- **Direct delivery, reordered, no Collector:** sending traces before logs
+  reproduces the same class of difference.
+
+The Collector therefore introduces no double counting and no change in
+meaning for a given arrival order. Its independent per-signal pipelines do
+not preserve cross-signal order, but Codex already exports logs, traces, and
+metrics as separate OTLP requests, so the order sensitivity is a pre-existing
+router property.
+
+**Follow-up item (added): make router OTLP attribution independent of
+cross-signal arrival order.** This item was not in the plan; the Phase 3
+harness surfaced it. `noteMcpServer`/`resolveTelemetryContext` attribute an
+MCP span's model and health from the conversation session that a prior
+`codex.conversation_starts` log created. A span that arrives first is
+permanently recorded as `unattributed`, and its status is not reconciled when
+the session arrives. The fix belongs in the router's session/attribution join,
+for example by resolving or backfilling when the conversation context lands,
+not in Collector ordering. The regression should replay the
+`collector-forwarded-otlp.json` fixture in both orders and require identical
+projections. The frozen workspace-attribution contract must be kept.
 
 Enable/rollback procedure:
 
@@ -1346,6 +1500,9 @@ Suggested attributes:
 ### Exit gate
 
 Existing AutoDev metrics remain identical in meaning and do not double-count after Collector insertion
+
+**Met (2026-09-15).** See Status. Cross-signal arrival-order sensitivity is a
+pre-existing router property, tracked as a follow-up item.
 
 ---
 

@@ -1703,8 +1703,9 @@ installer is the only supported materialization path into
 `/Users/henrykirk/.codex`; materialized runtime copies and symlinks, logs, and
 `.env` credentials remain machine-local and are not versioned.
 
-- User-level skills: `scripts/codex/skills/{lsp-mcp-server,orchestration,remove-legacy-shims}`
-  are versioned directories owned by AutoDev. The installer creates absolute,
+- User-level skills: `.rulesync/skills/{lsp-mcp-server,orchestration,remove-legacy-shims}`
+  are versioned directories owned by AutoDev in the single canonical skill
+  source (also the Rulesync input). The installer creates absolute,
   directory-level symlinks under `$HOME/.agents/skills/`, so Codex reads the
   canonical skill files without a second copied source of truth. Keep each
   source `SKILL.md` as a regular file; `--check` rejects file-level or relative
@@ -1911,7 +1912,7 @@ Target state and current verification:
 | Requirement | State |
 | --- | --- |
 | OpenAI/Codex orchestrator and tracked user-level cross-provider TOMLs | Configured under `scripts/codex/agents/` and materialized as verified regular-file copies under `~/.codex/agents/`. The orchestrator runs on the `autodev/orchestrator` alias so it degrades to Claude Opus, MiniMax, then Gemini when Codex is out of usage. |
-| Shared user-level skills | Configured under `scripts/codex/skills/` as AutoDev-owned versioned directories and materialized under `~/.agents/skills/`; `install-codex-integration.sh --check` verifies every managed skill link. |
+| Shared user-level skills | Configured under the canonical `.rulesync/skills/` source as AutoDev-owned versioned directories and materialized under `~/.agents/skills/`; `install-codex-integration.sh --check` verifies every managed skill link. |
 | Versioned scripts/hooks/config installed into `~/.codex` | Configured; profiles/catalogs/config are symlinked and app-executed hooks are checksum-checked runtime copies; `install-codex-integration.sh --check` passes. |
 | Native app-server custom-provider routing | Verified: `thread/start` selects the custom provider; Claude reached its upstream session-limit response. |
 | Direct CLI provider turns | Transport paths verified; Claude was session-limited, MiniMax was upstream high-demand limited, and Antigravity was quota-limited. |

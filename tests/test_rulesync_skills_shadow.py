@@ -12,7 +12,31 @@ SHADOW_ROOT = REPO_ROOT / "tests/fixtures/rulesync-shadow"
 WORKFLOW_PATH = REPO_ROOT / ".github/workflows/rulesync-mcp-shadow-drift.yml"
 RULESYNC_CONFIG_PATH = REPO_ROOT / "rulesync.jsonc"
 
-EXPECTED_SKILLS = ("ccc", "lsp-mcp-server", "orchestration")
+# `.rulesync/skills` is the single canonical skill source; every AutoDev skill
+# lives there and is projected into each target's shadow.
+EXPECTED_SKILLS = (
+    "ccc",
+    "code-simplification",
+    "diagnosing-bugs",
+    "doubt-driven-development",
+    "improve-codebase-architecture",
+    "lsp-mcp-server",
+    "orchestration",
+    "remove-legacy-shims",
+    "resolve-merge-conflicts",
+    "writing-agent-skills",
+)
+# Non-SKILL.md files that must be carried byte-identically into projections.
+NESTED_SKILL_FILES = (
+    "ccc/references/management.md",
+    "ccc/references/settings.md",
+    "resolve-merge-conflicts/THIRD_PARTY_NOTICES.md",
+    "resolve-merge-conflicts/scripts/extract_conflict_context.py",
+)
+# Codex UI metadata sidecar. Rulesync's codexcli target composes this file only
+# from a `codexcli:` frontmatter section and drops a raw copy; other targets
+# copy it verbatim. Live Codex reads it through the installer's skill symlink.
+OPENAI_YAML = "orchestration/agents/openai.yaml"
 EXPECTED_SKILL_PATH = {
     "codexcli": ".agents/skills",
     "claudecode": ".claude/skills",
@@ -70,15 +94,13 @@ class RulesyncSkillsShadowTests(unittest.TestCase):
         self.assertEqual(
             tuple(names),
             EXPECTED_SKILLS,
-            msg=".rulesync/skills must contain exactly ccc, lsp-mcp-server, and orchestration",
+            msg=".rulesync/skills must contain exactly the canonical AutoDev skills",
         )
 
-    def test_rulesync_skills_source_excludes_openai_yaml(self):
-        bad = SOURCE_ROOT / "skills" / "orchestration" / "agents" / "openai.yaml"
-        self.assertFalse(
-            bad.exists(),
-            msg="orchestration/agents/openai.yaml must not live under .rulesync/skills",
-        )
+    def test_rulesync_skills_source_carries_codex_openai_yaml(self):
+        sidecar = SOURCE_ROOT / "skills" / OPENAI_YAML
+        self.assertTrue(sidecar.is_file(), msg=f"canonical source must keep {OPENAI_YAML} for live Codex")
+        self.assertFalse(sidecar.is_symlink())
 
     def test_ccc_skill_includes_references_management_and_settings(self):
         references = SOURCE_ROOT / "skills" / "ccc" / "references"
@@ -150,22 +172,24 @@ class RulesyncSkillsShadowTests(unittest.TestCase):
                             (skill_dir / "SKILL.md").is_file(),
                             msg=f"{target} must emit SKILL.md under {skill_dir}",
                         )
-                        if skill == "ccc":
-                            for ref in CCC_REFERENCE_FILES:
-                                self.assertTrue(
-                                    (skill_dir / "references" / ref).is_file(),
-                                    msg=(
-                                        f"{target} must carry ccc reference "
-                                        f"references/{ref} under {skill_dir}"
-                                    ),
-                                )
-                    self.assertFalse(
-                        (root / target / rel_root / "orchestration" / "agents" / "openai.yaml").exists(),
-                        msg=(
-                            f"{target} shadow must not carry orchestration/agents/openai.yaml "
-                            "because .rulesync/skills does not include that file"
-                        ),
-                    )
+                    for nested in NESTED_SKILL_FILES:
+                        self.assertEqual(
+                            (root / target / rel_root / nested).read_bytes(),
+                            (SOURCE_ROOT / "skills" / nested).read_bytes(),
+                            msg=f"{target} must carry {nested} byte-identically",
+                        )
+                    projected_sidecar = root / target / rel_root / OPENAI_YAML
+                    if target == "codexcli":
+                        self.assertFalse(
+                            projected_sidecar.exists(),
+                            msg="codexcli composes openai.yaml only from codexcli frontmatter",
+                        )
+                    else:
+                        self.assertEqual(
+                            projected_sidecar.read_bytes(),
+                            (SOURCE_ROOT / "skills" / OPENAI_YAML).read_bytes(),
+                            msg=f"{target} copies {OPENAI_YAML} verbatim",
+                        )
                     unexpected = {
                         p.name
                         for p in (root / target / rel_root).iterdir()
@@ -175,7 +199,7 @@ class RulesyncSkillsShadowTests(unittest.TestCase):
                         unexpected,
                         set(),
                         msg=(
-                            f"{target} shadow must contain only ccc/lsp-mcp-server/orchestration; "
+                            f"{target} shadow must contain only the canonical skills; "
                             f"unexpected dirs: {sorted(unexpected)}"
                         ),
                     )
@@ -204,20 +228,13 @@ class RulesyncSkillsShadowTests(unittest.TestCase):
         for target in EXPECTED_SKILL_TARGETS:
             rel_root = EXPECTED_SKILL_PATH[target]
             with self.subTest(target=target):
-                for ref in CCC_REFERENCE_FILES:
-                    src = SOURCE_ROOT / "skills" / "ccc" / "references" / ref
-                    shadow = SHADOW_ROOT / rel_root / "ccc" / "references" / ref
-                    self.assertTrue(
-                        shadow.is_file(),
-                        msg=f"{target} shadow must carry ccc reference {ref}",
-                    )
+                for nested in NESTED_SKILL_FILES:
+                    shadow = SHADOW_ROOT / rel_root / nested
+                    self.assertTrue(shadow.is_file(), msg=f"{target} shadow must carry {nested}")
                     self.assertEqual(
-                        shadow.read_text(),
-                        src.read_text(),
-                        msg=(
-                            f"{target} ccc reference {ref} must be byte-identical to "
-                            f".rulesync/skills/ccc/references/{ref}"
-                        ),
+                        shadow.read_bytes(),
+                        (SOURCE_ROOT / "skills" / nested).read_bytes(),
+                        msg=f"{target} {nested} must be byte-identical to .rulesync/skills/{nested}",
                     )
 
     def test_tracked_shadow_frontmatter_normalizes_description(self):
@@ -289,11 +306,18 @@ class RulesyncSkillsShadowTests(unittest.TestCase):
                         msg=f"{target} shadow for {skill!r} must keep name: {skill}",
                     )
 
-    def test_tracked_shadow_excludes_openai_yaml_everywhere(self):
-        for path in SHADOW_ROOT.rglob("openai.yaml"):
-            self.fail(
-                f"shadow fixture must not include Codex openai.yaml; found at {path}"
-            )
+    def test_tracked_shadow_carries_openai_yaml_once_per_skill_root(self):
+        # `.agents/skills` is shared by codexcli and antigravity-cli; the
+        # combined generation keeps Antigravity's verbatim copy there.
+        source = (SOURCE_ROOT / "skills" / OPENAI_YAML).read_bytes()
+        roots = sorted(set(EXPECTED_SKILL_PATH.values()))
+        self.assertEqual(
+            sorted(path.relative_to(SHADOW_ROOT).as_posix() for path in SHADOW_ROOT.rglob("openai.yaml")),
+            sorted(f"{root}/{OPENAI_YAML}" for root in roots),
+        )
+        for root in roots:
+            with self.subTest(root=root):
+                self.assertEqual((SHADOW_ROOT / root / OPENAI_YAML).read_bytes(), source)
 
     def test_tracked_rulesync_generate_passes_check(self):
         with tempfile.TemporaryDirectory() as temp:

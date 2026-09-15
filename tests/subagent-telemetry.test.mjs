@@ -1153,8 +1153,8 @@ test("the skill-read telemetry hook dedupes per turn and emits one skill_used pe
     process.env.AUTODEV_AGENT_EVENTS_URL = `http://127.0.0.1:${port}/v1/agent-events`;
     try {
       const scriptPath = fileURLToPath(new URL("../scripts/codex/skill-read-telemetry.mjs", import.meta.url));
-      const skillPath = `${process.env.AUTODEV_REPO_ROOT}/scripts/codex/skills/orchestration/SKILL.md`;
-      const otherSkillPath = `${process.env.AUTODEV_REPO_ROOT}/scripts/codex/skills/ccc/SKILL.md`;
+      const skillPath = `${process.env.AUTODEV_REPO_ROOT}/.rulesync/skills/orchestration/SKILL.md`;
+      const otherSkillPath = `${process.env.AUTODEV_REPO_ROOT}/.rulesync/skills/ccc/SKILL.md`;
       const userSkillPath = `${tempHome.dir}/.agents/skills/orchestration/SKILL.md`;
       const sessionId = `session-${Date.now()}`;
       const turnId = "turn-1";
@@ -1514,7 +1514,7 @@ test("the provider bridges wire activity lifecycle telemetry", () => {
 // A canonical SKILL.md this checkout actually ships, so the matching logic
 // below is exercised against a real approved root instead of a synthetic one.
 const REPO_ROOT = fileURLToPath(new URL("..", import.meta.url));
-const CANONICAL_SKILL_PATH = join(REPO_ROOT, "scripts", "codex", "skills", "ccc", "SKILL.md");
+const CANONICAL_SKILL_PATH = join(REPO_ROOT, ".rulesync", "skills", "ccc", "SKILL.md");
 const OTHER_FILE_PATH = join(REPO_ROOT, "AGENTS.md");
 
 test("the Antigravity bridge detects a successful canonical SKILL.md read", async () => {

@@ -219,9 +219,9 @@ const SKILL_ROOTS = [
   join(HOME, ".agents", "skills"),
   join(HOME, ".codex", "skills"),
   join(HOME, "AutoDev", ".agents", "skills"),
-  join(HOME, "AutoDev", "scripts", "codex", "skills"),
+  join(HOME, "AutoDev", ".rulesync", "skills"),
   join(REPO_ROOT, ".agents", "skills"),
-  join(REPO_ROOT, "scripts", "codex", "skills"),
+  join(REPO_ROOT, ".rulesync", "skills"),
 ].filter((path) => existsSync(path));
 
 // Tool names agy uses to read a file's contents outright, versus the shell

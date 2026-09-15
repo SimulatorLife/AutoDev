@@ -5,9 +5,9 @@ import test from "node:test";
 const read = (path) => readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
 
 const installer = read("scripts/codex/install-codex-integration.sh");
-const skill = read("scripts/codex/skills/resolve-merge-conflicts/SKILL.md");
-const helper = read("scripts/codex/skills/resolve-merge-conflicts/scripts/extract_conflict_context.py");
-const notices = read("scripts/codex/skills/resolve-merge-conflicts/THIRD_PARTY_NOTICES.md");
+const skill = read(".rulesync/skills/resolve-merge-conflicts/SKILL.md");
+const helper = read(".rulesync/skills/resolve-merge-conflicts/scripts/extract_conflict_context.py");
+const notices = read(".rulesync/skills/resolve-merge-conflicts/THIRD_PARTY_NOTICES.md");
 
 test("resolve-merge-conflicts is installed as a user-level skill", () => {
   assert.match(installer, /skill_names=.*\bcode-simplification\b/);

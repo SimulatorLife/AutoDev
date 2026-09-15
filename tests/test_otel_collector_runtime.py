@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import os
 import plistlib
+import socket
 import stat
 import subprocess
 import tempfile
@@ -17,6 +18,14 @@ PLIST = ROOT / "scripts/codex/launchagents/com.codex.otel-collector.plist"
 
 
 class CollectorRuntimeTests(unittest.TestCase):
+    @staticmethod
+    def free_port() -> int:
+        # Never probe the live 4318 ingress: an enabled local Collector would
+        # make the runner's duplicate-listener guard fire inside a hermetic test.
+        with socket.socket() as sock:
+            sock.bind(("127.0.0.1", 0))
+            return int(sock.getsockname()[1])
+
     def env(self, td: str, **extra: str) -> dict[str, str]:
         env = os.environ.copy()
         env.update(
@@ -27,7 +36,7 @@ class CollectorRuntimeTests(unittest.TestCase):
                 "AUTODEV_OTEL_CONFIG": f"{td}/collector.yaml",
                 "AUTODEV_OTEL_VERSION_FILE": f"{td}/collector.version",
                 "AUTODEV_OTEL_HOST": "127.0.0.1",
-                "AUTODEV_OTEL_PORT": "4318",
+                "AUTODEV_OTEL_PORT": str(self.free_port()),
             }
         )
         env.update(extra)
@@ -81,6 +90,24 @@ class CollectorRuntimeTests(unittest.TestCase):
             self.assertNotEqual(result.returncode, 0)
             self.assertIn("version mismatch", result.stderr)
             self.assertFalse(Path(td, "validated").exists())
+
+    def test_run_check_allows_existing_collector_listener(self):
+        with tempfile.TemporaryDirectory() as td:
+            self.base_files(td)
+            binary = self.fake_binary(td)
+            fakebin = Path(td, "bin")
+            fakebin.mkdir()
+            nc = fakebin / "nc"
+            nc.write_text("#!/bin/sh\nexit 0\n")
+            nc.chmod(0o700)
+            env = self.env(
+                td,
+                AUTODEV_OTELCOL_BIN=str(binary),
+                PATH=f"{fakebin}:/usr/bin:/bin",
+            )
+            result = subprocess.run([str(RUN), "--check"], env=env, text=True, capture_output=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn("validates", result.stdout)
 
     def test_run_refuses_existing_http_service_as_duplicate(self):
         with tempfile.TemporaryDirectory() as td:

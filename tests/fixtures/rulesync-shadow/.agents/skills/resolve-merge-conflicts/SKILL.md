@@ -1,8 +1,11 @@
 ---
 name: resolve-merge-conflicts
-description: Resolve in-progress Git merge, rebase, cherry-pick, or stash conflicts by extracting compact conflict context, reconstructing both sides' intent, preserving the intended target behavior, minimizing unrelated churn, and validating the completed integration
+description: >-
+  Resolve in-progress Git merge, rebase, cherry-pick, or stash conflicts by
+  extracting compact conflict context, reconstructing both sides' intent,
+  preserving the intended target behavior, minimizing unrelated churn, and
+  validating the completed integration
 ---
-
 # Resolve Merge Conflicts
 
 Resolve conflicts as an integration problem, not a text-selection problem. Understand why both changes exist, determine the intended combined behavior, then produce the smallest correct resolution
@@ -34,7 +37,7 @@ conflict_context="$HOME/.agents/skills/resolve-merge-conflicts/scripts/extract_c
 If working directly in the AutoDev source tree before installation, the canonical source is:
 
 ```bash
-conflict_context="scripts/codex/skills/resolve-merge-conflicts/scripts/extract_conflict_context.py"
+conflict_context=".rulesync/skills/resolve-merge-conflicts/scripts/extract_conflict_context.py"
 ```
 
 ### 1. Start with a summary

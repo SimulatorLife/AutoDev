@@ -8,6 +8,8 @@
 # accept the Collector exporter's protobuf default.
 #
 # No generic backend exporter or multi-exporter tee is part of this slice.
+# Internal Collector metrics are disabled so the process owns exactly one
+# listener; the upstream default would also bind 127.0.0.1:8888.
 # See docs/AUTODEV_PLATFORM_MIGRATION.md ("Phase 3 — Insert OpenTelemetry
 # Collector as OTLP ingress") for the runtime and rollback procedure.
 
@@ -23,6 +25,9 @@ exporters:
     encoding: json
 
 service:
+  telemetry:
+    metrics:
+      level: none
   pipelines:
     traces:
       receivers: [otlp]

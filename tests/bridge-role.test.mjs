@@ -180,7 +180,7 @@ test("the installer ships every shared module the bridges import", () => {
     "scripts/codex/prompts/leaf.md",
     "scripts/codex/prompts/orchestrator.md",
     "scripts/codex/prompts/code-search.md",
-    "scripts/codex/skills/orchestration/SKILL.md",
+    ".rulesync/skills/orchestration/SKILL.md",
   ]) {
     assert.ok(installer.includes(asset), `installer must deploy ${asset}`);
   }

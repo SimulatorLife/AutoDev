@@ -34,8 +34,8 @@ AutoDev's shared code-search guidance already distinguishes semantic discovery f
 Sources:
 
 - [`scripts/codex/prompts/code-search.md`](../scripts/codex/prompts/code-search.md)
-- [`scripts/codex/skills/ccc/SKILL.md`](../scripts/codex/skills/ccc/SKILL.md)
-- [`scripts/codex/skills/lsp-mcp-server/SKILL.md`](../scripts/codex/skills/lsp-mcp-server/SKILL.md)
+- [`.rulesync/skills/ccc/SKILL.md`](../.rulesync/skills/ccc/SKILL.md)
+- [`.rulesync/skills/lsp-mcp-server/SKILL.md`](../.rulesync/skills/lsp-mcp-server/SKILL.md)
 
 Repomix solves a different problem: it turns a selected repository scope into a structured AI-oriented artifact with a directory tree, file contents, token counts, include/ignore filtering, output formats, and optional Tree-sitter compression
 

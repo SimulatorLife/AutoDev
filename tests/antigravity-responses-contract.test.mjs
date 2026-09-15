@@ -170,7 +170,7 @@ process.exitCode = fixture.exitCode ?? 0;
       const args = update.tool_info.args;
       const skillPath = extractSkillReadPath(update.tool_name, args);
       assert.equal(update.tool_name.toLowerCase() === "read_file", item.expected.directRead, `${name}: direct-vs-shell read shape`);
-      assert.equal(skillPath, `${REPO_ROOT}/scripts/codex/skills/ccc/SKILL.md`, `${name}: extracted skill path`);
+      assert.equal(skillPath, `${REPO_ROOT}/.rulesync/skills/ccc/SKILL.md`, `${name}: extracted skill path`);
       assert.equal(matchSkillReadPath(skillPath), "ccc", `${name}: matched skill name`);
     }
     assert.doesNotMatch(JSON.stringify(sse), new RegExp(item.expected.privacyToken), `${name}: prompt content must not be in SSE`);

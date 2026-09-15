@@ -67,7 +67,7 @@
               "toolCallId": "tool-1",
               "toolName": "read_file",
               "arguments": {
-                "file_path": "<REPO_ROOT>/scripts/codex/skills/ccc/SKILL.md"
+                "file_path": "<REPO_ROOT>/.rulesync/skills/ccc/SKILL.md"
               }
             }
           },
@@ -149,7 +149,7 @@
               "toolCallId": "tool-shell-1",
               "toolName": "bash",
               "arguments": {
-                "cmd": "cat <REPO_ROOT>/scripts/codex/skills/ccc/SKILL.md"
+                "cmd": "cat <REPO_ROOT>/.rulesync/skills/ccc/SKILL.md"
               }
             }
           },

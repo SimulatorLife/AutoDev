@@ -15,7 +15,10 @@ const PROMPTS = Object.freeze({
   orchestrator: new URL("../prompts/orchestrator.md", import.meta.url),
   roleDirectory: new URL("../prompts/roles/", import.meta.url),
 });
-const ORCHESTRATION_SKILL = new URL("../skills/orchestration/SKILL.md", import.meta.url);
+// The canonical skill source is the repository's `.rulesync/skills`. The
+// installer maps non-`scripts/` assets under $CODEX_HOME at the same depth, so
+// this one specifier resolves in a checkout and in the installed hooks copy.
+const ORCHESTRATION_SKILL = new URL("../../../.rulesync/skills/orchestration/SKILL.md", import.meta.url);
 const ROLE_PROMPT_NAMES = new Set(["browser-tester", "default", "docs-researcher", "explorer", "orchestrator", "smart", "validator", "worker"]);
 const cache = new Map();
 const BASE_PROMPT = readFileSync(PROMPTS.base, "utf8").trim();

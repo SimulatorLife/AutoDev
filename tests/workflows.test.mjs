@@ -266,7 +266,7 @@ test('Antigravity workspace customizations expose the code skills', async () => 
   const skills = JSON.parse(await readFile(path.join(root, '.agents', 'skills.json'), 'utf8'));
   assert.deepEqual(skills, {
     entries: [
-      { path: 'scripts/codex/skills', include_only: ['ccc', 'lsp-mcp-server'] },
+      { path: '.rulesync/skills', include_only: ['ccc', 'lsp-mcp-server'] },
     ],
   });
 });

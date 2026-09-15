@@ -55,10 +55,12 @@ esac
 # uses owner-scoped enumeration when a runtime provides it. One relative path covers
 # both layouts: this hook
 # sits beside `codex/prompts/` in a checkout (`scripts/`) and again in the
-# installed copy (`$CODEX_HOME/hooks/`).
+# installed copy (`$CODEX_HOME/hooks/`). The canonical skill source is the
+# repository's `.rulesync/skills`, mirrored under `$CODEX_HOME` by the installer,
+# so it sits one level above the hook directory in both layouts.
 hook_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 prompt_file="$hook_dir/codex/prompts/orchestrator.md"
-skill_file="$hook_dir/codex/skills/orchestration/SKILL.md"
+skill_file="$hook_dir/../.rulesync/skills/orchestration/SKILL.md"
 code_search_file="$hook_dir/codex/prompts/code-search.md"
 if [[ ! -f "$prompt_file" ]]; then
   echo "enforce-root-delegation: orchestrator prompt not found at $prompt_file" >&2

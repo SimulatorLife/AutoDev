@@ -6,7 +6,9 @@ docs/AUTODEV_PLATFORM_MIGRATION.md ("Phase 3 -- Insert OpenTelemetry
 Collector as OTLP ingress"): an OTLP HTTP receiver on
 127.0.0.1:4318 forwarding logs/traces/metrics pipelines to an
 otlp_http/autodev exporter targeting http://127.0.0.1:4100 with JSON
-encoding. No generic backend or multi-exporter tee belongs in this slice.
+encoding. No generic backend or multi-exporter tee belongs in this slice, and
+the Collector's internal telemetry must not open a second listener (the
+upstream default binds 127.0.0.1:8888).
 
 Only the Python standard library is used -- no third-party YAML parser --
 so a small indentation-based YAML subset loader is implemented below,
@@ -32,7 +34,7 @@ EXPECTED_PIPELINES = ("traces", "metrics", "logs")
 # scope it explicitly must not have yet (a generic backend, live process
 # wiring, or a tee adapter fanning out to more than one exporter).
 UNSUPPORTED_TOP_LEVEL_SECTIONS = ("processors", "extensions", "connectors")
-UNSUPPORTED_SERVICE_SECTIONS = ("extensions", "telemetry")
+UNSUPPORTED_SERVICE_SECTIONS = ("extensions",)
 
 
 def _parse_scalar(value):
@@ -191,12 +193,18 @@ class OtelCollectorConfigStructureTests(unittest.TestCase):
             msg="the existing AutoDev receiver parses OTLP JSON, not protobuf",
         )
 
-    def test_service_has_pipelines_section_only(self):
+    def test_service_has_pipelines_and_telemetry_sections_only(self):
         service = self.config["service"]
-        self.assertEqual(set(service.keys()), {"pipelines"})
+        self.assertEqual(set(service.keys()), {"pipelines", "telemetry"})
         for section in UNSUPPORTED_SERVICE_SECTIONS:
             with self.subTest(section=section):
                 self.assertNotIn(section, service)
+
+    def test_internal_telemetry_opens_no_metrics_listener(self):
+        # Without this, otelcol binds 127.0.0.1:8888 for its own Prometheus
+        # metrics: an unmanaged second port that also blocks any other
+        # Collector on the host from starting.
+        self.assertEqual(self.config["service"]["telemetry"], {"metrics": {"level": "none"}})
 
     def test_all_three_pipelines_present(self):
         pipelines = self.config["service"]["pipelines"]

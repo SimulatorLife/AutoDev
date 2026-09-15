@@ -112,7 +112,8 @@ disabled so child agents do not inherit parent orchestration policy.
 Antigravity has a separate global MCP registry and workspace customization
 discovery. The installer registers the pinned `cocoindex-code` and `lsp` MCP
 servers with `agy`; `.agents/skills.json` exposes the corresponding `ccc` and
-`lsp-mcp-server` skills to Antigravity sessions in this repository. Without
+`lsp-mcp-server` skills from the canonical `.rulesync/skills/` source to
+Antigravity sessions in this repository. Without
 both registrations, Antigravity can receive the code-search wording but cannot
 actually call either semantic tool surface.
 
@@ -310,7 +311,7 @@ pnpm exec rulesync generate \
   --silent
 ```
 
-Rulesync does not replace AutoDev's live hook enforcement, MCP configuration, or role filtering. The first canonical-skill cutover is limited to the Copilot repository surface at `.github/skills/` (`ccc`, `lsp-mcp-server`, and `orchestration`); its `SKILL.md` bodies and generated frontmatter are drift-checked. The installer continues to symlink Codex/user-level canonical skills from `scripts/codex/skills/`, `render-provider-skill-views.py` continues to project role-specific Claude views from the execution contract, and Antigravity continues to use its explicit `include_only` registration. `ccc` reference files, MCP, hooks, and permissions remain shadow-only or deferred until those boundaries are separately proven equivalent.
+Rulesync does not replace AutoDev's live hook enforcement, MCP configuration, or role filtering. The first canonical-skill cutover is limited to the Copilot repository surface at `.github/skills/` (`ccc`, `lsp-mcp-server`, and `orchestration`); its `SKILL.md` bodies and generated frontmatter are drift-checked. `.rulesync/skills/` is the single canonical source for every AutoDev skill; the other canonical skills are projected into the tracked shadow fixtures but are not promoted into `.github/skills/`. The installer symlinks Codex/user-level skills from `.rulesync/skills/`, `render-provider-skill-views.py` continues to project role-specific Claude views from the execution contract, and Antigravity continues to use its explicit `include_only` registration. `ccc` reference files, MCP, hooks, and permissions remain shadow-only or deferred until those boundaries are separately proven equivalent.
 
 To refresh the tracked shadow fixtures after making intentional changes to `.rulesync/` or `rulesync.jsonc`:
 

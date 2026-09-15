@@ -140,7 +140,7 @@
               "index": 0,
               "delta": {
                 "type": "input_json_delta",
-                "partial_json": "{\"file_path\":\"<REPO_ROOT>/scripts/codex/skills/ccc/SKILL.md\"}"
+                "partial_json": "{\"file_path\":\"<REPO_ROOT>/.rulesync/skills/ccc/SKILL.md\"}"
               }
             }
           },
@@ -281,7 +281,7 @@
               "index": 0,
               "delta": {
                 "type": "input_json_delta",
-                "partial_json": "{\"command\":\"cat <REPO_ROOT>/scripts/codex/skills/ccc/SKILL.md\"}"
+                "partial_json": "{\"command\":\"cat <REPO_ROOT>/.rulesync/skills/ccc/SKILL.md\"}"
               }
             }
           },
@@ -422,7 +422,7 @@
               "index": 0,
               "delta": {
                 "type": "input_json_delta",
-                "partial_json": "{\"file_path\":\"<REPO_ROOT>/scripts/codex/skills/ccc/SKILL.md\"}"
+                "partial_json": "{\"file_path\":\"<REPO_ROOT>/.rulesync/skills/ccc/SKILL.md\"}"
               }
             }
           },
@@ -467,7 +467,7 @@
               "index": 1,
               "delta": {
                 "type": "input_json_delta",
-                "partial_json": "{\"command\":\"cat <REPO_ROOT>/scripts/codex/skills/lsp-mcp-server/SKILL.md\"}"
+                "partial_json": "{\"command\":\"cat <REPO_ROOT>/.rulesync/skills/lsp-mcp-server/SKILL.md\"}"
               }
             }
           },

@@ -108,7 +108,7 @@
               "state": "ACTIVE",
               "tool_info": {
                 "args": {
-                  "file_path": "<REPO_ROOT>/scripts/codex/skills/ccc/SKILL.md"
+                  "file_path": "<REPO_ROOT>/.rulesync/skills/ccc/SKILL.md"
                 }
               }
             }
@@ -123,7 +123,7 @@
               "duration_seconds": 0.01,
               "tool_info": {
                 "args": {
-                  "file_path": "<REPO_ROOT>/scripts/codex/skills/ccc/SKILL.md"
+                  "file_path": "<REPO_ROOT>/.rulesync/skills/ccc/SKILL.md"
                 },
                 "output": "skill body"
               }
@@ -199,7 +199,7 @@
               "state": "ACTIVE",
               "tool_info": {
                 "args": {
-                  "command": "cat <REPO_ROOT>/scripts/codex/skills/ccc/SKILL.md"
+                  "command": "cat <REPO_ROOT>/.rulesync/skills/ccc/SKILL.md"
                 }
               }
             }
@@ -214,7 +214,7 @@
               "duration_seconds": 0.01,
               "tool_info": {
                 "args": {
-                  "command": "cat <REPO_ROOT>/scripts/codex/skills/ccc/SKILL.md"
+                  "command": "cat <REPO_ROOT>/.rulesync/skills/ccc/SKILL.md"
                 },
                 "output": "skill body"
               }

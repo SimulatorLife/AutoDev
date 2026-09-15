@@ -6,8 +6,8 @@ const read = (path) => readFileSync(new URL(`../${path}`, import.meta.url), "utf
 
 const installer = read("scripts/codex/install-codex-integration.sh");
 const localSetup = read("docs/local-setup.md");
-const architecture = read("scripts/codex/skills/improve-codebase-architecture/SKILL.md");
-const diagnosing = read("scripts/codex/skills/diagnosing-bugs/SKILL.md");
+const architecture = read(".rulesync/skills/improve-codebase-architecture/SKILL.md");
+const diagnosing = read(".rulesync/skills/diagnosing-bugs/SKILL.md");
 
 const registeredSkills = ["diagnosing-bugs", "improve-codebase-architecture"];
 

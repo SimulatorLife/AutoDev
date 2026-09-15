@@ -264,9 +264,11 @@ ORCHESTRATOR_AGENT_ROLE = "orchestrator"
 # Bridge role prompts are shared verbatim with the other provider bridges and
 # with the root delegation hook. One relative path covers both layouts: this
 # file sits beside `codex/prompts/` in a checkout (`scripts/`) and again in the
-# installed copy (`$CODEX_HOME/hooks/`).
+# installed copy (`$CODEX_HOME/hooks/`). The canonical skill source lives at the
+# repository root in `.rulesync/skills`, which the installer mirrors under
+# `$CODEX_HOME`, so it is always three levels above the prompt directory.
 _PROMPT_DIRECTORY = Path(__file__).resolve().parent / "codex" / "prompts"
-_ORCHESTRATION_SKILL = _PROMPT_DIRECTORY.parent / "skills" / "orchestration" / "SKILL.md"
+_ORCHESTRATION_SKILL = _PROMPT_DIRECTORY.parent.parent.parent / ".rulesync" / "skills" / "orchestration" / "SKILL.md"
 _CODE_SEARCH_PROMPT = _PROMPT_DIRECTORY / "code-search.md"
 _ROLE_PROMPT_DIRECTORY = _PROMPT_DIRECTORY / "roles"
 
@@ -1279,9 +1281,9 @@ _SKILL_ROOTS = [
         _HOME / ".agents" / "skills",
         _HOME / ".codex" / "skills",
         _HOME / "AutoDev" / ".agents" / "skills",
-        _HOME / "AutoDev" / "scripts" / "codex" / "skills",
+        _HOME / "AutoDev" / ".rulesync" / "skills",
         _REPO_ROOT / ".agents" / "skills",
-        _REPO_ROOT / "scripts" / "codex" / "skills",
+        _REPO_ROOT / ".rulesync" / "skills",
     )
     if root.is_dir()
 ]

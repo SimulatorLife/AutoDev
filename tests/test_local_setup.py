@@ -41,7 +41,7 @@ class LocalSetupTests(unittest.TestCase):
         installer = (REPO_ROOT / "scripts/codex/install-codex-integration.sh").read_text()
         for name in SKILL_NAMES:
             with self.subTest(skill=name):
-                source = REPO_ROOT / "scripts/codex/skills" / name
+                source = REPO_ROOT / ".rulesync/skills" / name
                 self.assertTrue(source.is_dir())
                 self.assertFalse(source.is_symlink())
                 self.assertTrue((source / "SKILL.md").is_file())
@@ -49,8 +49,8 @@ class LocalSetupTests(unittest.TestCase):
                     (source / "SKILL.md").is_symlink(),
                     msg=f"skill source {name!r} must expose a regular (non-symlink) SKILL.md",
                 )
-                self.assertIn(f'source="$repo_root/scripts/codex/skills/$name"', installer)
-                self.assertIn(f'link_skill "$repo_root/scripts/codex/skills/$name" "$user_skills_dir/$name"', installer)
+                self.assertIn(f'source="$skill_source_root/$name"', installer)
+                self.assertIn(f'link_skill "$skill_source_root/$name" "$user_skills_dir/$name"', installer)
                 self.assertIn('legacy_skills_dirs=("$codex_home/skills" "$codex_home/agents/skills")', installer)
 
     @staticmethod
@@ -164,6 +164,166 @@ exit 0
                 "http://127.0.0.1:4100/v1/logs",
             )
 
+    def test_failed_collector_mode_change_does_not_persist_requested_mode(self):
+        # The mode file is what --check and the next plain install trust. A
+        # mode change that aborts before its configuration and services are
+        # applied must leave the previously applied mode recorded.
+        with tempfile.TemporaryDirectory() as home, tempfile.TemporaryDirectory() as codex_home:
+            failed = self._run_installer(
+                home,
+                codex_home,
+                "--enable-otel-collector",
+                AUTODEV_OTELCOL_BIN=str(Path(home) / "missing-otelcol"),
+            )
+            self.assertNotEqual(failed.returncode, 0, failed.stdout + failed.stderr)
+            self.assertIn("AUTODEV_OTELCOL_BIN is not executable", failed.stderr)
+            self.assertFalse((Path(codex_home) / "otel-collector.mode").exists())
+
+    def _run_restart_services_with_loaded_collector(self, collector_program: str, hooks_dir: str) -> str:
+        # Launchd labels are global to the user, so a direct-mode install under
+        # an overridden HOME/CODEX_HOME still sees the live Collector job. Run
+        # the real restart_services against a logging launchctl stub.
+        installer = INSTALLER_PATH.read_text()
+
+        def function(name: str) -> str:
+            start = installer.index(f"\n{name}() {{\n") + 1
+            return installer[start:installer.index("\n}\n", start) + 3]
+
+        with tempfile.TemporaryDirectory() as td:
+            binaries = Path(td, "bin")
+            binaries.mkdir()
+            log = Path(td, "launchctl.log")
+            (binaries / "launchctl").write_text(
+                "#!/bin/bash\n"
+                'echo "$*" >> "$STUB_LOG"\n'
+                'if [[ "$1" == print && "$2" == */com.codex.otel-collector ]]; then\n'
+                '  printf "\\tprogram = /bin/bash\\n\\targuments = {\\n\\t\\t%s\\n\\t}\\n" "$COLLECTOR_PROGRAM"\n'
+                "  exit 0\n"
+                "fi\n"
+                '[[ "$1" == print ]] && exit 113\n'
+                "exit 0\n",
+                encoding="utf-8",
+            )
+            (binaries / "launchctl").chmod(0o700)
+            script = "\n".join(
+                [
+                    "set -euo pipefail",
+                    'hooks_dir="$HOOKS_DIR"',
+                    # No repository: any fallthrough to the ensure hooks fails
+                    # here instead of touching live loopback services.
+                    'repo_root="$HOME/no-repository"',
+                    "otel_collector_mode=direct",
+                    "launchagent_labels=(com.codex.model-router com.codex.otel-collector)",
+                    "plist_codex_home() { :; }",
+                    "reap_unmanaged() { :; }",
+                    function("service_launcher"),
+                    function("restart_services"),
+                    "restart_services",
+                ]
+            )
+            subprocess.run(
+                ["bash", "-c", script],
+                text=True,
+                capture_output=True,
+                env={
+                    **os.environ,
+                    "HOME": td,
+                    "HOOKS_DIR": hooks_dir,
+                    "PATH": f"{binaries}:{os.environ['PATH']}",
+                    "STUB_LOG": str(log),
+                    "COLLECTOR_PROGRAM": collector_program,
+                },
+                timeout=30,
+            )
+            return log.read_text() if log.exists() else ""
+
+    def test_direct_mode_install_never_boots_out_another_runtimes_collector(self):
+        with tempfile.TemporaryDirectory() as td:
+            calls = self._run_restart_services_with_loaded_collector(
+                "/Users/live/.codex/hooks/codex/otel/run-autodev-otel-collector.sh",
+                f"{td}/hooks",
+            )
+        self.assertIn("print gui/", calls)
+        self.assertNotIn("bootout", calls)
+
+    def test_direct_mode_install_stops_its_own_collector(self):
+        with tempfile.TemporaryDirectory() as td:
+            calls = self._run_restart_services_with_loaded_collector(
+                f"{td}/hooks/codex/otel/run-autodev-otel-collector.sh",
+                f"{td}/hooks",
+            )
+        self.assertRegex(calls, r"bootout gui/\d+/com\.codex\.otel-collector")
+
+    @staticmethod
+    def _installer_function(name: str) -> str:
+        installer = INSTALLER_PATH.read_text()
+        start = installer.index(f"\n{name}() {{\n") + 1
+        return installer[start:installer.index("\n}\n", start) + 3]
+
+    def test_runtime_assets_outside_scripts_install_at_the_same_depth_under_codex_home(self):
+        # The canonical skill source is `.rulesync/skills` at the repository
+        # root. $hooks_dir stands in for `scripts/` and $codex_home for the repo
+        # root, so one relative specifier resolves in a checkout and installed.
+        script = "\n".join(
+            [
+                "set -euo pipefail",
+                'codex_home=/runtime/codex; hooks_dir="$codex_home/hooks"',
+                self._installer_function("runtime_module_target").strip(),
+                "runtime_module_target scripts/codex/lib/bridge-role.mjs",
+                "runtime_module_target .rulesync/skills/orchestration/SKILL.md",
+            ]
+        )
+        result = subprocess.run(["bash", "-c", script], text=True, capture_output=True, check=True)
+        self.assertEqual(
+            result.stdout.splitlines(),
+            [
+                "/runtime/codex/hooks/codex/lib/bridge-role.mjs",
+                "/runtime/codex/.rulesync/skills/orchestration/SKILL.md",
+            ],
+        )
+        installer = INSTALLER_PATH.read_text()
+        self.assertIn("  .rulesync/skills/orchestration/SKILL.md\n", installer)
+        self.assertIn("obsolete_runtime_directory_names=(scripts codex/skills)", installer)
+
+    def test_agy_skill_registry_replaces_obsolete_source_and_check_rejects_it(self):
+        with tempfile.TemporaryDirectory() as home:
+            binaries = Path(home, "bin")
+            binaries.mkdir()
+            (binaries / "agy").write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+            (binaries / "agy").chmod(0o700)
+            config = Path(home, ".gemini/config/skills.json")
+            config.parent.mkdir(parents=True)
+            obsolete = "/repo/scripts/codex/skills"
+            user_entry = {"path": "/elsewhere/skills", "include_only": ["mine"]}
+            config.write_text(json.dumps({"entries": [{"path": obsolete, "include_only": ["ccc", "lsp-mcp-server"]}, user_entry]}))
+            environment = {**os.environ, "HOME": home, "PATH": f"{binaries}:{os.environ['PATH']}"}
+            environment.pop("AUTODEV_SKIP_AGY_MCP", None)
+
+            def run(function: str) -> subprocess.CompletedProcess:
+                script = "\n".join(
+                    [
+                        "set -euo pipefail",
+                        'skill_source_root=/repo/.rulesync/skills',
+                        f'obsolete_agy_skill_paths=("{obsolete}")',
+                        self._installer_function(function),
+                        function,
+                    ]
+                )
+                return subprocess.run(["bash", "-c", script], text=True, capture_output=True, env=environment)
+
+            stale = run("check_agy_code_skills")
+            self.assertNotEqual(stale.returncode, 0, stale.stdout + stale.stderr)
+            self.assertIn(f"obsolete agy skill registration {obsolete}", stale.stdout)
+
+            registered = run("register_agy_code_skills")
+            self.assertEqual(registered.returncode, 0, registered.stderr)
+            self.assertEqual(
+                json.loads(config.read_text())["entries"],
+                [user_entry, {"path": "/repo/.rulesync/skills", "include_only": ["ccc", "lsp-mcp-server"]}],
+            )
+            checked = run("check_agy_code_skills")
+            self.assertEqual(checked.returncode, 0, checked.stdout + checked.stderr)
+
     def test_skill_installer_links_each_target_as_absolute_directory_symlink_with_regular_skill_doc(self):
         """The installer must expose every AutoDev-owned skill under
         ``$HOME/.agents/skills`` as an absolute directory-level symlink
@@ -195,7 +355,7 @@ exit 0
                     )
                     self.assertEqual(
                         Path(link_target),
-                        REPO_ROOT / "scripts/codex/skills" / name,
+                        REPO_ROOT / ".rulesync/skills" / name,
                         msg=f"skill {name!r} symlink must point at the AutoDev-owned source directory, got {link_target!r}",
                     )
                     self.assertTrue(
@@ -378,7 +538,7 @@ exit 0
         }
         self.assertTrue(skill_config["ccc"])
 
-        skill = REPO_ROOT / "scripts/codex/skills/ccc"
+        skill = REPO_ROOT / ".rulesync/skills/ccc"
         self.assertTrue((skill / "SKILL.md").is_file())
         self.assertTrue((skill / "references/management.md").is_file())
         self.assertTrue((skill / "references/settings.md").is_file())
@@ -595,7 +755,7 @@ exit 0
 
     def test_antigravity_discovers_the_code_skills_from_the_workspace(self):
         skills_config = json.loads((REPO_ROOT / ".agents/skills.json").read_text())
-        self.assertEqual(skills_config["entries"][0]["path"], "scripts/codex/skills")
+        self.assertEqual(skills_config["entries"][0]["path"], ".rulesync/skills")
         self.assertEqual(
             skills_config["entries"][0]["include_only"],
             ["ccc", "lsp-mcp-server"],
@@ -1247,11 +1407,11 @@ exit 0
                     self.assertIn("model_reasoning_effort", result.stderr)
 
     def test_user_level_skill_registry_contains_all_requested_skill_names(self):
-        names = {path.name for path in (REPO_ROOT / "scripts/codex/skills").iterdir()}
+        names = {path.name for path in (REPO_ROOT / ".rulesync/skills").iterdir()}
         self.assertTrue(set(SKILL_NAMES) <= names)
 
     def test_code_simplification_skill_is_repository_agnostic_and_quality_focused(self):
-        skill = (REPO_ROOT / "scripts/codex/skills/code-simplification/SKILL.md").read_text()
+        skill = (REPO_ROOT / ".rulesync/skills/code-simplification/SKILL.md").read_text()
         for required in (
             "## Operating Modes",
             "### Proactive Audit Mode",
@@ -2512,6 +2672,27 @@ PY
         ):
             self.assertIn(hook, installer, msg=f"the restart must run {hook}")
 
+    def test_restart_services_direct_collector_ensure_forwards_otel_environment(self):
+        # Launchd-unavailable installs use the direct ensure-hook path. The
+        # installed hook cannot derive repository config paths from its
+        # $CODEX_HOME/hooks location, so restart_services must pass them
+        # explicitly just as the --check path does.
+        installer = INSTALLER_PATH.read_text()
+        marker = "launchctl unavailable (sandbox?); starting bridges through the direct ensure-hook path."
+        marker_index = installer.index(marker)
+        fallback_end = installer.index('  if [[ "$otel_collector_mode" == collector ]]; then', marker_index)
+        fallback = installer[marker_index:fallback_end]
+        fallback += installer[fallback_end:installer.index("\n  fi", fallback_end)]
+        expected = "\n".join(
+            [
+                'AUTODEV_OTEL_REPO_ROOT="$repo_root" ' + chr(92),
+                '      AUTODEV_OTEL_CONFIG="$repo_root/config/otel/collector.yaml" ' + chr(92),
+                '      AUTODEV_OTEL_VERSION_FILE="$repo_root/config/otel/collector.version" ' + chr(92),
+                '      bash "$hooks_dir/codex/otel/ensure-autodev-otel-collector.sh"',
+            ]
+        )
+        self.assertIn(expected, fallback)
+
     def test_installer_clears_unmanaged_processes_before_adopting_a_service(self):
         # A process squatting the port outside launchd cannot be replaced by
         # launchd: it owns the bind, so bootstrap fails and the agent never
@@ -2874,7 +3055,7 @@ PY
                     self.assertEqual(python_result, node_result)
 
     def test_orchestration_skill_is_self_contained_and_orchestrator_focused(self):
-        skill = (REPO_ROOT / "scripts/codex/skills/orchestration/SKILL.md").read_text()
+        skill = (REPO_ROOT / ".rulesync/skills/orchestration/SKILL.md").read_text()
         for forbidden in (
             "provider-routing",
             "github.com/SimulatorLife/AutoDev",
@@ -2903,7 +3084,7 @@ PY
         root delegation hook must each inject it as a coherent section, and no
         leaf path may carry the orchestration policy into a delegated turn.
         """
-        skill = (REPO_ROOT / "scripts/codex/skills/orchestration/SKILL.md").read_text()
+        skill = (REPO_ROOT / ".rulesync/skills/orchestration/SKILL.md").read_text()
         self.assertIn("## Root orchestrator contract", skill)
         self.assertIn("## Capability roles", skill)
 
@@ -2911,13 +3092,11 @@ PY
         # relative path so the installer ships it. JS uses URL-style paths
         # while the Claude bridge composes its path with Path parts.
         path_patterns = (
-            ("scripts/codex/lib/bridge-role.mjs", "../skills/orchestration/SKILL.md"),
-            ("scripts/codex/lib/bridge-role.mjs", "skills/orchestration/SKILL.md"),
+            ("scripts/codex/lib/bridge-role.mjs", "../../../.rulesync/skills/orchestration/SKILL.md"),
             ("scripts/codex/lib/bridge-role.mjs", "../prompts/code-search.md"),
-            ("scripts/codex-claude-cli-responses-proxy.py", '"orchestration"'),
-            ("scripts/codex-claude-cli-responses-proxy.py", '"SKILL.md"'),
+            ("scripts/codex-claude-cli-responses-proxy.py", '".rulesync" / "skills" / "orchestration" / "SKILL.md"'),
             ("scripts/codex-claude-cli-responses-proxy.py", '"code-search.md"'),
-            ("scripts/enforce-root-delegation.sh", "skills/orchestration/SKILL.md"),
+            ("scripts/enforce-root-delegation.sh", "$hook_dir/../.rulesync/skills/orchestration/SKILL.md"),
             ("scripts/enforce-root-delegation.sh", "prompts/code-search.md"),
         )
         for relative_path, needle in path_patterns:

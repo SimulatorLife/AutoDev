@@ -102,7 +102,7 @@ if (( check_only == 0 )) && command -v curl >/dev/null 2>&1; then
     fail "port ${host}:${port} already serving HTTP ($http_code); refusing to start a duplicate Collector"
   fi
 fi
-if port_busy; then
+if (( check_only == 0 )) && port_busy; then
   fail "port ${host}:${port} is already in use by another process"
 fi
 

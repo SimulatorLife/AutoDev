@@ -14,6 +14,9 @@ otel_collector_mode_file="$codex_home/otel-collector.mode"
 agents_dir="$codex_home/agents"
 rules_dir="$codex_home/rules"
 user_skills_dir="$HOME/.agents/skills"
+# The single canonical skill source. Every consumer (user-level links, the agy
+# registry, the bridges' orchestrator prompt) reads from this directory.
+skill_source_root="$repo_root/.rulesync/skills"
 agy_settings_file="$HOME/.gemini/antigravity-cli/settings.json"
 legacy_skills_dirs=("$codex_home/skills" "$codex_home/agents/skills")
 
@@ -48,10 +51,15 @@ obsolete_runtime_hook_names=(log-subagent-model.sh run-codex-antigravity-litellm
 obsolete_launchagent_labels=(com.codex.antigravity-litellm)
 # Runtime files installed outside the hooks directory that no longer belong.
 obsolete_runtime_paths=("$HOME/.config/litellm/antigravity.yaml" "$HOME/.codex/codex-antigravity-litellm-config.sha256")
+# agy global skill registry entries written for a skill source that no longer
+# exists. register_agy_code_skills removes them and --check rejects them.
+obsolete_agy_skill_paths=("$repo_root/scripts/codex/skills")
 # Directories under the hooks directory that earlier layouts created and no
 # longer belong there. Removed with `rm -rf`, so entries must stay fixed
 # literals that name a directory this installer itself once created.
-obsolete_runtime_directory_names=(scripts)
+# `codex/skills` held the orchestration skill copy before the canonical source
+# moved to `.rulesync/skills` (now installed under $codex_home).
+obsolete_runtime_directory_names=(scripts codex/skills)
 
 dashboard_asset_names=(codex-model-router-dashboard.html)
 # Repo-relative assets the bridges load at runtime. The hooks directory is
@@ -83,7 +91,7 @@ runtime_module_names=(
   scripts/codex/prompts/leaf.md
   scripts/codex/prompts/code-search.md
   scripts/codex/prompts/orchestrator.md
-  scripts/codex/skills/orchestration/SKILL.md
+  .rulesync/skills/orchestration/SKILL.md
 )
 
 profile_names=(claude minimax antigravity)
@@ -160,7 +168,16 @@ load_otel_collector_mode
 # The installed path for a runtime module: its repo path without the leading
 # `scripts/`, because the bridges are installed flat into the hooks directory
 # rather than under a mirrored `scripts/` subtree.
-runtime_module_target() { printf '%s\n' "$hooks_dir/${1#scripts/}"; }
+# Repo `scripts/X` installs at `$hooks_dir/X`; any other repo path (for example
+# the canonical `.rulesync/skills`) installs at `$codex_home/<path>`. With
+# $hooks_dir standing in for `scripts/` and $codex_home for the repo root, a
+# relative specifier resolves identically in a checkout and in the hooks copy.
+runtime_module_target() {
+  case "$1" in
+    scripts/*) printf '%s\n' "$hooks_dir/${1#scripts/}" ;;
+    *) printf '%s\n' "$codex_home/$1" ;;
+  esac
+}
 
 link_one() {
   local source="$1"
@@ -429,7 +446,7 @@ check_versioned_sources() {
     fi
   done
   for name in "${skill_names[@]}"; do
-    source="$repo_root/scripts/codex/skills/$name"
+    source="$skill_source_root/$name"
     if ! check_versioned_source "$source"; then
       failed=1
     fi
@@ -863,13 +880,22 @@ check_agy_code_skills() {
     printf 'missing agy global skill config %s\n' "$config"
     return 1
   }
-  python3 - "$config" "$repo_root/scripts/codex/skills" <<'PY'
+  python3 - "$config" "$skill_source_root" "${obsolete_agy_skill_paths[@]}" <<'PY'
 import json
 import sys
 
 with open(sys.argv[1], encoding="utf-8") as stream:
     config = json.load(stream)
 expected = sys.argv[2]
+obsolete = set(sys.argv[3:])
+stale = sorted(
+    entry.get("path")
+    for entry in config.get("entries", [])
+    if isinstance(entry, dict) and entry.get("path") in obsolete
+)
+if stale:
+    print("obsolete agy skill registration " + ", ".join(stale))
+    raise SystemExit(1)
 managed = any(
     entry.get("path") == expected
     and entry.get("include_only") == ["ccc", "lsp-mcp-server"]
@@ -1141,7 +1167,7 @@ check_links() {
     fi
   done
   for name in "${skill_names[@]}"; do
-    source="$repo_root/scripts/codex/skills/$name"
+    source="$skill_source_root/$name"
     target="$user_skills_dir/$name"
     if check_skill_one "$source" "$target"; then
       printf 'ok %s -> %s\n' "$target" "$source"
@@ -1361,9 +1387,11 @@ if [[ "$check_only" == 1 ]]; then
   exit "$status"
 fi
 
+# The requested mode drives this run in memory only. It is persisted after the
+# install succeeds, so a failed enable/disable never leaves the recorded mode
+# (and --check) disagreeing with the configuration and services still active.
 if [[ -n "$otel_collector_action" ]]; then
   otel_collector_mode="$otel_collector_action"
-  write_otel_collector_mode "$otel_collector_mode"
 fi
 
 if [[ "$otel_collector_mode" == collector && "$materialize_only" == 0 ]]; then
@@ -1543,13 +1571,14 @@ register_agy_code_skills() {
   fi
   local config="$HOME/.gemini/config/skills.json"
   mkdir -p -- "$(dirname -- "$config")"
-  python3 - "$config" "$repo_root/scripts/codex/skills" <<'PY'
+  python3 - "$config" "$skill_source_root" "${obsolete_agy_skill_paths[@]}" <<'PY'
 import json
 import os
 import sys
 import tempfile
 
-path, skills_path = sys.argv[1:]
+path, skills_path, *obsolete_paths = sys.argv[1:]
+replaced_paths = {skills_path, *obsolete_paths}
 if os.path.isfile(path):
     with open(path, encoding="utf-8") as stream:
         config = json.load(stream)
@@ -1561,7 +1590,7 @@ entries[:] = [
     entry for entry in entries
     if not (
         isinstance(entry, dict)
-        and entry.get("path") == skills_path
+        and entry.get("path") in replaced_paths
     )
 ]
 entries.append(managed)
@@ -1660,7 +1689,7 @@ for name in "${skill_names[@]}"; do
       exit 1
     fi
   done
-  link_skill "$repo_root/scripts/codex/skills/$name" "$user_skills_dir/$name"
+  link_skill "$skill_source_root/$name" "$user_skills_dir/$name"
 done
 mkdir -p -- "$agents_dir"
 rendered_agents_dir="$(mktemp -d "${TMPDIR:-/tmp}/autodev-rendered-agents.XXXXXX")"
@@ -1831,15 +1860,10 @@ restart_services() {
   fi
   local launchd_ok=1 foreign_service=0 label plist_link probe job_dump expected_hook
   for label in "${launchagent_labels[@]}"; do
-    if [[ "$label" == com.codex.otel-collector && "$otel_collector_mode" != collector ]]; then
-      launchctl bootout "$domain/$label" >/dev/null 2>&1 || true
-      continue
-    fi
-    local plist_link="$HOME/Library/LaunchAgents/$label.plist"
-    [[ -f "$plist_link" ]] || { launchd_ok=0; continue; }
-    # LaunchAgent labels are global. Never boot out a service owned by a
-    # different CODEX_HOME (for example a hermetic installer test or a staged
-    # migration); only cycle a loaded job whose program is this install's hook.
+    # LaunchAgent labels are global to the user even when HOME/CODEX_HOME are
+    # overridden. Never boot out a service owned by a different CODEX_HOME (for
+    # example a hermetic installer test or a staged migration): ownership is
+    # decided before any bootout, including stopping a disabled Collector.
     if job_dump="$(launchctl print "$domain/$label" 2>/dev/null)"; then
       expected_hook="$(service_launcher "$label")"
       if ! grep -Fq -- "$expected_hook" <<<"$job_dump"; then
@@ -1849,6 +1873,12 @@ restart_services() {
         continue
       fi
     fi
+    if [[ "$label" == com.codex.otel-collector && "$otel_collector_mode" != collector ]]; then
+      launchctl bootout "$domain/$label" >/dev/null 2>&1 || true
+      continue
+    fi
+    local plist_link="$HOME/Library/LaunchAgents/$label.plist"
+    [[ -f "$plist_link" ]] || { launchd_ok=0; continue; }
     launchctl bootout "$domain/$label" >/dev/null 2>&1 || true
     reap_unmanaged "$label"
     if launchctl bootstrap "$domain" "$plist_link" >/dev/null 2>&1; then
@@ -1889,7 +1919,10 @@ restart_services() {
   fi
   bash "$repo_root/scripts/ensure-codex-model-router.sh"
   if [[ "$otel_collector_mode" == collector ]]; then
-    if ! bash "$hooks_dir/codex/otel/ensure-autodev-otel-collector.sh"; then
+    if ! AUTODEV_OTEL_REPO_ROOT="$repo_root" \
+      AUTODEV_OTEL_CONFIG="$repo_root/config/otel/collector.yaml" \
+      AUTODEV_OTEL_VERSION_FILE="$repo_root/config/otel/collector.version" \
+      bash "$hooks_dir/codex/otel/ensure-autodev-otel-collector.sh"; then
       printf '%s\n' 'OpenTelemetry Collector failed to start; refusing to leave Codex pointed at an unavailable ingress.' >&2
       return 1
     fi
@@ -1915,6 +1948,10 @@ if [[ "$materialize_only" == 0 ]]; then
   restart_services
 else
   printf '%s\n' 'Materialized AutoDev integration without restarting services.' >&2
+fi
+
+if [[ -n "$otel_collector_action" ]]; then
+  write_otel_collector_mode "$otel_collector_mode"
 fi
 
 check_links
