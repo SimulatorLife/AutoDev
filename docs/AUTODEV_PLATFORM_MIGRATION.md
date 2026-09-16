@@ -993,7 +993,7 @@ Fresh install and update can converge AutoDev-owned configuration without deleti
 
 ### Status
 
-Complete. The portable source is authoritative at `scripts/codex/config.autodev.toml`: it carries the AutoDev-owned portable scalars, provider definitions, `sandbox_workspace_write`, `otel`, `analytics`, `features`, `tools`, `agents`, the declared hooks (without `hooks.state`), the AutoDev-owned skills (`ccc`, `lsp-mcp-server`, `orchestration`), and `shell_environment_policy`. MCP declarations come from the live Rulesync source `.rulesync/mcp.jsonc` and are projected into the composer. The source excludes `notify`, `hooks.state`, `projects`, `marketplaces`, TUI/notice/desktop/apps/plugins/memories, `node_repl`/`cua_repl`, non-AutoDev skills, and absolute user/application paths. `scripts/codex/compose-user-config.py` deterministically merges the portable source and Rulesync MCP projection with existing machine-local configuration into `$CODEX_HOME/config.toml` as an atomic regular file, resolving conflicts in favor of AutoDev while semantically preserving machine-local and user-owned values. The installer (`install-codex-integration.sh`), `--check` drift validation, and `render-execution-contract.py` consume `config.autodev.toml` and the composer. The former `scripts/codex/config.toml` seed is removed from the repository and no longer participates in validation.
+Complete. The portable source is authoritative at `scripts/codex/config.autodev.toml`: it carries the AutoDev-owned portable scalars, provider definitions, `sandbox_workspace_write`, `otel`, `analytics`, `features`, `tools`, `agents`, the AutoDev-owned skills (`ccc`, `lsp-mcp-server`, `orchestration`), and `shell_environment_policy`. MCP declarations come from the live Rulesync source `.rulesync/mcp.jsonc` and are projected into the composer. The source excludes `notify`, `hooks.state`, `projects`, `marketplaces`, TUI/notice/desktop/apps/plugins/memories, `node_repl`/`cua_repl`, non-AutoDev skills, and absolute user/application paths. `scripts/codex/compose-user-config.py` deterministically merges the portable source and Rulesync MCP projection with existing machine-local configuration into `$CODEX_HOME/config.toml` as an atomic regular file, resolving conflicts in favor of AutoDev while semantically preserving machine-local and user-owned values. The installer (`install-codex-integration.sh`), `--check` drift validation, and `render-execution-contract.py` consume `config.autodev.toml` and the composer. The former `scripts/codex/config.toml` seed is removed from the repository and no longer participates in validation.
 
 ### Seed-retirement acceptance
 
@@ -2212,6 +2212,19 @@ Point the existing MiniMax Codex model-provider entry at a direct/shared API tra
 ---
 
 ## Phase 6 — Shrink the AutoDev router around retained semantics
+
+Rulesync hook declaration ownership is complete: `.rulesync/hooks.jsonc` is the
+only declaration source, while AutoDev scripts remain implementations. The
+installer generates and checks repository projections, including `.codex/hooks.json`
+in the active project location. The Codex projection cannot represent
+`prevent_idle_sleep`; Copilot and Antigravity projections are intentionally lossy.
+
+**Status (2026-09-15):** A bounded simplification is complete: response model-field
+replacement and tool-namespace rewriting are centralized in
+`scripts/codex-model-router.mjs`; SSE/JSON behavior and opaque scripts are
+contract-tested. Provider policy, retry/cooldown, and telemetry ownership are
+unchanged. Phase 6 remains in progress; this does not imply provider/router
+deletion.
 
 After successful provider transport migrations, separate router responsibilities into:
 

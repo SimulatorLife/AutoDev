@@ -1,6 +1,6 @@
 {
   "schema": "autodev-portable-autodev-config-v1",
-  "description": "Deterministic Phase 1 portable-source contract for scripts/codex/config.autodev.toml. The fixture pins every byte-for-byte portable scalar, the four [model_providers.*] entries, the seven required top-level sections (sandbox_workspace_write, otel, analytics, features, tools, skills, shell_environment_policy), the declared hooks event arrays (SessionStart, SubagentStart, UserPromptSubmit, PreToolUse) and the explicit absence of hooks.state, the explicit absence of mcp_servers (MCP is owned by .rulesync/mcp.jsonc and attached by the generated Codex projection), and the [[skills.config]] name set (lsp-mcp-server, ccc, orchestration). composer scripts/codex/compose-user-config.py merges this portable source into $CODEX_HOME/config.toml, resolving conflicts in favor of AutoDev-owned keys while preserving machine-local state (notify, projects, marketplaces, TUI/desktop/apps/plugins/memories, node_repl/cua_repl, non-AutoDev skills, hooks.state trusted hashes). Refreshing this fixture is itself the documented, intentional signal that the portable-source shape, schema tag, or AutoDev-owned key set has changed.",
+  "description": "Deterministic portable-source contract for scripts/codex/config.autodev.toml. Rulesync owns hook declarations and generated hook files; this fixture pins AutoDev's portable scalars, provider entries, required sections, explicit absence of hooks and mcp_servers, and the skills.config name set. compose-user-config.py removes legacy hook event arrays while preserving machine-local hooks.state trusted hashes.",
   "source": "scripts/codex/config.autodev.toml",
   "portableScalars": [
     "approval_policy",
@@ -176,19 +176,6 @@
     "minimax",
     "antigravity_cli"
   ],
-  "hooksEvents": [
-    "SessionStart",
-    "SubagentStart",
-    "UserPromptSubmit",
-    "PreToolUse"
-  ],
-  "hooksEventsRequired": [
-    "SessionStart",
-    "SubagentStart",
-    "UserPromptSubmit",
-    "PreToolUse"
-  ],
-  "hooksStateOmitted": true,
   "skillsConfigNames": [
     "ccc",
     "lsp-mcp-server",

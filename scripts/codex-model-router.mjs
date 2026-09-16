@@ -5238,12 +5238,16 @@ function rewriteToolNamespaces(value) {
   return result;
 }
 
+function rewriteResponseValue(value, publicModel) {
+  return rewriteToolNamespaces(replaceModelFields(value, publicModel));
+}
+
 function transformSseEvent(event, publicModel) {
   return event.split(/(\r?\n)/).map((line) => {
     if (!line.startsWith("data: ") || line.slice(6) === "[DONE]") return line;
     try {
       const parsed = JSON.parse(line.slice(6));
-      const rewritten = rewriteToolNamespaces(replaceModelFields(parsed, publicModel));
+      const rewritten = rewriteResponseValue(parsed, publicModel);
       return `data: ${JSON.stringify(rewritten)}`;
     } catch {
       return line;
@@ -5737,7 +5741,7 @@ async function writeSuccessfulResponse(response, route, result, wantsStream, pub
     || incomplete?.incompleteReason === "requires_action";
   if (route.provider === "codex") {
     const toolCalls = countToolCallsFromSse(body);
-    const parsed = replaceModelFields(responseTextFromSse(body), publicModel);
+    const parsed = rewriteResponseValue(responseTextFromSse(body), publicModel);
     sendJson(response, upstream.status, parsed, responseHeaders);
     const incomplete = incompleteFromResponse(parsed);
     return { toolCalls, failed: responseWasNotCompleted(parsed), ...incomplete, inputRequired: hasInputRequired(parsed, incomplete) };
@@ -5745,7 +5749,7 @@ async function writeSuccessfulResponse(response, route, result, wantsStream, pub
   try {
     const parsed = JSON.parse(body);
     const toolCalls = countToolCallsInResponse(parsed);
-    const rewritten = rewriteToolNamespaces(replaceModelFields(parsed, publicModel));
+    const rewritten = rewriteResponseValue(parsed, publicModel);
     sendJson(response, upstream.status, rewritten, responseHeaders);
     const incomplete = incompleteFromResponse(rewritten);
     return { toolCalls, failed: responseWasNotCompleted(rewritten), ...incomplete, inputRequired: hasInputRequired(rewritten, incomplete) };

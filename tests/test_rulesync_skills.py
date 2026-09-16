@@ -172,14 +172,14 @@ class RulesyncSkillsTests(unittest.TestCase):
         installer = INSTALLER.read_text()
         self.assertIn('rulesync_bin="$repo_root/node_modules/.bin/rulesync"', installer)
         self.assertIn('repository_skill_exclude_entry="/.agents/skills/"', installer)
-        generation = installer.split("run_repository_skill_generation() {", 1)[1].split("\n}\n", 1)[0]
+        generation = installer.split("run_repository_outputs_generation() {", 1)[1].split("\n}\n", 1)[0]
         self.assertIn('(cd -- "$repo_root" && "$rulesync_bin" generate --config "$repo_root/rulesync.jsonc" "$@" --silent)', generation)
         self.assertRegex(
             installer,
-            r"\nrender_claude_skill_views\nif ! render_bridge_mcp_catalogue >/dev/null; then\n  exit 1\nfi\nif ! generate_repository_skills; then\n  exit 1\nfi\n",
+            r"\nrender_claude_skill_views\nif ! render_bridge_mcp_catalogue >/dev/null; then\n  exit 1\nfi\nif ! generate_repository_outputs; then\n  exit 1\nfi\n",
         )
         check_links = installer.split("check_links() {", 1)[1].split("\n}\n", 1)[0]
-        self.assertIn("check_repository_skills", check_links)
+        self.assertIn("check_repository_outputs", check_links)
 
     def test_copilot_cloud_agent_generates_its_skills_during_setup(self):
         workflow = COPILOT_SETUP_WORKFLOW.read_text()
@@ -194,7 +194,7 @@ class RulesyncSkillsTests(unittest.TestCase):
         # into temporary roots by their suites, never tracked as fixtures.
         config = json.loads(RULESYNC_CONFIG.read_text())
         self.assertEqual(tuple(config["targets"]), TARGETS)
-        self.assertEqual(config["features"], ["skills"])
+        self.assertEqual(config["features"], ["skills", "hooks"])
         self.assertEqual(config["outputRoots"], ["."])
         self.assertIs(config["delete"], True)
         self.assertIs(config["global"], False)

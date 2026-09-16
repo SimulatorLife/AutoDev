@@ -129,55 +129,6 @@ config_file = "./agents/docs-researcher.toml"
 description = "Read-only browser tester."
 config_file = "./agents/browser-tester.toml"
 
-[[hooks.SessionStart]]
-matcher = ".*"
-
-[[hooks.SessionStart.hooks]]
-type = "command"
-command = "bash ~/.codex/hooks/ensure-codex-model-router.sh"
-prevent_idle_sleep = true
-
-[[hooks.SubagentStart]]
-matcher = ".*"
-
-[[hooks.SubagentStart.hooks]]
-type = "command"
-command = "bash ~/.codex/hooks/ensure-codex-claude-bridge.sh"
-prevent_idle_sleep = true
-
-[[hooks.SubagentStart]]
-matcher = ".*"
-
-[[hooks.SubagentStart.hooks]]
-type = "command"
-command = "bash ~/.codex/hooks/ensure-codex-minimax-proxy.sh"
-prevent_idle_sleep = true
-
-[[hooks.SubagentStart]]
-matcher = ".*"
-
-[[hooks.SubagentStart.hooks]]
-type = "command"
-command = "bash ~/.codex/hooks/ensure-codex-antigravity-proxy.sh"
-prevent_idle_sleep = true
-
-[[hooks.UserPromptSubmit]]
-[[hooks.UserPromptSubmit.hooks]]
-type = "command"
-command = "bash ~/.codex/hooks/enforce-root-delegation.sh"
-statusMessage = "Applying root delegation policy"
-
-# Observe pre-tool calls so the router can attribute a SKILL.md read to the
-# in-flight parent turn (see scripts/codex/skill-read-telemetry.mjs). It is
-# fail-open and only counts canonical SKILL.md reads under approved roots.
-[[hooks.PreToolUse]]
-matcher = "(?i)read[_ -]?file|read|exec[_ -]?command|bash"
-
-[[hooks.PreToolUse.hooks]]
-type = "command"
-command = "node ~/.codex/hooks/codex/skill-read-telemetry.mjs"
-statusMessage = "Recording skill-read telemetry"
-
 # MCP servers are not declared here. `.rulesync/mcp.jsonc` is their only source;
 # the installer generates the Codex projection from it and the composer merges
 # those servers into the user config.

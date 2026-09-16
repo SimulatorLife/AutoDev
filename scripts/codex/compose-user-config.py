@@ -15,12 +15,10 @@ set). Conflicts on AutoDev-owned keys always resolve in favor of the portable
 source so the installer can run on any host without leaking personal
 preferences.
 
-Hook event arrays (``[[hooks.SessionStart]]`` and friends) are replaced
-verbatim from the portable source because each AutoDev-owned hook is bound to
-a specific launchd/job contract; merging them by entry would leave a half-old,
-half-new array that does not match either source. ``hooks.state`` carries the
-Codex-owned per-hook trusted hashes and is preserved from the existing file so
-the installer does not invalidate trust on every run.
+Hook declarations are owned by Rulesync and are not read from the portable
+source. Any legacy hook event arrays in the existing config are removed;
+``hooks.state`` carries Codex-owned per-hook trusted hashes and is preserved
+from the existing file so the installer does not invalidate trust on every run.
 
 ``mcp_servers`` never come from the portable source. They come from
 ``--mcp-source``: the Codex ``config.toml`` Rulesync generates from
@@ -234,25 +232,18 @@ def _merge_mcp_servers(portable_servers: dict, existing_servers: dict) -> dict:
     return merged
 
 
-def _merge_hooks(portable_hooks: dict, existing_hooks: dict) -> dict:
-    """Replace declared hook events from portable and preserve ``state``.
+def _merge_hooks(existing_hooks: Any) -> dict:
+    """Drop legacy event declarations while preserving Codex-owned state.
 
-    Each AutoDev-owned hook is bound to a launchd/job contract (router ensure,
-    subagent bridge ensure, root delegation, skill-read telemetry). Replacing
-    the declared event arrays verbatim means the installer's hooks run the
-    exact command Codex will pin in its trusted-hash manifest, so the operator
-    is never asked to re-trust a half-changed hook.
-
-    ``hooks.state`` is Codex-owned runtime state (trusted hashes, per-hook
-    metadata) and is preserved verbatim from the existing file because the
-    installer has no business regenerating it.
+    Older configs may contain a malformed/non-table ``hooks`` value. It is
+    obsolete declaration data, so remove it rather than allowing composition
+    to fail or accidentally preserve event arrays.
     """
-    merged: dict = {}
-    for event, entries in portable_hooks.items():
-        merged[event] = entries
-    if "state" in existing_hooks:
-        merged["state"] = existing_hooks["state"]
-    return merged
+    if not isinstance(existing_hooks, dict):
+        return {}
+    if "state" not in existing_hooks:
+        return {}
+    return {"state": existing_hooks["state"]}
 
 
 def _merge_nested_table(
@@ -314,7 +305,7 @@ def compose(portable: dict, existing: dict) -> dict:
     for key, portable_value in portable.items():
         existing_value = existing.get(key)
         if key == "hooks":
-            composed[key] = _merge_hooks(portable_value or {}, existing_value or {})
+            composed[key] = _merge_hooks(existing_value or {})
             continue
         if key == "mcp_servers":
             composed[key] = _merge_mcp_servers(portable_value or {}, existing_value or {})
@@ -338,6 +329,11 @@ def compose(portable: dict, existing: dict) -> dict:
 
     for key, value in existing.items():
         if key in portable_top_level_order:
+            continue
+        if key == "hooks":
+            merged_hooks = _merge_hooks(value)
+            if merged_hooks:
+                composed[key] = merged_hooks
             continue
         composed[key] = value
 

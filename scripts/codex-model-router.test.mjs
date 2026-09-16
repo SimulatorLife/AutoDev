@@ -1107,7 +1107,16 @@ test("successful responses identify the resolved provider, model, and request", 
   const originalFetch = globalThis.fetch;
   globalThis.fetch = async (url, options) => {
     if (String(url) === "http://127.0.0.1:4000/v1/responses") {
-      return new Response(JSON.stringify({ id: "upstream-response", model: "sonnet", output_text: "ok" }), {
+      return new Response(JSON.stringify({
+        id: "upstream-response",
+        model: "provider-internal-model",
+        output_text: "ok",
+        nested: {
+          model: "provider-internal-model",
+          tool: { type: "function_call", name: "multi_agent_v1__spawn_agent", model: "provider-internal-model" },
+          script: '{"model":"provider-internal-model","name":"multi_agent_v1__spawn_agent"}',
+        },
+      }), {
         status: 200,
         headers: { "content-type": "application/json" },
       });
@@ -1127,6 +1136,16 @@ test("successful responses identify the resolved provider, model, and request", 
     assert.equal(response.headers.get("x-autodev-provider"), "claude");
     assert.equal(response.headers.get("x-autodev-model"), "sonnet");
     assert.equal(response.headers.get("x-autodev-request-id"), "req-header");
+    const body = await response.json();
+    assert.equal(body.model, "sonnet");
+    assert.equal(body.nested.model, "sonnet");
+    assert.deepEqual(body.nested.tool, {
+      type: "function_call",
+      name: "spawn_agent",
+      model: "sonnet",
+      namespace: "multi_agent_v1",
+    });
+    assert.equal(body.nested.script, '{"model":"provider-internal-model","name":"multi_agent_v1__spawn_agent"}');
   } finally {
     await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
     globalThis.fetch = originalFetch;
@@ -3614,9 +3633,26 @@ test("rewrites the routed provider model back to the public role alias", () => {
   const value = replaceModelFields({ model: "gemini-3.8-flash-medium", nested: [ { model: "gemini-3.8-flash-medium" } ] }, "autodev/explorer");
   assert.deepEqual(value, { model: "autodev/explorer", nested: [ { model: "autodev/explorer" } ] });
 
-  const event = transformSseEvent('data: {"type":"response.completed","response":{"model":"gemini-3.8-flash-medium"},"model":"gemini-3.8-flash-medium"}\n\n', "autodev/explorer");
-  assert.match(event, /autodev\/explorer/);
-  assert.equal((event.match(/autodev\/explorer/g) ?? []).length, 2);
+  const event = transformSseEvent(`data: ${JSON.stringify({
+    type: "response.completed",
+    response: {
+      model: "gemini-3.8-flash-medium",
+      output: [ { type: "function_call", name: "multi_agent_v1__spawn_agent", model: "gemini-3.8-flash-medium" } ],
+      script: '{"model":"gemini-3.8-flash-medium","name":"multi_agent_v1__spawn_agent"}',
+    },
+    model: "gemini-3.8-flash-medium",
+  })}\n\n`, "autodev/explorer");
+  const parsedEvent = JSON.parse(event.match(/^data: (.+)$/m)[ 1 ]);
+  assert.equal(parsedEvent.model, "autodev/explorer");
+  assert.equal(parsedEvent.response.model, "autodev/explorer");
+  assert.equal(parsedEvent.response.output[ 0 ].model, "autodev/explorer");
+  assert.deepEqual(parsedEvent.response.output[ 0 ], {
+    type: "function_call",
+    name: "spawn_agent",
+    model: "autodev/explorer",
+    namespace: "multi_agent_v1",
+  });
+  assert.equal(parsedEvent.response.script, '{"model":"gemini-3.8-flash-medium","name":"multi_agent_v1__spawn_agent"}');
 });
 
 test("uses the least-busy provider before starting another provider request", () => {

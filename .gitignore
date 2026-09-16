@@ -17,3 +17,9 @@ tmp/
 # `.agents/skills/` that .gitignore lists.
 /.claude/skills/
 /.github/skills/
+# Rulesync-generated hook projections; `.rulesync/hooks.jsonc` is the only
+# tracked declaration source.
+/.codex/hooks.json
+/.claude/settings.json
+/.github/hooks/
+/.agents/hooks.json

@@ -39,12 +39,6 @@ const EXPECTED_MODEL_PROVIDERS = Object.freeze([
   "minimax",
   "antigravity_cli",
 ]);
-const EXPECTED_HOOKS_EVENTS = Object.freeze([
-  "SessionStart",
-  "SubagentStart",
-  "UserPromptSubmit",
-  "PreToolUse",
-]);
 const EXPECTED_SKILLS = Object.freeze(["lsp-mcp-server", "ccc", "orchestration"]);
 
 function loadPortable(absoluteTomlPath) {
@@ -197,30 +191,12 @@ test("four model_providers entries are pinned with byte-for-byte attributes", as
   }
 });
 
-test("hooks events declared without hooks.state", async () => {
-  const fixture = await readFixture();
+test("hook declarations stay in Rulesync, not the portable Codex source", async () => {
   const portable = loadPortable(PORTABLE_PATH);
-
-  assert.equal(fixture.hooksStateOmitted, true);
-  assert.deepEqual(fixture.hooksEventsRequired, EXPECTED_HOOKS_EVENTS);
-
-  const hooks = portable.hooks ?? {};
-  for (const event of EXPECTED_HOOKS_EVENTS) {
-    assert.ok(
-      Object.prototype.hasOwnProperty.call(hooks, event),
-      `portable source missing declared hooks event: ${event}`,
-    );
-  }
-  assert.ok(
-    !Object.prototype.hasOwnProperty.call(hooks, "state"),
-    "portable source must NOT declare hooks.state (Codex-owned runtime state)",
-  );
-
-  const declaredEvents = Object.keys(hooks).filter((name) => name !== "state");
-  assert.deepEqual(
-    declaredEvents.sort(),
-    [...EXPECTED_HOOKS_EVENTS].sort(),
-    "declared hooks events drifted from the contract fixture",
+  assert.equal(Object.prototype.hasOwnProperty.call(portable, "hooks"), false);
+  assert.equal(
+    readFileSync(fileURLToPath(new URL("../.rulesync/hooks.jsonc", import.meta.url)), "utf8").includes('"hooks"'),
+    true,
   );
 });
 

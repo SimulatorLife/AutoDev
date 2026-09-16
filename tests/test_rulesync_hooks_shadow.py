@@ -69,9 +69,8 @@ def _grouped_commands(events: dict) -> list[str]:
     ]
 
 
-class RulesyncHooksShadowTests(unittest.TestCase):
-    """Hooks stay a shadow translation: live hooks remain AutoDev-owned, and the
-    projections are generated from `.rulesync/hooks.jsonc` into temporary roots."""
+class RulesyncHooksGenerationTests(unittest.TestCase):
+    """Rulesync owns hook declarations and produces each provider projection."""
 
     @classmethod
     def setUpClass(cls):
@@ -103,29 +102,11 @@ class RulesyncHooksShadowTests(unittest.TestCase):
         self.assertNotIn("prevent_idle_sleep", HOOK_SOURCE.read_text())
         self.assertEqual(_commands(source), SOURCE_COMMANDS)
 
-    def test_codex_only_fields_stay_with_the_live_installer_config_owner(self):
+    def test_portable_config_has_no_hook_arrays_and_codex_limit_is_documented(self):
         portable = tomllib.loads(PORTABLE_CONFIG.read_text())
-        live_hooks = portable["hooks"]
-        live_commands = [
-            hook["command"]
-            for event in live_hooks.values()
-            for entry in event
-            for hook in entry["hooks"]
-        ]
-        self.assertEqual(live_commands, SOURCE_COMMANDS)
-        self.assertEqual(
-            [
-                hook["prevent_idle_sleep"]
-                for event in ("SessionStart", "SubagentStart")
-                for entry in live_hooks[event]
-                for hook in entry["hooks"]
-            ],
-            [True] * 4,
-        )
-
-        # Rulesync cannot carry this Codex-only field, so it must not become a
-        # second source that silently drops the live Codex behavior.
+        self.assertNotIn("hooks", portable)
         self.assertNotIn("prevent_idle_sleep", HOOK_SOURCE.read_text())
+        self.assertIn('"hooks"', (REPO_ROOT / "rulesync.jsonc").read_text())
         self.assertIn("config.autodev.toml", INSTALLER.read_text())
         self.assertIn("compose-user-config.py", INSTALLER.read_text())
 
@@ -163,6 +144,17 @@ class RulesyncHooksShadowTests(unittest.TestCase):
                     sorted(path.relative_to(output_root).as_posix() for path in output_root.rglob("*") if path.is_file()),
                     [HOOK_PATHS[target]],
                 )
+
+    def test_rulesync_config_run_generates_hooks_alongside_skills(self):
+        with tempfile.TemporaryDirectory() as temp:
+            result = subprocess.run(
+                ["pnpm", "exec", "rulesync", "generate", "--config", "rulesync.jsonc",
+                 "--output-roots", temp, "--delete", "--silent"],
+                cwd=REPO_ROOT, capture_output=True, text=True, timeout=60,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            for target, path in HOOK_PATHS.items():
+                self.assertTrue((Path(temp) / path).is_file(), target)
 
     def test_codex_and_claude_carry_every_hook_with_its_matcher_and_status(self):
         source = json.loads(HOOK_SOURCE.read_text())["hooks"]
