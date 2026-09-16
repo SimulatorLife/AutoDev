@@ -1,6 +1,7 @@
 import json
 import subprocess
 import tempfile
+import tomllib
 import unittest
 from pathlib import Path
 
@@ -9,6 +10,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 SOURCE_ROOT = REPO_ROOT / ".rulesync"
 HOOK_SOURCE = SOURCE_ROOT / "hooks.jsonc"
 PORTABLE_CONFIG = REPO_ROOT / "scripts/codex/config.autodev.toml"
+INSTALLER = REPO_ROOT / "scripts/codex/install-codex-integration.sh"
 TARGETS = ("codexcli", "claudecode", "copilot", "antigravity-cli")
 HOOK_PATHS = {
     "codexcli": ".codex/hooks.json",
@@ -100,6 +102,57 @@ class RulesyncHooksShadowTests(unittest.TestCase):
         )
         self.assertNotIn("prevent_idle_sleep", HOOK_SOURCE.read_text())
         self.assertEqual(_commands(source), SOURCE_COMMANDS)
+
+    def test_codex_only_fields_stay_with_the_live_installer_config_owner(self):
+        portable = tomllib.loads(PORTABLE_CONFIG.read_text())
+        live_hooks = portable["hooks"]
+        live_commands = [
+            hook["command"]
+            for event in live_hooks.values()
+            for entry in event
+            for hook in entry["hooks"]
+        ]
+        self.assertEqual(live_commands, SOURCE_COMMANDS)
+        self.assertEqual(
+            [
+                hook["prevent_idle_sleep"]
+                for event in ("SessionStart", "SubagentStart")
+                for entry in live_hooks[event]
+                for hook in entry["hooks"]
+            ],
+            [True] * 4,
+        )
+
+        # Rulesync cannot carry this Codex-only field, so it must not become a
+        # second source that silently drops the live Codex behavior.
+        self.assertNotIn("prevent_idle_sleep", HOOK_SOURCE.read_text())
+        self.assertIn("config.autodev.toml", INSTALLER.read_text())
+        self.assertIn("compose-user-config.py", INSTALLER.read_text())
+
+    def test_target_projections_freeze_the_known_command_losses(self):
+        projected = {
+            target: set(
+                _commands(self._document(target))
+                if target == "copilot"
+                else _grouped_commands(self._document(target)["hooks"])
+                if target == "claudecode"
+                else _grouped_commands(self._document(target)["rulesync"])
+                if target == "antigravity-cli"
+                else _grouped_commands(self._document(target)["hooks"])
+            )
+            for target in TARGETS
+        }
+        expected_losses = {
+            "codexcli": set(),
+            "claudecode": set(),
+            "copilot": set(SOURCE_COMMANDS)
+            - {"bash ~/.codex/hooks/enforce-root-delegation.sh"},
+            "antigravity-cli": set(SOURCE_COMMANDS)
+            - {"node ~/.codex/hooks/codex/skill-read-telemetry.mjs"},
+        }
+        for target in TARGETS:
+            with self.subTest(target=target):
+                self.assertEqual(set(SOURCE_COMMANDS) - projected[target], expected_losses[target])
 
     def test_generation_writes_one_hook_file_per_target_and_nothing_live(self):
         self.assertTrue(self.portable_config_unchanged)

@@ -1056,6 +1056,22 @@ source-derived MCP checks" below). Rulesync is pinned to `16.30.2` for
 tracked as a fixture: the tests generate every projection into temporary roots
 (see "Completed removal of Rulesync shadow fixtures" below).
 
+The hook-adoption evaluation is **not a live-cutover approval**.
+`tests/test_rulesync_hooks_shadow.py` executes the parity blockers against
+current sources: Codex's live `config.autodev.toml` carries
+`prevent_idle_sleep` on four hooks while Rulesync cannot represent it; Copilot
+and Antigravity lose target-specific commands during projection; and the
+installer/composer still owns the materialized user configuration. The result
+is **retain AutoDev as the live hook owner**. Rulesync remains a shadow
+translation generated only into temporary roots.
+
+**Next action:** keep the live hook/config path unchanged and add a
+target-by-target parity harness only if a future Rulesync release can preserve
+Codex-only fields and all target-specific commands (or provide an explicit
+owner for each loss). Re-run the focused shadow suite against that release;
+do not promote hooks until the harness proves byte/semantic parity with the
+installer-composed Codex config and provider runtime behavior.
+
 **Completed first live surface — shared instruction rules.**
 `.rulesync/rules/overview.md` is now byte-identical to `AGENTS.md`; the live
 `CLAUDE.md` and `.github/copilot-instructions.md` artifacts are also byte-
