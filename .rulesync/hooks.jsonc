@@ -4,30 +4,20 @@
       {
         "type": "command",
         "matcher": ".*",
-        "command": "bash ~/.codex/hooks/ensure-codex-model-router.sh"
+        "command": "node ~/.codex/src/hooks/session-start.ts"
       }
     ],
     "subagentStart": [
       {
         "type": "command",
         "matcher": ".*",
-        "command": "bash ~/.codex/hooks/ensure-codex-claude-bridge.sh"
-      },
-      {
-        "type": "command",
-        "matcher": ".*",
-        "command": "bash ~/.codex/hooks/ensure-codex-minimax-proxy.sh"
-      },
-      {
-        "type": "command",
-        "matcher": ".*",
-        "command": "bash ~/.codex/hooks/ensure-codex-antigravity-proxy.sh"
+        "command": "node ~/.codex/src/hooks/subagent-start.ts"
       }
     ],
     "beforeSubmitPrompt": [
       {
         "type": "command",
-        "command": "bash ~/.codex/hooks/enforce-root-delegation.sh",
+        "command": "node ~/.codex/src/hooks/root-delegation.ts",
         "statusMessage": "Applying root delegation policy"
       }
     ],

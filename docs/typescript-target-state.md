@@ -22,6 +22,13 @@ The first migration pass is partially landed and remains intentionally behavior-
 - Canonical declarative content remains under `scripts/codex/`; moving it to the target `agents/` and `config/` layout must be coordinated with installer/runtime path changes.
 - An attempted strict conversion of the spawn-tool and Codex state-collector modules exposed a large typing surface and was reverted to the still-green legacy modules; do not remove those modules until their full contract tests and installer paths are converted together.
 - The typed skill-read hook still has a dynamic JSON boundary that uses an explicit `any`; tighten that boundary when the hook tests are converted to TypeScript.
+- `src/cli/autodev.ts` now has typed dispatch boundaries for `router`, `provider`, `hook`, and `install`; only `check` and render commands have concrete repository backends, while the remaining default backends fail closed until their runtime migrations land.
+- The router status CLI now crosses a typed boundary in `src/router/status.ts`; the legacy router backend remains explicit and unchanged.
+- Session-start, subagent-start, and root-delegation command handlers now own the
+  hook entry points under `src/hooks`; Rulesync invokes those typed handlers
+  directly while the existing ensure scripts remain unchanged runtime helpers.
+  Their current implementation still delegates service startup to those legacy
+  ensure scripts, so the platform/lifecycle migration is not complete.
 - The vendored `.rulesync/skills/resolve-merge-conflicts/scripts/extract_conflict_context.py` helper remains an allowed upstream-language exception.
 
 ### Next implementation order
@@ -32,7 +39,7 @@ The first migration pass is partially landed and remains intentionally behavior-
 4. Move installer, reconciliation, hook, and `ensure-*` behavior behind the typed CLI/platform modules.
 5. Convert remaining JavaScript/Python tests to `node:test`, remove obsolete entrypoints, and enable the inventory gate as a required check.
 
-The current validation baseline is: `pnpm typecheck`, `pnpm test`, `pnpm run test:ts`, actionlint, and ShellCheck pass; `pnpm run validate:inventory` is expected to fail until the remaining migration order above is completed.
+The current validation baseline is: `pnpm typecheck` passes; `pnpm test` reports 616 passed and 1 skipped; `pnpm run test:ts` reports 18 passed and 1 skipped; actionlint and ShellCheck pass. `pnpm run validate:inventory` is expected to fail until the remaining migration order above is completed.
 
 ## Decision
 

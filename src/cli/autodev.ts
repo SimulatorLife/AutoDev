@@ -7,6 +7,10 @@ import { renderBridgeMcpCatalogue, runBridgeMcpCatalogue } from '../config/rende
 import { renderExecutionContract, runExecutionContract } from '../config/render-execution-contract.ts';
 import { renderProviderSkillViews } from '../config/render-provider-skill-views.ts';
 import { ConfigError, parseArgs, requiredArg } from '../config/toml.ts';
+import { dispatchHookCommand, type HookCommandBackend } from './hook.ts';
+import { dispatchInstallCommand, type InstallCommandBackend } from './install.ts';
+import { dispatchProviderCommand, type ProviderCommandBackend } from './provider.ts';
+import { dispatchRouterCommand, type RouterCommandBackend } from './router.ts';
 
 const repoRoot = resolve(fileURLToPath(new URL('../../', import.meta.url)));
 const defaults = {
@@ -98,11 +102,38 @@ function usage(): void {
   console.log(`Usage: node src/cli/autodev.ts <command> [subcommand] [options]\n\nCommands:\n  check\n  render agents|contract|skills|mcp\n  router run|ensure|status\n  provider <name>\n  hook <name>\n  install\n`);
 }
 
-export function main(argv = process.argv.slice(2)): number {
+export interface CliBackends {
+  router?: RouterCommandBackend;
+  provider?: ProviderCommandBackend;
+  hook?: HookCommandBackend;
+  install?: InstallCommandBackend;
+}
+
+export function main(argv = process.argv.slice(2), backends: CliBackends = {}): number {
+  return runMain(argv, backends);
+}
+
+export function runMain(argv: string[], backends: CliBackends = {}): number {
   const [command, subcommand, ...rest] = argv;
   if (!command || command === '--help' || command === '-h') { usage(); return 0; }
   if (command === 'check') return checkRepository();
   if (command === 'render' && subcommand) return renderCommand(subcommand, rest);
+  if (command === 'router') {
+    if (rest.length > 0) throw new ConfigError('router commands do not accept positional arguments');
+    return dispatchRouterCommand(subcommand ?? '', backends.router);
+  }
+  if (command === 'provider') {
+    if (rest.length > 0) throw new ConfigError('provider commands do not accept positional arguments');
+    return dispatchProviderCommand(subcommand ?? '', backends.provider);
+  }
+  if (command === 'hook') {
+    if (rest.length > 0) throw new ConfigError('hook commands do not accept positional arguments');
+    return dispatchHookCommand(subcommand ?? '', backends.hook);
+  }
+  if (command === 'install') {
+    if (subcommand !== undefined || rest.length > 0) throw new ConfigError('install does not accept arguments');
+    return dispatchInstallCommand(backends.install);
+  }
   throw new ConfigError(`command '${[command, subcommand].filter(Boolean).join(' ')}' is not implemented in this migration slice; use a typed render/check command or complete the owning subsystem migration`);
 }
 

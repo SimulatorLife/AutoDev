@@ -19,11 +19,9 @@ HOOK_PATHS = {
     "antigravity-cli": ".agents/hooks.json",
 }
 SOURCE_COMMANDS = [
-    "bash ~/.codex/hooks/ensure-codex-model-router.sh",
-    "bash ~/.codex/hooks/ensure-codex-claude-bridge.sh",
-    "bash ~/.codex/hooks/ensure-codex-minimax-proxy.sh",
-    "bash ~/.codex/hooks/ensure-codex-antigravity-proxy.sh",
-    "bash ~/.codex/hooks/enforce-root-delegation.sh",
+    "node ~/.codex/src/hooks/session-start.ts",
+    "node ~/.codex/src/hooks/subagent-start.ts",
+    "node ~/.codex/src/hooks/root-delegation.ts",
     "node ~/.codex/src/hooks/skill-read-telemetry.ts",
 ]
 
@@ -127,7 +125,7 @@ class RulesyncHooksGenerationTests(unittest.TestCase):
             "codexcli": set(),
             "claudecode": set(),
             "copilot": set(SOURCE_COMMANDS)
-            - {"bash ~/.codex/hooks/enforce-root-delegation.sh"},
+            - {"node ~/.codex/src/hooks/root-delegation.ts"},
             "antigravity-cli": set(SOURCE_COMMANDS)
             - {"node ~/.codex/src/hooks/skill-read-telemetry.ts"},
         }
@@ -172,7 +170,7 @@ class RulesyncHooksGenerationTests(unittest.TestCase):
     def test_copilot_and_antigravity_parity_limits_are_frozen(self):
         copilot = self._document("copilot")
         self.assertEqual(set(copilot["hooks"]), {"userPromptSubmitted"})
-        self.assertEqual(_commands(copilot), ["bash ~/.codex/hooks/enforce-root-delegation.sh"])
+        self.assertEqual(_commands(copilot), ["node ~/.codex/src/hooks/root-delegation.ts"])
         antigravity = self._document("antigravity-cli")
         self.assertEqual(set(antigravity), {"rulesync"})
         self.assertEqual(set(antigravity["rulesync"]), {"PreToolUse"})

@@ -98,12 +98,16 @@ runtime_module_names=(
   # Executed as a child process by the bridges rather than imported.
   scripts/codex/lib/spawn-shim-mcp.mjs
   src/shared/execution-contract.ts
+  src/router/status.ts
   scripts/codex/execution-contract.json
   scripts/codex/prompts/base.md
   scripts/codex/prompts/leaf.md
   scripts/codex/prompts/code-search.md
   scripts/codex/prompts/orchestrator.md
   src/hooks/skill-read-telemetry.ts
+  src/hooks/session-start.ts
+  src/hooks/subagent-start.ts
+  src/hooks/root-delegation.ts
   .rulesync/skills/orchestration/SKILL.md
 )
 

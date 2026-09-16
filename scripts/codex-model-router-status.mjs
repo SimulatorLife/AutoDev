@@ -1,18 +1,20 @@
 #!/usr/bin/env node
 
+import { parseRouterStatus, serializeRouterStatus } from "../src/router/status.ts";
+
 const counts = (record) => Object.entries(record ?? {}).map(([ key, value ]) => `${key}: ${value}`).join(", ") || "-";
 const host = process.env.CODEX_MODEL_ROUTER_HOST ?? "127.0.0.1";
 const port = process.env.CODEX_MODEL_ROUTER_PORT ?? "4100";
 const endpoint = `http://${host}:${port}/status`;
 const response = await fetch(endpoint);
-const body = await response.json();
+const body = parseRouterStatus(await response.json());
 if (!response.ok) {
   console.error(body?.error?.message ?? `Router status request failed with HTTP ${response.status}`);
   process.exit(1);
 }
 
 if (process.argv.includes("--json")) {
-  console.log(JSON.stringify(body, null, 2));
+  console.log(serializeRouterStatus(body));
   process.exit(0);
 }
 
