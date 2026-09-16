@@ -12,6 +12,7 @@ import { RESPONSES_ITEM_ID_PREFIXES } from "../src/shared/responses-item-ids.ts"
 
 import { COOLDOWNS as cooldowns } from "../src/router/cooldown.ts";
 import { ROUTING_POLICY as routing, validateRoutingConfig } from "../src/router/routing.ts";
+import * as responses from "../src/router/responses.ts";
 
 import {
   activeProviderRequests,
@@ -29,8 +30,6 @@ import {
   getActiveRequests,
   getLifecycleStatus,
   concurrencyStatus,
-  countToolCallsFromSse,
-  countToolCallsInResponse,
   getRouterStatus,
   handle,
   codexTelemetryStatus,
@@ -55,7 +54,6 @@ import {
   recordRouterEvent,
   recordSpawnFailure,
   releaseSubagentSlot,
-  replaceModelFields,
   requestSession,
   proxyConcreteResponse,
   proxyOrchestratorResponse,
@@ -69,12 +67,8 @@ import {
   ROUTER_INSTANCE_ID,
   serializeRouterState,
   spawnFailureStatus,
-  responseTextFromSse,
   routerAuthorizationValid,
   setRouterAuthTokenForTests,
-  transformSseEvent,
-  flattenOutboundTools,
-  rewriteToolNamespaces,
   bridgeTelemetryHeaders,
   mcpContractForRole,
   recordNativeMcpExposure,
@@ -93,7 +87,6 @@ import {
   AGENT_EVENTS_URL_HEADER,
   AGENT_EVENTS_PATH,
   tryAcquireSubagentSlot,
-  upstreamPayload,
   workspaceContextFromRequest,
   registerWorkspaceId,
   attributionDiagnosticsStatus,
@@ -657,7 +650,7 @@ test("router flattens outbound tools and rewrites inbound tool namespaces in SSE
       name: "read_file"
     }
   ];
-  const flattened = flattenOutboundTools(tools);
+  const flattened = responses.flattenOutboundTools(tools);
   assert.deepEqual(flattened, [
     { type: "function", name: "multi_agent_v1__spawn_agent", description: "Spawn child agent" },
     { type: "function", name: "collaboration__send_message" },
@@ -678,7 +671,7 @@ test("router flattens outbound tools and rewrites inbound tool namespaces in SSE
   ]);
 
   const sseEvent = 'data: {"type":"response.output_item.added","output_index":1,"item":{"type":"function_call","name":"multi_agent_v1__spawn_agent"}}\n\n';
-  const transformed = transformSseEvent(sseEvent, "autodev/orchestrator");
+  const transformed = responses.transformSseEvent(sseEvent, "autodev/orchestrator");
   assert.match(transformed, /"namespace":"multi_agent_v1"/);
   assert.match(transformed, /"name":"spawn_agent"/);
 });
@@ -695,7 +688,7 @@ test("an exec tool call carrying a spawn script reaches Codex byte for byte", as
   const source = buildSpawnScript([ { agentType: "explorer", message: "audit the catalogue" } ]);
 
   for (const [ name, payload ] of execToolCallSseEvents({ itemId: "ctc_1", callId: "call_1", source })) {
-    const transformed = transformSseEvent(`event: ${name}\ndata: ${JSON.stringify(payload)}\n\n`, "autodev/orchestrator");
+    const transformed = responses.transformSseEvent(`event: ${name}\ndata: ${JSON.stringify(payload)}\n\n`, "autodev/orchestrator");
     const back = JSON.parse(transformed.split("\n").find((line) => line.startsWith("data: ")).slice(6));
     assert.deepEqual(back.item ?? null, payload.item ?? null);
     assert.equal(back.delta ?? null, payload.delta ?? null);
@@ -3273,14 +3266,14 @@ test("ignores a corrupt persisted router state file", async () => {
 
 test("counts tool calls without double-counting streamed output items", () => {
   const toolResponse = { output: [ { id: "call-1", type: "function_call" }, { id: "message-1", type: "message" } ] };
-  assert.equal(countToolCallsInResponse(toolResponse), 1);
+  assert.equal(responses.countToolCallsInResponse(toolResponse), 1);
   const stream = [
     'data: {"type":"response.output_item.added","item":{"id":"call-1","type":"function_call"}}',
     `data: ${JSON.stringify({ type: "response.completed", response: toolResponse })}`,
     "data: [DONE]",
     "",
   ].join("\n");
-  assert.equal(countToolCallsFromSse(stream), 1);
+  assert.equal(responses.countToolCallsFromSse(stream), 1);
 });
 
 test("aggregates usage by role, resolved model, origin, duration, and tool calls", () => {
@@ -3603,7 +3596,7 @@ test("extracts text from a Responses SSE completion", () => {
     "data: [DONE]",
     "",
   ].join("\n");
-  const response = responseTextFromSse(body);
+  const response = responses.responseTextFromSse(body);
   assert.equal(response.status, "completed");
   assert.equal(response.output_text, "router-ok");
   assert.equal(response.output[ 0 ].content[ 0 ].text, "router-ok");
@@ -3616,10 +3609,10 @@ test("deduplicates catalog models and keeps role aliases visible", () => {
 });
 
 test("rewrites the routed provider model back to the public role alias", () => {
-  const value = replaceModelFields({ model: "gemini-3.8-flash-medium", nested: [ { model: "gemini-3.8-flash-medium" } ] }, "autodev/explorer");
+  const value = responses.replaceModelFields({ model: "gemini-3.8-flash-medium", nested: [ { model: "gemini-3.8-flash-medium" } ] }, "autodev/explorer");
   assert.deepEqual(value, { model: "autodev/explorer", nested: [ { model: "autodev/explorer" } ] });
 
-  const event = transformSseEvent(`data: ${JSON.stringify({
+  const event = responses.transformSseEvent(`data: ${JSON.stringify({
     type: "response.completed",
     response: {
       model: "gemini-3.8-flash-medium",
@@ -3710,7 +3703,7 @@ test("rejects invalid role model patterns and unknown models", () => {
 
 test("handles malformed SSE lines and comments gracefully without throwing", () => {
   const malformed = 'data: not a valid json line\n: keep-alive comment\ndata: [DONE]\n\n';
-  const result = transformSseEvent(malformed, "autodev/worker");
+  const result = responses.transformSseEvent(malformed, "autodev/worker");
   assert.equal(result, malformed);
 });
 
@@ -3726,7 +3719,7 @@ test("extracts text from SSE stream with empty lines and keep-alive comments", (
     'data: [DONE]',
     '',
   ].join('\n');
-  const response = responseTextFromSse(rawStream);
+  const response = responses.responseTextFromSse(rawStream);
   assert.equal(response.status, "completed");
   assert.equal(response.output_text, "part1 part2");
   assert.equal(response.output[ 0 ].content[ 0 ].text, "part1 part2");

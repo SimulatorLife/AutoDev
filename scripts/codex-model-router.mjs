@@ -13,6 +13,17 @@ import { pathToFileURL } from "node:url";
 // and the directory the agent actually runs in from drifting apart -- they
 // were separate implementations, and they disagreed.
 import { resolveCwd, WORKSPACE_KEYS, isDirectory } from "../src/shared/resolve-workspace.ts";
+import {
+  buildCompletedResponse,
+  countToolCallsFromSse,
+  countToolCallsInResponse,
+  flattenOutboundTools,
+  replaceModelFields,
+  responseTextFromSse,
+  setUpstreamShapeHooks,
+  transformSseEvent,
+  upstreamPayload,
+} from "../src/router/responses.ts";
 import { INCOMPLETE_REASON_INTERRUPTED, INCOMPLETE_REASON_TIMEOUT, isHardLimitClass, LIMIT_HEADER_CLASS, LIMIT_HEADER_RESETS_AT, LIMIT_SOURCE_REPORTED, normalizeResetsAt, readLimitHeaders, terminalIncompleteEvents } from "../src/shared/provider-limits.ts";
 // Providers disagree about the Responses API's item-id contract, and Codex
 // replays whatever it was handed on every later turn. Normalising outbound is
@@ -3660,6 +3671,31 @@ COOLDOWNS.setRuntime({
   isKnownProvider: (provider) => Object.hasOwn(ROUTING.providers, provider),
   lastFailureClass: (provider) => providerState(provider).lastFailureClass,
 });
+setUpstreamShapeHooks({
+  dropUnresolvableReasoning: (input) => {
+    const result = dropUnresolvableReasoning(input);
+    return { input: result.input, dropped: result.dropped };
+  },
+  normalizeInputItemIds: (input) => {
+    const result = normalizeInputItemIds(input);
+    return { input: result.input, changed: result.changed };
+  },
+  shouldNormalizeItemIds: true,
+  shouldDropUnresolvableReasoning: true,
+  shouldNormalizeItemIds: true,
+  recordEvent: (event) => {
+    if (typeof event.requestId !== 'string' || event.requestId.length === 0) return;
+    recordRouterEvent({
+      phase: event.phase,
+      requestId: event.requestId ?? null,
+      requestedModel: event.requestedModel ?? null,
+      provider: event.provider ?? null,
+      model: event.model ?? null,
+      droppedReasoningItems: event.droppedReasoningItems,
+      normalizedItemIds: event.normalizedItemIds,
+    });
+  },
+});
 
 function classifyProviderFailure(status, body = "") {
   const text = String(body ?? "");
@@ -4745,54 +4781,6 @@ function carriesPendingToolResult(payload) {
   return false;
 }
 
-function replaceModelFields(value, publicModel) {
-  if (Array.isArray(value)) return value.map((item) => replaceModelFields(item, publicModel));
-  if (!value || typeof value !== "object") return value;
-  return Object.fromEntries(Object.entries(value).map(([key, item]) => [
-    key,
-    key === "model" && typeof item === "string" ? publicModel : replaceModelFields(item, publicModel),
-  ]));
-}
-
-const TOOL_OUTPUT_TYPES = new Set(["function_call", "computer_call", "custom_tool_call", "code_interpreter_call"]);
-
-function countToolCallsInResponse(response, seen = new Set()) {
-  if (!response || typeof response !== "object" || !Array.isArray(response.output)) return 0;
-  let count = 0;
-  for (const item of response.output) {
-    if (item && TOOL_OUTPUT_TYPES.has(item.type) && !seen.has(item.id)) {
-      if (item.id) seen.add(item.id);
-      count += 1;
-    }
-  }
-  return count;
-}
-
-function countToolCallsFromSse(body, seen = new Set()) {
-  let count = 0;
-  for (const line of String(body).split(/\r?\n/)) {
-    if (!line.startsWith("data: ") || line.slice(6) === "[DONE]") continue;
-    try {
-      const event = JSON.parse(line.slice(6));
-      if (event.type === "response.output_item.added" && event.item && TOOL_OUTPUT_TYPES.has(event.item.type) && !seen.has(event.item.id)) {
-        if (event.item.id) seen.add(event.item.id);
-        count += 1;
-      } else if (event.type === "response.completed") {
-        count += countToolCallsInResponse(event.response, seen);
-      }
-    } catch {
-      // Ignore malformed/non-JSON SSE lines.
-    }
-  }
-  return count;
-}
-
-const FLATTENED_NAMESPACES = Object.freeze([
-  ["multi_agent_v1", "multi_agent_v1__"],
-  ["collaboration", "collaboration__"],
-  ["agents", "agents__"],
-]);
-
 function getNamespacePrefix(ns) {
   const match = FLATTENED_NAMESPACES.find(([namespace]) => namespace === ns);
   return match ? match[1] : `${ns}__`;
@@ -4821,71 +4809,6 @@ function flattenOutboundTool(tool, defaultNamespace = null) {
     }
   }
   return result;
-}
-
-function flattenOutboundTools(tools) {
-  if (!Array.isArray(tools)) return tools;
-  const flattened = [];
-
-  for (const item of tools) {
-    if (item === null || typeof item !== "object") {
-      flattened.push(item);
-      continue;
-    }
-
-    const ns = item.type === "namespace" ? (item.name ?? item.namespace) : item.namespace;
-
-    if (ns && Array.isArray(item.tools)) {
-      for (const innerTool of item.tools) {
-        if (innerTool && typeof innerTool === "object") {
-          flattened.push(flattenOutboundTool(innerTool, ns));
-        }
-      }
-    } else {
-      flattened.push(flattenOutboundTool(item));
-    }
-  }
-  return flattened;
-}
-
-function rewriteToolNamespaces(value) {
-  if (Array.isArray(value)) {
-    return value.map(rewriteToolNamespaces);
-  }
-  if (value === null || typeof value !== "object") {
-    return value;
-  }
-
-  const result = {};
-  for (const [key, child] of Object.entries(value)) {
-    result[key] = rewriteToolNamespaces(child);
-  }
-
-  if (typeof result.name === "string" && (result.namespace === undefined || result.namespace === null)) {
-    const match = FLATTENED_NAMESPACES.find(([, prefix]) => result.name.startsWith(prefix));
-    if (match) {
-      result.namespace = match[0];
-      result.name = result.name.slice(match[1].length);
-    }
-  }
-  return result;
-}
-
-function rewriteResponseValue(value, publicModel) {
-  return rewriteToolNamespaces(replaceModelFields(value, publicModel));
-}
-
-function transformSseEvent(event, publicModel) {
-  return event.split(/(\r?\n)/).map((line) => {
-    if (!line.startsWith("data: ") || line.slice(6) === "[DONE]") return line;
-    try {
-      const parsed = JSON.parse(line.slice(6));
-      const rewritten = rewriteResponseValue(parsed, publicModel);
-      return `data: ${JSON.stringify(rewritten)}`;
-    } catch {
-      return line;
-    }
-  }).join("");
 }
 
 function responseWasNotCompleted(response) {
@@ -5224,91 +5147,6 @@ function downstreamHeaders(route, auth, turnMetadataHeader, agentRole = null, re
   return headers;
 }
 
-function responseTextFromSse(body) {
-  let text = "";
-  let completed = null;
-  for (const line of body.split(/\r?\n/)) {
-    if (!line.startsWith("data: ") || line.slice(6) === "[DONE]") continue;
-    try {
-      const event = JSON.parse(line.slice(6));
-      if (event.type === "response.output_text.delta") text += event.delta ?? "";
-      if (event.type === "response.completed") completed = event.response;
-    } catch {
-      // Ignore non-JSON SSE comments and provider keep-alives.
-    }
-  }
-  if (completed) {
-    return {
-      ...completed,
-      output_text: completed.output_text ?? text,
-      output: completed.output?.length
-        ? completed.output
-        : [{ type: "message", role: "assistant", status: "completed", content: [{ type: "output_text", text, annotations: [] }] }],
-    };
-  }
-  return {
-    id: `router_${Date.now()}`,
-    object: "response",
-    status: "completed",
-    output_text: text,
-    output: [{ type: "message", role: "assistant", status: "completed", content: [{ type: "output_text", text, annotations: [] }] }],
-    usage: { input_tokens: 0, output_tokens: 0, total_tokens: 0 },
-  };
-}
-
-function upstreamPayload(route, payload, wantsStream, requestId = null) {
-  // `extra_headers` is an SDK escape hatch a proxy consumes as outbound HTTP
-  // headers. Never pass the caller's value through the router: doing so would
-  // bypass the router's credential and header allowlist. Every provider now
-  // sits behind a local adapter the router calls directly, so the router's own
-  // headers travel as real headers (see downstreamHeaders) and nothing needs to
-  // ride in the body.
-  const { extra_headers: _discardedExtraHeaders, ...safePayload } = payload;
-  if (route.provider !== "codex" && Array.isArray(safePayload.tools)) {
-    safePayload.tools = flattenOutboundTools(safePayload.tools);
-  }
-  // A reasoning item without encrypted content names something the backend is
-  // meant to be holding, and Codex sends `store: false`, so one produced by a
-  // different provider resolves to nothing and 404s the turn. Only the OpenAI
-  // route can be sure: every reasoning item it issues is encrypted, so an
-  // unencrypted one is definitionally foreign. Elsewhere these are the
-  // provider's own reasoning continuity and must survive.
-  if (route.provider === "codex") {
-    const { input, dropped } = dropUnresolvableReasoning(safePayload.input);
-    if (dropped) {
-      safePayload.input = input;
-      recordRouterEvent({
-        phase: "foreign_reasoning_dropped",
-        requestId,
-        requestedModel: payload.model ?? null,
-        provider: route.provider,
-        model: safePayload.model ?? null,
-        droppedReasoningItems: dropped,
-      });
-    }
-  }
-  // Codex replays the whole conversation on every turn, so a single item an
-  // earlier provider mis-labelled fails every later request against a provider
-  // that checks. Correcting it here -- the one point every upstream call passes
-  // through -- also repairs sessions already carrying bad ids, because the
-  // stored history is re-sent rather than re-read.
-  if (providerCapabilities(route.provider).normalizeItemIds) {
-    const { input, changed } = normalizeInputItemIds(safePayload.input);
-    if (changed) {
-      safePayload.input = input;
-      recordRouterEvent({
-        phase: "item_ids_normalized",
-        requestId,
-        requestedModel: payload.model ?? null,
-        provider: route.provider,
-        model: safePayload.model ?? null,
-        normalizedItemIds: changed,
-      });
-    }
-  }
-  return route.provider === "codex" ? { ...safePayload, stream: true, store: false } : { ...safePayload, stream: wantsStream };
-}
-
 async function fetchUpstream(route, payload, wantsStream, turnMetadataHeader, clientSignal = null, agentRole = null, requestId = null, session = null) {
   let auth = null;
   if (route.provider === "codex") {
@@ -5323,7 +5161,7 @@ async function fetchUpstream(route, payload, wantsStream, turnMetadataHeader, cl
       throw authError;
     }
   }
-  const requestPayload = upstreamPayload(route, payload, wantsStream, requestId);
+  const requestPayload = upstreamPayload(route, payload, wantsStream, requestId, undefined, { normalizeItemIds: providerCapabilities(route.provider).normalizeItemIds });
   const timeoutSignal = AbortSignal.timeout(UPSTREAM_TIMEOUT_MS);
   const signal = clientSignal ? AbortSignal.any([clientSignal, timeoutSignal]) : timeoutSignal;
   const upstream = await fetch(`${route.baseUrl}/responses`, {
@@ -6430,8 +6268,6 @@ export {
   codexTelemetryStatus,
   setCodexStateSnapshotForTests,
   declaredLimit,
-  countToolCallsFromSse,
-  countToolCallsInResponse,
   concurrencyStatus,
   agentsStatus,
   decrementActiveRequests,
@@ -6464,7 +6300,6 @@ export {
   recordRouterEvent,
   recordSpawnFailure,
   releaseSubagentSlot,
-  replaceModelFields,
   requestSession,
   resetConcurrencyTelemetry,
   resetLifecycleForTests,
@@ -6477,11 +6312,6 @@ export {
   setRouterAuthTokenForTests,
   serializeRouterState,
   tryAcquireSubagentSlot,
-  responseTextFromSse,
-  transformSseEvent,
-  flattenOutboundTools,
-  rewriteToolNamespaces,
-  FLATTENED_NAMESPACES,
   providerCapabilities,
   subagentSpawnToolsFor,
   bridgeTelemetryHeaders,
@@ -6507,7 +6337,6 @@ export {
   AGENT_EVENTS_PATH,
   workspaceContextFromRequest,
   workspaceMetadataForSession,
-  upstreamPayload,
   registerWorkspaceId,
   attributionDiagnosticsStatus,
   resetAttributionDiagnostics,
