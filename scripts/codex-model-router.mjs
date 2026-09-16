@@ -20,6 +20,7 @@ import {
   flattenOutboundTools,
   replaceModelFields,
   responseTextFromSse,
+  rewriteResponseValue,
   setUpstreamShapeHooks,
   transformSseEvent,
   upstreamPayload,

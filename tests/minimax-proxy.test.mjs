@@ -4,7 +4,8 @@ import { createServer } from "node:http";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 
-import { AGENT_ROLE_HEADER, FORWARDED_REQUEST_HEADERS, SESSION_ID_HEADER, SESSION_SCOPE_HEADER, downstreamHeaders, upstreamPayload } from "../scripts/codex-model-router.mjs";
+import { AGENT_ROLE_HEADER, FORWARDED_REQUEST_HEADERS, SESSION_ID_HEADER, SESSION_SCOPE_HEADER, downstreamHeaders } from "../scripts/codex-model-router.mjs";
+import { upstreamPayload } from "../src/router/responses.ts";
 import { ROUTING_POLICY as routing } from "../src/router/routing.ts";
 import { coerceResponseBody, freeformInputFromArguments, unrecognisedFreeformFeedback } from "../scripts/codex-minimax-responses-proxy.mjs";
 

@@ -103,6 +103,7 @@ runtime_module_names=(
   src/router/state-collector.ts
   src/router/routing.ts
   src/router/cooldown.ts
+  src/router/responses.ts
   src/agents/bridge-spawn-session.ts
   # Executed as a child process by the bridges rather than imported.
   src/mcp/spawn-shim.ts
@@ -113,6 +114,7 @@ runtime_module_names=(
   scripts/codex/prompts/leaf.md
   scripts/codex/prompts/code-search.md
   scripts/codex/prompts/orchestrator.md
+  src/hooks/command-utils.ts
   src/hooks/skill-read-telemetry.ts
   src/hooks/session-start.ts
   src/hooks/subagent-start.ts

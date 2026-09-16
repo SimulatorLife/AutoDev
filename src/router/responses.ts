@@ -238,11 +238,17 @@ function completedEnvelopeMessage(text: string): RouterResponseMessageItem[] {
 }
 
 const DEFAULT_HOOKS: UpstreamShapeHooks = {
-  dropUnresolvableReasoning: (input) => ({ input, dropped: 0 }),
-  normalizeInputItemIds: (input) => ({ input, changed: 0 }),
+  dropUnresolvableReasoning: (input) => {
+    const res = dropUnresolvableReasoning(input);
+    return { input: res.input, dropped: res.dropped };
+  },
+  normalizeInputItemIds: (input) => {
+    const res = normalizeInputItemIds(input);
+    return { input: res.input, changed: res.changed };
+  },
   recordEvent: () => undefined,
   shouldNormalizeItemIds: true,
-  shouldDropUnresolvableReasoning: false,
+  shouldDropUnresolvableReasoning: true,
 };
 
 let currentHooks: UpstreamShapeHooks = DEFAULT_HOOKS;
@@ -330,5 +336,3 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
 
-void dropUnresolvableReasoning;
-void normalizeInputItemIds;

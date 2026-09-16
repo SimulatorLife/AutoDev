@@ -17,6 +17,7 @@ The migration remains intentionally behavior-preserving. The shared-runtime spaw
 - Dedicated spawn/state tests are native TypeScript, and the typed spawn MCP server has protocol tests covering initialization, tool gating, valid forwarding, malformed calls, and model-readable failures.
 - Typed routing and cooldown owners now live in `src/router/routing.ts` and `src/router/cooldown.ts`; the legacy router imports them directly for model selection, fallback ordering, cooldown ladders, status, and persistence without compatibility re-exports.
 - Routing/cooldown contract tests and new focused TypeScript tests cover validation, seeded ordering, disabled providers, orchestrator preference, cooldown ladders, last-resort policy, summaries, and hard-cooldown restoration.
+- Typed Responses/SSE transformation, tool flattening, namespace rewriting, model replacement, tool-call counting, and upstream payload normalization now live in `src/router/responses.ts` and are deployed by the installer runtime manifest.
 - Existing provider/router contract tests remain green while imports move to typed shared modules.
 
 ### Current findings and constraints
@@ -166,7 +167,9 @@ vendor/
 docs/
 ```
 
-Do not introduce multiple pnpm workspace packages unless independently versioned/deployed package boundaries later justify them. Internal TypeScript modules are sufficient for the current control-plane architecture
+Do not introduce multiple pnpm workspace packages unless independently versioned/deployed package boundaries later justify them. Internal TypeScript modules are sufficient for the current control-plane architecture.
+
+Directory [scripts/](scripts) and [scripts/codex/](scripts/codex/) are legacy and should be removed/migrated to `src/` or `agents/` as appropriate. The install script, [scripts/codex/install-codex-integration.sh](scripts/codex/install-codex-integration.sh) should be moved to the repo root or `src/`, renamed to `install.sh`, and/or replaced with a typed CLI command(s).
 
 ## Single CLI boundary
 

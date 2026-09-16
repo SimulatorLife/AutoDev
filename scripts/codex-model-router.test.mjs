@@ -657,7 +657,7 @@ test("router flattens outbound tools and rewrites inbound tool namespaces in SSE
     { type: "function", name: "read_file" }
   ]);
 
-  const rewritten = rewriteToolNamespaces({
+  const rewritten = responses.rewriteToolNamespaces({
     output: [
       { name: "multi_agent_v1__spawn_agent", type: "function_call" },
       { name: "collaboration__send_message", type: "function_call" },
@@ -698,7 +698,7 @@ test("an exec tool call carrying a spawn script reaches Codex byte for byte", as
   // The rewriting is real, so the pass-through above is not vacuous: the same
   // name as a bare `function_call` name still gets split into a namespace.
   assert.deepEqual(
-    rewriteToolNamespaces({ name: "multi_agent_v1__spawn_agent", type: "function_call" }),
+    responses.rewriteToolNamespaces({ name: "multi_agent_v1__spawn_agent", type: "function_call" }),
     { name: "spawn_agent", namespace: "multi_agent_v1", type: "function_call" },
   );
 });
@@ -5171,7 +5171,7 @@ test("outbound item ids are corrected to match their item type", () => {
   // while self-contained items like tool calls are normalized.
   for (const model of [ "MiniMax-M3", "sonnet" ]) {
     const route = routing.routeForModel(model);
-    const sent = upstreamPayload(route, { model, input: poisoned }, true);
+    const sent = responses.upstreamPayload(route, { model, input: poisoned }, true);
     assert.equal(sent.input.length, 4);
     assert.equal(sent.input[ 0 ].id, "msg_1");
     assert.equal(sent.input[ 1 ].id, "06eea1506b9c37f6f3f4bb02f90abd28_rs", `${route.provider} reasoning id preserved`);
@@ -5184,7 +5184,7 @@ test("outbound item ids are corrected to match their item type", () => {
   // On Codex routes, reasoning items without encrypted_content are unresolvable references
   // under store: false and are dropped outright, while tool calls are normalized.
   const codexRoute = routing.routeForModel("gpt-5.6-luna");
-  const codexSent = upstreamPayload(codexRoute, { model: "gpt-5.6-luna", input: poisoned }, true);
+  const codexSent = responses.upstreamPayload(codexRoute, { model: "gpt-5.6-luna", input: poisoned }, true);
   assert.equal(codexSent.input.length, 3, "unresolvable foreign reasoning item dropped");
   assert.equal(codexSent.input[ 0 ].id, "msg_1");
   assert.match(codexSent.input[ 1 ].id, /^ctc_/, "tool call id normalized");
@@ -5197,7 +5197,7 @@ test("outbound item ids are corrected to match their item type", () => {
     { type: "reasoning", id: "rs_0252e954049dbf1c016aa00850d46087d1853ed6aa5cb47915", encrypted_content: "enc_data" },
     { type: "custom_tool_call", id: "06ef3bc08924acade1facee14da0af2e_fc_0", call_id: "call_8ec20ad454e0460d9d4b6662", name: "exec", input: "text()" },
   ];
-  const codexSurvives = upstreamPayload(codexRoute, { model: "gpt-5.6-luna", input: withEncrypted }, true);
+  const codexSurvives = responses.upstreamPayload(codexRoute, { model: "gpt-5.6-luna", input: withEncrypted }, true);
   assert.equal(codexSurvives.input.length, 2);
   assert.equal(codexSurvives.input[ 0 ].id, "rs_0252e954049dbf1c016aa00850d46087d1853ed6aa5cb47915");
   assert.match(codexSurvives.input[ 1 ].id, /^ctc_/);
@@ -5211,7 +5211,7 @@ test("a payload whose ids already conform is forwarded unchanged", () => {
     { type: "reasoning", id: "rs_abc", encrypted_content: "enc_1" },
     { type: "custom_tool_call", id: "ctc_abc", call_id: "call_1", name: "exec" },
   ];
-  const sent = upstreamPayload(routing.routeForModel("gpt-5.6-luna"), { model: "gpt-5.6-luna", input }, true);
+  const sent = responses.upstreamPayload(routing.routeForModel("gpt-5.6-luna"), { model: "gpt-5.6-luna", input }, true);
   assert.equal(sent.input, input);
 });
 
