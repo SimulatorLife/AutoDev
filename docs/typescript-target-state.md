@@ -2,7 +2,7 @@
 
 ## Migration progress — 2026-09-16
 
-The first migration pass is partially landed and remains intentionally behavior-preserving.
+The migration remains intentionally behavior-preserving. The shared-runtime spawn/state/MCP pass is now landed; router, provider, installer, and test-stack migrations remain.
 
 ### Completed
 
@@ -12,6 +12,9 @@ The first migration pass is partially landed and remains intentionally behavior-
 - AutoDev-owned TOML/config/rendering paths are ported to `src/config` with deterministic output, atomic writes, local-state preservation, and drift checks.
 - Typed CLI, MCP launcher, and macOS launchd lifecycle boundaries exist; `run-autodev-mcp.sh` is now only a process-dispatch shim.
 - Agent-event telemetry and skill-read telemetry now run from typed modules under `src/telemetry` and `src/hooks`; bridge/router consumers use the shared telemetry module.
+- Shared spawn generation/SSE/recovery helpers now live in `src/agents/spawn-tools.ts`; the read-only Codex state collector now lives in `src/router/state-collector.ts` with typed SQLite and snapshot contracts; and the stdio spawn MCP server now lives in `src/mcp/spawn-shim.ts`.
+- All current consumers and installer/runtime projections use the typed paths. The old `scripts/codex/lib/*.mjs` modules are deleted, and installers reject/remove stale copies under `$CODEX_HOME/hooks/codex/lib/`.
+- Dedicated spawn/state tests are native TypeScript, and the typed spawn MCP server has protocol tests covering initialization, tool gating, valid forwarding, malformed calls, and model-readable failures.
 - Existing provider/router contract tests remain green while imports move to typed shared modules.
 
 ### Current findings and constraints
@@ -20,7 +23,8 @@ The first migration pass is partially landed and remains intentionally behavior-
 - Installer, reconciliation, hook, telemetry, and `ensure-*` behavior still has substantial shell/legacy runtime ownership.
 - First-party tests are still split between JavaScript, Python, and TypeScript. The inventory gate is present but intentionally reports the remaining legacy files until their replacements and equivalent tests land.
 - Canonical declarative content remains under `scripts/codex/`; moving it to the target `agents/` and `config/` layout must be coordinated with installer/runtime path changes.
-- An attempted strict conversion of the spawn-tool and Codex state-collector modules exposed a large typing surface and was reverted to the still-green legacy modules; do not remove those modules until their full contract tests and installer paths are converted together.
+- The typed state collector keeps its dynamic SQLite schema inspection behind an explicit row/binding boundary and continues to strip raw paths before snapshots are exposed; its output and privacy contracts were not changed.
+- The Claude bridge still contains a provider-local Python copy of spawn-script/SSE logic until the provider bridge conversion pass; its MCP delegation path now launches the shared typed shim.
 - The typed skill-read hook still has a dynamic JSON boundary that uses an explicit `any`; tighten that boundary when the hook tests are converted to TypeScript.
 - `src/cli/autodev.ts` now has typed dispatch boundaries for `router`, `provider`, `hook`, and `install`; only `check` and render commands have concrete repository backends, while the remaining default backends fail closed until their runtime migrations land.
 - The router status CLI now crosses a typed boundary in `src/router/status.ts`; the legacy router backend remains explicit and unchanged.
@@ -33,13 +37,12 @@ The first migration pass is partially landed and remains intentionally behavior-
 
 ### Next implementation order
 
-1. Finish typed telemetry, spawn-tool, MCP-shim, and state-collector migrations; update installer manifests and all consumers.
-2. Split the router into typed routing, cooldown, Responses/SSE, telemetry, persistence, lifecycle, and HTTP modules without changing its contracts.
-3. Convert provider bridges, then the Claude bridge, so all providers use the shared contracts.
-4. Move installer, reconciliation, hook, and `ensure-*` behavior behind the typed CLI/platform modules.
-5. Convert remaining JavaScript/Python tests to `node:test`, remove obsolete entrypoints, and enable the inventory gate as a required check.
+1. Split the router into typed routing, cooldown, Responses/SSE, telemetry, persistence, lifecycle, and HTTP modules without changing its contracts.
+2. Convert provider bridges, then the Claude bridge, so all providers use the shared contracts.
+3. Move installer, reconciliation, hook, and `ensure-*` behavior behind the typed CLI/platform modules.
+4. Convert remaining JavaScript/Python tests to `node:test`, remove obsolete entrypoints, and enable the inventory gate as a required check.
 
-The current validation baseline is: `pnpm typecheck` passes; `pnpm test` reports 616 passed and 1 skipped; `pnpm run test:ts` reports 18 passed and 1 skipped; actionlint and ShellCheck pass. `pnpm run validate:inventory` is expected to fail until the remaining migration order above is completed.
+The current validation baseline is: `pnpm typecheck` passes; the expanded test commands include root-level TypeScript tests and currently report `pnpm test` at 621 passed and 1 skipped and `pnpm run test:ts` at 48 passed and 1 skipped. The Python compatibility suite reports 280 tests passing with 1 skipped; actionlint and ShellCheck also pass. `pnpm run validate:inventory` is expected to fail until the remaining migration order above is completed.
 
 ## Decision
 

@@ -189,7 +189,6 @@ class LocalSetupTests(unittest.TestCase):
     def _render_agent_configs(output_dir):
         return subprocess.run(
             [
-                "python3",
                 "node", str(AGENT_RENDERER_PATH),
                 "--source-dir",
                 str(REPO_ROOT / "scripts/codex/agents"),
@@ -580,7 +579,8 @@ exit 0
 
     def test_lsp_mcp_server_launches_from_autodev_workspace(self):
         launcher = (REPO_ROOT / "scripts/codex/run-autodev-mcp.sh").read_text()
-        self.assertIn('export PATH="$repo_root/node_modules/.bin:${HOME:-.}/.local/bin:${PATH:-}"', launcher)
+        self.assertIn('src/mcp/launcher.ts', launcher)
+        self.assertNotIn('export PATH=', launcher)
         language_server = subprocess.run(
             ["pnpm", "exec", "typescript-language-server", "--version"],
             cwd=REPO_ROOT,
@@ -1092,20 +1092,16 @@ exit 0
             self.assertFalse(installed_config.is_symlink())
 
             # Simulate operator edits to the composed user-level file. Keep
-            # top-level `notify` before the first table; the composer emits
-            # mcp_servers as an inline table, so add the custom server to that
-            # same TOML value rather than redeclaring the table later.
+            # top-level `notify` before the first table and add the custom MCP
+            # server as a sibling of the generated `mcp_servers.*` tables.
             original = installed_config.read_text(encoding="utf-8")
-            mcp_match = re.search(r"(?m)^mcp_servers = .*\n", original)
-            self.assertIsNotNone(mcp_match, "composed config must contain inline mcp_servers")
-            mcp_line = mcp_match.group(0).rstrip("\n")
-            self.assertTrue(mcp_line.endswith(" }"), mcp_line)
-            mcp_line = (
-                mcp_line[:-2]
-                + ', operator_custom_server = { command = "/usr/local/bin/operator-mcp", args = ["--stdio"] } }'
-                + "\n"
+            self.assertIn("[mcp_servers.", original, "composed config must contain MCP server tables")
+            hand_edited = (
+                original
+                + "\n[mcp_servers.operator_custom_server]\n"
+                + 'command = "/usr/local/bin/operator-mcp"\n'
+                + 'args = ["--stdio"]\n'
             )
-            hand_edited = original[:mcp_match.start()] + mcp_line + original[mcp_match.end():]
             installed_config.write_text(
                 'notify = ["/Applications/Notify.app", "turn-ended"]\n'
                 + hand_edited
@@ -1950,7 +1946,7 @@ exit 0
 
         config = json.loads(args[args.index("--mcp-config") + 1])
         server = config["mcpServers"]["autodev_spawn"]
-        self.assertTrue(server["args"][0].endswith("spawn-shim-mcp.mjs"))
+        self.assertTrue(server["args"][0].endswith("spawn-shim.ts"))
         self.assertEqual(server["env"]["AUTODEV_SPAWN_SESSION"], "sess-1")
         self.assertIn(str(claude_bridge.PORT), server["env"]["AUTODEV_BRIDGE_URL"])
         # Strict: a bridged turn sees exactly its contract's servers, never the
@@ -2808,7 +2804,10 @@ PY
         installer = (REPO_ROOT / "scripts/codex/install-codex-integration.sh").read_text()
         self.assertIn("run-codex-antigravity-litellm.sh", installer.split("obsolete_runtime_hook_names=(")[1].split(")")[0])
         self.assertIn("obsolete_launchagent_labels=(com.codex.antigravity-litellm)", installer)
-        self.assertIn('"$HOME/.config/litellm/antigravity.yaml"', installer.split("obsolete_runtime_paths=(")[1].split(")")[0])
+        obsolete_paths = installer.split("obsolete_runtime_paths=(")[1].split(")")[0]
+        self.assertIn('"$HOME/.config/litellm/antigravity.yaml"', obsolete_paths)
+        for legacy_module in ("codex-spawn-tools.mjs", "codex-state-collector.mjs", "spawn-shim-mcp.mjs"):
+            self.assertIn(legacy_module, obsolete_paths)
         self.assertNotIn("litellm_dir", installer)
         self.assertNotIn("scripts/codex/litellm/", installer)
         for name in ("run-codex-antigravity-litellm.sh", "com.codex.antigravity-litellm"):
@@ -3312,7 +3311,7 @@ PY
         # while the Claude bridge composes its path with Path parts.
         path_patterns = (
             ("src/agents/bridge-role.ts", "../../.rulesync/skills/orchestration/SKILL.md"),
-            ("src/agents/bridge-role.ts", "../../scripts/codex/prompts/code-search.md"),
+            ("src/agents/bridge-role.ts", "new URL(\"code-search.md\", promptRoot)"),
             ("scripts/codex-claude-cli-responses-proxy.py", '".rulesync" / "skills" / "orchestration" / "SKILL.md"'),
             ("scripts/codex-claude-cli-responses-proxy.py", '"code-search.md"'),
             ("scripts/enforce-root-delegation.sh", "$hook_dir/../.rulesync/skills/orchestration/SKILL.md"),

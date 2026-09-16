@@ -12,7 +12,7 @@ import {
   mintCallItemId,
   parseSpawnResults,
   pendingToolCallOutputs,
-} from "../scripts/codex/lib/codex-spawn-tools.mjs";
+} from "../src/agents/spawn-tools.ts";
 
 // The literals below are not style choices -- each was read off a live Codex
 // 0.153.1 or a recorded rollout of a GPT-served turn that spawned successfully.
@@ -24,18 +24,18 @@ test("the spawn call targets Codex's own code-mode tools", () => {
 
 test("recovery script closes only terminal children owned by the parent", async () => {
   const source = buildRecoveryScript("parent-1");
-  const closed = [];
-  const output = [];
+  const closed: string[] = [];
+  const output: unknown[] = [];
   const tools = {
     mcp__codex_app__read_thread: async () => ({ content: [ { text: JSON.stringify({ turns: [ { items: [
       { type: "collabAgentToolCall", senderThreadId: "other-parent", receiverThreadIds: [ "foreign" ] },
       { type: "collabAgentToolCall", senderThreadId: "parent-1", receiverThreadIds: [ "done", "running" ] },
     ] } ] }) } ] }),
-    multi_agent_v1__wait_agent: async ({ targets }) => ({ status: { [targets[0]]: targets[0] === "done" ? { completed: null } : "running" } }),
-    multi_agent_v1__close_agent: async ({ target }) => { closed.push(target); return { status: "closed" }; },
+    multi_agent_v1__wait_agent: async ({ targets }: { targets: string[] }) => ({ status: { [targets[0]!]: targets[0] === "done" ? { completed: null } : "running" } }),
+    multi_agent_v1__close_agent: async ({ target }: { target: string }) => { closed.push(target); return { status: "closed" }; },
   };
   const run = new Function("tools", "text", `return (async () => {\n${source}\n})();`);
-  await run(tools, (value) => output.push(JSON.parse(value)));
+  await run(tools, (value: string) => output.push(JSON.parse(value)));
   assert.deepEqual(closed, [ "done" ]);
   assert.deepEqual(output, [ { recovery_status: "closed", child_id: "done", previous_status: { completed: null } } ]);
 });
@@ -60,7 +60,7 @@ test("a batch settles through one Promise.allSettled so one rejection preserves 
   assert.match(source, /spawn_status: "rejected"/);
   // One `tasks` array, not one call per child: a twelve-way fan-out must stay a
   // single tool call.
-  assert.equal(source.match(/tools\.multi_agent_v1__spawn_agent/g).length, 1);
+  assert.equal(source.match(/tools\.multi_agent_v1__spawn_agent/g)?.length, 1);
   assert.match(source, /agent_type: "explorer"/);
   assert.match(source, /agent_type: "validator"/);
 });
@@ -70,15 +70,15 @@ test("a rejected child is reported without hiding successfully created siblings"
     { agentType: "explorer", message: "first" },
     { agentType: "validator", message: "second" },
   ]);
-  const values = [];
+  const values: unknown[] = [];
   const tools = {
-    [SPAWN_TOOL]: async ({ message }) => {
+    [SPAWN_TOOL]: async ({ message }: { message: string }) => {
       if (message === "second") throw new Error("thread limit reached");
       return { agent_id: "child-1", nickname: "Explorer" };
     },
   };
   const run = new Function("tools", "text", `return (async () => {\n${source}\n})();`);
-  await run(tools, (value) => values.push(JSON.parse(value)));
+  await run(tools, (value: string) => values.push(JSON.parse(value)));
   assert.deepEqual(values, [
     { spawn_status: "created", agent_id: "child-1", nickname: "Explorer" },
     { spawn_status: "rejected", agent_id: null, error: "thread limit reached" },
@@ -121,7 +121,9 @@ test("a prompt cannot break out of the generated script", () => {
     { agentType: "validator", message: "benign" },
   ]);
 
-  const literal = source.match(/^const tasks = (\[.*\]);$/m)[ 1 ];
+  const literalMatch = source.match(/^const tasks = (\[.*\]);$/m);
+  assert.ok(literalMatch);
+  const literal = literalMatch[1]!;
   // A pure data literal: no calls, no references, nothing to execute.
   const tasks = new Function(`return ${literal};`)();
   assert.deepEqual(tasks, [
@@ -130,7 +132,7 @@ test("a prompt cannot break out of the generated script", () => {
   ]);
 
   // And the surrounding script still has exactly the one spawn call it wrote.
-  assert.equal(source.match(/tools\.multi_agent_v1__spawn_agent/g).length, 1);
+  assert.equal(source.match(/tools\.multi_agent_v1__spawn_agent/g)?.length, 1);
   assert.doesNotThrow(() => new Function(`return (async () => {\n${source}\n});`));
 });
 
@@ -198,7 +200,7 @@ test("the exec call is emitted as a complete custom_tool_call", () => {
   assert.equal(done.item.status, "completed");
   assert.equal(done.item.input, source);
   assert.equal(done.output_index, 1);
-  assert.equal(events.every(([ , payload ]) => payload.output_index === 1 || payload.item_id === "ctc_1"), true);
+  assert.equal(events.every(([ , payload ]) => payload.output_index === 1 || ("item_id" in payload && payload.item_id === "ctc_1")), true);
 });
 
 test("Codex's returned tool output is matched back by call id", () => {

@@ -52,8 +52,8 @@ esac
 # which provider serves it. The injected prompt also owns the terminal-child
 # close/recovery protocol; this hook must not attempt a global cleanup because
 # it cannot distinguish another parent tree's handles. The prompt conditionally
-# uses owner-scoped enumeration when a runtime provides it. One relative path covers
-# both layouts: this hook
+# uses owner-scoped enumeration when a runtime provides it. One relative path
+# reaches both the typed helper and prompt layout: this hook
 # sits beside `codex/prompts/` in a checkout (`scripts/`) and again in the
 # installed copy (`$CODEX_HOME/hooks/`). The canonical skill source is the
 # repository's `.rulesync/skills`, mirrored under `$CODEX_HOME` by the installer,
@@ -79,7 +79,7 @@ printf '%s' "$input" | HOOK_PROMPT_FILE="$prompt_file" HOOK_SKILL_FILE="$skill_f
     let recovery = "";
     if (parentId) {
       try {
-        const module = await import(pathToFileURL(path.join(process.env.HOOK_ROOT_DIR, "codex/lib/codex-spawn-tools.mjs")).href);
+        const module = await import(pathToFileURL(path.join(process.env.HOOK_ROOT_DIR, "../src/agents/spawn-tools.ts")).href);
         recovery = module.buildRecoveryScript(parentId);
       } catch { }
     }

@@ -42,7 +42,7 @@ import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { isAbsolute, join, resolve, sep } from "node:path";
 import { SpawnSessionRegistry } from "../src/agents/bridge-spawn-session.ts";
-import { buildSpawnScript, execToolCallSseEvents, mintCallId, mintCallItemId } from "./codex/lib/codex-spawn-tools.mjs";
+import { buildSpawnScript, execToolCallSseEvents, mintCallId, mintCallItemId } from "../src/agents/spawn-tools.ts";
 
 // agy's spawn tool takes a batch, not one child: the orchestrator calls
 // `invoke_subagent` with `{"Subagents":[{"TypeName":...,"Model":...,"Prompt":...}, ...]}`

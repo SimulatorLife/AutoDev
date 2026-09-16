@@ -182,7 +182,7 @@ delegation paths:
       concurrency limit rejects one child; the tool output names that rejected child
       instead of collapsing the whole batch into an opaque `Failed creating` error.
   The canonical `orchestration` skill documents this contract, and
-  `scripts/codex/lib/codex-spawn-tools.mjs` builds the call for any component
+  `src/agents/spawn-tools.ts` builds the call for any component
   that needs to emit one.
 - **Bridge-native spawn** (`claude`, `antigravity`): the CLI behind the bridge
   delegates inside its own runtime -- Claude's `Agent` tool, Antigravity's
@@ -1294,11 +1294,11 @@ or unrecognized header fails closed to the bounded policy. The
 bootstrap and the canonical `orchestration` skill, so the root agent gets one
 delegation policy no matter which provider serves it. The JavaScript bridges
 share `src/agents/bridge-role.ts`; the Claude bridge reads the same
-prompt files and skill from Python. The installer deploys both the shared module and the prompt
-files into the hooks directory at their repo path minus the leading `scripts/`,
-so a bridge sits at the same depth above them there as it does in a checkout
-and one relative lookup -- `./codex/lib/…`, `./codex/prompts/…` -- resolves in
-both. That is what makes the bridges runnable and importable straight from a
+prompt files and skill from Python. The installer copies `src/` runtime modules
+under `$CODEX_HOME/src/` and script-backed bridge assets under the hooks
+runtime, so a bridge uses the same relative layout in a checkout and an
+installation: `../src/…` for typed modules and `./codex/prompts/…` for prompt
+assets. That is what makes the bridges runnable and importable straight from a
 checkout, so their pure request-shaping helpers can be unit-tested rather than
 asserted against source text.
 
@@ -1518,8 +1518,11 @@ Two details follow from that:
 
 The shared reporter is `src/telemetry/agent-events.ts`; the Claude bridge
 mirrors it in Python. The installer ships the module beside the bridges that
-import it. The Claude bridge reports spawns but not closes, so its children are
-measured against the parent turn until it adopts `reportResults`.
+import it. The native spawn script/SSE helper is now `src/agents/spawn-tools.ts`.
+The Claude bridge still mirrors that helper locally until its provider conversion
+pass, while its per-turn `autodev_spawn` server launches the shared
+`src/mcp/spawn-shim.ts`. The Claude bridge reports spawns but not closes, so its
+children are measured against the parent turn until it adopts `reportResults`.
 
 ### Reasoning effort on the Antigravity bridge
 

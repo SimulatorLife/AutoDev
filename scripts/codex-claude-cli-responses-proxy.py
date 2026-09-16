@@ -882,7 +882,7 @@ def log_inbound_request(request: Any, headers: Any) -> None:
 # inside an `additional_tools` input item -- whose payload is raw JavaScript
 # evaluated in a V8 isolate. The spawner is reached from inside that script and
 # is never named in the request. This mirrors
-# scripts/codex/lib/codex-spawn-tools.mjs; tests/provider-limits.test.mjs style
+# src/agents/spawn-tools.ts; tests/provider-limits.test.mjs style
 # parity checks read both files as text, so the literals must not drift.
 SPAWN_TOOL = "multi_agent_v1__spawn_agent"
 EXEC_TOOL = "exec"
@@ -1474,7 +1474,7 @@ def mcp_config_for_role(role: Any = None, spawn_session: str | None = None) -> s
             else {"command": server["command"], "args": list(server.get("args", []))}
         )
     if is_orchestrator_role(role) and spawn_session:
-        shim = os.path.join(os.path.dirname(os.path.abspath(__file__)), "codex", "lib", "spawn-shim-mcp.mjs")
+        shim = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "src", "mcp", "spawn-shim.ts")
         servers["autodev_spawn"] = {
             "command": os.environ.get("AUTODEV_NODE_BIN", "node"),
             "args": [shim],

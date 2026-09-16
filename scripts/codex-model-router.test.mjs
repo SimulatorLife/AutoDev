@@ -705,7 +705,7 @@ test("an exec tool call carrying a spawn script reaches Codex byte for byte", as
   // must not touch it. If it ever did, Codex would be handed a script calling a
   // function that does not exist, and every bridge-driven spawn would fail with
   // nothing in the router log to explain it.
-  const { buildSpawnScript, execToolCallSseEvents } = await import("./codex/lib/codex-spawn-tools.mjs");
+  const { buildSpawnScript, execToolCallSseEvents } = await import("../src/agents/spawn-tools.ts");
   const source = buildSpawnScript([ { agentType: "explorer", message: "audit the catalogue" } ]);
 
   for (const [ name, payload ] of execToolCallSseEvents({ itemId: "ctc_1", callId: "call_1", source })) {

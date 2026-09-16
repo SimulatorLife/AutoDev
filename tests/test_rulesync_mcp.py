@@ -113,7 +113,7 @@ class RulesyncMcpTests(unittest.TestCase):
                 with self.subTest(target=target, server=name):
                     if name == "autodev_spawn":
                         self.assertEqual(server["command"], "bash")
-                        self.assertTrue(server["args"][1].endswith('/hooks/codex/lib/spawn-shim-mcp.mjs"'))
+                        self.assertTrue(server["args"][1].endswith('/src/mcp/spawn-shim.ts"'))
                     elif "command" in server:
                         self.assertEqual(server["command"], "bash")
                         self.assertEqual(server["args"], ["-lc", LAUNCHER + name])

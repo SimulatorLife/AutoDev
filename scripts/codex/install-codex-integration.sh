@@ -63,7 +63,13 @@ obsolete_runtime_hook_names=(log-subagent-model.sh run-codex-antigravity-litellm
 # plist after the code that fronted it is gone.
 obsolete_launchagent_labels=(com.codex.antigravity-litellm)
 # Runtime files installed outside the hooks directory that no longer belong.
-obsolete_runtime_paths=("$HOME/.config/litellm/antigravity.yaml" "$HOME/.codex/codex-antigravity-litellm-config.sha256")
+obsolete_runtime_paths=(
+  "$HOME/.config/litellm/antigravity.yaml"
+  "$HOME/.codex/codex-antigravity-litellm-config.sha256"
+  "$hooks_dir/codex/lib/codex-spawn-tools.mjs"
+  "$hooks_dir/codex/lib/codex-state-collector.mjs"
+  "$hooks_dir/codex/lib/spawn-shim-mcp.mjs"
+)
 # agy global skill registry entries written for a skill source that no longer
 # exists. register_agy_code_skills removes them and --check rejects them.
 obsolete_agy_skill_paths=("$repo_root/scripts/codex/skills")
@@ -78,8 +84,9 @@ dashboard_asset_names=(codex-model-router-dashboard.html)
 # Repo-relative assets the bridges load at runtime. The hooks directory is
 # flat: each asset is installed at its repo path minus the leading `scripts/`
 # (see runtime_module_target), which puts it at the same depth below a bridge
-# as it sits in a checkout. One relative specifier -- `./codex/lib/x.mjs`,
-# `./codex/prompts/x.md` -- therefore resolves in both.
+# as it sits in a checkout. Typed `src/` modules are installed under
+# `$codex_home/src/`; script-backed bridge assets remain under hooks, so
+# `../src/x.ts` and `./codex/prompts/x.md` resolve in both layouts.
 mcp_launcher_names=(run-autodev-mcp.sh)
 agent_renderer_name=src/config/render-agent-configs.ts
 execution_contract_builder_name=src/config/render-execution-contract.ts
@@ -92,11 +99,11 @@ runtime_module_names=(
   src/agents/agent-activity.ts
   src/shared/provider-limits.ts
   src/shared/responses-item-ids.ts
-  scripts/codex/lib/codex-spawn-tools.mjs
-  scripts/codex/lib/codex-state-collector.mjs
+  src/agents/spawn-tools.ts
+  src/router/state-collector.ts
   src/agents/bridge-spawn-session.ts
   # Executed as a child process by the bridges rather than imported.
-  scripts/codex/lib/spawn-shim-mcp.mjs
+  src/mcp/spawn-shim.ts
   src/shared/execution-contract.ts
   src/router/status.ts
   scripts/codex/execution-contract.json

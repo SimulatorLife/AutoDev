@@ -18,7 +18,7 @@ import { INCOMPLETE_REASON_INTERRUPTED, INCOMPLETE_REASON_TIMEOUT, isHardLimitCl
 // replays whatever it was handed on every later turn. Normalising outbound is
 // what stops one lax turn from permanently poisoning a session.
 import { dropUnresolvableReasoning, normalizeInputItemIds } from "../src/shared/responses-item-ids.ts";
-import { CodexStateCollector, loadCodexStateCollectorConfig } from "./codex/lib/codex-state-collector.mjs";
+import { CodexStateCollector, loadCodexStateCollectorConfig } from "../src/router/state-collector.ts";
 // Session/agent activity that spans the gaps between requests -- waiting on a
 // tool result, waiting on the next user turn, waiting on a spawned subagent.
 // A single shared state machine backs both the usage-table "live activity"

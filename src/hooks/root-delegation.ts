@@ -22,6 +22,11 @@ function runtimeRoot(): string {
   return existsSync(join(installed, 'codex')) ? installed : join(repositoryRoot(), 'scripts');
 }
 
+function runtimeSourceRoot(): string {
+  const installed = codexHome();
+  return existsSync(join(installed, 'src', 'agents', 'spawn-tools.ts')) ? installed : repositoryRoot();
+}
+
 function logInput(input: HookInput): void {
   try {
     const logFile = join(codexHome(), 'hooks', 'hooks.log');
@@ -36,7 +41,7 @@ function logInput(input: HookInput): void {
 
 async function recoveryScript(parentId: string): Promise<string> {
   try {
-    const modulePath = join(runtimeRoot(), 'codex', 'lib', 'codex-spawn-tools.mjs');
+    const modulePath = join(runtimeSourceRoot(), 'src', 'agents', 'spawn-tools.ts');
     const tools = await import(pathToFileURL(modulePath).href) as unknown as SpawnTools;
     return tools.buildRecoveryScript(parentId);
   } catch {

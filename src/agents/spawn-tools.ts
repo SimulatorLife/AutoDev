@@ -21,38 +21,89 @@
  *   - the spawn argument is `{ agent_type, message }`. Passing `agent` instead
  *     is silently ignored and yields a generic agent, which is why that
  *     spelling is not accepted here.
- *   - one `exec` call can spawn many agents by awaiting `Promise.allSettled` over
- *     the batch, so fan-out does not need parallel tool calls and one rejected
- *     child does not erase siblings that were already created. This matters because
- *     Codex sends `parallel_tool_calls: false` on the wire regardless of what
- *     the model catalog advertises.
+ *   - one `exec` call can spawn many agents by awaiting `Promise.allSettled`
+ *     over the batch, so fan-out does not need parallel tool calls and one
+ *     rejected child does not erase siblings that were already created. This
+ *     matters because Codex sends `parallel_tool_calls: false` on the wire
+ *     regardless of what the model catalog advertises.
  *   - each spawn resolves to `{ agent_id, nickname }`, and `agent_id` is the
  *     thread id the app links to.
  */
 
-import { randomBytes, createHash } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 
 /** Codex's spawn function, as exposed on the isolate's `tools` global. */
-export const SPAWN_TOOL = "multi_agent_v1__spawn_agent";
+export const SPAWN_TOOL = "multi_agent_v1__spawn_agent" as const;
 
 /** The code-mode tool a bridge drives. Codex names it plainly, with no namespace. */
-export const EXEC_TOOL = "exec";
+export const EXEC_TOOL = "exec" as const;
 
 // How long `exec` may run before Codex yields the script back. Spawning is
 // effectively instantaneous -- the observed wall time for a three-agent batch
 // was 0.8s -- so this only has to cover a slow batch, not a child's lifetime.
 // The children keep running after the script returns.
 const DEFAULT_YIELD_MS = 60_000;
-/**
- * The JavaScript body for one spawn batch.
- *
- * Emitting the batch as a single `Promise.allSettled` rather than a call per
- * child keeps a wide fan-out to one tool call, and it mirrors the shape Codex's
- * own GPT-served turns produce, so it exercises a path Codex already handles.
- * Each result or rejection is passed to `text()` so it comes back in the tool
- * output, one JSON object or readable failure per line. A rejected child must
- * not turn successful siblings into an opaque "Failed creating" tool error.
- */
+
+export interface SpawnChild {
+  agentType?: string | null;
+  message: string;
+}
+
+export interface SpawnScriptOptions {
+  yieldTimeMs?: number;
+  recoverParentId?: string | null;
+}
+
+export interface SpawnResult {
+  agentId: string;
+  nickname: string | null;
+}
+
+export interface CustomToolCallItem {
+  id: string;
+  type: "custom_tool_call";
+  call_id: string;
+  name: typeof EXEC_TOOL;
+  input: string;
+  status: "in_progress" | "completed";
+}
+
+interface AddedToolCallPayload {
+  type: "response.output_item.added";
+  output_index: number;
+  item: Omit<CustomToolCallItem, "input" | "status"> & {
+    input: "";
+    status: "in_progress";
+  };
+}
+
+interface ToolCallInputDeltaPayload {
+  type: "response.custom_tool_call_input.delta";
+  item_id: string;
+  output_index: number;
+  delta: string;
+}
+
+interface ToolCallInputDonePayload {
+  type: "response.custom_tool_call_input.done";
+  item_id: string;
+  output_index: number;
+  input: string;
+}
+
+interface CompletedToolCallPayload {
+  type: "response.output_item.done";
+  output_index: number;
+  item: CustomToolCallItem;
+}
+
+export type ExecToolCallSseEvent = readonly [
+  ["response.output_item.added", AddedToolCallPayload],
+  ["response.custom_tool_call_input.delta", ToolCallInputDeltaPayload],
+  ["response.custom_tool_call_input.done", ToolCallInputDonePayload],
+  ["response.output_item.done", CompletedToolCallPayload],
+];
+
 /**
  * JavaScript preflight that recovers terminal child handles owned by the
  * current parent when the Codex App MCP is available inside code mode.
@@ -62,8 +113,8 @@ const DEFAULT_YIELD_MS = 60_000;
  * foreign parent's child. The parent id is supplied by the bridge from the
  * router-generated conversation identity.
  */
-export function buildRecoveryScript(parentId) {
-  if (typeof parentId !== "string" || !parentId.trim()) return "";
+export function buildRecoveryScript(parentId: string): string {
+  if (!parentId.trim()) return "";
   const encodedParent = JSON.stringify(parentId.trim());
   return [
     `const recoveryParentId = ${encodedParent};`,
@@ -103,10 +154,10 @@ export function buildRecoveryScript(parentId) {
   ].join("\n");
 }
 
-export function buildSpawnScript(children, { yieldTimeMs = DEFAULT_YIELD_MS, recoverParentId = null } = {}) {
+export function buildSpawnScript(children: readonly SpawnChild[], { yieldTimeMs = DEFAULT_YIELD_MS, recoverParentId = null }: SpawnScriptOptions = {}): string {
   const tasks = children.map((child) => {
-    const agentType = typeof child?.agentType === "string" && child.agentType.trim() ? child.agentType.trim() : null;
-    const message = typeof child?.message === "string" ? child.message : "";
+    const agentType = typeof child.agentType === "string" && child.agentType.trim() ? child.agentType.trim() : null;
+    const message = typeof child.message === "string" ? child.message : "";
     // JSON.stringify is the escaping here: the script is source text, and a
     // prompt containing quotes, newlines or a `*/` would otherwise end the
     // string or the script.
@@ -115,10 +166,10 @@ export function buildSpawnScript(children, { yieldTimeMs = DEFAULT_YIELD_MS, rec
       : `{ message: ${JSON.stringify(message)} }`;
   });
   if (tasks.length === 0) throw new Error("buildSpawnScript requires at least one child");
-  const recovery = buildRecoveryScript(recoverParentId);
+  const recovery = recoverParentId === null ? "" : buildRecoveryScript(recoverParentId);
   return [
     `// @exec: ${JSON.stringify({ yield_time_ms: yieldTimeMs })}`,
-    ...(recovery ? [ recovery ] : []),
+    ...(recovery ? [recovery] : []),
     `const tasks = [${tasks.join(", ")}];`,
     `const out = await Promise.allSettled(tasks.map((t) => tools.${SPAWN_TOOL}(t)));`,
     `out.forEach((result) => text(JSON.stringify(result.status === "fulfilled" ? { spawn_status: "created", ...(result.value && typeof result.value === "object" ? result.value : {}) } : { spawn_status: "rejected", agent_id: null, error: String(result.reason?.message ?? result.reason) })));`,
@@ -132,21 +183,21 @@ export function buildSpawnScript(children, { yieldTimeMs = DEFAULT_YIELD_MS, rec
  * Codex wraps the script's output in a `custom_tool_call_output` whose `output`
  * is a list of `input_text` parts: a "Script completed ..." preamble, then one
  * part per `text()` call. Anything that does not parse as an object carrying an
- * `agent_id` is skipped rather than treated as an error, so the preamble and any
- * stray diagnostic line cost nothing.
+ * `agent_id` is skipped rather than treated as an error, so the preamble and
+ * any stray diagnostic line cost nothing.
  */
-export function parseSpawnResults(output) {
+export function parseSpawnResults(output: unknown): SpawnResult[] {
   const parts = Array.isArray(output)
-    ? output.map((part) => (typeof part === "string" ? part : part?.text)).filter((t) => typeof t === "string")
-    : [ typeof output === "string" ? output : "" ];
-  const results = [];
+    ? output.map((part: unknown) => typeof part === "string" ? part : isRecord(part) ? part.text : undefined).filter((text): text is string => typeof text === "string")
+    : [typeof output === "string" ? output : ""];
+  const results: SpawnResult[] = [];
   for (const part of parts) {
     for (const line of part.split("\n")) {
       const trimmed = line.trim();
       if (!trimmed.startsWith("{")) continue;
       try {
-        const parsed = JSON.parse(trimmed);
-        if (parsed && typeof parsed.agent_id === "string" && parsed.agent_id.trim()) {
+        const parsed: unknown = JSON.parse(trimmed);
+        if (isRecord(parsed) && typeof parsed.agent_id === "string" && parsed.agent_id.trim()) {
           results.push({ agentId: parsed.agent_id, nickname: typeof parsed.nickname === "string" ? parsed.nickname : null });
         }
       } catch {
@@ -163,12 +214,12 @@ export function parseSpawnResults(output) {
  * The session key is hashed rather than embedded because it can be a raw Codex
  * session id, and a call id travels back through the model's own context.
  */
-export function mintCallId(sessionKey, sequence) {
-  const digest = createHash("sha256").update(String(sessionKey)).digest("hex").slice(0, 8);
+export function mintCallId(sessionKey: string, sequence: number): string {
+  const digest = createHash("sha256").update(sessionKey).digest("hex").slice(0, 8);
   return `call_${digest}_${sequence}`;
 }
 
-export function mintCallItemId() {
+export function mintCallItemId(): string {
   return `ctc_${randomBytes(12).toString("hex")}`;
 }
 
@@ -180,14 +231,14 @@ export function mintCallItemId() {
  * mid-stream backstop reconstructs `output` from the items it saw and would
  * ship a call with truncated source for Codex to execute.
  */
-export function execToolCallSseEvents({ itemId, callId, source, outputIndex = 0 }) {
-  const base = { id: itemId, type: "custom_tool_call", call_id: callId, name: EXEC_TOOL };
-  const completed = { ...base, input: source, status: "completed" };
+export function execToolCallSseEvents({ itemId, callId, source, outputIndex = 0 }: { itemId: string; callId: string; source: string; outputIndex?: number }): ExecToolCallSseEvent {
+  const base = { id: itemId, type: "custom_tool_call" as const, call_id: callId, name: EXEC_TOOL as typeof EXEC_TOOL };
+  const completed: CustomToolCallItem = { ...base, input: source, status: "completed" };
   return [
-    [ "response.output_item.added", { type: "response.output_item.added", output_index: outputIndex, item: { ...base, input: "", status: "in_progress" } } ],
-    [ "response.custom_tool_call_input.delta", { type: "response.custom_tool_call_input.delta", item_id: itemId, output_index: outputIndex, delta: source } ],
-    [ "response.custom_tool_call_input.done", { type: "response.custom_tool_call_input.done", item_id: itemId, output_index: outputIndex, input: source } ],
-    [ "response.output_item.done", { type: "response.output_item.done", output_index: outputIndex, item: completed } ],
+    ["response.output_item.added", { type: "response.output_item.added", output_index: outputIndex, item: { ...base, input: "", status: "in_progress" } }],
+    ["response.custom_tool_call_input.delta", { type: "response.custom_tool_call_input.delta", item_id: itemId, output_index: outputIndex, delta: source }],
+    ["response.custom_tool_call_input.done", { type: "response.custom_tool_call_input.done", item_id: itemId, output_index: outputIndex, input: source }],
+    ["response.output_item.done", { type: "response.output_item.done", output_index: outputIndex, item: completed }],
   ];
 }
 
@@ -195,13 +246,13 @@ export function execToolCallSseEvents({ itemId, callId, source, outputIndex = 0 
  * Tool results Codex is handing back on this request, by call id.
  *
  * `custom_tool_call_output` is what an `exec` call returns. `function_call_output`
- * is accepted too: it costs one line, and it means a bridge that later drives a
- * plain function tool needs no change here.
+ * is accepted too: it costs one line, and it means a bridge that later drives
+ * a plain function tool needs no change here.
  */
-export function pendingToolCallOutputs(input) {
-  const outputs = new Map();
+export function pendingToolCallOutputs(input: unknown): Map<string, unknown> {
+  const outputs = new Map<string, unknown>();
   for (const item of Array.isArray(input) ? input : []) {
-    if (item?.type !== "custom_tool_call_output" && item?.type !== "function_call_output") continue;
+    if (!isRecord(item) || (item.type !== "custom_tool_call_output" && item.type !== "function_call_output")) continue;
     if (typeof item.call_id !== "string" || !item.call_id) continue;
     outputs.set(item.call_id, item.output);
   }
@@ -209,6 +260,10 @@ export function pendingToolCallOutputs(input) {
 }
 
 /** True when this request is Codex returning the result of a call we made. */
-export function carriesPendingSpawnResult(payload) {
-  return pendingToolCallOutputs(payload?.input).size > 0;
+export function carriesPendingSpawnResult(payload: unknown): boolean {
+  return isRecord(payload) && pendingToolCallOutputs(payload.input).size > 0;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object";
 }

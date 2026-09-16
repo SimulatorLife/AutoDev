@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import test from "node:test";
 
-import { CodexStateCollector, loadCodexStateCollectorConfig } from "../scripts/codex/lib/codex-state-collector.mjs";
+import { CodexStateCollector, loadCodexStateCollectorConfig } from "../src/router/state-collector.ts";
 import * as router from "../scripts/codex-model-router.mjs";
 
 function createStubBinding(db) {
