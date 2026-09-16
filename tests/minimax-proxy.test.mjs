@@ -4,7 +4,8 @@ import { createServer } from "node:http";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 
-import { AGENT_ROLE_HEADER, FORWARDED_REQUEST_HEADERS, SESSION_ID_HEADER, SESSION_SCOPE_HEADER, downstreamHeaders, routeForModel, upstreamPayload } from "../scripts/codex-model-router.mjs";
+import { AGENT_ROLE_HEADER, FORWARDED_REQUEST_HEADERS, SESSION_ID_HEADER, SESSION_SCOPE_HEADER, downstreamHeaders, upstreamPayload } from "../scripts/codex-model-router.mjs";
+import { ROUTING_POLICY as routing } from "../src/router/routing.ts";
 import { coerceResponseBody, freeformInputFromArguments, unrecognisedFreeformFeedback } from "../scripts/codex-minimax-responses-proxy.mjs";
 
 const read = (path) => readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
@@ -58,7 +59,7 @@ test("only the credential and content negotiation headers leave the machine", as
   const previousKey = process.env.MINIMAX_API_KEY;
   process.env.MINIMAX_API_KEY = "minimax-key";
   const routerHeaders = downstreamHeaders(
-    routeForModel("MiniMax-M3"),
+    routing.routeForModel("MiniMax-M3"),
     null,
     JSON.stringify({ workspaces: { "/Users/someone/private-repo": { associated_remote_urls: { origin: "git@example.invalid:private/repo.git" } } } }),
     "worker",
@@ -409,7 +410,7 @@ test("normalising item ids upstream leaves everything MiniMax relies on intact",
       { type: "custom_tool_call", id: "06ef3bc08924acade1facee14da0af2e_fc_0", call_id: "call_8ec20ad454e0460d9d4b6662", name: "exec", input: "text()" },
       { type: "custom_tool_call_output", call_id: "call_8ec20ad454e0460d9d4b6662", output: "ok" },
     ];
-    const payload = upstreamPayload(routeForModel("MiniMax-M3"), {
+    const payload = upstreamPayload(routing.routeForModel("MiniMax-M3"), {
       model: "MiniMax-M3",
       input: history,
       tools: [ { type: "namespace", name: "multi_agent_v1", tools: [ { type: "function", name: "spawn_agent" } ] } ],

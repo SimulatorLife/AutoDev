@@ -85,9 +85,10 @@ class SubscriptionProviderPolicyGateTests(unittest.TestCase):
     def setUpClass(cls):
         cls.texts = tracked_runtime_texts()
         cls.router = (REPO_ROOT / "scripts/codex-model-router.mjs").read_text(encoding="utf-8")
+        cls.routing = (REPO_ROOT / "src/router/routing.ts").read_text(encoding="utf-8")
 
     def route(self, provider: str) -> str:
-        match = re.search(rf'\{{ provider: "{provider}",[^\n]*\}}', self.router)
+        match = re.search(rf"\{{ provider: ['\"]{provider}['\"],[^\n]*\}}", self.routing)
         self.assertIsNotNone(match, f"router route for {provider}")
         return match.group(0)
 
@@ -112,7 +113,7 @@ class SubscriptionProviderPolicyGateTests(unittest.TestCase):
         spec.loader.exec_module(bridge)
         self.assertEqual(Path(bridge.CLI).name, "claude")
         self.assertNotIn("anthropic.com", self.texts["scripts/codex-claude-cli-responses-proxy.py"])
-        self.assertIn('baseUrl: "http://127.0.0.1:4000/v1"', self.route("claude"))
+        self.assertIn("baseUrl: 'http://127.0.0.1:4000/v1'", self.route("claude"))
         self.assertNotIn("anthropic.com", self.router)
 
     def test_ci_runs_the_pinned_official_claude_code_package(self):
@@ -124,13 +125,13 @@ class SubscriptionProviderPolicyGateTests(unittest.TestCase):
     def test_copilot_proxy_runs_the_official_copilot_cli(self):
         source = self.texts["scripts/codex-copilot-cli-responses-proxy.mjs"]
         self.assertIn('spawn(process.env.COPILOT_BIN ?? "copilot", args', source)
-        self.assertIn('baseUrl: "http://127.0.0.1:4003/v1"', self.route("copilot"))
+        self.assertIn("baseUrl: 'http://127.0.0.1:4003/v1'", self.route("copilot"))
 
     def test_antigravity_proxy_runs_the_official_agy_cli(self):
         source = self.texts["scripts/codex-antigravity-cli-responses-proxy.mjs"]
         self.assertIn("const CLI = process.env.AGY_CLI_PATH ?? `${process.env.HOME ?? process.cwd()}/.local/bin/agy`;", source)
         self.assertIn("spawn(CLI, agyArgs(", source)
-        self.assertIn('baseUrl: "http://127.0.0.1:4002/v1"', self.route("antigravity"))
+        self.assertIn("baseUrl: 'http://127.0.0.1:4002/v1'", self.route("antigravity"))
 
 
 if __name__ == "__main__":

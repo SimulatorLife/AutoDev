@@ -10,18 +10,16 @@ import { tmpdir } from "node:os";
 
 import { RESPONSES_ITEM_ID_PREFIXES } from "../src/shared/responses-item-ids.ts";
 
+import { COOLDOWNS as cooldowns } from "../src/router/cooldown.ts";
+import { ROUTING_POLICY as routing, validateRoutingConfig } from "../src/router/routing.ts";
+
 import {
   activeProviderRequests,
   AGENT_ROLE_HEADER,
   ORCHESTRATOR_AGENT_ROLE,
   beginShutdown,
-  catalogModelIds,
   classifyProviderFailure,
-  clearProviderCooldown,
-  cooldownAllowsLastResort,
-  cooldownProvider,
   declaredLimit,
-  providerCooldownSummary,
   providerCapabilities,
   roleCapabilityRequirements,
   decrementActiveRequests,
@@ -42,16 +40,10 @@ import {
   isAutodevAttributesEnabled,
   isClientDisconnectError,
   isDraining,
-  isProviderCoolingDown,
-  isProviderEnabled,
-  setProviderEnabled,
-  resetDisabledProvidersForTests,
-  disabledProviders,
   routingStatus,
   limitsStatus,
   isLoopbackAddress,
   loadRouterState,
-  nextProviderRetryMs,
   parseConcurrencyConfig,
   parseTurnMetadataJson,
   persistRouterStateNow,
@@ -67,7 +59,6 @@ import {
   requestSession,
   proxyConcreteResponse,
   proxyOrchestratorResponse,
-  orchestratorCandidates,
   ORCHESTRATOR_ALIAS,
   payloadForCandidate,
   resetConcurrencyTelemetry,
@@ -79,12 +70,8 @@ import {
   serializeRouterState,
   spawnFailureStatus,
   responseTextFromSse,
-  roleCandidates,
-  roleForModel,
-  routeCredentialAvailable,
   routerAuthorizationValid,
   setRouterAuthTokenForTests,
-  routeForModel,
   transformSseEvent,
   flattenOutboundTools,
   rewriteToolNamespaces,
@@ -106,7 +93,6 @@ import {
   AGENT_EVENTS_URL_HEADER,
   AGENT_EVENTS_PATH,
   tryAcquireSubagentSlot,
-  validateRoutingConfig,
   upstreamPayload,
   workspaceContextFromRequest,
   registerWorkspaceId,
@@ -168,7 +154,7 @@ test("the router calls the Antigravity adapter directly, with no LiteLLM hop", a
   // forced the router to smuggle its own headers through the Responses body --
   // and it mistranslated `response.failed`, which forced the adapter to fake a
   // completed response. Both workarounds are gone with it.
-  const route = routeForModel("gemini-3.8-flash-high");
+  const route = routing.routeForModel("gemini-3.8-flash-high");
   assert.equal(route.provider, "antigravity");
   assert.equal(route.baseUrl, "http://127.0.0.1:4002/v1");
   assert.equal(route.healthUrl, "http://127.0.0.1:4002/health/liveliness");
@@ -254,9 +240,9 @@ test("router status treats every provider as spawn-capable without role capabili
 
 test("orchestrator alias degrades from the pinned primary provider to a load-balanced fallback group with pinned reasoning effort", () => {
   assert.equal(ORCHESTRATOR_ALIAS, "autodev/orchestrator");
-  assert.equal(roleForModel(ORCHESTRATOR_ALIAS), null);
+  assert.equal(routing.roleForModel(ORCHESTRATOR_ALIAS), null);
 
-  const candidates = orchestratorCandidates(() => 0.5);
+  const candidates = routing.orchestratorCandidates(() => 0.5);
   assert.equal(candidates[ 0 ].provider, "codex", "the primary provider is always attempted first");
   assert.equal(candidates[ 0 ].model, "gpt-5.6-luna");
   assert.equal(candidates[ 0 ].reasoningEffort, null, "the primary provider keeps the caller's reasoning effort");
@@ -272,8 +258,8 @@ test("orchestrator alias degrades from the pinned primary provider to a load-bal
 
   // The fallback group is shuffled/least-loaded, never the pinned primary.
   assert.notDeepEqual(
-    orchestratorCandidates(() => 0).slice(1).map((candidate) => candidate.provider),
-    orchestratorCandidates(() => 0.999).slice(1).map((candidate) => candidate.provider),
+    routing.orchestratorCandidates(() => 0).slice(1).map((candidate) => candidate.provider),
+    routing.orchestratorCandidates(() => 0.999).slice(1).map((candidate) => candidate.provider),
   );
 
   const swapped = payloadForCandidate({ model: "autodev/orchestrator", reasoning: { summary: "auto", effort: "xhigh" } }, byProvider.claude);
@@ -341,22 +327,22 @@ test("validates routing config and requires default model for providers", () => 
 });
 
 test("routes supported model families without provider aliases", () => {
-  assert.equal(routeForModel("gpt-5.6-luna")?.provider, "codex");
-  assert.equal(routeForModel("sonnet")?.provider, "claude");
-  assert.equal(routeForModel("MiniMax-M3")?.provider, "minimax");
-  assert.equal(routeForModel("gemini-3.8-flash-medium")?.provider, "antigravity");
-  assert.equal(routeForModel("unknown-model"), null);
+  assert.equal(routing.routeForModel("gpt-5.6-luna")?.provider, "codex");
+  assert.equal(routing.routeForModel("sonnet")?.provider, "claude");
+  assert.equal(routing.routeForModel("MiniMax-M3")?.provider, "minimax");
+  assert.equal(routing.routeForModel("gemini-3.8-flash-medium")?.provider, "antigravity");
+  assert.equal(routing.routeForModel("unknown-model"), null);
 });
 
 test("resolves role aliases through tier-specific randomized provider groups with smart model fallback", () => {
-  assert.equal(roleForModel("autodev/explorer"), "explorer");
+  assert.equal(routing.roleForModel("autodev/explorer"), "explorer");
 
-  const explorerCandidates = roleCandidates("explorer", () => 0.5);
+  const explorerCandidates = routing.roleCandidates("explorer", () => 0.5);
   const explorerProviders = explorerCandidates.map((c) => c.provider);
   assert.deepEqual(explorerProviders.slice(0, 3).sort(), [ "antigravity", "claude", "minimax" ]);
   assert.deepEqual(explorerProviders.slice(3), [ "copilot", "codex" ]);
 
-  const smartCandidates = roleCandidates("smart", () => 0.5);
+  const smartCandidates = routing.roleCandidates("smart", () => 0.5);
   const smartProviders = smartCandidates.map((c) => c.provider);
   assert.deepEqual(smartProviders.slice(0, 2).sort(), [ "antigravity", "claude" ]);
   assert.deepEqual(smartProviders.slice(2), [ "codex" ]);
@@ -366,8 +352,8 @@ test("resolves role aliases through tier-specific randomized provider groups wit
   assert.equal(smartModelMap.claude, "claude-opus-5");
   assert.equal(smartModelMap.codex, "gpt-5.6-sol");
   assert.notDeepEqual(
-    roleCandidates("smart", () => 0).slice(0, 2).map((candidate) => candidate.provider),
-    roleCandidates("smart", () => 0.999).slice(0, 2).map((candidate) => candidate.provider),
+    routing.roleCandidates("smart", () => 0).slice(0, 2).map((candidate) => candidate.provider),
+    routing.roleCandidates("smart", () => 0.999).slice(0, 2).map((candidate) => candidate.provider),
   );
 });
 
@@ -382,31 +368,31 @@ test("classifies provider exhaustion and transient responses for fallback", () =
 
 test("temporarily omits providers after a fallbackable limit or outage", () => {
   const now = 1000;
-  cooldownProvider("minimax", { now });
-  assert.equal(isProviderCoolingDown("minimax", now + 1), true);
-  assert.equal(isProviderCoolingDown("minimax", now + 30_000), false);
-  clearProviderCooldown("minimax");
-  assert.equal(isProviderCoolingDown("minimax", now), false);
+  cooldowns.cooldownProvider("minimax", { now });
+  assert.equal(cooldowns.isCooling("minimax", now + 1), true);
+  assert.equal(cooldowns.isCooling("minimax", now + 30_000), false);
+  cooldowns.clear("minimax");
+  assert.equal(cooldowns.isCooling("minimax", now), false);
 });
 
 test("holds a provider that reported a real reset until that reset, not on the transient ladder", () => {
   const now = 1_000;
   try {
     const resetsAt = new Date(now + 3_600_000).toISOString();
-    const hard = cooldownProvider("minimax", { now, failureClass: "quota_exhausted", resetsAt, structured: true });
+    const hard = cooldowns.cooldownProvider("minimax", { now, failureClass: "quota_exhausted", resetsAt, structured: true });
     assert.equal(hard.kind, "hard");
     assert.equal(hard.cooldownUntil, Date.parse(resetsAt), "the provider's own reset time is authoritative");
     assert.equal(hard.resetsAt, resetsAt);
 
     // Repeating it does not escalate: the reset time is a fact, not a guess.
-    assert.equal(cooldownProvider("minimax", { now, failureClass: "quota_exhausted", resetsAt, structured: true }).cooldownUntil, Date.parse(resetsAt));
+    assert.equal(cooldowns.cooldownProvider("minimax", { now, failureClass: "quota_exhausted", resetsAt, structured: true }).cooldownUntil, Date.parse(resetsAt));
 
     // A reset further out than the ceiling is clamped rather than trusted whole.
-    clearProviderCooldown("minimax");
-    const far = cooldownProvider("minimax", { now, failureClass: "quota_exhausted", resetsAt: new Date(now + 30 * 86_400_000).toISOString(), structured: true });
+    cooldowns.clear("minimax");
+    const far = cooldowns.cooldownProvider("minimax", { now, failureClass: "quota_exhausted", resetsAt: new Date(now + 30 * 86_400_000).toISOString(), structured: true });
     assert.equal(far.cooldownUntil, now + 21_600_000);
   } finally {
-    clearProviderCooldown("minimax");
+    cooldowns.clear("minimax");
   }
 });
 
@@ -416,11 +402,11 @@ test("a limit only inferred from prose stays on the transient ladder", () => {
     // classifyProviderFailure matches keywords, and bridges ship stderr tails in
     // error messages. One stray "quota" must not take a provider out for the
     // hard window; only a provider *reporting* the limit does that.
-    const inferred = cooldownProvider("minimax", { now, failureClass: "quota_exhausted", structured: false });
+    const inferred = cooldowns.cooldownProvider("minimax", { now, failureClass: "quota_exhausted", structured: false });
     assert.equal(inferred.kind, "transient");
     assert.equal(inferred.durationMs, 30_000);
   } finally {
-    clearProviderCooldown("minimax");
+    cooldowns.clear("minimax");
   }
 });
 
@@ -429,21 +415,21 @@ test("health probe failures and broken credentials get their own cooldowns", () 
   try {
     // A local bridge restarting says nothing about the provider behind it, so
     // it must not push the provider's own backoff toward its ceiling.
-    const first = cooldownProvider("minimax", { now, failureClass: "probe_unavailable" });
-    const second = cooldownProvider("minimax", { now, failureClass: "probe_unavailable" });
+    const first = cooldowns.cooldownProvider("minimax", { now, failureClass: "probe_unavailable" });
+    const second = cooldowns.cooldownProvider("minimax", { now, failureClass: "probe_unavailable" });
     assert.equal(first.kind, "probe");
     assert.equal(first.durationMs, 5_000);
     assert.equal(second.durationMs, 10_000);
     assert.equal(getRouterStatus(now + 1).providers.minimax.failureStreak, 0, "a probe failure must not move the provider's own streak");
 
-    clearProviderCooldown("minimax");
+    cooldowns.clear("minimax");
     // A broken credential is deterministic: fixed, unescalating, and never
     // retried as a last resort, because re-sending cannot make it work.
-    const config = cooldownProvider("minimax", { now, failureClass: "authentication" });
+    const config = cooldowns.cooldownProvider("minimax", { now, failureClass: "authentication" });
     assert.equal(config.kind, "config");
-    assert.equal(cooldownProvider("minimax", { now, failureClass: "authentication" }).durationMs, 30_000);
+    assert.equal(cooldowns.cooldownProvider("minimax", { now, failureClass: "authentication" }).durationMs, 30_000);
   } finally {
-    clearProviderCooldown("minimax");
+    cooldowns.clear("minimax");
     resetRouterTelemetry();
   }
 });
@@ -452,15 +438,15 @@ test("a cooldown only ever moves later", () => {
   const now = 1_000;
   try {
     const resetsAt = new Date(now + 3_600_000).toISOString();
-    cooldownProvider("minimax", { now, failureClass: "quota_exhausted", resetsAt, structured: true });
+    cooldowns.cooldownProvider("minimax", { now, failureClass: "quota_exhausted", resetsAt, structured: true });
     // A five-second probe failure landing on top of an hour-long usage limit
     // must not shorten it back to five seconds.
-    cooldownProvider("minimax", { now, failureClass: "probe_unavailable" });
+    cooldowns.cooldownProvider("minimax", { now, failureClass: "probe_unavailable" });
     const status = getRouterStatus(now + 1).providers.minimax;
     assert.equal(status.cooldownKind, "hard");
     assert.equal(status.cooldownResetsAt, resetsAt);
   } finally {
-    clearProviderCooldown("minimax");
+    cooldowns.clear("minimax");
     resetRouterTelemetry();
   }
 });
@@ -469,13 +455,13 @@ test("backs off repeatedly failing providers and moves them behind healthy peers
   resetRouterTelemetry();
   activeProviderRequests.clear();
   try {
-    const first = cooldownProvider("claude", { now: 1_000 });
-    const second = cooldownProvider("claude", { now: 1_000 });
+    const first = cooldowns.cooldownProvider("claude", { now: 1_000 });
+    const second = cooldowns.cooldownProvider("claude", { now: 1_000 });
     assert.equal(first.durationMs, 30_000);
     assert.equal(second.durationMs, 60_000);
-    assert.equal(nextProviderRetryMs([ "claude", "minimax" ], 1_000), 60_000);
+    assert.equal(cooldowns.nextRetryMs([ "claude", "minimax" ], 1_000), 60_000);
 
-    const providers = roleCandidates("default", () => 0.5).map(({ provider }) => provider);
+    const providers = routing.roleCandidates("default", () => 0.5).map(({ provider }) => provider);
     assert.ok(providers.indexOf("claude") > providers.indexOf("antigravity"));
     assert.ok(providers.indexOf("claude") > providers.indexOf("minimax"));
   } finally {
@@ -496,9 +482,9 @@ test("reroutes a role request after a provider returns a fallbackable failure", 
   process.env.MINIMAX_API_KEY = "test-provider-key";
   process.env.CODEX_ROUTER_COPILOT_API_KEY = "test-provider-key";
   activeProviderRequests.clear();
-  clearProviderCooldown("claude");
-  clearProviderCooldown("antigravity");
-  clearProviderCooldown("minimax");
+  cooldowns.clear("claude");
+  cooldowns.clear("antigravity");
+  cooldowns.clear("minimax");
   agentActivity.beginRequest("busy-antigravity", { requestId: "busy-antigravity", provider: "antigravity", model: "gemini-3.8-flash-medium", origin: "direct" });
   agentActivity.beginRequest("busy-minimax-1", { requestId: "busy-minimax-1", provider: "minimax", model: "MiniMax-M3", origin: "direct" });
   agentActivity.beginRequest("busy-minimax-2", { requestId: "busy-minimax-2", provider: "minimax", model: "MiniMax-M3", origin: "direct" });
@@ -551,7 +537,7 @@ test("orchestrator alias falls back to another provider when the primary is unav
   process.env.MINIMAX_API_KEY = "test-provider-key";
   resetRouterTelemetry();
   activeProviderRequests.clear();
-  for (const provider of [ "codex", "claude", "antigravity", "minimax" ]) clearProviderCooldown(provider);
+  for (const provider of [ "codex", "claude", "antigravity", "minimax" ]) cooldowns.clear(provider);
   let orchestratorResponseProvider = null;
   globalThis.fetch = async (url, options) => {
     const target = String(url);
@@ -612,7 +598,7 @@ test("reports the earliest provider retry time when every role candidate is cool
   };
   resetRouterTelemetry();
   const cooldownStartedAt = Date.now();
-  for (const provider of [ "claude", "antigravity", "minimax", "copilot", "codex" ]) cooldownProvider(provider, { now: cooldownStartedAt });
+  for (const provider of [ "claude", "antigravity", "minimax", "copilot", "codex" ]) cooldowns.cooldownProvider(provider, { now: cooldownStartedAt });
   const server = createServer((request, response) => { void handle(request, response); });
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
   try {
@@ -628,16 +614,16 @@ test("reports the earliest provider retry time when every role candidate is cool
   } finally {
     await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
     globalThis.fetch = originalFetch;
-    for (const provider of [ "claude", "antigravity", "minimax", "copilot", "codex" ]) clearProviderCooldown(provider);
+    for (const provider of [ "claude", "antigravity", "minimax", "copilot", "codex" ]) cooldowns.clear(provider);
     resetRouterTelemetry();
   }
 });
 
 test("requires configured credentials before treating keyed providers as available", () => {
-  assert.equal(routeCredentialAvailable(routeForModel("MiniMax-M3"), {}), false);
-  assert.equal(routeCredentialAvailable(routeForModel("MiniMax-M3"), { MINIMAX_API_KEY: "  " }), false);
-  assert.equal(routeCredentialAvailable(routeForModel("MiniMax-M3"), { MINIMAX_API_KEY: "key-present" }), true);
-  assert.equal(routeCredentialAvailable(routeForModel("gpt-5.6-luna"), {}), true);
+  assert.equal(routing.routeCredentialAvailable(routing.routeForModel("MiniMax-M3"), {}), false);
+  assert.equal(routing.routeCredentialAvailable(routing.routeForModel("MiniMax-M3"), { MINIMAX_API_KEY: "  " }), false);
+  assert.equal(routing.routeCredentialAvailable(routing.routeForModel("MiniMax-M3"), { MINIMAX_API_KEY: "key-present" }), true);
+  assert.equal(routing.routeCredentialAvailable(routing.routeForModel("gpt-5.6-luna"), {}), true);
 });
 
 test("classifies provider failures into operator-visible limit states", () => {
@@ -1964,7 +1950,7 @@ test("restores validated workspace metadata on role and concrete continuations",
   process.env.LITELLM_API_KEY = "test-provider-key";
   process.env.MINIMAX_API_KEY = "test-provider-key";
   resetRouterTelemetry();
-  for (const provider of [ "claude", "antigravity", "minimax", "copilot", "codex" ]) clearProviderCooldown(provider);
+  for (const provider of [ "claude", "antigravity", "minimax", "copilot", "codex" ]) cooldowns.clear(provider);
   globalThis.fetch = async (url, options) => {
     const target = String(url);
     if (target.endsWith("/health") || target.endsWith("/health/liveliness")) return new Response("ok", { status: 200 });
@@ -3395,14 +3381,14 @@ test("byModel live activity count is separate from transport in-flight requests"
 
 test("keeps a stale byModel lastFailure after a later success, which the dashboard must not treat as an ongoing outage once the provider recovers", () => {
   resetRouterTelemetry();
-  clearProviderCooldown("claude");
+  cooldowns.clear("claude");
   recordRouterEvent({ phase: "selected", requestId: "req-model-fail", requestedModel: "sonnet", provider: "claude", model: "sonnet" });
-  cooldownProvider("claude");
+  cooldowns.cooldownProvider("claude");
   recordRouterEvent({ phase: "result", requestId: "req-model-fail", requestedModel: "sonnet", provider: "claude", model: "sonnet", outcome: "failure", status: 429, failureClass: "throttled", elapsedMs: 5 });
   assert.equal(getRouterStatus().providers.claude.status, "throttled");
 
   // Provider recovers: cooldown clears and a later request on the same model succeeds.
-  clearProviderCooldown("claude");
+  cooldowns.clear("claude");
   recordRouterEvent({ phase: "selected", requestId: "req-model-recover", requestedModel: "sonnet", provider: "claude", model: "sonnet" });
   recordRouterEvent({ phase: "result", requestId: "req-model-recover", requestedModel: "sonnet", provider: "claude", model: "sonnet", outcome: "success", status: 200, elapsedMs: 8 });
 
@@ -3586,7 +3572,7 @@ test("per-session slot limit gives distinct identified sessions independent capa
 test("status snapshot exposes configured models, active work, cooldowns, and recent events", () => {
   resetRouterTelemetry();
   activeProviderRequests.clear();
-  clearProviderCooldown("claude");
+  cooldowns.clear("claude");
   recordRouterEvent({ phase: "selected", requestId: "req-status", role: "explorer", requestedModel: "autodev/explorer", provider: "claude", model: "sonnet" });
   incrementActiveRequests("claude");
   const selected = getRouterStatus();
@@ -3596,7 +3582,7 @@ test("status snapshot exposes configured models, active work, cooldowns, and rec
   assert.equal(selected.providers.claude.inFlightRequests, 1);
   assert.equal(selected.providers.claude.active, 0);
 
-  cooldownProvider("claude");
+  cooldowns.cooldownProvider("claude");
   recordRouterEvent({ phase: "result", requestId: "req-status", role: "explorer", requestedModel: "autodev/explorer", provider: "claude", model: "sonnet", outcome: "failure", status: 429, failureClass: "throttled", elapsedMs: 12 });
   const limited = getRouterStatus();
   assert.equal(limited.providers.claude.status, "throttled");
@@ -3605,7 +3591,7 @@ test("status snapshot exposes configured models, active work, cooldowns, and rec
   assert.equal(limited.recentEvents[ 0 ].phase, "result");
   assert.equal(limited.recentEvents[ 0 ].requestId, "req-status");
   decrementActiveRequests("claude");
-  clearProviderCooldown("claude");
+  cooldowns.clear("claude");
   resetRouterTelemetry();
 });
 
@@ -3625,7 +3611,7 @@ test("extracts text from a Responses SSE completion", () => {
 
 
 test("deduplicates catalog models and keeps role aliases visible", () => {
-  const ids = catalogModelIds([ { slug: "gpt-5.6-luna" }, { slug: "gpt-5.6-luna" } ], [ "autodev/explorer" ]);
+  const ids = routing.catalogModelIds([ { slug: "gpt-5.6-luna" }, { slug: "gpt-5.6-luna" } ], [ "autodev/explorer" ]);
   assert.deepEqual(ids, [ "gpt-5.6-luna", "autodev/explorer" ]);
 });
 
@@ -3660,7 +3646,7 @@ test("uses the least-busy provider before starting another provider request", ()
   agentActivity.reset();
   agentActivity.beginRequest("busy-claude", { requestId: "busy-claude", provider: "claude", model: "sonnet" });
   agentActivity.beginRequest("busy-minimax", { requestId: "busy-minimax", provider: "minimax", model: "MiniMax-M3" });
-  const candidates = roleCandidates("default", () => 0.5).map((candidate) => candidate.provider);
+  const candidates = routing.roleCandidates("default", () => 0.5).map((candidate) => candidate.provider);
   assert.equal(candidates[ 0 ], "antigravity");
   assert.deepEqual(candidates.slice(3), [ "copilot", "codex" ]);
   activeProviderRequests.clear();
@@ -3679,7 +3665,7 @@ test("balances candidate provider priority across active in-flight requests", ()
   assert.equal(agentActivity.countLive({ provider: "antigravity" }), 1);
   assert.equal(agentActivity.countLive({ provider: "minimax" }), 0);
 
-  const candidates = roleCandidates("default", () => 0.5);
+  const candidates = routing.roleCandidates("default", () => 0.5);
   const providers = candidates.map((c) => c.provider);
   // minimax (0 active) should come first, then antigravity (1 active), then claude (2 active)
   assert.equal(providers[ 0 ], "minimax");
@@ -3709,17 +3695,17 @@ test("handles safe decrement on inactive providers without going negative", () =
 });
 
 test("rejects invalid role model patterns and unknown models", () => {
-  assert.equal(roleForModel(null), null);
-  assert.equal(roleForModel(undefined), null);
-  assert.equal(roleForModel(""), null);
-  assert.equal(roleForModel("autodev/"), null);
-  assert.equal(roleForModel("autodev/nonexistent-role"), null);
-  assert.equal(roleForModel("not-autodev/default"), null);
+  assert.equal(routing.roleForModel(null), null);
+  assert.equal(routing.roleForModel(undefined), null);
+  assert.equal(routing.roleForModel(""), null);
+  assert.equal(routing.roleForModel("autodev/"), null);
+  assert.equal(routing.roleForModel("autodev/nonexistent-role"), null);
+  assert.equal(routing.roleForModel("not-autodev/default"), null);
 
-  assert.equal(routeForModel(null), null);
-  assert.equal(routeForModel(undefined), null);
-  assert.equal(routeForModel(""), null);
-  assert.equal(routeForModel("custom-unsupported-model-name"), null);
+  assert.equal(routing.routeForModel(null), null);
+  assert.equal(routing.routeForModel(undefined), null);
+  assert.equal(routing.routeForModel(""), null);
+  assert.equal(routing.routeForModel("custom-unsupported-model-name"), null);
 });
 
 test("handles malformed SSE lines and comments gracefully without throwing", () => {
@@ -3782,7 +3768,7 @@ test("structured router error body carries code, retryable, failure class, provi
     await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
     globalThis.fetch = originalFetch;
     activeProviderRequests.clear();
-    clearProviderCooldown("claude");
+    cooldowns.clear("claude");
     resetRouterTelemetry();
   }
 });
@@ -3797,7 +3783,7 @@ test("wraps transport failures with actionable safe diagnostics", async () => {
     }
     return originalFetch(url, options);
   };
-  clearProviderCooldown("claude");
+  cooldowns.clear("claude");
   const server = createServer((request, response) => { void handle(request, response); });
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
   try {
@@ -3822,7 +3808,7 @@ test("wraps transport failures with actionable safe diagnostics", async () => {
     await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
     globalThis.fetch = originalFetch;
     activeProviderRequests.clear();
-    clearProviderCooldown("claude");
+    cooldowns.clear("claude");
     resetRouterTelemetry();
   }
 });
@@ -3847,7 +3833,7 @@ test("direct concrete request survives two pre-response transport failures in a 
     }
     return originalFetch(url, options);
   };
-  clearProviderCooldown("claude");
+  cooldowns.clear("claude");
   const server = createServer((request, response) => { void handle(request, response); });
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
   try {
@@ -3866,7 +3852,7 @@ test("direct concrete request survives two pre-response transport failures in a 
     await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
     globalThis.fetch = originalFetch;
     activeProviderRequests.clear();
-    clearProviderCooldown("claude");
+    cooldowns.clear("claude");
     resetRouterTelemetry();
   }
 });
@@ -3947,7 +3933,7 @@ test("a direct concrete request registers its real session, not sessionKey: null
     await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
     globalThis.fetch = originalFetch;
     activeProviderRequests.clear();
-    clearProviderCooldown("claude");
+    cooldowns.clear("claude");
     resetRouterTelemetry();
   }
 });
@@ -4015,7 +4001,7 @@ test("direct concrete request retries once on HTTP 503 then succeeds without rer
     if (originalMax === undefined) delete process.env.CODEX_ROUTER_CONCRETE_RETRY_MAX_MS;
     else process.env.CODEX_ROUTER_CONCRETE_RETRY_MAX_MS = originalMax;
     activeProviderRequests.clear();
-    clearProviderCooldown("claude");
+    cooldowns.clear("claude");
     resetRouterTelemetry();
   }
 });
@@ -4058,7 +4044,7 @@ test("direct concrete request stops after the single bounded retry and surfaces 
     assert.equal(body.error.model, "sonnet");
     assert.equal(body.error.requestId, "req-bounded-retry");
     // Cooldown is now active so the next role request skips this provider.
-    assert.equal(isProviderCoolingDown("claude"), true);
+    assert.equal(cooldowns.isCooling("claude"), true);
     // Recent events include the retry phase plus a final failure result.
     const recent = getRouterStatus().recentEvents;
     const retryEvents = recent.filter((event) => event.phase === "retry" && event.requestId === "req-bounded-retry");
@@ -4071,7 +4057,7 @@ test("direct concrete request stops after the single bounded retry and surfaces 
     if (originalMax === undefined) delete process.env.CODEX_ROUTER_CONCRETE_RETRY_MAX_MS;
     else process.env.CODEX_ROUTER_CONCRETE_RETRY_MAX_MS = originalMax;
     activeProviderRequests.clear();
-    clearProviderCooldown("claude");
+    cooldowns.clear("claude");
     resetRouterTelemetry();
   }
 });
@@ -4106,11 +4092,11 @@ test("direct concrete request does not retry on auth (401) or payload (400) erro
       assert.equal(body.error.code, status === 401 ? "router_authentication_error" : "router_upstream_error");
       assert.equal(body.error.retryable, false);
       assert.equal(body.error.failureClass, status === 401 ? "authentication" : "request_error");
-      assert.equal(isProviderCoolingDown("claude"), false);
+      assert.equal(cooldowns.isCooling("claude"), false);
     } finally {
       await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
       activeProviderRequests.clear();
-      clearProviderCooldown("claude");
+      cooldowns.clear("claude");
       resetRouterTelemetry();
     }
   }
@@ -4136,7 +4122,7 @@ test("direct concrete request does not retry once the client signal is aborted",
     }
     return originalFetch(url, options);
   };
-  const route = routeForModel("sonnet");
+  const route = routing.routeForModel("sonnet");
   const controller = new AbortController();
   const requestChunks = [ Buffer.from(JSON.stringify({ model: "sonnet", stream: false })) ];
   const { IncomingMessage } = await import("node:http");
@@ -4187,7 +4173,7 @@ test("direct concrete request does not retry once the client signal is aborted",
     if (originalMax === undefined) delete process.env.CODEX_ROUTER_CONCRETE_RETRY_MAX_MS;
     else process.env.CODEX_ROUTER_CONCRETE_RETRY_MAX_MS = originalMax;
     activeProviderRequests.clear();
-    clearProviderCooldown("claude");
+    cooldowns.clear("claude");
     resetRouterTelemetry();
   }
 });
@@ -4218,7 +4204,7 @@ test("direct concrete request stops retrying once the client aborts mid-way thro
     }
     return originalFetch(url, options);
   };
-  const route = routeForModel("sonnet");
+  const route = routing.routeForModel("sonnet");
   const requestChunks = [ Buffer.from(JSON.stringify({ model: "sonnet", stream: false })) ];
   const { IncomingMessage } = await import("node:http");
   const { Socket } = await import("node:net");
@@ -4249,7 +4235,7 @@ test("direct concrete request stops retrying once the client aborts mid-way thro
     removeListener() { },
   };
   try {
-    clearProviderCooldown("claude");
+    cooldowns.clear("claude");
     await proxyConcreteResponse(fakeResponse, route, { model: "sonnet", stream: false }, false, "req-mid-budget-abort", null, { key: "unknown", cwd: null }, controller.signal);
     assert.equal(responseCalls, 2, `cancellation must stop retries before the 3-attempt transport budget is exhausted; got ${responseCalls} fetch calls`);
     const events = getRouterStatus().recentEvents.filter((event) => event.requestId === "req-mid-budget-abort");
@@ -4260,7 +4246,7 @@ test("direct concrete request stops retrying once the client aborts mid-way thro
   } finally {
     globalThis.fetch = originalFetch;
     activeProviderRequests.clear();
-    clearProviderCooldown("claude");
+    cooldowns.clear("claude");
     resetRouterTelemetry();
   }
 });
@@ -4272,8 +4258,8 @@ test("direct concrete request does not reroute to a different provider when the 
   };
   let antigravityCalls = 0;
   process.env.LITELLM_API_KEY = "test-provider-key";
-  clearProviderCooldown("claude");
-  clearProviderCooldown("antigravity");
+  cooldowns.clear("claude");
+  cooldowns.clear("antigravity");
   globalThis.fetch = async (url, options) => {
     if (String(url) === "http://127.0.0.1:4000/v1/responses") {
       return new Response(JSON.stringify({ error: "provider unavailable" }), { status: 503 });
@@ -4313,8 +4299,8 @@ test("direct concrete request does not reroute to a different provider when the 
       else process.env[ key ] = value;
     }
     activeProviderRequests.clear();
-    clearProviderCooldown("claude");
-    clearProviderCooldown("antigravity");
+    cooldowns.clear("claude");
+    cooldowns.clear("antigravity");
     resetRouterTelemetry();
   }
 });
@@ -4472,7 +4458,7 @@ test("graceful shutdown drains in-flight requests, persists state, and stops acc
     delete process.env.CODEX_ROUTER_TEST_NO_EXIT;
     resetRouterTelemetry();
     activeProviderRequests.clear();
-    clearProviderCooldown("claude");
+    cooldowns.clear("claude");
     await rm(directory, { recursive: true, force: true });
   }
 });
@@ -4483,7 +4469,7 @@ test("tells the provider bridge that an orchestrator turn is the orchestrator, s
   process.env.LITELLM_API_KEY = "test-provider-key";
   resetRouterTelemetry();
   activeProviderRequests.clear();
-  for (const provider of [ "codex", "claude", "antigravity", "minimax" ]) clearProviderCooldown(provider);
+  for (const provider of [ "codex", "claude", "antigravity", "minimax" ]) cooldowns.clear(provider);
   let upstreamHeaders = null;
   globalThis.fetch = async (url, options) => {
     const target = String(url);
@@ -4524,7 +4510,7 @@ test("a delegated role is named as that role, and a client cannot claim to be th
   process.env.LITELLM_API_KEY = "test-provider-key";
   resetRouterTelemetry();
   activeProviderRequests.clear();
-  for (const provider of [ "codex", "claude", "antigravity", "minimax", "copilot" ]) clearProviderCooldown(provider);
+  for (const provider of [ "codex", "claude", "antigravity", "minimax", "copilot" ]) cooldowns.clear(provider);
   let upstreamHeaders = null;
   globalThis.fetch = async (url, options) => {
     const target = String(url);
@@ -4602,7 +4588,7 @@ test("writeResponseStream emits active keep-alive comments down to the client du
     }
     return originalFetch(url, options);
   };
-  clearProviderCooldown("claude");
+  cooldowns.clear("claude");
   const server = createServer((request, response) => { void handle(request, response); });
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
   try {
@@ -4620,7 +4606,7 @@ test("writeResponseStream emits active keep-alive comments down to the client du
     await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
     globalThis.fetch = originalFetch;
     activeProviderRequests.clear();
-    clearProviderCooldown("claude");
+    cooldowns.clear("claude");
     resetRouterTelemetry();
   }
 });
@@ -4654,7 +4640,7 @@ test("abrupt client disconnect during SSE stream does not crash the router proce
     }
     return originalFetch(url, options);
   };
-  clearProviderCooldown("claude");
+  cooldowns.clear("claude");
   const server = createServer((request, response) => { void handle(request, response); });
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
   const port = server.address().port;
@@ -4694,7 +4680,7 @@ test("abrupt client disconnect during SSE stream does not crash the router proce
     await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
     globalThis.fetch = originalFetch;
     activeProviderRequests.clear();
-    clearProviderCooldown("claude");
+    cooldowns.clear("claude");
     resetRouterTelemetry();
   }
 });
@@ -4760,14 +4746,14 @@ test("attempts a cooling provider as a last resort rather than stranding the cal
       assert.equal(responseCalls, 1);
       assert.ok(getRouterStatus().recentEvents.some((event) => event.selection === "last_resort"), "the last-resort pass must be visible in the event log");
       // Serving clears the cooldown: the chain heals itself.
-      assert.equal(isProviderCoolingDown(response.headers.get("x-autodev-provider")), false);
+      assert.equal(cooldowns.isCooling(response.headers.get("x-autodev-provider")), false);
     },
     // Out of usage with no stated reset: the 15-minute floor is the router's own
     // guess, so a last resort may still challenge it -- and it is far enough out
     // that the bounded wait cannot fire and confuse what is being measured.
-    () => { for (const provider of DEFAULT_TIER) cooldownProvider(provider, { failureClass: "quota_exhausted", structured: true }); },
+    () => { for (const provider of DEFAULT_TIER) cooldowns.cooldownProvider(provider, { failureClass: "quota_exhausted", structured: true }); },
   );
-  for (const provider of DEFAULT_TIER) clearProviderCooldown(provider);
+  for (const provider of DEFAULT_TIER) cooldowns.clear(provider);
 });
 
 test("bounds how many cooling providers the last-resort pass will try", async () => {
@@ -4788,9 +4774,9 @@ test("bounds how many cooling providers the last-resort pass will try", async ()
       assert.equal(responseCalls, 2);
       assert.equal((await response.json()).error.details.lastResortAttempts, 2);
     },
-    () => { for (const provider of DEFAULT_TIER) cooldownProvider(provider, { failureClass: "quota_exhausted", structured: true }); },
+    () => { for (const provider of DEFAULT_TIER) cooldowns.cooldownProvider(provider, { failureClass: "quota_exhausted", structured: true }); },
   );
-  for (const provider of DEFAULT_TIER) clearProviderCooldown(provider);
+  for (const provider of DEFAULT_TIER) cooldowns.clear(provider);
 });
 
 test("never re-attempts a provider that stated a reset time still in the future", async () => {
@@ -4818,9 +4804,9 @@ test("never re-attempts a provider that stated a reset time still in the future"
       assert.equal(response.headers.get("x-autodev-limit-class"), "quota_exhausted");
       for (const entry of body.error.details.providers) assert.equal(entry.state, "hard");
     },
-    () => { for (const provider of DEFAULT_TIER) cooldownProvider(provider, { failureClass: "quota_exhausted", resetsAt, structured: true }); },
+    () => { for (const provider of DEFAULT_TIER) cooldowns.cooldownProvider(provider, { failureClass: "quota_exhausted", resetsAt, structured: true }); },
   );
-  for (const provider of DEFAULT_TIER) clearProviderCooldown(provider);
+  for (const provider of DEFAULT_TIER) cooldowns.clear(provider);
 });
 
 test("waits out a cooldown that is about to lapse instead of ending the turn", async () => {
@@ -4844,10 +4830,10 @@ test("waits out a cooldown that is about to lapse instead of ending the turn", a
     // that can save this turn.
     () => {
       const resetsAt = new Date(Date.now() + 250).toISOString();
-      for (const provider of DEFAULT_TIER) cooldownProvider(provider, { failureClass: "quota_exhausted", resetsAt, structured: true });
+      for (const provider of DEFAULT_TIER) cooldowns.cooldownProvider(provider, { failureClass: "quota_exhausted", resetsAt, structured: true });
     },
   );
-  for (const provider of DEFAULT_TIER) clearProviderCooldown(provider);
+  for (const provider of DEFAULT_TIER) cooldowns.clear(provider);
 });
 
 test("a provider whose bridge is down does not consume the attempt the wait bought", async () => {
@@ -4881,10 +4867,10 @@ test("a provider whose bridge is down does not consume the attempt the wait boug
     },
     () => {
       const resetsAt = new Date(Date.now() + 250).toISOString();
-      for (const provider of DEFAULT_TIER) cooldownProvider(provider, { failureClass: "session_limit", resetsAt, structured: true });
+      for (const provider of DEFAULT_TIER) cooldowns.cooldownProvider(provider, { failureClass: "session_limit", resetsAt, structured: true });
     },
   );
-  for (const provider of DEFAULT_TIER) clearProviderCooldown(provider);
+  for (const provider of DEFAULT_TIER) cooldowns.clear(provider);
 });
 
 test("does not wait for a cooldown that is nowhere near lapsing", async () => {
@@ -4902,14 +4888,14 @@ test("does not wait for a cooldown that is nowhere near lapsing", async () => {
       // An hour is not something to hold a subagent slot for.
       assert.ok(Date.now() - startedAt < 5_000, "the router must not hold the request for a distant reset");
     },
-    () => { for (const provider of DEFAULT_TIER) cooldownProvider(provider, { failureClass: "session_limit", resetsAt, structured: true }); },
+    () => { for (const provider of DEFAULT_TIER) cooldowns.cooldownProvider(provider, { failureClass: "session_limit", resetsAt, structured: true }); },
   );
-  for (const provider of DEFAULT_TIER) clearProviderCooldown(provider);
+  for (const provider of DEFAULT_TIER) cooldowns.clear(provider);
 });
 
 test("holds a provider until the reset time it declared in its response", async () => {
   const resetsAt = new Date(Date.now() + 7_200_000).toISOString();
-  for (const provider of DEFAULT_TIER) clearProviderCooldown(provider);
+  for (const provider of DEFAULT_TIER) cooldowns.clear(provider);
   await withStubbedProviders(
     (target) => healthyProbe(target) ?? (target.endsWith("/responses") || target.startsWith("https://chatgpt.com/")
       ? new Response(JSON.stringify({ error: { message: "out of usage", type: "rate_limit_error" } }), {
@@ -4932,7 +4918,7 @@ test("holds a provider until the reset time it declared in its response", async 
       assert.equal(claude.lastResortEligible, false);
     },
   );
-  for (const provider of DEFAULT_TIER) clearProviderCooldown(provider);
+  for (const provider of DEFAULT_TIER) cooldowns.clear(provider);
 });
 
 test("a turn a provider closed as incomplete reaches the caller and cools on the reported class", async () => {
@@ -4944,7 +4930,7 @@ test("a turn a provider closed as incomplete reaches the caller and cools on the
     `data: {"type":"response.completed","response":{"id":"resp_1","status":"incomplete","output_text":"half a result","incomplete_details":{"reason":"provider_limit","provider_limit":{"class":"session_limit","type":"session","resets_at":"${resetsAt}","source":"reported"}}}}`,
     "data: [DONE]",
   ].join("\n\n") + "\n\n";
-  for (const provider of DEFAULT_TIER) clearProviderCooldown(provider);
+  for (const provider of DEFAULT_TIER) cooldowns.clear(provider);
   await withStubbedProviders(
     (target) => healthyProbe(target) ?? (target.endsWith("/responses") || target.startsWith("https://chatgpt.com/")
       ? new Response(incomplete, { status: 200, headers: { "content-type": "text/event-stream" } })
@@ -4967,11 +4953,11 @@ test("a turn a provider closed as incomplete reaches the caller and cools on the
       assert.equal(provider.failures, 1);
     },
   );
-  for (const provider of DEFAULT_TIER) clearProviderCooldown(provider);
+  for (const provider of DEFAULT_TIER) cooldowns.clear(provider);
 });
 
 test("closes an abandoned stream as incomplete, carrying what it already forwarded", async () => {
-  for (const provider of DEFAULT_TIER) clearProviderCooldown(provider);
+  for (const provider of DEFAULT_TIER) cooldowns.clear(provider);
   const truncated = [
     'data: {"type":"response.created","response":{"id":"resp_2"}}',
     'data: {"type":"response.output_item.added","output_index":1,"item":{"id":"msg_2","type":"message"}}',
@@ -4996,7 +4982,7 @@ test("closes an abandoned stream as incomplete, carrying what it already forward
       assert.doesNotMatch(body, /closed the stream before response\.completed/);
     },
   );
-  for (const provider of DEFAULT_TIER) clearProviderCooldown(provider);
+  for (const provider of DEFAULT_TIER) cooldowns.clear(provider);
 });
 
 test("releases the subagent slot when every provider is exhausted", async () => {
@@ -5017,9 +5003,9 @@ test("releases the subagent slot when every provider is exhausted", async () => 
     },
     // A broken credential: never retried as a last resort, so this exhausts
     // immediately and the only question is whether the slot came back.
-    () => { for (const provider of DEFAULT_TIER) cooldownProvider(provider, { failureClass: "authentication" }); },
+    () => { for (const provider of DEFAULT_TIER) cooldowns.cooldownProvider(provider, { failureClass: "authentication" }); },
   );
-  for (const provider of DEFAULT_TIER) clearProviderCooldown(provider);
+  for (const provider of DEFAULT_TIER) cooldowns.clear(provider);
   resetConcurrencyTelemetry();
 });
 
@@ -5029,9 +5015,9 @@ test("only a provider-declared cooldown survives a router restart", async () => 
   const resetsAt = new Date(Date.now() + 3_600_000).toISOString();
   try {
     resetRouterTelemetry();
-    cooldownProvider("claude", { failureClass: "quota_exhausted", resetsAt, structured: true });
-    cooldownProvider("minimax", {});
-    cooldownProvider("copilot", { failureClass: "probe_unavailable" });
+    cooldowns.cooldownProvider("claude", { failureClass: "quota_exhausted", resetsAt, structured: true });
+    cooldowns.cooldownProvider("minimax", {});
+    cooldowns.cooldownProvider("copilot", { failureClass: "probe_unavailable" });
     await writeFile(file, serializeRouterState(), "utf8");
 
     resetRouterTelemetry();
@@ -5046,7 +5032,7 @@ test("only a provider-declared cooldown survives a router restart", async () => 
     assert.equal(providers.copilot.cooldownUntil, null);
   } finally {
     await rm(directory, { recursive: true, force: true });
-    for (const provider of DEFAULT_TIER) clearProviderCooldown(provider);
+    for (const provider of DEFAULT_TIER) cooldowns.clear(provider);
     resetRouterTelemetry();
   }
 });
@@ -5104,16 +5090,16 @@ test("summarizes every candidate's cooldown for the exhaustion body", () => {
   const now = 1_000_000;
   try {
     const resetsAt = new Date(now + 600_000).toISOString();
-    cooldownProvider("claude", { now, failureClass: "quota_exhausted", resetsAt, structured: true });
-    cooldownProvider("minimax", { now });
-    const summary = providerCooldownSummary([ "claude", "minimax", "codex" ], now + 1);
+    cooldowns.cooldownProvider("claude", { now, failureClass: "quota_exhausted", resetsAt, structured: true });
+    cooldowns.cooldownProvider("minimax", { now });
+    const summary = cooldowns.summary([ "claude", "minimax", "codex" ], now + 1);
     assert.deepEqual(summary.map(({ provider, state }) => [ provider, state ]), [ [ "claude", "hard" ], [ "minimax", "transient" ], [ "codex", "available" ] ]);
     assert.equal(summary[ 0 ].resetsAt, resetsAt);
     assert.equal(summary[ 1 ].retryAfterMs, 29_999);
-    assert.equal(cooldownAllowsLastResort(null), true);
+    assert.equal(cooldowns.allowsLastResort(null), true);
   } finally {
-    clearProviderCooldown("claude");
-    clearProviderCooldown("minimax");
+    cooldowns.clear("claude");
+    cooldowns.clear("minimax");
   }
 });
 
@@ -5159,11 +5145,11 @@ test("a continuation prefers the provider still holding the turn, without pinnin
   // The bridge that made the tool call is holding a live CLI for the answer.
   // Sending the continuation elsewhere strands it and loses the turn's work.
   const providers = (list) => list.map((c) => c.provider);
-  const plain = orchestratorCandidates(() => 0);
+  const plain = routing.orchestratorCandidates(() => 0);
   assert.ok(plain.length > 1, "this test needs a multi-provider orchestrator tier");
 
   const last = plain.at(-1).provider;
-  const hoisted = orchestratorCandidates(() => 0, last);
+  const hoisted = routing.orchestratorCandidates(() => 0, last);
   assert.equal(hoisted[ 0 ].provider, last, "the holding provider is tried first");
   // Still a preference, not a pin: every candidate survives, exactly once, so
   // the chain can still degrade if that provider is down.
@@ -5171,9 +5157,9 @@ test("a continuation prefers the provider still holding the turn, without pinnin
   assert.equal(new Set(providers(hoisted)).size, hoisted.length);
 
   // An unknown or already-first preference changes nothing.
-  assert.deepEqual(providers(orchestratorCandidates(() => 0, "not-a-provider")), providers(plain));
-  assert.deepEqual(providers(orchestratorCandidates(() => 0, plain[ 0 ].provider)), providers(plain));
-  assert.deepEqual(providers(orchestratorCandidates(() => 0, null)), providers(plain));
+  assert.deepEqual(providers(routing.orchestratorCandidates(() => 0, "not-a-provider")), providers(plain));
+  assert.deepEqual(providers(routing.orchestratorCandidates(() => 0, plain[ 0 ].provider)), providers(plain));
+  assert.deepEqual(providers(routing.orchestratorCandidates(() => 0, null)), providers(plain));
 });
 
 // A turn served by a provider that mints ids the Responses contract rejects
@@ -5191,7 +5177,7 @@ test("outbound item ids are corrected to match their item type", () => {
   // Non-Codex providers preserve reasoning items with their minted IDs for continuity,
   // while self-contained items like tool calls are normalized.
   for (const model of [ "MiniMax-M3", "sonnet" ]) {
-    const route = routeForModel(model);
+    const route = routing.routeForModel(model);
     const sent = upstreamPayload(route, { model, input: poisoned }, true);
     assert.equal(sent.input.length, 4);
     assert.equal(sent.input[ 0 ].id, "msg_1");
@@ -5204,7 +5190,7 @@ test("outbound item ids are corrected to match their item type", () => {
 
   // On Codex routes, reasoning items without encrypted_content are unresolvable references
   // under store: false and are dropped outright, while tool calls are normalized.
-  const codexRoute = routeForModel("gpt-5.6-luna");
+  const codexRoute = routing.routeForModel("gpt-5.6-luna");
   const codexSent = upstreamPayload(codexRoute, { model: "gpt-5.6-luna", input: poisoned }, true);
   assert.equal(codexSent.input.length, 3, "unresolvable foreign reasoning item dropped");
   assert.equal(codexSent.input[ 0 ].id, "msg_1");
@@ -5232,7 +5218,7 @@ test("a payload whose ids already conform is forwarded unchanged", () => {
     { type: "reasoning", id: "rs_abc", encrypted_content: "enc_1" },
     { type: "custom_tool_call", id: "ctc_abc", call_id: "call_1", name: "exec" },
   ];
-  const sent = upstreamPayload(routeForModel("gpt-5.6-luna"), { model: "gpt-5.6-luna", input }, true);
+  const sent = upstreamPayload(routing.routeForModel("gpt-5.6-luna"), { model: "gpt-5.6-luna", input }, true);
   assert.equal(sent.input, input);
 });
 
@@ -5452,7 +5438,7 @@ transport = "streamable_http"
 });
 
 test("router status includes sanitized routing and limits metadata", () => {
-  resetDisabledProvidersForTests();
+  routing.resetDisabledProviders();
   const status = getRouterStatus();
 
   // Status shape for routing metadata
@@ -5528,7 +5514,7 @@ test("loopback-only POST /v1/providers/:provider endpoint validation and state p
 
   try {
     resetRouterTelemetry();
-    resetDisabledProvidersForTests();
+    routing.resetDisabledProviders();
 
     // 1. Non-loopback request is rejected with 403
     const nonLoopbackRes = await originalFetch(`${baseUrl}/v1/providers/claude`, {
@@ -5602,7 +5588,7 @@ test("loopback-only POST /v1/providers/:provider endpoint validation and state p
     assert.equal(disableJson.status, "disabled");
 
     // In-memory status is updated
-    assert.equal(isProviderEnabled("claude"), false);
+    assert.equal(routing.isProviderEnabled("claude"), false);
     const statusAfterDisable = getRouterStatus();
     assert.equal(statusAfterDisable.providers.claude.enabled, false);
     assert.equal(statusAfterDisable.providers.claude.status, "disabled");
@@ -5615,10 +5601,10 @@ test("loopback-only POST /v1/providers/:provider endpoint validation and state p
     assert.deepEqual(savedState.disabledProviders, ["claude"]);
 
     // Reset memory and restore from file
-    resetDisabledProvidersForTests();
-    assert.equal(isProviderEnabled("claude"), true);
+    routing.resetDisabledProviders();
+    assert.equal(routing.isProviderEnabled("claude"), true);
     assert.equal(loadRouterState(stateFile), true);
-    assert.equal(isProviderEnabled("claude"), false);
+    assert.equal(routing.isProviderEnabled("claude"), false);
 
     // 7. Re-enable provider successfully
     const enableRes = await originalFetch(`${baseUrl}/v1/providers/claude`, {
@@ -5633,7 +5619,7 @@ test("loopback-only POST /v1/providers/:provider endpoint validation and state p
     assert.equal(enableJson.enabled, true);
     assert.equal(enableJson.status, "ready");
 
-    assert.equal(isProviderEnabled("claude"), true);
+    assert.equal(routing.isProviderEnabled("claude"), true);
     const statusAfterEnable = getRouterStatus();
     assert.equal(statusAfterEnable.providers.claude.enabled, true);
     assert.equal(statusAfterEnable.providers.claude.status, "ready");
@@ -5643,35 +5629,35 @@ test("loopback-only POST /v1/providers/:provider endpoint validation and state p
     if (previousStateFile === undefined) delete process.env.CODEX_ROUTER_STATE_FILE;
     else process.env.CODEX_ROUTER_STATE_FILE = previousStateFile;
     await rm(directory, { recursive: true, force: true });
-    resetDisabledProvidersForTests();
+    routing.resetDisabledProviders();
     resetRouterTelemetry();
   }
 });
 
 test("disabled providers are excluded across role aliases, orchestrator, and fallback chains", async () => {
   resetRouterTelemetry();
-  resetDisabledProvidersForTests();
+  routing.resetDisabledProviders();
 
   // Baseline: all enabled
-  const baselineCandidates = roleCandidates("default", () => 0.5);
+  const baselineCandidates = routing.roleCandidates("default", () => 0.5);
   assert.ok(baselineCandidates.some((c) => c.provider === "claude"));
 
   // 1. Role aliases exclude disabled provider
-  setProviderEnabled("claude", false);
-  const filteredCandidates = roleCandidates("default", () => 0.5);
+  routing.setProviderEnabled("claude", false);
+  const filteredCandidates = routing.roleCandidates("default", () => 0.5);
   assert.equal(filteredCandidates.some((c) => c.provider === "claude"), false, "disabled provider must be excluded from role candidates");
   assert.ok(filteredCandidates.length > 0);
 
   // 2. Orchestrator excludes disabled provider
-  const baselineOrch = orchestratorCandidates(() => 0.5);
+  const baselineOrch = routing.orchestratorCandidates(() => 0.5);
   assert.equal(baselineOrch[0].provider, "codex");
 
-  setProviderEnabled("codex", false);
-  const filteredOrch = orchestratorCandidates(() => 0.5);
+  routing.setProviderEnabled("codex", false);
+  const filteredOrch = routing.orchestratorCandidates(() => 0.5);
   assert.equal(filteredOrch.some((c) => c.provider === "codex"), false, "disabled provider must be excluded from orchestrator candidates");
 
   // Continuation preferred provider is not hoisted if disabled
-  const preferredOrch = orchestratorCandidates(() => 0.5, "codex");
+  const preferredOrch = routing.orchestratorCandidates(() => 0.5, "codex");
   assert.equal(preferredOrch.some((c) => c.provider === "codex"), false, "disabled preferred provider must not be hoisted");
 
   // 3. Fallback request skips disabled provider
@@ -5742,15 +5728,15 @@ test("disabled providers are excluded across role aliases, orchestrator, and fal
       else process.env[ key ] = value;
     }
     resetRouterTelemetry();
-    resetDisabledProvidersForTests();
+    routing.resetDisabledProviders();
   }
 });
 
 test("all-disabled behavior rejects aliases, orchestrator, and concrete requests", async () => {
   resetRouterTelemetry();
-  resetDisabledProvidersForTests();
+  routing.resetDisabledProviders();
   const allProviders = ["claude", "antigravity", "minimax", "copilot", "codex"];
-  for (const provider of allProviders) setProviderEnabled(provider, false);
+  for (const provider of allProviders) routing.setProviderEnabled(provider, false);
 
   const status = getRouterStatus();
   assert.equal(status.routing.enabledProviders.length, 0);
@@ -5761,9 +5747,9 @@ test("all-disabled behavior rejects aliases, orchestrator, and concrete requests
   }
 
   // Candidate lists are empty
-  assert.deepEqual(roleCandidates("default"), []);
-  assert.deepEqual(roleCandidates("smart"), []);
-  assert.deepEqual(orchestratorCandidates(), []);
+  assert.deepEqual(routing.roleCandidates("default"), []);
+  assert.deepEqual(routing.roleCandidates("smart"), []);
+  assert.deepEqual(routing.orchestratorCandidates(), []);
 
   const server = createServer((request, response) => { void handle(request, response); });
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
@@ -5806,7 +5792,7 @@ test("all-disabled behavior rejects aliases, orchestrator, and concrete requests
     assert.equal(concreteJson.error?.provider, "codex");
   } finally {
     await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
-    resetDisabledProvidersForTests();
+    routing.resetDisabledProviders();
     resetRouterTelemetry();
   }
 });

@@ -19,6 +19,21 @@ import { INCOMPLETE_REASON_INTERRUPTED, INCOMPLETE_REASON_TIMEOUT, isHardLimitCl
 // what stops one lax turn from permanently poisoning a session.
 import { dropUnresolvableReasoning, normalizeInputItemIds } from "../src/shared/responses-item-ids.ts";
 import { CodexStateCollector, loadCodexStateCollectorConfig } from "../src/router/state-collector.ts";
+import {
+  COOLDOWN_CONFIG,
+  COOLDOWNS,
+  PROBE_FAILURE_CLASS,
+} from "../src/router/cooldown.ts";
+import {
+  ORCHESTRATOR_ALIAS,
+  ORCHESTRATOR_REASONING_EFFORT,
+  ORCHESTRATOR_TIER,
+  ROLE_NAMES,
+  ROUTES,
+  ROUTING_CONFIG as ROUTING,
+  ROUTING_CONFIG_FILE,
+  ROUTING_POLICY,
+} from "../src/router/routing.ts";
 // Session/agent activity that spans the gaps between requests -- waiting on a
 // tool result, waiting on the next user turn, waiting on a spawned subagent.
 // A single shared state machine backs both the usage-table "live activity"
@@ -67,14 +82,6 @@ async function refreshCodexState() {
 // legitimately carries the token would otherwise silently arm the auth gate
 // against tests that send no Authorization header.
 let ROUTER_AUTH_TOKEN = process.env.CODEX_ROUTER_AUTH_TOKEN ?? "";
-const ROUTING_CONFIG_FILE = process.env.CODEX_ROUTER_CONFIG_FILE
-  ?? (existsSync(new URL('./codex/model-routing.json', import.meta.url).pathname)
-    ? new URL('./codex/model-routing.json', import.meta.url).pathname
-    : (existsSync(`${CODEX_HOME}/codex-model-routing.json`)
-      ? `${CODEX_HOME}/codex-model-routing.json`
-      : new URL('./codex/model-routing.json', import.meta.url).pathname));
-const ROLE_NAMES = ['default', 'docs-researcher', 'browser-tester', 'explorer', 'worker', 'validator', 'smart'];
-const ROUTING_CONFIG = JSON.parse(readFileSync(ROUTING_CONFIG_FILE, 'utf8'));
 const EXECUTION_CONTRACT_FILE = process.env.CODEX_EXECUTION_CONTRACT_FILE
   ?? (existsSync(new URL('./codex/execution-contract.json', import.meta.url).pathname)
     ? new URL('./codex/execution-contract.json', import.meta.url).pathname
@@ -82,102 +89,11 @@ const EXECUTION_CONTRACT_FILE = process.env.CODEX_EXECUTION_CONTRACT_FILE
       ? `${CODEX_HOME}/hooks/codex/execution-contract.json`
       : new URL('./codex/execution-contract.json', import.meta.url).pathname));
 const EXECUTION_CONTRACT = JSON.parse(readFileSync(EXECUTION_CONTRACT_FILE, 'utf8'));
-const DEFAULT_ROUTES = [
-  { provider: "claude", pattern: /^(sonnet|opus|haiku|claude-[A-Za-z0-9][A-Za-z0-9.-]*)$/, baseUrl: "http://127.0.0.1:4000/v1", healthUrl: "http://127.0.0.1:4000/health/liveliness", envKey: "LITELLM_API_KEY" },
-  { provider: "minimax", pattern: /^MiniMax-[A-Za-z0-9][A-Za-z0-9.-]*$/, baseUrl: "http://127.0.0.1:18765/v1", healthUrl: "http://127.0.0.1:18765/health", envKey: "MINIMAX_API_KEY" },
-  { provider: "antigravity", pattern: /^gemini-[A-Za-z0-9][A-Za-z0-9.-]*$/, baseUrl: "http://127.0.0.1:4002/v1", healthUrl: "http://127.0.0.1:4002/health/liveliness", envKey: "LITELLM_API_KEY" },
-  { provider: "codex", pattern: /^(gpt-[A-Za-z0-9][A-Za-z0-9.-]*|o[1-9][A-Za-z0-9.-]*|codex-[A-Za-z0-9][A-Za-z0-9.-]*)$/, baseUrl: process.env.CODEX_ROUTER_GPT_BASE_URL ?? "https://chatgpt.com/backend-api/codex", envKey: null },
-  { provider: "copilot", pattern: /^copilot$/, baseUrl: "http://127.0.0.1:4003/v1", healthUrl: "http://127.0.0.1:4003/health/liveliness", envKey: "CODEX_ROUTER_COPILOT_API_KEY" },
-];
-const ROUTES = Object.freeze(ROUTING_CONFIG.routes
-  ? Object.entries(ROUTING_CONFIG.routes).map(([provider, route]) => ({
-    ...route,
-    provider,
-    pattern: new RegExp(route.pattern),
-    ...(provider === "codex" && process.env.CODEX_ROUTER_GPT_BASE_URL ? { baseUrl: process.env.CODEX_ROUTER_GPT_BASE_URL } : {}),
-  }))
-  : DEFAULT_ROUTES);
-
-function validateTierGroups(config, tier) {
-  const groups = config.providerGroups[tier];
-  if (!Array.isArray(groups) || groups.length === 0) throw new Error(`Routing config tier ${tier} must define provider groups.`);
-  for (const group of groups) {
-    if (!Array.isArray(group) || group.length === 0 || !group.every((provider) => typeof provider === 'string' && provider.trim())) {
-      throw new Error(`Routing config tier ${tier} contains an invalid provider group.`);
-    }
-    for (const provider of group) {
-      if (!config.providers[provider]) throw new Error(`Routing config tier ${tier} references unknown provider ${provider}.`);
-    }
-  }
-}
-
-function validateRoutingConfig(config) {
-  if (!config.providerGroups || typeof config.providerGroups !== 'object') throw new Error(`Routing config requires providerGroups: ${ROUTING_CONFIG_FILE}`);
-  if (!config.providers || typeof config.providers !== 'object') throw new Error(`Routing config requires providers: ${ROUTING_CONFIG_FILE}`);
-  if (config.routes !== undefined) {
-    if (!config.routes || typeof config.routes !== 'object') throw new Error(`Routing config routes must be an object: ${ROUTING_CONFIG_FILE}`);
-    for (const provider of Object.keys(config.providers)) {
-      const route = config.routes[provider];
-      if (!route || typeof route !== 'object' || typeof route.pattern !== 'string' || !route.pattern.trim() || typeof route.baseUrl !== 'string' || !route.baseUrl.trim()) {
-        throw new Error(`Routing config provider ${provider} must define a route with pattern and baseUrl.`);
-      }
-      if (route.healthUrl !== undefined && typeof route.healthUrl !== 'string') throw new Error(`Routing config provider ${provider} route healthUrl must be a string.`);
-      if (route.envKey !== undefined && route.envKey !== null && typeof route.envKey !== 'string') throw new Error(`Routing config provider ${provider} route envKey must be a string or null.`);
-    }
-  }
-  if (!config.roles || typeof config.roles !== 'object') throw new Error(`Routing config requires roles: ${ROUTING_CONFIG_FILE}`);
-  if (!config.orchestrator || typeof config.orchestrator !== 'object') throw new Error(`Routing config requires an orchestrator block: ${ROUTING_CONFIG_FILE}`);
-  for (const [provider, info] of Object.entries(config.providers)) {
-    if (!info || typeof info !== 'object' || !info.models || typeof info.models !== 'object') {
-      throw new Error(`Routing config provider ${provider} must define a models object.`);
-    }
-    if (typeof info.models.default !== 'string' || !info.models.default.trim()) {
-      throw new Error(`Routing config provider ${provider} must define a default model.`);
-    }
-  }
-  for (const role of ROLE_NAMES) {
-    const tier = config.roles[role]?.tier;
-    if (typeof tier !== 'string' || !tier) throw new Error(`Routing config role ${role} must define a tier.`);
-    validateTierGroups(config, tier);
-  }
-  const orchestrator = config.orchestrator;
-  if (typeof orchestrator.alias !== 'string' || !/^autodev\/[a-z0-9-]+$/.test(orchestrator.alias.trim())) {
-    throw new Error(`Routing config orchestrator.alias must be an autodev/<name> alias.`);
-  }
-  if (typeof orchestrator.tier !== 'string' || !orchestrator.tier) throw new Error(`Routing config orchestrator must define a tier.`);
-  validateTierGroups(config, orchestrator.tier);
-  if (orchestrator.reasoningEffort !== undefined) {
-    if (!orchestrator.reasoningEffort || typeof orchestrator.reasoningEffort !== 'object') {
-      throw new Error(`Routing config orchestrator.reasoningEffort must be an object mapping providers to effort strings.`);
-    }
-    for (const [provider, effort] of Object.entries(orchestrator.reasoningEffort)) {
-      if (!config.providers[provider]) throw new Error(`Routing config orchestrator.reasoningEffort references unknown provider ${provider}.`);
-      if (typeof effort !== 'string' || !effort.trim()) throw new Error(`Routing config orchestrator.reasoningEffort.${provider} must be a non-empty string.`);
-    }
-  }
-  return config;
-}
-
-const ROUTING = validateRoutingConfig(ROUTING_CONFIG);
-const ORCHESTRATOR_ALIAS = ROUTING.orchestrator.alias.trim();
-const ORCHESTRATOR_TIER = ROUTING.orchestrator.tier;
-const ORCHESTRATOR_REASONING_EFFORT = Object.freeze({ ...(ROUTING.orchestrator.reasoningEffort ?? {}) });
 function positiveDuration(value, fallback) {
   const parsed = Number.parseInt(value ?? "", 10);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 }
 
-const PROVIDER_COOLDOWN_MS = positiveDuration(process.env.CODEX_ROUTER_PROVIDER_COOLDOWN_MS, 30_000);
-const PROVIDER_COOLDOWN_MAX_MS = Math.max(PROVIDER_COOLDOWN_MS, positiveDuration(process.env.CODEX_ROUTER_PROVIDER_COOLDOWN_MAX_MS, 600_000));
-// A provider that has told us it is out of usage until a stated time is not the
-// same thing as one that blipped a 503, and backing both off on one 30s-doubling
-// ladder meant a weekly quota was re-probed every ten minutes forever while a
-// local bridge that flapped for a minute was taken out for the same ten. These
-// are the three other cooldown shapes; `cooldownProvider` picks between them.
-const HARD_COOLDOWN_MS = positiveDuration(process.env.CODEX_ROUTER_HARD_COOLDOWN_MS, 900_000);
-const HARD_COOLDOWN_MAX_MS = Math.max(HARD_COOLDOWN_MS, positiveDuration(process.env.CODEX_ROUTER_HARD_COOLDOWN_MAX_MS, 21_600_000));
-const PROBE_COOLDOWN_MS = positiveDuration(process.env.CODEX_ROUTER_PROBE_COOLDOWN_MS, 5_000);
-const PROBE_COOLDOWN_MAX_MS = Math.max(PROBE_COOLDOWN_MS, positiveDuration(process.env.CODEX_ROUTER_PROBE_COOLDOWN_MAX_MS, 30_000));
 const PROBE_TIMEOUT_MS = positiveDuration(process.env.CODEX_ROUTER_PROBE_TIMEOUT_MS, 700);
 // A cooldown is load-shedding advice, not evidence a provider is dead. When
 // every candidate is cooling the router would rather attempt a few of them than
@@ -221,40 +137,12 @@ const CONCRETE_TRANSPORT_MAX_ATTEMPTS = Math.max(
 // Time the router will wait for in-flight response requests to drain after a
 // shutdown signal before forcibly aborting them and exiting.
 const SHUTDOWN_DRAIN_TIMEOUT_MS = positiveDuration(process.env.CODEX_ROUTER_SHUTDOWN_DRAIN_MS, 30_000);
-// provider -> { until, kind, failureClass, resetsAt, since }. `kind` is what
-// decides whether a cooling provider may still be attempted as a last resort.
-const providerCooldowns = new Map();
-const providerFailureStreaks = new Map();
-// Probe failures ride their own ladder: a local bridge restarting must not
-// escalate the backoff that describes the real provider's health.
-const providerProbeStreaks = new Map();
 const activeProviderRequests = new Map();
 // Read once at module load, matching every other env-derived constant here;
 // a test that needs a different TTL builds its own tracker with
 // createAgentActivityTracker({ ttlMs }) rather than mutating this one.
 const AGENT_ACTIVITY_TTL_MS = resolveAgentActivityTtlMs(process.env);
 const agentActivity = createAgentActivityTracker({ ttlMs: AGENT_ACTIVITY_TTL_MS });
-const disabledProviders = new Set();
-
-function isProviderEnabled(provider) {
-  if (!provider || typeof provider !== "string") return false;
-  return !disabledProviders.has(provider.toLowerCase().trim());
-}
-
-function setProviderEnabled(provider, enabled) {
-  if (!provider || typeof provider !== "string") return;
-  const key = provider.toLowerCase().trim();
-  if (enabled) {
-    disabledProviders.delete(key);
-  } else {
-    disabledProviders.add(key);
-  }
-}
-
-function resetDisabledProvidersForTests() {
-  disabledProviders.clear();
-}
-
 function isLoopbackAddress(address) {
   if (!address || typeof address !== "string") return false;
   const normalized = address.replace(/^::ffff:/, "").trim();
@@ -3763,13 +3651,15 @@ function providerState(provider) {
   return providerTelemetry.get(provider);
 }
 
-function routeCredentialAvailable(route, environment = process.env) {
-  return !route.envKey || Boolean(String(environment[route.envKey] ?? "").trim());
-}
-
-// A local bridge that did not answer its health check. Distinct from the
-// classes below, which all describe something the provider itself said.
-const PROBE_FAILURE_CLASS = "probe_unavailable";
+ROUTING_POLICY.setRuntime({
+  providerFailureStreak: (provider) => COOLDOWNS.failureStreak(provider),
+  liveProviderCount: (provider) => countLiveAgentActivity({ provider }),
+});
+COOLDOWNS.setRuntime({
+  isProviderEnabled: (provider) => ROUTING_POLICY.isProviderEnabled(provider),
+  isKnownProvider: (provider) => Object.hasOwn(ROUTING.providers, provider),
+  lastFailureClass: (provider) => providerState(provider).lastFailureClass,
+});
 
 function classifyProviderFailure(status, body = "") {
   const text = String(body ?? "");
@@ -3876,9 +3766,7 @@ function resetRouterTelemetry() {
   spawnFailureTelemetry.total = 0;
   spawnFailureTelemetry.byReason = {};
   spawnFailureTelemetry.recent = [];
-  providerCooldowns.clear();
-  providerFailureStreaks.clear();
-  providerProbeStreaks.clear();
+  COOLDOWNS.clearAll();
   scheduleRouterStatePersist();
 }
 
@@ -3909,8 +3797,8 @@ function routingStatus() {
       return [route.provider, tierPrios];
     })),
     configuredProviders: Object.keys(ROUTING.providers),
-    enabledProviders: Object.keys(ROUTING.providers).filter((p) => isProviderEnabled(p)),
-    disabledProviders: [...disabledProviders].sort(),
+    enabledProviders: Object.keys(ROUTING.providers).filter((p) => ROUTING_POLICY.isProviderEnabled(p)),
+    disabledProviders: ROUTING_POLICY.runtimeState().disabledProviders,
     routes: Object.fromEntries(ROUTES.map((route) => [
       route.provider,
       {
@@ -3918,7 +3806,7 @@ function routingStatus() {
         baseUrl: route.baseUrl,
         healthUrl: route.healthUrl ?? null,
         envKey: route.envKey ?? null,
-        credentialConfigured: routeCredentialAvailable(route),
+        credentialConfigured: ROUTING_POLICY.routeCredentialAvailable(route),
       },
     ])),
   };
@@ -3926,12 +3814,12 @@ function routingStatus() {
 
 function limitsStatus() {
   return {
-    providerCooldownMs: PROVIDER_COOLDOWN_MS,
-    providerCooldownMaxMs: PROVIDER_COOLDOWN_MAX_MS,
-    hardCooldownMs: HARD_COOLDOWN_MS,
-    hardCooldownMaxMs: HARD_COOLDOWN_MAX_MS,
-    probeCooldownMs: PROBE_COOLDOWN_MS,
-    probeCooldownMaxMs: PROBE_COOLDOWN_MAX_MS,
+    providerCooldownMs: COOLDOWN_CONFIG.providerCooldownMs,
+    providerCooldownMaxMs: COOLDOWN_CONFIG.providerCooldownMaxMs,
+    hardCooldownMs: COOLDOWN_CONFIG.hardCooldownMs,
+    hardCooldownMaxMs: COOLDOWN_CONFIG.hardCooldownMaxMs,
+    probeCooldownMs: COOLDOWN_CONFIG.probeCooldownMs,
+    probeCooldownMaxMs: COOLDOWN_CONFIG.probeCooldownMaxMs,
     probeTimeoutMs: PROBE_TIMEOUT_MS,
     lastResortMaxAttempts: LAST_RESORT_MAX_ATTEMPTS,
     exhaustionWaitMs: EXHAUSTION_WAIT_MS,
@@ -3950,11 +3838,11 @@ function getRouterStatus(now = Date.now()) {
   const projection = projectLiveAgents(now);
   const providers = Object.fromEntries(ROUTES.map((route) => {
     const state = providerState(route.provider);
-    const cooldown = providerCooldown(route.provider, now);
+    const cooldown = COOLDOWNS.get(route.provider, now);
     const inFlightRequests = getActiveRequests(route.provider);
     const active = projection.byProvider[route.provider] ?? 0;
     const coolingDown = cooldown !== null;
-    const enabled = isProviderEnabled(route.provider);
+    const enabled = ROUTING_POLICY.isProviderEnabled(route.provider);
     const tierPrios = [];
     for (const [tier, groups] of Object.entries(ROUTING.providerGroups)) {
       if (Array.isArray(groups)) {
@@ -3977,7 +3865,7 @@ function getRouterStatus(now = Date.now()) {
         cooldownResetsAt: coolingDown ? cooldown.resetsAt ?? null : null,
         cooldownUntil: coolingDown ? new Date(cooldown.until).toISOString() : null,
         cooldownRemainingMs: coolingDown ? cooldown.until - now : 0,
-        lastResortEligible: coolingDown ? cooldownAllowsLastResort(cooldown, now) : true,
+        lastResortEligible: coolingDown ? COOLDOWNS.allowsLastResort(cooldown, now) : true,
       },
       active,
       inFlightRequests,
@@ -3988,9 +3876,9 @@ function getRouterStatus(now = Date.now()) {
       cooldownKind: coolingDown ? cooldown.kind : null,
       cooldownFailureClass: coolingDown ? cooldown.failureClass ?? null : null,
       cooldownResetsAt: coolingDown ? cooldown.resetsAt ?? null : null,
-      lastResortEligible: coolingDown ? cooldownAllowsLastResort(cooldown, now) : true,
-      failureStreak: providerFailureStreaks.get(route.provider) ?? 0,
-      probeFailureStreak: providerProbeStreaks.get(route.provider) ?? 0,
+      lastResortEligible: coolingDown ? COOLDOWNS.allowsLastResort(cooldown, now) : true,
+      failureStreak: COOLDOWNS.failureStreak(route.provider) ?? 0,
+      probeFailureStreak: COOLDOWNS.probeFailureStreak(route.provider) ?? 0,
       configuredModels: ROUTING.providers[route.provider]?.models ?? {},
       capabilities: providerCapabilities(route.provider),
       attempts: state.attempts,
@@ -4023,7 +3911,7 @@ function getRouterStatus(now = Date.now()) {
     authentication: { responseRequests: Boolean(ROUTER_AUTH_TOKEN) },
     routing: routingStatus(),
     limits: limitsStatus(),
-    disabledProviders: [...disabledProviders].sort(),
+    disabledProviders: ROUTING_POLICY.runtimeState().disabledProviders,
     usage: usageStatus(now, projection),
     attributionDiagnostics: attributionDiagnosticsStatus(),
     liveAgentAttribution: {
@@ -4389,7 +4277,7 @@ function serializeRouterState() {
   return JSON.stringify({
     schema: `${PERSISTED_STATE_SCHEMA}-v3`,
     updatedAt: new Date().toISOString(),
-    disabledProviders: [...disabledProviders].sort(),
+    disabledProviders: ROUTING_POLICY.runtimeState().disabledProviders,
     providerTelemetry: Object.fromEntries(providerTelemetry),
     usage: usagePersistenceSnapshot(),
     concurrency: concurrencyTelemetry,
@@ -4408,9 +4296,7 @@ function serializeRouterState() {
     // straight back to re-probing an exhausted account. Transient and probe
     // cooldowns are the router's own guesses about a moment that has passed, so
     // a restart is a legitimate reason to go and look again.
-    providerCooldowns: [...providerCooldowns.entries()]
-      .filter(([, entry]) => entry.kind === "hard")
-      .map(([provider, entry]) => ({ provider, ...entry })),
+    providerCooldowns: COOLDOWNS.persistedHardEntries(),
     recentEvents: [...recentRouterEvents],
     otelTelemetry: otelPersistenceSnapshot(),
   }, null, 2);
@@ -4602,34 +4488,9 @@ function loadRouterState(file = effectiveStateFile()) {
       }
     }
     if (Array.isArray(parsed.providerCooldowns)) {
-      const now = Date.now();
-      for (const entry of parsed.providerCooldowns) {
-        if (!entry || typeof entry !== "object" || entry.kind !== "hard") continue;
-        if (!providerTelemetry.has(entry.provider)) continue;
-        const until = Number(entry.until);
-        // Re-clamp on the way back in: a persisted deadline is only as good as
-        // the clock that wrote it, and one far in the future would strand a
-        // provider that has long since recovered.
-        if (!Number.isFinite(until) || until <= now) continue;
-        providerCooldowns.set(entry.provider, {
-          until: Math.min(until, now + HARD_COOLDOWN_MAX_MS),
-          kind: "hard",
-          failureClass: typeof entry.failureClass === "string" ? entry.failureClass : null,
-          resetsAt: normalizeResetsAt(entry.resetsAt),
-          since: typeof entry.since === "number" ? entry.since : now,
-        });
-      }
+      COOLDOWNS.restoreHardEntries(parsed.providerCooldowns, Date.now());
     }
-    disabledProviders.clear();
-    if (Array.isArray(parsed.disabledProviders)) {
-      for (const provider of parsed.disabledProviders) {
-        if (typeof provider !== "string") continue;
-        const normalized = provider.toLowerCase().trim();
-        if (providerTelemetry.has(normalized) || ROUTING.providers[normalized]) {
-          disabledProviders.add(normalized);
-        }
-      }
-    }
+    ROUTING_POLICY.restoreRuntimeState({ disabledProviders: parsed.disabledProviders });
     if (Array.isArray(parsed.recentEvents)) {
       recentRouterEvents.length = 0;
       recentRouterEvents.push(...parsed.recentEvents.filter((event) => event && typeof event === "object").slice(-Math.max(1, MAX_RECENT_EVENTS)));
@@ -4873,218 +4734,6 @@ function resetLifecycleForTests() {
   shutdownPromise = null;
 }
 
-function shuffleGroup(group, random = Math.random) {
-  const items = [...group];
-  for (let i = items.length - 1; i > 0; i--) {
-    const j = Math.floor(random() * (i + 1));
-    [items[i], items[j]] = [items[j], items[i]];
-  }
-  items.sort((a, b) => {
-    const failureDifference = (providerFailureStreaks.get(a) ?? 0) - (providerFailureStreaks.get(b) ?? 0);
-    return failureDifference || countLiveAgentActivity({ provider: a }) - countLiveAgentActivity({ provider: b });
-  });
-  return items;
-}
-
-function providerPriority(tier, random = Math.random) {
-  const rawGroups = ROUTING.providerGroups[tier] ?? [];
-  const providers = [];
-  const seen = new Set();
-  for (const rawGroup of rawGroups) {
-    const group = rawGroup.map((provider) => provider.trim().toLowerCase());
-    const shuffled = shuffleGroup(group, random);
-    for (const provider of shuffled) {
-      if (!isProviderEnabled(provider)) continue;
-      if (!seen.has(provider)) {
-        seen.add(provider);
-        providers.push(provider);
-      }
-    }
-  }
-  return providers;
-}
-
-function providerCooldown(provider, now = Date.now()) {
-  const entry = providerCooldowns.get(provider);
-  if (!entry) return null;
-  if (entry.until > now) return entry;
-  providerCooldowns.delete(provider);
-  return null;
-}
-
-function isProviderCoolingDown(provider, now = Date.now()) {
-  return providerCooldown(provider, now) !== null;
-}
-
-/**
- * Back a provider off, for a duration that depends on *why* it failed.
- *
- * - `config` (authentication, invalid model): a deterministic misconfiguration.
- *   Fixed and short, with no streak escalation, and never retried as a last
- *   resort -- re-sending a request against a broken credential cannot work.
- * - `probe`: the local bridge did not answer its health check. Its own short
- *   ladder, because a bridge restarting says nothing about the provider behind
- *   it and must not push the real backoff toward its ceiling.
- * - `hard`: the provider itself reported that it is out of usage. Held until the
- *   reset time it stated, with no escalation -- that time is authoritative, and
- *   guessing a longer one helps nobody.
- * - `transient`: everything else, on the original 30s-doubling ladder.
- *
- * A hard class requires `structured` corroboration: a provider *reporting* the
- * limit, not this router matching keywords in prose. Bridges ship stderr tails
- * in error messages, and one stray "quota" in an unrelated crash must not take a
- * provider out for the hard window.
- */
-function cooldownProvider(provider, { now = Date.now(), failureClass = null, resetsAt = null, structured = false } = {}) {
-  const record = (kind, durationMs, streak = 0, until = now + durationMs) => {
-    const entry = { until, kind, failureClass, resetsAt: kind === "hard" ? resetsAt : null, since: now };
-    // A cooldown only ever moves later. Otherwise a short one -- a health probe
-    // failing while the provider is already out of usage for the week -- would
-    // silently shorten the long one and put the router straight back into the
-    // hammering the long one exists to prevent. The later deadline keeps its own
-    // kind and reset, because that is the one still describing the provider.
-    const existing = providerCooldowns.get(provider);
-    const kept = existing && existing.until > until ? existing : entry;
-    providerCooldowns.set(provider, kept);
-    return { provider, kind, streak, durationMs: until - now, cooldownUntil: kept.until, resetsAt: kept.resetsAt };
-  };
-  if (failureClass === "authentication" || failureClass === "invalid_model") {
-    return record("config", PROVIDER_COOLDOWN_MS);
-  }
-  if (failureClass === PROBE_FAILURE_CLASS) {
-    const streak = (providerProbeStreaks.get(provider) ?? 0) + 1;
-    providerProbeStreaks.set(provider, streak);
-    return record("probe", Math.min(PROBE_COOLDOWN_MAX_MS, PROBE_COOLDOWN_MS * (2 ** (streak - 1))), streak);
-  }
-  if (structured && isHardLimitClass(failureClass)) {
-    const declared = resetsAt ? Date.parse(resetsAt) : Number.NaN;
-    // A stated reset is taken at face value, including an imminent one -- the
-    // whole point of asking for it is to stop guessing. A reset already in the
-    // past means the provider is wrong or its clock is, so that falls back to
-    // the short transient window rather than to no cooldown at all. The ceiling
-    // caps how long one declaration can strand a provider.
-    const until = Number.isNaN(declared)
-      ? now + HARD_COOLDOWN_MS
-      : declared <= now
-        ? now + PROVIDER_COOLDOWN_MS
-        : Math.min(declared, now + HARD_COOLDOWN_MAX_MS);
-    return record("hard", until - now, 0, until);
-  }
-  const streak = (providerFailureStreaks.get(provider) ?? 0) + 1;
-  providerFailureStreaks.set(provider, streak);
-  return record("transient", Math.min(PROVIDER_COOLDOWN_MAX_MS, PROVIDER_COOLDOWN_MS * (2 ** (streak - 1))), streak);
-}
-
-function clearProviderCooldown(provider) {
-  providerCooldowns.delete(provider);
-  providerFailureStreaks.delete(provider);
-  providerProbeStreaks.delete(provider);
-}
-
-function nextProviderRetryMs(providers, now = Date.now()) {
-  let earliest = null;
-  for (const provider of providers) {
-    const entry = providerCooldowns.get(provider);
-    if (entry && entry.until > now && (earliest === null || entry.until < earliest)) earliest = entry.until;
-  }
-  return earliest === null ? 0 : earliest - now;
-}
-
-/**
- * A provider is worth one more attempt while cooling when the cooldown is our
- * own guess rather than something the provider stated. A deterministic config
- * failure is excluded, and so is a hard limit with a reset time still in the
- * future: the provider has said it will not serve until then, and attempting it
- * anyway is guaranteed to fail and is exactly the hammering cooldowns exist to
- * prevent. A hard cooldown with no stated reset stays eligible, because that
- * floor is this router's guess and not the provider's word.
- */
-function cooldownAllowsLastResort(entry, now = Date.now()) {
-  if (!entry) return true;
-  if (entry.kind === "config") return false;
-  if (entry.kind === "hard" && entry.resetsAt && Date.parse(entry.resetsAt) > now) return false;
-  return true;
-}
-
-/** Per-provider cooldown state for the structured exhaustion body and /status. */
-function providerCooldownSummary(providers, now = Date.now()) {
-  return [ ...new Set(providers) ].map((provider) => {
-    if (!isProviderEnabled(provider)) {
-      return {
-        provider,
-        state: "disabled",
-        failureClass: "provider_disabled",
-        resetsAt: null,
-        retryAfterMs: 0,
-      };
-    }
-    const entry = providerCooldowns.get(provider);
-    const cooling = entry && entry.until > now;
-    return {
-      provider,
-      state: cooling ? entry.kind : "available",
-      failureClass: cooling ? entry.failureClass ?? null : providerState(provider).lastFailureClass ?? null,
-      resetsAt: cooling ? entry.resetsAt ?? null : null,
-      retryAfterMs: cooling ? entry.until - now : 0,
-    };
-  });
-}
-
-function roleForModel(model) {
-  if (typeof model !== "string") return null;
-  const match = model.trim().match(/^autodev\/([a-z0-9-]+)$/i);
-  return match && ROUTING.roles[match[1].toLowerCase()] ? match[1].toLowerCase() : null;
-}
-
-function copilotRoute() {
-  return ROUTES.find((route) => route.provider === "copilot") ?? null;
-}
-
-function routeForModel(model) {
-  if (typeof model !== "string") return null;
-  const trimmed = model.trim();
-  if (trimmed === "copilot") return copilotRoute();
-  return ROUTES.find((route) => route.pattern.test(trimmed)) ?? null;
-}
-
-function tierCandidates(tier, random = Math.random) {
-  if (!tier) return [];
-  return providerPriority(tier, random).map((provider) => {
-    if (!isProviderEnabled(provider)) return null;
-    const providerModels = ROUTING.providers[provider]?.models;
-    const model = providerModels?.[tier] || providerModels?.default;
-    if (typeof model !== 'string' || !model) return null;
-    const route = routeForModel(model);
-    return route ? { ...route, model } : null;
-  }).filter(Boolean);
-}
-
-function roleCandidates(role, random = Math.random) {
-  return tierCandidates(ROUTING.roles[role]?.tier, random);
-}
-
-// The root orchestrator degrades through the orchestrator tier the same way a
-// role does, but it is not a leaf subagent: it keeps the parent reasoning
-// effort for its primary provider and applies an explicit per-provider effort
-// for each fallback provider so a downgraded run still reasons at the intended
-// depth.
-function orchestratorCandidates(random = Math.random, preferred = null) {
-  const candidates = tierCandidates(ORCHESTRATOR_TIER, random).map((candidate) => ({
-    ...candidate,
-    reasoningEffort: ORCHESTRATOR_REASONING_EFFORT[candidate.provider] ?? null,
-  }));
-  // A turn that ended with a tool call is continued by a *second* request
-  // carrying the tool's output. A bridge driving Codex's spawner is holding a
-  // live CLI for that continuation, so sending it to a different provider
-  // strands that CLI and loses the turn's work. Hoist the provider that served
-  // the turn rather than pinning to it: if it is now down the chain still
-  // degrades, and the bridge treats an unknown continuation as a fresh run.
-  if (!preferred || !isProviderEnabled(preferred)) return candidates;
-  const index = candidates.findIndex((candidate) => candidate.provider === preferred);
-  if (index <= 0) return candidates;
-  return [ candidates[ index ], ...candidates.slice(0, index), ...candidates.slice(index + 1) ];
-}
-
 /**
  * True when Codex is handing back the result of a tool call the provider made
  * on a previous request, which makes this the continuation of that turn.
@@ -5094,22 +4743,6 @@ function carriesPendingToolResult(payload) {
     if (item?.type === "custom_tool_call_output" || item?.type === "function_call_output") return true;
   }
   return false;
-}
-
-function providerModelMetadata(model) {
-  const route = routeForModel(model);
-  return { id: model, object: "model", owned_by: route?.provider ?? "local-router" };
-}
-
-function catalogModelIds(models, roles = [...ROLE_NAMES.map((role) => `autodev/${role}`), ORCHESTRATOR_ALIAS]) {
-  return [...new Set([...models.map((model) => model.slug), ...roles])];
-}
-
-async function loadCatalog() {
-  const parsed = JSON.parse(await readFile(CATALOG_FILE, "utf8"));
-  const models = Array.isArray(parsed.models) ? parsed.models : [];
-  const ids = catalogModelIds(models);
-  return { models: ids, data: ids.map(providerModelMetadata) };
 }
 
 function replaceModelFields(value, publicModel) {
@@ -5798,7 +5431,7 @@ function fallbackable(status, body) {
 }
 
 async function providerAvailable(route) {
-  if (!routeCredentialAvailable(route)) return false;
+  if (!ROUTING_POLICY.routeCredentialAvailable(route)) return false;
   if (route.provider === "codex") {
     try { await loadCodexAuth(); return true; } catch { return false; }
   }
@@ -5820,7 +5453,7 @@ async function proxyConcreteResponse(response, route, payload, wantsStream, requ
   // only knows the session id (skill-read telemetry, mcp_exposed, ...) can
   // still correlate back to this turn's provider/model/workspace.
   const activitySubject = `req:${requestId}`;
-  if (!isProviderEnabled(route.provider)) {
+  if (!ROUTING_POLICY.isProviderEnabled(route.provider)) {
     recordRouterEvent({ phase: "skipped", requestId, requestedModel: payload.model, provider: route.provider, model: payload.model, workspace, failureClass: "provider_disabled" });
     recordRouterEvent({ phase: "result", requestId, requestedModel: payload.model, provider: route.provider, model: payload.model, workspace, outcome: "failure", status: 503, failureClass: "provider_disabled" });
     sendJson(
@@ -5867,7 +5500,7 @@ async function proxyConcreteResponse(response, route, payload, wantsStream, requ
       ? "router_authentication_error"
       : status === 502 || status === 503 || status === 504 ? "router_provider_unavailable" : "router_upstream_error";
     const retryable = status === 502 || status === 503 || status === 504;
-    const retryAfterMs = retryable ? nextProviderRetryMs([route.provider]) : 0;
+    const retryAfterMs = retryable ? COOLDOWNS.nextRetryMs([route.provider]) : 0;
     const retryAfterSeconds = retryAfterMs > 0 ? Math.max(1, Math.ceil(retryAfterMs / 1000)) : null;
     sendJson(
       response,
@@ -5923,7 +5556,7 @@ async function proxyConcreteResponse(response, route, payload, wantsStream, requ
           }
           recordRouterEvent({ phase: "result", requestId, requestedModel: payload.model, provider: route.provider, model: payload.model, workspace, outcome: "failure", status: result.status, failureClass, elapsedMs: Date.now() - startedAt });
           agentActivity.endRequest(activitySubject, { requestId, outcome: "failure", hasToolCalls: false });
-          if (result.retryable) cooldownProvider(route.provider, cooldownFor(failureClass, result.limit));
+          if (result.retryable) COOLDOWNS.cooldownProvider(route.provider, cooldownFor(failureClass, result.limit));
           sendFailureResponse(result.status, failureClass);
           return;
         }
@@ -5959,7 +5592,7 @@ async function proxyConcreteResponse(response, route, payload, wantsStream, requ
         const failureClass = classifyProviderFailure(502, error instanceof Error ? error.message : String(error));
         recordRouterEvent({ phase: "result", requestId, requestedModel: payload.model, provider: route.provider, model: payload.model, workspace, outcome: "failure", status: 502, failureClass, elapsedMs: Date.now() - startedAt });
         agentActivity.endRequest(activitySubject, { requestId, outcome: "failure", hasToolCalls: false });
-        cooldownProvider(route.provider, cooldownFor(failureClass));
+        COOLDOWNS.cooldownProvider(route.provider, cooldownFor(failureClass));
         sendFailureResponse(502, failureClass);
         return;
       }
@@ -6076,16 +5709,16 @@ async function proxyFallbackChain(response, { candidates, role = null, origin = 
             // generic upstream_error -- that report is the whole reason the
             // bridges now carry one.
             const failureClass = responseResult.limit?.limitClass ?? (responseResult.incompleteReason ? "unavailable" : "upstream_error");
-            cooldownProvider(route.provider, cooldownFor(failureClass, responseResult.limit));
+            COOLDOWNS.cooldownProvider(route.provider, cooldownFor(failureClass, responseResult.limit));
             recordRouterEvent({ phase: "result", requestId, role, origin, requestedModel: payload.model, provider: route.provider, model: route.model, workspace, outcome: "failure", status: result.upstream.status, failureClass, elapsedMs: Date.now() - attemptStartedAt, toolCalls: responseResult.toolCalls, selection });
             agentActivity.endRequest(activitySubject, { requestId, outcome: "failure", hasToolCalls: responseResult.toolCalls > 0, inputRequired: Boolean(responseResult.inputRequired) });
             return "served";
           }
-          clearProviderCooldown(route.provider);
+          COOLDOWNS.clear(route.provider);
           recordRouterEvent({ phase: "result", requestId, role, origin, requestedModel: payload.model, provider: route.provider, model: route.model, workspace, outcome: "success", status: result.upstream.status, elapsedMs: Date.now() - attemptStartedAt, toolCalls: responseResult.toolCalls, selection });
           agentActivity.endRequest(activitySubject, { requestId, outcome: "success", hasToolCalls: responseResult.toolCalls > 0, inputRequired: Boolean(responseResult.inputRequired) });
         } catch (streamError) {
-          cooldownProvider(route.provider, cooldownFor("upstream_error"));
+          COOLDOWNS.cooldownProvider(route.provider, cooldownFor("upstream_error"));
           throw streamError;
         }
         return "served";
@@ -6099,7 +5732,7 @@ async function proxyFallbackChain(response, { candidates, role = null, origin = 
         agentActivity.endRequest(activitySubject, { requestId, outcome: "failure", hasToolCalls: false });
         return "terminal";
       }
-      cooldownProvider(route.provider, cooldownFor(failureClass, result.limit));
+      COOLDOWNS.cooldownProvider(route.provider, cooldownFor(failureClass, result.limit));
       return "fallback";
     } catch (error) {
       // A missing credential is deterministic, not a transient network failure:
@@ -6113,7 +5746,7 @@ async function proxyFallbackChain(response, { candidates, role = null, origin = 
       // provider summary for fallback diagnostics.
       failures.push(`${route.provider}: ${failureClass}`);
       recordRouterEvent({ phase: "result", requestId, role, origin, requestedModel: payload.model, provider: route.provider, model: route.model, workspace, outcome: "failure", status: 502, failureClass, elapsedMs: Date.now() - attemptStartedAt, selection });
-      cooldownProvider(route.provider, cooldownFor(failureClass));
+      COOLDOWNS.cooldownProvider(route.provider, cooldownFor(failureClass));
       if (response.headersSent) {
         // The stream already closed itself as incomplete on the way out of
         // writeResponseStream; this is the backstop for a throw that happened
@@ -6135,7 +5768,7 @@ async function proxyFallbackChain(response, { candidates, role = null, origin = 
   // "unavailable" is distinct from "fallback": nothing was sent, so it does not
   // count against a pass that is budgeted in attempts.
   const tryCandidate = async (route, selection) => {
-    if (!isProviderEnabled(route.provider)) {
+    if (!ROUTING_POLICY.isProviderEnabled(route.provider)) {
       noteSkip(route, "disabled", "provider_disabled");
       return "unavailable";
     }
@@ -6143,7 +5776,7 @@ async function proxyFallbackChain(response, { candidates, role = null, origin = 
       // A health probe says the local bridge did not answer. That is real, but
       // it says nothing about the provider behind it, so it rides its own short
       // ladder rather than escalating the provider's own backoff.
-      cooldownProvider(route.provider, { failureClass: PROBE_FAILURE_CLASS });
+      COOLDOWNS.cooldownProvider(route.provider, { failureClass: PROBE_FAILURE_CLASS });
       noteSkip(route, "unavailable", PROBE_FAILURE_CLASS);
       return "unavailable";
     }
@@ -6154,12 +5787,12 @@ async function proxyFallbackChain(response, { candidates, role = null, origin = 
   // Pass 1: the candidates that are not cooling at all.
   for (const route of candidates) {
     if (Date.now() > selectionDeadline) { deadlineReached = true; break; }
-    if (!isProviderEnabled(route.provider)) {
+    if (!ROUTING_POLICY.isProviderEnabled(route.provider)) {
       noteSkip(route, "disabled", "provider_disabled");
       continue;
     }
-    if (isProviderCoolingDown(route.provider)) {
-      noteSkip(route, "cooldown active", providerCooldown(route.provider)?.failureClass ?? providerState(route.provider).lastFailureClass ?? "cooldown");
+    if (COOLDOWNS.isCooling(route.provider)) {
+      noteSkip(route, "cooldown active", COOLDOWNS.get(route.provider)?.failureClass ?? providerState(route.provider).lastFailureClass ?? "cooldown");
       continue;
     }
     if (served(await tryCandidate(route, "primary"))) return;
@@ -6175,8 +5808,8 @@ async function proxyFallbackChain(response, { candidates, role = null, origin = 
   // the same cooling provider at once.
   if (!deadlineReached) {
     const eligible = skipped
-      .filter((route) => isProviderEnabled(route.provider) && !attempted.has(route.provider) && cooldownAllowsLastResort(providerCooldown(route.provider)) && countLiveAgentActivity({ provider: route.provider }) === 0)
-      .sort((a, b) => (providerCooldown(a.provider)?.until ?? 0) - (providerCooldown(b.provider)?.until ?? 0))
+      .filter((route) => ROUTING_POLICY.isProviderEnabled(route.provider) && !attempted.has(route.provider) && COOLDOWNS.allowsLastResort(COOLDOWNS.get(route.provider)) && countLiveAgentActivity({ provider: route.provider }) === 0)
+      .sort((a, b) => (COOLDOWNS.get(a.provider)?.until ?? 0) - (COOLDOWNS.get(b.provider)?.until ?? 0))
       .slice(0, LAST_RESORT_MAX_ATTEMPTS);
     for (const route of eligible) {
       if (Date.now() > selectionDeadline) { deadlineReached = true; break; }
@@ -6190,8 +5823,8 @@ async function proxyFallbackChain(response, { candidates, role = null, origin = 
   // the client sees a slow request rather than a stalled stream -- and a role
   // request holds its subagent slot throughout, which is why the budget is
   // small.
-  const waitCandidates = candidates.filter((route) => isProviderEnabled(route.provider) && !attempted.has(route.provider));
-  const waitMs = nextProviderRetryMs(waitCandidates.map(({ provider }) => provider));
+  const waitCandidates = candidates.filter((route) => ROUTING_POLICY.isProviderEnabled(route.provider) && !attempted.has(route.provider));
+  const waitMs = COOLDOWNS.nextRetryMs(waitCandidates.map(({ provider }) => provider));
   if (!deadlineReached && EXHAUSTION_WAIT_MS > 0 && waitMs > 0 && waitMs <= EXHAUSTION_WAIT_MS && !clientSignal?.aborted && !response.headersSent) {
     recordRouterEvent({ phase: "exhaustion_wait", requestId, role, origin, requestedModel: payload.model, provider: null, model: null, workspace, elapsedMs: waitMs });
     await delay(waitMs, clientSignal);
@@ -6200,7 +5833,7 @@ async function proxyFallbackChain(response, { candidates, role = null, origin = 
       // was never asked anything, so it must not consume the single try the
       // wait bought.
       for (const route of waitCandidates) {
-        if (isProviderCoolingDown(route.provider)) continue;
+        if (COOLDOWNS.isCooling(route.provider)) continue;
         const outcome = await tryCandidate(route, "exhaustion_wait");
         if (served(outcome)) return;
         if (outcome !== "unavailable") break;
@@ -6213,7 +5846,7 @@ async function proxyFallbackChain(response, { candidates, role = null, origin = 
   // opened for this request would otherwise stay open forever.
   closeBridgeSubagentsForRequest(requestId, "failure");
   agentActivity.endRequest(activitySubject, { requestId, outcome: "failure", hasToolCalls: false });
-  const summary = providerCooldownSummary(candidates.map(({ provider }) => provider));
+  const summary = COOLDOWNS.summary(candidates.map(({ provider }) => provider));
   sendJson(response, 503, exhaustionBody({ subject, summary, failures, model: payload.model, requestId, lastResortAttempts, deadlineReached }), exhaustionHeaders({ summary, requestId }));
 }
 
@@ -6294,13 +5927,13 @@ function exhaustionHeaders({ summary, requestId }) {
 }
 
 async function proxyRoleResponse(response, role, payload, wantsStream, requestId, turnMetadataHeader, workspace, clientSignal = null, session = null) {
-  return proxyFallbackChain(response, { candidates: roleCandidates(role), role, agentRole: role, subject: `role ${role}`, sessionKey: session?.key ?? null, session }, payload, wantsStream, requestId, turnMetadataHeader, workspace, clientSignal);
+  return proxyFallbackChain(response, { candidates: ROUTING_POLICY.roleCandidates(role), role, agentRole: role, subject: `role ${role}`, sessionKey: session?.key ?? null, session }, payload, wantsStream, requestId, turnMetadataHeader, workspace, clientSignal);
 }
 
 async function proxyOrchestratorResponse(response, payload, wantsStream, requestId, turnMetadataHeader, workspace, clientSignal = null, session = null) {
   const sessionKey = session?.key ?? null;
   const preferred = carriesPendingToolResult(payload) ? orchestratorProviderForSession(sessionKey) : null;
-  return proxyFallbackChain(response, { candidates: orchestratorCandidates(Math.random, preferred), role: null, origin: "orchestrator", agentRole: ORCHESTRATOR_AGENT_ROLE, subject: "the orchestrator", sessionKey, session }, payload, wantsStream, requestId, turnMetadataHeader, workspace, clientSignal);
+  return proxyFallbackChain(response, { candidates: ROUTING_POLICY.orchestratorCandidates(Math.random, preferred), role: null, origin: "orchestrator", agentRole: ORCHESTRATOR_AGENT_ROLE, subject: "the orchestrator", sessionKey, session }, payload, wantsStream, requestId, turnMetadataHeader, workspace, clientSignal);
 }
 
 function requestSession(request, payload, turnMetadataHeader = null) {
@@ -6603,13 +6236,13 @@ async function handleRequest(request, response) {
       sendJson(response, 400, errorBody("request body requires boolean 'enabled'"));
       return;
     }
-    setProviderEnabled(provider, payload.enabled);
+    ROUTING_POLICY.setProviderEnabled(provider, payload.enabled);
     await persistRouterStateNow();
     sendJson(response, 200, {
       ok: true,
       provider,
       enabled: payload.enabled,
-      status: payload.enabled ? (isProviderCoolingDown(provider) ? (providerCooldown(provider)?.failureClass ?? "cooldown") : "ready") : "disabled",
+      status: payload.enabled ? (COOLDOWNS.isCooling(provider) ? (COOLDOWNS.get(provider)?.failureClass ?? "cooldown") : "ready") : "disabled",
     });
     return;
   }
@@ -6662,7 +6295,7 @@ async function handleRequest(request, response) {
     return;
   }
   payload = { ...payload, model };
-  const role = roleForModel(model);
+  const role = ROUTING_POLICY.roleForModel(model);
   const requestId = String(request.headers["x-request-id"] ?? randomUUID());
   const wantsStream = payload.stream !== false;
   const turnMetadataHeader = resolveTurnMetadataHeader(request, payload);
@@ -6739,7 +6372,7 @@ async function handleRequest(request, response) {
       }
       return;
     }
-    const route = routeForModel(payload.model);
+    const route = ROUTING_POLICY.routeForModel(payload.model);
     if (!route) {
       sendJson(response, 400, errorBody(`No local route is configured for model ${String(payload.model)}`));
       return;
@@ -6789,22 +6422,13 @@ export {
   AGENT_ROLE_HEADER,
   ORCHESTRATOR_AGENT_ROLE,
   beginShutdown,
-  catalogModelIds,
   proxyConcreteResponse,
   proxyOrchestratorResponse,
-  orchestratorCandidates,
-  providerPriority,
-  shuffleGroup,
-  tierCandidates,
   ORCHESTRATOR_ALIAS,
   payloadForCandidate,
   classifyProviderFailure,
-  clearProviderCooldown,
   codexTelemetryStatus,
   setCodexStateSnapshotForTests,
-  cooldownAllowsLastResort,
-  cooldownProvider,
-  providerCooldownSummary,
   declaredLimit,
   countToolCallsFromSse,
   countToolCallsInResponse,
@@ -6827,21 +6451,14 @@ export {
   isAutodevAttributesEnabled,
   isClientDisconnectError,
   isDraining,
-  isProviderCoolingDown,
-  isProviderEnabled,
-  setProviderEnabled,
-  resetDisabledProvidersForTests,
-  disabledProviders,
   routingStatus,
   limitsStatus,
   isLoopbackAddress,
   loadRouterState,
-  nextProviderRetryMs,
   parseConcurrencyConfig,
   parseTurnMetadataJson,
   persistRouterStateNow,
   PROCESS_FALLBACK_SESSION_KEY,
-  providerModelMetadata,
   roleCapabilityRequirements,
   recordConcurrencyDenial,
   recordRouterEvent,
@@ -6856,12 +6473,8 @@ export {
   resolveTurnMetadataHeader,
   ROUTER_INSTANCE_ID,
   spawnFailureStatus,
-  routeCredentialAvailable,
   routerAuthorizationValid,
   setRouterAuthTokenForTests,
-  roleCandidates,
-  roleForModel,
-  routeForModel,
   serializeRouterState,
   tryAcquireSubagentSlot,
   responseTextFromSse,
@@ -6892,7 +6505,6 @@ export {
   carriesPendingToolResult,
   AGENT_EVENTS_URL_HEADER,
   AGENT_EVENTS_PATH,
-  validateRoutingConfig,
   workspaceContextFromRequest,
   workspaceMetadataForSession,
   upstreamPayload,

@@ -1,11 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
-
-import {
-  providerPriority,
-  roleCandidates,
-  tierCandidates,
-} from "../scripts/codex-model-router.mjs";
+import { ROUTING_POLICY as routing } from "../src/router/routing.ts";
 
 const contract = await import("../tests/fixtures/contracts/provider-selection-order.json", { with: { type: "json" } }).then((m) => m.default ?? m);
 
@@ -28,7 +23,7 @@ function observe(tier, draws) {
   const random = mulberry32(SEED);
   const out = [];
   for (let i = 0; i < draws; i += 1) {
-    const list = providerPriority(tier, random);
+    const list = routing.providerPriority(tier, random);
     if (list.length > 0) out.push(list);
   }
   return out;
@@ -54,7 +49,7 @@ describe("provider selection order", () => {
   test("providerPriority for an unknown tier returns an empty list", () => {
     const random = mulberry32(SEED);
     for (let i = 0; i < 4; i += 1) {
-      assert.deepEqual(providerPriority("nonexistent", random), []);
+      assert.deepEqual(routing.providerPriority("nonexistent", random), []);
     }
   });
 
@@ -70,9 +65,9 @@ describe("provider selection order", () => {
     const tierRandom = mulberry32(SEED);
     const roleRandom = mulberry32(SEED);
     for (let i = 0; i < 4; i += 1) {
-      const priority = providerPriority("default", priorityRandom);
-      const tier = tierCandidates("default", tierRandom);
-      const role = roleCandidates("default", roleRandom);
+      const priority = routing.providerPriority("default", priorityRandom);
+      const tier = routing.tierCandidates("default", tierRandom);
+      const role = routing.roleCandidates("default", roleRandom);
       for (let j = 0; j < priority.length; j += 1) {
         assert.equal(tier[j].provider, priority[j], `tier candidate ${j} matches priority order`);
         if (role[j]) assert.equal(role[j].provider, priority[j], `role candidate ${j} matches priority order`);
