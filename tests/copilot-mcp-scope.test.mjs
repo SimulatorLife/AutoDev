@@ -3,7 +3,7 @@ import { chmod, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
 
-import { EXECUTION_CONTRACT, roleContract } from "../scripts/codex/lib/execution-contract.mjs";
+import { EXECUTION_CONTRACT, roleContract } from "../src/shared/execution-contract.ts";
 import { copilotMcpArgs, runCopilot } from "../scripts/codex-copilot-cli-responses-proxy.mjs";
 import { createBridgeMcpHomes } from "./bridge-mcp-fixture.mjs";
 

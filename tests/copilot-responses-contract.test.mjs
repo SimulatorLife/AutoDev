@@ -6,7 +6,7 @@ import { spawn } from "node:child_process";
 import { tmpdir } from "node:os";
 import test from "node:test";
 
-import { classifyCliLimit, limitPayload } from "../scripts/codex/lib/provider-limits.mjs";
+import { classifyCliLimit, limitPayload } from "../src/shared/provider-limits.ts";
 import { runCopilot } from "../scripts/codex-copilot-cli-responses-proxy.mjs";
 import { createBridgeMcpHomes } from "./bridge-mcp-fixture.mjs";
 

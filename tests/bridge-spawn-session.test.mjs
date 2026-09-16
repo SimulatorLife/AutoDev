@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { SpawnSessionRegistry, UNIDENTIFIED_SESSION_SCOPE } from "../scripts/codex/lib/bridge-spawn-session.mjs";
+import { SpawnSessionRegistry, UNIDENTIFIED_SESSION_SCOPE } from "../src/agents/bridge-spawn-session.ts";
 
 const registry = (overrides = {}) => {
   let clock = 1000;

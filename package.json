@@ -2,15 +2,26 @@
   "name": "@simulatorlife/autodev",
   "private": true,
   "type": "module",
+  "engines": {
+    "node": ">=24.12.0"
+  },
   "scripts": {
-    "test": "node --test tests/**/*.test.mjs scripts/codex-model-router.test.mjs",
+    "test": "node --test tests/**/*.test.mjs tests/**/*.test.ts scripts/codex-model-router.test.mjs",
+    "test:ts": "node --test tests/**/*.test.ts",
+    "typecheck": "tsc --noEmit",
     "validate:weights": "node tests/weights.test.mjs",
     "test:python": "python3 -m unittest discover -s tests -p 'test_*.py'",
     "validate:actionlint": "actionlint",
-    "validate:shell": "find scripts -type f -name '*.sh' -exec shellcheck --severity=warning {} +"
+    "validate:shell": "find scripts -type f -name '*.sh' -exec shellcheck --severity=warning {} +",
+    "autodev": "node src/cli/autodev.ts",
+    "validate:inventory": "AUTODEV_ENFORCE_INVENTORY=1 node --test tests/inventory/repository-inventory.test.ts"
   },
   "packageManager": "pnpm@10.32.1",
+  "dependencies": {
+    "smol-toml": "^1.8.0"
+  },
   "devDependencies": {
+    "@types/node": "^24.0.0",
     "@playwright/mcp": "^0.0.80",
     "lsp-mcp-server": "^1.1.20",
     "rulesync": "16.30.2",

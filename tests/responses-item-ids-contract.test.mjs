@@ -7,7 +7,7 @@ import {
   normalizeItemId,
   normalizeInputItemIds,
   dropUnresolvableReasoning,
-} from "../scripts/codex/lib/responses-item-ids.mjs";
+} from "../src/shared/responses-item-ids.ts";
 
 const contract = await import("../tests/fixtures/contracts/responses-item-ids-contract.json", { with: { type: "json" } }).then((m) => m.default ?? m);
 const POISONED_FIXTURE = JSON.parse(readFileSync(new URL("./fixtures/poisoned-rollout-items.json", import.meta.url), "utf8"));

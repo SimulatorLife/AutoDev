@@ -3,17 +3,15 @@
 // Reads tests/fixtures/contracts/portable-autodev-config-contract.json and
 // asserts every invariant against the live
 // scripts/codex/config.autodev.toml portable source. The TOML is parsed by
-// the project's existing python tomllib (the same loader the composer uses)
-// invoked via subprocess so the test cannot drift from the installer's
-// canonical parser or introduce a second TOML implementation.
+// the maintained parser shared with the TypeScript composer.
 //
 // Schema tag for this contract: autodev-portable-autodev-config-v1.
 
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
-import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
+import { parse } from "smol-toml";
 import test from "node:test";
 
 const FIXTURE_PATH = fileURLToPath(
@@ -42,38 +40,12 @@ const EXPECTED_MODEL_PROVIDERS = Object.freeze([
 const EXPECTED_SKILLS = Object.freeze(["lsp-mcp-server", "ccc", "orchestration"]);
 
 function loadPortable(absoluteTomlPath) {
-  // Use the existing python tomllib (same loader compose-user-config.py uses)
-  // via subprocess so the test mirrors the installer's canonical parser.
-  const text = readFileSync(absoluteTomlPath, "utf8");
-  const result = spawnSync(
-    "python3",
-    [
-      "-c",
-      "import json, sys, tomllib; sys.stdout.write(json.dumps(tomllib.loads(sys.stdin.read())))",
-    ],
-    { input: text, encoding: "utf-8" },
-  );
-  if (result.status !== 0) {
-    throw new Error(
-      `python tomllib failed for ${absoluteTomlPath}: status=${result.status} stderr=${result.stderr}`,
-    );
-  }
-  return JSON.parse(result.stdout);
+  return parse(readFileSync(absoluteTomlPath, "utf8"));
 }
 
 async function readFixture() {
   return JSON.parse(await readFile(FIXTURE_PATH, "utf8"));
 }
-
-test("python3 + tomllib are available on PATH", () => {
-  const probe = spawnSync(
-    "python3",
-    ["-c", "import tomllib, sys; sys.stdout.write(tomllib.__name__)"],
-    { encoding: "utf-8" },
-  );
-  assert.equal(probe.status, 0, `python3 + tomllib probe failed: ${probe.stderr}`);
-  assert.equal(probe.stdout.trim(), "tomllib");
-});
 
 test("schema tag pin and source path", async () => {
   const fixture = await readFixture();

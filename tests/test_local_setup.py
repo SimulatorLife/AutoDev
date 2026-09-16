@@ -19,11 +19,11 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 BRIDGE_PATH = REPO_ROOT / "scripts/codex-claude-cli-responses-proxy.py"
 INSTALLER_PATH = REPO_ROOT / "scripts/codex/install-codex-integration.sh"
 AUTODEV_CONFIG_PATH = REPO_ROOT / "scripts/codex/config.autodev.toml"
-COMPOSE_USER_CONFIG_PATH = REPO_ROOT / "scripts/codex/compose-user-config.py"
-AGENT_RENDERER_PATH = REPO_ROOT / "scripts/codex/render-agent-configs.py"
-PROVIDER_SKILL_VIEW_RENDERER_PATH = REPO_ROOT / "scripts/codex/render-provider-skill-views.py"
-EXECUTION_CONTRACT_RENDERER_PATH = REPO_ROOT / "scripts/codex/render-execution-contract.py"
-BRIDGE_MCP_CATALOGUE_RENDERER_PATH = REPO_ROOT / "scripts/codex/render-bridge-mcp-catalogue.py"
+COMPOSE_USER_CONFIG_PATH = REPO_ROOT / "src/config/compose-user-config.ts"
+AGENT_RENDERER_PATH = REPO_ROOT / "src/config/render-agent-configs.ts"
+PROVIDER_SKILL_VIEW_RENDERER_PATH = REPO_ROOT / "src/config/render-provider-skill-views.ts"
+EXECUTION_CONTRACT_RENDERER_PATH = REPO_ROOT / "src/config/render-execution-contract.ts"
+BRIDGE_MCP_CATALOGUE_RENDERER_PATH = REPO_ROOT / "src/config/render-bridge-mcp-catalogue.ts"
 SKILL_NAMES = ("ccc", "code-simplification", "lsp-mcp-server", "orchestration", "remove-legacy-shims")
 LSP_AGENT_NAMES = ("default", "explorer", "smart", "validator", "worker")
 NON_LSP_AGENT_NAMES = ("browser-tester", "docs-researcher")
@@ -77,7 +77,7 @@ def autodev_config_with_rulesync_mcp() -> dict:
 def render_bridge_mcp_catalogue(codex_home: Path, *extra: str) -> subprocess.CompletedProcess:
     return subprocess.run(
         [
-            "python3", str(BRIDGE_MCP_CATALOGUE_RENDERER_PATH),
+            "node", str(BRIDGE_MCP_CATALOGUE_RENDERER_PATH),
             "--mcp-source", str(codex_mcp_source()),
             "--output", str(Path(codex_home) / "provider-runtime" / "mcp-servers.json"),
             *extra,
@@ -96,7 +96,7 @@ def setUpModule():
     render_bridge_mcp_catalogue(home).check_returncode()
     subprocess.run(
         [
-            "python3", str(PROVIDER_SKILL_VIEW_RENDERER_PATH),
+            "node", str(PROVIDER_SKILL_VIEW_RENDERER_PATH),
             "--contract", str(REPO_ROOT / "scripts/codex/execution-contract.json"),
             "--canonical-root", str(REPO_ROOT / ".rulesync/skills"),
             "--output-root", str(home / "provider-runtime" / "claude"),
@@ -190,7 +190,7 @@ class LocalSetupTests(unittest.TestCase):
         return subprocess.run(
             [
                 "python3",
-                str(AGENT_RENDERER_PATH),
+                "node", str(AGENT_RENDERER_PATH),
                 "--source-dir",
                 str(REPO_ROOT / "scripts/codex/agents"),
                 "--prompt-dir",
@@ -402,7 +402,7 @@ exit 0
                 "set -euo pipefail",
                 'codex_home=/runtime/codex; hooks_dir="$codex_home/hooks"',
                 self._installer_function("runtime_module_target").strip(),
-                "runtime_module_target scripts/codex/lib/bridge-role.mjs",
+                "runtime_module_target src/agents/bridge-role.ts",
                 "runtime_module_target .rulesync/skills/orchestration/SKILL.md",
             ]
         )
@@ -410,7 +410,7 @@ exit 0
         self.assertEqual(
             result.stdout.splitlines(),
             [
-                "/runtime/codex/hooks/codex/lib/bridge-role.mjs",
+                "/runtime/codex/src/agents/bridge-role.ts",
                 "/runtime/codex/.rulesync/skills/orchestration/SKILL.md",
             ],
         )
@@ -1233,10 +1233,10 @@ exit 0
                 installed_dashboard.read_bytes(),
                 (REPO_ROOT / "scripts/codex-model-router-dashboard.html").read_bytes(),
             )
-            installed_resolver = Path(codex_home) / "hooks/codex/lib/resolve-workspace.mjs"
+            installed_resolver = Path(codex_home) / "src/shared/resolve-workspace.ts"
             self.assertEqual(
                 installed_resolver.read_bytes(),
-                (REPO_ROOT / "scripts/codex/lib/resolve-workspace.mjs").read_bytes(),
+                (REPO_ROOT / "src/shared/resolve-workspace.ts").read_bytes(),
             )
 
     def test_rulesync_generates_the_active_codex_hook_projection(self):
@@ -1246,13 +1246,13 @@ exit 0
         hooks = json.loads(projection.read_text())["hooks"]["PreToolUse"]
         self.assertTrue(any(
             hook.get("matcher") == "(?i)read[_ -]?file|read|exec[_ -]?command|bash"
-            and hook["hooks"][0]["command"] == "node ~/.codex/hooks/codex/skill-read-telemetry.mjs"
+            and hook["hooks"][0]["command"] == "node ~/.codex/src/hooks/skill-read-telemetry.ts"
             for hook in hooks
         ))
-        hook_source = REPO_ROOT / "scripts/codex/skill-read-telemetry.mjs"
+        hook_source = REPO_ROOT / "src/hooks/skill-read-telemetry.ts"
         self.assertTrue(hook_source.is_file())
         installer = (REPO_ROOT / "scripts/codex/install-codex-integration.sh").read_text()
-        self.assertIn("codex/skill-read-telemetry.mjs", installer)
+        self.assertIn("src/hooks/skill-read-telemetry.ts", installer)
 
     def test_root_config_enables_canonical_orchestration_skill(self):
         config = autodev_config_with_rulesync_mcp()
@@ -1294,7 +1294,7 @@ exit 0
                 else:
                     self.assertNotIn(code_search, rendered["developer_instructions"])
         installer = INSTALLER_PATH.read_text()
-        self.assertIn("render-agent-configs.py", installer)
+        self.assertIn("src/config/render-agent-configs.ts", installer)
         self.assertIn("render_agent_configs", installer)
 
     def test_execution_contract_matches_role_toml_mcp_and_skill_capabilities(self):
@@ -1307,7 +1307,7 @@ exit 0
             generated = Path(output_dir) / "execution-contract.json"
             subprocess.run(
                 [
-                    "python3",
+                    "node",
                     str(EXECUTION_CONTRACT_RENDERER_PATH),
                     "--source-dir",
                     str(role_dir),
@@ -1369,7 +1369,7 @@ exit 0
             generated = Path(output_dir) / "execution-contract.json"
             subprocess.run(
                 [
-                    "python3",
+                    "node",
                     str(EXECUTION_CONTRACT_RENDERER_PATH),
                     "--source-dir",
                     str(role_dir),
@@ -1389,7 +1389,7 @@ exit 0
             rendered,
             fixture,
             msg=(
-                "render-execution-contract.py output has drifted from the frozen "
+                "src/config/render-execution-contract.ts output has drifted from the frozen "
                 f"Phase 0 baseline fixture at {fixture_path.relative_to(REPO_ROOT)}. "
                 "The renderer's role-TOML-derived output must remain stable for "
                 "the frozen baseline; update the fixture only alongside a documented, "
@@ -1456,7 +1456,7 @@ exit 0
                     (Path(source_dir) / "default.toml").write_text(header + body)
                     result = subprocess.run(
                         [
-                            "python3",
+                            "node",
                             str(AGENT_RENDERER_PATH),
                             "--source-dir",
                             source_dir,
@@ -1556,7 +1556,7 @@ exit 0
                     )
                     result = subprocess.run(
                         [
-                            "python3",
+                            "node",
                             str(AGENT_RENDERER_PATH),
                             "--source-dir",
                             source_dir,
@@ -2244,7 +2244,7 @@ exit 0
         with tempfile.TemporaryDirectory() as codex_home:
             subprocess.run(
                 [
-                    "python3", str(PROVIDER_SKILL_VIEW_RENDERER_PATH),
+                    "node", str(PROVIDER_SKILL_VIEW_RENDERER_PATH),
                     "--contract", str(REPO_ROOT / "scripts/codex/execution-contract.json"),
                     "--canonical-root", str(REPO_ROOT / ".rulesync/skills"),
                     "--output-root", str(Path(codex_home) / "provider-runtime" / "claude"),
@@ -2284,7 +2284,7 @@ exit 0
                 "orchestrator": {"skills": ["orchestration"]},
             }}))
             subprocess.run([
-                "python3", str(PROVIDER_SKILL_VIEW_RENDERER_PATH),
+                "node", str(PROVIDER_SKILL_VIEW_RENDERER_PATH),
                 "--contract", str(contract), "--canonical-root", str(canonical_path),
                 "--output-root", str(Path(output) / "claude"), "--provider", "claude",
             ], check=True, capture_output=True, text=True)
@@ -2293,14 +2293,14 @@ exit 0
             self.assertFalse((Path(output) / "claude/browser-tester/.claude/skills/ccc").exists())
             self.assertTrue((Path(output) / "claude/orchestrator/.claude/skills/orchestration").is_symlink())
             subprocess.run([
-                "python3", str(PROVIDER_SKILL_VIEW_RENDERER_PATH),
+                "node", str(PROVIDER_SKILL_VIEW_RENDERER_PATH),
                 "--contract", str(contract), "--canonical-root", str(canonical_path),
                 "--output-root", str(Path(output) / "claude"), "--provider", "claude", "--check",
             ], check=True, capture_output=True, text=True)
             stale = Path(output) / "claude/explorer/.claude/skills/stale"
             stale.symlink_to(canonical_path / "ccc", target_is_directory=True)
             subprocess.run([
-                "python3", str(PROVIDER_SKILL_VIEW_RENDERER_PATH),
+                "node", str(PROVIDER_SKILL_VIEW_RENDERER_PATH),
                 "--contract", str(contract), "--canonical-root", str(canonical_path),
                 "--output-root", str(Path(output) / "claude"), "--provider", "claude",
             ], check=True, capture_output=True, text=True)
@@ -2308,7 +2308,7 @@ exit 0
             missing_contract = canonical_path / "missing-contract.json"
             missing_contract.write_text(json.dumps({"roles": {"explorer": {"skills": ["missing"]}}}))
             missing = subprocess.run([
-                "python3", str(PROVIDER_SKILL_VIEW_RENDERER_PATH),
+                "node", str(PROVIDER_SKILL_VIEW_RENDERER_PATH),
                 "--contract", str(missing_contract), "--canonical-root", str(canonical_path),
                 "--output-root", str(Path(output) / "missing"), "--provider", "claude",
             ], capture_output=True, text=True)
@@ -3191,7 +3191,7 @@ PY
                 self.assertNotIn("prompt.match(/(?:Working directory:", source)
 
     def test_all_provider_bridges_support_canonical_turn_metadata_workspaces(self):
-        shared_source = (REPO_ROOT / "scripts/codex/lib/resolve-workspace.mjs").read_text()
+        shared_source = (REPO_ROOT / "src/shared/resolve-workspace.ts").read_text()
         for fragment in ("x-codex-turn-metadata", "workspaces", "Object.keys(workspaces)", "WorkspaceResolutionError"):
             self.assertIn(fragment, shared_source, msg=f"shared resolver missing required fragment {fragment!r}")
 
@@ -3210,7 +3210,7 @@ PY
                     self.assertIn(fragment, source, msg=f"{relative_path} missing required fragment {fragment!r}")
 
     def test_javascript_provider_bridges_use_the_shared_workspace_resolver(self):
-        import_line = 'from "./codex/lib/resolve-workspace.mjs"'
+        import_line = 'from "../src/shared/resolve-workspace.ts"'
         for relative_path in (
             "scripts/codex-antigravity-cli-responses-proxy.mjs",
             "scripts/codex-copilot-cli-responses-proxy.mjs",
@@ -3230,7 +3230,7 @@ PY
             "const [payload, headers, root] = JSON.parse(process.argv[1]);\n"
             "try { process.stdout.write(resolveCwd(payload, headers, root)); }\n"
             "catch (error) { process.stdout.write(`ERROR:${error.constructor.name}`); }\n"
-        ) % (REPO_ROOT / "scripts/codex/lib/resolve-workspace.mjs").as_uri()
+        ) % (REPO_ROOT / "src/shared/resolve-workspace.ts").as_uri()
         result = subprocess.run(
             ["node", "--input-type=module", "-e", script, json.dumps([payload, headers, project_root])],
             capture_output=True, text=True, check=True,
@@ -3311,8 +3311,8 @@ PY
         # relative path so the installer ships it. JS uses URL-style paths
         # while the Claude bridge composes its path with Path parts.
         path_patterns = (
-            ("scripts/codex/lib/bridge-role.mjs", "../../../.rulesync/skills/orchestration/SKILL.md"),
-            ("scripts/codex/lib/bridge-role.mjs", "../prompts/code-search.md"),
+            ("src/agents/bridge-role.ts", "../../.rulesync/skills/orchestration/SKILL.md"),
+            ("src/agents/bridge-role.ts", "../../scripts/codex/prompts/code-search.md"),
             ("scripts/codex-claude-cli-responses-proxy.py", '".rulesync" / "skills" / "orchestration" / "SKILL.md"'),
             ("scripts/codex-claude-cli-responses-proxy.py", '"code-search.md"'),
             ("scripts/enforce-root-delegation.sh", "$hook_dir/../.rulesync/skills/orchestration/SKILL.md"),
@@ -3743,7 +3743,7 @@ class PortableAutodevConfigTests(unittest.TestCase):
 class ComposeUserConfigTests(unittest.TestCase):
     """Phase 1 of docs/AUTODEV_PLATFORM_MIGRATION.md defines a portable,
     AutoDev-owned slice of the user-level Codex configuration. The composer
-    in scripts/codex/compose-user-config.py merges that portable source with
+    in src/config/compose-user-config.ts merges that portable source with
     whatever machine-local state the existing $CODEX_HOME/config.toml carries
     and writes the result back as a regular file. These tests pin every
     documented property of that composer against its public CLI."""
@@ -3753,7 +3753,7 @@ class ComposeUserConfigTests(unittest.TestCase):
         """Invoke the composer with isolated paths and return the result."""
         return subprocess.run(
             [
-                sys.executable,
+                "node",
                 str(COMPOSE_USER_CONFIG_PATH),
                 "--portable-source", str(portable),
                 "--mcp-source", str(mcp_source or codex_mcp_source()),
@@ -4084,7 +4084,7 @@ class ComposeUserConfigTests(unittest.TestCase):
             self.assertNotIn("cocoindex-code", legacy_parsed.get("mcp_servers", {}))
             run = subprocess.run(
                 [
-                    sys.executable,
+                    "node",
                     str(COMPOSE_USER_CONFIG_PATH),
                     "--portable-source", str(AUTODEV_CONFIG_PATH),
                     "--mcp-source", str(codex_mcp_source()),

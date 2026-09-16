@@ -9,8 +9,8 @@ import {
   roleInstructions,
   isOrchestratorRole,
   resolveAgentRole,
-} from "../scripts/codex/lib/bridge-role.mjs";
-import { EXECUTION_CONTRACT, roleContract } from "../scripts/codex/lib/execution-contract.mjs";
+} from "../src/agents/bridge-role.ts";
+import { EXECUTION_CONTRACT, roleContract } from "../src/shared/execution-contract.ts";
 import { promptFromInput } from "../scripts/codex-antigravity-cli-responses-proxy.mjs";
 import { inputText } from "../scripts/codex-copilot-cli-responses-proxy.mjs";
 
@@ -126,7 +126,7 @@ test("every provider bridge picks its instructions from the shared role prompts"
     "scripts/codex-copilot-cli-responses-proxy.mjs",
   ]) {
     const source = read(path);
-    assert.match(source, /from "\.\/codex\/lib\/bridge-role\.mjs"/, path);
+    assert.match(source, /from "\.\.\/src\/agents\/bridge-role\.ts"/, path);
     assert.match(source, /composeProviderPrompt\(agentRole, cwd\)/, path);
     assert.match(source, /resolveAgentRole\(request\.headers\)/, path);
     // No bridge may keep a hard-coded leaf prompt that outranks the role.
@@ -171,6 +171,9 @@ test("the installer ships every shared module the bridges import", () => {
   for (const source of sources) {
     for (const match of read(source).matchAll(/from "\.\/(codex\/lib\/[a-z-]+\.mjs)"/g)) {
       imported.add(`scripts/${match[ 1 ]}`);
+    }
+    for (const match of read(source).matchAll(/from "\.\.\/src\/([^"]+\.ts)"/g)) {
+      imported.add(`src/${match[ 1 ]}`);
     }
   }
   assert.ok(imported.size >= 3, "expected the bridges to share several modules");

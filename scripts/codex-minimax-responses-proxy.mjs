@@ -20,9 +20,9 @@
 import { createServer } from "node:http";
 import { pathToFileURL } from "node:url";
 
-import { resolveAgentEventReporter } from "./codex/lib/agent-events.mjs";
-import { resolveAgentRole } from "./codex/lib/bridge-role.mjs";
-import { roleContract } from "./codex/lib/execution-contract.mjs";
+import { resolveAgentEventReporter } from "../src/telemetry/agent-events.ts";
+import { resolveAgentRole } from "../src/agents/bridge-role.ts";
+import { roleContract } from "../src/shared/execution-contract.ts";
 
 const MCP_EXPOSURE_SOURCE = "role_contract";
 

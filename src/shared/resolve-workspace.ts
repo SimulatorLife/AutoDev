@@ -2,11 +2,15 @@ import { statSync } from "node:fs";
 
 export const WORKSPACE_KEYS = Object.freeze(["cwd", "project_root", "working_directory"]);
 
+export type JsonObject = Record<string, unknown>;
+export type RequestHeaders = Record<string, string | string[] | undefined>;
+
 export class WorkspaceResolutionError extends Error {}
 
 /** More than one workspace in the turn metadata exists on this host. */
 export class AmbiguousWorkspaceError extends WorkspaceResolutionError {
-  constructor(candidates) {
+  candidates: string[];
+  constructor(candidates: string[]) {
     super(
       `turn metadata lists ${candidates.length} workspaces that exist on this host ` +
       `(${candidates.join(", ")}) and does not say which is active; refusing to let key order ` +
@@ -16,7 +20,7 @@ export class AmbiguousWorkspaceError extends WorkspaceResolutionError {
   }
 }
 
-export function isDirectory(path) {
+export function isDirectory(path: unknown): path is string {
   try {
     return typeof path === "string" && Boolean(path) && statSync(path).isDirectory();
   } catch {
@@ -24,7 +28,7 @@ export function isDirectory(path) {
   }
 }
 
-export function parseTurnMetadataJson(value) {
+export function parseTurnMetadataJson(value: unknown): JsonObject | null {
   if (typeof value !== "string" || !value.trim()) return null;
   try {
     const parsed = JSON.parse(value);
@@ -38,19 +42,20 @@ export function parseTurnMetadataJson(value) {
 // `x-codex-turn-metadata` request header; callers that cannot set custom
 // headers may instead embed the same JSON under
 // `client_metadata["x-codex-turn-metadata"]` in the body.
-export function turnMetadataFrom(headerValue, clientMetadata) {
+export function turnMetadataFrom(headerValue: unknown, clientMetadata: unknown): JsonObject | null {
   const fromHeader = parseTurnMetadataJson(Array.isArray(headerValue) ? headerValue[0] : headerValue);
   if (fromHeader) return fromHeader;
-  const embedded = clientMetadata && typeof clientMetadata === "object" ? clientMetadata["x-codex-turn-metadata"] : undefined;
-  if (embedded && typeof embedded === "object" && !Array.isArray(embedded)) return embedded;
+  const embedded = clientMetadata && typeof clientMetadata === "object" ? (clientMetadata as JsonObject)["x-codex-turn-metadata"] : undefined;
+  if (embedded && typeof embedded === "object" && !Array.isArray(embedded)) return embedded as JsonObject;
   return parseTurnMetadataJson(embedded);
 }
 
-function workspacePathFromEntry(entry) {
+function workspacePathFromEntry(entry: unknown): string | null {
   if (typeof entry === "string") return entry;
   if (entry && typeof entry === "object") {
+    const record = entry as JsonObject;
     for (const key of [ ...WORKSPACE_KEYS, "path" ]) {
-      if (typeof entry[key] === "string") return entry[key];
+      if (typeof record[key] === "string") return record[key] as string;
     }
   }
   return null;
@@ -70,12 +75,12 @@ function workspacePathFromEntry(entry) {
 // workspace is resolvable; guessing between several is the same failure with
 // worse consequences, so it refuses there too and the operator pins one with
 // CODEX_PROJECT_ROOT if a multi-root turn is ever legitimate.
-export function resolveWorkspaceFromTurnMetadata(turnMetadata) {
+export function resolveWorkspaceFromTurnMetadata(turnMetadata: JsonObject | null): string | null {
   const workspaces = turnMetadata && typeof turnMetadata === "object" ? turnMetadata.workspaces : null;
   if (!workspaces || typeof workspaces !== "object" || Array.isArray(workspaces)) return null;
   const fromKeys = Object.keys(workspaces).filter(isDirectory);
   if (fromKeys.length > 1) throw new AmbiguousWorkspaceError(fromKeys);
-  if (fromKeys.length === 1) return fromKeys[0];
+  if (fromKeys.length === 1) return fromKeys[0] ?? null;
   const fromValues = [ ...new Set(Object.values(workspaces).map(workspacePathFromEntry).filter(isDirectory)) ];
   if (fromValues.length > 1) throw new AmbiguousWorkspaceError(fromValues);
   return fromValues[0] ?? null;
@@ -86,14 +91,16 @@ export function resolveWorkspaceFromTurnMetadata(turnMetadata) {
  * never consulted. The explicit operator override is provider-specific and is
  * passed by the caller after resolving its environment variable.
  */
-export function resolveCwd(payload, headers, projectRoot = null) {
+export function resolveCwd(payload: JsonObject | null | undefined, headers: RequestHeaders | null | undefined, projectRoot: string | null = null): string {
   for (const key of WORKSPACE_KEYS) {
-    if (isDirectory(payload?.[key])) return payload[key];
+    const value = payload?.[key];
+    if (isDirectory(value)) return value;
   }
-  const meta = payload?.metadata;
+  const meta = payload?.metadata as JsonObject | undefined;
   if (meta && typeof meta === "object") {
     for (const key of WORKSPACE_KEYS) {
-      if (isDirectory(meta[key])) return meta[key];
+      const value = meta[key];
+      if (isDirectory(value)) return value;
     }
   }
   const turnMetadata = turnMetadataFrom(headers?.["x-codex-turn-metadata"], payload?.client_metadata);

@@ -1,5 +1,39 @@
 # AutoDev TypeScript Target State
 
+## Migration progress — 2026-09-16
+
+The first migration pass is partially landed and remains intentionally behavior-preserving.
+
+### Completed
+
+- Node 24.12+ is pinned in `.nvmrc`; strict native-TypeScript checking is configured in `tsconfig.json`.
+- `smol-toml` and Node typings are installed; `typecheck`, native TypeScript tests, CLI checks, and inventory validation commands exist.
+- Provider-limit, workspace, execution-contract, response-item, role, activity, and spawn-session primitives now have typed modules under `src/`.
+- AutoDev-owned TOML/config/rendering paths are ported to `src/config` with deterministic output, atomic writes, local-state preservation, and drift checks.
+- Typed CLI, MCP launcher, and macOS launchd lifecycle boundaries exist; `run-autodev-mcp.sh` is now only a process-dispatch shim.
+- Agent-event telemetry and skill-read telemetry now run from typed modules under `src/telemetry` and `src/hooks`; bridge/router consumers use the shared telemetry module.
+- Existing provider/router contract tests remain green while imports move to typed shared modules.
+
+### Current findings and constraints
+
+- The router and provider bridges are still primarily legacy `.mjs`/Python implementations; router decomposition and Claude bridge conversion are not complete.
+- Installer, reconciliation, hook, telemetry, and `ensure-*` behavior still has substantial shell/legacy runtime ownership.
+- First-party tests are still split between JavaScript, Python, and TypeScript. The inventory gate is present but intentionally reports the remaining legacy files until their replacements and equivalent tests land.
+- Canonical declarative content remains under `scripts/codex/`; moving it to the target `agents/` and `config/` layout must be coordinated with installer/runtime path changes.
+- An attempted strict conversion of the spawn-tool and Codex state-collector modules exposed a large typing surface and was reverted to the still-green legacy modules; do not remove those modules until their full contract tests and installer paths are converted together.
+- The typed skill-read hook still has a dynamic JSON boundary that uses an explicit `any`; tighten that boundary when the hook tests are converted to TypeScript.
+- The vendored `.rulesync/skills/resolve-merge-conflicts/scripts/extract_conflict_context.py` helper remains an allowed upstream-language exception.
+
+### Next implementation order
+
+1. Finish typed telemetry, spawn-tool, MCP-shim, and state-collector migrations; update installer manifests and all consumers.
+2. Split the router into typed routing, cooldown, Responses/SSE, telemetry, persistence, lifecycle, and HTTP modules without changing its contracts.
+3. Convert provider bridges, then the Claude bridge, so all providers use the shared contracts.
+4. Move installer, reconciliation, hook, and `ensure-*` behavior behind the typed CLI/platform modules.
+5. Convert remaining JavaScript/Python tests to `node:test`, remove obsolete entrypoints, and enable the inventory gate as a required check.
+
+The current validation baseline is: `pnpm typecheck`, `pnpm test`, `pnpm run test:ts`, actionlint, and ShellCheck pass; `pnpm run validate:inventory` is expected to fail until the remaining migration order above is completed.
+
 ## Decision
 
 AutoDev should converge on **TypeScript as its sole first-party implementation language**

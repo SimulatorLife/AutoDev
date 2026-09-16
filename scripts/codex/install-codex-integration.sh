@@ -35,7 +35,6 @@ agy_settings_file="$HOME/.gemini/antigravity-cli/settings.json"
 legacy_skills_dirs=("$codex_home/skills" "$codex_home/agents/skills")
 
 hook_names=(
-  codex/skill-read-telemetry.mjs
   codex-antigravity-cli-responses-proxy.mjs
   codex-claude-cli-responses-proxy.py
   codex-copilot-cli-responses-proxy.mjs
@@ -82,30 +81,29 @@ dashboard_asset_names=(codex-model-router-dashboard.html)
 # as it sits in a checkout. One relative specifier -- `./codex/lib/x.mjs`,
 # `./codex/prompts/x.md` -- therefore resolves in both.
 mcp_launcher_names=(run-autodev-mcp.sh)
-agent_renderer_name=scripts/codex/render-agent-configs.py
-execution_contract_builder_name=scripts/codex/render-execution-contract.py
-provider_skill_view_renderer_name=scripts/codex/render-provider-skill-views.py
-bridge_mcp_catalogue_renderer_name=scripts/codex/render-bridge-mcp-catalogue.py
+agent_renderer_name=src/config/render-agent-configs.ts
+execution_contract_builder_name=src/config/render-execution-contract.ts
+provider_skill_view_renderer_name=src/config/render-provider-skill-views.ts
+bridge_mcp_catalogue_renderer_name=src/config/render-bridge-mcp-catalogue.ts
 runtime_module_names=(
-  scripts/codex/lib/resolve-workspace.mjs
-  scripts/codex/lib/bridge-role.mjs
-  scripts/codex/lib/agent-events.mjs
-  scripts/codex/lib/agent-activity.mjs
-  scripts/codex/lib/provider-limits.mjs
-  scripts/codex/lib/responses-item-ids.mjs
+  src/shared/resolve-workspace.ts
+  src/agents/bridge-role.ts
+  src/telemetry/agent-events.ts
+  src/agents/agent-activity.ts
+  src/shared/provider-limits.ts
+  src/shared/responses-item-ids.ts
   scripts/codex/lib/codex-spawn-tools.mjs
   scripts/codex/lib/codex-state-collector.mjs
-  scripts/codex/lib/bridge-spawn-session.mjs
-  # Executed as a child process by the bridges rather than imported, so nothing
-  # else would pull it in: an installed bridge whose --mcp-config points at a
-  # missing file silently loses delegation.
+  src/agents/bridge-spawn-session.ts
+  # Executed as a child process by the bridges rather than imported.
   scripts/codex/lib/spawn-shim-mcp.mjs
-  scripts/codex/lib/execution-contract.mjs
+  src/shared/execution-contract.ts
   scripts/codex/execution-contract.json
   scripts/codex/prompts/base.md
   scripts/codex/prompts/leaf.md
   scripts/codex/prompts/code-search.md
   scripts/codex/prompts/orchestrator.md
+  src/hooks/skill-read-telemetry.ts
   .rulesync/skills/orchestration/SKILL.md
 )
 
@@ -127,7 +125,7 @@ custom_provider_names=(local_model_router claude_code_subscription minimax antig
 cocoindex_code_package="cocoindex-code[full]==0.2.41"
 python_language_server_package="python-lsp-server==1.15.0"
 # AutoDev-owned portable source for the user-level Codex configuration. The
-# composer in scripts/codex/compose-user-config.py merges it with the existing
+# composer in src/config/compose-user-config.ts merges it with the existing
 # installed config.toml so AutoDev-owned settings win conflicts, while machine-
 # local state (notify, hooks.state trusted hashes, projects, marketplaces, TUI/
 # desktop/apps/plugins/memories, non-AutoDev MCP servers, user-added skills) is
@@ -135,7 +133,7 @@ python_language_server_package="python-lsp-server==1.15.0"
 # config.toml at the retired seed are read through that symlink and atomically
 # replaced with a regular composed file; new installs never reference a seed.
 user_config_portable_source="$repo_root/scripts/codex/config.autodev.toml"
-user_config_composer="$repo_root/scripts/codex/compose-user-config.py"
+user_config_composer="$repo_root/src/config/compose-user-config.ts"
 otel_artifact_manifest="$repo_root/config/otel/collector-artifacts.json"
 tracked_sources=""
 router_auth_requested=0
@@ -276,7 +274,7 @@ compose_user_config() {
   # The composer reads through a legacy symlink before atomically replacing
   # it with a regular file. Keeping that read-and-replace operation inside the
   # composer ensures malformed input cannot alter the existing target first.
-  python3 "$user_config_composer" \
+  node "$user_config_composer" \
     --portable-source "$user_config_portable_source" \
     --mcp-source "$codex_mcp_source" \
     --existing-config "$existing" \
@@ -302,7 +300,7 @@ check_user_config() {
     printf 'ok user config bootstrap target absent: %s\n' "$target"
     return 0
   fi
-  if ! python3 "$user_config_composer" \
+  if ! node "$user_config_composer" \
     --portable-source "$user_config_portable_source" \
     --mcp-source "$codex_mcp_source" \
     --existing-config "$target" \
@@ -681,7 +679,7 @@ check_agent_registry() {
 
 render_agent_configs() {
   local output_dir="$1"
-  python3 "$repo_root/$agent_renderer_name" \
+  node "$repo_root/$agent_renderer_name" \
     --source-dir "$repo_root/scripts/codex/agents" \
     --prompt-dir "$repo_root/scripts/codex/prompts" \
     --output-dir "$output_dir" \
@@ -712,7 +710,7 @@ check_user_agent_files() {
 }
 
 render_claude_skill_views() {
-  python3 "$repo_root/$provider_skill_view_renderer_name" \
+  node "$repo_root/$provider_skill_view_renderer_name" \
     --contract "$repo_root/scripts/codex/execution-contract.json" \
     --canonical-root "$user_skills_dir" \
     --output-root "$codex_home/provider-runtime/claude" \
@@ -721,7 +719,7 @@ render_claude_skill_views() {
 }
 
 check_claude_skill_views() {
-  if python3 "$repo_root/$provider_skill_view_renderer_name" \
+  if node "$repo_root/$provider_skill_view_renderer_name" \
     --contract "$repo_root/scripts/codex/execution-contract.json" \
     --canonical-root "$user_skills_dir" \
     --output-root "$codex_home/provider-runtime/claude" \
@@ -736,7 +734,7 @@ check_claude_skill_views() {
 # The launch definitions the Claude and Copilot bridges hand each role, derived
 # from the Codex projection of `.rulesync/mcp.jsonc`.
 render_bridge_mcp_catalogue() {
-  python3 "$repo_root/$bridge_mcp_catalogue_renderer_name" \
+  node "$repo_root/$bridge_mcp_catalogue_renderer_name" \
     --mcp-source "$codex_mcp_source" \
     --output "$codex_home/provider-runtime/mcp-servers.json" \
     "$@"
@@ -750,7 +748,7 @@ check_execution_contract() {
   local generated_dir generated
   generated_dir="$(mktemp -d "${TMPDIR:-/tmp}/autodev-contract.XXXXXX")"
   generated="$generated_dir/execution-contract.json"
-  if ! python3 "$repo_root/$execution_contract_builder_name" \
+  if ! node "$repo_root/$execution_contract_builder_name" \
     --source-dir "$repo_root/scripts/codex/agents" \
     --root-config "$codex_mcp_source" \
     --contract "$repo_root/scripts/codex/execution-contract.json" \
@@ -763,7 +761,7 @@ check_execution_contract() {
     rm -rf -- "$generated_dir"
     return 0
   fi
-  printf 'execution-contract.json is stale; regenerate it with render-execution-contract.py\n'
+  printf 'execution-contract.json is stale; regenerate it with src/config/render-execution-contract.ts\n'
   rm -rf -- "$generated_dir"
   return 1
 }

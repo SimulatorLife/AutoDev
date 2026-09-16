@@ -35,7 +35,7 @@
       {
         "type": "command",
         "matcher": "(?i)read[_ -]?file|read|exec[_ -]?command|bash",
-        "command": "node ~/.codex/hooks/codex/skill-read-telemetry.mjs",
+        "command": "node ~/.codex/src/hooks/skill-read-telemetry.ts",
         "statusMessage": "Recording skill-read telemetry"
       }
     ]

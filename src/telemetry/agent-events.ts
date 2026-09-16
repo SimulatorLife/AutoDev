@@ -48,7 +48,7 @@ export const SESSION_ID_HEADER = "x-autodev-session-id";
 // without inflating or undercounting either.
 export const SKILL_READ_SOURCE = "skill_read";
 
-function headerValue(headers, name) {
+function headerValue(headers: Record<string, unknown> | undefined, name: string): string | null {
   if (!headers || typeof headers !== "object") return null;
   // Node lowercases inbound header names, but LiteLLM and other intermediaries
   // can preserve the case the router sent, so match without regard to it.
@@ -70,8 +70,15 @@ export const VALID_ACTIVITY_STATES = Object.freeze(new Set([
   "heartbeat",
 ]));
 
-class AgentEventReporter {
-  constructor(url, requestId, spawnTools, options = {}) {
+export class AgentEventReporter {
+  private url: string;
+  private requestId: string;
+  private spawnTools: Set<string>;
+  private childSequence: number;
+  private lastActivityState: string | null;
+  private lastHeartbeatAt: number;
+  private heartbeatThrottleMs: number;
+  constructor(url: string, requestId: string, spawnTools: Set<string>, options: Record<string, unknown> = {}) {
     this.url = url;
     this.requestId = requestId;
     this.spawnTools = spawnTools;
@@ -79,19 +86,19 @@ class AgentEventReporter {
     this.lastActivityState = null;
     this.lastHeartbeatAt = 0;
     const envThrottle = Number.parseInt(process.env.CODEX_AGENT_HEARTBEAT_THROTTLE_MS ?? "", 10);
-    this.heartbeatThrottleMs = Number.isFinite(options?.heartbeatThrottleMs)
+    this.heartbeatThrottleMs = typeof options?.heartbeatThrottleMs === "number" && Number.isFinite(options.heartbeatThrottleMs)
       ? Math.max(0, options.heartbeatThrottleMs)
       : (Number.isInteger(envThrottle) && envThrottle >= 0 ? envThrottle : DEFAULT_HEARTBEAT_THROTTLE_MS);
   }
 
   /** An id unique within this request, for callers that have no id of their own. */
-  nextChildId() {
+  nextChildId(): string {
     this.childSequence += 1;
     return `c${this.childSequence}`;
   }
 
   /** True when this tool name means the CLI just spawned a subagent. */
-  isSpawnTool(name) {
+  isSpawnTool(name: unknown): boolean {
     return typeof name === "string" && this.spawnTools.has(name);
   }
 
@@ -100,7 +107,7 @@ class AgentEventReporter {
    * on transport errors and non-2xx replies instead of rejecting; a lost
    * report costs a count, a thrown one would cost the turn.
    */
-  async reportSpawn({ tool, role = null, status = "started", count = 1 }) {
+  async reportSpawn({ tool, role = null, status = "started", count = 1 }: { tool: string; role?: string | null; status?: string; count?: number }) {
     await this.reportSpawns({ tool, children: Array.from({ length: Math.max(1, count) }, () => ({ role })), status });
   }
 
@@ -112,7 +119,7 @@ class AgentEventReporter {
    * count of one. Children are grouped by role so the router's `byRole` keeps
    * the shape of the delegation, and the whole batch travels as one request.
    */
-  async reportSpawns({ tool, children, status = "started" }) {
+  async reportSpawns({ tool, children, status = "started" }: { tool: string; children?: Array<Record<string, unknown>>; status?: string }) {
     await this.post(this.childEvents("subagent_spawn", { tool, children, status }));
   }
 
@@ -122,8 +129,8 @@ class AgentEventReporter {
    * CLI ran the child, which is the only per-child turn measurement that
    * exists -- the router never served a request for it.
    */
-  async reportResults({ tool, children, outcome = "success", durationMs = null, status = null }) {
-    const extra = { outcome: outcome === "success" ? "success" : "failure", durationMs: Number.isFinite(durationMs) ? Math.max(0, Math.round(durationMs)) : null };
+  async reportResults({ tool, children, outcome = "success", durationMs = null, status = null }: { tool: string; children?: Array<Record<string, unknown>>; outcome?: string; durationMs?: number | null; status?: string | null }) {
+    const extra = { outcome: outcome === "success" ? "success" : "failure", durationMs: typeof durationMs === "number" && Number.isFinite(durationMs) ? Math.max(0, Math.round(durationMs)) : null };
     await this.post(this.childEvents("subagent_result", { tool, children, status: status ?? extra.outcome }, extra));
   }
 
@@ -133,7 +140,7 @@ class AgentEventReporter {
    * twelve-way fan-out is not twelve rows -- while the per-child ids inside
    * each group still address each child individually.
    */
-  childEvents(type, { tool, children, status }, extra = {}) {
+  childEvents(type: string, { tool, children, status }: { tool: string; children: Array<Record<string, unknown>> | undefined; status: string }, extra: Record<string, unknown> = {}): Array<Record<string, unknown>> {
     const list = Array.isArray(children) && children.length > 0 ? children : [ { role: null } ];
     const byRole = new Map();
     for (const child of list) {
@@ -160,7 +167,7 @@ class AgentEventReporter {
    * same reading as a provider that simply chose not to delegate, so the
    * absence has to be reported as its own fact.
    */
-  async reportSpawnToolsUnavailable({ available = [] } = {}) {
+  async reportSpawnToolsUnavailable({ available = [] }: { available?: unknown[] } = {}) {
     await this.post([ {
       type: "subagent_tools_unavailable",
       expected: [ ...this.spawnTools ],
@@ -180,7 +187,7 @@ class AgentEventReporter {
    * optional call id are the only identifying metadata the router retains;
    * arguments and outputs are deliberately not propagated.
    */
-  async reportToolExecuted({ tool, callId = null, status = "ok", server = null, durationMs = null } = {}) {
+  async reportToolExecuted({ tool, callId = null, status = "ok", server = null, durationMs = null }: { tool?: string; callId?: string | null; status?: string; server?: string | null; durationMs?: number | null } = {}) {
     if (typeof tool !== "string" || !tool.trim()) return;
     await this.post([ {
       type: "tool_executed",
@@ -188,7 +195,7 @@ class AgentEventReporter {
       callId: typeof callId === "string" && callId.trim() ? callId.trim() : null,
       status: status === "error" || status === "failure" ? "error" : status === "ok" || status === "success" ? "ok" : "unknown",
       server: typeof server === "string" && server.trim() ? server.trim() : null,
-      durationMs: Number.isFinite(durationMs) ? Math.max(0, Math.round(durationMs)) : null,
+      durationMs: typeof durationMs === "number" && Number.isFinite(durationMs) ? Math.max(0, Math.round(durationMs)) : null,
     } ]);
   }
 
@@ -200,7 +207,7 @@ class AgentEventReporter {
    * provider never offered the tool" from "the provider offered it but
    * something stopped it from running".
    */
-  async reportToolRequested({ tool, callId = null, server = null } = {}) {
+  async reportToolRequested({ tool, callId = null, server = null }: { tool?: string; callId?: string | null; server?: string | null } = {}) {
     if (typeof tool !== "string" || !tool.trim()) return;
     await this.post([ {
       type: "tool_requested",
@@ -217,7 +224,7 @@ class AgentEventReporter {
    * dashboard from rendering "the workspace never used this tool" when the
    * truth is "the workspace was forbidden from using it".
    */
-  async reportToolUnavailable({ tool, callId = null, reason = "denied", server = null } = {}) {
+  async reportToolUnavailable({ tool, callId = null, reason = "denied", server = null }: { tool?: string; callId?: string | null; reason?: string; server?: string | null } = {}) {
     if (typeof tool !== "string" || !tool.trim()) return;
     await this.post([ {
       type: "tool_unavailable",
@@ -235,7 +242,7 @@ class AgentEventReporter {
    * event the router needs to mark the skill as available per workspace;
    * without it, per-workspace skill attribution stays unavailable.
    */
-  async reportSkillExposed({ skill, source = null, pluginId = null } = {}) {
+  async reportSkillExposed({ skill, source = null, pluginId = null }: { skill?: string; source?: string | null; pluginId?: string | null } = {}) {
     if (typeof skill !== "string" || !skill.trim()) return;
     await this.post([ {
       type: "skill_exposed",
@@ -254,7 +261,7 @@ class AgentEventReporter {
    * server (a discovery call or an executed tool), which the router derives
    * from `tool_executed` and its own OTLP discovery-span telemetry instead.
    */
-  async reportMcpExposed({ server, source = null } = {}) {
+  async reportMcpExposed({ server, source = null }: { server?: string; source?: string | null } = {}) {
     if (typeof server !== "string" || !server.trim()) return;
     await this.post([ {
       type: "mcp_exposed",
@@ -271,7 +278,7 @@ class AgentEventReporter {
    * repeated reads of the same skill in one turn collapse into one
    * attributed use rather than overcounting.
    */
-  async reportSkillUsed({ skill, source = null, pluginId = null, eventId = null } = {}) {
+  async reportSkillUsed({ skill, source = null, pluginId = null, eventId = null }: { skill?: string; source?: string | null; pluginId?: string | null; eventId?: string | null } = {}) {
     if (typeof skill !== "string" || !skill.trim()) return;
     const payload = {
       type: "skill_used",
@@ -279,7 +286,7 @@ class AgentEventReporter {
       source: typeof source === "string" && source.trim() ? source.trim() : null,
       pluginId: typeof pluginId === "string" && pluginId.trim() ? pluginId.trim() : null,
     };
-    if (typeof eventId === "string" && eventId.trim()) payload.eventId = eventId.trim().slice(0, 128);
+    if (typeof eventId === "string" && eventId.trim()) (payload as Record<string, unknown>).eventId = eventId.trim().slice(0, 128);
     await this.post([ payload ]);
   }
 
@@ -287,7 +294,7 @@ class AgentEventReporter {
    * Post a heartbeat activity observation to refresh staleness without
    * transitioning lifecycle state.
    */
-  async reportHeartbeat(options = {}) {
+  async reportHeartbeat(options: number | { minIntervalMs?: number } = {}) {
     const minIntervalMs = typeof options === "number" ? options : (typeof options?.minIntervalMs === "number" ? options.minIntervalMs : 0);
     const now = Date.now();
     if (minIntervalMs > 0 && this.lastHeartbeatAt > 0 && (now - this.lastHeartbeatAt) < minIntervalMs) {
@@ -302,7 +309,7 @@ class AgentEventReporter {
    *
    * { type: "activity", state: "tool_wait" | "user_wait" | "subagent_wait" | "resumed" | "finished" | "failed" | "heartbeat", childIds? }
    */
-  async reportActivity(stateOrOptions, maybeChildIds = null) {
+  async reportActivity(stateOrOptions: string | { state?: string; childIds?: unknown[]; child_ids?: unknown[]; minIntervalMs?: number; timestamp?: number } , maybeChildIds: unknown[] | null = null) {
     let state = null;
     let childIds = null;
     if (typeof stateOrOptions === "string") {
@@ -317,8 +324,9 @@ class AgentEventReporter {
     if (this.lastActivityState === "finished" || this.lastActivityState === "failed") return;
 
     if (cleanState === "heartbeat") {
-      const minIntervalMs = typeof stateOrOptions?.minIntervalMs === "number" ? stateOrOptions.minIntervalMs : 0;
-      const now = Number.isFinite(stateOrOptions?.timestamp) ? stateOrOptions.timestamp : Date.now();
+      const minIntervalMs = typeof stateOrOptions === "object" && typeof stateOrOptions.minIntervalMs === "number" ? stateOrOptions.minIntervalMs : 0;
+      const timestamp = typeof stateOrOptions === "object" ? stateOrOptions.timestamp : undefined;
+      const now = typeof timestamp === "number" && Number.isFinite(timestamp) ? timestamp : Date.now();
       if (minIntervalMs > 0 && this.lastHeartbeatAt > 0 && (now - this.lastHeartbeatAt) < minIntervalMs) {
         return;
       }
@@ -329,7 +337,7 @@ class AgentEventReporter {
 
     if (this.lastActivityState === cleanState && cleanState !== "resumed") return;
     this.lastActivityState = cleanState;
-    const event = { type: "activity", state: cleanState };
+    const event: Record<string, unknown> = { type: "activity", state: cleanState };
     if (Array.isArray(childIds)) {
       const cleanIds = childIds.map((id) => typeof id === "string" ? id.trim() : String(id).trim()).filter(Boolean);
       if (cleanIds.length > 0) event.childIds = cleanIds;
@@ -337,7 +345,7 @@ class AgentEventReporter {
     await this.post([ event ]);
   }
 
-  async post(events) {
+  async post(events: Array<Record<string, unknown>>): Promise<void> {
     try {
       const response = await fetch(this.url, {
         method: "POST",
@@ -371,7 +379,7 @@ class AgentEventReporter {
  * header is optional and, when absent, this reporter simply never
  * recognizes a tool call as a spawn.
  */
-export function resolveAgentEventReporter(headers) {
+export function resolveAgentEventReporter(headers: Record<string, unknown> | undefined): AgentEventReporter | null {
   const url = headerValue(headers, AGENT_EVENTS_URL_HEADER);
   const requestId = headerValue(headers, REQUEST_ID_HEADER);
   if (!url || !requestId) return null;
@@ -397,7 +405,7 @@ export function resolveAgentEventReporter(headers) {
  * session id, so a misconfigured hook is a no-op rather than a shadow
  * authorization path.
  */
-export function resolveSkillReadReporter(headers) {
+export function resolveSkillReadReporter(headers: Record<string, unknown> | undefined): AgentEventReporter | null {
   const url = headerValue(headers, AGENT_EVENTS_URL_HEADER);
   const sessionId = headerValue(headers, SESSION_ID_HEADER);
   if (!url || !sessionId) return null;

@@ -89,7 +89,7 @@ CLAUDE_RESEARCH_ALLOWED_TOOLS = ("WebSearch", "WebFetch")
 
 
 # Provider limit vocabulary. These literals mirror
-# scripts/codex/lib/provider-limits.mjs exactly, and
+# src/shared/provider-limits.ts exactly, and
 # tests/provider-limits.test.mjs reads this file as text to assert they still
 # do: the router reads what this bridge writes, so the two must not drift.
 LIMIT_HEADER_CLASS = "x-autodev-limit-class"
@@ -107,7 +107,7 @@ INCOMPLETE_REASON_TIMEOUT = "provider_timeout"
 INCOMPLETE_REASON_INTERRUPTED = "provider_interrupted"
 # The upstream closed the connection while the provider was in the middle of
 # executing a tool that spawns sub-agents (Claude: Agent / Task). Mirrors the
-# JS-side INCOMPLETE_REASON_CLIENT_DISCONNECTED in scripts/codex/lib/provider-limits.mjs;
+# JS-side INCOMPLETE_REASON_CLIENT_DISCONNECTED in src/shared/provider-limits.ts;
 # the provider-limits test asserts both sides agree so they cannot drift.
 INCOMPLETE_REASON_CLIENT_DISCONNECTED = "client_disconnected"
 HARD_LIMIT_CLASSES = ("quota_exhausted", "session_limit")
@@ -305,7 +305,7 @@ BASE_SYSTEM_PROMPT = load_bridge_prompt("base")
 # delegate. The router supplies the watchlist, the endpoint, and the request id
 # that correlates the report; the request id is a router-generated UUID this
 # bridge only learns by serving the request, so presenting it is also what
-# authorizes the report. Mirrors scripts/codex/lib/agent-events.mjs.
+# authorizes the report. Mirrors src/telemetry/agent-events.ts.
 REQUEST_ID_HEADER = "x-autodev-request-id"
 SUBAGENT_SPAWN_TOOLS_HEADER = "x-autodev-subagent-spawn-tools"
 AGENT_EVENTS_URL_HEADER = "x-autodev-agent-events-url"
@@ -342,7 +342,7 @@ class AgentEventReporter:
     Three kinds of observation travel this channel, and none of them is
     visible to the router any other way: the subagents the CLI spawned, the
     tools it asked for / ran / was refused, and the skills this bridge
-    exposed to the turn. Mirrors scripts/codex/lib/agent-events.mjs, whose
+    exposed to the turn. Mirrors src/telemetry/agent-events.ts, whose
     docstrings carry the full rationale for each event type.
     """
 
@@ -553,7 +553,7 @@ class AgentEventReporter:
         workspace, eventId), so a retried tool call or a repeated read of the
         same skill in one turn collapses into one attributed use rather than
         overcounting. Mirrors `reportSkillUsed` in
-        scripts/codex/lib/agent-events.mjs.
+        src/telemetry/agent-events.ts.
         """
         effective_plugin_id = plugin_id if plugin_id is not None else pluginId
         effective_event_id = event_id if event_id is not None else eventId
@@ -1263,12 +1263,12 @@ CLAUDE_SKILL_EXPOSURE_SOURCE = "claude_skill_view"
 CLAUDE_MCP_EXPOSURE_SOURCE = "role_contract"
 
 # Source tag for a verified `SKILL.md` read, as opposed to a mere exposure.
-# Matches SKILL_READ_SOURCE in scripts/codex/lib/agent-events.mjs so the
+# Matches SKILL_READ_SOURCE in src/telemetry/agent-events.ts so the
 # router's dashboard shows one meaning for the tag across every provider.
 CLAUDE_SKILL_READ_SOURCE = "skill_read"
 
 # Canonical skill roots whose `SKILL.md` a successful `Read` counts as actual
-# usage, mirroring the approved roots `scripts/codex/skill-read-telemetry.mjs`
+# usage, mirroring the approved roots `src/hooks/skill-read-telemetry.ts`
 # uses for Codex's own PreToolUse hook. The Claude CLI's own `Read` tool runs
 # entirely inside its runtime and never reaches that hook, so this bridge is
 # the only place a read of one of these files is observable at all.
@@ -1646,7 +1646,7 @@ def _resolve_workspace_from_turn_metadata(turn_metadata: Any) -> str | None:
     resolvable workspaces is an ambiguity, not a choice. Taking the first --
     which is what this used to do -- lets JSON key order decide which
     repository a coding agent edits, and key order carries no meaning. Mirrors
-    ``resolveWorkspaceFromTurnMetadata`` in scripts/codex/lib/resolve-workspace.mjs.
+    ``resolveWorkspaceFromTurnMetadata`` in src/shared/resolve-workspace.ts.
     """
     workspaces = turn_metadata.get("workspaces") if isinstance(turn_metadata, dict) else None
     if not isinstance(workspaces, dict):

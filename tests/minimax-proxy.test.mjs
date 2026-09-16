@@ -191,7 +191,13 @@ test("the proxy forwards namespace tools unchanged instead of flattening them", 
   await new Promise((resolve) => upstream.listen(0, "127.0.0.1", resolve));
   const upstreamPort = upstream.address().port;
 
-  const proxyPort = 18750 + (process.pid % 500);
+  const portProbe = createServer();
+  await new Promise((resolve, reject) => {
+    portProbe.once("error", reject);
+    portProbe.listen(0, "127.0.0.1", resolve);
+  });
+  const proxyPort = portProbe.address().port;
+  await new Promise((resolve) => portProbe.close(resolve));
   const child = spawn(process.execPath, [ PROXY ], {
     env: {
       ...process.env,

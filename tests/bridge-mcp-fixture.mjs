@@ -24,7 +24,7 @@ export function createBridgeMcpHomes() {
   run(rulesync, [ "generate", "--input-roots", source, "--targets", "codexcli", "--features", "mcp", "--output-roots", projection, "--silent" ]);
   const codexHome = join(root, "codex");
   const catalogue = join(codexHome, "provider-runtime", "mcp-servers.json");
-  run("python3", [ join(REPO_ROOT, "scripts/codex/render-bridge-mcp-catalogue.py"), "--mcp-source", join(projection, ".codex", "config.toml"), "--output", catalogue ]);
+  run("node", [ join(REPO_ROOT, "src/config/render-bridge-mcp-catalogue.ts"), "--mcp-source", join(projection, ".codex", "config.toml"), "--output", catalogue ]);
   const home = join(root, "home");
   mkdirSync(home);
   run(rulesync, [ "generate", "--global", "--input-roots", source, "--targets", "copilotcli", "--features", "mcp", "--silent" ], { ...process.env, HOME: home });

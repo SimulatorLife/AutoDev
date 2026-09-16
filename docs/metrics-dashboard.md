@@ -520,7 +520,7 @@ attributes and numeric aggregates are retained.
 These are Codex-native metrics, not a generic audit stream for every provider
 behind the router. `skillContextsInjected` measures context loading, while
 `skillUses` measures explicit activations and verified `SKILL.md` reads. A
-`PreToolUse` hook (`scripts/codex/skill-read-telemetry.mjs`) recognizes only
+`PreToolUse` hook (`src/hooks/skill-read-telemetry.ts`) recognizes only
 canonical `SKILL.md` reads under the approved skill roots, deduplicates each
 skill once per turn, and sends a privacy-safe `skill_used` event correlated to
 the parent session. Shell commands such as `cat /.../SKILL.md` supplied to a

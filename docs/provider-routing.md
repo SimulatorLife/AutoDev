@@ -123,7 +123,7 @@ problem, not as a target-repository build failure.
 ### Truncation reasons when an orchestrator turn cuts short
 
 The router, all three bridges, and the Python bridge share one vocabulary for
-why a turn stopped before it finished (`scripts/codex/lib/provider-limits.mjs`
+why a turn stopped before it finished (`src/shared/provider-limits.ts`
 and the `tests/provider-limits.test.mjs` mirroring test pin both sides).
 `provider_limit`, `provider_timeout`, and `provider_interrupted` were the only
 values through early 2026; the cluster of long-running antigravity-orchestrated
@@ -257,7 +257,7 @@ a continuation and so is not pinned to the provider that served the last one,
 one failover is enough to end a session.
 
 `upstreamPayload` in `scripts/codex-model-router.mjs` therefore rewrites any
-non-conforming id, using `scripts/codex/lib/responses-item-ids.mjs`. The router
+non-conforming id, using `src/shared/responses-item-ids.ts`. The router
 is the right place for it rather than each adapter: it is the one point every
 upstream call passes through, and since stored history is re-sent rather than
 re-read, correcting outbound also repairs sessions that are already carrying
@@ -407,7 +407,7 @@ than only in prose, on both the streamed and non-streamed paths:
 
 The same shape appears as `error.limit` in a non-streamed failure body and as
 `response.incomplete_details.provider_limit` on a streamed one, so the router
-reads one shape wherever it finds it. `scripts/codex/lib/provider-limits.mjs` is
+reads one shape wherever it finds it. `src/shared/provider-limits.ts` is
 the single implementation; the Claude bridge is Python and restates the same
 literals, with `tests/provider-limits.test.mjs` guarding against drift.
 
@@ -1189,7 +1189,7 @@ transport responsible only for composing them:
 
 | Consumer | Shared composition | Provider-specific boundary |
 | --- | --- | --- |
-| Native Codex child | `base.md` + `leaf.md` + optional `code-search.md` + role-specific `developer_instructions` | `render-agent-configs.py` materializes the complete role TOML under `~/.codex/agents`; `agent_type` selects it at spawn time |
+| Native Codex child | `base.md` + `leaf.md` + optional `code-search.md` + role-specific `developer_instructions` | `src/config/render-agent-configs.ts` materializes the complete role TOML under `~/.codex/agents`; `agent_type` selects it at spawn time |
 | Antigravity/Copilot bridge | `base.md` + workspace + `leaf.md` (or `orchestrator.md` + orchestration skill) + optional `code-search.md` + role fragment + capability metadata | `composeProviderPrompt(role, cwd)` then appends the delegated task |
 | Claude bridge | `base.md` + workspace + `leaf.md` (or `orchestrator.md` + orchestration skill) + optional `code-search.md` + role fragment + capability metadata | `system_prompt()` passes the composed text as the replacement CLI system prompt |
 | MiniMax pass-through | Native Codex request, including the rendered role configuration | The proxy remains transport-only and does not author a competing prompt |
@@ -1293,7 +1293,7 @@ or unrecognized header fails closed to the bounded policy. The
 `enforce-root-delegation.sh` `UserPromptSubmit` hook injects the orchestrator
 bootstrap and the canonical `orchestration` skill, so the root agent gets one
 delegation policy no matter which provider serves it. The JavaScript bridges
-share `scripts/codex/lib/bridge-role.mjs`; the Claude bridge reads the same
+share `src/agents/bridge-role.ts`; the Claude bridge reads the same
 prompt files and skill from Python. The installer deploys both the shared module and the prompt
 files into the hooks directory at their repo path minus the leading `scripts/`,
 so a bridge sits at the same depth above them there as it does in a checkout
@@ -1516,7 +1516,7 @@ Two details follow from that:
   status CLI label the summary and totals as `X recent / Y total`; they never
   inflate the recent subtotal to match all-time history.
 
-The shared reporter is `scripts/codex/lib/agent-events.mjs`; the Claude bridge
+The shared reporter is `src/telemetry/agent-events.ts`; the Claude bridge
 mirrors it in Python. The installer ships the module beside the bridges that
 import it. The Claude bridge reports spawns but not closes, so its children are
 measured against the parent turn until it adopts `reportResults`.
@@ -1631,7 +1631,7 @@ the latter by running the Python and JavaScript resolvers over the same inputs
 and asserting identical answers.
 
 The JavaScript CLI adapters share this resolver in
-`scripts/codex/lib/resolve-workspace.mjs`; the installer deploys that module
+`src/shared/resolve-workspace.ts`; the installer deploys that module
 alongside the runtime adapter copies, at `codex/lib/` beneath the hooks
 directory so the same `./codex/lib/…` specifier resolves in a checkout too. The Claude bridge remains a separate
 Python implementation, but it follows the same contract and is covered by the
@@ -1753,7 +1753,7 @@ installer is the only supported materialization path into
     generated output.
 - User-level provider/role configuration: `scripts/codex/config.autodev.toml` is
   the authoritative portable configuration, composed into `$CODEX_HOME/config.toml`
-  as an atomic regular file by `scripts/codex/compose-user-config.py`. The former
+  as an atomic regular file by `src/config/compose-user-config.ts`. The former
   `scripts/codex/config.toml` seed is retired; valid legacy symlink
   targets are migrated once and broken targets fail closed.
   Composition is required because Codex loads user-level settings at startup and
@@ -1944,7 +1944,7 @@ configured and validated.
 `/Users/henrykirk/AutoDev/scripts/codex/execution-contract.json` is the generated
 shared contract for role kind, read-only intent, expected MCP/skill capabilities,
 and adapter spawn-tool metadata. It is projected from the native role TOMLs by
-`render-execution-contract.py`; the installer rejects drift. The Claude, Antigravity, and Copilot bridge prompt paths append the canonical
+`src/config/render-execution-contract.ts`; the installer rejects drift. The Claude, Antigravity, and Copilot bridge prompt paths append the canonical
 role fragment from `scripts/codex/prompts/roles/` and use this JSON only for
 capability metadata. The installer deploys both beside the bridge runtime
 modules. Native TOML role files remain the Codex configuration surface; the

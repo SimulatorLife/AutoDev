@@ -4,7 +4,7 @@ import { describe, test } from "node:test";
 import {
   AGENT_ACTIVITY_KINDS,
   AGENT_ACTIVITY_STATES,
-} from "../scripts/codex/lib/agent-activity.mjs";
+} from "../src/agents/agent-activity.ts";
 
 import {
   agentActivity,

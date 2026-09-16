@@ -52,7 +52,20 @@ export const INCOMPLETE_REASON_CLIENT_DISCONNECTED = "client_disconnected";
 // resets", as opposed to a transient failure worth retrying in seconds.
 export const HARD_LIMIT_CLASSES = Object.freeze(["quota_exhausted", "session_limit"]);
 
-export function isHardLimitClass(limitClass) {
+export type LimitClass = "quota_exhausted" | "session_limit" | "throttled" | "capacity" | (string & {});
+export type LimitSource = typeof LIMIT_SOURCE_REPORTED | typeof LIMIT_SOURCE_INFERRED;
+export interface ProviderLimit {
+  limitClass: LimitClass;
+  limitType?: string | null;
+  resetsAt?: string | null;
+  source?: LimitSource;
+  exitCode?: number | null;
+}
+export interface LimitHeaders {
+  [name: string]: string | string[] | undefined;
+}
+
+export function isHardLimitClass(limitClass: string): boolean {
   return HARD_LIMIT_CLASSES.includes(limitClass);
 }
 
@@ -62,7 +75,7 @@ export function isHardLimitClass(limitClass) {
  * which CLI produced it. Anything unparseable is dropped rather than guessed:
  * a wrong reset time is worse than none, because the router trusts it.
  */
-export function normalizeResetsAt(value) {
+export function normalizeResetsAt(value: unknown): string | null {
   if (value === null || value === undefined || value === "") return null;
   let ms = null;
   if (typeof value === "number" && Number.isFinite(value)) {
@@ -100,7 +113,7 @@ const RESETS_AT_PATTERN = /reset(?:s|ting)?(?: at| on| in)?[:\s]+([0-9TZ:.\-+ ]{
  * hard-cooldown window on the strength of one keyword. It is enough to pick a
  * better HTTP status and a retry hint, which is what it is used for.
  */
-export function classifyCliLimit(message, exitCode = null) {
+export function classifyCliLimit(message: unknown, exitCode: number | null = null): ProviderLimit | null {
   const text = String(message ?? "");
   if (!text.trim()) return null;
   const match = CLI_LIMIT_PATTERNS.find(({ pattern }) => pattern.test(text));
@@ -109,28 +122,29 @@ export function classifyCliLimit(message, exitCode = null) {
   return {
     limitClass: match.limitClass,
     limitType: match.limitType,
-    resetsAt: resetsMatch ? normalizeResetsAt(resetsMatch[1].trim()) : null,
+    resetsAt: resetsMatch?.[1] ? normalizeResetsAt(resetsMatch[1].trim()) : null,
     source: LIMIT_SOURCE_INFERRED,
     exitCode: Number.isInteger(exitCode) ? exitCode : null,
   };
 }
 
 /** Response headers describing a limit. Absent fields are omitted, never sent empty. */
-export function limitResponseHeaders(limit) {
+export function limitResponseHeaders(limit: ProviderLimit | null | undefined): Record<string, string> {
   if (!limit || typeof limit !== "object" || !limit.limitClass) return {};
-  const headers = { [LIMIT_HEADER_CLASS]: limit.limitClass };
+  const headers: Record<string, string> = { [LIMIT_HEADER_CLASS]: limit.limitClass };
   if (limit.limitType) headers[LIMIT_HEADER_TYPE] = limit.limitType;
   if (limit.resetsAt) headers[LIMIT_HEADER_RESETS_AT] = limit.resetsAt;
   headers[LIMIT_HEADER_SOURCE] = limit.source === LIMIT_SOURCE_REPORTED ? LIMIT_SOURCE_REPORTED : LIMIT_SOURCE_INFERRED;
   return headers;
 }
 
-function headerValue(headers, name) {
+function headerValue(headers: LimitHeaders | Headers | null | undefined, name: string): string | null {
   if (!headers) return null;
-  const get = typeof headers.get === "function" ? (key) => headers.get(key) : null;
+  const get = headers instanceof Headers ? (key: string) => headers.get(key) : null;
   const raw = get ? get(name) : (() => {
-    const key = Object.keys(headers).find((candidate) => candidate.toLowerCase() === name);
-    return key === undefined ? undefined : headers[key];
+    const record = headers as LimitHeaders;
+    const key = Object.keys(record).find((candidate: string) => candidate.toLowerCase() === name);
+    return key === undefined ? undefined : record[key];
   })();
   const single = Array.isArray(raw) ? raw[0] : raw;
   return typeof single === "string" && single.trim() ? single.trim() : null;
@@ -141,7 +155,7 @@ function headerValue(headers, name) {
  * upstream response. Returns null when the provider said nothing structural, so
  * the caller can tell "no limit reported" from "limit reported without a reset".
  */
-export function readLimitHeaders(headers) {
+export function readLimitHeaders(headers: LimitHeaders | Headers | null | undefined): ProviderLimit | null {
   const limitClass = headerValue(headers, LIMIT_HEADER_CLASS);
   if (!limitClass) return null;
   const source = headerValue(headers, LIMIT_HEADER_SOURCE);
@@ -154,7 +168,7 @@ export function readLimitHeaders(headers) {
 }
 
 /** Seconds until the limit's stated reset, or null when it stated none. */
-export function retryAfterSecondsFromLimit(limit, now = Date.now()) {
+export function retryAfterSecondsFromLimit(limit: ProviderLimit | null | undefined, now = Date.now()): number | null {
   if (!limit?.resetsAt) return null;
   const resetsAtMs = Date.parse(limit.resetsAt);
   if (Number.isNaN(resetsAtMs)) return null;
@@ -166,7 +180,7 @@ export function retryAfterSecondsFromLimit(limit, now = Date.now()) {
  * `incomplete_details.provider_limit` and for `error.limit` on a non-streamed
  * failure, so the router reads one shape wherever it finds it.
  */
-export function limitPayload(limit) {
+export function limitPayload(limit: ProviderLimit | null | undefined): Record<string, string | null> | null {
   if (!limit?.limitClass) return null;
   return {
     class: limit.limitClass,
@@ -176,8 +190,8 @@ export function limitPayload(limit) {
   };
 }
 
-export function incompleteDetails(reason, limit = null) {
-  const details = { reason };
+export function incompleteDetails(reason: string, limit: ProviderLimit | null = null): Record<string, unknown> {
+  const details: Record<string, unknown> = { reason };
   const payload = limitPayload(limit);
   if (payload) details.provider_limit = payload;
   return details;
@@ -189,7 +203,7 @@ export function incompleteDetails(reason, limit = null) {
  * and that nothing after it ran -- a partial answer read as a complete one is
  * worse than a failure.
  */
-export function truncationNotice({ provider = null, limit = null, reason = INCOMPLETE_REASON_PROVIDER_LIMIT } = {}) {
+export function truncationNotice({ provider = null, limit = null, reason = INCOMPLETE_REASON_PROVIDER_LIMIT }: { provider?: string | null; limit?: ProviderLimit | null; reason?: string } = {}): string {
   const who = provider ? `The ${provider} provider` : "The provider";
   const cause = limit?.limitClass === "capacity"
     ? "was over capacity"
@@ -227,7 +241,7 @@ export function terminalIncompleteEvents({
   limit = null,
   provider = null,
   response = null,
-}) {
+}: { responseId: string; itemId: string; reasoningId: string; text?: string; reasoningText?: string; reason?: string; limit?: ProviderLimit | null; provider?: string | null; response?: Record<string, unknown> | null }): Array<[string, Record<string, unknown>]> {
   const notice = truncationNotice({ provider, limit, reason });
   const finalText = `${text}${notice}`;
   const details = incompleteDetails(reason, limit);

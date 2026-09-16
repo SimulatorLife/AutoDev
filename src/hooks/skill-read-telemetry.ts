@@ -33,11 +33,12 @@ import {
   SESSION_ID_HEADER,
   SKILL_READ_SOURCE,
   resolveSkillReadReporter,
-} from "./lib/agent-events.mjs";
+} from "../telemetry/agent-events.ts";
 
 const STATE_DIR = join(homedir(), ".codex", "run", "skill-read-telemetry");
 const SEEN_KEYS_LIMIT = 4096;
 const SEEN_VALUE_LIMIT = 4096;
+type JsonValue = any;
 
 const HOME = homedir();
 const REPO_ROOT = process.env.AUTODEV_REPO_ROOT || resolve(join(import.meta.dirname, "..", ".."));
@@ -69,7 +70,7 @@ async function readStdin() {
   return Buffer.concat(chunks).toString("utf8");
 }
 
-function pickString(payload, keys) {
+function pickString(payload: JsonValue, keys: string[]): string | null {
   for (const key of keys) {
     const value = payload?.[key];
     if (typeof value === "string" && value.trim()) return value.trim();
@@ -77,7 +78,7 @@ function pickString(payload, keys) {
   return null;
 }
 
-function pickObject(payload, keys) {
+function pickObject(payload: JsonValue, keys: string[]): JsonValue {
   for (const key of keys) {
     const value = payload?.[key];
     if (value && typeof value === "object" && !Array.isArray(value)) return value;
@@ -93,14 +94,14 @@ function pickObject(payload, keys) {
   return null;
 }
 
-function pickValue(payload, keys) {
+function pickValue(payload: JsonValue, keys: string[]): JsonValue {
   for (const key of keys) {
     if (payload?.[key] !== undefined && payload?.[key] !== null) return payload[key];
   }
   return null;
 }
 
-function normaliseToolName(name) {
+function normaliseToolName(name: unknown): string {
   return typeof name === "string" ? name.trim().toLowerCase().replace(/[\s-]+/g, "_") : "";
 }
 
@@ -108,7 +109,7 @@ function normaliseToolName(name) {
 // walks every plausible key and only accepts the payload if at least one tool
 // name was present. A pre-tool hook that saw no tool name is a firehose we
 // have no signal on, so we drop it instead of guessing.
-function extractToolCall(payload) {
+function extractToolCall(payload: JsonValue): JsonValue {
   const toolName = pickString(payload, TOOL_NAME_KEYS);
   if (!toolName) return null;
   const rawArguments = pickValue(payload, ARGUMENT_KEYS);
@@ -122,7 +123,7 @@ function extractToolCall(payload) {
 // return the first one that names a real file we can resolve. Returning null
 // from the helper means "this tool call is not a SKILL.md read"; the hook
 // drops it silently rather than logging anything.
-function extractReadPath(argsObject) {
+function extractReadPath(argsObject: JsonValue): string | null {
   if (typeof argsObject === "string") return matchExecCommandPaths(argsObject)[0] ?? null;
   if (!argsObject || typeof argsObject !== "object") return null;
   const directKeys = [ "file_path", "filePath", "path", "filepath" ];
@@ -149,7 +150,7 @@ function extractReadPath(argsObject) {
   for (const candidate of candidates) {
     if (matchSkillPath(normalisePath(candidate))) return candidate;
   }
-  return candidates[0];
+  return candidates[0] ?? null;
 }
 
 // Shell tool names whose command line is treated as a read when it names a
@@ -166,7 +167,7 @@ const SHELL_CONTROL_TOKENS = new Set([ "|", "&&", "||", ";", "&" ]);
 // escapes and `$()`/backtick substitution are not unwound -- but it is
 // enough to recover the plain file arguments Codex's own tool calls put on
 // these command lines.
-function tokenizeShellWords(cmd) {
+function tokenizeShellWords(cmd: string): string[] {
   const tokens = [];
   const re = /'[^']*'|"(?:[^"\\]|\\.)*"|\S+/g;
   let match;
@@ -183,7 +184,7 @@ function tokenizeShellWords(cmd) {
 // A word counts as a path argument, not a flag or a search pattern, only when
 // it is absolute or home-relative. Relative shell paths remain excluded so a
 // command cannot be attributed to the wrong working directory.
-function isPathLikeToken(token) {
+function isPathLikeToken(token: string): string | null {
   if (typeof token !== "string" || !token || token.startsWith("-")) return null;
   if (token.startsWith("/") || token.startsWith("~")) return token;
   return null;
@@ -196,7 +197,7 @@ function isPathLikeToken(token) {
 // Only one level of object nesting is unwrapped -- deeper nesting is not a
 // shape any tool call here actually uses, and unwrapping arbitrarily deep
 // objects would risk treating unrelated nested strings as commands.
-function flattenCommandValue(raw) {
+function flattenCommandValue(raw: JsonValue): string | null {
   let value = raw;
   if (value && typeof value === "object" && !Array.isArray(value)) {
     value = value.cmd ?? value.command ?? value.script ?? value.value ?? null;
@@ -214,18 +215,18 @@ function flattenCommandValue(raw) {
 // make this walk unbounded. Returning every candidate -- not just the first
 // -- lets the caller pick out whichever one actually names a SKILL.md when a
 // command reads more than one file.
-function matchExecCommandPaths(raw) {
+function matchExecCommandPaths(raw: JsonValue): string[] {
   const cmd = flattenCommandValue(raw);
   if (!cmd || cmd.length > 4096) return [];
   const tokens = tokenizeShellWords(cmd);
   const candidates = [];
   for (let i = 0; i < tokens.length; i++) {
-    const word = tokens[i];
+    const word = tokens[i] ?? "";
     const isSedPrint = word === "sed" && tokens[i + 1] === "-n";
     if (!SKILL_READ_COMMANDS.has(word) && !isSedPrint) continue;
     const start = isSedPrint ? i + 2 : i + 1;
     for (let j = start; j < tokens.length && j < start + 8; j++) {
-      const next = tokens[j];
+      const next = tokens[j] ?? "";
       if (SHELL_CONTROL_TOKENS.has(next)) break;
       const path = isPathLikeToken(next);
       if (path) candidates.push(path);
@@ -234,7 +235,7 @@ function matchExecCommandPaths(raw) {
   return candidates;
 }
 
-function normalisePath(raw) {
+function normalisePath(raw: unknown): string | null {
   if (typeof raw !== "string") return null;
   const trimmed = raw.trim().replace(/^['"]|['"]$/g, "");
   if (!trimmed) return null;
@@ -249,7 +250,7 @@ function normalisePath(raw) {
 // `{ skill }` rather than just true preserves the directory name as the
 // canonical skill identifier the dashboard renders; we deliberately do not
 // keep absolute paths in telemetry.
-function matchSkillPath(path) {
+function matchSkillPath(path: string | null): { skill: string; root: string } | null {
   if (!path) return null;
   const normalised = path.replace(/[\\/]+/g, sep);
   for (const rootRaw of SKILL_ROOTS) {
@@ -267,36 +268,36 @@ function matchSkillPath(path) {
   return null;
 }
 
-function hashKey(...parts) {
+function hashKey(...parts: string[]): string {
   return createHash("sha256").update(parts.join("\0")).digest("hex");
 }
 
-async function readSeenState(sessionId) {
+async function readSeenState(sessionId: string): Promise<{ path: string; value: JsonValue }> {
   const path = join(STATE_DIR, `${sessionId}.json`);
   try {
     const raw = await readFile(path, "utf8");
     const parsed = JSON.parse(raw);
     if (parsed && typeof parsed === "object") return { path, value: parsed };
   } catch (error) {
-    if (error?.code !== "ENOENT") throw error;
+    if (!(error && typeof error === "object" && "code" in error && error.code === "ENOENT")) throw error;
   }
   return { path, value: { turns: {}, keys: [] } };
 }
 
-async function writeSeenState({ path, value }) {
+async function writeSeenState({ path, value }: { path: string; value: JsonValue }): Promise<void> {
   await mkdir(STATE_DIR, { recursive: true });
   const tmp = `${path}.tmp`;
   await writeFile(tmp, JSON.stringify(value));
   await rename(tmp, path);
 }
 
-function pruneKeys(keys, keep) {
+function pruneKeys(keys: string[], keep: string[]): void {
   const keepSet = new Set(keep);
   for (const key of keys) if (!keepSet.has(key)) keys.splice(keys.indexOf(key), 1);
   while (keys.length > SEEN_KEYS_LIMIT) keys.shift();
 }
 
-async function alreadyReported({ sessionId, turnId, skill, root }) {
+async function alreadyReported({ sessionId, turnId, skill, root }: { sessionId: string; turnId: string; skill: string; root: string }): Promise<boolean> {
   const state = await readSeenState(sessionId);
   const turn = state.value.turns?.[turnId];
   if (!turn) return false;
@@ -305,7 +306,7 @@ async function alreadyReported({ sessionId, turnId, skill, root }) {
   return false;
 }
 
-async function markReported({ sessionId, turnId, skill, root, toolName }) {
+async function markReported({ sessionId, turnId, skill, root, toolName }: { sessionId: string; turnId: string; skill: string; root: string; toolName: string }): Promise<void> {
   const state = await readSeenState(sessionId);
   if (!state.value.turns) state.value.turns = {};
   if (!state.value.keys) state.value.keys = [];
@@ -319,7 +320,7 @@ async function markReported({ sessionId, turnId, skill, root, toolName }) {
   const turnKeys = Object.keys(state.value.turns);
   while (turnKeys.length > 64) {
     const drop = turnKeys.shift();
-    delete state.value.turns[drop];
+    if (drop !== undefined) delete state.value.turns[drop];
   }
   await writeSeenState(state);
 }
@@ -334,7 +335,7 @@ function resolveEventsUrl() {
   return "http://127.0.0.1:4100/v1/agent-events";
 }
 
-async function postSkillUsed({ sessionId, skill, root, toolName, turnId }) {
+async function postSkillUsed({ sessionId, skill, root, toolName, turnId }: { sessionId: string; skill: string; root: string; toolName: string; turnId: string }): Promise<void> {
   const reporter = resolveSkillReadReporter({
     [ AGENT_EVENTS_URL_HEADER ]: resolveEventsUrl(),
     [ SESSION_ID_HEADER ]: sessionId,
@@ -353,7 +354,7 @@ async function postSkillUsed({ sessionId, skill, root, toolName, turnId }) {
 
 // Resolve the workspace CWD from payload so we can also write it to the
 // session state for downstream consumers. Never forwarded in the post body.
-function payloadCwd(payload) {
+function payloadCwd(payload: JsonValue): string | null {
   const candidates = [
     payload?.cwd,
     payload?.working_directory,
@@ -367,7 +368,7 @@ function payloadCwd(payload) {
   return null;
 }
 
-async function run() {
+async function run(): Promise<void> {
   let raw = "";
   try {
     raw = await readStdin();

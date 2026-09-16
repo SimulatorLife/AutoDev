@@ -83,25 +83,28 @@ const LIFECYCLE_EVENT_STATES = new Set(["user_wait", "subagent_wait", "tool_wait
 
 /** Bound on retained per-record idempotency markers, so a long-lived subject cannot grow without bound. */
 const MAX_TRACKED_EVENT_IDS = 64;
+type ActivityRecord = Record<string, any>;
+type ActivityOptions = Record<string, any>;
 
-function trackEventId(set, eventId) {
+function trackEventId(set: Set<string>, eventId: unknown): boolean {
   if (!eventId) return false;
-  if (set.has(eventId)) return true;
-  set.add(eventId);
+  const id = String(eventId);
+  if (set.has(id)) return true;
+  set.add(id);
   if (set.size > MAX_TRACKED_EVENT_IDS) {
     const oldest = set.values().next().value;
-    set.delete(oldest);
+    if (oldest !== undefined) set.delete(oldest);
   }
   return false;
 }
 
 /** Reads the TTL from the environment, falling back to the documented default for anything unset or invalid. */
-export function resolveAgentActivityTtlMs(env = process.env) {
+export function resolveAgentActivityTtlMs(env: Record<string, string | undefined> = process.env): number {
   const parsed = Number.parseInt(env?.[AGENT_ACTIVITY_TTL_ENV] ?? "", 10);
   return Number.isInteger(parsed) && parsed > 0 ? parsed : DEFAULT_AGENT_ACTIVITY_TTL_MS;
 }
 
-function snapshotRecord(rec, at) {
+function snapshotRecord(rec: ActivityRecord, at: number): ActivityRecord {
   return {
     subject: rec.subject,
     kind: rec.kind,
@@ -118,7 +121,7 @@ function snapshotRecord(rec, at) {
   };
 }
 
-function isStale(rec, at) {
+function isStale(rec: ActivityRecord, at: number): boolean {
   if (TERMINAL_STATES.has(rec.state)) return false;
   // An agent-kind record with an open request has a stronger liveness signal
   // than its last timestamp: the request/stream itself is still in flight.
@@ -137,11 +140,11 @@ function emptyStateCounts() {
  * gets its own instance rather than reaching into shared module state, which
  * is what makes the TTL/stale behaviour testable with a fake clock.
  */
-export function createAgentActivityTracker({ ttlMs = resolveAgentActivityTtlMs(), now = () => Date.now() } = {}) {
+export function createAgentActivityTracker({ ttlMs = resolveAgentActivityTtlMs(), now = () => Date.now() }: { ttlMs?: number; now?: () => number } = {}): ActivityOptions {
   const effectiveTtlMs = Number.isInteger(ttlMs) && ttlMs > 0 ? ttlMs : DEFAULT_AGENT_ACTIVITY_TTL_MS;
   const subjects = new Map();
 
-  function ensure(subject, { kind = "session", tag = null } = {}) {
+  function ensure(subject: string, { kind = "session", tag = null }: { kind?: string; tag?: string | null } = {}): ActivityRecord {
     let rec = subjects.get(subject);
     if (!rec) {
       rec = {
@@ -170,7 +173,7 @@ export function createAgentActivityTracker({ ttlMs = resolveAgentActivityTtlMs()
     return rec;
   }
 
-  function transition(rec, state, at) {
+  function transition(rec: ActivityRecord, state: string, at: number | undefined): void {
     rec.state = state;
     rec.updatedAt = Number.isFinite(at) ? at : now();
   }
@@ -184,7 +187,7 @@ export function createAgentActivityTracker({ ttlMs = resolveAgentActivityTtlMs()
    * for: a continuation is observable as a resume, not indistinguishable
    * from any other turn.
    */
-  function beginRequest(subject, { requestId = null, provider = null, model = null, role = null, origin = null, workspace = null, kind = "session", tag = null, timestamp } = {}) {
+  function beginRequest(subject: string, { requestId = null, provider = null, model = null, role = null, origin = null, workspace = null, kind = "session", tag = null, timestamp }: ActivityOptions = {}): ActivityRecord | null {
     if (!subject) return null;
     const rec = ensure(subject, { kind, tag });
     if (requestId && rec.openRequestId === requestId && !TERMINAL_STATES.has(rec.state)) {
@@ -248,7 +251,7 @@ export function createAgentActivityTracker({ ttlMs = resolveAgentActivityTtlMs()
    * for a request already settled is a no-op, and a terminal record is
    * never reopened by a later result.
    */
-  function endRequest(subject, { requestId = null, outcome = "success", hasToolCalls = false, inputRequired = false, timestamp } = {}) {
+  function endRequest(subject: string, { requestId = null, outcome = "success", hasToolCalls = false, inputRequired = false, timestamp }: ActivityOptions = {}): ActivityRecord | null {
     const rec = subjects.get(subject);
     if (!rec) return null;
     if (TERMINAL_STATES.has(rec.state)) return snapshotRecord(rec, timestamp ?? now());
@@ -277,7 +280,7 @@ export function createAgentActivityTracker({ ttlMs = resolveAgentActivityTtlMs()
    * concurrency slot being released, or an explicit close). Idempotent per
    * (subject, requestId) and never reopens a terminal record.
    */
-  function finish(subject, { requestId = null, outcome = "success", timestamp } = {}) {
+  function finish(subject: string, { requestId = null, outcome = "success", timestamp }: ActivityOptions = {}): ActivityRecord | null {
     const rec = subjects.get(subject);
     if (!rec) return null;
     if (TERMINAL_STATES.has(rec.state)) return snapshotRecord(rec, timestamp ?? now());
@@ -304,7 +307,7 @@ export function createAgentActivityTracker({ ttlMs = resolveAgentActivityTtlMs()
    * reopens or otherwise touches a terminal record -- a terminal record's
    * staleness is moot, and touching it would misreport when it actually ended.
    */
-  function touch(subject, { timestamp } = {}) {
+  function touch(subject: string, { timestamp }: ActivityOptions = {}): ActivityRecord | null {
     const rec = subjects.get(subject);
     if (!rec) return null;
     const at = timestamp ?? now();
@@ -318,7 +321,7 @@ export function createAgentActivityTracker({ ttlMs = resolveAgentActivityTtlMs()
   }
 
   /** The subject just spawned a subagent it is now waiting on. Idempotent (re-applying while already waiting is a no-op). */
-  function noteSubagentWait(subject, { timestamp, kind = "session", tag = null } = {}) {
+  function noteSubagentWait(subject: string, { timestamp, kind = "session", tag = null }: ActivityOptions = {}): ActivityRecord | null {
     if (!subject) return null;
     const rec = ensure(subject, { kind, tag });
     if (TERMINAL_STATES.has(rec.state) || rec.state === "subagent_wait") return snapshotRecord(rec, timestamp ?? now());
@@ -327,7 +330,7 @@ export function createAgentActivityTracker({ ttlMs = resolveAgentActivityTtlMs()
   }
 
   /** The subagent the subject was waiting on reported back. A no-op unless the subject was actually in subagent_wait. */
-  function noteSubagentResolved(subject, { timestamp } = {}) {
+  function noteSubagentResolved(subject: string, { timestamp }: ActivityOptions = {}): ActivityRecord | null {
     const rec = subjects.get(subject);
     if (!rec) return null;
     if (TERMINAL_STATES.has(rec.state) || rec.state !== "subagent_wait") return rec ? snapshotRecord(rec, timestamp ?? now()) : null;
@@ -344,7 +347,7 @@ export function createAgentActivityTracker({ ttlMs = resolveAgentActivityTtlMs()
    * Idempotent by eventId when the caller supplies one; a terminal record
    * never reopens, including via a duplicated terminal event.
    */
-  function applyLifecycleEvent(subject, event) {
+  function applyLifecycleEvent(subject: string, event: ActivityOptions): ActivityRecord | null {
     if (!subject || !event || typeof event !== "object") return null;
     const state = event.state;
     if (!LIFECYCLE_EVENT_STATES.has(state)) return null;
@@ -361,19 +364,19 @@ export function createAgentActivityTracker({ ttlMs = resolveAgentActivityTtlMs()
     return snapshotRecord(rec, event.timestamp ?? now());
   }
 
-  function getState(subject, at = now()) {
+  function getState(subject: string, at = now()): string | null {
     const rec = subjects.get(subject);
     if (!rec) return null;
     return isStale(rec, at) ? "stale" : rec.state;
   }
 
-  function getRecord(subject, at = now()) {
+  function getRecord(subject: string, at = now()): ActivityRecord | null {
     const rec = subjects.get(subject);
     return rec ? snapshotRecord(rec, at) : null;
   }
 
   /** Marks every matured non-terminal record stale as of `at`. Idempotent; returns the count actually swept. */
-  function sweep(at = now()) {
+  function sweep(at = now()): number {
     let swept = 0;
     for (const rec of subjects.values()) {
       if (isStale(rec, at)) {
@@ -384,7 +387,7 @@ export function createAgentActivityTracker({ ttlMs = resolveAgentActivityTtlMs()
     return swept;
   }
 
-  function matches(rec, filter = {}) {
+  function matches(rec: ActivityRecord, filter: ActivityOptions = {}): boolean {
     if (Object.hasOwn(filter, "kind")) {
       if (rec.kind !== filter.kind) return false;
     } else if (!AGENT_ACTIVITY_KINDS.includes(rec.kind)) {
@@ -403,7 +406,7 @@ export function createAgentActivityTracker({ ttlMs = resolveAgentActivityTtlMs()
 
 
   /** Count of subjects currently in a live (non-terminal, non-stale) state, optionally filtered. Never negative by construction: it is a fresh count over records, not a running counter. */
-  function countLive(filter = {}, at = now()) {
+  function countLive(filter: ActivityOptions = {}, at = now()): number {
     sweep(at);
     let count = 0;
     for (const rec of subjects.values()) {
@@ -415,7 +418,7 @@ export function createAgentActivityTracker({ ttlMs = resolveAgentActivityTtlMs()
   }
 
   /** List of subjects currently in a live (non-terminal, non-stale) state, optionally filtered. Excludes bookkeeping kinds (e.g. subagent_slot) unless kind is explicitly filtered. */
-  function listLive(filter = {}, at = now()) {
+  function listLive(filter: ActivityOptions = {}, at = now()): ActivityRecord[] {
     sweep(at);
     const live = [];
     for (const rec of subjects.values()) {
@@ -427,7 +430,7 @@ export function createAgentActivityTracker({ ttlMs = resolveAgentActivityTtlMs()
   }
 
   /** Count of subjects grouped by state, optionally filtered. */
-  function countByState(filter = {}, at = now()) {
+  function countByState(filter: ActivityOptions = {}, at = now()): Record<string, number> {
     sweep(at);
     const counts = emptyStateCounts();
     for (const rec of subjects.values()) {
@@ -438,9 +441,9 @@ export function createAgentActivityTracker({ ttlMs = resolveAgentActivityTtlMs()
   }
 
   /** Distinct `tag` values with at least one live record of `kind`. */
-  function distinctTags({ kind } = {}, at = now()) {
+  function distinctTags({ kind }: { kind?: string } = {}, at = now()): string[] {
     sweep(at);
-    const tags = new Set();
+    const tags = new Set<string>();
     for (const rec of subjects.values()) {
       if (kind !== undefined && rec.kind !== kind) continue;
       if (!LIVE_STATES.has(rec.state)) continue;
@@ -450,16 +453,16 @@ export function createAgentActivityTracker({ ttlMs = resolveAgentActivityTtlMs()
   }
 
   /** A status-shaped snapshot: totals, live count, and per-provider/per-model state breakdowns, for surfacing on /status. */
-  function snapshot(at = now()) {
+  function snapshot(at = now()): ActivityOptions {
     sweep(at);
     const byProvider = {};
     const byModel = {};
     const byRole = {};
     const byOrigin = {};
     const byWorkspace = {};
-    const add = (collection, key, rec, { skipMissing = false } = {}) => {
+    const add = (collection: Record<string, Record<string, number>>, key: unknown, rec: ActivityRecord, { skipMissing = false }: { skipMissing?: boolean } = {}) => {
       if (skipMissing && (key === null || key === undefined || key === "")) return;
-      const normalized = key ?? "unattributed";
+      const normalized = String(key ?? "unattributed");
       collection[normalized] ??= emptyStateCounts();
       collection[normalized][rec.state] = (collection[normalized][rec.state] ?? 0) + 1;
     };

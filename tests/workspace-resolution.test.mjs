@@ -8,7 +8,7 @@ import {
   AmbiguousWorkspaceError,
   resolveCwd,
   WorkspaceResolutionError,
-} from "../scripts/codex/lib/resolve-workspace.mjs";
+} from "../src/shared/resolve-workspace.ts";
 import { workspaceContextFromRequest, workspaceMetadataForSession } from "../scripts/codex-model-router.mjs";
 
 async function withWorkspace(callback) {

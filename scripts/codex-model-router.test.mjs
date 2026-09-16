@@ -8,7 +8,7 @@ import test from "node:test";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
-import { RESPONSES_ITEM_ID_PREFIXES } from "./codex/lib/responses-item-ids.mjs";
+import { RESPONSES_ITEM_ID_PREFIXES } from "../src/shared/responses-item-ids.ts";
 
 import {
   activeProviderRequests,
@@ -117,7 +117,7 @@ import {
   usageStatus,
   projectLiveAgents,
 } from "./codex-model-router.mjs";
-import { resolveAgentEventReporter, REQUEST_ID_HEADER as AGENT_EVENTS_REQUEST_ID_HEADER } from "./codex/lib/agent-events.mjs";
+import { resolveAgentEventReporter, REQUEST_ID_HEADER as AGENT_EVENTS_REQUEST_ID_HEADER } from "../src/telemetry/agent-events.ts";
 import { spawnedChildren } from "./codex-antigravity-cli-responses-proxy.mjs";
 import {
   AGENT_ACTIVITY_STATES,
@@ -125,7 +125,7 @@ import {
   createAgentActivityTracker,
   DEFAULT_AGENT_ACTIVITY_TTL_MS,
   resolveAgentActivityTtlMs,
-} from "./codex/lib/agent-activity.mjs";
+} from "../src/agents/agent-activity.ts";
 
 const read = (path) => readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
 
@@ -5404,12 +5404,12 @@ url = "https://developers.openai.com/mcp"
 transport = "streamable_http"
 `);
 
-    const renderer = new URL("./codex/render-execution-contract.py", import.meta.url).pathname;
-    const rootConfig = new URL("./codex/config.toml", import.meta.url).pathname;
+    const renderer = new URL("../src/config/render-execution-contract.ts", import.meta.url).pathname;
+    const rootConfig = new URL("./codex/config.autodev.toml", import.meta.url).pathname;
     const contractPath = new URL("./codex/execution-contract.json", import.meta.url).pathname;
     const outputPath = join(directory, "output.json");
 
-    const child = spawn("python3", [
+    const child = spawn(process.execPath, [
       renderer,
       "--source-dir", rolesDir,
       "--root-config", rootConfig,
@@ -5434,7 +5434,7 @@ enabled = true
 url = "https://developers.openai.com/mcp"
 transport = "streamable_http"
 `);
-    const child2 = spawn("python3", [
+    const child2 = spawn(process.execPath, [
       renderer,
       "--source-dir", rolesDir,
       "--root-config", rootConfig,
@@ -5811,7 +5811,7 @@ test("all-disabled behavior rejects aliases, orchestrator, and concrete requests
   }
 });
 
-// --- Agent activity: shared state machine (scripts/codex/lib/agent-activity.mjs) ---
+// --- Agent activity: shared state machine (src/agents/agent-activity.ts) ---
 
 test("agent activity: TTL resolves from CODEX_ROUTER_AGENT_ACTIVITY_TTL_MS with a 300000ms default", () => {
   assert.equal(resolveAgentActivityTtlMs({}), DEFAULT_AGENT_ACTIVITY_TTL_MS);

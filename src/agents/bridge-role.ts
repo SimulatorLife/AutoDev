@@ -1,5 +1,6 @@
-import { readFileSync } from "node:fs";
-import { roleContract } from "./execution-contract.mjs";
+import { existsSync, readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { roleContract } from "../shared/execution-contract.ts";
 
 // Router-generated request header naming the agent role a provider bridge is
 // serving. The router builds its outbound header set from scratch, so this can
@@ -8,23 +9,29 @@ import { roleContract } from "./execution-contract.mjs";
 export const AGENT_ROLE_HEADER = "x-autodev-agent-role";
 export const ORCHESTRATOR_AGENT_ROLE = "orchestrator";
 
+const promptRootCandidates = [
+  new URL("../../scripts/codex/prompts/", import.meta.url),
+  new URL("../../hooks/codex/prompts/", import.meta.url),
+];
+const promptRoot = promptRootCandidates.find((url) => existsSync(fileURLToPath(url))) ?? promptRootCandidates[0]!;
 const PROMPTS = Object.freeze({
-  base: new URL("../prompts/base.md", import.meta.url),
-  leaf: new URL("../prompts/leaf.md", import.meta.url),
-  codeSearch: new URL("../prompts/code-search.md", import.meta.url),
-  orchestrator: new URL("../prompts/orchestrator.md", import.meta.url),
-  roleDirectory: new URL("../prompts/roles/", import.meta.url),
+  base: new URL("base.md", promptRoot),
+  leaf: new URL("leaf.md", promptRoot),
+  codeSearch: new URL("code-search.md", promptRoot),
+  orchestrator: new URL("orchestrator.md", promptRoot),
+  roleDirectory: new URL("roles/", promptRoot),
 });
 // The canonical skill source is the repository's `.rulesync/skills`. The
 // installer maps non-`scripts/` assets under $CODEX_HOME at the same depth, so
 // this one specifier resolves in a checkout and in the installed hooks copy.
-const ORCHESTRATION_SKILL = new URL("../../../.rulesync/skills/orchestration/SKILL.md", import.meta.url);
+const ORCHESTRATION_SKILL_CANDIDATES = [new URL("../../.rulesync/skills/orchestration/SKILL.md", import.meta.url), new URL("../../hooks/../.agents/skills/orchestration/SKILL.md", import.meta.url)];
+const ORCHESTRATION_SKILL = ORCHESTRATION_SKILL_CANDIDATES.find((url) => existsSync(fileURLToPath(url))) ?? ORCHESTRATION_SKILL_CANDIDATES[0]!;
 const ROLE_PROMPT_NAMES = new Set(["browser-tester", "default", "docs-researcher", "explorer", "orchestrator", "smart", "validator", "worker"]);
 const cache = new Map();
 const BASE_PROMPT = readFileSync(PROMPTS.base, "utf8").trim();
 const CODE_SEARCH_PROMPT = readFileSync(PROMPTS.codeSearch, "utf8").trim();
 
-function headerValue(headers, name) {
+function headerValue(headers: Record<string, unknown> | null | undefined, name: string): string | null {
   if (!headers || typeof headers !== "object") return null;
   // Node lowercases inbound header names, but LiteLLM and other intermediaries
   // can preserve the case the router sent, so match without regard to it.
@@ -35,11 +42,11 @@ function headerValue(headers, name) {
 }
 
 /** The agent role the router assigned to this request, or null when it sent none. */
-export function resolveAgentRole(headers) {
+export function resolveAgentRole(headers: Record<string, unknown> | null | undefined): string | null {
   return headerValue(headers, AGENT_ROLE_HEADER);
 }
 
-export function isOrchestratorRole(role) {
+export function isOrchestratorRole(role: string | null | undefined): boolean {
   return role === ORCHESTRATOR_AGENT_ROLE;
 }
 
@@ -50,7 +57,7 @@ export function isOrchestratorRole(role) {
  * that composition explicit prevents Claude's replacement system prompt from
  * accidentally receiving the base twice while the other bridges omit it.
  */
-export function roleInstructions(role) {
+export function roleInstructions(role: string | null | undefined): string {
   const key = isOrchestratorRole(role) ? "orchestrator" : "leaf";
   const contractKey = isOrchestratorRole(role) ? "orchestrator" : role;
   const contract = roleContract(contractKey);
@@ -82,7 +89,7 @@ export function roleInstructions(role) {
  * only the downstream CLI invocation differs. Native Codex role configs use
  * render-agent-configs.py to materialize this same base+leaf+role-fragment composition.
  */
-export function composeProviderPrompt(role, cwd = null) {
+export function composeProviderPrompt(role: string | null | undefined, cwd: string | null = null): string {
   const workspace = typeof cwd === "string" && cwd.trim()
     ? `\n\n## Workspace\n\nWorking directory: ${cwd}\nPlatform: ${process.platform}`
     : "";

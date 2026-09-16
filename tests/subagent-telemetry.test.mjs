@@ -18,7 +18,7 @@ import {
   VALID_ACTIVITY_STATES,
   resolveAgentEventReporter,
   resolveSkillReadReporter,
-} from "../scripts/codex/lib/agent-events.mjs";
+} from "../src/telemetry/agent-events.ts";
 import {
   ANTIGRAVITY_MCP_EXPOSURE_SOURCE,
   ANTIGRAVITY_SKILL_EXPOSURE_SOURCE,
@@ -337,7 +337,7 @@ test("the router's request id reaches agyErrorDetails and logTurnEnd without any
   // AgentEventReporter is authorized from) is what closes that gap -- it
   // carries no prompt text, only an id the router itself assigned.
   const source = read("scripts/codex-antigravity-cli-responses-proxy.mjs");
-  assert.match(source, /import \{ REQUEST_ID_HEADER, SKILL_READ_SOURCE, resolveAgentEventReporter \} from "\.\/codex\/lib\/agent-events\.mjs";/);
+  assert.match(source, /import \{ REQUEST_ID_HEADER, SKILL_READ_SOURCE, resolveAgentEventReporter \} from "\.\.\/src\/telemetry\/agent-events\.ts";/);
   assert.match(source, /const requestId = headerValue\(request\.headers, REQUEST_ID_HEADER\);/);
   // Both places agyErrorDetails is called for an upstream failure (the
   // non-streaming 502 path and the stream-not-yet-started 429/503 path) pass
@@ -424,7 +424,7 @@ test("agyArgs sandboxes read-only roles instead of granting them permission bypa
 test("the Antigravity bridge reports the subagents its own CLI spawns", () => {
   const source = read("scripts/codex-antigravity-cli-responses-proxy.mjs");
   // Reached only from inside handle(), so this stays a source assertion.
-  assert.match(source, /from "\.\/codex\/lib\/agent-events\.mjs"/);
+  assert.match(source, /from "\.\.\/src\/telemetry\/agent-events\.ts"/);
   assert.match(source, /resolveAgentEventReporter\(request\.headers\)/);
   assert.match(source, /agentEvents\.reportSpawns\(\{ tool: toolName, children \}\)/);
   // A child's own turn is measured only if the step that opened it is closed,
@@ -522,7 +522,7 @@ test("the Claude bridge reports the spawns its Agent tool makes in-process", () 
 });
 
 test("the installer ships the reporting module the bridges import at runtime", () => {
-  assert.match(read("scripts/codex/install-codex-integration.sh"), /scripts\/codex\/lib\/agent-events\.mjs/);
+  assert.match(read("scripts/codex/install-codex-integration.sh"), /src\/telemetry\/agent-events\.ts/);
 });
 
 // The two `invoke_subagent` step_updates agy really emitted for one dispatch,
@@ -1152,7 +1152,7 @@ test("the skill-read telemetry hook dedupes per turn and emits one skill_used pe
     const port = server.address().port;
     process.env.AUTODEV_AGENT_EVENTS_URL = `http://127.0.0.1:${port}/v1/agent-events`;
     try {
-      const scriptPath = fileURLToPath(new URL("../scripts/codex/skill-read-telemetry.mjs", import.meta.url));
+      const scriptPath = fileURLToPath(new URL("../src/hooks/skill-read-telemetry.ts", import.meta.url));
       const skillPath = `${process.env.AUTODEV_REPO_ROOT}/.rulesync/skills/orchestration/SKILL.md`;
       const otherSkillPath = `${process.env.AUTODEV_REPO_ROOT}/.rulesync/skills/ccc/SKILL.md`;
       const userSkillPath = `${tempHome.dir}/.agents/skills/orchestration/SKILL.md`;

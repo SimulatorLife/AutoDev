@@ -9,8 +9,10 @@ on:
       - ".rulesync/**"
       - "scripts/**"
       - "tests/**"
+      - ".nvmrc"
       - "package.json"
       - "pnpm-lock.yaml"
+      - "tsconfig.json"
   pull_request:
     paths:
       - ".agents/prompts/**"
@@ -18,8 +20,10 @@ on:
       - ".rulesync/**"
       - "scripts/**"
       - "tests/**"
+      - ".nvmrc"
       - "package.json"
       - "pnpm-lock.yaml"
+      - "tsconfig.json"
 
 jobs:
   copilot-setup-steps:
@@ -75,6 +79,8 @@ jobs:
 
       - name: Validate AutoDev tests
         run: |
+          pnpm run typecheck
+          pnpm run test:ts
           pnpm test
           pnpm run test:python
 

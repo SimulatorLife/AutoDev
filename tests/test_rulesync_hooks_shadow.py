@@ -24,7 +24,7 @@ SOURCE_COMMANDS = [
     "bash ~/.codex/hooks/ensure-codex-minimax-proxy.sh",
     "bash ~/.codex/hooks/ensure-codex-antigravity-proxy.sh",
     "bash ~/.codex/hooks/enforce-root-delegation.sh",
-    "node ~/.codex/hooks/codex/skill-read-telemetry.mjs",
+    "node ~/.codex/src/hooks/skill-read-telemetry.ts",
 ]
 
 
@@ -108,7 +108,7 @@ class RulesyncHooksGenerationTests(unittest.TestCase):
         self.assertNotIn("prevent_idle_sleep", HOOK_SOURCE.read_text())
         self.assertIn('"hooks"', (REPO_ROOT / "rulesync.jsonc").read_text())
         self.assertIn("config.autodev.toml", INSTALLER.read_text())
-        self.assertIn("compose-user-config.py", INSTALLER.read_text())
+        self.assertIn("src/config/compose-user-config.ts", INSTALLER.read_text())
 
     def test_target_projections_freeze_the_known_command_losses(self):
         projected = {
@@ -129,7 +129,7 @@ class RulesyncHooksGenerationTests(unittest.TestCase):
             "copilot": set(SOURCE_COMMANDS)
             - {"bash ~/.codex/hooks/enforce-root-delegation.sh"},
             "antigravity-cli": set(SOURCE_COMMANDS)
-            - {"node ~/.codex/hooks/codex/skill-read-telemetry.mjs"},
+            - {"node ~/.codex/src/hooks/skill-read-telemetry.ts"},
         }
         for target in TARGETS:
             with self.subTest(target=target):
@@ -178,7 +178,7 @@ class RulesyncHooksGenerationTests(unittest.TestCase):
         self.assertEqual(set(antigravity["rulesync"]), {"PreToolUse"})
         self.assertEqual(
             _grouped_commands(antigravity["rulesync"]),
-            ["node ~/.codex/hooks/codex/skill-read-telemetry.mjs"],
+            ["node ~/.codex/src/hooks/skill-read-telemetry.ts"],
         )
 
 

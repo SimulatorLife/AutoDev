@@ -2,7 +2,10 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 
-const config = JSON.parse(await readFile(new URL('../.github/workflows/weights.json', import.meta.url), 'utf8'));
+interface RepositoryConfig { name: string; baseBranch: string }
+interface WeightsConfig { repositories: RepositoryConfig[] }
+
+const config = JSON.parse(await readFile(new URL('../.github/workflows/weights.json', import.meta.url), 'utf8')) as WeightsConfig;
 const expectedRepositories = new Set([
   'SimulatorLife/3DSpider',
   'SimulatorLife/AutoDev',

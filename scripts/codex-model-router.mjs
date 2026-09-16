@@ -12,19 +12,19 @@ import { pathToFileURL } from "node:url";
 // the same turn for telemetry. Sharing the primitives is what keeps the label
 // and the directory the agent actually runs in from drifting apart -- they
 // were separate implementations, and they disagreed.
-import { resolveCwd, WORKSPACE_KEYS, isDirectory } from "./codex/lib/resolve-workspace.mjs";
-import { INCOMPLETE_REASON_INTERRUPTED, INCOMPLETE_REASON_TIMEOUT, isHardLimitClass, LIMIT_HEADER_CLASS, LIMIT_HEADER_RESETS_AT, LIMIT_SOURCE_REPORTED, normalizeResetsAt, readLimitHeaders, terminalIncompleteEvents } from "./codex/lib/provider-limits.mjs";
+import { resolveCwd, WORKSPACE_KEYS, isDirectory } from "../src/shared/resolve-workspace.ts";
+import { INCOMPLETE_REASON_INTERRUPTED, INCOMPLETE_REASON_TIMEOUT, isHardLimitClass, LIMIT_HEADER_CLASS, LIMIT_HEADER_RESETS_AT, LIMIT_SOURCE_REPORTED, normalizeResetsAt, readLimitHeaders, terminalIncompleteEvents } from "../src/shared/provider-limits.ts";
 // Providers disagree about the Responses API's item-id contract, and Codex
 // replays whatever it was handed on every later turn. Normalising outbound is
 // what stops one lax turn from permanently poisoning a session.
-import { dropUnresolvableReasoning, normalizeInputItemIds } from "./codex/lib/responses-item-ids.mjs";
+import { dropUnresolvableReasoning, normalizeInputItemIds } from "../src/shared/responses-item-ids.ts";
 import { CodexStateCollector, loadCodexStateCollectorConfig } from "./codex/lib/codex-state-collector.mjs";
 // Session/agent activity that spans the gaps between requests -- waiting on a
 // tool result, waiting on the next user turn, waiting on a spawned subagent.
 // A single shared state machine backs both the usage-table "live activity"
 // view and the concurrency table's subagent-slot accounting so the two never
 // disagree about what "still active" means.
-import { AGENT_ACTIVITY_KINDS, AGENT_ACTIVITY_STATES, createAgentActivityTracker, resolveAgentActivityTtlMs } from "./codex/lib/agent-activity.mjs";
+import { AGENT_ACTIVITY_KINDS, AGENT_ACTIVITY_STATES, createAgentActivityTracker, resolveAgentActivityTtlMs } from "../src/agents/agent-activity.ts";
 
 const HOST = process.env.CODEX_MODEL_ROUTER_HOST ?? "127.0.0.1";
 const PORT = Number.parseInt(process.env.CODEX_MODEL_ROUTER_PORT ?? "4100", 10);

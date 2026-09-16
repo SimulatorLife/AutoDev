@@ -24,7 +24,7 @@ import {
   retryAfterSecondsFromLimit,
   terminalIncompleteEvents,
   truncationNotice,
-} from "../scripts/codex/lib/provider-limits.mjs";
+} from "../src/shared/provider-limits.ts";
 
 const read = (path) => readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
 

@@ -71,13 +71,13 @@ The editable Codex role TOMLs currently encode more than prompts:
 
 Example: [`scripts/codex/agents/explorer.toml`](https://github.com/SimulatorLife/AutoDev/blob/main/scripts/codex/agents/explorer.toml)
 
-`render-agent-configs.py` composes the base, leaf, code-search, and role prompts because native Codex role TOML has no prompt-file include primitive, and it validates concrete MCP transport shapes and provider-specific reasoning constraints
+`src/config/render-agent-configs.ts` composes the base, leaf, code-search, and role prompts because native Codex role TOML has no prompt-file include primitive, and it validates concrete MCP transport shapes and provider-specific reasoning constraints
 
-Source: [`scripts/codex/render-agent-configs.py`](https://github.com/SimulatorLife/AutoDev/blob/main/scripts/codex/render-agent-configs.py)
+Source: [`src/config/render-agent-configs.ts`](https://github.com/SimulatorLife/AutoDev/blob/main/src/config/render-agent-configs.ts)
 
-`render-execution-contract.py` then projects the role TOMLs into the provider-neutral role contract consumed by bridges and child bootstrap logic
+`src/config/render-execution-contract.ts` then projects the role TOMLs into the provider-neutral role contract consumed by bridges and child bootstrap logic
 
-Source: [`scripts/codex/render-execution-contract.py`](https://github.com/SimulatorLife/AutoDev/blob/main/scripts/codex/render-execution-contract.py)
+Source: [`src/config/render-execution-contract.ts`](https://github.com/SimulatorLife/AutoDev/blob/main/src/config/render-execution-contract.ts)
 
 **Conclusion:** this is AutoDev domain logic, not merely provider-format translation. Keep it unless a later parity test proves an upstream representation can replace it without losing semantics
 
@@ -186,7 +186,7 @@ Do **not** initially use Rulesync as the source of truth for AutoDev's role-capa
 Keep initially:
 
 - Native AutoDev role TOMLs
-- `render-execution-contract.py`
+- `src/config/render-execution-contract.ts`
 - Prompt composition required by native Codex
 - `run-autodev-mcp.sh`
 - Role-specific provider skill filtering/views
@@ -717,7 +717,7 @@ The Phase 0 "Responses item-ID continuation behavior" capture is landed
 as a deterministic fixture. The fixture at
 `tests/fixtures/contracts/responses-item-ids-contract.json` records the
 observable shape the router produces today through the four exports of
-`scripts/codex/lib/responses-item-ids.mjs`: the frozen
+`src/shared/responses-item-ids.ts`: the frozen
 `RESPONSES_ITEM_ID_PREFIXES` map (the type -> prefix table every self-
 contained item's id must match); every `normalizeItemId` branch
 (MiniMax-minted `custom_tool_call` and `function_call` ids rewritten to
@@ -993,7 +993,7 @@ Fresh install and update can converge AutoDev-owned configuration without deleti
 
 ### Status
 
-Complete. The portable source is authoritative at `scripts/codex/config.autodev.toml`: it carries the AutoDev-owned portable scalars, provider definitions, `sandbox_workspace_write`, `otel`, `analytics`, `features`, `tools`, `agents`, the AutoDev-owned skills (`ccc`, `lsp-mcp-server`, `orchestration`), and `shell_environment_policy`. MCP declarations come from the live Rulesync source `.rulesync/mcp.jsonc` and are projected into the composer. The source excludes `notify`, `hooks.state`, `projects`, `marketplaces`, TUI/notice/desktop/apps/plugins/memories, `node_repl`/`cua_repl`, non-AutoDev skills, and absolute user/application paths. `scripts/codex/compose-user-config.py` deterministically merges the portable source and Rulesync MCP projection with existing machine-local configuration into `$CODEX_HOME/config.toml` as an atomic regular file, resolving conflicts in favor of AutoDev while semantically preserving machine-local and user-owned values. The installer (`install-codex-integration.sh`), `--check` drift validation, and `render-execution-contract.py` consume `config.autodev.toml` and the composer. The former `scripts/codex/config.toml` seed is removed from the repository and no longer participates in validation.
+Complete. The portable source is authoritative at `scripts/codex/config.autodev.toml`: it carries the AutoDev-owned portable scalars, provider definitions, `sandbox_workspace_write`, `otel`, `analytics`, `features`, `tools`, `agents`, the AutoDev-owned skills (`ccc`, `lsp-mcp-server`, `orchestration`), and `shell_environment_policy`. MCP declarations come from the live Rulesync source `.rulesync/mcp.jsonc` and are projected into the composer. The source excludes `notify`, `hooks.state`, `projects`, `marketplaces`, TUI/notice/desktop/apps/plugins/memories, `node_repl`/`cua_repl`, non-AutoDev skills, and absolute user/application paths. `src/config/compose-user-config.ts` deterministically merges the portable source and Rulesync MCP projection with existing machine-local configuration into `$CODEX_HOME/config.toml` as an atomic regular file, resolving conflicts in favor of AutoDev while semantically preserving machine-local and user-owned values. The installer (`install-codex-integration.sh`), `--check` drift validation, and `src/config/render-execution-contract.ts` consume `config.autodev.toml` and the composer. The former `scripts/codex/config.toml` seed is removed from the repository and no longer participates in validation.
 
 ### Seed-retirement acceptance
 
@@ -1014,7 +1014,7 @@ The Phase 1 portable-source boundary is now hardened. The stale caveat in
 `scripts/codex/config.autodev.toml` claiming that the source was not yet
 composed into the installed config was removed; the source now states that it
 is composed into `$CODEX_HOME/config.toml` by
-`scripts/codex/compose-user-config.py`. The frozen contract fixture
+`src/config/compose-user-config.ts`. The frozen contract fixture
 `tests/fixtures/contracts/portable-autodev-config-contract.json` (schema
 `autodev-portable-autodev-config-v1`) and
 `tests/portable-autodev-config-contract.test.mjs` pin the portable scalar set,
@@ -1130,7 +1130,7 @@ single source:
   `$CODEX_HOME/<path>`. As a result, one relative specifier reaches the
   orchestration skill in both a checkout and the hooks copy, for
   `bridge-role.mjs`, the Claude bridge, and `enforce-root-delegation.sh`.
-- The Claude, Copilot, and Antigravity bridges and `skill-read-telemetry.mjs`
+- The Claude, Copilot, and Antigravity bridges and `skill-read-telemetry.ts`
   recognise `.rulesync/skills` as the canonical skill root.
 - `.agents/skills.json`, the three frozen provider contract fixtures, the tests,
   and the docs were updated to the new path.
@@ -1474,7 +1474,7 @@ inventory is incomplete but because each source resists a single portable
 translation: Codex's scalars are composed at the user level against
 whatever machine-local `$CODEX_HOME/config.toml` already exists (global,
 not per-project, and merged rather than overwritten — see
-`scripts/codex/compose-user-config.py`); Claude's current bridge tool boundary is computed
+`src/config/compose-user-config.ts`); Claude's current bridge tool boundary is computed
 per request from the agent role (orchestrator-with-shim vs. leaf,
 read-only vs. mutating, Playwright-eligible vs. not, research-capable vs.
 not), not a static file Rulesync could diff against; and Antigravity's current CLI grants

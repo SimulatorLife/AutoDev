@@ -123,7 +123,7 @@ test('AutoDev CI is repository-native and pnpm-native', async () => {
   for (const [key, item] of Object.entries(profiles)) {
     assert.equal(item.pnpmVersion, undefined, `pnpmVersion present in profile ${key}`);
   }
-  assert.deepEqual(profile.commands.map(({ run }) => run), ['pnpm test', 'pnpm run test:python']);
+  assert.deepEqual(profile.commands.map(({ run }) => run), ['pnpm test', 'pnpm run test:python', 'pnpm run typecheck', 'pnpm run test:ts']);
   const source = await readWorkflow('copilot-setup-steps.yml');
   assert.match(source, /uses: pnpm\/action-setup@v6/);
   assert.match(source, /cache: pnpm/);
@@ -455,7 +455,7 @@ test('agent-invoke.yml run: blocks are syntactically valid bash', async () => {
 
 test('Node actions use the AutoDev root .nvmrc', async () => {
   const nvmrc = await readFile(path.join(root, '.nvmrc'), 'utf8');
-  assert.equal(nvmrc.trim(), '22');
+  assert.equal(nvmrc.trim(), '24.12');
   for (const name of ['copilot-setup-steps.yml', 'agent-invoke.yml', 'target-validation.yml']) {
     const source = await readWorkflow(name);
     assert.doesNotMatch(source, /node-version:\s*["']22["']/u, name);

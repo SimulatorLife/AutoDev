@@ -26,6 +26,11 @@
 
 import { createHash } from "node:crypto";
 
+export type ResponsesItem = Record<string, unknown>;
+export type ResponsesInput = ResponsesItem[] | unknown;
+export interface NormalizedItemsResult { input: ResponsesInput; changed: number }
+export interface DroppedItemsResult { input: ResponsesInput; dropped: number }
+
 /**
  * The prefix each item type's id must carry.
  *
@@ -78,9 +83,9 @@ const SELF_CONTAINED_ITEM_TYPES = Object.freeze([
  * router exists to avoid. Hashing also keeps distinct originals distinct, so
  * two items can never collapse onto one id.
  */
-export function normalizeItemId(type, id) {
-  if (!SELF_CONTAINED_ITEM_TYPES.includes(type)) return null;
-  const prefix = RESPONSES_ITEM_ID_PREFIXES[type];
+export function normalizeItemId(type: unknown, id: unknown): string | null {
+  if (typeof type !== "string" || !SELF_CONTAINED_ITEM_TYPES.includes(type)) return null;
+  const prefix = RESPONSES_ITEM_ID_PREFIXES[type as keyof typeof RESPONSES_ITEM_ID_PREFIXES];
   if (!prefix) return null;
   // An absent id is legal -- Codex omits it on some tool outputs -- and an
   // invented one would name an item the upstream never issued.
@@ -99,7 +104,7 @@ export function normalizeItemId(type, id) {
  * Returns the original array when nothing changed, so the ordinary case --
  * every id already well-formed -- allocates nothing.
  */
-export function normalizeInputItemIds(input) {
+export function normalizeInputItemIds(input: ResponsesInput): NormalizedItemsResult {
   if (!Array.isArray(input)) return { input, changed: 0 };
   let changed = 0;
   const normalized = input.map((item) => {
@@ -131,7 +136,7 @@ export function normalizeInputItemIds(input) {
  * This is why it is not applied to every route: on the provider that minted
  * them, those same items are live reasoning continuity.
  */
-export function dropUnresolvableReasoning(input) {
+export function dropUnresolvableReasoning(input: ResponsesInput): DroppedItemsResult {
   if (!Array.isArray(input)) return { input, dropped: 0 };
   const kept = input.filter((item) => {
     if (item === null || typeof item !== "object" || item.type !== "reasoning") return true;

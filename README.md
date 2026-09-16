@@ -32,13 +32,17 @@ in sync.
 ## Local validation toolchain
 
 AutoDev itself is managed with pnpm `10.32.1`, declared by `packageManager` in
-`package.json` and locked in `pnpm-lock.yaml`. Use `pnpm install --frozen-lockfile`
-before running the checks. The target-aware runner intentionally retains an npm
-compatibility branch for organization repositories that have not migrated their
-own package manager; that branch is not used to validate AutoDev. Native Codex
-role MCP entries must use a complete stdio or streamable-HTTP transport shape;
-see [`docs/local-setup.md`](docs/local-setup.md) for the role and installer
-contract.
+`package.json` and locked in `pnpm-lock.yaml`. The local runtime baseline is
+Node 24.12+, declared by `.nvmrc` and the package engine constraint. Use
+`pnpm install --frozen-lockfile` before running the checks. The typed command
+boundary is available as `pnpm autodev -- <command>` (or
+`node src/cli/autodev.ts <command>`); native TypeScript is executed directly by
+Node and checked with `pnpm run typecheck`. The target-aware runner
+intentionally retains an npm compatibility branch for organization repositories
+that have not migrated their own package manager; that branch is not used to
+validate AutoDev. Native Codex role MCP entries must use a complete stdio or
+streamable-HTTP transport shape; see [`docs/local-setup.md`](docs/local-setup.md)
+for the role and installer contract.
 
 ## Configure target repositories
 
@@ -50,8 +54,9 @@ Run the focused policy, workflow, shell, and local setup checks locally with:
 
 ```bash
 pnpm install --frozen-lockfile
+pnpm run typecheck
 pnpm test
-pnpm run test:python
+pnpm run validate:inventory  # migration gate; fails while legacy files remain
 pnpm run validate:actionlint
 pnpm run validate:shell
 ```

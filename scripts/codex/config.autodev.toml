@@ -6,7 +6,7 @@
 # machine. It intentionally excludes machine-local state (notify targets,
 # hooks.state trusted hashes, projects trust entries, marketplaces, TUI/
 # notice/desktop/apps/plugins/memories settings, node_repl/cua_repl servers,
-# Composed into $CODEX_HOME/config.toml by scripts/codex/compose-user-config.py; preserve AutoDev-owned keys here only.
+# Composed into $CODEX_HOME/config.toml by src/config/compose-user-config.ts; preserve AutoDev-owned keys here only.
 model = "autodev/orchestrator"
 model_provider = "local_model_router"
 openai_base_url = "http://127.0.0.1:4100/v1"

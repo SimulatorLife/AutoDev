@@ -16,11 +16,11 @@ const PORT = Number.parseInt(process.env.COPILOT_PROXY_PORT ?? "4003", 10);
 const TIMEOUT_MS = Number.parseInt(process.env.COPILOT_PROXY_TIMEOUT_MS ?? "900000", 10);
 const PROJECT_ROOT = process.env.CODEX_PROJECT_ROOT ?? process.env.COPILOT_PROJECT_ROOT ?? null;
 
-import { resolveCwd, WorkspaceResolutionError } from "./codex/lib/resolve-workspace.mjs";
-import { composeProviderPrompt, isOrchestratorRole, resolveAgentRole } from "./codex/lib/bridge-role.mjs";
-import { roleContract } from "./codex/lib/execution-contract.mjs";
-import { classifyCliLimit, INCOMPLETE_REASON_INTERRUPTED, INCOMPLETE_REASON_PROVIDER_LIMIT, limitPayload, limitResponseHeaders, retryAfterSecondsFromLimit, terminalIncompleteEvents } from "./codex/lib/provider-limits.mjs";
-import { resolveAgentEventReporter, SKILL_READ_SOURCE } from "./codex/lib/agent-events.mjs";
+import { resolveCwd, WorkspaceResolutionError } from "../src/shared/resolve-workspace.ts";
+import { composeProviderPrompt, isOrchestratorRole, resolveAgentRole } from "../src/agents/bridge-role.ts";
+import { roleContract } from "../src/shared/execution-contract.ts";
+import { classifyCliLimit, INCOMPLETE_REASON_INTERRUPTED, INCOMPLETE_REASON_PROVIDER_LIMIT, limitPayload, limitResponseHeaders, retryAfterSecondsFromLimit, terminalIncompleteEvents } from "../src/shared/provider-limits.ts";
+import { resolveAgentEventReporter, SKILL_READ_SOURCE } from "../src/telemetry/agent-events.ts";
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { isAbsolute, join, resolve, sep } from "node:path";
@@ -33,7 +33,7 @@ const SKILL_EXPOSURE_SOURCE = "role_contract";
 const MCP_EXPOSURE_SOURCE = "role_contract";
 
 // Canonical skill roots whose `SKILL.md` a successful read counts as actual
-// usage, mirroring the approved roots `scripts/codex/skill-read-telemetry.mjs`
+// usage, mirroring the approved roots `src/hooks/skill-read-telemetry.ts`
 // uses for Codex's own PreToolUse hook. The Copilot CLI's tool calls never
 // reach that hook -- it runs entirely inside its own runtime -- so this
 // bridge is the only place a read of one of these files is observable at all.

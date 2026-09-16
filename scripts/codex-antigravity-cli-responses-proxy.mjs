@@ -33,15 +33,15 @@ const EFFORTS = new Set([ "low", "medium", "high" ]);
 // wins and --effort is omitted for models that already carry one.
 const MODEL_EFFORT_SUFFIX = /-(low|medium|high)$/;
 
-import { resolveCwd, WorkspaceResolutionError } from "./codex/lib/resolve-workspace.mjs";
-import { composeProviderPrompt, isOrchestratorRole, resolveAgentRole } from "./codex/lib/bridge-role.mjs";
-import { roleContract } from "./codex/lib/execution-contract.mjs";
-import { classifyCliLimit, INCOMPLETE_REASON_CLIENT_DISCONNECTED, INCOMPLETE_REASON_INTERRUPTED, INCOMPLETE_REASON_PROVIDER_LIMIT, limitPayload, limitResponseHeaders, retryAfterSecondsFromLimit, terminalIncompleteEvents } from "./codex/lib/provider-limits.mjs";
-import { REQUEST_ID_HEADER, SKILL_READ_SOURCE, resolveAgentEventReporter } from "./codex/lib/agent-events.mjs";
+import { resolveCwd, WorkspaceResolutionError } from "../src/shared/resolve-workspace.ts";
+import { composeProviderPrompt, isOrchestratorRole, resolveAgentRole } from "../src/agents/bridge-role.ts";
+import { roleContract } from "../src/shared/execution-contract.ts";
+import { classifyCliLimit, INCOMPLETE_REASON_CLIENT_DISCONNECTED, INCOMPLETE_REASON_INTERRUPTED, INCOMPLETE_REASON_PROVIDER_LIMIT, limitPayload, limitResponseHeaders, retryAfterSecondsFromLimit, terminalIncompleteEvents } from "../src/shared/provider-limits.ts";
+import { REQUEST_ID_HEADER, SKILL_READ_SOURCE, resolveAgentEventReporter } from "../src/telemetry/agent-events.ts";
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { isAbsolute, join, resolve, sep } from "node:path";
-import { SpawnSessionRegistry } from "./codex/lib/bridge-spawn-session.mjs";
+import { SpawnSessionRegistry } from "../src/agents/bridge-spawn-session.ts";
 import { buildSpawnScript, execToolCallSseEvents, mintCallId, mintCallItemId } from "./codex/lib/codex-spawn-tools.mjs";
 
 // agy's spawn tool takes a batch, not one child: the orchestrator calls
@@ -208,7 +208,7 @@ const ANTIGRAVITY_SKILL_EXPOSURE_SOURCE = "role_contract";
 const ANTIGRAVITY_MCP_EXPOSURE_SOURCE = "role_contract";
 
 // Canonical skill roots whose `SKILL.md` a successful read counts as actual
-// usage, mirroring the approved roots `scripts/codex/skill-read-telemetry.mjs`
+// usage, mirroring the approved roots `src/hooks/skill-read-telemetry.ts`
 // uses for Codex's own PreToolUse hook. agy's own tool calls never reach that
 // hook -- its CLI runs entirely inside its own runtime -- so this bridge is
 // the only place a `read_file`/`view_file` or shell read of one of these
@@ -949,7 +949,7 @@ function activityText(event) {
 }
 
 // Delegation requests the shim collects while a turn is in flight. See
-// scripts/codex/lib/bridge-spawn-session.mjs for why the session key matters.
+// src/agents/bridge-spawn-session.ts for why the session key matters.
 const spawnSessions = new SpawnSessionRegistry();
 
 /**

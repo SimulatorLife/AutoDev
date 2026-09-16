@@ -7,7 +7,7 @@ import {
   normalizeItemId,
   normalizeInputItemIds,
   dropUnresolvableReasoning,
-} from "../scripts/codex/lib/responses-item-ids.mjs";
+} from "../src/shared/responses-item-ids.ts";
 
 const conforms = (item) => {
   const prefix = RESPONSES_ITEM_ID_PREFIXES[item.type];
