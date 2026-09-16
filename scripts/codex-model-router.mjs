@@ -52,6 +52,33 @@ import {
 // view and the concurrency table's subagent-slot accounting so the two never
 // disagree about what "still active" means.
 import { AGENT_ACTIVITY_KINDS, AGENT_ACTIVITY_STATES, createAgentActivityTracker, resolveAgentActivityTtlMs } from "../src/agents/agent-activity.ts";
+import {
+  ConcurrencyManager,
+  PROCESS_FALLBACK_SESSION_KEY,
+  SUBAGENT_SLOT_KIND,
+  concurrencyStatus as getConcurrencyStatus,
+  matchAgentsContext,
+  parseConcurrencyConfig,
+  recordConcurrencyDenial as recordManagerConcurrencyDenial,
+  releaseSubagentSlot as releaseManagerSubagentSlot,
+  resetConcurrencyTelemetry as resetManagerConcurrencyTelemetry,
+  restoreConcurrencyTelemetry,
+  setDefaultConcurrencyManager,
+  touchOpenSubagentSlots as touchManagerOpenSubagentSlots,
+  tryAcquireSubagentSlot as tryAcquireManagerSubagentSlot,
+} from "../src/router/concurrency.ts";
+import {
+  RouterLifecycle,
+  abortActiveResponseRequests as abortManagerActiveResponseRequests,
+  beginShutdown as beginManagerShutdown,
+  getLifecycleStatus as getManagerLifecycleStatus,
+  isDraining as isManagerDraining,
+  registerActiveRequest as registerManagerActiveRequest,
+  resetLifecycleForTests as resetManagerLifecycleForTests,
+  setDefaultRouterLifecycle,
+  setLifecycleState as setManagerLifecycleState,
+  unregisterActiveRequest as unregisterManagerActiveRequest,
+} from "../src/router/lifecycle.ts";
 
 const HOST = process.env.CODEX_MODEL_ROUTER_HOST ?? "127.0.0.1";
 const PORT = Number.parseInt(process.env.CODEX_MODEL_ROUTER_PORT ?? "4100", 10);
@@ -165,13 +192,12 @@ const ROUTER_INSTANCE_ID = randomUUID();
 // Router lifecycle: "ready" accepts new response requests; "draining" rejects
 // them with a structured 503 while existing requests get a bounded time to
 // finish. Liveness probes remain unconditional 200 regardless of state.
-let lifecycleState = "ready";
-let lifecycleStateChangedAt = ROUTER_STARTED_AT;
-// Active /v1/responses request aborters, so SIGTERM can cancel every
-// in-flight upstream call when the drain timeout elapses. A Set avoids losing
-// one request when callers reuse the same x-request-id concurrently.
-const activeRequestAborters = new Set();
-let shutdownPromise = null;
+const routerLifecycle = new RouterLifecycle({
+  startedAt: ROUTER_STARTED_AT,
+  drainTimeoutMs: SHUTDOWN_DRAIN_TIMEOUT_MS,
+  routerInstanceId: ROUTER_INSTANCE_ID,
+});
+setDefaultRouterLifecycle(routerLifecycle);
 const MAX_RECENT_EVENTS = Number.parseInt(process.env.CODEX_ROUTER_MAX_RECENT_EVENTS ?? "100", 10);
 const recentRouterEvents = [];
 let persistedStateUpdatedAt = null;
@@ -2565,173 +2591,41 @@ function formatBridgeEvents(events) {
   };
 }
 
-function parseConcurrencyConfig(file = CODEX_CONFIG_FILE) {
-  // The only authority for the per-session limit is the canonical Codex key
-  // `max_concurrent_threads_per_session`. Anything else -- including the old
-  // `max_threads` alias, free-form keys, or values that do not parse as a
-  // non-negative integer -- is ignored, so admission falls back to the documented
-  // null-limit behaviour (deny when the configured cap is reached, accept
-  // otherwise). The legacy alias is intentionally not surfaced in this object,
-  // the `concurrencyStatus()` projection, or the `/status` payload: a wrapper
-  // would just hide a parser bug behind a second source of truth.
-  const result = { file, maxConcurrentThreadsPerSession: null };
-  if (!existsSync(file)) return result;
-  try {
-    const source = readFileSync(file, "utf8");
-    // Codex ships the [agents] block two ways: a multiline table and the
-    // composer's inline `agents = { ... }` form. The previous regex only
-    // matched the multiline shape, so an inline-emitted config was silently
-    // treated as absent and the router ran with no configured limit. Pick
-    // the agents context first, then look for the canonical key inside it
-    // within that context so a stray key in an unrelated section cannot bleed
-    // into the capture.
-    const agentsContext = matchAgentsContext(source);
-    const keyMatch = agentsContext.match(/(?:^|[\s,])max_concurrent_threads_per_session\s*=\s*(\d+)/);
-    if (keyMatch) result.maxConcurrentThreadsPerSession = Number.parseInt(keyMatch[1], 10);
-  } catch (error) {
-    console.error(`Warning: could not read Codex concurrency config from ${file}: ${error instanceof Error ? error.message : String(error)}`);
-  }
-  return result;
-}
-
-function matchAgentsContext(source) {
-  // Multiline `[agents]` table: capture every line up to the next `[section]`
-  // header or end of input. Anchored on `[agents]` rather than a key prefix so
-  // a misindented file cannot accidentally capture siblings like
-  // `[agents.explorer]`. `(?![\s\S])` is the JS idiom for end-of-string,
-  // which the engine satisfies whether or not the multiline flag is set;
-  // using `$` here would match every line end and truncate the capture at the
-  // first newline.
-  const multiline = source.match(/^\s*\[agents\]\s*(?:\r?\n|;)([\s\S]*?)(?=^\s*\[|(?![\s\S]))/m);
-  if (multiline) return multiline[1];
-  // Composer-emitted inline table. We hand-roll brace tracking rather than
-  // `[^{}]` because the composer inlines every registered role as
-  // `agents = { ..., explorer = { ... }, worker = { ... }, ... }` and the
-  // naive character class would stop at the first nested role's `{` and
-  // miss `max_concurrent_threads_per_session` declared above it.
-  const start = source.search(/(?:^|\n)\s*agents\s*=\s*\{/);
-  if (start === -1) return "";
-  const open = source.indexOf("{", start);
-  if (open === -1) return "";
-  let depth = 0;
-  for (let i = open; i < source.length; i += 1) {
-    const ch = source[i];
-    if (ch === "{") depth += 1;
-    else if (ch === "}") {
-      depth -= 1;
-      if (depth === 0) return source.slice(open + 1, i);
-    }
-  }
-  return "";
-}
-
 const CODEX_CONFIG_FILE = process.env.CODEX_ROUTER_CODEX_CONFIG_FILE ?? `${CODEX_HOME}/config.toml`;
-const CONCURRENCY_CONFIG = parseConcurrencyConfig();
-// Shared bucket key for requests that carry no caller-identified session. All such
-// requests are throttled together (see requestSession()), which trades an over-denial
-// risk (unrelated unidentified callers can cap each other) for never silently granting
-// unbounded concurrency when the router cannot tell sessions apart.
-const PROCESS_FALLBACK_SESSION_KEY = "process-scope";
-// A held concurrency slot is itself a live agent activity -- something is
-// occupying it until the role response it was acquired for finishes -- so
-// admission accounting is a view over the shared tracker (kind:
-// "subagent_slot", tagged by session key) rather than a second, parallel
-// counter that could drift from it. `openSubagentSlots` only remembers which
-// tracker subject a given (sessionKey) acquisition mapped to, so the
-// zero-argument `releaseSubagentSlot(sessionKey)` call sites keep working
-// unchanged (LIFO, matching the previous counter's semantics).
-const openSubagentSlots = new Map(); // sessionKey -> array of open activity subjects
-let subagentSlotSequence = 0;
-const SUBAGENT_SLOT_KIND = "subagent_slot";
-const concurrencyTelemetry = { denials: 0, denialsByReason: {}, lastDenial: null };
+const concurrencyManager = new ConcurrencyManager({
+  agentActivity,
+  configFile: CODEX_CONFIG_FILE,
+  configSource: process.env.CODEX_ROUTER_CODEX_CONFIG_FILE ? "env_override" : "default_codex_home",
+});
+setDefaultConcurrencyManager(concurrencyManager);
 const spawnFailureTelemetry = { total: 0, byReason: {}, recent: [] };
 
 function effectivePerSessionLimit() {
-  // Only the canonical Codex key feeds admission. A missing or invalid value
-  // surfaces as `null`, which `tryAcquireSubagentSlot` interprets as "no
-  // configured cap". A missing or invalid file therefore does not silently
-  // impose a limit, while a valid canonical value is enforced directly.
-  return CONCURRENCY_CONFIG.maxConcurrentThreadsPerSession;
+  return concurrencyManager.effectivePerSessionLimit();
 }
 
-function activeSubagentThreads() {
-  return agentActivity.countLive({ kind: SUBAGENT_SLOT_KIND });
+function activeSubagentThreads(at) {
+  return concurrencyManager.activeSubagentThreads(at);
 }
 
 function tryAcquireSubagentSlot(sessionKey) {
-  const sessionActive = agentActivity.countLive({ kind: SUBAGENT_SLOT_KIND, tag: sessionKey });
-  const perSessionLimit = effectivePerSessionLimit();
-  if (perSessionLimit !== null && sessionActive >= perSessionLimit) return "max_concurrent_threads_per_session";
-  subagentSlotSequence += 1;
-  const subject = `${SUBAGENT_SLOT_KIND}:${sessionKey}:${subagentSlotSequence}`;
-  agentActivity.beginRequest(subject, { requestId: subject, kind: SUBAGENT_SLOT_KIND, tag: sessionKey, origin: "subagent" });
-  const stack = openSubagentSlots.get(sessionKey) ?? [];
-  stack.push(subject);
-  openSubagentSlots.set(sessionKey, stack);
-  return null;
+  return concurrencyManager.tryAcquireSubagentSlot(sessionKey);
 }
 
 function releaseSubagentSlot(sessionKey) {
-  const stack = openSubagentSlots.get(sessionKey);
-  if (!stack || stack.length === 0) return;
-  const subject = stack.pop();
-  if (stack.length === 0) openSubagentSlots.delete(sessionKey);
-  agentActivity.finish(subject, { requestId: subject, outcome: "success" });
+  concurrencyManager.releaseSubagentSlot(sessionKey);
 }
 
-/**
- * Refreshes every subagent slot a session currently holds. A slot's own
- * lifecycle only ever calls beginRequest (acquire) and finish (release) --
- * nothing updates it in between -- so a slot held across a session's own
- * long-running turn (streaming heartbeats above) would otherwise go stale
- * purely from the TTL elapsing, even though the session obviously has not
- * abandoned it: the router just observed the session serving a live turn.
- * Called from that heartbeat, not on a timer of its own, so a slot whose
- * session genuinely stops producing signal still ages out on the existing
- * TTL rather than being kept alive forever.
- */
 function touchOpenSubagentSlots(sessionKey) {
-  const stack = openSubagentSlots.get(sessionKey);
-  if (!stack) return;
-  for (const subject of stack) agentActivity.touch(subject);
+  concurrencyManager.touchOpenSubagentSlots(sessionKey);
 }
 
 function resetConcurrencyTelemetry() {
-  openSubagentSlots.clear();
-  agentActivity.reset();
-  concurrencyTelemetry.denials = 0;
-  concurrencyTelemetry.denialsByReason = {};
-  concurrencyTelemetry.lastDenial = null;
+  concurrencyManager.resetConcurrencyTelemetry();
 }
 
 function concurrencyStatus(at = Date.now()) {
-  // Exposed unconditionally (not only after a denial) so an operator can see the
-  // per-session limit is currently being enforced as a single process-wide bucket
-  // for any unidentified caller, rather than discovering it only once denials occur.
-  // Evaluate every slot-derived counter at the same `at` as the agent
-  // projection in getRouterStatus(now): agentsStatus(at) and this
-  // concurrencyStatus(at) share a single sweep, so status.agents and
-  // status.concurrency describe the same instant.
-  const processFallbackActiveThreads = agentActivity.countLive({ kind: SUBAGENT_SLOT_KIND, tag: PROCESS_FALLBACK_SESSION_KEY }, at);
-  return {
-    // This is the router's request-admission view. Codex app child handles are
-    // owned by the parent session and are not observable here.
-    scope: "router-admitted-child-requests",
-    // The absolute config path is never surfaced on /status (a public,
-    // unauthenticated endpoint); operators only need to know whether an
-    // override is in play and whether the file is actually there.
-    configSource: process.env.CODEX_ROUTER_CODEX_CONFIG_FILE ? "env_override" : "default_codex_home",
-    configFileExists: existsSync(CONCURRENCY_CONFIG.file),
-    maxConcurrentThreadsPerSession: effectivePerSessionLimit(),
-    effectivePerSessionLimit: effectivePerSessionLimit(),
-    activeSubagentThreads: agentActivity.countLive({ kind: SUBAGENT_SLOT_KIND }, at),
-    activeSessions: agentActivity.distinctTags({ kind: SUBAGENT_SLOT_KIND }, at).length,
-    processFallbackActiveThreads,
-    processFallbackEnforcement: processFallbackActiveThreads > 0,
-    denials: concurrencyTelemetry.denials,
-    denialsByReason: { ...concurrencyTelemetry.denialsByReason },
-    lastDenial: concurrencyTelemetry.lastDenial,
-  };
+  return concurrencyManager.concurrencyStatus(at);
 }
 
 
@@ -2821,12 +2715,25 @@ function agentsStatus(at = Date.now()) {
   };
 }
 
-function recordConcurrencyDenial({ requestId, role, requestedModel, sessionScope, reason }) {
-  concurrencyTelemetry.denials += 1;
-  concurrencyTelemetry.denialsByReason[reason] = (concurrencyTelemetry.denialsByReason[reason] ?? 0) + 1;
-  concurrencyTelemetry.lastDenial = { timestamp: new Date().toISOString(), requestId, role, requestedModel, sessionScope, reason };
-  recordSpawnFailure({ requestId, role, requestedModel, reason });
-  recordRouterEvent({ phase: "denied", requestId, role, requestedModel, provider: null, model: null, failureClass: "concurrency_limit", denialReason: reason });
+function recordConcurrencyDenial(denial) {
+  concurrencyManager.recordConcurrencyDenial(denial);
+  const info = typeof denial === "string" ? { reason: denial } : (denial ?? {});
+  recordSpawnFailure({
+    requestId: info.requestId ?? null,
+    role: info.role ?? null,
+    requestedModel: info.requestedModel ?? null,
+    reason: info.reason ?? "unknown",
+  });
+  recordRouterEvent({
+    phase: "denied",
+    requestId: info.requestId ?? null,
+    role: info.role ?? null,
+    requestedModel: info.requestedModel ?? null,
+    provider: null,
+    model: null,
+    failureClass: "concurrency_limit",
+    denialReason: info.reason ?? "unknown",
+  });
 }
 
 function recordSpawnFailure({ requestId, role, requestedModel, reason }) {
@@ -4317,7 +4224,7 @@ function serializeRouterState() {
     disabledProviders: ROUTING_POLICY.runtimeState().disabledProviders,
     providerTelemetry: Object.fromEntries(providerTelemetry),
     usage: usagePersistenceSnapshot(),
-    concurrency: concurrencyTelemetry,
+    concurrency: concurrencyManager.telemetry,
     subagents: {
       total: subagentTelemetry.total,
       byMechanism: subagentTelemetry.byMechanism,
@@ -4493,9 +4400,7 @@ function loadRouterState(file = effectiveStateFile()) {
       }
     }
     if (parsed.concurrency && typeof parsed.concurrency === "object") {
-      if (Number.isInteger(parsed.concurrency.denials) && parsed.concurrency.denials >= 0) concurrencyTelemetry.denials = parsed.concurrency.denials;
-      if (parsed.concurrency.denialsByReason && typeof parsed.concurrency.denialsByReason === "object") concurrencyTelemetry.denialsByReason = { ...parsed.concurrency.denialsByReason };
-      if (parsed.concurrency.lastDenial === null || (parsed.concurrency.lastDenial && typeof parsed.concurrency.lastDenial === "object")) concurrencyTelemetry.lastDenial = parsed.concurrency.lastDenial;
+      concurrencyManager.restoreTelemetry(parsed.concurrency);
     }
     if (parsed.spawnFailures && typeof parsed.spawnFailures === "object") {
       if (Number.isInteger(parsed.spawnFailures.total) && parsed.spawnFailures.total >= 0) spawnFailureTelemetry.total = parsed.spawnFailures.total;
@@ -4656,32 +4561,23 @@ function decrementActiveRequests(provider) {
 }
 
 function isDraining() {
-  return lifecycleState !== "ready";
+  return routerLifecycle.isDraining();
 }
 
 function getLifecycleStatus() {
-  return {
-    state: lifecycleState,
-    draining: isDraining(),
-    changedAt: lifecycleStateChangedAt,
-    activeResponseRequests: activeRequestAborters.size,
-  };
+  return routerLifecycle.getLifecycleStatus();
 }
 
 function registerActiveRequest(abortController) {
-  if (!abortController) return;
-  activeRequestAborters.add(abortController);
+  routerLifecycle.registerActiveRequest(abortController);
 }
 
 function unregisterActiveRequest(abortController) {
-  if (!abortController) return;
-  activeRequestAborters.delete(abortController);
+  routerLifecycle.unregisterActiveRequest(abortController);
 }
 
 function abortActiveResponseRequests() {
-  for (const controller of activeRequestAborters.values()) {
-    try { controller.abort(); } catch { /* best effort during shutdown */ }
-  }
+  routerLifecycle.abortActiveResponseRequests();
 }
 
 async function jitteredBackoff() {
@@ -4722,53 +4618,21 @@ function logTransportError({ requestId, role = null, provider, model, requestedM
 }
 
 function setLifecycleState(next) {
-  lifecycleState = next;
-  lifecycleStateChangedAt = new Date().toISOString();
+  routerLifecycle.setLifecycleState(next);
 }
 
 async function beginShutdown(signal, server, stateFile = effectiveStateFile()) {
-  if (shutdownPromise) return shutdownPromise;
-  setLifecycleState("draining");
-  const drainingStartedAt = Date.now();
-  const activeAtStart = activeRequestAborters.size;
-  console.error(JSON.stringify({
-    schema: "autodev-router-event-v1",
-    timestamp: new Date().toISOString(),
-    routerInstanceId: ROUTER_INSTANCE_ID,
-    requestId: null,
-    phase: "shutdown_started",
+  return routerLifecycle.beginShutdown({
     signal,
-    inFlightRequests: activeAtStart,
+    server,
+    persistState: () => persistRouterStateNow(stateFile),
     drainTimeoutMs: SHUTDOWN_DRAIN_TIMEOUT_MS,
-  }));
-  shutdownPromise = (async () => {
-    while (activeRequestAborters.size > 0 && Date.now() - drainingStartedAt < SHUTDOWN_DRAIN_TIMEOUT_MS) {
-      await new Promise((resolve) => setTimeout(resolve, 50));
-    }
-    if (activeRequestAborters.size > 0) abortActiveResponseRequests();
-    try { await persistRouterStateNow(stateFile); } catch { /* already logged inside */ }
-    if (server && typeof server.close === "function") {
-      await new Promise((resolve) => server.close(() => resolve()));
-    }
-    console.error(JSON.stringify({
-      schema: "autodev-router-event-v1",
-      timestamp: new Date().toISOString(),
-      routerInstanceId: ROUTER_INSTANCE_ID,
-      requestId: null,
-      phase: "shutdown_complete",
-      durationMs: Date.now() - drainingStartedAt,
-      abortedInFlight: activeRequestAborters.size > 0,
-    }));
-    if (process.env.CODEX_ROUTER_TEST_NO_EXIT === "1") return;
-    process.exit(0);
-  })();
-  return shutdownPromise;
+    routerInstanceId: ROUTER_INSTANCE_ID,
+  });
 }
 
 function resetLifecycleForTests() {
-  setLifecycleState("ready");
-  activeRequestAborters.clear();
-  shutdownPromise = null;
+  routerLifecycle.resetLifecycleForTests();
 }
 
 /**

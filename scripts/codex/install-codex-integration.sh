@@ -104,6 +104,8 @@ runtime_module_names=(
   src/router/routing.ts
   src/router/cooldown.ts
   src/router/responses.ts
+  src/router/concurrency.ts
+  src/router/lifecycle.ts
   src/agents/bridge-spawn-session.ts
   # Executed as a child process by the bridges rather than imported.
   src/mcp/spawn-shim.ts
