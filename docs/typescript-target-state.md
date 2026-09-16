@@ -19,7 +19,8 @@ The migration remains intentionally behavior-preserving. The shared-runtime spaw
 - Routing/cooldown contract tests and new focused TypeScript tests cover validation, seeded ordering, disabled providers, orchestrator preference, cooldown ladders, last-resort policy, summaries, and hard-cooldown restoration.
 - Typed Responses/SSE transformation, tool flattening, namespace rewriting, model replacement, tool-call counting, and upstream payload normalization now live in `src/router/responses.ts` and are deployed by the installer runtime manifest.
 - Typed concurrency tracking and slot admission now live in `src/router/concurrency.ts` with TOML config parsing (`max_concurrent_threads_per_session`), process-fallback scoping, denial recording, and telemetry restoration; router lifecycle state management and graceful shutdown coordination live in `src/router/lifecycle.ts`.
-- Dedicated native TypeScript test suites cover concurrency (`tests/router/concurrency.test.ts`) and router lifecycle (`tests/router/lifecycle.test.ts`), while frozen concurrency and agent reconciliation contract tests remain 100% green.
+- Typed router authentication boundary (`src/router/auth.ts`), failure classification and ring-buffer event recording (`src/router/events.ts`), and subagent/bridge orchestration registry (`src/router/subagents.ts`) are decomposed from the legacy router into dedicated TypeScript modules deployed by the installer runtime manifest.
+- Dedicated native TypeScript test suites cover concurrency (`tests/router/concurrency.test.ts`), router lifecycle (`tests/router/lifecycle.test.ts`), authentication (`tests/router/auth.test.ts`), event recording (`tests/router/events.test.ts`), and subagent registry (`tests/router/subagents.test.ts`), while all router integration and frozen contract tests remain 100% green.
 - Existing provider/router contract tests remain green while imports move to typed shared modules.
 
 ### Current findings and constraints
@@ -48,7 +49,7 @@ The migration remains intentionally behavior-preserving. The shared-runtime spaw
 3. Move installer, reconciliation, hook, and `ensure-*` behavior behind the typed CLI/platform modules.
 4. Convert remaining JavaScript/Python tests to `node:test`, remove obsolete entrypoints, and enable the inventory gate as a required check.
 
-The current validation baseline is: `pnpm typecheck` passes; the expanded test commands include root-level TypeScript tests and currently report `pnpm test` at 636 passed and 1 skipped and `pnpm run test:ts` at 63 passed and 1 skipped. The Python compatibility suite reports 280 tests passing with 1 skipped; actionlint and ShellCheck also pass. `pnpm run validate:inventory` is expected to fail until the remaining migration order above is completed.
+The current validation baseline is: `pnpm typecheck` passes; the expanded test commands include root-level TypeScript tests and currently report `pnpm test` at 651 passed and 1 skipped and `pnpm run test:ts` at 78 passed and 1 skipped. The Python compatibility suite reports 280 tests passing with 1 skipped; actionlint and ShellCheck also pass. `pnpm run validate:inventory` is expected to fail until the remaining migration order above is completed.
 
 ## Decision
 

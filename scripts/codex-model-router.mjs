@@ -79,6 +79,61 @@ import {
   setLifecycleState as setManagerLifecycleState,
   unregisterActiveRequest as unregisterManagerActiveRequest,
 } from "../src/router/lifecycle.ts";
+import {
+  authStatus,
+  isLoopbackAddress,
+  isRouterAuthEnabled,
+  routerAuthorizationValid,
+  setRouterAuthTokenForTests,
+} from "../src/router/auth.ts";
+import {
+  RouterEventRecorder,
+  classifyProviderFailure,
+  setDefaultRouterEventRecorder,
+} from "../src/router/events.ts";
+import {
+  SubagentRegistry,
+  SUBAGENT_MECHANISMS,
+  MAX_RECENT_SUBAGENT_SPAWNS,
+  UNATTRIBUTED_SUBAGENT_ROLE,
+  SESSION_ID_HEADER,
+  SESSION_SCOPE_HEADER,
+  REQUEST_ID_HEADER,
+  SUBAGENT_SPAWN_TOOLS_HEADER,
+  AGENT_EVENTS_URL_HEADER,
+  AGENT_EVENTS_PATH,
+  AGENT_ROLE_HEADER,
+  ORCHESTRATOR_AGENT_ROLE,
+  FORWARDED_REQUEST_HEADERS,
+  bridgeSubagentKey,
+  reportedChildren,
+  providerCapabilities,
+  roleCapabilityRequirements,
+  subagentSpawnToolsFor,
+  mcpContractForRole as subagentMcpContractForRole,
+  bridgeTelemetryHeaders as subagentBridgeTelemetryHeaders,
+  safeMetricLabel,
+  bumpCount,
+  setDefaultSubagentRegistry,
+  noteOrchestratorSession,
+  orchestratorProviderForSession,
+  noteBridgeRequest,
+  noteBridgeSession,
+  lookupBridgeSessionContext,
+  recallBridgeSessionRequestId,
+  recordSubagentSpawn,
+  resetSubagentTelemetry,
+  subagentStatus,
+  recordSpawnFailure,
+  spawnFailureStatus,
+  closeBridgeSubagentsForRequest,
+  rememberWorkspaceMetadata,
+  getWorkspaceMetadata,
+  openBridgeSubagentUsage,
+  closeBridgeSubagentUsage,
+  getBridgeRequestContext,
+  resetSpawnFailureTelemetry,
+} from "../src/router/subagents.ts";
 
 const HOST = process.env.CODEX_MODEL_ROUTER_HOST ?? "127.0.0.1";
 const PORT = Number.parseInt(process.env.CODEX_MODEL_ROUTER_PORT ?? "4100", 10);
@@ -116,11 +171,6 @@ async function refreshCodexState() {
     };
   }
 }
-// Read once at startup, but kept mutable so the test suite can pin it. The
-// launcher sources $CODEX_HOME/.env before exec, so a developer shell that
-// legitimately carries the token would otherwise silently arm the auth gate
-// against tests that send no Authorization header.
-let ROUTER_AUTH_TOKEN = process.env.CODEX_ROUTER_AUTH_TOKEN ?? "";
 const EXECUTION_CONTRACT_FILE = process.env.CODEX_EXECUTION_CONTRACT_FILE
   ?? (existsSync(new URL('./codex/execution-contract.json', import.meta.url).pathname)
     ? new URL('./codex/execution-contract.json', import.meta.url).pathname
@@ -182,11 +232,6 @@ const activeProviderRequests = new Map();
 // createAgentActivityTracker({ ttlMs }) rather than mutating this one.
 const AGENT_ACTIVITY_TTL_MS = resolveAgentActivityTtlMs(process.env);
 const agentActivity = createAgentActivityTracker({ ttlMs: AGENT_ACTIVITY_TTL_MS });
-function isLoopbackAddress(address) {
-  if (!address || typeof address !== "string") return false;
-  const normalized = address.replace(/^::ffff:/, "").trim();
-  return normalized === "127.0.0.1" || normalized === "::1" || normalized.startsWith("127.") || normalized === "localhost";
-}
 const ROUTER_STARTED_AT = new Date().toISOString();
 const ROUTER_INSTANCE_ID = randomUUID();
 // Router lifecycle: "ready" accepts new response requests; "draining" rejects
@@ -199,7 +244,74 @@ const routerLifecycle = new RouterLifecycle({
 });
 setDefaultRouterLifecycle(routerLifecycle);
 const MAX_RECENT_EVENTS = Number.parseInt(process.env.CODEX_ROUTER_MAX_RECENT_EVENTS ?? "100", 10);
-const recentRouterEvents = [];
+const routerEvents = new RouterEventRecorder({
+  maxRecentEvents: MAX_RECENT_EVENTS,
+  routerInstanceId: ROUTER_INSTANCE_ID,
+  resolveOrigin: (role, provider) => usageOrigin(role, provider),
+  onEvent: (event, input, effectiveOrigin) => {
+    const workspaceContext = typeof input.workspace === "string" ? { key: input.workspace, cwd: null } : (input.workspace ?? null);
+    if (event.provider && event.model && ["selected", "skipped", "result"].includes(event.phase)) {
+      recordUsageEvent({
+        phase: event.phase,
+        requestId: event.requestId,
+        role: event.role,
+        provider: event.provider,
+        model: event.model,
+        workspace: workspaceContext,
+        outcome: event.outcome,
+        failureClass: event.failureClass,
+        status: event.status,
+        elapsedMs: event.elapsedMs,
+        toolCalls: event.toolCalls,
+        timestamp: event.timestamp,
+        origin: effectiveOrigin ?? usageOrigin(event.role, event.provider),
+      });
+    }
+    // Any CLI child still open under this request ends with it; see
+    // closeBridgeSubagentsForRequest.
+    if (event.phase === "result") closeBridgeSubagentsForRequest(event.requestId, event.outcome, event.elapsedMs);
+    const state = event.provider ? providerState(event.provider) : null;
+    if (state && event.phase === "selected") {
+      state.attempts += 1;
+      state.lastAttemptAt = event.timestamp;
+    } else if (state && event.phase === "skipped") {
+      state.skipped += 1;
+      state.lastFailureClass = event.failureClass;
+    } else if (state && event.phase === "result") {
+      if (event.outcome === "success") {
+        state.successes += 1;
+        state.lastSuccessAt = event.timestamp;
+        state.lastFailureClass = null;
+        state.lastFailure = null;
+      } else {
+        state.failures += 1;
+        state.lastFailureAt = event.timestamp;
+        state.lastFailureClass = event.failureClass;
+        state.lastFailure = { timestamp: event.timestamp, class: event.failureClass, status: event.status };
+      }
+    }
+    scheduleRouterStatePersist();
+  },
+});
+setDefaultRouterEventRecorder(routerEvents);
+const subagentRegistry = new SubagentRegistry({
+  agentActivity,
+  executionContract: EXECUTION_CONTRACT,
+  onRecordRouterEvent: (event) => recordRouterEvent(event),
+  onRecordUsageEvent: (event) => recordUsageEvent(event),
+  onSchedulePersist: () => scheduleRouterStatePersist(),
+  onMissingProviderDiagnostic: (count) => { attributionDiagnostics.byReason.missing_provider += count; },
+  onMissingModelDiagnostic: (count) => { attributionDiagnostics.byReason.missing_model += count; },
+  getCodexNativeSpawns: () => otelTelemetry.threads.spawns.total,
+  getSpawnCapableProviders: () => Object.keys(ROUTING.providers).filter((provider) => providerCapabilities(provider, EXECUTION_CONTRACT).subagentSpawn),
+});
+setDefaultSubagentRegistry(subagentRegistry);
+const subagentTelemetry = subagentRegistry.subagentTelemetry;
+const spawnFailureTelemetry = subagentRegistry.spawnFailureTelemetry;
+const bridgeRequestContext = {
+  get: (id) => subagentRegistry.getBridgeRequestContext(id),
+  set: (id, val) => subagentRegistry.noteBridgeRequest(id, val),
+};
 let persistedStateUpdatedAt = null;
 let persistTimeout = null;
 let persistChain = Promise.resolve();
@@ -1709,10 +1821,6 @@ function noteMetricInventory(metric) {
   otelTelemetry.metricInventory.set(metric.name, entry);
 }
 
-function safeMetricLabel(value, fallback = "unknown") {
-  if (typeof value !== "string" || !value.trim()) return fallback;
-  return value.trim().replace(/[\u0000-\u001f\u007f]/g, "").slice(0, 100) || fallback;
-}
 
 function sqliteKey(attributes) {
   return `${safeMetricLabel(attributes.db)}::${safeMetricLabel(attributes.status)}`;
@@ -2598,7 +2706,6 @@ const concurrencyManager = new ConcurrencyManager({
   configSource: process.env.CODEX_ROUTER_CODEX_CONFIG_FILE ? "env_override" : "default_codex_home",
 });
 setDefaultConcurrencyManager(concurrencyManager);
-const spawnFailureTelemetry = { total: 0, byReason: {}, recent: [] };
 
 function effectivePerSessionLimit() {
   return concurrencyManager.effectivePerSessionLimit();
@@ -2736,484 +2843,7 @@ function recordConcurrencyDenial(denial) {
   });
 }
 
-function recordSpawnFailure({ requestId, role, requestedModel, reason }) {
-  const failure = { timestamp: new Date().toISOString(), requestId, role, requestedModel, reason };
-  spawnFailureTelemetry.total += 1;
-  spawnFailureTelemetry.byReason[reason] = (spawnFailureTelemetry.byReason[reason] ?? 0) + 1;
-  spawnFailureTelemetry.recent.push(failure);
-  while (spawnFailureTelemetry.recent.length > 50) spawnFailureTelemetry.recent.shift();
-  recordRouterEvent({ phase: "spawn_failed", requestId, role, requestedModel, provider: null, model: null, failureClass: "spawn_failure", spawnFailureReason: reason });
-}
 
-function spawnFailureStatus() {
-  return {
-    // These are failures observed after a child request reached the router;
-    // Codex app spawn admission failures happen earlier and are not counted.
-    scope: "router-admitted-child-requests",
-    total: spawnFailureTelemetry.total,
-    byReason: { ...spawnFailureTelemetry.byReason },
-    recent: [...spawnFailureTelemetry.recent].reverse(),
-  };
-}
-
-function providerCapabilities(provider) {
-  // All providers are treated as capable of MCP, skills, and subagent spawning;
-  // role TOMLs remain the sole source for role MCP/skill exposure. The generated
-  // execution contract supplies only adapter transport details such as the
-  // bridge-native spawn tool watchlist.
-  return {
-    subagentSpawn: true,
-    subagentSpawnTools: Array.isArray(EXECUTION_CONTRACT.providers?.[provider]?.spawnTools)
-      ? [...EXECUTION_CONTRACT.providers[provider].spawnTools]
-      : [],
-    normalizeItemIds: true,
-  };
-}
-
-function roleCapabilityRequirements(role) {
-  const key = role === ORCHESTRATOR_AGENT_ROLE ? "orchestrator" : (typeof role === "string" && role.trim() ? role.trim().toLowerCase() : "default");
-  const contract = EXECUTION_CONTRACT.roles?.[key] ?? EXECUTION_CONTRACT.roles?.default ?? {};
-  const webResearch = contract.webResearch && typeof contract.webResearch === "object"
-    ? {
-        search: contract.webResearch.search === true,
-        fetch: contract.webResearch.fetch === true,
-        optionalMcp: new Set(Array.isArray(contract.webResearch.optionalMcp) ? contract.webResearch.optionalMcp : []),
-      }
-    : { search: false, fetch: false, optionalMcp: new Set() };
-  return {
-    mcp: new Set(Array.isArray(contract.mcp) ? contract.mcp : []),
-    skills: new Set(Array.isArray(contract.skills) ? contract.skills : []),
-    webResearch,
-  };
-}
-
-// Tool names whose invocation inside a provider bridge means "a subagent was
-// spawned". Sent to the bridge as a request header so a bridge never has to
-// know which provider it is or parse the routing config: it matches the tool
-// names its CLI reports against the list the router handed it.
-function subagentSpawnToolsFor(provider) {
-  return providerCapabilities(provider).subagentSpawnTools;
-}
-
-// Subagent spawn telemetry, unified across every provider.
-//
-// Subagents reach existence by two different mechanisms and, before this, the
-// router could only see one of them:
-//
-// - `router_alias`: Codex's native `multi_agent_v1` spawn tool (driven by the
-//   Codex provider itself, or by MiniMax, which calls namespace tools natively
-//   and whose tools this router flattens) creates a child thread that asks this router for an
-//   `autodev/<role>` alias. The router observes that request directly.
-// - `bridge_native`: the Claude and Antigravity bridges delegate inside their
-//   own CLI runtime -- Claude's `Agent` tool, Antigravity's
-//   `invoke_subagent` -- and no router request is ever made
-//   for the child. Those bridges report the spawn to /v1/agent-events instead.
-//
-// Counting only `router_alias` made a Claude- or Antigravity-served
-// orchestrator look like it had never delegated at all, which is precisely the
-// signal an operator uses to decide whether a provider is orchestrating.
-const SUBAGENT_MECHANISMS = Object.freeze(["router_alias", "bridge_native"]);
-const MAX_RECENT_SUBAGENT_SPAWNS = 50;
-const subagentTelemetry = {
-  total: 0,
-  byMechanism: Object.fromEntries(SUBAGENT_MECHANISMS.map((mechanism) => [mechanism, 0])),
-  byProvider: {},
-  byRole: {},
-  byStatus: {},
-  recent: [],
-};
-
-// Which provider served the orchestrator turn for a session, so a later
-// `autodev/<role>` request from that same session can be attributed to the
-// parent that spawned it. Without this join every router-routed subagent is
-// unattributed, because the child thread's request carries no trace of which
-// provider ran the parent turn. Bounded so a long-lived router cannot grow it
-// without limit.
-const MAX_TRACKED_ORCHESTRATOR_SESSIONS = 256;
-const orchestratorProviderBySession = new Map();
-
-// Codex can omit turn metadata on a continuation request even though the
-// conversation itself is still identified. A bridge cannot safely recover the
-// workspace from its process cwd, so retain only the last workspace that this
-// router successfully resolved for that identified conversation. This is
-// continuity, not workspace discovery: anonymous requests and sessions with no
-// previously validated workspace still fail closed at the bridge boundary.
-const MAX_TRACKED_WORKSPACE_SESSIONS = 256;
-const workspaceMetadataBySession = new Map();
-
-function rememberWorkspaceMetadata(sessionKey, workspacePath) {
-  if (!sessionKey || sessionKey === PROCESS_FALLBACK_SESSION_KEY || !workspacePath) return;
-  workspaceMetadataBySession.delete(sessionKey);
-  workspaceMetadataBySession.set(sessionKey, JSON.stringify({ workspaces: { [workspacePath]: {} } }));
-  while (workspaceMetadataBySession.size > MAX_TRACKED_WORKSPACE_SESSIONS) {
-    workspaceMetadataBySession.delete(workspaceMetadataBySession.keys().next().value);
-  }
-}
-
-// Recorded when the attempt is dispatched, not when it succeeds: a parent
-// spawns children mid-turn and waits for them, so the child's request arrives
-// while the parent's response is still open. A chain that ends up failing over
-// therefore leaves the last provider attempted, which the next attempt
-// overwrites. Sessions the caller did not identify are excluded: they all
-// share one fallback key (see requestSession), so joining on it would
-// attribute an unrelated caller's subagent to whichever provider last ran an
-// unidentified orchestrator turn.
-function noteOrchestratorSession(sessionKey, provider) {
-  if (!sessionKey || sessionKey === PROCESS_FALLBACK_SESSION_KEY || !provider) return;
-  orchestratorProviderBySession.delete(sessionKey);
-  orchestratorProviderBySession.set(sessionKey, provider);
-  while (orchestratorProviderBySession.size > MAX_TRACKED_ORCHESTRATOR_SESSIONS) {
-    orchestratorProviderBySession.delete(orchestratorProviderBySession.keys().next().value);
-  }
-}
-
-function orchestratorProviderForSession(sessionKey) {
-  if (!sessionKey || sessionKey === PROCESS_FALLBACK_SESSION_KEY) return null;
-  return orchestratorProviderBySession.get(sessionKey) ?? null;
-}
-
-// Recent router requests, so an out-of-band bridge report naming a request id
-// can be attributed to the provider, model, and workspace that request ran on.
-// A bridge posts after its CLI has already invoked the spawn tool, which can
-// land just after the response completed, so entries are retained for a while
-// rather than deleted the moment the request finishes. The request id is a
-// router-generated UUID the bridge only learns by serving the request, so
-// matching against this map is also what authorizes the report.
-const MAX_TRACKED_BRIDGE_REQUESTS = 256;
-const bridgeRequestContext = new Map();
-
-function noteBridgeRequest(requestId, context) {
-  if (!requestId) return;
-  bridgeRequestContext.delete(requestId);
-  bridgeRequestContext.set(requestId, context);
-  while (bridgeRequestContext.size > MAX_TRACKED_BRIDGE_REQUESTS) {
-    bridgeRequestContext.delete(bridgeRequestContext.keys().next().value);
-  }
-}
-
-// Some Codex-side telemetry cannot name the request id a bridge would carry:
-// a `PreToolUse` hook observing a SKILL.md read runs in the same session as a
-// parent /v1/responses request the router already opened, but the hook itself
-// only sees the Codex session id. The router keeps a parallel sessionKey ->
-// bridge context map so the hook's skill_read post can be attributed to the
-// in-flight parent turn instead of an unattributed workspace fallback. A
-// session with no open parent is reported back as such and dropped, so a hook
-// firing between requests -- or on a session the router never saw -- never
-// fabricates an `unattributed` workspace count. The session map is *not* a
-// second authorization channel; it is a correlation key the router derives
-// from the same parent request that authorized the agent.
-const MAX_TRACKED_BRIDGE_SESSIONS = 256;
-const bridgeSessionContext = new Map();
-
-function noteBridgeSession(sessionKey, context) {
-  if (!sessionKey || sessionKey === PROCESS_FALLBACK_SESSION_KEY) return;
-  const requestId = typeof context?.requestId === "string" ? context.requestId : null;
-  // Strip the request id before storing -- a session lookup should re-find
-  // the session via its own id, not by reconstructing the parent request.
-  const persisted = context ? { ...context } : {};
-  delete persisted.requestId;
-  bridgeSessionContext.delete(sessionKey);
-  bridgeSessionContext.set(sessionKey, { requestId, context: persisted });
-  while (bridgeSessionContext.size > MAX_TRACKED_BRIDGE_SESSIONS) {
-    bridgeSessionContext.delete(bridgeSessionContext.keys().next().value);
-  }
-}
-
-function lookupBridgeSessionContext(sessionKey) {
-  if (!sessionKey || sessionKey === PROCESS_FALLBACK_SESSION_KEY) return null;
-  const entry = bridgeSessionContext.get(sessionKey);
-  if (!entry) return null;
-  return entry.context;
-}
-
-function recallBridgeSessionRequestId(sessionKey) {
-  if (!sessionKey || sessionKey === PROCESS_FALLBACK_SESSION_KEY) return null;
-  return bridgeSessionContext.get(sessionKey)?.requestId ?? null;
-}
-
-// Usage accounting for `bridge_native` children.
-//
-// A CLI-delegated child never reaches the router as a request, so it used to
-// exist only as a spawn count: the provider that actually did the work showed
-// one turn in **Provider health and usage** no matter how wide it fanned out,
-// and **Usage by orchestrator and subagents** showed no subagent row at all.
-// The bridge's report is the only evidence those turns happened, so it is what
-// opens and closes a usage bucket for each child here.
-//
-// These are deliberately *not* routed through recordRouterEvent: provider
-// health, cooldown, and the fallback chain describe routing decisions this
-// router made, and a child it never routed must not move them. Only the usage
-// buckets -- which measure work done behind the router, not routing -- count
-// them, tagged with the `subagent` origin.
-const MAX_TRACKED_BRIDGE_SUBAGENTS = 512;
-const bridgeSubagentUsage = new Map();
-
-// A bridge-native spawn is the router's explicit parent/child boundary. Keep
-// one synthetic activity record for the parent request that authorized the
-// report, carrying the concrete provider/model selected for that request.
-// This replaces the old workspace-wide parent inference: a child can keep its
-// actual parent live only when the router can prove which request spawned it.
-const bridgeParentActivity = new Map();
-
-// A roleless CLI child cannot share the `unattributed` role bucket: that key is
-// the roleless *orchestrator* traffic the dashboard renders as the Orchestrator
-// row, and folding children into it would credit a delegation to its parent.
-const UNATTRIBUTED_SUBAGENT_ROLE = "unattributed-subagent";
-
-// A child model that names the parent's choice rather than one of its own.
-const INHERITED_CHILD_MODELS = new Set(["inherit", "self", "default", "parent"]);
-
-function bridgeSubagentKey(requestId, childId) {
-  return `${requestId}\u0000${childId}`;
-}
-
-function openBridgeParentActivity(requestId, context) {
-  if (!requestId || !context?.provider || !context?.model) return null;
-  let parent = bridgeParentActivity.get(requestId);
-  if (parent) return parent;
-  const subject = `bridge-parent:${requestId}`;
-  agentActivity.beginRequest(subject, {
-    requestId: subject,
-    provider: context.provider,
-    model: context.model,
-    role: "orchestrator",
-    origin: "orchestrator",
-    workspace: context.workspace ?? null,
-    tag: context.sessionKey ?? null,
-  });
-  agentActivity.applyLifecycleEvent(subject, {
-    state: "subagent_wait",
-    eventId: `${subject}:subagent_wait`,
-    provider: context.provider,
-    model: context.model,
-    role: "orchestrator",
-    origin: "orchestrator",
-    workspace: context.workspace ?? null,
-  });
-  parent = { subject, children: new Set(), context };
-  bridgeParentActivity.set(requestId, parent);
-  return parent;
-}
-
-function closeBridgeParentActivity(requestId) {
-  const parent = bridgeParentActivity.get(requestId);
-  if (!parent || parent.children.size > 0) return false;
-  agentActivity.finish(parent.subject, { requestId: parent.subject, outcome: "success" });
-  bridgeParentActivity.delete(requestId);
-  return true;
-}
-
-function openBridgeSubagentUsage({ requestId, context, role, childId, model }) {
-  const key = bridgeSubagentKey(requestId, childId);
-  // Both name the bucket, so neither can be missing; the spawn itself is
-  // already counted whether or not a turn can be measured for it.
-  if (bridgeSubagentUsage.has(key)) return;
-  if (!context.provider || !context.model) {
-    if (!context.provider) attributionDiagnostics.byReason.missing_provider += 1;
-    if (!context.model) attributionDiagnostics.byReason.missing_model += 1;
-    return;
-  }
-  // A bridge posts its report without awaiting it, so one can arrive after the
-  // parent turn already ended. Such a child is still real work: open it and
-  // settle it at once against the parent turn it ran inside.
-  const settled = context.finished ?? null;
-  // `inherit`/`self` is agy naming the parent's model rather than choosing one,
-  // and a child with no model named ran on whatever the parent was routed to.
-  const childModel = model && !INHERITED_CHILD_MODELS.has(model.toLowerCase()) ? model : context.model;
-  const entry = {
-    requestId,
-    provider: context.provider,
-    model: childModel,
-    role: role ?? UNATTRIBUTED_SUBAGENT_ROLE,
-    workspace: context.workspace ?? null,
-    startedAt: Date.now(),
-  };
-  bridgeSubagentUsage.set(key, entry);
-  const parent = openBridgeParentActivity(requestId, context);
-  if (parent) parent.children.add(key);
-  agentActivity.beginRequest(`bridge:${key}`, {
-    requestId: key,
-    provider: entry.provider,
-    model: entry.model,
-    role: entry.role,
-    origin: "subagent",
-    workspace: entry.workspace,
-    kind: "bridge_subagent",
-    tag: entry.requestId,
-  });
-  recordUsageEvent({
-    phase: "selected",
-    requestId: key,
-    role: entry.role,
-    provider: entry.provider,
-    model: entry.model,
-    workspace: entry.workspace,
-    origin: "subagent",
-    timestamp: new Date().toISOString(),
-  });
-  if (settled) {
-    closeBridgeSubagentUsage(key, { outcome: settled.outcome, failureClass: settled.outcome === "success" ? null : "parent_turn_failed", elapsedMs: settled.elapsedMs });
-    return;
-  }
-  // A bridge that never closes its children must not grow this map without
-  // bound; the oldest is closed out as a failure rather than dropped, which
-  // would leave its `active` count raised forever.
-  while (bridgeSubagentUsage.size > MAX_TRACKED_BRIDGE_SUBAGENTS) {
-    closeBridgeSubagentUsage(bridgeSubagentUsage.keys().next().value, { outcome: "failure", failureClass: "subagent_result_missing" });
-  }
-}
-
-/**
- * Move one child from `started` to how it ended.
- *
- * `byStatus` is a breakdown of how spawns finished, but only the open path ever
- * wrote to it, so it read `{ started: N }` forever -- which says "none of these
- * ever finished" about children that had all completed. Settled here rather
- * than at either caller because this is the one place a child actually
- * transitions from open to closed, and it does so exactly once.
- */
-function settleSubagentStatus(requestId, outcome) {
-  const status = outcome === "failure" ? "failure" : "success";
-  if ((subagentTelemetry.byStatus.started ?? 0) > 0) subagentTelemetry.byStatus.started -= 1;
-  bumpCount(subagentTelemetry.byStatus, status, 1);
-  // Attach it to the batch it came from so a row can show how its children
-  // ended, not just that they started. Oldest unsettled batch for this request
-  // first: children open in order and a batch is only ever partly settled while
-  // its siblings are still running.
-  const batch = subagentTelemetry.recent.find((candidate) => candidate.requestId === requestId
-    && candidate.mechanism === "bridge_native"
-    && (candidate.settled?.success ?? 0) + (candidate.settled?.failure ?? 0) < candidate.count);
-  if (batch) {
-    batch.settled = batch.settled ?? { success: 0, failure: 0 };
-    batch.settled[status] += 1;
-  }
-  scheduleRouterStatePersist();
-}
-
-function closeBridgeSubagentUsage(key, { outcome = "success", failureClass = null, elapsedMs = null, toolCalls = 0 } = {}) {
-  const entry = bridgeSubagentUsage.get(key);
-  if (!entry) return false;
-  bridgeSubagentUsage.delete(key);
-  agentActivity.finish(`bridge:${key}`, { requestId: key, outcome });
-  settleSubagentStatus(entry.requestId, outcome);
-  recordUsageEvent({
-    phase: "result",
-    requestId: key,
-    role: entry.role,
-    provider: entry.provider,
-    model: entry.model,
-    workspace: entry.workspace,
-    origin: "subagent",
-    outcome,
-    failureClass,
-    elapsedMs: Number.isFinite(elapsedMs) ? elapsedMs : Date.now() - entry.startedAt,
-    toolCalls,
-    timestamp: new Date().toISOString(),
-  });
-  const parent = bridgeParentActivity.get(entry.requestId);
-  if (parent) {
-    parent.children.delete(key);
-    closeBridgeParentActivity(entry.requestId);
-  }
-  return true;
-}
-
-// A CLI child cannot outlive the parent turn that spawned it, so the parent's
-// result is the deadline for every child still open under it. This is what
-// makes the bridge's `subagent_result` report an accuracy improvement rather
-// than a requirement: without one the child is still counted, measured against
-// the parent turn instead of its own.
-function closeBridgeSubagentsForRequest(requestId, outcome, elapsedMs = null) {
-  if (!requestId) return 0;
-  const settled = { outcome: outcome === "success" ? "success" : "failure", elapsedMs: Number.isFinite(elapsedMs) ? Math.max(0, elapsedMs) : null };
-  const context = bridgeRequestContext.get(requestId);
-  // Remembered so a report that arrives after this point can still be settled;
-  // a fallback chain re-registers the context per candidate, which clears it.
-  if (context) context.finished = settled;
-  let closed = 0;
-  for (const [key, entry] of [...bridgeSubagentUsage]) {
-    if (entry.requestId !== requestId) continue;
-    closeBridgeSubagentUsage(key, { outcome: settled.outcome, failureClass: settled.outcome === "success" ? null : "parent_turn_failed" });
-    closed += 1;
-  }
-  return closed;
-}
-
-function bumpCount(collection, key, amount) {
-  collection[key] = (collection[key] ?? 0) + amount;
-}
-
-function recordSubagentSpawn({ mechanism, provider = null, role = null, status = "started", tool = null, requestId = null, workspace = null, count = 1 }) {
-  if (!SUBAGENT_MECHANISMS.includes(mechanism) || !Number.isInteger(count) || count < 1) return null;
-  const resolvedProvider = typeof provider === "string" && provider.trim() ? safeMetricLabel(provider) : null;
-  if (!resolvedProvider) attributionDiagnostics.byReason.missing_provider += count;
-  const entry = {
-    timestamp: new Date().toISOString(),
-    mechanism,
-    provider: resolvedProvider,
-    role: role ?? "unattributed",
-    status,
-    tool,
-    requestId,
-    workspace: workspace ?? null,
-    count,
-    settled: { success: 0, failure: 0 },
-  };
-  subagentTelemetry.total += count;
-  bumpCount(subagentTelemetry.byMechanism, mechanism, count);
-  if (entry.provider) bumpCount(subagentTelemetry.byProvider, entry.provider, count);
-  bumpCount(subagentTelemetry.byRole, entry.role, count);
-  bumpCount(subagentTelemetry.byStatus, entry.status, count);
-  subagentTelemetry.recent.push(entry);
-  while (subagentTelemetry.recent.length > MAX_RECENT_SUBAGENT_SPAWNS) subagentTelemetry.recent.shift();
-  recordRouterEvent({
-    phase: "subagent_spawn",
-    requestId,
-    role,
-    requestedModel: null,
-    provider: entry.provider,
-    model: null,
-    workspace,
-    outcome: status,
-  });
-  scheduleRouterStatePersist();
-  return entry;
-}
-
-function resetSubagentTelemetry() {
-  subagentTelemetry.total = 0;
-  subagentTelemetry.byMechanism = Object.fromEntries(SUBAGENT_MECHANISMS.map((mechanism) => [mechanism, 0]));
-  subagentTelemetry.byProvider = {};
-  subagentTelemetry.byRole = {};
-  subagentTelemetry.byStatus = {};
-  subagentTelemetry.recent = [];
-  orchestratorProviderBySession.clear();
-  bridgeRequestContext.clear();
-  bridgeSessionContext.clear();
-  for (const key of [...bridgeSubagentUsage.keys()]) {
-    closeBridgeSubagentUsage(key, { outcome: "failure", failureClass: "telemetry_reset" });
-  }
-  for (const parent of bridgeParentActivity.values()) {
-    agentActivity.finish(parent.subject, { requestId: parent.subject, outcome: "failure" });
-  }
-  bridgeParentActivity.clear();
-}
-
-function subagentStatus() {
-  return {
-    total: subagentTelemetry.total,
-    byMechanism: { ...subagentTelemetry.byMechanism },
-    byProvider: { ...subagentTelemetry.byProvider },
-    byRole: { ...subagentTelemetry.byRole },
-    byStatus: { ...subagentTelemetry.byStatus },
-    // Codex's own OTLP spawn counter, kept beside the router's count rather
-    // than merged into it: it covers only Codex-exported threads, so adding
-    // the two would double-count every `router_alias` spawn.
-    codexNativeSpawns: otelTelemetry.threads.spawns.total,
-    spawnCapableProviders: Object.keys(ROUTING.providers).filter((provider) => providerCapabilities(provider).subagentSpawn),
-    recent: [...subagentTelemetry.recent].reverse(),
-  };
-}
 
 // Ingests a provider bridge's report that its CLI invoked a subagent spawn
 // tool. Only reports naming a request id this router actually issued are
@@ -3226,25 +2856,7 @@ const INGESTED_AGENT_EVENTS = new Set(["subagent_spawn", "subagent_result", "sub
 // TTL) and are never something an external report can set.
 const REPORTABLE_AGENT_ACTIVITY_STATES = new Set(["tool_wait", "user_wait", "subagent_wait", "resumed", "finished", "failed", "heartbeat"]);
 
-let anonymousChildSequence = 0;
 
-// The children one report names, as `{ id, model }`. A bridge that assigns its
-// own ids gets them back on the matching `subagent_result`; one that names no
-// children at all still gets `count` distinct buckets rather than a single
-// shared one, so a fan-out is never collapsed into one turn.
-function reportedChildren(event) {
-  const listed = (Array.isArray(event.children) ? event.children : []).filter((child) => child && typeof child === "object");
-  const children = listed.map((child) => ({
-    id: typeof child.id === "string" && child.id.trim() ? safeMetricLabel(child.id) : null,
-    model: typeof child.model === "string" && child.model.trim() ? safeMetricLabel(child.model) : null,
-  }));
-  // `count` is the older, id-less form of the same statement, so a report that
-  // names fewer children than it counts is padded rather than truncated: the
-  // unnamed ones are real subagents that simply cannot be closed individually.
-  const count = Number.isInteger(event.count) && event.count > 0 ? event.count : 1;
-  while (children.length < count) children.push({ id: null, model: null });
-  return children.map((child) => child.id ? child : { ...child, id: `anon${(anonymousChildSequence += 1)}` });
-}
 
 function ingestAgentEvents(payload) {
   const requestId = typeof payload?.requestId === "string" ? payload.requestId.trim() : "";
@@ -3605,94 +3217,12 @@ setUpstreamShapeHooks({
   },
 });
 
-function classifyProviderFailure(status, body = "") {
-  const text = String(body ?? "");
-  if (/session.?limit|session.*(?:exhaust|capacity)|concurrent session/i.test(text)) return "session_limit";
-  if (/quota|credit|billing|usage.?limit|usage exhausted|insufficient.*(?:fund|quota)/i.test(text)) return "quota_exhausted";
-  if (status === 429 || /rate.?limit|weekly.?limit|throttl|too many requests/i.test(text)) return "throttled";
-  if (/high.?demand|overloaded|capacity/i.test(text)) return "capacity";
-  if (status === 408 || /timeout|timed.?out/i.test(text)) return "timeout";
-  if ([502, 503, 504].includes(status) || /temporarily unavailable|unavailable/i.test(text)) return "unavailable";
-  if (/invalid model|model name.*(?:invalid|not found)|unknown model/i.test(text)) return "invalid_model";
-  if ([401, 403].includes(status)) return "authentication";
-  if (typeof status === "number" && status >= 500) return "upstream_error";
-  return "request_error";
-}
-
-function recordRouterEvent({ phase, requestId, role = null, requestedModel, provider, model, workspace = null, outcome = null, status = null, failureClass = null, denialReason = null, spawnFailureReason = null, elapsedMs = null, toolCalls = 0, errorName = null, errorCode = null, syscall = null, origin = null, selection = null, normalizedItemIds = 0, droppedReasoningItems = 0 }) {
-  const timestamp = new Date().toISOString();
-  const workspaceContext = typeof workspace === "string" ? { key: workspace, cwd: null } : workspace;
-  const effectiveOrigin = origin ?? usageOrigin(role, provider);
-  const effectiveRole = role ?? (effectiveOrigin === "orchestrator" ? "orchestrator" : null);
-  const event = {
-    schema: "autodev-router-event-v1",
-    timestamp,
-    routerInstanceId: ROUTER_INSTANCE_ID,
-    requestId,
-    phase,
-    role: effectiveRole,
-    requestedModel,
-    provider,
-    model,
-    workspace: workspaceContext?.key ?? null,
-    cwd: workspaceContext?.cwd ?? null,
-    outcome,
-    status,
-    failureClass,
-    denialReason,
-    spawnFailureReason,
-    elapsedMs,
-    toolCalls,
-    errorName,
-    errorCode,
-    syscall,
-    // "primary", "last_resort" or "exhaustion_wait": which selection pass chose
-    // this provider. Phase stays as it was so every existing counter keeps
-    // working; this only says how hard the router had to look.
-    selection,
-    // How many item ids this request had to have corrected. A provider minting
-    // ids that violate the Responses contract is otherwise invisible until a
-    // session dies against a stricter provider weeks later.
-    normalizedItemIds,
-    // Reasoning items removed because this upstream could not resolve them.
-    droppedReasoningItems,
-  };
-  recentRouterEvents.push(event);
-  while (recentRouterEvents.length > Math.max(1, MAX_RECENT_EVENTS)) recentRouterEvents.shift();
-
-  if (provider && model && ["selected", "skipped", "result"].includes(phase)) {
-    recordUsageEvent({ phase, requestId, role: effectiveRole, provider, model, workspace: workspaceContext, outcome, failureClass, status, elapsedMs, toolCalls, timestamp, origin: effectiveOrigin });
-  }
-  // Any CLI child still open under this request ends with it; see
-  // closeBridgeSubagentsForRequest.
-  if (phase === "result") closeBridgeSubagentsForRequest(requestId, outcome, elapsedMs);
-  const state = provider ? providerState(provider) : null;
-  if (state && phase === "selected") {
-    state.attempts += 1;
-    state.lastAttemptAt = timestamp;
-  } else if (state && phase === "skipped") {
-    state.skipped += 1;
-    state.lastFailureClass = failureClass;
-  } else if (state && phase === "result") {
-    if (outcome === "success") {
-      state.successes += 1;
-      state.lastSuccessAt = timestamp;
-      state.lastFailureClass = null;
-      state.lastFailure = null;
-    } else {
-      state.failures += 1;
-      state.lastFailureAt = timestamp;
-      state.lastFailureClass = failureClass;
-      state.lastFailure = { timestamp, class: failureClass, status };
-    }
-  }
-  console.error(JSON.stringify(event));
-  scheduleRouterStatePersist();
-  return event;
+function recordRouterEvent(input) {
+  return routerEvents.record(input);
 }
 
 function resetRouterTelemetry() {
-  recentRouterEvents.length = 0;
+  routerEvents.clear();
   for (const state of providerTelemetry.values()) {
     state.attempts = 0;
     state.successes = 0;
@@ -3707,9 +3237,7 @@ function resetRouterTelemetry() {
   resetUsageTelemetry();
   resetConcurrencyTelemetry();
   resetSubagentTelemetry();
-  spawnFailureTelemetry.total = 0;
-  spawnFailureTelemetry.byReason = {};
-  spawnFailureTelemetry.recent = [];
+  resetSpawnFailureTelemetry();
   COOLDOWNS.clearAll();
   scheduleRouterStatePersist();
 }
@@ -3852,7 +3380,7 @@ function getRouterStatus(now = Date.now()) {
       exists: existsSync(effectiveStateFile()),
       updatedAt: persistedStateUpdatedAt,
     },
-    authentication: { responseRequests: Boolean(ROUTER_AUTH_TOKEN) },
+    authentication: authStatus(),
     routing: routingStatus(),
     limits: limitsStatus(),
     disabledProviders: ROUTING_POLICY.runtimeState().disabledProviders,
@@ -3884,7 +3412,7 @@ function getRouterStatus(now = Date.now()) {
     // projection directly.
     liveActivity: projection.canonicalTotal,
     providers,
-    recentEvents: [...recentRouterEvents].reverse(),
+    recentEvents: routerEvents.getRecentEvents(true),
     codexState: codexStateStatus(),
   };
 }
@@ -4241,7 +3769,7 @@ function serializeRouterState() {
     // cooldowns are the router's own guesses about a moment that has passed, so
     // a restart is a legitimate reason to go and look again.
     providerCooldowns: COOLDOWNS.persistedHardEntries(),
-    recentEvents: [...recentRouterEvents],
+    recentEvents: routerEvents.getRecentEvents(false),
     otelTelemetry: otelPersistenceSnapshot(),
   }, null, 2);
 }
@@ -4403,42 +3931,21 @@ function loadRouterState(file = effectiveStateFile()) {
       concurrencyManager.restoreTelemetry(parsed.concurrency);
     }
     if (parsed.spawnFailures && typeof parsed.spawnFailures === "object") {
-      if (Number.isInteger(parsed.spawnFailures.total) && parsed.spawnFailures.total >= 0) spawnFailureTelemetry.total = parsed.spawnFailures.total;
-      if (parsed.spawnFailures.byReason && typeof parsed.spawnFailures.byReason === "object") spawnFailureTelemetry.byReason = { ...parsed.spawnFailures.byReason };
-      if (Array.isArray(parsed.spawnFailures.recent)) spawnFailureTelemetry.recent = parsed.spawnFailures.recent.filter((item) => item && typeof item === "object").slice(-50);
+      subagentRegistry.restoreSpawnFailureTelemetry(parsed.spawnFailures);
     }
     restoreOtelTelemetry(parsed.otelTelemetry);
     if (parsed.subagents && typeof parsed.subagents === "object") {
-      const saved = parsed.subagents;
-      if (Number.isInteger(saved.total) && saved.total >= 0) subagentTelemetry.total = saved.total;
-      for (const section of ["byMechanism", "byProvider", "byRole", "byStatus"]) {
-        if (!saved[section] || typeof saved[section] !== "object") continue;
-        for (const [key, count] of Object.entries(saved[section])) {
-          if (typeof count === "number" && Number.isFinite(count) && count >= 0) subagentTelemetry[section][safeMetricLabel(key)] = count;
-        }
-      }
-      if (Array.isArray(saved.recent)) {
-        subagentTelemetry.recent = saved.recent
-          .filter((entry) => entry && typeof entry === "object")
-          .slice(-MAX_RECENT_SUBAGENT_SPAWNS)
-          .map((entry) => ({
-            ...entry,
-            settled: entry.settled && typeof entry.settled === "object"
-              ? { success: Number(entry.settled.success) || 0, failure: Number(entry.settled.failure) || 0 }
-              : { success: 0, failure: 0 },
-          }));
-      }
+      subagentRegistry.restoreSubagentTelemetry(parsed.subagents);
     }
     if (Array.isArray(parsed.providerCooldowns)) {
       COOLDOWNS.restoreHardEntries(parsed.providerCooldowns, Date.now());
     }
     ROUTING_POLICY.restoreRuntimeState({ disabledProviders: parsed.disabledProviders });
     if (Array.isArray(parsed.recentEvents)) {
-      recentRouterEvents.length = 0;
-      recentRouterEvents.push(...parsed.recentEvents.filter((event) => event && typeof event === "object").slice(-Math.max(1, MAX_RECENT_EVENTS)));
+      routerEvents.restore(parsed.recentEvents);
       if (!parsed.usage) {
         resetUsageTelemetry();
-        for (const event of recentRouterEvents) {
+        for (const event of routerEvents.getRecentEvents()) {
           if (event.provider && event.model && event.phase) recordUsageEvent(event);
         }
         inFlightUsage.clear();
@@ -4936,9 +4443,7 @@ async function requestBody(request) {
 }
 
 function mcpContractForRole(agentRole) {
-  const requested = typeof agentRole === "string" && agentRole.trim() ? agentRole.trim().toLowerCase() : "default";
-  const key = requested === ORCHESTRATOR_AGENT_ROLE ? "orchestrator" : requested;
-  return Array.isArray(EXECUTION_CONTRACT.roles?.[key]?.mcp) ? EXECUTION_CONTRACT.roles[key].mcp : [];
+  return subagentMcpContractForRole(agentRole, EXECUTION_CONTRACT);
 }
 
 function recordNativeMcpExposure({ route, agentRole, workspace, requestId, sessionKey }) {
@@ -4957,25 +4462,7 @@ function recordNativeMcpExposure({ route, agentRole, workspace, requestId, sessi
 }
 
 function bridgeTelemetryHeaders(route, requestId) {
-  // Reporting tool_executed/skill_exposed/mcp_exposed observations does not
-  // depend on the bridge's runtime being able to spawn subagents -- a
-  // provider with no spawn tools (minimax, copilot) still runs tools, exposes
-  // skills, and reaches MCP servers, and those observations must not go
-  // unreported just because the spawn watchlist is empty. Only requestId
-  // authorizes the channel; the spawn-tool watchlist is sent alongside it
-  // when this provider has one, so a bridge that can spawn also learns which
-  // tool names count as a spawn.
-  // Native Codex is observed through its OTLP receiver and router-side role
-  // contract path; never leak the local agent-events URL or correlation id to
-  // the remote Codex API. Only local provider bridges consume these headers.
-  if (!requestId || route.provider === "codex") return {};
-  const spawnTools = subagentSpawnToolsFor(route.provider);
-  const headers = {
-    [REQUEST_ID_HEADER]: requestId,
-    [AGENT_EVENTS_URL_HEADER]: AGENT_EVENTS_URL,
-  };
-  if (spawnTools.length > 0) headers[SUBAGENT_SPAWN_TOOLS_HEADER] = spawnTools.join(",");
-  return headers;
+  return subagentBridgeTelemetryHeaders(route, requestId, { executionContract: EXECUTION_CONTRACT, agentEventsUrl: AGENT_EVENTS_URL });
 }
 
 function downstreamHeaders(route, auth, turnMetadataHeader, agentRole = null, requestId = null, session = null) {
@@ -5699,7 +5186,7 @@ function workspaceMetadataForSession(payload, turnMetadataHeader, session) {
     return addWorkspaceIdToTurnMetadata(payload, turnMetadataHeader ?? JSON.stringify({ workspaces: { [workspacePath]: {} } }));
   }
   if (session?.scope === "identified" && !hasWorkspaceClaim(payload, turnMetadataHeader)) {
-    const metadata = workspaceMetadataBySession.get(session.key) ?? turnMetadataHeader;
+    const metadata = getWorkspaceMetadata(session.key) ?? turnMetadataHeader;
     return addWorkspaceIdToTurnMetadata(payload, metadata);
   }
   return turnMetadataHeader;
@@ -5711,14 +5198,7 @@ function workspaceMetadataForSession(payload, turnMetadataHeader, session) {
 // and relays. Everything else about the inbound request (in particular any
 // client-supplied Authorization) is never forwarded: downstreamHeaders()
 // always sets the outbound provider credential independently.
-const FORWARDED_REQUEST_HEADERS = Object.freeze(["x-codex-turn-metadata"]);
 
-// Router-generated (never forwarded from the client) header naming the agent
-// role each outbound provider request is serving. Provider bridges use it to
-// pick their role instructions: the root orchestrator must receive the
-// orchestrator policy, not the leaf policy that forbids spawning subagents.
-const AGENT_ROLE_HEADER = "x-autodev-agent-role";
-const ORCHESTRATOR_AGENT_ROLE = "orchestrator";
 
 // Router-generated (never forwarded from the client) identity of the Codex
 // conversation this request belongs to. A bridge that drives Codex's own
@@ -5731,20 +5211,6 @@ const ORCHESTRATOR_AGENT_ROLE = "orchestrator";
 // and a bridge holding CLI state under that key would let two unrelated Codex
 // conversations share one process. Telling the bridge the key is not specific
 // lets it fail closed to a one-shot run instead of guessing.
-const SESSION_ID_HEADER = "x-autodev-session-id";
-const SESSION_SCOPE_HEADER = "x-autodev-session-scope";
-
-// Router-generated headers that let a CLI-delegation bridge report the
-// subagents it spawns inside its own runtime. The router owns all three
-// values, so a bridge needs no configuration of its own: the request id is the
-// correlation key (and, being an unguessable per-request UUID the bridge only
-// learns by serving the request, the thing that authorizes the report), the
-// tool list is the watchlist of tool names that mean "a subagent was spawned"
-// for the provider serving this request, and the URL is where to post them.
-const REQUEST_ID_HEADER = "x-autodev-request-id";
-const SUBAGENT_SPAWN_TOOLS_HEADER = "x-autodev-subagent-spawn-tools";
-const AGENT_EVENTS_URL_HEADER = "x-autodev-agent-events-url";
-const AGENT_EVENTS_PATH = "/v1/agent-events";
 const AGENT_EVENTS_URL = `http://${HOST}:${PORT}${AGENT_EVENTS_PATH}`;
 
 function parseTurnMetadataJson(value) {
@@ -5856,17 +5322,6 @@ function workspaceContextFromRequest(request, payload, turnMetadataHeader) {
   };
   if (workspaceId) context.workspace_id = workspaceId;
   return context;
-}
-
-function routerAuthorizationValid(request, configuredToken = ROUTER_AUTH_TOKEN) {
-  if (!configuredToken) return true;
-  const raw = request.headers.authorization;
-  const value = Array.isArray(raw) ? raw[0] : raw;
-  return typeof value === "string" && value === `Bearer ${configuredToken}`;
-}
-
-function setRouterAuthTokenForTests(token) {
-  ROUTER_AUTH_TOKEN = typeof token === "string" ? token : "";
 }
 
 function sendRouterAuthFailure(response) {
