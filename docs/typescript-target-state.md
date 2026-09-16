@@ -252,7 +252,16 @@ Generated files should be clearly marked and protected by drift validation. Avoi
 1. Add strict `tsconfig.json` and repository TypeScript conventions
 2. Upgrade Node to 24 LTS and establish the native-TypeScript runtime constraints
 3. Convert shared `.mjs` libraries to `.ts` so later migrations reuse typed primitives
-4. Split and convert the model router into cohesive TypeScript modules
+4. Split and convert the model router into cohesive TypeScript modules:
+   - `src/router/auth.ts`: Bearer token authentication & authorization validation.
+   - `src/router/lifecycle.ts`: Router lifecycle management, graceful draining & shutdown.
+   - `src/router/cooldown.ts`: Provider cooldown management, probe failure classification, and retry ladders.
+   - `src/router/concurrency.ts`: Subagent concurrency slots, session key tracking, and reservation limits.
+   - `src/router/events.ts`: Router event recording, recent event ring buffer, and persistence serialization.
+   - `src/router/subagents.ts`: Subagent registry, capability resolution, role contracts, bridge telemetry headers, and child normalization.
+   - `src/router/persistence.ts`: Router state persistence envelope (`autodev-router-persisted-state-v3`), atomic writes (`0o600`), debounced scheduling, and section restore dispatch.
+   - `src/router/usage.ts`: Usage telemetry buckets, workspace attribution, privacy-safe hashing, live agent projection, attribution diagnostics, and snapshot restoration.
+   - `src/router/otel.ts`: OpenTelemetry ingestion (logs, traces, metrics), delta/cumulative series calculation, deduplication windows, MCP health & lifecycle tracking, bridge observation events, additive `AUTODEV_OTEL_ATTRIBUTES=v1` payload enrichment, and persistence snapshot/restore (`schemaVersion: 6`).
 5. Convert the Claude Python bridge and unify provider contracts
 6. Convert AutoDev-owned config/render Python scripts
 7. Replace large Bash installer/reconciliation logic with typed CLI/platform modules
