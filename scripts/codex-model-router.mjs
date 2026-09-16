@@ -134,6 +134,13 @@ import {
   getBridgeRequestContext,
   resetSpawnFailureTelemetry,
 } from "../src/router/subagents.ts";
+import {
+  PERSISTED_STATE_SCHEMA,
+  RouterPersistence,
+  effectiveStateFile,
+  restoreProviderTelemetrySection,
+  setDefaultPersistenceManager,
+} from "../src/router/persistence.ts";
 
 const HOST = process.env.CODEX_MODEL_ROUTER_HOST ?? "127.0.0.1";
 const PORT = Number.parseInt(process.env.CODEX_MODEL_ROUTER_PORT ?? "4100", 10);
@@ -142,10 +149,7 @@ const AUTH_FILE = process.env.CODEX_ROUTER_AUTH_FILE ?? `${CODEX_HOME}/auth.json
 const CATALOG_FILE = process.env.CODEX_ROUTER_CATALOG_FILE ?? `${CODEX_HOME}/codex-model-catalog.json`;
 const DASHBOARD_FILE = new URL("./codex-model-router-dashboard.html", import.meta.url);
 const IS_MAIN = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
-const STATE_FILE = process.env.CODEX_ROUTER_STATE_FILE ?? `${CODEX_HOME}/codex-router-state.json`;
-function effectiveStateFile() {
-  return process.env.CODEX_ROUTER_STATE_FILE ?? STATE_FILE;
-}
+const STATE_FILE = effectiveStateFile();
 const CODEX_STATE_DB_PATH = process.env.CODEX_STATE_DB_PATH ?? `${CODEX_HOME}/state_5.sqlite`;
 // The collector is read-only: it never writes to the Codex-owned
 // state_5.sqlite file or any other path inside $CODEX_HOME. Its derived
@@ -312,9 +316,6 @@ const bridgeRequestContext = {
   get: (id) => subagentRegistry.getBridgeRequestContext(id),
   set: (id, val) => subagentRegistry.noteBridgeRequest(id, val),
 };
-let persistedStateUpdatedAt = null;
-let persistTimeout = null;
-let persistChain = Promise.resolve();
 const providerTelemetry = new Map(ROUTES.map(({ provider }) => [provider, {
   attempts: 0,
   successes: 0,
@@ -3378,7 +3379,7 @@ function getRouterStatus(now = Date.now()) {
       enabled: IS_MAIN,
       source: process.env.CODEX_ROUTER_STATE_FILE ? "env_override" : "default_codex_home",
       exists: existsSync(effectiveStateFile()),
-      updatedAt: persistedStateUpdatedAt,
+      updatedAt: routerPersistence.getUpdatedAt(),
     },
     authentication: authStatus(),
     routing: routingStatus(),
@@ -3736,19 +3737,148 @@ function restoreOtelTelemetry(snapshot) {
   }
 }
 
-// The persisted-state file's envelope identity. The trailing version names the
-// envelope, not the sections inside it: a version stamp that changed whenever
-// any section was added used to invalidate the whole file, so adding one field
-// threw away every counter the router had accumulated -- provider telemetry,
-// usage, subagent spawns, spawn failures, the event log. Sections are restored
-// individually below and each validates its own shape, so a section whose
-// format really did change is the only thing dropped when it changes.
-const PERSISTED_STATE_SCHEMA = "autodev-router-persisted-state";
+function restoreUsagePersistenceSnapshot(savedUsage) {
+  if (!savedUsage || typeof savedUsage !== "object" || (savedUsage.schemaVersion !== 7 && savedUsage.schemaVersion !== 8)) {
+    return;
+  }
+  if (Array.isArray(savedUsage.workspaceRegistry)) {
+    for (const [id, key] of savedUsage.workspaceRegistry) {
+      if (typeof id === "string" && typeof key === "string") {
+        registerWorkspaceId(id, key);
+      }
+    }
+  }
+  for (const section of ["byRole", "byModel", "byOrigin"]) {
+    if (!savedUsage[section] || typeof savedUsage[section] !== "object") continue;
+    for (const [key, saved] of Object.entries(savedUsage[section])) {
+      if (!saved || typeof saved !== "object") continue;
+      const current = usageBucket(usageTelemetry[section], key);
+      restoreUsageBucket(current, saved);
+    }
+  }
+  if (savedUsage.byWorkspace && typeof savedUsage.byWorkspace === "object") {
+    for (const [key, saved] of Object.entries(savedUsage.byWorkspace)) {
+      if (!saved || typeof saved !== "object") continue;
+      const current = workspaceBucket(usageTelemetry.byWorkspace, key, typeof saved.cwd === "string" ? saved.cwd : null);
+      restoreUsageBucket(current, saved);
+      if (Number.isInteger(saved.skillUses) && saved.skillUses >= 0) {
+        current.skillUses = saved.skillUses;
+      }
+      if (Number.isInteger(saved.skillContextsInjected) && saved.skillContextsInjected >= 0) {
+        current.skillContextsInjected = saved.skillContextsInjected;
+      }
+      for (const counter of ["toolsUnattributed", "skillsUnattributed", "toolsExecuted", "toolsRequested", "toolsUnavailable", "skillsExposed"]) {
+        if (Number.isInteger(saved[counter]) && saved[counter] >= 0) {
+          current[counter] = saved[counter];
+        }
+      }
+      for (const flag of ["toolsCapable", "skillsCapable", "mcpCapable"]) {
+        if (saved[flag] === true) current[flag] = true;
+      }
+      if (saved.byMcp && typeof saved.byMcp === "object") {
+        for (const [mcp, cnt] of Object.entries(saved.byMcp)) {
+          if (typeof cnt === "number" && Number.isFinite(cnt) && cnt >= 0) {
+            current.byMcp[safeMetricLabel(mcp)] = cnt;
+            current.mcpCapable = true;
+          }
+        }
+      }
+      if (Array.isArray(saved.mcpExposed)) {
+        for (const row of saved.mcpExposed) {
+          if (row && typeof row.server === "string" && row.server.trim() && typeof row.count === "number" && row.count >= 0) {
+            const server = safeMetricLabel(row.server);
+            const restored = workspaceMcpBucket(current, server);
+            restored.count = row.count;
+            current.mcpCapable = true;
+          }
+        }
+      }
+      if (Array.isArray(saved.bridgeTools)) {
+        for (const tool of saved.bridgeTools) {
+          if (tool && typeof tool.tool === "string") {
+            const restored = { tool: safeMetricLabel(tool.tool), server: typeof tool.server === "string" ? safeMetricLabel(tool.server) : "", count: 0, byStatus: {} };
+            if (typeof tool.count === "number" && tool.count >= 0) restored.count = tool.count;
+            if (tool.byStatus && typeof tool.byStatus === "object") {
+              for (const [st, cnt] of Object.entries(tool.byStatus)) if (typeof cnt === "number" && cnt >= 0) restored.byStatus[safeMetricLabel(st)] = cnt;
+            }
+            current.bridgeObservations.tools.set(restored.tool, restored);
+          }
+        }
+      }
+      if (Array.isArray(saved.bridgeSkills)) {
+        for (const skill of saved.bridgeSkills) {
+          if (skill && typeof skill.skill === "string" && typeof skill.count === "number" && skill.count >= 0) {
+            current.bridgeObservations.skills.set(safeMetricLabel(skill.skill), skill.count);
+          }
+        }
+      }
+      for (const section of ["byRole", "byModel", "byProvider"]) {
+        if (!saved[section] || typeof saved[section] !== "object") continue;
+        for (const [name, value] of Object.entries(saved[section])) restoreUsageBucket(usageBucket(current[section], name), value);
+      }
+      if (Array.isArray(saved.byTool)) {
+        for (const tool of saved.byTool) {
+          if (tool && typeof tool.tool === "string") {
+            const restoredTool = {
+              tool: safeMetricLabel(tool.tool, "unknown-tool"),
+              source: safeMetricLabel(tool.source),
+              server: toolServerAttribute({ server: tool.server, mcp_server: tool.mcp_server }),
+              count: 0,
+              byStatus: {},
+              durationCount: 0,
+              durationMs: 0,
+            };
+            for (const field of ["count", "durationCount", "durationMs"]) {
+              if (typeof tool[field] === "number" && tool[field] >= 0) restoredTool[field] = tool[field];
+            }
+            if (tool.byStatus && typeof tool.byStatus === "object") {
+              for (const [st, cnt] of Object.entries(tool.byStatus)) {
+                if (typeof cnt === "number" && cnt >= 0) restoredTool.byStatus[safeMetricLabel(st)] = cnt;
+              }
+            }
+            current.tools.set(toolKey(restoredTool), restoredTool);
+          }
+        }
+      }
+      if (Array.isArray(saved.bySkill)) {
+        for (const skill of saved.bySkill) {
+          if (skill && typeof skill.skill === "string") {
+            const restoredSkill = {
+              skill: safeMetricLabel(skill.skill),
+              total: 0,
+              uses: 0,
+              byStatus: {},
+              byInvokeType: {},
+              byAgentKind: {},
+              byModel: {},
+              byPlugin: {},
+            };
+            if (typeof skill.total === "number" && skill.total >= 0) restoredSkill.total = skill.total;
+            if (typeof skill.uses === "number" && skill.uses >= 0) restoredSkill.uses = skill.uses;
+            for (const dict of ["byStatus", "byInvokeType", "byAgentKind", "byModel", "byPlugin"]) {
+              if (skill[dict] && typeof skill[dict] === "object") {
+                for (const [k, cnt] of Object.entries(skill[dict])) {
+                  if (typeof cnt === "number" && cnt >= 0) restoredSkill[dict][safeMetricLabel(k)] = cnt;
+                }
+              }
+            }
+            current.skills.set(restoredSkill.skill, restoredSkill);
+          }
+        }
+      }
+    }
+  }
+  const savedTotals = savedUsage.totals;
+  if (savedTotals && typeof savedTotals === "object") {
+    restoreUsageBucket(usageTelemetry.totals, savedTotals);
+  }
+}
 
-function serializeRouterState() {
-  return JSON.stringify({
-    schema: `${PERSISTED_STATE_SCHEMA}-v3`,
-    updatedAt: new Date().toISOString(),
+const routerPersistence = new RouterPersistence({
+  stateFile: () => effectiveStateFile(),
+  isMain: IS_MAIN,
+  debounceMs: 500,
+  getSnapshot: () => ({
     disabledProviders: ROUTING_POLICY.runtimeState().disabledProviders,
     providerTelemetry: Object.fromEntries(providerTelemetry),
     usage: usagePersistenceSnapshot(),
@@ -3762,187 +3892,29 @@ function serializeRouterState() {
       recent: subagentTelemetry.recent,
     },
     spawnFailures: spawnFailureTelemetry,
-    // Only hard cooldowns survive a restart. A provider that stated it is out
-    // of usage until Tuesday is still out of usage on Tuesday, and the router
-    // restarts often enough (launchd KeepAlive) that dropping that would put it
-    // straight back to re-probing an exhausted account. Transient and probe
-    // cooldowns are the router's own guesses about a moment that has passed, so
-    // a restart is a legitimate reason to go and look again.
     providerCooldowns: COOLDOWNS.persistedHardEntries(),
     recentEvents: routerEvents.getRecentEvents(false),
     otelTelemetry: otelPersistenceSnapshot(),
-  }, null, 2);
-}
-
-function loadRouterState(file = effectiveStateFile()) {
-  if (!existsSync(file)) return false;
-  try {
-    const parsed = JSON.parse(readFileSync(file, "utf8"));
-    // Envelope check only. Every section below restores itself and rejects a
-    // shape it does not recognise, which is what decides whether that section
-    // survives -- not a global stamp that discards the file over an unrelated
-    // addition.
-    if (typeof parsed?.schema !== "string" || !parsed.schema.startsWith(PERSISTED_STATE_SCHEMA)) return false;
-    for (const [provider, saved] of Object.entries(parsed.providerTelemetry ?? {})) {
-      if (!providerTelemetry.has(provider) || !saved || typeof saved !== "object") continue;
-      const current = providerState(provider);
-      for (const field of ["attempts", "successes", "failures", "skipped"]) {
-        if (Number.isInteger(saved[field]) && saved[field] >= 0) current[field] = saved[field];
-      }
-      for (const field of ["lastAttemptAt", "lastSuccessAt", "lastFailureAt", "lastFailureClass"]) {
-        if (saved[field] === null || typeof saved[field] === "string") current[field] = saved[field];
-      }
-      if (saved.lastFailure === null || (saved.lastFailure && typeof saved.lastFailure === "object")) current.lastFailure = saved.lastFailure;
-    }
-    if (parsed.usage && typeof parsed.usage === "object" && (parsed.usage.schemaVersion === 7 || parsed.usage.schemaVersion === 8)) {
-      if (Array.isArray(parsed.usage.workspaceRegistry)) {
-        for (const [id, key] of parsed.usage.workspaceRegistry) {
-          if (typeof id === "string" && typeof key === "string") {
-            registerWorkspaceId(id, key);
-          }
-        }
-      }
-      for (const section of ["byRole", "byModel", "byOrigin"]) {
-        if (!parsed.usage[section] || typeof parsed.usage[section] !== "object") continue;
-        for (const [key, saved] of Object.entries(parsed.usage[section])) {
-          if (!saved || typeof saved !== "object") continue;
-          const current = usageBucket(usageTelemetry[section], key);
-          restoreUsageBucket(current, saved);
-        }
-      }
-      if (parsed.usage.byWorkspace && typeof parsed.usage.byWorkspace === "object") {
-        for (const [key, saved] of Object.entries(parsed.usage.byWorkspace)) {
-          if (!saved || typeof saved !== "object") continue;
-          const current = workspaceBucket(usageTelemetry.byWorkspace, key, typeof saved.cwd === "string" ? saved.cwd : null);
-          restoreUsageBucket(current, saved);
-          if (Number.isInteger(saved.skillUses) && saved.skillUses >= 0) {
-            current.skillUses = saved.skillUses;
-          }
-          if (Number.isInteger(saved.skillContextsInjected) && saved.skillContextsInjected >= 0) {
-            current.skillContextsInjected = saved.skillContextsInjected;
-          }
-          for (const counter of ["toolsUnattributed", "skillsUnattributed", "toolsExecuted", "toolsRequested", "toolsUnavailable", "skillsExposed"]) {
-            if (Number.isInteger(saved[counter]) && saved[counter] >= 0) {
-              current[counter] = saved[counter];
-            }
-          }
-          for (const flag of ["toolsCapable", "skillsCapable", "mcpCapable"]) {
-            if (saved[flag] === true) current[flag] = true;
-          }
-          if (saved.byMcp && typeof saved.byMcp === "object") {
-            for (const [mcp, cnt] of Object.entries(saved.byMcp)) {
-              if (typeof cnt === "number" && Number.isFinite(cnt) && cnt >= 0) {
-                current.byMcp[safeMetricLabel(mcp)] = cnt;
-                current.mcpCapable = true;
-              }
-            }
-          }
-          if (Array.isArray(saved.mcpExposed)) {
-            for (const row of saved.mcpExposed) {
-              if (row && typeof row.server === "string" && row.server.trim() && typeof row.count === "number" && row.count >= 0) {
-                const server = safeMetricLabel(row.server);
-                const restored = workspaceMcpBucket(current, server);
-                restored.count = row.count;
-                current.mcpCapable = true;
-              }
-            }
-          }
-          if (Array.isArray(saved.bridgeTools)) {
-            for (const tool of saved.bridgeTools) {
-              if (tool && typeof tool.tool === "string") {
-                const restored = { tool: safeMetricLabel(tool.tool), server: typeof tool.server === "string" ? safeMetricLabel(tool.server) : "", count: 0, byStatus: {} };
-                if (typeof tool.count === "number" && tool.count >= 0) restored.count = tool.count;
-                if (tool.byStatus && typeof tool.byStatus === "object") {
-                  for (const [st, cnt] of Object.entries(tool.byStatus)) if (typeof cnt === "number" && cnt >= 0) restored.byStatus[safeMetricLabel(st)] = cnt;
-                }
-                current.bridgeObservations.tools.set(restored.tool, restored);
-              }
-            }
-          }
-          if (Array.isArray(saved.bridgeSkills)) {
-            for (const skill of saved.bridgeSkills) {
-              if (skill && typeof skill.skill === "string" && typeof skill.count === "number" && skill.count >= 0) {
-                current.bridgeObservations.skills.set(safeMetricLabel(skill.skill), skill.count);
-              }
-            }
-          }
-          for (const section of ["byRole", "byModel", "byProvider"]) {
-            if (!saved[section] || typeof saved[section] !== "object") continue;
-            for (const [name, value] of Object.entries(saved[section])) restoreUsageBucket(usageBucket(current[section], name), value);
-          }
-          if (Array.isArray(saved.byTool)) {
-            for (const tool of saved.byTool) {
-              if (tool && typeof tool.tool === "string") {
-                const restoredTool = {
-                  tool: safeMetricLabel(tool.tool, "unknown-tool"),
-                  source: safeMetricLabel(tool.source),
-                  server: toolServerAttribute({ server: tool.server, mcp_server: tool.mcp_server }),
-                  count: 0,
-                  byStatus: {},
-                  durationCount: 0,
-                  durationMs: 0,
-                };
-                for (const field of ["count", "durationCount", "durationMs"]) {
-                  if (typeof tool[field] === "number" && tool[field] >= 0) restoredTool[field] = tool[field];
-                }
-                if (tool.byStatus && typeof tool.byStatus === "object") {
-                  for (const [st, cnt] of Object.entries(tool.byStatus)) {
-                    if (typeof cnt === "number" && cnt >= 0) restoredTool.byStatus[safeMetricLabel(st)] = cnt;
-                  }
-                }
-                current.tools.set(toolKey(restoredTool), restoredTool);
-              }
-            }
-          }
-          if (Array.isArray(saved.bySkill)) {
-            for (const skill of saved.bySkill) {
-              if (skill && typeof skill.skill === "string") {
-                const restoredSkill = {
-                  skill: safeMetricLabel(skill.skill),
-                  total: 0,
-                  uses: 0,
-                  byStatus: {},
-                  byInvokeType: {},
-                  byAgentKind: {},
-                  byModel: {},
-                  byPlugin: {},
-                };
-                if (typeof skill.total === "number" && skill.total >= 0) restoredSkill.total = skill.total;
-                if (typeof skill.uses === "number" && skill.uses >= 0) restoredSkill.uses = skill.uses;
-                for (const dict of ["byStatus", "byInvokeType", "byAgentKind", "byModel", "byPlugin"]) {
-                  if (skill[dict] && typeof skill[dict] === "object") {
-                    for (const [k, cnt] of Object.entries(skill[dict])) {
-                      if (typeof cnt === "number" && cnt >= 0) restoredSkill[dict][safeMetricLabel(k)] = cnt;
-                    }
-                  }
-                }
-                current.skills.set(restoredSkill.skill, restoredSkill);
-              }
-            }
-          }
-        }
-      }
-      const savedTotals = parsed.usage.totals;
-      if (savedTotals && typeof savedTotals === "object") {
-        restoreUsageBucket(usageTelemetry.totals, savedTotals);
-      }
-    }
-    if (parsed.concurrency && typeof parsed.concurrency === "object") {
-      concurrencyManager.restoreTelemetry(parsed.concurrency);
-    }
-    if (parsed.spawnFailures && typeof parsed.spawnFailures === "object") {
-      subagentRegistry.restoreSpawnFailureTelemetry(parsed.spawnFailures);
-    }
-    restoreOtelTelemetry(parsed.otelTelemetry);
-    if (parsed.subagents && typeof parsed.subagents === "object") {
-      subagentRegistry.restoreSubagentTelemetry(parsed.subagents);
-    }
-    if (Array.isArray(parsed.providerCooldowns)) {
-      COOLDOWNS.restoreHardEntries(parsed.providerCooldowns, Date.now());
-    }
-    ROUTING_POLICY.restoreRuntimeState({ disabledProviders: parsed.disabledProviders });
-    if (Array.isArray(parsed.recentEvents)) {
-      routerEvents.restore(parsed.recentEvents);
+  }),
+  restoreSection: (section, value, parsed) => {
+    if (section === "providerTelemetry") {
+      restoreProviderTelemetrySection(providerTelemetry, value);
+    } else if (section === "usage") {
+      restoreUsagePersistenceSnapshot(value);
+    } else if (section === "concurrency" && value && typeof value === "object") {
+      concurrencyManager.restoreTelemetry(value);
+    } else if (section === "spawnFailures" && value && typeof value === "object") {
+      subagentRegistry.restoreSpawnFailureTelemetry(value);
+    } else if (section === "otelTelemetry") {
+      restoreOtelTelemetry(value);
+    } else if (section === "subagents" && value && typeof value === "object") {
+      subagentRegistry.restoreSubagentTelemetry(value);
+    } else if (section === "providerCooldowns" && Array.isArray(value)) {
+      COOLDOWNS.restoreHardEntries(value, Date.now());
+    } else if (section === "disabledProviders") {
+      ROUTING_POLICY.restoreRuntimeState({ disabledProviders: value });
+    } else if (section === "recentEvents" && Array.isArray(value)) {
+      routerEvents.restore(value);
       if (!parsed.usage) {
         resetUsageTelemetry();
         for (const event of routerEvents.getRecentEvents()) {
@@ -3951,36 +3923,24 @@ function loadRouterState(file = effectiveStateFile()) {
         inFlightUsage.clear();
       }
     }
-    persistedStateUpdatedAt = typeof parsed.updatedAt === "string" ? parsed.updatedAt : null;
-    return true;
-  } catch (error) {
-    console.error(`Warning: could not load router state from ${file}: ${error instanceof Error ? error.message : String(error)}`);
-    return false;
-  }
+  },
+});
+setDefaultPersistenceManager(routerPersistence);
+
+function serializeRouterState() {
+  return routerPersistence.serialize();
+}
+
+function loadRouterState(file = effectiveStateFile()) {
+  return routerPersistence.load(file);
 }
 
 function persistRouterStateNow(file = effectiveStateFile()) {
-  if (persistTimeout) {
-    clearTimeout(persistTimeout);
-    persistTimeout = null;
-  }
-  const temporaryFile = `${file}.${process.pid}.${Date.now()}.tmp`;
-  persistChain = persistChain.catch(() => {}).then(async () => {
-    await writeFile(temporaryFile, serializeRouterState(), { encoding: "utf8", mode: 0o600 });
-    await rename(temporaryFile, file);
-    persistedStateUpdatedAt = new Date().toISOString();
-  }).catch((error) => {
-    console.error(`Warning: could not persist router state to ${file}: ${error instanceof Error ? error.message : String(error)}`);
-  });
-  return persistChain;
+  return routerPersistence.persistNow(file);
 }
 
 function scheduleRouterStatePersist() {
-  if (!IS_MAIN || persistTimeout) return;
-  persistTimeout = setTimeout(() => {
-    persistTimeout = null;
-    void persistRouterStateNow();
-  }, 500);
+  routerPersistence.schedulePersist();
 }
 
 const CLIENT_DISCONNECT_CODES = new Set([
