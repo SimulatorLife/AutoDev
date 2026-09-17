@@ -46,7 +46,8 @@ class RulesyncPermissionsInventoryTests(unittest.TestCase):
             'PLAYWRIGHT_AGENT_ROLES',
             'PLAYWRIGHT_DISALLOWED_TOOLS',
             'RESEARCH_CAPABLE_ROLES',
-            '"Bash", "Write"',
+            'denied.push("Bash", "Edit", "Write", "NotebookEdit")',
+
             '"--allowed-tools"',
             '"--permission-mode"',
             'CLAUDE_CODE_PERMISSION_MODE ?? "bypassPermissions"',

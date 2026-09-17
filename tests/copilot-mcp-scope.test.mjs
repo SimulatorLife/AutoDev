@@ -5,7 +5,7 @@ import test from "node:test";
 
 import { EXECUTION_CONTRACT, roleContract } from "../src/shared/execution-contract.ts";
 import { copilotMcpArgs, runCopilot } from "../src/providers/copilot.ts";
-import { createBridgeMcpHomes } from "./bridge-mcp-fixture.mjs";
+import { createBridgeMcpHomes } from "./bridge-mcp-fixture.ts";
 
 const homes = createBridgeMcpHomes();
 process.env.CODEX_HOME = homes.codexHome;

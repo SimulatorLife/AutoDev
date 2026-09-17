@@ -8,7 +8,7 @@ import test from "node:test";
 
 import { classifyCliLimit, limitPayload } from "../src/shared/provider-limits.ts";
 import { runCopilot } from "../src/providers/copilot.ts";
-import { createBridgeMcpHomes } from "./bridge-mcp-fixture.mjs";
+import { createBridgeMcpHomes } from "./bridge-mcp-fixture.ts";
 
 const REPO_ROOT = resolve(import.meta.dirname, "..");
 // The bridge reads the MCP catalogue and user-level Copilot MCP file an install

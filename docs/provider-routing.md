@@ -122,7 +122,7 @@ problem, not as a target-repository build failure.
 
 ### Truncation reasons when an orchestrator turn cuts short
 
-The router, all three bridges, and the Python bridge share one vocabulary for
+The router and all four typed provider bridges share one vocabulary for
 why a turn stopped before it finished (`src/shared/provider-limits.ts`
 and the `tests/provider-limits.test.ts` mirroring test pin both sides).
 `provider_limit`, `provider_timeout`, and `provider_interrupted` were the only
@@ -150,9 +150,8 @@ protected path; `agy turn aborted` means no active or pending delegation was
 observed.
 
 Adding a new reason is a small but cross-cutting change: the JS-side
-`INCOMPLETE_REASON_*` constant in `provider-limits.mjs`, the matching Python
-literal in `codex-claude-cli-responses-proxy.py`, the cause ladder in both
-`truncationNotice` functions, and the test that asserts both sides agree.
+the shared typed `INCOMPLETE_REASON_*` contract, each provider cause
+ladder, and the tests that assert all bridges agree.
 
 All providers are treated as capable of MCP, skills, and subagent spawning;
 role TOMLs remain the sole source for role MCP/skill exposure and normal Codex inheritance.
@@ -407,9 +406,8 @@ than only in prose, on both the streamed and non-streamed paths:
 
 The same shape appears as `error.limit` in a non-streamed failure body and as
 `response.incomplete_details.provider_limit` on a streamed one, so the router
-reads one shape wherever it finds it. `src/shared/provider-limits.ts` is
-the single implementation; the Claude bridge is Python and restates the same
-literals, with `tests/provider-limits.test.ts` guarding against drift.
+reads one shape wherever it finds it. `src/shared/provider-limits.ts` is the single implementation imported by all
+typed bridges, with `tests/provider-limits.test.ts` guarding the boundary.
 
 Only `reported` corroborates a hard cooldown. A bridge classifying its CLI's
 error text always reports `inferred`, which is enough to pick a better HTTP
@@ -1198,7 +1196,7 @@ The orchestration skill is the single source of truth for delegation procedure,
 child lifecycle, recovery, and role selection. The orchestrator prompt is only a
 small bootstrap of root identity and a pointer to the canonical policy. The native root
 hook injects the same skill content and recovery preflight; provider bridges use
-`bridge-role.mjs` to assemble the same role prompt. Execution-contract JSON is a
+`src/agents/bridge-role.ts` to assemble the same role prompt. Execution-contract JSON is a
 generated projection for provider diagnostics; it is not a second editable role
 capability list. Native child calls carry only `agent_type` and the task message.
 Codex must load the selected role TOML before the first child turn and expose that
@@ -1516,11 +1514,11 @@ Two details follow from that:
   status CLI label the summary and totals as `X recent / Y total`; they never
   inflate the recent subtotal to match all-time history.
 
-The shared reporter is `src/telemetry/agent-events.ts`; the Claude bridge
-mirrors it in Python. The installer ships the module beside the bridges that
+The shared reporter is `src/telemetry/agent-events.ts`; the typed Claude bridge
+imports it directly. The installer ships the module beside the bridges that
 import it. The native spawn script/SSE helper is now `src/agents/spawn-tools.ts`.
-The Claude bridge still mirrors that helper locally until its provider conversion
-pass, while its per-turn `autodev_spawn` server launches the shared
+The typed Claude bridge uses the shared spawn contract and its per-turn
+`autodev_spawn` server launches the shared
 `src/mcp/spawn-shim.ts`. The Claude bridge reports spawns but not closes, so its
 children are measured against the parent turn until it adopts `reportResults`.
 
@@ -1630,15 +1628,14 @@ that is a directory here, so a stale first entry made telemetry and execution
 disagree silently. Where the bridge refuses an ambiguity, the router records no
 workspace instead of inventing one. `tests/workspace-resolution.test.ts` and
 `test_all_provider_bridges_resolve_a_workspace_identically` pin both halves,
-the latter by running the Python and JavaScript resolvers over the same inputs
+the latter by running the shared resolver over the same inputs
 and asserting identical answers.
 
 The JavaScript CLI adapters share this resolver in
 `src/shared/resolve-workspace.ts`; the installer deploys that module
 alongside the runtime adapter copies, at `codex/lib/` beneath the hooks
-directory so the same `./codex/lib/…` specifier resolves in a checkout too. The Claude bridge remains a separate
-Python implementation, but it follows the same contract and is covered by the
-same workspace-resolution tests. Provider-specific code should pass its
+directory so the same `./codex/lib/…` specifier resolves in a checkout too. The typed Claude bridge imports the shared resolver and is covered by the same
+workspace-resolution tests. Provider-specific code should pass its
 operator override into the shared resolver rather than reimplementing request
 metadata parsing or workspace selection.
 
@@ -1850,7 +1847,7 @@ and Antigravity their own subagents -- not a model completion:
 
 | Bridge | Authenticates as |
 | --- | --- |
-| `codex-claude-cli-responses-proxy.py` | the `claude` CLI's Claude Code OAuth subscription. `claude_environment()` **removes** `ANTHROPIC_API_KEY` and `ANTHROPIC_AUTH_TOKEN` from the child environment so the CLI cannot silently fall back to metered API billing. |
+| `src/providers/claude.ts` | the `claude` CLI's Claude Code OAuth subscription. `claudeEnvironment()` **removes** `ANTHROPIC_API_KEY` and `ANTHROPIC_AUTH_TOKEN` from the child environment so the CLI cannot silently fall back to metered API billing. |
 | `src/providers/antigravity.ts` | the `agy` CLI's Antigravity subscription. `ensure-codex-antigravity-proxy.sh` refuses to start unless `useAiCredits=false` and `useG1Credits=false`. |
 | `src/providers/copilot.ts` | the `copilot` CLI's own login. |
 | `src/providers/minimax.ts` | a plain `MINIMAX_API_KEY`; no subprocess. |

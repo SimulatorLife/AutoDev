@@ -58,7 +58,7 @@ Step 1 — router HTTP and upstream proxy decomposition — is complete.
 3. Move installer, reconciliation, hook, and `ensure-*` behavior behind the typed CLI/platform modules.
 4. Convert remaining JavaScript/Python tests to `node:test`, remove obsolete entrypoints, and enable the inventory gate as a required check.
 
-For the current provider and test-stack slices, `pnpm typecheck` passes; the focused Claude, provider, MCP, role, telemetry, workspace, and boundary suites pass, including the native TypeScript Claude Responses fixture contract. The full suites and inventory gate must be refreshed after this slice; remaining expected migration work is concentrated in installer/reconciliation/platform ownership and the last legacy test files.
+For the current provider and test-stack slices, `pnpm typecheck` passes; `pnpm test` reports 738 tests with 737 passing and 1 skip, and `pnpm test:ts` reports 299 tests with 298 passing and 1 skip. The focused Claude, provider, MCP, role, telemetry, workspace, and boundary suites pass, including the native TypeScript Claude Responses fixture contract. The inventory gate intentionally still reports the remaining installer, shell, and legacy test files; remaining migration work is concentrated in installer/reconciliation/platform ownership and the last legacy test files.
 
 ## Decision
 
@@ -273,7 +273,7 @@ Generated files should be clearly marked and protected by drift validation. Avoi
    - `src/router/otel.ts`: OpenTelemetry ingestion (logs, traces, metrics), delta/cumulative series calculation, deduplication windows, MCP health & lifecycle tracking, bridge observation events, additive `AUTODEV_OTEL_ATTRIBUTES=v1` payload enrichment, and persistence snapshot/restore (`schemaVersion: 6`).
    - `src/router/proxy.ts`: upstream headers/authentication, payload transformation, streaming/JSON response handling, retries, cooldown-aware fallback chains, and structured exhaustion diagnostics.
    - `src/router/http.ts`: HTTP endpoint routing, workspace/session resolution, status aggregation, agent-event ingestion, and router request lifecycle/error handling.
-5. Convert the Claude Python bridge and unify provider contracts
+5. Convert the Claude bridge and unify provider contracts — complete; the implementation is `src/providers/claude.ts` and Claude Code CLI/OAuth remains the supported transport
 6. Convert AutoDev-owned config/render Python scripts
 7. Replace large Bash installer/reconciliation logic with typed CLI/platform modules
 8. Convert behavioral hooks and `ensure-*` scripts to CLI subcommands

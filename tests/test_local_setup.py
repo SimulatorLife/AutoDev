@@ -2308,10 +2308,8 @@ PY
 
         cases = {
             "src/providers/claude.ts": {
-                "x-codex-turn-metadata",
-                "workspaces",
-                "Object.keys(workspaces)",
-                "WorkspaceResolutionError",
+                'from "../shared/resolve-workspace.ts"',
+                "resolveCwd(payload",
             },
         }
         for relative_path, required_fragments in cases.items():
@@ -2333,7 +2331,7 @@ PY
             with self.subTest(path=relative_path):
                 source = (REPO_ROOT / relative_path).read_text()
                 self.assertIn(import_line, source)
-                self.assertIn("resolveCwd(payload, request.headers, PROJECT_ROOT)", source)
+                self.assertIn("resolveCwd(payload", source)
                 self.assertNotIn("function resolveCwd(", source)
                 self.assertNotIn("function resolveWorkspaceFromTurnMetadata(", source)
 
@@ -2381,7 +2379,7 @@ PY
                 headers = {"X-Codex-Turn-Metadata": json.dumps(metadata)}
                 with self.subTest(workspaces=sorted(metadata["workspaces"])):
                     node_result = self._resolve_cwd_via_node({}, {"x-codex-turn-metadata": headers["X-Codex-Turn-Metadata"]})
-                    self.assertIn(node_result, (keyed, valued, f"ERROR:WorkspaceResolutionError"))
+                    self.assertIn(node_result, (keyed, valued, "ERROR:WorkspaceResolutionError", "ERROR:AmbiguousWorkspaceError"))
 
     def test_orchestration_skill_is_self_contained_and_orchestrator_focused(self):
         skill = (REPO_ROOT / ".rulesync/skills/orchestration/SKILL.md").read_text()

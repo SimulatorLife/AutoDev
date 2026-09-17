@@ -1129,7 +1129,7 @@ single source:
 - `runtime_module_target()` installs non-`scripts/` assets under
   `$CODEX_HOME/<path>`. As a result, one relative specifier reaches the
   orchestration skill in both a checkout and the hooks copy, for
-  `bridge-role.mjs`, the Claude bridge, and `enforce-root-delegation.sh`.
+  `src/agents/bridge-role.ts`, the Claude bridge, and `enforce-root-delegation.sh`.
 - The Claude, Copilot, and Antigravity bridges and `skill-read-telemetry.ts`
   recognise `.rulesync/skills` as the canonical skill root.
 - `.agents/skills.json`, the three frozen provider contract fixtures, the tests,
@@ -1461,7 +1461,7 @@ scalars in `scripts/codex/config.autodev.toml` and the per-server
 `CROSS_SESSION_CLAUDE_TOOLS`, `PLAYWRIGHT_AGENT_ROLES`,
 `PLAYWRIGHT_DISALLOWED_TOOLS`, `RESEARCH_CAPABLE_ROLES`,
 `CLAUDE_RESEARCH_ALLOWED_TOOLS`, and the `readOnly` role-contract deny list) in
-`scripts/codex-claude-cli-responses-proxy.py`, and the dynamic
+`src/providers/claude.ts`, and the dynamic
 `mcp(...)`/`read_file(...)`/`unsandboxed(...)` grant markers that
 `grant_agy_code_mcp_permissions`/`check_agy_code_mcp_permissions` compute
 against the machine-local `$HOME/.gemini/antigravity-cli/settings.json` in
@@ -1619,8 +1619,9 @@ user account, `otelcol v0.160.0`):**
   are identical to the pre-validation snapshot.
 
 Validation of this tree (HEAD plus the Phase 3 changes) had these results:
-- The JavaScript suite passes 582/582, including
-  `tests/claude-responses-contract.test.mjs`.
+- The historical Phase 3 JavaScript suite passed 582/582, including
+  the then-incumbent Claude contract; the current typed Claude contract is
+  `tests/claude-responses-contract.test.ts`.
 - The Python suite ran 271 tests after the canonical skill-source
   consolidation, including the opt-in real-binary smoke test with
   `AUTODEV_OTELCOL_BIN`. 269 pass. The live Collector kept the same pid through
@@ -1967,7 +1968,7 @@ stable, supported protocol, while keeping subscription billing and the
 retained CLI runtime. It must pass the frozen
 `copilot-responses-contract` baseline and remove more complexity than it adds.
 
-`tests/test_subscription_provider_policy_gates.py` freezes this result. No
+`tests/subscription-provider-policy-gates.test.ts` freezes this result. No
 runtime file may use `copilot_internal`, the borrowed client id,
 `api.githubcopilot.com`, or a LiteLLM `github_copilot/` route. The proxy must
 spawn the official `copilot` CLI, and the Copilot route must stay on the local
@@ -2050,7 +2051,7 @@ and GitHub (whose Copilot SDK exists to embed the CLI), this remains an
 unresolved account risk. Confirm acceptability with Google, or accept the risk
 explicitly, before relying on the bridge for heavy automated use.
 
-`tests/test_subscription_provider_policy_gates.py` freezes this result. No
+`tests/subscription-provider-policy-gates.test.ts` freezes this result. No
 runtime file may reach `cloudcode-pa.googleapis.com` without `agy`. The bridge
 must spawn the official `agy` CLI, and the Antigravity route must stay on the
 local adapter.
