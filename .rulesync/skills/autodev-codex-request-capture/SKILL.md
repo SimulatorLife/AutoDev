@@ -11,7 +11,7 @@ level.
 
 Use it before changing anything that sits between Codex and a model provider:
 - `scripts/codex-model-router.mjs` routes, header allowlists, payload rewrites;
-- provider adapters such as `scripts/codex-minimax-responses-proxy.mjs`;
+- provider adapters such as `src/providers/minimax.ts`;
 - model catalogs in `scripts/codex/catalogs/`;
 - any claim about what leaves the machine.
 

@@ -45,14 +45,14 @@ Current `.github/workflows/` owns the scheduler, weighted target/provider select
 
 ## Local AI/provider runtime
 
-Current `scripts/` contains substantial custom runtime infrastructure, including:
+Current source/runtime paths contain substantial custom infrastructure, including:
 
 - `codex-model-router.mjs`
 - `codex-model-router.test.mjs`
 - `codex-claude-cli-responses-proxy.py`
 - `codex-antigravity-cli-responses-proxy.mjs`
 - `codex-copilot-cli-responses-proxy.mjs`
-- `codex-minimax-responses-proxy.mjs`
+- `src/providers/minimax.ts`
 - `codex-model-router-dashboard.html`
 - `codex-model-router-status.mjs`
 - `autodev-metrics.cjs`
@@ -255,7 +255,7 @@ The migration requires parity tests for Responses streaming, namespace/custom/fr
 
 LiteLLM has a MiniMax provider and generic Responses-to-chat transformation code with namespace and custom-tool handling
 
-AutoDev already exposes MiniMax through Codex's native model-provider configuration and authenticates it with `MINIMAX_API_KEY`; the remaining custom part is that the provider entry currently targets `codex-minimax-responses-proxy.mjs` rather than the MiniMax API or a shared gateway directly
+AutoDev already exposes MiniMax through Codex's native model-provider configuration and authenticates it with `MINIMAX_API_KEY`; the remaining custom part is that the provider entry currently targets `src/providers/minimax.ts` rather than the MiniMax API or a shared gateway directly
 
 **Preferred target, conditional on validation:** keep MiniMax API-key usage and remove the bespoke MiniMax proxy only if direct provider support or LiteLLM can preserve the exact Codex Responses/tool contract. MiniMax does not need an OAuth/subscription migration, and the current proxy remains valid if no simpler path reaches parity
 
@@ -2079,16 +2079,22 @@ MiniMax remains API-key-backed. The goal is to test whether bespoke protocol tra
 ### Status
 
 The Phase 5 slice is now landed as an offline boundary contract for the
-incumbent MiniMax Responses pass-through proxy. The fixture at
+incumbent MiniMax Responses pass-through adapter. The adapter's first provider
+bridge conversion is also complete: its implementation now lives in the
+strictly checked `src/providers/minimax.ts`, the installer and CI execute that
+typed module directly, and the obsolete `scripts/codex-minimax-responses-proxy.mjs`
+entrypoint has been deleted. This is an implementation/runtime ownership
+change only; the transport remains the retained local boundary adapter and no
+provider retirement gate has been bypassed. The fixture at
 `tests/fixtures/contracts/minimax-responses-contract.json` and the boundary
-suite `tests/minimax-responses-contract.test.mjs` exercise the proxy's pure
-helpers (`rewrite`, `flattenOutboundTools`, `isWebResearchTool`,
+suite `tests/minimax-responses-contract.test.mjs` exercise the adapter's pure
+helpers (`rewriteOutboundPayload`, `isWebResearchTool`,
 `freeformInputFromArguments`, `coerceResponseBody`) against normal-stream
 namespace flattening, freeform tool coercion, and preserved web-research
 tools, without contacting the remote API, deploying LiteLLM, or changing the
 live proxy. `coerceResponseBody`/`freeformInputFromArguments`/`isWebResearchTool`
-were promoted from `export function` to the consolidated export block so the
-test can drive the same logic the live proxy runs. The test asserts the
+remain exported from the typed module so the test can drive the same logic the
+live adapter runs. The test asserts the
 request tool shape the proxy sends upstream, the response namespace the
 proxy hands back to the caller, and the `function_call -> custom_tool_call`
 rewriting Codex needs to run freeform `exec`.
@@ -2139,7 +2145,7 @@ Each proxy responsibility was checked against five kinds of evidence:
   and coercion retained.
 - The live check through the simplified proxy returned HTTP 200 streams with
   every `event:` line intact and MiniMax's native namespace preserved.
-- The running proxy keeps the previous code until the next installer run.
+- The installer deploys the typed adapter under `$CODEX_HOME/src/providers/minimax.ts`; stale copies of the deleted `.mjs` entrypoint are removed during reconciliation.
 
 **✅ Residual items resolved (2026-09-15).**
 
@@ -2205,7 +2211,7 @@ Current configuration already exposes MiniMax as `[model_providers.minimax]` wit
 
 ### Exit gate
 
-Point the existing MiniMax Codex model-provider entry at a direct/shared API transport and retire `codex-minimax-responses-proxy.mjs` only after all required Codex tool patterns and the applicable provider migration gates pass. Otherwise retain the current proxy
+Point the existing MiniMax Codex model-provider entry at a direct/shared API transport and retire `src/providers/minimax.ts` only after all required Codex tool patterns and the applicable provider migration gates pass. Otherwise retain the current proxy
 
 **Outcome (2026-09-15): retain the proxy, reduced to its boundary, coercion, and telemetry responsibilities.** A direct or LiteLLM transport fails the privacy boundary, the `exec` coercion requirement, and usage-telemetry parity. Reopen only if Codex stops embedding workspace metadata in provider requests and MiniMax's `exec` JSON pattern stays absent long enough for the coercion to be judged obsolete.
 
@@ -2219,7 +2225,7 @@ installer generates and checks repository projections, including `.codex/hooks.j
 in the active project location. The Codex projection cannot represent
 `prevent_idle_sleep`; Copilot and Antigravity projections are intentionally lossy.
 
-**Status (2026-09-16):** Router HTTP and upstream proxy execution are now
+**Status (2026-09-17):** Router HTTP and upstream proxy execution are now
 fully decomposed into the typed `src/router/http.ts` and `src/router/proxy.ts`
 modules. Endpoint routing, workspace/session continuity, status aggregation,
 agent-event ingestion, header/payload boundaries, streaming, retry/fallback,
@@ -2228,7 +2234,9 @@ and exhaustion diagnostics retain their existing contracts. The legacy
 re-export entrypoint; provider policy, cooldowns, telemetry, and lifecycle
 ownership remain explicit typed modules. Phase 6 remains in progress because
 provider transport migrations and any future deletion still require parity
-proof.
+proof. The first provider implementation slice is complete: MiniMax now runs
+from `src/providers/minimax.ts`, while its retained boundary responsibilities
+remain outside the router.
 
 After successful provider transport migrations, separate router responsibilities into:
 

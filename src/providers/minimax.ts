@@ -19,12 +19,20 @@
  */
 import { createServer } from "node:http";
 import { pathToFileURL } from "node:url";
+import type { IncomingMessage, ServerResponse } from "node:http";
 
-import { resolveAgentEventReporter } from "../src/telemetry/agent-events.ts";
-import { resolveAgentRole } from "../src/agents/bridge-role.ts";
-import { roleContract } from "../src/shared/execution-contract.ts";
+import { resolveAgentEventReporter } from "../telemetry/agent-events.ts";
+import { resolveAgentRole } from "../agents/bridge-role.ts";
+import { roleContract } from "../shared/execution-contract.ts";
 
 const MCP_EXPOSURE_SOURCE = "role_contract";
+
+// Provider payloads are JSON-shaped but intentionally retain upstream fields we
+// do not own. Keep the dynamic edge explicit while the transport and boundary
+// operations remain typed.
+type JsonRecord = Record<string, any>;
+type EventTransform = (event: JsonRecord) => JsonRecord | JsonRecord[] | null;
+type AgentReporter = import("../telemetry/agent-events.ts").AgentEventReporter;
 
 // Bind the port only when run as a program. The rewriting helpers below are
 // pure and worth testing directly; importing this file must not take the port
@@ -45,7 +53,7 @@ const forwardedRequestHeaders = [ "accept", "authorization", "content-type" ];
 
 const WEB_RESEARCH_TOOL_NAMES = new Set([ "web_search", "web_fetch" ]);
 
-function isWebResearchTool(tool) {
+function isWebResearchTool(tool: JsonRecord | null | undefined): boolean {
   if (!tool || typeof tool !== "object") return false;
   if (WEB_RESEARCH_TOOL_NAMES.has(tool.type) || WEB_RESEARCH_TOOL_NAMES.has(tool.name)) return true;
   if (tool.function && typeof tool.function.name === "string" && WEB_RESEARCH_TOOL_NAMES.has(tool.function.name)) return true;
@@ -57,7 +65,7 @@ function isWebResearchTool(tool) {
 // in the request body. It is Codex-internal correlation that the MiniMax
 // Responses API does not define, so it is removed before the payload leaves
 // the machine. Everything else is the caller's own payload and is forwarded.
-function rewriteOutboundPayload(payload) {
+function rewriteOutboundPayload(payload: JsonRecord | null | undefined): JsonRecord | null | undefined {
   if (payload === null || typeof payload !== "object" || Array.isArray(payload)) return payload;
   const { client_metadata: _clientMetadata, ...rewritten } = payload;
   return rewritten;
@@ -76,8 +84,8 @@ function rewriteOutboundPayload(payload) {
 // `additional_tools` input item rather than the top-level `tools` array. A
 // renamed or additional freeform tool is therefore picked up automatically, and
 // a payload that declares none leaves the response untouched.
-function collectFreeformToolNames(payload, names = new Set()) {
-  const visit = (tools) => {
+function collectFreeformToolNames(payload: JsonRecord | null | undefined, names: Set<string> = new Set<string>()): Set<string> {
+  const visit = (tools: unknown): void => {
     for (const tool of Array.isArray(tools) ? tools : []) {
       if (!tool || typeof tool !== "object") continue;
       if (tool.type === "custom" && typeof tool.name === "string" && !isWebResearchTool(tool)) names.add(tool.name);
@@ -97,7 +105,7 @@ function collectFreeformToolNames(payload, names = new Set()) {
 // the intent is not clear enough to rewrite. Guessing wrong would swap one
 // broken call for a different broken call, so an unrecognised shape is never
 // translated; see unrecognisedFreeformFeedback for what the model is told.
-function freeformInputFromArguments(argumentsText) {
+function freeformInputFromArguments(argumentsText: unknown): string | null {
   const raw = typeof argumentsText === "string" ? argumentsText.trim() : "";
   if (!raw) return null;
 
@@ -142,7 +150,7 @@ function freeformInputFromArguments(argumentsText) {
 // were followed by another identical broken one. The call instead becomes a
 // script that fails with an explanation naming only the argument keys (never
 // their values), so the model learns what the tool expects and can correct it.
-function unrecognisedFreeformFeedback(toolName, argumentsText) {
+function unrecognisedFreeformFeedback(toolName: string, argumentsText: unknown): string {
   const raw = typeof argumentsText === "string" ? argumentsText.trim() : "";
   let shape = "no arguments";
   if (raw) {
@@ -162,7 +170,7 @@ function unrecognisedFreeformFeedback(toolName, argumentsText) {
   return `throw new Error(${JSON.stringify(message)});\n`;
 }
 
-function freeformSourceFor(toolName, argumentsText) {
+function freeformSourceFor(toolName: string, argumentsText: unknown): string {
   return freeformInputFromArguments(argumentsText) ?? unrecognisedFreeformFeedback(toolName, argumentsText);
 }
 
@@ -175,13 +183,13 @@ function freeformSourceFor(toolName, argumentsText) {
  * finished source is emitted as one input delta at `done` time, which is also
  * how the bridges emit a spawn call.
  */
-function createFreeformCoercion(freeformNames) {
+function createFreeformCoercion(freeformNames: Set<string>): EventTransform {
   const coerced = new Map(); // item_id -> { source }
 
-  const isFreeform = (item) =>
+  const isFreeform = (item: JsonRecord | null | undefined): boolean =>
     item?.type === "function_call" && typeof item.name === "string" && freeformNames.has(item.name) && !isWebResearchTool(item);
 
-  return function coerce(event) {
+  return function coerce(event: JsonRecord): JsonRecord | JsonRecord[] | null {
     if (!event || typeof event !== "object") return event;
 
     if (event.type === "response.output_item.added" && isFreeform(event.item)) {
@@ -221,7 +229,7 @@ function createFreeformCoercion(freeformNames) {
     // already derived for each item.
     if (event.response && Array.isArray(event.response.output)) {
       let changed = false;
-      const output = event.response.output.map((item) => {
+      const output = event.response.output.map((item: JsonRecord) => {
         if (!isFreeform(item)) return item;
         const source = coerced.get(item.id)?.source ?? freeformSourceFor(item.name, item.arguments);
         changed = true;
@@ -239,7 +247,7 @@ function createFreeformCoercion(freeformNames) {
  * The same coercion for a non-streaming response, where the whole item is
  * present at once and no cross-line state is needed.
  */
-function coerceResponseBody(body, freeformNames) {
+function coerceResponseBody(body: JsonRecord | null | undefined, freeformNames: Set<string>): JsonRecord | null | undefined {
   if (!body || typeof body !== "object" || !(freeformNames instanceof Set) || freeformNames.size === 0) return body;
   const output = body.response?.output ?? body.output;
   if (!Array.isArray(output)) return body;
@@ -283,7 +291,7 @@ function coerceResponseBody(body, freeformNames) {
 const REPORTED_CALL_LIMIT = 4096;
 const reportedCalls = new Map();
 
-function firstReport(kind, callId) {
+function firstReport(kind: string, callId: unknown): boolean {
   const id = typeof callId === "string" && callId.trim() ? callId.trim() : null;
   // An un-idd call cannot be de-duplicated across replays, and reporting it
   // once per remaining turn of the conversation would be worse than not
@@ -304,7 +312,7 @@ const TOOL_OUTPUT_ITEM_TYPES = new Set([ "function_call_output", "custom_tool_ca
 const MINIMAX_DENIED_PATTERN = /permission[_\s-]?denied|auto[_\s-]?denied|denied|not[_\s-]?permitted|not[_\s-]?allowed|user[_\s-]?rejected|tool[_\s-]?not[_\s-]?found|no such tool/i;
 
 /** How a tool call ended, as far as its output item says. */
-function toolOutputOutcome(item) {
+function toolOutputOutcome(item: JsonRecord | null | undefined): JsonRecord {
   const raw = typeof item?.output === "string" ? item.output : null;
   let payload = null;
   if (raw) {
@@ -327,7 +335,7 @@ function toolOutputOutcome(item) {
 }
 
 /** Report every tool call this request carries the output of. */
-function reportExecutedToolCalls(agentEvents, payload) {
+function reportExecutedToolCalls(agentEvents: AgentReporter | null, payload: JsonRecord | null | undefined): void {
   if (!agentEvents || !payload || typeof payload !== "object") return;
   const input = Array.isArray(payload.input) ? payload.input : [];
   // An output item names only the call id it settles, so the name comes from
@@ -368,8 +376,8 @@ function reportExecutedToolCalls(agentEvents, payload) {
 }
 
 /** Report a tool call the model just asked for, once per call id. */
-function reportRequestedToolCall(agentEvents, item) {
-  if (!item || typeof item !== "object" || !TOOL_CALL_ITEM_TYPES.has(item.type)) return;
+function reportRequestedToolCall(agentEvents: AgentReporter | null, item: JsonRecord | null | undefined): void {
+  if (!agentEvents || !item || typeof item !== "object" || !TOOL_CALL_ITEM_TYPES.has(item.type)) return;
   const tool = typeof item.name === "string" ? item.name.trim() : "";
   const callId = typeof item.call_id === "string" && item.call_id.trim() ? item.call_id.trim() : null;
   const server = typeof item.server === "string" && item.server.trim()
@@ -385,14 +393,14 @@ function reportRequestedToolCall(agentEvents, item) {
  * and terminal snapshots repeat the whole output array, which is why the
  * de-duplication above is what makes this safe to call on every event.
  */
-function observeResponseEvent(agentEvents, event) {
+function observeResponseEvent(agentEvents: AgentReporter | null, event: JsonRecord | null | undefined): void {
   if (!agentEvents || !event || typeof event !== "object") return;
   if (event.item) reportRequestedToolCall(agentEvents, event.item);
   for (const item of Array.isArray(event.response?.output) ? event.response.output : []) reportRequestedToolCall(agentEvents, item);
   for (const item of Array.isArray(event.output) ? event.output : []) reportRequestedToolCall(agentEvents, item);
 }
 
-function rewriteSseLine(line, coerce = null, observe = null) {
+function rewriteSseLine(line: string, coerce: EventTransform | null = null, observe: ((event: JsonRecord) => void) | null = null): string | null {
   const lineEnding = line.endsWith("\r") ? "\r" : "";
   const content = lineEnding ? line.slice(0, -1) : line;
   if (!content.startsWith("data:")) {
@@ -416,7 +424,7 @@ function rewriteSseLine(line, coerce = null, observe = null) {
   }
 }
 
-function requestHeaders(request) {
+function requestHeaders(request: IncomingMessage): Headers {
   const headers = new Headers();
   for (const [name, value] of Object.entries(request.headers)) {
     if (value === undefined || !forwardedRequestHeaders.includes(name.toLowerCase())) {
@@ -427,7 +435,7 @@ function requestHeaders(request) {
   return headers;
 }
 
-async function requestBody(request) {
+async function requestBody(request: IncomingMessage): Promise<string | undefined> {
   const chunks = [];
   for await (const chunk of request) {
     chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
@@ -435,7 +443,7 @@ async function requestBody(request) {
   return chunks.length === 0 ? undefined : Buffer.concat(chunks).toString("utf8");
 }
 
-function upstreamHeaders(response, upstream) {
+function upstreamHeaders(response: ServerResponse, upstream: Response): void {
   for (const [name, value] of upstream.headers) {
     if (["connection", "content-encoding", "content-length", "transfer-encoding"].includes(name.toLowerCase())) {
       continue;
@@ -444,7 +452,7 @@ function upstreamHeaders(response, upstream) {
   }
 }
 
-async function streamSse(body, response, coerce = null, observe = null, agentEvents = null) {
+async function streamSse(body: ReadableStream<Uint8Array>, response: ServerResponse, coerce: EventTransform | null = null, observe: ((event: JsonRecord) => void) | null = null, agentEvents: AgentReporter | null = null): Promise<void> {
   const reader = body.getReader();
   const decoder = new TextDecoder();
   let bufferedLine = "";
@@ -453,7 +461,7 @@ async function streamSse(body, response, coerce = null, observe = null, agentEve
   // event into two or none, so the header cannot be written before its payload
   // is known -- otherwise a dropped delta leaves an orphaned header and a
   // rewritten one contradicts it. Hold it and re-derive it from the result.
-  let pendingEventLine = null;
+  let pendingEventLine: string | null = null;
 
   const keepAlive = setInterval(() => {
     if (agentEvents && typeof agentEvents.reportHeartbeat === "function") {
@@ -461,7 +469,7 @@ async function streamSse(body, response, coerce = null, observe = null, agentEve
     }
   }, 5000);
 
-  const writeLine = (line, terminated) => {
+  const writeLine = (line: string, terminated: boolean): void => {
     const suffix = terminated ? "\n" : "";
     const trimmed = line.endsWith("\r") ? line.slice(0, -1) : line;
 
@@ -533,7 +541,7 @@ async function streamSse(body, response, coerce = null, observe = null, agentEve
   }
 }
 
-function proxyError(response, error) {
+function proxyError(response: ServerResponse, error: unknown): void {
   if (response.headersSent || response.destroyed) {
     return;
   }
@@ -546,7 +554,7 @@ function proxyError(response, error) {
   }));
 }
 
-async function forward(request, response) {
+async function forward(request: IncomingMessage, response: ServerResponse): Promise<void> {
   if (request.url === "/health") {
     response.writeHead(200, { "content-type": "text/plain" });
     response.end("ok\n");
@@ -581,7 +589,7 @@ async function forward(request, response) {
     let body = rawBody;
     // Which tools this turn declared as freeform, so the response can be
     // coerced back into the shape Codex will accept.
-    let freeformNames = new Set();
+    let freeformNames: Set<string> = new Set<string>();
     if (rawBody) {
       try {
         const payload = JSON.parse(rawBody);
@@ -595,12 +603,12 @@ async function forward(request, response) {
       }
     }
     const coerce = freeformNames.size > 0 ? createFreeformCoercion(freeformNames) : null;
-    const observe = agentEvents ? (event) => observeResponseEvent(agentEvents, event) : null;
+    const observe: ((event: JsonRecord) => void) | null = agentEvents ? (event) => observeResponseEvent(agentEvents, event) : null;
 
     const upstream = await fetch(new URL(request.url ?? "/", upstreamBaseUrl), {
-      body,
+      ...(body === undefined ? {} : { body }),
       headers: requestHeaders(request),
-      method: request.method,
+      method: request.method ?? "GET",
       signal: abortController.signal
     });
     upstreamHeaders(response, upstream);

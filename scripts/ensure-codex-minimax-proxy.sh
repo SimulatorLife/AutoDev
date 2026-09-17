@@ -4,7 +4,7 @@
 
 set -euo pipefail
 
-hook_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+codex_home="${CODEX_HOME:-$HOME/.codex}"
 resolve_node() {
   if command -v node >/dev/null 2>&1; then command -v node; return 0; fi
   local candidate
@@ -98,10 +98,10 @@ fi
 
 mkdir -p "$(dirname -- "$proxy_log")" "$(dirname -- "$proxy_pid_file")"
 
-# The proxy itself is a tracked AutoDev source next to this hook (the installer
-# copies both into the hooks directory), not an inline heredoc: keeping it a
-# real file is what makes it lintable, testable, and visibly owned here.
-proxy_script="$hook_dir/codex-minimax-responses-proxy.mjs"
+# The proxy is a typed AutoDev runtime module installed under CODEX_HOME. It is
+# not an inline heredoc: keeping it as a source-owned module makes it lintable,
+# testable, and reusable by the typed CLI/runtime path.
+proxy_script="$codex_home/src/providers/minimax.ts"
 if [[ ! -f "$proxy_script" ]]; then
   echo "MiniMax proxy source is missing: $proxy_script" >&2
   echo "Run scripts/codex/install-codex-integration.sh to deploy it." >&2

@@ -38,7 +38,6 @@ hook_names=(
   codex-antigravity-cli-responses-proxy.mjs
   codex-claude-cli-responses-proxy.py
   codex-copilot-cli-responses-proxy.mjs
-  codex-minimax-responses-proxy.mjs
   codex-model-router.mjs
   codex-model-router-status.mjs
   enforce-root-delegation.sh
@@ -57,7 +56,7 @@ otel_runtime_names=(
   scripts/codex/otel/ensure-autodev-otel-collector.sh
   scripts/codex/otel/run-autodev-otel-collector.sh
 )
-obsolete_runtime_hook_names=(log-subagent-model.sh run-codex-antigravity-litellm.sh)
+obsolete_runtime_hook_names=(log-subagent-model.sh run-codex-antigravity-litellm.sh codex-minimax-responses-proxy.mjs)
 # LaunchAgents earlier versions installed and this one no longer supervises.
 # Booted out and unlinked so a removed hop does not keep running from a stale
 # plist after the code that fronted it is gone.
@@ -115,6 +114,7 @@ runtime_module_names=(
   src/router/proxy.ts
   src/router/http.ts
   src/agents/bridge-spawn-session.ts
+  src/providers/minimax.ts
   # Executed as a child process by the bridges rather than imported.
   src/mcp/spawn-shim.ts
   src/shared/execution-contract.ts
@@ -1825,7 +1825,7 @@ service_hook() {
     com.codex.claude-bridge) printf '%s/codex-claude-cli-responses-proxy.py\n' "$hooks_dir" ;;
     com.codex.antigravity-proxy) printf '%s/codex-antigravity-cli-responses-proxy.mjs\n' "$hooks_dir" ;;
     com.codex.copilot-proxy) printf '%s/codex-copilot-cli-responses-proxy.mjs\n' "$hooks_dir" ;;
-    com.codex.minimax-proxy) printf '%s/codex-minimax-responses-proxy.mjs\n' "$hooks_dir" ;;
+    com.codex.minimax-proxy) printf '%s/src/providers/minimax.ts\n' "$codex_home" ;;
     com.codex.otel-collector) printf '%s/codex/otel/run-autodev-otel-collector.sh\n' "$hooks_dir" ;;
   esac
 }

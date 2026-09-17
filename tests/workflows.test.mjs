@@ -380,7 +380,7 @@ test('MiniMax Codex CI runs through the tracked boundary adapter, never straight
   assert.match(branch, /export CODEX_HOME="\$runner_temp\/codex-home"/);
   assert.match(branch, /scripts\/codex\/profiles\/minimax\.config\.toml" "\$CODEX_HOME\/minimax\.config\.toml"/);
   assert.match(branch, /scripts\/codex\/catalogs\/minimax-model-catalog\.json" "\$CODEX_HOME\/minimax-model-catalog\.json"/);
-  assert.match(branch, /node "\$AUTODEV_ROOT\/scripts\/codex-minimax-responses-proxy\.mjs"/);
+  assert.match(branch, /node "\$AUTODEV_ROOT\/src\/providers\/minimax\.ts"/);
   assert.match(branch, /MINIMAX_PROXY_HOST=127\.0\.0\.1 MINIMAX_PROXY_PORT=18765/);
   assert.match(branch, /\/health/);
   assert.match(branch, /export MINIMAX_API_KEY=/);

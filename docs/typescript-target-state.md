@@ -1,8 +1,8 @@
 # AutoDev TypeScript Target State
 
-## Migration progress — 2026-09-16
+## Migration progress — 2026-09-17
 
-The migration remains intentionally behavior-preserving. The shared-runtime spawn/state/MCP pass and the router HTTP/proxy decomposition are now landed; provider, installer, and test-stack migrations remain.
+The migration remains intentionally behavior-preserving. The shared-runtime spawn/state/MCP pass, router HTTP/proxy decomposition, and the first provider bridge conversion are now landed; the remaining provider, installer, and test-stack migrations continue.
 
 ### Completed
 
@@ -23,10 +23,11 @@ The migration remains intentionally behavior-preserving. The shared-runtime spaw
 - Dedicated native TypeScript test suites cover concurrency (`tests/router/concurrency.test.ts`), router lifecycle (`tests/router/lifecycle.test.ts`), authentication (`tests/router/auth.test.ts`), event recording (`tests/router/events.test.ts`), subagent registry (`tests/router/subagents.test.ts`), and state persistence (`tests/router/persistence.test.ts`), while all router integration and frozen contract tests remain 100% green.
 - Existing provider/router contract tests remain green while imports move to typed shared modules.
 - Router HTTP routing, workspace/session resolution, status aggregation, agent-event ingestion, upstream proxying, retry/fallback, and exhaustion diagnostics now live in `src/router/http.ts` and `src/router/proxy.ts`; `scripts/codex-model-router.mjs` is a concise executable/re-export entrypoint. Dedicated native TypeScript proxy and HTTP tests cover the extracted contracts.
+- The MiniMax boundary adapter now lives in `src/providers/minimax.ts` with strict native-TypeScript checking. Its header allowlist, `client_metadata` privacy boundary, freeform `exec` coercion, streaming rewrite, and tool/activity/MCP telemetry are unchanged; workstation installation, launchd service ownership, and CI now deploy/execute the typed module directly, and the obsolete `.mjs` entrypoint is deleted.
 
 ### Current findings and constraints
 
-- Provider bridges are still primarily legacy `.mjs`/Python implementations; the Claude bridge conversion is not complete. The router entrypoint remains a compatibility-preserving `.mjs` executable while its retained implementation is typed.
+- Remaining provider bridges are still legacy `.mjs`/Python implementations; the MiniMax adapter has moved to `src/providers/minimax.ts`, while the Claude bridge conversion is not complete. The router entrypoint remains a compatibility-preserving `.mjs` executable while its retained implementation is typed.
 - Installer, reconciliation, hook, telemetry, and `ensure-*` behavior still has substantial shell/legacy runtime ownership.
 - First-party tests are still split between JavaScript, Python, and TypeScript. The inventory gate is present but intentionally reports the remaining legacy files until their replacements and equivalent tests land.
 - Canonical declarative content remains under `scripts/codex/`; moving it to the target `agents/` and `config/` layout must be coordinated with installer/runtime path changes.
@@ -47,11 +48,11 @@ The migration remains intentionally behavior-preserving. The shared-runtime spaw
 
 Step 1 — router HTTP and upstream proxy decomposition — is complete.
 
-2. Convert provider bridges, then the Claude bridge, so all providers use the shared contracts.
+2. Convert the remaining provider bridges (Antigravity and Copilot), then the Claude bridge, so all providers use the shared contracts; MiniMax is the completed first slice.
 3. Move installer, reconciliation, hook, and `ensure-*` behavior behind the typed CLI/platform modules.
 4. Convert remaining JavaScript/Python tests to `node:test`, remove obsolete entrypoints, and enable the inventory gate as a required check.
 
-The current validation baseline is: `pnpm typecheck` passes; the expanded test commands include root-level TypeScript tests and currently report `pnpm test` at 691 passed and 1 skipped and `pnpm run test:ts` at 118 passed and 1 skipped. The Python compatibility suite reports 280 tests passing with 1 skipped; actionlint and ShellCheck also pass. `pnpm run validate:inventory` is expected to fail until the remaining migration order above is completed.
+For this slice, `pnpm typecheck` passes and the focused MiniMax/provider-contract/workflow suites report 54 passing tests. The full `pnpm test` baseline is 689 passed, 2 failed, and 1 skipped; the two failures are the pre-existing router HTTP/auth and proxy-header assertions, unrelated to this provider move. `pnpm run validate:inventory` remains expected to fail until the remaining migration order above is completed.
 
 ## Decision
 

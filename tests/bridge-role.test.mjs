@@ -165,7 +165,7 @@ test("the installer ships every shared module the bridges import", () => {
     "scripts/codex-model-router.mjs",
     "scripts/codex-antigravity-cli-responses-proxy.mjs",
     "scripts/codex-copilot-cli-responses-proxy.mjs",
-    "scripts/codex-minimax-responses-proxy.mjs",
+    "src/providers/minimax.ts",
   ];
   const imported = new Set();
   for (const source of sources) {

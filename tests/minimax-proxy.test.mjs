@@ -7,15 +7,15 @@ import test from "node:test";
 import { AGENT_ROLE_HEADER, FORWARDED_REQUEST_HEADERS, SESSION_ID_HEADER, SESSION_SCOPE_HEADER, downstreamHeaders } from "../scripts/codex-model-router.mjs";
 import { upstreamPayload } from "../src/router/responses.ts";
 import { ROUTING_POLICY as routing } from "../src/router/routing.ts";
-import { coerceResponseBody, freeformInputFromArguments, unrecognisedFreeformFeedback } from "../scripts/codex-minimax-responses-proxy.mjs";
+import { coerceResponseBody, freeformInputFromArguments, unrecognisedFreeformFeedback } from "../src/providers/minimax.ts";
 
 const read = (path) => readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
-const PROXY = new URL("../scripts/codex-minimax-responses-proxy.mjs", import.meta.url).pathname;
+const PROXY = new URL("../src/providers/minimax.ts", import.meta.url).pathname;
 
 test("the MiniMax proxy is an AutoDev-tracked source, not an inline heredoc", () => {
   const ensure = read("scripts/ensure-codex-minimax-proxy.sh");
   assert.match(ensure, /node_bin.*proxy_script|nohup "\$node_bin" "\$proxy_script"/s);
-  assert.match(ensure, /codex-minimax-responses-proxy\.mjs/);
+  assert.match(ensure, /src\/providers\/minimax\.ts/);
   // A heredoc'd server cannot be syntax-checked, tested, or drift-detected as
   // a source of its own, which is what made this proxy look externally owned.
   assert.doesNotMatch(ensure, /<<'NODE'/);
@@ -23,7 +23,7 @@ test("the MiniMax proxy is an AutoDev-tracked source, not an inline heredoc", ()
 
   const installer = read("scripts/codex/install-codex-integration.sh");
   assert.ok(
-    installer.includes("codex-minimax-responses-proxy.mjs"),
+    installer.includes("src/providers/minimax.ts"),
     "the installer must deploy the proxy beside the hook that launches it",
   );
 });

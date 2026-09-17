@@ -53,7 +53,7 @@ import {
   reportExecutedToolCalls,
   reportRequestedToolCall,
   toolOutputOutcome as minimaxToolOutputOutcome,
-} from "../scripts/codex-minimax-responses-proxy.mjs";
+} from "../src/providers/minimax.ts";
 
 const read = (path) => readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
 
@@ -941,7 +941,7 @@ test("the MiniMax proxy reports tool calls requested and executed or unavailable
 
   // MCP exposure from role contract
   assert.equal(MINIMAX_MCP_EXPOSURE_SOURCE, "role_contract");
-  const source = read("scripts/codex-minimax-responses-proxy.mjs");
+  const source = read("src/providers/minimax.ts");
   assert.match(source, /for \(const server of contract\.mcp \?\? \[\]\)/);
   assert.match(source, /reportMcpExposed\(\{ server, source: MCP_EXPOSURE_SOURCE \}\)/);
 
@@ -1504,7 +1504,7 @@ test("the provider bridges wire activity lifecycle telemetry", () => {
   assert.match(claudeSource, /agent_events\.report_activity_async\("failed"\)/);
 
   // MiniMax bridge source assertions
-  const minimaxSource = read("scripts/codex-minimax-responses-proxy.mjs");
+  const minimaxSource = read("src/providers/minimax.ts");
   assert.match(minimaxSource, /reportActivity\(\{ state: tool\.toLowerCase\(\) === "ask_question"/);
   assert.match(minimaxSource, /void agentEvents\.reportActivity\(\{ state: "resumed" \}\)/);
   assert.match(minimaxSource, /void agentEvents\.reportActivity\(\{ state: "finished" \}\)/);

@@ -66,7 +66,7 @@ case "$provider" in
       exit 1
     fi
     MINIMAX_PROXY_HOST=127.0.0.1 MINIMAX_PROXY_PORT=18765 \
-      node "$AUTODEV_ROOT/scripts/codex-minimax-responses-proxy.mjs" >"$runner_temp/minimax-adapter.log" 2>&1 &
+      node "$AUTODEV_ROOT/src/providers/minimax.ts" >"$runner_temp/minimax-adapter.log" 2>&1 &
     adapter_pid=$!
     trap 'kill "$adapter_pid" 2>/dev/null || true' EXIT
     for _ in $(seq 1 100); do

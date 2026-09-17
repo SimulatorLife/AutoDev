@@ -217,7 +217,7 @@ delegation paths:
   tools natively and answers with the `namespace` set (verified live
   2026-09-15), so the MiniMax adapter forwards tools unchanged.
 
-  The MiniMax adapter (`scripts/codex-minimax-responses-proxy.mjs`) also
+  The MiniMax adapter (`src/providers/minimax.ts`) also
   coerces **freeform tool calls**. MiniMax documents only `function` tools. It
   now usually answers Codex's code-mode `exec` with a native `custom_tool_call`,
   or calls the nested `exec_command` directly, which Codex executes. But it has
@@ -1322,7 +1322,7 @@ which under `bypassPermissions` are the only remaining guardrail on an
 autonomous turn. Fix the deny list, not the setting sources.
 
 MiniMax is the exception, and it needs no role prompt: its adapter
-(`scripts/codex-minimax-responses-proxy.mjs`) is a pass-through to
+(`src/providers/minimax.ts`) is a pass-through to
 `https://api.minimax.io` rather than a local CLI gateway. It changes only the machine boundary (allowlisted headers, no `client_metadata`) and freeform `exec` calls. CI's `mini-max-codex` workflow starts the same adapter on loopback with the tracked `minimax` profile and catalog, so CI never sends Codex's turn metadata to MiniMax either; CI git authentication uses an env-backed credential helper, never a token in a remote URL. It forwards the
 parent's own Responses payload, so the root turn arrives with the real Codex
 context and the delegation policy the `UserPromptSubmit` hook already injected;
@@ -1853,7 +1853,7 @@ and Antigravity their own subagents -- not a model completion:
 | `codex-claude-cli-responses-proxy.py` | the `claude` CLI's Claude Code OAuth subscription. `claude_environment()` **removes** `ANTHROPIC_API_KEY` and `ANTHROPIC_AUTH_TOKEN` from the child environment so the CLI cannot silently fall back to metered API billing. |
 | `codex-antigravity-cli-responses-proxy.mjs` | the `agy` CLI's Antigravity subscription. `ensure-codex-antigravity-proxy.sh` refuses to start unless `useAiCredits=false` and `useG1Credits=false`. |
 | `codex-copilot-cli-responses-proxy.mjs` | the `copilot` CLI's own login. |
-| `codex-minimax-responses-proxy.mjs` | a plain `MINIMAX_API_KEY`; no subprocess. |
+| `src/providers/minimax.ts` | a plain `MINIMAX_API_KEY`; no subprocess. |
 
 LiteLLM's `anthropic/*` and `gemini/*` providers speak HTTPS with an API key:
 a different account, a different meter, and per-token billing where these have

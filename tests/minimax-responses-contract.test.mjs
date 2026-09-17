@@ -6,7 +6,7 @@ import {
   freeformInputFromArguments,
   isWebResearchTool,
   rewriteOutboundPayload,
-} from "../scripts/codex-minimax-responses-proxy.mjs";
+} from "../src/providers/minimax.ts";
 
 const contract = await import("../tests/fixtures/contracts/minimax-responses-contract.json", { with: { type: "json" } }).then((m) => m.default ?? m);
 
