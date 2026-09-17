@@ -17,63 +17,207 @@
       "smart": "autodev/smart"
     },
     "nonAliases": {
-      "concreteModels": ["sonnet", "MiniMax-M3", "gpt-5.6-luna"],
-      "unknownModels": ["autodev/not-a-role", "not-a-model"]
+      "concreteModels": [
+        "sonnet",
+        "MiniMax-M3",
+        "gpt-5.6-luna"
+      ],
+      "unknownModels": [
+        "autodev/not-a-role",
+        "not-a-model"
+      ]
     }
   },
   "tiers": {
-    "default": ["minimax", "antigravity", "claude", "copilot", "codex"],
-    "smart": ["antigravity", "claude", "codex"],
-    "orchestrator": ["codex", "antigravity", "minimax", "claude"]
+    "default": [
+      "minimax",
+      "antigravity",
+      "claude",
+      "copilot",
+      "codex"
+    ],
+    "smart": [
+      "antigravity",
+      "claude",
+      "codex"
+    ],
+    "orchestrator": [
+      "codex",
+      "antigravity",
+      "copilot",
+      "claude"
+    ]
   },
   "subagentCandidates": {
     "default": [
-      { "provider": "minimax", "model": "MiniMax-M3" },
-      { "provider": "antigravity", "model": "gemini-3.8-flash-medium" },
-      { "provider": "claude", "model": "sonnet" },
-      { "provider": "copilot", "model": "copilot" },
-      { "provider": "codex", "model": "gpt-5.6-luna" }
+      {
+        "provider": "minimax",
+        "model": "MiniMax-M3"
+      },
+      {
+        "provider": "antigravity",
+        "model": "gemini-3.8-flash-medium"
+      },
+      {
+        "provider": "claude",
+        "model": "sonnet"
+      },
+      {
+        "provider": "copilot",
+        "model": "copilot"
+      },
+      {
+        "provider": "codex",
+        "model": "gpt-5.6-luna"
+      }
     ],
     "smart": [
-      { "provider": "antigravity", "model": "gemini-3.8-flash-high" },
-      { "provider": "claude", "model": "claude-opus-5" },
-      { "provider": "codex", "model": "gpt-5.6-sol" }
+      {
+        "provider": "antigravity",
+        "model": "gemini-3.8-flash-high"
+      },
+      {
+        "provider": "claude",
+        "model": "claude-opus-5"
+      },
+      {
+        "provider": "codex",
+        "model": "gpt-5.6-sol"
+      }
     ]
   },
   "orchestratorCandidates": {
     "unpreferred": [
-      { "provider": "codex", "model": "gpt-5.6-luna", "reasoningEffort": null },
-      { "provider": "antigravity", "model": "gemini-3.8-flash-high", "reasoningEffort": "high" },
-      { "provider": "minimax", "model": "MiniMax-M3", "reasoningEffort": "high" },
-      { "provider": "claude", "model": "claude-opus-5", "reasoningEffort": "medium" }
+      {
+        "provider": "codex",
+        "model": "gpt-5.6-luna",
+        "reasoningEffort": null
+      },
+      {
+        "provider": "antigravity",
+        "model": "gemini-3.8-flash-high",
+        "reasoningEffort": "high"
+      },
+      {
+        "provider": "copilot",
+        "model": "copilot",
+        "reasoningEffort": null
+      },
+      {
+        "provider": "claude",
+        "model": "claude-opus-5",
+        "reasoningEffort": "medium"
+      }
     ],
     "preferred": {
-      "claude": [
-        { "provider": "claude", "model": "claude-opus-5", "reasoningEffort": "medium" },
-        { "provider": "codex", "model": "gpt-5.6-luna", "reasoningEffort": null },
-        { "provider": "antigravity", "model": "gemini-3.8-flash-high", "reasoningEffort": "high" },
-        { "provider": "minimax", "model": "MiniMax-M3", "reasoningEffort": "high" }
+      "codex": [
+        {
+          "provider": "codex",
+          "model": "gpt-5.6-luna",
+          "reasoningEffort": null
+        },
+        {
+          "provider": "antigravity",
+          "model": "gemini-3.8-flash-high",
+          "reasoningEffort": "high"
+        },
+        {
+          "provider": "copilot",
+          "model": "copilot",
+          "reasoningEffort": null
+        },
+        {
+          "provider": "claude",
+          "model": "claude-opus-5",
+          "reasoningEffort": "medium"
+        }
       ],
-      "minimax": [
-        { "provider": "minimax", "model": "MiniMax-M3", "reasoningEffort": "high" },
-        { "provider": "codex", "model": "gpt-5.6-luna", "reasoningEffort": null },
-        { "provider": "antigravity", "model": "gemini-3.8-flash-high", "reasoningEffort": "high" },
-        { "provider": "claude", "model": "claude-opus-5", "reasoningEffort": "medium" }
+      "antigravity": [
+        {
+          "provider": "antigravity",
+          "model": "gemini-3.8-flash-high",
+          "reasoningEffort": "high"
+        },
+        {
+          "provider": "codex",
+          "model": "gpt-5.6-luna",
+          "reasoningEffort": null
+        },
+        {
+          "provider": "copilot",
+          "model": "copilot",
+          "reasoningEffort": null
+        },
+        {
+          "provider": "claude",
+          "model": "claude-opus-5",
+          "reasoningEffort": "medium"
+        }
+      ],
+      "copilot": [
+        {
+          "provider": "copilot",
+          "model": "copilot",
+          "reasoningEffort": null
+        },
+        {
+          "provider": "codex",
+          "model": "gpt-5.6-luna",
+          "reasoningEffort": null
+        },
+        {
+          "provider": "antigravity",
+          "model": "gemini-3.8-flash-high",
+          "reasoningEffort": "high"
+        },
+        {
+          "provider": "claude",
+          "model": "claude-opus-5",
+          "reasoningEffort": "medium"
+        }
+      ],
+      "claude": [
+        {
+          "provider": "claude",
+          "model": "claude-opus-5",
+          "reasoningEffort": "medium"
+        },
+        {
+          "provider": "codex",
+          "model": "gpt-5.6-luna",
+          "reasoningEffort": null
+        },
+        {
+          "provider": "antigravity",
+          "model": "gemini-3.8-flash-high",
+          "reasoningEffort": "high"
+        },
+        {
+          "provider": "copilot",
+          "model": "copilot",
+          "reasoningEffort": null
+        }
       ]
     }
   },
   "payloads": {
     "orchestratorPrimary": {
       "model": "gpt-5.6-luna",
-      "reasoning": { "effort": "xhigh" }
+      "reasoning": {
+        "effort": "xhigh"
+      }
     },
     "orchestratorFallback": {
       "model": "claude-opus-5",
-      "reasoning": { "effort": "medium" }
+      "reasoning": {
+        "effort": "medium"
+      }
     },
     "subagent": {
       "model": "MiniMax-M3",
-      "reasoning": { "effort": "xhigh" }
+      "reasoning": {
+        "effort": "xhigh"
+      }
     }
   }
 }

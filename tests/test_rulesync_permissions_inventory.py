@@ -82,6 +82,29 @@ class RulesyncPermissionsInventoryTests(unittest.TestCase):
         config = json.loads(RULESYNC_CONFIG.read_text())
         self.assertNotIn("permissions", config["features"])
 
+    def test_subagent_generation_stays_deferred_until_role_parity_exists(self):
+        config = json.loads(RULESYNC_CONFIG.read_text())
+        self.assertNotIn("subagents", config["features"])
+        self.assertFalse((REPO_ROOT / ".rulesync" / "subagents").exists())
+
+        contract = json.loads((REPO_ROOT / "scripts/codex/execution-contract.json").read_text())
+        providers = contract["providers"]
+        self.assertEqual(
+            {name: providers[name]["delegation"] for name in ("codex", "claude", "antigravity", "copilot", "minimax")},
+            {
+                "codex": "native",
+                "claude": "codex-shim",
+                "antigravity": "codex-shim",
+                "copilot": "codex-shim",
+                "minimax": "none",
+            },
+        )
+        self.assertIn("autodev_spawn", json.loads(RULESYNC_MCP_SOURCE.read_text())["antigravity-cli"]["mcpServers"])
+        # The other bridge definitions are request-scoped and must not become a
+        # global Rulesync server that an unrelated turn could call.
+        for target in ("codexcli", "copilotcli"):
+            self.assertNotIn("autodev_spawn", json.loads(RULESYNC_MCP_SOURCE.read_text())[target]["mcpServers"])
+
     def test_inventory_is_read_only(self):
         paths = (
             AUTODEV_CONFIG,

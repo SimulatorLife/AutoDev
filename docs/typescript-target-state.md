@@ -2,7 +2,7 @@
 
 ## Migration progress — 2026-09-17
 
-The migration remains intentionally behavior-preserving. The shared-runtime spawn/state/MCP pass, router HTTP/proxy decomposition, and all four provider bridge conversions are now landed; installer/platform and final test-stack migrations continue.
+The migration remains intentionally behavior-preserving. The shared-runtime spawn/state/MCP pass, router HTTP/proxy decomposition, all four provider bridge conversions, and the cross-provider orchestrator delegation pass are now landed; installer/platform and final test-stack migrations continue.
 
 ### Completed
 
@@ -20,6 +20,9 @@ The migration remains intentionally behavior-preserving. The shared-runtime spaw
 - Typed Responses/SSE transformation, tool flattening, namespace rewriting, model replacement, tool-call counting, and upstream payload normalization now live in `src/router/responses.ts` and are deployed by the installer runtime manifest.
 - Typed concurrency tracking and slot admission now live in `src/router/concurrency.ts` with TOML config parsing (`max_concurrent_threads_per_session`), process-fallback scoping, denial recording, and telemetry restoration; router lifecycle state management and graceful shutdown coordination live in `src/router/lifecycle.ts`.
 - Typed router authentication boundary (`src/router/auth.ts`), failure classification and ring-buffer event recording (`src/router/events.ts`), subagent/bridge orchestration registry (`src/router/subagents.ts`), and state persistence subsystem (`src/router/persistence.ts`) are decomposed from the legacy router into dedicated TypeScript modules deployed by the installer runtime manifest.
+- Orchestrator capability is now explicit in the execution contract: Codex, Claude, Antigravity, and Copilot have native or Codex-shim delegation paths; MiniMax is excluded from the orchestrator fallback tier instead of being advertised as spawn-capable. Copilot's bridge receives a session-scoped `autodev_spawn` MCP shim and emits the same Codex `exec` delegation item used by the other CLI bridges.
+- Delegation capability resolution now fails closed to the execution contract rather than inferring capability from a routed provider name or a stale `spawnTools` list. Bridge-native parent activity remains open until the parent outcome is known, preserving failure semantics when child results arrive first; focused TypeScript coverage freezes both behaviors.
+
 - Dedicated native TypeScript test suites cover concurrency (`tests/router/concurrency.test.ts`), router lifecycle (`tests/router/lifecycle.test.ts`), authentication (`tests/router/auth.test.ts`), event recording (`tests/router/events.test.ts`), subagent registry (`tests/router/subagents.test.ts`), and state persistence (`tests/router/persistence.test.ts`), while all router integration and frozen contract tests remain 100% green.
 - Existing provider/router contract tests remain green while imports move to typed shared modules.
 - Router HTTP routing, workspace/session resolution, status aggregation, agent-event ingestion, upstream proxying, retry/fallback, and exhaustion diagnostics now live in `src/router/http.ts` and `src/router/proxy.ts`; `scripts/codex-model-router.mjs` is a concise executable/re-export entrypoint. Dedicated native TypeScript proxy and HTTP tests cover the extracted contracts.
@@ -38,7 +41,7 @@ The migration remains intentionally behavior-preserving. The shared-runtime spaw
 - First-party tests are still split between JavaScript, Python, and TypeScript. The inventory gate is present but intentionally reports the remaining legacy files until their replacements and equivalent tests land.
 - Canonical declarative content remains under `scripts/codex/`; moving it to the target `agents/` and `config/` layout must be coordinated with installer/runtime path changes.
 - The typed state collector keeps its dynamic SQLite schema inspection behind an explicit row/binding boundary and continues to strip raw paths before snapshots are exposed; its output and privacy contracts were not changed.
-- Routing owns provider/config policy; typed router modules now own HTTP, upstream proxy execution, Responses/SSE compatibility, OTEL telemetry, persistence, lifecycle, and bridge orchestration. The legacy `.mjs` router is retained only as the executable/public re-export entrypoint.
+- Routing owns provider/config policy; typed router modules now own HTTP, upstream proxy execution, Responses/SSE compatibility, OTEL telemetry, persistence, lifecycle, and bridge orchestration. The legacy `.mjs` router is retained only as the executable/public re-export entrypoint. The execution contract records a provider delegation mode so status and routing cannot claim that a provider with no spawn path can orchestrate.
 - Claude's supported subscription path remains the unmodified Claude Code CLI, but AutoDev-owned bridge logic is now typed and imports shared workspace, role, limit, telemetry, and spawn contracts rather than maintaining a Python copy.
 - `src/cli/autodev.ts` now has typed dispatch boundaries for `router`, `provider`, `hook`, and `install`; only `check` and render commands have concrete repository backends, while the remaining default backends fail closed until their runtime migrations land.
 - The router status CLI now lives in `src/cli/router-status.ts` and consumes the typed `src/router/status.ts` boundary; the obsolete `scripts/codex-model-router-status.mjs` entrypoint is deleted and stale installed copies are removed.
@@ -57,8 +60,9 @@ Step 1 — router HTTP and upstream proxy decomposition — is complete.
 2. Convert all provider bridges to typed shared-contract implementations — complete for MiniMax, Copilot, Antigravity, and Claude.
 3. Move installer, reconciliation, hook, and `ensure-*` behavior behind the typed CLI/platform modules.
 4. Convert remaining JavaScript/Python tests to `node:test`, remove obsolete entrypoints, and enable the inventory gate as a required check.
+5. Preserve the provider delegation matrix while moving the remaining bridge/telemetry contract tests to native TypeScript; Rulesync subagent generation remains deferred until it can project the AutoDev role/capability contract without weakening Codex ownership. The current slice hardens the contract and parent-outcome telemetry boundary first.
 
-For the current provider and test-stack slices, `pnpm typecheck` passes; `pnpm test` reports 738 tests with 737 passing and 1 skip, and `pnpm test:ts` reports 299 tests with 298 passing and 1 skip. The focused Claude, provider, MCP, role, telemetry, workspace, and boundary suites pass, including the native TypeScript Claude Responses fixture contract. The inventory gate intentionally still reports the remaining installer, shell, and legacy test files; remaining migration work is concentrated in installer/reconciliation/platform ownership and the last legacy test files.
+For the current provider and test-stack slices, `pnpm typecheck` passes; `pnpm test` reports 741 tests with 740 passing and 1 skip, and `pnpm test:ts` reports 300 tests with 299 passing and 1 skip. The focused Claude, provider, MCP, role, telemetry, workspace, and boundary suites pass, including the native TypeScript Claude Responses fixture contract. The inventory gate intentionally still reports the remaining installer, shell, and legacy test files; remaining migration work is concentrated in installer/reconciliation/platform ownership and the last legacy test files.
 
 ## Decision
 

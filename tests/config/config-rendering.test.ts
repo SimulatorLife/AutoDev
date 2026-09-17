@@ -6,6 +6,7 @@ import { parse } from 'smol-toml';
 import test from 'node:test';
 import { compose } from '../../src/config/compose-user-config.ts';
 import { renderBridgeMcpCatalogue } from '../../src/config/render-bridge-mcp-catalogue.ts';
+import { validateProviderContracts } from '../../src/config/render-execution-contract.ts';
 import { atomicWrite, serializeToml, type TomlTable } from '../../src/config/toml.ts';
 
 test('TOML serialization is parseable and ends with one newline', () => {
@@ -48,4 +49,28 @@ test('bridge MCP catalogues are deterministic and sorted', async () => {
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
+});
+
+
+test('execution-contract provider delegation is explicit and consistent', () => {
+  assert.deepEqual(
+    validateProviderContracts({
+      codex: { delegation: 'native', spawnTools: [] },
+      claude: { delegation: 'codex-shim', spawnTools: ['Agent'] },
+      minimax: { delegation: 'none', spawnTools: [] },
+    }),
+    {
+      codex: { delegation: 'native', spawnTools: [] },
+      claude: { delegation: 'codex-shim', spawnTools: ['Agent'] },
+      minimax: { delegation: 'none', spawnTools: [] },
+    },
+  );
+  assert.throws(
+    () => validateProviderContracts({ unknown: { spawnTools: [] } }),
+    /must declare delegation/,
+  );
+  assert.throws(
+    () => validateProviderContracts({ minimax: { delegation: 'none', spawnTools: ['invoke_subagent'] } }),
+    /cannot declare spawnTools/,
+  );
 });

@@ -154,6 +154,7 @@ export interface BridgeParentActivityEntry {
   subject: string;
   children: Set<string>;
   context: BridgeRequestContext;
+  finished: { outcome: string; elapsedMs: number | null } | null;
 }
 
 export interface ProviderCapabilities {
@@ -202,11 +203,24 @@ export function providerCapabilities(
   provider: string,
   executionContract: Record<string, any> = getDefaultExecutionContract(),
 ): ProviderCapabilities {
+  const subagentSpawnTools = Array.isArray(executionContract.providers?.[provider]?.spawnTools)
+    ? [...executionContract.providers[provider].spawnTools]
+    : [];
+  // The provider delegation mode is generated alongside the role contract.
+  // A route is not evidence of orchestration capability: providers without a
+  // native, Codex-shim, or bridge-native path must not enter the root fallback
+  // tier merely because they can serve ordinary turns.
+  const delegation = executionContract.providers?.[provider]?.delegation;
+  // The execution contract is the provider capability source of truth. A
+  // route alone is not evidence that its orchestrator can delegate, and a
+  // stale spawnTools list must not resurrect a provider explicitly marked
+  // `none`.
+  const subagentSpawn = delegation === 'native'
+    || delegation === 'codex-shim'
+    || delegation === 'bridge-native';
   return {
-    subagentSpawn: true,
-    subagentSpawnTools: Array.isArray(executionContract.providers?.[provider]?.spawnTools)
-      ? [...executionContract.providers[provider].spawnTools]
-      : [],
+    subagentSpawn,
+    subagentSpawnTools,
     normalizeItemIds: true,
   };
 }
@@ -434,16 +448,22 @@ export class SubagentRegistry {
       origin: 'orchestrator',
       workspace: context.workspace ?? null,
     });
-    parent = { subject, children: new Set(), context };
+    parent = { subject, children: new Set(), context, finished: null };
     this.bridgeParentActivity.set(requestId, parent);
     return parent;
   }
 
   closeBridgeParentActivity(requestId: string): boolean {
     const parent = this.bridgeParentActivity.get(requestId);
-    if (!parent || parent.children.size > 0) return false;
+    // A child result can arrive before the parent turn settles. Keep the
+    // synthetic parent open until the router supplies the parent's outcome;
+    // otherwise a later parent failure would be reported as a success.
+    if (!parent || parent.children.size > 0 || !parent.finished) return false;
     if (this.agentActivity) {
-      this.agentActivity.finish(parent.subject, { requestId: parent.subject, outcome: 'success' });
+      this.agentActivity.finish(parent.subject, {
+        requestId: parent.subject,
+        outcome: parent.finished.outcome,
+      });
     }
     this.bridgeParentActivity.delete(requestId);
     return true;
@@ -591,6 +611,8 @@ export class SubagentRegistry {
     };
     const context = this.bridgeRequestContext.get(requestId);
     if (context) context.finished = settled;
+    const parent = this.bridgeParentActivity.get(requestId);
+    if (parent) parent.finished = settled;
     let closed = 0;
     for (const [key, entry] of [...this.bridgeSubagentUsage]) {
       if (entry.requestId !== requestId) continue;
@@ -600,6 +622,10 @@ export class SubagentRegistry {
       });
       closed += 1;
     }
+    // The parent may have no still-open children by the time its result event
+    // arrives (for example, every child reported its own result first). Close
+    // that synthetic activity now that the parent's outcome is authoritative.
+    this.closeBridgeParentActivity(requestId);
     return closed;
   }
 
@@ -675,7 +701,9 @@ export class SubagentRegistry {
     const codexNativeSpawns = this.getCodexNativeSpawns ? this.getCodexNativeSpawns() : 0;
     const spawnCapableProviders = this.getSpawnCapableProviders
       ? this.getSpawnCapableProviders()
-      : ['antigravity', 'claude', 'minimax', 'copilot', 'codex'];
+      : Object.keys(this.executionContract?.providers ?? {}).filter(
+          (provider) => providerCapabilities(provider, this.executionContract).subagentSpawn,
+        );
     return {
       total: this.subagentTelemetry.total,
       byMechanism: { ...this.subagentTelemetry.byMechanism },

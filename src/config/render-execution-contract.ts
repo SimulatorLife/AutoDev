@@ -6,6 +6,28 @@ import { atomicWriteJson, ConfigError, parseArgs, readJsonFile, requiredArg, typ
 const MCP_ORDER: Record<string, number> = { lsp: 0, 'cocoindex-code': 1, playwright: 2, openaiDeveloperDocs: 3, autodev_spawn: 4 };
 const SKILL_ORDER: Record<string, number> = { orchestration: 0, ccc: 1, 'lsp-mcp-server': 2 };
 const RESEARCH_ROLES = new Set(['docs-researcher', 'smart', 'orchestrator']);
+const DELEGATION_MODES = new Set(['native', 'codex-shim', 'bridge-native', 'none']);
+
+export function validateProviderContracts(value: unknown): UnknownRecord {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new ConfigError('execution contract providers must be an object');
+  }
+  const providers = record(value);
+  for (const [name, raw] of Object.entries(providers)) {
+    const provider = record(raw);
+    const delegation = provider.delegation;
+    if (typeof delegation !== 'string' || !DELEGATION_MODES.has(delegation)) {
+      throw new ConfigError(`provider '${name}' must declare delegation as one of: ${[...DELEGATION_MODES].join(', ')}`);
+    }
+    if (!Array.isArray(provider.spawnTools) || provider.spawnTools.some((tool) => typeof tool !== 'string' || !tool.trim())) {
+      throw new ConfigError(`provider '${name}' must declare spawnTools as an array of non-empty strings`);
+    }
+    if (delegation === 'none' && provider.spawnTools.length > 0) {
+      throw new ConfigError(`provider '${name}' cannot declare spawnTools when delegation is none`);
+    }
+  }
+  return providers;
+}
 
 type UnknownRecord = Record<string, unknown>;
 type RoleProjection = {
@@ -102,7 +124,7 @@ export function renderExecutionContract(sourceDir: string, rootConfigPath: strin
   return {
     version: typeof template.version === 'number' ? template.version : 1,
     roles,
-    providers: template.providers ?? {},
+    providers: validateProviderContracts(template.providers),
   };
 }
 

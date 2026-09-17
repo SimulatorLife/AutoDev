@@ -144,8 +144,11 @@ test('reportedChildren parses structured children and pads to count', () => {
 test('capabilities and telemetry headers resolve properly', () => {
   const mockExecutionContract = {
     providers: {
-      claude: { spawnTools: ['Agent'] },
-      antigravity: { spawnTools: ['invoke_subagent'] },
+      claude: { spawnTools: ['Agent'], delegation: 'codex-shim' },
+      antigravity: { spawnTools: ['invoke_subagent'], delegation: 'codex-shim' },
+      copilot: { spawnTools: [], delegation: 'codex-shim' },
+      codex: { spawnTools: [], delegation: 'native' },
+      minimax: { spawnTools: [], delegation: 'none' },
     },
     roles: {
       orchestrator: { mcp: ['server-1'], skills: ['skill-1'] },
@@ -158,6 +161,10 @@ test('capabilities and telemetry headers resolve properly', () => {
   assert.deepEqual(caps.subagentSpawnTools, ['Agent']);
 
   assert.deepEqual(subagentSpawnToolsFor('antigravity', mockExecutionContract), ['invoke_subagent']);
+  assert.equal(providerCapabilities('minimax', mockExecutionContract).subagentSpawn, false);
+  assert.equal(providerCapabilities('copilot', mockExecutionContract).subagentSpawn, true);
+  assert.equal(providerCapabilities('missing', mockExecutionContract).subagentSpawn, false);
+  assert.equal(providerCapabilities('minimax', { providers: { minimax: { spawnTools: ['invoke_subagent'], delegation: 'none' } } }).subagentSpawn, false);
   assert.deepEqual(mcpContractForRole('orchestrator', mockExecutionContract), ['server-1']);
   assert.deepEqual(mcpContractForRole('explorer', mockExecutionContract), ['server-2']);
 
@@ -215,4 +222,33 @@ test('convenience functions delegate to default SubagentRegistry', async () => {
   assert.equal(subagentStatus().total, 0);
 
   setDefaultSubagentRegistry(null);
+});
+
+
+test('synthetic bridge parent activity settles with the parent outcome', () => {
+  const finishes: Array<{ subject: string; outcome: string }> = [];
+  const agentActivity = {
+    beginRequest: () => undefined,
+    applyLifecycleEvent: () => true,
+    finish: (subject: string, options: { outcome?: string }) => {
+      finishes.push({ subject, outcome: options.outcome ?? 'unknown' });
+      return null;
+    },
+  };
+  const registry = new SubagentRegistry({ agentActivity: agentActivity as any });
+  const context = { provider: 'claude', model: 'sonnet', role: 'orchestrator', workspace: 'AutoDev' };
+  registry.noteBridgeRequest('parent-failure', context);
+  registry.openBridgeSubagentUsage({ requestId: 'parent-failure', context, role: 'worker', childId: 'child-1' });
+
+  // A child can finish before the parent request. That must not close the
+  // synthetic parent early, because the parent's eventual failure is the
+  // authoritative outcome for the parent activity.
+  assert.equal(registry.closeBridgeSubagentUsage('parent-failure\0child-1', { outcome: 'success' }), true);
+  assert.deepEqual(finishes, [{ subject: 'bridge:parent-failure\0child-1', outcome: 'success' }]);
+
+  registry.closeBridgeSubagentsForRequest('parent-failure', 'failure', 25);
+  assert.deepEqual(finishes, [
+    { subject: 'bridge:parent-failure\0child-1', outcome: 'success' },
+    { subject: 'bridge-parent:parent-failure', outcome: 'failure' },
+  ]);
 });

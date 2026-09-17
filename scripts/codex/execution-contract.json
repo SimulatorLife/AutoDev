@@ -161,25 +161,30 @@
         "Agent",
         "Task"
       ],
-      "permissionMode": "configured"
+      "permissionMode": "configured",
+      "delegation": "codex-shim"
     },
     "antigravity": {
       "spawnTools": [
         "invoke_subagent"
       ],
-      "permissionMode": "configured"
+      "permissionMode": "configured",
+      "delegation": "codex-shim"
     },
     "minimax": {
       "spawnTools": [],
-      "permissionMode": "upstream"
+      "permissionMode": "upstream",
+      "delegation": "none"
     },
     "copilot": {
       "spawnTools": [],
-      "permissionMode": "configured"
+      "permissionMode": "configured",
+      "delegation": "codex-shim"
     },
     "codex": {
       "spawnTools": [],
-      "permissionMode": "native"
+      "permissionMode": "native",
+      "delegation": "native"
     }
   }
 }

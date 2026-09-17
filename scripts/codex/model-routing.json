@@ -28,7 +28,7 @@
       ],
       [
         "claude",
-        "minimax",
+        "copilot",
         "antigravity"
       ]
     ]
@@ -86,7 +86,8 @@
     },
     "copilot": {
       "models": {
-        "default": "copilot"
+        "default": "copilot",
+        "orchestrator": "copilot"
       }
     },
     "codex": {
@@ -125,7 +126,6 @@
     "tier": "orchestrator",
     "reasoningEffort": {
       "claude": "medium",
-      "minimax": "high",
       "antigravity": "high"
     }
   }

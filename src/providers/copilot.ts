@@ -21,6 +21,7 @@ const HOST = process.env.COPILOT_PROXY_HOST ?? "127.0.0.1";
 const PORT = Number.parseInt(process.env.COPILOT_PROXY_PORT ?? "4003", 10);
 const TIMEOUT_MS = Number.parseInt(process.env.COPILOT_PROXY_TIMEOUT_MS ?? "900000", 10);
 const PROJECT_ROOT = process.env.CODEX_PROJECT_ROOT ?? process.env.COPILOT_PROJECT_ROOT ?? null;
+const AUTH_TOKEN = process.env.CODEX_ROUTER_COPILOT_API_KEY ?? "";
 
 import { resolveCwd, WorkspaceResolutionError } from "../shared/resolve-workspace.ts";
 import { composeProviderPrompt, isOrchestratorRole, resolveAgentRole } from "../agents/bridge-role.ts";
@@ -28,6 +29,8 @@ import { roleContract } from "../shared/execution-contract.ts";
 import type { RoleContract } from "../shared/execution-contract.ts";
 import { classifyCliLimit, INCOMPLETE_REASON_INTERRUPTED, INCOMPLETE_REASON_PROVIDER_LIMIT, limitPayload, limitResponseHeaders, retryAfterSecondsFromLimit, terminalIncompleteEvents } from "../shared/provider-limits.ts";
 import { resolveAgentEventReporter, SKILL_READ_SOURCE } from "../telemetry/agent-events.ts";
+import { SpawnSessionRegistry } from "../agents/bridge-spawn-session.ts";
+import { buildSpawnScript, execToolCallSseEvents, mintCallId, mintCallItemId } from "../agents/spawn-tools.ts";
 
 // Provider/CLI payloads are JSON-shaped but intentionally retain fields this
 // bridge does not own (the Copilot CLI's event stream is not a formally
@@ -52,6 +55,8 @@ function copilotRoleContract(role: unknown): CopilotRoleContract {
 // router's rows say which mechanism made the skill available.
 const SKILL_EXPOSURE_SOURCE = "role_contract";
 const MCP_EXPOSURE_SOURCE = "role_contract";
+
+const spawnSessions = new SpawnSessionRegistry();
 
 // Canonical skill roots whose `SKILL.md` a successful read counts as actual
 // usage, mirroring the approved roots `src/hooks/skill-read-telemetry.ts`
@@ -409,7 +414,7 @@ function userMcpServerNames(): string[] {
  * User-level servers in the contract stay as Rulesync wrote them: they come
  * from the same `.rulesync/mcp.jsonc` declaration as the catalogue.
  */
-function copilotMcpArgs(agentRole: string | null): string[] {
+function copilotMcpArgs(agentRole: string | null, spawnSession: string | null = null): string[] {
   const contract = copilotRoleContract(agentRole);
   const granted = (contract.mcp ?? []).filter((name) => name !== "autodev_spawn");
   const catalogue = bridgeMcpCatalogue();
@@ -433,6 +438,22 @@ function copilotMcpArgs(agentRole: string | null): string[] {
       ? { type: "http", url: server.url, tools: tools ?? [ "*" ] }
       : { type: "stdio", command: server.command, args: server.args ?? [], tools: tools ?? [ "*" ] };
   }
+  if (isOrchestratorRole(agentRole) && spawnSession) {
+    // The CLI cannot reach Codex directly. Give only this identified root turn
+    // a per-request MCP server whose call is collected and returned as a
+    // synthetic Codex exec item after the CLI turn completes.
+    const shim = resolve(join(import.meta.dirname, "..", "mcp", "spawn-shim.ts"));
+    additional.autodev_spawn = {
+      type: "stdio",
+      command: process.execPath,
+      args: [ shim ],
+      env: {
+        AUTODEV_BRIDGE_URL: `http://${HOST}:${PORT}`,
+        AUTODEV_BRIDGE_TOKEN: AUTH_TOKEN,
+        AUTODEV_SPAWN_SESSION: spawnSession,
+      },
+    };
+  }
   if (Object.keys(additional).length > 0) args.push("--additional-mcp-config", JSON.stringify({ mcpServers: additional }));
   for (const name of granted) args.push(`--allow-tool=${name}`);
   return args;
@@ -451,11 +472,11 @@ type OnRunCopilotEvent = (event: JsonRecord) => void;
  * final answer and for the commentary/tool narration around it, so the parent
  * sees the turn progress instead of one silent block at the end.
  */
-function runCopilot(prompt: string, model: unknown, cwd: string, onEvent: OnRunCopilotEvent | null = null, agentRole: string | null = null): Promise<RunCopilotResult> {
+function runCopilot(prompt: string, model: unknown, cwd: string, onEvent: OnRunCopilotEvent | null = null, agentRole: string | null = null, spawnSession: string | null = null): Promise<RunCopilotResult> {
   return new Promise<RunCopilotResult>((resolvePromise, rejectPromise) => {
     const args = [ "--no-auto-update", "--no-color", "--output-format", "json", "--prompt", prompt ];
     const contract = copilotRoleContract(agentRole);
-    args.push(...copilotMcpArgs(agentRole));
+    args.push(...copilotMcpArgs(agentRole, spawnSession));
     if (isResearchRole(agentRole)) args.push("--allow-tool=web_search", "--allow-tool=web_fetch");
     if (!contract.readOnly) args.splice(4, 0, "--allow-all-tools", "--allow-all-paths", "--allow-all-urls", "--no-ask-user");
     if (model && model !== "copilot" && model !== "auto") args.push("--model", String(model));
@@ -599,9 +620,42 @@ function sseLine(eventName: string, body: JsonRecord): string {
   return `event: ${eventName}\ndata: ${JSON.stringify(body)}\n\n`;
 }
 
+function headerValue(headers: NodeJS.Dict<string | string[]> | undefined, name: string): string | null {
+  if (!headers || typeof headers !== "object") return null;
+  const key = Object.keys(headers).find((candidate) => candidate.toLowerCase() === name);
+  const value = key === undefined ? undefined : headers[key];
+  const single = Array.isArray(value) ? value[0] : value;
+  return typeof single === "string" && single.trim() ? single.trim() : null;
+}
+
 async function handle(request: IncomingMessage, response: ServerResponse): Promise<void> {
   const pathname = new URL(request.url ?? "/", `http://${HOST}:${PORT}`).pathname;
-  if (pathname === "/health" || pathname === "/health/liveliness") { sendJson(response, 200, { status: "ok", provider: "copilot" }); return; }
+  if (pathname === "/health" || pathname === "/health/liveliness") {
+    sendJson(response, 200, { status: "ok", provider: "copilot", spawnSessions: spawnSessions.status() });
+    return;
+  }
+  if (pathname === "/v1/bridge-spawn/attach" || pathname === "/v1/bridge-spawn/call") {
+    if (AUTH_TOKEN && request.headers.authorization !== `Bearer ${AUTH_TOKEN}`) {
+      sendJson(response, 401, { error: "invalid local gateway key" });
+      return;
+    }
+    let body: JsonRecord;
+    try { body = JSON.parse(await bodyOf(request)); } catch { sendJson(response, 400, { error: "invalid JSON" }); return; }
+    const session = typeof body.session === "string" ? body.session : "";
+    if (pathname.endsWith("/attach")) {
+      sendJson(response, 200, { spawnAllowed: spawnSessions.mayDelegate(session) });
+      return;
+    }
+    const result = spawnSessions.record(session, body.children);
+    if (!result.accepted) {
+      sendJson(response, 409, { error: result.message });
+      return;
+    }
+    sendJson(response, 200, {
+      text: `Dispatched ${result.count} subagent(s): ${result.roles}. They are running now and are tracked by the orchestration layer, not by you.`,
+    });
+    return;
+  }
   if (pathname !== "/v1/responses" || request.method !== "POST") { sendJson(response, 404, { error: { message: "not found", type: "invalid_request_error" } }); return; }
   let payload: JsonRecord;
   try { payload = JSON.parse(await bodyOf(request)); } catch { sendJson(response, 400, { error: { message: "invalid JSON", type: "invalid_request_error" } }); return; }
@@ -621,6 +675,10 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
     return;
   }
   const prompt = inputText(payload.input, composeProviderPrompt(agentRole, cwd));
+  const sessionHeader = headerValue(request.headers, "x-autodev-session-id");
+  const sessionScope = headerValue(request.headers, "x-autodev-session-scope");
+  const spawnSession = SpawnSessionRegistry.canHold(sessionHeader, sessionScope) ? sessionHeader : null;
+  if (spawnSession) spawnSessions.open(spawnSession, { orchestrator: isOrchestratorRole(agentRole) });
   const bootstrapContract = copilotRoleContract(agentRole);
   console.error(`copilot bootstrap provider=copilot model=${payload.model} role=${agentRole ?? "default"} cwd=${cwd} skills=${JSON.stringify(bootstrapContract.skills ?? [])} mcp=${JSON.stringify(bootstrapContract.mcp ?? [])}`);
   console.error(`copilot request model=${payload.model} role=${isOrchestratorRole(agentRole) ? "orchestrator" : "leaf"} cwd=${cwd}`);
@@ -656,13 +714,26 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
             void agentEvents.reportHeartbeat({ minIntervalMs: 5000 });
           }
           reportToolObservation(agentEvents, event);
-        }, agentRole);
+        }, agentRole, spawnSession);
       } finally {
         clearInterval(nonStreamHeartbeat);
       }
+      const output = [ responseMessageItem(result.text, `msg_${randomBytes(10).toString("hex")}`) ];
+      const spawnChildren = spawnSession ? spawnSessions.close(spawnSession) : [];
+      if (spawnSession && spawnChildren.length > 0) {
+        const spawnEvents = execToolCallSseEvents({
+          itemId: mintCallItemId(),
+          callId: mintCallId(spawnSession, output.length),
+          source: buildSpawnScript(spawnChildren, { recoverParentId: spawnSession }),
+          outputIndex: output.length,
+        });
+        output.push(spawnEvents[3][1].item as unknown as JsonRecord);
+        console.error(`copilot delegating ${spawnChildren.length} subagent(s) through Codex`);
+      }
       if (typeof agentEvents?.reportActivity === "function") void agentEvents.reportActivity({ state: "finished" });
-      sendJson(response, 200, responsePayload(payload.model, result.text, result.result));
+      sendJson(response, 200, responsePayload(payload.model, result.text, result.result, undefined, undefined, output));
     } catch (error) {
+      if (spawnSession) spawnSessions.close(spawnSession);
       if (typeof agentEvents?.reportActivity === "function") void agentEvents.reportActivity({ state: "failed" });
       const message = error instanceof Error ? error.message : String(error);
       sendJson(response, 503, { error: { type: "copilot_proxy_error", message } });
@@ -759,7 +830,7 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
       // Commentary and tool narration are appended verbatim; the CLI streams
       // commentary token by token, so those parts are keyed by their text.
       emitActivity(event.text, event.key ?? `activity:${activityParts.length}:${event.text}`);
-    }, agentRole);
+    }, agentRole, spawnSession);
     startStream();
     const reasoningText = activityParts.join("");
     const completedReasoning = { id: reasoningId, type: "reasoning", status: "completed", summary: [ { type: "summary_text", text: reasoningText } ], content: [] };
@@ -771,12 +842,25 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
     emit("response.output_text.done", { type: "response.output_text.done", item_id: itemId, text: result.text, content_index: 0, output_index: 1 });
     emit("response.content_part.done", { type: "response.content_part.done", item_id: itemId, output_index: 1, content_index: 0, part: { type: "output_text", text: result.text, annotations: [] } });
     emit("response.output_item.done", { type: "response.output_item.done", output_index: 1, item: completedMessage });
+    const spawnChildren = spawnSession ? spawnSessions.close(spawnSession) : [];
+    if (spawnSession && spawnChildren.length > 0) {
+      const spawnEvents = execToolCallSseEvents({
+        itemId: mintCallItemId(),
+        callId: mintCallId(spawnSession, completed.output.length),
+        source: buildSpawnScript(spawnChildren, { recoverParentId: spawnSession }),
+        outputIndex: completed.output.length,
+      });
+      for (const [eventName, body] of spawnEvents) emit(eventName, body as unknown as JsonRecord);
+      completed.output.push(spawnEvents[3][1].item as unknown as JsonRecord);
+      console.error(`copilot delegating ${spawnChildren.length} subagent(s) through Codex`);
+    }
     emit("response.completed", { type: "response.completed", response: completed });
     if (typeof agentEvents?.reportActivity === "function") void agentEvents.reportActivity({ state: "finished" });
     if (isWritable()) {
       try { response.end("data: [DONE]\n\n"); } catch {}
     }
   } catch (error) {
+    if (spawnSession) spawnSessions.close(spawnSession);
     if (typeof agentEvents?.reportActivity === "function") void agentEvents.reportActivity({ state: "failed" });
     if (!isWritable()) return;
     const message = error instanceof Error ? error.message : String(error);
@@ -817,6 +901,7 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
     }
   } finally {
     clearInterval(keepAlive);
+    if (spawnSession) spawnSessions.close(spawnSession);
     response.removeListener("error", onResponseError);
   }
 }

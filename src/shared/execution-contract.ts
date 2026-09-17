@@ -8,6 +8,7 @@ export interface RoleContract {
 }
 export interface ProviderContract {
   spawnTools: string[];
+  delegation: 'native' | 'codex-shim' | 'bridge-native' | 'none';
   permissionMode: string;
   [key: string]: unknown;
 }
@@ -32,5 +33,5 @@ export function roleContract(role: unknown): RoleContract {
 }
 
 export function providerContract(provider: string): ProviderContract {
-  return CONTRACT.providers[provider] ?? { spawnTools: [], permissionMode: "unknown" };
+  return CONTRACT.providers[provider] ?? { spawnTools: [], delegation: "none", permissionMode: "unknown" };
 }

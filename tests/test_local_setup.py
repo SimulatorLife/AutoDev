@@ -1486,9 +1486,10 @@ exit 0
         self.assertIn(minimax_profile.get("model_reasoning_effort"), ("none", "high"))
         self.assertIn(minimax_profile.get("agents", {}).get("default_subagent_reasoning_effort"), ("none", "high"))
 
-        # Router config orchestrator effort for minimax
+        # MiniMax is leaf-only because its adapter has no delegation path.
         routing = json.loads((REPO_ROOT / "scripts/codex/model-routing.json").read_text())
-        self.assertIn(routing.get("orchestrator", {}).get("reasoningEffort", {}).get("minimax"), ("none", "high"))
+        self.assertNotIn("minimax", sum(routing.get("providerGroups", {}).get("orchestrator", []), []))
+        self.assertNotIn("minimax", routing.get("orchestrator", {}).get("reasoningEffort", {}))
 
     def test_agent_configs_and_rendered_outputs_inherit_model_reasoning_effort(self):
         """Agent role configs must omit model_reasoning_effort so child

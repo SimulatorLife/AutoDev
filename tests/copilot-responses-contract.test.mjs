@@ -7,7 +7,7 @@ import { tmpdir } from "node:os";
 import test from "node:test";
 
 import { classifyCliLimit, limitPayload } from "../src/shared/provider-limits.ts";
-import { runCopilot } from "../src/providers/copilot.ts";
+import { copilotMcpArgs, runCopilot } from "../src/providers/copilot.ts";
 import { createBridgeMcpHomes } from "./bridge-mcp-fixture.ts";
 
 const REPO_ROOT = resolve(import.meta.dirname, "..");
@@ -202,6 +202,18 @@ process.exitCode = fixture.exitCode ?? 0;
     await rm(temp, { recursive: true, force: true });
   }
 }
+
+test("Copilot orchestrator receives only its identified AutoDev spawn shim", () => {
+  const args = copilotMcpArgs("orchestrator", "copilot-session");
+  const configIndex = args.indexOf("--additional-mcp-config");
+  assert.notEqual(configIndex, -1);
+  const config = JSON.parse(args[configIndex + 1]);
+  const shim = config.mcpServers.autodev_spawn;
+  assert.equal(shim.type, "stdio");
+  assert.equal(shim.command, process.execPath);
+  assert.equal(shim.env.AUTODEV_SPAWN_SESSION, "copilot-session");
+  assert.equal(copilotMcpArgs("worker").some((arg) => arg.includes("autodev_spawn")), false);
+});
 
 test("Copilot Responses contract fixture is exercised through the offline proxy boundary", async () => {
   const before = await readFile(CONTRACT_PATH);

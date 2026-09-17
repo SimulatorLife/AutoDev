@@ -189,7 +189,7 @@ test("loads editable provider and role models from JSON routing config", async (
   assert.equal(config.providers.copilot.models.smart, undefined);
   assert.deepEqual(config.providerGroups.default, [ [ "claude", "antigravity", "minimax" ], [ "copilot" ], [ "codex" ] ]);
   assert.deepEqual(config.providerGroups.smart, [ [ "claude", "antigravity" ], [ "codex" ] ]);
-  assert.deepEqual(config.providerGroups.orchestrator, [ [ "codex" ], [ "claude", "minimax", "antigravity" ] ]);
+  assert.deepEqual(config.providerGroups.orchestrator, [ [ "codex" ], [ "claude", "copilot", "antigravity" ] ]);
   assert.equal(config.roles.worker.tier, "default");
   assert.equal(config.roles.smart.tier, "smart");
   assert.equal(config.orchestrator.alias, "autodev/orchestrator");
@@ -197,18 +197,18 @@ test("loads editable provider and role models from JSON routing config", async (
   assert.equal(config.providers.codex.models.orchestrator, "gpt-5.6-luna");
   assert.equal(config.providers.claude.models.orchestrator, "claude-opus-5");
   assert.equal(config.providers.antigravity.models.orchestrator, "gemini-3.8-flash-high");
-  assert.deepEqual(config.orchestrator.reasoningEffort, { claude: "medium", minimax: "high", antigravity: "high" });
+  assert.equal(config.providers.copilot.models.orchestrator, "copilot");
+  assert.deepEqual(config.orchestrator.reasoningEffort, { claude: "medium", antigravity: "high" });
 });
 
-test("all providers are treated as capable of subagent spawning", async () => {
+test("provider capabilities expose only providers with a real delegation path", async () => {
   const config = JSON.parse(await readFile(new URL("./codex/model-routing.json", import.meta.url), "utf8"));
   for (const provider of Object.keys(config.providers)) {
     assert.equal(config.providers[provider].capabilities, undefined, `${provider} must not declare capabilities in routing config`);
-    assert.equal(
-      providerCapabilities(provider).subagentSpawn,
-      true,
-      `${provider} must be treated as spawn-capable`,
-    );
+  }
+  assert.equal(providerCapabilities("minimax").subagentSpawn, false);
+  for (const provider of ["codex", "claude", "antigravity", "copilot"]) {
+    assert.equal(providerCapabilities(provider).subagentSpawn, true, `${provider} must be treated as spawn-capable`);
   }
   for (const group of config.providerGroups.orchestrator) {
     for (const provider of group) {
@@ -221,10 +221,10 @@ test("all providers are treated as capable of subagent spawning", async () => {
   }
 });
 
-test("router status treats every provider as spawn-capable without role capability metadata", () => {
+test("router status reports only providers with a delegation path", () => {
   const providers = getRouterStatus().providers;
-  for (const provider of Object.values(providers)) {
-    assert.equal(provider.capabilities.subagentSpawn, true);
+  for (const [name, provider] of Object.entries(providers)) {
+    assert.equal(provider.capabilities.subagentSpawn, name !== "minimax");
     assert.ok(Array.isArray(provider.capabilities.subagentSpawnTools));
     assert.equal("mcp" in provider.capabilities, false);
     assert.equal("skills" in provider.capabilities, false);
@@ -239,13 +239,13 @@ test("orchestrator alias degrades from the pinned primary provider to a load-bal
   assert.equal(candidates[ 0 ].provider, "codex", "the primary provider is always attempted first");
   assert.equal(candidates[ 0 ].model, "gpt-5.6-luna");
   assert.equal(candidates[ 0 ].reasoningEffort, null, "the primary provider keeps the caller's reasoning effort");
-  assert.deepEqual(candidates.slice(1).map((candidate) => candidate.provider).sort(), [ "antigravity", "claude", "minimax" ]);
+  assert.deepEqual(candidates.slice(1).map((candidate) => candidate.provider).sort(), [ "antigravity", "claude", "copilot" ]);
 
   const byProvider = Object.fromEntries(candidates.map((candidate) => [ candidate.provider, candidate ]));
   assert.equal(byProvider.claude.model, "claude-opus-5");
   assert.equal(byProvider.claude.reasoningEffort, "medium");
-  assert.equal(byProvider.minimax.model, "MiniMax-M3");
-  assert.equal(byProvider.minimax.reasoningEffort, "high");
+  assert.equal(byProvider.copilot.model, "copilot");
+  assert.equal(byProvider.copilot.reasoningEffort, null);
   assert.equal(byProvider.antigravity.model, "gemini-3.8-flash-high");
   assert.equal(byProvider.antigravity.reasoningEffort, "high");
 
@@ -781,7 +781,7 @@ test("subagent telemetry counts both spawn mechanisms and attributes each to a p
     assert.deepEqual(status.byMechanism, { router_alias: 1, bridge_native: 3 });
     assert.deepEqual(status.byProvider, { claude: 3, minimax: 1 });
     assert.deepEqual(status.byRole, { explorer: 1, worker: 2, validator: 1 });
-    assert.deepEqual(status.spawnCapableProviders, [ "antigravity", "claude", "minimax", "copilot", "codex" ]);
+    assert.deepEqual(status.spawnCapableProviders, [ "antigravity", "claude", "copilot", "codex" ]);
     assert.equal(status.recent[ 0 ].role, "validator", "the recent list is newest first");
     assert.equal(status.recent.at(-1).provider, "claude");
 
