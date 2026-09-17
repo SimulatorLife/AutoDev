@@ -90,7 +90,7 @@ CLAUDE_RESEARCH_ALLOWED_TOOLS = ("WebSearch", "WebFetch")
 
 # Provider limit vocabulary. These literals mirror
 # src/shared/provider-limits.ts exactly, and
-# tests/provider-limits.test.mjs reads this file as text to assert they still
+# tests/provider-limits.test.ts reads this file as text to assert they still
 # do: the router reads what this bridge writes, so the two must not drift.
 LIMIT_HEADER_CLASS = "x-autodev-limit-class"
 LIMIT_HEADER_TYPE = "x-autodev-limit-type"
@@ -882,7 +882,7 @@ def log_inbound_request(request: Any, headers: Any) -> None:
 # inside an `additional_tools` input item -- whose payload is raw JavaScript
 # evaluated in a V8 isolate. The spawner is reached from inside that script and
 # is never named in the request. This mirrors
-# src/agents/spawn-tools.ts; tests/provider-limits.test.mjs style
+# src/agents/spawn-tools.ts; tests/provider-limits.test.ts style
 # parity checks read both files as text, so the literals must not drift.
 SPAWN_TOOL = "multi_agent_v1__spawn_agent"
 EXEC_TOOL = "exec"

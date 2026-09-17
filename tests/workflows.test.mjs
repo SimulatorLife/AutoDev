@@ -273,7 +273,7 @@ test('Antigravity workspace customizations expose the code skills', async () => 
 });
 
 test('provider bridges explicitly expose code MCP capabilities', async () => {
-  const copilot = await readFile(path.join(root, 'scripts', 'codex-copilot-cli-responses-proxy.mjs'), 'utf8');
+  const copilot = await readFile(path.join(root, 'src', 'providers', 'copilot.ts'), 'utf8');
   // Copilot MCP exposure follows the role contract (see copilot-mcp-scope.test.mjs).
   assert.match(copilot, /--additional-mcp-config/);
   assert.match(copilot, /--disable-mcp-server/);
@@ -284,7 +284,7 @@ test('provider bridges explicitly expose code MCP capabilities', async () => {
   assert.match(claude, /_CODE_SEARCH_PROMPT/);
   assert.match(claude, /WebSearch/);
   assert.match(claude, /WebFetch/);
-  const antigravity = await readFile(path.join(root, 'scripts', 'codex-antigravity-cli-responses-proxy.mjs'), 'utf8');
+  const antigravity = await readFile(path.join(root, 'src', 'providers', 'antigravity.ts'), 'utf8');
   assert.match(antigravity, /search_web/);
   assert.match(antigravity, /read_url_content/);
   const installer = await readFile(path.join(root, 'scripts', 'codex', 'install-codex-integration.sh'), 'utf8');

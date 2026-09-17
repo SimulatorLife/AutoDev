@@ -52,10 +52,12 @@ test('RouterLifecycle transitions to draining and drains requests during shutdow
     },
   };
 
+  const drainTimeoutMs = 200;
+  const unregisterAfterMs = 20;
   const shutdownPromise = lifecycle.beginShutdown({
     signal: 'SIGTERM',
     server,
-    drainTimeoutMs: 100,
+    drainTimeoutMs,
     noExit: true,
     persistState: async () => {
       persisted = true;
@@ -65,10 +67,12 @@ test('RouterLifecycle transitions to draining and drains requests during shutdow
   assert.equal(lifecycle.isDraining(), true);
   assert.equal(lifecycle.state, 'draining');
 
-  // Simulate in-flight request completion after 20ms
-  setTimeout(() => {
-    lifecycle.unregisterActiveRequest(controller);
-  }, 20);
+  // Simulate in-flight request completion after the loop has had a chance to
+  // observe at least one non-empty in-flight tick. Drain checks every 50ms;
+  // finishing inside that window is what proves a graceful drain rather
+  // than the timeout-driven abort path.
+  await new Promise((resolve) => setTimeout(resolve, Math.max(unregisterAfterMs, 10)));
+  lifecycle.unregisterActiveRequest(controller);
 
   await shutdownPromise;
 

@@ -11,8 +11,8 @@ import {
   resolveAgentRole,
 } from "../src/agents/bridge-role.ts";
 import { EXECUTION_CONTRACT, roleContract } from "../src/shared/execution-contract.ts";
-import { promptFromInput } from "../scripts/codex-antigravity-cli-responses-proxy.mjs";
-import { inputText } from "../scripts/codex-copilot-cli-responses-proxy.mjs";
+import { promptFromInput } from "../src/providers/antigravity.ts";
+import { inputText } from "../src/providers/copilot.ts";
 
 const read = (path) => readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
 
@@ -121,12 +121,14 @@ test("a leaf is told to ignore a spawn tool its runtime leaks to it", () => {
 });
 
 test("every provider bridge picks its instructions from the shared role prompts", () => {
-  for (const path of [
-    "scripts/codex-antigravity-cli-responses-proxy.mjs",
-    "scripts/codex-copilot-cli-responses-proxy.mjs",
+  // Every converted bridge lives under src/providers/, so each imports the
+  // sibling agents/bridge-role.ts module at the same relative depth.
+  for (const [ path, bridgeRoleImportPattern ] of [
+    [ "src/providers/antigravity.ts", /from "\.\.\/agents\/bridge-role\.ts"/ ],
+    [ "src/providers/copilot.ts", /from "\.\.\/agents\/bridge-role\.ts"/ ],
   ]) {
     const source = read(path);
-    assert.match(source, /from "\.\.\/src\/agents\/bridge-role\.ts"/, path);
+    assert.match(source, bridgeRoleImportPattern, path);
     assert.match(source, /composeProviderPrompt\(agentRole, cwd\)/, path);
     assert.match(source, /resolveAgentRole\(request\.headers\)/, path);
     // No bridge may keep a hard-coded leaf prompt that outranks the role.
@@ -163,9 +165,9 @@ test("the installer ships every shared module the bridges import", () => {
   const installer = read("scripts/codex/install-codex-integration.sh");
   const sources = [
     "scripts/codex-model-router.mjs",
-    "scripts/codex-antigravity-cli-responses-proxy.mjs",
-    "scripts/codex-copilot-cli-responses-proxy.mjs",
+    "src/providers/antigravity.ts",
     "src/providers/minimax.ts",
+    "src/providers/copilot.ts",
   ];
   const imported = new Set();
   for (const source of sources) {

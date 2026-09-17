@@ -97,7 +97,7 @@ import {
   projectLiveAgents,
 } from "./codex-model-router.mjs";
 import { resolveAgentEventReporter, REQUEST_ID_HEADER as AGENT_EVENTS_REQUEST_ID_HEADER } from "../src/telemetry/agent-events.ts";
-import { spawnedChildren } from "./codex-antigravity-cli-responses-proxy.mjs";
+import { spawnedChildren } from "../src/providers/antigravity.ts";
 import {
   AGENT_ACTIVITY_STATES,
   AGENT_ACTIVITY_TTL_ENV,
@@ -156,7 +156,7 @@ test("the router calls the Antigravity adapter directly, with no LiteLLM hop", a
   assert.doesNotMatch(router, /extra_headers = forwarded/, "router headers must travel as real headers");
   assert.doesNotMatch(router, /metadata\?\.provider_error/, "the faked-completion detector is obsolete");
 
-  const bridge = read("scripts/codex-antigravity-cli-responses-proxy.mjs");
+  const bridge = read("src/providers/antigravity.ts");
   // A post-stream failure must never read as success. It is no longer a bare
   // `response.failed` either: that discarded every token already streamed. The
   // turn is closed as *incomplete* instead, carrying the work that finished --

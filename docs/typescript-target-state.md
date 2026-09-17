@@ -24,10 +24,12 @@ The migration remains intentionally behavior-preserving. The shared-runtime spaw
 - Existing provider/router contract tests remain green while imports move to typed shared modules.
 - Router HTTP routing, workspace/session resolution, status aggregation, agent-event ingestion, upstream proxying, retry/fallback, and exhaustion diagnostics now live in `src/router/http.ts` and `src/router/proxy.ts`; `scripts/codex-model-router.mjs` is a concise executable/re-export entrypoint. Dedicated native TypeScript proxy and HTTP tests cover the extracted contracts.
 - The MiniMax boundary adapter now lives in `src/providers/minimax.ts` with strict native-TypeScript checking. Its header allowlist, `client_metadata` privacy boundary, freeform `exec` coercion, streaming rewrite, and tool/activity/MCP telemetry are unchanged; workstation installation, launchd service ownership, and CI now deploy/execute the typed module directly, and the obsolete `.mjs` entrypoint is deleted.
+- The Copilot Responses bridge now lives in `src/providers/copilot.ts` under strict native-TypeScript checking. Its CLI-backed Responses, MCP, skill-read, tool-outcome, provider-limit, and activity telemetry boundaries are behavior-preserving; the installer deploys the typed module directly, stale `.mjs` copies are removed, and the obsolete `.mjs` entrypoint is deleted.
+- The provider-limit contract suite and MiniMax Responses boundary suite now run as native TypeScript `node:test` files, preserving their cross-language vocabulary and frozen adapter assertions without duplicate JavaScript test entrypoints.
 
 ### Current findings and constraints
 
-- Remaining provider bridges are still legacy `.mjs`/Python implementations; the MiniMax adapter has moved to `src/providers/minimax.ts`, while the Claude bridge conversion is not complete. The router entrypoint remains a compatibility-preserving `.mjs` executable while its retained implementation is typed.
+- Remaining provider bridges are still legacy `.mjs`/Python implementations for Antigravity and Claude; the MiniMax and Copilot adapters now live under `src/providers/`. The router entrypoint remains a compatibility-preserving `.mjs` executable while its retained implementation is typed.
 - Installer, reconciliation, hook, telemetry, and `ensure-*` behavior still has substantial shell/legacy runtime ownership.
 - First-party tests are still split between JavaScript, Python, and TypeScript. The inventory gate is present but intentionally reports the remaining legacy files until their replacements and equivalent tests land.
 - Canonical declarative content remains under `scripts/codex/`; moving it to the target `agents/` and `config/` layout must be coordinated with installer/runtime path changes.
@@ -48,11 +50,11 @@ The migration remains intentionally behavior-preserving. The shared-runtime spaw
 
 Step 1 — router HTTP and upstream proxy decomposition — is complete.
 
-2. Convert the remaining provider bridges (Antigravity and Copilot), then the Claude bridge, so all providers use the shared contracts; MiniMax is the completed first slice.
+2. Convert the remaining provider bridges (Antigravity, then Claude) so all providers use the shared contracts; MiniMax and Copilot are complete typed slices.
 3. Move installer, reconciliation, hook, and `ensure-*` behavior behind the typed CLI/platform modules.
 4. Convert remaining JavaScript/Python tests to `node:test`, remove obsolete entrypoints, and enable the inventory gate as a required check.
 
-For this slice, `pnpm typecheck` passes and the focused MiniMax/provider-contract/workflow suites report 54 passing tests. The full `pnpm test` baseline is 689 passed, 2 failed, and 1 skipped; the two failures are the pre-existing router HTTP/auth and proxy-header assertions, unrelated to this provider move. `pnpm run validate:inventory` remains expected to fail until the remaining migration order above is completed.
+For the current provider and test-stack slices, `pnpm typecheck` passes; the Copilot bridge, MCP, role, and telemetry focused suites report 64 passing tests, and the MiniMax boundary contract is now a native TypeScript test. Router HTTP/auth and proxy-header contract tests are isolated from ambient credentials, and persistence scheduling waits for the debounced write rather than relying on a fixed event-loop delay. `pnpm run validate:inventory` remains expected to fail until the remaining migration order above is completed.
 
 ## Decision
 

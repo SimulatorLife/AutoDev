@@ -2,13 +2,19 @@
 
 /** OpenAI Responses compatibility proxy for the subscription-authenticated Copilot CLI. */
 import { spawn } from "node:child_process";
+import type { ChildProcess } from "node:child_process";
 import { createServer } from "node:http";
+import type { IncomingMessage, ServerResponse } from "node:http";
 import { randomBytes } from "node:crypto";
 import { createInterface } from "node:readline";
 import { pathToFileURL } from "node:url";
+import { existsSync, readFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { isAbsolute, join, resolve, sep } from "node:path";
 
 // Bind the port only when run as a program, so this file can be imported for
-// its pure helpers without taking the port from the running bridge.
+// its pure helpers without taking the port from the running bridge. Mirrors
+// the MiniMax adapter's guard.
 const IS_MAIN = process.argv[ 1 ] && import.meta.url === pathToFileURL(process.argv[ 1 ]).href;
 
 const HOST = process.env.COPILOT_PROXY_HOST ?? "127.0.0.1";
@@ -16,14 +22,29 @@ const PORT = Number.parseInt(process.env.COPILOT_PROXY_PORT ?? "4003", 10);
 const TIMEOUT_MS = Number.parseInt(process.env.COPILOT_PROXY_TIMEOUT_MS ?? "900000", 10);
 const PROJECT_ROOT = process.env.CODEX_PROJECT_ROOT ?? process.env.COPILOT_PROJECT_ROOT ?? null;
 
-import { resolveCwd, WorkspaceResolutionError } from "../src/shared/resolve-workspace.ts";
-import { composeProviderPrompt, isOrchestratorRole, resolveAgentRole } from "../src/agents/bridge-role.ts";
-import { roleContract } from "../src/shared/execution-contract.ts";
-import { classifyCliLimit, INCOMPLETE_REASON_INTERRUPTED, INCOMPLETE_REASON_PROVIDER_LIMIT, limitPayload, limitResponseHeaders, retryAfterSecondsFromLimit, terminalIncompleteEvents } from "../src/shared/provider-limits.ts";
-import { resolveAgentEventReporter, SKILL_READ_SOURCE } from "../src/telemetry/agent-events.ts";
-import { existsSync, readFileSync } from "node:fs";
-import { homedir } from "node:os";
-import { isAbsolute, join, resolve, sep } from "node:path";
+import { resolveCwd, WorkspaceResolutionError } from "../shared/resolve-workspace.ts";
+import { composeProviderPrompt, isOrchestratorRole, resolveAgentRole } from "../agents/bridge-role.ts";
+import { roleContract } from "../shared/execution-contract.ts";
+import type { RoleContract } from "../shared/execution-contract.ts";
+import { classifyCliLimit, INCOMPLETE_REASON_INTERRUPTED, INCOMPLETE_REASON_PROVIDER_LIMIT, limitPayload, limitResponseHeaders, retryAfterSecondsFromLimit, terminalIncompleteEvents } from "../shared/provider-limits.ts";
+import { resolveAgentEventReporter, SKILL_READ_SOURCE } from "../telemetry/agent-events.ts";
+
+// Provider/CLI payloads are JSON-shaped but intentionally retain fields this
+// bridge does not own (the Copilot CLI's event stream is not a formally
+// specified schema; see COPILOT_TOOL_OUTPUT_KEYS below). Keep the dynamic edge
+// explicit while the transport and boundary operations remain typed.
+type JsonRecord = Record<string, any>;
+type AgentReporter = import("../telemetry/agent-events.ts").AgentEventReporter;
+// `roleContract` returns the fields every consumer shares (`mcp`) typed, plus
+// an index signature for the rest. This bridge additionally reads
+// `mcpTools`, `readOnly`, and `skills`, which are real contract fields the
+// shared interface leaves untyped for other consumers; narrow them here
+// rather than widening the shared type for one bridge's shape.
+type CopilotRoleContract = RoleContract & { mcpTools?: Record<string, string[]>; readOnly?: boolean; skills?: string[] };
+
+function copilotRoleContract(role: unknown): CopilotRoleContract {
+  return roleContract(role) as CopilotRoleContract;
+}
 
 // How a Copilot turn comes by the skills its role contract grants it: the CLI
 // has no per-invocation skill flag, so the contract rendered into the turn's
@@ -38,7 +59,10 @@ const MCP_EXPOSURE_SOURCE = "role_contract";
 // reach that hook -- it runs entirely inside its own runtime -- so this
 // bridge is the only place a read of one of these files is observable at all.
 const HOME = homedir();
-const REPO_ROOT = process.env.AUTODEV_REPO_ROOT || resolve(join(import.meta.dirname, ".."));
+// Two levels up from `src/providers/` reaches the repository root in a
+// checkout and `$CODEX_HOME` once installed there, mirroring every other
+// typed `src/` module's `../..` depth (see src/shared/execution-contract.ts).
+const REPO_ROOT = process.env.AUTODEV_REPO_ROOT || resolve(join(import.meta.dirname, "..", ".."));
 const SKILL_ROOTS = [
   join(HOME, ".agents", "skills"),
   join(HOME, ".codex", "skills"),
@@ -56,7 +80,7 @@ const SKILL_ROOTS = [
 const COPILOT_READ_TOOL_NAMES = new Set([ "read_file", "view_file", "cat_file", "view" ]);
 const COPILOT_EXEC_TOOL_NAMES = new Set([ "bash", "shell", "execute", "exec_command", "run_command" ]);
 
-function normaliseSkillReadPath(raw) {
+function normaliseSkillReadPath(raw: unknown): string | null {
   if (typeof raw !== "string") return null;
   const trimmed = raw.trim().replace(/^['"]|['"]$/g, "");
   if (!trimmed) return null;
@@ -78,8 +102,8 @@ const SHELL_CONTROL_TOKENS = new Set([ "|", "&&", "||", ";", "&" ]);
 // broken across two tokens. Not a full shell grammar -- backslash escapes and
 // `$()`/backtick substitution are not unwound -- but enough to recover the
 // plain file arguments Copilot's own tool calls put on these command lines.
-function tokenizeShellWords(cmd) {
-  const tokens = [];
+function tokenizeShellWords(cmd: string): string[] {
+  const tokens: string[] = [];
   const re = /'[^']*'|"(?:[^"\\]|\\.)*"|\S+/g;
   let match;
   while ((match = re.exec(cmd)) !== null) {
@@ -95,7 +119,7 @@ function tokenizeShellWords(cmd) {
 // A word counts as a path argument, not a flag or a search pattern, only when
 // it is absolute or home-relative. Relative shell paths remain excluded so a
 // command cannot be attributed to the wrong working directory.
-function isPathLikeToken(token) {
+function isPathLikeToken(token: unknown): string | null {
   if (typeof token !== "string" || !token || token.startsWith("-")) return null;
   if (token.startsWith("/") || token.startsWith("~")) return token;
   return null;
@@ -107,10 +131,11 @@ function isPathLikeToken(token) {
 // object carrying the real command one level down (`{ command: { cmd: "..." } }`).
 // Only one level of object nesting is unwrapped -- deeper nesting is not a
 // shape any tool call here actually uses.
-function flattenCommandValue(raw) {
-  let value = raw;
+function flattenCommandValue(raw: unknown): string | null {
+  let value: unknown = raw;
   if (value && typeof value === "object" && !Array.isArray(value)) {
-    value = value.cmd ?? value.command ?? value.script ?? value.value ?? null;
+    const record = value as JsonRecord;
+    value = record.cmd ?? record.command ?? record.script ?? record.value ?? null;
   }
   if (Array.isArray(value)) {
     return value.filter((entry) => typeof entry === "string").join(" ");
@@ -124,19 +149,19 @@ function flattenCommandValue(raw) {
 // command are scanned for a path. Returning every candidate -- not just the
 // first -- lets the caller pick out whichever one actually names a SKILL.md
 // when a command reads more than one file (`grep pattern a.md SKILL.md`).
-function matchExecReadPaths(raw) {
+function matchExecReadPaths(raw: unknown): string[] {
   const cmd = flattenCommandValue(raw);
   if (!cmd || cmd.length > 4096) return [];
   const tokens = tokenizeShellWords(cmd);
-  const candidates = [];
+  const candidates: string[] = [];
   for (let i = 0; i < tokens.length; i++) {
     const word = tokens[ i ];
     const isSedPrint = word === "sed" && tokens[ i + 1 ] === "-n";
-    if (!SKILL_READ_COMMANDS.has(word) && !isSedPrint) continue;
+    if (!SKILL_READ_COMMANDS.has(word ?? "") && !isSedPrint) continue;
     const start = isSedPrint ? i + 2 : i + 1;
     for (let j = start; j < tokens.length && j < start + 8; j++) {
       const next = tokens[ j ];
-      if (SHELL_CONTROL_TOKENS.has(next)) break;
+      if (next === undefined || SHELL_CONTROL_TOKENS.has(next)) break;
       const path = isPathLikeToken(next);
       if (path) candidates.push(path);
     }
@@ -145,9 +170,9 @@ function matchExecReadPaths(raw) {
 }
 
 /** The path a `read_file`-shaped or shell-read tool call names, if any. */
-function extractSkillReadPath(toolName, argsObject) {
+function extractSkillReadPath(toolName: unknown, argsObject: unknown): string | null {
   const name = String(toolName ?? "").trim().toLowerCase();
-  const args = argsObject && typeof argsObject === "object" ? argsObject : {};
+  const args: JsonRecord = argsObject && typeof argsObject === "object" ? argsObject as JsonRecord : {};
   if (COPILOT_READ_TOOL_NAMES.has(name)) {
     for (const key of [ "file_path", "filePath", "path", "filepath", "AbsolutePath", "absolutePath", "targetFile", "TargetFile", "file", "filename", "fileName" ]) {
       const value = args[ key ];
@@ -169,7 +194,7 @@ function extractSkillReadPath(toolName, argsObject) {
 // True when `path` resolves to `<root>/<skill-name>/SKILL.md` for one of the
 // approved roots. Returns the skill's directory name -- never the absolute
 // path -- because that is all the router retains.
-function matchSkillReadPath(path) {
+function matchSkillReadPath(path: string | null): string | null {
   if (!path) return null;
   const normalised = path.replace(/[\\/]+/g, sep);
   for (const rootRaw of SKILL_ROOTS) {
@@ -192,7 +217,7 @@ function matchSkillReadPath(path) {
  * `seenSkills` dedupes per turn: re-reading the same file from a second tool
  * call in the same turn reports one use, not two.
  */
-function skillReadEvent({ seenSkills, toolName, args, callId }) {
+function skillReadEvent({ seenSkills, toolName, args, callId }: { seenSkills: Set<string>; toolName: unknown; args: unknown; callId: string | null }): JsonRecord | null {
   const candidate = extractSkillReadPath(toolName, args);
   if (!candidate) return null;
   const normalised = normaliseSkillReadPath(candidate);
@@ -219,7 +244,7 @@ const COPILOT_TOOL_OUTPUT_KEYS = [ "toolResult", "tool_result", "result", "outpu
 const COPILOT_DENIED_PATTERN = /deni|reject|not[_\s-]?permitted|not[_\s-]?allowed/i;
 
 /** The result payload of a terminal tool event, whatever it is called. */
-function copilotToolResult(data) {
+function copilotToolResult(data: JsonRecord | null | undefined): JsonRecord | null {
   const result = data?.toolResult ?? data?.tool_result ?? data?.result ?? null;
   return result && typeof result === "object" ? result : null;
 }
@@ -230,7 +255,7 @@ function copilotToolResult(data) {
  * word "denied" did run, and must not be reported as one the workspace
  * refused to run.
  */
-function copilotToolStatusLabel(data) {
+function copilotToolStatusLabel(data: JsonRecord | null | undefined): string {
   const result = copilotToolResult(data);
   return [
     typeof data?.status === "string" ? data.status : "",
@@ -240,7 +265,7 @@ function copilotToolStatusLabel(data) {
 }
 
 /** True when the event carries the call's own output. */
-function copilotToolOutputPresent(data) {
+function copilotToolOutputPresent(data: JsonRecord | null | undefined): boolean {
   if (!data || typeof data !== "object") return false;
   return COPILOT_TOOL_OUTPUT_KEYS.some((key) => {
     const value = data[ key ];
@@ -248,6 +273,11 @@ function copilotToolOutputPresent(data) {
     return typeof value === "string" ? value.trim() !== "" : true;
   }) || data.success !== undefined || Number.isFinite(data.exitCode);
 }
+
+type CopilotToolOutcome =
+  | { kind: "unavailable"; reason: string }
+  | { kind: "none" }
+  | { kind: "executed"; status: "ok" | "error" };
 
 /**
  * What one terminal `tool.*` event proves about the call.
@@ -258,7 +288,7 @@ function copilotToolOutputPresent(data) {
  * a guess. A call the workspace refused is `unavailable`, and anything else
  * proves only what the `tool.execution_start` already reported.
  */
-function copilotToolOutcome(data) {
+function copilotToolOutcome(data: JsonRecord | null | undefined): CopilotToolOutcome {
   const label = copilotToolStatusLabel(data);
   if (data?.permissionDenied === true || data?.denied === true || COPILOT_DENIED_PATTERN.test(label)) {
     return { kind: "unavailable", reason: "denied" };
@@ -269,16 +299,16 @@ function copilotToolOutcome(data) {
     }
     return { kind: "none" };
   }
-  const failed = data.success === false
-    || data.isError === true
-    || Boolean(data.error ?? data.errorMessage)
-    || (Number.isFinite(data.exitCode) && data.exitCode !== 0)
+  const failed = data?.success === false
+    || data?.isError === true
+    || Boolean(data?.error ?? data?.errorMessage)
+    || (Number.isFinite(data?.exitCode) && data?.exitCode !== 0)
     || /error|fail/i.test(label);
   return { kind: "executed", status: failed ? "error" : "ok" };
 }
 
 /** Post one observation, when the router authorized reporting for this turn. */
-function reportToolObservation(agentEvents, event) {
+function reportToolObservation(agentEvents: AgentReporter | null, event: JsonRecord): void {
   if (!agentEvents) return;
   if (event.type === "tool_requested") {
     void agentEvents.reportToolRequested({ tool: event.tool, callId: event.callId, server: event.server });
@@ -294,17 +324,17 @@ function reportToolObservation(agentEvents, event) {
   }
 }
 
-function sendJson(response, status, body, extraHeaders = {}) {
+function sendJson(response: ServerResponse, status: number, body: JsonRecord, extraHeaders: Record<string, string> = {}): void {
   const encoded = Buffer.from(JSON.stringify(body));
   response.writeHead(status, { "content-type": "application/json", "content-length": encoded.length, connection: "close", ...extraHeaders });
   response.end(encoded);
 }
 
-function responseMessageItem(text, itemId) {
+function responseMessageItem(text: string, itemId: string): JsonRecord {
   return { id: itemId, type: "message", role: "assistant", status: "completed", content: [ { type: "output_text", text, annotations: [] } ] };
 }
 
-function responsePayload(model, text, result, responseId = `resp_${randomBytes(12).toString("hex")}`, itemId = `msg_${randomBytes(10).toString("hex")}`, output = null, status = "completed") {
+function responsePayload(model: unknown, text: string, result: JsonRecord | null, responseId: string = `resp_${randomBytes(12).toString("hex")}`, itemId: string = `msg_${randomBytes(10).toString("hex")}`, output: JsonRecord[] | null = null, status: string = "completed"): JsonRecord {
   const message = responseMessageItem(text, itemId);
   return {
     id: responseId,
@@ -320,13 +350,13 @@ function responsePayload(model, text, result, responseId = `resp_${randomBytes(1
   };
 }
 
-function contentText(content) {
+function contentText(content: unknown): string {
   if (typeof content === "string") return content;
   if (!Array.isArray(content)) return String(content ?? "");
-  return content.map((part) => typeof part === "object" ? part?.text ?? JSON.stringify(part) : String(part)).join("\n");
+  return content.map((part) => typeof part === "object" ? (part as JsonRecord)?.text ?? JSON.stringify(part) : String(part)).join("\n");
 }
 
-function inputText(input, instructions) {
+function inputText(input: unknown, instructions: string): string {
   if (typeof input === "string") return `${instructions}\n\nDelegated task:\n${input}`;
   if (!Array.isArray(input)) return `${instructions}\n\nDelegated task:\n${String(input ?? "")}`;
   const userItems = input.filter((item) => item && typeof item === "object" && item.role === "user");
@@ -337,27 +367,21 @@ function inputText(input, instructions) {
 
 // The Copilot CLI's `report_intent` tool exists to narrate what the agent is
 // about to do, so its argument is a better activity line than the tool name.
-function toolActivityText(data) {
+function toolActivityText(data: JsonRecord | null | undefined): string {
   const toolName = String(data?.toolName ?? "tool");
   const intent = data?.arguments?.intent;
   if (toolName === "report_intent" && typeof intent === "string" && intent.trim()) return `Copilot: ${intent.trim()}`;
   return `Copilot is using ${toolName}.`;
 }
 
-/**
- * Run one Copilot turn, reporting the CLI's JSONL events as they arrive.
- * `onEvent` receives `{ type: "text_delta" | "activity", text }` for the
- * final answer and for the commentary/tool narration around it, so the parent
- * sees the turn progress instead of one silent block at the end.
- */
 const RESEARCH_CAPABLE_ROLES = new Set([ "docs-researcher", "smart", "orchestrator" ]);
 
-function isResearchRole(role) {
+function isResearchRole(role: unknown): boolean {
   return typeof role === "string" && RESEARCH_CAPABLE_ROLES.has(role.trim().toLowerCase());
 }
 
 /** The launch definition of every AutoDev MCP server, rendered by the installer from `.rulesync/mcp.jsonc`. */
-function bridgeMcpCatalogue() {
+function bridgeMcpCatalogue(): JsonRecord {
   const path = join(process.env.CODEX_HOME ?? join(homedir(), ".codex"), "provider-runtime", "mcp-servers.json");
   try {
     const catalogue = JSON.parse(readFileSync(path, "utf8"));
@@ -367,10 +391,10 @@ function bridgeMcpCatalogue() {
 }
 
 /** Server names in the user-level Copilot MCP file that Rulesync writes. */
-function userMcpServerNames() {
+function userMcpServerNames(): string[] {
   const path = join(process.env.COPILOT_HOME ?? join(homedir(), ".copilot"), "mcp-config.json");
   if (!existsSync(path)) return [];
-  const servers = JSON.parse(readFileSync(path, "utf8"))?.mcpServers;
+  const servers = (JSON.parse(readFileSync(path, "utf8")) as JsonRecord)?.mcpServers;
   return servers && typeof servers === "object" ? Object.keys(servers) : [];
 }
 
@@ -385,27 +409,27 @@ function userMcpServerNames() {
  * User-level servers in the contract stay as Rulesync wrote them: they come
  * from the same `.rulesync/mcp.jsonc` declaration as the catalogue.
  */
-function copilotMcpArgs(agentRole) {
-  const contract = roleContract(agentRole);
+function copilotMcpArgs(agentRole: string | null): string[] {
+  const contract = copilotRoleContract(agentRole);
   const granted = (contract.mcp ?? []).filter((name) => name !== "autodev_spawn");
   const catalogue = bridgeMcpCatalogue();
   const userServers = new Set(userMcpServerNames());
-  const args = [ "--disable-builtin-mcps" ];
+  const args: string[] = [ "--disable-builtin-mcps" ];
   for (const name of userServers) {
     if (!granted.includes(name)) args.push("--disable-mcp-server", name);
   }
-  const additional = {};
+  const additional: Record<string, JsonRecord> = {};
   for (const name of granted) {
-    const server = catalogue[name];
+    const server = catalogue[ name ];
     if (!server || typeof server !== "object") {
       throw new Error(`MCP server ${name} granted to role ${agentRole ?? "default"} is not in the bridge MCP catalogue; rerun install-codex-integration.sh`);
     }
-    const tools = contract.mcpTools?.[name];
+    const tools = contract.mcpTools?.[ name ];
     if (userServers.has(name)) {
       if (tools) throw new Error(`MCP server ${name} has a role tool allowlist but is registered at user level; it cannot be narrowed per session`);
       continue;
     }
-    additional[name] = server.url
+    additional[ name ] = server.url
       ? { type: "http", url: server.url, tools: tools ?? [ "*" ] }
       : { type: "stdio", command: server.command, args: server.args ?? [], tools: tools ?? [ "*" ] };
   }
@@ -414,37 +438,56 @@ function copilotMcpArgs(agentRole) {
   return args;
 }
 
-function runCopilot(prompt, model, cwd, onEvent, agentRole = null) {
-  return new Promise((resolve, reject) => {
+interface RunCopilotResult {
+  text: string;
+  result: JsonRecord;
+}
+
+type OnRunCopilotEvent = (event: JsonRecord) => void;
+
+/**
+ * Run one Copilot turn, reporting the CLI's JSONL events as they arrive.
+ * `onEvent` receives `{ type: "text_delta" | "activity", text }` for the
+ * final answer and for the commentary/tool narration around it, so the parent
+ * sees the turn progress instead of one silent block at the end.
+ */
+function runCopilot(prompt: string, model: unknown, cwd: string, onEvent: OnRunCopilotEvent | null = null, agentRole: string | null = null): Promise<RunCopilotResult> {
+  return new Promise<RunCopilotResult>((resolvePromise, rejectPromise) => {
     const args = [ "--no-auto-update", "--no-color", "--output-format", "json", "--prompt", prompt ];
-    const contract = roleContract(agentRole);
+    const contract = copilotRoleContract(agentRole);
     args.push(...copilotMcpArgs(agentRole));
     if (isResearchRole(agentRole)) args.push("--allow-tool=web_search", "--allow-tool=web_fetch");
     if (!contract.readOnly) args.splice(4, 0, "--allow-all-tools", "--allow-all-paths", "--allow-all-urls", "--no-ask-user");
-    if (model && model !== "copilot" && model !== "auto") args.push("--model", model);
+    if (model && model !== "copilot" && model !== "auto") args.push("--model", String(model));
     const child = spawn(process.env.COPILOT_BIN ?? "copilot", args, { cwd, stdio: [ "ignore", "pipe", "pipe" ] });
-    const phases = new Map();
+    const phases = new Map<string, string>();
     // Tool calls the CLI opened, keyed by the id its terminal event names, so
     // a result can be attributed to the tool and timed against its start.
-    const toolCalls = new Map();
+    const toolCalls = new Map<string, { tool: string; startedAt: number; server: string | null; args: unknown }>();
     // Per-turn dedupe for skill reads: keyed on the skill name, not the call.
-    const seenSkills = new Set();
+    const seenSkills = new Set<string>();
     let stderr = "";
     let answer = "";
-    let terminalResult = null;
+    let terminalResult: JsonRecord | null = null;
     let settled = false;
     const timer = setTimeout(() => child.kill("SIGTERM"), TIMEOUT_MS);
-    const finish = (callback, value) => {
+    const finishResolve = (value: RunCopilotResult): void => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
-      callback(value);
+      resolvePromise(value);
     };
-    const lines = createInterface({ input: child.stdout });
+    const finishReject = (error: unknown): void => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      rejectPromise(error);
+    };
+    const lines = createInterface({ input: child.stdout! });
     lines.on("line", (line) => {
-      let event;
+      let event: JsonRecord;
       try { event = JSON.parse(line); } catch { return; }
-      const data = event?.data ?? {};
+      const data: JsonRecord = event?.data ?? {};
       switch (event?.type) {
         case "assistant.message_start":
           if (data.messageId) phases.set(data.messageId, String(data.phase ?? ""));
@@ -481,7 +524,7 @@ function runCopilot(prompt, model, cwd, onEvent, agentRole = null) {
             ? data.server.trim()
             : (typeof data.serverName === "string" && data.serverName.trim()
               ? data.serverName.trim()
-              : (toolName.startsWith("mcp__") ? toolName.split("__")[1] : null));
+              : (toolName.startsWith("mcp__") ? toolName.split("__")[1] ?? null : null));
           if (toolName) {
             if (callId) toolCalls.set(callId, { tool: toolName, startedAt: Date.now(), server, args: data.arguments ?? null });
             // The model asking is not the tool running: this call is upgraded
@@ -513,7 +556,7 @@ function runCopilot(prompt, model, cwd, onEvent, agentRole = null) {
             ? data.server.trim()
             : (typeof data.serverName === "string" && data.serverName.trim()
               ? data.serverName.trim()
-              : open?.server)) || (toolName.startsWith("mcp__") ? toolName.split("__")[1] : null);
+              : open?.server)) || (toolName.startsWith("mcp__") ? toolName.split("__")[1] ?? null : null);
           onEvent?.(outcome.kind === "unavailable"
             ? { type: "tool_unavailable", tool: toolName, callId, reason: outcome.reason, server }
             : { type: "tool_executed", tool: toolName, callId, status: outcome.status, durationMs: open ? Date.now() - open.startedAt : null, server });
@@ -528,39 +571,39 @@ function runCopilot(prompt, model, cwd, onEvent, agentRole = null) {
         }
       }
     });
-    child.stderr.on("data", (chunk) => { stderr += chunk.toString(); });
-    child.on("error", (error) => finish(reject, error));
+    child.stderr!.on("data", (chunk) => { stderr += chunk.toString(); });
+    child.on("error", (error) => finishReject(error));
     child.on("close", (code, signal) => {
       const exitCode = terminalResult?.exitCode ?? code;
       if (exitCode !== 0 || code !== 0) {
-        finish(reject, new Error((stderr.trim() || `Copilot exited with ${signal || exitCode}`).slice(-4000)));
+        finishReject(new Error((stderr.trim() || `Copilot exited with ${signal || exitCode}`).slice(-4000)));
         return;
       }
       if (!answer.trim()) {
-        finish(reject, new Error("Copilot exited successfully without a final answer"));
+        finishReject(new Error("Copilot exited successfully without a final answer"));
         return;
       }
-      finish(resolve, { text: answer, result: terminalResult ?? {} });
+      finishResolve({ text: answer, result: terminalResult ?? {} });
     });
     onEvent?.({ type: "process", child });
   });
 }
 
-async function bodyOf(request) {
-  const chunks = [];
+async function bodyOf(request: IncomingMessage): Promise<string> {
+  const chunks: Buffer[] = [];
   for await (const chunk of request) chunks.push(chunk);
   return Buffer.concat(chunks).toString("utf8");
 }
 
-function sseLine(eventName, body) {
+function sseLine(eventName: string, body: JsonRecord): string {
   return `event: ${eventName}\ndata: ${JSON.stringify(body)}\n\n`;
 }
 
-async function handle(request, response) {
+async function handle(request: IncomingMessage, response: ServerResponse): Promise<void> {
   const pathname = new URL(request.url ?? "/", `http://${HOST}:${PORT}`).pathname;
   if (pathname === "/health" || pathname === "/health/liveliness") { sendJson(response, 200, { status: "ok", provider: "copilot" }); return; }
   if (pathname !== "/v1/responses" || request.method !== "POST") { sendJson(response, 404, { error: { message: "not found", type: "invalid_request_error" } }); return; }
-  let payload;
+  let payload: JsonRecord;
   try { payload = JSON.parse(await bodyOf(request)); } catch { sendJson(response, 400, { error: { message: "invalid JSON", type: "invalid_request_error" } }); return; }
   // The router classifies the turn; only it can tell this bridge that it is
   // serving the root orchestrator rather than a delegated leaf.
@@ -568,7 +611,7 @@ async function handle(request, response) {
   // The CLI runs every tool inside its own runtime, so what this turn asked
   // for, ran, or was refused only reaches the router if this bridge says so.
   const agentEvents = resolveAgentEventReporter(request.headers);
-  let cwd;
+  let cwd: string;
   try {
     cwd = resolveCwd(payload, request.headers, PROJECT_ROOT);
   } catch (error) {
@@ -578,7 +621,7 @@ async function handle(request, response) {
     return;
   }
   const prompt = inputText(payload.input, composeProviderPrompt(agentRole, cwd));
-  const bootstrapContract = roleContract(agentRole);
+  const bootstrapContract = copilotRoleContract(agentRole);
   console.error(`copilot bootstrap provider=copilot model=${payload.model} role=${agentRole ?? "default"} cwd=${cwd} skills=${JSON.stringify(bootstrapContract.skills ?? [])} mcp=${JSON.stringify(bootstrapContract.mcp ?? [])}`);
   console.error(`copilot request model=${payload.model} role=${isOrchestratorRole(agentRole) ? "orchestrator" : "leaf"} cwd=${cwd}`);
   // Exposure, not invocation: the role contract decides which skills this turn
@@ -606,7 +649,7 @@ async function handle(request, response) {
           void agentEvents.reportHeartbeat({ minIntervalMs: 5000 });
         }
       }, 5000);
-      let result;
+      let result: RunCopilotResult;
       try {
         result = await runCopilot(prompt, payload.model, cwd, (event) => {
           if (agentEvents && typeof agentEvents.reportHeartbeat === "function") {
@@ -621,7 +664,8 @@ async function handle(request, response) {
       sendJson(response, 200, responsePayload(payload.model, result.text, result.result));
     } catch (error) {
       if (typeof agentEvents?.reportActivity === "function") void agentEvents.reportActivity({ state: "failed" });
-      sendJson(response, 503, { error: { type: "copilot_proxy_error", message: error.message ?? String(error) } });
+      const message = error instanceof Error ? error.message : String(error);
+      sendJson(response, 503, { error: { type: "copilot_proxy_error", message } });
     }
     return;
   }
@@ -629,17 +673,17 @@ async function handle(request, response) {
   const responseId = `resp_${randomBytes(12).toString("hex")}`;
   const reasoningId = `rs_${randomBytes(12).toString("hex")}`;
   const itemId = `msg_${randomBytes(10).toString("hex")}`;
-  const activityParts = [];
-  const seenActivities = new Set();
+  const activityParts: string[] = [];
+  const seenActivities = new Set<string>();
   // Exactly what this client already received, so flushing it on a failure is
   // truthful by construction rather than a second guess at the turn's output.
   let partialText = "";
   let sequenceNumber = 0;
   let streamStarted = false;
-  const pendingEvents = [];
+  const pendingEvents: string[] = [];
   let clientClosed = false;
   const isWritable = () => !clientClosed && !response.writableEnded && !response.destroyed && !response.closed;
-  const emit = (eventName, body) => {
+  const emit = (eventName: string, body: JsonRecord) => {
     const event = sseLine(eventName, { ...body, sequence_number: ++sequenceNumber });
     if (!isWritable()) return;
     if (streamStarted) {
@@ -663,7 +707,7 @@ async function handle(request, response) {
       try { response.write(event); } catch {}
     }
   };
-  const emitActivity = (text, key = text) => {
+  const emitActivity = (text: string, key: string = text) => {
     if (!text || seenActivities.has(key) || !isWritable()) return;
     seenActivities.add(key);
     activityParts.push(text);
@@ -690,7 +734,7 @@ async function handle(request, response) {
       try { response.write(": copilot-bridge keep-alive\n\n"); } catch {}
     }
   }, 2000);
-  let child;
+  let child: ChildProcess | undefined;
   response.on("close", () => {
     clientClosed = true;
     clearInterval(keepAlive);
@@ -735,18 +779,19 @@ async function handle(request, response) {
   } catch (error) {
     if (typeof agentEvents?.reportActivity === "function") void agentEvents.reportActivity({ state: "failed" });
     if (!isWritable()) return;
-    const message = error.message ?? String(error);
+    const message = error instanceof Error ? error.message : String(error);
+    const exitCode = typeof (error as { exitCode?: unknown } | null)?.exitCode === "number" ? (error as { exitCode: number }).exitCode : null;
     // The CLI reports a usage limit as an error string like any other failure,
     // so this is the one place the two can be told apart. Only ever `inferred`:
     // enough to pick a status the router can act on, never enough on its own to
     // take the provider out for a long cooldown.
-    const limit = classifyCliLimit(message, error.exitCode);
+    const limit = classifyCliLimit(message, exitCode);
     if (!streamStarted) {
       const status = limit && [ "throttled", "session_limit", "quota_exhausted" ].includes(limit.limitClass) ? 429 : 503;
       const headers = limitResponseHeaders(limit);
       const retryAfter = retryAfterSecondsFromLimit(limit);
       if (retryAfter !== null) headers[ "retry-after" ] = String(retryAfter);
-      const body = { error: { type: "copilot_proxy_error", message } };
+      const body: JsonRecord = { error: { type: "copilot_proxy_error", message } };
       const declaredLimit = limitPayload(limit);
       if (declaredLimit) body.error.limit = declaredLimit;
       sendJson(response, status, body, headers);

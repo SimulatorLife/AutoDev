@@ -3097,7 +3097,7 @@ PY
             self.assertIn("probe_ok", hook[:nohup_index], msg=name)
 
     def test_antigravity_stream_reports_early_provider_errors_as_retryable(self):
-        proxy = (REPO_ROOT / "scripts/codex-antigravity-cli-responses-proxy.mjs").read_text()
+        proxy = (REPO_ROOT / "src/providers/antigravity.ts").read_text()
         self.assertIn('if (!streamStarted)', proxy)
         # Still a retryable status the router can fall back on, but the status is
         # now chosen from the failure: agy reports a usage limit as an error
@@ -3145,7 +3145,7 @@ PY
         self.assertNotIn("failedStream", proxy)
 
     def test_copilot_proxy_does_not_report_an_empty_clean_exit_as_success(self):
-        proxy = (REPO_ROOT / "scripts/codex-copilot-cli-responses-proxy.mjs").read_text()
+        proxy = (REPO_ROOT / "src/providers/copilot.ts").read_text()
         self.assertIn('if (!answer.trim())', proxy)
         self.assertIn('Copilot exited successfully without a final answer', proxy)
         self.assertIn('if (!streamStarted)', proxy)
@@ -3180,8 +3180,8 @@ PY
     def test_provider_bridges_never_infer_workspace_from_prompt_text(self):
         for relative_path in (
             "scripts/codex-claude-cli-responses-proxy.py",
-            "scripts/codex-antigravity-cli-responses-proxy.mjs",
-            "scripts/codex-copilot-cli-responses-proxy.mjs",
+            "src/providers/antigravity.ts",
+            "src/providers/copilot.ts",
         ):
             with self.subTest(path=relative_path):
                 source = (REPO_ROOT / relative_path).read_text()
@@ -3209,11 +3209,14 @@ PY
                     self.assertIn(fragment, source, msg=f"{relative_path} missing required fragment {fragment!r}")
 
     def test_javascript_provider_bridges_use_the_shared_workspace_resolver(self):
-        import_line = 'from "../src/shared/resolve-workspace.ts"'
-        for relative_path in (
-            "scripts/codex-antigravity-cli-responses-proxy.mjs",
-            "scripts/codex-copilot-cli-responses-proxy.mjs",
-        ):
+        # copilot.ts lives inside src/ itself, so its import of the sibling
+        # shared/resolve-workspace.ts module is one level shallower than a
+        # scripts/*.mjs bridge's import of the same shared module.
+        cases = {
+            "src/providers/antigravity.ts": 'from "../src/shared/resolve-workspace.ts"',
+            "src/providers/copilot.ts": 'from "../shared/resolve-workspace.ts"',
+        }
+        for relative_path, import_line in cases.items():
             with self.subTest(path=relative_path):
                 source = (REPO_ROOT / relative_path).read_text()
                 self.assertIn(import_line, source)

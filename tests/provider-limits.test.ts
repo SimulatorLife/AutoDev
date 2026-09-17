@@ -24,9 +24,10 @@ import {
   retryAfterSecondsFromLimit,
   terminalIncompleteEvents,
   truncationNotice,
+  type ProviderLimit,
 } from "../src/shared/provider-limits.ts";
 
-const read = (path) => readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
+const read = (path: string) => readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
 
 test("normalizes the shapes providers actually state a reset in", () => {
   assert.equal(normalizeResetsAt(1757174400), "2025-09-06T16:00:00.000Z");
@@ -43,13 +44,16 @@ test("normalizes the shapes providers actually state a reset in", () => {
 
 test("a limit read out of a CLI error message is only ever inferred", () => {
   const quota = classifyCliLimit("agy exited with code 1: quota exceeded for this account");
+  assert.ok(quota);
   assert.equal(quota.limitClass, "quota_exhausted");
   assert.equal(quota.source, LIMIT_SOURCE_INFERRED);
 
   const throttled = classifyCliLimit("copilot: 429 too many requests");
+  assert.ok(throttled);
   assert.equal(throttled.limitClass, "throttled");
 
   const session = classifyCliLimit("session limit reached for this account");
+  assert.ok(session);
   assert.equal(session.limitClass, "session_limit");
 
   assert.equal(classifyCliLimit("agy exited on SIGSEGV"), null);
@@ -66,7 +70,7 @@ test("a limit read out of a CLI error message is only ever inferred", () => {
 });
 
 test("limit headers round-trip through the reader the router uses", () => {
-  const limit = { limitClass: "quota_exhausted", limitType: "weekly", resetsAt: "2026-09-06T15:40:00.000Z", source: LIMIT_SOURCE_REPORTED };
+  const limit: ProviderLimit = { limitClass: "quota_exhausted", limitType: "weekly", resetsAt: "2026-09-06T15:40:00.000Z", source: LIMIT_SOURCE_REPORTED };
   const headers = limitResponseHeaders(limit);
   assert.deepEqual(headers, {
     [LIMIT_HEADER_CLASS]: "quota_exhausted",
@@ -86,7 +90,7 @@ test("limit headers round-trip through the reader the router uses", () => {
 });
 
 test("an incomplete turn carries its work, and says plainly that it is partial", () => {
-  const limit = { limitClass: "session_limit", limitType: "session", resetsAt: "2026-09-06T15:40:00.000Z", source: LIMIT_SOURCE_REPORTED };
+  const limit: ProviderLimit = { limitClass: "session_limit", limitType: "session", resetsAt: "2026-09-06T15:40:00.000Z", source: LIMIT_SOURCE_REPORTED };
   const events = terminalIncompleteEvents({
     responseId: "resp_1",
     itemId: "msg_1",
@@ -107,7 +111,8 @@ test("an incomplete turn carries its work, and says plainly that it is partial",
     "response.output_item.done",
     "response.completed",
   ]);
-  const completed = events.at(-1)[ 1 ].response;
+  const completed = events.at(-1)?.[1].response as { status: string; incomplete_details: Record<string, unknown>; output_text: string; output: Array<{ status: string }> };
+  assert.ok(completed);
   assert.equal(completed.status, "incomplete");
   assert.deepEqual(completed.incomplete_details, { reason: INCOMPLETE_REASON_PROVIDER_LIMIT, provider_limit: limitPayload(limit) });
   assert.match(completed.output_text, /^the work so far/);

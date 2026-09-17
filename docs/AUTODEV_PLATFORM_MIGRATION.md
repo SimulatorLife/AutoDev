@@ -51,7 +51,7 @@ Current source/runtime paths contain substantial custom infrastructure, includin
 - `codex-model-router.test.mjs`
 - `codex-claude-cli-responses-proxy.py`
 - `codex-antigravity-cli-responses-proxy.mjs`
-- `codex-copilot-cli-responses-proxy.mjs`
+- `src/providers/copilot.ts`
 - `src/providers/minimax.ts`
 - `codex-model-router-dashboard.html`
 - `codex-model-router-status.mjs`
@@ -2087,7 +2087,7 @@ entrypoint has been deleted. This is an implementation/runtime ownership
 change only; the transport remains the retained local boundary adapter and no
 provider retirement gate has been bypassed. The fixture at
 `tests/fixtures/contracts/minimax-responses-contract.json` and the boundary
-suite `tests/minimax-responses-contract.test.mjs` exercise the adapter's pure
+suite `tests/minimax-responses-contract.test.ts` exercises the adapter's pure
 helpers (`rewriteOutboundPayload`, `isWebResearchTool`,
 `freeformInputFromArguments`, `coerceResponseBody`) against normal-stream
 namespace flattening, freeform tool coercion, and preserved web-research
@@ -2217,6 +2217,27 @@ Point the existing MiniMax Codex model-provider entry at a direct/shared API tra
 
 ---
 
+### Completed provider bridge conversion — GitHub Copilot (2026-09-17)
+
+The Copilot CLI remains the supported subscription transport, but its AutoDev
+Responses boundary is no longer a legacy `.mjs` implementation.
+`scripts/codex-copilot-cli-responses-proxy.mjs` was moved to the strictly
+checked `src/providers/copilot.ts`; the typed module preserves the existing
+CLI invocation, Responses streaming and continuation shapes, role-specific MCP
+configuration, skill-read detection, provider-limit payloads, and
+tool/activity/skill/MCP telemetry. The installer deploys it through the
+`runtime_module_names` manifest, the launch wrapper executes the installed
+TypeScript source directly, and reconciliation removes stale `.mjs` copies.
+
+The frozen offline Copilot contract remains the retirement baseline:
+`tests/copilot-responses-contract.test.mjs` now imports the typed module and
+continues to exercise a fake official CLI, while the MCP-scope, bridge-role,
+telemetry, workflow, installer, and subscription-policy checks use the new
+path. `pnpm typecheck` and the focused Copilot suites pass. This is an
+implementation/runtime ownership migration only; the provider CLI is retained
+per the Phase 4 policy and supportability decision.
+
+
 ## Phase 6 — Shrink the AutoDev router around retained semantics
 
 Rulesync hook declaration ownership is complete: `.rulesync/hooks.jsonc` is the
@@ -2234,9 +2255,14 @@ and exhaustion diagnostics retain their existing contracts. The legacy
 re-export entrypoint; provider policy, cooldowns, telemetry, and lifecycle
 ownership remain explicit typed modules. Phase 6 remains in progress because
 provider transport migrations and any future deletion still require parity
-proof. The first provider implementation slice is complete: MiniMax now runs
-from `src/providers/minimax.ts`, while its retained boundary responsibilities
-remain outside the router.
+proof. The first provider implementation slices are complete: MiniMax runs from
+`src/providers/minimax.ts` and Copilot runs from `src/providers/copilot.ts`, while
+their retained boundary responsibilities remain outside the router. The obsolete
+Copilot `.mjs` implementation was deleted after its frozen Responses, MCP,
+skill-read, tool-outcome, limit, and activity telemetry contracts passed through
+the typed module; installer/runtime projections now deploy the typed source
+directly and remove stale `.mjs` copies. Antigravity and Claude remain the
+remaining provider bridge conversions.
 
 After successful provider transport migrations, separate router responsibilities into:
 

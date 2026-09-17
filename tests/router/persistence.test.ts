@@ -168,10 +168,19 @@ test('RouterPersistence schedulePersist debounces writes', async () => {
     }
     assert.equal(existsImmediately, false);
 
-    // Wait for debounce to fire
-    await new Promise((resolve) => setTimeout(resolve, 100));
-
-    const fileStat = await stat(testFile);
+    // Wait for the debounced write itself instead of assuming the event loop
+    // can service the timer within a fixed interval while the full suite runs.
+    let fileStat;
+    for (let attempt = 0; attempt < 100; attempt += 1) {
+      try {
+        fileStat = await stat(testFile);
+        break;
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+    }
+    assert.ok(fileStat, 'debounced persistence did not complete within 1 second');
     assert.ok(fileStat.isFile());
     assert.equal(snapshotCounter, 1);
   } finally {

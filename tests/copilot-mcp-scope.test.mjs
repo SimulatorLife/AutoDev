@@ -4,7 +4,7 @@ import { join } from "node:path";
 import test from "node:test";
 
 import { EXECUTION_CONTRACT, roleContract } from "../src/shared/execution-contract.ts";
-import { copilotMcpArgs, runCopilot } from "../scripts/codex-copilot-cli-responses-proxy.mjs";
+import { copilotMcpArgs, runCopilot } from "../src/providers/copilot.ts";
 import { createBridgeMcpHomes } from "./bridge-mcp-fixture.mjs";
 
 const homes = createBridgeMcpHomes();

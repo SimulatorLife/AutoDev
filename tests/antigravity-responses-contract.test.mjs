@@ -8,10 +8,10 @@ import { tmpdir } from "node:os";
 import test from "node:test";
 
 import { classifyCliLimit, limitPayload } from "../src/shared/provider-limits.ts";
-import { extractSkillReadPath, matchSkillReadPath } from "../scripts/codex-antigravity-cli-responses-proxy.mjs";
+import { extractSkillReadPath, matchSkillReadPath } from "../src/providers/antigravity.ts";
 
 const REPO_ROOT = resolve(import.meta.dirname, "..");
-const PROXY = join(REPO_ROOT, "scripts/codex-antigravity-cli-responses-proxy.mjs");
+const PROXY = join(REPO_ROOT, "src/providers/antigravity.ts");
 const CONTRACT_PATH = join(REPO_ROOT, "tests/fixtures/contracts/antigravity-responses-contract.json");
 const contract = JSON.parse(await readFile(CONTRACT_PATH, "utf8"));
 

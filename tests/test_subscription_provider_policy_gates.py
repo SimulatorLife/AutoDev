@@ -123,12 +123,12 @@ class SubscriptionProviderPolicyGateTests(unittest.TestCase):
         self.assertIn('pnpm --silent dlx "$AUTODEV_CLAUDE_PACKAGE"', claude_branch)
 
     def test_copilot_proxy_runs_the_official_copilot_cli(self):
-        source = self.texts["scripts/codex-copilot-cli-responses-proxy.mjs"]
+        source = self.texts["src/providers/copilot.ts"]
         self.assertIn('spawn(process.env.COPILOT_BIN ?? "copilot", args', source)
         self.assertIn("baseUrl: 'http://127.0.0.1:4003/v1'", self.route("copilot"))
 
     def test_antigravity_proxy_runs_the_official_agy_cli(self):
-        source = self.texts["scripts/codex-antigravity-cli-responses-proxy.mjs"]
+        source = self.texts["src/providers/antigravity.ts"]
         self.assertIn("const CLI = process.env.AGY_CLI_PATH ?? `${process.env.HOME ?? process.cwd()}/.local/bin/agy`;", source)
         self.assertIn("spawn(CLI, agyArgs(", source)
         self.assertIn("baseUrl: 'http://127.0.0.1:4002/v1'", self.route("antigravity"))

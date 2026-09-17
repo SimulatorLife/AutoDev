@@ -8,7 +8,7 @@ import {
   isDelegationActive,
   isWaitStep,
   updateDelegationState,
-} from "../scripts/codex-antigravity-cli-responses-proxy.mjs";
+} from "../src/providers/antigravity.ts";
 
 const spawnTools = new Set([ "invoke_subagent", "manage_subagents" ]);
 const isSpawnTool = (name) => spawnTools.has(name);

@@ -37,7 +37,7 @@ import {
   spawnedChildren,
   subagentModel,
   toolStepEvidence,
-} from "../scripts/codex-antigravity-cli-responses-proxy.mjs";
+} from "../src/providers/antigravity.ts";
 import {
   copilotToolOutcome,
   extractSkillReadPath as copilotSkillReadPath,
@@ -46,7 +46,7 @@ import {
   skillReadEvent,
   SKILL_EXPOSURE_SOURCE as COPILOT_SKILL_EXPOSURE_SOURCE,
   MCP_EXPOSURE_SOURCE as COPILOT_MCP_EXPOSURE_SOURCE,
-} from "../scripts/codex-copilot-cli-responses-proxy.mjs";
+} from "../src/providers/copilot.ts";
 import {
   MCP_EXPOSURE_SOURCE as MINIMAX_MCP_EXPOSURE_SOURCE,
   observeResponseEvent,
@@ -336,8 +336,8 @@ test("the router's request id reaches agyErrorDetails and logTurnEnd without any
   // request id the router already issues on every request (the same header
   // AgentEventReporter is authorized from) is what closes that gap -- it
   // carries no prompt text, only an id the router itself assigned.
-  const source = read("scripts/codex-antigravity-cli-responses-proxy.mjs");
-  assert.match(source, /import \{ REQUEST_ID_HEADER, SKILL_READ_SOURCE, resolveAgentEventReporter \} from "\.\.\/src\/telemetry\/agent-events\.ts";/);
+  const source = read("src/providers/antigravity.ts");
+  assert.match(source, /import \{ REQUEST_ID_HEADER, SKILL_READ_SOURCE, resolveAgentEventReporter \} from "\.\.\/telemetry\/agent-events\.ts";/);
   assert.match(source, /const requestId = headerValue\(request\.headers, REQUEST_ID_HEADER\);/);
   // Both places agyErrorDetails is called for an upstream failure (the
   // non-streaming 502 path and the stream-not-yet-started 429/503 path) pass
@@ -422,9 +422,9 @@ test("agyArgs sandboxes read-only roles instead of granting them permission bypa
 });
 
 test("the Antigravity bridge reports the subagents its own CLI spawns", () => {
-  const source = read("scripts/codex-antigravity-cli-responses-proxy.mjs");
+  const source = read("src/providers/antigravity.ts");
   // Reached only from inside handle(), so this stays a source assertion.
-  assert.match(source, /from "\.\.\/src\/telemetry\/agent-events\.ts"/);
+  assert.match(source, /from "\.\.\/telemetry\/agent-events\.ts"/);
   assert.match(source, /resolveAgentEventReporter\(request\.headers\)/);
   assert.match(source, /agentEvents\.reportSpawns\(\{ tool: toolName, children \}\)/);
   // A child's own turn is measured only if the step that opened it is closed,
@@ -442,10 +442,10 @@ test("an Antigravity turn that dies names its own cause in the log", () => {
   // router as `upstream_error` at HTTP 200 and leaving nothing in the bridge
   // log but the step lines that happened to precede it. The turn logged its
   // start and never its end, so the reason it died was written down nowhere.
-  const source = read("scripts/codex-antigravity-cli-responses-proxy.mjs");
+  const source = read("src/providers/antigravity.ts");
 
   // Every exit from a turn names itself and how long it took.
-  assert.match(source, /const logTurnEnd = \(outcome, detail = ""\) =>/);
+  assert.match(source, /const logTurnEnd = \(outcome: string, detail = ""\) =>/);
   assert.match(source, /logTurnEnd\("succeeded"\)/);
   assert.match(source, /logTurnEnd\("failed"/);
   assert.match(source, /logTurnEnd\("aborted"/);
@@ -702,12 +702,12 @@ test("a known transcript path travels with the child, and its absence costs noth
 });
 
 test("the Antigravity bridge delegates through Codex when the turn can reach it", () => {
-  const source = read("scripts/codex-antigravity-cli-responses-proxy.mjs");
+  const source = read("src/providers/antigravity.ts");
   // agy has no per-invocation MCP flag -- its server list is the single global
   // ~/.gemini/config/mcp_config.json -- so the shim cannot be told which turn
   // it belongs to through its arguments. It is told through the environment:
   // agy spawns its MCP servers as its own children and they inherit this.
-  assert.match(source, /function agyEnvironment\(spawnSession\)/);
+  assert.match(source, /function agyEnvironment\(spawnSession: string \| null\)/);
   assert.match(source, /AUTODEV_SPAWN_SESSION: spawnSession \?\? ""/);
   assert.match(source, /env: agyEnvironment\(spawnSession\)/);
   // A leaf turn passes no session, so the handshake finds nothing to attach to.
@@ -726,7 +726,7 @@ test("agy's own in-CLI spawns are still reported, because they cannot be denied"
   // the prompt says and one turn can produce both kinds of child. Dropping the
   // bridge-native reporting would make those children vanish from /status
   // entirely rather than merely being invisible in the app.
-  const source = read("scripts/codex-antigravity-cli-responses-proxy.mjs");
+  const source = read("src/providers/antigravity.ts");
   assert.match(source, /createSpawnTracker\(agentEvents\)/);
   assert.match(source, /observeSpawnStep\(event\.step_update \?\? \{\}\)/);
 });
@@ -739,10 +739,10 @@ test("pending children from the spawn tracker gate the bridge's disconnect kill 
   // agy out from under still-running children. These assertions pin the
   // wiring that folds the spawn tracker's openSpawnCount() into the
   // delegation state both decisions read.
-  const source = read("scripts/codex-antigravity-cli-responses-proxy.mjs");
+  const source = read("src/providers/antigravity.ts");
   assert.match(source, /pendingChildren: 0,/);
   assert.match(source, /delegation\.pendingChildren = openSpawnCount\(\);/);
-  assert.match(source, /function isDelegationActive\(delegation\)/);
+  assert.match(source, /function isDelegationActive\(delegation: DelegationState\)/);
   assert.match(source, /return Number\(delegation\.pendingChildren\) > 0;/);
   // Both the close/error decision and the heartbeat gate read that combined
   // signal, not activeTool alone.
@@ -757,7 +757,7 @@ test("pending children from the spawn tracker gate the bridge's disconnect kill 
   // is what keeps the kill decision correct when the router sent no
   // telemetry headers at all.
   assert.match(source, /const ANTIGRAVITY_SPAWN_TOOL_NAMES = new Set\(\[ "invoke_subagent" \]\);/);
-  assert.match(source, /function isSpawnToolName\(agentEvents, toolName\) \{/);
+  assert.match(source, /function isSpawnToolName\(agentEvents: AgentReporter \| null, toolName: string\): boolean \{/);
   assert.match(source, /if \(agentEvents\) return agentEvents\.isSpawnTool\(toolName\);/);
   assert.match(source, /isSpawnToolName\(agentEvents, name\)/);
 
@@ -870,7 +870,7 @@ test("the Antigravity bridge observes and reports tool requests, executions, and
 test("the Antigravity bridge reports skill exposure from actual role contract", () => {
   assert.equal(ANTIGRAVITY_SKILL_EXPOSURE_SOURCE, "role_contract");
   assert.equal(ANTIGRAVITY_MCP_EXPOSURE_SOURCE, "role_contract");
-  const source = read("scripts/codex-antigravity-cli-responses-proxy.mjs");
+  const source = read("src/providers/antigravity.ts");
   assert.match(source, /for \(const skill of bootstrapContract\.skills \?\? \[\]\)/);
   assert.match(source, /agentEvents\.reportSkillExposed\(\{ skill, source: ANTIGRAVITY_SKILL_EXPOSURE_SOURCE \}\)/);
   assert.match(source, /for \(const server of bootstrapContract\.mcp \?\? \[\]\)/);
@@ -892,7 +892,7 @@ test("the Copilot bridge evaluates tool outcomes and reports telemetry", () => {
   assert.deepEqual(copilotToolOutcome({}), { kind: "none" });
 
   // Source assertions for Copilot bridge telemetry wiring
-  const source = read("scripts/codex-copilot-cli-responses-proxy.mjs");
+  const source = read("src/providers/copilot.ts");
   assert.equal(COPILOT_SKILL_EXPOSURE_SOURCE, "role_contract");
   assert.equal(COPILOT_MCP_EXPOSURE_SOURCE, "role_contract");
   assert.match(source, /for \(const skill of bootstrapContract\.skills \?\? \[\]\)/);
@@ -1479,7 +1479,7 @@ reporter.flush()
 
 test("the provider bridges wire activity lifecycle telemetry", () => {
   // Antigravity bridge source assertions
-  const agySource = read("scripts/codex-antigravity-cli-responses-proxy.mjs");
+  const agySource = read("src/providers/antigravity.ts");
   assert.match(agySource, /tool === "ask_question"\) void agentEvents\.reportActivity\(\{ state: "user_wait" \}\)/);
   assert.match(agySource, /void agentEvents\.reportActivity\(\{ state: "tool_wait" \}\)/);
   assert.match(agySource, /void agentEvents\.reportActivity\(\{ state: "subagent_wait", childIds: children\.map\(/);
@@ -1488,7 +1488,7 @@ test("the provider bridges wire activity lifecycle telemetry", () => {
   assert.match(agySource, /void agentEvents\.reportActivity\(\{ state: "failed" \}\)/);
 
   // Copilot bridge source assertions
-  const copilotSource = read("scripts/codex-copilot-cli-responses-proxy.mjs");
+  const copilotSource = read("src/providers/copilot.ts");
   assert.match(copilotSource, /reportActivity\(\{ state: String\(event\.tool/);
   assert.match(copilotSource, /void agentEvents\.reportActivity\(\{ state: "resumed" \}\)/);
   assert.match(copilotSource, /void agentEvents\.reportActivity\(\{ state: "finished" \}\)/);
@@ -1603,7 +1603,7 @@ test("the Copilot bridge detects a successful canonical SKILL.md read", () => {
   reportToolObservation(fakeReporter, { type: "skill_used", skill: "ccc", eventId: "skill_read:call_1:ccc" });
   assert.deepEqual(events, [ { skill: "ccc", source: "skill_read", eventId: "skill_read:call_1:ccc" } ]);
 
-  const source = read("scripts/codex-copilot-cli-responses-proxy.mjs");
+  const source = read("src/providers/copilot.ts");
   assert.match(source, /if \(outcome\.kind === "executed" && outcome\.status === "ok"\) \{/);
   assert.match(source, /const skillEvent = skillReadEvent\(\{ seenSkills, toolName, args: open\?\.args \?\? data\.arguments, callId \}\);/);
 });

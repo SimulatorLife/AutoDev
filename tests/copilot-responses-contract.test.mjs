@@ -7,7 +7,7 @@ import { tmpdir } from "node:os";
 import test from "node:test";
 
 import { classifyCliLimit, limitPayload } from "../src/shared/provider-limits.ts";
-import { runCopilot } from "../scripts/codex-copilot-cli-responses-proxy.mjs";
+import { runCopilot } from "../src/providers/copilot.ts";
 import { createBridgeMcpHomes } from "./bridge-mcp-fixture.mjs";
 
 const REPO_ROOT = resolve(import.meta.dirname, "..");
@@ -19,7 +19,7 @@ process.env.COPILOT_HOME = homes.copilotHome;
 test.after(async () => {
   await rm(homes.root, { recursive: true, force: true });
 });
-const PROXY = join(REPO_ROOT, "scripts/codex-copilot-cli-responses-proxy.mjs");
+const PROXY = join(REPO_ROOT, "src/providers/copilot.ts");
 const CONTRACT_PATH = join(REPO_ROOT, "tests/fixtures/contracts/copilot-responses-contract.json");
 const contract = JSON.parse(await readFile(CONTRACT_PATH, "utf8"));
 const cases = Object.entries(contract.cases);

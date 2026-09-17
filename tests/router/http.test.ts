@@ -12,6 +12,7 @@ import {
   workspaceContextFromRequest,
 } from '../../src/router/http.ts';
 import { noteBridgeRequest, resetSubagentTelemetry } from '../../src/router/subagents.ts';
+import { setRouterAuthTokenForTests } from '../../src/router/auth.ts';
 
 class FakeRequest extends EventEmitter {
   method: string;
@@ -100,6 +101,9 @@ test('catalog loading returns the public models/data envelope', async () => {
 });
 
 test('HTTP endpoint routing keeps health, status, models, provider, and response contracts', async () => {
+  const previousAuthToken = process.env.CODEX_ROUTER_AUTH_TOKEN;
+  setRouterAuthTokenForTests('');
+  try {
   const healthResponse = responseRecorder();
   await handleRequest(new FakeRequest('GET', '/health') as any, healthResponse);
   assert.equal(healthResponse.statusCode, 200);
@@ -119,6 +123,9 @@ test('HTTP endpoint routing keeps health, status, models, provider, and response
   await handleRequest(new FakeRequest('POST', '/v1/responses', {}) as any, responseResponse);
   assert.equal(responseResponse.statusCode, 400);
   assert.match(JSON.parse(responseResponse.body).error.message, /requires a non-empty string model/);
+  } finally {
+    setRouterAuthTokenForTests(previousAuthToken ?? '');
+  }
 });
 
 test('agent event ingestion accepts activity only for a router-owned request', () => {

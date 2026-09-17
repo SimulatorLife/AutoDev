@@ -18,4 +18,14 @@ resolve_node() {
 }
 node_bin="$(resolve_node)" || { echo "run-codex-antigravity-proxy: node not found" >&2; exit 127; }
 codex_home="${CODEX_HOME:-$HOME/.codex}"
-exec "$node_bin" "$codex_home/hooks/codex-antigravity-cli-responses-proxy.mjs"
+# The proxy is a typed AutoDev runtime module installed under CODEX_HOME. It is
+# not a hook script: keeping it as a source-owned module makes it lintable,
+# testable, and reusable by the typed CLI/runtime path (mirrors the MiniMax and
+# Copilot adapters under src/providers/).
+proxy_script="$codex_home/src/providers/antigravity.ts"
+if [[ ! -f "$proxy_script" ]]; then
+  echo "Antigravity proxy source is missing: $proxy_script" >&2
+  echo "Run scripts/codex/install-codex-integration.sh to deploy it." >&2
+  exit 1
+fi
+exec "$node_bin" "$proxy_script"

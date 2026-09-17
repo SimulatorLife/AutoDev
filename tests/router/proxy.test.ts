@@ -59,9 +59,12 @@ function jsonResponse(value: unknown, status = 200): Response {
 }
 
 test('downstream headers and payload candidates preserve router-owned boundaries', () => {
+  const previousKey = process.env.TEST_PROVIDER_KEY;
+  process.env.TEST_PROVIDER_KEY = 'sk-test-provider';
+  try {
   const claude = ROUTES.find((candidate) => candidate.provider === 'claude')!;
-  const headers = downstreamHeaders(claude, null, '{"workspace":"safe"}', 'worker', 'req-1', { key: 'session-1', scope: 'identified' });
-  assert.equal(headers.authorization, undefined);
+  const headers = downstreamHeaders({ ...claude, envKey: 'TEST_PROVIDER_KEY' }, null, '{"workspace":"safe"}', 'worker', 'req-1', { key: 'session-1', scope: 'identified' });
+  assert.equal(headers.authorization, 'Bearer sk-test-provider');
   assert.equal(headers['x-codex-turn-metadata'], '{"workspace":"safe"}');
   assert.equal(headers['x-autodev-agent-role'], 'worker');
   assert.equal(headers['x-autodev-session-id'], 'session-1');
@@ -71,6 +74,10 @@ test('downstream headers and payload candidates preserve router-owned boundaries
     payloadForCandidate({ model: 'autodev/worker', reasoning: { effort: 'none' } }, { model: 'sonnet', reasoningEffort: 'high' }),
     { model: 'sonnet', reasoning: { effort: 'high' } },
   );
+  } finally {
+    if (previousKey === undefined) delete process.env.TEST_PROVIDER_KEY;
+    else process.env.TEST_PROVIDER_KEY = previousKey;
+  }
 });
 
 test('declared limits, fallback classification, and exhaustion diagnostics remain structured', () => {

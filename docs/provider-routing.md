@@ -124,7 +124,7 @@ problem, not as a target-repository build failure.
 
 The router, all three bridges, and the Python bridge share one vocabulary for
 why a turn stopped before it finished (`src/shared/provider-limits.ts`
-and the `tests/provider-limits.test.mjs` mirroring test pin both sides).
+and the `tests/provider-limits.test.ts` mirroring test pin both sides).
 `provider_limit`, `provider_timeout`, and `provider_interrupted` were the only
 values through early 2026; the cluster of long-running antigravity-orchestrated
 turns that died with "The antigravity provider stopped unexpectedly" without
@@ -409,7 +409,7 @@ The same shape appears as `error.limit` in a non-streamed failure body and as
 `response.incomplete_details.provider_limit` on a streamed one, so the router
 reads one shape wherever it finds it. `src/shared/provider-limits.ts` is
 the single implementation; the Claude bridge is Python and restates the same
-literals, with `tests/provider-limits.test.mjs` guarding against drift.
+literals, with `tests/provider-limits.test.ts` guarding against drift.
 
 Only `reported` corroborates a hard cooldown. A bridge classifying its CLI's
 error text always reports `inferred`, which is enough to pick a better HTTP
@@ -1852,7 +1852,7 @@ and Antigravity their own subagents -- not a model completion:
 | --- | --- |
 | `codex-claude-cli-responses-proxy.py` | the `claude` CLI's Claude Code OAuth subscription. `claude_environment()` **removes** `ANTHROPIC_API_KEY` and `ANTHROPIC_AUTH_TOKEN` from the child environment so the CLI cannot silently fall back to metered API billing. |
 | `codex-antigravity-cli-responses-proxy.mjs` | the `agy` CLI's Antigravity subscription. `ensure-codex-antigravity-proxy.sh` refuses to start unless `useAiCredits=false` and `useG1Credits=false`. |
-| `codex-copilot-cli-responses-proxy.mjs` | the `copilot` CLI's own login. |
+| `src/providers/copilot.ts` | the `copilot` CLI's own login. |
 | `src/providers/minimax.ts` | a plain `MINIMAX_API_KEY`; no subprocess. |
 
 LiteLLM's `anthropic/*` and `gemini/*` providers speak HTTPS with an API key:

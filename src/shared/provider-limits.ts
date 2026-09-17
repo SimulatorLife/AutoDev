@@ -14,7 +14,7 @@
 // response carrying that work, so the parent reads what its child actually did
 // rather than an error string. All three bridges emit the same ordering through
 // this one implementation so they cannot drift; the Python bridge mirrors these
-// literals and `tests/provider-limits.test.mjs` asserts the two agree.
+// literals and `tests/provider-limits.test.ts` asserts the two agree.
 
 export const LIMIT_HEADER_CLASS = "x-autodev-limit-class";
 export const LIMIT_HEADER_TYPE = "x-autodev-limit-type";
