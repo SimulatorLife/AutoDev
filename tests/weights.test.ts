@@ -5,16 +5,21 @@ import test from 'node:test';
 const TASK_CATEGORIES = new Set(['code', 'merging', 'regressions']);
 const WEIGHT_SCALE = 1000;
 
-const config = JSON.parse(await readFile(new URL('../.github/workflows/weights.json', import.meta.url), 'utf8'));
+type WeightedItem = { name: string; weight: number };
+type Agent = { weight: number; category: string[] };
+type Prompt = { category: string; promptRepository?: string; path: string; complexity: number; weight: number };
+type WorkflowConfig = { repositories: WeightedItem[]; agents: Agent[]; prompts: Prompt[]; agentPools?: { followUps?: unknown } };
 
-function toSlots(weight) {
+const config = JSON.parse(await readFile(new URL('../.github/workflows/weights.json', import.meta.url), 'utf8')) as WorkflowConfig;
+
+function toSlots(weight: number): number {
   return Math.max(1, Math.round(weight * WEIGHT_SCALE));
 }
 
-function weightedCycle(items) {
+function weightedCycle(items: WeightedItem[]): string[] {
   const sorted = [...items].filter((item) => item.weight > 0).sort((a, b) => a.name.localeCompare(b.name));
   const maxSlots = Math.max(...sorted.map((item) => toSlots(item.weight)), 0);
-  const cycle = [];
+  const cycle: string[] = [];
   for (let slot = 1; slot <= maxSlots; slot += 1) {
     for (const item of sorted) {
       if (toSlots(item.weight) >= slot) cycle.push(item.name);
@@ -26,7 +31,7 @@ function weightedCycle(items) {
 test('weights define valid, unique organization repositories', () => {
   assert.ok(Array.isArray(config.repositories));
   assert.ok(config.repositories.length > 0);
-  const names = new Set();
+  const names = new Set<string>();
   for (const repository of config.repositories) {
     assert.match(repository.name, /^[^/\s]+\/[^/\s]+$/);
     assert.equal(names.has(repository.name), false);

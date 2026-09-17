@@ -551,7 +551,7 @@ The router makes its effective choice visible in two ways:
   distinct from `usage.byRole`, which counts *router requests* made by
   subagents: a bridge-native child makes no router request at all, so it
   appears in `status.subagents` and nowhere else. The dashboard renders it as
-  **Subagents spawned** and `codex-model-router-status.mjs` prints it under
+  **Subagents spawned** and `src/cli/router-status.ts` prints it under
   `Subagents spawned:`. See "Counting subagents across providers".
 - Open `http://127.0.0.1:4100/dashboard` in a browser for the live HTML
   dashboard; it fetches `/status` on load and polls the same JSON endpoint every
@@ -625,7 +625,7 @@ been removed (see "What the router deliberately does not do" below);
 CLI view is:
 
   ```sh
-  node /Users/henrykirk/AutoDev/scripts/codex-model-router-status.mjs
+  node /Users/henrykirk/AutoDev/src/cli/router-status.ts
   # Add --json for machine-readable output.
   ```
 
@@ -1628,7 +1628,7 @@ is worse than no label. The router therefore imports `WORKSPACE_KEYS` and
 previously took the first non-empty key while the bridges took the first key
 that is a directory here, so a stale first entry made telemetry and execution
 disagree silently. Where the bridge refuses an ambiguity, the router records no
-workspace instead of inventing one. `tests/workspace-resolution.test.mjs` and
+workspace instead of inventing one. `tests/workspace-resolution.test.ts` and
 `test_all_provider_bridges_resolve_a_workspace_identically` pin both halves,
 the latter by running the Python and JavaScript resolvers over the same inputs
 and asserting identical answers.

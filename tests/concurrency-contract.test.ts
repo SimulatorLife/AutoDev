@@ -12,24 +12,27 @@ import {
   releaseSubagentSlot,
   resetConcurrencyTelemetry,
   tryAcquireSubagentSlot,
-} from "../scripts/codex-model-router.mjs";
+  type ConcurrencyDenialRecord,
+} from "../src/router/concurrency.ts";
 
-const contract = await import("./fixtures/contracts/concurrency-contract.json", { with: { type: "json" } }).then((m) => m.default ?? m);
+type JsonRecord = Record<string, any>;
+
+const contract = await import("./fixtures/contracts/concurrency-contract.json", { with: { type: "json" } }).then((m) => (m.default ?? m) as JsonRecord);
 
 assert.equal(contract.schema, "autodev-concurrency-contract-v1", "concurrency contract must match its schema tag");
 assert.equal(contract.canonicalKey, "max_concurrent_threads_per_session", "canonical key is frozen");
 assert.equal(contract.legacyAlias, "max_threads", "legacy alias is frozen");
 assert.equal(contract.denialReason, "max_concurrent_threads_per_session", "denial reason is frozen");
 
-const SCENARIOS = contract.scenarios;
+const SCENARIOS = contract.scenarios as Record<string, JsonRecord>;
 
-function getPath(obj, dotted) {
+function getPath(obj: any, dotted: string): any {
   let cur = obj;
   for (const part of dotted.split(".")) cur = cur?.[part];
   return cur;
 }
 
-function runParseScenario(name, scenario) {
+function runParseScenario(name: string, scenario: JsonRecord): Promise<void> {
   if (!scenario.missing && typeof scenario.source !== "string") {
     throw new Error(`${name}: parse scenarios must declare source or missing`);
   }
@@ -42,7 +45,7 @@ function runParseScenario(name, scenario) {
       } else {
         await writeFile(configFile, scenario.source);
       }
-      const result = parseConcurrencyConfig(configFile);
+      const result = parseConcurrencyConfig(configFile) as JsonRecord;
       assert.equal(Object.hasOwn(result, "maxThreads"), false, `${name}: result must not expose maxThreads`);
       for (const [key, value] of Object.entries(scenario.expected)) {
         assert.equal(result[key], value, `${name}: ${key}`);
@@ -54,7 +57,7 @@ function runParseScenario(name, scenario) {
   })();
 }
 
-function runAdmissionScenario(name, scenario) {
+function runAdmissionScenario(name: string, scenario: JsonRecord): void {
   resetConcurrencyTelemetry();
   try {
     const configuredLimit = scenario.configuredLimit;
@@ -79,7 +82,8 @@ function runAdmissionScenario(name, scenario) {
             requestedModel: op.requestedModel,
             sessionScope: op.sessionScope,
             reason: op.reason,
-          });
+            timestamp: new Date().toISOString(),
+          } as ConcurrencyDenialRecord);
           break;
         }
         case "status_field": {

@@ -135,37 +135,12 @@ test("an incomplete turn carries its work, and says plainly that it is partial",
   assert.deepEqual(incompleteDetails(INCOMPLETE_REASON_CLIENT_DISCONNECTED), { reason: INCOMPLETE_REASON_CLIENT_DISCONNECTED });
 });
 
-test("the Python bridge mirrors this vocabulary exactly", () => {
-  // The Claude bridge is Python and cannot import the module above, so it
-  // restates these literals. The router reads what that bridge writes, and a
-  // drift between the two would not fail anywhere -- it would quietly stop the
-  // router from recognising a declared limit. Hence this guard.
-  const bridge = read("scripts/codex-claude-cli-responses-proxy.py");
-  const literals = [
-    LIMIT_HEADER_CLASS,
-    LIMIT_HEADER_TYPE,
-    LIMIT_HEADER_RESETS_AT,
-    LIMIT_HEADER_SOURCE,
-    LIMIT_SOURCE_REPORTED,
-    LIMIT_SOURCE_INFERRED,
-    INCOMPLETE_REASON_PROVIDER_LIMIT,
-    INCOMPLETE_REASON_TIMEOUT,
-    INCOMPLETE_REASON_INTERRUPTED,
-    INCOMPLETE_REASON_CLIENT_DISCONNECTED,
-    ...HARD_LIMIT_CLASSES,
-  ];
-  for (const literal of literals) {
-    assert.match(bridge, new RegExp(`"${literal}"`), `the Python bridge must define ${literal}`);
-  }
-  for (const name of [ "normalize_resets_at", "classify_cli_limit", "limit_response_headers", "retry_after_seconds_from_limit", "limit_payload", "incomplete_details", "truncation_notice", "terminal_incomplete_events" ]) {
-    assert.match(bridge, new RegExp(`def ${name}\\(`), `the Python bridge must implement ${name}`);
-  }
-  // Both sides emit the same event ordering; the Python list is the one place
-  // that could silently reorder. Scoped to `terminal_incomplete_events` rather
-  // than scraped from the whole file: the bridge emits other event sequences
-  // too (the `exec` tool call it uses to delegate through Codex), and matching
-  // those here would make this assertion fail for a reason it does not describe.
-  const terminalBody = bridge.slice(bridge.indexOf("def terminal_incomplete_events("));
-  const pythonOrder = [ ...terminalBody.matchAll(/\n {8}\("(response\.[a-z_.]+)", \{"type"/g) ].map((match) => match[ 1 ]);
-  assert.deepEqual(pythonOrder, terminalIncompleteEvents({ responseId: "r", itemId: "i", reasoningId: "rs" }).map(([ name ]) => name));
+test("the typed Claude bridge uses the shared limit boundary", () => {
+  const bridge = read("src/providers/claude.ts");
+  assert.match(bridge, /from "\.\.\/shared\/provider-limits\.ts"/);
+  assert.match(bridge, /classifyCliLimit/);
+  assert.match(bridge, /terminalIncompleteEvents/);
+  assert.match(bridge, /ClaudeRateLimitError/);
+  assert.match(bridge, /INCOMPLETE_REASON_PROVIDER_LIMIT/);
+  assert.match(bridge, /limitResponseHeaders/);
 });

@@ -9,7 +9,7 @@
     "test": "node --test tests/*.test.mjs tests/**/*.test.mjs tests/*.test.ts tests/**/*.test.ts scripts/codex-model-router.test.mjs",
     "test:ts": "node --test tests/*.test.ts tests/**/*.test.ts",
     "typecheck": "tsc --noEmit",
-    "validate:weights": "node tests/weights.test.mjs",
+    "validate:weights": "node tests/weights.test.ts",
     "test:python": "python3 -m unittest discover -s tests -p 'test_*.py'",
     "validate:actionlint": "actionlint",
     "validate:shell": "find scripts -type f -name '*.sh' -exec shellcheck --severity=warning {} +",

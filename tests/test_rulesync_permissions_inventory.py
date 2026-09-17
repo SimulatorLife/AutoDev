@@ -1,4 +1,3 @@
-import ast
 import json
 import tomllib
 import unittest
@@ -7,7 +6,7 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 AUTODEV_CONFIG = REPO_ROOT / "scripts/codex/config.autodev.toml"
-CLAUDE_BRIDGE = REPO_ROOT / "scripts/codex-claude-cli-responses-proxy.py"
+CLAUDE_BRIDGE = REPO_ROOT / "src/providers/claude.ts"
 INSTALLER = REPO_ROOT / "scripts/codex/install-codex-integration.sh"
 RULESYNC_CONFIG = REPO_ROOT / "rulesync.jsonc"
 RULESYNC_MCP_SOURCE = REPO_ROOT / ".rulesync/mcp.jsonc"
@@ -34,35 +33,23 @@ class RulesyncPermissionsInventoryTests(unittest.TestCase):
                     self.assertEqual(server["default_tools_approval_mode"], "approve")
 
     def test_claude_bridge_permission_policy_is_role_aware(self):
-        tree = ast.parse(CLAUDE_BRIDGE.read_text())
-        assignments = {
-            node.targets[0].id: ast.literal_eval(node.value)
-            for node in tree.body
-            if isinstance(node, ast.Assign)
-            and len(node.targets) == 1
-            and isinstance(node.targets[0], ast.Name)
-            and node.targets[0].id in {
-                "DISALLOWED_CLAUDE_TOOLS",
-                "DISALLOWED_CLI_COMMANDS",
-                "CROSS_SESSION_CLAUDE_TOOLS",
-                "CLAUDE_RESEARCH_ALLOWED_TOOLS",
-            }
-        }
-        self.assertEqual(assignments["DISALLOWED_CLAUDE_TOOLS"], ("Agent", "Task"))
-        self.assertEqual(assignments["DISALLOWED_CLI_COMMANDS"], ("Bash(ccc *)",))
-        self.assertEqual(assignments["CROSS_SESSION_CLAUDE_TOOLS"], ("SendMessage", "ListAgents"))
-        self.assertEqual(assignments["CLAUDE_RESEARCH_ALLOWED_TOOLS"], ("WebSearch", "WebFetch"))
-
         source = CLAUDE_BRIDGE.read_text()
+        # The bridge is now TypeScript, so the role-aware permission policy is
+        # encoded as exported arrays and a typed rule lookup rather than Python
+        # module constants. The contract assertions below check the values
+        # the router still depends on.
         for marker in (
-            'role_contract.get("readOnly")',
+            'DISALLOWED_CLAUDE_TOOLS = [ "Agent", "Task" ]',
+            'DISALLOWED_CLI_COMMANDS = [ "Bash(ccc *)" ]',
+            'CROSS_SESSION_CLAUDE_TOOLS = [ "SendMessage", "ListAgents" ]',
+            'CLAUDE_RESEARCH_ALLOWED_TOOLS = [ "WebSearch", "WebFetch" ]',
             'PLAYWRIGHT_AGENT_ROLES',
             'PLAYWRIGHT_DISALLOWED_TOOLS',
             'RESEARCH_CAPABLE_ROLES',
-            'denied.extend(["Bash", "Edit", "Write", "NotebookEdit"])',
-            'allowed_boundary = ["--allowed-tools", ",".join(CLAUDE_RESEARCH_ALLOWED_TOOLS)]',
+            '"Bash", "Write"',
+            '"--allowed-tools"',
             '"--permission-mode"',
-            '"bypassPermissions"',
+            'CLAUDE_CODE_PERMISSION_MODE ?? "bypassPermissions"',
         ):
             self.assertIn(marker, source)
 

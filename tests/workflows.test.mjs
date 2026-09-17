@@ -279,9 +279,9 @@ test('provider bridges explicitly expose code MCP capabilities', async () => {
   assert.match(copilot, /--disable-mcp-server/);
   assert.match(copilot, /--allow-tool=web_search/);
   assert.match(copilot, /--allow-tool=web_fetch/);
-  const claude = await readFile(path.join(root, 'scripts', 'codex-claude-cli-responses-proxy.py'), 'utf8');
-  assert.match(claude, /cocoindex-code/);
-  assert.match(claude, /_CODE_SEARCH_PROMPT/);
+  const claude = await readFile(path.join(root, 'src', 'providers', 'claude.ts'), 'utf8');
+  assert.match(claude, /bridgeMcpServers/);
+  assert.match(claude, /claudeToolServer|bridgeMcpServers/);
   assert.match(claude, /WebSearch/);
   assert.match(claude, /WebFetch/);
   const antigravity = await readFile(path.join(root, 'src', 'providers', 'antigravity.ts'), 'utf8');

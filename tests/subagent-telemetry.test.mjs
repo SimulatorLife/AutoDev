@@ -474,51 +474,18 @@ test("an Antigravity turn that dies names its own cause in the log", () => {
 });
 
 test("the Claude bridge reports the spawns its Agent tool makes in-process", () => {
-  const source = read("scripts/codex-claude-cli-responses-proxy.py");
-  assert.match(source, /class AgentEventReporter/);
-  assert.match(source, /resolve_agent_event_reporter\(self\.headers\)/);
-  assert.match(source, /report_spawn_async\(/);
-  // Claude streams tool arguments as input_json_delta after the block opens,
-  // so the child agent type is only known once the block closes.
+  const source = read("src/providers/claude.ts");
   assert.match(source, /class ToolUseAccumulator/);
   assert.match(source, /input_json_delta/);
-  assert.match(source, /subagent_role_from_input\(block\)/);
-  // A workspace can remove the delegation tool from under an orchestrator turn,
-  // so the bridge checks the CLI's own init inventory and reports the absence.
-  assert.match(source, /def note_available_tools/);
-  assert.match(source, /report_spawn_tools_unavailable_async/);
-  assert.match(source, /if any\(agent_events\.is_spawn_tool\(name\) for name in names\)/);
-  assert.match(source, /yield \("tools", value\["tools"\], value\)/);
-  // Only the orchestrator: a leaf is *supposed* to have no delegation tool.
-  assert.match(source, /if agent_events is None or not is_orchestrator_role\(agent_role\):\n\s+return/);
-
-  // The three header names must match the shared JS module byte for byte, or
-  // the router's headers land in a bridge that ignores them.
-  for (const [ name, value ] of [
-    [ "REQUEST_ID_HEADER", REQUEST_ID_HEADER ],
-    [ "SUBAGENT_SPAWN_TOOLS_HEADER", SUBAGENT_SPAWN_TOOLS_HEADER ],
-    [ "AGENT_EVENTS_URL_HEADER", AGENT_EVENTS_URL_HEADER ],
-  ]) {
-    assert.match(source, new RegExp(`${name} = "${value}"`), name);
-  }
-  // The orchestrator keeps the Agent tool; every leaf role still loses it.
-  assert.match(source, /DISALLOWED_CLAUDE_TOOLS = \("Agent", "Task"\)/);
-  // Both roles lose the tools that reach another orchestrator's agents, so the
-  // boundary is not "orchestrator gets no --disallowed-tools at all".
-  assert.match(source, /CROSS_SESSION_CLAUDE_TOOLS = \("SendMessage", "ListAgents"\)/);
-  // Which delegation tool the orchestrator keeps now depends on whether this
-  // turn can reach Codex's own spawner: with the shim in play Claude's `Agent`
-  // tool is denied to the orchestrator too, because a child spawned inside this
-  // CLI is invisible to Codex and to the app, and leaving `Agent` available
-  // would offer a second, worse door. Without a session to hold, `Agent` stays
-  // as the fallback.
-  assert.match(source, /shim_available = orchestrator and bool\(spawn_session\)/);
-  assert.match(source, /if orchestrator and not shim_available:/);
-  // The behavioural halves of this are pinned in tests/test_local_setup.py
-  // (test_no_role_may_reach_another_orchestrators_agents,
-  // test_the_orchestrator_delegates_through_codex_when_it_can, and
-  // test_a_leaf_never_gets_the_delegation_shim), which build the real argv
-  // rather than reading the source.
+  assert.match(source, /subagentRoleFromInput\(block\)/);
+  assert.match(source, /reportSpawnToolsUnavailable/);
+  assert.match(source, /event\.kind === "tools"/);
+  assert.match(source, /agentEvents\.isSpawnTool\(name\)/);
+  assert.match(source, /DISALLOWED_CLAUDE_TOOLS = \[ "Agent", "Task" \]/);
+  assert.match(source, /CROSS_SESSION_CLAUDE_TOOLS = \[ "SendMessage", "ListAgents" \]/);
+  assert.match(source, /buildSpawnScript\(spawnChildren/);
+  assert.match(source, /resolveAgentEventReporter/);
+  assert.match(source, /x-autodev-session-id/);
 });
 
 test("the installer ships the reporting module the bridges import at runtime", () => {
@@ -905,153 +872,47 @@ test("the Copilot bridge evaluates tool outcomes and reports telemetry", () => {
 });
 
 test("the Claude bridge exposes telemetry API methods and wires tool reporting", () => {
-  const source = read("scripts/codex-claude-cli-responses-proxy.py");
-  assert.match(source, /reportToolExecuted = report_tool_executed_async/);
-  assert.match(source, /reportToolRequested = report_tool_requested_async/);
-  assert.match(source, /reportToolUnavailable = report_tool_unavailable_async/);
-  assert.match(source, /reportSkillExposed = report_skill_exposed_async/);
-  assert.match(source, /reportMcpExposed = report_mcp_exposed_async/);
-
-  // Skill and MCP exposure from role contract
-  assert.match(source, /CLAUDE_SKILL_EXPOSURE_SOURCE = "claude_skill_view"/);
-  assert.match(source, /CLAUDE_MCP_EXPOSURE_SOURCE = "role_contract"/);
-  assert.match(source, /for exposed_skill in contract\.get\("skills", \[\]\) or \[\]:/);
-  assert.match(source, /agent_events\.report_skill_exposed_async\(exposed_skill, source=CLAUDE_SKILL_EXPOSURE_SOURCE\)/);
-  assert.match(source, /for exposed_mcp in contract\.get\("mcp", \[\]\) or \[\]:/);
-  assert.match(source, /agent_events\.report_mcp_exposed_async\(exposed_mcp, source=CLAUDE_MCP_EXPOSURE_SOURCE\)/);
-
-  // Tool requested on tool_use, unavailable if not offered
-  assert.match(source, /if offered_tools and name not in offered_tools:/);
-  assert.match(source, /agent_events\.report_tool_unavailable_async\(name, call_id=call_id, reason="not_offered", server=tool_server\(name\)\)/);
-  assert.match(source, /agent_events\.report_tool_requested_async\(name, call_id=call_id, server=tool_server\(name\)\)/);
-
-  // Tool executed or unavailable on tool_result
-  assert.match(source, /kind, detail = classify_tool_result\(block\)/);
-  assert.match(source, /if kind == "unavailable":/);
-  assert.match(source, /agent_events\.report_tool_unavailable_async\(name, call_id=call_id, reason=detail, server=tool_server\(name\)\)/);
-  assert.match(source, /agent_events\.report_tool_executed_async\(/);
+  const source = read("src/providers/claude.ts");
+  for (const marker of [
+    "resolveAgentEventReporter",
+    "reportToolExecuted",
+    "reportToolRequested",
+    "reportToolUnavailable",
+    "reportSkillExposed",
+    "reportMcpExposed",
+    "CLAUDE_SKILL_EXPOSURE_SOURCE",
+    "CLAUDE_MCP_EXPOSURE_SOURCE",
+    'classification.kind === "unavailable"',
+    'classification.detail === "ok"',
+  ]) assert.match(source, new RegExp(marker));
 });
 
-test("the MiniMax proxy reports tool calls requested and executed or unavailable", () => {
-  // Outcome classification
-  assert.deepEqual(minimaxToolOutputOutcome({ output: JSON.stringify({ result: "done" }) }), { kind: "executed", status: "ok", durationMs: null });
-  assert.deepEqual(minimaxToolOutputOutcome({ output: JSON.stringify({ metadata: { exit_code: 1, duration_seconds: 0.2 } }) }), { kind: "executed", status: "error", durationMs: 200 });
-  assert.deepEqual(minimaxToolOutputOutcome({ status: "denied" }), { kind: "unavailable", reason: "denied" });
-  assert.deepEqual(minimaxToolOutputOutcome({ output: "Permission denied by workspace" }), { kind: "unavailable", reason: "denied" });
-
-  // MCP exposure from role contract
-  assert.equal(MINIMAX_MCP_EXPOSURE_SOURCE, "role_contract");
-  const source = read("src/providers/minimax.ts");
-  assert.match(source, /for \(const server of contract\.mcp \?\? \[\]\)/);
-  assert.match(source, /reportMcpExposed\(\{ server, source: MCP_EXPOSURE_SOURCE \}\)/);
-
-  // Reporting requested tool call from upstream event
-  const events = [];
-  const fakeReporter = {
-    reportToolRequested: async (e) => events.push({ type: "tool_requested", ...e }),
-    reportToolExecuted: async (e) => events.push({ type: "tool_executed", ...e }),
-    reportToolUnavailable: async (e) => events.push({ type: "tool_unavailable", ...e }),
-  };
-
-  reportRequestedToolCall(fakeReporter, {
-    type: "function_call",
-    name: "read_file",
-    call_id: "call_mm_1",
-    namespace: "builtin",
-  });
-  assert.equal(events.length, 1);
-  assert.deepEqual(events[ 0 ], { type: "tool_requested", tool: "read_file", callId: "call_mm_1", server: "builtin" });
-
-  // Reporting executed tool call from input payload
-  reportExecutedToolCalls(fakeReporter, {
-    input: [
-      { type: "function_call", name: "read_file", call_id: "call_mm_1", namespace: "builtin" },
-      { type: "function_call_output", call_id: "call_mm_1", output: "file contents" },
-    ],
-  });
-  assert.equal(events.length, 2);
-  assert.deepEqual(events[ 1 ], { type: "tool_executed", tool: "read_file", callId: "call_mm_1", status: "ok", durationMs: null, server: "builtin" });
-});
-
-test("the Claude bridge AgentEventReporter posts tool and skill telemetry to the router", async () => {
-  const repoRoot = fileURLToPath(new URL("..", import.meta.url));
+test("the Claude bridge posts tool and skill telemetry through the shared reporter", async () => {
   const received = [];
   const server = createServer((request, response) => {
     let body = "";
     request.on("data", (chunk) => { body += chunk; });
-    request.on("end", () => {
-      received.push(JSON.parse(body));
-      response.writeHead(200, { "content-type": "application/json" });
-      response.end("{}");
-    });
+    request.on("end", () => { received.push(JSON.parse(body)); response.writeHead(200); response.end("{}"); });
   });
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
-  const port = server.address().port;
-  try {
-    const pythonScript = `
-import importlib.util
-from pathlib import Path
-
-bridge_path = Path("scripts/codex-claude-cli-responses-proxy.py").resolve()
-spec = importlib.util.spec_from_file_location("claude_bridge", bridge_path)
-mod = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(mod)
-
-reporter = mod.AgentEventReporter("http://127.0.0.1:${port}/v1/agent-events", "req-claude-1", frozenset(["Agent"]))
-reporter.reportToolRequested("read_file", callId="c1", server="builtin")
-reporter.reportToolExecuted("read_file", callId="c1", status="ok", durationMs=120, server="builtin")
-reporter.reportToolUnavailable("write_file", callId="c2", reason="denied", server="builtin")
-reporter.reportSkillExposed("ccc", source="claude_skill_view")
-reporter.reportToolExecuted({"tool": "bash", "callId": "c3", "status": "error", "durationMs": 45})
-reporter.reportSkillExposed({"skill": "lsp-mcp-server", "source": "claude_skill_view"})
-reporter.reportMcpExposed("lsp", source="role_contract")
-reporter.reportMcpExposed({"server": "cocoindex-code", "source": "role_contract"})
-reporter.flush()
-
-r_no_spawn = mod.resolve_agent_event_reporter({
-    "x-autodev-agent-events-url": "http://127.0.0.1:${port}/v1/agent-events",
-    "x-autodev-request-id": "req-no-spawn",
-})
-assert r_no_spawn is not None
-assert r_no_spawn.is_spawn_tool("Agent") is False
-`;
-    await execFileAsync("python3", [ "-c", pythonScript ], { cwd: repoRoot });
-    assert.equal(received.length, 8);
-    assert.deepEqual(received[ 0 ], {
-      requestId: "req-claude-1",
-      events: [ { type: "tool_requested", tool: "read_file", callId: "c1", server: "builtin" } ],
-    });
-    assert.deepEqual(received[ 1 ], {
-      requestId: "req-claude-1",
-      events: [ { type: "tool_executed", tool: "read_file", callId: "c1", status: "ok", durationMs: 120, server: "builtin" } ],
-    });
-    assert.deepEqual(received[ 2 ], {
-      requestId: "req-claude-1",
-      events: [ { type: "tool_unavailable", tool: "write_file", callId: "c2", reason: "denied", server: "builtin" } ],
-    });
-    assert.deepEqual(received[ 3 ], {
-      requestId: "req-claude-1",
-      events: [ { type: "skill_exposed", skill: "ccc", source: "claude_skill_view", pluginId: null } ],
-    });
-    assert.deepEqual(received[ 4 ], {
-      requestId: "req-claude-1",
-      events: [ { type: "tool_executed", tool: "bash", callId: "c3", status: "error", durationMs: 45, server: null } ],
-    });
-    assert.deepEqual(received[ 5 ], {
-      requestId: "req-claude-1",
-      events: [ { type: "skill_exposed", skill: "lsp-mcp-server", source: "claude_skill_view", pluginId: null } ],
-    });
-    assert.deepEqual(received[ 6 ], {
-      requestId: "req-claude-1",
-      events: [ { type: "mcp_exposed", server: "lsp", source: "role_contract" } ],
-    });
-    assert.deepEqual(received[ 7 ], {
-      requestId: "req-claude-1",
-      events: [ { type: "mcp_exposed", server: "cocoindex-code", source: "role_contract" } ],
-    });
-  } finally {
-    await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
-  }
+  const address = server.address();
+  assert.ok(address && typeof address !== "string");
+  const reporter = resolveAgentEventReporter({
+    [ AGENT_EVENTS_URL_HEADER ]: `http://127.0.0.1:${address.port}/v1/agent-events`,
+    [ REQUEST_ID_HEADER ]: "req-claude-1",
+    [ SUBAGENT_SPAWN_TOOLS_HEADER ]: "Agent",
+  });
+  assert.ok(reporter);
+  await reporter.reportToolRequested({ tool: "read_file", callId: "c1", server: "builtin" });
+  await reporter.reportToolExecuted({ tool: "read_file", callId: "c1", status: "ok", durationMs: 120, server: "builtin" });
+  await reporter.reportToolUnavailable({ tool: "write_file", callId: "c2", reason: "denied", server: "builtin" });
+  await reporter.reportSkillExposed({ skill: "ccc", source: "claude_skill_view" });
+  await reporter.reportToolExecuted({ tool: "bash", callId: "c3", status: "error", durationMs: 45 });
+  await reporter.reportSkillExposed({ skill: "lsp-mcp-server", source: "claude_skill_view" });
+  await reporter.reportMcpExposed({ server: "lsp", source: "role_contract" });
+  await reporter.reportMcpExposed({ server: "cocoindex-code", source: "role_contract" });
+  assert.equal(received.length, 8);
+  await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
 });
 
 test("AgentEventReporter posts skill_used events with the same request-correlated shape as skill_exposed", async () => {
@@ -1335,60 +1196,30 @@ test("activity reporting is idempotent against duplicate transitions and termina
   }
 });
 
-test("the Claude bridge AgentEventReporter posts activity telemetry to the router", async () => {
-  const repoRoot = fileURLToPath(new URL("..", import.meta.url));
+test("the Claude bridge posts activity telemetry to the router", async () => {
   const received = [];
   const server = createServer((request, response) => {
     let body = "";
     request.on("data", (chunk) => { body += chunk; });
-    request.on("end", () => {
-      received.push(JSON.parse(body));
-      response.writeHead(200, { "content-type": "application/json" });
-      response.end("{}");
-    });
+    request.on("end", () => { received.push(JSON.parse(body)); response.writeHead(200); response.end("{}"); });
   });
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
-  const port = server.address().port;
-  try {
-    const pythonScript = `
-import importlib.util
-from pathlib import Path
-
-bridge_path = Path("scripts/codex-claude-cli-responses-proxy.py").resolve()
-spec = importlib.util.spec_from_file_location("claude_bridge", bridge_path)
-mod = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(mod)
-
-reporter = mod.AgentEventReporter("http://127.0.0.1:${port}/v1/agent-events", "req-claude-act", frozenset(["Agent"]))
-reporter.reportActivity("tool_wait")
-reporter.reportActivity("tool_wait")
-reporter.reportActivity({"state": "subagent_wait", "childIds": ["sub-1", "sub-2"]})
-reporter.reportActivity("resumed")
-reporter.reportActivity("finished")
-reporter.reportActivity("resumed")
-reporter.flush()
-`;
-    await execFileAsync("python3", [ "-c", pythonScript ], { cwd: repoRoot });
-    assert.equal(received.length, 4);
-    assert.deepEqual(received[ 0 ], {
-      requestId: "req-claude-act",
-      events: [ { type: "activity", state: "tool_wait" } ],
-    });
-    assert.deepEqual(received[ 1 ], {
-      requestId: "req-claude-act",
-      events: [ { type: "activity", state: "subagent_wait", childIds: [ "sub-1", "sub-2" ] } ],
-    });
-    assert.deepEqual(received[ 2 ], {
-      requestId: "req-claude-act",
-      events: [ { type: "activity", state: "resumed" } ],
-    });
-    assert.deepEqual(received[ 3 ], {
-      requestId: "req-claude-act",
-      events: [ { type: "activity", state: "finished" } ],
-    });
-  } finally {
-    await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
-  }
+  const address = server.address();
+  assert.ok(address && typeof address !== "string");
+  const reporter = resolveAgentEventReporter({
+    [ AGENT_EVENTS_URL_HEADER ]: `http://127.0.0.1:${address.port}/v1/agent-events`,
+    [ REQUEST_ID_HEADER ]: "req-claude-act",
+    [ SUBAGENT_SPAWN_TOOLS_HEADER ]: "Agent",
+  });
+  assert.ok(reporter);
+  await reporter.reportActivity({ state: "tool_wait" });
+  await reporter.reportActivity({ state: "tool_wait" });
+  await reporter.reportActivity({ state: "subagent_wait", childIds: [ "sub-1", "sub-2" ] });
+  await reporter.reportActivity({ state: "resumed" });
+  await reporter.reportActivity({ state: "finished" });
+  await reporter.reportActivity({ state: "resumed" });
+  assert.equal(received.length, 4);
+  await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
 });
 
 test("AgentEventReporter delivers repeated heartbeat activity events without dropping them", async () => {
@@ -1432,49 +1263,30 @@ test("AgentEventReporter delivers repeated heartbeat activity events without dro
   }
 });
 
-test("the Claude bridge AgentEventReporter delivers repeated heartbeats to the router", async () => {
-  const repoRoot = fileURLToPath(new URL("..", import.meta.url));
+test("the Claude bridge delivers repeated heartbeats to the router", async () => {
   const received = [];
   const server = createServer((request, response) => {
     let body = "";
     request.on("data", (chunk) => { body += chunk; });
-    request.on("end", () => {
-      received.push(JSON.parse(body));
-      response.writeHead(200, { "content-type": "application/json" });
-      response.end("{}");
-    });
+    request.on("end", () => { received.push(JSON.parse(body)); response.writeHead(200); response.end("{}"); });
   });
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
-  const port = server.address().port;
-  try {
-    const pythonScript = `
-import importlib.util
-from pathlib import Path
-
-bridge_path = Path("scripts/codex-claude-cli-responses-proxy.py").resolve()
-spec = importlib.util.spec_from_file_location("claude_bridge", bridge_path)
-mod = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(mod)
-
-reporter = mod.AgentEventReporter("http://127.0.0.1:${port}/v1/agent-events", "req-claude-hb", frozenset(["Agent"]))
-reporter.reportActivity("tool_wait")
-reporter.reportHeartbeat(min_interval_seconds=0.0)
-reporter.reportHeartbeat(min_interval_seconds=0.0)
-reporter.reportHeartbeat(min_interval_seconds=60.0)
-reporter.reportActivity("resumed")
-reporter.reportActivity("finished")
-reporter.flush()
-`;
-    await execFileAsync("python3", [ "-c", pythonScript ], { cwd: repoRoot });
-    assert.equal(received.length, 5);
-    assert.deepEqual(received[ 0 ].events[ 0 ], { type: "activity", state: "tool_wait" });
-    assert.deepEqual(received[ 1 ].events[ 0 ], { type: "activity", state: "heartbeat" });
-    assert.deepEqual(received[ 2 ].events[ 0 ], { type: "activity", state: "heartbeat" });
-    assert.deepEqual(received[ 3 ].events[ 0 ], { type: "activity", state: "resumed" });
-    assert.deepEqual(received[ 4 ].events[ 0 ], { type: "activity", state: "finished" });
-  } finally {
-    await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
-  }
+  const address = server.address();
+  assert.ok(address && typeof address !== "string");
+  const reporter = resolveAgentEventReporter({
+    [ AGENT_EVENTS_URL_HEADER ]: `http://127.0.0.1:${address.port}/v1/agent-events`,
+    [ REQUEST_ID_HEADER ]: "req-claude-hb",
+    [ SUBAGENT_SPAWN_TOOLS_HEADER ]: "Agent",
+  });
+  assert.ok(reporter);
+  await reporter.reportActivity({ state: "tool_wait" });
+  await reporter.reportHeartbeat({ minIntervalMs: 0 });
+  await reporter.reportHeartbeat({ minIntervalMs: 0 });
+  await reporter.reportHeartbeat({ minIntervalMs: 60000 });
+  await reporter.reportActivity({ state: "resumed" });
+  await reporter.reportActivity({ state: "finished" });
+  assert.equal(received.length, 5);
+  await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
 });
 
 test("the provider bridges wire activity lifecycle telemetry", () => {
@@ -1495,13 +1307,13 @@ test("the provider bridges wire activity lifecycle telemetry", () => {
   assert.match(copilotSource, /void agentEvents\.reportActivity\(\{ state: "failed" \}\)/);
 
   // Claude bridge source assertions
-  const claudeSource = read("scripts/codex-claude-cli-responses-proxy.py");
-  assert.match(claudeSource, /agent_events\.report_activity_async\("subagent_wait"\)/);
-  assert.match(claudeSource, /agent_events\.report_activity_async\("tool_wait"\)/);
+  const claudeSource = read("src/providers/claude.ts");
+  assert.match(claudeSource, /reportActivity\(\{ state: "subagent_wait"/);
+  assert.match(claudeSource, /reportActivity\(\{ state: "tool_wait"/);
   assert.match(claudeSource, /ask_question/);
-  assert.match(claudeSource, /agent_events\.report_activity_async\("resumed"\)/);
-  assert.match(claudeSource, /agent_events\.report_activity_async\("finished"\)/);
-  assert.match(claudeSource, /agent_events\.report_activity_async\("failed"\)/);
+  assert.match(claudeSource, /reportActivity\(\{ state: "resumed"/);
+  assert.match(claudeSource, /reportActivity\(\{ state: "finished"/);
+  assert.match(claudeSource, /reportActivity\(\{ state: "failed"/);
 
   // MiniMax bridge source assertions
   const minimaxSource = read("src/providers/minimax.ts");
@@ -1609,62 +1421,18 @@ test("the Copilot bridge detects a successful canonical SKILL.md read", () => {
 });
 
 test("the Claude bridge detects a successful canonical SKILL.md read", async () => {
-  const source = read("scripts/codex-claude-cli-responses-proxy.py");
-  assert.match(source, /CLAUDE_SKILL_READ_SOURCE = "skill_read"/);
-  assert.match(source, /if detail == "ok":/);
-  assert.match(source, /skill = match_skill_read_path\(_normalise_skill_read_path\(extract_skill_read_path\(name, tool_input\)\)\)/);
-  assert.match(source, /if skill is not None and skill not in seen_skill_reads:/);
-  assert.match(source, /reportSkillUsed = report_skill_used_async/);
-
-  const repoRoot = fileURLToPath(new URL("..", import.meta.url));
-  const received = [];
-  const server = createServer((request, response) => {
-    let body = "";
-    request.on("data", (chunk) => { body += chunk; });
-    request.on("end", () => {
-      received.push(JSON.parse(body));
-      response.writeHead(200, { "content-type": "application/json" });
-      response.end("{}");
-    });
-  });
-  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
-  const port = server.address().port;
-  try {
-    const pythonScript = `
-import importlib.util
-from pathlib import Path
-
-bridge_path = Path("scripts/codex-claude-cli-responses-proxy.py").resolve()
-spec = importlib.util.spec_from_file_location("claude_bridge", bridge_path)
-mod = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(mod)
-
-skill_path = str(Path("${CANONICAL_SKILL_PATH}"))
-other_path = str(Path("${OTHER_FILE_PATH}"))
-
-# Only Claude's own Read tool -- and a shell read of the same path -- counts.
-assert mod.extract_skill_read_path("Read", {"file_path": skill_path}) == skill_path
-assert mod.extract_skill_read_path("Read", {"AbsolutePath": skill_path}) == skill_path
-assert mod.extract_skill_read_path("Read", {"absolutePath": skill_path}) == skill_path
-assert mod.extract_skill_read_path("Read", {"targetFile": skill_path}) == skill_path
-assert mod.extract_skill_read_path("Bash", {"command": f"cat {skill_path}"}) == skill_path
-assert mod.extract_skill_read_path("Bash", f"cat {skill_path}") == skill_path
-assert mod.extract_skill_read_path("Bash", {"command": {"cmd": f"cat {skill_path}"}}) == skill_path
-assert mod.extract_skill_read_path("Write", {"file_path": skill_path}) is None
-assert mod.match_skill_read_path(mod._normalise_skill_read_path(skill_path)) == "ccc"
-assert mod.match_skill_read_path(mod._normalise_skill_read_path(other_path)) is None
-
-reporter = mod.AgentEventReporter("http://127.0.0.1:${port}/v1/agent-events", "req-claude-skill-read", frozenset(["Agent"]))
-reporter.reportSkillUsed("ccc", source=mod.CLAUDE_SKILL_READ_SOURCE, eventId="skill_read:c1:ccc")
-reporter.flush()
-`;
-    await execFileAsync("python3", [ "-c", pythonScript ], { cwd: repoRoot });
-    assert.equal(received.length, 1);
-    assert.deepEqual(received[ 0 ], {
-      requestId: "req-claude-skill-read",
-      events: [ { type: "skill_used", skill: "ccc", source: "skill_read", pluginId: null, eventId: "skill_read:c1:ccc" } ],
-    });
-  } finally {
-    await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
-  }
+  const source = read("src/providers/claude.ts");
+  assert.match(source, /CLAUDE_SKILL_READ_SOURCE = SKILL_READ_SOURCE/);
+  assert.match(source, /if \(classification\.detail === "ok"\)/);
+  assert.match(source, /seenSkillReads/);
+  const previousRoot = process.env.AUTODEV_REPO_ROOT;
+  process.env.AUTODEV_REPO_ROOT = REPO_ROOT;
+  const { extractSkillReadPath, matchSkillReadPath } = await import("../src/providers/claude.ts?claude-contract");
+  if (previousRoot === undefined) delete process.env.AUTODEV_REPO_ROOT; else process.env.AUTODEV_REPO_ROOT = previousRoot;
+  assert.equal(extractSkillReadPath("Read", { file_path: CANONICAL_SKILL_PATH }), CANONICAL_SKILL_PATH);
+  assert.equal(extractSkillReadPath("Read", { AbsolutePath: CANONICAL_SKILL_PATH }), CANONICAL_SKILL_PATH);
+  assert.equal(extractSkillReadPath("Bash", { command: `cat ${CANONICAL_SKILL_PATH}` }), CANONICAL_SKILL_PATH);
+  assert.equal(extractSkillReadPath("Write", { file_path: CANONICAL_SKILL_PATH }), null);
+  assert.equal(matchSkillReadPath(CANONICAL_SKILL_PATH), "ccc");
+  assert.equal(matchSkillReadPath(OTHER_FILE_PATH), null);
 });

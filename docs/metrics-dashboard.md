@@ -174,7 +174,7 @@ Codex does emit `codex.skill.injected` (a counter) and
 `codex.thread.skills.enabled_total`, `codex.thread.skills.kept_total`, and
 `codex.thread.skills.truncated` (histograms), the
 router aggregates them into `codexTelemetry.skills`, surfaced in `/status`, the
-dashboard's Skills section, and `codex-model-router-status.mjs`. The receiver
+dashboard's Skills section, and `src/cli/router-status.ts`. The receiver
 counter confirms that the endpoint is available if Codex begins emitting other
 metrics in a later version.
 
@@ -379,7 +379,7 @@ The router and dashboard cleanly separate **live agent activity** from **in-flig
   one agent is attributed to exactly one workspace and a workspace can
   host more than one live agent.
 - **In-flight requests (`inFlightRequests`):**
-  A distinct, transport-level diagnostic metric measuring active HTTP requests currently open between the router daemon and upstream provider model APIs. Incremented upon socket dispatch and decremented upon response completion or cancellation. The dashboard's **Operational summary** labels in-flight requests separately under Concurrency (`In-flight requests`), and `scripts/codex-model-router-status.mjs` displays both `Active` (live agent activity) and `In-Flight` (transport requests) side-by-side in its provider table.
+  A distinct, transport-level diagnostic metric measuring active HTTP requests currently open between the router daemon and upstream provider model APIs. Incremented upon socket dispatch and decremented upon response completion or cancellation. The dashboard's **Operational summary** labels in-flight requests separately under Concurrency (`In-flight requests`), and `src/cli/router-status.ts` displays both `Active` (live agent activity) and `In-Flight` (transport requests) side-by-side in its provider table.
 
 ### Lifecycle event contract and configurable freshness TTL
 

@@ -226,7 +226,7 @@ test("status CLI keeps the byMechanism summary deterministic", async () => {
 
     const address = server.address();
     const output = await new Promise((resolve, reject) => {
-      const child = spawn(process.execPath, ["scripts/codex-model-router-status.mjs"], {
+      const child = spawn(process.execPath, ["src/cli/router-status.ts"], {
         cwd: new URL(".", ROOT),
         env: {
           ...process.env,

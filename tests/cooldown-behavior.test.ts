@@ -3,11 +3,13 @@ import { readFile } from "node:fs/promises";
 import { describe, test } from "node:test";
 import { COOLDOWNS as cooldowns } from "../src/router/cooldown.ts";
 import { ROUTING_POLICY as routing } from "../src/router/routing.ts";
+
+type JsonRecord = Record<string, any>;
 cooldowns.setRuntime({ isProviderEnabled: (provider) => routing.isProviderEnabled(provider) });
 
 const contract = JSON.parse(
   await readFile(new URL("./fixtures/contracts/cooldown-behavior.json", import.meta.url), "utf8"),
-);
+) as JsonRecord;
 
 assert.equal(contract.schema, "autodev-cooldown-behavior-v1", "cooldown behavior contract must match its schema tag");
 assert.equal(typeof contract.now, "number", "cooldown behavior contract must fix `now` to an epoch millisecond value");
@@ -20,7 +22,7 @@ function cleanState() {
   routing.resetDisabledProviders();
 }
 
-function applySetup(setup) {
+function applySetup(setup: JsonRecord[] | undefined): void {
   for (const step of setup ?? []) {
     if (step && typeof step === "object" && typeof step.disable === "string") {
       routing.setProviderEnabled(step.disable, false);
@@ -30,7 +32,7 @@ function applySetup(setup) {
   }
 }
 
-function runScenario(name, scenario) {
+function runScenario(name: string, scenario: JsonRecord): void {
   cleanState();
   applySetup(scenario.setup);
 
@@ -126,7 +128,7 @@ describe("cooldown behavior", () => {
     assert.equal(contract.constants.probeCooldownMaxMs, 30_000);
   });
 
-  for (const [ name, scenario ] of Object.entries(contract.scenarios)) {
+  for (const [ name, scenario ] of Object.entries(contract.scenarios as JsonRecord) as Array<[string, JsonRecord]>) {
     test(`${name}`, () => {
       try {
         runScenario(name, scenario);
@@ -195,7 +197,7 @@ describe("cooldown behavior", () => {
   });
 
   test("every fixture scenario stays within the contract ceilings", () => {
-    for (const [ name, scenario ] of Object.entries(contract.scenarios)) {
+    for (const [ name, scenario ] of Object.entries(contract.scenarios as JsonRecord) as Array<[string, JsonRecord]>) {
       try {
         cleanState();
         applySetup(scenario.setup);

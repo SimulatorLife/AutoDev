@@ -49,12 +49,12 @@ Current source/runtime paths contain substantial custom infrastructure, includin
 
 - `codex-model-router.mjs`
 - `codex-model-router.test.mjs`
-- `codex-claude-cli-responses-proxy.py`
+- `src/providers/claude.ts`
 - `src/providers/antigravity.ts`
 - `src/providers/copilot.ts`
 - `src/providers/minimax.ts`
 - `codex-model-router-dashboard.html`
-- `codex-model-router-status.mjs`
+- `src/cli/router-status.ts`
 - `autodev-metrics.cjs`
 
 This is the main simplification target, but the code is not all generic plumbing
@@ -641,7 +641,7 @@ baseline to diff against instead of "whatever the renderer currently
 produces." Updating the fixture is itself the documented, intentional signal
 that the contract's shape was meant to change.
 
-Copilot direct-file and shell-based skill-read paths are frozen (`tests/fixtures/contracts/copilot-responses-contract.json` exercised via `tests/copilot-responses-contract.test.mjs`). Antigravity's Responses boundary is now frozen as well: `tests/fixtures/contracts/antigravity-responses-contract.json` and `tests/antigravity-responses-contract.test.mjs` exercise normal stream/SSE completion, direct and shell-based skill reads, permission denial, and provider-limit incomplete output through a fake local `agy` executable and temporary loopback telemetry server. The contract also asserts sanitized response IDs/timestamps, prompt-content privacy, telemetry observations, and fixture immutability; it does not contact a provider or require credentials. Other provider contracts remain pending. The Claude Responses boundary is now frozen as well: `tests/fixtures/contracts/claude-responses-contract.json` and `tests/claude-responses-contract.test.mjs` exercise the incumbent Python bridge against a fake local Claude CLI and loopback telemetry server for normal and streaming completion, direct and shell-based skill reads, tool continuation/item IDs, permission denial, provider-limit incomplete output, authentication failure, sanitized identifiers/timestamps, prompt privacy, telemetry, and fixture immutability. This contract is offline-only and does not contact Anthropic or require credentials; OAuth-native transport parity and bridge retirement remain pending. Dashboard contract assertions were also hardened to tolerate formatting-only whitespace and to match the current provider-health labels (`Models` and `Errors & cooldowns`); no dashboard runtime behavior changed. Focused Claude/provider-contract and dashboard tests pass. The full `pnpm test` baseline remains red in three unrelated router-limit/status assertions (`scripts/codex-model-router.test.mjs`), and `pnpm run test:python` remains red in one unrelated installer string assertion (`tests/test_local_setup.py`); none were introduced or modified by this slice.
+Copilot direct-file and shell-based skill-read paths are frozen (`tests/fixtures/contracts/copilot-responses-contract.json` exercised via `tests/copilot-responses-contract.test.mjs`). Antigravity's Responses boundary is now frozen as well: `tests/fixtures/contracts/antigravity-responses-contract.json` and `tests/antigravity-responses-contract.test.ts` exercise normal stream/SSE completion, direct and shell-based skill reads, permission denial, and provider-limit incomplete output through a fake local `agy` executable and temporary loopback telemetry server. The contract also asserts sanitized response IDs/timestamps, prompt-content privacy, telemetry observations, and fixture immutability; it does not contact a provider or require credentials. The Claude Responses boundary is now frozen and runs through the typed bridge: `tests/fixtures/contracts/claude-responses-contract.json` and `tests/claude-responses-contract.test.ts` exercise a fake local Claude CLI and loopback telemetry server for normal and streaming completion, direct and shell skill reads, tool continuation/item IDs, permission denial, provider-limit incomplete output, authentication failure, sanitized identifiers/timestamps, prompt privacy, telemetry, and fixture immutability. This contract is offline-only and does not contact Anthropic or require credentials. The OAuth-native transport retirement gate remains closed by policy; Claude Code CLI/OAuth is the supported path. Dashboard contract assertions were also hardened to tolerate formatting-only whitespace and to match the current provider-health labels (`Models` and `Errors & cooldowns`); no dashboard runtime behavior changed.
 
 The Phase 0 "provider selection order and randomization" capture is landed
 as a deterministic fixture. The fixture at
@@ -650,7 +650,7 @@ non-empty `providerPriority` listings the router produces under seeded
 randomness (`mulberry32(0xC0FFEE)`) for the `default`, `smart`, and
 `orchestrator` tiers, plus the second eight listings for `default`, and the
 live tier membership that each listing must stay within.
-`tests/provider-selection-order.test.mjs` drives those listings through the
+`tests/provider-selection-order.test.ts` drives those listings through the
 exported `providerPriority`, `tierCandidates`, and `roleCandidates` helpers
 and asserts every listing stays within its tier membership. Refreshing the
 fixture is the documented, intentional signal that ordering, group layout,
@@ -671,7 +671,7 @@ the preferred-provider continuation ordering for every tier member, the
 orchestrator fallback, and a leaf candidate (so the root-only fallback
 reasoning override is captured distinctly from the caller's effort that
 leaves are required to preserve), and the tier membership each listing
-must stay within. `tests/root-subagent-provider-selection.test.mjs` drives
+must stay within. `tests/root-subagent-provider-selection.test.ts` drives
 those scenarios through the exported `roleForModel`,
 `orchestratorCandidates`, `roleCandidates`, and `payloadForCandidate`
 helpers and asserts every shape against the fixture, including the schema
@@ -681,7 +681,7 @@ and unknown aliases remaining role-less, the root-only continuation
 preference being a preference (never a pin), and the leaf effort remaining
 untouched under `payloadForCandidate`. The test is
 fully offline and deterministic and is distinct from the existing
-`tests/provider-selection-order.test.mjs`, which freezes only the
+`tests/provider-selection-order.test.ts`, which freezes only the
 generic `providerPriority` tier listings the router produces under the
 same seed: this fixture is the one that locks down which alias resolves
 to which tier, which concrete model each provider must use for it, and
@@ -705,7 +705,7 @@ shorter failure from pulling a longer one back; `cooldownAllowsLastResort`
 decisions for every entry shape; `nextProviderRetryMs` for the earliest
 remaining retry window; and `providerCooldownSummary` for disabled,
 cooling, available, deduplicated, and mixed-provider lists.
-`tests/cooldown-behavior.test.mjs` drives those scenarios through the
+`tests/cooldown-behavior.test.ts` drives those scenarios through the
 exported `cooldownProvider`, `clearProviderCooldown`,
 `cooldownAllowsLastResort`, `providerCooldownSummary`, and
 `nextProviderRetryMs` helpers and asserts every shape against the fixture.
@@ -795,7 +795,7 @@ value, missing file), the admission scenarios (under-limit admit,
 over-limit deny, identified-session independence, process-fallback shared
 bucket, release drops counts, denial records sanitized status), and the
 sanitized-status shape (the exact key set returned by `concurrencyStatus`
-and the absence of the `maxThreads` alias). `tests/concurrency-contract.test.mjs` drives every parser scenario and drives
+and the absence of the `maxThreads` alias). `tests/concurrency-contract.test.ts` drives every parser scenario and drives
 admission scenarios when the host's effective configured limit matches the
 fixture's declared limit; mismatches are explicitly skipped rather than
 faked. It drives every scenario through the exported `parseConcurrencyConfig`,
@@ -809,14 +809,14 @@ router test `"admission enforces the canonical limit, surfaces the same value on
 covers the sanitized-status assertions in isolation; both are gated on
 the module-level `CONCURRENCY_CONFIG` so a host without a configured
 `$CODEX_HOME/config.toml` still exercises the no-cap branch. **Completed
-slice only after verification.** `node --test tests/concurrency-contract.test.mjs`
+slice only after verification.** `node --test tests/concurrency-contract.test.ts`
 reports 25 passing scenarios (parser + admission + constants) and
 `node --test scripts/codex-model-router.test.mjs` reports 181 passing
 tests with no failures; the parser fix also clears the three unrelated
 baseline failures (`scripts/codex-model-router.test.mjs` lines 3313,
 3367, and 5255) that were caused by the same root cause and previously
 inlined the `maxThreads` field in their expectations. **Commands / results.**
-`node --test tests/concurrency-contract.test.mjs` -> 25 pass, 0 fail;
+`node --test tests/concurrency-contract.test.ts` -> 25 pass, 0 fail;
 `node --test scripts/codex-model-router.test.mjs` -> 181 pass, 0 fail
 (3 baseline failures resolved). The Phase 0 "active-agent reconciliation" capture is landed as a
 deterministic fixture. **Finding.** The router exposed live-agent counts
@@ -928,7 +928,7 @@ metrics 19, workspace telemetry 18, and router state snapshot 3, all with
 `pnpm run validate:actionlint` and `pnpm run validate:shell` exit 0;
 `python3 -m unittest tests.test_otel_autodev_attributes tests.test_otel_autodev_attributes_emission`
 reports 44 pass, 0 fail; and `git diff --check` is clean. LSP diagnostics
-for `scripts/codex-model-router-status.mjs`,
+for `src/cli/router-status.ts`,
 `tests/native-vs-bridge-child-counts.test.mjs`, and
 `tests/dashboard-status-snapshot.test.mjs` report 0 errors, warnings, info,
 and hints. An independent validator reproduced 29/29 focused passes and
@@ -1840,7 +1840,7 @@ This is a high-value pilot because the current Claude bridge is large and Claude
 
 #### Status
 
-The incumbent Claude Responses boundary is frozen by `tests/fixtures/contracts/claude-responses-contract.json` and `tests/claude-responses-contract.test.mjs`. The suite runs the actual Python bridge with a fake local Claude CLI and loopback telemetry server, covering normal and streaming responses, direct and shell skill reads, tool continuation and item IDs, permission denial, provider-limit incomplete output, authentication failure, privacy sanitization, and telemetry without contacting Anthropic or requiring credentials. This establishes the offline parity baseline only.
+The Claude Responses boundary is frozen by `tests/fixtures/contracts/claude-responses-contract.json` and `tests/claude-responses-contract.test.ts`. The suite runs the typed AutoDev bridge with a fake local Claude CLI and loopback telemetry server, covering normal and streaming responses, direct and shell skill reads, tool continuation and item IDs, permission denial, provider-limit incomplete output, authentication failure, privacy sanitization, and telemetry without contacting Anthropic or requiring credentials. This is the offline parity baseline for the supported Claude Code CLI path.
 
 **Policy/operational gate evaluated (2026-09-15): the OAuth-native candidate is
 closed, and the incumbent bridge is retained.** Anthropic's Claude Code
@@ -1865,7 +1865,7 @@ incumbent path has the permitted shape:
 - CI runs the pinned official `@anthropic-ai/claude-code@2.1.263` package.
 
 It stays within policy only for the user's own ordinary, individual use.
-`tests/test_subscription_provider_policy_gates.py` freezes this result. It checks the
+`tests/subscription-provider-policy-gates.test.ts` freezes this result. It checks the
 exact set of reviewed files that reference `CLAUDE_CODE_OAUTH_TOKEN`, that the
 bridge runs the Claude Code binary, that CI pins the official package, and
 that no Codex model provider or router route talks to Anthropic directly.
@@ -1896,7 +1896,7 @@ retained for that case:
 
 ### Claude exit gate
 
-Delete `codex-claude-cli-responses-proxy.py` and its launch/ensure lifecycle only when a Codex model-provider route using subscription OAuth is behaviorally equivalent across the full provider migration gate. Otherwise retain the existing bridge
+Do not delete the supported Claude Code CLI bridge or its launch/ensure lifecycle while the OAuth-native Codex model-provider route is prohibited. The AutoDev-owned implementation has migrated to `src/providers/claude.ts`; only a future policy change plus a fully equivalent replacement could justify retiring the CLI boundary.
 
 **Outcome (2026-09-15): retain the existing bridge permanently.** A subscription-OAuth route cannot pass the policy requirement, and an API-key route violates the subscription-billing hard requirement. The bridge is not a deletion candidate unless Anthropic's policy changes.
 
@@ -2274,15 +2274,27 @@ and exhaustion diagnostics retain their existing contracts. The legacy
 re-export entrypoint; provider policy, cooldowns, telemetry, and lifecycle
 ownership remain explicit typed modules. Phase 6 remains in progress because
 provider transport migrations and any future deletion still require parity
-proof. The provider implementation slices are complete for MiniMax, Copilot, and
-Antigravity: they run from `src/providers/minimax.ts`,
-`src/providers/copilot.ts`, and `src/providers/antigravity.ts`, while
-their retained boundary responsibilities remain outside the router. The obsolete
-Copilot `.mjs` implementation was deleted after its frozen Responses, MCP,
-skill-read, tool-outcome, limit, and activity telemetry contracts passed through
-the typed module; installer/runtime projections now deploy the typed source
-directly and remove stale `.mjs` copies. Claude remains the only remaining
-provider bridge conversion.
+proof. The provider implementation slices are complete for MiniMax, Copilot,
+Antigravity, and Claude: they run from `src/providers/minimax.ts`,
+`src/providers/copilot.ts`, `src/providers/antigravity.ts`, and
+`src/providers/claude.ts`, while their retained boundary responsibilities
+remain outside the router. The obsolete Copilot `.mjs` and Claude Python
+implementations were deleted after their frozen Responses, MCP, skill-read,
+tool-outcome, limit, activity, and spawn-session contracts passed through the
+typed modules; installer/runtime projections now deploy typed sources directly
+and remove stale copies. The router status presentation also moved out of
+`scripts/`: `src/cli/router-status.ts` now consumes the typed
+`src/router/status.ts` boundary, installer runtime projections deploy it under
+`$CODEX_HOME/src/cli/`, and the obsolete `codex-model-router-status.mjs`
+entrypoint is removed and reconciled from older installations. Its JSON and
+human-readable output remain covered by the dashboard/status snapshot tests.
+The router ensure decision and lifecycle owner also moved to
+`src/platform/router-ensure.ts`; `src/hooks/session-start.ts` invokes it
+without shelling out, and its injectable tests freeze launchd ownership,
+locking, readiness, fallback, PID safety, and duplicate detection. The typed
+owner retains the ensure hook's best-effort Copilot side effect through
+`src/platform/copilot-ensure.ts`, while `scripts/ensure-codex-model-router.sh`
+remains unchanged as the rollback baseline.
 
 After successful provider transport migrations, separate router responsibilities into:
 
@@ -2451,11 +2463,10 @@ Only now test whether Rulesync can replace more AutoDev role rendering
 
 - Repeated cross-provider rules/MCP/hooks/permissions translation where Rulesync reaches parity
 - Generic OTLP HTTP receive/process/export plumbing where Collector reaches parity
-- Claude Code CLI Responses bridge only after OAuth-native provider parity
 - Antigravity CLI Responses bridge only after OAuth-native provider parity
 - Copilot CLI/Responses proxy only after OAuth-native provider parity
 - MiniMax Responses proxy only after direct/shared API parity
-- Provider-specific launch/ensure lifecycle only for retired CLI bridges
+- Provider-specific launch/ensure lifecycle only for retired CLI bridges (Claude Code remains supported)
 - Generic provider metrics already emitted equivalently by LiteLLM/OTel
 - Generic provider transport/retry/health code that becomes redundant after a validated replacement
 

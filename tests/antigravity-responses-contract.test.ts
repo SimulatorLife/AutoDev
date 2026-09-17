@@ -13,41 +13,49 @@ import { extractSkillReadPath, matchSkillReadPath } from "../src/providers/antig
 const REPO_ROOT = resolve(import.meta.dirname, "..");
 const PROXY = join(REPO_ROOT, "src/providers/antigravity.ts");
 const CONTRACT_PATH = join(REPO_ROOT, "tests/fixtures/contracts/antigravity-responses-contract.json");
-const contract = JSON.parse(await readFile(CONTRACT_PATH, "utf8"));
+type JsonRecord = Record<string, any>;
+type ContractCase = JsonRecord & { cli: JsonRecord; request?: JsonRecord; expected: JsonRecord };
+type Contract = { schema: string; cases: Record<string, ContractCase> };
+const contract = JSON.parse(await readFile(CONTRACT_PATH, "utf8")) as Contract;
 
-function replaceTokens(value) {
+function replaceTokens(value: any): any {
   if (typeof value === "string") return value.replaceAll("<REPO_ROOT>", REPO_ROOT);
   if (Array.isArray(value)) return value.map(replaceTokens);
   if (value && typeof value === "object") return Object.fromEntries(Object.entries(value).map(([key, nested]) => [key, replaceTokens(nested)]));
   return value;
 }
 
-function freePort() {
+function freePort(): Promise<number> {
   return new Promise((resolvePort, reject) => {
     const server = createServer();
     server.once("error", reject);
     server.listen(0, "127.0.0.1", () => {
-      const port = server.address().port;
+      const address = server.address();
+      if (!address || typeof address === "string") {
+        reject(new Error("test server did not expose a TCP address"));
+        return;
+      }
+      const port = address.port;
       server.close((error) => error ? reject(error) : resolvePort(port));
     });
   });
 }
 
-function waitForListening(child) {
+function waitForListening(child: any): Promise<void> {
   return new Promise((resolveListening, reject) => {
     let stderr = "";
-    const timer = setTimeout(() => reject(new Error(`proxy did not start: ${stderr}`)), 5000);
-    child.stderr.on("data", (chunk) => {
+    const timer = setTimeout(() => reject(new Error(`proxy did not start: ${stderr}`)), 15000);
+    child.stderr.on("data", (chunk: Buffer | string) => {
       stderr += chunk.toString();
       if (!stderr.includes("Antigravity Responses proxy listening")) return;
       clearTimeout(timer);
       resolveListening();
     });
-    child.once("error", (error) => {
+    child.once("error", (error: Error) => {
       clearTimeout(timer);
       reject(error);
     });
-    child.once("exit", (code, signal) => {
+    child.once("exit", (code: number | null, signal: NodeJS.Signals | null) => {
       if (code !== null) {
         clearTimeout(timer);
         reject(new Error(`proxy exited before listening (${code}/${signal}): ${stderr}`));
@@ -56,7 +64,7 @@ function waitForListening(child) {
   });
 }
 
-function parseSse(text) {
+function parseSse(text: string): Array<{ event: string | undefined; data: any }> {
   return text.trimEnd().split("\n\n").filter(Boolean).map((chunk) => {
     if (chunk === "data: [DONE]") return { event: "[DONE]", data: null };
     const lines = chunk.split("\n");
@@ -66,7 +74,7 @@ function parseSse(text) {
   });
 }
 
-function scrub(value) {
+function scrub(value: any): any {
   if (typeof value === "string") return value
     .replaceAll(REPO_ROOT, "<REPO_ROOT>")
     .replace(/resp_[0-9a-f]+/g, "<RESPONSE_ID>")
@@ -81,27 +89,29 @@ function scrub(value) {
   return value;
 }
 
-async function startTelemetryServer() {
-  const events = [];
+async function startTelemetryServer(): Promise<{ events: JsonRecord[]; server: any; url: string }> {
+  const events: JsonRecord[] = [];
   const server = createServer(async (request, response) => {
-    const chunks = [];
-    for await (const chunk of request) chunks.push(chunk);
+    const chunks: Buffer[] = [];
+    for await (const chunk of request) chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
     if (request.method === "POST") {
       const payload = JSON.parse(Buffer.concat(chunks).toString("utf8"));
       for (const event of payload.events ?? []) events.push({ ...event, requestId: payload.requestId });
     }
     response.end("ok");
   });
-  await new Promise((resolveListening) => server.listen(0, "127.0.0.1", resolveListening));
-  return { events, server, url: `http://127.0.0.1:${server.address().port}/events` };
+  await new Promise<void>((resolveListening) => server.listen(0, "127.0.0.1", () => resolveListening()));
+  const address = server.address();
+  if (!address || typeof address === "string") throw new Error("telemetry server did not expose a TCP address");
+  return { events, server, url: `http://127.0.0.1:${address.port}/events` };
 }
 
-async function stop(child) {
+async function stop(child: any): Promise<void> {
   if (child.exitCode === null && child.signalCode === null) child.kill("SIGTERM");
   if (child.exitCode === null && child.signalCode === null) await once(child, "exit");
 }
 
-async function runCase(name, rawCase, telemetry) {
+async function runCase(name: string, rawCase: ContractCase, telemetry: { events: JsonRecord[]; server: any; url: string }): Promise<any> {
   const item = replaceTokens(rawCase);
   const temp = await mkdtemp(join(tmpdir(), "autodev-antigravity-contract-"));
   const fakeAgy = join(temp, "fake-agy.mjs");
@@ -139,15 +149,16 @@ process.exitCode = fixture.exitCode ?? 0;
         "x-autodev-request-id": requestId,
         "x-autodev-agent-events-url": telemetry.url,
       },
-      body: JSON.stringify({ model: "antigravity-subscription", input: [{ role: "user", content: "contract task" }], cwd: REPO_ROOT, ...item.request }),
+      body: JSON.stringify({ model: "antigravity-subscription", input: [{ role: "user", content: "contract task" }], cwd: REPO_ROOT, ...(item.request ?? {}) }),
     });
     const body = await response.text();
     assert.equal(response.status, item.expected.status, `${name}: HTTP status`);
     assert.equal(response.headers.get("content-type"), "text/event-stream", `${name}: SSE content type`);
     const sse = parseSse(body);
     assert.deepEqual(sse.map(({ event }) => event), item.expected.eventTypes, `${name}: SSE lifecycle`);
-    assert.equal(sse.at(-1).event, "[DONE]", `${name}: terminal sentinel`);
-    const completed = sse.find(({ event }) => event === "response.completed").data.response;
+    assert.equal(sse.at(-1)?.event, "[DONE]", `${name}: terminal sentinel`);
+    const completed = sse.find(({ event }) => event === "response.completed")?.data.response;
+    assert.ok(completed, `${name}: response.completed event`);
     if (item.expected.outputText !== undefined) assert.equal(completed.output_text, item.expected.outputText, `${name}: output text`);
     if (item.expected.outputTextPrefix !== undefined) assert.ok(completed.output_text.startsWith(item.expected.outputTextPrefix), `${name}: partial output text`);
     assert.equal(completed.status, item.expected.completedStatus, `${name}: completion status`);

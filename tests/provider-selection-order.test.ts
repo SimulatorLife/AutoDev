@@ -2,11 +2,13 @@ import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 import { ROUTING_POLICY as routing } from "../src/router/routing.ts";
 
-const contract = await import("../tests/fixtures/contracts/provider-selection-order.json", { with: { type: "json" } }).then((m) => m.default ?? m);
+type JsonRecord = Record<string, any>;
+
+const contract = await import("../tests/fixtures/contracts/provider-selection-order.json", { with: { type: "json" } }).then((m) => (m.default ?? m) as JsonRecord);
 
 assert.equal(contract.schema, "autodev-provider-selection-order-v1", "provider selection contract must match its schema tag");
 
-function mulberry32(seed) {
+function mulberry32(seed: number): () => number {
   let s = seed >>> 0;
   return () => {
     s = (s + 0x6D2B79F5) >>> 0;
@@ -19,9 +21,9 @@ function mulberry32(seed) {
 
 const SEED = 0xC0FFEE;
 
-function observe(tier, draws) {
+function observe(tier: string, draws: number): string[][] {
   const random = mulberry32(SEED);
-  const out = [];
+  const out: string[][] = [];
   for (let i = 0; i < draws; i += 1) {
     const list = routing.providerPriority(tier, random);
     if (list.length > 0) out.push(list);
@@ -69,8 +71,8 @@ describe("provider selection order", () => {
       const tier = routing.tierCandidates("default", tierRandom);
       const role = routing.roleCandidates("default", roleRandom);
       for (let j = 0; j < priority.length; j += 1) {
-        assert.equal(tier[j].provider, priority[j], `tier candidate ${j} matches priority order`);
-        if (role[j]) assert.equal(role[j].provider, priority[j], `role candidate ${j} matches priority order`);
+        assert.equal(tier[j]!.provider, priority[j]!, `tier candidate ${j} matches priority order`);
+        if (role[j]) assert.equal(role[j]!.provider, priority[j]!, `role candidate ${j} matches priority order`);
       }
     }
   });

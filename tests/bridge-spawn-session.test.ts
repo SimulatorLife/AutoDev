@@ -3,10 +3,10 @@ import test from "node:test";
 
 import { SpawnSessionRegistry, UNIDENTIFIED_SESSION_SCOPE } from "../src/agents/bridge-spawn-session.ts";
 
-const registry = (overrides = {}) => {
+const registry = (overrides: Record<string, unknown> = {}): [SpawnSessionRegistry, { advance: (ms: number) => void }] => {
   let clock = 1000;
   const r = new SpawnSessionRegistry({ now: () => clock, ...overrides });
-  return [ r, { advance: (ms) => { clock += ms; } } ];
+  return [ r, { advance: (ms: number) => { clock += ms; } } ];
 };
 
 test("a session the router could not identify never collects delegation state", () => {
@@ -45,17 +45,17 @@ test("delegation is collected against the turn that asked, and drained by it", (
 
 test("a refusal is a sentence the model can act on, not a transport error", () => {
   const [ r ] = registry();
-  assert.match(r.record("no-such-session", [ { message: "x" } ]).message, /no child was created/);
+  assert.match(r.record("no-such-session", [ { message: "x" } ]).message ?? "", /no child was created/);
 
   r.open("leaf", { orchestrator: false });
   const leaf = r.record("leaf", [ { message: "x" } ]);
   assert.equal(leaf.accepted, false);
-  assert.match(leaf.message, /may not delegate/);
+  assert.match(leaf.message ?? "", /may not delegate/);
 
   r.open("orch", { orchestrator: true });
   const empty = r.record("orch", [ { message: "   " }, { agent_type: "explorer" } ]);
   assert.equal(empty.accepted, false);
-  assert.match(empty.message, /non-empty/);
+  assert.match(empty.message ?? "", /non-empty/);
   assert.deepEqual(r.close("orch"), [], "a refused batch dispatches nothing");
 });
 

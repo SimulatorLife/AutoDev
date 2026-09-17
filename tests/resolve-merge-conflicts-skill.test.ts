@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 
-const read = (path) => readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
+const read = (path: string): string => readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
 
 const installer = read("scripts/codex/install-codex-integration.sh");
 const skill = read(".rulesync/skills/resolve-merge-conflicts/SKILL.md");

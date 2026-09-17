@@ -38,7 +38,29 @@ import {
 const STATE_DIR = join(homedir(), ".codex", "run", "skill-read-telemetry");
 const SEEN_KEYS_LIMIT = 4096;
 const SEEN_VALUE_LIMIT = 4096;
-type JsonValue = any;
+type JsonPrimitive = string | number | boolean | null;
+type JsonObject = { [key: string]: JsonValue };
+type JsonValue = JsonPrimitive | JsonObject | JsonValue[];
+type SeenTurn = { has: string[]; tool: string };
+type SeenState = { turns: Record<string, SeenTurn>; keys: string[] };
+
+function asObject(value: JsonValue | undefined): JsonObject {
+  return value !== null && typeof value === "object" && !Array.isArray(value) ? value : {};
+}
+
+function asSeenState(value: JsonValue): SeenState {
+  const object = asObject(value);
+  const turns: Record<string, SeenTurn> = {};
+  const rawTurns = asObject(object.turns);
+  for (const [turnId, rawTurn] of Object.entries(rawTurns)) {
+    const turn = asObject(rawTurn);
+    const has = Array.isArray(turn.has) ? turn.has.filter((entry): entry is string => typeof entry === "string") : [];
+    const tool = typeof turn.tool === "string" ? turn.tool : "";
+    turns[turnId] = { has, tool };
+  }
+  const keys = Array.isArray(object.keys) ? object.keys.filter((entry): entry is string => typeof entry === "string") : [];
+  return { turns, keys };
+}
 
 const HOME = homedir();
 const REPO_ROOT = process.env.AUTODEV_REPO_ROOT || resolve(join(import.meta.dirname, "..", ".."));
@@ -70,22 +92,24 @@ async function readStdin() {
   return Buffer.concat(chunks).toString("utf8");
 }
 
-function pickString(payload: JsonValue, keys: string[]): string | null {
+function pickString(payload: JsonValue | undefined, keys: string[]): string | null {
+  const object = asObject(payload);
   for (const key of keys) {
-    const value = payload?.[key];
+    const value = object[key];
     if (typeof value === "string" && value.trim()) return value.trim();
   }
   return null;
 }
 
-function pickObject(payload: JsonValue, keys: string[]): JsonValue {
+function pickObject(payload: JsonValue | undefined, keys: string[]): JsonObject | null {
+  const object = asObject(payload);
   for (const key of keys) {
-    const value = payload?.[key];
+    const value = object[key];
     if (value && typeof value === "object" && !Array.isArray(value)) return value;
     if (typeof value === "string" && value.trim().startsWith("{")) {
       try {
         const parsed = JSON.parse(value);
-        if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) return parsed;
+        if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) return parsed as JsonObject;
       } catch {
         // A non-JSON argument string is handled by the command matcher below.
       }
@@ -94,9 +118,10 @@ function pickObject(payload: JsonValue, keys: string[]): JsonValue {
   return null;
 }
 
-function pickValue(payload: JsonValue, keys: string[]): JsonValue {
+function pickValue(payload: JsonValue | undefined, keys: string[]): JsonValue | null {
+  const object = asObject(payload);
   for (const key of keys) {
-    if (payload?.[key] !== undefined && payload?.[key] !== null) return payload[key];
+    if (object[key] !== undefined && object[key] !== null) return object[key];
   }
   return null;
 }
@@ -109,7 +134,7 @@ function normaliseToolName(name: unknown): string {
 // walks every plausible key and only accepts the payload if at least one tool
 // name was present. A pre-tool hook that saw no tool name is a firehose we
 // have no signal on, so we drop it instead of guessing.
-function extractToolCall(payload: JsonValue): JsonValue {
+function extractToolCall(payload: JsonValue): { toolName: string; args: JsonValue } | null {
   const toolName = pickString(payload, TOOL_NAME_KEYS);
   if (!toolName) return null;
   const rawArguments = pickValue(payload, ARGUMENT_KEYS);
@@ -125,21 +150,22 @@ function extractToolCall(payload: JsonValue): JsonValue {
 // drops it silently rather than logging anything.
 function extractReadPath(argsObject: JsonValue): string | null {
   if (typeof argsObject === "string") return matchExecCommandPaths(argsObject)[0] ?? null;
-  if (!argsObject || typeof argsObject !== "object") return null;
+  if (!argsObject || typeof argsObject !== "object" || Array.isArray(argsObject)) return null;
+  const args = argsObject as JsonObject;
   const directKeys = [ "file_path", "filePath", "path", "filepath" ];
   for (const key of directKeys) {
-    const value = argsObject[key];
+    const value = args[key];
     if (typeof value === "string" && value.trim()) return value.trim();
   }
   const arrayKeys = [ "files", "paths", "file_paths" ];
   for (const key of arrayKeys) {
-    const value = argsObject[key];
+    const value = args[key];
     if (Array.isArray(value) && value.length > 0) {
       const first = value.find((entry) => typeof entry === "string" && entry.trim());
       if (typeof first === "string") return first.trim();
     }
   }
-  const candidates = matchExecCommandPaths(argsObject.cmd ?? argsObject.command);
+  const candidates = matchExecCommandPaths(args.cmd ?? args.command);
   if (candidates.length === 0) return null;
   // Several read tools take more than one file argument (`grep pat a b`,
   // `rg pat a b`); the canonical SKILL.md is not guaranteed to be the first
@@ -197,10 +223,11 @@ function isPathLikeToken(token: string): string | null {
 // Only one level of object nesting is unwrapped -- deeper nesting is not a
 // shape any tool call here actually uses, and unwrapping arbitrarily deep
 // objects would risk treating unrelated nested strings as commands.
-function flattenCommandValue(raw: JsonValue): string | null {
+function flattenCommandValue(raw: JsonValue | undefined): string | null {
   let value = raw;
   if (value && typeof value === "object" && !Array.isArray(value)) {
-    value = value.cmd ?? value.command ?? value.script ?? value.value ?? null;
+    const object = value as JsonObject;
+    value = object.cmd ?? object.command ?? object.script ?? object.value ?? null;
   }
   if (Array.isArray(value)) {
     return value.filter((entry) => typeof entry === "string").join(" ");
@@ -215,7 +242,7 @@ function flattenCommandValue(raw: JsonValue): string | null {
 // make this walk unbounded. Returning every candidate -- not just the first
 // -- lets the caller pick out whichever one actually names a SKILL.md when a
 // command reads more than one file.
-function matchExecCommandPaths(raw: JsonValue): string[] {
+function matchExecCommandPaths(raw: JsonValue | undefined): string[] {
   const cmd = flattenCommandValue(raw);
   if (!cmd || cmd.length > 4096) return [];
   const tokens = tokenizeShellWords(cmd);
@@ -272,19 +299,19 @@ function hashKey(...parts: string[]): string {
   return createHash("sha256").update(parts.join("\0")).digest("hex");
 }
 
-async function readSeenState(sessionId: string): Promise<{ path: string; value: JsonValue }> {
+async function readSeenState(sessionId: string): Promise<{ path: string; value: SeenState }> {
   const path = join(STATE_DIR, `${sessionId}.json`);
   try {
     const raw = await readFile(path, "utf8");
     const parsed = JSON.parse(raw);
-    if (parsed && typeof parsed === "object") return { path, value: parsed };
+    if (parsed && typeof parsed === "object") return { path, value: asSeenState(parsed as JsonValue) };
   } catch (error) {
     if (!(error && typeof error === "object" && "code" in error && error.code === "ENOENT")) throw error;
   }
   return { path, value: { turns: {}, keys: [] } };
 }
 
-async function writeSeenState({ path, value }: { path: string; value: JsonValue }): Promise<void> {
+async function writeSeenState({ path, value }: { path: string; value: SeenState }): Promise<void> {
   await mkdir(STATE_DIR, { recursive: true });
   const tmp = `${path}.tmp`;
   await writeFile(tmp, JSON.stringify(value));
@@ -299,7 +326,7 @@ function pruneKeys(keys: string[], keep: string[]): void {
 
 async function alreadyReported({ sessionId, turnId, skill, root }: { sessionId: string; turnId: string; skill: string; root: string }): Promise<boolean> {
   const state = await readSeenState(sessionId);
-  const turn = state.value.turns?.[turnId];
+  const turn = state.value.turns[turnId];
   if (!turn) return false;
   const key = hashKey(skill, root);
   if (turn.has?.includes(key)) return true;
@@ -355,12 +382,13 @@ async function postSkillUsed({ sessionId, skill, root, toolName, turnId }: { ses
 // Resolve the workspace CWD from payload so we can also write it to the
 // session state for downstream consumers. Never forwarded in the post body.
 function payloadCwd(payload: JsonValue): string | null {
+  const object = asObject(payload);
   const candidates = [
-    payload?.cwd,
-    payload?.working_directory,
-    payload?.workingDirectory,
-    payload?.workspace_cwd,
-    payload?.repository_cwd,
+    object.cwd,
+    object.working_directory,
+    object.workingDirectory,
+    object.workspace_cwd,
+    object.repository_cwd,
   ];
   for (const value of candidates) {
     if (typeof value === "string" && value.trim()) return value.trim();
@@ -375,9 +403,9 @@ async function run(): Promise<void> {
   } catch {
     process.exit(0);
   }
-  let payload;
+  let payload: JsonValue;
   try {
-    payload = JSON.parse(raw);
+    payload = JSON.parse(raw) as JsonValue;
   } catch {
     // Hook receives malformed JSON: no-op rather than surfacing an error to
     // Codex. Telemetry must never fail a turn.
@@ -392,9 +420,10 @@ async function run(): Promise<void> {
   if (!normalised) return;
   const match = matchSkillPath(normalised)
   if (!match) return;
-  const sessionId = pickString(payload, SESSION_ID_KEYS) ?? pickString(payload?.metadata ?? {}, SESSION_ID_KEYS) ?? payload?.[CODEX_SESSION_KEY] ?? null;
+  const payloadObject = asObject(payload);
+  const sessionId = pickString(payload, SESSION_ID_KEYS) ?? pickString(payloadObject.metadata, SESSION_ID_KEYS) ?? (typeof payloadObject[CODEX_SESSION_KEY] === "string" ? payloadObject[CODEX_SESSION_KEY] : null);
   if (!sessionId) return;
-  const turnId = pickString(payload, TURN_ID_KEYS) ?? pickString(payload?.metadata ?? {}, TURN_ID_KEYS) ?? "no-turn";
+  const turnId = pickString(payload, TURN_ID_KEYS) ?? pickString(payloadObject.metadata, TURN_ID_KEYS) ?? "no-turn";
   if (await alreadyReported({ sessionId, turnId, skill: match.skill, root: match.root })) return;
   await markReported({ sessionId, turnId, skill: match.skill, root: match.root, toolName: tool.toolName });
   await postSkillUsed({ sessionId, skill: match.skill, root: match.root, toolName: tool.toolName, turnId });

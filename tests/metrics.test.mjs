@@ -222,7 +222,7 @@ test('router dashboard and status CLI contract separates live agent activity fro
   assert.match(rawDashboard, /<span>In-flight requests<\/span><span>\$\{inFlightRequests\}<\/span>/);
 
   // Status CLI script displays both live agent activity (Active) and transport diagnostics (In-Flight)
-  const statusCli = await readFile(path.join(root, 'scripts', 'codex-model-router-status.mjs'), 'utf8');
+  const statusCli = await readFile(path.join(root, 'src', 'cli', 'router-status.ts'), 'utf8');
   assert.match(statusCli, /Active\s+In-Flight/);
   assert.match(statusCli, /getProviderLiveActivity/);
   assert.match(statusCli, /getProviderInFlight/);

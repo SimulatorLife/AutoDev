@@ -245,7 +245,7 @@ superuser/raw-disk commands, and catastrophic root/home recursive deletion.
 - Treat proxy and router logs as local-only operational data. Antigravity's
   launchd service is the canonical supervisor when loaded; the ensure hook
   refuses to start a duplicate unmanaged process on port 4002. The
-  router ensure hook owns the same property for port 4100 and additionally
+  typed session-start platform owner now owns the same property for port 4100 and additionally
   serializes concurrent invocations through an atomic private lock directory
   at `$CODEX_HOME/run/codex-model-router.ensure.lock.d`.
 - All router operational state (launchd stdout/stderr logs, the fallback
@@ -270,7 +270,7 @@ superuser/raw-disk commands, and catastrophic root/home recursive deletion.
   app-server. A `thread/list` snapshot was surfaced here once and was removed
   because nothing in routing, concurrency, or fallback read it and it cold-spawned
   an app-server process on every refresh. Inspect the same state with
-  `node scripts/codex-model-router-status.mjs` (use `--json` for automation).
+  `node src/cli/router-status.ts` (use `--json` for automation).
   It reports observed session-limit, throttling, quota, capacity, timeout, and
   availability failures; it cannot query an upstream provider's private quota
   dashboard. Antigravity CLI turns allow up to 15 minutes by default (override

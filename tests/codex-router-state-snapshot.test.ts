@@ -5,49 +5,52 @@ import { tmpdir } from "node:os";
 import test from "node:test";
 
 import { CodexStateCollector, loadCodexStateCollectorConfig } from "../src/router/state-collector.ts";
-import * as router from "../scripts/codex-model-router.mjs";
+import { getRouterStatus, resetRouterTelemetry } from "../src/router/http.ts";
+import { resetOtelTelemetry } from "../src/router/otel.ts";
 
-function createStubBinding(db) {
+type JsonRecord = Record<string, any>;
+
+function createStubBinding(db: any): any {
   return {
     available: true,
     open: () => ({
-      prepare(sql) {
+      prepare(sql: string) {
         const statement = sql.replace(/\s+/g, " ").trim();
         if (statement.startsWith("PRAGMA table_info")) {
           const table = statement.match(/PRAGMA table_info\((\w+)\)/)?.[1];
           return { all: () => db.tableInfo(table) };
         }
         if (statement.startsWith("SELECT name FROM sqlite_master")) {
-          return { get: (value) => (db.tables[value] ? { name: value } : undefined) };
+          return { get: (value: string) => (db.tables[value] ? { name: value } : undefined) };
         }
         const tableSelect = statement.match(/^SELECT (.+?) FROM (\w+)(?:\s+WHERE\s+COALESCE\("?(\w+)"?, 0\) >= \?)?(?:\s+ORDER BY "?(\w+)"? DESC)?\s+LIMIT \d+$/);
         if (tableSelect) {
-          const selectList = tableSelect[1].split(/,\s*/).map((col) => col.replace(/^"|"$/g, ""));
+          const selectList = tableSelect[1]!.split(/,\s*/).map((col: string) => col.replace(/^"|"$/g, ""));
           const tableName = tableSelect[2];
           const orderColumn = tableSelect[4] ?? null;
           return {
-            all: (...params) => {
-              let rows = db.records(tableName).map((row) => Object.fromEntries(selectList.map((column) => [column, row[column]])));
+            all: (...params: any[]) => {
+              let rows = db.records(tableName).map((row: any) => Object.fromEntries(selectList.map((column: string) => [column, row[column]])));
               if (tableSelect[3]) {
                 const filterColumn = tableSelect[3];
                 const cutoff = params[0];
-                rows = rows.filter((row) => Number(row[filterColumn]) >= cutoff);
+                rows = rows.filter((row: any) => Number(row[filterColumn]) >= cutoff);
               }
-              if (orderColumn) rows.sort((a, b) => Number(b[orderColumn]) - Number(a[orderColumn]));
+              if (orderColumn) rows.sort((a: any, b: any) => Number(b[orderColumn]) - Number(a[orderColumn]));
               return rows;
             },
           };
         }
         if (statement.startsWith("SELECT") && statement.includes("FROM projects")) {
-          const selectList = statement.match(/SELECT (.+?) FROM/)?.[1].split(/,\s*/).map((col) => col.replace(/^"|"$/g, "")) ?? [];
+          const selectList = (statement.match(/SELECT (.+?) FROM/)?.[1] ?? "").split(/,\s*/).map((col: string) => col.replace(/^"|"$/g, "")) ?? [];
           return {
-            all: () => db.records("projects").map((row) => Object.fromEntries(selectList.map((column) => [column, row[column]]))).sort((a, b) => Number(a.position) - Number(b.position)),
+            all: () => db.records("projects").map((row: any) => Object.fromEntries(selectList.map((column: string) => [column, row[column]]))).sort((a: any, b: any) => Number(a.position) - Number(b.position)),
           };
         }
         if (statement.startsWith("SELECT") && statement.includes("FROM thread_spawn_edges")) {
-          const selectList = statement.match(/SELECT (.+?) FROM/)?.[1].split(/,\s*/).map((col) => col.replace(/^"|"$/g, "")) ?? [];
+          const selectList = (statement.match(/SELECT (.+?) FROM/)?.[1] ?? "").split(/,\s*/).map((col: string) => col.replace(/^"|"$/g, "")) ?? [];
           return {
-            all: () => db.records("thread_spawn_edges").map((row) => Object.fromEntries(selectList.map((column) => [column, row[column]]))),
+            all: () => db.records("thread_spawn_edges").map((row: any) => Object.fromEntries(selectList.map((column: string) => [column, row[column]]))),
           };
         }
         throw new Error(`unhandled stub query: ${sql}`);
@@ -57,22 +60,22 @@ function createStubBinding(db) {
   };
 }
 
-function newDatabase(rows) {
+function newDatabase(rows: any): any {
   const tables = { threads: rows.threads ?? [], projects: rows.projects ?? [], thread_spawn_edges: rows.edges ?? [], thread_sections: [] };
   return {
     tables,
-    tableInfo(name) {
-      if (!tables[name] || tables[name].length === 0) return [];
-      const sample = tables[name][0];
+    tableInfo(name: string) {
+      if (!tables[name as keyof typeof tables] || tables[name as keyof typeof tables].length === 0) return [];
+      const sample = tables[name as keyof typeof tables][0];
       return Object.keys(sample).map((column, index) => ({ name: column, type: "TEXT", notnull: 0, dflt_value: null, pk: index === 0 ? 1 : 0 }));
     },
-    records(name) {
-      return (tables[name] ?? []).map((row) => ({ ...row }));
+    records(name: string) {
+      return (tables[name as keyof typeof tables] ?? []).map((row: any) => ({ ...row }));
     },
   };
 }
 
-function makeFile(content = "") {
+function makeFile(content: string = ""): string {
   const dir = mkdtempSync(join(tmpdir(), "autodev-state-"));
   const file = join(dir, "state.sqlite");
   writeFileSync(file, content);
@@ -84,13 +87,13 @@ function makeFile(content = "") {
 // walks the full response recursively rather than spot-checking known fields,
 // so a newly added field that accidentally embeds a path fails the test.
 const LEAKED_PATH_PATTERN = /\/Users\/|\/home\/|CODEX_HOME/;
-function assertNoLeakedPaths(value, path = "$") {
+function assertNoLeakedPaths(value: any, path: string = "$"): void {
   if (typeof value === "string") {
     assert.equal(LEAKED_PATH_PATTERN.test(value), false, `leaked filesystem path at ${path}: ${value}`);
     return;
   }
   if (Array.isArray(value)) {
-    value.forEach((item, index) => assertNoLeakedPaths(item, `${path}[${index}]`));
+    value.forEach((item: any, index: number) => assertNoLeakedPaths(item, `${path}[${index}]`));
     return;
   }
   if (value && typeof value === "object") {
@@ -99,9 +102,9 @@ function assertNoLeakedPaths(value, path = "$") {
 }
 
 test("codexStateStatus surfaces the pending envelope before the first snapshot", () => {
-  router.resetRouterTelemetry();
-  router.resetOtelTelemetry();
-  const status = router.getRouterStatus();
+  resetRouterTelemetry();
+  resetOtelTelemetry();
+  const status = getRouterStatus() as JsonRecord;
   assert.equal(status.codexState.localTelemetry.status, "pending");
   assert.equal(status.codexState.localTelemetry.reason, "collector_initializing");
   assert.equal(status.codexState.localTelemetry.pathConfigured, true);
@@ -150,9 +153,9 @@ test("codexStateStatus surfaces a successful snapshot when refreshed via the exp
   // calling collectSnapshot and asserting on the returned snapshot, which is
   // what the router's getRouterStatus reads.
   await collector.collectSnapshot();
-  // Verify the same snapshot shape that router.getRouterStatus().codexState
+  // Verify the same snapshot shape that getRouterStatus().codexState
   // will surface once a live collector has run.
-  const expected = await collector.collectSnapshot();
+  const expected = await collector.collectSnapshot() as JsonRecord;
   assert.equal(expected.localTelemetry.status, "ok");
   assert.equal(expected.recentThreads[0].workspaceKey, "SimulatorLife/RacingGame");
   assert.equal(expected.conversationThreads["thread-1"].workspaceKey, "SimulatorLife/RacingGame");

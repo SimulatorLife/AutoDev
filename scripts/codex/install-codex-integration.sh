@@ -35,9 +35,7 @@ agy_settings_file="$HOME/.gemini/antigravity-cli/settings.json"
 legacy_skills_dirs=("$codex_home/skills" "$codex_home/agents/skills")
 
 hook_names=(
-  codex-claude-cli-responses-proxy.py
   codex-model-router.mjs
-  codex-model-router-status.mjs
   enforce-root-delegation.sh
   ensure-codex-antigravity-proxy.sh
   ensure-codex-claude-bridge.sh
@@ -54,7 +52,7 @@ otel_runtime_names=(
   scripts/codex/otel/ensure-autodev-otel-collector.sh
   scripts/codex/otel/run-autodev-otel-collector.sh
 )
-obsolete_runtime_hook_names=(log-subagent-model.sh run-codex-antigravity-litellm.sh codex-minimax-responses-proxy.mjs codex-copilot-cli-responses-proxy.mjs codex-antigravity-cli-responses-proxy.mjs)
+obsolete_runtime_hook_names=(log-subagent-model.sh run-codex-antigravity-litellm.sh codex-minimax-responses-proxy.mjs codex-copilot-cli-responses-proxy.mjs codex-antigravity-cli-responses-proxy.mjs codex-model-router-status.mjs codex-claude-cli-responses-proxy.py)
 # LaunchAgents earlier versions installed and this one no longer supervises.
 # Booted out and unlinked so a removed hop does not keep running from a stale
 # plist after the code that fronted it is gone.
@@ -115,10 +113,12 @@ runtime_module_names=(
   src/providers/minimax.ts
   src/providers/copilot.ts
   src/providers/antigravity.ts
+  src/providers/claude.ts
   # Executed as a child process by the bridges rather than imported.
   src/mcp/spawn-shim.ts
   src/shared/execution-contract.ts
   src/router/status.ts
+  src/cli/router-status.ts
   scripts/codex/execution-contract.json
   scripts/codex/prompts/base.md
   scripts/codex/prompts/leaf.md
@@ -128,6 +128,10 @@ runtime_module_names=(
   src/hooks/skill-read-telemetry.ts
   src/hooks/session-start.ts
   src/hooks/subagent-start.ts
+  src/platform/macos/launchd.ts
+  src/platform/router-ensure.ts
+  src/platform/copilot-ensure.ts
+  src/platform/antigravity-ensure.ts
   src/hooks/root-delegation.ts
   .rulesync/skills/orchestration/SKILL.md
 )
@@ -1822,7 +1826,7 @@ service_port() {
 service_hook() {
   case "$1" in
     com.codex.model-router) printf '%s/codex-model-router.mjs\n' "$hooks_dir" ;;
-    com.codex.claude-bridge) printf '%s/codex-claude-cli-responses-proxy.py\n' "$hooks_dir" ;;
+    com.codex.claude-bridge) printf '%s/src/providers/claude.ts\n' "$codex_home" ;;
     com.codex.antigravity-proxy) printf '%s/src/providers/antigravity.ts\n' "$codex_home" ;;
     com.codex.copilot-proxy) printf '%s/src/providers/copilot.ts\n' "$codex_home" ;;
     com.codex.minimax-proxy) printf '%s/src/providers/minimax.ts\n' "$codex_home" ;;

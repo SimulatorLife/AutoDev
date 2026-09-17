@@ -2,7 +2,7 @@
 
 ## Migration progress — 2026-09-17
 
-The migration remains intentionally behavior-preserving. The shared-runtime spawn/state/MCP pass, router HTTP/proxy decomposition, and the MiniMax, Copilot, and Antigravity provider bridge conversions are now landed; the remaining Claude, installer, and test-stack migrations continue.
+The migration remains intentionally behavior-preserving. The shared-runtime spawn/state/MCP pass, router HTTP/proxy decomposition, and all four provider bridge conversions are now landed; installer/platform and final test-stack migrations continue.
 
 ### Completed
 
@@ -26,20 +26,23 @@ The migration remains intentionally behavior-preserving. The shared-runtime spaw
 - The MiniMax boundary adapter now lives in `src/providers/minimax.ts` with strict native-TypeScript checking. Its header allowlist, `client_metadata` privacy boundary, freeform `exec` coercion, streaming rewrite, and tool/activity/MCP telemetry are unchanged; workstation installation, launchd service ownership, and CI now deploy/execute the typed module directly, and the obsolete `.mjs` entrypoint is deleted.
 - The Copilot Responses bridge now lives in `src/providers/copilot.ts` under strict native-TypeScript checking. Its CLI-backed Responses, MCP, skill-read, tool-outcome, provider-limit, and activity telemetry boundaries are behavior-preserving; the installer deploys the typed module directly, stale `.mjs` copies are removed, and the obsolete `.mjs` entrypoint is deleted.
 - The Antigravity Responses bridge now lives in `src/providers/antigravity.ts` under strict native-TypeScript checking. Its CLI-backed Responses, workspace/permission handling, role-specific MCP and skill exposure, tool outcomes, provider limits, activity, and bridge-native spawn accounting are preserved; installer/runtime projections deploy the typed module directly, stale `.mjs` copies are removed, and the obsolete `.mjs` entrypoint is deleted.
-- The provider-limit contract suite and MiniMax Responses boundary suite now run as native TypeScript `node:test` files, preserving their cross-language vocabulary and frozen adapter assertions without duplicate JavaScript test entrypoints.
+- The Claude Code Responses bridge now lives in `src/providers/claude.ts` under strict native-TypeScript checking. Its Claude Code OAuth-only environment, workspace and role permissions, MCP/skill views, stream-json continuation and item IDs, provider-limit handling, activity/tool/skill/MCP telemetry, and Codex-owned spawn-session boundary are preserved. The installer deploys the typed module directly, stale Python copies are removed, and the obsolete Python implementation is deleted; Claude Code CLI/OAuth remains the supported transport by policy.
+- The provider-limit, MiniMax Responses boundary, and workspace-resolution contract suites now run as native TypeScript `node:test` files, preserving cross-language vocabulary, adapter assertions, and router/bridge workspace parity without duplicate JavaScript test entrypoints.
+- The skill-read hook now validates its JSON payload and persisted deduplication state through explicit `JsonValue`, `JsonObject`, and `SeenState` boundaries rather than an `any` escape hatch; malformed state still fails closed without changing telemetry behavior.
+- The workflow-weight validation suite now runs as native TypeScript (`tests/weights.test.ts`), and `validate:weights` executes that single source without a duplicate JavaScript entrypoint.
 
 ### Current findings and constraints
 
-- The Claude bridge remains the only remaining legacy provider implementation (Python); the MiniMax, Copilot, and Antigravity adapters now live under `src/providers/`. The router entrypoint remains a compatibility-preserving `.mjs` executable while its retained implementation is typed.
-- Installer, reconciliation, hook, telemetry, and `ensure-*` behavior still has substantial shell/legacy runtime ownership.
+- All provider bridges now live under `src/providers/` as typed modules. The router entrypoint remains a compatibility-preserving `.mjs` executable while its retained implementation is typed.
+- Installer, reconciliation, provider hooks, telemetry, and remaining `ensure-*` behavior still has substantial shell/legacy runtime ownership; router ensure and session-start now use the typed platform owner.
 - First-party tests are still split between JavaScript, Python, and TypeScript. The inventory gate is present but intentionally reports the remaining legacy files until their replacements and equivalent tests land.
 - Canonical declarative content remains under `scripts/codex/`; moving it to the target `agents/` and `config/` layout must be coordinated with installer/runtime path changes.
 - The typed state collector keeps its dynamic SQLite schema inspection behind an explicit row/binding boundary and continues to strip raw paths before snapshots are exposed; its output and privacy contracts were not changed.
 - Routing owns provider/config policy; typed router modules now own HTTP, upstream proxy execution, Responses/SSE compatibility, OTEL telemetry, persistence, lifecycle, and bridge orchestration. The legacy `.mjs` router is retained only as the executable/public re-export entrypoint.
-- The Claude bridge still contains a provider-local Python copy of spawn-script/SSE logic until the provider bridge conversion pass; its MCP delegation path now launches the shared typed shim.
-- The typed skill-read hook still has a dynamic JSON boundary that uses an explicit `any`; tighten that boundary when the hook tests are converted to TypeScript.
+- Claude's supported subscription path remains the unmodified Claude Code CLI, but AutoDev-owned bridge logic is now typed and imports shared workspace, role, limit, telemetry, and spawn contracts rather than maintaining a Python copy.
 - `src/cli/autodev.ts` now has typed dispatch boundaries for `router`, `provider`, `hook`, and `install`; only `check` and render commands have concrete repository backends, while the remaining default backends fail closed until their runtime migrations land.
-- The router status CLI now crosses a typed boundary in `src/router/status.ts`; the legacy router backend remains explicit and unchanged.
+- The router status CLI now lives in `src/cli/router-status.ts` and consumes the typed `src/router/status.ts` boundary; the obsolete `scripts/codex-model-router-status.mjs` entrypoint is deleted and stale installed copies are removed.
+- Router ensure/lifecycle decisions now live in `src/platform/router-ensure.ts` with injectable filesystem/process/launchd dependencies; `src/hooks/session-start.ts` invokes the typed owner directly, while the original shell ensure script remains unchanged as the verified rollback path. The typed owner preserves the best-effort optional Copilot ensure side effect through `src/platform/copilot-ensure.ts`.
 - Session-start, subagent-start, and root-delegation command handlers now own the
   hook entry points under `src/hooks`; Rulesync invokes those typed handlers
   directly while the existing ensure scripts remain unchanged runtime helpers.
@@ -51,11 +54,11 @@ The migration remains intentionally behavior-preserving. The shared-runtime spaw
 
 Step 1 — router HTTP and upstream proxy decomposition — is complete.
 
-2. Convert the remaining Claude bridge so all providers use the shared contracts; MiniMax, Copilot, and Antigravity are complete typed slices.
+2. Convert all provider bridges to typed shared-contract implementations — complete for MiniMax, Copilot, Antigravity, and Claude.
 3. Move installer, reconciliation, hook, and `ensure-*` behavior behind the typed CLI/platform modules.
 4. Convert remaining JavaScript/Python tests to `node:test`, remove obsolete entrypoints, and enable the inventory gate as a required check.
 
-For the current provider and test-stack slices, `pnpm typecheck` passes; `pnpm test` reports 691 passing tests, 0 failures, and 1 skip, while `pnpm run test:python` reports 280 passing tests and 1 skip. The focused provider, MCP, role, telemetry, and native TypeScript boundary suites pass. Router HTTP/auth and proxy-header contract tests are isolated from ambient credentials, and persistence scheduling waits for the debounced write rather than relying on a fixed event-loop delay. `pnpm run validate:inventory` remains expected to fail until the remaining migration order above is completed.
+For the current provider and test-stack slices, `pnpm typecheck` passes; the focused Claude, provider, MCP, role, telemetry, workspace, and boundary suites pass, including the native TypeScript Claude Responses fixture contract. The full suites and inventory gate must be refreshed after this slice; remaining expected migration work is concentrated in installer/reconciliation/platform ownership and the last legacy test files.
 
 ## Decision
 

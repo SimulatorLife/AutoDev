@@ -7,12 +7,15 @@ import { spawn } from "node:child_process";
 import { tmpdir } from "node:os";
 import test from "node:test";
 
-import { createBridgeMcpHomes } from "./bridge-mcp-fixture.mjs";
+import { createBridgeMcpHomes } from "./bridge-mcp-fixture.ts";
 
 const REPO_ROOT = resolve(import.meta.dirname, "..");
-const PROXY = join(REPO_ROOT, "scripts/codex-claude-cli-responses-proxy.py");
+const PROXY = join(REPO_ROOT, "src/providers/claude.ts");
 const CONTRACT_PATH = join(REPO_ROOT, "tests/fixtures/contracts/claude-responses-contract.json");
-const contract = JSON.parse(await readFile(CONTRACT_PATH, "utf8"));
+type JsonRecord = Record<string, any>;
+type ContractCase = JsonRecord & { cli: JsonRecord; request?: JsonRecord; expected: JsonRecord; auth?: JsonRecord };
+type Contract = { schema: string; cases: Record<string, ContractCase> };
+const contract = JSON.parse(await readFile(CONTRACT_PATH, "utf8")) as Contract;
 
 const BRIDGE_ROLE = "browser-tester";
 const PRIVACY_TOKEN = "contract task";
@@ -25,27 +28,29 @@ test.after(async () => {
   await rm(homes.root, { recursive: true, force: true });
 });
 
-function replaceTokens(value) {
+function replaceTokens(value: any): any {
   if (typeof value === "string") return value.replaceAll("<REPO_ROOT>", REPO_ROOT);
   if (Array.isArray(value)) return value.map(replaceTokens);
   if (value && typeof value === "object") return Object.fromEntries(Object.entries(value).map(([key, nested]) => [key, replaceTokens(nested)]));
   return value;
 }
 
-function freePort() {
+function freePort(): Promise<number> {
   return new Promise((resolvePort, reject) => {
     const server = createServer();
     server.once("error", reject);
     server.listen(0, "127.0.0.1", () => {
-      const port = server.address().port;
+      const address = server.address();
+      if (!address || typeof address === "string") { reject(new Error("port server did not expose an address")); return; }
+      const port = address.port;
       server.close((error) => error ? reject(error) : resolvePort(port));
     });
   });
 }
 
-async function waitForHealth(port, timeoutMs = 5000) {
+async function waitForHealth(port: number, timeoutMs = 5000): Promise<void> {
   const deadline = Date.now() + timeoutMs;
-  let lastError;
+  let lastError: unknown;
   while (Date.now() < deadline) {
     try {
       const response = await fetch(`http://127.0.0.1:${port}/health`);
@@ -56,10 +61,11 @@ async function waitForHealth(port, timeoutMs = 5000) {
     }
     await new Promise((resolveSleep) => setTimeout(resolveSleep, 50));
   }
-  throw new Error(`Claude bridge did not become healthy on port ${port}: ${lastError?.message ?? lastError}`);
+  const detail = lastError instanceof Error ? lastError.message : String(lastError);
+  throw new Error(`Claude bridge did not become healthy on port ${port}: ${detail}`);
 }
 
-function parseSse(text) {
+function parseSse(text: string): Array<{ event: string | undefined; data: any }> {
   return text.trimEnd().split("\n\n").filter(Boolean).map((chunk) => {
     if (chunk === "data: [DONE]") return { event: "[DONE]", data: null };
     const lines = chunk.split("\n");
@@ -69,7 +75,7 @@ function parseSse(text) {
   });
 }
 
-function scrub(value) {
+function scrub(value: any): any {
   if (typeof value === "string") return value
     .replaceAll(REPO_ROOT, "<REPO_ROOT>")
     .replace(/resp_[0-9a-f]+/g, "<RESPONSE_ID>")
@@ -86,10 +92,10 @@ function scrub(value) {
   return value;
 }
 
-async function startTelemetryServer() {
-  const events = [];
+async function startTelemetryServer(): Promise<{ events: JsonRecord[]; server: any; url: string }> {
+  const events: JsonRecord[] = [];
   const server = createServer(async (request, response) => {
-    const chunks = [];
+    const chunks: Buffer[] = [];
     for await (const chunk of request) chunks.push(chunk);
     if (request.method === "POST") {
       try {
@@ -99,16 +105,18 @@ async function startTelemetryServer() {
     }
     response.end("ok");
   });
-  await new Promise((resolveListening) => server.listen(0, "127.0.0.1", resolveListening));
-  return { events, server, url: `http://127.0.0.1:${server.address().port}/events` };
+  await new Promise<void>((resolveListening) => server.listen(0, "127.0.0.1", () => resolveListening()));
+  const address = server.address();
+  if (!address || typeof address === "string") throw new Error("telemetry server did not expose an address");
+  return { events, server, url: `http://127.0.0.1:${address.port}/events` };
 }
 
-async function stop(child) {
+async function stop(child: any): Promise<void> {
   if (child.exitCode === null && child.signalCode === null) child.kill("SIGTERM");
   if (child.exitCode === null && child.signalCode === null) await once(child, "exit");
 }
 
-function buildFakeCliSource() {
+function buildFakeCliSource(): string {
   return `#!/usr/bin/env python3
 import json
 import os
@@ -127,8 +135,14 @@ sys.exit(fixture.get("exitCode") or 0)
 `;
 }
 
-async function startBridge({ proxyPort, bearerToken, oauthToken, fakeCli, contractCase }) {
-  const env = {
+async function startBridge({ proxyPort, bearerToken, oauthToken, fakeCli, contractCase }: {
+  proxyPort: number;
+  bearerToken?: string;
+  oauthToken?: string | null;
+  fakeCli: string;
+  contractCase?: JsonRecord;
+}): Promise<ReturnType<typeof spawn>> {
+  const env: NodeJS.ProcessEnv = {
     ...process.env,
     AUTODEV_REPO_ROOT: REPO_ROOT,
     CODEX_PROJECT_ROOT: REPO_ROOT,
@@ -144,7 +158,7 @@ async function startBridge({ proxyPort, bearerToken, oauthToken, fakeCli, contra
   } else {
     env.CLAUDE_CODE_OAUTH_TOKEN = oauthToken ?? "fake-oauth-token";
   }
-  const child = spawn(process.execPath === "node" ? "python3" : "python3", [PROXY], {
+  const child = spawn(process.execPath, [PROXY], {
     cwd: REPO_ROOT,
     env,
     stdio: ["ignore", "pipe", "pipe"],
@@ -152,7 +166,7 @@ async function startBridge({ proxyPort, bearerToken, oauthToken, fakeCli, contra
   return child;
 }
 
-async function runStreamingCase(name, rawCase, telemetry) {
+async function runStreamingCase(name: string, rawCase: ContractCase, telemetry: { events: JsonRecord[]; server: any; url: string }): Promise<any> {
   const item = replaceTokens(rawCase);
   const temp = await mkdtemp(join(tmpdir(), "autodev-claude-contract-"));
   const fakeCli = join(temp, "fake-claude.py");
@@ -184,8 +198,10 @@ async function runStreamingCase(name, rawCase, telemetry) {
     assert.equal(response.headers.get("content-type"), "text/event-stream", `${name}: SSE content type`);
     const sse = parseSse(body);
     assert.deepEqual(sse.map(({ event }) => event), item.expected.eventTypes, `${name}: SSE lifecycle`);
-    assert.equal(sse.at(-1).event, "[DONE]", `${name}: terminal sentinel`);
-    const completed = sse.find(({ event }) => event === "response.completed").data.response;
+    assert.equal(sse.at(-1)?.event, "[DONE]", `${name}: terminal sentinel`);
+    const completedEvent = sse.find(({ event }) => event === "response.completed");
+    assert.ok(completedEvent, `${name}: response.completed event`);
+    const completed = completedEvent.data.response;
     if (item.expected.outputText !== undefined) assert.equal(completed.output_text, item.expected.outputText, `${name}: output text`);
     if (item.expected.outputTextPrefix !== undefined) assert.ok(completed.output_text.startsWith(item.expected.outputTextPrefix), `${name}: partial output text`);
     assert.equal(completed.status, item.expected.completedStatus, `${name}: completion status`);
@@ -202,8 +218,11 @@ async function runStreamingCase(name, rawCase, telemetry) {
     }
     const itemIds = collectItemIds(sse);
     if (itemIds.length > 0) {
-      const created = sse.find(({ event }) => event === "response.created").data.response;
-      const completed2 = sse.find(({ event }) => event === "response.completed").data.response;
+      const createdEvent = sse.find(({ event }) => event === "response.created");
+      const completedEvent = sse.find(({ event }) => event === "response.completed");
+      assert.ok(createdEvent && completedEvent, `${name}: response IDs require lifecycle events`);
+      const created = createdEvent.data.response;
+      const completed2 = completedEvent.data.response;
       assert.equal(created.id, completed2.id, `${name}: response id continuity`);
     }
     await new Promise((resolveEvents) => setTimeout(resolveEvents, 150));
@@ -238,7 +257,7 @@ async function runStreamingCase(name, rawCase, telemetry) {
   }
 }
 
-function collectItemIds(sse) {
+function collectItemIds(sse: Array<{ event: string | undefined; data: any }>): Array<{ key: string; value: string }> {
   const ids = [];
   for (const entry of sse) {
     if (!entry.data || typeof entry.data !== "object") continue;
@@ -249,7 +268,7 @@ function collectItemIds(sse) {
   return ids;
 }
 
-async function runAuthFailureCase(name, rawCase) {
+async function runAuthFailureCase(name: string, rawCase: ContractCase): Promise<void> {
   const item = replaceTokens(rawCase);
   const temp = await mkdtemp(join(tmpdir(), "autodev-claude-contract-"));
   const fakeCli = join(temp, "fake-claude.py");
@@ -260,7 +279,7 @@ async function runAuthFailureCase(name, rawCase) {
   try {
     await waitForHealth(proxyPort);
     const requestId = `claude-contract-${name}`;
-    const headers = {
+    const headers: Record<string, string> = {
       "content-type": "application/json",
       "x-autodev-agent-role": BRIDGE_ROLE,
       "x-autodev-request-id": requestId,
@@ -288,7 +307,7 @@ async function runAuthFailureCase(name, rawCase) {
   }
 }
 
-async function runOauthMissingCase(name, rawCase) {
+async function runOauthMissingCase(name: string, rawCase: ContractCase): Promise<void> {
   const item = replaceTokens(rawCase);
   const temp = await mkdtemp(join(tmpdir(), "autodev-claude-contract-"));
   const fakeCli = join(temp, "fake-claude.py");
@@ -336,8 +355,11 @@ test("Claude Responses contract fixture is exercised through the offline proxy b
       assert.ok(entry, `${name}: contract case must exist`);
       await runStreamingCase(name, entry, telemetry);
     }
-    await runAuthFailureCase("auth_token_failure", contract.cases.auth_token_failure);
-    await runOauthMissingCase("oauth_token_missing", contract.cases.oauth_token_missing);
+    const authFailureCase = contract.cases.auth_token_failure;
+    const oauthMissingCase = contract.cases.oauth_token_missing;
+    assert.ok(authFailureCase && oauthMissingCase, "authentication contract cases must exist");
+    await runAuthFailureCase("auth_token_failure", authFailureCase);
+    await runOauthMissingCase("oauth_token_missing", oauthMissingCase);
   } finally {
     await new Promise((resolveClosed) => telemetry.server.close(resolveClosed));
   }

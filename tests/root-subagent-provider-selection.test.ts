@@ -1,13 +1,15 @@
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 import { ROUTING_POLICY as routing } from "../src/router/routing.ts";
-import { payloadForCandidate } from "../scripts/codex-model-router.mjs";
+import { payloadForCandidate } from "../src/router/proxy.ts";
 
-const contract = await import("./fixtures/contracts/root-subagent-provider-selection.json", { with: { type: "json" } }).then((m) => m.default ?? m);
+type JsonRecord = Record<string, any>;
+
+const contract = await import("./fixtures/contracts/root-subagent-provider-selection.json", { with: { type: "json" } }).then((m) => (m.default ?? m) as JsonRecord);
 
 assert.equal(contract.schema, "autodev-root-subagent-provider-selection-v1");
 
-function mulberry32(seed) {
+function mulberry32(seed: number): () => number {
   let s = seed >>> 0;
   return () => {
     s = (s + 0x6D2B79F5) >>> 0;
@@ -18,8 +20,8 @@ function mulberry32(seed) {
   };
 }
 
-const seeded = () => mulberry32(Number.parseInt(contract.seed, 16));
-const shape = (candidate) => ({ provider: candidate.provider, model: candidate.model, ...("reasoningEffort" in candidate ? { reasoningEffort: candidate.reasoningEffort } : {}) });
+const seeded = (): () => number => mulberry32(Number.parseInt(String(contract.seed), 16));
+const shape = (candidate: JsonRecord): JsonRecord => ({ provider: candidate.provider, model: candidate.model, ...("reasoningEffort" in candidate ? { reasoningEffort: candidate.reasoningEffort } : {}) });
 
 describe("root versus subagent provider selection", () => {
   test("keeps the root alias distinct from every leaf alias", () => {
@@ -50,8 +52,8 @@ describe("root versus subagent provider selection", () => {
 
   test("freezes root-only fallback reasoning overrides and leaf effort preservation", () => {
     const root = routing.orchestratorCandidates(seeded());
-    assert.deepEqual(payloadForCandidate({ model: "autodev/orchestrator", reasoning: { effort: "xhigh" } }, root[0]), contract.payloads.orchestratorPrimary);
-    assert.deepEqual(payloadForCandidate({ model: "autodev/orchestrator", reasoning: { effort: "xhigh" } }, root.at(-1)), contract.payloads.orchestratorFallback);
-    assert.deepEqual(payloadForCandidate({ model: "autodev/explorer", reasoning: { effort: "xhigh" } }, routing.roleCandidates("explorer", seeded())[0]), contract.payloads.subagent);
+    assert.deepEqual(payloadForCandidate({ model: "autodev/orchestrator", reasoning: { effort: "xhigh" } }, root[0]!), contract.payloads.orchestratorPrimary);
+    assert.deepEqual(payloadForCandidate({ model: "autodev/orchestrator", reasoning: { effort: "xhigh" } }, root.at(-1)!), contract.payloads.orchestratorFallback);
+    assert.deepEqual(payloadForCandidate({ model: "autodev/explorer", reasoning: { effort: "xhigh" } }, routing.roleCandidates("explorer", seeded())[0]!), contract.payloads.subagent);
   });
 });

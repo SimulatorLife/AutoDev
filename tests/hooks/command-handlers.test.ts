@@ -3,7 +3,8 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
-import { runSessionStart } from '../../src/hooks/session-start.ts';
+import { createSessionStart } from '../../src/hooks/session-start.ts';
+import type { RouterEnsureDeps, RouterEnsureOptions, RouterEnsureResult } from '../../src/platform/router-ensure.ts';
 import { runSubagentStart } from '../../src/hooks/subagent-start.ts';
 import { runRootDelegation } from '../../src/hooks/root-delegation.ts';
 
@@ -24,10 +25,29 @@ function hook(home: string, name: string, body: string): void {
   writeFileSync(path, `#!/bin/sh\n${body}\n`);
 }
 
-test('session-start delegates the ensure command and preserves its status', () => withCodexHome((home) => {
-  hook(home, 'ensure-codex-model-router.sh', 'cat > "$CODEX_HOME/session-input"');
-  assert.equal(runSessionStart(Buffer.from('{"event":"start"}')), 0);
+test('session-start delegates the typed ensure runner and preserves a healthy status', async () => withCodexHome(async (home) => {
+  const seen: { deps: RouterEnsureDeps; options: RouterEnsureOptions }[] = [];
+  const runner = {
+    async runRouterEnsure(deps: RouterEnsureDeps, options: RouterEnsureOptions): Promise<RouterEnsureResult> {
+      seen.push({ deps, options });
+      return { status: 'healthy-launchd', exitCode: 0 };
+    },
+  };
+  const run = createSessionStart(runner);
+  assert.equal(await run(Buffer.from('{"event":"start"}')), 0);
+  assert.equal(seen.length, 1);
+  assert.equal(seen[0]?.options.paths.codexHome, home);
 }));
+
+test('session-start surfaces the typed exit code from the ensure runner', async () => {
+  const runner = {
+    async runRouterEnsure(): Promise<RouterEnsureResult> {
+      return { status: 'launchd-failed', exitCode: 1, message: 'launchd down' };
+    },
+  };
+  const run = createSessionStart(runner);
+  assert.equal(await run(Buffer.from('{}')), 1);
+});
 
 test('subagent-start runs each ensure hook once and fails closed', () => withCodexHome((home) => {
   for (const name of ['ensure-codex-claude-bridge.sh', 'ensure-codex-minimax-proxy.sh', 'ensure-codex-antigravity-proxy.sh']) {

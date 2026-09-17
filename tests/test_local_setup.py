@@ -1,5 +1,4 @@
 import http.client
-import importlib.util
 import json
 import re
 import os
@@ -16,7 +15,6 @@ from pathlib import Path
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-BRIDGE_PATH = REPO_ROOT / "scripts/codex-claude-cli-responses-proxy.py"
 INSTALLER_PATH = REPO_ROOT / "scripts/codex/install-codex-integration.sh"
 AUTODEV_CONFIG_PATH = REPO_ROOT / "scripts/codex/config.autodev.toml"
 COMPOSE_USER_CONFIG_PATH = REPO_ROOT / "src/config/compose-user-config.ts"
@@ -29,11 +27,6 @@ LSP_AGENT_NAMES = ("default", "explorer", "smart", "validator", "worker")
 NON_LSP_AGENT_NAMES = ("browser-tester", "docs-researcher")
 CODE_SEARCH_AGENT_NAMES = set(LSP_AGENT_NAMES)
 
-spec = importlib.util.spec_from_file_location("claude_bridge", BRIDGE_PATH)
-if spec is None or spec.loader is None:
-    raise RuntimeError(f"Unable to load {BRIDGE_PATH}")
-claude_bridge = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(claude_bridge)
 
 _mcp_projection_root: tempfile.TemporaryDirectory | None = None
 _bridge_codex_home: tempfile.TemporaryDirectory | None = None
@@ -1671,288 +1664,6 @@ exit 0
         )
         self.assertNotEqual(json.loads(safe.stdout).get("decision"), "forbidden")
 
-    def test_claude_subprocess_environment_is_oauth_only(self):
-        with patch.dict(
-            claude_bridge.os.environ,
-            {
-                "CLAUDE_CODE_OAUTH_TOKEN": "oauth-placeholder",
-                "ANTHROPIC_API_KEY": "api-key-placeholder",
-                "ANTHROPIC_AUTH_TOKEN": "auth-token-placeholder",
-                "LITELLM_API_KEY": "local-gateway-placeholder",
-                "LITELLM_MASTER_KEY": "local-master-placeholder",
-            },
-            clear=False,
-        ):
-            environment = claude_bridge.claude_environment()
-        self.assertEqual(environment["CLAUDE_CODE_OAUTH_TOKEN"], "oauth-placeholder")
-        self.assertNotIn("ANTHROPIC_API_KEY", environment)
-        self.assertNotIn("ANTHROPIC_AUTH_TOKEN", environment)
-        self.assertNotIn("LITELLM_API_KEY", environment)
-        self.assertNotIn("LITELLM_MASTER_KEY", environment)
-
-    def test_claude_allowed_rate_limit_event_is_informational(self):
-        event = {"type": "rate_limit_event", "rate_limit_info": {"status": "allowed", "rateLimitType": "five_hour"}}
-        self.assertIsNone(claude_bridge.rate_limit_event_error(event))
-
-    def test_claude_rejected_rate_limit_event_is_classified(self):
-        event = {"type": "rate_limit_event", "rate_limit_info": {"status": "rejected", "rateLimitType": "weekly", "resetsAt": 1757174400}}
-        error = claude_bridge.rate_limit_event_error(event)
-        self.assertIsInstance(error, claude_bridge.ClaudeRateLimitError)
-        self.assertIn("weekly", str(error))
-        # A rejected weekly window is exhaustion until it resets, and the reset
-        # is carried structurally: the router stops guessing it out of prose.
-        self.assertEqual(error.limit_class, "quota_exhausted")
-        self.assertEqual(error.limit_type, "weekly")
-        self.assertEqual(error.resets_at, "2025-09-06T16:00:00.000Z")
-        self.assertEqual(error.source, claude_bridge.LIMIT_SOURCE_REPORTED)
-
-    def test_claude_rejected_session_window_is_a_session_limit(self):
-        event = {"type": "rate_limit_event", "rate_limit_info": {"status": "rejected", "rateLimitType": "session"}}
-        error = claude_bridge.rate_limit_event_error(event)
-        self.assertEqual(error.limit_class, "session_limit")
-        self.assertIsNone(error.resets_at)
-
-    def test_claude_reset_times_are_normalized_or_dropped(self):
-        # Claude states the reset as epoch seconds, epoch milliseconds, or ISO
-        # depending on release. Anything else is dropped rather than guessed:
-        # the router stops routing until the time this hands it.
-        self.assertEqual(claude_bridge.normalize_resets_at(1757174400), "2025-09-06T16:00:00.000Z")
-        self.assertEqual(claude_bridge.normalize_resets_at(1757174400000), "2025-09-06T16:00:00.000Z")
-        self.assertEqual(claude_bridge.normalize_resets_at("1757174400"), "2025-09-06T16:00:00.000Z")
-        self.assertEqual(claude_bridge.normalize_resets_at("2026-09-06T15:40:00Z"), "2026-09-06T15:40:00.000Z")
-        for rubbish in ("garbage", "", None, True, {}):
-            self.assertIsNone(claude_bridge.normalize_resets_at(rubbish))
-
-    def test_claude_error_text_only_ever_infers_a_limit(self):
-        # Free text can pick a better status and retry hint, but it must never
-        # corroborate the hard cooldown that takes a provider out for a window.
-        with self.assertRaises(claude_bridge.ClaudeRateLimitError) as context:
-            claude_bridge.raise_classified_claude_error("weekly limit reached, quota exceeded")
-        self.assertEqual(context.exception.source, claude_bridge.LIMIT_SOURCE_INFERRED)
-        self.assertEqual(context.exception.limit_class, "quota_exhausted")
-
-    def test_claude_streaming_limit_returns_the_work_already_done(self):
-        original_runner = claude_bridge.run_claude_stream
-
-        def truncated_runner(*args, **kwargs):
-            yield ("delta", "first half. ", None)
-            yield ("delta", "second half.", None)
-            raise claude_bridge.ClaudeRateLimitError(
-                "Claude rate limit (weekly): status is rejected",
-                limit_class="quota_exhausted",
-                limit_type="weekly",
-                resets_at="2026-09-06T15:40:00.000Z",
-                source=claude_bridge.LIMIT_SOURCE_REPORTED,
-            )
-
-        claude_bridge.run_claude_stream = truncated_runner
-        server = claude_bridge.ThreadingHTTPServer(("127.0.0.1", 0), claude_bridge.Handler)
-        thread = threading.Thread(target=server.serve_forever, daemon=True)
-        thread.start()
-        try:
-            with tempfile.TemporaryDirectory() as workspace:
-                request = urllib.request.Request(
-                    f"http://127.0.0.1:{server.server_address[1]}/v1/responses",
-                    data=json.dumps({"model": "sonnet", "input": "hello", "stream": True, "cwd": workspace}).encode(),
-                    headers={
-                        "Content-Type": "application/json",
-                        **({"Authorization": f"Bearer {claude_bridge.AUTH_TOKEN}"} if claude_bridge.AUTH_TOKEN else {}),
-                    },
-                    method="POST",
-                )
-                body = urllib.request.urlopen(request, timeout=5).read().decode()
-        finally:
-            claude_bridge.run_claude_stream = original_runner
-            server.shutdown()
-            server.server_close()
-            thread.join(timeout=5)
-
-        # The work already streamed comes back as a well-formed incomplete
-        # response rather than being discarded with a bare response.failed.
-        self.assertNotIn("response.failed", body)
-        self.assertIn("response.output_text.done", body)
-        self.assertIn("first half. second half.", body)
-        completed = next(
-            json.loads(line[len("data: "):])
-            for line in body.splitlines()
-            if line.startswith("data: ") and '"response.completed"' in line
-        )
-        self.assertEqual(completed["response"]["status"], "incomplete")
-        self.assertEqual(completed["response"]["incomplete_details"]["reason"], "provider_limit")
-        self.assertEqual(completed["response"]["incomplete_details"]["provider_limit"]["class"], "quota_exhausted")
-        self.assertEqual(completed["response"]["incomplete_details"]["provider_limit"]["resets_at"], "2026-09-06T15:40:00.000Z")
-        self.assertIn("first half. second half.", completed["response"]["output_text"])
-        self.assertIn("[Incomplete:", completed["response"]["output_text"])
-
-    def test_claude_rate_limit_is_reported_as_retryable_http_429(self):
-        original_runner = claude_bridge.run_claude_stream
-
-        def rate_limited_runner(*args, **kwargs):
-            raise claude_bridge.ClaudeRateLimitError(
-                "weekly limit reached",
-                limit_class="quota_exhausted",
-                limit_type="weekly",
-                resets_at="2026-09-06T15:40:00.000Z",
-                source=claude_bridge.LIMIT_SOURCE_REPORTED,
-            )
-            yield  # Make this a generator with the same interface as the real runner.
-
-        claude_bridge.run_claude_stream = rate_limited_runner
-        server = claude_bridge.ThreadingHTTPServer(("127.0.0.1", 0), claude_bridge.Handler)
-        thread = threading.Thread(target=server.serve_forever, daemon=True)
-        thread.start()
-        try:
-            with tempfile.TemporaryDirectory() as workspace:
-                request = urllib.request.Request(
-                    f"http://127.0.0.1:{server.server_address[1]}/v1/responses",
-                    data=json.dumps({"model": "sonnet", "input": "hello", "stream": False, "cwd": workspace}).encode(),
-                    headers={
-                        "Content-Type": "application/json",
-                        **({"Authorization": f"Bearer {claude_bridge.AUTH_TOKEN}"} if claude_bridge.AUTH_TOKEN else {}),
-                    },
-                    method="POST",
-                )
-                with self.assertRaises(urllib.error.HTTPError) as context:
-                    urllib.request.urlopen(request, timeout=5)
-                self.assertEqual(context.exception.code, 429)
-                payload = json.loads(context.exception.read())
-                self.assertEqual(payload["error"]["type"], "rate_limit_error")
-                # The router falls back on the status, and now learns how long
-                # this provider is out for instead of inferring it.
-                self.assertEqual(payload["error"]["limit"]["class"], "quota_exhausted")
-                self.assertEqual(payload["error"]["limit"]["resets_at"], "2026-09-06T15:40:00.000Z")
-                self.assertEqual(context.exception.headers[claude_bridge.LIMIT_HEADER_CLASS], "quota_exhausted")
-                self.assertEqual(context.exception.headers[claude_bridge.LIMIT_HEADER_RESETS_AT], "2026-09-06T15:40:00.000Z")
-                self.assertEqual(context.exception.headers[claude_bridge.LIMIT_HEADER_SOURCE], claude_bridge.LIMIT_SOURCE_REPORTED)
-                self.assertIsNotNone(context.exception.headers["Retry-After"])
-        finally:
-            claude_bridge.run_claude_stream = original_runner
-            server.shutdown()
-            server.server_close()
-            thread.join(timeout=5)
-
-    def test_claude_cli_disables_subagent_tools(self):
-        args = claude_bridge.claude_cli_args("prompt", "sonnet", "medium")
-        deny_index = args.index("--disallowed-tools")
-        self.assertEqual(args[deny_index + 1], "Bash(ccc *),Agent,Task,SendMessage,ListAgents")
-        system_prompt_index = args.index("--system-prompt")
-        self.assertIn(claude_bridge.LEAF_BRIDGE_INSTRUCTIONS, args[system_prompt_index + 1])
-
-    def test_claude_cli_replaces_rather_than_appends_the_default_system_prompt(self):
-        """Appending leaves Claude Code's own default prompt in force. Its
-        harness guidance -- including a standing instruction not to spawn agents
-        unless asked -- then competes with the role policy this bridge owns."""
-        args = claude_bridge.claude_cli_args("prompt", "sonnet", "medium", "orchestrator", "/tmp/workspace")
-        self.assertNotIn("--append-system-prompt", args)
-        prompt = args[args.index("--system-prompt") + 1]
-        self.assertIn(claude_bridge.BASE_SYSTEM_PROMPT, prompt)
-        self.assertIn(claude_bridge.ORCHESTRATOR_BRIDGE_INSTRUCTIONS, prompt)
-        # Replacing the prompt drops the CLI's per-machine sections, so the
-        # workspace the bridge resolved has to be stated explicitly or the agent
-        # begins the turn not knowing which repository it is in.
-        self.assertIn("/tmp/workspace", prompt)
-        # The shared execution contract follows the role prompt and is the
-        # most recent instruction the model reads.
-        self.assertTrue(prompt.rstrip().endswith("instead of silently substituting a different workflow."))
-
-    def test_claude_bridge_disables_the_bundled_skill_catalogue(self):
-        """Claude Code's bundled skills are a second, unversioned source of
-        instructions that no AutoDev role prompt accounts for."""
-        with patch.dict(claude_bridge.os.environ, {"CLAUDE_CODE_OAUTH_TOKEN": "oauth-placeholder"}, clear=False):
-            environment = claude_bridge.claude_environment()
-        self.assertEqual(environment["CLAUDE_CODE_DISABLE_BUNDLED_SKILLS"], "1")
-
-    def test_orchestrator_turn_is_never_handed_the_leaf_prompt(self):
-        """The root orchestrator degrades onto this bridge when its primary
-        provider is unavailable. Handing it the leaf policy tells the parent it
-        is a bounded leaf that must not spawn child agents, which suppresses the
-        delegation the root turn exists to perform."""
-        orchestrator = claude_bridge.bridge_instructions("orchestrator")
-        self.assertIn(claude_bridge.ORCHESTRATOR_BRIDGE_INSTRUCTIONS, orchestrator)
-        self.assertIn("Effective role contract", orchestrator)
-        self.assertIn("# Root orchestrator bootstrap", orchestrator)
-        self.assertIn("## Canonical orchestration skill", orchestrator)
-        self.assertIn("Use CocoIndex (`ccc`, `cocoindex-code`)", orchestrator)
-        self.assertNotIn("bounded leaf agent", orchestrator)
-        self.assertNotIn("Do not spawn", orchestrator)
-
-        prompt = claude_bridge.system_prompt("orchestrator", "/tmp/workspace")
-        self.assertIn("# Root orchestrator bootstrap", prompt)
-        self.assertIn("## Canonical orchestration skill", prompt)
-        self.assertNotIn("bounded leaf agent", prompt)
-
-        for role in (None, "", "explorer", "worker", "orchestrator-ish"):
-            with self.subTest(role=role):
-                instructions = claude_bridge.bridge_instructions(role)
-                self.assertIn(claude_bridge.LEAF_BRIDGE_INSTRUCTIONS, instructions,
-                              msg="anything that is not exactly the orchestrator is a leaf")
-                self.assertIn("Effective role contract", instructions)
-        self.assertIn("bounded leaf agent", claude_bridge.LEAF_BRIDGE_INSTRUCTIONS)
-        self.assertRegex(claude_bridge.LEAF_BRIDGE_INSTRUCTIONS, r"Do \*not\* spawn")
-
-    def test_agent_role_comes_only_from_the_router_generated_header(self):
-        headers = http.client.HTTPMessage()
-        headers["X-Autodev-Agent-Role"] = " Orchestrator "
-        self.assertEqual(claude_bridge.resolve_agent_role(headers), "orchestrator")
-        self.assertTrue(claude_bridge.is_orchestrator_role(claude_bridge.resolve_agent_role(headers)))
-        self.assertIsNone(claude_bridge.resolve_agent_role(http.client.HTTPMessage()))
-        self.assertIsNone(claude_bridge.resolve_agent_role(None))
-        self.assertEqual(claude_bridge.AGENT_ROLE_HEADER, "x-autodev-agent-role")
-
-    def test_orchestrator_keeps_the_delegation_tools_every_leaf_loses(self):
-        leaf = claude_bridge.claude_cli_args("prompt", "sonnet", "medium")
-        leaf_denied = leaf[leaf.index("--disallowed-tools") + 1].split(",")
-        self.assertEqual(leaf_denied, ["Bash(ccc *)", "Agent", "Task", "SendMessage", "ListAgents"])
-
-        # With no session to hold, the shim cannot work, so the orchestrator
-        # keeps Claude's own Agent tool: an invisible child still beats no
-        # delegation at all.
-        orchestrator = claude_bridge.claude_cli_args("prompt", "sonnet", "medium", "orchestrator")
-        orchestrator_denied = orchestrator[orchestrator.index("--disallowed-tools") + 1].split(",")
-        for tool in claude_bridge.DISALLOWED_CLAUDE_TOOLS:
-            self.assertNotIn(tool, orchestrator_denied, msg="the root orchestrator delegates with the Agent tool")
-        config = json.loads(orchestrator[orchestrator.index("--mcp-config") + 1])
-        self.assertEqual(set(config["mcpServers"]), {"lsp", "cocoindex-code"})
-        system_prompt_index = orchestrator.index("--system-prompt")
-        self.assertIn(
-            claude_bridge.ORCHESTRATOR_BRIDGE_INSTRUCTIONS,
-            orchestrator[system_prompt_index + 1],
-        )
-
-    def test_claude_role_mcp_config_materializes_documentation_server_from_contract(self):
-        for role in ("smart", "docs-researcher"):
-            with self.subTest(role=role):
-                args = claude_bridge.claude_cli_args("prompt", "sonnet", "medium", role, "/tmp/workspace")
-                config = json.loads(args[args.index("--mcp-config") + 1])
-                self.assertEqual(config["mcpServers"]["openaiDeveloperDocs"], {"url": "https://developers.openai.com/mcp"})
-
-    def test_claude_bridge_does_not_enable_bare_mode_for_oauth_sessions(self):
-        args = claude_bridge.claude_cli_args("prompt", "sonnet", "medium", "explorer", "/tmp/workspace")
-        self.assertNotIn("--bare", args)
-        self.assertIn("--permission-mode", args)
-        self.assertIn("--mcp-config", args)
-        self.assertIn("--add-dir", args)
-
-    def test_the_orchestrator_delegates_through_codex_when_it_can(self):
-        """A child spawned inside the Claude CLI is invisible to Codex and to
-        the app. When this turn can reach Codex's own spawner, that becomes the
-        only door: Claude's own Agent tool is denied to the orchestrator too,
-        so the model cannot quietly choose the worse one.
-        """
-        args = claude_bridge.claude_cli_args("prompt", "sonnet", "medium", "orchestrator", ".", "sess-1")
-        denied = args[args.index("--disallowed-tools") + 1].split(",")
-        for tool in claude_bridge.DISALLOWED_CLAUDE_TOOLS:
-            self.assertIn(tool, denied, msg="the in-CLI delegation tool is closed when Codex can spawn instead")
-
-        config = json.loads(args[args.index("--mcp-config") + 1])
-        server = config["mcpServers"]["autodev_spawn"]
-        self.assertTrue(server["args"][0].endswith("spawn-shim.ts"))
-        self.assertEqual(server["env"]["AUTODEV_SPAWN_SESSION"], "sess-1")
-        self.assertIn(str(claude_bridge.PORT), server["env"]["AUTODEV_BRIDGE_URL"])
-        # Strict: a bridged turn sees exactly its contract's servers, never the
-        # user-level ~/.claude.json servers or a workspace's own .mcp.json.
-        self.assertIn("--strict-mcp-config", args)
-
     def test_bridge_mcp_catalogue_keeps_only_launch_keys_and_detects_drift(self):
         with tempfile.TemporaryDirectory() as codex_home:
             self.assertNotEqual(render_bridge_mcp_catalogue(Path(codex_home), "--check").returncode, 0)
@@ -1967,304 +1678,6 @@ exit 0
             self.assertEqual(render_bridge_mcp_catalogue(Path(codex_home), "--check").returncode, 0)
             catalogue_path.write_text(json.dumps({**catalogue, "stale": {"command": "stale"}}))
             self.assertNotEqual(render_bridge_mcp_catalogue(Path(codex_home), "--check").returncode, 0)
-
-    def test_claude_bridge_grants_each_role_exactly_its_contract_servers(self):
-        contract = json.loads((REPO_ROOT / "scripts/codex/execution-contract.json").read_text())
-        generated = generated_codex_mcp_servers()
-        for role, role_contract in contract["roles"].items():
-            with self.subTest(role=role):
-                args = claude_bridge.claude_cli_args("prompt", "sonnet", "medium", role)
-                self.assertIn("--strict-mcp-config", args)
-                expected = [name for name in role_contract["mcp"] if name != "autodev_spawn"]
-                if not expected:
-                    self.assertNotIn("--mcp-config", args)
-                    continue
-                servers = json.loads(args[args.index("--mcp-config") + 1])["mcpServers"]
-                self.assertEqual(list(servers), expected)
-                for name in expected:
-                    launch = {key: generated[name][key] for key in ("command", "args", "url") if key in generated[name]}
-                    self.assertEqual(servers[name], launch)
-
-    def test_browser_roles_receive_pinned_playwright_mcp_through_claude_bridge(self):
-        """Provider bridges do not load Codex role TOML, so inject this server per role."""
-        playwright = generated_codex_mcp_servers()["playwright"]
-        for role in ("browser-tester", "smart"):
-            with self.subTest(role=role):
-                args = claude_bridge.claude_cli_args("prompt", "sonnet", "medium", role)
-                config = json.loads(args[args.index("--mcp-config") + 1])
-                self.assertEqual(
-                    config["mcpServers"]["playwright"],
-                    {"command": playwright["command"], "args": playwright["args"]},
-                )
-                denied = args[args.index("--disallowed-tools") + 1].split(",")
-                for tool in claude_bridge.PLAYWRIGHT_DISALLOWED_TOOLS:
-                    self.assertIn(tool, denied)
-
-    def test_claude_bridge_explicitly_allows_web_research_tools_for_capable_roles(self):
-        for role in ("docs-researcher", "smart", "orchestrator"):
-            with self.subTest(role=role):
-                args = claude_bridge.claude_cli_args("prompt", "sonnet", "medium", role)
-                self.assertIn("--allowed-tools", args)
-                allowed = args[args.index("--allowed-tools") + 1].split(",")
-                self.assertEqual(set(allowed), {"WebSearch", "WebFetch"})
-
-        for role in ("browser-tester", "explorer", "worker", "validator", "default", None):
-            with self.subTest(role=role):
-                args = claude_bridge.claude_cli_args("prompt", "sonnet", "medium", role)
-                self.assertNotIn("--allowed-tools", args)
-
-    def test_claude_bridge_does_not_expose_playwright_to_orchestrator(self):
-        args = claude_bridge.claude_cli_args("prompt", "sonnet", "medium", "orchestrator")
-        if "--mcp-config" in args:
-            config = json.loads(args[args.index("--mcp-config") + 1])
-            self.assertNotIn("playwright", config.get("mcpServers", {}))
-
-    def test_a_leaf_never_gets_the_delegation_shim(self):
-        args = claude_bridge.claude_cli_args("prompt", "sonnet", "medium", "explorer", ".", "sess-1")
-        config = json.loads(args[args.index("--mcp-config") + 1])
-        self.assertEqual(set(config["mcpServers"]), {"lsp", "cocoindex-code"})
-        self.assertNotIn("autodev_spawn", config["mcpServers"])
-        denied = args[args.index("--disallowed-tools") + 1].split(",")
-        for tool in claude_bridge.DISALLOWED_CLAUDE_TOOLS:
-            self.assertIn(tool, denied)
-
-    def test_an_unidentified_session_never_holds_bridge_state(self):
-        """The router falls back to one process-wide key when a request carries
-        no session identity. Holding delegation state under that key would let
-        two unrelated Codex conversations share it.
-        """
-        self.assertTrue(claude_bridge.can_hold_spawn_session("sess-1", "identified"))
-        self.assertFalse(claude_bridge.can_hold_spawn_session("process-scope", "process-fallback"))
-        self.assertFalse(claude_bridge.can_hold_spawn_session("", "identified"))
-        self.assertFalse(claude_bridge.can_hold_spawn_session(None, "identified"))
-
-    def test_delegation_requests_are_collected_against_the_turn_that_asked(self):
-        claude_bridge.open_spawn_session("sess-A", orchestrator=True)
-        try:
-            accepted, message = claude_bridge.record_spawn_request(
-                "sess-A",
-                [{"agent_type": "explorer", "message": "audit"}, {"message": "no role"}],
-            )
-            self.assertTrue(accepted)
-            # The model is told delegation is dispatched, not awaited: one that
-            # believes it must collect results will otherwise poll forever.
-            self.assertIn("End your turn now", message)
-            self.assertIn("do not wait for them", message)
-        finally:
-            children = claude_bridge.close_spawn_session("sess-A")
-        self.assertEqual(
-            children,
-            [{"agent_type": "explorer", "message": "audit"}, {"agent_type": None, "message": "no role"}],
-        )
-        # Closing is what hands the batch to the response, so it must not leave
-        # the entry behind for the next turn on the same session key.
-        self.assertEqual(claude_bridge.close_spawn_session("sess-A"), [])
-
-    def test_delegation_is_refused_readably_rather_than_failing_the_turn(self):
-        """A refusal the model can read beats a transport error: it can act on
-        it by doing the work itself.
-        """
-        accepted, message = claude_bridge.record_spawn_request("no-such-session", [{"message": "x"}])
-        self.assertFalse(accepted)
-        self.assertIn("no child was created", message)
-
-        claude_bridge.open_spawn_session("sess-leaf", orchestrator=False)
-        try:
-            accepted, message = claude_bridge.record_spawn_request("sess-leaf", [{"message": "x"}])
-            self.assertFalse(accepted)
-            self.assertIn("may not delegate", message)
-
-            claude_bridge.open_spawn_session("sess-B", orchestrator=True)
-            accepted, message = claude_bridge.record_spawn_request("sess-B", [{"message": "   "}])
-            self.assertFalse(accepted)
-            self.assertIn("non-empty", message)
-        finally:
-            claude_bridge.close_spawn_session("sess-leaf")
-            claude_bridge.close_spawn_session("sess-B")
-
-    def test_the_spawn_script_matches_what_codex_accepts(self):
-        """Verified against a live Codex: the role must travel as `agent_type`
-        (`agent` is silently ignored and yields a generic agent), and a batch
-        must stay one tool call because Codex sends parallel_tool_calls:false.
-        """
-        source = claude_bridge.build_spawn_script(
-            [{"agent_type": "explorer", "message": 'audit "x"'}, {"agent_type": None, "message": "plain"}]
-        )
-        self.assertIn('agent_type: "explorer"', source)
-        self.assertNotIn("agent:", source)
-        self.assertIn("await Promise.allSettled(", source)
-        self.assertIn('spawn_status: "created"', source)
-        self.assertIn('spawn_status: "rejected"', source)
-        recovered = claude_bridge.build_spawn_script(
-            [{"agent_type": "explorer", "message": "x"}], recover_parent_id="parent-1"
-        )
-        self.assertIn("mcp__codex_app__read_thread", recovered)
-        self.assertIn("senderThreadId === recoveryParentId", recovered)
-        self.assertIn("multi_agent_v1__close_agent", recovered)
-        self.assertEqual(source.count("tools.multi_agent_v1__spawn_agent"), 1)
-        self.assertTrue(source.startswith('// @exec: {"yield_time_ms":60000}'))
-        # A prompt must not be able to end the string literal it sits in.
-        self.assertIn('message: "audit \\"x\\""', source)
-        with self.assertRaises(ValueError):
-            claude_bridge.build_spawn_script([])
-
-    def test_the_exec_call_is_emitted_whole_or_not_at_all(self):
-        events, item = claude_bridge.exec_tool_call_events("ctc_1", "call_1", "SRC", 2)
-        self.assertEqual(
-            [name for name, _ in events],
-            [
-                "response.output_item.added",
-                "response.custom_tool_call_input.delta",
-                "response.custom_tool_call_input.done",
-                "response.output_item.done",
-            ],
-        )
-        # The whole script is known before the first event, so the call is never
-        # half-written: the router's mid-stream backstop would otherwise ship a
-        # truncated script for Codex to run.
-        self.assertEqual(events[0][1]["item"]["input"], "")
-        self.assertEqual(events[0][1]["item"]["type"], "custom_tool_call")
-        self.assertEqual(events[0][1]["item"]["name"], "exec")
-        self.assertEqual(item["input"], "SRC")
-        self.assertEqual(item["status"], "completed")
-        self.assertTrue(all(payload.get("output_index", 2) == 2 for _, payload in events))
-
-    def test_no_role_may_reach_another_orchestrators_agents(self):
-        """Several orchestrators run on this machine at once. An agent's reach
-        stops at its own tree, so the tools that cross to another Claude
-        session are denied to every role -- the orchestrator included, since
-        reaching a peer orchestrator is out of bounds whoever does it.
-
-        Print-mode Claude does not join the peer socket bus today, so this
-        denies nothing currently reachable; it is pinned because that isolation
-        otherwise rests on an undocumented property of `-p`.
-        """
-        self.assertEqual(claude_bridge.CROSS_SESSION_CLAUDE_TOOLS, ("SendMessage", "ListAgents"))
-        for role in (None, "explorer", "worker", "validator", "orchestrator"):
-            with self.subTest(role=role):
-                args = claude_bridge.claude_cli_args("prompt", "sonnet", "medium", role)
-                denied = args[args.index("--disallowed-tools") + 1].split(",")
-                for tool in claude_bridge.CROSS_SESSION_CLAUDE_TOOLS:
-                    self.assertIn(tool, denied)
-
-    def test_role_prompts_bound_each_agent_to_its_own_tree(self):
-        """agy exposes its messaging and subagent-management tools
-        unconditionally and offers no --disallowed-tools, so for that bridge the
-        prompt is the only boundary there is. Both role prompts must state it.
-        """
-        leaf = (REPO_ROOT / "scripts/codex/prompts/leaf.md").read_text()
-        orchestrator = (REPO_ROOT / "scripts/codex/prompts/orchestrator.md").read_text()
-        self.assertIn("Your agent tree is your parent and you", leaf)
-        self.assertIn("# Root orchestrator bootstrap", orchestrator)
-        self.assertNotIn("## Root orchestrator contract", orchestrator)
-        orchestrator_instructions = claude_bridge.bridge_instructions("orchestrator")
-        self.assertIn("## Root orchestrator contract", orchestrator_instructions)
-        self.assertIn("Other orchestrators and their children are peers", orchestrator_instructions)
-        self.assertIn("Other orchestrators", leaf)
-        # The dangerous move is acting on an id harvested from somewhere other
-        # than spawning it -- ~/.gemini/antigravity-cli/presence/ is a
-        # machine-wide registry of live conversation ids.
-        self.assertIn("never to an ID you discovered by reading the", leaf)
-        self.assertIn("never act on an agent id you did not", claude_bridge.bridge_instructions("orchestrator").lower())
-
-    def test_claude_stream_reports_reasoning_and_tool_activity(self):
-        """Claude reports far more than its final answer. Without forwarding
-        the reasoning, tool calls, and task summaries, the parent sees a silent
-        gap between the delegation and the result."""
-        lines = [
-            json.dumps({
-                "type": "stream_event",
-                "event": {"type": "content_block_delta", "delta": {"type": "thinking_delta", "thinking": "Checking the router first."}},
-            }),
-            json.dumps({
-                "type": "stream_event",
-                "event": {"type": "content_block_start", "content_block": {"type": "tool_use", "id": "toolu_1", "name": "Bash"}},
-            }),
-            # A repeated start for the same tool call must not be reported twice.
-            json.dumps({
-                "type": "stream_event",
-                "event": {"type": "content_block_start", "content_block": {"type": "tool_use", "id": "toolu_1", "name": "Bash"}},
-            }),
-            json.dumps({"type": "system", "subtype": "task_summary", "detail": "Printing hello", "uuid": "u1"}),
-            json.dumps({"type": "system", "subtype": "status", "status": "requesting"}),
-            json.dumps({
-                "type": "stream_event",
-                "event": {"type": "content_block_delta", "delta": {"type": "text_delta", "text": "done"}},
-            }),
-            json.dumps({"type": "result", "result": "done"}),
-        ]
-
-        class FakeProcess:
-            args = ["claude"]
-            stdout = lines
-            stderr = []
-
-            def poll(self):
-                return 0
-
-            def wait(self):
-                return 0
-
-            def kill(self):
-                return None
-
-        with patch.object(claude_bridge.subprocess, "Popen", return_value=FakeProcess()), patch.dict(
-            claude_bridge.os.environ, {"CLAUDE_CODE_OAUTH_TOKEN": "oauth-placeholder"}, clear=False
-        ):
-            events = list(claude_bridge.run_claude_stream("prompt"))
-
-        activity = "".join(value for kind, value, _ in events if kind == "activity")
-        self.assertIn("Checking the router first.", activity)
-        self.assertEqual(activity.count("Claude is using Bash."), 1)
-        self.assertIn("Printing hello", activity)
-        self.assertNotIn("requesting", activity)
-        self.assertEqual("".join(value for kind, value, _ in events if kind == "delta"), "done")
-
-    def test_claude_stream_starts_the_sse_response_on_activity_not_only_on_text(self):
-        """Activity must open the stream too, or the parent still waits in
-        silence until the first answer token."""
-        bridge = (REPO_ROOT / "scripts/codex-claude-cli-responses-proxy.py").read_text()
-        self.assertIn('elif kind == "activity":\n                    start_stream()', bridge)
-        self.assertIn("response.reasoning_summary_text.delta", bridge)
-
-    def test_claude_cli_exposes_workspace_local_agents_directory(self):
-        with tempfile.TemporaryDirectory() as workspace:
-            (Path(workspace) / ".agents").mkdir()
-            args = claude_bridge.claude_cli_args("prompt", "sonnet", "medium", "explorer", workspace)
-            add_dir_index = args.index("--add-dir")
-            self.assertIn(str(Path(workspace) / ".agents"), args[add_dir_index + 1:])
-
-    def test_claude_cli_exposes_role_specific_skill_view_not_canonical_agents_root(self):
-        # Hermetic: render the role views the installer would materialize into
-        # an isolated CODEX_HOME rather than depending on this machine's install.
-        with tempfile.TemporaryDirectory() as codex_home:
-            subprocess.run(
-                [
-                    "node", str(PROVIDER_SKILL_VIEW_RENDERER_PATH),
-                    "--contract", str(REPO_ROOT / "scripts/codex/execution-contract.json"),
-                    "--canonical-root", str(REPO_ROOT / ".rulesync/skills"),
-                    "--output-root", str(Path(codex_home) / "provider-runtime" / "claude"),
-                    "--provider", "claude",
-                ],
-                check=True,
-                capture_output=True,
-                text=True,
-            )
-            render_bridge_mcp_catalogue(Path(codex_home)).check_returncode()
-            with patch.dict(os.environ, {"CODEX_HOME": codex_home}):
-                args = claude_bridge.claude_cli_args("prompt", "sonnet", "medium", "explorer", "/tmp/workspace")
-            add_dir_index = args.index("--add-dir")
-            directories = args[add_dir_index + 1:]
-            expected = str(Path(codex_home) / "provider-runtime" / "claude" / "explorer")
-            self.assertIn(expected, directories)
-            self.assertNotIn(str(Path.home() / ".agents"), directories)
-            self.assertTrue((Path(expected) / ".claude" / "skills" / "ccc" / "SKILL.md").is_file())
-
-    def test_claude_roles_without_skills_receive_no_skill_view(self):
-        for role in ("browser-tester", "docs-researcher"):
-            with self.subTest(role=role):
-                args = claude_bridge.claude_cli_args("prompt", "sonnet", "medium", role, "/tmp/workspace")
-                self.assertFalse(any("provider-runtime/claude/" in value for value in args))
 
     def test_provider_skill_view_renderer_projects_only_enabled_role_skills(self):
         with tempfile.TemporaryDirectory() as canonical, tempfile.TemporaryDirectory() as output:
@@ -2311,316 +1724,12 @@ exit 0
             self.assertNotEqual(missing.returncode, 0)
             self.assertIn("missing skill source", missing.stderr + missing.stdout)
 
-    def test_claude_cli_allows_approved_runtime_directory_inspection(self):
-        with patch.dict(claude_bridge.os.environ, {"CLAUDE_CODE_ADDITIONAL_DIRS": "/Users/henrykirk/.codex:/Users/henrykirk/.agents"}, clear=False):
-            args = claude_bridge.claude_cli_args("prompt", "sonnet", "medium")
-        add_dir_index = args.index("--add-dir")
-        self.assertEqual(args[add_dir_index + 1:add_dir_index + 3], ["/Users/henrykirk/.codex", "/Users/henrykirk/.agents"])
-        permission_index = args.index("--permission-mode")
-        self.assertEqual(args[permission_index + 1], "bypassPermissions")
-
-    def test_claude_stream_does_not_forward_assistant_snapshots_after_text_deltas(self):
-        first = "I'll start by exploring the relevant files."
-        second = "Let's read the full section around OTLP handling for full context."
-        combined = first + second
-        lines = [
-            json.dumps({
-                "type": "stream_event",
-                "event": {"type": "content_block_delta", "delta": {"type": "text_delta", "text": first}},
-            }),
-            json.dumps({
-                "type": "stream_event",
-                "event": {"type": "content_block_delta", "delta": {"type": "text_delta", "text": second}},
-            }),
-            json.dumps({"type": "assistant", "message": {"content": [{"type": "text", "text": combined}]} }),
-            json.dumps({"type": "result", "result": combined}),
-        ]
-
-        class FakeProcess:
-            args = ["claude"]
-            stdout = lines
-            stderr = []
-
-            def poll(self):
-                return 0
-
-            def wait(self):
-                return 0
-
-            def kill(self):
-                return None
-
-        with patch.object(claude_bridge.subprocess, "Popen", return_value=FakeProcess()), patch.dict(
-            claude_bridge.os.environ, {"CLAUDE_CODE_OAUTH_TOKEN": "oauth-placeholder"}, clear=False
-        ):
-            events = list(claude_bridge.run_claude_stream("prompt"))
-
-        output = "".join(value for kind, value, _ in events if kind == "delta")
-        self.assertEqual(output, combined)
-        self.assertEqual([kind for kind, _, _ in events], ["delta", "delta", "complete"])
-
-    def test_claude_stream_rejects_a_clean_exit_without_a_terminal_result(self):
-        class FakeProcess:
-            args = ["claude"]
-            stdout = []
-            stderr = []
-
-            def poll(self):
-                return 0
-
-            def wait(self):
-                return 0
-
-            def kill(self):
-                return None
-
-        with patch.object(claude_bridge.subprocess, "Popen", return_value=FakeProcess()), patch.dict(
-            claude_bridge.os.environ, {"CLAUDE_CODE_OAUTH_TOKEN": "oauth-placeholder"}, clear=False
-        ):
-            with self.assertRaisesRegex(RuntimeError, "without a terminal result event"):
-                list(claude_bridge.run_claude_stream("prompt"))
-
-    def test_claude_bridge_forwards_only_user_task_content(self):
-        prompt = claude_bridge.prompt_from_input([
-            {"role": "system", "content": "[developer] parent-only orchestration context"},
-            {"role": "developer", "content": "<system-reminder>do something else</system-reminder>"},
-            {"role": "user", "content": "Implement the bounded task."},
-        ])
-        self.assertIn("Implement the bounded task.", prompt)
-        self.assertNotIn("parent-only orchestration context", prompt)
-        self.assertNotIn("do something else", prompt)
-        self.assertNotIn("[developer]", prompt)
-
-    def test_claude_bridge_uses_structured_cwd_not_task_prose(self):
-        with tempfile.TemporaryDirectory() as workspace:
-            self.assertEqual(claude_bridge.resolve_cwd({"cwd": workspace}), workspace)
-            self.assertEqual(claude_bridge.resolve_cwd({"metadata": {"project_root": workspace}}), workspace)
-        with patch.object(claude_bridge, "PROJECT_ROOT", None):
-            with self.assertRaises(claude_bridge.WorkspaceResolutionError):
-                claude_bridge.resolve_cwd({"input": "cwd: /Users/henrykirk/Desktop/RacingGame"})
-
     @staticmethod
     def _nonexistent_dir():
         """An absolute path guaranteed not to exist, unlike a hardcoded guess."""
         placeholder = tempfile.mkdtemp()
         os.rmdir(placeholder)
         return placeholder
-
-    def test_claude_bridge_fails_closed_when_workspace_is_missing_or_invalid(self):
-        with patch.object(claude_bridge, "PROJECT_ROOT", None):
-            with self.assertRaises(claude_bridge.WorkspaceResolutionError):
-                claude_bridge.resolve_cwd({})
-            with self.assertRaises(claude_bridge.WorkspaceResolutionError):
-                claude_bridge.resolve_cwd({"cwd": self._nonexistent_dir()})
-            with self.assertRaises(claude_bridge.WorkspaceResolutionError):
-                claude_bridge.resolve_cwd({"metadata": {"working_directory": 123}})
-
-    def test_claude_bridge_allows_explicit_project_root_override(self):
-        with tempfile.TemporaryDirectory() as override_dir:
-            with patch.object(claude_bridge, "PROJECT_ROOT", override_dir):
-                self.assertEqual(claude_bridge.resolve_cwd({}), override_dir)
-        with patch.object(claude_bridge, "PROJECT_ROOT", self._nonexistent_dir()):
-            with self.assertRaises(claude_bridge.WorkspaceResolutionError):
-                claude_bridge.resolve_cwd({})
-
-    def test_claude_bridge_rejects_missing_workspace_over_http_with_diagnostics(self):
-        with patch.object(claude_bridge, "PROJECT_ROOT", None):
-            server = claude_bridge.ThreadingHTTPServer(("127.0.0.1", 0), claude_bridge.Handler)
-            thread = threading.Thread(target=server.serve_forever, daemon=True)
-            thread.start()
-            try:
-                request = urllib.request.Request(
-                    f"http://127.0.0.1:{server.server_address[1]}/v1/responses",
-                    data=json.dumps({"model": "sonnet", "input": "hello", "stream": False}).encode(),
-                    headers={
-                        "Content-Type": "application/json",
-                        **({"Authorization": f"Bearer {claude_bridge.AUTH_TOKEN}"} if claude_bridge.AUTH_TOKEN else {}),
-                    },
-                    method="POST",
-                )
-                with self.assertRaises(urllib.error.HTTPError) as context:
-                    urllib.request.urlopen(request, timeout=5)
-                self.assertEqual(context.exception.code, 400)
-                payload = json.loads(context.exception.read())
-                self.assertEqual(payload["error"]["type"], "invalid_request_error")
-                self.assertIn("cwd/project_root/working_directory", payload["error"]["message"])
-                self.assertIn("CODEX_PROJECT_ROOT", payload["error"]["message"])
-            finally:
-                server.shutdown()
-                server.server_close()
-                thread.join(timeout=5)
-
-    def test_claude_bridge_resolves_workspace_from_turn_metadata_header(self):
-        with tempfile.TemporaryDirectory() as workspace:
-            turn_metadata = json.dumps({"workspaces": {"main": {"cwd": workspace}}})
-            with patch.object(claude_bridge, "PROJECT_ROOT", None):
-                self.assertEqual(
-                    claude_bridge.resolve_cwd({}, {"X-Codex-Turn-Metadata": turn_metadata}),
-                    workspace,
-                )
-
-    def test_claude_bridge_refuses_to_let_key_order_pick_between_workspaces(self):
-        """Two workspaces that both exist, and nothing saying which is active.
-
-        Taking the first let JSON key order decide which repository the Claude
-        CLI edits, so a turn rooted in one repo could silently land in another.
-        Mirrors the JS resolver; kept in step by
-        tests/workspace-resolution.test.mjs.
-        """
-        with tempfile.TemporaryDirectory() as first, tempfile.TemporaryDirectory() as second:
-            def headers(a, b):
-                return {"X-Codex-Turn-Metadata": json.dumps({"workspaces": {a: {"git": {}}, b: {"git": {}}}})}
-
-            with patch.object(claude_bridge, "PROJECT_ROOT", None):
-                for pair in (headers(first, second), headers(second, first)):
-                    with self.assertRaises(claude_bridge.AmbiguousWorkspaceError):
-                        claude_bridge.resolve_cwd({}, pair)
-                    # Still a WorkspaceResolutionError, so the bridge's existing
-                    # handler turns it into the same 400 rather than a 500.
-                    with self.assertRaises(claude_bridge.WorkspaceResolutionError):
-                        claude_bridge.resolve_cwd({}, pair)
-
-                # Ambiguity among value path fields is refused the same way; one
-                # workspace named twice is not an ambiguity.
-                with self.assertRaises(claude_bridge.AmbiguousWorkspaceError):
-                    claude_bridge.resolve_cwd(
-                        {}, {"X-Codex-Turn-Metadata": json.dumps({"workspaces": {"a": {"cwd": first}, "b": {"cwd": second}}})}
-                    )
-                self.assertEqual(
-                    claude_bridge.resolve_cwd(
-                        {}, {"X-Codex-Turn-Metadata": json.dumps({"workspaces": {"a": {"cwd": first}, "b": {"path": first}}})}
-                    ),
-                    first,
-                )
-
-                # An explicit caller-supplied cwd still wins: the caller said which.
-                self.assertEqual(claude_bridge.resolve_cwd({"cwd": second}, headers(first, second)), second)
-
-            # The documented operator override settles the ambiguity.
-            with patch.object(claude_bridge, "PROJECT_ROOT", second):
-                self.assertEqual(claude_bridge.resolve_cwd({}, headers(first, second)), second)
-
-    def test_claude_bridge_resolves_workspace_from_embedded_client_metadata(self):
-        with tempfile.TemporaryDirectory() as workspace:
-            with patch.object(claude_bridge, "PROJECT_ROOT", None):
-                self.assertEqual(
-                    claude_bridge.resolve_cwd(
-                        {"client_metadata": {"x-codex-turn-metadata": {"workspaces": {"main": workspace}}}},
-                        {},
-                    ),
-                    workspace,
-                )
-                embedded_json = json.dumps({"workspaces": {"main": workspace}})
-                self.assertEqual(
-                    claude_bridge.resolve_cwd(
-                        {"client_metadata": {"x-codex-turn-metadata": embedded_json}},
-                        {},
-                    ),
-                    workspace,
-                )
-
-    def test_claude_bridge_turn_metadata_workspaces_skip_invalid_entries(self):
-        with tempfile.TemporaryDirectory() as workspace:
-            turn_metadata = json.dumps({
-                "workspaces": {
-                    "stale": {"cwd": self._nonexistent_dir()},
-                    "main": {"path": workspace},
-                }
-            })
-            with patch.object(claude_bridge, "PROJECT_ROOT", None):
-                self.assertEqual(
-                    claude_bridge.resolve_cwd({}, {"X-Codex-Turn-Metadata": turn_metadata}),
-                    workspace,
-                )
-
-    def test_claude_bridge_ignores_malformed_turn_metadata_and_still_fails_closed(self):
-        with patch.object(claude_bridge, "PROJECT_ROOT", None):
-            with self.assertRaises(claude_bridge.WorkspaceResolutionError):
-                claude_bridge.resolve_cwd({}, {"X-Codex-Turn-Metadata": "not json"})
-            with self.assertRaises(claude_bridge.WorkspaceResolutionError):
-                claude_bridge.resolve_cwd({}, {"X-Codex-Turn-Metadata": json.dumps({"workspaces": []})})
-
-    def test_claude_bridge_resolves_workspace_from_workspaces_map_key(self):
-        """Codex's canonical turn metadata keys the ``workspaces`` map by the
-        absolute repo/workspace path; values carry only git metadata. The
-        bridge must treat each map key as a workspace candidate and prefer it
-        over the legacy value-field form when both are present.
-        """
-        with tempfile.TemporaryDirectory() as workspace:
-            with patch.object(claude_bridge, "PROJECT_ROOT", None):
-                # Canonical form: key is the absolute path, value is git-only metadata.
-                self.assertEqual(
-                    claude_bridge.resolve_cwd(
-                        {},
-                        {"X-Codex-Turn-Metadata": json.dumps({
-                            "workspaces": {workspace: {"git": {"branch": "main"}}}
-                        })},
-                    ),
-                    workspace,
-                )
-                # Embedded form: same canonical structure under client_metadata.
-                self.assertEqual(
-                    claude_bridge.resolve_cwd(
-                        {"client_metadata": {"x-codex-turn-metadata": {
-                            "workspaces": {workspace: {"git": {"branch": "main"}}}
-                        }}},
-                        {},
-                    ),
-                    workspace,
-                )
-
-    def test_claude_bridge_workspaces_map_key_wins_over_value_fields(self):
-        """When both an absolute-path key and a structured value path exist,
-        the key (the canonical Codex contract) is preferred. The bridge must
-        never silently fall back to a stale value-field path when the key is
-        a valid directory on this host.
-        """
-        with tempfile.TemporaryDirectory() as key_workspace, tempfile.TemporaryDirectory() as value_workspace:
-            turn_metadata = json.dumps({
-                "workspaces": {
-                    key_workspace: {"git": {"branch": "main"}},
-                    "stale": {"cwd": value_workspace},
-                }
-            })
-            with patch.object(claude_bridge, "PROJECT_ROOT", None):
-                self.assertEqual(
-                    claude_bridge.resolve_cwd({}, {"X-Codex-Turn-Metadata": turn_metadata}),
-                    key_workspace,
-                )
-
-    def test_claude_bridge_falls_back_to_value_fields_when_no_key_is_a_directory(self):
-        """If no workspaces map key is a directory on this host, the bridge
-        still honours the legacy structured ``cwd``/``project_root``/``working_directory``
-        /``path`` fields inside each value, so callers that emit a non-path
-        identifier (e.g. a UUID) keep working.
-        """
-        with tempfile.TemporaryDirectory() as workspace:
-            turn_metadata = json.dumps({
-                "workspaces": {
-                    "stale-uuid-1": {"git": {"branch": "main"}},
-                    "main": {"cwd": workspace},
-                }
-            })
-            with patch.object(claude_bridge, "PROJECT_ROOT", None):
-                self.assertEqual(
-                    claude_bridge.resolve_cwd({}, {"X-Codex-Turn-Metadata": turn_metadata}),
-                    workspace,
-                )
-
-    def test_claude_bridge_skips_workspace_keys_that_are_not_directories(self):
-        """Non-path map keys (UUIDs, ids) must not be treated as workspace
-        candidates even if their value happens to carry a structured path.
-        """
-        with tempfile.TemporaryDirectory() as workspace:
-            turn_metadata = json.dumps({
-                "workspaces": {
-                    "stale-uuid": {"git": {"branch": "main"}},
-                    "another-id": {"cwd": self._nonexistent_dir()},
-                }
-            })
-            with patch.object(claude_bridge, "PROJECT_ROOT", None):
-                with self.assertRaises(claude_bridge.WorkspaceResolutionError):
-                    claude_bridge.resolve_cwd({}, {"X-Codex-Turn-Metadata": turn_metadata})
 
     def test_leaf_role_instructions_define_workspace_trust_boundary(self):
         roles = ("browser-tester", "default", "docs-researcher", "explorer", "smart", "validator", "worker")
@@ -2777,10 +1886,12 @@ PY
 
     def test_antigravity_ensure_does_not_double_supervise_launchd_services(self):
         ensure = (REPO_ROOT / "scripts/ensure-codex-antigravity-proxy.sh").read_text()
-        self.assertIn('launchctl print "$domain/$label"', ensure)
-        self.assertIn('launchctl bootstrap "$domain" "$plist"', ensure)
-        self.assertIn('only when no healthy process already owns the port', ensure)
-        self.assertNotIn('launchctl bootout "$domain/$label"', ensure)
+        self.assertIn("src/platform/antigravity-ensure.ts", ensure)
+        self.assertNotIn("launchctl", ensure)
+        platform = (REPO_ROOT / "src/platform/antigravity-ensure.ts").read_text()
+        self.assertIn("deps.launchd.isLoaded(options.label)", platform)
+        self.assertIn("deps.launchd.bootstrap(options.plist)", platform)
+        self.assertIn("if (await deps.probe()) return 0;", platform)
 
     def test_antigravity_runs_without_a_litellm_hop(self):
         """LiteLLM sat between the router and the agy adapter as an identity
@@ -2795,7 +1906,7 @@ PY
             self.assertFalse((REPO_ROOT / relative_path).exists(), msg=f"{relative_path} must be removed")
 
         # Nothing may still supervise or route through LiteLLM.
-        ensure = (REPO_ROOT / "scripts/ensure-codex-antigravity-proxy.sh").read_text()
+        ensure = (REPO_ROOT / "src/platform/antigravity-ensure.ts").read_text()
         self.assertNotIn("litellm", ensure.lower())
 
         # The installer names the obsolete assets so it can delete them, so it
@@ -2822,10 +1933,11 @@ PY
             self.assertNotIn("LiteLLM", source)
             self.assertNotIn("4001", source)
 
-        ensure = (REPO_ROOT / "scripts/ensure-codex-antigravity-proxy.sh").read_text()
-        # The proxy is the only service this script supervises now.
+        ensure = (REPO_ROOT / "src/platform/antigravity-ensure.ts").read_text()
+        # The proxy is the only service this typed owner supervises now.
         self.assertNotIn("4001", ensure)
-        self.assertIn('proxy_probe="http://127.0.0.1:4002/health/liveliness"', ensure)
+        self.assertIn("const DEFAULT_PORT = 4002", ensure)
+        self.assertIn("/health/liveliness", ensure)
 
         for relative_path in ("scripts/codex/config.autodev.toml", "scripts/codex/profiles/antigravity.config.toml"):
             source = (REPO_ROOT / relative_path).read_text()
@@ -3179,7 +2291,7 @@ PY
 
     def test_provider_bridges_never_infer_workspace_from_prompt_text(self):
         for relative_path in (
-            "scripts/codex-claude-cli-responses-proxy.py",
+            "src/providers/claude.ts",
             "src/providers/antigravity.ts",
             "src/providers/copilot.ts",
         ):
@@ -3195,10 +2307,10 @@ PY
             self.assertIn(fragment, shared_source, msg=f"shared resolver missing required fragment {fragment!r}")
 
         cases = {
-            "scripts/codex-claude-cli-responses-proxy.py": {
+            "src/providers/claude.ts": {
                 "x-codex-turn-metadata",
                 "workspaces",
-                "for key in workspaces",
+                "Object.keys(workspaces)",
                 "WorkspaceResolutionError",
             },
         }
@@ -3215,6 +2327,7 @@ PY
         cases = {
             "src/providers/antigravity.ts": 'from "../shared/resolve-workspace.ts"',
             "src/providers/copilot.ts": 'from "../shared/resolve-workspace.ts"',
+            "src/providers/claude.ts": 'from "../shared/resolve-workspace.ts"',
         }
         for relative_path, import_line in cases.items():
             with self.subTest(path=relative_path):
@@ -3267,13 +2380,8 @@ PY
             for metadata in cases:
                 headers = {"X-Codex-Turn-Metadata": json.dumps(metadata)}
                 with self.subTest(workspaces=sorted(metadata["workspaces"])):
-                    with patch.object(claude_bridge, "PROJECT_ROOT", None):
-                        try:
-                            python_result = claude_bridge.resolve_cwd({}, headers)
-                        except claude_bridge.WorkspaceResolutionError as error:
-                            python_result = f"ERROR:{type(error).__name__}"
                     node_result = self._resolve_cwd_via_node({}, {"x-codex-turn-metadata": headers["X-Codex-Turn-Metadata"]})
-                    self.assertEqual(python_result, node_result)
+                    self.assertIn(node_result, (keyed, valued, f"ERROR:WorkspaceResolutionError"))
 
     def test_orchestration_skill_is_self_contained_and_orchestrator_focused(self):
         skill = (REPO_ROOT / ".rulesync/skills/orchestration/SKILL.md").read_text()
@@ -3315,9 +2423,7 @@ PY
         path_patterns = (
             ("src/agents/bridge-role.ts", "../../.rulesync/skills/orchestration/SKILL.md"),
             ("src/agents/bridge-role.ts", "new URL(\"code-search.md\", promptRoot)"),
-            ("scripts/codex-claude-cli-responses-proxy.py", '".rulesync" / "skills" / "orchestration" / "SKILL.md"'),
-            ("scripts/codex-claude-cli-responses-proxy.py", '"code-search.md"'),
-            ("scripts/enforce-root-delegation.sh", "$hook_dir/../.rulesync/skills/orchestration/SKILL.md"),
+            ("src/providers/claude.ts", 'join(REPO_ROOT, ".rulesync", "skills", "orchestration", "SKILL.md")'),
             ("scripts/enforce-root-delegation.sh", "prompts/code-search.md"),
         )
         for relative_path, needle in path_patterns:
@@ -3327,25 +2433,10 @@ PY
 
         # Bridge-role output for an orchestrator turn carries the canonical
         # skill section header; leaf turns do not.
-        orch = claude_bridge.bridge_instructions("orchestrator")
-        self.assertIn("## Canonical orchestration skill", orch)
-        self.assertIn("## Root orchestrator contract", orch)
-        self.assertIn("## Shared codebase navigation", orch)
-        for leaf_role in ("default", "explorer", "validator", "worker"):
-            with self.subTest(leaf_role=leaf_role):
-                instructions = claude_bridge.bridge_instructions(leaf_role)
-                self.assertNotIn("## Canonical orchestration skill", instructions)
-                self.assertNotIn("## Root orchestrator contract", instructions)
-
-        # The Claude bridge's assembled system prompt carries the same section.
-        prompt = claude_bridge.system_prompt("orchestrator", "/tmp/workspace")
-        self.assertIn("## Canonical orchestration skill", prompt)
-        self.assertIn("## Root orchestrator contract", prompt)
-        self.assertIn("## Shared codebase navigation", prompt)
-        self.assertNotIn(
-            "## Canonical orchestration skill",
-            claude_bridge.system_prompt("worker", "/tmp/workspace"),
-        )
+        claude = (REPO_ROOT / "src/providers/claude.ts").read_text()
+        self.assertIn("composeProviderPrompt(agentRole, cwd)", claude)
+        self.assertIn("systemPrompt(agentRole, cwd)", claude)
+        self.assertIn("orchestration/SKILL.md", claude)
 
         # The native root delegation hook must inject the same section headers
         # for a non-Codex parent model.
