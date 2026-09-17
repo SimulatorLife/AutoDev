@@ -1851,7 +1851,7 @@ and Antigravity their own subagents -- not a model completion:
 | Bridge | Authenticates as |
 | --- | --- |
 | `codex-claude-cli-responses-proxy.py` | the `claude` CLI's Claude Code OAuth subscription. `claude_environment()` **removes** `ANTHROPIC_API_KEY` and `ANTHROPIC_AUTH_TOKEN` from the child environment so the CLI cannot silently fall back to metered API billing. |
-| `codex-antigravity-cli-responses-proxy.mjs` | the `agy` CLI's Antigravity subscription. `ensure-codex-antigravity-proxy.sh` refuses to start unless `useAiCredits=false` and `useG1Credits=false`. |
+| `src/providers/antigravity.ts` | the `agy` CLI's Antigravity subscription. `ensure-codex-antigravity-proxy.sh` refuses to start unless `useAiCredits=false` and `useG1Credits=false`. |
 | `src/providers/copilot.ts` | the `copilot` CLI's own login. |
 | `src/providers/minimax.ts` | a plain `MINIMAX_API_KEY`; no subprocess. |
 

@@ -2,7 +2,7 @@
 
 ## Migration progress — 2026-09-17
 
-The migration remains intentionally behavior-preserving. The shared-runtime spawn/state/MCP pass, router HTTP/proxy decomposition, and the first provider bridge conversion are now landed; the remaining provider, installer, and test-stack migrations continue.
+The migration remains intentionally behavior-preserving. The shared-runtime spawn/state/MCP pass, router HTTP/proxy decomposition, and the MiniMax, Copilot, and Antigravity provider bridge conversions are now landed; the remaining Claude, installer, and test-stack migrations continue.
 
 ### Completed
 
@@ -25,11 +25,12 @@ The migration remains intentionally behavior-preserving. The shared-runtime spaw
 - Router HTTP routing, workspace/session resolution, status aggregation, agent-event ingestion, upstream proxying, retry/fallback, and exhaustion diagnostics now live in `src/router/http.ts` and `src/router/proxy.ts`; `scripts/codex-model-router.mjs` is a concise executable/re-export entrypoint. Dedicated native TypeScript proxy and HTTP tests cover the extracted contracts.
 - The MiniMax boundary adapter now lives in `src/providers/minimax.ts` with strict native-TypeScript checking. Its header allowlist, `client_metadata` privacy boundary, freeform `exec` coercion, streaming rewrite, and tool/activity/MCP telemetry are unchanged; workstation installation, launchd service ownership, and CI now deploy/execute the typed module directly, and the obsolete `.mjs` entrypoint is deleted.
 - The Copilot Responses bridge now lives in `src/providers/copilot.ts` under strict native-TypeScript checking. Its CLI-backed Responses, MCP, skill-read, tool-outcome, provider-limit, and activity telemetry boundaries are behavior-preserving; the installer deploys the typed module directly, stale `.mjs` copies are removed, and the obsolete `.mjs` entrypoint is deleted.
+- The Antigravity Responses bridge now lives in `src/providers/antigravity.ts` under strict native-TypeScript checking. Its CLI-backed Responses, workspace/permission handling, role-specific MCP and skill exposure, tool outcomes, provider limits, activity, and bridge-native spawn accounting are preserved; installer/runtime projections deploy the typed module directly, stale `.mjs` copies are removed, and the obsolete `.mjs` entrypoint is deleted.
 - The provider-limit contract suite and MiniMax Responses boundary suite now run as native TypeScript `node:test` files, preserving their cross-language vocabulary and frozen adapter assertions without duplicate JavaScript test entrypoints.
 
 ### Current findings and constraints
 
-- Remaining provider bridges are still legacy `.mjs`/Python implementations for Antigravity and Claude; the MiniMax and Copilot adapters now live under `src/providers/`. The router entrypoint remains a compatibility-preserving `.mjs` executable while its retained implementation is typed.
+- The Claude bridge remains the only remaining legacy provider implementation (Python); the MiniMax, Copilot, and Antigravity adapters now live under `src/providers/`. The router entrypoint remains a compatibility-preserving `.mjs` executable while its retained implementation is typed.
 - Installer, reconciliation, hook, telemetry, and `ensure-*` behavior still has substantial shell/legacy runtime ownership.
 - First-party tests are still split between JavaScript, Python, and TypeScript. The inventory gate is present but intentionally reports the remaining legacy files until their replacements and equivalent tests land.
 - Canonical declarative content remains under `scripts/codex/`; moving it to the target `agents/` and `config/` layout must be coordinated with installer/runtime path changes.
@@ -50,11 +51,11 @@ The migration remains intentionally behavior-preserving. The shared-runtime spaw
 
 Step 1 — router HTTP and upstream proxy decomposition — is complete.
 
-2. Convert the remaining provider bridges (Antigravity, then Claude) so all providers use the shared contracts; MiniMax and Copilot are complete typed slices.
+2. Convert the remaining Claude bridge so all providers use the shared contracts; MiniMax, Copilot, and Antigravity are complete typed slices.
 3. Move installer, reconciliation, hook, and `ensure-*` behavior behind the typed CLI/platform modules.
 4. Convert remaining JavaScript/Python tests to `node:test`, remove obsolete entrypoints, and enable the inventory gate as a required check.
 
-For the current provider and test-stack slices, `pnpm typecheck` passes; the Copilot bridge, MCP, role, and telemetry focused suites report 64 passing tests, and the MiniMax boundary contract is now a native TypeScript test. Router HTTP/auth and proxy-header contract tests are isolated from ambient credentials, and persistence scheduling waits for the debounced write rather than relying on a fixed event-loop delay. `pnpm run validate:inventory` remains expected to fail until the remaining migration order above is completed.
+For the current provider and test-stack slices, `pnpm typecheck` passes; `pnpm test` reports 691 passing tests, 0 failures, and 1 skip, while `pnpm run test:python` reports 280 passing tests and 1 skip. The focused provider, MCP, role, telemetry, and native TypeScript boundary suites pass. Router HTTP/auth and proxy-header contract tests are isolated from ambient credentials, and persistence scheduling waits for the debounced write rather than relying on a fixed event-loop delay. `pnpm run validate:inventory` remains expected to fail until the remaining migration order above is completed.
 
 ## Decision
 

@@ -3103,7 +3103,7 @@ PY
         # now chosen from the failure: agy reports a usage limit as an error
         # string like any other failure, and a 429 carrying the limit headers is
         # the difference between the router guessing and the router knowing.
-        self.assertIn('classifyCliLimit(message, error.exitCode)', proxy)
+        self.assertIn('classifyCliLimit(message, (error as AgyFailure | undefined)?.exitCode ?? null)', proxy)
         self.assertIn('? 429 : 503', proxy)
         self.assertIn('sendJson(response, status, body, headers)', proxy)
         self.assertIn('limitResponseHeaders(limit)', proxy)
@@ -3213,7 +3213,7 @@ PY
         # shared/resolve-workspace.ts module is one level shallower than a
         # scripts/*.mjs bridge's import of the same shared module.
         cases = {
-            "src/providers/antigravity.ts": 'from "../src/shared/resolve-workspace.ts"',
+            "src/providers/antigravity.ts": 'from "../shared/resolve-workspace.ts"',
             "src/providers/copilot.ts": 'from "../shared/resolve-workspace.ts"',
         }
         for relative_path, import_line in cases.items():

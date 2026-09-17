@@ -50,7 +50,7 @@ Current source/runtime paths contain substantial custom infrastructure, includin
 - `codex-model-router.mjs`
 - `codex-model-router.test.mjs`
 - `codex-claude-cli-responses-proxy.py`
-- `codex-antigravity-cli-responses-proxy.mjs`
+- `src/providers/antigravity.ts`
 - `src/providers/copilot.ts`
 - `src/providers/minimax.ts`
 - `codex-model-router-dashboard.html`
@@ -2238,6 +2238,25 @@ implementation/runtime ownership migration only; the provider CLI is retained
 per the Phase 4 policy and supportability decision.
 
 
+### Completed provider bridge conversion — Antigravity (2026-09-17)
+
+The Antigravity CLI remains the supported subscription transport because the
+Phase 4 policy gate found no supported subscription-billed non-CLI interface.
+Its AutoDev Responses boundary has nevertheless moved to the typed runtime:
+`scripts/codex-antigravity-cli-responses-proxy.mjs` was replaced by the
+strictly checked `src/providers/antigravity.ts`. The conversion preserves the
+CLI invocation, workspace and permission boundaries, role-specific MCP and
+skill exposure, Responses streaming and continuation behavior, provider-limit
+handling, activity/tool telemetry, and bridge-native spawn-session accounting.
+
+The installer manifest deploys the typed module directly, the launch wrapper
+executes the installed TypeScript source, and reconciliation removes stale
+`.mjs` copies. The frozen offline Antigravity Responses contract and dedicated
+bridge-delegation, MCP-scope, role, telemetry, installer, and policy tests now
+exercise the typed path. This is an implementation/runtime ownership migration
+only; it does not reopen the closed OAuth-native provider retirement gate.
+
+
 ## Phase 6 — Shrink the AutoDev router around retained semantics
 
 Rulesync hook declaration ownership is complete: `.rulesync/hooks.jsonc` is the
@@ -2255,14 +2274,15 @@ and exhaustion diagnostics retain their existing contracts. The legacy
 re-export entrypoint; provider policy, cooldowns, telemetry, and lifecycle
 ownership remain explicit typed modules. Phase 6 remains in progress because
 provider transport migrations and any future deletion still require parity
-proof. The first provider implementation slices are complete: MiniMax runs from
-`src/providers/minimax.ts` and Copilot runs from `src/providers/copilot.ts`, while
+proof. The provider implementation slices are complete for MiniMax, Copilot, and
+Antigravity: they run from `src/providers/minimax.ts`,
+`src/providers/copilot.ts`, and `src/providers/antigravity.ts`, while
 their retained boundary responsibilities remain outside the router. The obsolete
 Copilot `.mjs` implementation was deleted after its frozen Responses, MCP,
 skill-read, tool-outcome, limit, and activity telemetry contracts passed through
 the typed module; installer/runtime projections now deploy the typed source
-directly and remove stale `.mjs` copies. Antigravity and Claude remain the
-remaining provider bridge conversions.
+directly and remove stale `.mjs` copies. Claude remains the only remaining
+provider bridge conversion.
 
 After successful provider transport migrations, separate router responsibilities into:
 
