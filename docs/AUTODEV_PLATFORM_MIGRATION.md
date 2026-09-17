@@ -2296,6 +2296,19 @@ locking, readiness, fallback, PID safety, and duplicate detection. The typed
 owner retains the ensure hook's best-effort Copilot side effect through
 `src/platform/copilot-ensure.ts`, while `scripts/ensure-codex-model-router.sh`
 remains unchanged as the rollback baseline.
+The provider lifecycle slice is now typed as well. Claude and MiniMax
+model-gated ensure decisions live in `src/platform/claude-ensure.ts` and
+`src/platform/minimax-ensure.ts`; Copilot's typed owner is now an executable
+boundary. The corresponding `scripts/ensure-codex-{claude,minimax,copilot}-*`
+files are process-dispatch shims only, and the MiniMax `--daemon` launchd path
+executes `src/providers/minimax.ts` directly so launchd supervises the server
+rather than a short-lived ensure process. `src/hooks/subagent-start.ts` calls
+all three typed owners directly in a fail-closed sequence, while the existing
+Antigravity owner remains the same typed path. Native TypeScript lifecycle
+contract tests cover model gating, credential/CLI checks, launchd adoption,
+private fallback behavior, and the no-duplicate invariant. This removes
+provider policy and readiness logic from the subagent hook without changing
+provider transports or the closed OAuth retirement gates.
 
 **Status (2026-09-17) — cross-provider orchestrator delegation.** The
 execution contract now records an explicit provider `delegation` mode instead

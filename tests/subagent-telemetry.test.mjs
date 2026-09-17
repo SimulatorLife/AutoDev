@@ -3,6 +3,7 @@ import { execFile } from "node:child_process";
 import { createServer } from "node:http";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import test from "node:test";
@@ -993,7 +994,7 @@ test("resolveSkillReadReporter posts skill_used with the SKILL_READ_SOURCE tag a
 });
 
 test("the skill-read telemetry hook dedupes per turn and emits one skill_used per skill", async () => {
-  const tempHome = await import("node:fs/promises").then(({ mkdtemp, rm }) => mkdtemp(`${import.meta.dirname}/skill-read-home-`).then(async (dir) => ({ dir, rm })));
+  const tempHome = await import("node:fs/promises").then(({ mkdtemp, rm }) => mkdtemp(join(tmpdir(), "autodev-skill-read-home-")).then(async (dir) => ({ dir, rm })));
   process.env.HOME = tempHome.dir;
   await import("node:fs/promises").then(({ mkdir }) => mkdir(join(tempHome.dir, ".agents", "skills"), { recursive: true }));
   // Force the hook to read fresh roots via a stable repo root.

@@ -14,7 +14,8 @@ const PROXY = new URL("../src/providers/minimax.ts", import.meta.url).pathname;
 
 test("the MiniMax proxy is an AutoDev-tracked source, not an inline heredoc", () => {
   const ensure = read("scripts/ensure-codex-minimax-proxy.sh");
-  assert.match(ensure, /node_bin.*proxy_script|nohup "\$node_bin" "\$proxy_script"/s);
+  assert.match(ensure, /src\/providers\/minimax\.ts/);
+  assert.match(ensure, /src\/platform\/minimax-ensure\.ts/);
   assert.match(ensure, /src\/providers\/minimax\.ts/);
   // A heredoc'd server cannot be syntax-checked, tested, or drift-detected as
   // a source of its own, which is what made this proxy look externally owned.

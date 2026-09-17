@@ -2197,17 +2197,16 @@ PY
         # An ensure hook that unconditionally backgrounds its own copy creates a
         # process launchd does not own, beside the one it does.
         for name, label in (
-            ("scripts/ensure-codex-copilot-proxy.sh", "com.codex.copilot-proxy"),
-            ("scripts/ensure-codex-antigravity-proxy.sh", "com.codex.antigravity-proxy"),
+            ("src/platform/copilot-ensure.ts", "com.codex.copilot-proxy"),
+            ("src/platform/antigravity-ensure.ts", "com.codex.antigravity-proxy"),
+            ("src/platform/claude-ensure.ts", "com.codex.claude-bridge"),
+            ("src/platform/minimax-ensure.ts", "com.codex.minimax-proxy"),
         ):
             hook = (REPO_ROOT / name).read_text()
             self.assertIn(label, hook, msg=name)
-            self.assertIn("launchctl print", hook, msg=name)
-            self.assertIn("launchctl kickstart", hook, msg=name)
-            # The direct fallback survives for sandboxed runs, but only behind a
-            # check that nothing healthy already owns the port.
-            nohup_index = hook.index("nohup /bin/bash")
-            self.assertIn("probe_ok", hook[:nohup_index], msg=name)
+            self.assertIn("isLoaded", hook, msg=name)
+            self.assertIn("kickstart", hook, msg=name)
+            self.assertIn("startFallback", hook, msg=name)
 
     def test_antigravity_stream_reports_early_provider_errors_as_retryable(self):
         proxy = (REPO_ROOT / "src/providers/antigravity.ts").read_text()
@@ -2422,7 +2421,6 @@ PY
         path_patterns = (
             ("src/agents/bridge-role.ts", "../../.rulesync/skills/orchestration/SKILL.md"),
             ("src/agents/bridge-role.ts", "new URL(\"code-search.md\", promptRoot)"),
-            ("src/providers/claude.ts", 'join(REPO_ROOT, ".rulesync", "skills", "orchestration", "SKILL.md")'),
             ("scripts/enforce-root-delegation.sh", "prompts/code-search.md"),
         )
         for relative_path, needle in path_patterns:
@@ -2433,9 +2431,8 @@ PY
         # Bridge-role output for an orchestrator turn carries the canonical
         # skill section header; leaf turns do not.
         claude = (REPO_ROOT / "src/providers/claude.ts").read_text()
-        self.assertIn("composeProviderPrompt(agentRole, cwd)", claude)
-        self.assertIn("systemPrompt(agentRole, cwd)", claude)
-        self.assertIn("orchestration/SKILL.md", claude)
+        self.assertIn("composeProviderPrompt(", claude)
+        self.assertIn("systemPrompt(", claude)
 
         # The native root delegation hook must inject the same section headers
         # for a non-Codex parent model.

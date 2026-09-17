@@ -1,11 +1,11 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 import { createSessionStart } from '../../src/hooks/session-start.ts';
 import type { RouterEnsureDeps, RouterEnsureOptions, RouterEnsureResult } from '../../src/platform/router-ensure.ts';
-import { runSubagentStart } from '../../src/hooks/subagent-start.ts';
+import { createSubagentStart } from '../../src/hooks/subagent-start.ts';
 import { runRootDelegation } from '../../src/hooks/root-delegation.ts';
 
 function withCodexHome<T>(callback: (home: string) => T): T {
@@ -17,12 +17,6 @@ function withCodexHome<T>(callback: (home: string) => T): T {
     if (previous === undefined) delete process.env.CODEX_HOME; else process.env.CODEX_HOME = previous;
     rmSync(home, { recursive: true, force: true });
   }
-}
-
-function hook(home: string, name: string, body: string): void {
-  mkdirSync(join(home, 'hooks'), { recursive: true });
-  const path = join(home, 'hooks', name);
-  writeFileSync(path, `#!/bin/sh\n${body}\n`);
 }
 
 test('session-start delegates the typed ensure runner and preserves a healthy status', async () => withCodexHome(async (home) => {
@@ -49,12 +43,20 @@ test('session-start surfaces the typed exit code from the ensure runner', async 
   assert.equal(await run(Buffer.from('{}')), 1);
 });
 
-test('subagent-start runs each ensure hook once and fails closed', () => withCodexHome((home) => {
-  for (const name of ['ensure-codex-claude-bridge.sh', 'ensure-codex-minimax-proxy.sh', 'ensure-codex-antigravity-proxy.sh']) {
-    hook(home, name, `printf '%s\\n' ${name} >> "$CODEX_HOME/subagent-hooks"`);
-  }
-  assert.equal(runSubagentStart(Buffer.from('{}')), 0);
-}));
+test('subagent-start calls typed provider owners in order and fails closed', async () => {
+  const calls: string[] = [];
+  const run = createSubagentStart({
+    claude: async (input) => { calls.push(`claude:${input}`); return 0; },
+    minimax: async (input) => { calls.push(`minimax:${input}`); return 0; },
+    antigravity: async (input) => { calls.push(`antigravity:${input}`); return 0; },
+  });
+  assert.equal(await run(Buffer.from('{\"model\":\"MiniMax-M3\"}')), 0);
+  assert.deepEqual(calls, [
+    'claude:{\"model\":\"MiniMax-M3\"}',
+    'minimax:{\"model\":\"MiniMax-M3\"}',
+    'antigravity:{\"model\":\"MiniMax-M3\"}',
+  ]);
+});
 
 test('root-delegation skips configured leaf models', async () => {
   assert.equal(await runRootDelegation('{"model":"autodev/worker"}'), 0);

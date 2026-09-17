@@ -21,43 +21,53 @@ test.after(async () => {
 });
 const PROXY = join(REPO_ROOT, "src/providers/copilot.ts");
 const CONTRACT_PATH = join(REPO_ROOT, "tests/fixtures/contracts/copilot-responses-contract.json");
-const contract = JSON.parse(await readFile(CONTRACT_PATH, "utf8"));
+
+type JsonRecord = Record<string, any>;
+type ContractCase = JsonRecord & { cli: JsonRecord; request?: JsonRecord; expected: JsonRecord };
+type Contract = { schema: string; cases: Record<string, ContractCase> };
+
+const contract = JSON.parse(await readFile(CONTRACT_PATH, "utf8")) as Contract;
 const cases = Object.entries(contract.cases);
 
-function replaceTokens(value) {
+function replaceTokens(value: any): any {
   if (typeof value === "string") return value.replaceAll("<REPO_ROOT>", REPO_ROOT);
   if (Array.isArray(value)) return value.map(replaceTokens);
   if (value && typeof value === "object") return Object.fromEntries(Object.entries(value).map(([key, nested]) => [key, replaceTokens(nested)]));
   return value;
 }
 
-function freePort() {
+function freePort(): Promise<number> {
   return new Promise((resolvePort, reject) => {
     const server = createServer();
     server.once("error", reject);
     server.listen(0, "127.0.0.1", () => {
-      const port = server.address().port;
+      const address = server.address();
+      if (!address || typeof address === "string") {
+        reject(new Error("test server did not expose a TCP address"));
+        return;
+      }
+      const port = address.port;
       server.close((error) => error ? reject(error) : resolvePort(port));
     });
   });
 }
 
-function waitForListening(child) {
+function waitForListening(child: any): Promise<void> {
   return new Promise((resolveListening, reject) => {
     let stderr = "";
     const timer = setTimeout(() => reject(new Error(`proxy did not start: ${stderr}`)), 5000);
-    child.stderr.on("data", (chunk) => {
+    child.stderr.on("data", (chunk: Buffer | string) => {
       stderr += chunk.toString();
       if (stderr.includes("Copilot Responses proxy listening")) {
         clearTimeout(timer);
         resolveListening();
       }
     });
-    child.once("error", (error) => {
+    child.once("error", (error: Error) => {
       clearTimeout(timer);
       reject(error);
     });
-    child.once("exit", (code, signal) => {
+    child.once("exit", (code: number | null, signal: NodeJS.Signals | null) => {
       if (code !== null) {
         clearTimeout(timer);
         reject(new Error(`proxy exited before listening (${code}/${signal}): ${stderr}`));
@@ -66,17 +76,17 @@ function waitForListening(child) {
   });
 }
 
-function parseSse(text) {
+function parseSse(text: string): Array<{ event: string; data: any }> {
   return text.trimEnd().split("\n\n").filter(Boolean).map((chunk) => {
     if (chunk === "data: [DONE]") return { event: "[DONE]", data: null };
     const lines = chunk.split("\n");
-    const event = lines.find((line) => line.startsWith("event: "))?.slice(7);
+    const event = lines.find((line) => line.startsWith("event: "))?.slice(7) ?? "";
     const data = lines.find((line) => line.startsWith("data: "))?.slice(6);
     return { event, data: data ? JSON.parse(data) : null };
   });
 }
 
-function scrub(value) {
+function scrub(value: any): any {
   if (typeof value === "string") return value
     .replaceAll(REPO_ROOT, "<REPO_ROOT>")
     .replace(/resp_[0-9a-f]+/g, "<RESPONSE_ID>")
@@ -91,24 +101,32 @@ function scrub(value) {
   return value;
 }
 
-async function startTelemetryServer() {
-  const events = [];
+interface TelemetryHandle {
+  events: any[];
+  server: any;
+  url: string;
+}
+
+async function startTelemetryServer(): Promise<TelemetryHandle> {
+  const events: any[] = [];
   const server = createServer(async (request, response) => {
-    const chunks = [];
-    for await (const chunk of request) chunks.push(chunk);
+    const chunks: Buffer[] = [];
+    for await (const chunk of request) chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
     if (request.method === "POST") {
       try {
         const payload = JSON.parse(Buffer.concat(chunks).toString("utf8"));
         for (const event of payload.events ?? []) events.push({ ...event, requestId: payload.requestId });
-      } catch (error) { response.statusCode = 400; }
+      } catch { response.statusCode = 400; }
     }
     response.end("ok");
   });
-  await new Promise((resolveListening) => server.listen(0, "127.0.0.1", resolveListening));
-  return { events, server, url: `http://127.0.0.1:${server.address().port}/events` };
+  await new Promise<void>((resolveListening) => server.listen(0, "127.0.0.1", () => resolveListening()));
+  const address = server.address();
+  const port = address && typeof address !== "string" ? address.port : 0;
+  return { events, server, url: `http://127.0.0.1:${port}/events` };
 }
 
-async function runCase(name, rawCase, telemetry) {
+async function runCase(name: string, rawCase: ContractCase, telemetry: TelemetryHandle): Promise<any> {
   const item = replaceTokens(rawCase);
   const temp = await mkdtemp(join(tmpdir(), "autodev-copilot-contract-"));
   const fakeCli = join(temp, "fake-copilot.mjs");
@@ -152,8 +170,8 @@ process.exitCode = fixture.exitCode ?? 0;
     assert.equal(response.headers.get("content-type"), "text/event-stream", `${name}: SSE content type`);
     const sse = parseSse(body);
     assert.deepEqual(sse.map(({ event }) => event), item.expected.eventTypes, `${name}: SSE lifecycle`);
-    assert.equal(sse.at(-1).event, "[DONE]", `${name}: terminal sentinel`);
-    const completed = sse.find(({ event }) => event === "response.completed").data.response;
+    assert.equal(sse.at(-1)?.event, "[DONE]", `${name}: terminal sentinel`);
+    const completed = sse.find(({ event }) => event === "response.completed")?.data?.response;
     const completedText = completed.output_text;
     if (item.expected.outputText !== undefined) assert.equal(completedText, item.expected.outputText, `${name}: output text`);
     if (item.expected.outputTextPrefix !== undefined) assert.ok(completedText.startsWith(item.expected.outputTextPrefix), `${name}: partial output text`);
@@ -167,14 +185,14 @@ process.exitCode = fixture.exitCode ?? 0;
     for (const entry of sse.filter(({ data }) => data?.sequence_number !== undefined)) assert.equal(typeof entry.data.sequence_number, "number");
     await new Promise((resolveEvents) => setTimeout(resolveEvents, 100));
     const reported = telemetry.events.filter((event) => event.requestId === requestId);
-    for (const type of item.expected.telemetryTypes ?? []) assert.ok(reported.some((event) => event.type === type), `${name}: telemetry ${type}: ${JSON.stringify(reported)}`);
+    for (const type of item.expected.telemetryTypes ?? []) assert.ok(reported.some((event: any) => event.type === type), `${name}: telemetry ${type}: ${JSON.stringify(reported)}`);
     if (item.expected.directEventTypes) {
       const previousCopilotBin = process.env.COPILOT_BIN;
       const previousContractCase = process.env.COPILOT_CONTRACT_CASE;
       process.env.COPILOT_BIN = fakeCli;
       process.env.COPILOT_CONTRACT_CASE = JSON.stringify(item.cli);
       try {
-        const directEvents = [];
+        const directEvents: any[] = [];
         await runCopilot("contract task", "copilot", REPO_ROOT, (event) => directEvents.push(event));
         for (const type of item.expected.directEventTypes) assert.ok(directEvents.some((event) => event.type === type), `${name}: direct parser event ${type}`);
         if (item.expected.skill) assert.ok(directEvents.some((event) => event.type === "skill_used" && event.skill === item.expected.skill), `${name}: direct skill parser event`);
@@ -189,7 +207,7 @@ process.exitCode = fixture.exitCode ?? 0;
       const toolEvents = reported.filter((event) => event.tool === item.expected.tool);
       assert.ok(toolEvents.length > 0, `${name}: tool telemetry`);
     }
-    if (item.expected.unavailableReason) assert.ok(reported.some((event) => event.type === "tool_unavailable" && event.reason === item.expected.unavailableReason), `${name}: denial telemetry`);
+    if (item.expected.unavailableReason) assert.ok(reported.some((event: any) => event.type === "tool_unavailable" && event.reason === item.expected.unavailableReason), `${name}: denial telemetry`);
     const normalizedSse = scrub(sse);
     assert.match(JSON.stringify(normalizedSse), /<RESPONSE_ID>/, `${name}: response IDs must be normalized`);
     assert.match(JSON.stringify(normalizedSse), /<CREATED_AT>/, `${name}: timestamps must be normalized`);
@@ -207,7 +225,7 @@ test("Copilot orchestrator receives only its identified AutoDev spawn shim", () 
   const args = copilotMcpArgs("orchestrator", "copilot-session");
   const configIndex = args.indexOf("--additional-mcp-config");
   assert.notEqual(configIndex, -1);
-  const config = JSON.parse(args[configIndex + 1]);
+  const config = JSON.parse(args[configIndex + 1] ?? "{}");
   const shim = config.mcpServers.autodev_spawn;
   assert.equal(shim.type, "stdio");
   assert.equal(shim.command, process.execPath);
@@ -221,7 +239,7 @@ test("Copilot Responses contract fixture is exercised through the offline proxy 
   try {
     for (const [name, item] of cases) await runCase(name, item, telemetry);
   } finally {
-    await new Promise((resolveClosed) => telemetry.server.close(resolveClosed));
+    await new Promise<void>((resolveClosed) => telemetry.server.close(() => resolveClosed()));
   }
   assert.deepEqual(await readFile(CONTRACT_PATH), before, "contract fixture must not be mutated");
 });

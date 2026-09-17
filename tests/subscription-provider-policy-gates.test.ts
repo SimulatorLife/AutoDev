@@ -11,7 +11,7 @@ const CLAUDE_TOKEN = 'CLAUDE_CODE_OAUTH_TOKEN';
 const REVIEWED_CLAUDE_TOKEN_CONSUMERS = new Set([
   'src/providers/claude.ts',
   'scripts/run-codex-claude-bridge.sh',
-  'scripts/ensure-codex-claude-bridge.sh',
+  'src/platform/claude-ensure.ts',
   '.github/workflows/claude-invoke.yml',
   'scripts/codex/run-ci-provider.sh',
   '.github/workflows/agent-invoke.yml',
@@ -29,7 +29,7 @@ type JsonRecord = Record<string, any>;
 type RuntimeTexts = Record<string, string>;
 
 function trackedRuntimeTexts(): RuntimeTexts {
-  const listed = execFileSync('git', ['ls-files'], { cwd: REPO_ROOT, encoding: 'utf8' });
+  const listed = execFileSync('git', ['ls-files', '-co', '--exclude-standard'], { cwd: REPO_ROOT, encoding: 'utf8' });
   const texts: RuntimeTexts = {};
   for (const path of listed.split('\n').filter(Boolean)) {
     if (path.startsWith('docs/') || path.startsWith('tests/') || path.endsWith('.md')) continue;

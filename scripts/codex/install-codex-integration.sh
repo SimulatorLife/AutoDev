@@ -132,6 +132,8 @@ runtime_module_names=(
   src/platform/router-ensure.ts
   src/platform/copilot-ensure.ts
   src/platform/antigravity-ensure.ts
+  src/platform/claude-ensure.ts
+  src/platform/minimax-ensure.ts
   src/hooks/root-delegation.ts
   .rulesync/skills/orchestration/SKILL.md
 )

@@ -1,7 +1,7 @@
 import { execFileSync, spawn } from 'node:child_process';
-import { existsSync, openSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, openSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { LaunchdClient } from './macos/launchd.ts';
 
 export interface CopilotEnsureOptions {
@@ -47,7 +47,7 @@ export function resolveCopilotEnsureOptions(env: NodeJS.ProcessEnv = process.env
     launcher: join(codexHome, 'hooks', 'run-codex-copilot-cli-responses-proxy.sh'),
     copilotBin: env.COPILOT_BIN?.trim() || 'copilot',
     readyTimeoutMs: positiveInteger(env.CODEX_COPILOT_READY_TIMEOUT_MS, DEFAULT_TIMEOUT_MS),
-    logPath: join(env.TMPDIR?.trim() || '/tmp', 'codex-copilot-proxy.log'),
+    logPath: join(codexHome, 'run', 'codex-copilot-proxy.fallback.log'),
   };
 }
 
@@ -63,7 +63,11 @@ function defaultDeps(options: CopilotEnsureOptions): CopilotEnsureDeps {
       try { execFileSync('which', [command], { stdio: 'ignore' }); return true; } catch { return false; }
     },
     startFallback: (launcher, logPath) => {
-      const fd = openSync(logPath, 'a');
+      const runDir = dirname(logPath);
+      mkdirSync(runDir, { recursive: true, mode: 0o700 });
+      chmodSync(runDir, 0o700);
+      const fd = openSync(logPath, 'a', 0o600);
+      chmodSync(logPath, 0o600);
       const child = spawn('/bin/bash', [launcher], { detached: true, stdio: ['ignore', fd, fd] });
       child.unref();
     },
@@ -109,4 +113,11 @@ export async function ensureCopilotProxy(
     return waitForProbe(deps, options.readyTimeoutMs);
   }
   return false;
+}
+
+if (process.argv[1] === new URL(import.meta.url).pathname) {
+  ensureCopilotProxy().then((ready) => {
+    if (!ready) console.error("Copilot Responses proxy did not become ready; router will route around it.");
+    process.exitCode = ready ? 0 : 1;
+  });
 }
