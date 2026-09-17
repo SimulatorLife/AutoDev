@@ -2219,12 +2219,16 @@ installer generates and checks repository projections, including `.codex/hooks.j
 in the active project location. The Codex projection cannot represent
 `prevent_idle_sleep`; Copilot and Antigravity projections are intentionally lossy.
 
-**Status (2026-09-15):** A bounded simplification is complete: response model-field
-replacement and tool-namespace rewriting are centralized in
-`scripts/codex-model-router.mjs`; SSE/JSON behavior and opaque scripts are
-contract-tested. Provider policy, retry/cooldown, and telemetry ownership are
-unchanged. Phase 6 remains in progress; this does not imply provider/router
-deletion.
+**Status (2026-09-16):** Router HTTP and upstream proxy execution are now
+fully decomposed into the typed `src/router/http.ts` and `src/router/proxy.ts`
+modules. Endpoint routing, workspace/session continuity, status aggregation,
+agent-event ingestion, header/payload boundaries, streaming, retry/fallback,
+and exhaustion diagnostics retain their existing contracts. The legacy
+`scripts/codex-model-router.mjs` remains only as the executable/public
+re-export entrypoint; provider policy, cooldowns, telemetry, and lifecycle
+ownership remain explicit typed modules. Phase 6 remains in progress because
+provider transport migrations and any future deletion still require parity
+proof.
 
 After successful provider transport migrations, separate router responsibilities into:
 

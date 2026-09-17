@@ -2,7 +2,7 @@
 
 ## Migration progress — 2026-09-16
 
-The migration remains intentionally behavior-preserving. The shared-runtime spawn/state/MCP pass is now landed; router, provider, installer, and test-stack migrations remain.
+The migration remains intentionally behavior-preserving. The shared-runtime spawn/state/MCP pass and the router HTTP/proxy decomposition are now landed; provider, installer, and test-stack migrations remain.
 
 ### Completed
 
@@ -22,15 +22,16 @@ The migration remains intentionally behavior-preserving. The shared-runtime spaw
 - Typed router authentication boundary (`src/router/auth.ts`), failure classification and ring-buffer event recording (`src/router/events.ts`), subagent/bridge orchestration registry (`src/router/subagents.ts`), and state persistence subsystem (`src/router/persistence.ts`) are decomposed from the legacy router into dedicated TypeScript modules deployed by the installer runtime manifest.
 - Dedicated native TypeScript test suites cover concurrency (`tests/router/concurrency.test.ts`), router lifecycle (`tests/router/lifecycle.test.ts`), authentication (`tests/router/auth.test.ts`), event recording (`tests/router/events.test.ts`), subagent registry (`tests/router/subagents.test.ts`), and state persistence (`tests/router/persistence.test.ts`), while all router integration and frozen contract tests remain 100% green.
 - Existing provider/router contract tests remain green while imports move to typed shared modules.
+- Router HTTP routing, workspace/session resolution, status aggregation, agent-event ingestion, upstream proxying, retry/fallback, and exhaustion diagnostics now live in `src/router/http.ts` and `src/router/proxy.ts`; `scripts/codex-model-router.mjs` is a concise executable/re-export entrypoint. Dedicated native TypeScript proxy and HTTP tests cover the extracted contracts.
 
 ### Current findings and constraints
 
-- The router and provider bridges are still primarily legacy `.mjs`/Python implementations; router decomposition and Claude bridge conversion are not complete.
+- Provider bridges are still primarily legacy `.mjs`/Python implementations; the Claude bridge conversion is not complete. The router entrypoint remains a compatibility-preserving `.mjs` executable while its retained implementation is typed.
 - Installer, reconciliation, hook, telemetry, and `ensure-*` behavior still has substantial shell/legacy runtime ownership.
 - First-party tests are still split between JavaScript, Python, and TypeScript. The inventory gate is present but intentionally reports the remaining legacy files until their replacements and equivalent tests land.
 - Canonical declarative content remains under `scripts/codex/`; moving it to the target `agents/` and `config/` layout must be coordinated with installer/runtime path changes.
 - The typed state collector keeps its dynamic SQLite schema inspection behind an explicit row/binding boundary and continues to strip raw paths before snapshots are exposed; its output and privacy contracts were not changed.
-- Routing owns provider/config policy while the legacy router retains HTTP, Responses/SSE, OTEL telemetry, persistence, lifecycle, and bridge orchestration; typed modules receive narrow runtime callbacks for live-load and provider-state inputs rather than importing those concerns.
+- Routing owns provider/config policy; typed router modules now own HTTP, upstream proxy execution, Responses/SSE compatibility, OTEL telemetry, persistence, lifecycle, and bridge orchestration. The legacy `.mjs` router is retained only as the executable/public re-export entrypoint.
 - The Claude bridge still contains a provider-local Python copy of spawn-script/SSE logic until the provider bridge conversion pass; its MCP delegation path now launches the shared typed shim.
 - The typed skill-read hook still has a dynamic JSON boundary that uses an explicit `any`; tighten that boundary when the hook tests are converted to TypeScript.
 - `src/cli/autodev.ts` now has typed dispatch boundaries for `router`, `provider`, `hook`, and `install`; only `check` and render commands have concrete repository backends, while the remaining default backends fail closed until their runtime migrations land.
@@ -44,12 +45,13 @@ The migration remains intentionally behavior-preserving. The shared-runtime spaw
 
 ### Next implementation order
 
-1. Continue router decomposition with typed Responses/SSE, telemetry, persistence, lifecycle, and HTTP modules without changing its contracts.
+Step 1 — router HTTP and upstream proxy decomposition — is complete.
+
 2. Convert provider bridges, then the Claude bridge, so all providers use the shared contracts.
 3. Move installer, reconciliation, hook, and `ensure-*` behavior behind the typed CLI/platform modules.
 4. Convert remaining JavaScript/Python tests to `node:test`, remove obsolete entrypoints, and enable the inventory gate as a required check.
 
-The current validation baseline is: `pnpm typecheck` passes; the expanded test commands include root-level TypeScript tests and currently report `pnpm test` at 658 passed and 1 skipped and `pnpm run test:ts` at 85 passed and 1 skipped. The Python compatibility suite reports 280 tests passing with 1 skipped; actionlint and ShellCheck also pass. `pnpm run validate:inventory` is expected to fail until the remaining migration order above is completed.
+The current validation baseline is: `pnpm typecheck` passes; the expanded test commands include root-level TypeScript tests and currently report `pnpm test` at 691 passed and 1 skipped and `pnpm run test:ts` at 118 passed and 1 skipped. The Python compatibility suite reports 280 tests passing with 1 skipped; actionlint and ShellCheck also pass. `pnpm run validate:inventory` is expected to fail until the remaining migration order above is completed.
 
 ## Decision
 
@@ -262,6 +264,8 @@ Generated files should be clearly marked and protected by drift validation. Avoi
    - `src/router/persistence.ts`: Router state persistence envelope (`autodev-router-persisted-state-v3`), atomic writes (`0o600`), debounced scheduling, and section restore dispatch.
    - `src/router/usage.ts`: Usage telemetry buckets, workspace attribution, privacy-safe hashing, live agent projection, attribution diagnostics, and snapshot restoration.
    - `src/router/otel.ts`: OpenTelemetry ingestion (logs, traces, metrics), delta/cumulative series calculation, deduplication windows, MCP health & lifecycle tracking, bridge observation events, additive `AUTODEV_OTEL_ATTRIBUTES=v1` payload enrichment, and persistence snapshot/restore (`schemaVersion: 6`).
+   - `src/router/proxy.ts`: upstream headers/authentication, payload transformation, streaming/JSON response handling, retries, cooldown-aware fallback chains, and structured exhaustion diagnostics.
+   - `src/router/http.ts`: HTTP endpoint routing, workspace/session resolution, status aggregation, agent-event ingestion, and router request lifecycle/error handling.
 5. Convert the Claude Python bridge and unify provider contracts
 6. Convert AutoDev-owned config/render Python scripts
 7. Replace large Bash installer/reconciliation logic with typed CLI/platform modules
