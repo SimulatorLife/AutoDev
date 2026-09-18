@@ -1832,8 +1832,8 @@ installer is the only supported materialization path into
 Install or repair the managed machine integration with:
 
 ```sh
-./install.sh
-./install.sh --check
+bash scripts/install.sh
+bash scripts/install.sh --check
 ```
 
 ## Build vs. delegate
@@ -1932,8 +1932,8 @@ Target state and current verification:
 | Requirement | State |
 | --- | --- |
 | OpenAI/Codex orchestrator and tracked user-level cross-provider TOMLs | Configured under `agents/roles/` and materialized as verified regular-file copies under `~/.codex/agents/`. The orchestrator runs on the `autodev/orchestrator` alias so it degrades to Claude Opus, MiniMax, then Gemini when Codex is out of usage. |
-| Shared user-level skills | Configured under the canonical `.rulesync/skills/` source as AutoDev-owned versioned directories and materialized under `~/.agents/skills/`; `install.sh --check` verifies every managed skill link. |
-| Versioned scripts/hooks/config installed into `~/.codex` | Configured; profiles/catalogs/config are symlinked and app-executed hooks are checksum-checked runtime copies; `install.sh --check` passes. |
+| Shared user-level skills | Configured under the canonical `.rulesync/skills/` source as AutoDev-owned versioned directories and materialized under `~/.agents/skills/`; `scripts/install.sh --check` verifies every managed skill link. |
+| Versioned scripts/hooks/config installed into `~/.codex` | Configured; profiles/catalogs/config are symlinked and app-executed hooks are checksum-checked runtime copies; `scripts/install.sh --check` passes. |
 | Native app-server custom-provider routing | Verified: `thread/start` selects the custom provider; Claude reached its upstream session-limit response. |
 | Direct CLI provider turns | Transport paths verified; Claude was session-limited, MiniMax was upstream high-demand limited, and Antigravity was quota-limited. |
 | Desktop high-level native fanout across external models | Tracked model-router and user-level role/config wiring is installed; requires a fully restarted Desktop app and a new thread for fresh `spawn_agent` verification through `127.0.0.1:4100`. |

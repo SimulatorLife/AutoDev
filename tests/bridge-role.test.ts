@@ -162,7 +162,7 @@ test("the installer ships every shared module the bridges import", () => {
   // it is the installed router crash-looping under launchd on
   // ERR_MODULE_NOT_FOUND, which reaches the operator as nothing more
   // informative than "Connection failed: error sending request".
-  const installer = read("install.sh");
+  const installer = read("scripts/install.sh");
   const materializer = read("src/platform/install-materializer.ts");
   const sources = [
     "src/router/server.ts",

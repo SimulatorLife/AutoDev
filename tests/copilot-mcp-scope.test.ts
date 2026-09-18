@@ -94,7 +94,7 @@ test("a missing bridge MCP catalogue fails the turn instead of guessing servers"
   const saved = process.env.CODEX_HOME;
   process.env.CODEX_HOME = join(homes.root, "absent");
   try {
-    assert.throws(() => copilotMcpArgs("explorer"), /bridge MCP catalogue is missing or invalid.*rerun install\.sh/);
+    assert.throws(() => copilotMcpArgs("explorer"), /bridge MCP catalogue is missing or invalid.*rerun scripts\/install\.sh/);
   } finally {
     process.env.CODEX_HOME = saved;
   }

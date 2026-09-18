@@ -994,7 +994,7 @@ Fresh install and update can converge AutoDev-owned configuration without deleti
 
 ### Status
 
-Complete. The portable source is authoritative at `config/config.autodev.toml`: it carries the AutoDev-owned portable scalars, provider definitions, `sandbox_workspace_write`, `otel`, `analytics`, `features`, `tools`, `agents`, the AutoDev-owned skills (`ccc`, `lsp-mcp-server`, `orchestration`), and `shell_environment_policy`. MCP declarations come from the live Rulesync source `.rulesync/mcp.jsonc` and are projected into the composer. The source excludes `notify`, `hooks.state`, `projects`, `marketplaces`, TUI/notice/desktop/apps/plugins/memories, `node_repl`/`cua_repl`, non-AutoDev skills, and absolute user/application paths. `src/config/compose-user-config.ts` deterministically merges the portable source and Rulesync MCP projection with existing machine-local configuration into `$CODEX_HOME/config.toml` as an atomic regular file, resolving conflicts in favor of AutoDev while semantically preserving machine-local and user-owned values. The installer (`install.sh`), `--check` drift validation, and `src/config/render-execution-contract.ts` consume `config.autodev.toml` and the composer. The former `config/config.toml` seed is removed from the repository and no longer participates in validation.
+Complete. The portable source is authoritative at `config/config.autodev.toml`: it carries the AutoDev-owned portable scalars, provider definitions, `sandbox_workspace_write`, `otel`, `analytics`, `features`, `tools`, `agents`, the AutoDev-owned skills (`ccc`, `lsp-mcp-server`, `orchestration`), and `shell_environment_policy`. MCP declarations come from the live Rulesync source `.rulesync/mcp.jsonc` and are projected into the composer. The source excludes `notify`, `hooks.state`, `projects`, `marketplaces`, TUI/notice/desktop/apps/plugins/memories, `node_repl`/`cua_repl`, non-AutoDev skills, and absolute user/application paths. `src/config/compose-user-config.ts` deterministically merges the portable source and Rulesync MCP projection with existing machine-local configuration into `$CODEX_HOME/config.toml` as an atomic regular file, resolving conflicts in favor of AutoDev while semantically preserving machine-local and user-owned values. The installer (`scripts/install.sh`), `--check` drift validation, and `src/config/render-execution-contract.ts` consume `config.autodev.toml` and the composer. The former `config/config.toml` seed is removed from the repository and no longer participates in validation.
 
 ### Seed-retirement acceptance
 
@@ -1004,7 +1004,7 @@ reads a valid legacy symlink target only during migration from an older
 installation, and keeps
 existing machine-local state such as projects, notifications, custom MCP
 servers, and trusted hook state. A second install must be idempotent and
-`./install.sh --check` must pass without
+`scripts/install.sh --check` must pass without
 rewriting the composed file. The focused composer/convergence tests and the
 Rulesync MCP and generated-skills checks are the validation evidence for this
 boundary.
@@ -1466,7 +1466,7 @@ scalars in `config/config.autodev.toml` and the per-server
 `mcp(...)`/`read_file(...)`/`unsandboxed(...)` grant markers that
 `grant_agy_code_mcp_permissions`/`check_agy_code_mcp_permissions` compute
 against the machine-local `$HOME/.gemini/antigravity-cli/settings.json` in
-`install.sh`. The test also asserts no
+`scripts/install.sh`. The test also asserts no
 `.rulesync/permissions.jsonc` source exists and that `permissions` is absent
 from `rulesync.jsonc`'s `features` array.
 
@@ -1770,7 +1770,7 @@ at their source.
   install.
 
 The running router keeps the previous code until the next installer run
-(`./install.sh --enable-otel-collector`),
+(`bash scripts/install.sh --enable-otel-collector`),
 which restarts it.
 
 Enable/rollback procedure:
@@ -1779,10 +1779,10 @@ Enable/rollback procedure:
 # Optional: provision the pinned host-local binary explicitly.
 bash scripts/otel/provision-autodev-otel-collector.sh
 
-./install.sh --enable-otel-collector
-./install.sh --check
-./install.sh --disable-otel-collector
-./install.sh --check
+bash scripts/install.sh --enable-otel-collector
+bash scripts/install.sh --check
+bash scripts/install.sh --disable-otel-collector
+bash scripts/install.sh --check
 ```
 
 Phase 4's gate evaluations are complete (2026-09-15). The Claude, GitHub

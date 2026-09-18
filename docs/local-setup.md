@@ -15,7 +15,8 @@ pnpm autodev -- check
 Start with the installer and read the script before running it:
 
 ```bash
-./install.sh
+bash scripts/install.sh
+# or: pnpm run install:codex
 ```
 
 Provider-specific `ensure-*` and `run-*` scripts are intentionally separate so a machine can enable only the providers it has credentials for. Use environment variables documented in each script to override local binary paths and project roots; do not add machine secrets or generated logs to this repository.
@@ -29,7 +30,7 @@ Codex user-level configuration is managed via a composed model rather than a dir
 - **Hook and state handling:** `.rulesync/hooks.jsonc` is the sole hook declaration source. The installer generates provider projections alongside repository skills, including `.codex/hooks.json` in the active project location Codex reads; `--check` validates those outputs. The composer removes legacy Codex hook event arrays while preserving `hooks.state` and unrelated machine-local state. Rulesync projections are lossy where documented: Codex cannot retain `prevent_idle_sleep`, and Copilot/Antigravity support fewer hook events.
 - **Regular file output:** Writes an atomic regular file to `$CODEX_HOME/config.toml` (never a symlink). Codex resolves configuration at startup, and symlinking would cause local overrides to be overwritten or lost.
 - **Legacy seed retirement:** `config/config.toml` is no longer tracked or authoritative. An older installation with a valid symlink target is migrated once into a regular composed file at `$CODEX_HOME/config.toml`; a broken legacy symlink fails closed rather than discarding machine-local state.
-- **Drift detection:** `./install.sh --check` invokes the composer in `--check` mode to detect any drift between the installed configuration and the composed portable source without writing changes.
+- **Drift detection:** `bash scripts/install.sh --check` invokes the composer in `--check` mode to detect any drift between the installed configuration and the composed portable source without writing changes.
 
 The tracked Codex role files under `agents/roles/` contain role-specific
 configuration plus shared-prompt composition markers. The installer renders
@@ -150,7 +151,7 @@ colon-separated `AUTODEV_AGY_READ_ROOTS` environment variable:
 
 ```bash
 export AUTODEV_AGY_READ_ROOTS="/path/to/repo1:/path/to/repo2"
-./install.sh
+bash scripts/install.sh
 ```
 
 The installer normalizes each entry, strips empty segments, and deduplicates
@@ -166,7 +167,7 @@ Run the installer with `--check` to validate that all configured workspace roots
 and required MCP/read grants are present in the settings file:
 
 ```bash
-./install.sh --check
+bash scripts/install.sh --check
 ```
 
 If any configured workspace or required MCP permission is missing, `--check`
@@ -208,7 +209,7 @@ An upgrade is accepted when the installer/composer creates a regular, non-symlin
 reads an existing legacy symlink target only during migration, and preserves
 machine-local values such as projects, notifications, custom MCP
 servers, and trusted hook state. Re-running the installer must be idempotent;
-`./install.sh --check` must pass afterward.
+`bash scripts/install.sh --check` must pass afterward.
 
 Destructive Git commands are enforced by Codex's native rules engine. The
 tracked rules live in `agents/rules/default.rules` and are symlinked by
@@ -335,7 +336,7 @@ Rulesync does not replace AutoDev's live hook enforcement or role filtering. `.r
 To enable the router authentication boundary during a planned restart, run:
 
 ```bash
-./install.sh --enable-router-auth --materialize-only
+bash scripts/install.sh --enable-router-auth --materialize-only
 ```
 
 This creates/reuses a private `CODEX_ROUTER_AUTH_TOKEN` in
@@ -351,7 +352,7 @@ role files, MCP launchers, and rendered LaunchAgents without cycling any running
 service:
 
 ```bash
-./install.sh --materialize-only
+bash scripts/install.sh --materialize-only
 ```
 
 Run the normal installer later, when no active task depends on the local router,

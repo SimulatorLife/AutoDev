@@ -392,7 +392,7 @@ function bridgeMcpCatalogue(): JsonRecord {
     const catalogue = JSON.parse(readFileSync(path, "utf8"));
     if (catalogue && typeof catalogue === "object" && !Array.isArray(catalogue)) return catalogue;
   } catch { /* reported below */ }
-  throw new Error(`bridge MCP catalogue is missing or invalid: ${path}; rerun install.sh`);
+  throw new Error(`bridge MCP catalogue is missing or invalid: ${path}; rerun scripts/install.sh`);
 }
 
 /** Server names in the user-level Copilot MCP file that Rulesync writes. */
@@ -427,7 +427,7 @@ function copilotMcpArgs(agentRole: string | null, spawnSession: string | null = 
   for (const name of granted) {
     const server = catalogue[ name ];
     if (!server || typeof server !== "object") {
-      throw new Error(`MCP server ${name} granted to role ${agentRole ?? "default"} is not in the bridge MCP catalogue; rerun install.sh`);
+      throw new Error(`MCP server ${name} granted to role ${agentRole ?? "default"} is not in the bridge MCP catalogue; rerun scripts/install.sh`);
     }
     const tools = contract.mcpTools?.[ name ];
     if (userServers.has(name)) {

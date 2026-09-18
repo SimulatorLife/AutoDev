@@ -689,10 +689,10 @@ export function bridgeMcpServers(): Record<string, JsonRecord> {
   try {
     const parsed = JSON.parse(readFileSync(path, "utf8")) as unknown;
     if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) return parsed as Record<string, JsonRecord>;
-    throw new ClaudeOverloadedError(`bridge MCP catalogue is invalid: ${path}; rerun install.sh`);
+    throw new ClaudeOverloadedError(`bridge MCP catalogue is invalid: ${path}; rerun scripts/install.sh`);
   } catch (error) {
     if (error instanceof ClaudeOverloadedError) throw error;
-    throw new ClaudeOverloadedError(`bridge MCP catalogue is missing or invalid: ${path}; rerun install.sh (${(error as Error).message})`);
+    throw new ClaudeOverloadedError(`bridge MCP catalogue is missing or invalid: ${path}; rerun scripts/install.sh (${(error as Error).message})`);
   }
 }
 
@@ -705,7 +705,7 @@ export function claudeSkillViewForRole(role: unknown): string | null {
   const view = join(codexHome, "provider-runtime", "claude", roleKey);
   if (!existsSync(join(view, ".claude", "skills"))) {
     throw new ClaudeOverloadedError(
-      `Claude skill bootstrap view is missing for role ${roleKey}: ${view}; rerun install.sh`,
+      `Claude skill bootstrap view is missing for role ${roleKey}: ${view}; rerun scripts/install.sh`,
     );
   }
   return view;
@@ -728,7 +728,7 @@ export function mcpConfigForRole(role: unknown, spawnSession: string | null = nu
     const server = available[name];
     if (!server || typeof server !== "object") {
       throw new ClaudeOverloadedError(
-        `MCP server ${JSON.stringify(name)} granted to role ${String(role)} is not in the bridge MCP catalogue; rerun install.sh`,
+        `MCP server ${JSON.stringify(name)} granted to role ${String(role)} is not in the bridge MCP catalogue; rerun scripts/install.sh`,
       );
     }
     const typed = server as JsonRecord;

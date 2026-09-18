@@ -82,7 +82,7 @@ test('Rulesync permissions and subagent generation remain deferred', () => {
 });
 
 test('the permission inventory reads sources without changing them', () => {
-  const paths = ['config/config.autodev.toml', 'src/providers/claude.ts', 'install.sh', 'rulesync.jsonc', '.rulesync/mcp.jsonc'];
+  const paths = ['config/config.autodev.toml', 'src/providers/claude.ts', 'scripts/install.sh', 'rulesync.jsonc', '.rulesync/mcp.jsonc'];
   const before = paths.map(read);
   for (const content of before) assert.ok(content.length > 0);
   assert.deepEqual(paths.map(read), before);

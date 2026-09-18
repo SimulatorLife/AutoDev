@@ -85,7 +85,7 @@ test('portable config keeps hooks in Rulesync and install uses typed materializa
   assert.equal(Object.hasOwn(portable, 'hooks'), false);
   assert.doesNotMatch(readFileSync(hookSourcePath, 'utf8'), /prevent_idle_sleep/);
   assert.match(readFileSync(join(repositoryRoot, 'rulesync.jsonc'), 'utf8'), /"hooks"/);
-  assert.match(readFileSync(join(repositoryRoot, 'install.sh'), 'utf8'), /src\/cli\/install\.ts/);
+  assert.match(readFileSync(join(repositoryRoot, 'scripts', 'install.sh'), 'utf8'), /src\/cli\/install\.ts/);
   const materializer = readFileSync(join(repositoryRoot, 'src/platform/install-materializer.ts'), 'utf8');
   assert.match(materializer, /config\.autodev\.toml/);
   assert.match(materializer, /runCompose/);

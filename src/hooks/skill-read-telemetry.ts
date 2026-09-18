@@ -65,7 +65,7 @@ function asSeenState(value: JsonValue): SeenState {
 const HOME = homedir();
 const REPO_ROOT = process.env.AUTODEV_REPO_ROOT || resolve(join(import.meta.dirname, "..", ".."));
 // Source roots whose SKILL.md reads count as skill activation telemetry.
-// Mirrors the install-time contract in install.sh and is
+// Mirrors the install-time contract in scripts/install.sh and is
 // intentionally narrow: a path under a recognised root that ends in `SKILL.md`
 // is the only positive signal we accept. Anything else -- symlinks that
 // resolve outside the root, non-canonical locations, files that just happen

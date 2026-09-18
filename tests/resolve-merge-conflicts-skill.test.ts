@@ -4,7 +4,7 @@ import test from "node:test";
 
 const read = (path: string): string => readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
 
-const installer = read("install.sh");
+const installer = read("scripts/install.sh");
 const materializer = read("src/platform/install-materializer.ts");
 const skill = read(".rulesync/skills/resolve-merge-conflicts/SKILL.md");
 const helper = read(".rulesync/skills/resolve-merge-conflicts/scripts/extract_conflict_context.py");

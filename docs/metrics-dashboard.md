@@ -161,8 +161,8 @@ installer before checking live telemetry: it synchronizes those copies and
 restarts every service, so nothing is left running the code it replaced.
 
 ```bash
-./install.sh
-./install.sh --check
+bash scripts/install.sh
+bash scripts/install.sh --check
 curl --silent http://127.0.0.1:4100/status | jq '.codexTelemetry.skills'
 ```
 

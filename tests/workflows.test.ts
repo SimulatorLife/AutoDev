@@ -296,7 +296,7 @@ test('provider bridges explicitly expose code MCP capabilities', async () => {
   const antigravity = await readFile(path.join(root, 'src', 'providers', 'antigravity.ts'), 'utf8');
   assert.match(antigravity, /search_web/);
   assert.match(antigravity, /read_url_content/);
-  const installer = await readFile(path.join(root, 'install.sh'), 'utf8');
+  const installer = await readFile(path.join(root, 'scripts', 'install.sh'), 'utf8');
   const settings = await readFile(path.join(root, 'src', 'platform', 'antigravity-settings.ts'), 'utf8');
   assert.match(settings, /read_url\(\*\)/);
   const materializer = await readFile(path.join(root, 'src', 'platform', 'install-materializer.ts'), 'utf8');

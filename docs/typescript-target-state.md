@@ -50,7 +50,7 @@ The TypeScript target state migration is fully completed across all twelve phase
 - `package.json` test scripts are unified: `"test": "node --test tests/*.test.ts tests/**/*.test.ts"`.
 - Strict inventory validation (`pnpm run validate:inventory` with `AUTODEV_ENFORCE_INVENTORY=1`) passes with zero unapproved legacy files.
 - Declarative assets are migrated out of `scripts/codex/` into top-level `agents/` (`roles/`, `prompts/`, `rules/`) and `config/` (`catalogs/`, `profiles/`, `launchagents/`, `config.autodev.toml`, `model-routing.json`, `execution-contract.json`).
-- Root `install.sh` provides the canonical entrypoint delegating directly to `autodev install`.
+- `scripts/install.sh` provides the canonical shell entrypoint (executable via `pnpm run install:codex` or `bash scripts/install.sh`) delegating directly to `autodev install`.
 - Legacy `scripts/codex/` directory is completely eliminated with zero legacy compatibility shims.
 - The entire test suite (854 tests, 24 suites) passes with 0 failures under `node:test` on Node 24+ LTS.
 
@@ -185,7 +185,7 @@ docs/
 
 Do not introduce multiple pnpm workspace packages unless independently versioned/deployed package boundaries later justify them. Internal TypeScript modules are sufficient for the current control-plane architecture.
 
-Declarative assets reside in top-level `agents/` (`roles/`, `prompts/`, `rules/`) and `config/` (`catalogs/`, `profiles/`, `launchagents/`, `config.autodev.toml`, `model-routing.json`, `execution-contract.json`), while `scripts/` contains only runtime launch shims (`scripts/run-*.sh` and `scripts/otel/`). The root `install.sh` acts as the repository-level installer entrypoint delegating directly to `autodev install`. Legacy `scripts/codex/` is eliminated completely.
+Declarative assets reside in top-level `agents/` (`roles/`, `prompts/`, `rules/`) and `config/` (`catalogs/`, `profiles/`, `launchagents/`, `config.autodev.toml`, `model-routing.json`, `execution-contract.json`), while `scripts/` contains only runtime launch shims (`scripts/run-*.sh` and `scripts/otel/`) and the repository-level installer (`scripts/install.sh`, invokable via `pnpm run install:codex`). The installer delegates directly to `autodev install`. Legacy `scripts/codex/` is eliminated completely.
 
 ## Single CLI boundary
 
