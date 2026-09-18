@@ -39,7 +39,7 @@ test('Claude bridge permission policy remains role-aware', () => {
   const source = read('src/providers/claude.ts');
   for (const marker of [
     'DISALLOWED_CLAUDE_TOOLS = [ "Agent", "Task" ]',
-    'DISALLOWED_CLI_COMMANDS = [ "Bash(ccc *)" ]',
+    'DISALLOWED_CLI_COMMANDS = [ "Bash(ccc *)", "Bash(ccc)" ]',
     'CROSS_SESSION_CLAUDE_TOOLS = [ "SendMessage", "ListAgents" ]',
     'CLAUDE_RESEARCH_ALLOWED_TOOLS = [ "WebSearch", "WebFetch" ]',
     'PLAYWRIGHT_AGENT_ROLES', 'PLAYWRIGHT_DISALLOWED_TOOLS', 'RESEARCH_CAPABLE_ROLES',
@@ -57,6 +57,7 @@ test('Antigravity permissions are dynamic and machine-local', () => {
     'function permissionList(config: JsonObject)', 'normalizedReadRoots', 'read_file(${root})', 'read_file(${root}/**)',
     "join(home, '.agents')", "join(home, '.codex')", 'mcp(cocoindex-code)', 'mcp(lsp)', 'read_url(*)',
     'unsandboxed(pwd)', 'unsandboxed(pnpm test)', "unsandboxed(python3 -m unittest discover -s tests -p 'test_*.py')", 'mcp(playwright)',
+    'DENIED_COMMAND_PERMISSIONS', 'permissions.deny = deny',
   ]) assert.ok(source.includes(marker), marker);
   assert.ok(source.includes("openSync(temporary, 'wx'"));
   assert.ok(source.includes('renameSync(temporary, path)'));

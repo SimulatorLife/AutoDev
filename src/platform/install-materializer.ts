@@ -28,6 +28,7 @@ export const RUNTIME_MODULES = [
   'src/platform/antigravity-ensure.ts', 'src/platform/claude-ensure.ts', 'src/platform/minimax-ensure.ts', 'src/platform/antigravity-settings.ts',
   'src/platform/runtime-files.ts', 'src/platform/runtime-reconciliation.ts', 'src/platform/service-restart.ts', 'src/platform/otel-collector.ts',
   'src/platform/otel-provision.ts', 'src/platform/install-state.ts', 'src/platform/dependencies.ts', 'src/platform/install-materializer.ts', 'src/platform/install-command.ts', 'src/platform/install-check.ts', 'src/hooks/root-delegation.ts',
+  'src/hooks/block-ccc-cli.ts',
   '.rulesync/skills/orchestration/SKILL.md',
 ] as const;
 export const OTEL_RUNTIME = ['scripts/otel/provision-autodev-otel-collector.sh', 'scripts/otel/ensure-autodev-otel-collector.sh', 'scripts/otel/run-autodev-otel-collector.sh'] as const;
@@ -47,7 +48,8 @@ export const OBSOLETE_PATHS = ['.config/litellm/antigravity.yaml', '.codex/codex
 export const OBSOLETE_HOOKS = ['codex-model-router.mjs', 'log-subagent-model.sh', 'run-codex-antigravity-litellm.sh', 'codex-minimax-responses-proxy.mjs', 'codex-copilot-cli-responses-proxy.mjs', 'codex-antigravity-cli-responses-proxy.mjs', 'codex-model-router-status.mjs', 'codex-claude-cli-responses-proxy.py'] as const;
 export const OBSOLETE_DIRS = ['scripts', 'codex', 'codex/skills'] as const;
 export const CANONICAL_HOOK_HASHES = {
-  'pre_tool_use:0:0': 'sha256:f81073b7b43edd2b08ba8a6f8a07d3f269326f0b133157c8f5367851c99167ce',
+  'pre_tool_use:0:0': 'sha256:5f1d5b28fdc75a6290e2dc8deecebe92ffaad5e7352e1122f02a1680e10f0567',
+  'pre_tool_use:1:0': 'sha256:f81073b7b43edd2b08ba8a6f8a07d3f269326f0b133157c8f5367851c99167ce',
   'session_start:0:0': 'sha256:ffe71c68625270b1a58ea48db245f1a4f35f9071c086be5988514a329b14933d',
   'user_prompt_submit:0:0': 'sha256:e90b5998c2d5b47752bcb486784d5e66a32f92dbabda14b5d04e2f47282fe019',
   'subagent_start:0:0': 'sha256:d3796d1a79be308b1fd16b311ee343c7f0797c03f9a4fc267082ab2ffd53b596',

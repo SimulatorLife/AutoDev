@@ -13,6 +13,9 @@ export const REQUIRED_MCP_PERMISSIONS = [
   'unsandboxed(pnpm test)', "unsandboxed(python3 -m unittest discover -s tests -p 'test_*.py')",
 ] as const;
 export const DISABLED_MCP_PERMISSIONS = ['mcp(playwright)', 'mcp(playwright/*)'] as const;
+export const DENIED_COMMAND_PERMISSIONS = [
+  'run_command(ccc *)', 'run_command(ccc)', 'unsandboxed(ccc *)', 'unsandboxed(ccc)',
+] as const;
 export const MANAGED_CODE_SKILLS = ['ccc', 'lsp-mcp-server', 'orchestration'] as const;
 
 type JsonMap = { [key: string]: JsonValue };
@@ -71,13 +74,20 @@ export function updateAntigravityPermissions(path: string, readRoots: readonly s
   const allow = permissionList(config).filter((entry) => typeof entry !== 'string' || !DISABLED_MCP_PERMISSIONS.includes(entry as typeof DISABLED_MCP_PERMISSIONS[number]));
   for (const grant of expectedPermissionGrants(readRoots, home)) if (!allow.includes(grant)) allow.push(grant);
   permissions.allow = allow;
+  const deny = Array.isArray(permissions.deny) ? [...permissions.deny] : [];
+  for (const denial of DENIED_COMMAND_PERMISSIONS) if (!deny.includes(denial)) deny.push(denial);
+  permissions.deny = deny;
   config.permissions = permissions;
   writeObject(path, config);
 }
 
 export function missingAntigravityPermissions(path: string, readRoots: readonly string[], home = process.env.HOME?.trim() || homedir()): string[] {
-  const allow = permissionList(readObject(path));
-  return expectedPermissionGrants(readRoots, home).filter((grant) => !allow.includes(grant));
+  const obj = readObject(path);
+  const allow = permissionList(obj);
+  const missingAllow = expectedPermissionGrants(readRoots, home).filter((grant) => !allow.includes(grant));
+  const deny = Array.isArray(asObject(obj.permissions).deny) ? (asObject(obj.permissions).deny as JsonValue[]) : [];
+  const missingDeny = DENIED_COMMAND_PERMISSIONS.filter((denial) => !deny.includes(denial));
+  return [...missingAllow, ...missingDeny];
 }
 
 function entryPath(entry: JsonValue): string | null {

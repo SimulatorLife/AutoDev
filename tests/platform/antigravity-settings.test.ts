@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import test from 'node:test';
 import {
   antigravitySkillsStatus,
+  DENIED_COMMAND_PERMISSIONS,
   expectedPermissionGrants,
   missingAntigravityPermissions,
   normalizedReadRoots,
@@ -29,19 +30,21 @@ test('normalizes Antigravity read roots without allowing duplicates', () => with
   ]);
 }));
 
-test('permission update preserves user grants, removes disabled Playwright grants, and is idempotent', () => withTempDir((directory) => {
+test('permission update preserves user grants, removes disabled Playwright grants, populates deny list, and is idempotent', () => withTempDir((directory) => {
   const path = join(directory, 'settings.json');
   const home = join(directory, 'home');
   writeFileSync(path, JSON.stringify({ permissions: { allow: ['user-grant', 'mcp(playwright)', 'mcp(playwright/*)'] }, other: true }));
+  assert.deepEqual(missingAntigravityPermissions(path, [directory], home).slice(-4), [...DENIED_COMMAND_PERMISSIONS]);
   updateAntigravityPermissions(path, [directory], home);
   const first = readFileSync(path, 'utf8');
   updateAntigravityPermissions(path, [directory, directory], home);
   const second = readFileSync(path, 'utf8');
   assert.equal(second, first);
-  const config = JSON.parse(second) as { permissions: { allow: string[] }; other: boolean };
+  const config = JSON.parse(second) as { permissions: { allow: string[]; deny: string[] }; other: boolean };
   assert.equal(config.other, true);
   assert.deepEqual(config.permissions.allow.filter((entry) => entry.startsWith('mcp(playwright')), []);
   assert.equal(config.permissions.allow.filter((entry) => entry === `read_file(${directory})`).length, 1);
+  assert.deepEqual(config.permissions.deny, [...DENIED_COMMAND_PERMISSIONS]);
   assert.deepEqual(missingAntigravityPermissions(path, [directory], home), []);
 }));
 

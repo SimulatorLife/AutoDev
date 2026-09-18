@@ -24,6 +24,12 @@
     "preToolUse": [
       {
         "type": "command",
+        "matcher": "(?i)exec[_ -]?command|bash",
+        "command": "node ~/.codex/src/hooks/block-ccc-cli.ts",
+        "statusMessage": "Enforcing command policy"
+      },
+      {
+        "type": "command",
         "matcher": "(?i)read[_ -]?file|read|exec[_ -]?command|bash",
         "command": "node ~/.codex/src/hooks/skill-read-telemetry.ts",
         "statusMessage": "Recording skill-read telemetry"

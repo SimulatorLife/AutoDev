@@ -60,7 +60,7 @@ const DEFAULT_CLAUDE_EFFORT = "medium";
 const DISALLOWED_CLAUDE_TOOLS = [ "Agent", "Task" ];
 // The MCP backend is launched by the bridge, but the model must not invoke the
 // CocoIndex CLI through Claude's Bash tool as a fallback.
-const DISALLOWED_CLI_COMMANDS = [ "Bash(ccc *)" ];
+const DISALLOWED_CLI_COMMANDS = [ "Bash(ccc *)", "Bash(ccc)" ];
 
 // Tools that reach *outside* this turn's own agent tree, to other Claude
 // sessions running on the same machine. Denied for every role, orchestrator

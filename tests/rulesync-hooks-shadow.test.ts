@@ -25,6 +25,7 @@ const sourceCommands = [
   'node ~/.codex/src/hooks/session-start.ts',
   'node ~/.codex/src/hooks/subagent-start.ts',
   'node ~/.codex/src/hooks/root-delegation.ts',
+  'node ~/.codex/src/hooks/block-ccc-cli.ts',
   'node ~/.codex/src/hooks/skill-read-telemetry.ts',
 ];
 
@@ -102,7 +103,7 @@ test('target projections preserve their documented command losses', () => {
     codexcli: new Set(),
     claudecode: new Set(),
     copilot: new Set(sourceCommands.filter((command) => command !== 'node ~/.codex/src/hooks/root-delegation.ts')),
-    'antigravity-cli': new Set(sourceCommands.filter((command) => command !== 'node ~/.codex/src/hooks/skill-read-telemetry.ts')),
+    'antigravity-cli': new Set(sourceCommands.filter((command) => !['node ~/.codex/src/hooks/block-ccc-cli.ts', 'node ~/.codex/src/hooks/skill-read-telemetry.ts'].includes(command))),
   };
   for (const target of targets) assert.deepEqual(new Set(sourceCommands.filter((command) => !projected[target].has(command))), expected[target], target);
 });
@@ -139,5 +140,5 @@ test('Copilot and Antigravity retain their documented parity limits', () => {
   assert.deepEqual(commands(copilot), ['node ~/.codex/src/hooks/root-delegation.ts']);
   const antigravity = document('antigravity-cli');
   assert.deepEqual(Object.keys(asObject(antigravity.rulesync)), ['PreToolUse']);
-  assert.deepEqual(groupedCommands(asObject(antigravity.rulesync)), ['node ~/.codex/src/hooks/skill-read-telemetry.ts']);
+  assert.deepEqual(groupedCommands(asObject(antigravity.rulesync)), ['node ~/.codex/src/hooks/block-ccc-cli.ts', 'node ~/.codex/src/hooks/skill-read-telemetry.ts']);
 });
