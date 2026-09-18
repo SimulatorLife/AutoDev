@@ -62,3 +62,41 @@ test('runtime links replace files and validate canonical skill directories', () 
   linkSkillSource(skill, skillTarget);
   assert.equal(skillLinkMatches(skill, skillTarget), true);
 }));
+
+test('runtime links replace broken symlinks idempotently and refuse non-symlink directories', () => withTempDir((directory) => {
+  const source = join(directory, 'source');
+  const target = join(directory, 'target');
+  writeFileSync(source, 'source content');
+
+  // Point to a nonexistent path (broken symlink)
+  symlinkSync(join(directory, 'nonexistent-source'), target);
+  assert.equal(lstatSync(target).isSymbolicLink(), true);
+
+  // First call should replace the broken symlink
+  linkRuntimeSource(source, target);
+  assert.equal(runtimeLinkMatches(source, target), true);
+  assert.equal(readlinkSync(target), source);
+
+  // Second call must be a clean idempotent no-op
+  linkRuntimeSource(source, target);
+  assert.equal(runtimeLinkMatches(source, target), true);
+
+  // Non-symlink directories must fail closed to protect data
+  const dirTarget = join(directory, 'managed-dir');
+  mkdirSync(dirTarget);
+  assert.throws(() => linkRuntimeSource(source, dirTarget), /refusing to replace directory/);
+}));
+
+test('materialization replaces truly broken symlinks cleanly', () => withTempDir((directory) => {
+  const source = join(directory, 'source.ts');
+  const target = join(directory, 'target.ts');
+  writeFileSync(source, 'materialized content\n');
+  symlinkSync(join(directory, 'does-not-exist'), target);
+  assert.equal(lstatSync(target).isSymbolicLink(), true);
+
+  materializeRuntimeFile(source, target, 0o644);
+  assert.equal(lstatSync(target).isSymbolicLink(), false);
+  assert.equal(readFileSync(target, 'utf8'), 'materialized content\n');
+  assert.equal((lstatSync(target).mode & 0o777), 0o644);
+}));
+

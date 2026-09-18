@@ -1,4 +1,4 @@
-import { chmodSync, copyFileSync, existsSync, lstatSync, mkdirSync, readFileSync, readlinkSync, renameSync, rmSync, symlinkSync } from 'node:fs';
+import { chmodSync, copyFileSync, existsSync, lstatSync, mkdirSync, readFileSync, readlinkSync, renameSync, rmSync, symlinkSync, unlinkSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 
 export type RuntimeFileMode = 0o644 | 0o755;
@@ -14,14 +14,19 @@ function ensureParent(path: string): void {
 /** Atomically materialize a versioned runtime file with its execution mode. */
 export function materializeRuntimeFile(source: string, target: string, mode: RuntimeFileMode): void {
   ensureParent(target);
-  if (existsSync(target) && lstatSync(target).isSymbolicLink()) rmSync(target);
+  try {
+    const stat = lstatSync(target);
+    if (stat.isSymbolicLink()) unlinkSync(target);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+  }
   const temporary = `${target}.autodev-${process.pid}-${Date.now()}`;
   try {
     copyFileSync(source, temporary);
     chmodSync(temporary, mode);
     renameSync(temporary, target);
   } finally {
-    try { rmSync(temporary, { force: true }); } catch { /* already renamed */ }
+    try { unlinkSync(temporary); } catch { /* already renamed or absent */ }
   }
 }
 
@@ -30,13 +35,29 @@ export function linkRuntimeSource(source: string, target: string): void {
   ensureParent(target);
   try {
     const stat = lstatSync(target);
-    if (stat.isSymbolicLink() && readlinkSync(target) === source) return;
-    if (stat.isDirectory() && !stat.isSymbolicLink()) throw new Error(`refusing to replace directory ${target}`);
-    rmSync(target, { force: true });
+    if (stat.isSymbolicLink()) {
+      if (readlinkSync(target) === source) return;
+      unlinkSync(target);
+    } else if (stat.isDirectory()) {
+      throw new Error(`refusing to replace directory ${target}`);
+    } else {
+      unlinkSync(target);
+    }
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
   }
-  symlinkSync(source, target);
+  try {
+    symlinkSync(source, target);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'EEXIST') {
+      const stat = lstatSync(target);
+      if (stat.isSymbolicLink() && readlinkSync(target) === source) return;
+      unlinkSync(target);
+      symlinkSync(source, target);
+    } else {
+      throw error;
+    }
+  }
 }
 
 export function runtimeLinkMatches(source: string, target: string): boolean {

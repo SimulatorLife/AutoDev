@@ -1,10 +1,21 @@
-import { existsSync, lstatSync, readdirSync, readlinkSync, rmSync, symlinkSync, mkdirSync } from "node:fs";
+import { existsSync, lstatSync, readdirSync, readlinkSync, rmSync, symlinkSync, mkdirSync, unlinkSync } from "node:fs";
 import { join, relative } from "node:path";
 import { ConfigError, parseArgs, readJsonFile, requiredArg } from "./toml.ts";
 
 const ROOTS: Record<string, string> = { claude: join(".claude", "skills") };
 
-function removeManaged(path: string): void { if (existsSync(path) || lstatSafe(path)) rmSync(path, { recursive: true, force: true }); }
+function removeManaged(path: string): void {
+  try {
+    const stat = lstatSync(path);
+    if (stat.isDirectory() && !stat.isSymbolicLink()) {
+      rmSync(path, { recursive: true, force: true });
+    } else {
+      unlinkSync(path);
+    }
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+  }
+}
 function lstatSafe(path: string): boolean { try { lstatSync(path); return true; } catch { return false; } }
 
 export function expectedSkillViews(contract: Record<string, unknown>, canonicalRoot: string, outputRoot: string, provider: string): Map<string, string> {
@@ -53,7 +64,22 @@ export function renderProviderSkillViews(contractPath: string, canonicalRoot: st
     const root = join(outputRoot, role, ROOTS[provider]!);
     for (const name of readdirSync(root)) if (![...expected.keys()].some((path) => path === join(root, name))) removeManaged(join(root, name));
   }
-  for (const [target, source] of expected) { mkdirSync(dirnameOfLink(target), { recursive: true }); if (lstatSafe(target) && lstatSync(target).isSymbolicLink() && readlinkSync(target) === source) continue; removeManaged(target); symlinkSync(source, target, "dir"); }
+  for (const [target, source] of expected) {
+    mkdirSync(dirnameOfLink(target), { recursive: true });
+    if (lstatSafe(target) && lstatSync(target).isSymbolicLink() && readlinkSync(target) === source) continue;
+    removeManaged(target);
+    try {
+      symlinkSync(source, target, "dir");
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "EEXIST") {
+        if (lstatSafe(target) && lstatSync(target).isSymbolicLink() && readlinkSync(target) === source) continue;
+        removeManaged(target);
+        symlinkSync(source, target, "dir");
+      } else {
+        throw error;
+      }
+    }
+  }
 }
 function dirnameOfLink(path: string): string { return path.slice(0, path.lastIndexOf("/")); }
 

@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { chmodSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join, resolve } from 'node:path';
 import { homedir } from 'node:os';
@@ -89,7 +89,7 @@ export function materializeInstallation(options: MaterializeOptions): void {
   for (const name of CATALOGS) linkRuntimeSource(source(`config/catalogs/${name}-model-catalog.json`), join(options.codexHome, `${name}-model-catalog.json`));
   for (const name of RULES) linkRuntimeSource(source(`agents/rules/${name}`), join(rules, name));
   for (const name of SKILLS) {
-    for (const legacy of LEGACY_SKILL_DIRS) { const path = join(options.codexHome, legacy, name); if (exists(path) && !isSymlink(path)) throw new Error(`refusing to replace obsolete non-symlink skill path: ${path}`); if (isSymlink(path)) rmSync(path); }
+    for (const legacy of LEGACY_SKILL_DIRS) { const path = join(options.codexHome, legacy, name); if (exists(path) && !isSymlink(path)) throw new Error(`refusing to replace obsolete non-symlink skill path: ${path}`); if (isSymlink(path)) unlinkSync(path); }
     linkSkillSource(join(skillsRoot, name), join(userSkills, name));
   }
   mkdirSync(agents, { recursive: true, mode: 0o700 });
