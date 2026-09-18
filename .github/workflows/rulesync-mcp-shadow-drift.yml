@@ -8,7 +8,7 @@ on:
     paths:
       - ".rulesync/**"
       - "rulesync.jsonc"
-      - "tests/test_rulesync_*.py"
+      - "tests/rulesync-*.test.ts"
       - ".nvmrc"
       - "package.json"
       - "pnpm-lock.yaml"
@@ -17,7 +17,7 @@ on:
     paths:
       - ".rulesync/**"
       - "rulesync.jsonc"
-      - "tests/test_rulesync_*.py"
+      - "tests/rulesync-*.test.ts"
       - ".nvmrc"
       - "package.json"
       - "pnpm-lock.yaml"
@@ -51,4 +51,4 @@ jobs:
       # its projections from `.rulesync` into temporary roots with the pinned
       # Rulesync and asserts them, so the canonical source stays the only copy.
       - name: Check Rulesync projections generated from the canonical source
-        run: python3 -m unittest tests/test_rulesync_*.py
+        run: node --test tests/rulesync-mcp.test.ts tests/rulesync-hooks-shadow.test.ts tests/rulesync-skills.test.ts tests/rulesync-permissions-inventory.test.ts

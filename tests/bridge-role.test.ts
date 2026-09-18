@@ -14,7 +14,7 @@ import { EXECUTION_CONTRACT, roleContract } from "../src/shared/execution-contra
 import { promptFromInput } from "../src/providers/antigravity.ts";
 import { inputText } from "../src/providers/copilot.ts";
 
-const read = (path) => readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
+const read = (path: string): string => readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
 
 test("the agent role is read only from the router-generated header", () => {
   assert.equal(AGENT_ROLE_HEADER, "x-autodev-agent-role");
@@ -123,10 +123,11 @@ test("a leaf is told to ignore a spawn tool its runtime leaks to it", () => {
 test("every provider bridge picks its instructions from the shared role prompts", () => {
   // Every converted bridge lives under src/providers/, so each imports the
   // sibling agents/bridge-role.ts module at the same relative depth.
-  for (const [ path, bridgeRoleImportPattern ] of [
+  const bridgeRoleImports: ReadonlyArray<readonly [string, RegExp]> = [
     [ "src/providers/antigravity.ts", /from "\.\.\/agents\/bridge-role\.ts"/ ],
     [ "src/providers/copilot.ts", /from "\.\.\/agents\/bridge-role\.ts"/ ],
-  ]) {
+  ];
+  for (const [ path, bridgeRoleImportPattern ] of bridgeRoleImports) {
     const source = read(path);
     assert.match(source, bridgeRoleImportPattern, path);
     assert.match(source, /composeProviderPrompt\(agentRole, cwd\)/, path);
@@ -162,13 +163,14 @@ test("the installer ships every shared module the bridges import", () => {
   // ERR_MODULE_NOT_FOUND, which reaches the operator as nothing more
   // informative than "Connection failed: error sending request".
   const installer = read("scripts/codex/install-codex-integration.sh");
+  const materializer = read("src/platform/install-materializer.ts");
   const sources = [
     "scripts/codex-model-router.mjs",
     "src/providers/antigravity.ts",
     "src/providers/minimax.ts",
     "src/providers/copilot.ts",
   ];
-  const imported = new Set();
+  const imported = new Set<string>();
   for (const source of sources) {
     for (const match of read(source).matchAll(/from "\.\/(codex\/lib\/[a-z-]+\.mjs)"/g)) {
       imported.add(`scripts/${match[ 1 ]}`);
@@ -186,9 +188,9 @@ test("the installer ships every shared module the bridges import", () => {
     "scripts/codex/prompts/code-search.md",
     ".rulesync/skills/orchestration/SKILL.md",
   ]) {
-    assert.ok(installer.includes(asset), `installer must deploy ${asset}`);
+    assert.ok(materializer.includes(asset), `materializer must deploy ${asset}`);
   }
-  assert.match(installer, /scripts\/codex\/prompts\/roles\/\$name\.md/);
+  assert.match(materializer, /scripts\/codex\/prompts\/roles/);
   for (const role of ["browser-tester", "default", "docs-researcher", "explorer", "orchestrator", "smart", "validator", "worker"]) {
     assert.ok(read(`scripts/codex/prompts/roles/${role}.md`).trim(), `missing role prompt ${role}`);
   }
@@ -196,11 +198,13 @@ test("the installer ships every shared module the bridges import", () => {
 
 test("the root delegation hook injects the same orchestrator prompt the bridges use", () => {
   const hook = read("scripts/enforce-root-delegation.sh");
-  assert.match(hook, /codex\/prompts\/orchestrator\.md/);
-  assert.match(hook, /codex\/prompts\/code-search\.md/);
-  // The policy text lives in one file; the hook must not carry its own copy.
+  const typedHook = read("src/hooks/root-delegation.ts");
+  assert.match(typedHook, /join\(root, ['\"]codex['\"], ['\"]prompts['\"], ['\"]orchestrator\.md['\"]\)/);
+  assert.match(typedHook, /join\(root, ['\"]codex['\"], ['\"]prompts['\"], ['\"]code-search\.md['\"]\)/);
+  // The policy text lives in one file; neither dispatch shim nor typed hook
+  // carries an obsolete duplicate.
   assert.doesNotMatch(hook, /ROOT ORCHESTRATOR POLICY/);
-  assert.doesNotMatch(hook, /ROOT DELEGATION REQUIREMENT/);
+  assert.doesNotMatch(typedHook, /ROOT DELEGATION REQUIREMENT/);
 });
 
 test("web research policy and Playwright boundaries are enforced in role prompts", () => {

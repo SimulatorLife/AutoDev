@@ -19,7 +19,7 @@ Documentation and memory describe what Codex *should* send. This procedure shows
 what the installed Codex *does* send, and what it does with a reply, for free and
 without network access.
 
-The recorder is `scripts/responses-recorder.mjs` in this skill directory:
+The recorder is `scripts/responses-recorder.ts` in this skill directory:
 - **capture mode** (no `--turns`): records each request with credentials redacted
   and answers with a controlled error;
 - **replay mode** (`--turns <file>`): streams scripted SSE turns, one per request
@@ -46,7 +46,7 @@ responses-lite), so capture each path you are changing:
 | The router's role aliases | e.g. `autodev/worker` | `scripts/codex/catalogs/codex-model-catalog.json` |
 
 ```bash
-node "$SKILL_DIR/scripts/responses-recorder.mjs" --record "$WORK/requests.jsonl" --port 0 2>"$WORK/recorder.log" &
+node "$SKILL_DIR/scripts/responses-recorder.ts" --record "$WORK/requests.jsonl" --port 0 2>"$WORK/recorder.log" &
 RECORDER=$!; sleep 1
 PORT="$(grep -o '[0-9]*$' "$WORK/recorder.log")"
 
@@ -122,7 +122,7 @@ second recorded request. It carries Codex's own record of the call's outcome: a
 `"aborted"`, or an error.
 
 ```bash
-node "$SKILL_DIR/scripts/responses-recorder.mjs" --record "$WORK/replay.jsonl" \
+node "$SKILL_DIR/scripts/responses-recorder.ts" --record "$WORK/replay.jsonl" \
   --turns "$SKILL_DIR/examples/exec-command.turns.json" --port 0 2>"$WORK/recorder.log" &
 ```
 

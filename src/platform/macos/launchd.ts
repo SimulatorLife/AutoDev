@@ -33,6 +33,7 @@ export class LaunchdClient {
   }
 
   bootstrap(plist: string): void { this.run(['bootstrap', this.domain, plist]); }
+  enable(label: string): void { this.run(['enable', `${this.domain}/${label}`]); }
   bootout(label: string): void { this.run(['bootout', `${this.domain}/${label}`]); }
   kickstart(label: string): void { this.run(['kickstart', '-k', `${this.domain}/${label}`]); }
   print(label: string): string { return this.run(['print', `${this.domain}/${label}`]).stdout; }

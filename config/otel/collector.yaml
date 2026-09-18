@@ -1,6 +1,6 @@
 # Phase 3 pinned OpenTelemetry Collector runtime configuration.
 #
-# This configuration is validated by tests/test_otel_collector_config.py and
+# This configuration is validated by tests/platform/otel-collector-config.test.ts and
 # installed/launched only when Collector mode is explicitly enabled. It pins the
 # an OTLP HTTP ingress on 127.0.0.1:4318 that forwards logs, traces, and
 # metrics to the existing AutoDev OTLP receiver at http://127.0.0.1:4100

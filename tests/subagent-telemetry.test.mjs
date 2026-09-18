@@ -490,7 +490,7 @@ test("the Claude bridge reports the spawns its Agent tool makes in-process", () 
 });
 
 test("the installer ships the reporting module the bridges import at runtime", () => {
-  assert.match(read("scripts/codex/install-codex-integration.sh"), /src\/telemetry\/agent-events\.ts/);
+  assert.match(read("src/platform/install-materializer.ts"), /src\/telemetry\/agent-events\.ts/);
 });
 
 // The two `invoke_subagent` step_updates agy really emitted for one dispatch,

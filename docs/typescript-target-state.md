@@ -2,7 +2,7 @@
 
 ## Migration progress — 2026-09-17
 
-The migration remains intentionally behavior-preserving. The shared-runtime spawn/state/MCP pass, router HTTP/proxy decomposition, all four provider bridge conversions, cross-provider orchestrator delegation, and the provider lifecycle ownership slice are now landed; installer/reconciliation and final test-stack migrations continue.
+The migration remains intentionally behavior-preserving. The shared-runtime spawn/state/MCP pass, router HTTP/proxy decomposition, all four provider bridge conversions, cross-provider orchestrator delegation, provider lifecycle ownership, and typed installer boundary are now landed; final test-stack migration continues.
 
 ### Completed
 
@@ -34,26 +34,39 @@ The migration remains intentionally behavior-preserving. The shared-runtime spaw
 - The skill-read hook now validates its JSON payload and persisted deduplication state through explicit `JsonValue`, `JsonObject`, and `SeenState` boundaries rather than an `any` escape hatch; malformed state still fails closed without changing telemetry behavior.
 - The workflow-weight validation suite now runs as native TypeScript (`tests/weights.test.ts`), and `validate:weights` executes that single source without a duplicate JavaScript entrypoint.
 - Claude and MiniMax launch/ensure decisions now live in `src/platform/claude-ensure.ts` and `src/platform/minimax-ensure.ts`; Copilot's existing typed owner is the executable boundary as well. The corresponding `ensure-*` files are process-dispatch shims, while MiniMax's launchd daemon path directly execs the typed provider. `src/hooks/subagent-start.ts` invokes the typed owners directly in a model-gated, fail-closed sequence, with native TypeScript contract tests for each lifecycle boundary.
+- Antigravity permission and global skill-registry reconciliation now live in `src/platform/antigravity-settings.ts` with typed JSON validation, deterministic deduplication, atomic private writes, and native TypeScript contract tests. The installer retains only optional CLI detection, root collection, and process dispatch; its embedded Python configuration logic is removed.
+- Runtime file targeting, atomic materialization, symlink replacement/linking, skill-source validation, mode assignment, and drift comparison now live in `src/platform/runtime-files.ts`. Installer runtime-module, prompt, role, config, catalog, rules, and skill link/check paths use that typed owner; native TypeScript tests freeze checkout-to-`CODEX_HOME` mapping and link/replacement behavior.
+- Obsolete launch-agent, runtime-file, hook, and directory cleanup now lives in `src/platform/runtime-reconciliation.ts`; the installer retains only launchctl bootout and argument collection. Native TypeScript tests cover lstat-based detection, symlink-safe removal, and recursive directory cleanup.
+- Launchd service ownership, foreign-runtime protection, stale-process reaping, readiness probes, service restart ordering, and direct fallback dispatch now live in `src/platform/service-restart.ts`. The installer invokes this typed owner; only Collector/provider process execution remains an external boundary. Native TypeScript tests cover managed ownership, foreign services, alternate `CODEX_HOME`, Collector environment forwarding, and hook-matched reaping.
+- Collector foreground validation, exact version/config checks, duplicate-listener protection, readiness, and ensure fallback now live in `src/platform/otel-collector.ts`; the `ensure-*` and `run-*` Collector scripts are process-dispatch shims. Native TypeScript tests cover option boundaries and exact binary validation.
+- Pinned Collector artifact manifest validation, platform/architecture selection, download, SHA-256 verification, archive extraction, and private installation now live in `src/platform/otel-provision.ts`; the provisioning script is a process-dispatch shim. Native TypeScript tests cover explicit-binary, invalid-binary, and manifest-drift fail-closed paths.
+- LaunchAgent placeholder rendering and drift validation now live in `src/platform/macos/launchagent.ts` with atomic writes and literal-safe path substitution; the installer delegates plist rendering/checks to the typed macOS owner.
+- Collector mode persistence and router-auth token creation/publication now live in `src/platform/install-state.ts` with private atomic mode writes, preserved environment content, idempotent token reuse, and native TypeScript tests; the installer retains only option parsing and dispatch.
+- External dependency availability, pipx provisioning, pinned CocoIndex/Python-LSP installation, macOS SDK/compiler environment preparation, and executable checks now live in `src/platform/dependencies.ts`; installer dependency functions are dispatch-only and native TypeScript tests cover skip, Homebrew, Python fallback, and missing-tool paths.
+- The AutoDev request-capture recorder and its contract suite now run as native TypeScript (`.rulesync/skills/autodev-codex-request-capture/scripts/responses-recorder.ts` and `tests/codex-request-capture-skill.test.ts`); the previous first-party `.mjs` test/recorder pair is removed.
+- The install materialization sequence now lives in `src/platform/install-materializer.ts`: typed runtime/role/link deployment, stale cleanup, Rulesync projections, composed config, provider skill/MCP views, Antigravity settings, and LaunchAgent rendering are coordinated there. The shell installer now dispatches the materializer before typed service restart.
+- The concrete `autodev install` command now runs through `src/platform/install-command.ts`, coordinating typed state, dependency, materialization, Collector, and service owners. Installation drift diagnostics now live in `src/platform/install-check.ts`; the shell installer is only a process-dispatch shim.
 
 ### Current findings and constraints
 
 - All provider bridges now live under `src/providers/` as typed modules. The router entrypoint remains a compatibility-preserving `.mjs` executable while its retained implementation is typed.
-- Installer, reconciliation, Collector lifecycle, and parts of service restart still have substantial shell/legacy runtime ownership. Provider ensure scripts are now thin process-dispatch shims; router ensure, session-start, and subagent-start use typed platform owners.
-- First-party tests are still split between JavaScript, Python, and TypeScript. The inventory gate is present but intentionally reports the remaining legacy files until their replacements and equivalent tests land.
+- The installer shell file is now a process-dispatch shim. Check-only validation, temporary MCP projection, final status gating, normal install orchestration, materialization, stale-path reconciliation, Antigravity settings, service restart, Collector lifecycle/provisioning, install-state, and dependency policy are typed owners reached through the concrete CLI coordinator; provider and Collector scripts are dispatch-only.
+- First-party tests are still split between JavaScript, Python, and TypeScript. The inventory gate is present but intentionally reports the remaining legacy files until their replacements and equivalent tests land. The root-delegation, bridge-role, portable-config, Copilot MCP, workflow, workspace-attribution, native-vs-bridge, agent-instructions, Rulesync-permissions/MCP/hooks, and Collector config/runtime contract slices now run as native TypeScript.
 - Canonical declarative content remains under `scripts/codex/`; moving it to the target `agents/` and `config/` layout must be coordinated with installer/runtime path changes.
 - The typed state collector keeps its dynamic SQLite schema inspection behind an explicit row/binding boundary and continues to strip raw paths before snapshots are exposed; its output and privacy contracts were not changed.
 - Routing owns provider/config policy; typed router modules now own HTTP, upstream proxy execution, Responses/SSE compatibility, OTEL telemetry, persistence, lifecycle, and bridge orchestration. The legacy `.mjs` router is retained only as the executable/public re-export entrypoint. The execution contract records a provider delegation mode so status and routing cannot claim that a provider with no spawn path can orchestrate.
 - Claude's supported subscription path remains the unmodified Claude Code CLI, but AutoDev-owned bridge logic is now typed and imports shared workspace, role, limit, telemetry, and spawn contracts rather than maintaining a Python copy.
-- `src/cli/autodev.ts` now has typed dispatch boundaries for `router`, `provider`, `hook`, and `install`; only `check` and render commands have concrete repository backends, while the remaining default backends fail closed until their runtime migrations land.
+- `src/cli/autodev.ts` now has typed dispatch boundaries for `router`, `provider`, `hook`, and `install`; normal install, check, and render behavior has explicit typed ownership.
 - The router status CLI now lives in `src/cli/router-status.ts` and consumes the typed `src/router/status.ts` boundary; the obsolete `scripts/codex-model-router-status.mjs` entrypoint is deleted and stale installed copies are removed.
-- Router ensure/lifecycle decisions now live in `src/platform/router-ensure.ts` with injectable filesystem/process/launchd dependencies; `src/hooks/session-start.ts` invokes the typed owner directly, while the original shell ensure script remains unchanged as the verified rollback path. The typed owner preserves the best-effort optional Copilot ensure side effect through `src/platform/copilot-ensure.ts`.
+- Router ensure/lifecycle decisions now live in `src/platform/router-ensure.ts` with injectable filesystem/process/launchd dependencies; `src/hooks/session-start.ts` invokes the typed owner directly, and the installed shell ensure entrypoint is only a process-dispatch shim. The typed owner preserves the best-effort optional Copilot ensure side effect through `src/platform/copilot-ensure.ts`.
 - Session-start, subagent-start, and root-delegation command handlers own the
   hook entry points under `src/hooks`; Rulesync invokes those typed handlers
   directly. Session-start and subagent-start now call typed platform owners
   for router, Claude, MiniMax, Copilot, and Antigravity lifecycle decisions.
-  Remaining shell ownership is limited to process dispatch, the large
-  installer/reconciliation path, and Collector lifecycle; those are the next
-  platform migration targets.
+  The migrated local runtime's remaining shell ownership is limited to process
+dispatch. CI provider invocation and the generic role runner still contain
+behavior and remain pending migration; the next slice is consolidating the
+remaining first-party legacy test stack and those two runtime entrypoints.
 - The vendored `.rulesync/skills/resolve-merge-conflicts/scripts/extract_conflict_context.py` helper remains an allowed upstream-language exception.
 
 ### Next implementation order
@@ -61,11 +74,11 @@ The migration remains intentionally behavior-preserving. The shared-runtime spaw
 Step 1 — router HTTP and upstream proxy decomposition — is complete.
 
 2. Convert all provider bridges to typed shared-contract implementations — complete for MiniMax, Copilot, Antigravity, and Claude.
-3. Move installer, reconciliation, Collector lifecycle, and the remaining service restart behavior behind typed CLI/platform modules; retain only process-dispatch shims.
-4. Convert remaining JavaScript/Python tests to `node:test`, remove obsolete entrypoints, and enable the inventory gate as a required check.
+3. Move installer option/check orchestration and temporary MCP projection behind typed CLI/platform modules — complete; the installer is now dispatch-only.
+4. Convert the remaining JavaScript/Python tests to `node:test`, remove obsolete entrypoints, and enable the inventory gate as a required check — in progress; the request-capture test/recorder slice is complete.
 5. Preserve the provider delegation matrix while moving the remaining bridge/telemetry contract tests to native TypeScript; Rulesync subagent generation remains deferred until it can project the AutoDev role/capability contract without weakening Codex ownership. The current slice hardens the contract and parent-outcome telemetry boundary first.
 
-For the current provider and lifecycle slices, `pnpm typecheck` passes; the full JavaScript/TypeScript suite reports 752 tests with 751 passing and 1 skip. The focused Claude, provider, lifecycle, MCP, role, telemetry, workspace, and boundary suites pass, including the native TypeScript Claude Responses fixture contract. The inventory gate intentionally still reports the remaining installer, shell, and legacy test files; remaining migration work is concentrated in installer/reconciliation/Collector ownership and the last legacy test files.
+For the current provider, lifecycle, installer, and test-stack slices, `pnpm typecheck` and the remaining Python compatibility suite pass; the full JavaScript/TypeScript suite reports 848 tests with 846 passing and 2 skips. The focused Claude, provider, lifecycle, MCP, role, telemetry, workspace, root-delegation, and boundary suites pass, including the native TypeScript Claude Responses, portable-config, Copilot MCP, workflow, workspace-attribution, native-vs-bridge, agent-instructions, Rulesync-permissions/MCP/hooks, and Collector config/runtime contract tests. The inventory gate intentionally still reports the remaining legacy runtime entrypoints and test files; remaining migration work is concentrated in the final first-party test conversions and removal of obsolete executable entrypoints.
 
 ## Decision
 
@@ -188,7 +201,7 @@ docs/
 
 Do not introduce multiple pnpm workspace packages unless independently versioned/deployed package boundaries later justify them. Internal TypeScript modules are sufficient for the current control-plane architecture.
 
-Directory [scripts/](scripts) and [scripts/codex/](scripts/codex/) are legacy and should be removed/migrated to `src/` or `agents/` as appropriate. The install script, [scripts/codex/install-codex-integration.sh](scripts/codex/install-codex-integration.sh) should be moved to the repo root or `src/`, renamed to `install.sh`, and/or replaced with a typed CLI command(s).
+Directory [scripts/](scripts) and [scripts/codex/](scripts/codex/) remain declarative/configuration and external process-boundary locations where required. The install script is now only a process-dispatch shim to the typed `autodev install` command and should be removed once downstream callers migrate.
 
 ## Single CLI boundary
 

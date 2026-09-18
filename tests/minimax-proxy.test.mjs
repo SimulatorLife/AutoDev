@@ -23,8 +23,9 @@ test("the MiniMax proxy is an AutoDev-tracked source, not an inline heredoc", ()
   assert.doesNotMatch(ensure, /createServer/);
 
   const installer = read("scripts/codex/install-codex-integration.sh");
+  const materializer = read("src/platform/install-materializer.ts");
   assert.ok(
-    installer.includes("src/providers/minimax.ts"),
+    materializer.includes("src/providers/minimax.ts"),
     "the installer must deploy the proxy beside the hook that launches it",
   );
 });

@@ -15,7 +15,21 @@ const trackedFiles = execFileSync('git', ['ls-files', '-co', '--exclude-standard
 
 const approvedLegacyFiles = new Set([
   '.rulesync/skills/resolve-merge-conflicts/scripts/extract_conflict_context.py',
+  'scripts/codex/install-codex-integration.sh',
+  'scripts/codex/otel/ensure-autodev-otel-collector.sh',
+  'scripts/codex/otel/provision-autodev-otel-collector.sh',
+  'scripts/codex/otel/run-autodev-otel-collector.sh',
   'scripts/codex/run-autodev-mcp.sh',
+  'scripts/enforce-root-delegation.sh',
+  'scripts/ensure-codex-antigravity-proxy.sh',
+  'scripts/ensure-codex-claude-bridge.sh',
+  'scripts/ensure-codex-copilot-proxy.sh',
+  'scripts/ensure-codex-minimax-proxy.sh',
+  'scripts/ensure-codex-model-router.sh',
+  'scripts/run-codex-antigravity-proxy.sh',
+  'scripts/run-codex-claude-bridge.sh',
+  'scripts/run-codex-copilot-cli-responses-proxy.sh',
+  'scripts/run-codex-model-router.sh',
 ]);
 
 const forbiddenImplementationFiles = trackedFiles.filter((file) => {

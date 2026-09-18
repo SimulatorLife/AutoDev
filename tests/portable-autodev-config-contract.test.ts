@@ -39,12 +39,25 @@ const EXPECTED_MODEL_PROVIDERS = Object.freeze([
 ]);
 const EXPECTED_SKILLS = Object.freeze(["lsp-mcp-server", "ccc", "orchestration"]);
 
-function loadPortable(absoluteTomlPath) {
-  return parse(readFileSync(absoluteTomlPath, "utf8"));
+type PortableFixture = {
+  schema: string;
+  source: string;
+  description: string;
+  portableScalars: string[];
+  scalars: Record<string, unknown>;
+  requiredSections: string[];
+  sectionShapes: Record<string, unknown>;
+  modelProviders: Array<{ name: string; attributes: unknown }>;
+  modelProviderOrder: string[];
+  skillsConfigNamesRequired: string[];
+};
+
+function loadPortable(absoluteTomlPath: string): Record<string, unknown> {
+  return parse(readFileSync(absoluteTomlPath, "utf8")) as unknown as Record<string, unknown>;
 }
 
-async function readFixture() {
-  return JSON.parse(await readFile(FIXTURE_PATH, "utf8"));
+async function readFixture(): Promise<PortableFixture> {
+  return JSON.parse(await readFile(FIXTURE_PATH, "utf8")) as PortableFixture;
 }
 
 test("schema tag pin and source path", async () => {
@@ -136,7 +149,7 @@ test("four model_providers entries are pinned with byte-for-byte attributes", as
 
   assert.deepEqual(fixture.modelProviderOrder, EXPECTED_MODEL_PROVIDERS);
 
-  const providers = portable.model_providers ?? {};
+  const providers = (portable.model_providers ?? {}) as Record<string, unknown>;
   assert.ok(providers && !Array.isArray(providers), "model_providers must be a TOML table");
 
   for (const name of EXPECTED_MODEL_PROVIDERS) {
@@ -185,7 +198,8 @@ test("MCP servers stay out of the portable source and skills.config.name is pinn
     "portable source must not declare mcp_servers",
   );
 
-  const skillsConfig = portable.skills?.config ?? [];
+  const skills = portable.skills as Record<string, unknown> | undefined;
+  const skillsConfig = skills?.config ?? [];
   assert.ok(Array.isArray(skillsConfig), "skills.config must be an array of tables");
   const names = skillsConfig
     .filter((entry) => entry && typeof entry === "object")

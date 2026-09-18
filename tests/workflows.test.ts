@@ -3,34 +3,38 @@ import { spawnSync } from 'node:child_process';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 
-const root = path.resolve(new URL('..', import.meta.url).pathname);
+const root = path.resolve(fileURLToPath(new URL('..', import.meta.url)));
 const workflows = path.join(root, '.github', 'workflows');
 const prompts = path.join(root, '.agents', 'prompts');
-const readWorkflow = (name) => readFile(path.join(workflows, name), 'utf8');
-const readPrompt = (name) => readFile(path.join(prompts, name), 'utf8');
+const readWorkflow = (name: string): Promise<string> => readFile(path.join(workflows, name), 'utf8');
+const readPrompt = (name: string): Promise<string> => readFile(path.join(prompts, name), 'utf8');
 
 // Extracts each `run: |` block's body lines, keyed by the indentation of the
 // `run:` key itself, so a malformed quote inside one block (which would
 // otherwise swallow the rest of the file as an unterminated string) is
 // caught by bash's own parser rather than by string matching.
-const extractRunBlocks = (source) => {
+type RunBlock = { startLine: number; body: string };
+
+const extractRunBlocks = (source: string): RunBlock[] => {
   const lines = source.split('\n');
-  const blocks = [];
+  const blocks: RunBlock[] = [];
   for (let i = 0; i < lines.length; i++) {
-    const runMatch = lines[i].match(/^(\s*)run: \|-?\s*$/);
+    const line = lines[i] ?? '';
+    const runMatch = line.match(/^(\s*)run: \|-?\s*$/);
     if (!runMatch) continue;
-    const runIndent = runMatch[1].length;
+    const runIndent = (runMatch[1] ?? '').length;
     const body = [];
     let j = i + 1;
     for (; j < lines.length; j++) {
-      const line = lines[j];
+      const line = lines[j] ?? '';
       if (line.trim() === '') {
         body.push('');
         continue;
       }
-      if ((line.match(/^ */)[0]).length <= runIndent) break;
+      if ((line.match(/^ */)?.[0].length ?? 0) <= runIndent) break;
       body.push(line);
     }
     blocks.push({ startLine: i + 1, body: body.join('\n') });
@@ -39,7 +43,11 @@ const extractRunBlocks = (source) => {
   return blocks;
 };
 
-const config = JSON.parse(await readFile(path.join(workflows, 'weights.json'), 'utf8'));
+type PromptConfig = { prompts: Array<{ name: string; path: string; promptRepository?: string; sourceWorkflow?: string }> };
+type ValidationProfile = { packageManager: string; pnpmVersion?: string; commands: Array<{ run: string }> };
+type ValidationProfiles = Record<string, ValidationProfile>;
+type ProviderManifest = { schemaVersion: number; tools: Record<string, { package: string }> };
+const config = JSON.parse(await readFile(path.join(workflows, 'weights.json'), 'utf8')) as PromptConfig;
 
 test('scheduler routes prompt, agent, and target repository', async () => {
   const source = await readWorkflow('_scheduler.yml');
@@ -116,8 +124,9 @@ test('AutoDev CI is repository-native and pnpm-native', async () => {
   const packageJson = JSON.parse(await readFile(path.join(root, 'package.json'), 'utf8'));
   assert.equal(packageJson.packageManager, 'pnpm@10.32.1');
   assert.ok((await readFile(path.join(root, 'pnpm-lock.yaml'), 'utf8')).startsWith('lockfileVersion:'));
-  const profiles = JSON.parse(await readFile(path.join(root, '.github', 'ci', 'validation-profiles.json'), 'utf8'));
+  const profiles = JSON.parse(await readFile(path.join(root, '.github', 'ci', 'validation-profiles.json'), 'utf8')) as ValidationProfiles;
   const profile = profiles['SimulatorLife/AutoDev'];
+  assert.ok(profile);
   assert.equal(profile.packageManager, 'pnpm');
   assert.equal(profile.pnpmVersion, undefined);
   for (const [key, item] of Object.entries(profiles)) {
@@ -230,7 +239,7 @@ test('local provider tooling resolves the playwright MCP from a pinned devDepend
 
   for (const role of ['browser-tester', 'smart']) {
     const roleSource = await readFile(path.join(root, 'scripts', 'codex', 'agents', `${role}.toml`), 'utf8');
-    const roleSettings = roleSource.slice(roleSource.indexOf('[mcp_servers.playwright]')).split('\n\n')[0];
+    const roleSettings = roleSource.slice(roleSource.indexOf('[mcp_servers.playwright]')).split('\n\n')[0] ?? '';
     assert.match(roleSettings, /enabled = true/, role);
     assert.match(roleSettings, /default_tools_approval_mode = "approve"/, role);
   }
@@ -274,7 +283,7 @@ test('Antigravity workspace customizations expose the code skills', async () => 
 
 test('provider bridges explicitly expose code MCP capabilities', async () => {
   const copilot = await readFile(path.join(root, 'src', 'providers', 'copilot.ts'), 'utf8');
-  // Copilot MCP exposure follows the role contract (see copilot-mcp-scope.test.mjs).
+  // Copilot MCP exposure follows the role contract (see copilot-mcp-scope.test.ts).
   assert.match(copilot, /--additional-mcp-config/);
   assert.match(copilot, /--disable-mcp-server/);
   assert.match(copilot, /--allow-tool=web_search/);
@@ -288,13 +297,16 @@ test('provider bridges explicitly expose code MCP capabilities', async () => {
   assert.match(antigravity, /search_web/);
   assert.match(antigravity, /read_url_content/);
   const installer = await readFile(path.join(root, 'scripts', 'codex', 'install-codex-integration.sh'), 'utf8');
-  assert.match(installer, /read_url\(\*\)/);
+  const settings = await readFile(path.join(root, 'src', 'platform', 'antigravity-settings.ts'), 'utf8');
+  assert.match(settings, /read_url\(\*\)/);
+  const materializer = await readFile(path.join(root, 'src', 'platform', 'install-materializer.ts'), 'utf8');
+  assert.match(materializer, /src\/platform\/antigravity-settings|updateAntigravityPermissions/);
   // Rulesync writes the user-level MCP server lists from .rulesync/mcp.jsonc.
   assert.doesNotMatch(installer, /\b(agy|copilot|claude) mcp (add|remove)\b/);
 });
 
 test('provider CLI versions are pinned in one AutoDev manifest', async () => {
-  const manifest = JSON.parse(await readFile(path.join(root, '.github', 'ci', 'provider-tools.json'), 'utf8'));
+  const manifest = JSON.parse(await readFile(path.join(root, '.github', 'ci', 'provider-tools.json'), 'utf8')) as ProviderManifest;
   assert.equal(manifest.schemaVersion, 1);
   for (const packageSpec of Object.values(manifest.tools)) {
     assert.match(packageSpec.package, /@[^@\s]+\@[0-9]+\.[0-9]+\.[0-9]+$/);
@@ -376,7 +388,8 @@ test('MiniMax Codex CI runs through the tracked boundary adapter, never straight
   assert.match(agentInvoke, /AUTODEV_ROOT: \$\{\{ github\.workspace \}\}\/\.autodev/);
   const runner = await readFile(path.join(root, 'scripts', 'codex', 'run-ci-provider.sh'), 'utf8');
   // Assert against commands, not prose: the comments explain why MiniMax is never called directly.
-  const branch = runner.split('  mini-max-codex)', 2)[1].split(';;', 1)[0].split('\n').filter((line) => !line.trimStart().startsWith('#')).join('\n');
+  const branchSource = (runner.split('  mini-max-codex)', 2)[1] ?? '').split(';;', 1)[0] ?? '';
+  const branch = branchSource.split('\n').filter((line) => !line.trimStart().startsWith('#')).join('\n');
   assert.match(branch, /export CODEX_HOME="\$runner_temp\/codex-home"/);
   assert.match(branch, /scripts\/codex\/profiles\/minimax\.config\.toml" "\$CODEX_HOME\/minimax\.config\.toml"/);
   assert.match(branch, /scripts\/codex\/catalogs\/minimax-model-catalog\.json" "\$CODEX_HOME\/minimax-model-catalog\.json"/);
@@ -406,14 +419,16 @@ test('CI never stores a GitHub credential in a git remote URL', async () => {
 test('the CI git credential helper answers from the environment without persisting the token', async () => {
   const invoke = await readWorkflow('agent-invoke.yml');
   assert.match(invoke, /git config --local --add credential\.https:\/\/github\.com\.helper ''\n/, 'the helper list must be reset first');
-  const helper = invoke.match(/--add credential\.https:\/\/github\.com\.helper '(![^']+)'/)[1];
+  const helperMatch = invoke.match(/--add credential\.https:\/\/github\.com\.helper '(![^']+)'/);
+  assert.ok(helperMatch);
+  const helper = helperMatch[1] ?? '';
   const repo = await mkdtemp(path.join(tmpdir(), 'autodev-credential-helper-'));
   // Isolated from this machine's global/system git config and credential
   // helpers (for example the macOS keychain), so only the workflow's helper can
   // answer and no real credential is ever read.
   const isolated = { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1', GIT_TERMINAL_PROMPT: '0', GH_TOKEN: '' };
   try {
-    const git = (args, options = {}) => spawnSync('git', args, { cwd: repo, encoding: 'utf8', env: isolated, ...options });
+    const git = (args: string[], options: { input?: string; env?: NodeJS.ProcessEnv } = {}) => spawnSync('git', args, { cwd: repo, encoding: 'utf8', env: isolated, ...options });
     assert.equal(git(['init', '-q']).status, 0);
     assert.equal(git(['remote', 'add', 'origin', 'https://github.com/SimulatorLife/AutoDev.git']).status, 0);
     assert.equal(git(['config', '--local', '--add', 'credential.https://github.com.helper', '']).status, 0);

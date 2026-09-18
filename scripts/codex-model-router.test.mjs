@@ -176,9 +176,9 @@ test("the router calls the Antigravity adapter directly, with no LiteLLM hop", a
   assert.doesNotMatch(read("scripts/ensure-codex-antigravity-proxy.sh"), /litellm/i, "the ensure hook must not supervise LiteLLM");
   // The installer still names the obsolete assets, because naming them is how
   // it removes them from a host that has them; it must not install them.
-  const installer = read("scripts/codex/install-codex-integration.sh");
-  assert.match(installer, /obsolete_launchagent_labels=\(com\.codex\.antigravity-litellm\)/);
-  assert.doesNotMatch(installer, /litellm_dir/);
+  const materializer = read("src/platform/install-materializer.ts");
+  assert.match(materializer, /com\.codex\.antigravity-litellm/);
+  assert.doesNotMatch(materializer, /litellm_dir/);
 });
 
 test("loads editable provider and role models from JSON routing config", async () => {

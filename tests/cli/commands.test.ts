@@ -18,6 +18,9 @@ test('CLI dispatches router, provider, hook, and install through typed backends'
   assert.equal(runMain(['provider', 'claude'], { provider: { start: (name) => { calls.push(`provider ${name}`); return 13; } } }), 13);
   assert.equal(runMain(['hook', 'skill-read'], { hook: { run: (name) => { calls.push(`hook ${name}`); return 14; } } }), 14);
   assert.equal(runMain(['install'], { install: { install: () => { calls.push('install'); return 15; } } }), 15);
+  const installArgs: string[] = [];
+  assert.equal(runMain(['install', '--materialize-only'], { install: { install: (args = []) => { installArgs.push(...args); return 16; } } }), 16);
+  assert.deepEqual(installArgs, ['--materialize-only']);
   assert.deepEqual(calls, ['router run', 'provider claude', 'hook skill-read', 'install']);
 });
 
@@ -38,7 +41,7 @@ test('router status uses its typed status result', () => {
 });
 
 test('unmigrated runtime backends fail clearly instead of invoking wrappers', () => {
-  for (const args of [['router', 'status'], ['provider', 'claude'], ['hook', 'skill-read'], ['install']] as string[][]) {
+  for (const args of [['router', 'status'], ['provider', 'claude'], ['hook', 'skill-read']] as string[][]) {
     assert.throws(() => main(args), (error: unknown) => {
       assert.equal(error instanceof UnmigratedRuntimeError, true);
       assert.match(String(error), /runtime backend is not migrated/);
@@ -51,5 +54,5 @@ test('typed command boundaries reject unknown names and extra arguments', () => 
   assert.throws(() => runMain(['provider', 'unknown']), /unsupported provider/);
   assert.throws(() => runMain(['hook', 'unknown']), /unsupported hook/);
   assert.throws(() => runMain(['router', 'unknown']), /unsupported router command/);
-  assert.throws(() => runMain(['install', '--check']), /install does not accept arguments/);
+  assert.equal(runMain(['install', '--check'], { install: { install: () => 17 } }), 17);
 });

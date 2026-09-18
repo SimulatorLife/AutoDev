@@ -899,7 +899,7 @@ The final two Phase 0 capture contracts are now frozen. The native-versus-
 bridge-native child-count fixture at
 `tests/fixtures/contracts/native-vs-bridge-child-counts.json` (schema
 `autodev-native-vs-bridge-child-counts-v1`) and its executable suite at
-`tests/native-vs-bridge-child-counts.test.mjs` drive the existing router
+`tests/native-vs-bridge-child-counts.test.ts` drive the existing router
 helpers and `ingestAgentEvents` with deterministic IDs and timestamps. They
 pin mechanism ordering, exact empty/non-empty projection keys, per-child
 bridge batch counts, started-to-settled outcomes and row settlement tallies,
@@ -919,22 +919,22 @@ its bounded recent-window subtotal from the cumulative all-time total as
 footer and status CLI use the same distinction without fallback inflation.
 These two contracts mark `Native versus bridge-native child counts` and
 `Dashboard/status snapshots` frozen. **Validation.** The focused contracts
-pass exactly: `node --test tests/native-vs-bridge-child-counts.test.mjs` ->
+pass exactly: `node --test tests/native-vs-bridge-child-counts.test.ts` ->
 24 pass, 0 fail; `node --test tests/dashboard-status-snapshot.test.mjs` ->
 5 pass, 0 fail. The requested regression commands also pass: agent
 reconciliation 16, workspace attribution 8, concurrency 25, router 182,
 metrics 19, workspace telemetry 18, and router state snapshot 3, all with
 0 failures. The full `pnpm test` run reports 575 pass, 0 fail; both
 `pnpm run validate:actionlint` and `pnpm run validate:shell` exit 0;
-`python3 -m unittest tests.test_otel_autodev_attributes tests.test_otel_autodev_attributes_emission`
+`node --test tests/otel-attributes-schema.test.ts tests/otel-attributes-emission.test.ts`
 reports 44 pass, 0 fail; and `git diff --check` is clean. LSP diagnostics
 for `src/cli/router-status.ts`,
-`tests/native-vs-bridge-child-counts.test.mjs`, and
+`tests/native-vs-bridge-child-counts.test.ts`, and
 `tests/dashboard-status-snapshot.test.mjs` report 0 errors, warnings, info,
 and hints. An independent validator reproduced 29/29 focused passes and
 reported no privacy, determinism, labeling, or documentation blockers.
 
-The Phase 0 "workspace attribution and tool/skill/MCP attribution" capture is now frozen as a deterministic contract. **Finding.** Existing behavioral tests covered workspace-local named tool/skill/MCP evidence, fail-closed unavailable-versus-empty rendering, workspace-id joins, privacy normalization, and attribution diagnostics, but no fixture pinned the public `status.usage.byWorkspace` rows or diagnostic reasons. **Slice.** `tests/fixtures/contracts/workspace-attribution-contract.json` (schema `autodev-workspace-attribution-v1`) and `tests/workspace-attribution-contract.test.mjs` now freeze empty dimensions, workspace-local bridge evidence, skill exposure versus use, MCP exposure versus confirmed use, registered/unknown/ambiguous workspace identifiers, privacy hashing, deterministic named rows, and additive privacy-safe OTel attributes. The fixture registers slot/telemetry inputs directly where needed so it is host-independent; admission limits remain covered by the separate concurrency contract. **Completed slice only after verification.** The focused contract reports 8 passing tests; existing workspace telemetry and OTel attribute suites remain green. `Workspace attribution` and `Tool/skill/MCP attribution` are marked frozen below; the final child-count and dashboard/status slices are documented immediately below.
+The Phase 0 "workspace attribution and tool/skill/MCP attribution" capture is now frozen as a deterministic contract. **Finding.** Existing behavioral tests covered workspace-local named tool/skill/MCP evidence, fail-closed unavailable-versus-empty rendering, workspace-id joins, privacy normalization, and attribution diagnostics, but no fixture pinned the public `status.usage.byWorkspace` rows or diagnostic reasons. **Slice.** `tests/fixtures/contracts/workspace-attribution-contract.json` (schema `autodev-workspace-attribution-v1`) and `tests/workspace-attribution-contract.test.ts` now freeze empty dimensions, workspace-local bridge evidence, skill exposure versus use, MCP exposure versus confirmed use, registered/unknown/ambiguous workspace identifiers, privacy hashing, deterministic named rows, and additive privacy-safe OTel attributes. The fixture registers slot/telemetry inputs directly where needed so it is host-independent; admission limits remain covered by the separate concurrency contract. **Completed slice only after verification.** The focused contract reports 8 passing tests; existing workspace telemetry and OTel attribute suites remain green. `Workspace attribution` and `Tool/skill/MCP attribution` are marked frozen below; the final child-count and dashboard/status slices are documented immediately below.
 
 With these two contracts complete, the entire Phase 0 capture list is frozen
 except for provider and CLI parity gaps that explicitly require provider
@@ -1017,7 +1017,7 @@ is composed into `$CODEX_HOME/config.toml` by
 `src/config/compose-user-config.ts`. The frozen contract fixture
 `tests/fixtures/contracts/portable-autodev-config-contract.json` (schema
 `autodev-portable-autodev-config-v1`) and
-`tests/portable-autodev-config-contract.test.mjs` pin the portable scalar set,
+`tests/portable-autodev-config-contract.test.ts` pin the portable scalar set,
 four model providers, seven required sections, declared hook events without
 `hooks.state`, and the exact AutoDev MCP and skill-name sets byte-for-byte
 using the same Python `tomllib` parser as the composer.
@@ -1057,7 +1057,7 @@ tracked as a fixture: the tests generate every projection into temporary roots
 (see "Completed removal of Rulesync shadow fixtures" below).
 
 The hook-adoption evaluation is **not a live-cutover approval**.
-`tests/test_rulesync_hooks_shadow.py` executes the parity blockers against
+`tests/rulesync-hooks-shadow.test.ts` executes the parity blockers against
 current sources: Codex's live `config.autodev.toml` carries
 `prevent_idle_sleep` on four hooks while Rulesync cannot represent it; Copilot
 and Antigravity lose target-specific commands during projection; and the
@@ -1163,7 +1163,7 @@ see "Completed generated repository skill surfaces" below.
 skills exist only for developing AutoDev itself and must never reach other
 workspaces. The first is `autodev-codex-request-capture`, which documents how to
 see exactly what Codex sends a provider without contacting any API, and bundles
-`scripts/responses-recorder.mjs` plus an example turns file.
+`scripts/responses-recorder.ts` plus an example turns file.
 - Like every skill, its source is `.rulesync/skills`.
 - It is deliberately absent from the installer's user-level `skill_names` and
   from the agy registries.
@@ -1174,7 +1174,7 @@ see exactly what Codex sends a provider without contacting any API, and bundles
 - `tests/test_local_setup.py` asserts the generated copies, that they stay out
   of git, the exclusions, and that a hermetic install creates no user-level
   link.
-- `tests/codex-request-capture-skill.test.mjs` covers the recorder.
+- `tests/codex-request-capture-skill.test.ts` covers the recorder.
 
 **Completed generated repository skill surfaces — only `.rulesync/skills` is
 tracked (added item, 2026-09-15).** Git tracked Rulesync output in three
@@ -1207,7 +1207,7 @@ single source:
   - the tracked `.github/skills` copies and the repository-only symlinks;
   - the skill shadow fixtures;
   - `test_rulesync_skills_shadow.py` and `test_rulesync_live_skills.py`.
-- `tests/test_rulesync_skills.py` generates the folders fresh and checks:
+- `tests/rulesync-skills.test.ts` generates the folders fresh and checks:
   - each folder gets exactly its skills, with bundled files byte-identical;
   - no user-level skill is duplicated;
   - name, description, and body survive, and `targets` does not;
@@ -1229,8 +1229,8 @@ into temporary roots, so the fixtures only added a byte-for-byte golden
 comparison. They are deleted, and nothing Rulesync generates is tracked as a
 fixture:
 - `test_rulesync_mcp_shadow.py`, `test_rulesync_mcp_boundary.py`,
-  `test_rulesync_hooks_shadow.py`, `test_rulesync_live_rules.py`, and
-  `test_rulesync_skills.py` generate from `.rulesync` into temporary roots with
+  `rulesync-hooks-shadow.test.ts`, `test_rulesync_live_rules.py`, and
+  `rulesync-skills.test.ts` generate from `.rulesync` into temporary roots with
   the pinned Rulesync.
 - They assert what matters instead of comparing golden bytes:
   - MCP: each target's server set and commands, plus the boundary contract;
@@ -1241,10 +1241,10 @@ fixture:
   - skills: exposure and bundled files.
 - `rulesync.jsonc` stopped pointing at the fixture root. It is now the live
   skills configuration used by the installer, Copilot's setup steps, and
-  `test_rulesync_skills.py`.
+  `rulesync-skills.test.ts`.
 - The drift workflow keeps its name and job id, so required checks are
   unaffected. It no longer runs inline Rulesync generation. Instead it runs
-  `python3 -m unittest tests/test_rulesync_*.py`, filtered on `.rulesync/**`,
+  `node --test tests/rulesync-mcp.test.ts tests/rulesync-hooks-shadow.test.ts tests/rulesync-skills.test.ts tests/rulesync-permissions-inventory.test.ts`, filtered on `.rulesync/**`,
   `rulesync.jsonc`, those tests, the MCP boundary contract, the live rule
   files, and the dependency manifests.
 - An upgrade that changes Rulesync output is caught by those assertions, not by
@@ -1274,7 +1274,7 @@ consumer now reads the one source natively:
   instructions.
 - Copilot and VS Code read both `AGENTS.md` and `CLAUDE.md`, so they see the
   text twice; before this change they saw it three times.
-- `tests/test_agent_instructions.py` asserts that `AGENTS.md` is the only regular
+- `tests/agent-instructions.test.ts` asserts that `AGENTS.md` is the only regular
   instruction file, that `CLAUDE.md` links to it, and that no tracked file
   duplicates it.
 
@@ -1317,7 +1317,7 @@ that. Meanwhile each server's launch definition was repeated in four places:
 - `copilotcli` drops `openaiDeveloperDocs`.
 - `antigravity-cli` adds `autodev_spawn`, launched through the installed shim.
 - A target section replaces a shared entry whole, so the Codex entries repeat
-  their launch keys; `tests/test_rulesync_mcp.py` keeps them equal.
+  their launch keys; `tests/rulesync-mcp.test.ts` keeps them equal.
 
 *Generation.*
 - **Claude Code, Copilot CLI, Antigravity:** for each of `claude`, `copilot`,
@@ -1451,7 +1451,7 @@ assignment and exposure remain AutoDev-owned:
 - hooks and permissions.
 
 The permission source inventory is complete:
-`tests/test_rulesync_permissions_inventory.py` snapshots and contract-tests
+`tests/rulesync-permissions-inventory.test.ts` snapshots and contract-tests
 the three live permission sources without writing to any of them —
 Codex's `approval_policy`/`sandbox_mode`/`sandbox_workspace_write.network_access`
 scalars in `scripts/codex/config.autodev.toml` and the per-server
@@ -1487,10 +1487,10 @@ CI drift protection is enforced by `.github/workflows/rulesync-mcp-shadow-drift.
 read-only workflow triggered on `push` to `main`, `pull_request`, and `workflow_dispatch`.
 It is path-filtered to:
 - `.rulesync/**` and `rulesync.jsonc`;
-- `tests/test_rulesync_*.py`;
+- `tests/rulesync-*.test.ts`;
 - `package.json`, `pnpm-lock.yaml`, and the workflow file itself.
 
-It runs `python3 -m unittest tests/test_rulesync_*.py`. Those suites generate every
+It runs `node --test tests/rulesync-mcp.test.ts tests/rulesync-hooks-shadow.test.ts tests/rulesync-skills.test.ts tests/rulesync-permissions-inventory.test.ts`. Those suites generate every
 projection from `.rulesync` into temporary roots with the pinned Rulesync and
 derive their expectations from the tracked sources; no generated output is tracked.
 
@@ -1501,7 +1501,7 @@ When a Rulesync suite fails after an intentional change to `.rulesync/`,
 
 1. Run the suites locally:
    ```bash
-   python3 -m unittest tests/test_rulesync_*.py
+   node --test tests/rulesync-mcp.test.ts tests/rulesync-hooks-shadow.test.ts tests/rulesync-skills.test.ts tests/rulesync-permissions-inventory.test.ts
    ```
 2. Update the failing assertion only when the new projection is the intended
    behaviour. There are no fixtures to refresh.
@@ -1553,10 +1553,11 @@ The Phase 3 runtime slice is implemented as a reversible, opt-in local
 Collector ingress. The pinned build remains `v0.160.0`; the platform artifact
 manifest at `config/otel/collector-artifacts.json` records official
 `darwin/{arm64,amd64}` and `linux/{arm64,amd64}` release assets and SHA-256
-checksums. `scripts/codex/otel/provision-autodev-otel-collector.sh` downloads
-only the host-matching asset, verifies its checksum, and installs the
-machine-local binary under `$CODEX_HOME/otelcol`; no Collector binary is
-vendored in the repository.
+checksums. `src/platform/otel-provision.ts` downloads only the host-matching
+asset, verifies its checksum, and installs the machine-local binary under
+`$CODEX_HOME/otelcol`; `scripts/codex/otel/provision-autodev-otel-collector.sh`
+is only the process-dispatch shim, and no Collector binary is vendored in the
+repository.
 
 The runtime is supervised by
 `scripts/codex/launchagents/com.codex.otel-collector.plist` and the foreground
@@ -2190,7 +2191,7 @@ takes raw JavaScript, and shows `await tools.exec_command({ cmd })`.
   - The working directory still appears inside Codex's own environment-context
     prompt message, which every model receives so it can run commands. That is
     prompt content, not metadata.
-- **Tests:** `tests/workflows.test.mjs` freezes the adapter route, the token-free
+- **Tests:** `tests/workflows.test.ts` freezes the adapter route, the token-free
   remote, and the helper. Its helper test runs `git credential fill` isolated
   from the machine's global and system git config.
 
@@ -2274,8 +2275,8 @@ and exhaustion diagnostics retain their existing contracts. The legacy
 `scripts/codex-model-router.mjs` remains only as the executable/public
 re-export entrypoint; provider policy, cooldowns, telemetry, and lifecycle
 ownership remain explicit typed modules. Phase 6 remains in progress because
-provider transport migrations and any future deletion still require parity
-proof. The provider implementation slices are complete for MiniMax, Copilot,
+that final executable entrypoint and the remaining first-party test/runtime
+paths still require migration and parity proof. The provider implementation slices are complete for MiniMax, Copilot,
 Antigravity, and Claude: they run from `src/providers/minimax.ts`,
 `src/providers/copilot.ts`, `src/providers/antigravity.ts`, and
 `src/providers/claude.ts`, while their retained boundary responsibilities
@@ -2295,7 +2296,7 @@ without shelling out, and its injectable tests freeze launchd ownership,
 locking, readiness, fallback, PID safety, and duplicate detection. The typed
 owner retains the ensure hook's best-effort Copilot side effect through
 `src/platform/copilot-ensure.ts`, while `scripts/ensure-codex-model-router.sh`
-remains unchanged as the rollback baseline.
+now remains only as the installed process-dispatch shim.
 The provider lifecycle slice is now typed as well. Claude and MiniMax
 model-gated ensure decisions live in `src/platform/claude-ensure.ts` and
 `src/platform/minimax-ensure.ts`; Copilot's typed owner is now an executable
@@ -2309,6 +2310,88 @@ contract tests cover model gating, credential/CLI checks, launchd adoption,
 private fallback behavior, and the no-duplicate invariant. This removes
 provider policy and readiness logic from the subagent hook without changing
 provider transports or the closed OAuth retirement gates.
+
+The installer reconciliation slice also moved Antigravity's machine-local JSON
+policy out of embedded Python. `src/platform/antigravity-settings.ts` now owns
+permission grants and the global code-skill registration, including typed JSON
+validation, duplicate removal, atomic `0600` writes, and check-mode diagnostics.
+The installer keeps only optional CLI detection, root collection, and invocation
+of that typed owner. The native TypeScript settings contract covers root
+normalization, preserved user entries, disabled Playwright removal, stale skill
+registration, and idempotence; the existing Rulesync permission-generation gate
+remains unchanged.
+
+The installer runtime-file slice is now typed. `src/platform/runtime-files.ts`
+owns checkout-to-`CODEX_HOME` target mapping, atomic replacement of runtime
+files, symlink removal, mode assignment, and content drift checks. Runtime
+modules, rendered prompt roles, and generated role files now use that owner
+instead of inline `install`/`cmp` policy. The same owner now handles absolute
+symlinks, canonical skill-source validation, and link drift checks; native
+TypeScript tests cover path mapping, atomic replacement, symlink handling,
+modes, and drift detection.
+The remaining shell installer file is a process-dispatch shim; typed CLI
+modules own install and check orchestration, including the temporary Codex MCP
+projection.
+Obsolete launch-agent filesystem cleanup, stale runtime files, stale hooks,
+and obsolete runtime directories now use `src/platform/runtime-reconciliation.ts`
+with explicit path-kind contracts and symlink-safe removal. The installer no longer owns filesystem reconciliation or service policy in shell;
+service restart and Collector management are typed owners as well.
+
+The service-restart slice is now typed in `src/platform/service-restart.ts`.
+That owner protects foreign `CODEX_HOME` runtimes, coordinates launchd
+bootout/bootstrap/enable/kickstart ordering, reaps only matching stale
+listeners, waits on managed service readiness, and forwards the Collector
+configuration when direct fallback is required. The installer now invokes the
+owner as a process-dispatch boundary; installer-wide orchestration is now
+owned by the typed install coordinator.
+The Collector foreground and ensure slice is now typed in
+`src/platform/otel-collector.ts`. Exact pinned-version/config validation,
+listener duplicate protection, readiness, private state, and direct fallback
+are owned there; the `ensure-*` and `run-*` Collector scripts are dispatch
+shims. The pinned artifact downloader/provisioning slice is now typed in
+`src/platform/otel-provision.ts`: it validates the pinned manifest, selects the
+host asset, downloads and verifies its SHA-256, extracts the binary, and installs
+it with private permissions. `provision-autodev-otel-collector.sh` is now only a
+process-dispatch shim; installer-wide orchestration is owned by the typed
+install coordinator.
+
+The top-level install materialization sequence is now typed in
+`src/platform/install-materializer.ts`. It owns runtime/role/link deployment,
+stale cleanup, Rulesync repository and user projections, composed Codex config,
+provider skill/MCP views, Antigravity settings, LaunchAgent rendering, and
+private run-log setup. The shell installer now dispatches this sequence and
+then the typed service-restart owner; the shell installer is now only a
+process-dispatch entrypoint.
+
+The concrete `autodev install` backend now lives in
+`src/platform/install-command.ts`. It owns normal-install option validation and
+coordinates typed mode/auth state, dependency setup, Collector provisioning,
+materialization, and service restart. The shell installer dispatches the same
+backend for normal installs and the typed `install-check` backend for `--check`;
+it is now only a process-dispatch entrypoint.
+
+Install-state policy is now typed in `src/platform/install-state.ts`. Collector
+mode read/write and router-auth token creation preserve the private-file and
+idempotence invariants without shell parsing or `openssl`; the installer only
+parses options and dispatches the owner. External dependency setup is now
+also typed in `src/platform/dependencies.ts`, including pipx provisioning,
+pinned CocoIndex/Python-LSP installation, and macOS native-build environment
+preparation. The shell installer retains no application logic; option/check
+orchestration and the temporary Codex MCP projection are typed.
+
+LaunchAgent template rendering and drift checks now use the typed macOS owner
+`src/platform/macos/launchagent.ts`, including atomic output and literal-safe
+substitution for machine-local paths. The installer retains only the template
+source list and process-dispatch calls.
+The first test-stack slices are now complete: the AutoDev request-capture
+recorder and its contract suite, bridge-role contract, portable configuration
+contract, Copilot MCP contract, workflow contract, workspace-attribution
+contract, native-vs-bridge contract, agent-instructions contract,
+Rulesync-permissions contract, Collector config/runtime contracts, and
+root-delegation hook contract now use native TypeScript; the superseded `.mjs`
+and Python test files are removed. The vendored recorder remains repository-only
+skill content and is still offline; this does not change provider transport or
+capture privacy semantics.
 
 **Status (2026-09-17) — cross-provider orchestrator delegation.** The
 execution contract now records an explicit provider `delegation` mode instead

@@ -446,3 +446,13 @@ export async function runRouterEnsure(deps: RouterEnsureDeps, options: RouterEns
 }
 
 export const __testing = { parseLaunchdPid, waitForProbe, acquireLock, ensureViaLaunchd, ensureViaFallback, safeLaunchctlAvailable, safeLaunchctlPrint, fallbackPidOwned, launchdOwnsListener, lockDirCleanup, secureLogFile, resolveRouterEnsureOptionsFromEnv };
+
+
+if (process.argv[1] === new URL(import.meta.url).pathname) {
+  const options = resolveRouterEnsureOptionsFromEnv(process.env, process.pid);
+  runRouterEnsure(createDefaultRouterEnsureDeps(options), options).then((result) => {
+    if (result.message && result.exitCode !== 0) process.stderr.write(`${result.message}\n`);
+    for (const line of result.logTail ?? []) process.stderr.write(`${line}\n`);
+    process.exitCode = result.exitCode;
+  });
+}

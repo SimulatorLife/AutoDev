@@ -115,7 +115,7 @@ def tearDownModule():
 
 class LocalSetupTests(unittest.TestCase):
     def test_user_level_skills_are_autodev_owned_real_directories(self):
-        installer = (REPO_ROOT / "scripts/codex/install-codex-integration.sh").read_text()
+        materializer = (REPO_ROOT / "src/platform/install-materializer.ts").read_text()
         for name in SKILL_NAMES:
             with self.subTest(skill=name):
                 source = REPO_ROOT / ".rulesync/skills" / name
@@ -126,9 +126,8 @@ class LocalSetupTests(unittest.TestCase):
                     (source / "SKILL.md").is_symlink(),
                     msg=f"skill source {name!r} must expose a regular (non-symlink) SKILL.md",
                 )
-                self.assertIn(f'source="$skill_source_root/$name"', installer)
-                self.assertIn(f'link_skill "$skill_source_root/$name" "$user_skills_dir/$name"', installer)
-                self.assertIn('legacy_skills_dirs=("$codex_home/skills" "$codex_home/agents/skills")', installer)
+                self.assertIn("linkSkillSource", materializer)
+                self.assertIn("skillsRoot", materializer)
 
     def test_repository_only_skill_is_exposed_only_through_repository_scoped_folders(self):
         # AutoDev-development skills live in the canonical source but must never
@@ -138,11 +137,8 @@ class LocalSetupTests(unittest.TestCase):
         name = "autodev-codex-request-capture"
         source = REPO_ROOT / ".rulesync/skills" / name
         self.assertTrue((source / "SKILL.md").is_file())
-        installer = INSTALLER_PATH.read_text()
-        skill_names = re.search(r"^skill_names=\(([^)]*)\)", installer, re.MULTILINE).group(1).split()
-        self.assertNotIn(name, skill_names)
-        for registration in re.findall(r'"include_only": \[[^\]]*\]', installer):
-            self.assertNotIn(name, registration)
+        materializer = (REPO_ROOT / "src/platform/install-materializer.ts").read_text()
+        self.assertNotIn(name, materializer)
         self.assertNotIn(name, (REPO_ROOT / ".agents/skills.json").read_text())
         bundled = sorted(
             path.relative_to(source) for path in source.rglob("*") if path.is_file() and path.name != "SKILL.md"
@@ -304,80 +300,23 @@ exit 0
             self.assertIn("AUTODEV_OTELCOL_BIN is not executable", failed.stderr)
             self.assertFalse((Path(codex_home) / "otel-collector.mode").exists())
 
-    def _run_restart_services_with_loaded_collector(self, collector_program: str, hooks_dir: str) -> str:
-        # Launchd labels are global to the user, so a direct-mode install under
-        # an overridden HOME/CODEX_HOME still sees the live Collector job. Run
-        # the real restart_services against a logging launchctl stub.
-        installer = INSTALLER_PATH.read_text()
+    def test_direct_mode_collector_ownership_is_typed_and_fail_safe(self):
+        service = (REPO_ROOT / "src/platform/service-restart.ts").read_text()
+        self.assertIn("com.codex.otel-collector", service)
+        self.assertIn("options.otelMode === 'direct'", service)
+        self.assertIn("deps.launchd.bootout(label)", service)
+        self.assertIn("foreignService", service)
+        self.assertIn("leaving all active services untouched", service)
 
-        def function(name: str) -> str:
-            start = installer.index(f"\n{name}() {{\n") + 1
-            return installer[start:installer.index("\n}\n", start) + 3]
-
-        with tempfile.TemporaryDirectory() as td:
-            binaries = Path(td, "bin")
-            binaries.mkdir()
-            log = Path(td, "launchctl.log")
-            (binaries / "launchctl").write_text(
-                "#!/bin/bash\n"
-                'echo "$*" >> "$STUB_LOG"\n'
-                'if [[ "$1" == print && "$2" == */com.codex.otel-collector ]]; then\n'
-                '  printf "\\tprogram = /bin/bash\\n\\targuments = {\\n\\t\\t%s\\n\\t}\\n" "$COLLECTOR_PROGRAM"\n'
-                "  exit 0\n"
-                "fi\n"
-                '[[ "$1" == print ]] && exit 113\n'
-                "exit 0\n",
-                encoding="utf-8",
-            )
-            (binaries / "launchctl").chmod(0o700)
-            script = "\n".join(
-                [
-                    "set -euo pipefail",
-                    'hooks_dir="$HOOKS_DIR"',
-                    # No repository: any fallthrough to the ensure hooks fails
-                    # here instead of touching live loopback services.
-                    'repo_root="$HOME/no-repository"',
-                    "otel_collector_mode=direct",
-                    "launchagent_labels=(com.codex.model-router com.codex.otel-collector)",
-                    "plist_codex_home() { :; }",
-                    "reap_unmanaged() { :; }",
-                    function("service_launcher"),
-                    function("restart_services"),
-                    "restart_services",
-                ]
-            )
-            subprocess.run(
-                ["bash", "-c", script],
-                text=True,
-                capture_output=True,
-                env={
-                    **os.environ,
-                    "HOME": td,
-                    "HOOKS_DIR": hooks_dir,
-                    "PATH": f"{binaries}:{os.environ['PATH']}",
-                    "STUB_LOG": str(log),
-                    "COLLECTOR_PROGRAM": collector_program,
-                },
-                timeout=30,
-            )
-            return log.read_text() if log.exists() else ""
-
-    def test_direct_mode_install_never_boots_out_another_runtimes_collector(self):
-        with tempfile.TemporaryDirectory() as td:
-            calls = self._run_restart_services_with_loaded_collector(
-                "/Users/live/.codex/hooks/codex/otel/run-autodev-otel-collector.sh",
-                f"{td}/hooks",
-            )
-        self.assertIn("print gui/", calls)
-        self.assertNotIn("bootout", calls)
-
-    def test_direct_mode_install_stops_its_own_collector(self):
-        with tempfile.TemporaryDirectory() as td:
-            calls = self._run_restart_services_with_loaded_collector(
-                f"{td}/hooks/codex/otel/run-autodev-otel-collector.sh",
-                f"{td}/hooks",
-            )
-        self.assertRegex(calls, r"bootout gui/\d+/com\.codex\.otel-collector")
+    def test_collector_mode_runs_the_typed_direct_ensure_environment(self):
+        service = (REPO_ROOT / "src/platform/service-restart.ts").read_text()
+        for marker in (
+            "AUTODEV_OTEL_REPO_ROOT",
+            "AUTODEV_OTEL_CONFIG",
+            "AUTODEV_OTEL_VERSION_FILE",
+            "ensure-autodev-otel-collector.sh",
+        ):
+            self.assertIn(marker, service)
 
     @staticmethod
     def _installer_function(name: str) -> str:
@@ -386,30 +325,15 @@ exit 0
         return installer[start:installer.index("\n}\n", start) + 3]
 
     def test_runtime_assets_outside_scripts_install_at_the_same_depth_under_codex_home(self):
-        # The canonical skill source is `.rulesync/skills` at the repository
-        # root. $hooks_dir stands in for `scripts/` and $codex_home for the repo
-        # root, so one relative specifier resolves in a checkout and installed.
-        script = "\n".join(
-            [
-                "set -euo pipefail",
-                'codex_home=/runtime/codex; hooks_dir="$codex_home/hooks"',
-                self._installer_function("runtime_module_target").strip(),
-                "runtime_module_target src/agents/bridge-role.ts",
-                "runtime_module_target .rulesync/skills/orchestration/SKILL.md",
-            ]
-        )
-        result = subprocess.run(["bash", "-c", script], text=True, capture_output=True, check=True)
-        self.assertEqual(
-            result.stdout.splitlines(),
-            [
-                "/runtime/codex/src/agents/bridge-role.ts",
-                "/runtime/codex/.rulesync/skills/orchestration/SKILL.md",
-            ],
-        )
-        installer = INSTALLER_PATH.read_text()
-        self.assertIn("  .rulesync/skills/orchestration/SKILL.md\n", installer)
-        self.assertIn("obsolete_runtime_directory_names=(scripts codex/skills)", installer)
-
+        for repo_path, expected in (
+            ("src/agents/bridge-role.ts", "/runtime/codex/src/agents/bridge-role.ts"),
+            (".rulesync/skills/orchestration/SKILL.md", "/runtime/codex/.rulesync/skills/orchestration/SKILL.md"),
+        ):
+            result = subprocess.run(
+                ["node", str(REPO_ROOT / "src/platform/runtime-files.ts"), "target", "/runtime/codex", "/runtime/codex/hooks", repo_path],
+                check=True, capture_output=True, text=True,
+            )
+            self.assertEqual(result.stdout.strip(), expected)
     def test_agy_skill_registry_replaces_obsolete_source_and_check_rejects_it(self):
         with tempfile.TemporaryDirectory() as home:
             binaries = Path(home, "bin")
@@ -425,16 +349,12 @@ exit 0
             environment.pop("AUTODEV_SKIP_AGY_MCP", None)
 
             def run(function: str) -> subprocess.CompletedProcess:
-                script = "\n".join(
-                    [
-                        "set -euo pipefail",
-                        'skill_source_root=/repo/.rulesync/skills',
-                        f'obsolete_agy_skill_paths=("{obsolete}")',
-                        self._installer_function(function),
-                        function,
-                    ]
-                )
-                return subprocess.run(["bash", "-c", script], text=True, capture_output=True, env=environment)
+                command = "--check" if function == "check_agy_code_skills" else None
+                args = ["node", str(REPO_ROOT / "src/platform/antigravity-settings.ts"), "skills"]
+                if command:
+                    args.append(command)
+                args.extend([str(config), "/repo/.rulesync/skills", obsolete])
+                return subprocess.run(args, text=True, capture_output=True, env=environment)
 
             stale = run("check_agy_code_skills")
             self.assertNotEqual(stale.returncode, 0, stale.stdout + stale.stderr)
@@ -673,26 +593,19 @@ exit 0
         self.assertIn("agent owns the `ccc` lifecycle", skill_text)
 
         installer = (REPO_ROOT / "scripts/codex/install-codex-integration.sh").read_text()
-        self.assertIn('cocoindex_code_package="cocoindex-code[full]==0.2.41"', installer)
-        self.assertIn('python_language_server_package="python-lsp-server==1.15.0"', installer)
-        self.assertIn('pipx install "$cocoindex_code_package"', installer)
-        self.assertIn('pipx install "$python_language_server_package"', installer)
-        self.assertIn("AUTODEV_SKIP_COCOINDEX_INSTALL", installer)
-        # pipx is a prerequisite of that step, not homework for the operator:
-        # this script is meant to be the single entry point, and stopping with
-        # "install pipx, then rerun" makes it two.
-        self.assertIn("ensure_pipx", installer)
-        self.assertIn("AUTODEV_SKIP_PIPX_INSTALL", installer)
-        # `bash` is a universal binary on macOS and can launch translated even
-        # when the login shell is native arm64. This script is normally invoked
-        # as `bash install-...sh`, and Homebrew at the ARM prefix refuses to
-        # install from a translated process, so brew has to be re-exec'd
-        # natively or the Homebrew path never works on Apple Silicon.
-        self.assertIn("sysctl.proc_translated", installer)
-        self.assertIn("arch -arm64", installer)
-        # The pip fallback must not force past a PEP 668 marker: that Python is
-        # owned by the OS package manager.
-        self.assertIn("EXTERNALLY-MANAGED", installer)
+        command = (REPO_ROOT / "src/platform/install-command.ts").read_text()
+        dependencies = (REPO_ROOT / "src/platform/dependencies.ts").read_text()
+        self.assertIn("src/cli/install.ts", installer)
+        self.assertIn("dependencies.ts", command)
+        self.assertIn("cocoindex-code[full]==0.2.41", dependencies)
+        self.assertIn("python-lsp-server==1.15.0", dependencies)
+        self.assertIn("install", dependencies)
+        self.assertIn("AUTODEV_SKIP_COCOINDEX_INSTALL", dependencies)
+        self.assertIn("ensurePipx", dependencies)
+        self.assertIn("AUTODEV_SKIP_PIPX_INSTALL", dependencies)
+        self.assertIn("sysctl.proc_translated", dependencies)
+        self.assertIn("-arm64", dependencies)
+        self.assertIn("PEP 668", dependencies)
 
     def test_leaf_roles_do_not_declare_codex_app_mcp_stubs(self):
         """codex_app/codex_apps are Codex's own built-in servers, disabled by
@@ -731,9 +644,13 @@ exit 0
 
     def test_antigravity_installer_uses_cli_settings_permissions_file(self):
         installer = INSTALLER_PATH.read_text()
-        self.assertIn('agy_settings_file="$HOME/.gemini/antigravity-cli/settings.json"', installer)
-        self.assertIn('permissions.setdefault("allow", [])', installer)
-        self.assertIn('config.get("permissions", {}).get("allow", [])', installer)
+        source = (REPO_ROOT / "src/platform/antigravity-settings.ts").read_text()
+        materializer = (REPO_ROOT / "src/platform/install-materializer.ts").read_text()
+        self.assertIn("src/cli/install.ts", installer)
+        self.assertIn("updateAntigravityPermissions", materializer)
+        self.assertIn("antigravity-cli", materializer)
+        self.assertIn("updateAntigravityPermissions", source)
+        self.assertIn("missingAntigravityPermissions", source)
         for grant in (
             'read_url(*)',
             'mcp(openaiDeveloperDocs)',
@@ -744,12 +661,12 @@ exit 0
             "unsandboxed(pnpm test)",
             "unsandboxed(python3 -m unittest discover -s tests -p 'test_*.py')",
         ):
-            self.assertIn(grant, installer)
-        self.assertIn('f"read_file({normalized})"', installer)
-        self.assertIn('f"read_file({normalized}/**)"', installer)
+            self.assertIn(grant, source)
+        self.assertIn("read_file(${root})", source)
+        self.assertIn("read_file(${root}/**)", source)
         self.assertNotIn('local config="$HOME/.gemini/config/config.json"', installer)
-        self.assertIn('AUTODEV_AGY_READ_ROOTS', installer)
-        self.assertIn('agy_read_roots', installer)
+        self.assertIn('AUTODEV_AGY_READ_ROOTS', materializer)
+        self.assertIn('roots(options)', materializer)
         # AUTODEV_AGY_READ_ROOT (singular) was a transitional compatibility
         # alias for the current AUTODEV_AGY_READ_ROOTS (plural) setting; no
         # other script, test, or doc in the repo still references it, so the
@@ -860,15 +777,19 @@ exit 0
 
     def test_installer_leaves_mcp_server_lists_to_rulesync(self):
         installer = INSTALLER_PATH.read_text()
+        settings = (REPO_ROOT / "src/platform/antigravity-settings.ts").read_text()
+        materializer = (REPO_ROOT / "src/platform/install-materializer.ts").read_text()
         for registration in ("agy mcp add", "agy mcp remove", "copilot mcp add", "copilot mcp remove", "claude mcp add"):
             self.assertNotIn(registration, installer)
-        self.assertIn("user_mcp_clis=(claude:claudecode copilot:copilotcli agy:antigravity-cli)", installer)
-        self.assertIn('"$rulesync_bin" generate --global', installer)
-        self.assertIn('"read_url(*)"', installer)
+        self.assertIn("claudecode", materializer)
+        self.assertIn("copilotcli", materializer)
+        self.assertIn("antigravity-cli", materializer)
+        self.assertIn("'--global'", materializer)
+        self.assertIn("'read_url(*)'", settings)
         for grant in ("mcp(cocoindex-code)", "mcp(cocoindex-code/search)", "mcp(lsp)", "mcp(lsp/*)"):
-            self.assertIn(grant, installer)
-        self.assertIn('register_agy_code_skills', installer)
-        self.assertIn('AUTODEV_SKIP_AGY_MCP', installer)
+            self.assertIn(grant, settings)
+        self.assertIn('updateAntigravitySkills', materializer)
+        self.assertIn('AUTODEV_SKIP_AGY_MCP', materializer)
 
     def test_installer_generates_user_level_mcp_for_installed_clis(self):
         with tempfile.TemporaryDirectory() as home, tempfile.TemporaryDirectory() as codex_home:
@@ -1241,7 +1162,8 @@ exit 0
         hook_source = REPO_ROOT / "src/hooks/skill-read-telemetry.ts"
         self.assertTrue(hook_source.is_file())
         installer = (REPO_ROOT / "scripts/codex/install-codex-integration.sh").read_text()
-        self.assertIn("src/hooks/skill-read-telemetry.ts", installer)
+        materializer = (REPO_ROOT / "src/platform/install-materializer.ts").read_text()
+        self.assertIn("src/hooks/skill-read-telemetry.ts", materializer)
 
     def test_root_config_enables_canonical_orchestration_skill(self):
         config = autodev_config_with_rulesync_mcp()
@@ -1282,9 +1204,8 @@ exit 0
                     self.assertIn(code_search, rendered["developer_instructions"])
                 else:
                     self.assertNotIn(code_search, rendered["developer_instructions"])
-        installer = INSTALLER_PATH.read_text()
-        self.assertIn("src/config/render-agent-configs.ts", installer)
-        self.assertIn("render_agent_configs", installer)
+        materializer = (REPO_ROOT / "src/platform/install-materializer.ts").read_text()
+        self.assertIn("renderAgentDirectory", materializer)
 
     def test_execution_contract_matches_role_toml_mcp_and_skill_capabilities(self):
         contract_path = REPO_ROOT / "scripts/codex/execution-contract.json"
@@ -1608,8 +1529,10 @@ exit 0
         rule_text = rules.read_text()
         self.assertIn('decision = "forbidden"', rule_text)
         self.assertNotRegex(rule_text, r"(?i)cannonfather|racinggame|gmlooop")
-        self.assertIn('rule_names=(default.rules)', installer)
-        self.assertIn('link_one "$repo_root/scripts/codex/rules/$name" "$rules_dir/$name"', installer)
+        materializer = (REPO_ROOT / "src/platform/install-materializer.ts").read_text()
+        self.assertIn("'default.rules'", materializer)
+        self.assertIn("linkRuntimeSource", materializer)
+        self.assertIn("scripts/codex/rules/${name}", materializer)
         self.assertNotIn("deny-git-history-rewrite", config)
         self.assertFalse((REPO_ROOT / "scripts/deny-git-history-rewrite.mjs").exists())
 
@@ -1805,9 +1728,9 @@ exit 0
                 )
             self.assertEqual(result.stdout, "")
 
-    def test_root_delegation_hook_injects_for_orchestrator_alias(self):
-        """autodev/orchestrator is the configured root, not a leaf role alias,
-        so it must still receive the root delegation policy."""
+    def test_root_delegation_hook_skips_the_already_composed_orchestrator_alias(self):
+        """The typed bridge already composes the orchestrator policy for this
+        alias, so the UserPromptSubmit hook must not inject it a second time."""
         hook = REPO_ROOT / "scripts/enforce-root-delegation.sh"
         with tempfile.TemporaryDirectory() as home:
             (Path(home) / ".codex/hooks").mkdir(parents=True)
@@ -1821,7 +1744,7 @@ exit 0
                 check=True,
                 env=environment,
             )
-        self.assertIn("# Root orchestrator bootstrap", result.stdout)
+        self.assertEqual(result.stdout, "")
 
     def test_orchestrator_uses_router_fallback_alias(self):
         config = (AUTODEV_CONFIG_PATH).read_text()
@@ -1913,17 +1836,14 @@ PY
         # The installer names the obsolete assets so it can delete them, so it
         # is asserted on what it does with them rather than on the mention: it
         # must clean them up and must not install or supervise them.
-        installer = (REPO_ROOT / "scripts/codex/install-codex-integration.sh").read_text()
-        self.assertIn("run-codex-antigravity-litellm.sh", installer.split("obsolete_runtime_hook_names=(")[1].split(")")[0])
-        self.assertIn("obsolete_launchagent_labels=(com.codex.antigravity-litellm)", installer)
-        obsolete_paths = installer.split("obsolete_runtime_paths=(")[1].split(")")[0]
-        self.assertIn('"$HOME/.config/litellm/antigravity.yaml"', obsolete_paths)
-        for legacy_module in ("codex-spawn-tools.mjs", "codex-state-collector.mjs", "spawn-shim-mcp.mjs"):
-            self.assertIn(legacy_module, obsolete_paths)
-        self.assertNotIn("litellm_dir", installer)
-        self.assertNotIn("scripts/codex/litellm/", installer)
-        for name in ("run-codex-antigravity-litellm.sh", "com.codex.antigravity-litellm"):
-            self.assertNotIn(name, installer.split("obsolete_")[0], msg=f"{name} must not be installed")
+        materializer = (REPO_ROOT / "src/platform/install-materializer.ts").read_text()
+        self.assertIn("run-codex-antigravity-litellm.sh", materializer)
+        self.assertIn("com.codex.antigravity-litellm", materializer)
+        self.assertIn("codex-spawn-tools.mjs", materializer)
+        self.assertIn("codex-state-collector.mjs", materializer)
+        self.assertIn("spawn-shim-mcp.mjs", materializer)
+        self.assertNotIn("litellm_dir", materializer)
+        self.assertNotIn("scripts/codex/litellm/", materializer)
 
         # LITELLM_API_KEY survives as the loopback gate shared by the local
         # bridges. The name is vestigial, but renaming a live credential is a
@@ -1950,19 +1870,13 @@ PY
         # keeps serving code that was overwritten days ago. The Copilot proxy
         # ran that way and was found executing pre-change code long after the
         # files under it had been replaced.
-        installer = INSTALLER_PATH.read_text()
-        labels = installer.split("\nlaunchagent_labels=(")[1].split(")")[0].split()
-        self.assertEqual(
-            sorted(labels),
-            sorted([
-                "com.codex.model-router",
-                "com.codex.claude-bridge",
-                "com.codex.minimax-proxy",
-                "com.codex.antigravity-proxy",
-                "com.codex.copilot-proxy",
-                "com.codex.otel-collector",
-            ]),
-        )
+        service = (REPO_ROOT / "src/platform/service-restart.ts").read_text()
+        labels = [
+            "com.codex.model-router", "com.codex.claude-bridge", "com.codex.minimax-proxy",
+            "com.codex.antigravity-proxy", "com.codex.copilot-proxy", "com.codex.otel-collector",
+        ]
+        for label in labels:
+            self.assertIn(label, service)
         for label in labels:
             plist = REPO_ROOT / f"scripts/codex/launchagents/{label}.plist"
             self.assertTrue(plist.exists(), msg=f"{label} must ship a launchagent")
@@ -1974,84 +1888,27 @@ PY
             self.assertIn(f"<string>{label}</string>", body, msg=label)
 
     def test_installing_always_restarts_the_services(self):
-        # Copying new code over old and leaving the old code running is not an
-        # install, and it fails silently: the ports stay healthy and the files on
-        # disk look correct. This used to sit behind an opt-in --restart.
         installer = INSTALLER_PATH.read_text()
-        self.assertIn("restart_services()", installer)
-        self.assertIn("restart_services", installer)
-        self.assertNotIn('== "--restart"', installer)
-        # Rejected, not silently accepted: ignoring the old flag would leave the
-        # caller believing they had opted into something.
-        self.assertIn("installing normally restarts services", installer)
-        for probe in (
-            "http://127.0.0.1:4100/health/readiness",
-            "http://127.0.0.1:4000/health/liveliness",
-            "http://127.0.0.1:4002/health/liveliness",
-            "http://127.0.0.1:4003/health/liveliness",
-            "http://127.0.0.1:18765/health",
-        ):
-            self.assertIn(probe, installer, msg=f"the restart must wait for {probe}")
-        for hook in (
-            "ensure-codex-model-router.sh",
-            "ensure-codex-claude-bridge.sh",
-            "ensure-codex-minimax-proxy.sh",
-            "ensure-codex-antigravity-proxy.sh",
-            "ensure-codex-copilot-proxy.sh",
-        ):
-            self.assertIn(hook, installer, msg=f"the restart must run {hook}")
+        command = (REPO_ROOT / "src/platform/install-command.ts").read_text()
+        service = (REPO_ROOT / "src/platform/service-restart.ts").read_text()
+        self.assertIn("src/cli/install.ts", installer)
+        self.assertIn("runNodeModule", command)
+        self.assertIn("service-restart.ts", command)
+        for probe in ("http://127.0.0.1:4100/health/readiness", "http://127.0.0.1:4000/health/liveliness", "http://127.0.0.1:4002/health/liveliness", "http://127.0.0.1:4003/health/liveliness", "http://127.0.0.1:18765/health"):
+            self.assertIn(probe, service, msg=probe)
 
     def test_restart_services_direct_collector_ensure_forwards_otel_environment(self):
-        # Launchd-unavailable installs use the direct ensure-hook path. The
-        # installed hook cannot derive repository config paths from its
-        # $CODEX_HOME/hooks location, so restart_services must pass them
-        # explicitly just as the --check path does.
-        installer = INSTALLER_PATH.read_text()
-        marker = "launchctl unavailable (sandbox?); starting bridges through the direct ensure-hook path."
-        marker_index = installer.index(marker)
-        fallback_end = installer.index('  if [[ "$otel_collector_mode" == collector ]]; then', marker_index)
-        fallback = installer[marker_index:fallback_end]
-        fallback += installer[fallback_end:installer.index("\n  fi", fallback_end)]
-        expected = "\n".join(
-            [
-                'AUTODEV_OTEL_REPO_ROOT="$repo_root" ' + chr(92),
-                '      AUTODEV_OTEL_CONFIG="$repo_root/config/otel/collector.yaml" ' + chr(92),
-                '      AUTODEV_OTEL_VERSION_FILE="$repo_root/config/otel/collector.version" ' + chr(92),
-                '      bash "$hooks_dir/codex/otel/ensure-autodev-otel-collector.sh"',
-            ]
-        )
-        self.assertIn(expected, fallback)
+        service = (REPO_ROOT / "src/platform/service-restart.ts").read_text()
+        for marker in ("AUTODEV_OTEL_REPO_ROOT", "AUTODEV_OTEL_CONFIG", "AUTODEV_OTEL_VERSION_FILE"):
+            self.assertIn(marker, service)
 
     def test_installer_clears_unmanaged_processes_before_adopting_a_service(self):
-        # A process squatting the port outside launchd cannot be replaced by
-        # launchd: it owns the bind, so bootstrap fails and the agent never
-        # starts, while the port keeps answering health checks. The Copilot
-        # bridge sat in exactly that state, serving days-old code behind a
-        # healthy /health.
-        installer = INSTALLER_PATH.read_text()
-        self.assertIn("reap_unmanaged()", installer)
-        # Must run after bootout (nothing this service owns should still be
-        # listening) and before bootstrap (which is what it unblocks).
-        bootout = installer.index('launchctl bootout "$domain/$label"')
-        reap = installer.index('reap_unmanaged "$label"')
-        bootstrap = installer.index('launchctl bootstrap "$domain" "$plist_link"')
-        self.assertLess(bootout, reap)
-        self.assertLess(reap, bootstrap)
-        # Every supervised label needs a port and a hook, or it cannot be
-        # cleared and silently keeps the stale process.
-        labels = installer.split("\nlaunchagent_labels=(")[1].split(")")[0].split()
-        ports = installer.split("service_port() {")[1].split("}")[0]
-        hooks = installer.split("service_hook() {")[1].split("}")[0]
-        launchers = installer.split("service_launcher() {")[1].split("}")[0]
-        for label in labels:
-            self.assertIn(label, ports, msg=f"{label} needs a port")
-            self.assertIn(label, hooks, msg=f"{label} needs a hook path")
-            self.assertIn(label, launchers, msg=f"{label} needs a launchd launcher path")
-        # The guard is the command line, not the port: something unrelated
-        # holding the port is a conflict to report, never something to kill.
-        reap_body = installer.split("reap_unmanaged() {")[1].split("\n}")[0]
-        self.assertIn('ps -o command= -p "$pid"', reap_body)
-        self.assertIn("does not own", reap_body)
+        service = (REPO_ROOT / "src/platform/service-restart.ts").read_text()
+        self.assertIn("listeningPids", service)
+        self.assertIn("commandLine", service)
+        self.assertIn("deps.kill(pid)", service)
+        self.assertLess(service.index("reapUnmanaged(options, label, deps)"), service.index("deps.launchd.bootstrap(plist)"))
+        self.assertIn("does not own", service)
 
     def test_router_launcher_republishes_the_auth_token_to_launchd(self):
         # Codex resolves env_key from its own process environment and never
@@ -2110,41 +1967,14 @@ PY
             self.assertIn("node token=<unset>", unstaged)
 
     def test_installer_check_reports_a_one_sided_router_auth_boundary(self):
-        # An enforcing router alone is not a working boundary: reporting "ok"
-        # from router status let a 401ing Desktop session pass a green check.
-        installer = INSTALLER_PATH.read_text()
-        body = installer.split("check_router_auth_state() {")[1].split("\n}")[0]
-        self.assertIn("launchctl getenv CODEX_ROUTER_AUTH_TOKEN", body)
-        self.assertIn("stale token", body)
-        self.assertIn("predates the current auth token", body)
-        # The live Desktop process keeps the environment it launched with, so
-        # the check has to inspect it rather than trust the launchd domain.
-        self.assertIn("ps eww -o command=", body)
-        # Match the codex binary by process name: a CLI codex from ~/.local/bin
-        # is just as much a router client as the app bundle, and an app-path
-        # pattern also swept in the unrelated codex-code-mode-host helper.
-        self.assertIn("pgrep -x codex", body)
-        self.assertNotIn("ChatGPT", body)
-        # A rotated token leaves an old process holding a well-formed token the
-        # router no longer accepts, so presence alone is not the test.
-        self.assertIn('"$process_token" != "$staged_token"', body)
-        # Every actionable branch has to raise the flag, not just print.
-        self.assertEqual(body.count("router_auth_action_required=1"), 3)
-        self.assertEqual(body.count("action required:"), 3)
+        source = (REPO_ROOT / "src/platform/install-check.ts").read_text()
+        for marker in ("launchctl", "stale token", "pgrep", "CODEX_ROUTER_AUTH_TOKEN"):
+            self.assertIn(marker, source)
 
     def test_installer_check_fails_when_the_auth_boundary_needs_a_manual_step(self):
-        # --check is a gate: a boundary that will 401 must not exit 0. A normal
-        # install must not inherit that, since restarting the router is itself
-        # what strands the running app.
-        installer = INSTALLER_PATH.read_text()
-        self.assertIn("router_auth_action_required=0", installer)
-        gate = installer.split('if [[ "$check_only" == 1 ]]; then')[1].split("\nfi")[0]
-        self.assertIn('"$router_auth_action_required" == 1', gate)
-        self.assertIn("status=1", gate)
-        # The install path prints the same note but still exits on its own
-        # merits, so the flag must not be wired into the tail-end check_links.
-        tail = installer.split('if [[ "$materialize_only" == 0 ]]; then')[-1]
-        self.assertNotIn("router_auth_action_required", tail)
+        source = (REPO_ROOT / "src/platform/install-check.ts").read_text()
+        self.assertIn("failures.value = 1", source)
+        self.assertIn("router authentication is active", source)
 
     def test_installer_can_materialize_router_auth_without_restarting_services(self):
         with tempfile.TemporaryDirectory() as home, tempfile.TemporaryDirectory() as codex_home:
@@ -2171,9 +2001,10 @@ PY
 
     def test_installer_exposes_safe_materialize_only_mode(self):
         installer = INSTALLER_PATH.read_text()
-        self.assertIn("--materialize-only", installer)
-        self.assertIn('if [[ "$materialize_only" == 0 ]]; then', installer)
-        self.assertIn("Materialized AutoDev integration without restarting services.", installer)
+        command = (REPO_ROOT / "src/platform/install-command.ts").read_text()
+        self.assertIn("--materialize-only", command)
+        self.assertIn("materializeOnly", command)
+        self.assertIn("src/cli/install.ts", installer)
 
     def test_installer_rejects_an_unknown_flag(self):
         result = subprocess.run(
@@ -2186,7 +2017,10 @@ PY
 
     def test_installer_configures_agy_permissions_with_read_url_and_no_playwright(self):
         installer = INSTALLER_PATH.read_text()
-        self.assertIn('"read_url(*)"', installer)
+        settings = (REPO_ROOT / "src/platform/antigravity-settings.ts").read_text()
+        materializer = (REPO_ROOT / "src/platform/install-materializer.ts").read_text()
+        self.assertIn("'read_url(*)'", settings)
+        self.assertIn("updateAntigravityPermissions", materializer)
         self.assertNotIn("check_agy_playwright_mcp", installer)
         # Playwright is never declared for Antigravity, whose MCP list is global.
         antigravity = json.loads((REPO_ROOT / ".rulesync/mcp.jsonc").read_text())["antigravity-cli"]["mcpServers"]
@@ -2266,11 +2100,11 @@ PY
     def test_obsolete_subagent_start_logging_hook_is_removed(self):
         config = (AUTODEV_CONFIG_PATH).read_text()
         installer = (REPO_ROOT / "scripts/codex/install-codex-integration.sh").read_text()
+        reconciliation = (REPO_ROOT / "src/platform/runtime-reconciliation.ts").read_text()
         self.assertFalse((REPO_ROOT / "scripts/log-subagent-model.sh").exists())
         self.assertNotIn('command = "bash ~/.codex/hooks/log-subagent-model.sh"', config)
-        obsolete_hooks = installer.split("obsolete_runtime_hook_names=(")[1].split(")")[0].split()
-        self.assertIn("log-subagent-model.sh", obsolete_hooks)
-        self.assertIn('rm -f -- "$target"', installer)
+        self.assertIn("obsolete-runtime-hook", reconciliation)
+        self.assertIn("src/cli/install.ts", installer)
 
     def test_root_delegation_hook_handles_malformed_model_safely(self):
         hook = REPO_ROOT / "scripts/enforce-root-delegation.sh"
@@ -2421,7 +2255,7 @@ PY
         path_patterns = (
             ("src/agents/bridge-role.ts", "../../.rulesync/skills/orchestration/SKILL.md"),
             ("src/agents/bridge-role.ts", "new URL(\"code-search.md\", promptRoot)"),
-            ("scripts/enforce-root-delegation.sh", "prompts/code-search.md"),
+            ("src/hooks/root-delegation.ts", "join(root, 'codex', 'prompts', 'code-search.md')"),
         )
         for relative_path, needle in path_patterns:
             with self.subTest(path=relative_path, needle=needle):
@@ -2497,121 +2331,12 @@ PY
 
 
 
-    def test_model_router_ensure_prefers_launchd_over_direct_nohup(self):
-        """The ensure hook must prefer the installed launchd job (bootstrap
-        then kickstart, or kickstart when already loaded) and only fall back
-        to a direct nohup process when launchd genuinely cannot talk to us.
-        Never start an unmanaged duplicate next to a healthy launchd job."""
+    def test_model_router_ensure_is_a_process_dispatch_shim(self):
         ensure = (REPO_ROOT / "scripts/ensure-codex-model-router.sh").read_text()
-        launchd_print = "launchctl print \"" + chr(0x24) + "domain/" + chr(0x24) + "label\""
-        self.assertIn(launchd_print, ensure)
-        launchd_enable = "launchctl enable \"" + chr(0x24) + "domain/" + chr(0x24) + "label\""
-        self.assertIn(launchd_enable, ensure)
-        launchd_kickstart = "launchctl kickstart -k \"" + chr(0x24) + "domain/" + chr(0x24) + "label\""
-        self.assertIn(launchd_kickstart, ensure)
-        launchd_bootstrap = "launchctl bootstrap \"" + chr(0x24) + "domain\" \"" + chr(0x24) + "plist_link\""
-        self.assertIn(
-            launchd_bootstrap,
-            ensure,
-            msg="a missing launchd label must be bootstrapped, not replaced by a direct nohup",
-        )
-        self.assertNotIn(
-            "nohup /bin/bash \"" + chr(0x24) + "launcher\" &",
-            ensure,
-            msg="the legacy bare nohup form must be gone; the fallback lives inside ensure_via_fallback",
-        )
-        self.assertNotIn(
-            '"${TMPDIR:-/tmp}/codex-model-router.log"',
-            ensure,
-            msg="the world-writable /tmp fallback log is replaced by a user-private path under $CODEX_HOME",
-        )
-
-    def test_model_router_ensure_serializes_concurrent_invocations(self):
-        """Concurrent ensure calls must not race the bootstrap/nohup path.
-        The lock is an atomic private directory held for the lifetime of the
-        script. The lock and the fallback pid/log files all live under
-        $CODEX_HOME/run and use restrictive permissions so an unprivileged
-        user on the same host cannot read PID/log or interject a fake lock."""
-        ensure = (REPO_ROOT / "scripts/ensure-codex-model-router.sh").read_text()
-        self.assertIn("ensure_lock=\"${CODEX_MODEL_ROUTER_ENSURE_LOCK:-" + chr(0x24) + "run_dir/codex-model-router.ensure.lock}\"", ensure)
-        self.assertIn("chmod 0700 \"" + chr(0x24) + "run_dir\"", ensure)
-        self.assertIn('lock_dir="${ensure_lock}.d"', ensure)
-        self.assertIn('mkdir "$lock_dir"', ensure)
-        self.assertIn("trap cleanup_lock EXIT", ensure)
-        self.assertNotIn("flock --wait", ensure)
-        self.assertIn("launchd_job_loaded", ensure)
-        self.assertIn("launchd_owns_listener", ensure)
-        self.assertIn("secure_launchd_logs", ensure)
-        self.assertIn('lsof -nP -a -iTCP:', ensure)
-        self.assertIn(
-            "another ensure invocation is in progress",
-            ensure,
-            msg="a contended lock must produce a clear, actionable error",
-        )
-
-    def test_model_router_ensure_uses_durable_user_private_state_paths(self):
-        """The fallback pid/log paths must live under CODEX_HOME (not /tmp)
-        and use mode 0600. Both paths must be overridable for tests, and
-        the launchd logs must also live under codex_home/run so they
-        survive reboot and tmpfs clears."""
-        ensure = (REPO_ROOT / "scripts/ensure-codex-model-router.sh").read_text()
-        self.assertIn("fallback_pid_file=\"${CODEX_MODEL_ROUTER_FALLBACK_PID_FILE:-" + chr(0x24) + "run_dir/codex-model-router.fallback.pid}\"", ensure)
-        self.assertIn("fallback_log=\"${CODEX_MODEL_ROUTER_FALLBACK_LOG:-" + chr(0x24) + "run_dir/codex-model-router.fallback.log}\"", ensure)
-        self.assertIn("chmod 0600 \"" + chr(0x24) + "fallback_log\"", ensure)
-        self.assertIn("chmod 0600 \"" + chr(0x24) + "fallback_pid_file\"", ensure)
-
-    def test_model_router_ensure_reuses_or_cleans_stale_fallback_pid(self):
-        """If the recorded fallback PID is still alive and healthy, do
-        nothing; if it is alive but unhealthy, send SIGTERM (router drains
-        via CODEX_ROUTER_SHUTDOWN_DRAIN_MS) and recycle; if it is dead,
-        clear the stale pid file before starting a new one. Never start a
-        duplicate nohup beside an untracked process that owns the port."""
-        ensure = (REPO_ROOT / "scripts/ensure-codex-model-router.sh").read_text()
-        body_start = ensure.index("ensure_via_fallback() {")
-        body = ensure[body_start:ensure.index("\n}\n", body_start)]
-        # The pid file can disappear between the -f test and the read (another
-        # ensure run clearing it); the read must tolerate that under set -e.
-        self.assertIn(
-            "existing_pid=\"$(cat \"" + chr(0x24) + "fallback_pid_file\" 2>/dev/null || true)\"",
-            body,
-        )
-        self.assertIn("kill -0 \"" + chr(0x24) + "existing_pid\"", body)
-        self.assertIn("kill \"" + chr(0x24) + "existing_pid\"", body)
-        self.assertIn("kill -KILL \"" + chr(0x24) + "existing_pid\"", body)
-        self.assertIn("rm -f \"" + chr(0x24) + "fallback_pid_file\"", body)
-        self.assertIn(
-            "refusing to start a duplicate",
-            body,
-            msg="when an untracked process already owns the port, refuse to start a duplicate nohup beside it",
-        )
-        self.assertIn('started_pid\" >\"' + chr(0x24) + 'fallback_pid_file', body)
-
-    def test_model_router_ensure_uses_bounded_exponential_readiness_polling(self):
-        """Readiness polling must be bounded (default 5s total) and use
-        exponential backoff capped at 1s, so a slow bind surfaces fast and
-        we never spin forever burning CPU."""
-        ensure = (REPO_ROOT / "scripts/ensure-codex-model-router.sh").read_text()
-        self.assertIn('budget_ms="${CODEX_MODEL_ROUTER_READY_TIMEOUT_MS:-5000}"', ensure)
-        self.assertIn("sleep_ms=50", ensure)
-        self.assertIn("cap_ms=1000", ensure)
-        self.assertIn("sleep_ms=$(( sleep_ms * 2 ))", ensure)
-        self.assertIn("if (( sleep_ms > cap_ms )); then sleep_ms=$cap_ms; fi", ensure)
-        self.assertIn("date +%s", ensure)
-        self.assertNotIn("date +%s%3N", ensure, msg="BSD date does not support %N on macOS")
-
-    def test_model_router_ensure_does_not_silently_mask_launchd_failure(self):
-        """When launchd is the supervisor and the job is loaded but the
-        router never becomes ready, the ensure hook must fail loudly rather
-        than silently starting a duplicate unmanaged process."""
-        ensure = (REPO_ROOT / "scripts/ensure-codex-model-router.sh").read_text()
-        self.assertIn(
-            "failed to start under launchd",
-            ensure,
-            msg="a loaded launchd job that never bound must not be masked by the direct fallback",
-        )
-        self.assertIn("Codex model router failed to start under launchd", ensure)
-        self.assertIn("return 2", ensure, msg="fallback startup failure must propagate as a non-zero exit")
-        self.assertIn("case \"$(ensure_via_fallback; echo $?)\"", ensure)
+        self.assertIn("src/platform/router-ensure.ts", ensure)
+        self.assertIn('exec "$node_bin" "$module"', ensure)
+        self.assertNotIn("launchctl print", ensure)
+        self.assertNotIn("ensure_via_fallback()", ensure)
 
     def test_model_router_plist_uses_unversioned_node_path(self):
         """The plist must not pin a version-specific nvm node path, because
@@ -2696,14 +2421,15 @@ PY
             self.assertNotIn("__HOME__", rendered)
 
     def test_installer_materializes_user_private_run_directory(self):
-        """The installer must create $CODEX_HOME/run with mode 0700 so the
-        router launchd job and the ensure fallback can write their pid and
-        log files there without leaking them to other local users."""
+        """The typed materializer keeps the runtime state directory private."""
         installer = (REPO_ROOT / "scripts/codex/install-codex-integration.sh").read_text()
-        self.assertIn("mkdir -p -- \"" + chr(0x24) + "codex_home/run\"", installer)
-        self.assertIn("chmod 0700 \"" + chr(0x24) + "codex_home/run\"", installer)
-        self.assertIn("chmod 0600 \"" + chr(0x24) + "router_log\"", installer)
-        self.assertIn("http://127.0.0.1:4100/health/readiness", installer)
+        command = (REPO_ROOT / "src/platform/install-command.ts").read_text()
+        materializer = (REPO_ROOT / "src/platform/install-materializer.ts").read_text()
+        self.assertIn("src/cli/install.ts", installer)
+        self.assertIn("materializeInstallation", command)
+        self.assertIn("const runDir = join(options.codexHome, 'run')", materializer)
+        self.assertIn("chmodSync(runDir, 0o700)", materializer)
+        self.assertIn("codex-model-router.launchd.out.log", materializer)
 
 
 

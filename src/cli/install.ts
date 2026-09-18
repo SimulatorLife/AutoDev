@@ -1,14 +1,20 @@
-import { UnmigratedRuntimeError } from './runtime.ts';
+import { runInstallCommand } from '../platform/install-command.ts';
+import { runInstallCheck } from '../platform/install-check.ts';
 
 export interface InstallCommandBackend {
-  install(): number;
+  install(args?: readonly string[]): number;
 }
 
-const unmigratedInstaller: InstallCommandBackend = {
-  install: () => { throw new UnmigratedRuntimeError('install'); },
+const defaultInstaller: InstallCommandBackend = {
+  install: (args = []) => args.length === 1 && args[0] === '--check' ? runInstallCheck() : runInstallCommand(args),
 };
 
-export function dispatchInstallCommand(backend: InstallCommandBackend = unmigratedInstaller): number {
-  return backend.install();
+export function dispatchInstallCommand(backend: InstallCommandBackend = defaultInstaller, args: readonly string[] = []): number {
+  return backend.install(args);
 }
 
+
+if (process.argv[1] === new URL(import.meta.url).pathname) {
+  try { process.exitCode = dispatchInstallCommand(undefined, process.argv.slice(2)); }
+  catch (error) { console.error(`autodev install: ${error instanceof Error ? error.message : String(error)}`); process.exitCode = 2; }
+}

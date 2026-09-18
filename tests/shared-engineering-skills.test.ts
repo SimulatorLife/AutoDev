@@ -5,6 +5,7 @@ import test from "node:test";
 const read = (path: string): string => readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
 
 const installer = read("scripts/codex/install-codex-integration.sh");
+const materializer = read("src/platform/install-materializer.ts");
 const localSetup = read("docs/local-setup.md");
 const architecture = read(".rulesync/skills/improve-codebase-architecture/SKILL.md");
 const diagnosing = read(".rulesync/skills/diagnosing-bugs/SKILL.md");
@@ -13,8 +14,8 @@ const registeredSkills = ["diagnosing-bugs", "improve-codebase-architecture"];
 
 test("new engineering skills are registered as user-level skills", () => {
   for (const skill of registeredSkills) {
-    assert.match(installer, new RegExp(`skill_names=.*\\b${skill}\\b`));
-    assert.match(installer, /user_skills_dir="\$HOME\/\.agents\/skills"/);
+    assert.match(materializer, new RegExp(skill));
+    assert.match(materializer, /userSkills/);
     assert.match(localSetup, new RegExp("- `" + skill + "`"));
   }
 });

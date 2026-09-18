@@ -5,14 +5,15 @@ import test from "node:test";
 const read = (path: string): string => readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
 
 const installer = read("scripts/codex/install-codex-integration.sh");
+const materializer = read("src/platform/install-materializer.ts");
 const skill = read(".rulesync/skills/resolve-merge-conflicts/SKILL.md");
 const helper = read(".rulesync/skills/resolve-merge-conflicts/scripts/extract_conflict_context.py");
 const notices = read(".rulesync/skills/resolve-merge-conflicts/THIRD_PARTY_NOTICES.md");
 
 test("resolve-merge-conflicts is installed as a user-level skill", () => {
-  assert.match(installer, /skill_names=.*\bcode-simplification\b/);
-  assert.match(installer, /skill_names=.*\bresolve-merge-conflicts\b/);
-  assert.match(installer, /user_skills_dir="\$HOME\/\.agents\/skills"/);
+  assert.match(materializer, /code-simplification/);
+  assert.match(materializer, /resolve-merge-conflicts/);
+  assert.match(materializer, /userSkills/);
 });
 
 test("merge conflict skill uses the compact extractor before full-file inspection", () => {

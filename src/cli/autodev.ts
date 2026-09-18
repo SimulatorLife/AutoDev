@@ -131,8 +131,8 @@ export function runMain(argv: string[], backends: CliBackends = {}): number {
     return dispatchHookCommand(subcommand ?? '', backends.hook);
   }
   if (command === 'install') {
-    if (subcommand !== undefined || rest.length > 0) throw new ConfigError('install does not accept arguments');
-    return dispatchInstallCommand(backends.install);
+    const args = [subcommand, ...rest].filter((value): value is string => value !== undefined);
+    return dispatchInstallCommand(backends.install, args);
   }
   throw new ConfigError(`command '${[command, subcommand].filter(Boolean).join(' ')}' is not implemented in this migration slice; use a typed render/check command or complete the owning subsystem migration`);
 }
