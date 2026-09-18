@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
-import { createServer } from "node:http";
-import { pathToFileURL } from "node:url";
+import { createServer, type Server } from 'node:http';
+import { pathToFileURL } from 'node:url';
 
 import {
   PORT,
@@ -25,7 +25,7 @@ import {
   loadCatalog,
   AGENT_ACTIVITY_TTL_MS,
   agentActivity,
-} from "../src/router/http.ts";
+} from './http.ts';
 
 import {
   activeProviderRequests,
@@ -44,20 +44,20 @@ import {
   recordNativeMcpExposure,
   ROUTER_INSTANCE_ID,
   transportErrorInfo,
-} from "../src/router/proxy.ts";
+} from './proxy.ts';
 
 import {
   isLoopbackAddress,
   routerAuthorizationValid,
   setRouterAuthTokenForTests,
-} from "../src/router/auth.ts";
+} from './auth.ts';
 
 import {
   beginShutdown,
   getLifecycleStatus,
   isDraining,
   resetLifecycleForTests,
-} from "../src/router/lifecycle.ts";
+} from './lifecycle.ts';
 
 import {
   concurrencyStatus,
@@ -67,12 +67,12 @@ import {
   releaseSubagentSlot,
   resetConcurrencyTelemetry,
   tryAcquireSubagentSlot,
-} from "../src/router/concurrency.ts";
+} from './concurrency.ts';
 
 import {
   classifyProviderFailure,
   recordRouterEvent,
-} from "../src/router/events.ts";
+} from './events.ts';
 
 import {
   AGENT_EVENTS_PATH,
@@ -101,7 +101,7 @@ import {
   subagentStatus,
   SUBAGENT_SPAWN_TOOLS_HEADER,
   UNATTRIBUTED_SUBAGENT_ROLE,
-} from "../src/router/subagents.ts";
+} from './subagents.ts';
 
 import {
   attributionDiagnosticsStatus,
@@ -111,7 +111,7 @@ import {
   usageStatus,
   safeAgentIdentity,
   safePrivacyWorkspace,
-} from "../src/router/usage.ts";
+} from './usage.ts';
 
 import {
   autodevEnrichOtlpPayload,
@@ -126,33 +126,32 @@ import {
   resetOtelTelemetry,
   resolveTelemetryContext,
   restoreOtelTelemetry,
-} from "../src/router/otel.ts";
+} from './otel.ts';
 
 import {
   loadRouterState,
   persistRouterStateNow,
   serializeRouterState,
-} from "../src/router/persistence.ts";
+} from './persistence.ts';
 
 import {
   ORCHESTRATOR_ALIAS,
-} from "../src/router/routing.ts";
+} from './routing.ts';
 
+const IS_MAIN = Boolean(process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href);
 
-const IS_MAIN = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
+let fatalExitPromise: Promise<void> | null = null;
 
-let fatalExitPromise = null;
-
-function handleFatalProcessError(phase, reason) {
+export function handleFatalProcessError(phase: string, reason: unknown): void {
   if (fatalExitPromise) return;
   const info = transportErrorInfo(reason);
-  if (phase === "uncaught_exception" && isClientDisconnectError(reason)) {
+  if (phase === 'uncaught_exception' && isClientDisconnectError(reason)) {
     console.error(JSON.stringify({
-      schema: "autodev-router-event-v1",
+      schema: 'autodev-router-event-v1',
       timestamp: new Date().toISOString(),
       routerInstanceId: ROUTER_INSTANCE_ID,
       requestId: null,
-      phase: "client_disconnect_ignored",
+      phase: 'client_disconnect_ignored',
       errorName: info.name,
       errorCode: info.code,
       syscall: info.syscall,
@@ -160,7 +159,7 @@ function handleFatalProcessError(phase, reason) {
     return;
   }
   console.error(JSON.stringify({
-    schema: "autodev-router-event-v1",
+    schema: 'autodev-router-event-v1',
     timestamp: new Date().toISOString(),
     routerInstanceId: ROUTER_INSTANCE_ID,
     requestId: null,
@@ -174,22 +173,27 @@ function handleFatalProcessError(phase, reason) {
     .finally(() => process.exit(1));
 }
 
-if (IS_MAIN) {
+export function startRouterServer(port = PORT, host = HOST): Server {
   loadRouterState();
-  process.on("uncaughtException", (error) => handleFatalProcessError("uncaught_exception", error));
-  process.on("unhandledRejection", (reason) => handleFatalProcessError("unhandled_rejection", reason));
+  process.on('uncaughtException', (error) => handleFatalProcessError('uncaught_exception', error));
+  process.on('unhandledRejection', (reason) => handleFatalProcessError('unhandled_rejection', reason));
   void refreshCodexState();
   if (!codexState.livePollStarted) {
     codexState.collector.startLivePoll();
     codexState.livePollStarted = true;
   }
   const server = createServer((request, response) => { void handle(request, response); });
-  const sigtermHandler = (signal) => { void beginShutdown(signal, server); };
-  process.on("SIGINT", () => sigtermHandler("SIGINT"));
-  process.on("SIGTERM", () => sigtermHandler("SIGTERM"));
-  server.listen(PORT, HOST, () => {
-    console.error(`Codex model router listening at http://${HOST}:${PORT}`);
+  const sigtermHandler = (signal: string) => { void beginShutdown(signal, server); };
+  process.on('SIGINT', () => sigtermHandler('SIGINT'));
+  process.on('SIGTERM', () => sigtermHandler('SIGTERM'));
+  server.listen(port, host, () => {
+    console.error(`Codex model router listening at http://${host}:${port}`);
   });
+  return server;
+}
+
+if (IS_MAIN) {
+  startRouterServer(PORT, HOST);
 }
 
 export {
@@ -200,6 +204,7 @@ export {
   beginShutdown,
   proxyConcreteResponse,
   proxyOrchestratorResponse,
+  proxyRoleResponse,
   ORCHESTRATOR_ALIAS,
   payloadForCandidate,
   classifyProviderFailure,
@@ -216,6 +221,7 @@ export {
   getLifecycleStatus,
   getRouterStatus,
   handle,
+  handleRequest,
   incrementActiveRequests,
   ingestOtelLogs,
   ingestOtelMetrics,
@@ -228,6 +234,7 @@ export {
   routingStatus,
   limitsStatus,
   isLoopbackAddress,
+  loadCatalog,
   loadRouterState,
   parseConcurrencyConfig,
   parseTurnMetadataJson,

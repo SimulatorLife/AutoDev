@@ -39,7 +39,7 @@ jobs:
           github-token: ${{ secrets.GH_USER_TOKEN }}
           script: |
             const fs = require('node:fs');
-            const { collectMetrics, renderDashboard } = require('./scripts/autodev-metrics.cjs');
+            const { collectMetrics, renderDashboard } = await import('./src/telemetry/github-metrics.ts');
             const policy = JSON.parse(fs.readFileSync('.github/workflows/weights.json', 'utf8'));
             const repositories = policy.repositories.map((item) => item.name);
             const metrics = await collectMetrics({

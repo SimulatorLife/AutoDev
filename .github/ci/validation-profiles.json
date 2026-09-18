@@ -8,10 +8,6 @@
         "run": "pnpm test"
       },
       {
-        "name": "python-tests",
-        "run": "pnpm run test:python"
-      },
-      {
         "name": "typecheck",
         "run": "pnpm run typecheck"
       },

@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { createServer } from "node:http";
+import { createServer, type Server } from "node:http";
+import type { AddressInfo } from "node:net";
 import { connect } from "node:net";
 import { existsSync, readFileSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
@@ -8,11 +9,11 @@ import test from "node:test";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
-import { RESPONSES_ITEM_ID_PREFIXES } from "../src/shared/responses-item-ids.ts";
+import { RESPONSES_ITEM_ID_PREFIXES } from "../../src/shared/responses-item-ids.ts";
 
-import { COOLDOWNS as cooldowns } from "../src/router/cooldown.ts";
-import { ROUTING_POLICY as routing, validateRoutingConfig } from "../src/router/routing.ts";
-import * as responses from "../src/router/responses.ts";
+import { COOLDOWNS as cooldowns } from "../../src/router/cooldown.ts";
+import { ROUTING_POLICY as routing, validateRoutingConfig } from "../../src/router/routing.ts";
+import * as responses from "../../src/router/responses.ts";
 
 import {
   activeProviderRequests,
@@ -30,7 +31,7 @@ import {
   getActiveRequests,
   getLifecycleStatus,
   concurrencyStatus,
-  getRouterStatus,
+  getRouterStatus as rawGetRouterStatus,
   handle,
   codexTelemetryStatus,
   ingestOtelSignal,
@@ -93,20 +94,36 @@ import {
   resetAttributionDiagnostics,
   agentActivity,
   AGENT_ACTIVITY_TTL_MS,
-  usageStatus,
+  usageStatus as rawUsageStatus,
   projectLiveAgents,
-} from "./codex-model-router.mjs";
-import { resolveAgentEventReporter, REQUEST_ID_HEADER as AGENT_EVENTS_REQUEST_ID_HEADER } from "../src/telemetry/agent-events.ts";
-import { spawnedChildren } from "../src/providers/antigravity.ts";
+} from "../../src/router/server.ts";
+import { resolveAgentEventReporter, REQUEST_ID_HEADER as AGENT_EVENTS_REQUEST_ID_HEADER } from "../../src/telemetry/agent-events.ts";
+import { spawnedChildren } from "../../src/providers/antigravity.ts";
 import {
   AGENT_ACTIVITY_STATES,
   AGENT_ACTIVITY_TTL_ENV,
   createAgentActivityTracker,
   DEFAULT_AGENT_ACTIVITY_TTL_MS,
   resolveAgentActivityTtlMs,
-} from "../src/agents/agent-activity.ts";
+} from "../../src/agents/agent-activity.ts";
 
-const read = (path) => readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
+const getRouterStatus = (...args: any[]): any => (rawGetRouterStatus as any)(...args);
+const usageStatus = (...args: any[]): any => (rawUsageStatus as any)(...args);
+
+
+function listenServer(server: Server): Promise<void> {
+  return new Promise<void>((resolve) => {
+    server.listen(0, "127.0.0.1", () => resolve());
+  });
+}
+
+function closeServer(server: Server): Promise<void> {
+  return new Promise<void>((resolve, reject) => {
+    server.close((error) => error ? reject(error) : resolve());
+  });
+}
+
+const read = (path: string) => readFileSync(new URL(`../../${path}`, import.meta.url), "utf8");
 
 // /status is unauthenticated and machine-reachable, so it must never surface
 // an absolute filesystem path (home-directory or $CODEX_HOME-rooted). This
@@ -114,7 +131,7 @@ const read = (path) => readFileSync(new URL(`../${path}`, import.meta.url), "utf
 // to have carried a path historically -- so a new field added later that
 // accidentally embeds one fails the test instead of shipping silently.
 const LEAKED_PATH_PATTERN = /\/Users\/|\/home\/|CODEX_HOME/;
-function assertNoLeakedPaths(value, path = "$") {
+function assertNoLeakedPaths(value: any, path = "$") {
   if (typeof value === "string") {
     assert.equal(LEAKED_PATH_PATTERN.test(value), false, `leaked filesystem path at ${path}: ${value}`);
     return;
@@ -135,10 +152,10 @@ function assertNoLeakedPaths(value, path = "$") {
 setRouterAuthTokenForTests("");
 
 test("router auth is opt-in and validates bearer tokens without exposing the token", () => {
-  assert.equal(routerAuthorizationValid({ headers: {} }), true);
-  assert.equal(routerAuthorizationValid({ headers: {} }, "secret"), false);
-  assert.equal(routerAuthorizationValid({ headers: { authorization: "Bearer wrong" } }, "secret"), false);
-  assert.equal(routerAuthorizationValid({ headers: { authorization: "Bearer secret" } }, "secret"), true);
+  assert.equal(routerAuthorizationValid({ headers: {} } as any), true);
+  assert.equal(routerAuthorizationValid({ headers: {} } as any, "secret"), false);
+  assert.equal(routerAuthorizationValid({ headers: { authorization: "Bearer wrong" } } as any, "secret"), false);
+  assert.equal(routerAuthorizationValid({ headers: { authorization: "Bearer secret" } } as any, "secret"), true);
 });
 
 test("the router calls the Antigravity adapter directly, with no LiteLLM hop", async () => {
@@ -147,12 +164,12 @@ test("the router calls the Antigravity adapter directly, with no LiteLLM hop", a
   // forced the router to smuggle its own headers through the Responses body --
   // and it mistranslated `response.failed`, which forced the adapter to fake a
   // completed response. Both workarounds are gone with it.
-  const route = routing.routeForModel("gemini-3.8-flash-high");
+  const route = routing.routeForModel("gemini-3.8-flash-high")!;
   assert.equal(route.provider, "antigravity");
   assert.equal(route.baseUrl, "http://127.0.0.1:4002/v1");
   assert.equal(route.healthUrl, "http://127.0.0.1:4002/health/liveliness");
 
-  const router = read("scripts/codex-model-router.mjs");
+  const router = read("src/router/server.ts");
   assert.doesNotMatch(router, /extra_headers = forwarded/, "router headers must travel as real headers");
   assert.doesNotMatch(router, /metadata\?\.provider_error/, "the faked-completion detector is obsolete");
 
@@ -171,7 +188,7 @@ test("the router calls the Antigravity adapter directly, with no LiteLLM hop", a
     "scripts/run-codex-antigravity-litellm.sh",
     "scripts/codex/launchagents/com.codex.antigravity-litellm.plist",
   ]) {
-    assert.equal(existsSync(new URL(`../${path}`, import.meta.url)), false, `${path} must be gone`);
+    assert.equal(existsSync(new URL(`../../${path}`, import.meta.url)), false, `${path} must be gone`);
   }
   assert.doesNotMatch(read("scripts/ensure-codex-antigravity-proxy.sh"), /litellm/i, "the ensure hook must not supervise LiteLLM");
   // The installer still names the obsolete assets, because naming them is how
@@ -182,7 +199,7 @@ test("the router calls the Antigravity adapter directly, with no LiteLLM hop", a
 });
 
 test("loads editable provider and role models from JSON routing config", async () => {
-  const config = JSON.parse(await readFile(new URL("./codex/model-routing.json", import.meta.url), "utf8"));
+  const config = JSON.parse(await readFile(new URL("../../scripts/codex/model-routing.json", import.meta.url), "utf8"));
   assert.equal(config.providers.claude.models.smart, "claude-opus-5");
   assert.equal(config.providers.codex.models.smart, "gpt-5.6-sol");
   assert.equal(config.providers.minimax.models.smart, undefined);
@@ -202,7 +219,7 @@ test("loads editable provider and role models from JSON routing config", async (
 });
 
 test("provider capabilities expose only providers with a real delegation path", async () => {
-  const config = JSON.parse(await readFile(new URL("./codex/model-routing.json", import.meta.url), "utf8"));
+  const config = JSON.parse(await readFile(new URL("../../scripts/codex/model-routing.json", import.meta.url), "utf8"));
   for (const provider of Object.keys(config.providers)) {
     assert.equal(config.providers[provider].capabilities, undefined, `${provider} must not declare capabilities in routing config`);
   }
@@ -223,7 +240,7 @@ test("provider capabilities expose only providers with a real delegation path", 
 
 test("router status reports only providers with a delegation path", () => {
   const providers = getRouterStatus().providers;
-  for (const [name, provider] of Object.entries(providers)) {
+  for (const [name, provider] of Object.entries(providers) as [string, any][]) {
     assert.equal(provider.capabilities.subagentSpawn, name !== "minimax");
     assert.ok(Array.isArray(provider.capabilities.subagentSpawnTools));
     assert.equal("mcp" in provider.capabilities, false);
@@ -235,13 +252,13 @@ test("orchestrator alias degrades from the pinned primary provider to a load-bal
   assert.equal(ORCHESTRATOR_ALIAS, "autodev/orchestrator");
   assert.equal(routing.roleForModel(ORCHESTRATOR_ALIAS), null);
 
-  const candidates = routing.orchestratorCandidates(() => 0.5);
+  const candidates: any[] = routing.orchestratorCandidates(() => 0.5);
   assert.equal(candidates[ 0 ].provider, "codex", "the primary provider is always attempted first");
   assert.equal(candidates[ 0 ].model, "gpt-5.6-luna");
   assert.equal(candidates[ 0 ].reasoningEffort, null, "the primary provider keeps the caller's reasoning effort");
   assert.deepEqual(candidates.slice(1).map((candidate) => candidate.provider).sort(), [ "antigravity", "claude", "copilot" ]);
 
-  const byProvider = Object.fromEntries(candidates.map((candidate) => [ candidate.provider, candidate ]));
+  const byProvider: Record<string, any> = Object.fromEntries(candidates.map((candidate: any) => [ candidate.provider, candidate ]));
   assert.equal(byProvider.claude.model, "claude-opus-5");
   assert.equal(byProvider.claude.reasoningEffort, "medium");
   assert.equal(byProvider.copilot.model, "copilot");
@@ -481,7 +498,7 @@ test("reroutes a role request after a provider returns a fallbackable failure", 
   agentActivity.beginRequest("busy-antigravity", { requestId: "busy-antigravity", provider: "antigravity", model: "gemini-3.8-flash-medium", origin: "direct" });
   agentActivity.beginRequest("busy-minimax-1", { requestId: "busy-minimax-1", provider: "minimax", model: "MiniMax-M3", origin: "direct" });
   agentActivity.beginRequest("busy-minimax-2", { requestId: "busy-minimax-2", provider: "minimax", model: "MiniMax-M3", origin: "direct" });
-  globalThis.fetch = async (url, options) => {
+  globalThis.fetch = async (url: any, options: any = {}) => {
     const target = String(url);
     if (target.endsWith("/health") || target.endsWith("/health/liveliness")) {
       return new Response("ok", { status: 200 });
@@ -497,9 +514,9 @@ test("reroutes a role request after a provider returns a fallbackable failure", 
     return originalFetch(url, options);
   };
   const server = createServer((request, response) => { void handle(request, response); });
-  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  await listenServer(server);
   try {
-    const address = server.address();
+    const address = server.address() as AddressInfo;
     const response = await originalFetch(`http://127.0.0.1:${address.port}/v1/responses`, {
       method: "POST",
       headers: { "content-type": "application/json", "x-codex-session-id": "fallback-test" },
@@ -509,7 +526,7 @@ test("reroutes a role request after a provider returns a fallbackable failure", 
     assert.equal(response.headers.get("x-autodev-provider"), "antigravity");
     assert.equal(responseCalls, 2);
   } finally {
-    await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    await closeServer(server);
     globalThis.fetch = originalFetch;
     for (const [ key, value ] of Object.entries(originalCredentials)) {
       if (value === undefined) delete process.env[ key ];
@@ -532,7 +549,7 @@ test("orchestrator alias falls back to another provider when the primary is unav
   activeProviderRequests.clear();
   for (const provider of [ "codex", "claude", "antigravity", "minimax" ]) cooldowns.clear(provider);
   let orchestratorResponseProvider = null;
-  globalThis.fetch = async (url, options) => {
+  globalThis.fetch = async (url: any, options: any = {}) => {
     const target = String(url);
     // The primary provider (chatgpt.com Codex backend) is out of usage.
     if (target.startsWith("https://chatgpt.com/")) {
@@ -551,9 +568,9 @@ test("orchestrator alias falls back to another provider when the primary is unav
     return originalFetch(url, options);
   };
   const server = createServer((request, response) => { void handle(request, response); });
-  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  await listenServer(server);
   try {
-    const address = server.address();
+    const address = server.address() as AddressInfo;
     const response = await originalFetch(`http://127.0.0.1:${address.port}/v1/responses`, {
       method: "POST",
       headers: { "content-type": "application/json", "x-codex-session-id": "orchestrator-test" },
@@ -561,15 +578,15 @@ test("orchestrator alias falls back to another provider when the primary is unav
     });
     assert.equal(response.status, 200);
     const servingProvider = response.headers.get("x-autodev-provider");
-    assert.ok([ "claude", "minimax", "antigravity" ].includes(servingProvider), `expected a fallback-group provider, got ${servingProvider}`);
+    assert.ok([ "claude", "minimax", "antigravity" ].includes(servingProvider!), `expected a fallback-group provider, got ${servingProvider}`);
     assert.notEqual(response.headers.get("x-autodev-model"), "autodev/orchestrator");
-    assert.ok(orchestratorResponseProvider && !orchestratorResponseProvider.startsWith("https://chatgpt.com/"));
+    assert.ok(orchestratorResponseProvider && !(orchestratorResponseProvider as string).startsWith("https://chatgpt.com/"));
 
     const usage = getRouterStatus().usage;
     assert.equal(usage.byOrigin.orchestrator.successes, 1, "fallback traffic is still attributed to the orchestrator origin");
     assert.equal(usage.byOrigin.subagent?.successes ?? 0, 0, "the orchestrator must not consume a subagent slot");
   } finally {
-    await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    await closeServer(server);
     globalThis.fetch = originalFetch;
     for (const [ key, value ] of Object.entries(originalCredentials)) {
       if (value === undefined) delete process.env[ key ];
@@ -582,7 +599,7 @@ test("orchestrator alias falls back to another provider when the primary is unav
 
 test("reports the earliest provider retry time when every role candidate is cooling down", async () => {
   const originalFetch = globalThis.fetch;
-  globalThis.fetch = async (url, options) => {
+  globalThis.fetch = async (url: any, options: any = {}) => {
     const target = String(url);
     if (target.endsWith("/health") || target.endsWith("/health/liveliness")) {
       return new Response("down", { status: 503 });
@@ -593,9 +610,9 @@ test("reports the earliest provider retry time when every role candidate is cool
   const cooldownStartedAt = Date.now();
   for (const provider of [ "claude", "antigravity", "minimax", "copilot", "codex" ]) cooldowns.cooldownProvider(provider, { now: cooldownStartedAt });
   const server = createServer((request, response) => { void handle(request, response); });
-  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  await listenServer(server);
   try {
-    const address = server.address();
+    const address = server.address() as AddressInfo;
     const response = await originalFetch(`http://127.0.0.1:${address.port}/v1/responses`, {
       method: "POST",
       headers: { "content-type": "application/json", "x-codex-session-id": "cooldown-test" },
@@ -605,7 +622,7 @@ test("reports the earliest provider retry time when every role candidate is cool
     assert.equal(response.headers.get("retry-after"), "30");
     assert.match((await response.json()).error.message, /Retry after approximately 30s/);
   } finally {
-    await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    await closeServer(server);
     globalThis.fetch = originalFetch;
     for (const provider of [ "claude", "antigravity", "minimax", "copilot", "codex" ]) cooldowns.clear(provider);
     resetRouterTelemetry();
@@ -664,7 +681,7 @@ test("router flattens outbound tools and rewrites inbound tool namespaces in SSE
       { name: "read_file", type: "function_call" }
     ]
   });
-  assert.deepEqual(rewritten.output, [
+  assert.deepEqual((rewritten as any).output, [
     { name: "spawn_agent", namespace: "multi_agent_v1", type: "function_call" },
     { name: "send_message", namespace: "collaboration", type: "function_call" },
     { name: "read_file", type: "function_call" }
@@ -684,15 +701,15 @@ test("an exec tool call carrying a spawn script reaches Codex byte for byte", as
   // must not touch it. If it ever did, Codex would be handed a script calling a
   // function that does not exist, and every bridge-driven spawn would fail with
   // nothing in the router log to explain it.
-  const { buildSpawnScript, execToolCallSseEvents } = await import("../src/agents/spawn-tools.ts");
+  const { buildSpawnScript, execToolCallSseEvents } = await import("../../src/agents/spawn-tools.ts");
   const source = buildSpawnScript([ { agentType: "explorer", message: "audit the catalogue" } ]);
 
   for (const [ name, payload ] of execToolCallSseEvents({ itemId: "ctc_1", callId: "call_1", source })) {
     const transformed = responses.transformSseEvent(`event: ${name}\ndata: ${JSON.stringify(payload)}\n\n`, "autodev/orchestrator");
-    const back = JSON.parse(transformed.split("\n").find((line) => line.startsWith("data: ")).slice(6));
-    assert.deepEqual(back.item ?? null, payload.item ?? null);
-    assert.equal(back.delta ?? null, payload.delta ?? null);
-    assert.equal(back.input ?? null, payload.input ?? null);
+    const back = JSON.parse(transformed.split("\n").find((line: string) => line.startsWith("data: "))!.slice(6));
+    assert.deepEqual((back as any).item ?? null, (payload as any).item ?? null);
+    assert.equal((back as any).delta ?? null, (payload as any).delta ?? null);
+    assert.equal((back as any).input ?? null, (payload as any).input ?? null);
   }
 
   // The rewriting is real, so the pass-through above is not vacuous: the same
@@ -782,8 +799,8 @@ test("subagent telemetry counts both spawn mechanisms and attributes each to a p
     assert.deepEqual(status.byProvider, { claude: 3, minimax: 1 });
     assert.deepEqual(status.byRole, { explorer: 1, worker: 2, validator: 1 });
     assert.deepEqual(status.spawnCapableProviders, [ "antigravity", "claude", "copilot", "codex" ]);
-    assert.equal(status.recent[ 0 ].role, "validator", "the recent list is newest first");
-    assert.equal(status.recent.at(-1).provider, "claude");
+    assert.equal(status.recent[ 0 ]!.role, "validator", "the recent list is newest first");
+    assert.equal(status.recent.at(-1)!.provider, "claude");
 
     // The request id is the only credential a report carries, so an unknown one
     // is counted nowhere.
@@ -802,11 +819,11 @@ test("subagent telemetry counts both spawn mechanisms and attributes each to a p
 test("the router accepts a bridge spawn report over /v1/agent-events", async () => {
   resetSubagentTelemetry();
   const server = createServer((request, response) => { void handle(request, response); });
-  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  await listenServer(server);
   try {
-    const base = `http://127.0.0.1:${server.address().port}`;
+    const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
     noteBridgeRequest("request-live", { provider: "antigravity", model: "gemini-3.8-flash-high", role: null, workspace: "AutoDev" });
-    const post = (body) => fetch(`${base}${AGENT_EVENTS_PATH}`, {
+    const post = (body: any) => fetch(`${base}${AGENT_EVENTS_PATH}`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify(body),
@@ -824,7 +841,7 @@ test("the router accepts a bridge spawn report over /v1/agent-events", async () 
     assert.deepEqual(status.subagents.byProvider, { antigravity: 1 });
     assert.equal(status.subagents.recent[ 0 ].tool, "invoke_subagent");
   } finally {
-    await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    await closeServer(server);
     resetSubagentTelemetry();
   }
 });
@@ -836,9 +853,9 @@ test("an Antigravity batch spawn reaches the router as one count per child", asy
   // twelve-way fan-out used to arrive as a single roleless `antigravity/null`.
   resetSubagentTelemetry();
   const server = createServer((request, response) => { void handle(request, response); });
-  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  await listenServer(server);
   try {
-    const base = `http://127.0.0.1:${server.address().port}`;
+    const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
     noteBridgeRequest("request-batch", { provider: "antigravity", model: "gemini-3.8-flash-high", role: null, workspace: "SimulatorLife/RacingGame" });
     const reporter = resolveAgentEventReporter({
       ...bridgeTelemetryHeaders({ provider: "antigravity" }, "request-batch"),
@@ -860,8 +877,8 @@ test("an Antigravity batch spawn reaches the router as one count per child", asy
         }),
       },
     };
-    assert.equal(reporter.isSpawnTool(stepUpdate.tool_name), true);
-    await reporter.reportSpawns({ tool: stepUpdate.tool_name, children: spawnedChildren(stepUpdate) });
+    assert.equal(reporter!.isSpawnTool(stepUpdate.tool_name), true);
+    await reporter!.reportSpawns({ tool: stepUpdate.tool_name, children: spawnedChildren(stepUpdate) });
 
     const status = await (await fetch(`${base}/status`)).json();
     assert.equal(status.subagents.total, 3);
@@ -873,7 +890,7 @@ test("an Antigravity batch spawn reaches the router as one count per child", asy
       assert.equal(spawn.workspace, "SimulatorLife/RacingGame");
     }
   } finally {
-    await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    await closeServer(server);
     resetSubagentTelemetry();
   }
 });
@@ -908,8 +925,8 @@ test("a spawn breakdown says how its children ended, not only that they started"
     // The batch row carries its own tally, so a reader can see how that
     // delegation ended rather than only how many it started.
     const [ batch ] = subagentStatus().recent;
-    assert.equal(batch.count, 2);
-    assert.deepEqual(batch.settled, { success: 1, failure: 1 });
+    assert.equal(batch!.count, 2);
+    assert.deepEqual(batch!.settled, { success: 1, failure: 1 });
   } finally {
     resetSubagentTelemetry();
   }
@@ -933,7 +950,7 @@ test("a spawn row restored from an older state file still settles", async () => 
 
     resetSubagentTelemetry();
     assert.equal(loadRouterState(file), true);
-    assert.deepEqual(subagentStatus().recent[ 0 ].settled, { success: 0, failure: 0 }, "a restored row is normalized, not left ragged");
+    assert.deepEqual(subagentStatus().recent[ 0 ]!.settled, { success: 0, failure: 0 }, "a restored row is normalized, not left ragged");
 
     noteBridgeRequest("request-old-row", { provider: "antigravity", model: "gemini-3.8-flash-medium", role: null, workspace: "SimulatorLife/RacingGame" });
     ingestAgentEvents({
@@ -967,7 +984,7 @@ test("children still running when the parent turn ends are settled by it", async
 
     closeBridgeSubagentsForRequest("request-parent-close", "success", 45_000);
     assert.deepEqual(subagentStatus().byStatus, { started: 0, success: 1 });
-    assert.deepEqual(subagentStatus().recent[ 0 ].settled, { success: 1, failure: 0 });
+    assert.deepEqual(subagentStatus().recent[ 0 ]!.settled, { success: 1, failure: 0 });
   } finally {
     resetSubagentTelemetry();
   }
@@ -980,9 +997,9 @@ test("an Antigravity batch spawn contributes measured turns to the usage tables"
   // CLI-delegated child never reaches the router as a request. The bridge's
   // report is the only evidence it ran, so it is what has to open the bucket.
   const usageBefore = getRouterStatus().usage;
-  const roleAttempts = (usage, role) => Number(usage.byRole?.[ role ]?.attempts ?? 0);
-  const roleSuccesses = (usage, role) => Number(usage.byRole?.[ role ]?.successes ?? 0);
-  const modelAttempts = (usage, key) => Number(usage.byModel?.[ key ]?.attempts ?? 0);
+  const roleAttempts = (usage: any, role: any) => Number(usage.byRole?.[ role ]?.attempts ?? 0);
+  const roleSuccesses = (usage: any, role: any) => Number(usage.byRole?.[ role ]?.successes ?? 0);
+  const modelAttempts = (usage: any, key: any) => Number(usage.byModel?.[ key ]?.attempts ?? 0);
 
   resetSubagentTelemetry();
   try {
@@ -1061,7 +1078,7 @@ test("an orchestrator handed no delegation tool is reported, not read as a refus
   // that chose not to delegate. The absence has to arrive as its own fact.
   resetSubagentTelemetry();
   const before = getRouterStatus().spawnFailures;
-  const reasonCount = (snapshot) => Number(snapshot.byReason?.spawn_tool_unavailable ?? 0);
+  const reasonCount = (snapshot: any) => Number(snapshot.byReason?.spawn_tool_unavailable ?? 0);
   try {
     noteBridgeRequest("request-denied", { provider: "claude", model: "claude-opus-5", role: null, workspace: "SimulatorLife/RacingGame" });
     const result = ingestAgentEvents({
@@ -1084,7 +1101,7 @@ test("an orchestrator handed no delegation tool is reported, not read as a refus
 
 test("successful responses identify the resolved provider, model, and request", async () => {
   const originalFetch = globalThis.fetch;
-  globalThis.fetch = async (url, options) => {
+  globalThis.fetch = async (url: any, options: any = {}) => {
     if (String(url) === "http://127.0.0.1:4000/v1/responses") {
       return new Response(JSON.stringify({
         id: "upstream-response",
@@ -1103,9 +1120,9 @@ test("successful responses identify the resolved provider, model, and request", 
     return originalFetch(url, options);
   };
   const server = createServer((request, response) => { void handle(request, response); });
-  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  await listenServer(server);
   try {
-    const address = server.address();
+    const address = server.address() as AddressInfo;
     const response = await originalFetch(`http://127.0.0.1:${address.port}/v1/responses`, {
       method: "POST",
       headers: { "content-type": "application/json", "x-request-id": "req-header" },
@@ -1126,7 +1143,7 @@ test("successful responses identify the resolved provider, model, and request", 
     });
     assert.equal(body.nested.script, '{"model":"provider-internal-model","name":"multi_agent_v1__spawn_agent"}');
   } finally {
-    await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    await closeServer(server);
     globalThis.fetch = originalFetch;
   }
 });
@@ -1134,25 +1151,25 @@ test("successful responses identify the resolved provider, model, and request", 
 test("resolveTurnMetadataHeader prefers the canonical header and falls back to embedded client_metadata", () => {
   const rawJson = JSON.stringify({ workspaces: { main: "/tmp/ws" } });
   assert.equal(
-    resolveTurnMetadataHeader({ headers: { "x-codex-turn-metadata": rawJson } }, {}),
+    resolveTurnMetadataHeader({ headers: { "x-codex-turn-metadata": rawJson } } as any, {} as any),
     rawJson
   );
   assert.equal(
-    resolveTurnMetadataHeader({ headers: { "x-codex-turn-metadata": [ rawJson ] } }, {}),
+    resolveTurnMetadataHeader({ headers: { "x-codex-turn-metadata": [ rawJson ] } } as any, {} as any),
     rawJson
   );
   assert.equal(
-    resolveTurnMetadataHeader({ headers: {} }, { client_metadata: { "x-codex-turn-metadata": rawJson } }),
+    resolveTurnMetadataHeader({ headers: {} } as any, { client_metadata: { "x-codex-turn-metadata": rawJson } } as any),
     rawJson
   );
   assert.equal(
-    resolveTurnMetadataHeader({ headers: {} }, { client_metadata: { "x-codex-turn-metadata": { workspaces: { main: "/tmp/ws" } } } }),
+    resolveTurnMetadataHeader({ headers: {} } as any, { client_metadata: { "x-codex-turn-metadata": { workspaces: { main: "/tmp/ws" } } } }),
     JSON.stringify({ workspaces: { main: "/tmp/ws" } })
   );
-  assert.equal(resolveTurnMetadataHeader({ headers: { "x-codex-turn-metadata": "not json" } }, {}), null);
-  assert.equal(resolveTurnMetadataHeader({ headers: {} }, {}), null);
+  assert.equal(resolveTurnMetadataHeader({ headers: { "x-codex-turn-metadata": "not json" } } as any, {} as any), null);
+  assert.equal(resolveTurnMetadataHeader({ headers: {} } as any, {} as any), null);
   assert.equal(parseTurnMetadataJson("[]"), null);
-  assert.equal(parseTurnMetadataJson(rawJson).workspaces.main, "/tmp/ws");
+  assert.equal((parseTurnMetadataJson(rawJson) as any).workspaces.main, "/tmp/ws");
 });
 
 test("derives a privacy-safe repository and cwd label from turn metadata", () => {
@@ -1301,8 +1318,8 @@ test("attributes named tools, skills, and skillUses across two distinct workspac
   });
 
   // Helper for OTLP points
-  const attrs = (entries) => entries.map(([ key, value ]) => ({ key, value: { stringValue: String(value) } }));
-  const point = (entries, value, start = "1", time = "2") => ({
+  const attrs = (entries: any[]) => entries.map(([ key, value ]: [any, any]) => ({ key, value: { stringValue: String(value) } }));
+  const point = (entries: any, value: any, start: any = "1", time: any = "2") => ({
     attributes: attrs(entries),
     startTimeUnixNano: String(start),
     timeUnixNano: String(time),
@@ -1367,7 +1384,7 @@ test("attributes named tools, skills, and skillUses across two distinct workspac
     ],
   });
 
-  const status = getRouterStatus();
+  const status = getRouterStatus() as any;
   const wsA = status.usage.byWorkspace[ "SimulatorLife/RacingGame" ];
   const wsB = status.usage.byWorkspace[ "Company/WebPortal" ];
 
@@ -1381,32 +1398,32 @@ test("attributes named tools, skills, and skillUses across two distinct workspac
 
   // Per-workspace named tools (byTool)
   assert.equal(Array.isArray(wsA.byTool), true);
-  assert.equal(wsA.byTool.find((t) => t.tool === "exec_command")?.count, 4);
-  assert.equal(wsA.byTool.find((t) => t.tool === "read_file")?.count, 2);
-  assert.equal(wsA.byTool.find((t) => t.tool === "write_file"), undefined);
+  assert.equal(wsA.byTool.find((t: any) => t.tool === "exec_command")?.count, 4);
+  assert.equal(wsA.byTool.find((t: any) => t.tool === "read_file")?.count, 2);
+  assert.equal(wsA.byTool.find((t: any) => t.tool === "write_file"), undefined);
 
   assert.equal(Array.isArray(wsB.byTool), true);
-  assert.equal(wsB.byTool.find((t) => t.tool === "exec_command")?.count, 3);
-  assert.equal(wsB.byTool.find((t) => t.tool === "write_file")?.count, 1);
-  assert.equal(wsB.byTool.find((t) => t.tool === "read_file"), undefined);
+  assert.equal(wsB.byTool.find((t: any) => t.tool === "exec_command")?.count, 3);
+  assert.equal(wsB.byTool.find((t: any) => t.tool === "write_file")?.count, 1);
+  assert.equal(wsB.byTool.find((t: any) => t.tool === "read_file"), undefined);
 
   // Per-workspace named skills (bySkill)
   assert.equal(Array.isArray(wsA.bySkill), true);
-  assert.equal(wsA.bySkill.find((s) => s.skill === "ccc")?.total, 2);
-  assert.equal(wsA.bySkill.find((s) => s.skill === "lsp-mcp-server"), undefined);
+  assert.equal(wsA.bySkill.find((s: any) => s.skill === "ccc")?.total, 2);
+  assert.equal(wsA.bySkill.find((s: any) => s.skill === "lsp-mcp-server"), undefined);
 
   assert.equal(Array.isArray(wsB.bySkill), true);
-  assert.equal(wsB.bySkill.find((s) => s.skill === "lsp-mcp-server")?.total, 5);
-  assert.equal(wsB.bySkill.find((s) => s.skill === "ccc"), undefined);
+  assert.equal(wsB.bySkill.find((s: any) => s.skill === "lsp-mcp-server")?.total, 5);
+  assert.equal(wsB.bySkill.find((s: any) => s.skill === "ccc"), undefined);
 
   // Global telemetry preserved and reflects aggregate of both workspaces
-  const globalExec = status.codexTelemetry.tools.byTool.find((t) => t.tool === "exec_command");
+  const globalExec = status.codexTelemetry.tools.byTool.find((t: any) => t.tool === "exec_command");
   assert.equal(globalExec?.count, 7); // 4 + 3
-  assert.equal(status.codexTelemetry.tools.byTool.find((t) => t.tool === "read_file")?.count, 2);
-  assert.equal(status.codexTelemetry.tools.byTool.find((t) => t.tool === "write_file")?.count, 1);
+  assert.equal(status.codexTelemetry.tools.byTool.find((t: any) => t.tool === "read_file")?.count, 2);
+  assert.equal(status.codexTelemetry.tools.byTool.find((t: any) => t.tool === "write_file")?.count, 1);
   assert.equal(status.codexTelemetry.skills.injected.total, 7); // 2 + 5
-  assert.equal(status.codexTelemetry.skills.injected.bySkill.find((s) => s.skill === "ccc")?.total, 2);
-  assert.equal(status.codexTelemetry.skills.injected.bySkill.find((s) => s.skill === "lsp-mcp-server")?.total, 5);
+  assert.equal(status.codexTelemetry.skills.injected.bySkill.find((s: any) => s.skill === "ccc")?.total, 2);
+  assert.equal(status.codexTelemetry.skills.injected.bySkill.find((s: any) => s.skill === "lsp-mcp-server")?.total, 5);
 
   resetRouterTelemetry();
   resetOtelTelemetry();
@@ -1419,8 +1436,8 @@ test("dedupes cumulative and delta OTLP metrics independently across multiple wo
   registerWorkspaceId("ws-1", "RepoA");
   registerWorkspaceId("ws-2", "RepoB");
 
-  const attrs = (entries) => entries.map(([ key, value ]) => ({ key, value: { stringValue: String(value) } }));
-  const point = (entries, value, start, time) => ({
+  const attrs = (entries: any[]) => entries.map(([ key, value ]: [any, any]) => ({ key, value: { stringValue: String(value) } }));
+  const point = (entries: any, value: any, start?: any, time?: any) => ({
     attributes: attrs(entries),
     startTimeUnixNano: String(start),
     timeUnixNano: String(time),
@@ -1459,9 +1476,9 @@ test("dedupes cumulative and delta OTLP metrics independently across multiple wo
   });
 
   let status = getRouterStatus();
-  assert.equal(status.usage.byWorkspace.RepoA.byTool.find((t) => t.tool === "bash")?.count, 5);
-  assert.equal(status.usage.byWorkspace.RepoB.byTool.find((t) => t.tool === "bash")?.count, 3);
-  assert.equal(status.codexTelemetry.tools.byTool.find((t) => t.tool === "bash")?.count, 8);
+  assert.equal(status.usage.byWorkspace.RepoA.byTool.find((t: any) => t.tool === "bash")?.count, 5);
+  assert.equal(status.usage.byWorkspace.RepoB.byTool.find((t: any) => t.tool === "bash")?.count, 3);
+  assert.equal(status.codexTelemetry.tools.byTool.find((t: any) => t.tool === "bash")?.count, 8);
 
   // Workspace 1 sends cumulative 8 at T=200 (delta = 3)
   // Workspace 2 resends cumulative 3 at T=100 (duplicate timestamp -> delta = 0)
@@ -1495,9 +1512,9 @@ test("dedupes cumulative and delta OTLP metrics independently across multiple wo
   });
 
   status = getRouterStatus();
-  assert.equal(status.usage.byWorkspace.RepoA.byTool.find((t) => t.tool === "bash")?.count, 8);
-  assert.equal(status.usage.byWorkspace.RepoB.byTool.find((t) => t.tool === "bash")?.count, 3);
-  assert.equal(status.codexTelemetry.tools.byTool.find((t) => t.tool === "bash")?.count, 11);
+  assert.equal(status.usage.byWorkspace.RepoA.byTool.find((t: any) => t.tool === "bash")?.count, 8);
+  assert.equal(status.usage.byWorkspace.RepoB.byTool.find((t: any) => t.tool === "bash")?.count, 3);
+  assert.equal(status.codexTelemetry.tools.byTool.find((t: any) => t.tool === "bash")?.count, 11);
 
   // Resend identical cumulative 8 at T=200 for Workspace 1 (duplicate timestamp)
   ingestOtelSignal("metrics", {
@@ -1516,8 +1533,8 @@ test("dedupes cumulative and delta OTLP metrics independently across multiple wo
   });
 
   status = getRouterStatus();
-  assert.equal(status.usage.byWorkspace.RepoA.byTool.find((t) => t.tool === "bash")?.count, 8);
-  assert.equal(status.codexTelemetry.tools.byTool.find((t) => t.tool === "bash")?.count, 11);
+  assert.equal(status.usage.byWorkspace.RepoA.byTool.find((t: any) => t.tool === "bash")?.count, 8);
+  assert.equal(status.codexTelemetry.tools.byTool.find((t: any) => t.tool === "bash")?.count, 11);
 
   resetRouterTelemetry();
   resetOtelTelemetry();
@@ -1530,8 +1547,8 @@ test("attributes tool call durations per-workspace and preserves global duration
   registerWorkspaceId("ws-dur-1", "RepoDurA");
   registerWorkspaceId("ws-dur-2", "RepoDurB");
 
-  const attrs = (entries) => entries.map(([ key, value ]) => ({ key, value: { stringValue: String(value) } }));
-  const histPoint = (entries, count, sum, start, time) => ({
+  const attrs = (entries: any[]) => entries.map(([ key, value ]: [any, any]) => ({ key, value: { stringValue: String(value) } }));
+  const histPoint = (entries: any, count: any, sum: any, start?: any, time?: any) => ({
     attributes: attrs(entries),
     startTimeUnixNano: String(start),
     timeUnixNano: String(time),
@@ -1569,17 +1586,17 @@ test("attributes tool call durations per-workspace and preserves global duration
   });
 
   const status = getRouterStatus();
-  const toolA = status.usage.byWorkspace.RepoDurA.byTool.find((t) => t.tool === "exec");
+  const toolA = status.usage.byWorkspace.RepoDurA.byTool.find((t: any) => t.tool === "exec");
   assert.equal(toolA.durationCount, 2);
   assert.equal(toolA.durationMs, 100);
   assert.equal(toolA.averageDurationMs, 50);
 
-  const toolB = status.usage.byWorkspace.RepoDurB.byTool.find((t) => t.tool === "exec");
+  const toolB = status.usage.byWorkspace.RepoDurB.byTool.find((t: any) => t.tool === "exec");
   assert.equal(toolB.durationCount, 3);
   assert.equal(toolB.durationMs, 60);
   assert.equal(toolB.averageDurationMs, 20);
 
-  const globalTool = status.codexTelemetry.tools.byTool.find((t) => t.tool === "exec");
+  const globalTool = status.codexTelemetry.tools.byTool.find((t: any) => t.tool === "exec");
   assert.equal(globalTool.durationCount, 5);
   assert.equal(globalTool.durationMs, 160);
   assert.equal(globalTool.averageDurationMs, 32);
@@ -1594,8 +1611,8 @@ test("fails closed on unknown workspace IDs and ambiguous resource fallbacks wit
 
   registerWorkspaceId("ws-known", "KnownRepo");
 
-  const attrs = (entries) => entries.map(([ key, value ]) => ({ key, value: { stringValue: String(value) } }));
-  const point = (entries, value, start = "0", time = "10") => ({
+  const attrs = (entries: any[]) => entries.map(([ key, value ]: [any, any]) => ({ key, value: { stringValue: String(value) } }));
+  const point = (entries: any, value: any, start: any = "0", time: any = "10") => ({
     attributes: attrs(entries),
     startTimeUnixNano: String(start),
     timeUnixNano: String(time),
@@ -1619,7 +1636,7 @@ test("fails closed on unknown workspace IDs and ambiguous resource fallbacks wit
 
   let status = getRouterStatus();
   assert.equal(status.usage.byWorkspace.KnownRepo, undefined);
-  assert.equal(status.codexTelemetry.tools.byTool.find((t) => t.tool === "exec")?.count, 2);
+  assert.equal(status.codexTelemetry.tools.byTool.find((t: any) => t.tool === "exec")?.count, 2);
 
   let diag = attributionDiagnosticsStatus();
   assert.equal(diag.unattributed, 1);
@@ -1643,7 +1660,7 @@ test("fails closed on unknown workspace IDs and ambiguous resource fallbacks wit
   });
 
   status = getRouterStatus();
-  assert.equal(status.usage.byWorkspace.KnownRepo.byTool.find((t) => t.tool === "exec")?.count, 4);
+  assert.equal(status.usage.byWorkspace.KnownRepo.byTool.find((t: any) => t.tool === "exec")?.count, 4);
   diag = attributionDiagnosticsStatus();
   assert.equal(diag.attributed, 1);
   assert.equal(diag.bySource.resource, 1);
@@ -1667,7 +1684,7 @@ test("fails closed on unknown workspace IDs and ambiguous resource fallbacks wit
   diag = attributionDiagnosticsStatus();
   assert.equal(diag.byReason.ambiguous_resource, 1);
   // KnownRepo should not have received the ambiguous call
-  assert.equal(status.usage.byWorkspace.KnownRepo.byTool.find((t) => t.tool === "exec")?.count, 4);
+  assert.equal(status.usage.byWorkspace.KnownRepo.byTool.find((t: any) => t.tool === "exec")?.count, 4);
 
   resetRouterTelemetry();
   resetOtelTelemetry();
@@ -1695,11 +1712,11 @@ test("ensures privacy by never leaking local filesystem paths in workspace attri
   assert.equal(context.key, "Confidential/SecretProject");
   assert.equal(context.cwd, "SecretProject");
   // Opaque workspace_id hashes local file path
-  assert.equal(context.workspace_id.startsWith("ws_"), true);
-  assert.equal(context.workspace_id.includes("/Users/henrykirk"), false);
+  assert.equal(context.workspace_id!.startsWith("ws_"), true);
+  assert.equal(context.workspace_id!.includes("/Users/henrykirk"), false);
 
-  const attrs = (entries) => entries.map(([ key, value ]) => ({ key, value: { stringValue: String(value) } }));
-  const point = (entries, value) => ({
+  const attrs = (entries: any[]) => entries.map(([ key, value ]: [any, any]) => ({ key, value: { stringValue: String(value) } }));
+  const point = (entries: any, value: any) => ({
     attributes: attrs(entries),
     startTimeUnixNano: "1",
     timeUnixNano: "2",
@@ -1741,8 +1758,8 @@ test("persists and restores per-workspace tool and skill attribution across rout
     registerWorkspaceId("ws-pers-1", "OwnerA/ProjectA");
     registerWorkspaceId("ws-pers-2", "OwnerB/ProjectB");
 
-    const attrs = (entries) => entries.map(([ key, value ]) => ({ key, value: { stringValue: String(value) } }));
-    const point = (entries, value, start, time) => ({
+    const attrs = (entries: any[]) => entries.map(([ key, value ]: [any, any]) => ({ key, value: { stringValue: String(value) } }));
+    const point = (entries: any, value: any, start?: any, time?: any) => ({
       attributes: attrs(entries),
       startTimeUnixNano: String(start),
       timeUnixNano: String(time),
@@ -1783,8 +1800,8 @@ test("persists and restores per-workspace tool and skill attribution across rout
     assert.ok(Array.isArray(raw.usage.workspaceRegistry));
     const savedWs = raw.usage.byWorkspace[ "OwnerA/ProjectA" ];
     assert.equal(savedWs.skillUses, 3);
-    assert.equal(savedWs.byTool.find((t) => t.tool === "exec_command")?.count, 6);
-    assert.equal(savedWs.bySkill.find((s) => s.skill === "ccc")?.total, 3);
+    assert.equal(savedWs.byTool.find((t: any) => t.tool === "exec_command")?.count, 6);
+    assert.equal(savedWs.bySkill.find((s: any) => s.skill === "ccc")?.total, 3);
 
     resetRouterTelemetry();
     resetOtelTelemetry();
@@ -1794,8 +1811,8 @@ test("persists and restores per-workspace tool and skill attribution across rout
     const restoredStatus = getRouterStatus();
     const restoredWs = restoredStatus.usage.byWorkspace[ "OwnerA/ProjectA" ];
     assert.equal(restoredWs.skillUses, 3);
-    assert.equal(restoredWs.byTool.find((t) => t.tool === "exec_command")?.count, 6);
-    assert.equal(restoredWs.bySkill.find((s) => s.skill === "ccc")?.total, 3);
+    assert.equal(restoredWs.byTool.find((t: any) => t.tool === "exec_command")?.count, 6);
+    assert.equal(restoredWs.bySkill.find((s: any) => s.skill === "ccc")?.total, 3);
 
     // Subsequent cumulative metric export resumes from persisted series without double-counting
     ingestOtelSignal("metrics", {
@@ -1815,7 +1832,7 @@ test("persists and restores per-workspace tool and skill attribution across rout
 
     const afterResumeStatus = getRouterStatus();
     const afterWs = afterResumeStatus.usage.byWorkspace[ "OwnerA/ProjectA" ];
-    assert.equal(afterWs.byTool.find((t) => t.tool === "exec_command")?.count, 9); // 6 + (9 - 6) = 9
+    assert.equal(afterWs.byTool.find((t: any) => t.tool === "exec_command")?.count, 9); // 6 + (9 - 6) = 9
   } finally {
     resetRouterTelemetry();
     resetOtelTelemetry();
@@ -1826,37 +1843,37 @@ test("persists and restores per-workspace tool and skill attribution across rout
 test("downstreamHeaders forwards only the allowlisted turn-metadata header and never a client-supplied credential", () => {
   assert.deepEqual([ ...FORWARDED_REQUEST_HEADERS ], [ "x-codex-turn-metadata" ]);
   const route = { provider: "claude", envKey: "LITELLM_API_KEY" };
-  const withoutTurnMetadata = downstreamHeaders(route, null, null);
+  const withoutTurnMetadata = downstreamHeaders(route as any, null, null);
   assert.equal(withoutTurnMetadata[ "x-codex-turn-metadata" ], undefined);
-  const withTurnMetadata = downstreamHeaders(route, null, "{\"workspaces\":{}}");
+  const withTurnMetadata = downstreamHeaders(route as any, null, "{\"workspaces\":{}}");
   assert.equal(withTurnMetadata[ "x-codex-turn-metadata" ], "{\"workspaces\":{}}");
   assert.notEqual(withTurnMetadata.authorization, "Bearer client-supplied-secret");
 });
 
 test("downstreamHeaders names the agent role the router assigned, and omits it when there is none", () => {
   const route = { provider: "claude", envKey: "LITELLM_API_KEY" };
-  assert.equal(downstreamHeaders(route, null, null)[ AGENT_ROLE_HEADER ], undefined);
-  assert.equal(downstreamHeaders(route, null, null, ORCHESTRATOR_AGENT_ROLE)[ AGENT_ROLE_HEADER ], "orchestrator");
-  assert.equal(downstreamHeaders(route, null, null, "explorer")[ AGENT_ROLE_HEADER ], "explorer");
+  assert.equal(downstreamHeaders(route as any, null, null)[ AGENT_ROLE_HEADER ], undefined);
+  assert.equal(downstreamHeaders(route as any, null, null, ORCHESTRATOR_AGENT_ROLE)[ AGENT_ROLE_HEADER ], "orchestrator");
+  assert.equal(downstreamHeaders(route as any, null, null, "explorer")[ AGENT_ROLE_HEADER ], "explorer");
 });
 
 test("downstreamHeaders forces a fresh connection per request to the codex route to avoid reusing a stale pooled keep-alive socket", () => {
-  const codexHeaders = downstreamHeaders({ provider: "codex", envKey: null }, { token: "t", accountId: "a" }, null);
+  const codexHeaders = downstreamHeaders({ provider: "codex", envKey: null } as any, { token: "t", accountId: "a" }, null);
   assert.equal(codexHeaders.connection, "close", "codex requests must never be served from a pooled keep-alive connection");
 });
 
 test("downstreamHeaders leaves keep-alive pooling untouched for other providers", () => {
   for (const route of [ { provider: "claude", envKey: "LITELLM_API_KEY" }, { provider: "minimax", envKey: "MINIMAX_API_KEY" }, { provider: "antigravity", envKey: "LITELLM_API_KEY" }, { provider: "copilot", envKey: "CODEX_ROUTER_COPILOT_API_KEY" } ]) {
-    const headers = downstreamHeaders(route, null, null);
-    assert.equal(headers.connection, undefined, `${route.provider} should keep reusing pooled connections`);
+    const headers = downstreamHeaders(route as any, null, null);
+    assert.equal(headers.connection, undefined, `${route!.provider} should keep reusing pooled connections`);
   }
 });
 
 
 test("forwards x-codex-turn-metadata to the upstream provider bridge without leaking the caller's own authorization", async () => {
   const originalFetch = globalThis.fetch;
-  let upstreamHeaders = null;
-  globalThis.fetch = async (url, options) => {
+  let upstreamHeaders: any = null;
+  globalThis.fetch = async (url: any, options: any = {}) => {
     if (String(url) === "http://127.0.0.1:4000/v1/responses") {
       upstreamHeaders = options.headers;
       return new Response(JSON.stringify({ id: "upstream-response", model: "sonnet", output_text: "ok" }), {
@@ -1867,9 +1884,9 @@ test("forwards x-codex-turn-metadata to the upstream provider bridge without lea
     return originalFetch(url, options);
   };
   const server = createServer((request, response) => { void handle(request, response); });
-  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  await listenServer(server);
   try {
-    const address = server.address();
+    const address = server.address() as AddressInfo;
     // Codex's canonical turn metadata keys the workspaces map by absolute
     // repo/workspace path; values carry only git metadata. The router must
     // forward that exact JSON shape verbatim, with no reformatting.
@@ -1891,15 +1908,15 @@ test("forwards x-codex-turn-metadata to the upstream provider bridge without lea
     assert.equal(forwardedMetadata.workspace_id, "ws_fe80d628d784");
     assert.notEqual(upstreamHeaders.authorization, "Bearer client-supplied-secret");
   } finally {
-    await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    await closeServer(server);
     globalThis.fetch = originalFetch;
   }
 });
 
 test("relays the canonical workspaces-map-keyed turn metadata even when it arrives only as embedded client_metadata", async () => {
   const originalFetch = globalThis.fetch;
-  let upstreamHeaders = null;
-  globalThis.fetch = async (url, options) => {
+  let upstreamHeaders: any = null;
+  globalThis.fetch = async (url: any, options: any = {}) => {
     if (String(url) === "http://127.0.0.1:4000/v1/responses") {
       upstreamHeaders = options.headers;
       return new Response(JSON.stringify({ id: "upstream-response", model: "sonnet", output_text: "ok" }), {
@@ -1910,9 +1927,9 @@ test("relays the canonical workspaces-map-keyed turn metadata even when it arriv
     return originalFetch(url, options);
   };
   const server = createServer((request, response) => { void handle(request, response); });
-  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  await listenServer(server);
   try {
-    const address = server.address();
+    const address = server.address() as AddressInfo;
     // Callers that cannot set custom headers embed the same canonical shape
     // under client_metadata["x-codex-turn-metadata"]; the router must
     // normalize that back into the canonical header before forwarding.
@@ -1927,7 +1944,7 @@ test("relays the canonical workspaces-map-keyed turn metadata even when it arriv
     assert.equal(response.status, 200);
     assert.equal(upstreamHeaders[ "x-codex-turn-metadata" ], JSON.stringify({ ...canonical, workspace_id: "ws_fe80d628d784" }));
   } finally {
-    await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    await closeServer(server);
     globalThis.fetch = originalFetch;
   }
 });
@@ -1939,12 +1956,12 @@ test("restores validated workspace metadata on role and concrete continuations",
     MINIMAX_API_KEY: process.env.MINIMAX_API_KEY,
   };
   const workspace = await mkdtemp(join(tmpdir(), "autodev-workspace-continuity-"));
-  const observedHeaders = [];
+  const observedHeaders: (string | null)[] = [];
   process.env.LITELLM_API_KEY = "test-provider-key";
   process.env.MINIMAX_API_KEY = "test-provider-key";
   resetRouterTelemetry();
   for (const provider of [ "claude", "antigravity", "minimax", "copilot", "codex" ]) cooldowns.clear(provider);
-  globalThis.fetch = async (url, options) => {
+  globalThis.fetch = async (url: any, options: any = {}) => {
     const target = String(url);
     if (target.endsWith("/health") || target.endsWith("/health/liveliness")) return new Response("ok", { status: 200 });
     if (target.endsWith("/responses")) {
@@ -1957,13 +1974,13 @@ test("restores validated workspace metadata on role and concrete continuations",
     return originalFetch(url, options);
   };
   const server = createServer((request, response) => { void handle(request, response); });
-  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  await listenServer(server);
   try {
-    const address = server.address();
+    const address = server.address() as AddressInfo;
     const turnMetadata = JSON.stringify({ workspaces: { [workspace]: { git: { branch: "main" } } } });
     for (const [index, model] of ["gemini-3.8-flash-medium", "autodev/default"].entries()) {
       const sessionId = `workspace-continuity-${index}`;
-      const send = (headers) => originalFetch(`http://127.0.0.1:${address.port}/v1/responses`, {
+      const send = (headers: any) => originalFetch(`http://127.0.0.1:${address.port}/v1/responses`, {
         method: "POST",
         headers: { "content-type": "application/json", "x-codex-session-id": sessionId, ...headers },
         body: JSON.stringify({ model, stream: false }),
@@ -1971,10 +1988,10 @@ test("restores validated workspace metadata on role and concrete continuations",
       assert.equal((await send({ "x-codex-turn-metadata": turnMetadata })).status, 200);
       assert.equal((await send({})).status, 200);
       const continuedHeader = observedHeaders.at(-1);
-      assert.deepEqual(JSON.parse(continuedHeader).workspaces[workspace], {});
+      assert.deepEqual(JSON.parse(continuedHeader!).workspaces[workspace], {});
     }
   } finally {
-    await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    await closeServer(server);
     globalThis.fetch = originalFetch;
     for (const [key, value] of Object.entries(originalCredentials)) {
       if (value === undefined) delete process.env[key];
@@ -1987,9 +2004,9 @@ test("restores validated workspace metadata on role and concrete continuations",
 
 test("sends the router's own headers to the Antigravity adapter and discards the caller's", async () => {
   const originalFetch = globalThis.fetch;
-  let upstreamHeaders = null;
-  let upstreamPayload = null;
-  globalThis.fetch = async (url, options) => {
+  let upstreamHeaders: any = null;
+  let upstreamPayload: any = null;
+  globalThis.fetch = async (url: any, options: any = {}) => {
     if (String(url) === "http://127.0.0.1:4002/v1/responses") {
       upstreamHeaders = options.headers;
       upstreamPayload = JSON.parse(options.body);
@@ -2001,9 +2018,9 @@ test("sends the router's own headers to the Antigravity adapter and discards the
     return originalFetch(url, options);
   };
   const server = createServer((request, response) => { void handle(request, response); });
-  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  await listenServer(server);
   try {
-    const address = server.address();
+    const address = server.address() as AddressInfo;
     const turnMetadata = JSON.stringify({
       workspaces: { "/Users/henrykirk/AutoDev": { git: { branch: "main" } } },
     });
@@ -2035,14 +2052,14 @@ test("sends the router's own headers to the Antigravity adapter and discards the
     assert.notEqual(upstreamHeaders.authorization, "Bearer caller-secret");
     assert.equal(upstreamHeaders[ "x-untrusted" ], undefined);
   } finally {
-    await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    await closeServer(server);
     globalThis.fetch = originalFetch;
   }
 });
 
 test("turns a provider stream that ends before completion into an explicit failure", async () => {
   const originalFetch = globalThis.fetch;
-  globalThis.fetch = async (url, options) => {
+  globalThis.fetch = async (url: any, options: any = {}) => {
     if (String(url) === "http://127.0.0.1:4000/v1/responses") {
       return new Response('event: response.output_text.delta\\ndata: {"type":"response.output_text.delta","delta":"partial"}\\n\\n', {
         status: 200,
@@ -2052,9 +2069,9 @@ test("turns a provider stream that ends before completion into an explicit failu
     return originalFetch(url, options);
   };
   const server = createServer((request, response) => { void handle(request, response); });
-  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  await listenServer(server);
   try {
-    const address = server.address();
+    const address = server.address() as AddressInfo;
     const response = await originalFetch(`http://127.0.0.1:${address.port}/v1/responses`, {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -2067,7 +2084,7 @@ test("turns a provider stream that ends before completion into an explicit failu
     assert.match(body, /closed the stream before response\.completed/);
     assert.equal(getRouterStatus().providers.claude.failures > 0, true);
   } finally {
-    await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    await closeServer(server);
     globalThis.fetch = originalFetch;
     resetRouterTelemetry();
   }
@@ -2075,7 +2092,7 @@ test("turns a provider stream that ends before completion into an explicit failu
 
 test("does not classify an explicitly incomplete response as a successful turn", async () => {
   const originalFetch = globalThis.fetch;
-  globalThis.fetch = async (url, options) => {
+  globalThis.fetch = async (url: any, options: any = {}) => {
     if (String(url) === "http://127.0.0.1:4000/v1/responses") {
       return new Response('event: response.completed\\ndata: {"type":"response.completed","response":{"status":"incomplete","output_text":"partial"}}\\n\\ndata: [DONE]\\n\\n', {
         status: 200,
@@ -2085,9 +2102,9 @@ test("does not classify an explicitly incomplete response as a successful turn",
     return originalFetch(url, options);
   };
   const server = createServer((request, response) => { void handle(request, response); });
-  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  await listenServer(server);
   try {
-    const address = server.address();
+    const address = server.address() as AddressInfo;
     const response = await originalFetch(`http://127.0.0.1:${address.port}/v1/responses`, {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -2097,7 +2114,7 @@ test("does not classify an explicitly incomplete response as a successful turn",
     assert.match(await response.text(), /response\.completed/);
     assert.equal(getRouterStatus().providers.claude.failures > 0, true);
   } finally {
-    await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    await closeServer(server);
     globalThis.fetch = originalFetch;
     resetRouterTelemetry();
   }
@@ -2105,9 +2122,9 @@ test("does not classify an explicitly incomplete response as a successful turn",
 
 test("rejects missing or malformed models before provider routing", async () => {
   const server = createServer((request, response) => { void handle(request, response); });
-  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  await listenServer(server);
   try {
-    const address = server.address();
+    const address = server.address() as AddressInfo;
     for (const body of [ null, {}, { model: "" }, { model: "  " }, { model: 42 } ]) {
       const response = await fetch(`http://127.0.0.1:${address.port}/v1/responses`, {
         method: "POST",
@@ -2120,14 +2137,14 @@ test("rejects missing or malformed models before provider routing", async () => 
       assert.match(payload.error.message, /JSON object|non-empty string model/);
     }
   } finally {
-    await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    await closeServer(server);
   }
 });
 
 test("ingests Codex OTEL turn and MCP lifecycle telemetry without prompt content", () => {
   resetOtelTelemetry();
   const start = BigInt(Date.now()) * 1_000_000n;
-  const attributes = (entries) => entries.map(([ key, value ]) => ({ key, value: { stringValue: String(value) } }));
+  const attributes = (entries: any[]) => entries.map(([ key, value ]: [any, any]) => ({ key, value: { stringValue: String(value) } }));
   ingestOtelSignal("logs", {
     resourceLogs: [ {
       resource: { attributes: attributes([ [ "mcp_servers", "playwright, codex_apps, node_repl" ] ]) },
@@ -2141,7 +2158,7 @@ test("ingests Codex OTEL turn and MCP lifecycle telemetry without prompt content
       } ],
     } ],
   });
-  const span = (name, serverName, durationNs = 5_000_000n) => ({
+  const span = (name: string, serverName: string, durationNs = 5_000_000n) => ({
     name,
     startTimeUnixNano: String(start),
     endTimeUnixNano: String(start + durationNs),
@@ -2176,13 +2193,13 @@ test("ingests Codex OTEL turn and MCP lifecycle telemetry without prompt content
   assert.equal(telemetry.mcpSummary.byRole.unattributed.observed, 3);
   assert.equal(telemetry.mcpSummary.byWorkspace.unattributed.observed, 3);
   assert.equal(telemetry.mcpSummary.byAgent["conversation-otel"].observed, 3);
-  const playwright = telemetry.mcpServers.find((server) => server.name === "playwright");
+  const playwright = telemetry.mcpServers.find((server: any) => server.name === "playwright");
   assert.equal(playwright.health, "ready");
   assert.equal(playwright.initAttempts, 1);
   assert.equal(playwright.toolDiscoveryAttempts, 1);
   assert.equal(playwright.averageDurationMs, 6);
   assert.equal(JSON.stringify(telemetry).includes("do-not-store-this"), false);
-  assert.equal(codexTelemetryStatus(Date.now() + 121_000).mcpServers.find((server) => server.name === "playwright").health, "stale");
+  assert.equal(codexTelemetryStatus(Date.now() + 121_000).mcpServers.find((server: any) => server.name === "playwright").health, "stale");
   resetOtelTelemetry();
 });
 
@@ -2213,14 +2230,14 @@ test("accepts Collector-forwarded OTLP JSON batches over HTTP at /v1/logs, /v1/t
     __OTEL_T13MS__: base + 13_000_000n,
     __OTEL_T20MS__: base + 20_000_000n,
   };
-  let fixtureText = await readFile(new URL("../tests/fixtures/otel/collector-forwarded-otlp.json", import.meta.url), "utf8");
+  let fixtureText = await readFile(new URL("../fixtures/otel/collector-forwarded-otlp.json", import.meta.url), "utf8");
   for (const [token, value] of Object.entries(fixtureTokens)) fixtureText = fixtureText.replaceAll(token, String(value));
   const fixture = JSON.parse(fixtureText);
   const server = createServer((request, response) => { void handle(request, response); });
-  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  await listenServer(server);
   try {
-    const address = server.address();
-    const post = (path, body) => fetch(`http://127.0.0.1:${address.port}${path}`, {
+    const address = server.address() as AddressInfo;
+    const post = (path: string, body: any) => fetch(`http://127.0.0.1:${address.port}${path}`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify(body),
@@ -2259,8 +2276,8 @@ test("accepts Collector-forwarded OTLP JSON batches over HTTP at /v1/logs, /v1/t
 
     // The fixture's traces batch reports one healthy MCP server and one that
     // errored during initialize; both must be observed from the HTTP path.
-    const playwright = telemetry.mcpServers.find((entry) => entry.name === "playwright");
-    const codexApps = telemetry.mcpServers.find((entry) => entry.name === "codex_apps");
+    const playwright = telemetry.mcpServers.find((entry: any) => entry.name === "playwright");
+    const codexApps = telemetry.mcpServers.find((entry: any) => entry.name === "codex_apps");
     assert.equal(playwright.health, "ready");
     assert.equal(codexApps.health, "error");
 
@@ -2275,7 +2292,7 @@ test("accepts Collector-forwarded OTLP JSON batches over HTTP at /v1/logs, /v1/t
     assert.equal(JSON.stringify(telemetry).includes("do-not-store-this-collector-forwarded-secret"), false);
     assert.equal(JSON.stringify(status).includes("do-not-store-this-collector-forwarded-secret"), false);
   } finally {
-    await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    await closeServer(server);
     resetOtelTelemetry();
   }
 });
@@ -2300,14 +2317,14 @@ test("dedupes repeated Collector-forwarded OTLP JSON batches so receiver counts 
     __OTEL_T13MS__: base + 13_000_000n,
     __OTEL_T20MS__: base + 20_000_000n,
   };
-  let fixtureText = await readFile(new URL("../tests/fixtures/otel/collector-forwarded-otlp.json", import.meta.url), "utf8");
+  let fixtureText = await readFile(new URL("../fixtures/otel/collector-forwarded-otlp.json", import.meta.url), "utf8");
   for (const [token, value] of Object.entries(fixtureTokens)) fixtureText = fixtureText.replaceAll(token, String(value));
   const fixture = JSON.parse(fixtureText);
   const server = createServer((request, response) => { void handle(request, response); });
-  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  await listenServer(server);
   try {
-    const address = server.address();
-    const post = (path, body) => fetch(`http://127.0.0.1:${address.port}${path}`, {
+    const address = server.address() as AddressInfo;
+    const post = (path: string, body: any) => fetch(`http://127.0.0.1:${address.port}${path}`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify(body),
@@ -2351,9 +2368,9 @@ test("dedupes repeated Collector-forwarded OTLP JSON batches so receiver counts 
     // the per-tool, per-skill, and per-hook counts stay at the single-
     // forward baseline.
     assert.equal(telemetry.skills.injected.total, 2);
-    assert.equal(telemetry.tools.byTool.find((row) => row.tool === "exec_command")?.count, 6);
-    assert.equal(telemetry.tools.byTool.find((row) => row.tool === "read_file")?.count, 3);
-    assert.equal(telemetry.hooks.byHook.find((row) => row.hook === "SessionStart")?.count, 1);
+    assert.equal(telemetry.tools.byTool.find((row: any) => row.tool === "exec_command")?.count, 6);
+    assert.equal(telemetry.tools.byTool.find((row: any) => row.tool === "read_file")?.count, 3);
+    assert.equal(telemetry.hooks.byHook.find((row: any) => row.hook === "SessionStart")?.count, 1);
 
     // Tool-result dedupe: the fixture's codex.tool_result log carries a
     // call_id that the receiver's seenKeys collapses, so re-arrival does
@@ -2370,7 +2387,7 @@ test("dedupes repeated Collector-forwarded OTLP JSON batches so receiver counts 
     );
     assert.deepEqual(telemetry.tokens, { input: 200, output: 40, cached: 10, reasoning: 15, tool: 5, total: 270 });
     assert.deepEqual(
-      telemetry.mcpServers.map(({ name, initAttempts, toolDiscoveryAttempts, failures, durationCount }) => ({ name, initAttempts, toolDiscoveryAttempts, failures, durationCount })),
+      telemetry.mcpServers.map(({ name, initAttempts, toolDiscoveryAttempts, failures, durationCount }: any) => ({ name, initAttempts, toolDiscoveryAttempts, failures, durationCount })),
       [
         { name: "codex_apps", initAttempts: 0, toolDiscoveryAttempts: 0, failures: 1, durationCount: 1 },
         { name: "playwright", initAttempts: 1, toolDiscoveryAttempts: 1, failures: 0, durationCount: 2 },
@@ -2397,8 +2414,8 @@ test("dedupes repeated Collector-forwarded OTLP JSON batches so receiver counts 
     // MCP server health is derived from lastStatus within the freshness
     // window, so the redelivered traces do not flip either server's
     // health classification.
-    const playwright = telemetry.mcpServers.find((entry) => entry.name === "playwright");
-    const codexApps = telemetry.mcpServers.find((entry) => entry.name === "codex_apps");
+    const playwright = telemetry.mcpServers.find((entry: any) => entry.name === "playwright");
+    const codexApps = telemetry.mcpServers.find((entry: any) => entry.name === "codex_apps");
     assert.equal(playwright.health, "ready");
     assert.equal(codexApps.health, "error");
 
@@ -2408,7 +2425,7 @@ test("dedupes repeated Collector-forwarded OTLP JSON batches so receiver counts 
     assert.equal(JSON.stringify(telemetry).includes("do-not-store-this-collector-forwarded-secret"), false);
     assert.equal(JSON.stringify(status).includes("do-not-store-this-collector-forwarded-secret"), false);
   } finally {
-    await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    await closeServer(server);
     resetOtelTelemetry();
   }
 });
@@ -2431,16 +2448,16 @@ test("Collector-forwarded OTLP semantics do not depend on logs/traces/metrics ar
     __OTEL_T13MS__: base + 13_000_000n,
     __OTEL_T20MS__: base + 20_000_000n,
   };
-  let fixtureText = await readFile(new URL("../tests/fixtures/otel/collector-forwarded-otlp.json", import.meta.url), "utf8");
+  let fixtureText = await readFile(new URL("../fixtures/otel/collector-forwarded-otlp.json", import.meta.url), "utf8");
   for (const [token, value] of Object.entries(fixtureTokens)) fixtureText = fixtureText.replaceAll(token, String(value));
   const fixture = JSON.parse(fixtureText);
   const now = Number(base / 1_000_000n) + 5_000;
-  const withoutWallClock = (value) => Array.isArray(value)
+  const withoutWallClock = (value: any): any => Array.isArray(value)
     ? value.map(withoutWallClock)
     : value && typeof value === "object"
       ? Object.fromEntries(Object.entries(value).filter(([key]) => key !== "lastSeenAt" && key !== "lastReceivedAt").map(([key, entry]) => [key, withoutWallClock(entry)]))
       : value;
-  const semantics = (signals) => {
+  const semantics = (signals: any[]) => {
     resetOtelTelemetry();
     for (const signal of signals) ingestOtelSignal(signal, structuredClone(fixture[signal]));
     const { receiver: _receiver, metrics: _metrics, ...telemetry } = codexTelemetryStatus(now);
@@ -2452,7 +2469,7 @@ test("Collector-forwarded OTLP semantics do not depend on logs/traces/metrics ar
     const byModel = canonical.telemetry.dimensions.mcp.byModel;
     assert.deepEqual(Object.keys(byModel), ["gpt-5.6-luna"]);
     assert.equal(byModel["gpt-5.6-luna"].count, 15);
-    const buckets = Object.fromEntries(canonical.telemetry.mcpServers.map((server) => [server.name, server.byModel["gpt-5.6-luna"].lastStatus]));
+    const buckets = Object.fromEntries(canonical.telemetry.mcpServers.map((server: any) => [server.name, server.byModel["gpt-5.6-luna"].lastStatus]));
     assert.deepEqual(buckets, { codex_apps: "error", playwright: "ready" });
     for (const signals of [
       ["logs", "metrics", "traces"],
@@ -2489,9 +2506,9 @@ test("rejects malformed OTLP HTTP bodies at /v1/logs, /v1/traces, and /v1/metric
   // count it as invalid rather than as a successful signal.
   resetOtelTelemetry();
   const server = createServer((request, response) => { void handle(request, response); });
-  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  await listenServer(server);
   try {
-    const address = server.address();
+    const address = server.address() as AddressInfo;
     for (const path of [ "/v1/logs", "/v1/traces", "/v1/metrics" ]) {
       const response = await fetch(`http://127.0.0.1:${address.port}${path}`, {
         method: "POST",
@@ -2506,7 +2523,7 @@ test("rejects malformed OTLP HTTP bodies at /v1/logs, /v1/traces, and /v1/metric
       { logs: 0, traces: 0, metrics: 0, invalid: 3 },
     );
   } finally {
-    await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    await closeServer(server);
     resetOtelTelemetry();
   }
 });
@@ -2515,8 +2532,8 @@ test("counts explicit skill activations separately from injected contexts and br
   resetOtelTelemetry();
   resetRouterTelemetry();
   registerWorkspaceId("ws-skill-use", "SkillRepo");
-  const attrs = (entries) => entries.map(([key, value]) => ({ key, value: { stringValue: String(value) } }));
-  const point = (entries, value, time) => ({ attributes: attrs(entries), startTimeUnixNano: "1", timeUnixNano: String(time), asInt: String(value) });
+  const attrs = (entries: any[]) => entries.map(([key, value]: [any, any]) => ({ key, value: { stringValue: String(value) } }));
+  const point = (entries: any, value: any, time?: any) => ({ attributes: attrs(entries), startTimeUnixNano: "1", timeUnixNano: String(time), asInt: String(value) });
   ingestOtelSignal("metrics", { resourceMetrics: [{ resource: { attributes: attrs([["workspace_id", "ws-skill-use"]]) }, scopeMetrics: [{ metrics: [{
     name: "codex.skill.injected",
     sum: { aggregationTemporality: 1, dataPoints: [
@@ -2559,14 +2576,14 @@ test("attributes session-keyed skill reads to the parent workspace", () => {
   });
   assert.equal(result.accepted, 1);
   assert.equal(getRouterStatus().usage.byWorkspace.AutoDev.skillUses, 1);
-  assert.equal(getRouterStatus().usage.byWorkspace.AutoDev.bySkill.find((row) => row.skill === "ccc")?.uses, 1);
+  assert.equal(getRouterStatus().usage.byWorkspace.AutoDev.bySkill.find((row: any) => row.skill === "ccc")?.uses, 1);
   resetRouterTelemetry();
 });
 
 test("normalizes canonical context across tool, hook, and skill telemetry", () => {
   resetOtelTelemetry();
-  const attrs = (entries) => entries.map(([key, value]) => ({ key, value: typeof value === "boolean" ? { boolValue: value } : { stringValue: String(value) } }));
-  const point = (entries, value) => ({ attributes: attrs(entries), startTimeUnixNano: "1000000000", timeUnixNano: "2000000000", asInt: String(value) });
+  const attrs = (entries: any[]) => entries.map(([key, value]: [any, any]) => ({ key, value: typeof value === "boolean" ? { boolValue: value } : { stringValue: String(value) } }));
+  const point = (entries: any, value: any) => ({ attributes: attrs(entries), startTimeUnixNano: "1000000000", timeUnixNano: "2000000000", asInt: String(value) });
   const common = [["role", "worker"], ["model", "gpt-worker"], ["agent_id", "agent-1"], ["agent_kind", "subagent"], ["session_source", "subagent_thread_spawn_worker"], ["workspace_id", "ws-ctx"]];
   ingestOtelSignal("metrics", {
     resourceMetrics: [{
@@ -2590,8 +2607,8 @@ test("normalizes canonical context across tool, hook, and skill telemetry", () =
 test("ingests Codex OTEL skill metrics with cumulative dedupe and tolerates invoke_type", () => {
   resetOtelTelemetry();
   const start = BigInt(Date.now()) * 1_000_000n;
-  const attributes = (entries) => entries.map(([ key, value ]) => ({ key, value: { stringValue: String(value) } }));
-  const skillSum = (skill, status, value, timeOffsetNs, extraAttributes = []) => ({
+  const attributes = (entries: any[]) => entries.map(([ key, value ]: [any, any]) => ({ key, value: { stringValue: String(value) } }));
+  const skillSum = (skill: any, status: any, value: any, timeOffsetNs: any, extraAttributes: any[] = []) => ({
     name: "codex.skill.injected",
     sum: {
       aggregationTemporality: 2,
@@ -2604,7 +2621,7 @@ test("ingests Codex OTEL skill metrics with cumulative dedupe and tolerates invo
       } ],
     },
   });
-  const threadHistogram = (name, count, sum, timeOffsetNs, extraAttributes = []) => ({
+  const threadHistogram = (name: any, count: any, sum: any, timeOffsetNs: any, extraAttributes: any[] = []) => ({
     name,
     histogram: {
       aggregationTemporality: 2,
@@ -2617,7 +2634,7 @@ test("ingests Codex OTEL skill metrics with cumulative dedupe and tolerates invo
       } ],
     },
   });
-  const resourceMetrics = (metrics) => ({ resourceMetrics: [ { resource: { attributes: [] }, scopeMetrics: [ { metrics } ] } ] });
+  const resourceMetrics = (metrics: any) => ({ resourceMetrics: [ { resource: { attributes: [] }, scopeMetrics: [ { metrics } ] } ] });
 
   // First export: injected=3, skipped(invoke_type=auto)=1, one thread reporting 3 enabled/2 kept, 1 truncated with 120 chars trimmed.
   ingestOtelSignal("metrics", resourceMetrics([
@@ -2652,7 +2669,7 @@ test("ingests Codex OTEL skill metrics with cumulative dedupe and tolerates invo
   assert.equal(telemetry.skills.injected.total, 7);
   assert.deepEqual(telemetry.skills.injected.byStatus, { injected: 5, skipped: 2 });
   assert.deepEqual(telemetry.skills.injected.byInvokeType, { auto: 2 });
-  const skill = telemetry.skills.injected.bySkill.find((entry) => entry.skill === "lsp-mcp-server");
+  const skill = telemetry.skills.injected.bySkill.find((entry: any) => entry.skill === "lsp-mcp-server");
   assert.equal(skill.total, 7);
   assert.deepEqual(skill.byStatus, { injected: 5, skipped: 2 });
   assert.deepEqual(skill.byInvokeType, { auto: 2 });
@@ -2668,20 +2685,20 @@ test("ingests Codex OTEL skill metrics with cumulative dedupe and tolerates invo
 test("reads skill names from skillName / skill / skill_name depending on metric source", () => {
   resetOtelTelemetry();
   const start = BigInt(Date.now()) * 1_000_000n;
-  const attrs = (entries) => entries.map(([ key, value ]) => ({ key, value: { stringValue: String(value) } }));
-  const injected = (skillAttribute, value) => ({
+  const attrs = (entries: any[]) => entries.map(([ key, value ]: [any, any]) => ({ key, value: { stringValue: String(value) } }));
+  const injected = (skillAttribute: any, value: any) => ({
     name: "codex.skill.injected",
     sum: { aggregationTemporality: 1, isMonotonic: true, dataPoints: [ {
       attributes: attrs([ [ skillAttribute, "skill-A" ], [ "status", "injected" ] ]),
       startTimeUnixNano: String(start), timeUnixNano: String(start + 1n), asInt: String(value),
     } ] },
   });
-  const ingest = (metrics) => ingestOtelSignal("metrics", { resourceMetrics: [ { scopeMetrics: [ { metrics } ] } ] });
+  const ingest = (metrics: any) => ingestOtelSignal("metrics", { resourceMetrics: [ { scopeMetrics: [ { metrics } ] } ] });
 
   // Modern and legacy exporters use skillName, skill, and skill_name.
   ingest([ injected("skillName", 2), injected("skill", 1), injected("skill_name", 1) ]);
   const telemetry = codexTelemetryStatus();
-  assert.deepEqual(telemetry.skills.injected.bySkill.map((row) => row.skill), [ "skill-A" ]);
+  assert.deepEqual(telemetry.skills.injected.bySkill.map((row: any) => row.skill), [ "skill-A" ]);
   assert.equal(telemetry.skills.injected.bySkill[ 0 ].total, 4);
   assert.equal(telemetry.skills.usage, undefined);
   resetOtelTelemetry();
@@ -2690,8 +2707,8 @@ test("reads skill names from skillName / skill / skill_name depending on metric 
 test("labels all skills without a recognised name 'unknown'", () => {
   resetOtelTelemetry();
   const start = BigInt(Date.now()) * 1_000_000n;
-  const attrs = (entries) => entries.map(([ key, value ]) => ({ key, value: { stringValue: String(value) } }));
-  const point = (attributes, value) => ({
+  const attrs = (entries: any[]) => entries.map(([ key, value ]: [any, any]) => ({ key, value: { stringValue: String(value) } }));
+  const point = (attributes: any, value: any) => ({
     attributes: attrs(attributes),
     startTimeUnixNano: String(start), timeUnixNano: String(start + 1n), asInt: String(value),
   });
@@ -2706,21 +2723,21 @@ test("labels all skills without a recognised name 'unknown'", () => {
   // codex.skill.injected has no recognised fallback contract; the bucket must
   // be "unknown" so callers can tell apart a missing attribute from the
   // explicit literal skill name "unknown".
-  assert.equal(telemetry.skills.injected.bySkill.find((row) => row.skill === "unknown")?.total, 5);
+  assert.equal(telemetry.skills.injected.bySkill.find((row: any) => row.skill === "unknown")?.total, 5);
   assert.equal(telemetry.skills.usage, undefined);
   resetOtelTelemetry();
 });
 
 test("groups skill injections by agent kind, model, and plugin metadata", () => {
   resetOtelTelemetry();
-  const attributes = (entries) => entries.map(([ key, value ]) => ({ key, value: { stringValue: String(value) } }));
-  const skillPoint = (skill, invokeType, value) => ({
+  const attributes = (entries: any[]) => entries.map(([ key, value ]: [any, any]) => ({ key, value: { stringValue: String(value) } }));
+  const skillPoint = (skill: any, invokeType: any, value: any) => ({
     attributes: attributes([ [ "skill", skill ], [ "status", "ok" ], [ "invoke_type", invokeType ] ]),
     startTimeUnixNano: "1",
     timeUnixNano: "2",
     asInt: String(value),
   });
-  const resourceMetric = (resourceEntries, point) => ({
+  const resourceMetric = (resourceEntries: any, point: any) => ({
     resource: { attributes: attributes(resourceEntries) },
     scopeMetrics: [ { metrics: [ { name: "codex.skill.injected", sum: { aggregationTemporality: 1, isMonotonic: true, dataPoints: [ point ] } } ] } ],
   });
@@ -2746,11 +2763,11 @@ test("groups skill injections by agent kind, model, and plugin metadata", () => 
 
 test("ignores shadow-selection diagnostics instead of treating them as skill usage", () => {
   resetOtelTelemetry();
-  const histogram = (name, count, sum, time) => ({
+  const histogram = (name: any, count: any, sum: any, time: any) => ({
     name,
     histogram: { aggregationTemporality: 2, dataPoints: [ { attributes: [], startTimeUnixNano: "1", timeUnixNano: String(time), count: String(count), sum } ] },
   });
-  const ingest = (metrics) => ingestOtelSignal("metrics", { resourceMetrics: [ { scopeMetrics: [ { metrics } ] } ] });
+  const ingest = (metrics: any) => ingestOtelSignal("metrics", { resourceMetrics: [ { scopeMetrics: [ { metrics } ] } ] });
   const removed = [
     "codex.skills.shadow_selection",
     "codex.skills.shadow_selection.invocation",
@@ -2768,14 +2785,14 @@ test("ignores shadow-selection diagnostics instead of treating them as skill usa
   const skills = codexTelemetryStatus();
   assert.equal(skills.skills.usage, undefined);
   assert.deepEqual(skills.skills.turnDuration.durationSeconds, { count: 2, sum: 200, average: 100 });
-  assert.equal(skills.metrics.observed.some(({ name }) => removed.includes(name)), false);
+  assert.equal(skills.metrics.observed.some(({ name }: any) => removed.includes(name)), false);
   resetOtelTelemetry();
 });
 
 test("counts delta-temporality skill metrics once per export", () => {
   resetOtelTelemetry();
-  const attributes = (entries) => entries.map(([ key, value ]) => ({ key, value: { stringValue: String(value) } }));
-  const metric = (name, value, timeUnixNano, kind = "sum") => ({
+  const attributes = (entries: any[]) => entries.map(([ key, value ]: [any, any]) => ({ key, value: { stringValue: String(value) } }));
+  const metric = (name: any, value: any, timeUnixNano: any, kind = "sum") => ({
     name,
     [ kind ]: {
       aggregationTemporality: 1,
@@ -2783,7 +2800,7 @@ test("counts delta-temporality skill metrics once per export", () => {
       dataPoints: [ { attributes: attributes([ [ "skill", "orchestration" ], [ "status", "ok" ] ]), timeUnixNano: String(timeUnixNano), ...(kind === "sum" ? { asInt: String(value) } : { count: "1", sum: value }) } ],
     },
   });
-  const ingest = (metrics) => ingestOtelSignal("metrics", { resourceMetrics: [ { scopeMetrics: [ { metrics } ] } ] });
+  const ingest = (metrics: any) => ingestOtelSignal("metrics", { resourceMetrics: [ { scopeMetrics: [ { metrics } ] } ] });
   ingest([ metric("codex.skill.injected", 2, 10), metric("codex.thread.skills.enabled_total", 1, 10, "histogram") ]);
   ingest([ metric("codex.skill.injected", 3, 20), metric("codex.thread.skills.enabled_total", 1, 20, "histogram") ]);
   const telemetry = codexTelemetryStatus();
@@ -2796,8 +2813,8 @@ test("counts delta-temporality skill metrics once per export", () => {
 test("reads tool names from tool / toolName / tool_name and shows real names in the dashboard buckets", () => {
   resetOtelTelemetry();
   const start = BigInt(Date.now()) * 1_000_000n;
-  const attrs = (entries) => entries.map(([ key, value ]) => ({ key, value: { stringValue: String(value) } }));
-  const point = (entries, value) => ({
+  const attrs = (entries: any[]) => entries.map(([ key, value ]: [any, any]) => ({ key, value: { stringValue: String(value) } }));
+  const point = (entries: any, value: any) => ({
     attributes: attrs(entries),
     startTimeUnixNano: String(start), timeUnixNano: String(start + 1n), asInt: String(value),
   });
@@ -2813,24 +2830,24 @@ test("reads tool names from tool / toolName / tool_name and shows real names in 
   const telemetry = codexTelemetryStatus();
   // Both modern and legacy spellings resolve to their real tool name; the dashboard
   // would otherwise show every row collapsed under the fallback bucket.
-  const execRow = telemetry.tools.byTool.find((row) => row.tool === "exec_command");
+  const execRow = telemetry.tools.byTool.find((row: any) => row.tool === "exec_command");
   assert.equal(execRow?.count, 4);
-  const applyPatchRow = telemetry.tools.byTool.find((row) => row.tool === "apply_patch");
+  const applyPatchRow = telemetry.tools.byTool.find((row: any) => row.tool === "apply_patch");
   assert.equal(applyPatchRow?.count, 2);
   // Empty or whitespace-only names fall back to "unknown-tool" so genuinely
   // missing attributes are still visible in the dashboard rather than silently
   // dropped. With cumulative-temporality dedupe, the two empty rows collapse
   // into one because they share the same series key.
-  const unknownRow = telemetry.tools.byTool.find((row) => row.tool === "unknown-tool");
+  const unknownRow = telemetry.tools.byTool.find((row: any) => row.tool === "unknown-tool");
   assert.equal(unknownRow?.count, 1);
   resetOtelTelemetry();
 });
 
 test("inventories native metrics and aggregates safe SQLite and tool telemetry", () => {
   resetOtelTelemetry();
-  const attributes = (entries) => entries.map(([ key, value ]) => ({ key, value: { stringValue: String(value) } }));
-  const dataPoint = (entries, value, time = "100") => ({ attributes: attributes(entries), startTimeUnixNano: "1", timeUnixNano: time, asInt: String(value) });
-  const histogramPoint = (entries, count, sum, time = "100") => ({ attributes: attributes(entries), startTimeUnixNano: "1", timeUnixNano: time, count: String(count), sum });
+  const attributes = (entries: any[]) => entries.map(([ key, value ]: [any, any]) => ({ key, value: { stringValue: String(value) } }));
+  const dataPoint = (entries: any, value: any, time: any = "100") => ({ attributes: attributes(entries), startTimeUnixNano: "1", timeUnixNano: time, asInt: String(value) });
+  const histogramPoint = (entries: any, count: any, sum: any, time: any = "100") => ({ attributes: attributes(entries), startTimeUnixNano: "1", timeUnixNano: time, count: String(count), sum });
   ingestOtelSignal("metrics", {
     resourceMetrics: [ {
       scopeMetrics: [ {
@@ -2854,12 +2871,12 @@ test("inventories native metrics and aggregates safe SQLite and tool telemetry",
   assert.equal(telemetry.sqlite.init.total, 2);
   assert.deepEqual(telemetry.sqlite.initDurationMs.byDbStatus, [ { db: "logs", status: "success", count: 2, sum: 40, average: 20 } ]);
   assert.equal(telemetry.sqlite.fallbacks.total, 1);
-  const tool = telemetry.tools.byTool.find((entry) => entry.tool === "exec");
+  const tool = telemetry.tools.byTool.find((entry: any) => entry.tool === "exec");
   assert.deepEqual(tool, { tool: "exec", source: "builtin", server: "", count: 3, byStatus: { ok: 3 }, durationCount: 3, durationMs: 90, averageDurationMs: 30 });
   assert.deepEqual(telemetry.hooks.byHook, [ { hook: "SessionStart", source: "user", handlerType: "command", count: 2, byStatus: { ok: 2 }, durationCount: 2, durationMs: 20, averageDurationMs: 10 } ]);
   assert.deepEqual(telemetry.threads, { started: { total: 4, bySource: { subagent: 4 } }, spawns: { total: 1, byStatus: { ok: 1 }, byRole: { worker: 1 }, byModel: { "autodev/worker": 1 } } });
   assert.equal(JSON.stringify(telemetry).includes("/private/path"), false);
-  assert.deepEqual(telemetry.metrics.observed.map(({ name, exports, dataPoints }) => ({ name, exports, dataPoints })), [
+  assert.deepEqual(telemetry.metrics.observed.map(({ name, exports, dataPoints }: any) => ({ name, exports, dataPoints })), [
     { name: "codex.hooks.run", exports: 1, dataPoints: 1 },
     { name: "codex.hooks.run.duration_ms", exports: 1, dataPoints: 1 },
     { name: "codex.multi_agent.spawn", exports: 1, dataPoints: 1 },
@@ -2875,8 +2892,8 @@ test("inventories native metrics and aggregates safe SQLite and tool telemetry",
 
 test("accepts histogram-shaped lifecycle metrics when Codex reports them as distributions", () => {
   resetOtelTelemetry();
-  const attributes = (entries) => entries.map(([ key, value ]) => ({ key, value: { stringValue: String(value) } }));
-  const point = (entries, count) => ({ attributes: attributes(entries), startTimeUnixNano: "1", timeUnixNano: "2", count: String(count), sum: 0 });
+  const attributes = (entries: any[]) => entries.map(([ key, value ]: [any, any]) => ({ key, value: { stringValue: String(value) } }));
+  const point = (entries: any, count: any) => ({ attributes: attributes(entries), startTimeUnixNano: "1", timeUnixNano: "2", count: String(count), sum: 0 });
   ingestOtelSignal("metrics", {
     resourceMetrics: [ {
       scopeMetrics: [ {
@@ -2898,8 +2915,8 @@ test("accepts histogram-shaped lifecycle metrics when Codex reports them as dist
 test("uses canonical source attribute for hook identity so project and user hooks stay separate", () => {
   resetOtelTelemetry();
   const start = BigInt(Date.now()) * 1_000_000n;
-  const attrs = (entries) => entries.map(([ key, value ]) => ({ key, value: { stringValue: String(value) } }));
-  const point = (entries, value) => ({
+  const attrs = (entries: any[]) => entries.map(([ key, value ]: [any, any]) => ({ key, value: { stringValue: String(value) } }));
+  const point = (entries: any, value: any) => ({
     attributes: attrs(entries),
     startTimeUnixNano: String(start), timeUnixNano: String(start + 1n), asInt: String(value),
   });
@@ -2919,9 +2936,9 @@ test("uses canonical source attribute for hook identity so project and user hook
     } ]
   });
   const telemetry = codexTelemetryStatus();
-  const projectHook = telemetry.hooks.byHook.find((entry) => entry.source === "project");
+  const projectHook = telemetry.hooks.byHook.find((entry: any) => entry.source === "project");
   assert.equal(projectHook.count, 2);
-  const userHook = telemetry.hooks.byHook.find((entry) => entry.source === "user");
+  const userHook = telemetry.hooks.byHook.find((entry: any) => entry.source === "user");
   assert.equal(userHook.count, 5);
   assert.equal(telemetry.hooks.byHook.length, 2);
   resetOtelTelemetry();
@@ -2930,7 +2947,7 @@ test("uses canonical source attribute for hook identity so project and user hook
 test("normalizes Codex tool success boolean into ok and error status buckets", () => {
   resetOtelTelemetry();
   const start = BigInt(Date.now()) * 1_000_000n;
-  const point = (entries, value, offset) => ({
+  const point = (entries: any, value: any, offset?: any) => ({
     attributes: entries,
     startTimeUnixNano: String(start + offset), timeUnixNano: String(start + offset + 1n), asInt: String(value),
   });
@@ -2952,7 +2969,7 @@ test("normalizes Codex tool success boolean into ok and error status buckets", (
     } ]
   });
   const telemetry = codexTelemetryStatus();
-  const exec = telemetry.tools.byTool.find((entry) => entry.tool === "exec_command");
+  const exec = telemetry.tools.byTool.find((entry: any) => entry.tool === "exec_command");
   // boolean or string success=true → ok, success=false → error, missing → unknown.
   // Without normalization, Codex's string-encoded success would be lost.
   assert.deepEqual(exec.byStatus, { ok: 5, error: 1, unknown: 2 });
@@ -2962,8 +2979,8 @@ test("normalizes Codex tool success boolean into ok and error status buckets", (
 test("reads tool server metadata from server / mcp_server without inferring it from the tool name", () => {
   resetOtelTelemetry();
   const start = BigInt(Date.now()) * 1_000_000n;
-  const attrs = (entries) => entries.map(([ key, value ]) => ({ key, value: { stringValue: String(value) } }));
-  const point = (entries, value) => ({
+  const attrs = (entries: any[]) => entries.map(([ key, value ]: [any, any]) => ({ key, value: { stringValue: String(value) } }));
+  const point = (entries: any, value: any) => ({
     attributes: attrs(entries),
     startTimeUnixNano: String(start), timeUnixNano: String(start + 1n), asInt: String(value),
   });
@@ -2985,11 +3002,11 @@ test("reads tool server metadata from server / mcp_server without inferring it f
     } ]
   });
   const telemetry = codexTelemetryStatus();
-  const byServer = Object.fromEntries(telemetry.tools.byTool.filter((entry) => entry.tool === "playwright_navigate").map((entry) => [ entry.server, entry.count ]));
+  const byServer = Object.fromEntries(telemetry.tools.byTool.filter((entry: any) => entry.tool === "playwright_navigate").map((entry: any) => [ entry.server, entry.count ]));
   assert.deepEqual(byServer, { playwright: 1, "playwright-alt": 2, "": 3 });
   // The router never guesses that "playwright_navigate" belongs to the
   // playwright server just because of the prefix.
-  assert.equal(telemetry.tools.byTool.find((entry) => entry.tool === "codex_apps_search").server, "codex_apps");
+  assert.equal(telemetry.tools.byTool.find((entry: any) => entry.tool === "codex_apps_search").server, "codex_apps");
   resetOtelTelemetry();
 });
 
@@ -3051,18 +3068,18 @@ test("tracks router-visible subagent spawn failure reasons", () => {
   assert.equal(failures.scope, "router-admitted-child-requests");
   assert.equal(failures.total, 1);
   assert.equal(failures.byReason.provider_exhausted, 1);
-  assert.equal(failures.recent[ 0 ].requestId, "req-provider-failed");
+  assert.equal(failures.recent[ 0 ]!.requestId, "req-provider-failed");
   resetRouterTelemetry();
 });
 
 test("serves the live component dashboard and keeps /status raw JSON", async () => {
   const server = createServer((request, response) => { void handle(request, response); });
-  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  await listenServer(server);
   try {
-    const address = server.address();
+    const address = server.address() as AddressInfo;
     const dashboard = await fetch(`http://127.0.0.1:${address.port}/dashboard`);
     assert.equal(dashboard.status, 200);
-    assert.match(dashboard.headers.get("content-type"), /text\/html/);
+    assert.match(dashboard.headers.get("content-type")!, /text\/html/);
     const dashboardBody = (await dashboard.text()).replace(/\s+/g, " ").replace(/>\s+</g, "><");
 
     // The dashboard is a live view: it fetches the raw status endpoint on load
@@ -3123,7 +3140,7 @@ test("serves the live component dashboard and keeps /status raw JSON", async () 
 
     const browserStatus = await fetch(`http://127.0.0.1:${address.port}/status`, { headers: { Accept: "text/html" } });
     assert.equal(browserStatus.status, 200);
-    assert.match(browserStatus.headers.get("content-type"), /application\/json/);
+    assert.match(browserStatus.headers.get("content-type")!, /application\/json/);
     const browserPayload = await browserStatus.json();
     assert.equal(browserPayload.schema, "autodev-router-status-v2");
     assert.doesNotMatch(JSON.stringify(browserPayload), /<html/i);
@@ -3133,20 +3150,20 @@ test("serves the live component dashboard and keeps /status raw JSON", async () 
     // the same JSON shape even though the dashboard asks for HTML first.
     const api = await fetch(`http://127.0.0.1:${address.port}/status`, { headers: { Accept: "application/json" } });
     assert.equal(api.status, 200);
-    assert.match(api.headers.get("content-type"), /application\/json/);
+    assert.match(api.headers.get("content-type")!, /application\/json/);
     const apiPayload = await api.json();
     assert.equal(apiPayload.schema, browserPayload.schema);
     assert.deepEqual(Object.keys(apiPayload).sort(), Object.keys(browserPayload).sort());
   } finally {
-    await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    await closeServer(server);
   }
 });
 
 test("serves status snapshots without exposing request content", async () => {
   const server = createServer((request, response) => { void handle(request, response); });
-  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  await listenServer(server);
   try {
-    const address = server.address();
+    const address = server.address() as AddressInfo;
     const response = await fetch(`http://127.0.0.1:${address.port}/status`);
     assert.equal(response.status, 200);
     const status = await response.json();
@@ -3166,7 +3183,7 @@ test("serves status snapshots without exposing request content", async () => {
     assert.equal(typeof status.concurrency.configFileExists, "boolean");
     assertNoLeakedPaths(status);
   } finally {
-    await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    await closeServer(server);
   }
 });
 
@@ -3246,7 +3263,7 @@ test("drops removed shadow-selection telemetry from persisted state", async () =
     const telemetry = getRouterStatus().codexTelemetry;
     assert.equal(telemetry.skills.usage, undefined);
     assert.equal(telemetry.skills.selection, undefined);
-    assert.equal(telemetry.metrics.observed.some(({ name }) => name.startsWith("codex.skills.shadow_selection")), false);
+    assert.equal(telemetry.metrics.observed.some(({ name }: any) => name.startsWith("codex.skills.shadow_selection")), false);
   } finally {
     resetRouterTelemetry();
     await rm(directory, { recursive: true, force: true });
@@ -3334,16 +3351,16 @@ test("keeps orchestrator role attribution separate from direct and subagent traf
   // traffic remains unattributed because it has no role contract.
   assert.equal(usage.byRole.orchestrator.attempts, 1);
   assert.equal(usage.byRole.orchestrator.successes, 1);
-  assert.equal(getRouterStatus().recentEvents.find((event) => event.requestId === "req-orchestrator" && event.phase === "selected").role, "orchestrator");
+  assert.equal(getRouterStatus().recentEvents.find((event: any) => event.requestId === "req-orchestrator" && event.phase === "selected").role, "orchestrator");
   assert.equal(usage.byRole.unattributed.attempts, 1);
   assert.equal(usage.byRole.unattributed.successes, 1);
 
   const roleEntries = Object.entries(usage.byRole).filter(([ role ]) => role !== "unattributed" && role !== "orchestrator");
   const subagentTotal = roleEntries.reduce((total, [ , bucket ]) => ({
-    attempts: total.attempts + bucket.attempts,
-    successes: total.successes + bucket.successes,
-    failures: total.failures + bucket.failures,
-    toolCalls: total.toolCalls + bucket.toolCalls,
+    attempts: total.attempts + (bucket as any).attempts,
+    successes: total.successes + (bucket as any).successes,
+    failures: total.failures + (bucket as any).failures,
+    toolCalls: total.toolCalls + (bucket as any).toolCalls,
   }), { attempts: 0, successes: 0, failures: 0, toolCalls: 0 });
   // Child role-bucket rows (excluding unattributed) must aggregate to the Subagents parent totals.
   assert.equal(subagentTotal.attempts, usage.byOrigin.subagent.attempts);
@@ -3483,7 +3500,7 @@ test("admission enforces the canonical limit, surfaces the same value on /status
   const configuredLimit = concurrencyStatus().effectivePerSessionLimit;
   assert.ok(configuredLimit === null || (Number.isInteger(configuredLimit) && configuredLimit > 0), "configured limit must be null or a positive integer");
   if (configuredLimit !== null) {
-    for (let slot = 0; slot < configuredLimit; slot += 1) assert.equal(tryAcquireSubagentSlot("admission-session"), null);
+    for (let slot = 0; slot < configuredLimit!; slot += 1) assert.equal(tryAcquireSubagentSlot("admission-session"), null);
     assert.equal(tryAcquireSubagentSlot("admission-session"), "max_concurrent_threads_per_session");
     recordConcurrencyDenial({ requestId: "req-denied", role: "worker", requestedModel: "autodev/worker", sessionScope: "identified", reason: "max_concurrent_threads_per_session" });
     const status = concurrencyStatus();
@@ -3494,35 +3511,35 @@ test("admission enforces the canonical limit, surfaces the same value on /status
     assert.equal(status.activeSubagentThreads, configuredLimit);
     assert.equal(status.activeSessions, 1);
     assert.equal(status.denials, 1);
-    assert.equal(status.lastDenial.reason, "max_concurrent_threads_per_session");
-    for (let slot = 0; slot < configuredLimit; slot += 1) releaseSubagentSlot("admission-session");
+    assert.equal(status.lastDenial!.reason, "max_concurrent_threads_per_session");
+    for (let slot = 0; slot < configuredLimit!; slot += 1) releaseSubagentSlot("admission-session");
     assert.equal(concurrencyStatus().activeSessions, 0);
   }
   resetConcurrencyTelemetry();
 });
 
 test("requestSession derives identity from caller-supplied headers and payload fields, never invents it", () => {
-  const noSignal = requestSession({ headers: {} }, {});
+  const noSignal = (requestSession as any)({ headers: {} }, {});
   assert.deepEqual(noSignal, { key: PROCESS_FALLBACK_SESSION_KEY, scope: "process-fallback" });
 
-  assert.deepEqual(requestSession({ headers: { "x-codex-session-id": "sess-header-1" } }, {}), { key: "sess-header-1", scope: "identified" });
-  assert.deepEqual(requestSession({ headers: { "x-session-id": "sess-header-2" } }, {}), { key: "sess-header-2", scope: "identified" });
-  assert.deepEqual(requestSession({ headers: { "x-conversation-id": "sess-header-3" } }, {}), { key: "sess-header-3", scope: "identified" });
-  assert.deepEqual(requestSession({ headers: {} }, { session_id: "sess-body-1" }), { key: "sess-body-1", scope: "identified" });
-  assert.deepEqual(requestSession({ headers: {} }, { conversation_id: "sess-body-2" }), { key: "sess-body-2", scope: "identified" });
-  assert.deepEqual(requestSession({ headers: {} }, { metadata: { session_id: "sess-meta-1" } }), { key: "sess-meta-1", scope: "identified" });
-  assert.deepEqual(requestSession({ headers: {} }, { metadata: { conversation_id: "sess-meta-2" } }), { key: "sess-meta-2", scope: "identified" });
+  assert.deepEqual((requestSession as any)({ headers: { "x-codex-session-id": "sess-header-1" } }, {}), { key: "sess-header-1", scope: "identified" });
+  assert.deepEqual((requestSession as any)({ headers: { "x-session-id": "sess-header-2" } }, {}), { key: "sess-header-2", scope: "identified" });
+  assert.deepEqual((requestSession as any)({ headers: { "x-conversation-id": "sess-header-3" } }, {}), { key: "sess-header-3", scope: "identified" });
+  assert.deepEqual((requestSession as any)({ headers: {} }, { session_id: "sess-body-1" }), { key: "sess-body-1", scope: "identified" });
+  assert.deepEqual((requestSession as any)({ headers: {} }, { conversation_id: "sess-body-2" }), { key: "sess-body-2", scope: "identified" });
+  assert.deepEqual((requestSession as any)({ headers: {} }, { metadata: { session_id: "sess-meta-1" } }), { key: "sess-meta-1", scope: "identified" });
+  assert.deepEqual((requestSession as any)({ headers: {} }, { metadata: { conversation_id: "sess-meta-2" } }), { key: "sess-meta-2", scope: "identified" });
   assert.deepEqual(
-    requestSession({ headers: {} }, {}, JSON.stringify({ conversation_id: "sess-turn-metadata" })),
+    (requestSession as any)({ headers: {} }, {}, JSON.stringify({ conversation_id: "sess-turn-metadata" })),
     { key: "sess-turn-metadata", scope: "identified" },
   );
 
   // Whitespace-only or non-string identity is treated as absent rather than trusted as-is.
-  assert.deepEqual(requestSession({ headers: { "x-codex-session-id": "   " } }, {}), { key: PROCESS_FALLBACK_SESSION_KEY, scope: "process-fallback" });
-  assert.deepEqual(requestSession({ headers: {} }, { session_id: 12345 }), { key: PROCESS_FALLBACK_SESSION_KEY, scope: "process-fallback" });
+  assert.deepEqual((requestSession as any)({ headers: { "x-codex-session-id": "   " } }, {}), { key: PROCESS_FALLBACK_SESSION_KEY, scope: "process-fallback" });
+  assert.deepEqual((requestSession as any)({ headers: {} }, { session_id: 12345 }), { key: PROCESS_FALLBACK_SESSION_KEY, scope: "process-fallback" });
 
   // A header takes priority over payload fields when both are present.
-  assert.deepEqual(requestSession({ headers: { "x-codex-session-id": "sess-header" } }, { session_id: "sess-body" }), { key: "sess-header", scope: "identified" });
+  assert.deepEqual((requestSession as any)({ headers: { "x-codex-session-id": "sess-header" } }, { session_id: "sess-body" }), { key: "sess-header", scope: "identified" });
 });
 
 test("per-session slot limit gives distinct identified sessions independent capacity while capping a shared or missing identity", () => {
@@ -3536,25 +3553,25 @@ test("per-session slot limit gives distinct identified sessions independent capa
 
     // The same identified session is capped by the configured per-session limit.
     const configuredLimit = concurrencyStatus().effectivePerSessionLimit;
-    for (let slot = 1; slot < configuredLimit; slot += 1) assert.equal(tryAcquireSubagentSlot("session-a"), null);
+    for (let slot = 1; slot < configuredLimit!; slot += 1) assert.equal(tryAcquireSubagentSlot("session-a"), null);
     assert.equal(tryAcquireSubagentSlot("session-a"), "max_concurrent_threads_per_session");
-    for (let slot = 0; slot < configuredLimit; slot += 1) releaseSubagentSlot("session-a");
+    for (let slot = 0; slot < configuredLimit!; slot += 1) releaseSubagentSlot("session-a");
     releaseSubagentSlot("session-b");
 
     // Two requests that both fail to supply any session identity share the documented
     // process-wide fallback bucket and are capped together, even though nothing proves
     // they belong to the same logical Codex session -- this is the fail-safe behavior
     // called out in docs/provider-routing.md, not true per-session enforcement.
-    const first = requestSession({ headers: {} }, {});
-    const second = requestSession({ headers: {} }, {});
+    const first = (requestSession as any)({ headers: {} }, {});
+    const second = (requestSession as any)({ headers: {} }, {});
     assert.equal(first.key, PROCESS_FALLBACK_SESSION_KEY);
     assert.equal(second.key, PROCESS_FALLBACK_SESSION_KEY);
     const fallbackLimit = concurrencyStatus().effectivePerSessionLimit;
-    for (let slot = 0; slot < fallbackLimit; slot += 1) assert.equal(tryAcquireSubagentSlot(first.key), null);
+    for (let slot = 0; slot < fallbackLimit!; slot += 1) assert.equal(tryAcquireSubagentSlot(first.key), null);
     assert.equal(concurrencyStatus().processFallbackActiveThreads, fallbackLimit);
     assert.equal(concurrencyStatus().processFallbackEnforcement, true);
     assert.equal(tryAcquireSubagentSlot(second.key), "max_concurrent_threads_per_session");
-    for (let slot = 0; slot < fallbackLimit; slot += 1) releaseSubagentSlot(first.key);
+    for (let slot = 0; slot < fallbackLimit!; slot += 1) releaseSubagentSlot(first.key);
     assert.equal(concurrencyStatus().processFallbackActiveThreads, 0);
     assert.equal(concurrencyStatus().processFallbackEnforcement, false);
   } finally {
@@ -3599,7 +3616,7 @@ test("extracts text from a Responses SSE completion", () => {
   const response = responses.responseTextFromSse(body);
   assert.equal(response.status, "completed");
   assert.equal(response.output_text, "router-ok");
-  assert.equal(response.output[ 0 ].content[ 0 ].text, "router-ok");
+  assert.equal((response as any).output[ 0 ].content[ 0 ].text, "router-ok");
 });
 
 
@@ -3621,7 +3638,7 @@ test("rewrites the routed provider model back to the public role alias", () => {
     },
     model: "gemini-3.8-flash-medium",
   })}\n\n`, "autodev/explorer");
-  const parsedEvent = JSON.parse(event.match(/^data: (.+)$/m)[ 1 ]);
+  const parsedEvent = JSON.parse(event.match(/^data: (.+)$/m)![ 1 ]!);
   assert.equal(parsedEvent.model, "autodev/explorer");
   assert.equal(parsedEvent.response.model, "autodev/explorer");
   assert.equal(parsedEvent.response.output[ 0 ].model, "autodev/explorer");
@@ -3722,13 +3739,13 @@ test("extracts text from SSE stream with empty lines and keep-alive comments", (
   const response = responses.responseTextFromSse(rawStream);
   assert.equal(response.status, "completed");
   assert.equal(response.output_text, "part1 part2");
-  assert.equal(response.output[ 0 ].content[ 0 ].text, "part1 part2");
+  assert.equal((response as any).output[ 0 ].content[ 0 ].text, "part1 part2");
 });
 
 test("structured router error body carries code, retryable, failure class, provider, model, request id, and router instance id", async () => {
   const originalFetch = globalThis.fetch;
   let responseCalls = 0;
-  globalThis.fetch = async (url, options) => {
+  globalThis.fetch = async (url: any, options: any = {}) => {
     if (String(url) === "http://127.0.0.1:4000/v1/responses") {
       responseCalls += 1;
       return new Response(JSON.stringify({ error: "upstream unavailable" }), { status: 503 });
@@ -3736,9 +3753,9 @@ test("structured router error body carries code, retryable, failure class, provi
     return originalFetch(url, options);
   };
   const server = createServer((request, response) => { void handle(request, response); });
-  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  await listenServer(server);
   try {
-    const address = server.address();
+    const address = server.address() as AddressInfo;
     const response = await fetch(`http://127.0.0.1:${address.port}/v1/responses`, {
       method: "POST",
       headers: { "content-type": "application/json", "x-request-id": "req-structured-error" },
@@ -3758,7 +3775,7 @@ test("structured router error body carries code, retryable, failure class, provi
     assert.match(body.error.message, /sonnet \(claude\) failed with HTTP 503/);
     assert.equal(responseCalls, 2); // 503 first attempt then 503 second attempt (single retry exhausted)
   } finally {
-    await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    await closeServer(server);
     globalThis.fetch = originalFetch;
     activeProviderRequests.clear();
     cooldowns.clear("claude");
@@ -3768,7 +3785,7 @@ test("structured router error body carries code, retryable, failure class, provi
 
 test("wraps transport failures with actionable safe diagnostics", async () => {
   const originalFetch = globalThis.fetch;
-  globalThis.fetch = async (url, options) => {
+  globalThis.fetch = async (url: any, options: any = {}) => {
     if (String(url) === "http://127.0.0.1:4000/v1/responses") {
       const error = new Error("fetch failed");
       error.cause = { code: "ECONNRESET", syscall: "read" };
@@ -3778,9 +3795,9 @@ test("wraps transport failures with actionable safe diagnostics", async () => {
   };
   cooldowns.clear("claude");
   const server = createServer((request, response) => { void handle(request, response); });
-  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  await listenServer(server);
   try {
-    const address = server.address();
+    const address = server.address() as AddressInfo;
     const response = await fetch(`http://127.0.0.1:${address.port}/v1/responses`, {
       method: "POST",
       headers: { "content-type": "application/json", "x-request-id": "req-transport-error" },
@@ -3794,11 +3811,11 @@ test("wraps transport failures with actionable safe diagnostics", async () => {
     assert.equal(body.error.retryable, true);
     assert.equal(body.error.requestId, "req-transport-error");
     assert.doesNotMatch(body.error.message, /ECONNRESET|fetch failed|127\.0\.0\.1|absolute|path/i);
-    const transportEvents = getRouterStatus().recentEvents.filter((event) => event.phase === "transport_error" && event.requestId === "req-transport-error");
+    const transportEvents = getRouterStatus().recentEvents.filter((event: any) => event.phase === "transport_error" && event.requestId === "req-transport-error");
     assert.equal(transportEvents.length, 3, "all bounded transport attempts should be observable");
     assert.equal(transportEvents[ 0 ].errorCode, "ECONNRESET");
   } finally {
-    await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    await closeServer(server);
     globalThis.fetch = originalFetch;
     activeProviderRequests.clear();
     cooldowns.clear("claude");
@@ -3809,7 +3826,7 @@ test("wraps transport failures with actionable safe diagnostics", async () => {
 test("direct concrete request survives two pre-response transport failures in a row before succeeding", async () => {
   const originalFetch = globalThis.fetch;
   let responseCalls = 0;
-  globalThis.fetch = async (url, options) => {
+  globalThis.fetch = async (url: any, options: any = {}) => {
     if (String(url) === "http://127.0.0.1:4000/v1/responses") {
       responseCalls += 1;
       if (responseCalls <= 2) {
@@ -3828,9 +3845,9 @@ test("direct concrete request survives two pre-response transport failures in a 
   };
   cooldowns.clear("claude");
   const server = createServer((request, response) => { void handle(request, response); });
-  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  await listenServer(server);
   try {
-    const address = server.address();
+    const address = server.address() as AddressInfo;
     const response = await fetch(`http://127.0.0.1:${address.port}/v1/responses`, {
       method: "POST",
       headers: { "content-type": "application/json", "x-request-id": "req-transport-recovers" },
@@ -3838,11 +3855,11 @@ test("direct concrete request survives two pre-response transport failures in a 
     });
     assert.equal(response.status, 200, "a request that only ever fails pre-response should recover within its retry budget");
     assert.equal(responseCalls, 3);
-    const transportEvents = getRouterStatus().recentEvents.filter((event) => event.phase === "transport_error" && event.requestId === "req-transport-recovers");
+    const transportEvents = getRouterStatus().recentEvents.filter((event: any) => event.phase === "transport_error" && event.requestId === "req-transport-recovers");
     assert.equal(transportEvents.length, 2);
-    assert.deepEqual(transportEvents.map((event) => event.errorCode).sort(), [ "EPIPE", "UND_ERR_SOCKET" ]);
+    assert.deepEqual(transportEvents.map((event: any) => event.errorCode).sort(), [ "EPIPE", "UND_ERR_SOCKET" ]);
   } finally {
-    await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    await closeServer(server);
     globalThis.fetch = originalFetch;
     activeProviderRequests.clear();
     cooldowns.clear("claude");
@@ -3852,7 +3869,7 @@ test("direct concrete request survives two pre-response transport failures in a 
 
 test("x-autodev-router-instance-id correlates every JSON response with the router instance id in the body", async () => {
   const originalFetch = globalThis.fetch;
-  globalThis.fetch = async (url, options) => {
+  globalThis.fetch = async (url: any, options: any = {}) => {
     if (String(url) === "http://127.0.0.1:4000/v1/responses") {
       return new Response(JSON.stringify({ id: "upstream-response", model: "sonnet", output_text: "ok" }), {
         status: 200,
@@ -3862,9 +3879,9 @@ test("x-autodev-router-instance-id correlates every JSON response with the route
     return originalFetch(url, options);
   };
   const server = createServer((request, response) => { void handle(request, response); });
-  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  await listenServer(server);
   try {
-    const address = server.address();
+    const address = server.address() as AddressInfo;
     const success = await fetch(`http://127.0.0.1:${address.port}/v1/responses`, {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -3888,14 +3905,14 @@ test("x-autodev-router-instance-id correlates every JSON response with the route
     const dashboard = await fetch(`http://127.0.0.1:${address.port}/dashboard`);
     assert.equal(dashboard.headers.get("x-autodev-router-instance-id"), ROUTER_INSTANCE_ID);
   } finally {
-    await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    await closeServer(server);
     globalThis.fetch = originalFetch;
   }
 });
 
 test("a direct concrete request registers its real session, not sessionKey: null, so a session-scoped bridge report can still correlate to it", async () => {
   const originalFetch = globalThis.fetch;
-  globalThis.fetch = async (url, options) => {
+  globalThis.fetch = async (url: any, options: any = {}) => {
     if (String(url) === "http://127.0.0.1:4000/v1/responses") {
       return new Response(JSON.stringify({ id: "concrete-session", model: "sonnet", output_text: "ok" }), {
         status: 200,
@@ -3905,9 +3922,9 @@ test("a direct concrete request registers its real session, not sessionKey: null
     return originalFetch(url, options);
   };
   const server = createServer((request, response) => { void handle(request, response); });
-  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  await listenServer(server);
   try {
-    const address = server.address();
+    const address = server.address() as AddressInfo;
     const response = await fetch(`http://127.0.0.1:${address.port}/v1/responses`, {
       method: "POST",
       headers: { "content-type": "application/json", "x-session-id": "session-concrete-1" },
@@ -3923,7 +3940,7 @@ test("a direct concrete request registers its real session, not sessionKey: null
     assert.equal(sessionContext.provider, "claude");
     assert.equal(sessionContext.model, "sonnet");
   } finally {
-    await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    await closeServer(server);
     globalThis.fetch = originalFetch;
     activeProviderRequests.clear();
     cooldowns.clear("claude");
@@ -3938,7 +3955,7 @@ test("native Codex requests record MCP exposure from the role contract without l
   resetOtelTelemetry();
   resetRouterTelemetry();
   recordNativeMcpExposure({
-    route: { provider: "codex", model: "gpt-5.6-luna" },
+    route: { provider: "codex", model: "gpt-5.6-luna" } as any,
     agentRole: "default",
     workspace: { key: "SimulatorLife/NativeCodex" },
     requestId: "request-native",
@@ -3961,7 +3978,7 @@ test("direct concrete request retries once on HTTP 503 then succeeds without rer
   const originalMax = process.env.CODEX_ROUTER_CONCRETE_RETRY_MAX_MS;
   process.env.CODEX_ROUTER_CONCRETE_RETRY_MS = "10";
   process.env.CODEX_ROUTER_CONCRETE_RETRY_MAX_MS = "20";
-  globalThis.fetch = async (url, options) => {
+  globalThis.fetch = async (url: any, options: any = {}) => {
     if (String(url) === "http://127.0.0.1:4000/v1/responses") {
       responseCalls += 1;
       if (responseCalls === 1) return new Response(JSON.stringify({ error: "temporarily unavailable" }), { status: 503 });
@@ -3973,9 +3990,9 @@ test("direct concrete request retries once on HTTP 503 then succeeds without rer
     return originalFetch(url, options);
   };
   const server = createServer((request, response) => { void handle(request, response); });
-  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  await listenServer(server);
   try {
-    const address = server.address();
+    const address = server.address() as AddressInfo;
     const response = await fetch(`http://127.0.0.1:${address.port}/v1/responses`, {
       method: "POST",
       headers: { "content-type": "application/json", "x-request-id": "req-retry-503" },
@@ -3987,7 +4004,7 @@ test("direct concrete request retries once on HTTP 503 then succeeds without rer
     assert.equal(response.headers.get("x-autodev-request-id"), "req-retry-503");
     assert.equal(responseCalls, 2);
   } finally {
-    await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    await closeServer(server);
     globalThis.fetch = originalFetch;
     if (originalCooldown === undefined) delete process.env.CODEX_ROUTER_CONCRETE_RETRY_MS;
     else process.env.CODEX_ROUTER_CONCRETE_RETRY_MS = originalCooldown;
@@ -4006,7 +4023,7 @@ test("direct concrete request stops after the single bounded retry and surfaces 
   const originalMax = process.env.CODEX_ROUTER_CONCRETE_RETRY_MAX_MS;
   process.env.CODEX_ROUTER_CONCRETE_RETRY_MS = "10";
   process.env.CODEX_ROUTER_CONCRETE_RETRY_MAX_MS = "20";
-  globalThis.fetch = async (url, options) => {
+  globalThis.fetch = async (url: any, options: any = {}) => {
     if (String(url) === "http://127.0.0.1:4000/v1/responses") {
       responseCalls += 1;
       return new Response(JSON.stringify({ error: "still unavailable" }), { status: 503 });
@@ -4014,9 +4031,9 @@ test("direct concrete request stops after the single bounded retry and surfaces 
     return originalFetch(url, options);
   };
   const server = createServer((request, response) => { void handle(request, response); });
-  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  await listenServer(server);
   try {
-    const address = server.address();
+    const address = server.address() as AddressInfo;
     const response = await fetch(`http://127.0.0.1:${address.port}/v1/responses`, {
       method: "POST",
       headers: { "content-type": "application/json", "x-request-id": "req-bounded-retry" },
@@ -4040,10 +4057,10 @@ test("direct concrete request stops after the single bounded retry and surfaces 
     assert.equal(cooldowns.isCooling("claude"), true);
     // Recent events include the retry phase plus a final failure result.
     const recent = getRouterStatus().recentEvents;
-    const retryEvents = recent.filter((event) => event.phase === "retry" && event.requestId === "req-bounded-retry");
+    const retryEvents = recent.filter((event: any) => event.phase === "retry" && event.requestId === "req-bounded-retry");
     assert.equal(retryEvents.length, 1);
   } finally {
-    await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    await closeServer(server);
     globalThis.fetch = originalFetch;
     if (originalCooldown === undefined) delete process.env.CODEX_ROUTER_CONCRETE_RETRY_MS;
     else process.env.CODEX_ROUTER_CONCRETE_RETRY_MS = originalCooldown;
@@ -4061,7 +4078,7 @@ test("direct concrete request does not retry on auth (401) or payload (400) erro
   let lastStatus = 0;
   for (const status of [ 401, 400 ]) {
     responseCalls = 0;
-    globalThis.fetch = async (url, options) => {
+    globalThis.fetch = async (url: any, options: any = {}) => {
       if (String(url) === "http://127.0.0.1:4000/v1/responses") {
         responseCalls += 1;
         return new Response(JSON.stringify({ error: "no" }), { status });
@@ -4069,9 +4086,9 @@ test("direct concrete request does not retry on auth (401) or payload (400) erro
       return originalFetch(url, options);
     };
     const server = createServer((request, response) => { void handle(request, response); });
-    await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+    await listenServer(server);
     try {
-      const address = server.address();
+      const address = server.address() as AddressInfo;
       const response = await fetch(`http://127.0.0.1:${address.port}/v1/responses`, {
         method: "POST",
         headers: { "content-type": "application/json" },
@@ -4087,7 +4104,7 @@ test("direct concrete request does not retry on auth (401) or payload (400) erro
       assert.equal(body.error.failureClass, status === 401 ? "authentication" : "request_error");
       assert.equal(cooldowns.isCooling("claude"), false);
     } finally {
-      await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+      await closeServer(server);
       activeProviderRequests.clear();
       cooldowns.clear("claude");
       resetRouterTelemetry();
@@ -4104,7 +4121,7 @@ test("direct concrete request does not retry once the client signal is aborted",
   process.env.CODEX_ROUTER_CONCRETE_RETRY_MS = "10";
   process.env.CODEX_ROUTER_CONCRETE_RETRY_MAX_MS = "20";
   let responseCalls = 0;
-  globalThis.fetch = async (url, options) => {
+  globalThis.fetch = async (url: any, options: any = {}) => {
     if (String(url) === "http://127.0.0.1:4000/v1/responses") {
       responseCalls += 1;
       const signal = options && options.signal;
@@ -4126,25 +4143,25 @@ test("direct concrete request does not retry once the client signal is aborted",
     headers: { "content-type": "application/json", "x-request-id": "req-aborted" },
     complete: false,
   });
-  fakeRequest.push(...requestChunks);
+  for (const chunk of requestChunks) fakeRequest.push(chunk);
   fakeRequest.push(null);
   let responseStatus = 0;
   let responseBody = "";
-  const headerStore = {};
+  const headerStore: Record<string, any> = {};
   const fakeResponse = {
     headersSent: false,
     writableEnded: false,
     destroyed: false,
-    setHeader(name, value) { headerStore[ name ] = value; },
-    getHeader(name) { return headerStore[ name ]; },
-    removeHeader(name) { delete headerStore[ name ]; },
-    writeHead(status, headers) {
+    setHeader(name: string, value: any) { headerStore[ name ] = value; },
+    getHeader(name: string) { return headerStore[ name ]; },
+    removeHeader(name: string) { delete headerStore[ name ]; },
+    writeHead(status: number, headers?: any) {
       this.headersSent = true;
       responseStatus = status;
       for (const [ name, value ] of Object.entries(headers ?? {})) headerStore[ name ] = value;
     },
-    write(chunk) { responseBody += String(chunk); },
-    end(chunk) {
+    write(chunk: any) { responseBody += String(chunk); },
+    end(chunk?: any) {
       if (chunk !== undefined) responseBody += String(chunk);
       this.writableEnded = true;
     },
@@ -4157,7 +4174,7 @@ test("direct concrete request does not retry once the client signal is aborted",
     // flight when the signal fires; the router must then observe the
     // aborted flag and skip its bounded retry.
     setImmediate(() => controller.abort());
-    await proxyConcreteResponse(fakeResponse, route, { model: "sonnet", stream: false }, false, "req-aborted", null, { key: "unknown", cwd: null }, controller.signal);
+    await proxyConcreteResponse(fakeResponse as any, route!, { model: "sonnet", stream: false }, false, "req-aborted", null, { key: "unknown", cwd: null }, controller.signal);
     assert.equal(responseCalls, 1, `aborted requests must not retry; got ${responseCalls} fetch calls`);
   } finally {
     globalThis.fetch = originalFetch;
@@ -4175,7 +4192,7 @@ test("direct concrete request stops retrying once the client aborts mid-way thro
   const originalFetch = globalThis.fetch;
   let responseCalls = 0;
   const controller = new AbortController();
-  globalThis.fetch = async (url, options) => {
+  globalThis.fetch = async (url: any, options: any = {}) => {
     if (String(url) === "http://127.0.0.1:4000/v1/responses") {
       responseCalls += 1;
       if (responseCalls === 1) {
@@ -4207,17 +4224,17 @@ test("direct concrete request stops retrying once the client aborts mid-way thro
     headers: { "content-type": "application/json", "x-request-id": "req-mid-budget-abort" },
     complete: false,
   });
-  fakeRequest.push(...requestChunks);
+  for (const chunk of requestChunks) fakeRequest.push(chunk);
   fakeRequest.push(null);
-  const headerStore = {};
+  const headerStore: Record<string, any> = {};
   const fakeResponse = {
     headersSent: false,
     writableEnded: false,
     destroyed: false,
-    setHeader(name, value) { headerStore[ name ] = value; },
-    getHeader(name) { return headerStore[ name ]; },
-    removeHeader(name) { delete headerStore[ name ]; },
-    writeHead(status, headers) {
+    setHeader(name: string, value: any) { headerStore[ name ] = value; },
+    getHeader(name: string) { return headerStore[ name ]; },
+    removeHeader(name: string) { delete headerStore[ name ]; },
+    writeHead(status: number, headers?: any) {
       this.headersSent = true;
       for (const [ name, value ] of Object.entries(headers ?? {})) headerStore[ name ] = value;
     },
@@ -4229,13 +4246,13 @@ test("direct concrete request stops retrying once the client aborts mid-way thro
   };
   try {
     cooldowns.clear("claude");
-    await proxyConcreteResponse(fakeResponse, route, { model: "sonnet", stream: false }, false, "req-mid-budget-abort", null, { key: "unknown", cwd: null }, controller.signal);
+    await proxyConcreteResponse(fakeResponse as any, route!, { model: "sonnet", stream: false }, false, "req-mid-budget-abort", null, { key: "unknown", cwd: null }, controller.signal);
     assert.equal(responseCalls, 2, `cancellation must stop retries before the 3-attempt transport budget is exhausted; got ${responseCalls} fetch calls`);
-    const events = getRouterStatus().recentEvents.filter((event) => event.requestId === "req-mid-budget-abort");
-    const result = events.find((event) => event.phase === "result");
+    const events = getRouterStatus().recentEvents.filter((event: any) => event.requestId === "req-mid-budget-abort");
+    const result = events.find((event: any) => event.phase === "result");
     assert.equal(result?.status, 499, "an in-flight cancellation must report client_aborted, not spend the remaining retry budget");
     assert.equal(result?.failureClass, "client_aborted");
-    assert.equal(events.filter((event) => event.phase === "retry").length, 1, "only the first attempt's retry should be scheduled; the second must be cut short by cancellation");
+    assert.equal(events.filter((event: any) => event.phase === "retry").length, 1, "only the first attempt's retry should be scheduled; the second must be cut short by cancellation");
   } finally {
     globalThis.fetch = originalFetch;
     activeProviderRequests.clear();
@@ -4253,7 +4270,7 @@ test("direct concrete request does not reroute to a different provider when the 
   process.env.LITELLM_API_KEY = "test-provider-key";
   cooldowns.clear("claude");
   cooldowns.clear("antigravity");
-  globalThis.fetch = async (url, options) => {
+  globalThis.fetch = async (url: any, options: any = {}) => {
     if (String(url) === "http://127.0.0.1:4000/v1/responses") {
       return new Response(JSON.stringify({ error: "provider unavailable" }), { status: 503 });
     }
@@ -4267,9 +4284,9 @@ test("direct concrete request does not reroute to a different provider when the 
     return originalFetch(url, options);
   };
   const server = createServer((request, response) => { void handle(request, response); });
-  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  await listenServer(server);
   try {
-    const address = server.address();
+    const address = server.address() as AddressInfo;
     const response = await fetch(`http://127.0.0.1:${address.port}/v1/responses`, {
       method: "POST",
       headers: { "content-type": "application/json", "x-request-id": "req-no-reroute" },
@@ -4285,7 +4302,7 @@ test("direct concrete request does not reroute to a different provider when the 
     assert.equal(body.error.model, "sonnet");
     assert.equal(body.error.routerInstanceId, ROUTER_INSTANCE_ID);
   } finally {
-    await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    await closeServer(server);
     globalThis.fetch = originalFetch;
     for (const [ key, value ] of Object.entries(originalCredentials)) {
       if (value === undefined) delete process.env[ key ];
@@ -4303,9 +4320,9 @@ test("liveness stays 200 during draining while readiness returns 503 with struct
   const stateDirectory = await mkdtemp(join(tmpdir(), "autodev-readiness-state-"));
   const stateFile = join(stateDirectory, "router-state.json");
   const server = createServer((request, response) => { void handle(request, response); });
-  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  await listenServer(server);
   try {
-    const address = server.address();
+    const address = server.address() as AddressInfo;
     const readinessReady = await fetch(`http://127.0.0.1:${address.port}/health/readiness`);
     assert.equal(readinessReady.status, 200);
     const readyPayload = await readinessReady.json();
@@ -4317,7 +4334,7 @@ test("liveness stays 200 during draining while readiness returns 503 with struct
     // (which would call process.exit in production).
     const { execSync } = await import("node:child_process");
     void execSync;
-    const internal = await import("./codex-model-router.mjs");
+    const internal = await import("../../src/router/server.ts");
     void internal;
 
     // Trigger draining through the public lifecycle helper used by tests.
@@ -4326,7 +4343,7 @@ test("liveness stays 200 during draining while readiness returns 503 with struct
     // test escape hatch so we can probe the endpoints while draining.
     process.env.CODEX_ROUTER_TEST_NO_EXIT = "1";
     try {
-      await beginShutdown("SIGTERM", null, stateFile);
+      await beginShutdown("SIGTERM", null, stateFile as any);
     } finally {
       delete process.env.CODEX_ROUTER_TEST_NO_EXIT;
     }
@@ -4356,7 +4373,7 @@ test("liveness stays 200 during draining while readiness returns 503 with struct
     const drainResponseBody = await responsesDuringDrain.json();
     assert.equal(drainResponseBody.error.code, "router_draining");
   } finally {
-    await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    await closeServer(server);
     resetLifecycleForTests();
     await rm(stateDirectory, { recursive: true, force: true });
   }
@@ -4377,10 +4394,10 @@ test("graceful shutdown drains in-flight requests, persists state, and stops acc
 
     // Mock fetch resolves only after the test allows it, simulating an
     // in-flight upstream call that must drain before shutdown completes.
-    let upstreamResolve;
+    let upstreamResolve: any;
     const upstreamPromise = new Promise((resolve) => { upstreamResolve = resolve; });
     let upstreamCalls = 0;
-    globalThis.fetch = async (url, options) => {
+    globalThis.fetch = async (url: any, options: any = {}) => {
       if (String(url) === "http://127.0.0.1:4000/v1/responses") {
         upstreamCalls += 1;
         await upstreamPromise;
@@ -4393,9 +4410,9 @@ test("graceful shutdown drains in-flight requests, persists state, and stops acc
     };
 
     const server = createServer((request, response) => { void handle(request, response); });
-    await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+    await listenServer(server);
     try {
-      const address = server.address();
+      const address = server.address() as AddressInfo;
       const inflight = fetch(`http://127.0.0.1:${address.port}/v1/responses`, {
         method: "POST",
         headers: { "content-type": "application/json" },
@@ -4410,7 +4427,7 @@ test("graceful shutdown drains in-flight requests, persists state, and stops acc
       assert.equal(getLifecycleStatus().activeResponseRequests >= 1, true);
 
       // Begin shutdown while the request is still in flight.
-      const shutdownPromise = beginShutdown("SIGTERM", server, stateFile);
+      const shutdownPromise = beginShutdown("SIGTERM", server, stateFile as any);
 
       // New requests during drain must be rejected immediately.
       const rejected = await fetch(`http://127.0.0.1:${address.port}/v1/responses`, {
@@ -4433,13 +4450,13 @@ test("graceful shutdown drains in-flight requests, persists state, and stops acc
       // perform its own flush; both paths are covered.
       const persisted = JSON.parse(await readFile(stateFile, "utf8"));
       assert.equal(persisted.schema, "autodev-router-persisted-state-v3");
-      assert.equal(persisted.recentEvents.some((event) => event.requestId === "shutdown-precondition"), true);
+      assert.equal(persisted.recentEvents.some((event: any) => event.requestId === "shutdown-precondition"), true);
       assert.ok(typeof persisted.updatedAt === "string" && persisted.updatedAt.length > 0);
       assert.equal(upstreamCalls, 1, `the in-flight request must complete cleanly without a new upstream call; got ${upstreamCalls}`);
       assert.equal(getLifecycleStatus().state, "draining");
     } finally {
       try {
-        await new Promise((resolve, reject) => server.close((error) => error && error.code !== "ERR_SERVER_NOT_RUNNING" ? reject(error) : resolve()));
+        await new Promise<void>((resolve, reject) => server.close((error: any) => error && error.code !== "ERR_SERVER_NOT_RUNNING" ? reject(error) : resolve()));
       } catch {
         // The drain step inside beginShutdown already closes the server;
         // tolerate the duplicate close here.
@@ -4463,8 +4480,8 @@ test("tells the provider bridge that an orchestrator turn is the orchestrator, s
   resetRouterTelemetry();
   activeProviderRequests.clear();
   for (const provider of [ "codex", "claude", "antigravity", "minimax" ]) cooldowns.clear(provider);
-  let upstreamHeaders = null;
-  globalThis.fetch = async (url, options) => {
+  let upstreamHeaders: any = null;
+  globalThis.fetch = async (url: any, options: any = {}) => {
     const target = String(url);
     // Force the orchestrator off its pinned primary and onto a bridge-backed
     // fallback provider, which is exactly where the leaf prompt used to leak in.
@@ -4477,9 +4494,9 @@ test("tells the provider bridge that an orchestrator turn is the orchestrator, s
     return originalFetch(url, options);
   };
   const server = createServer((request, response) => { void handle(request, response); });
-  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  await listenServer(server);
   try {
-    const address = server.address();
+    const address = server.address() as AddressInfo;
     const response = await originalFetch(`http://127.0.0.1:${address.port}/v1/responses`, {
       method: "POST",
       headers: { "content-type": "application/json", "x-codex-session-id": "orchestrator-role-header" },
@@ -4488,7 +4505,7 @@ test("tells the provider bridge that an orchestrator turn is the orchestrator, s
     assert.equal(response.status, 200);
     assert.equal(upstreamHeaders[ AGENT_ROLE_HEADER ], ORCHESTRATOR_AGENT_ROLE);
   } finally {
-    await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    await closeServer(server);
     globalThis.fetch = originalFetch;
     if (originalKey === undefined) delete process.env.LITELLM_API_KEY;
     else process.env.LITELLM_API_KEY = originalKey;
@@ -4504,8 +4521,8 @@ test("a delegated role is named as that role, and a client cannot claim to be th
   resetRouterTelemetry();
   activeProviderRequests.clear();
   for (const provider of [ "codex", "claude", "antigravity", "minimax", "copilot" ]) cooldowns.clear(provider);
-  let upstreamHeaders = null;
-  globalThis.fetch = async (url, options) => {
+  let upstreamHeaders: any = null;
+  globalThis.fetch = async (url: any, options: any = {}) => {
     const target = String(url);
     if (target.endsWith("/health") || target.endsWith("/health/liveliness")) return new Response("ok", { status: 200 });
     if (target.endsWith("/responses")) {
@@ -4515,9 +4532,9 @@ test("a delegated role is named as that role, and a client cannot claim to be th
     return originalFetch(url, options);
   };
   const server = createServer((request, response) => { void handle(request, response); });
-  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  await listenServer(server);
   try {
-    const address = server.address();
+    const address = server.address() as AddressInfo;
     const response = await originalFetch(`http://127.0.0.1:${address.port}/v1/responses`, {
       method: "POST",
       headers: {
@@ -4532,7 +4549,7 @@ test("a delegated role is named as that role, and a client cannot claim to be th
     assert.equal(response.status, 200);
     assert.equal(upstreamHeaders[ AGENT_ROLE_HEADER ], "explorer");
   } finally {
-    await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    await closeServer(server);
     globalThis.fetch = originalFetch;
     if (originalKey === undefined) delete process.env.LITELLM_API_KEY;
     else process.env.LITELLM_API_KEY = originalKey;
@@ -4561,7 +4578,7 @@ test("isClientDisconnectError correctly classifies client socket and broken pipe
 test("writeResponseStream emits active keep-alive comments down to the client during quiet streaming intervals", async () => {
   const originalFetch = globalThis.fetch;
   let streamClosed = false;
-  globalThis.fetch = async (url, options) => {
+  globalThis.fetch = async (url: any, options: any = {}) => {
     const target = String(url);
     if (target.endsWith("/responses")) {
       const stream = new ReadableStream({
@@ -4583,9 +4600,9 @@ test("writeResponseStream emits active keep-alive comments down to the client du
   };
   cooldowns.clear("claude");
   const server = createServer((request, response) => { void handle(request, response); });
-  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  await listenServer(server);
   try {
-    const address = server.address();
+    const address = server.address() as AddressInfo;
     const response = await originalFetch(`http://127.0.0.1:${address.port}/v1/responses`, {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -4596,7 +4613,7 @@ test("writeResponseStream emits active keep-alive comments down to the client du
     assert.match(body, /: codex-router keep-alive/, "the router should emit keep-alive comments during quiet intervals");
     assert.match(body, /"type":"response\.completed"/, "the completed event should follow the keep-alive");
   } finally {
-    await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    await closeServer(server);
     globalThis.fetch = originalFetch;
     activeProviderRequests.clear();
     cooldowns.clear("claude");
@@ -4607,7 +4624,7 @@ test("writeResponseStream emits active keep-alive comments down to the client du
 test("abrupt client disconnect during SSE stream does not crash the router process", async () => {
   const originalFetch = globalThis.fetch;
   let upstreamEmitted = 0;
-  globalThis.fetch = async (url, options) => {
+  globalThis.fetch = async (url: any, options: any = {}) => {
     const target = String(url);
     if (target.endsWith("/responses")) {
       const stream = new ReadableStream({
@@ -4635,11 +4652,11 @@ test("abrupt client disconnect during SSE stream does not crash the router proce
   };
   cooldowns.clear("claude");
   const server = createServer((request, response) => { void handle(request, response); });
-  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
-  const port = server.address().port;
+  await listenServer(server);
+  const port = (server.address() as AddressInfo).port;
   try {
     // Connect via raw TCP socket and abruptly destroy the socket after receiving initial data
-    await new Promise((resolve, reject) => {
+    await new Promise<void>((resolve, reject) => {
       const client = connect(port, "127.0.0.1", () => {
         const payload = JSON.stringify({ model: "sonnet", stream: true });
         client.write(
@@ -4670,7 +4687,7 @@ test("abrupt client disconnect during SSE stream does not crash the router proce
     });
     assert.equal(followUpResponse.status, 200, "router must remain healthy and responsive after a client disconnected mid-stream");
   } finally {
-    await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    await closeServer(server);
     globalThis.fetch = originalFetch;
     activeProviderRequests.clear();
     cooldowns.clear("claude");
@@ -4695,20 +4712,20 @@ const PROVIDER_KEYS = [ "LITELLM_API_KEY", "MINIMAX_API_KEY", "CODEX_ROUTER_COPI
  * `prepare` runs after telemetry is reset, which is where cooldown setup has to
  * go: resetRouterTelemetry clears the cooldown map.
  */
-async function withStubbedProviders(stub, body, prepare = () => {}) {
+async function withStubbedProviders(stub: any, body: any, prepare: any = () => {}) {
   const originalFetch = globalThis.fetch;
   const originalCredentials = Object.fromEntries(PROVIDER_KEYS.map((key) => [ key, process.env[ key ] ]));
   for (const key of PROVIDER_KEYS) process.env[ key ] = "test-provider-key";
   resetRouterTelemetry();
   activeProviderRequests.clear();
   prepare();
-  globalThis.fetch = async (url, options) => stub(String(url), options) ?? originalFetch(url, options);
+  globalThis.fetch = async (url: any, options: any = {}) => stub(String(url), options) ?? originalFetch(url, options);
   const server = createServer((request, response) => { void handle(request, response); });
-  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  await listenServer(server);
   try {
-    return await body({ port: server.address().port, fetch: originalFetch });
+    return await body({ port: (server.address() as AddressInfo).port, fetch: originalFetch });
   } finally {
-    await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    await closeServer(server);
     globalThis.fetch = originalFetch;
     for (const [ key, value ] of Object.entries(originalCredentials)) {
       if (value === undefined) delete process.env[ key ];
@@ -4719,17 +4736,17 @@ async function withStubbedProviders(stub, body, prepare = () => {}) {
   }
 }
 
-const healthyProbe = (target) => (target.endsWith("/health") || target.endsWith("/health/liveliness") ? new Response("ok", { status: 200 }) : null);
-const jsonResponse = (body, init = {}) => new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" }, ...init });
+const healthyProbe = (target: any) => (target.endsWith("/health") || target.endsWith("/health/liveliness") ? new Response("ok", { status: 200 }) : null);
+const jsonResponse = (body: any, init: any = {}) => new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" }, ...init });
 const DEFAULT_TIER = [ "claude", "antigravity", "minimax", "copilot", "codex" ];
 
 test("attempts a cooling provider as a last resort rather than stranding the caller", async () => {
   let responseCalls = 0;
   await withStubbedProviders(
-    (target) => healthyProbe(target) ?? (target.endsWith("/responses") || target.startsWith("https://chatgpt.com/")
+    (target: any) => healthyProbe(target) ?? (target.endsWith("/responses") || target.startsWith("https://chatgpt.com/")
       ? (responseCalls += 1, jsonResponse({ id: "last-resort", model: "sonnet", output_text: "served" }))
       : null),
-    async ({ port, fetch: realFetch }) => {
+    async ({ port, fetch: realFetch }: any) => {
       const response = await realFetch(`http://127.0.0.1:${port}/v1/responses`, {
         method: "POST",
         headers: { "content-type": "application/json", "x-codex-session-id": "last-resort-test" },
@@ -4737,7 +4754,7 @@ test("attempts a cooling provider as a last resort rather than stranding the cal
       });
       assert.equal(response.status, 200, "a soft cooldown must not be an absolute bar");
       assert.equal(responseCalls, 1);
-      assert.ok(getRouterStatus().recentEvents.some((event) => event.selection === "last_resort"), "the last-resort pass must be visible in the event log");
+      assert.ok(getRouterStatus().recentEvents.some((event: any) => event.selection === "last_resort"), "the last-resort pass must be visible in the event log");
       // Serving clears the cooldown: the chain heals itself.
       assert.equal(cooldowns.isCooling(response.headers.get("x-autodev-provider")), false);
     },
@@ -4752,10 +4769,10 @@ test("attempts a cooling provider as a last resort rather than stranding the cal
 test("bounds how many cooling providers the last-resort pass will try", async () => {
   let responseCalls = 0;
   await withStubbedProviders(
-    (target) => healthyProbe(target) ?? (target.endsWith("/responses") || target.startsWith("https://chatgpt.com/")
+    (target: any) => healthyProbe(target) ?? (target.endsWith("/responses") || target.startsWith("https://chatgpt.com/")
       ? (responseCalls += 1, new Response(JSON.stringify({ error: "temporarily unavailable" }), { status: 503 }))
       : null),
-    async ({ port, fetch: realFetch }) => {
+    async ({ port, fetch: realFetch }: any) => {
       const response = await realFetch(`http://127.0.0.1:${port}/v1/responses`, {
         method: "POST",
         headers: { "content-type": "application/json", "x-codex-session-id": "last-resort-cap" },
@@ -4776,8 +4793,8 @@ test("never re-attempts a provider that stated a reset time still in the future"
   let responseCalls = 0;
   const resetsAt = new Date(Date.now() + 3_600_000).toISOString();
   await withStubbedProviders(
-    (target) => healthyProbe(target) ?? (target.endsWith("/responses") || target.startsWith("https://chatgpt.com/") ? (responseCalls += 1, jsonResponse({ id: "x" })) : null),
-    async ({ port, fetch: realFetch }) => {
+    (target: any) => healthyProbe(target) ?? (target.endsWith("/responses") || target.startsWith("https://chatgpt.com/") ? (responseCalls += 1, jsonResponse({ id: "x" })) : null),
+    async ({ port, fetch: realFetch }: any) => {
       const response = await realFetch(`http://127.0.0.1:${port}/v1/responses`, {
         method: "POST",
         headers: { "content-type": "application/json", "x-codex-session-id": "hard-limit-test" },
@@ -4805,10 +4822,10 @@ test("never re-attempts a provider that stated a reset time still in the future"
 test("waits out a cooldown that is about to lapse instead of ending the turn", async () => {
   let responseCalls = 0;
   await withStubbedProviders(
-    (target) => healthyProbe(target) ?? (target.endsWith("/responses") || target.startsWith("https://chatgpt.com/")
+    (target: any) => healthyProbe(target) ?? (target.endsWith("/responses") || target.startsWith("https://chatgpt.com/")
       ? (responseCalls += 1, jsonResponse({ id: "after-wait", model: "sonnet", output_text: "served" }))
       : null),
-    async ({ port, fetch: realFetch }) => {
+    async ({ port, fetch: realFetch }: any) => {
       const response = await realFetch(`http://127.0.0.1:${port}/v1/responses`, {
         method: "POST",
         headers: { "content-type": "application/json", "x-codex-session-id": "wait-test" },
@@ -4816,7 +4833,7 @@ test("waits out a cooldown that is about to lapse instead of ending the turn", a
       });
       assert.equal(response.status, 200);
       assert.equal(responseCalls, 1);
-      assert.ok(getRouterStatus().recentEvents.some((event) => event.phase === "exhaustion_wait"));
+      assert.ok(getRouterStatus().recentEvents.some((event: any) => event.phase === "exhaustion_wait"));
     },
     // A stated reset moments away. The last-resort pass will not touch it -- the
     // provider has said it will not serve yet -- so the wait is the only thing
@@ -4835,7 +4852,7 @@ test("a provider whose bridge is down does not consume the attempt the wait boug
   // other candidate fails its health probe first.
   const MINIMAX_PORT = "18765";
   await withStubbedProviders(
-    (target) => {
+    (target: any) => {
       if (target.endsWith("/health") || target.endsWith("/health/liveliness")) {
         return new Response("", { status: target.includes(MINIMAX_PORT) ? 200 : 503 });
       }
@@ -4845,7 +4862,7 @@ test("a provider whose bridge is down does not consume the attempt the wait boug
       }
       return null;
     },
-    async ({ port, fetch: realFetch }) => {
+    async ({ port, fetch: realFetch }: any) => {
       const response = await realFetch(`http://127.0.0.1:${port}/v1/responses`, {
         method: "POST",
         headers: { "content-type": "application/json", "x-codex-session-id": "wait-skip-test" },
@@ -4870,8 +4887,8 @@ test("does not wait for a cooldown that is nowhere near lapsing", async () => {
   const startedAt = Date.now();
   const resetsAt = new Date(startedAt + 3_600_000).toISOString();
   await withStubbedProviders(
-    (target) => healthyProbe(target) ?? (target.endsWith("/responses") ? jsonResponse({ id: "never" }) : null),
-    async ({ port, fetch: realFetch }) => {
+    (target: any) => healthyProbe(target) ?? (target.endsWith("/responses") ? jsonResponse({ id: "never" }) : null),
+    async ({ port, fetch: realFetch }: any) => {
       const response = await realFetch(`http://127.0.0.1:${port}/v1/responses`, {
         method: "POST",
         headers: { "content-type": "application/json", "x-codex-session-id": "no-wait-test" },
@@ -4890,13 +4907,13 @@ test("holds a provider until the reset time it declared in its response", async 
   const resetsAt = new Date(Date.now() + 7_200_000).toISOString();
   for (const provider of DEFAULT_TIER) cooldowns.clear(provider);
   await withStubbedProviders(
-    (target) => healthyProbe(target) ?? (target.endsWith("/responses") || target.startsWith("https://chatgpt.com/")
+    (target: any) => healthyProbe(target) ?? (target.endsWith("/responses") || target.startsWith("https://chatgpt.com/")
       ? new Response(JSON.stringify({ error: { message: "out of usage", type: "rate_limit_error" } }), {
         status: 429,
         headers: { "x-autodev-limit-class": "quota_exhausted", "x-autodev-limit-type": "weekly", "x-autodev-limit-resets-at": resetsAt, "x-autodev-limit-source": "reported" },
       })
       : null),
-    async ({ port, fetch: realFetch }) => {
+    async ({ port, fetch: realFetch }: any) => {
       const response = await realFetch(`http://127.0.0.1:${port}/v1/responses`, {
         method: "POST",
         headers: { "content-type": "application/json", "x-codex-session-id": "declared-limit-test" },
@@ -4925,10 +4942,10 @@ test("a turn a provider closed as incomplete reaches the caller and cools on the
   ].join("\n\n") + "\n\n";
   for (const provider of DEFAULT_TIER) cooldowns.clear(provider);
   await withStubbedProviders(
-    (target) => healthyProbe(target) ?? (target.endsWith("/responses") || target.startsWith("https://chatgpt.com/")
+    (target: any) => healthyProbe(target) ?? (target.endsWith("/responses") || target.startsWith("https://chatgpt.com/")
       ? new Response(incomplete, { status: 200, headers: { "content-type": "text/event-stream" } })
       : null),
-    async ({ port, fetch: realFetch }) => {
+    async ({ port, fetch: realFetch }: any) => {
       const response = await realFetch(`http://127.0.0.1:${port}/v1/responses`, {
         method: "POST",
         headers: { "content-type": "application/json", "x-codex-session-id": "incomplete-test" },
@@ -4957,10 +4974,10 @@ test("closes an abandoned stream as incomplete, carrying what it already forward
     'data: {"type":"response.output_text.delta","item_id":"msg_2","delta":"work in progress"}',
   ].join("\n\n") + "\n\n";
   await withStubbedProviders(
-    (target) => healthyProbe(target) ?? (target.endsWith("/responses") || target.startsWith("https://chatgpt.com/")
+    (target: any) => healthyProbe(target) ?? (target.endsWith("/responses") || target.startsWith("https://chatgpt.com/")
       ? new Response(truncated, { status: 200, headers: { "content-type": "text/event-stream" } })
       : null),
-    async ({ port, fetch: realFetch }) => {
+    async ({ port, fetch: realFetch }: any) => {
       const response = await realFetch(`http://127.0.0.1:${port}/v1/responses`, {
         method: "POST",
         headers: { "content-type": "application/json", "x-codex-session-id": "truncated-test" },
@@ -4981,8 +4998,8 @@ test("closes an abandoned stream as incomplete, carrying what it already forward
 test("releases the subagent slot when every provider is exhausted", async () => {
   resetConcurrencyTelemetry();
   await withStubbedProviders(
-    (target) => healthyProbe(target) ?? (target.endsWith("/responses") ? jsonResponse({ id: "never" }) : null),
-    async ({ port, fetch: realFetch }) => {
+    (target: any) => healthyProbe(target) ?? (target.endsWith("/responses") ? jsonResponse({ id: "never" }) : null),
+    async ({ port, fetch: realFetch }: any) => {
       const response = await realFetch(`http://127.0.0.1:${port}/v1/responses`, {
         method: "POST",
         headers: { "content-type": "application/json", "x-codex-session-id": "slot-release-test" },
@@ -5065,13 +5082,13 @@ test("an added section does not throw away the history already persisted", async
 test("reads a declared limit from headers or from the error body", () => {
   const resetsAt = "2026-09-06T15:40:00.000Z";
   const fromHeaders = declaredLimit(new Headers({ "x-autodev-limit-class": "session_limit", "x-autodev-limit-resets-at": resetsAt, "x-autodev-limit-source": "reported" }), "");
-  assert.equal(fromHeaders.limitClass, "session_limit");
-  assert.equal(fromHeaders.resetsAt, resetsAt);
-  assert.equal(fromHeaders.source, "reported");
+  assert.equal(fromHeaders!.limitClass, "session_limit");
+  assert.equal(fromHeaders!.resetsAt, resetsAt);
+  assert.equal(fromHeaders!.source, "reported");
 
   const fromBody = declaredLimit(new Headers(), JSON.stringify({ error: { limit: { class: "quota_exhausted", resets_at: resetsAt, source: "reported" } } }));
-  assert.equal(fromBody.limitClass, "quota_exhausted");
-  assert.equal(fromBody.resetsAt, resetsAt);
+  assert.equal(fromBody!.limitClass, "quota_exhausted");
+  assert.equal(fromBody!.resetsAt, resetsAt);
 
   // A provider that declared nothing must not be read as declaring something:
   // that is what leaves the router guessing from prose.
@@ -5087,8 +5104,8 @@ test("summarizes every candidate's cooldown for the exhaustion body", () => {
     cooldowns.cooldownProvider("minimax", { now });
     const summary = cooldowns.summary([ "claude", "minimax", "codex" ], now + 1);
     assert.deepEqual(summary.map(({ provider, state }) => [ provider, state ]), [ [ "claude", "hard" ], [ "minimax", "transient" ], [ "codex", "available" ] ]);
-    assert.equal(summary[ 0 ].resetsAt, resetsAt);
-    assert.equal(summary[ 1 ].retryAfterMs, 29_999);
+    assert.equal(summary[ 0 ]!.resetsAt, resetsAt);
+    assert.equal(summary[ 1 ]!.retryAfterMs, 29_999);
     assert.equal(cooldowns.allowsLastResort(null), true);
   } finally {
     cooldowns.clear("claude");
@@ -5100,21 +5117,21 @@ test("a bridge is told which Codex conversation it is serving, and how sure the 
   // A bridge that drives Codex's own spawner has to split one CLI turn across
   // two requests, so it needs to recognise the continuation as the same
   // conversation. Codex serves its own children and is never told.
-  const claude = downstreamHeaders({ provider: "claude", envKey: "LITELLM_API_KEY" }, {}, null, "orchestrator", "req-1", { key: "sess-1", scope: "identified" });
+  const claude = downstreamHeaders({ provider: "claude", envKey: "LITELLM_API_KEY" } as any, {} as any, null, "orchestrator", "req-1", { key: "sess-1", scope: "identified" });
   assert.equal(claude[ SESSION_ID_HEADER ], "sess-1");
   assert.equal(claude[ SESSION_SCOPE_HEADER ], "identified");
 
-  const codex = downstreamHeaders({ provider: "codex" }, { token: "t", accountId: "a" }, null, "orchestrator", "req-1", { key: "sess-1", scope: "identified" });
+  const codex = downstreamHeaders({ provider: "codex" } as any, { token: "t", accountId: "a" }, null, "orchestrator", "req-1", { key: "sess-1", scope: "identified" });
   assert.equal(codex[ SESSION_ID_HEADER ], undefined);
 
   // The scope is what stops a bridge holding CLI state under the router's
   // process-wide fallback key, where two unrelated conversations would share
   // one process and see each other's work.
-  const unidentified = downstreamHeaders({ provider: "claude", envKey: "LITELLM_API_KEY" }, {}, null, "orchestrator", "req-1", { key: PROCESS_FALLBACK_SESSION_KEY, scope: "process-fallback" });
+  const unidentified = downstreamHeaders({ provider: "claude", envKey: "LITELLM_API_KEY" } as any, {} as any, null, "orchestrator", "req-1", { key: PROCESS_FALLBACK_SESSION_KEY, scope: "process-fallback" });
   assert.equal(unidentified[ SESSION_SCOPE_HEADER ], "process-fallback");
 
   // No session resolved at all means no header, not an empty one.
-  const none = downstreamHeaders({ provider: "claude", envKey: "LITELLM_API_KEY" }, {}, null, "orchestrator", "req-1", null);
+  const none = downstreamHeaders({ provider: "claude", envKey: "LITELLM_API_KEY" } as any, {} as any, null, "orchestrator", "req-1", null);
   assert.equal(none[ SESSION_ID_HEADER ], undefined);
   assert.equal(none[ SESSION_SCOPE_HEADER ], undefined);
 });
@@ -5137,13 +5154,13 @@ test("a turn continuing a tool call is recognised as one", () => {
 test("a continuation prefers the provider still holding the turn, without pinning to it", () => {
   // The bridge that made the tool call is holding a live CLI for the answer.
   // Sending the continuation elsewhere strands it and loses the turn's work.
-  const providers = (list) => list.map((c) => c.provider);
+  const providers = (list: any[]) => list.map((c: any) => c.provider);
   const plain = routing.orchestratorCandidates(() => 0);
   assert.ok(plain.length > 1, "this test needs a multi-provider orchestrator tier");
 
-  const last = plain.at(-1).provider;
+  const last = plain.at(-1)!.provider;
   const hoisted = routing.orchestratorCandidates(() => 0, last);
-  assert.equal(hoisted[ 0 ].provider, last, "the holding provider is tried first");
+  assert.equal(hoisted[ 0 ]!.provider, last, "the holding provider is tried first");
   // Still a preference, not a pin: every candidate survives, exactly once, so
   // the chain can still degrade if that provider is down.
   assert.deepEqual([ ...providers(hoisted) ].sort(), [ ...providers(plain) ].sort());
@@ -5151,7 +5168,7 @@ test("a continuation prefers the provider still holding the turn, without pinnin
 
   // An unknown or already-first preference changes nothing.
   assert.deepEqual(providers(routing.orchestratorCandidates(() => 0, "not-a-provider")), providers(plain));
-  assert.deepEqual(providers(routing.orchestratorCandidates(() => 0, plain[ 0 ].provider)), providers(plain));
+  assert.deepEqual(providers(routing.orchestratorCandidates(() => 0, plain[ 0 ]!.provider)), providers(plain));
   assert.deepEqual(providers(routing.orchestratorCandidates(() => 0, null)), providers(plain));
 });
 
@@ -5171,11 +5188,11 @@ test("outbound item ids are corrected to match their item type", () => {
   // while self-contained items like tool calls are normalized.
   for (const model of [ "MiniMax-M3", "sonnet" ]) {
     const route = routing.routeForModel(model);
-    const sent = responses.upstreamPayload(route, { model, input: poisoned }, true);
+    const sent: any = responses.upstreamPayload(route as any, { model, input: poisoned }, true);
     assert.equal(sent.input.length, 4);
     assert.equal(sent.input[ 0 ].id, "msg_1");
-    assert.equal(sent.input[ 1 ].id, "06eea1506b9c37f6f3f4bb02f90abd28_rs", `${route.provider} reasoning id preserved`);
-    assert.match(sent.input[ 2 ].id, /^ctc_/, `${route.provider} tool call id normalized`);
+    assert.equal(sent.input[ 1 ].id, "06eea1506b9c37f6f3f4bb02f90abd28_rs", `${route!.provider} reasoning id preserved`);
+    assert.match(sent.input[ 2 ].id, /^ctc_/, `${route!.provider} tool call id normalized`);
     assert.equal(sent.input[ 3 ].id, "ctco_1");
     assert.equal(sent.input[ 2 ].call_id, "call_8ec20ad454e0460d9d4b6662");
     assert.equal(sent.input[ 3 ].call_id, "call_8ec20ad454e0460d9d4b6662");
@@ -5184,7 +5201,7 @@ test("outbound item ids are corrected to match their item type", () => {
   // On Codex routes, reasoning items without encrypted_content are unresolvable references
   // under store: false and are dropped outright, while tool calls are normalized.
   const codexRoute = routing.routeForModel("gpt-5.6-luna");
-  const codexSent = responses.upstreamPayload(codexRoute, { model: "gpt-5.6-luna", input: poisoned }, true);
+  const codexSent: any = responses.upstreamPayload(codexRoute as any, { model: "gpt-5.6-luna", input: poisoned }, true);
   assert.equal(codexSent.input.length, 3, "unresolvable foreign reasoning item dropped");
   assert.equal(codexSent.input[ 0 ].id, "msg_1");
   assert.match(codexSent.input[ 1 ].id, /^ctc_/, "tool call id normalized");
@@ -5197,13 +5214,13 @@ test("outbound item ids are corrected to match their item type", () => {
     { type: "reasoning", id: "rs_0252e954049dbf1c016aa00850d46087d1853ed6aa5cb47915", encrypted_content: "enc_data" },
     { type: "custom_tool_call", id: "06ef3bc08924acade1facee14da0af2e_fc_0", call_id: "call_8ec20ad454e0460d9d4b6662", name: "exec", input: "text()" },
   ];
-  const codexSurvives = responses.upstreamPayload(codexRoute, { model: "gpt-5.6-luna", input: withEncrypted }, true);
+  const codexSurvives: any = responses.upstreamPayload(codexRoute as any, { model: "gpt-5.6-luna", input: withEncrypted }, true);
   assert.equal(codexSurvives.input.length, 2);
   assert.equal(codexSurvives.input[ 0 ].id, "rs_0252e954049dbf1c016aa00850d46087d1853ed6aa5cb47915");
   assert.match(codexSurvives.input[ 1 ].id, /^ctc_/);
 
   // The caller's array is never mutated in place.
-  assert.equal(poisoned[ 2 ].id, "06ef3bc08924acade1facee14da0af2e_fc_0");
+  assert.equal(poisoned[ 2 ]!.id, "06ef3bc08924acade1facee14da0af2e_fc_0");
 });
 
 test("a payload whose ids already conform is forwarded unchanged", () => {
@@ -5211,12 +5228,12 @@ test("a payload whose ids already conform is forwarded unchanged", () => {
     { type: "reasoning", id: "rs_abc", encrypted_content: "enc_1" },
     { type: "custom_tool_call", id: "ctc_abc", call_id: "call_1", name: "exec" },
   ];
-  const sent = responses.upstreamPayload(routing.routeForModel("gpt-5.6-luna"), { model: "gpt-5.6-luna", input }, true);
+  const sent: any = responses.upstreamPayload(routing.routeForModel("gpt-5.6-luna") as any, { model: "gpt-5.6-luna", input }, true);
   assert.equal(sent.input, input);
 });
 
 test("every provider normalises item ids", () => {
-  for (const provider of Object.keys(JSON.parse(readFileSync(new URL("./codex/model-routing.json", import.meta.url), "utf8")).providers)) {
+  for (const provider of Object.keys(JSON.parse(readFileSync(new URL("../../scripts/codex/model-routing.json", import.meta.url), "utf8")).providers)) {
     assert.equal(providerCapabilities(provider).normalizeItemIds, true, provider);
   }
 });
@@ -5225,7 +5242,7 @@ test("every provider normalises item ids", () => {
 // it in a child so the routing config can be swapped before module load.
 test("end-to-end: unresolvable reasoning items dropped and tool call ids normalized on codex route", async () => {
   resetRouterTelemetry();
-  const fixture = JSON.parse(readFileSync(new URL("../tests/fixtures/poisoned-rollout-items.json", import.meta.url), "utf8"));
+  const fixture = JSON.parse(readFileSync(new URL("../fixtures/poisoned-rollout-items.json", import.meta.url), "utf8"));
 
   const unresolvable1 = { type: "reasoning", id: "06eea1506b9c37f6f3f4bb02f90abd28_rs" };
   const unresolvable2 = { type: "reasoning", id: "rs_bridge_synthetic_123456" };
@@ -5238,16 +5255,16 @@ test("end-to-end: unresolvable reasoning items dropped and tool call ids normali
     extraGenuine,
   ];
 
-  let upstreamRequestBody = null;
+  let upstreamRequestBody: any = null;
   const upstream = createServer((request, response) => {
-    const chunks = [];
+    const chunks: Buffer[] = [];
     request.on("data", (chunk) => chunks.push(chunk));
     request.on("end", () => {
       upstreamRequestBody = JSON.parse(Buffer.concat(chunks).toString("utf8"));
       // 1. Format validation (400)
       for (let i = 0; i < upstreamRequestBody.input.length; i++) {
         const item = upstreamRequestBody.input[i];
-        const prefix = RESPONSES_ITEM_ID_PREFIXES[item.type];
+        const prefix = RESPONSES_ITEM_ID_PREFIXES[item.type as keyof typeof RESPONSES_ITEM_ID_PREFIXES];
         if (prefix && typeof item.id === "string" && !item.id.startsWith(prefix)) {
           response.writeHead(400, { "content-type": "application/json" });
           response.end(JSON.stringify({
@@ -5278,11 +5295,11 @@ test("end-to-end: unresolvable reasoning items dropped and tool call ids normali
       response.end(JSON.stringify({ id: "resp_success", output: [] }));
     });
   });
-  await new Promise((resolve) => upstream.listen(0, "127.0.0.1", resolve));
-  const upstreamPort = upstream.address().port;
+  await listenServer(upstream);
+  const upstreamPort = (upstream.address() as AddressInfo).port;
 
   const originalFetch = globalThis.fetch;
-  globalThis.fetch = async (url, options) => {
+  globalThis.fetch = async (url: any, options: any = {}) => {
     const target = String(url);
     if (target.startsWith("https://chatgpt.com/") || target.endsWith("/responses")) {
       return originalFetch(`http://127.0.0.1:${upstreamPort}/v1/responses`, options);
@@ -5291,9 +5308,9 @@ test("end-to-end: unresolvable reasoning items dropped and tool call ids normali
   };
 
   const server = createServer((request, response) => { void handle(request, response); });
-  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  await listenServer(server);
   try {
-    const address = server.address();
+    const address = server.address() as AddressInfo;
     const response = await originalFetch(`http://127.0.0.1:${address.port}/v1/responses`, {
       method: "POST",
       headers: { "content-type": "application/json", "x-codex-session-id": "e2e-reasoning-drop-test" },
@@ -5302,8 +5319,8 @@ test("end-to-end: unresolvable reasoning items dropped and tool call ids normali
     assert.equal(response.status, 200);
 
     const events = getRouterStatus().recentEvents;
-    const dropEvent = events.find((e) => e.phase === "foreign_reasoning_dropped");
-    const normEvent = events.find((e) => e.phase === "item_ids_normalized");
+    const dropEvent = events.find((e: any) => e.phase === "foreign_reasoning_dropped");
+    const normEvent = events.find((e: any) => e.phase === "item_ids_normalized");
 
     assert.ok(dropEvent, "foreign_reasoning_dropped event fired");
     assert.equal(dropEvent.droppedReasoningItems, 2);
@@ -5312,8 +5329,8 @@ test("end-to-end: unresolvable reasoning items dropped and tool call ids normali
     assert.equal(normEvent.normalizedItemIds, 9);
 
     // Verify upstream saw 0 non-conforming IDs
-    const nonConforming = upstreamRequestBody.input.filter((item) => {
-      const prefix = RESPONSES_ITEM_ID_PREFIXES[item.type];
+    const nonConforming = upstreamRequestBody.input.filter((item: any) => {
+      const prefix = RESPONSES_ITEM_ID_PREFIXES[item.type as keyof typeof RESPONSES_ITEM_ID_PREFIXES];
       return prefix && typeof item.id === "string" && !item.id.startsWith(prefix);
     });
     assert.equal(nonConforming.length, 0);
@@ -5322,22 +5339,22 @@ test("end-to-end: unresolvable reasoning items dropped and tool call ids normali
     assert.equal(upstreamRequestBody.input[ 18 ].id, "ctc_e60e73b91d8baea7b1f1d138d2967e27");
 
     // All 26 call_ids (13 tool calls, 13 outputs) from fixture are preserved exactly
-    const wireCalls = upstreamRequestBody.input.filter((i) => i.type === "custom_tool_call");
-    const wireOutputs = upstreamRequestBody.input.filter((i) => i.type === "custom_tool_call_output");
+    const wireCalls = upstreamRequestBody.input.filter((i: any) => i.type === "custom_tool_call");
+    const wireOutputs = upstreamRequestBody.input.filter((i: any) => i.type === "custom_tool_call_output");
     assert.equal(wireCalls.length, 13);
     assert.equal(wireOutputs.length, 13);
-    assert.deepEqual(wireCalls.map((i) => i.call_id), fixture.items.filter((i) => i.type === "custom_tool_call").map((i) => i.call_id));
-    assert.deepEqual(wireOutputs.map((i) => i.call_id), fixture.items.filter((i) => i.type === "custom_tool_call_output").map((i) => i.call_id));
+    assert.deepEqual(wireCalls.map((i: any) => i.call_id), fixture.items.filter((i: any) => i.type === "custom_tool_call").map((i: any) => i.call_id));
+    assert.deepEqual(wireOutputs.map((i: any) => i.call_id), fixture.items.filter((i: any) => i.type === "custom_tool_call_output").map((i: any) => i.call_id));
 
     // Reasoning items reaching upstream: 4 from fixture + 1 extra = 5 genuine encrypted ones
-    const wireReasoning = upstreamRequestBody.input.filter((i) => i.type === "reasoning");
+    const wireReasoning = upstreamRequestBody.input.filter((i: any) => i.type === "reasoning");
     assert.equal(wireReasoning.length, 5);
     for (const r of wireReasoning) {
       assert.match(r.id, /^rs_/);
       assert.ok(r.encrypted_content && r.encrypted_content.length > 0);
     }
   } finally {
-    await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    await closeServer(server);
     await new Promise((resolve) => upstream.close(resolve));
     globalThis.fetch = originalFetch;
     resetRouterTelemetry();
@@ -5367,7 +5384,7 @@ test("contract rendering fails when a research role is missing webResearch or ha
   try {
     const rolesDir = join(directory, "agents");
     await mkdir(rolesDir, { recursive: true });
-    const srcDir = new URL("./codex/agents", import.meta.url).pathname;
+    const srcDir = new URL("../../scripts/codex/agents", import.meta.url).pathname;
     const { readdirSync, copyFileSync } = await import("node:fs");
     for (const file of readdirSync(srcDir)) {
       if (file.endsWith(".toml")) {
@@ -5383,9 +5400,9 @@ url = "https://developers.openai.com/mcp"
 transport = "streamable_http"
 `);
 
-    const renderer = new URL("../src/config/render-execution-contract.ts", import.meta.url).pathname;
-    const rootConfig = new URL("./codex/config.autodev.toml", import.meta.url).pathname;
-    const contractPath = new URL("./codex/execution-contract.json", import.meta.url).pathname;
+    const renderer = new URL("../../src/config/render-execution-contract.ts", import.meta.url).pathname;
+    const rootConfig = new URL("../../scripts/codex/config.autodev.toml", import.meta.url).pathname;
+    const contractPath = new URL("../../scripts/codex/execution-contract.json", import.meta.url).pathname;
     const outputPath = join(directory, "output.json");
 
     const child = spawn(process.execPath, [
@@ -5449,7 +5466,7 @@ test("router status includes sanitized routing and limits metadata", () => {
   assert.ok(Array.isArray(status.routing.enabledProviders));
   assert.ok(Array.isArray(status.routing.disabledProviders));
   assert.equal(typeof status.routing.routes, "object");
-  for (const [provider, route] of Object.entries(status.routing.routes)) {
+  for (const [provider, route] of Object.entries(status.routing.routes) as [string, any][]) {
     assert.equal(typeof route.pattern, "string");
     assert.equal(typeof route.baseUrl, "string");
     assert.equal(typeof route.credentialConfigured, "boolean");
@@ -5477,7 +5494,7 @@ test("router status includes sanitized routing and limits metadata", () => {
 
   // Per-provider enabled property and status
   assert.ok(status.providers, "status must contain providers");
-  for (const provider of Object.values(status.providers)) {
+  for (const provider of Object.values(status.providers) as any[]) {
     assert.equal(typeof provider.enabled, "boolean");
     assert.equal(provider.enabled, true);
     assert.equal(provider.status, "ready");
@@ -5501,8 +5518,8 @@ test("loopback-only POST /v1/providers/:provider endpoint validation and state p
     }
     void handle(request, response);
   });
-  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
-  const port = server.address().port;
+  await listenServer(server);
+  const port = (server.address() as AddressInfo).port;
   const baseUrl = `http://127.0.0.1:${port}`;
 
   try {
@@ -5618,7 +5635,7 @@ test("loopback-only POST /v1/providers/:provider endpoint validation and state p
     assert.equal(statusAfterEnable.providers.claude.status, "ready");
     assert.equal(statusAfterEnable.routing.disabledProviders.includes("claude"), false);
   } finally {
-    await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    await closeServer(server);
     if (previousStateFile === undefined) delete process.env.CODEX_ROUTER_STATE_FILE;
     else process.env.CODEX_ROUTER_STATE_FILE = previousStateFile;
     await rm(directory, { recursive: true, force: true });
@@ -5643,7 +5660,7 @@ test("disabled providers are excluded across role aliases, orchestrator, and fal
 
   // 2. Orchestrator excludes disabled provider
   const baselineOrch = routing.orchestratorCandidates(() => 0.5);
-  assert.equal(baselineOrch[0].provider, "codex");
+  assert.equal(baselineOrch[0]!.provider, "codex");
 
   routing.setProviderEnabled("codex", false);
   const filteredOrch = routing.orchestratorCandidates(() => 0.5);
@@ -5662,8 +5679,8 @@ test("disabled providers are excluded across role aliases, orchestrator, and fal
   process.env.LITELLM_API_KEY = "test-key";
   process.env.MINIMAX_API_KEY = "test-key";
 
-  const attemptedProviders = [];
-  globalThis.fetch = async (url, options) => {
+  const attemptedProviders: string[] = [];
+  globalThis.fetch = async (url: any, options: any = {}) => {
     const target = String(url);
     if (target.includes("/health")) return new Response("ok", { status: 200 });
     let provider = null;
@@ -5685,8 +5702,8 @@ test("disabled providers are excluded across role aliases, orchestrator, and fal
   };
 
   const server = createServer((request, response) => { void handle(request, response); });
-  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
-  const port = server.address().port;
+  await listenServer(server);
+  const port = (server.address() as AddressInfo).port;
 
   try {
     // claude is disabled, first candidate fails, second should succeed via fallback
@@ -5714,7 +5731,7 @@ test("disabled providers are excluded across role aliases, orchestrator, and fal
     assert.equal(directJson.error?.provider, "claude");
     assert.equal(directRes.headers.get("x-autodev-provider"), "claude");
   } finally {
-    await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    await closeServer(server);
     globalThis.fetch = originalFetch;
     for (const [ key, value ] of Object.entries(originalCredentials)) {
       if (value === undefined) delete process.env[ key ];
@@ -5734,7 +5751,7 @@ test("all-disabled behavior rejects aliases, orchestrator, and concrete requests
   const status = getRouterStatus();
   assert.equal(status.routing.enabledProviders.length, 0);
   assert.deepEqual(status.routing.disabledProviders, allProviders.sort());
-  for (const p of Object.values(status.providers)) {
+  for (const p of Object.values(status.providers) as any[]) {
     assert.equal(p.enabled, false);
     assert.equal(p.status, "disabled");
   }
@@ -5745,8 +5762,8 @@ test("all-disabled behavior rejects aliases, orchestrator, and concrete requests
   assert.deepEqual(routing.orchestratorCandidates(), []);
 
   const server = createServer((request, response) => { void handle(request, response); });
-  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
-  const port = server.address().port;
+  await listenServer(server);
+  const port = (server.address() as AddressInfo).port;
   const baseUrl = `http://127.0.0.1:${port}`;
 
   try {
@@ -5784,7 +5801,7 @@ test("all-disabled behavior rejects aliases, orchestrator, and concrete requests
     assert.equal(concreteJson.error?.failureClass, "provider_disabled");
     assert.equal(concreteJson.error?.provider, "codex");
   } finally {
-    await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    await closeServer(server);
     routing.resetDisabledProviders();
     resetRouterTelemetry();
   }
@@ -5972,7 +5989,7 @@ test("router status exposes inFlightRequests (transport counters) with no active
   assert.equal(status.activeRequests, undefined, "the top-level transport counter map has no compatibility alias");
   assert.equal(typeof status.liveActivity, "number");
   assert.ok(status.liveActivity >= 0);
-  for (const provider of Object.values(status.providers)) {
+  for (const provider of Object.values(status.providers) as any[]) {
     // Per-provider entries expose live activity and a separate transport count.
     assert.equal(typeof provider.active, "number");
     assert.equal(typeof provider.inFlightRequests, "number");
@@ -6020,7 +6037,7 @@ test("router-visible response tool calls and continuations drive session activit
   const originalCredentials = { LITELLM_API_KEY: process.env.LITELLM_API_KEY };
   process.env.LITELLM_API_KEY = "test-key";
   let callCount = 0;
-  globalThis.fetch = async (url, options) => {
+  globalThis.fetch = async (url: any, options: any = {}) => {
     const target = String(url);
     if (target.includes("/health")) return new Response("ok", { status: 200 });
     if (target.includes("/responses")) {
@@ -6042,8 +6059,8 @@ test("router-visible response tool calls and continuations drive session activit
     return originalFetch(url, options);
   };
   const server = createServer((request, response) => { void handle(request, response); });
-  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
-  const port = server.address().port;
+  await listenServer(server);
+  const port = (server.address() as AddressInfo).port;
   const sessionHeader = { "x-codex-session-id": "activity-round-trip-session" };
   try {
     const first = await originalFetch(`http://127.0.0.1:${port}/v1/responses`, {
@@ -6068,7 +6085,7 @@ test("router-visible response tool calls and continuations drive session activit
     // settles to finished once its (tool-call-free) response lands.
     assert.equal(agentActivity.getState("activity-round-trip-session"), "finished");
   } finally {
-    await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    await closeServer(server);
     globalThis.fetch = originalFetch;
     for (const [ key, value ] of Object.entries(originalCredentials)) {
       if (value === undefined) delete process.env[ key ];
@@ -6342,7 +6359,7 @@ test("active-agent reconciliation: only explicitly tracked parent and children a
   assert.equal(status.usage.byRole.validator.active, 1);
 
   // Total of byRole active equals canonical total
-  const roleSum = Object.values(status.usage.byRole).reduce((sum, b) => sum + Number(b?.active ?? 0), 0);
+  const roleSum = Object.values(status.usage.byRole).reduce((sum: number, b: any) => sum + Number(b?.active ?? 0), 0);
   assert.equal(roleSum, 2);
 
   // Workspace total contains only the two explicitly tracked subagents.
@@ -6361,7 +6378,7 @@ test("active-agent reconciliation: only explicitly tracked parent and children a
   assert.equal(status.providers.claude.active, 1);
   assert.equal(status.providers.codex.active, 0);
   assert.equal(status.providers.unattributed, undefined);
-  const providerSum = Object.values(status.providers).reduce((sum, p) => sum + Number(p.active ?? 0), 0);
+  const providerSum = Object.values(status.providers).reduce((sum: number, p: any) => sum + Number(p.active ?? 0), 0);
   assert.equal(providerSum, 2);
 
   // Activity snapshot breakdown
@@ -6435,7 +6452,7 @@ test("active-agent reconciliation: multi-provider and multi-workspace reconcilia
   assert.equal(status.usage.byWorkspace.RepoAlpha.active, 2);
   assert.equal(status.usage.byWorkspace.RepoBeta.active, 2);
   assert.equal(status.usage.byWorkspace.RepoGamma.active, 1);
-  const workspaceSum = Object.values(status.usage.byWorkspace).reduce((s, b) => s + Number(b?.active ?? 0), 0);
+  const workspaceSum = Object.values(status.usage.byWorkspace).reduce((s: number, b: any) => s + Number(b?.active ?? 0), 0);
   assert.equal(workspaceSum, 5);
 
   // 2. Role dimension totals reconcile
@@ -6444,14 +6461,14 @@ test("active-agent reconciliation: multi-provider and multi-workspace reconcilia
   assert.equal(status.usage.byRole.orchestrator.active, 1);
   assert.equal(status.usage.byRole.explorer.active, 1);
   assert.equal(status.usage.byRole.unattributed.active, 1); // roleless in Gamma
-  const roleSum = Object.values(status.usage.byRole).reduce((s, b) => s + Number(b?.active ?? 0), 0);
+  const roleSum = Object.values(status.usage.byRole).reduce((s: number, b: any) => s + Number(b?.active ?? 0), 0);
   assert.equal(roleSum, 5);
 
   // 3. Origin dimension totals reconcile
   assert.equal(status.usage.byOrigin.subagent.active, 3);
   assert.equal(status.usage.byOrigin.orchestrator.active, 1);
   assert.equal(status.usage.byOrigin.direct.active, 1);
-  const originSum = Object.values(status.usage.byOrigin).reduce((s, b) => s + Number(b?.active ?? 0), 0);
+  const originSum = Object.values(status.usage.byOrigin).reduce((s: number, b: any) => s + Number(b?.active ?? 0), 0);
   assert.equal(originSum, 5);
 
   // 4. Status providers active counts reflect only verified attribution.
@@ -6461,21 +6478,21 @@ test("active-agent reconciliation: multi-provider and multi-workspace reconcilia
   assert.equal(status.providers.antigravity.active, 1);
   assert.equal(status.providers.copilot.active, 1);
   assert.equal(status.providers.unattributed, undefined);
-  const providerSum = Object.values(status.providers).reduce((s, p) => s + Number(p.active ?? 0), 0);
+  const providerSum = Object.values(status.providers).reduce((s: number, p: any) => s + Number(p.active ?? 0), 0);
   assert.equal(providerSum, 5);
 
   // 5. No provider residual is fabricated for the missing parent.
   assert.equal(status.usage.activity.byProvider.unattributed, undefined);
 
   // 6. Per-workspace internal consistency
-  const alphaByRoleSum = Object.values(status.usage.byWorkspace.RepoAlpha.byRole).reduce((s, b) => s + Number(b?.active ?? 0), 0);
+  const alphaByRoleSum = Object.values(status.usage.byWorkspace.RepoAlpha.byRole).reduce((s: number, b: any) => s + Number(b?.active ?? 0), 0);
   assert.equal(alphaByRoleSum, 2);
-  const alphaByProviderSum = Object.values(status.usage.byWorkspace.RepoAlpha.byProvider).reduce((s, b) => s + Number(b?.active ?? 0), 0);
+  const alphaByProviderSum = Object.values(status.usage.byWorkspace.RepoAlpha.byProvider).reduce((s: number, b: any) => s + Number(b?.active ?? 0), 0);
   assert.equal(alphaByProviderSum, 2);
 
-  const betaByRoleSum = Object.values(status.usage.byWorkspace.RepoBeta.byRole).reduce((s, b) => s + Number(b?.active ?? 0), 0);
+  const betaByRoleSum = Object.values(status.usage.byWorkspace.RepoBeta.byRole).reduce((s: number, b: any) => s + Number(b?.active ?? 0), 0);
   assert.equal(betaByRoleSum, 2);
-  const betaByProviderSum = Object.values(status.usage.byWorkspace.RepoBeta.byProvider).reduce((s, b) => s + Number(b?.active ?? 0), 0);
+  const betaByProviderSum = Object.values(status.usage.byWorkspace.RepoBeta.byProvider).reduce((s: number, b: any) => s + Number(b?.active ?? 0), 0);
   assert.equal(betaByProviderSum, 2);
 
   agentActivity.reset();
@@ -6679,13 +6696,13 @@ test("active-agent reconciliation: residual active provider and workspace bucket
   assert.equal(status.liveAgentAttribution.missingProvider, 1);
 
   // Provider health total matches canonical total exactly
-  let providerSum = Object.values(status.providers).reduce((sum, p) => sum + Number(p.active ?? 0), 0);
+  let providerSum = Object.values(status.providers).reduce((sum: number, p: any) => sum + Number(p.active ?? 0), 0);
   assert.equal(providerSum, 0);
 
   // Unattributed workspace bucket exists and includes the roleless agent
   assert.ok(status.usage.byWorkspace.unattributed, "unattributed workspace bucket must be present");
   assert.equal(status.usage.byWorkspace.unattributed.active, 1);
-  let workspaceSum = Object.values(status.usage.byWorkspace).reduce((sum, w) => sum + Number(w.active ?? 0), 0);
+  let workspaceSum = Object.values(status.usage.byWorkspace).reduce((sum: number, w: any) => sum + Number(w.active ?? 0), 0);
   assert.equal(workspaceSum, 1);
 
   // 2. Add a subagent with unproven workspace but verified provider (claude)
@@ -6706,12 +6723,12 @@ test("active-agent reconciliation: residual active provider and workspace bucket
   // Provider health reports only the concrete routed provider.
   assert.equal(status.providers.claude.active, 1);
   assert.equal(status.providers.unattributed, undefined);
-  providerSum = Object.values(status.providers).reduce((sum, p) => sum + Number(p.active ?? 0), 0);
+  providerSum = Object.values(status.providers).reduce((sum: number, p: any) => sum + Number(p.active ?? 0), 0);
   assert.equal(providerSum, 1);
 
   // Workspace usage includes all 3 in the unattributed workspace bucket
   assert.equal(status.usage.byWorkspace.unattributed.active, 2);
-  workspaceSum = Object.values(status.usage.byWorkspace).reduce((sum, w) => sum + Number(w.active ?? 0), 0);
+  workspaceSum = Object.values(status.usage.byWorkspace).reduce((sum: number, w: any) => sum + Number(w.active ?? 0), 0);
   assert.equal(workspaceSum, 2);
 
   // Internal workspace breakdown reconciles
@@ -6729,10 +6746,10 @@ test("active-agent reconciliation: residual active provider and workspace bucket
   assert.equal(status.liveActivity, 0);
   assert.equal(status.usage.totals.active, 0);
   assert.equal(status.providers.unattributed, undefined, "unattributed provider rows are never rendered");
-  providerSum = Object.values(status.providers).reduce((sum, p) => sum + Number(p.active ?? 0), 0);
+  providerSum = Object.values(status.providers).reduce((sum: number, p: any) => sum + Number(p.active ?? 0), 0);
   assert.equal(providerSum, 0);
   assert.equal(status.usage.byWorkspace.unattributed?.active ?? 0, 0);
-  workspaceSum = Object.values(status.usage.byWorkspace).reduce((sum, w) => sum + Number(w.active ?? 0), 0);
+  workspaceSum = Object.values(status.usage.byWorkspace).reduce((sum: number, w: any) => sum + Number(w.active ?? 0), 0);
   assert.equal(workspaceSum, 0);
 
   agentActivity.reset();
@@ -6854,7 +6871,7 @@ test("active-agent reconciliation: /status exposes status.agents (autodev-agent-
   agentActivity.finish("bridge:child-validator", { requestId: "req-agent-validator", outcome: "success" });
   agentActivity.finish("session:roleless", { requestId: "req-agent-rl", outcome: "success" });
 
-  const settled = getRouterStatus();
+  const settled = getRouterStatus() as any;
   assert.equal(settled.agents.canonicalLiveCount, 0);
   assert.equal(settled.agents.byState.finished, 4);
   assert.equal(settled.agents.slotVsAgent.admissionSlots, 2, "admission slots outlive agent finishes -- they only release on releaseSubagentSlot");
@@ -6869,7 +6886,7 @@ test("active-agent reconciliation: /status exposes status.agents (autodev-agent-
 // keys; events only carry event keys; unknown values are omitted; no prompt
 // content may be carried). The flag stays off by default so all of the
 // pre-existing tests run on the unchanged default path.
-const autodevAttr = (entries) => entries.map(([ key, value ]) => ({ key, value: { stringValue: String(value) } }));
+const autodevAttr = (entries: any) => entries.map(([ key, value ]: [any, any]) => ({ key, value: { stringValue: String(value) } }));
 
 function autodevBuildPayload() {
   return {
@@ -7008,8 +7025,8 @@ function autodevBuildPayload() {
   };
 }
 
-function autodevAttrMap(attributes) {
-  const map = {};
+function autodevAttrMap(attributes: any): Record<string, any> {
+  const map: Record<string, any> = {};
   for (const entry of attributes ?? []) map[entry.key] = entry.value?.stringValue;
   return map;
 }
@@ -7092,7 +7109,7 @@ test("autodevEnrichOtlpPayload places event keys only on the right event types",
   const payload = autodevBuildPayload();
   const logsEnriched = autodevEnrichOtlpPayload("logs", payload.logs);
   const records = logsEnriched.resourceLogs[0].scopeLogs[0].logRecords;
-  const byName = Object.fromEntries(records.map((r) => [ r.attributes.find((a) => a.key === "event.name")?.value?.stringValue, autodevAttrMap(r.attributes) ]));
+  const byName: Record<string, any> = Object.fromEntries(records.map((r: any) => [ r.attributes.find((a: any) => a.key === "event.name")?.value?.stringValue, autodevAttrMap(r.attributes) ]));
   assert.equal(byName["codex.subagent_spawn"]["autodev.spawn.mechanism"], "task-tool");
   assert.equal(byName["codex.skill_invoke"]["autodev.skill"], "ccc");
   assert.equal(byName["codex.mcp_tool_call"]["autodev.mcp.server"], "playwright");
@@ -7103,13 +7120,13 @@ test("autodevEnrichOtlpPayload places event keys only on the right event types",
 
   const tracesEnriched = autodevEnrichOtlpPayload("traces", payload.traces);
   const spans = tracesEnriched.resourceSpans[0].scopeSpans[0].spans;
-  assert.equal(spans[0].attributes.find((a) => a.key === "autodev.mcp.server")?.value?.stringValue, "playwright");
+  assert.equal(spans[0].attributes.find((a: any) => a.key === "autodev.mcp.server")?.value?.stringValue, "playwright");
   // No server_name alias → no autodev.mcp.server decoration on the unattributed span.
-  assert.equal(spans[1].attributes.find((a) => a.key === "autodev.mcp.server"), undefined);
+  assert.equal(spans[1].attributes.find((a: any) => a.key === "autodev.mcp.server"), undefined);
 
   const metricsEnriched = autodevEnrichOtlpPayload("metrics", payload.metrics);
   const dataPointAttributes = metricsEnriched.resourceMetrics[0].scopeMetrics[0].metrics[0].sum.dataPoints[0].attributes;
-  assert.equal(dataPointAttributes.find((a) => a.key === "autodev.skill")?.value?.stringValue, "ccc");
+  assert.equal(dataPointAttributes.find((a: any) => a.key === "autodev.skill")?.value?.stringValue, "ccc");
 });
 
 test("autodevEnrichOtlpPayload is non-mutating: the input is left untouched", () => {
@@ -7132,7 +7149,7 @@ test("autodevEnrichOtlpPayload is non-mutating: the input is left untouched", ()
   assert.deepEqual(payload.metrics, inputMetrics, "the input metrics payload is untouched");
   // Mutating the cloned enriched result must not touch the original input.
   enrichedLogs.resourceLogs[0].resource.attributes.push({ key: "autodev.injected", value: { stringValue: "marker" } });
-  assert.equal(payload.logs.resourceLogs[0].resource.attributes.find((a) => a.key === "autodev.injected"), undefined);
+  assert.equal(payload.logs.resourceLogs[0]?.resource.attributes.find((a: any) => a.key === "autodev.injected"), undefined);
 });
 
 test("autodevEnrichOtlpPayload never carries prompt or response content", () => {
@@ -7168,9 +7185,9 @@ test("autodevEnrichOtlpPayload never carries prompt or response content", () => 
   // prompt_text is preserved verbatim on its record (the helper never edits
   // existing non-autodev keys) so the rest of the pipeline keeps working.
   const userPromptRecord = enriched.resourceLogs[0].scopeLogs[0].logRecords
-    .find((r) => r.attributes.find((a) => a.key === "event.name")?.value?.stringValue === "codex.user_prompt");
+    .find((r: any) => r.attributes.find((a: any) => a.key === "event.name")?.value?.stringValue === "codex.user_prompt");
   assert.ok(userPromptRecord, "the user_prompt record must still be present");
-  const promptText = userPromptRecord.attributes.find((a) => a.key === "prompt_text")?.value?.stringValue;
+  const promptText = userPromptRecord.attributes.find((a: any) => a.key === "prompt_text")?.value?.stringValue;
   assert.equal(promptText, promptSecret, "prompt_text is preserved on its record (not modified by the helper)");
 });
 
@@ -7219,8 +7236,8 @@ test("autodevEnrichOtlpPayload omits unknown values and avoids duplicate keys", 
   // verbatim (the helper treats presence as "do not touch").
   const twice = autodevEnrichOtlpPayload("logs", once);
   const twiceResourceAttributes = twice.resourceLogs[0].resource.attributes;
-  const providerOccurrences = twiceResourceAttributes.filter((a) => a.key === "autodev.provider");
-  const modelOccurrences = twiceResourceAttributes.filter((a) => a.key === "autodev.model");
+  const providerOccurrences = twiceResourceAttributes.filter((a: any) => a.key === "autodev.provider");
+  const modelOccurrences = twiceResourceAttributes.filter((a: any) => a.key === "autodev.model");
   assert.equal(providerOccurrences.length, 1, "autodev.provider must appear exactly once after a second enrichment pass");
   assert.equal(modelOccurrences.length, 1, "autodev.model must appear exactly once after a second enrichment pass");
   assert.equal(providerOccurrences[0].value.stringValue, "openai");
@@ -7230,8 +7247,8 @@ test("autodevEnrichOtlpPayload omits unknown values and avoids duplicate keys", 
   once.resourceLogs[0].resource.attributes.unshift({ key: "autodev.provider", value: { stringValue: "pinned-openai" } });
   const thrice = autodevEnrichOtlpPayload("logs", once);
   const providerValues = thrice.resourceLogs[0].resource.attributes
-    .filter((a) => a.key === "autodev.provider")
-    .map((a) => a.value.stringValue);
+    .filter((a: any) => a.key === "autodev.provider")
+    .map((a: any) => a.value.stringValue);
   assert.deepEqual(providerValues, [ "pinned-openai", "openai" ], "pre-existing autodev.* entries are preserved verbatim");
 });
 
@@ -7251,6 +7268,6 @@ test("autodevEnrichOtlpPayload preserves aggregation semantics on metrics", () =
   assert.equal(enriched.resourceMetrics[0].scopeMetrics[0].metrics[0].sum.isMonotonic,
     before.resourceMetrics[0].scopeMetrics[0].metrics[0].sum.isMonotonic);
   // Pre-existing data-point attributes are still there untouched.
-  const afterKeys = dataPointAfter.attributes.map((a) => a.key);
+  const afterKeys = dataPointAfter.attributes.map((a: any) => a.key);
   for (const key of [ "skill", "status", "autodev.skill" ]) assert.equal(afterKeys.includes(key), true);
 });

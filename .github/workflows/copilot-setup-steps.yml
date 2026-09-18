@@ -82,7 +82,6 @@ jobs:
           pnpm run typecheck
           pnpm run test:ts
           pnpm test
-          pnpm run test:python
 
       - name: Validate provider scripts
         shell: bash
@@ -90,4 +89,4 @@ jobs:
           set -euo pipefail
           while IFS= read -r file; do bash -n "$file"; done < <(find scripts -type f -name '*.sh' -print)
           while IFS= read -r file; do node --check "$file"; done < <(find scripts -type f \( -name '*.mjs' -o -name '*.cjs' \) -print)
-          python3 -m py_compile scripts/*.py
+

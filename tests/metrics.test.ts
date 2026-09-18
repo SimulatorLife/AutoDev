@@ -1,13 +1,14 @@
 import assert from 'node:assert/strict';
-import { createRequire } from 'node:module';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { tmpdir } from 'node:os';
+import { fileURLToPath } from 'node:url';
 import test from 'node:test';
+import ts from 'typescript';
 
-const root = path.resolve(new URL('..', import.meta.url).pathname);
-const require = createRequire(import.meta.url);
-const metrics = require(path.join(root, 'scripts', 'autodev-metrics.cjs'));
+import * as metrics from '../src/telemetry/github-metrics.ts';
+
+const root = path.resolve(fileURLToPath(new URL('..', import.meta.url)));
 
 const agentPr = { title: 'Agent: Reduce duplication', head: { ref: 'mini-max/task-123' }, labels: [] };
 
@@ -32,13 +33,7 @@ test('router dashboard exposes the component hierarchy and explicit workspace at
     'panel-codex-state',
     'panel-events',
   ]);
-  // New panel surfaces local state DB status, executed/unattributed tool result
-  // coverage, and the per-workspace first-class event coverage. The renderer
-  // treats absent buckets as `pending` so the panel never reads `null`.
   assert.match(dashboard, /id="panel-codex-state"/);
-  // The dashboard reads the new fields off the status payload. Both the raw
-  // field references and the rendered labels are required so the panel never
-  // silently degrades when the JSON contract evolves.
   assert.match(dashboard, /codexState\.localTelemetry/);
   assert.match(dashboard, /codexState\.conversationThreads/);
   assert.match(dashboard, /toolResults\.executed/);
@@ -58,11 +53,6 @@ test('router dashboard exposes the component hierarchy and explicit workspace at
   assert.match(dashboard, /<dashboard-panel id="panel-orchestrator"[\s\S]*?<sub-panel id="panel-spawn-breakdown"/);
   assert.match(dashboard, /<dashboard-panel id="panel-skills"[\s\S]*?<sub-panel id="panel-skill-context"/);
   assert.match(dashboard, /<dashboard-panel id="panel-ops"[\s\S]*?<sub-panel id="panel-native-metrics"/);
-  // Per-workspace named tool/skill/mcp attribution is rendered conditionally from
-  // status.usage.byWorkspace[*].byTool/bySkill/byMcp: a fail-closed "unavailable"
-  // state when the backend omits the field entirely, distinct from a
-  // "no data yet" state when the backend reports the dimension but nothing
-  // was observed for that workspace.
   assert.match(dashboard, /function normalizeWorkspaceNamedUsage\(raw, identityKeys\)/);
   assert.match(dashboard, /function renderWorkspaceNamedUsage\(rows, \{ unavailableLabel, emptyLabel \}\)/);
   assert.match(dashboard, /normalizeWorkspaceNamedUsage\(w\.byTool, \[\s*"tool",\s*"name"\s*\]\)/);
@@ -75,19 +65,12 @@ test('router dashboard exposes the component hierarchy and explicit workspace at
   assert.match(dashboard, /No named skill uses observed for this workspace yet/);
   assert.match(dashboard, /MCP server telemetry is unavailable per-workspace/);
   assert.match(dashboard, /No MCP servers observed for this workspace yet/);
-  // Both route cards show observed MCP server counts with role-specific union
-  // semantics using /status partitions (orchestrator role union vs explicit subagent roles union).
   assert.match(dashboard, /orchMcpCount/);
   assert.match(dashboard, /subMcpCount/);
   assert.match(dashboard, /<mini-stat label="MCP servers" value="\$\{orchMcpCount\}"><\/mini-stat>/);
   assert.match(dashboard, /<mini-stat label="MCP servers" value="\$\{subMcpCount\}"><\/mini-stat>/);
-  // Model view embeds MCP counts and server details
   assert.match(dashboard, /getModelMcpDetails/);
   assert.match(dashboard, /model-mcp-details/);
-  // The workspace table's Tool calls column uses the same source of
-  // truth as each workspace's expanded Tools section (sum of rendered named
-  // tool rows from w.byTool via normalizeWorkspaceNamedUsage), without contrasting
-  // response-output counts or leaving stale notes asserting the old distinction.
   assert.doesNotMatch(dashboard, /Tool calls \(response output\)/);
   assert.doesNotMatch(dashboard, /response-output tool-call count/);
   assert.doesNotMatch(dashboard, /OTLP-named runtime tool rows/);
@@ -96,8 +79,6 @@ test('router dashboard exposes the component hierarchy and explicit workspace at
   assert.match(dashboard, /wsToolRows\.reduce\(/);
   assert.match(dashboard, /MCP servers/);
   assert.doesNotMatch(dashboard, /<(?:dashboard-panel|sub-panel)[^>]*(?:id="[^"]*mcp|title="[^"]*MCP)/i);
-  // Provider health panel renders routing priorities, effective/live limits and cooldowns,
-  // disabled state, and one enable/disable control per provider.
   assert.match(dashboard, /Routing priority/);
   assert.match(dashboard, /Errors &amp; cooldowns/);
   assert.match(dashboard, /formatRoutingPriority/);
@@ -108,7 +89,6 @@ test('router dashboard exposes the component hierarchy and explicit workspace at
   assert.match(dashboard, /toggleProvider/);
 });
 
-
 test('router dashboard inline JavaScript has no unresolved identifiers', async () => {
   const rawDashboard = await readFile(path.join(root, 'scripts', 'codex-model-router-dashboard.html'), 'utf8');
   const source = [...rawDashboard.matchAll(/<script(?:\s[^>]*)?>(.*?)<\/script>/gis)].map((match) => match[1]).join('\n\n');
@@ -116,18 +96,17 @@ test('router dashboard inline JavaScript has no unresolved identifiers', async (
   const sourceFile = path.join(tempDir, 'dashboard.js');
   try {
     await writeFile(sourceFile, source, 'utf8');
-    const typescript = require('typescript');
-    const program = typescript.createProgram([sourceFile], {
+    const program = ts.createProgram([sourceFile], {
       allowJs: true,
       checkJs: true,
       noEmit: true,
-      target: typescript.ScriptTarget.ES2022,
+      target: ts.ScriptTarget.ES2022,
       lib: ['lib.es2022.d.ts', 'lib.dom.d.ts'],
       skipLibCheck: true,
     });
-    const diagnostics = typescript.getPreEmitDiagnostics(program)
+    const diagnostics = ts.getPreEmitDiagnostics(program)
       .filter((diagnostic) => diagnostic.code === 2304 || diagnostic.code === 2552)
-      .map((diagnostic) => typescript.flattenDiagnosticMessageText(diagnostic.messageText, ' '));
+      .map((diagnostic) => ts.flattenDiagnosticMessageText(diagnostic.messageText, ' '));
     assert.deepEqual(diagnostics, [], `dashboard has unresolved identifiers: ${diagnostics.join('; ')}`);
   } finally {
     await rm(tempDir, { recursive: true, force: true });
@@ -136,7 +115,6 @@ test('router dashboard inline JavaScript has no unresolved identifiers', async (
 
 test('router dashboard provider health panel renders routing priorities, limits, disabled state, and toggle controls', async () => {
   const rawDashboard = await readFile(path.join(root, 'scripts', 'codex-model-router-dashboard.html'), 'utf8');
-  // Panel header and table columns
   assert.match(rawDashboard, /<dashboard-panel id="panel-providers"[^>]*title="Provider health"/);
   assert.match(rawDashboard, /<th>Routing priority<\/th>/);
   assert.match(rawDashboard, /<th>Errors &amp; cooldowns<\/th>/);
@@ -145,7 +123,6 @@ test('router dashboard provider health panel renders routing priorities, limits,
   assert.doesNotMatch(rawDashboard, /<th>Last failure<\/th>/);
   assert.match(rawDashboard, /<th>Control<\/th>/);
 
-  // Table column alignment: exactly 9 headers and matching colspan in loading and empty rows
   const providerPanel = rawDashboard.match(/<dashboard-panel id="panel-providers"[\s\S]*?<\/dashboard-panel>/)?.[0] ?? '';
   const providerHeaders = (providerPanel.match(/<th>.*?<\/th>/g) ?? []).map((h) => h.replace(/<[^>]+>/g, '').trim());
   assert.deepEqual(providerHeaders, [
@@ -167,26 +144,21 @@ test('router dashboard provider health panel renders routing priorities, limits,
   assert.equal(tdCount, 9, 'provider row template should have exactly 9 td cells to align with headers');
   assert.doesNotMatch(rowTemplateMatch[0], /p\.inFlightRequests/, 'provider row template must not include inFlightRequests cell');
   assert.doesNotMatch(rowTemplateMatch[0], /failureHtml/, 'provider row template must not include failureHtml cell');
-  // Routing priority helper and status handling
   assert.match(rawDashboard, /function formatRoutingPriority\(/);
   assert.match(rawDashboard, /formatRoutingPriority\(providerName, p, status\)/);
-  // Effective limits and cooldown helper
   assert.match(rawDashboard, /function formatEffectiveLimitsAndCooldowns\(/);
   assert.match(rawDashboard, /formatEffectiveLimitsAndCooldowns\(p\)/);
   assert.match(rawDashboard, /cooldownRemainingMs/);
   assert.match(rawDashboard, /cooldownKind/);
-  // Disabled state handling
   assert.match(rawDashboard, /const isDisabled = Boolean\(/);
   assert.match(rawDashboard, /statusLabel = isDisabled \? "disabled" : p\.status/);
   assert.match(rawDashboard, /provider-disabled/);
-  // Controls: POST to /v1/providers/:provider, disable while pending, refresh on success, error UI on failure
   assert.match(rawDashboard, /class="btn-provider-toggle"/);
   assert.match(rawDashboard, /fetch\(`\/v1\/providers\/\$\{encodeURIComponent\(providerName\)\}`,\s*\{[^}]*method:\s*"POST"/s);
   assert.match(rawDashboard, /pendingProviderToggles\.has\(providerName\)/);
   assert.match(rawDashboard, /buttonEl\.disabled = true/);
   assert.match(rawDashboard, /await refresh\(\)/);
   assert.match(rawDashboard, /errorEl\.textContent = err\.message/);
-  // Wordless iOS-like toggle switch: green when enabled, grey when disabled, no text inside button
   assert.match(rawDashboard, /\.btn-provider-toggle\s*\{[^}]*border-radius:\s*var\(--radius-pill\);/s);
   assert.match(rawDashboard, /\.btn-provider-toggle::after\s*\{/);
   assert.match(rawDashboard, /\.btn-provider-toggle\[data-action="disable"\][^}]*background:\s*#34c759;/s);
@@ -207,28 +179,23 @@ test('dashboard provider health excludes synthetic and unattributed provider row
 
 test('router dashboard and status CLI contract separates live agent activity from in-flight requests and documents lifecycle TTL', async () => {
   const rawDashboard = await readFile(path.join(root, 'scripts', 'codex-model-router-dashboard.html'), 'utf8');
-  // Helper functions for live agent activity and wait status
   assert.match(rawDashboard, /function getProviderLiveActivity\(/);
   assert.match(rawDashboard, /function isProviderLiveActive\(/);
   assert.match(rawDashboard, /window\.getProviderLiveActivity = getProviderLiveActivity/);
   assert.match(rawDashboard, /window\.isProviderLiveActive = isProviderLiveActive/);
-  // Provider active badge and row remain active during tool/user/subagent waits
   assert.match(rawDashboard, /return Number\(p\?\.active \?\? 0\)/);
   assert.match(rawDashboard, /provider-active/);
   assert.match(rawDashboard, /<status-badge \$\{isActive \? 'active=""' : ''\}>\$\{displayActive\}<\/status-badge>/);
-  // Operational summary labels in-flight requests separately
   assert.match(rawDashboard, /const avgInitDur = initSamples > 0 \? initSum \/ initSamples : 0/);
   assert.match(rawDashboard, /status\.inFlightRequests/);
   assert.match(rawDashboard, /<span>In-flight requests<\/span><span>\$\{inFlightRequests\}<\/span>/);
 
-  // Status CLI script displays both live agent activity (Active) and transport diagnostics (In-Flight)
   const statusCli = await readFile(path.join(root, 'src', 'cli', 'router-status.ts'), 'utf8');
   assert.match(statusCli, /Active\s+In-Flight/);
   assert.match(statusCli, /getProviderLiveActivity/);
   assert.match(statusCli, /getProviderInFlight/);
   assert.match(statusCli, /in-flight requests \$\{totalInFlight\}/);
 
-  // Documentation specifies live activity vs in-flight separation and lifecycle event contract with configurable TTL
   const metricsDoc = await readFile(path.join(root, 'docs', 'metrics-dashboard.md'), 'utf8');
   assert.match(metricsDoc, /Live agent activity vs\. in-flight requests transport diagnostics/);
   assert.match(metricsDoc, /Lifecycle event contract and configurable freshness TTL/);
@@ -242,9 +209,11 @@ test('router dashboard and status CLI contract separates live agent activity fro
 
 test('metrics dashboard renders requested counters and recent links', () => {
   const body = metrics.renderDashboard({
+    schema: 'autodev-metrics-v1',
     generatedAt: '2026-01-01T00:00:00.000Z',
     lookbackDays: 90,
     since: '2025-10-03',
+    repositories: ['SimulatorLife/AutoDev'],
     totals: { agentPrsRaised: 2, agentPrsMerged: 1, agentInvokes: 3, agentInvokesSucceeded: 2, agentInvokesFailed: 1, staleEmptyPrsClosed: 4 },
     perRepository: { 'SimulatorLife/AutoDev': { agentPrsRaised: 2, agentPrsMerged: 1, agentInvokes: { total: 3, succeeded: 2, failed: 1, other: 0 }, staleEmptyPrsClosed: 4 } },
     perAgent: { 'mini-max': { total: 3, succeeded: 2, failed: 1, other: 0 } },
@@ -265,7 +234,7 @@ test('metrics workflow publishes an issue dashboard and artifact', async () => {
   assert.match(source, /schedule:/);
   assert.match(source, /lookback_days:[\s\S]*default: 90[\s\S]*type: number/);
   assert.match(source, /actions\/github-script@v8/);
-  assert.match(await readFile(path.join(root, 'scripts', 'autodev-metrics.cjs'), 'utf8'), /listWorkflowRuns/);
+  assert.match(await readFile(path.join(root, 'src', 'telemetry', 'github-metrics.ts'), 'utf8'), /listWorkflowRuns/);
   assert.match(source, /issues\.update/);
   assert.match(source, /autodev-metrics-dashboard-v1/);
   assert.match(source, /upload-artifact@v4/);
@@ -274,47 +243,37 @@ test('metrics workflow publishes an issue dashboard and artifact', async () => {
 
 test('router dashboard workspace table derives Tool calls from byTool normalization and handles unavailable states', async () => {
   const rawDashboard = await readFile(path.join(root, 'scripts', 'codex-model-router-dashboard.html'), 'utf8');
-
-  // Verify that the table header and notes have no stale response-output references
   assert.doesNotMatch(rawDashboard, /OTLP-named runtime tool rows/);
   assert.doesNotMatch(rawDashboard, /response-output tool-call count/);
   assert.doesNotMatch(rawDashboard, /Tool calls \(response output\)/);
   assert.match(rawDashboard, /<th>Tool calls<\/th>/);
 
-  // Extract normalizeWorkspaceNamedUsage to test normalization logic and summing
   const match = rawDashboard.match(/function normalizeWorkspaceNamedUsage\([\s\S]*?\n    \}/);
   assert.ok(match, 'normalizeWorkspaceNamedUsage should be present in dashboard script');
-  const normalizeWorkspaceNamedUsage = new Function(`${match[0]}; return normalizeWorkspaceNamedUsage;`)();
+  const normalizeWorkspaceNamedUsage = new Function(`${match[0]}; return normalizeWorkspaceNamedUsage;`)() as (raw: unknown, identityKeys: string[]) => Array<{ name: string; count: number }> | null;
 
-  // Unavailable byTool returns null and is handled without inventing counts
-  assert.equal(normalizeWorkspaceNamedUsage(null, ["tool", "name"]), null);
-  assert.equal(normalizeWorkspaceNamedUsage(undefined, ["tool", "name"]), null);
+  assert.equal(normalizeWorkspaceNamedUsage(null, ['tool', 'name']), null);
+  assert.equal(normalizeWorkspaceNamedUsage(undefined, ['tool', 'name']), null);
 
-  // Empty byTool returns empty array (sum = 0)
-  const emptyRows = normalizeWorkspaceNamedUsage([], ["tool", "name"]);
+  const emptyRows = normalizeWorkspaceNamedUsage([], ['tool', 'name']);
   assert.deepEqual(emptyRows, []);
-  assert.equal(emptyRows.reduce((sum, r) => sum + Number(r.count ?? 0), 0), 0);
+  assert.equal((emptyRows ?? []).reduce((sum: number, r: { count?: number }) => sum + Number(r.count ?? 0), 0), 0);
 
-  // Array of named tool entries sums counts correctly
   const arrayRows = normalizeWorkspaceNamedUsage([
     { tool: 'bash', count: 5 },
     { tool: 'read_file', count: 2 },
-  ], ["tool", "name"]);
-  assert.equal(arrayRows.reduce((sum, r) => sum + Number(r.count ?? 0), 0), 7);
+  ], ['tool', 'name']);
+  assert.equal(arrayRows?.reduce((sum, r) => sum + Number(r.count ?? 0), 0), 7);
 
-  // Object-shaped named tool entries sums counts correctly
   const objectRows = normalizeWorkspaceNamedUsage({
     bash: { count: 4 },
     exec_command: { uses: 3 },
-  }, ["tool", "name"]);
-  assert.equal(objectRows.reduce((sum, r) => sum + Number(r.count ?? 0), 0), 7);
+  }, ['tool', 'name']);
+  assert.equal(objectRows?.reduce((sum, r) => sum + Number(r.count ?? 0), 0), 7);
 });
 
 test('router dashboard combines skill usage and exposure into one Skills section showing uses / exposed while keeping semantics distinct', async () => {
   const rawDashboard = await readFile(path.join(root, 'scripts', 'codex-model-router-dashboard.html'), 'utf8');
-
-  // Source-level checks: the two joins are read from distinct backend fields
-  // and rendered into a single "Skills" section as `uses / exposed`, never merged into one sum.
   assert.match(rawDashboard, /<th>Skill uses \/ exposed<\/th>/);
   assert.match(rawDashboard, /normalizeWorkspaceNamedUsage\(w\.bySkill, \[\s*"skill",\s*"name"\s*\]\)/);
   assert.match(rawDashboard, /normalizeWorkspaceNamedUsage\(w\.bridgeSkills, \[\s*"skill",\s*"name"\s*\]\)/);
@@ -324,7 +283,6 @@ test('router dashboard combines skill usage and exposure into one Skills section
   assert.match(rawDashboard, /Named skill attribution is unavailable per-workspace/);
   assert.match(rawDashboard, /No named skill uses observed for this workspace yet/);
 
-  // Extract the pure helpers and verify combined uses / exposed rendering
   const escapeMatch = rawDashboard.match(/function escapeHtml\([\s\S]*?\n    \}/);
   assert.ok(escapeMatch, 'escapeHtml should be present in dashboard script');
   const renderSkillsMatch = rawDashboard.match(/function renderWorkspaceSkills\([\s\S]*?\n    \}/);
@@ -335,23 +293,25 @@ test('router dashboard combines skill usage and exposure into one Skills section
   assert.ok(normalizeMatch, 'normalizeWorkspaceNamedUsage should be present in dashboard script');
 
   const fnScope = `${escapeMatch[0]}; ${normalizeMatch[0]}; ${summarizeSkillsMatch[0]}; ${renderSkillsMatch[0]}; return { normalizeWorkspaceNamedUsage, summarizeWorkspaceSkills, renderWorkspaceSkills };`;
-  const { normalizeWorkspaceNamedUsage, summarizeWorkspaceSkills, renderWorkspaceSkills } = new Function(fnScope)();
+  const { normalizeWorkspaceNamedUsage, summarizeWorkspaceSkills, renderWorkspaceSkills } = new Function(fnScope)() as {
+    normalizeWorkspaceNamedUsage: (raw: unknown, identityKeys: string[]) => Array<{ name: string; count: number }> | null;
+    summarizeWorkspaceSkills: (uses: unknown, exposed: unknown) => { uses: number | null; exposed: number | null };
+    renderWorkspaceSkills: (uses: unknown, exposed: unknown) => string;
+  };
 
-  // 1. RacingGame-style payload: skills exposed but 0 confirmed uses.
-  // The collapsed row must total the same exposed counts shown below it: 0 / 37.
   const racingGame = {
     skillUses: 0,
     bySkill: [],
     bridgeSkills: [
-      { skill: "ccc", count: 16 },
-      { skill: "lsp-mcp-server", count: 16 },
-      { skill: "orchestration", count: 5 },
+      { skill: 'ccc', count: 16 },
+      { skill: 'lsp-mcp-server', count: 16 },
+      { skill: 'orchestration', count: 5 },
     ],
   };
-  const wsSkillRows = normalizeWorkspaceNamedUsage(racingGame.bySkill, ["skill", "name"]);
-  const wsExposedSkillRows = normalizeWorkspaceNamedUsage(racingGame.bridgeSkills, ["skill", "name"]);
+  const wsSkillRows = normalizeWorkspaceNamedUsage(racingGame.bySkill, ['skill', 'name']);
+  const wsExposedSkillRows = normalizeWorkspaceNamedUsage(racingGame.bridgeSkills, ['skill', 'name']);
   assert.deepEqual(wsSkillRows, []);
-  assert.deepEqual(wsExposedSkillRows.map((r) => r.name), [ "ccc", "lsp-mcp-server", "orchestration" ]);
+  assert.deepEqual(wsExposedSkillRows?.map((r) => r.name), ['ccc', 'lsp-mcp-server', 'orchestration']);
 
   const racingGameSummary = summarizeWorkspaceSkills(wsSkillRows, wsExposedSkillRows);
   assert.deepEqual(racingGameSummary, { uses: 0, exposed: 37 });
@@ -362,31 +322,26 @@ test('router dashboard combines skill usage and exposure into one Skills section
   assert.match(racingGameHtml, /value="0 \/ 16"/);
   assert.match(racingGameHtml, /value="0 \/ 5"/);
 
-  // The collapsed workspace row must use the same named rows as the expanded
-  // Skills section, rather than the unrelated context-injection counter.
   assert.match(rawDashboard, /const wsSkillSummary = summarizeWorkspaceSkills\(wsSkillRows, wsExposedSkillRows\)/);
   assert.match(rawDashboard, /<td>\$\{wsSkillUsesText\} \/ \$\{wsSkillExposedText\}<\/td>/);
 
-  // 2. Confirmed skill use alongside exposure keeps counts distinct: e.g. 5 uses / 10 exposed.
   const lspMcpServer = {
-    bySkill: [ { skill: "lsp-mcp-server", count: 5 } ],
-    bridgeSkills: [ { skill: "lsp-mcp-server", count: 10 } ],
+    bySkill: [{ skill: 'lsp-mcp-server', count: 5 }],
+    bridgeSkills: [{ skill: 'lsp-mcp-server', count: 10 }],
   };
-  const lspSkillRows = normalizeWorkspaceNamedUsage(lspMcpServer.bySkill, ["skill", "name"]);
-  const lspExposedRows = normalizeWorkspaceNamedUsage(lspMcpServer.bridgeSkills, ["skill", "name"]);
+  const lspSkillRows = normalizeWorkspaceNamedUsage(lspMcpServer.bySkill, ['skill', 'name']);
+  const lspExposedRows = normalizeWorkspaceNamedUsage(lspMcpServer.bridgeSkills, ['skill', 'name']);
   const lspSummary = summarizeWorkspaceSkills(lspSkillRows, lspExposedRows);
   assert.deepEqual(lspSummary, { uses: 5, exposed: 10 });
   const lspHtml = renderWorkspaceSkills(lspSkillRows, lspExposedRows);
   assert.match(lspHtml, /label="lsp-mcp-server"/);
   assert.match(lspHtml, /value="5 \/ 10"/);
 
-  // 3. Fail-closed unavailable state when both dimensions are unavailable (null)
   assert.equal(
     renderWorkspaceSkills(null, null),
     '<div class="empty-state">Named skill attribution is unavailable per-workspace</div>',
   );
 
-  // 4. Fail-closed unavailable state on individual dimensions (e.g. bySkill is null -> — / 5)
   const unavailUsesSummary = summarizeWorkspaceSkills(null, wsExposedSkillRows);
   assert.deepEqual(unavailUsesSummary, { uses: null, exposed: 37 });
   const unavailUsesHtml = renderWorkspaceSkills(null, wsExposedSkillRows);
@@ -399,13 +354,11 @@ test('router dashboard combines skill usage and exposure into one Skills section
   assert.match(unavailExposedHtml, /label="lsp-mcp-server"/);
   assert.match(unavailExposedHtml, /value="5 \/ —"/);
 
-  // 5. Empty state when both dimensions are present but empty
   assert.equal(
     renderWorkspaceSkills([], []),
     '<div class="empty-state">No named skill uses observed for this workspace yet</div>',
   );
 
-  // 6. Documentation describes combined Skills section and workspace table header
   const metricsDoc = await readFile(path.join(root, 'docs', 'metrics-dashboard.md'), 'utf8');
   assert.match(metricsDoc, /combined \*\*"Skills"\*\* section/);
   assert.match(metricsDoc, /uses \/ exposed/);
@@ -432,41 +385,40 @@ test('router dashboard documents shell cat-style SKILL.md reads as ordinary skil
 
 test('router dashboard falls back to bridgeTools when OTLP named-tool rows are unavailable or empty, without double-counting', async () => {
   const rawDashboard = await readFile(path.join(root, 'scripts', 'codex-model-router-dashboard.html'), 'utf8');
-
   assert.match(rawDashboard, /normalizeWorkspaceNamedUsage\(w\.byTool, \[\s*"tool",\s*"name"\s*\]\)/);
   assert.match(rawDashboard, /normalizeWorkspaceNamedUsage\(w\.bridgeTools, \[\s*"tool",\s*"name"\s*\]\)/);
   assert.match(rawDashboard, /resolveWorkspaceToolRows\(otlpToolRows, bridgeToolRows\)/);
 
   const resolverMatch = rawDashboard.match(/function resolveWorkspaceToolRows\([\s\S]*?\n    \}/);
   assert.ok(resolverMatch, 'resolveWorkspaceToolRows should be present in dashboard script');
-  const resolveWorkspaceToolRows = new Function(`${resolverMatch[0]}; return resolveWorkspaceToolRows;`)();
+  const resolveWorkspaceToolRows = new Function(`${resolverMatch[0]}; return resolveWorkspaceToolRows;`)() as (
+    otlp: unknown,
+    bridge: unknown,
+  ) => { rows: Array<{ name: string; count: number }> | null; usingBridgeToolFallback: boolean };
 
   const normalizeMatch = rawDashboard.match(/function normalizeWorkspaceNamedUsage\([\s\S]*?\n    \}/);
-  const normalizeWorkspaceNamedUsage = new Function(`${normalizeMatch[0]}; return normalizeWorkspaceNamedUsage;`)();
+  assert.ok(normalizeMatch);
+  const normalizeWorkspaceNamedUsage = new Function(`${normalizeMatch[0]}; return normalizeWorkspaceNamedUsage;`)() as (
+    raw: unknown,
+    identityKeys: string[],
+  ) => Array<{ name: string; count: number }> | null;
 
-  // OTLP join absent entirely (fail-closed `null`): bridge's tool_executed
-  // observations (bridgeTools, the RacingGame-style bridge payload shape
-  // { tool, server, count, byStatus }) fill in as the sole source.
-  const otlpAbsent = normalizeWorkspaceNamedUsage(undefined, ["tool", "name"]);
-  const bridgeRows = normalizeWorkspaceNamedUsage([ { tool: "apply_patch", server: "codex-builtin", count: 2, byStatus: { ok: 1, error: 1 } } ], ["tool", "name"]);
+  const otlpAbsent = normalizeWorkspaceNamedUsage(undefined, ['tool', 'name']);
+  const bridgeRows = normalizeWorkspaceNamedUsage([{ tool: 'apply_patch', server: 'codex-builtin', count: 2, byStatus: { ok: 1, error: 1 } }], ['tool', 'name']);
   const fallback = resolveWorkspaceToolRows(otlpAbsent, bridgeRows);
   assert.equal(fallback.usingBridgeToolFallback, true);
-  assert.deepEqual(fallback.rows.map((r) => ({ name: r.name, count: r.count })), [ { name: "apply_patch", count: 2 } ]);
+  assert.deepEqual(fallback.rows?.map((r) => ({ name: r.name, count: r.count })), [{ name: 'apply_patch', count: 2 }]);
 
-  // OTLP join present but reports zero rows: still falls back to bridgeTools.
-  const otlpEmpty = normalizeWorkspaceNamedUsage([], ["tool", "name"]);
+  const otlpEmpty = normalizeWorkspaceNamedUsage([], ['tool', 'name']);
   const fallbackFromEmpty = resolveWorkspaceToolRows(otlpEmpty, bridgeRows);
   assert.equal(fallbackFromEmpty.usingBridgeToolFallback, true);
-  assert.deepEqual(fallbackFromEmpty.rows.map((r) => r.name), [ "apply_patch" ]);
+  assert.deepEqual(fallbackFromEmpty.rows?.map((r) => r.name), ['apply_patch']);
 
-  // OTLP join present and non-empty: bridgeTools is not merged in, so the
-  // same tool observed by both sources is never double-counted.
-  const otlpPresent = normalizeWorkspaceNamedUsage([ { tool: "apply_patch", count: 5 } ], ["tool", "name"]);
+  const otlpPresent = normalizeWorkspaceNamedUsage([{ tool: 'apply_patch', count: 5 }], ['tool', 'name']);
   const noFallback = resolveWorkspaceToolRows(otlpPresent, bridgeRows);
   assert.equal(noFallback.usingBridgeToolFallback, false);
-  assert.deepEqual(noFallback.rows.map((r) => ({ name: r.name, count: r.count })), [ { name: "apply_patch", count: 5 } ]);
+  assert.deepEqual(noFallback.rows?.map((r) => ({ name: r.name, count: r.count })), [{ name: 'apply_patch', count: 5 }]);
 
-  // Both sources unavailable: no invented rows, stays fail-closed `null`.
   const bothAbsent = resolveWorkspaceToolRows(null, null);
   assert.equal(bothAbsent.rows, null);
   assert.equal(bothAbsent.usingBridgeToolFallback, false);
@@ -474,49 +426,32 @@ test('router dashboard falls back to bridgeTools when OTLP named-tool rows are u
 
 test('dashboard hides totals rows for sections with 0 or 1 populated row and shows the five supported footers for 2+ via the shared shouldRenderTotals helper', async () => {
   const rawDashboard = await readFile(path.join(root, 'scripts', 'codex-model-router-dashboard.html'), 'utf8');
-
-  // 1. The helper exists in the dashboard script with a stable signature so
-  // it can drive every totals-footer site through one rule.
   const match = rawDashboard.match(/function shouldRenderTotals\([\s\S]*?\n    \}/);
   assert.ok(match, 'shouldRenderTotals should be present in dashboard script');
-  const shouldRenderTotals = new Function(`${match[0]}; return shouldRenderTotals;`)();
+  const shouldRenderTotals = new Function(`${match[0]}; return shouldRenderTotals;`)() as (count: unknown) => boolean;
 
-  // Boundary behavior: 0, 1, 2, 5 populated rows.
-  assert.equal(shouldRenderTotals(0), false, 'zero populated rows must hide totals');
-  assert.equal(shouldRenderTotals(1), false, 'single populated row must hide totals (it would just echo the row above)');
-  assert.equal(shouldRenderTotals(2), true, 'two populated rows must reveal totals');
-  assert.equal(shouldRenderTotals(5), true, 'more than two populated rows must keep totals visible');
-  // Defensive coercion: null/undefined/strings still resolve correctly without
-  // throwing, so totals never render on placeholder/loading tbody contents.
+  assert.equal(shouldRenderTotals(0), false);
+  assert.equal(shouldRenderTotals(1), false);
+  assert.equal(shouldRenderTotals(2), true);
+  assert.equal(shouldRenderTotals(5), true);
   assert.equal(shouldRenderTotals(null), false);
   assert.equal(shouldRenderTotals(undefined), false);
   assert.equal(shouldRenderTotals(''), false);
-  assert.equal(shouldRenderTotals('1'), false, 'string "1" coerces to 1 and still hides totals');
-  assert.equal(shouldRenderTotals('2'), true, 'string "2" coerces to 2 and reveals totals');
+  assert.equal(shouldRenderTotals('1'), false);
+  assert.equal(shouldRenderTotals('2'), true);
 
-  // 2. Every homogeneous roll-up footer wraps its content in the helper,
-  // measured against the populated-row variable each site already uses to
-  // build the tbody.
   assert.match(rawDashboard, /spawnTfoot\.innerHTML = shouldRenderTotals\(spawnList\.length\)/);
   assert.match(rawDashboard, /failuresTfoot\.innerHTML = shouldRenderTotals\(byReason\.length\)/);
   assert.match(rawDashboard, /skillsTfoot\.innerHTML = shouldRenderTotals\(sortedSkills\.length\)/);
   assert.match(rawDashboard, /hooksTfoot\.innerHTML = shouldRenderTotals\(rows\.length\)/);
   assert.match(rawDashboard, /metricsTfoot\.innerHTML = shouldRenderTotals\(metricsList\.length\)/);
 
-  // 3. The five Totals header cells remain so the totals template still renders
-  // when the populated-row count crosses the threshold. Removing the headings
-  // would silently drop the totals without any test catching it.
   const totalsHeaderCount = (rawDashboard.match(/<th>Totals<\/th>/g) ?? []).length;
-  assert.equal(totalsHeaderCount, 5, 'the five homogeneous roll-up sections should still define a Totals header');
+  assert.equal(totalsHeaderCount, 5);
   const workspaceTable = rawDashboard.match(/<table id="workspace-usage-table">[\s\S]*?<\/table>/)?.[0];
   assert.ok(workspaceTable, 'workspace usage table should remain present');
-  assert.doesNotMatch(workspaceTable, /<tfoot/, 'workspace usage must not define or render a totals footer');
+  assert.doesNotMatch(workspaceTable, /<tfoot/);
 
-  // 4. Empty/unavailable branches still clear the footer before any helper is
-  // consulted; "No X observed yet" placeholder colspan rows must never be
-  // counted toward the populated total. Each homogeneous roll-up tfoot has
-  // exactly two innerHTML assignments: `""` in the empty branch and the
-  // helper-wrapped template in the populated branch.
   for (const footerId of [
     'spawnTfoot',
     'failuresTfoot',
@@ -530,8 +465,6 @@ test('dashboard hides totals rows for sections with 0 or 1 populated row and sho
     assert.ok(populatedBranch, `populated branch for ${footerId} must gate the totals render on shouldRenderTotals`);
   }
 
-  // 5. Documentation explains the new threshold-based rule so the totals-row
-  // policy has a single source of truth between renderer and docs.
   const metricsDoc = await readFile(path.join(root, 'docs', 'metrics-dashboard.md'), 'utf8');
   assert.match(metricsDoc, /Totals footers are shown only when the section has at least 2 populated,\s*non-total data rows/);
   assert.match(metricsDoc, /loading\/placeholder\/empty colspan rows/);
@@ -541,13 +474,8 @@ test('dashboard counts active workspaces from live activity states and excludes 
   const dashboard = await readFile(path.join(root, 'scripts', 'codex-model-router-dashboard.html'), 'utf8');
   const match = dashboard.match(/function countActiveWorkspaces\([\s\S]*?\n    \}/);
   assert.ok(match, 'countActiveWorkspaces should be present in dashboard script');
-  const countActiveWorkspaces = new Function(`${match[0]}; return countActiveWorkspaces;`)();
+  const countActiveWorkspaces = new Function(`${match[0]}; return countActiveWorkspaces;`)() as (status: unknown) => number;
 
-  // The dashboard reads active workspaces directly off the frozen
-  // status.agents.liveByWorkspace partition (the same partition the
-  // canonicalLiveCount is derived from) and excludes unattributed/unknown
-  // residuals -- which is what keeps the workspace count from inflating the
-  // canonical live-agent total.
   assert.equal(countActiveWorkspaces({
     agents: {
       schema: 'autodev-agent-status-v1',
@@ -567,41 +495,32 @@ test('dashboard counts active workspaces from live activity states and excludes 
       liveByWorkspace: {},
     },
   }), 0);
-  // Missing or wrong-schema status.agents fails closed rather than falling
-  // back to legacy usage partitions, since the dashboard now requires the
-  // frozen reconciliation projection.
   assert.throws(() => countActiveWorkspaces({}), /status.agents.liveByWorkspace/);
 });
 
 test('dashboard KPI agent total uses the canonical live-agent count and never maxes it against unrelated counters', async () => {
   const dashboard = await readFile(path.join(root, 'scripts', 'codex-model-router-dashboard.html'), 'utf8');
-
-  // The KPI total must not be inflated via Math.max against per-provider
-  // active-request counts, subagent concurrency-slot counts, or any other
-  // unrelated counter -- it is read directly off the router's single
-  // canonical live-agent count.
   const kpiSection = dashboard.match(/function computeKpiAgentTotals\([\s\S]*?\n    \}/);
   assert.ok(kpiSection, 'computeKpiAgentTotals should be present in dashboard script');
-  assert.doesNotMatch(kpiSection[0], /Math\.max/, 'KPI total must not be maxed against unrelated counters');
-  assert.doesNotMatch(kpiSection[0], /activeSubagentThreads/, 'KPI total must not fold in subagent concurrency-slot counts');
-  assert.doesNotMatch(kpiSection[0], /activeSessions/, 'KPI total must not fold in concurrency session-slot counts');
-  assert.doesNotMatch(kpiSection[0], /providerActiveTotal/, 'KPI total must not fold in per-provider active-request counts');
-  assert.match(kpiSection[0], /agents\.schema/, 'KPI total should require the frozen status.agents projection');
-  assert.match(kpiSection[0], /canonicalLiveCount/, 'KPI total should read canonicalLiveCount off status.agents');
+  assert.doesNotMatch(kpiSection[0], /Math\.max/);
+  assert.doesNotMatch(kpiSection[0], /activeSubagentThreads/);
+  assert.doesNotMatch(kpiSection[0], /activeSessions/);
+  assert.doesNotMatch(kpiSection[0], /providerActiveTotal/);
+  assert.match(kpiSection[0], /agents\.schema/);
+  assert.match(kpiSection[0], /canonicalLiveCount/);
 
   const countMatch = dashboard.match(/function countActiveWorkspaces\([\s\S]*?\n    \}/);
   assert.ok(countMatch, 'countActiveWorkspaces should be present in dashboard script');
   const computeKpiAgentTotals = new Function(
-    `${countMatch[0]}; ${kpiSection[0]}; return computeKpiAgentTotals;`
-  )();
+    `${countMatch[0]}; ${kpiSection[0]}; return computeKpiAgentTotals;`,
+  )() as (status: unknown) => {
+    totalActive: number;
+    orchActive: number;
+    subActive: number;
+    unattributedActive: number;
+    activeWorkspaces: number;
+  };
 
-  // One subagent active in one workspace keeps its inferred orchestrator
-  // active too: two agents, one subagent, and one workspace. The workspace
-  // dimension is still not added to the agent total. The router no longer
-  // ships a legacy top-level liveActivity / usage.totals.active alias the
-  // dashboard folds in; the canonical total is read directly off
-  // status.agents.canonicalLiveCount and the breakdowns from
-  // status.agents.liveByRole / liveByWorkspace.
   const oneSubagentOneWorkspaceStatus = {
     agents: {
       schema: 'autodev-agent-status-v1',
@@ -630,36 +549,30 @@ test('dashboard KPI agent total uses the canonical live-agent count and never ma
     activeWorkspaces: 1,
   });
 
-  // When `status.agents` is absent (a pre-reconciliation status payload
-  // the dashboard no longer supports), the dashboard surfaces a loud
-  // failure rather than silently re-deriving the total from an unrelated
-  // counter -- there is no fallback path.
   assert.throws(() => computeKpiAgentTotals({
     usage: { totals: { active: 1 }, byRole: {}, byWorkspace: {} },
     providers: { codex: { active: 4 } },
   }), /status\.agents/);
 
-  // The rendered label calls out that the workspace count is non-additive
-  // context ("workspaces with active agents"), not a component summed into
-  // the agent total.
   assert.match(dashboard, /workspaces with active agents/);
 });
 
 test('dashboard keeps role-less ("unattributed") activity explicit instead of guessing a role', async () => {
   const dashboard = await readFile(path.join(root, 'scripts', 'codex-model-router-dashboard.html'), 'utf8');
-
   const kpiSection = dashboard.match(/function computeKpiAgentTotals\([\s\S]*?\n    \}/);
   assert.ok(kpiSection, 'computeKpiAgentTotals should be present in dashboard script');
   const countMatch = dashboard.match(/function countActiveWorkspaces\([\s\S]*?\n    \}/);
   assert.ok(countMatch, 'countActiveWorkspaces should be present in dashboard script');
   const computeKpiAgentTotals = new Function(
-    `${countMatch[0]}; ${kpiSection[0]}; return computeKpiAgentTotals;`
-  )();
+    `${countMatch[0]}; ${kpiSection[0]}; return computeKpiAgentTotals;`,
+  )() as (status: unknown) => {
+    totalActive: number;
+    orchActive: number;
+    subActive: number;
+    unattributedActive: number;
+    activeWorkspaces: number;
+  };
 
-  // "unattributed" is an explicit residual in the frozen
-  // status.agents.liveByRole partition: it may represent direct or
-  // role-less activity, so it must not be guessed into the subagent bucket.
-  // The residual remains visible and completes the canonical total.
   const status = {
     agents: {
       schema: 'autodev-agent-status-v1',
@@ -673,73 +586,52 @@ test('dashboard keeps role-less ("unattributed") activity explicit instead of gu
   };
   const totals = computeKpiAgentTotals(status);
   assert.deepEqual(totals, { totalActive: 3, orchActive: 1, subActive: 0, unattributedActive: 2, activeWorkspaces: 0 });
-  assert.equal(totals.orchActive + totals.subActive + totals.unattributedActive, totals.totalActive, 'all role buckets must reconcile to totalActive');
+  assert.equal(totals.orchActive + totals.subActive + totals.unattributedActive, totals.totalActive);
 
-  // computeKpiAgentTotals itself must never special-case "unattributed" as a
-  // stand-in for the orchestrator bucket.
-  assert.doesNotMatch(kpiSection[0], /orchRole\s*=\s*status\?\.agents\?\.liveByRole\?\.unattributed/, 'orchActive must not fall back to the unattributed bucket');
-
-  // The orchestrator/subagent usage panel reads the same "orchestrator"
-  // bucket directly (no unattributed fallback) and only excludes
-  // "orchestrator" from its subagent roll-up, so unattributed activity is
-  // visible in the subagent totals there too.
+  assert.doesNotMatch(kpiSection[0], /orchRole\s*=\s*status\?\.agents\?\.liveByRole\?\.unattributed/);
   assert.doesNotMatch(dashboard, /byRole\?\.orchestrator \?\? status\.usage\?\.byRole\?\.unattributed/);
   assert.match(dashboard, /if \(role === "orchestrator"\) continue;/);
-
-  // The KPI headline surfaces the unattributed residual explicitly instead
-  // of letting it disappear into the "subagents" figure unexplained.
   assert.match(dashboard, /unattributedActive/);
   assert.match(dashboard, /Unattributed/);
 });
 
 test('dashboard provider active totals derive directly from the canonical per-provider active field, with no Math.max floor', async () => {
   const dashboard = await readFile(path.join(root, 'scripts', 'codex-model-router-dashboard.html'), 'utf8');
-
   const activeReqSumMatch = dashboard.match(/const activeReqSum = providersEntries\.reduce\([^;]*\);/);
   assert.ok(activeReqSumMatch, 'activeReqSum computation should be present in dashboard script');
-  assert.doesNotMatch(activeReqSumMatch[0], /Math\.max/, 'provider active total must not be floored via Math.max');
+  assert.doesNotMatch(activeReqSumMatch[0], /Math\.max/);
 
   const displayActiveMatch = dashboard.match(/const displayActive = [^;]*;/);
   assert.ok(displayActiveMatch, 'displayActive computation should be present in dashboard script');
-  assert.doesNotMatch(displayActiveMatch[0], /Math\.max/, 'per-provider displayed active count must not be floored via Math.max');
-  assert.match(displayActiveMatch[0], /const displayActive = liveActive;/, 'displayActive should read the canonical liveActive field directly');
+  assert.doesNotMatch(displayActiveMatch[0], /Math\.max/);
+  assert.match(displayActiveMatch[0], /const displayActive = liveActive;/);
 
-  // The provider panel summary and each row's badge both read the same
-  // getProviderLiveActivity(p) field, so the panel total reconciles exactly
-  // with the sum of the rendered per-row values.
-  const providersEntries = [
+  const providersEntries: Array<[string, { active?: number }]> = [
     ['codex', { active: 2 }],
     ['anthropic', { active: 0 }],
     ['openai', { active: 1 }],
   ];
-  const getProviderLiveActivity = (p) => Number(p?.active ?? 0);
-  const activeReqSum = providersEntries.reduce((sum, [ , p ]) => sum + getProviderLiveActivity(p), 0);
+  const getProviderLiveActivity = (p?: { active?: number }): number => Number(p?.active ?? 0);
+  const activeReqSum = providersEntries.reduce((sum, [, p]) => sum + getProviderLiveActivity(p), 0);
   assert.equal(activeReqSum, 3);
 });
 
 test('dashboard workspace usage rows read the canonical per-workspace active field without a Math.max floor', async () => {
   const dashboard = await readFile(path.join(root, 'scripts', 'codex-model-router-dashboard.html'), 'utf8');
-
-  // Each workspace row's active count is read straight off `w.active`
-  // (the same canonical field `usage.byWorkspace[*].active` the backend
-  // already reconciles against `usage.totals.active`), with no artificial
-  // floor. Workspace usage intentionally has no totals footer.
   const activeDeclMatch = dashboard.match(/const active = Number\(w\.active \?\? 0\);/);
   assert.ok(activeDeclMatch, 'workspace row active value should be read directly off w.active');
 
   const rowBadgeMatch = dashboard.match(/<td><status-badge \$\{active > 0 [^<]*<\/status-badge><\/td>/);
   assert.ok(rowBadgeMatch, 'workspace row badge should render the unfloored per-row active value');
-  assert.doesNotMatch(rowBadgeMatch[0], /Math\.max/, 'workspace row badge must not be floored via Math.max');
+  assert.doesNotMatch(rowBadgeMatch[0], /Math\.max/);
 
-  // Simulate the row values for a representative payload to retain coverage
-  // for zero and non-zero workspace activity without a totals row.
-  const byWorkspace = {
+  const byWorkspace: Record<string, { active: number }> = {
     AutoDev: { active: 2 },
     'codex-runtime': { active: 0 },
     unattributed: { active: 1 },
   };
   const renderedActive = Object.values(byWorkspace).map((w) => Number(w.active ?? 0));
-  assert.deepEqual(renderedActive, [ 2, 0, 1 ], 'workspace rows must preserve each canonical active value, including unattributed');
+  assert.deepEqual(renderedActive, [2, 0, 1]);
 });
 
 test('router dashboard renders workspace MCP servers with confirmed uses and exposure rows', async () => {
@@ -752,22 +644,24 @@ test('router dashboard renders workspace MCP servers with confirmed uses and exp
   assert.ok(normalizeMatch, 'normalizeWorkspaceNamedUsage should be present in dashboard script');
 
   const fnScope = `${escapeMatch[0]}; ${normalizeMatch[0]}; ${renderMcpMatch[0]}; return { normalizeWorkspaceNamedUsage, renderWorkspaceMcp };`;
-  const { normalizeWorkspaceNamedUsage, renderWorkspaceMcp } = new Function(fnScope)();
+  const { normalizeWorkspaceNamedUsage, renderWorkspaceMcp } = new Function(fnScope)() as {
+    normalizeWorkspaceNamedUsage: (raw: unknown, identityKeys: string[]) => Array<{ name: string; count: number }> | null;
+    renderWorkspaceMcp: (uses: unknown, exposed: unknown) => string;
+  };
 
-  // 1. Uses and exposure present: e.g. playwright 1 / 2, lsp 0 / 1
   const ws = {
-    mcpUses: [ { server: "playwright", count: 1 } ],
+    mcpUses: [{ server: 'playwright', count: 1 }],
     mcpExposed: [
-      { server: "playwright", count: 2 },
-      { server: "lsp", count: 1 },
+      { server: 'playwright', count: 2 },
+      { server: 'lsp', count: 1 },
     ],
   };
-  const wsMcpRows = normalizeWorkspaceNamedUsage(ws.mcpUses, ["server", "name", "mcp"]);
-  const wsExposedMcpRows = normalizeWorkspaceNamedUsage(ws.mcpExposed, ["server", "name", "mcp"]);
-  assert.deepEqual(wsMcpRows.map((r) => ({ name: r.name, count: r.count })), [ { name: "playwright", count: 1 } ]);
-  assert.deepEqual(wsExposedMcpRows.map((r) => ({ name: r.name, count: r.count })), [
-    { name: "playwright", count: 2 },
-    { name: "lsp", count: 1 },
+  const wsMcpRows = normalizeWorkspaceNamedUsage(ws.mcpUses, ['server', 'name', 'mcp']);
+  const wsExposedMcpRows = normalizeWorkspaceNamedUsage(ws.mcpExposed, ['server', 'name', 'mcp']);
+  assert.deepEqual(wsMcpRows?.map((r) => ({ name: r.name, count: r.count })), [{ name: 'playwright', count: 1 }]);
+  assert.deepEqual(wsExposedMcpRows?.map((r) => ({ name: r.name, count: r.count })), [
+    { name: 'playwright', count: 2 },
+    { name: 'lsp', count: 1 },
   ]);
 
   const html = renderWorkspaceMcp(wsMcpRows, wsExposedMcpRows);
@@ -776,19 +670,16 @@ test('router dashboard renders workspace MCP servers with confirmed uses and exp
   assert.match(html, /label="lsp"/);
   assert.match(html, /value="0 \/ 1"/);
 
-  // 2. Fail-closed unavailable when both are null
   assert.equal(
     renderWorkspaceMcp(null, null),
     '<div class="empty-state">MCP server telemetry is unavailable per-workspace</div>',
   );
 
-  // 3. Empty state when both are empty arrays
   assert.equal(
     renderWorkspaceMcp([], []),
     '<div class="empty-state">No MCP servers observed for this workspace yet</div>',
   );
 
-  // 4. Backward-compatible when exposure is null
   const legacyHtml = renderWorkspaceMcp(wsMcpRows, null);
   assert.match(legacyHtml, /label="playwright"/);
   assert.match(legacyHtml, /value="1"/);

@@ -1,84 +1,64 @@
 # AutoDev TypeScript Target State
 
-## Migration progress — 2026-09-17
+## Migration progress — Complete (2026-09-17)
 
-The migration remains intentionally behavior-preserving. The shared-runtime spawn/state/MCP pass, router HTTP/proxy decomposition, all four provider bridge conversions, cross-provider orchestrator delegation, provider lifecycle ownership, and typed installer boundary are now landed; final test-stack migration continues.
+The TypeScript target state migration is fully completed across all twelve phases. AutoDev has converged on TypeScript as its sole first-party implementation and test language, running on Node 24+ LTS via native TypeScript execution.
 
 ### Completed
 
 - Node 24.12+ is pinned in `.nvmrc`; strict native-TypeScript checking is configured in `tsconfig.json`.
-- `smol-toml` and Node typings are installed; `typecheck`, native TypeScript tests, CLI checks, and inventory validation commands exist.
-- Provider-limit, workspace, execution-contract, response-item, role, activity, and spawn-session primitives now have typed modules under `src/`.
+- `smol-toml` and Node typings are installed; `typecheck`, native TypeScript tests, CLI checks, and strict inventory validation commands exist.
+- Provider-limit, workspace, execution-contract, response-item, role, activity, and spawn-session primitives have typed modules under `src/`.
 - AutoDev-owned TOML/config/rendering paths are ported to `src/config` with deterministic output, atomic writes, local-state preservation, and drift checks.
 - Typed CLI, MCP launcher, and macOS launchd lifecycle boundaries exist; `run-autodev-mcp.sh` is now only a process-dispatch shim.
-- Agent-event telemetry and skill-read telemetry now run from typed modules under `src/telemetry` and `src/hooks`; bridge/router consumers use the shared telemetry module.
-- Shared spawn generation/SSE/recovery helpers now live in `src/agents/spawn-tools.ts`; the read-only Codex state collector now lives in `src/router/state-collector.ts` with typed SQLite and snapshot contracts; and the stdio spawn MCP server now lives in `src/mcp/spawn-shim.ts`.
-- All current consumers and installer/runtime projections use the typed paths. The old `scripts/codex/lib/*.mjs` modules are deleted, and installers reject/remove stale copies under `$CODEX_HOME/hooks/codex/lib/`.
-- Dedicated spawn/state tests are native TypeScript, and the typed spawn MCP server has protocol tests covering initialization, tool gating, valid forwarding, malformed calls, and model-readable failures.
-- Typed routing and cooldown owners now live in `src/router/routing.ts` and `src/router/cooldown.ts`; the legacy router imports them directly for model selection, fallback ordering, cooldown ladders, status, and persistence without compatibility re-exports.
-- Routing/cooldown contract tests and new focused TypeScript tests cover validation, seeded ordering, disabled providers, orchestrator preference, cooldown ladders, last-resort policy, summaries, and hard-cooldown restoration.
-- Typed Responses/SSE transformation, tool flattening, namespace rewriting, model replacement, tool-call counting, and upstream payload normalization now live in `src/router/responses.ts` and are deployed by the installer runtime manifest.
-- Typed concurrency tracking and slot admission now live in `src/router/concurrency.ts` with TOML config parsing (`max_concurrent_threads_per_session`), process-fallback scoping, denial recording, and telemetry restoration; router lifecycle state management and graceful shutdown coordination live in `src/router/lifecycle.ts`.
+- Agent-event telemetry and skill-read telemetry run from typed modules under `src/telemetry` and `src/hooks`; bridge/router consumers use the shared telemetry module.
+- GitHub metrics dashboard automation is migrated to typed native ESM in `src/telemetry/github-metrics.ts` with comprehensive unit tests in `tests/metrics.test.ts`. Obsolete `scripts/autodev-metrics.cjs` and `tests/metrics.test.mjs` are deleted.
+- Shared spawn generation/SSE/recovery helpers live in `src/agents/spawn-tools.ts`; the read-only Codex state collector lives in `src/router/state-collector.ts` with typed SQLite and snapshot contracts; and the stdio spawn MCP server lives in `src/mcp/spawn-shim.ts`.
+- All consumers and installer/runtime projections use the typed paths. The old `scripts/codex/lib/*.mjs` modules are deleted, and installers reject/remove stale copies under `$CODEX_HOME/hooks/codex/lib/`.
+- Subagent telemetry test suite is native TypeScript in `tests/subagent-telemetry.test.ts`; `tests/subagent-telemetry.test.mjs` is deleted.
+- Typed routing and cooldown owners live in `src/router/routing.ts` and `src/router/cooldown.ts`.
+- Routing/cooldown contract tests and focused TypeScript tests cover validation, seeded ordering, disabled providers, orchestrator preference, cooldown ladders, last-resort policy, summaries, and hard-cooldown restoration.
+- Typed Responses/SSE transformation, tool flattening, namespace rewriting, model replacement, tool-call counting, and upstream payload normalization live in `src/router/responses.ts` and are deployed by the installer runtime manifest.
+- Typed concurrency tracking and slot admission live in `src/router/concurrency.ts` with TOML config parsing (`max_concurrent_threads_per_session`), process-fallback scoping, denial recording, and telemetry restoration; router lifecycle state management and graceful shutdown coordination live in `src/router/lifecycle.ts`.
 - Typed router authentication boundary (`src/router/auth.ts`), failure classification and ring-buffer event recording (`src/router/events.ts`), subagent/bridge orchestration registry (`src/router/subagents.ts`), and state persistence subsystem (`src/router/persistence.ts`) are decomposed from the legacy router into dedicated TypeScript modules deployed by the installer runtime manifest.
-- Orchestrator capability is now explicit in the execution contract: Codex, Claude, Antigravity, and Copilot have native or Codex-shim delegation paths; MiniMax is excluded from the orchestrator fallback tier instead of being advertised as spawn-capable. Copilot's bridge receives a session-scoped `autodev_spawn` MCP shim and emits the same Codex `exec` delegation item used by the other CLI bridges.
-- Delegation capability resolution now fails closed to the execution contract rather than inferring capability from a routed provider name or a stale `spawnTools` list. Bridge-native parent activity remains open until the parent outcome is known, preserving failure semantics when child results arrive first; focused TypeScript coverage freezes both behaviors.
+- Standalone router server execution is decomposed into `src/router/server.ts`, wiring directly to `src/cli/router.ts`, `scripts/run-codex-model-router.sh`, `src/platform/service-restart.ts`, and `src/platform/install-materializer.ts`. Legacy `scripts/codex-model-router.mjs` is deleted, and its comprehensive 183-test suite is migrated to `tests/router/model-router.test.ts` with 0 type errors.
+- Orchestrator capability is explicit in the execution contract: Codex, Claude, Antigravity, and Copilot have native or Codex-shim delegation paths; MiniMax is excluded from the orchestrator fallback tier. Copilot's bridge receives a session-scoped `autodev_spawn` MCP shim and emits the same Codex `exec` delegation item used by the other CLI bridges.
+- Delegation capability resolution fails closed to the execution contract.
+- Dedicated native TypeScript test suites cover concurrency (`tests/router/concurrency.test.ts`), router lifecycle (`tests/router/lifecycle.test.ts`), authentication (`tests/router/auth.test.ts`), event recording (`tests/router/events.test.ts`), subagent registry (`tests/router/subagents.test.ts`), and state persistence (`tests/router/persistence.test.ts`).
+- Router HTTP routing, workspace/session resolution, status aggregation, agent-event ingestion, upstream proxying, retry/fallback, and exhaustion diagnostics live in `src/router/http.ts` and `src/router/proxy.ts`.
+- The MiniMax boundary adapter lives in `src/providers/minimax.ts` with strict native-TypeScript checking. Workstation installation, launchd service ownership, and CI deploy/execute the typed module directly.
+- The Copilot Responses bridge lives in `src/providers/copilot.ts` under strict native-TypeScript checking.
+- The Antigravity Responses bridge lives in `src/providers/antigravity.ts` under strict native-TypeScript checking.
+- The Claude Code Responses bridge lives in `src/providers/claude.ts` under strict native-TypeScript checking.
+- The provider-limit, MiniMax Responses boundary, and workspace-resolution contract suites run as native TypeScript `node:test` files.
+- The skill-read hook validates its JSON payload and persisted deduplication state through explicit `JsonValue`, `JsonObject`, and `SeenState` boundaries.
+- The workflow-weight validation suite runs as native TypeScript (`tests/weights.test.ts`).
+- Claude and MiniMax launch/ensure decisions live in `src/platform/claude-ensure.ts` and `src/platform/minimax-ensure.ts`.
+- Antigravity permission and global skill-registry reconciliation live in `src/platform/antigravity-settings.ts` with typed JSON validation.
+- Runtime file targeting, atomic materialization, symlink replacement/linking, skill-source validation, mode assignment, and drift comparison live in `src/platform/runtime-files.ts`.
+- Obsolete launch-agent, runtime-file, hook, and directory cleanup lives in `src/platform/runtime-reconciliation.ts`.
+- Launchd service ownership, foreign-runtime protection, stale-process reaping, readiness probes, service restart ordering, and direct fallback dispatch live in `src/platform/service-restart.ts`.
+- Collector foreground validation, exact version/config checks, duplicate-listener protection, readiness, and ensure fallback live in `src/platform/otel-collector.ts`.
+- Pinned Collector artifact manifest validation, platform/architecture selection, download, SHA-256 verification, archive extraction, and private installation live in `src/platform/otel-provision.ts`.
+- LaunchAgent placeholder rendering and drift validation live in `src/platform/macos/launchagent.ts`.
+- Collector mode persistence and router-auth token creation/publication live in `src/platform/install-state.ts`.
+- External dependency availability, pipx provisioning, pinned CocoIndex/Python-LSP installation, macOS SDK/compiler environment preparation, and executable checks live in `src/platform/dependencies.ts`.
+- The AutoDev request-capture recorder and its contract suite run as native TypeScript (`.rulesync/skills/autodev-codex-request-capture/scripts/responses-recorder.ts` and `tests/codex-request-capture-skill.test.ts`).
+- The install materialization sequence lives in `src/platform/install-materializer.ts`.
+- The concrete `autodev install` command runs through `src/platform/install-command.ts`. Installation drift diagnostics live in `src/platform/install-check.ts`.
+- The legacy Python test suite `tests/test_local_setup.py` is eliminated; its concerns are 100% covered by native TypeScript suites (`tests/platform/*.test.ts`, `tests/config/*.test.ts`, `tests/cli/*.test.ts`).
+- `package.json` test scripts are unified: `"test": "node --test tests/*.test.ts tests/**/*.test.ts"`.
+- Strict inventory validation (`pnpm run validate:inventory` with `AUTODEV_ENFORCE_INVENTORY=1`) passes with zero unapproved legacy files.
+- The entire test suite (854 tests, 24 suites) passes with 0 failures under `node:test` on Node 24+ LTS.
 
-- Dedicated native TypeScript test suites cover concurrency (`tests/router/concurrency.test.ts`), router lifecycle (`tests/router/lifecycle.test.ts`), authentication (`tests/router/auth.test.ts`), event recording (`tests/router/events.test.ts`), subagent registry (`tests/router/subagents.test.ts`), and state persistence (`tests/router/persistence.test.ts`), while all router integration and frozen contract tests remain 100% green.
-- Existing provider/router contract tests remain green while imports move to typed shared modules.
-- Router HTTP routing, workspace/session resolution, status aggregation, agent-event ingestion, upstream proxying, retry/fallback, and exhaustion diagnostics now live in `src/router/http.ts` and `src/router/proxy.ts`; `scripts/codex-model-router.mjs` is a concise executable/re-export entrypoint. Dedicated native TypeScript proxy and HTTP tests cover the extracted contracts.
-- The MiniMax boundary adapter now lives in `src/providers/minimax.ts` with strict native-TypeScript checking. Its header allowlist, `client_metadata` privacy boundary, freeform `exec` coercion, streaming rewrite, and tool/activity/MCP telemetry are unchanged; workstation installation, launchd service ownership, and CI now deploy/execute the typed module directly, and the obsolete `.mjs` entrypoint is deleted.
-- The Copilot Responses bridge now lives in `src/providers/copilot.ts` under strict native-TypeScript checking. Its CLI-backed Responses, MCP, skill-read, tool-outcome, provider-limit, and activity telemetry boundaries are behavior-preserving; the installer deploys the typed module directly, stale `.mjs` copies are removed, and the obsolete `.mjs` entrypoint is deleted.
-- The Antigravity Responses bridge now lives in `src/providers/antigravity.ts` under strict native-TypeScript checking. Its CLI-backed Responses, workspace/permission handling, role-specific MCP and skill exposure, tool outcomes, provider limits, activity, and bridge-native spawn accounting are preserved; installer/runtime projections deploy the typed module directly, stale `.mjs` copies are removed, and the obsolete `.mjs` entrypoint is deleted.
-- The Claude Code Responses bridge now lives in `src/providers/claude.ts` under strict native-TypeScript checking. Its Claude Code OAuth-only environment, workspace and role permissions, MCP/skill views, stream-json continuation and item IDs, provider-limit handling, activity/tool/skill/MCP telemetry, and Codex-owned spawn-session boundary are preserved. The installer deploys the typed module directly, stale Python copies are removed, and the obsolete Python implementation is deleted; Claude Code CLI/OAuth remains the supported transport by policy.
-- The provider-limit, MiniMax Responses boundary, and workspace-resolution contract suites now run as native TypeScript `node:test` files, preserving cross-language vocabulary, adapter assertions, and router/bridge workspace parity without duplicate JavaScript test entrypoints.
-- The skill-read hook now validates its JSON payload and persisted deduplication state through explicit `JsonValue`, `JsonObject`, and `SeenState` boundaries rather than an `any` escape hatch; malformed state still fails closed without changing telemetry behavior.
-- The workflow-weight validation suite now runs as native TypeScript (`tests/weights.test.ts`), and `validate:weights` executes that single source without a duplicate JavaScript entrypoint.
-- Claude and MiniMax launch/ensure decisions now live in `src/platform/claude-ensure.ts` and `src/platform/minimax-ensure.ts`; Copilot's existing typed owner is the executable boundary as well. The corresponding `ensure-*` files are process-dispatch shims, while MiniMax's launchd daemon path directly execs the typed provider. `src/hooks/subagent-start.ts` invokes the typed owners directly in a model-gated, fail-closed sequence, with native TypeScript contract tests for each lifecycle boundary.
-- Antigravity permission and global skill-registry reconciliation now live in `src/platform/antigravity-settings.ts` with typed JSON validation, deterministic deduplication, atomic private writes, and native TypeScript contract tests. The installer retains only optional CLI detection, root collection, and process dispatch; its embedded Python configuration logic is removed.
-- Runtime file targeting, atomic materialization, symlink replacement/linking, skill-source validation, mode assignment, and drift comparison now live in `src/platform/runtime-files.ts`. Installer runtime-module, prompt, role, config, catalog, rules, and skill link/check paths use that typed owner; native TypeScript tests freeze checkout-to-`CODEX_HOME` mapping and link/replacement behavior.
-- Obsolete launch-agent, runtime-file, hook, and directory cleanup now lives in `src/platform/runtime-reconciliation.ts`; the installer retains only launchctl bootout and argument collection. Native TypeScript tests cover lstat-based detection, symlink-safe removal, and recursive directory cleanup.
-- Launchd service ownership, foreign-runtime protection, stale-process reaping, readiness probes, service restart ordering, and direct fallback dispatch now live in `src/platform/service-restart.ts`. The installer invokes this typed owner; only Collector/provider process execution remains an external boundary. Native TypeScript tests cover managed ownership, foreign services, alternate `CODEX_HOME`, Collector environment forwarding, and hook-matched reaping.
-- Collector foreground validation, exact version/config checks, duplicate-listener protection, readiness, and ensure fallback now live in `src/platform/otel-collector.ts`; the `ensure-*` and `run-*` Collector scripts are process-dispatch shims. Native TypeScript tests cover option boundaries and exact binary validation.
-- Pinned Collector artifact manifest validation, platform/architecture selection, download, SHA-256 verification, archive extraction, and private installation now live in `src/platform/otel-provision.ts`; the provisioning script is a process-dispatch shim. Native TypeScript tests cover explicit-binary, invalid-binary, and manifest-drift fail-closed paths.
-- LaunchAgent placeholder rendering and drift validation now live in `src/platform/macos/launchagent.ts` with atomic writes and literal-safe path substitution; the installer delegates plist rendering/checks to the typed macOS owner.
-- Collector mode persistence and router-auth token creation/publication now live in `src/platform/install-state.ts` with private atomic mode writes, preserved environment content, idempotent token reuse, and native TypeScript tests; the installer retains only option parsing and dispatch.
-- External dependency availability, pipx provisioning, pinned CocoIndex/Python-LSP installation, macOS SDK/compiler environment preparation, and executable checks now live in `src/platform/dependencies.ts`; installer dependency functions are dispatch-only and native TypeScript tests cover skip, Homebrew, Python fallback, and missing-tool paths.
-- The AutoDev request-capture recorder and its contract suite now run as native TypeScript (`.rulesync/skills/autodev-codex-request-capture/scripts/responses-recorder.ts` and `tests/codex-request-capture-skill.test.ts`); the previous first-party `.mjs` test/recorder pair is removed.
-- The install materialization sequence now lives in `src/platform/install-materializer.ts`: typed runtime/role/link deployment, stale cleanup, Rulesync projections, composed config, provider skill/MCP views, Antigravity settings, and LaunchAgent rendering are coordinated there. The shell installer now dispatches the materializer before typed service restart.
-- The concrete `autodev install` command now runs through `src/platform/install-command.ts`, coordinating typed state, dependency, materialization, Collector, and service owners. Installation drift diagnostics now live in `src/platform/install-check.ts`; the shell installer is only a process-dispatch shim.
+### Current state and verification
 
-### Current findings and constraints
-
-- All provider bridges now live under `src/providers/` as typed modules. The router entrypoint remains a compatibility-preserving `.mjs` executable while its retained implementation is typed.
-- The installer shell file is now a process-dispatch shim. Check-only validation, temporary MCP projection, final status gating, normal install orchestration, materialization, stale-path reconciliation, Antigravity settings, service restart, Collector lifecycle/provisioning, install-state, and dependency policy are typed owners reached through the concrete CLI coordinator; provider and Collector scripts are dispatch-only.
-- First-party tests are still split between JavaScript, Python, and TypeScript. The inventory gate is present but intentionally reports the remaining legacy files until their replacements and equivalent tests land. The root-delegation, bridge-role, portable-config, Copilot MCP, workflow, workspace-attribution, native-vs-bridge, agent-reconciliation, Antigravity delegation, router workspace telemetry, dashboard/status, MiniMax proxy, agent-instructions, Rulesync-permissions/MCP/hooks, and Collector config/runtime contract slices now run as native TypeScript.
-- Canonical declarative content remains under `scripts/codex/`; moving it to the target `agents/` and `config/` layout must be coordinated with installer/runtime path changes.
-- The typed state collector keeps its dynamic SQLite schema inspection behind an explicit row/binding boundary and continues to strip raw paths before snapshots are exposed; its output and privacy contracts were not changed.
-- Routing owns provider/config policy; typed router modules now own HTTP, upstream proxy execution, Responses/SSE compatibility, OTEL telemetry, persistence, lifecycle, and bridge orchestration. The legacy `.mjs` router is retained only as the executable/public re-export entrypoint. The execution contract records a provider delegation mode so status and routing cannot claim that a provider with no spawn path can orchestrate.
-- Claude's supported subscription path remains the unmodified Claude Code CLI, but AutoDev-owned bridge logic is now typed and imports shared workspace, role, limit, telemetry, and spawn contracts rather than maintaining a Python copy.
-- `src/cli/autodev.ts` now has typed dispatch boundaries for `router`, `provider`, `hook`, and `install`; normal install, check, and render behavior has explicit typed ownership.
-- The router status CLI now lives in `src/cli/router-status.ts` and consumes the typed `src/router/status.ts` boundary; the obsolete `scripts/codex-model-router-status.mjs` entrypoint is deleted and stale installed copies are removed.
-- Router ensure/lifecycle decisions now live in `src/platform/router-ensure.ts` with injectable filesystem/process/launchd dependencies; `src/hooks/session-start.ts` invokes the typed owner directly, and the installed shell ensure entrypoint is only a process-dispatch shim. The typed owner preserves the best-effort optional Copilot ensure side effect through `src/platform/copilot-ensure.ts`.
-- Session-start, subagent-start, and root-delegation command handlers own the
-  hook entry points under `src/hooks`; Rulesync invokes those typed handlers
-  directly. Session-start and subagent-start now call typed platform owners
-  for router, Claude, MiniMax, Copilot, and Antigravity lifecycle decisions.
-  The migrated local runtime's remaining shell ownership is limited to process
-dispatch. CI provider invocation and the generic role runner still contain
-behavior and remain pending migration; the next slice is consolidating the
-remaining first-party legacy test stack and those two runtime entrypoints.
-- The vendored `.rulesync/skills/resolve-merge-conflicts/scripts/extract_conflict_context.py` helper remains an allowed upstream-language exception.
-
-### Next implementation order
-
-Step 1 — router HTTP and upstream proxy decomposition — is complete.
-
-2. Convert all provider bridges to typed shared-contract implementations — complete for MiniMax, Copilot, Antigravity, and Claude.
-3. Move installer option/check orchestration and temporary MCP projection behind typed CLI/platform modules — complete; the installer is now dispatch-only.
-4. Convert the remaining JavaScript/Python tests to `node:test`, remove obsolete entrypoints, and enable the inventory gate as a required check — in progress; the request-capture test/recorder slice is complete.
-5. Preserve the provider delegation matrix while moving the remaining bridge/telemetry contract tests to native TypeScript; Rulesync subagent generation remains deferred until it can project the AutoDev role/capability contract without weakening Codex ownership. The current slice hardens the contract and parent-outcome telemetry boundary first.
-
-For the current provider, lifecycle, installer, and test-stack slices, `pnpm typecheck` and the remaining Python compatibility suite (119 tests) pass; the full JavaScript/TypeScript suite reports 848 tests with 846 passing and 2 skips. The focused Claude, provider, lifecycle, MCP, role, telemetry, workspace, root-delegation, and boundary suites pass, including the native TypeScript Claude Responses, portable-config, Copilot MCP, workflow, workspace-attribution, native-vs-bridge, agent-reconciliation, Antigravity delegation, router workspace telemetry, dashboard/status, MiniMax proxy, agent-instructions, Rulesync-permissions/MCP/hooks, and Collector config/runtime contract tests. The inventory gate now reports only the remaining router/metrics entrypoints, the two behavioral CI/role-runner scripts, the final metrics/telemetry JavaScript suites, and the local-setup Python suite; remaining migration work is concentrated there.
+- Zero first-party `.cjs`, `.mjs`, or `.py` files remain in `src/`, `scripts/`, or `tests/`.
+- Shell scripts are strictly restricted to thin OS/process execution boundaries registered in `approvedLegacyFiles`.
+- `pnpm run typecheck` (`tsc --noEmit`) passes with 0 errors.
+- `pnpm test` passes 100% across all 854 tests.
+- `pnpm run validate:actionlint` and `pnpm run validate:shell` pass with 0 warnings.
+- `pnpm run validate:inventory` passes with 0 violations.
 
 ## Decision
 

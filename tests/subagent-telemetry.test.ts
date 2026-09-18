@@ -7,6 +7,20 @@ import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import test from "node:test";
+import type { AddressInfo } from "node:net";
+import type { Server } from "node:http";
+
+const listen = (server: Server): Promise<number> =>
+  new Promise((resolve) => {
+    server.listen(0, "127.0.0.1", () => {
+      resolve((server.address() as AddressInfo).port);
+    });
+  });
+
+const close = (server: Server): Promise<void> =>
+  new Promise((resolve, reject) => {
+    server.close((error) => (error ? reject(error) : resolve()));
+  });
 
 const execFileAsync = promisify(execFile);
 
@@ -56,9 +70,9 @@ import {
   toolOutputOutcome as minimaxToolOutputOutcome,
 } from "../src/providers/minimax.ts";
 
-const read = (path) => readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
+const read = (path: string) => readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
 
-const routerHeaders = {
+const routerHeaders: Record<string, string | undefined> = {
   [ AGENT_EVENTS_URL_HEADER ]: "http://127.0.0.1:4100/v1/agent-events",
   [ REQUEST_ID_HEADER ]: "request-1",
   [ SUBAGENT_SPAWN_TOOLS_HEADER ]: "invoke_subagent,Agent",
@@ -84,15 +98,15 @@ test("a bridge reports spawns only when the router asked it to", () => {
   // A caller that is not the router gets no reporter at all rather than a
   // reporter that posts nowhere.
   assert.equal(resolveAgentEventReporter({}), null);
-  assert.equal(resolveAgentEventReporter(null), null);
+  assert.equal(resolveAgentEventReporter(null as unknown as Record<string, unknown>), null);
   for (const missing of [ AGENT_EVENTS_URL_HEADER, REQUEST_ID_HEADER ]) {
-    const partial = { ...routerHeaders };
+    const partial: Record<string, string | undefined> = { ...routerHeaders };
     delete partial[ missing ];
     assert.equal(resolveAgentEventReporter(partial), null, `missing ${missing} must disable reporting`);
   }
   // Missing or empty spawn tools still yields a reporter for providers without
   // delegation (copilot, minimax) so they can report tool and skill observations.
-  const noSpawnTools = { ...routerHeaders };
+  const noSpawnTools: Record<string, string | undefined> = { ...routerHeaders };
   delete noSpawnTools[ SUBAGENT_SPAWN_TOOLS_HEADER ];
   const noSpawnReporter = resolveAgentEventReporter(noSpawnTools);
   assert.ok(noSpawnReporter);
@@ -103,7 +117,7 @@ test("a bridge reports spawns only when the router asked it to", () => {
 });
 
 test("a reported spawn names the request that authorizes it", async () => {
-  const received = [];
+  const received: any[] = [];
   const server = createServer((request, response) => {
     let body = "";
     request.on("data", (chunk) => { body += chunk; });
@@ -113,24 +127,24 @@ test("a reported spawn names the request that authorizes it", async () => {
       response.end("{}");
     });
   });
-  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const port = await listen(server);
   try {
     const reporter = resolveAgentEventReporter({
       ...routerHeaders,
-      [ AGENT_EVENTS_URL_HEADER ]: `http://127.0.0.1:${server.address().port}/v1/agent-events`,
+      [ AGENT_EVENTS_URL_HEADER ]: `http://127.0.0.1:${port}/v1/agent-events`,
     });
-    await reporter.reportSpawn({ tool: "invoke_subagent", role: "explorer" });
+    await reporter!.reportSpawn({ tool: "invoke_subagent", role: "explorer" });
     assert.deepEqual(received, [ {
       requestId: "request-1",
       events: [ { type: "subagent_spawn", tool: "invoke_subagent", role: "explorer", status: "started", count: 1, children: [ { id: "c1" } ] } ],
     } ]);
   } finally {
-    await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    await close(server);
   }
 });
 
 test("a batch of children is reported as a batch, grouped by role", async () => {
-  const received = [];
+  const received: any[] = [];
   const server = createServer((request, response) => {
     let body = "";
     request.on("data", (chunk) => { body += chunk; });
@@ -140,15 +154,15 @@ test("a batch of children is reported as a batch, grouped by role", async () => 
       response.end("{}");
     });
   });
-  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const port = await listen(server);
   try {
     const reporter = resolveAgentEventReporter({
       ...routerHeaders,
-      [ AGENT_EVENTS_URL_HEADER ]: `http://127.0.0.1:${server.address().port}/v1/agent-events`,
+      [ AGENT_EVENTS_URL_HEADER ]: `http://127.0.0.1:${port}/v1/agent-events`,
     });
     // One `invoke_subagent` call, four children, two roles: the router must see
     // four spawns, not one, and must be able to tell the roles apart.
-    await reporter.reportSpawns({
+    await reporter!.reportSpawns({
       tool: "invoke_subagent",
       children: [ { id: "s3.0", role: "explorer" }, { id: "s3.1", role: "explorer", model: "gemini-3.8-flash-high", logUri: null }, { id: "s3.2", role: "validator" }, { id: "s3.3", role: null } ],
     });
@@ -163,7 +177,7 @@ test("a batch of children is reported as a batch, grouped by role", async () => 
 
     // The close names the same children the open did, which is what lets the
     // router measure each child's own turn instead of the whole parent turn.
-    await reporter.reportResults({
+    await reporter!.reportResults({
       tool: "invoke_subagent",
       children: [ { id: "s3.0", role: "explorer" }, { id: "s3.2", role: "validator" } ],
       outcome: "success",
@@ -177,14 +191,14 @@ test("a batch of children is reported as a batch, grouped by role", async () => 
     // No children at all still reports the call, so a CLI that stops exporting
     // its tool arguments degrades to the old count rather than to silence. The
     // router still gets an id, so even that child can be closed individually.
-    await reporter.reportSpawns({ tool: "invoke_subagent", children: [] });
+    await reporter!.reportSpawns({ tool: "invoke_subagent", children: [] });
     const [ degraded ] = received.at(-1).events;
     assert.equal(degraded.count, 1);
     assert.equal(degraded.role, null);
     assert.equal(degraded.children.length, 1);
     assert.match(degraded.children[ 0 ].id, /^c\d+$/, "a caller with no id of its own is given one");
   } finally {
-    await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    await close(server);
   }
 });
 
@@ -269,6 +283,7 @@ test("the Antigravity bridge counts every child in an invoke_subagent batch", ()
   const rolelessIds = new Set();
   for (const update of roleless) {
     const [ child, ...rest ] = spawnedChildren(update);
+    assert.ok(child);
     assert.equal(rest.length, 0);
     assert.equal(child.role, null);
     // A step with no index still gets a distinct id: keying every one of them
@@ -281,7 +296,8 @@ test("the Antigravity bridge counts every child in an invoke_subagent batch", ()
 test("a failed report costs a count, never the model turn", async () => {
   // Nothing is listening on this port; the reporter must resolve anyway.
   const reporter = resolveAgentEventReporter({ ...routerHeaders, [ AGENT_EVENTS_URL_HEADER ]: "http://127.0.0.1:1/v1/agent-events" });
-  await reporter.reportSpawn({ tool: "invoke_subagent" });
+  assert.ok(reporter);
+  await reporter!.reportSpawn({ tool: "invoke_subagent" });
 });
 
 test("Antigravity permission failures become structured diagnostics", () => {
@@ -499,15 +515,15 @@ test("the installer ships the reporting module the bridges import at runtime", (
 const AGY_INVOKE_SUBAGENT_STEPS = JSON.parse(readFileSync(new URL("./fixtures/agy-invoke-subagent-steps.json", import.meta.url), "utf8"));
 
 function recordingReporter() {
-  const spawns = [];
-  const results = [];
+  const spawns: any[] = [];
+  const results: any[] = [];
   return {
     spawns,
     results,
-    isSpawnTool: (name) => name === "invoke_subagent",
-    reportSpawns: async (event) => { spawns.push(event); },
-    reportResults: async (event) => { results.push(event); },
-  };
+    isSpawnTool: (name: unknown) => name === "invoke_subagent",
+    reportSpawns: async (event: unknown) => { spawns.push(event); },
+    reportResults: async (event: unknown) => { results.push(event); },
+  } as unknown as import("../src/telemetry/agent-events.ts").AgentEventReporter & { spawns: any[]; results: any[] };
 }
 
 test("a dispatch completing is not the child completing", async () => {
@@ -524,7 +540,7 @@ test("a dispatch completing is not the child completing", async () => {
   const tracker = createSpawnTracker(reporter);
   tracker.observeSpawnStep(active);
   assert.equal(reporter.spawns.length, 1);
-  assert.deepEqual(reporter.spawns[ 0 ].children.map(({ role }) => role), [ "research" ]);
+  assert.deepEqual(reporter.spawns[ 0 ].children.map(({ role }: any) => role), [ "research" ]);
 
   tracker.observeSpawnStep(done);
   assert.equal(reporter.results.length, 0, "a completed dispatch must not close the child it started");
@@ -632,6 +648,7 @@ test("a child is identified by agy's own conversation id, not its position", () 
     logUri: "file:///Users/henrykirk/.gemini/antigravity-cli/brain/b1655ed9-e48d-4f88-9c51-e8fbf1a8b9b1/.system_generated/logs/transcript.jsonl",
   } ]);
   // The same child, recognised across both steps by identity.
+  assert.ok(opened[ 0 ] && closed[ 0 ]);
   assert.equal(closed[ 0 ].id, opened[ 0 ].id);
   // The role is the archetype, not the human-facing "Line Counter" label.
   assert.equal(opened[ 0 ].role, "research");
@@ -654,18 +671,21 @@ test("a known transcript path travels with the child, and its absence costs noth
     "x-autodev-request-id": "req-1",
     "x-autodev-subagent-spawn-tools": "invoke_subagent",
   });
-  const [ withUri ] = reporter.childEvents("subagent_spawn", {
+  assert.ok(reporter);
+  const [ withUri ] = reporter!.childEvents("subagent_spawn", {
     tool: "invoke_subagent",
     children: [ { id: "c1", role: "research", logUri: "file:///tmp/t.jsonl" } ],
     status: "started",
   });
+  assert.ok(withUri);
   assert.deepEqual(withUri.children, [ { id: "c1", logUri: "file:///tmp/t.jsonl" } ]);
 
-  const [ without ] = reporter.childEvents("subagent_spawn", {
+  const [ without ] = reporter!.childEvents("subagent_spawn", {
     tool: "invoke_subagent",
     children: [ { id: "c1", role: "research" } ],
     status: "started",
   });
+  assert.ok(without);
   assert.deepEqual(without.children, [ { id: "c1" } ]);
 });
 
@@ -741,19 +761,19 @@ test("the shim tool is not counted as a bridge-native spawn", () => {
   // already records as router_alias. Reporting it over /v1/agent-events as well
   // would count the same child twice.
   const contract = JSON.parse(read("scripts/codex/execution-contract.json"));
-  for (const [ provider, config ] of Object.entries(contract.providers)) {
+  for (const [ provider, config ] of Object.entries(contract.providers as Record<string, { spawnTools?: string[] }>)) {
     const tools = config.spawnTools ?? [];
     assert.equal(tools.includes("spawn_subagent"), false, `${provider} must not treat the shim tool as an in-CLI spawn`);
   }
 });
 
 test("the Antigravity bridge observes and reports tool requests, executions, and denials", async () => {
-  const events = [];
+  const events: any[] = [];
   const fakeReporter = {
-    reportToolRequested: async (e) => events.push({ type: "tool_requested", ...e }),
-    reportToolExecuted: async (e) => events.push({ type: "tool_executed", ...e }),
-    reportToolUnavailable: async (e) => events.push({ type: "tool_unavailable", ...e }),
-  };
+    reportToolRequested: async (e: any) => events.push({ type: "tool_requested", ...e }),
+    reportToolExecuted: async (e: any) => events.push({ type: "tool_executed", ...e }),
+    reportToolUnavailable: async (e: any) => events.push({ type: "tool_unavailable", ...e }),
+  } as unknown as import("../src/telemetry/agent-events.ts").AgentEventReporter;
 
   const { observeToolStep, reportPermissionDenial } = createToolObserver(fakeReporter);
 
@@ -889,13 +909,13 @@ test("the Claude bridge exposes telemetry API methods and wires tool reporting",
 });
 
 test("the Claude bridge posts tool and skill telemetry through the shared reporter", async () => {
-  const received = [];
+  const received: any[] = [];
   const server = createServer((request, response) => {
     let body = "";
     request.on("data", (chunk) => { body += chunk; });
     request.on("end", () => { received.push(JSON.parse(body)); response.writeHead(200); response.end("{}"); });
   });
-  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const port = await listen(server);
   const address = server.address();
   assert.ok(address && typeof address !== "string");
   const reporter = resolveAgentEventReporter({
@@ -904,20 +924,20 @@ test("the Claude bridge posts tool and skill telemetry through the shared report
     [ SUBAGENT_SPAWN_TOOLS_HEADER ]: "Agent",
   });
   assert.ok(reporter);
-  await reporter.reportToolRequested({ tool: "read_file", callId: "c1", server: "builtin" });
-  await reporter.reportToolExecuted({ tool: "read_file", callId: "c1", status: "ok", durationMs: 120, server: "builtin" });
-  await reporter.reportToolUnavailable({ tool: "write_file", callId: "c2", reason: "denied", server: "builtin" });
-  await reporter.reportSkillExposed({ skill: "ccc", source: "claude_skill_view" });
-  await reporter.reportToolExecuted({ tool: "bash", callId: "c3", status: "error", durationMs: 45 });
-  await reporter.reportSkillExposed({ skill: "lsp-mcp-server", source: "claude_skill_view" });
-  await reporter.reportMcpExposed({ server: "lsp", source: "role_contract" });
-  await reporter.reportMcpExposed({ server: "cocoindex-code", source: "role_contract" });
+  await reporter!.reportToolRequested({ tool: "read_file", callId: "c1", server: "builtin" });
+  await reporter!.reportToolExecuted({ tool: "read_file", callId: "c1", status: "ok", durationMs: 120, server: "builtin" });
+  await reporter!.reportToolUnavailable({ tool: "write_file", callId: "c2", reason: "denied", server: "builtin" });
+  await reporter!.reportSkillExposed({ skill: "ccc", source: "claude_skill_view" });
+  await reporter!.reportToolExecuted({ tool: "bash", callId: "c3", status: "error", durationMs: 45 });
+  await reporter!.reportSkillExposed({ skill: "lsp-mcp-server", source: "claude_skill_view" });
+  await reporter!.reportMcpExposed({ server: "lsp", source: "role_contract" });
+  await reporter!.reportMcpExposed({ server: "cocoindex-code", source: "role_contract" });
   assert.equal(received.length, 8);
-  await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+  await close(server);
 });
 
 test("AgentEventReporter posts skill_used events with the same request-correlated shape as skill_exposed", async () => {
-  const received = [];
+  const received: any[] = [];
   const server = createServer((request, response) => {
     let body = "";
     request.on("data", (chunk) => { body += chunk; });
@@ -927,15 +947,15 @@ test("AgentEventReporter posts skill_used events with the same request-correlate
       response.end("{}");
     });
   });
-  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const port = await listen(server);
   try {
     const reporter = resolveAgentEventReporter({
       ...routerHeaders,
-      [ AGENT_EVENTS_URL_HEADER ]: `http://127.0.0.1:${server.address().port}/v1/agent-events`,
+      [ AGENT_EVENTS_URL_HEADER ]: `http://127.0.0.1:${port}/v1/agent-events`,
     });
-    await reporter.reportSkillUsed({ skill: "ccc", source: "role_contract" });
-    await reporter.reportSkillUsed({ skill: "ccc", eventId: "explicit-call-1", pluginId: "autodev" });
-    await reporter.reportSkillUsed({ skill: "   " });
+    await reporter!.reportSkillUsed({ skill: "ccc", source: "role_contract" });
+    await reporter!.reportSkillUsed({ skill: "ccc", eventId: "explicit-call-1", pluginId: "autodev" });
+    await reporter!.reportSkillUsed({ skill: "   " });
     assert.equal(received.length, 2);
     assert.deepEqual(received[ 0 ], {
       requestId: "request-1",
@@ -946,7 +966,7 @@ test("AgentEventReporter posts skill_used events with the same request-correlate
       events: [ { type: "skill_used", skill: "ccc", source: null, pluginId: "autodev", eventId: "explicit-call-1" } ],
     });
   } finally {
-    await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    await close(server);
   }
 });
 
@@ -965,7 +985,7 @@ test("resolveSkillReadReporter resolves a session-keyed reporter only when both 
 });
 
 test("resolveSkillReadReporter posts skill_used with the SKILL_READ_SOURCE tag and the session id as request id", async () => {
-  const received = [];
+  const received: any[] = [];
   const server = createServer((request, response) => {
     let body = "";
     request.on("data", (chunk) => { body += chunk; });
@@ -975,21 +995,21 @@ test("resolveSkillReadReporter posts skill_used with the SKILL_READ_SOURCE tag a
       response.end("{}");
     });
   });
-  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const port = await listen(server);
   try {
     const reporter = resolveSkillReadReporter({
-      [ AGENT_EVENTS_URL_HEADER ]: `http://127.0.0.1:${server.address().port}/v1/agent-events`,
+      [ AGENT_EVENTS_URL_HEADER ]: `http://127.0.0.1:${port}/v1/agent-events`,
       [ SESSION_ID_HEADER ]: "session-1",
     });
     assert.equal(SKILL_READ_SOURCE, "skill_read");
-    await reporter.reportSkillUsed({ skill: "ccc", source: SKILL_READ_SOURCE, eventId: "read:session-1:t1" });
+    await reporter!.reportSkillUsed({ skill: "ccc", source: SKILL_READ_SOURCE, eventId: "read:session-1:t1" });
     assert.equal(received.length, 1);
     assert.deepEqual(received[ 0 ], {
       requestId: "session-1",
       events: [ { type: "skill_used", skill: "ccc", source: "skill_read", pluginId: null, eventId: "read:session-1:t1" } ],
     });
   } finally {
-    await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    await close(server);
   }
 });
 
@@ -1000,7 +1020,7 @@ test("the skill-read telemetry hook dedupes per turn and emits one skill_used pe
   // Force the hook to read fresh roots via a stable repo root.
   process.env.AUTODEV_REPO_ROOT = fileURLToPath(new URL("..", import.meta.url));
   try {
-    const received = [];
+    const received: any[] = [];
     const server = createServer((request, response) => {
       let body = "";
       request.on("data", (chunk) => { body += chunk; });
@@ -1010,9 +1030,8 @@ test("the skill-read telemetry hook dedupes per turn and emits one skill_used pe
         response.end("{}");
       });
     });
-    await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
-    const port = server.address().port;
-    process.env.AUTODEV_AGENT_EVENTS_URL = `http://127.0.0.1:${port}/v1/agent-events`;
+    const port = await listen(server);
+        process.env.AUTODEV_AGENT_EVENTS_URL = `http://127.0.0.1:${port}/v1/agent-events`;
     try {
       const scriptPath = fileURLToPath(new URL("../src/hooks/skill-read-telemetry.ts", import.meta.url));
       const skillPath = `${process.env.AUTODEV_REPO_ROOT}/.rulesync/skills/orchestration/SKILL.md`;
@@ -1026,11 +1045,11 @@ test("the skill-read telemetry hook dedupes per turn and emits one skill_used pe
         tool_name: "read_file",
         tool_input: { file_path: skillPath },
       });
-      const run = (customInput = input) => new Promise((resolve, reject) => {
+      const run = (customInput: unknown = input) => new Promise<{ stdout: string; stderr: string }>((resolve, reject) => {
         const child = execFile("node", [ scriptPath ], { env: process.env }, (error, stdout, stderr) => {
           if (error) reject(new Error(stderr || error.message)); else resolve({ stdout, stderr });
         });
-        child.stdin.end(typeof customInput === "string" ? customInput : JSON.stringify(customInput));
+        child.stdin?.end(typeof customInput === "string" ? customInput : JSON.stringify(customInput));
       });
       // First read of `orchestration` in turn-1 emits a skill_used.
       await run();
@@ -1054,7 +1073,7 @@ test("the skill-read telemetry hook dedupes per turn and emits one skill_used pe
       assert.equal(received[ 2 ].events[ 0 ].skill, "orchestration");
       assert.equal(received[ 3 ].events[ 0 ].skill, "orchestration");
     } finally {
-      await new Promise((resolve) => server.close(() => resolve()));
+      await close(server);
     }
   } finally {
     delete process.env.HOME;
@@ -1065,7 +1084,7 @@ test("the skill-read telemetry hook dedupes per turn and emits one skill_used pe
 });
 
 test("AgentEventReporter posts normalized activity events with requestId", async () => {
-  const received = [];
+  const received: any[] = [];
   const server = createServer((request, response) => {
     let body = "";
     request.on("data", (chunk) => { body += chunk; });
@@ -1075,9 +1094,8 @@ test("AgentEventReporter posts normalized activity events with requestId", async
       response.end("{}");
     });
   });
-  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
-  const port = server.address().port;
-  try {
+  const port = await listen(server);
+    try {
     const reporter = resolveAgentEventReporter({
       [ AGENT_EVENTS_URL_HEADER ]: `http://127.0.0.1:${port}/v1/agent-events`,
       [ REQUEST_ID_HEADER ]: "req-activity-1",
@@ -1085,10 +1103,10 @@ test("AgentEventReporter posts normalized activity events with requestId", async
     });
     assert.ok(reporter);
 
-    await reporter.reportActivity({ state: "tool_wait" });
-    await reporter.reportActivity({ state: "subagent_wait", childIds: [ "c1", "c2" ] });
-    await reporter.reportActivity("resumed");
-    await reporter.reportActivity({ state: "finished" });
+    await reporter!.reportActivity({ state: "tool_wait" });
+    await reporter!.reportActivity({ state: "subagent_wait", childIds: [ "c1", "c2" ] });
+    await reporter!.reportActivity("resumed");
+    await reporter!.reportActivity({ state: "finished" });
 
     assert.equal(received.length, 4);
     assert.deepEqual(received[ 0 ], {
@@ -1108,7 +1126,7 @@ test("AgentEventReporter posts normalized activity events with requestId", async
       events: [ { type: "activity", state: "finished" } ],
     });
   } finally {
-    await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    await close(server);
   }
 });
 
@@ -1123,7 +1141,7 @@ test("activity reporting rejects invalid states and drops unapproved names", asy
     "user_wait",
   ]);
 
-  const received = [];
+  const received: any[] = [];
   const server = createServer((request, response) => {
     let body = "";
     request.on("data", (chunk) => { body += chunk; });
@@ -1133,29 +1151,28 @@ test("activity reporting rejects invalid states and drops unapproved names", asy
       response.end("{}");
     });
   });
-  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
-  const port = server.address().port;
-  try {
+  const port = await listen(server);
+    try {
     const reporter = resolveAgentEventReporter({
       [ AGENT_EVENTS_URL_HEADER ]: `http://127.0.0.1:${port}/v1/agent-events`,
       [ REQUEST_ID_HEADER ]: "req-activity-2",
       [ SUBAGENT_SPAWN_TOOLS_HEADER ]: "invoke_subagent",
     });
 
-    await reporter.reportActivity({ state: "invalid_state" });
-    await reporter.reportActivity({ state: "running" });
-    await reporter.reportActivity({ state: "" });
-    await reporter.reportActivity(null);
-    await reporter.reportActivity(undefined);
+    await reporter!.reportActivity({ state: "invalid_state" });
+    await reporter!.reportActivity({ state: "running" });
+    await reporter!.reportActivity({ state: "" });
+    await reporter!.reportActivity(null as unknown as string);
+    await reporter!.reportActivity(undefined as unknown as string);
 
     assert.equal(received.length, 0);
   } finally {
-    await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    await close(server);
   }
 });
 
 test("activity reporting is idempotent against duplicate transitions and terminal states", async () => {
-  const received = [];
+  const received: any[] = [];
   const server = createServer((request, response) => {
     let body = "";
     request.on("data", (chunk) => { body += chunk; });
@@ -1165,9 +1182,8 @@ test("activity reporting is idempotent against duplicate transitions and termina
       response.end("{}");
     });
   });
-  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
-  const port = server.address().port;
-  try {
+  const port = await listen(server);
+    try {
     const reporter = resolveAgentEventReporter({
       [ AGENT_EVENTS_URL_HEADER ]: `http://127.0.0.1:${port}/v1/agent-events`,
       [ REQUEST_ID_HEADER ]: "req-activity-3",
@@ -1175,36 +1191,36 @@ test("activity reporting is idempotent against duplicate transitions and termina
     });
 
     // Duplicate non-resumed transitions are dropped
-    await reporter.reportActivity({ state: "tool_wait" });
-    await reporter.reportActivity({ state: "tool_wait" });
+    await reporter!.reportActivity({ state: "tool_wait" });
+    await reporter!.reportActivity({ state: "tool_wait" });
     assert.equal(received.length, 1);
 
     // Resumed transition can re-occur
-    await reporter.reportActivity({ state: "resumed" });
-    await reporter.reportActivity({ state: "resumed" });
+    await reporter!.reportActivity({ state: "resumed" });
+    await reporter!.reportActivity({ state: "resumed" });
     assert.equal(received.length, 3);
 
     // Terminal state stops any further transitions
-    await reporter.reportActivity({ state: "finished" });
+    await reporter!.reportActivity({ state: "finished" });
     assert.equal(received.length, 4);
 
-    await reporter.reportActivity({ state: "tool_wait" });
-    await reporter.reportActivity({ state: "resumed" });
-    await reporter.reportActivity({ state: "failed" });
+    await reporter!.reportActivity({ state: "tool_wait" });
+    await reporter!.reportActivity({ state: "resumed" });
+    await reporter!.reportActivity({ state: "failed" });
     assert.equal(received.length, 4);
   } finally {
-    await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    await close(server);
   }
 });
 
 test("the Claude bridge posts activity telemetry to the router", async () => {
-  const received = [];
+  const received: any[] = [];
   const server = createServer((request, response) => {
     let body = "";
     request.on("data", (chunk) => { body += chunk; });
     request.on("end", () => { received.push(JSON.parse(body)); response.writeHead(200); response.end("{}"); });
   });
-  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const port = await listen(server);
   const address = server.address();
   assert.ok(address && typeof address !== "string");
   const reporter = resolveAgentEventReporter({
@@ -1213,18 +1229,18 @@ test("the Claude bridge posts activity telemetry to the router", async () => {
     [ SUBAGENT_SPAWN_TOOLS_HEADER ]: "Agent",
   });
   assert.ok(reporter);
-  await reporter.reportActivity({ state: "tool_wait" });
-  await reporter.reportActivity({ state: "tool_wait" });
-  await reporter.reportActivity({ state: "subagent_wait", childIds: [ "sub-1", "sub-2" ] });
-  await reporter.reportActivity({ state: "resumed" });
-  await reporter.reportActivity({ state: "finished" });
-  await reporter.reportActivity({ state: "resumed" });
+  await reporter!.reportActivity({ state: "tool_wait" });
+  await reporter!.reportActivity({ state: "tool_wait" });
+  await reporter!.reportActivity({ state: "subagent_wait", childIds: [ "sub-1", "sub-2" ] });
+  await reporter!.reportActivity({ state: "resumed" });
+  await reporter!.reportActivity({ state: "finished" });
+  await reporter!.reportActivity({ state: "resumed" });
   assert.equal(received.length, 4);
-  await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+  await close(server);
 });
 
 test("AgentEventReporter delivers repeated heartbeat activity events without dropping them", async () => {
-  const received = [];
+  const received: any[] = [];
   const server = createServer((request, response) => {
     let body = "";
     request.on("data", (chunk) => { body += chunk; });
@@ -1234,24 +1250,23 @@ test("AgentEventReporter delivers repeated heartbeat activity events without dro
       response.end("{}");
     });
   });
-  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
-  const port = server.address().port;
-  try {
+  const port = await listen(server);
+    try {
     const reporter = resolveAgentEventReporter({
       [ AGENT_EVENTS_URL_HEADER ]: `http://127.0.0.1:${port}/v1/agent-events`,
       [ REQUEST_ID_HEADER ]: "req-heartbeat-js",
       [ SUBAGENT_SPAWN_TOOLS_HEADER ]: "invoke_subagent",
     });
 
-    await reporter.reportActivity({ state: "tool_wait" });
+    await reporter!.reportActivity({ state: "tool_wait" });
     // Repeated heartbeats are delivered
-    await reporter.reportHeartbeat({ minIntervalMs: 0 });
-    await reporter.reportHeartbeat({ minIntervalMs: 0 });
+    await reporter!.reportHeartbeat({ minIntervalMs: 0 });
+    await reporter!.reportHeartbeat({ minIntervalMs: 0 });
     // Throttled heartbeat with minIntervalMs > 0 drops immediate repeat
-    await reporter.reportHeartbeat({ minIntervalMs: 60000 });
+    await reporter!.reportHeartbeat({ minIntervalMs: 60000 });
     // Resumed still works after heartbeats because heartbeat did not overwrite lifecycle state
-    await reporter.reportActivity("resumed");
-    await reporter.reportActivity({ state: "finished" });
+    await reporter!.reportActivity("resumed");
+    await reporter!.reportActivity({ state: "finished" });
 
     assert.equal(received.length, 5);
     assert.deepEqual(received[ 0 ].events[ 0 ], { type: "activity", state: "tool_wait" });
@@ -1260,18 +1275,18 @@ test("AgentEventReporter delivers repeated heartbeat activity events without dro
     assert.deepEqual(received[ 3 ].events[ 0 ], { type: "activity", state: "resumed" });
     assert.deepEqual(received[ 4 ].events[ 0 ], { type: "activity", state: "finished" });
   } finally {
-    await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    await close(server);
   }
 });
 
 test("the Claude bridge delivers repeated heartbeats to the router", async () => {
-  const received = [];
+  const received: any[] = [];
   const server = createServer((request, response) => {
     let body = "";
     request.on("data", (chunk) => { body += chunk; });
     request.on("end", () => { received.push(JSON.parse(body)); response.writeHead(200); response.end("{}"); });
   });
-  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const port = await listen(server);
   const address = server.address();
   assert.ok(address && typeof address !== "string");
   const reporter = resolveAgentEventReporter({
@@ -1280,14 +1295,14 @@ test("the Claude bridge delivers repeated heartbeats to the router", async () =>
     [ SUBAGENT_SPAWN_TOOLS_HEADER ]: "Agent",
   });
   assert.ok(reporter);
-  await reporter.reportActivity({ state: "tool_wait" });
-  await reporter.reportHeartbeat({ minIntervalMs: 0 });
-  await reporter.reportHeartbeat({ minIntervalMs: 0 });
-  await reporter.reportHeartbeat({ minIntervalMs: 60000 });
-  await reporter.reportActivity({ state: "resumed" });
-  await reporter.reportActivity({ state: "finished" });
+  await reporter!.reportActivity({ state: "tool_wait" });
+  await reporter!.reportHeartbeat({ minIntervalMs: 0 });
+  await reporter!.reportHeartbeat({ minIntervalMs: 0 });
+  await reporter!.reportHeartbeat({ minIntervalMs: 60000 });
+  await reporter!.reportActivity({ state: "resumed" });
+  await reporter!.reportActivity({ state: "finished" });
   assert.equal(received.length, 5);
-  await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+  await close(server);
 });
 
 test("the provider bridges wire activity lifecycle telemetry", () => {
@@ -1347,13 +1362,13 @@ test("the Antigravity bridge detects a successful canonical SKILL.md read", asyn
   assert.equal(agySkillReadPath("write_file", { file_path: CANONICAL_SKILL_PATH }), null);
   assert.equal(agyMatchSkillReadPath(OTHER_FILE_PATH), null);
 
-  const events = [];
+  const events: any[] = [];
   const fakeReporter = {
     reportToolRequested: async () => {},
     reportToolExecuted: async () => {},
     reportToolUnavailable: async () => {},
-    reportSkillUsed: async (e) => events.push(e),
-  };
+    reportSkillUsed: async (e: any) => events.push(e),
+  } as unknown as import("../src/telemetry/agent-events.ts").AgentEventReporter;
   const { observeToolStep } = createToolObserver(fakeReporter);
 
   // A successful read reports skill_used, correlated to the tool call id.
@@ -1395,7 +1410,7 @@ test("the Copilot bridge detects a successful canonical SKILL.md read", () => {
   assert.equal(copilotSkillReadPath("write_file", { file_path: CANONICAL_SKILL_PATH }), null);
   assert.equal(copilotMatchSkillReadPath(OTHER_FILE_PATH), null);
 
-  const seenSkills = new Set();
+  const seenSkills = new Set<string>();
   const first = skillReadEvent({ seenSkills, toolName: "read_file", args: { file_path: CANONICAL_SKILL_PATH }, callId: "call_1" });
   assert.deepEqual(first, { type: "skill_used", skill: "ccc", eventId: "skill_read:call_1:ccc" });
   // A second read of the same skill, from a different call id, is deduped.
@@ -1411,8 +1426,8 @@ test("the Copilot bridge detects a successful canonical SKILL.md read", () => {
   assert.deepEqual(copilotToolOutcome({ output: "fail", success: false }), { kind: "executed", status: "error" });
 
   // Wiring: a skill_used event is forwarded to the router with the read source.
-  const events = [];
-  const fakeReporter = { reportSkillUsed: async (e) => events.push(e) };
+  const events: any[] = [];
+  const fakeReporter = { reportSkillUsed: async (e: any) => events.push(e) } as unknown as import("../src/telemetry/agent-events.ts").AgentEventReporter;
   reportToolObservation(fakeReporter, { type: "skill_used", skill: "ccc", eventId: "skill_read:call_1:ccc" });
   assert.deepEqual(events, [ { skill: "ccc", source: "skill_read", eventId: "skill_read:call_1:ccc" } ]);
 
@@ -1428,7 +1443,7 @@ test("the Claude bridge detects a successful canonical SKILL.md read", async () 
   assert.match(source, /seenSkillReads/);
   const previousRoot = process.env.AUTODEV_REPO_ROOT;
   process.env.AUTODEV_REPO_ROOT = REPO_ROOT;
-  const { extractSkillReadPath, matchSkillReadPath } = await import("../src/providers/claude.ts?claude-contract");
+  const { extractSkillReadPath, matchSkillReadPath } = (await import("../src/providers/claude.ts" as string)) as any;
   if (previousRoot === undefined) delete process.env.AUTODEV_REPO_ROOT; else process.env.AUTODEV_REPO_ROOT = previousRoot;
   assert.equal(extractSkillReadPath("Read", { file_path: CANONICAL_SKILL_PATH }), CANONICAL_SKILL_PATH);
   assert.equal(extractSkillReadPath("Read", { AbsolutePath: CANONICAL_SKILL_PATH }), CANONICAL_SKILL_PATH);

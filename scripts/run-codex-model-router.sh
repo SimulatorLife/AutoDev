@@ -58,4 +58,7 @@ if [[ -z "${NODE_BIN:-}" ]]; then
   exit 127
 fi
 
-exec "$NODE_BIN" "$HOME/.codex/hooks/codex-model-router.mjs"
+codex_home="${CODEX_HOME:-$HOME/.codex}"
+server_script="$codex_home/src/router/server.ts"
+[[ -f "$server_script" ]] || server_script="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)/src/router/server.ts"
+exec "$NODE_BIN" "$server_script"

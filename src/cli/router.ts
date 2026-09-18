@@ -2,6 +2,8 @@ import { UnmigratedRuntimeError } from './runtime.ts';
 import { ConfigError } from '../config/toml.ts';
 import type { RouterStatus } from '../router/status.ts';
 
+import { startRouterServer } from '../router/server.ts';
+
 export type RouterCommand = 'run' | 'ensure' | 'status';
 
 export interface RouterCommandBackend {
@@ -10,13 +12,16 @@ export interface RouterCommandBackend {
   status(): RouterStatus;
 }
 
-const unmigratedRouter: RouterCommandBackend = {
-  run: () => { throw new UnmigratedRuntimeError('router run'); },
+const defaultRouterBackend: RouterCommandBackend = {
+  run: () => {
+    startRouterServer();
+    return 0;
+  },
   ensure: () => { throw new UnmigratedRuntimeError('router ensure'); },
   status: () => { throw new UnmigratedRuntimeError('router status'); },
 };
 
-export function dispatchRouterCommand(command: string, backend: RouterCommandBackend = unmigratedRouter): number {
+export function dispatchRouterCommand(command: string, backend: RouterCommandBackend = defaultRouterBackend): number {
   if (command !== 'run' && command !== 'ensure' && command !== 'status') {
     throw new ConfigError(`unsupported router command: ${command || '(missing)'}`);
   }

@@ -46,7 +46,7 @@ function route(provider: string): string {
 }
 
 const texts = trackedRuntimeTexts();
-const router = readFileSync(join(REPO_ROOT, 'scripts/codex-model-router.mjs'), 'utf8');
+const router = readFileSync(join(REPO_ROOT, 'src/router/server.ts'), 'utf8');
 
 for (const [needle, reason] of UNSUPPORTED_SUBSCRIPTION_TRANSPORTS) {
   test(`no runtime file uses ${reason}`, () => {

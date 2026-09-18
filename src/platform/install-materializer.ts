@@ -18,7 +18,7 @@ export const RUNTIME_MODULES = [
   'src/shared/provider-limits.ts', 'src/shared/responses-item-ids.ts', 'src/agents/spawn-tools.ts', 'src/router/state-collector.ts',
   'src/router/routing.ts', 'src/router/cooldown.ts', 'src/router/responses.ts', 'src/router/concurrency.ts', 'src/router/lifecycle.ts',
   'src/router/auth.ts', 'src/router/events.ts', 'src/router/subagents.ts', 'src/router/persistence.ts', 'src/router/usage.ts',
-  'src/router/otel.ts', 'src/router/proxy.ts', 'src/router/http.ts', 'src/agents/bridge-spawn-session.ts', 'src/providers/minimax.ts',
+  'src/router/otel.ts', 'src/router/proxy.ts', 'src/router/http.ts', 'src/router/server.ts', 'src/agents/bridge-spawn-session.ts', 'src/providers/minimax.ts',
   'src/providers/copilot.ts', 'src/providers/antigravity.ts', 'src/providers/claude.ts', 'src/mcp/spawn-shim.ts',
   'src/shared/execution-contract.ts', 'src/router/status.ts', 'src/cli/router-status.ts', 'scripts/codex/execution-contract.json',
   'scripts/codex/prompts/base.md', 'scripts/codex/prompts/leaf.md', 'scripts/codex/prompts/code-search.md', 'scripts/codex/prompts/orchestrator.md',
@@ -30,7 +30,7 @@ export const RUNTIME_MODULES = [
   '.rulesync/skills/orchestration/SKILL.md',
 ] as const;
 export const OTEL_RUNTIME = ['scripts/codex/otel/provision-autodev-otel-collector.sh', 'scripts/codex/otel/ensure-autodev-otel-collector.sh', 'scripts/codex/otel/run-autodev-otel-collector.sh'] as const;
-export const HOOKS = ['codex-model-router.mjs', 'enforce-root-delegation.sh', 'ensure-codex-antigravity-proxy.sh', 'ensure-codex-claude-bridge.sh', 'ensure-codex-copilot-proxy.sh', 'ensure-codex-model-router.sh', 'ensure-codex-minimax-proxy.sh', 'run-codex-antigravity-proxy.sh', 'run-codex-claude-bridge.sh', 'run-codex-copilot-cli-responses-proxy.sh', 'run-codex-model-router.sh'] as const;
+export const HOOKS = ['enforce-root-delegation.sh', 'ensure-codex-antigravity-proxy.sh', 'ensure-codex-claude-bridge.sh', 'ensure-codex-copilot-proxy.sh', 'ensure-codex-model-router.sh', 'ensure-codex-minimax-proxy.sh', 'run-codex-antigravity-proxy.sh', 'run-codex-claude-bridge.sh', 'run-codex-copilot-cli-responses-proxy.sh', 'run-codex-model-router.sh'] as const;
 export const DASHBOARD = ['codex-model-router-dashboard.html'] as const;
 export const MCP_LAUNCHERS = ['run-autodev-mcp.sh'] as const;
 export const PROFILES = ['claude', 'minimax', 'antigravity'] as const;
@@ -43,7 +43,7 @@ export const RULES = ['default.rules'] as const;
 export const LAUNCH_LABELS = ['com.codex.model-router', 'com.codex.claude-bridge', 'com.codex.minimax-proxy', 'com.codex.antigravity-proxy', 'com.codex.copilot-proxy', 'com.codex.otel-collector'] as const;
 export const OBSOLETE_LAUNCH = ['com.codex.antigravity-litellm'] as const;
 export const OBSOLETE_PATHS = ['.config/litellm/antigravity.yaml', '.codex/codex-antigravity-litellm-config.sha256'] as const;
-export const OBSOLETE_HOOKS = ['log-subagent-model.sh', 'run-codex-antigravity-litellm.sh', 'codex-minimax-responses-proxy.mjs', 'codex-copilot-cli-responses-proxy.mjs', 'codex-antigravity-cli-responses-proxy.mjs', 'codex-model-router-status.mjs', 'codex-claude-cli-responses-proxy.py'] as const;
+export const OBSOLETE_HOOKS = ['codex-model-router.mjs', 'log-subagent-model.sh', 'run-codex-antigravity-litellm.sh', 'codex-minimax-responses-proxy.mjs', 'codex-copilot-cli-responses-proxy.mjs', 'codex-antigravity-cli-responses-proxy.mjs', 'codex-model-router-status.mjs', 'codex-claude-cli-responses-proxy.py'] as const;
 export const OBSOLETE_DIRS = ['scripts', 'codex/skills'] as const;
 
 interface MaterializeOptions { repositoryRoot: string; home: string; codexHome: string; otelMode: string; materializeOnly: boolean; codexMcpSource: string; }

@@ -47,17 +47,18 @@ Current `.github/workflows/` owns the scheduler, weighted target/provider select
 
 Current source/runtime paths contain substantial custom infrastructure, including:
 
-- `codex-model-router.mjs`
-- `codex-model-router.test.mjs`
+- `src/router/server.ts` (decomposed from legacy `codex-model-router.mjs` into modular `src/router/*`)
+- `tests/router/model-router.test.ts` (migrated from legacy `codex-model-router.test.mjs`)
 - `src/providers/claude.ts`
 - `src/providers/antigravity.ts`
 - `src/providers/copilot.ts`
 - `src/providers/minimax.ts`
 - `codex-model-router-dashboard.html`
 - `src/cli/router-status.ts`
-- `autodev-metrics.cjs`
+- `src/telemetry/github-metrics.ts` (migrated from legacy `autodev-metrics.cjs`)
+- `tests/metrics.test.ts` (migrated from legacy `tests/metrics.test.mjs`)
 
-This is the main simplification target, but the code is not all generic plumbing
+This is the main simplification target, fully unified under native TypeScript on Node 24+ LTS.
 
 ## AutoDev role/capability contract
 

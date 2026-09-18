@@ -132,13 +132,13 @@ test('AutoDev CI is repository-native and pnpm-native', async () => {
   for (const [key, item] of Object.entries(profiles)) {
     assert.equal(item.pnpmVersion, undefined, `pnpmVersion present in profile ${key}`);
   }
-  assert.deepEqual(profile.commands.map(({ run }) => run), ['pnpm test', 'pnpm run test:python', 'pnpm run typecheck', 'pnpm run test:ts']);
+  assert.deepEqual(profile.commands.map(({ run }) => run), ['pnpm test', 'pnpm run typecheck', 'pnpm run test:ts']);
   const source = await readWorkflow('copilot-setup-steps.yml');
   assert.match(source, /uses: pnpm\/action-setup@v6/);
   assert.match(source, /cache: pnpm/);
   assert.match(source, /pnpm install --frozen-lockfile/);
   assert.match(source, /pnpm test/);
-  assert.match(source, /pnpm run test:python/);
+  assert.doesNotMatch(source, /test:python/);
   assert.doesNotMatch(source, /\bnpm\b/);
   assert.match(source, /node-version-file: \.nvmrc/);
 });

@@ -20,6 +20,8 @@ const approvedLegacyFiles = new Set([
   'scripts/codex/otel/provision-autodev-otel-collector.sh',
   'scripts/codex/otel/run-autodev-otel-collector.sh',
   'scripts/codex/run-autodev-mcp.sh',
+  'scripts/codex/run-ci-provider.sh',
+  'scripts/codex/run-provider-agent.sh',
   'scripts/enforce-root-delegation.sh',
   'scripts/ensure-codex-antigravity-proxy.sh',
   'scripts/ensure-codex-claude-bridge.sh',

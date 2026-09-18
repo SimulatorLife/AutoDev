@@ -108,7 +108,7 @@ function serviceLauncher(options: ServiceRestartOptions, label: ManagedServiceLa
 
 function serviceHook(options: ServiceRestartOptions, label: ManagedServiceLabel): string {
   switch (label) {
-    case 'com.codex.model-router': return join(options.codexHome, 'hooks', 'codex-model-router.mjs');
+    case 'com.codex.model-router': return join(options.codexHome, 'src', 'router', 'server.ts');
     case 'com.codex.claude-bridge': return join(options.codexHome, 'src', 'providers', 'claude.ts');
     case 'com.codex.antigravity-proxy': return join(options.codexHome, 'src', 'providers', 'antigravity.ts');
     case 'com.codex.copilot-proxy': return join(options.codexHome, 'src', 'providers', 'copilot.ts');

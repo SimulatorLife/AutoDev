@@ -165,18 +165,23 @@ test("the installer ships every shared module the bridges import", () => {
   const installer = read("scripts/codex/install-codex-integration.sh");
   const materializer = read("src/platform/install-materializer.ts");
   const sources = [
-    "scripts/codex-model-router.mjs",
+    "src/router/server.ts",
     "src/providers/antigravity.ts",
     "src/providers/minimax.ts",
     "src/providers/copilot.ts",
   ];
   const imported = new Set<string>();
   for (const source of sources) {
-    for (const match of read(source).matchAll(/from "\.\/(codex\/lib\/[a-z-]+\.mjs)"/g)) {
+    for (const match of read(source).matchAll(/from ["']\.\/(codex\/lib\/[a-z-]+\.mjs)["']/g)) {
       imported.add(`scripts/${match[ 1 ]}`);
     }
-    for (const match of read(source).matchAll(/from "\.\.\/src\/([^"]+\.ts)"/g)) {
+    for (const match of read(source).matchAll(/from ["']\.\.\/src\/([^"']+\.ts)["']/g)) {
       imported.add(`src/${match[ 1 ]}`);
+    }
+    if (source === "src/router/server.ts") {
+      for (const match of read(source).matchAll(/from ["']\.\/([^"']+\.ts)["']/g)) {
+        imported.add(`src/router/${match[ 1 ]}`);
+      }
     }
   }
   assert.ok(imported.size >= 3, "expected the bridges to share several modules");
