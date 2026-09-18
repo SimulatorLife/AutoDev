@@ -30,6 +30,7 @@ const EXPECTED_SECTIONS = Object.freeze([
   "tools",
   "skills",
   "shell_environment_policy",
+  "plugins",
 ]);
 const EXPECTED_MODEL_PROVIDERS = Object.freeze([
   "claude_code_subscription",
@@ -102,7 +103,7 @@ test("portable scalars are byte-for-byte pinned", async () => {
   }
 });
 
-test("seven required sections are present and shaped", async () => {
+test("eight required sections are present and shaped", async () => {
   const fixture = await readFixture();
   const portable = loadPortable(PORTABLE_PATH);
 
@@ -121,7 +122,7 @@ test("seven required sections are present and shaped", async () => {
     );
   }
 
-  // Exactly seven top-level sections are pinned by the contract; any new
+  // Exactly eight top-level sections are pinned by the contract; any new
   // section on the source must either be added to the fixture or surface
   // here as drift.
   const sourceTopLevelSections = new Set(EXPECTED_SECTIONS);

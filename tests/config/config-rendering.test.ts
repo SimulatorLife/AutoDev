@@ -19,12 +19,30 @@ test('TOML serialization is parseable and ends with one newline', () => {
 
 test('composition preserves local state while AutoDev-owned keys win', () => {
   const result = compose(
-    { owner: 'autodev', hooks: { generated: true }, mcp_servers: { lsp: { command: 'lsp' } } },
-    { owner: 'local', hooks: { state: { disabled: true }, stale: true }, notify: 'desktop', mcp_servers: { custom: { command: 'custom' } } },
+    {
+      owner: 'autodev',
+      hooks: { generated: true },
+      mcp_servers: { lsp: { command: 'lsp' } },
+      plugins: { 'codex-app-tools@openai-bundled': { enabled: false } },
+    },
+    {
+      owner: 'local',
+      hooks: { state: { disabled: true }, stale: true },
+      notify: 'desktop',
+      mcp_servers: { custom: { command: 'custom' } },
+      plugins: {
+        'codex-app-tools@openai-bundled': { enabled: true },
+        'github@openai-curated': { enabled: true },
+      },
+    },
   );
   assert.equal(result.owner, 'autodev');
   assert.deepEqual(result.hooks, { state: { disabled: true } });
   assert.deepEqual(result.mcp_servers, { lsp: { command: 'lsp' }, custom: { command: 'custom' } });
+  assert.deepEqual(result.plugins, {
+    'codex-app-tools@openai-bundled': { enabled: false },
+    'github@openai-curated': { enabled: true },
+  });
   assert.equal(result.notify, 'desktop');
 });
 

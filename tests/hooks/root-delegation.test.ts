@@ -45,9 +45,18 @@ test('root delegation injects the typed policy and canonical sources for a paren
   assert.match(context, /parent-test-1/);
 });
 
-test('root delegation does not duplicate policy for the orchestrator alias or leaf models', () => {
-  assert.equal(runHook('autodev/orchestrator'), '');
+test('root delegation injects the typed policy for autodev/orchestrator alias', () => {
+  const output = JSON.parse(runHook('autodev/orchestrator', 'orchestrator-test-1')) as HookOutput;
+  const context = output.hookSpecificOutput?.additionalContext ?? '';
+  assert.match(context, /# Root orchestrator bootstrap/);
+  assert.match(context, /## Canonical orchestration skill/);
+  assert.match(context, /## Shared codebase navigation/);
+  assert.match(context, /orchestrator-test-1/);
+});
+
+test('root delegation suppresses policy for leaf models', () => {
   assert.equal(runHook('autodev/explorer'), '');
+  assert.equal(runHook('autodev/worker'), '');
   assert.equal(runHook('sonnet'), '');
 });
 

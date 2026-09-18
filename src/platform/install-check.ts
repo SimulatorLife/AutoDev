@@ -86,6 +86,7 @@ export function runInstallCheck(overrides: InstallCheckOptions = {}): number {
     for (const name of PROFILES) check(`profile ${name}`, runtimeLinkMatches(join(repositoryRoot, `config/profiles/${name}.config.toml`), join(codexHome, `${name}.config.toml`)), failures);
     for (const name of CATALOGS) check(`catalog ${name}`, runtimeLinkMatches(join(repositoryRoot, `config/catalogs/${name}-model-catalog.json`), join(codexHome, `${name}-model-catalog.json`)), failures);
     check('model routing', runtimeLinkMatches(join(repositoryRoot, 'config/model-routing.json'), join(codexHome, 'codex-model-routing.json')), failures);
+    check('Codex hooks.json', runtimeLinkMatches(join(repositoryRoot, '.codex/hooks.json'), join(codexHome, 'hooks.json')), failures);
     const portable = readFileSync(join(repositoryRoot, 'config/config.autodev.toml'), 'utf8');
     for (const provider of ['local_model_router', 'claude_code_subscription', 'minimax', 'antigravity_cli']) check(`provider config ${provider}`, portable.includes(`[model_providers.${provider}]`), failures);
     check('provider auth boundary', portable.includes('requires_openai_auth = false'), failures);

@@ -13,7 +13,7 @@ export const REQUIRED_MCP_PERMISSIONS = [
   'unsandboxed(pnpm test)', "unsandboxed(python3 -m unittest discover -s tests -p 'test_*.py')",
 ] as const;
 export const DISABLED_MCP_PERMISSIONS = ['mcp(playwright)', 'mcp(playwright/*)'] as const;
-export const MANAGED_CODE_SKILLS = ['ccc', 'lsp-mcp-server'] as const;
+export const MANAGED_CODE_SKILLS = ['ccc', 'lsp-mcp-server', 'orchestration'] as const;
 
 type JsonMap = { [key: string]: JsonValue };
 function asObject(value: JsonValue | undefined): JsonMap {

@@ -413,7 +413,14 @@ export function subagentRoleFromInput(block: JsonRecord): string | null {
 function textFromContent(content: unknown): string {
   if (typeof content === "string") return content;
   if (!Array.isArray(content)) return "";
-  return (content as JsonRecord[]).map((block) => typeof block === "object" && block && (block as JsonRecord).type === "text" ? String((block as JsonRecord).text ?? "") : "").join("");
+  return (content as JsonRecord[]).map((block) => {
+    if (typeof block === "string") return block;
+    if (typeof block === "object" && block) {
+      const text = (block as JsonRecord).text;
+      if (typeof text === "string") return text;
+    }
+    return "";
+  }).join("");
 }
 
 function nestedText(event: JsonRecord): string {

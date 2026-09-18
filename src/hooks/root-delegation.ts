@@ -48,7 +48,7 @@ export async function runRootDelegation(raw = readFileSync(0, 'utf8')): Promise<
   const input = parseInput(raw);
   logInput(input);
   const model = typeof input.model === 'string' ? input.model : '';
-  if (model === 'autodev/orchestrator' || /^(autodev\/|MiniMax-|sonnet$|opus$|haiku$|claude-|gemini-|copilot)/.test(model)) return 0;
+  if (model !== 'autodev/orchestrator' && /^(autodev\/|MiniMax-|sonnet$|opus$|haiku$|claude-|gemini-|copilot)/.test(model)) return 0;
 
   const root = runtimeSourceRoot();
   const promptFile = join(root, 'agents', 'prompts', 'orchestrator.md');

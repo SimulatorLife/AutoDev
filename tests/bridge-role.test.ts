@@ -13,6 +13,7 @@ import {
 import { EXECUTION_CONTRACT, roleContract } from "../src/shared/execution-contract.ts";
 import { promptFromInput } from "../src/providers/antigravity.ts";
 import { inputText } from "../src/providers/copilot.ts";
+import { promptFromInput as claudePromptFromInput } from "../src/providers/claude.ts";
 
 const read = (path: string): string => readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
 
@@ -66,7 +67,19 @@ test("provider adapters put the complete shared prompt in the actual CLI prompt"
   assert.equal(promptFromInput("leaf task", leaf), `${leaf}\n\nleaf task`);
   assert.equal(inputText("root task", orchestrator), `${orchestrator}\n\nDelegated task:\nroot task`);
   assert.match(promptFromInput([{ role: "system", content: "ignored" }, { role: "user", content: "structured task" }], composeProviderPrompt("explorer", "/tmp/workspace")), /structured task$/);
+  assert.match(claudePromptFromInput([{ role: "developer", content: "ignored" }, { role: "user", content: [{ type: "input_text", text: "structured task" }] }], composeProviderPrompt("explorer", "/tmp/workspace")), /structured task$/);
   assert.match(inputText([{ role: "developer", content: "ignored" }, { role: "user", content: "structured task" }], composeProviderPrompt(ORCHESTRATOR_AGENT_ROLE, "/tmp/workspace")), /Delegated task:\nstructured task$/);
+});
+
+test("Claude prompt extraction accepts input_text and text parts without losing task text", () => {
+  assert.equal(
+    claudePromptFromInput([{ role: "user", content: [{ type: "input_text", text: "review the changes" }] }]),
+    "Delegated task:\nreview the changes",
+  );
+  assert.equal(
+    claudePromptFromInput([{ role: "user", content: [{ type: "text", text: "run the validator" }] }]),
+    "Delegated task:\nrun the validator",
+  );
 });
 
 test("the orchestrator is never handed the leaf prompt, and the leaf is never handed the orchestrator prompt", () => {

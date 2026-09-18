@@ -39,7 +39,8 @@
     "features",
     "tools",
     "skills",
-    "shell_environment_policy"
+    "shell_environment_policy",
+    "plugins"
   ],
   "sectionShapes": {
     "sandbox_workspace_write": {
@@ -113,6 +114,11 @@
       "filters": {
         "PATH": "include",
         "HOME": "include"
+      }
+    },
+    "plugins": {
+      "codex-app-tools@openai-bundled": {
+        "enabled": false
       }
     }
   },

@@ -46,6 +46,7 @@ export function compose(portable: TomlTable, existing: TomlTable): TomlTable {
     if (key === "mcp_servers") { result[key] = mergeServers(table(value), table(old)); continue; }
     if (key === "skills") { result[key] = mergeTable(table(value), table(old)); continue; }
     if (key === "shell_environment_policy") { result[key] = mergeTable(table(value), table(old)); continue; }
+    if (key === "plugins") { result[key] = mergeTable(table(value), table(old)); continue; }
     result[key] = value;
   }
   for (const [key, value] of Object.entries(existing)) {

@@ -57,7 +57,7 @@ test('skill update replaces managed and obsolete entries while preserving unrela
   ] }));
   updateAntigravitySkills(path, expected, [obsolete]);
   const config = JSON.parse(readFileSync(path, 'utf8')) as { entries: { path: string; include_only: string[] }[] };
-  assert.deepEqual(config.entries, [unrelated, { path: expected, include_only: ['ccc', 'lsp-mcp-server'] }]);
+  assert.deepEqual(config.entries, [unrelated, { path: expected, include_only: ['ccc', 'lsp-mcp-server', 'orchestration'] }]);
   assert.deepEqual(antigravitySkillsStatus(path, expected, [obsolete]), { missing: false, stale: [] });
 }));
 

@@ -103,6 +103,7 @@ export function materializeInstallation(options: MaterializeOptions): void {
   runCompose(source('config/config.autodev.toml'), options.codexMcpSource, join(options.codexHome, 'config.toml'), join(options.codexHome, 'config.toml'), false, options.otelMode);
   if (isSymlink(join(options.codexHome, 'config.toml'))) throw new Error(`refusing-symlinked-user-config ${join(options.codexHome, 'config.toml')}`);
   linkRuntimeSource(source('config/model-routing.json'), join(options.codexHome, 'codex-model-routing.json'));
+  linkRuntimeSource(source('.codex/hooks.json'), join(options.codexHome, 'hooks.json'));
   const targets = ([['claude', 'claudecode'], ['copilot', 'copilotcli'], ['agy', 'antigravity-cli']] as const).filter(([command]) => commandAvailable(command)).map(([, targetName]) => targetName).join(',');
   if (targets) rulesync(options, ['generate', '--global', '--input-roots', join(options.repositoryRoot, '.rulesync'), '--targets', targets, '--features', 'mcp', '--silent']);
   if (!options.materializeOnly && commandAvailable('agy') && process.env.AUTODEV_SKIP_AGY_MCP !== '1') {

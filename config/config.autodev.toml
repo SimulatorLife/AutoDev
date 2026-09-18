@@ -150,3 +150,6 @@ NODE_OPTIONS = "--disable-warning=ExperimentalWarning"
 [shell_environment_policy.filters]
 "PATH" = "include"
 "HOME" = "include"
+
+[plugins."codex-app-tools@openai-bundled"]
+enabled = false
