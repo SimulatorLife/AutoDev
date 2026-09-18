@@ -3,7 +3,7 @@ import { accessSync, constants as fsConstants, existsSync, readFileSync, readdir
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { parseTomlFile, type TomlTable, type TomlValue } from '../config/toml.ts';
+import { parseTomlFile, type TomlValue } from '../config/toml.ts';
 import { createDefaultRouterEnsureDeps, resolveRouterEnsureOptions, runRouterEnsure } from '../platform/router-ensure.ts';
 
 const repositoryRoot = resolve(fileURLToPath(new URL('../../', import.meta.url)));
@@ -26,6 +26,11 @@ export interface RoleExecutionSettings {
   readonly reasoningEffort: string;
   readonly reasoningSummary: string;
   readonly sandboxMode: string;
+}
+
+export interface ProviderAgentDeps {
+  readonly ensureRouter?: (environment: NodeJS.ProcessEnv) => Promise<void>;
+  readonly runCodex?: (binary: string, args: string[], environment: NodeJS.ProcessEnv, checkOnly: boolean) => number;
 }
 
 function usage(): string {
@@ -174,12 +179,26 @@ export function buildProviderPrompt(prompt: string, settings: RoleExecutionSetti
   return `Provider-neutral role instructions:\n${settings.developerInstructions}\n\nBounded task:\n${prompt}`;
 }
 
-export async function runProviderAgent(argv: readonly string[] = process.argv.slice(2), env: NodeJS.ProcessEnv = process.env): Promise<number> {
+function runCodex(binary: string, args: string[], environment: NodeJS.ProcessEnv, checkOnly: boolean): number {
+  if (checkOnly) return spawnSync(binary, args, { stdio: 'ignore', env: environment }).status ?? 1;
+  return spawnSync(binary, args, { stdio: ['ignore', 'inherit', 'inherit'], env: environment }).status ?? 1;
+}
+
+export async function runProviderAgent(
+  argv: readonly string[] = process.argv.slice(2),
+  env: NodeJS.ProcessEnv = process.env,
+  deps: ProviderAgentDeps = {},
+): Promise<number> {
+  if (argv.some((argument) => argument === '--help' || argument === '-h')) {
+    process.stdout.write(`${usage()}\n`);
+    return 0;
+  }
   const options = parseProviderAgentArgs(argv, env);
-  await ensureRouter(env);
+  await (deps.ensureRouter ?? ensureRouter)(env);
+  const execute = deps.runCodex ?? runCodex;
   if (options.checkOnly) {
-    const result = spawnSync(options.codexBinary, ['--strict-config', '-C', options.repositoryRoot, 'exec', '--model', `autodev/${options.role}`, '--help'], { stdio: 'ignore', env });
-    if (result.status !== 0) throw new Error(`Codex role validation failed for ${options.role}`);
+    const result = execute(options.codexBinary, ['--strict-config', '-C', options.repositoryRoot, 'exec', '--model', `autodev/${options.role}`, '--help'], env, true);
+    if (result !== 0) throw new Error(`Codex role validation failed for ${options.role}`);
     process.stdout.write(`role=${options.role} model=autodev/${options.role} router=http://127.0.0.1:4100/v1 status=ready\n`);
     return 0;
   }
@@ -191,8 +210,7 @@ export async function runProviderAgent(argv: readonly string[] = process.argv.sl
   if (settings.reasoningSummary) args.push('-c', `model_reasoning_summary=${settings.reasoningSummary}`);
   if (settings.sandboxMode) args.push('-c', `sandbox_mode=${settings.sandboxMode}`);
   args.push('exec', '--model', `autodev/${options.role}`, '--ephemeral', '--json', '--skip-git-repo-check', buildProviderPrompt(options.prompt, settings));
-  const result = spawnSync(options.codexBinary, args, { stdio: ['ignore', 'inherit', 'inherit'], env: environment });
-  return result.status ?? 1;
+  return execute(options.codexBinary, args, environment, false);
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
