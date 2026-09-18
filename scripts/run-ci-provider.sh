@@ -55,8 +55,8 @@ case "$provider" in
     unset OPENAI_API_KEY OPENAI_BASE_URL
     export CODEX_HOME="$runner_temp/codex-home"
     mkdir -p "$CODEX_HOME"
-    cp "$AUTODEV_ROOT/scripts/codex/profiles/minimax.config.toml" "$CODEX_HOME/minimax.config.toml"
-    cp "$AUTODEV_ROOT/scripts/codex/catalogs/minimax-model-catalog.json" "$CODEX_HOME/minimax-model-catalog.json"
+    cp "$AUTODEV_ROOT/config/profiles/minimax.config.toml" "$CODEX_HOME/minimax.config.toml"
+    cp "$AUTODEV_ROOT/config/catalogs/minimax-model-catalog.json" "$CODEX_HOME/minimax-model-catalog.json"
     # The profile's provider base_url is the adapter's fixed loopback port. Never
     # adopt a process already answering there (a leftover from an earlier retry,
     # or anything else): only the adapter this run starts may carry the traffic.

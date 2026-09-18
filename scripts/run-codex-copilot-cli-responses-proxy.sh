@@ -18,7 +18,7 @@ node_bin="$(resolve_node)" || { echo "run-codex-copilot-proxy: node not found" >
 proxy_script="$codex_home/src/providers/copilot.ts"
 if [[ ! -f "$proxy_script" ]]; then
   echo "Copilot proxy source is missing: $proxy_script" >&2
-  echo "Run scripts/codex/install-codex-integration.sh to deploy it." >&2
+  echo "Run install.sh to deploy it." >&2
   exit 1
 fi
 exec env COPILOT_PROXY_HOST="${CODEX_COPILOT_PROXY_HOST:-127.0.0.1}" COPILOT_PROXY_PORT="${CODEX_COPILOT_PROXY_PORT:-4003}" \

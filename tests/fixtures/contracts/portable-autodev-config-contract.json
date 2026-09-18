@@ -1,7 +1,7 @@
 {
   "schema": "autodev-portable-autodev-config-v1",
-  "description": "Deterministic portable-source contract for scripts/codex/config.autodev.toml. Rulesync owns hook declarations and generated hook files; this fixture pins AutoDev's portable scalars, provider entries, required sections, explicit absence of hooks and mcp_servers, and the skills.config name set. src/config/compose-user-config.ts removes legacy hook event arrays while preserving machine-local hooks.state trusted hashes.",
-  "source": "scripts/codex/config.autodev.toml",
+  "description": "Deterministic portable-source contract for config/config.autodev.toml. Rulesync owns hook declarations and generated hook files; this fixture pins AutoDev's portable scalars, provider entries, required sections, explicit absence of hooks and mcp_servers, and the skills.config name set. src/config/compose-user-config.ts removes legacy hook event arrays while preserving machine-local hooks.state trusted hashes.",
+  "source": "config/config.autodev.toml",
   "portableScalars": [
     "approval_policy",
     "approvals_reviewer",

@@ -9,11 +9,7 @@ import { roleContract } from "../shared/execution-contract.ts";
 export const AGENT_ROLE_HEADER = "x-autodev-agent-role";
 export const ORCHESTRATOR_AGENT_ROLE = "orchestrator";
 
-const promptRootCandidates = [
-  new URL("../../scripts/codex/prompts/", import.meta.url),
-  new URL("../../hooks/codex/prompts/", import.meta.url),
-];
-const promptRoot = promptRootCandidates.find((url) => existsSync(fileURLToPath(url))) ?? promptRootCandidates[0]!;
+const promptRoot = new URL("../../agents/prompts/", import.meta.url);
 const PROMPTS = Object.freeze({
   base: new URL("base.md", promptRoot),
   leaf: new URL("leaf.md", promptRoot),

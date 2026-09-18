@@ -128,7 +128,7 @@ test -f '${ready}' && printf 404 || printf 000
 });
 
 test('Collector LaunchAgent stays foreground, keep-alive, and private', () => {
-  const plist = readFileSync(join(repositoryRoot, 'scripts/codex/launchagents/com.codex.otel-collector.plist'), 'utf8');
+  const plist = readFileSync(join(repositoryRoot, 'config/launchagents/com.codex.otel-collector.plist'), 'utf8');
   assert.match(plist, /<key>Label<\/key>\s*<string>com\.codex\.otel-collector<\/string>/);
   assert.match(plist, /<key>KeepAlive<\/key>\s*<true\/>/);
   assert.match(plist, /<string>\/bin\/bash<\/string>/);

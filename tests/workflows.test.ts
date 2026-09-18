@@ -204,7 +204,7 @@ test('target auto-merge requires completed target check evidence', async () => {
 
 test('MiniMax invocation configures headless OpenAI-compatible authentication', async () => {
   const source = await readWorkflow('minimax-invoke.yml');
-  const runner = await readFile(path.join(root, 'scripts', 'codex', 'run-ci-provider.sh'), 'utf8');
+  const runner = await readFile(path.join(root, 'scripts', 'run-ci-provider.sh'), 'utf8');
   assert.match(source, /agent: mini-max/);
   assert.match(runner, /mini-max\)/);
   assert.match(runner, /--auth-type openai/);
@@ -238,7 +238,7 @@ test('local provider tooling resolves the playwright MCP from a pinned devDepend
   assert.equal(manifest.devDependencies['@playwright/mcp'], '^0.0.80');
 
   for (const role of ['browser-tester', 'smart']) {
-    const roleSource = await readFile(path.join(root, 'scripts', 'codex', 'agents', `${role}.toml`), 'utf8');
+    const roleSource = await readFile(path.join(root, 'agents', 'roles', `${role}.toml`), 'utf8');
     const roleSettings = roleSource.slice(roleSource.indexOf('[mcp_servers.playwright]')).split('\n\n')[0] ?? '';
     assert.match(roleSettings, /enabled = true/, role);
     assert.match(roleSettings, /default_tools_approval_mode = "approve"/, role);
@@ -262,12 +262,12 @@ test('the user-level MCP servers are self-sufficient, so no repository needs to 
 });
 
 test('root website research uses native search while Playwright stays role-scoped', async () => {
-  const config = await readFile(path.join(root, 'scripts', 'codex', 'config.autodev.toml'), 'utf8');
+  const config = await readFile(path.join(root, 'config', 'config.autodev.toml'), 'utf8');
   assert.match(config, /\[tools\][\s\S]*web_search = true/);
   const mcp = JSON.parse(await readFile(path.join(root, '.rulesync', 'mcp.jsonc'), 'utf8'));
   assert.equal(Boolean(mcp.codexcli.mcpServers.playwright.disabled), true);
   for (const role of ['docs-researcher', 'smart', 'orchestrator']) {
-    const source = await readFile(path.join(root, 'scripts', 'codex', 'agents', `${role}.toml`), 'utf8');
+    const source = await readFile(path.join(root, 'agents', 'roles', `${role}.toml`), 'utf8');
     assert.match(source, /web_search = true/, role);
   }
 });
@@ -296,7 +296,7 @@ test('provider bridges explicitly expose code MCP capabilities', async () => {
   const antigravity = await readFile(path.join(root, 'src', 'providers', 'antigravity.ts'), 'utf8');
   assert.match(antigravity, /search_web/);
   assert.match(antigravity, /read_url_content/);
-  const installer = await readFile(path.join(root, 'scripts', 'codex', 'install-codex-integration.sh'), 'utf8');
+  const installer = await readFile(path.join(root, 'install.sh'), 'utf8');
   const settings = await readFile(path.join(root, 'src', 'platform', 'antigravity-settings.ts'), 'utf8');
   assert.match(settings, /read_url\(\*\)/);
   const materializer = await readFile(path.join(root, 'src', 'platform', 'install-materializer.ts'), 'utf8');
@@ -314,7 +314,7 @@ test('provider CLI versions are pinned in one AutoDev manifest', async () => {
   const invoke = await readWorkflow('agent-invoke.yml');
   assert.match(invoke, /run-ci-provider\.sh/);
   assert.match(invoke, /AUTODEV_\$\{key\}_PACKAGE/);
-  const runner = await readFile(path.join(root, 'scripts', 'codex', 'run-ci-provider.sh'), 'utf8');
+  const runner = await readFile(path.join(root, 'scripts', 'run-ci-provider.sh'), 'utf8');
   assert.match(runner, /require_pinned_package/);
   for (const name of ['claude-invoke.yml', 'gemini-invoke.yml', 'minimax-invoke.yml', 'qwen-invoke.yml', 'minimax-codex-invoke.yml']) {
     const source = await readWorkflow(name);
@@ -386,20 +386,20 @@ test('MiniMax Codex CI runs through the tracked boundary adapter, never straight
   assert.doesNotMatch(invoke, /api\.minimax\.io/);
   const agentInvoke = await readWorkflow('agent-invoke.yml');
   assert.match(agentInvoke, /AUTODEV_ROOT: \$\{\{ github\.workspace \}\}\/\.autodev/);
-  const runner = await readFile(path.join(root, 'scripts', 'codex', 'run-ci-provider.sh'), 'utf8');
+  const runner = await readFile(path.join(root, 'scripts', 'run-ci-provider.sh'), 'utf8');
   // Assert against commands, not prose: the comments explain why MiniMax is never called directly.
   const branchSource = (runner.split('  mini-max-codex)', 2)[1] ?? '').split(';;', 1)[0] ?? '';
   const branch = branchSource.split('\n').filter((line) => !line.trimStart().startsWith('#')).join('\n');
   assert.match(branch, /export CODEX_HOME="\$runner_temp\/codex-home"/);
-  assert.match(branch, /scripts\/codex\/profiles\/minimax\.config\.toml" "\$CODEX_HOME\/minimax\.config\.toml"/);
-  assert.match(branch, /scripts\/codex\/catalogs\/minimax-model-catalog\.json" "\$CODEX_HOME\/minimax-model-catalog\.json"/);
+  assert.match(branch, /config\/profiles\/minimax\.config\.toml" "\$CODEX_HOME\/minimax\.config\.toml"/);
+  assert.match(branch, /config\/catalogs\/minimax-model-catalog\.json" "\$CODEX_HOME\/minimax-model-catalog\.json"/);
   assert.match(branch, /node "\$AUTODEV_ROOT\/src\/providers\/minimax\.ts"/);
   assert.match(branch, /MINIMAX_PROXY_HOST=127\.0\.0\.1 MINIMAX_PROXY_PORT=18765/);
   assert.match(branch, /\/health/);
   assert.match(branch, /export MINIMAX_API_KEY=/);
   assert.match(branch, /exec --profile=minimax --json -/);
   assert.doesNotMatch(branch, /api\.minimax\.io/);
-  const profile = await readFile(path.join(root, 'scripts', 'codex', 'profiles', 'minimax.config.toml'), 'utf8');
+  const profile = await readFile(path.join(root, 'config', 'profiles', 'minimax.config.toml'), 'utf8');
   assert.match(profile, /base_url = "http:\/\/127\.0\.0\.1:18765\/v1"/);
   assert.match(profile, /model_catalog_json = "\.\/minimax-model-catalog\.json"/);
 });
@@ -449,7 +449,7 @@ test('the CI git credential helper answers from the environment without persisti
 });
 
 test('the canonical CI provider entrypoint is valid bash', () => {
-  const script = path.join(root, 'scripts', 'codex', 'run-ci-provider.sh');
+  const script = path.join(root, 'scripts', 'run-ci-provider.sh');
   const result = spawnSync('bash', ['-n', script], { encoding: 'utf8' });
   assert.equal(result.status, 0, result.stderr);
 });

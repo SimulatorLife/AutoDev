@@ -102,7 +102,7 @@ function serviceLauncher(options: ServiceRestartOptions, label: ManagedServiceLa
     case 'com.codex.antigravity-proxy': return join(hooks, 'run-codex-antigravity-proxy.sh');
     case 'com.codex.copilot-proxy': return join(hooks, 'run-codex-copilot-cli-responses-proxy.sh');
     case 'com.codex.minimax-proxy': return join(hooks, 'ensure-codex-minimax-proxy.sh');
-    case 'com.codex.otel-collector': return join(hooks, 'codex', 'otel', 'run-autodev-otel-collector.sh');
+    case 'com.codex.otel-collector': return join(hooks, 'otel', 'run-autodev-otel-collector.sh');
   }
 }
 
@@ -158,7 +158,7 @@ async function runDirectEnsures(options: ServiceRestartOptions, deps: ServiceRes
   const run = (script: string, input?: string, env?: NodeJS.ProcessEnv): number => deps.run('/bin/bash', [script], input, env);
   if (run(join(options.repositoryRoot, 'scripts', 'ensure-codex-model-router.sh')) !== 0) return 1;
   if (options.otelMode === 'collector') {
-    const collector = join(options.codexHome, 'hooks', 'codex', 'otel', 'ensure-autodev-otel-collector.sh');
+    const collector = join(options.codexHome, 'hooks', 'otel', 'ensure-autodev-otel-collector.sh');
     if (run(collector, undefined, { AUTODEV_OTEL_REPO_ROOT: options.repositoryRoot, AUTODEV_OTEL_CONFIG: join(options.repositoryRoot, 'config', 'otel', 'collector.yaml'), AUTODEV_OTEL_VERSION_FILE: join(options.repositoryRoot, 'config', 'otel', 'collector.version') }) !== 0) return 1;
   }
   for (const [model, script] of [

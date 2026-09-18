@@ -199,7 +199,7 @@ test("the router calls the Antigravity adapter directly, with no LiteLLM hop", a
 });
 
 test("loads editable provider and role models from JSON routing config", async () => {
-  const config = JSON.parse(await readFile(new URL("../../scripts/codex/model-routing.json", import.meta.url), "utf8"));
+  const config = JSON.parse(await readFile(new URL("../../config/model-routing.json", import.meta.url), "utf8"));
   assert.equal(config.providers.claude.models.smart, "claude-opus-5");
   assert.equal(config.providers.codex.models.smart, "gpt-5.6-sol");
   assert.equal(config.providers.minimax.models.smart, undefined);
@@ -219,7 +219,7 @@ test("loads editable provider and role models from JSON routing config", async (
 });
 
 test("provider capabilities expose only providers with a real delegation path", async () => {
-  const config = JSON.parse(await readFile(new URL("../../scripts/codex/model-routing.json", import.meta.url), "utf8"));
+  const config = JSON.parse(await readFile(new URL("../../config/model-routing.json", import.meta.url), "utf8"));
   for (const provider of Object.keys(config.providers)) {
     assert.equal(config.providers[provider].capabilities, undefined, `${provider} must not declare capabilities in routing config`);
   }
@@ -5233,7 +5233,7 @@ test("a payload whose ids already conform is forwarded unchanged", () => {
 });
 
 test("every provider normalises item ids", () => {
-  for (const provider of Object.keys(JSON.parse(readFileSync(new URL("../../scripts/codex/model-routing.json", import.meta.url), "utf8")).providers)) {
+  for (const provider of Object.keys(JSON.parse(readFileSync(new URL("../../config/model-routing.json", import.meta.url), "utf8")).providers)) {
     assert.equal(providerCapabilities(provider).normalizeItemIds, true, provider);
   }
 });
@@ -5384,7 +5384,7 @@ test("contract rendering fails when a research role is missing webResearch or ha
   try {
     const rolesDir = join(directory, "agents");
     await mkdir(rolesDir, { recursive: true });
-    const srcDir = new URL("../../scripts/codex/agents", import.meta.url).pathname;
+    const srcDir = new URL("../../agents/roles", import.meta.url).pathname;
     const { readdirSync, copyFileSync } = await import("node:fs");
     for (const file of readdirSync(srcDir)) {
       if (file.endsWith(".toml")) {
@@ -5401,8 +5401,8 @@ transport = "streamable_http"
 `);
 
     const renderer = new URL("../../src/config/render-execution-contract.ts", import.meta.url).pathname;
-    const rootConfig = new URL("../../scripts/codex/config.autodev.toml", import.meta.url).pathname;
-    const contractPath = new URL("../../scripts/codex/execution-contract.json", import.meta.url).pathname;
+    const rootConfig = new URL("../../config/config.autodev.toml", import.meta.url).pathname;
+    const contractPath = new URL("../../config/execution-contract.json", import.meta.url).pathname;
     const outputPath = join(directory, "output.json");
 
     const child = spawn(process.execPath, [

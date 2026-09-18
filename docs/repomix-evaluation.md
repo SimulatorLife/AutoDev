@@ -33,7 +33,7 @@ AutoDev's shared code-search guidance already distinguishes semantic discovery f
 
 Sources:
 
-- [`scripts/codex/prompts/code-search.md`](../scripts/codex/prompts/code-search.md)
+- [`agents/prompts/code-search.md`](../agents/prompts/code-search.md)
 - [`.rulesync/skills/ccc/SKILL.md`](../.rulesync/skills/ccc/SKILL.md)
 - [`.rulesync/skills/lsp-mcp-server/SKILL.md`](../.rulesync/skills/lsp-mcp-server/SKILL.md)
 
@@ -80,7 +80,7 @@ Repomix grep is lexical search over a captured artifact, not semantic code searc
 
 ## MCP integration
 
-AutoDev already centralizes MCP process startup in [`scripts/codex/run-autodev-mcp.sh`](../scripts/codex/run-autodev-mcp.sh), resolving pinned AutoDev dependencies while preserving the active target repository as the MCP process working directory
+AutoDev already centralizes MCP process startup in [`scripts/run-autodev-mcp.sh`](../scripts/run-autodev-mcp.sh), resolving pinned AutoDev dependencies while preserving the active target repository as the MCP process working directory
 
 Repomix fits that model directly:
 

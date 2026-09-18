@@ -70,7 +70,7 @@ The editable Codex role TOMLs currently encode more than prompts:
 - Role-specific skill enablement
 - Provider-independent capability intent
 
-Example: [`scripts/codex/agents/explorer.toml`](https://github.com/SimulatorLife/AutoDev/blob/main/scripts/codex/agents/explorer.toml)
+Example: [`agents/roles/explorer.toml`](https://github.com/SimulatorLife/AutoDev/blob/main/agents/roles/explorer.toml)
 
 `src/config/render-agent-configs.ts` composes the base, leaf, code-search, and role prompts because native Codex role TOML has no prompt-file include primitive, and it validates concrete MCP transport shapes and provider-specific reasoning constraints
 
@@ -86,7 +86,7 @@ Source: [`src/config/render-execution-contract.ts`](https://github.com/Simulator
 
 `run-autodev-mcp.sh` deliberately resolves LSP and Playwright from AutoDev's pinned dependency tree while preserving the active workspace as process CWD, and resolves CocoIndex outside the model-shell permission boundary
 
-Source: [`scripts/codex/run-autodev-mcp.sh`](https://github.com/SimulatorLife/AutoDev/blob/main/scripts/codex/run-autodev-mcp.sh)
+Source: [`scripts/run-autodev-mcp.sh`](https://github.com/SimulatorLife/AutoDev/blob/main/scripts/run-autodev-mcp.sh)
 
 **Conclusion:** Rulesync can emit MCP configuration, but it does not replace this runtime launcher or AutoDev's dependency/security behavior
 
@@ -101,7 +101,7 @@ Source: [`scripts/codex/run-autodev-mcp.sh`](https://github.com/SimulatorLife/Au
 - Provider/model mapping
 - Provider-specific reasoning effort
 
-Source: [`scripts/codex/model-routing.json`](https://github.com/SimulatorLife/AutoDev/blob/main/scripts/codex/model-routing.json)
+Source: [`config/model-routing.json`](https://github.com/SimulatorLife/AutoDev/blob/main/config/model-routing.json)
 
 The router additionally implements behavior that is more specialized than ordinary failover:
 
@@ -122,7 +122,7 @@ Source: [`docs/provider-routing.md`](https://github.com/SimulatorLife/AutoDev/bl
 
 ## Current Codex model-provider shape
 
-`scripts/codex/config.autodev.toml` already exposes the external routes through Codex's `[model_providers.*]` mechanism. MiniMax is already represented as `[model_providers.minimax]` and uses `MINIMAX_API_KEY`, but its current `base_url` still points at the bespoke local MiniMax Responses proxy. Claude and Antigravity are likewise represented as Codex model providers, but those entries currently point at CLI-backed local bridges
+`config/config.autodev.toml` already exposes the external routes through Codex's `[model_providers.*]` mechanism. MiniMax is already represented as `[model_providers.minimax]` and uses `MINIMAX_API_KEY`, but its current `base_url` still points at the bespoke local MiniMax Responses proxy. Claude and Antigravity are likewise represented as Codex model providers, but those entries currently point at CLI-backed local bridges
 
 **Conclusion:** the preferred simplification is to keep Codex as the harness and test whether each `[model_providers.*]` endpoint can reach the provider through OAuth or API credentials without invoking that provider's CLI. The existing CLI-backed endpoint remains authoritative for that provider unless and until a replacement proves equivalent behavior
 
@@ -632,7 +632,7 @@ Inventory and test the behavior before replacing anything
 ### Status
 
 The first Phase 0 slice is landed: the generated execution contract
-(`scripts/codex/execution-contract.json`) is frozen against a canonical
+(`config/execution-contract.json`) is frozen against a canonical
 fixture at `tests/fixtures/contracts/execution-contract.json`.
 `tests/test_local_setup.py::LocalSetupTests::test_execution_contract_matches_frozen_phase0_baseline_fixture`
 asserts that both the tracked artifact and a fresh render from the role TOML
@@ -970,11 +970,11 @@ Every behavior being migrated has an executable fixture or an explicit documente
 
 Phase 0 is complete. The next step is to separate portable versus machine-local
 configuration using the existing portable source
-`scripts/codex/config.autodev.toml`, the existing composer, and the existing
+`config/config.autodev.toml`, the existing composer, and the existing
 rulesync-pinned fixtures. No additional Phase 0 contract is required before
 starting this work.
 
-The former tracked `scripts/codex/config.toml` was a legacy migration seed. Older
+The former tracked `config/config.toml` was a legacy migration seed. Older
 installations may still point a user config symlink at it; the supported upgrade
 path reads an existing target and atomically materializes a regular composed
 file. A broken legacy symlink fails closed rather than overwriting the target
@@ -994,7 +994,7 @@ Fresh install and update can converge AutoDev-owned configuration without deleti
 
 ### Status
 
-Complete. The portable source is authoritative at `scripts/codex/config.autodev.toml`: it carries the AutoDev-owned portable scalars, provider definitions, `sandbox_workspace_write`, `otel`, `analytics`, `features`, `tools`, `agents`, the AutoDev-owned skills (`ccc`, `lsp-mcp-server`, `orchestration`), and `shell_environment_policy`. MCP declarations come from the live Rulesync source `.rulesync/mcp.jsonc` and are projected into the composer. The source excludes `notify`, `hooks.state`, `projects`, `marketplaces`, TUI/notice/desktop/apps/plugins/memories, `node_repl`/`cua_repl`, non-AutoDev skills, and absolute user/application paths. `src/config/compose-user-config.ts` deterministically merges the portable source and Rulesync MCP projection with existing machine-local configuration into `$CODEX_HOME/config.toml` as an atomic regular file, resolving conflicts in favor of AutoDev while semantically preserving machine-local and user-owned values. The installer (`install-codex-integration.sh`), `--check` drift validation, and `src/config/render-execution-contract.ts` consume `config.autodev.toml` and the composer. The former `scripts/codex/config.toml` seed is removed from the repository and no longer participates in validation.
+Complete. The portable source is authoritative at `config/config.autodev.toml`: it carries the AutoDev-owned portable scalars, provider definitions, `sandbox_workspace_write`, `otel`, `analytics`, `features`, `tools`, `agents`, the AutoDev-owned skills (`ccc`, `lsp-mcp-server`, `orchestration`), and `shell_environment_policy`. MCP declarations come from the live Rulesync source `.rulesync/mcp.jsonc` and are projected into the composer. The source excludes `notify`, `hooks.state`, `projects`, `marketplaces`, TUI/notice/desktop/apps/plugins/memories, `node_repl`/`cua_repl`, non-AutoDev skills, and absolute user/application paths. `src/config/compose-user-config.ts` deterministically merges the portable source and Rulesync MCP projection with existing machine-local configuration into `$CODEX_HOME/config.toml` as an atomic regular file, resolving conflicts in favor of AutoDev while semantically preserving machine-local and user-owned values. The installer (`install.sh`), `--check` drift validation, and `src/config/render-execution-contract.ts` consume `config.autodev.toml` and the composer. The former `config/config.toml` seed is removed from the repository and no longer participates in validation.
 
 ### Seed-retirement acceptance
 
@@ -1004,7 +1004,7 @@ reads a valid legacy symlink target only during migration from an older
 installation, and keeps
 existing machine-local state such as projects, notifications, custom MCP
 servers, and trusted hook state. A second install must be idempotent and
-`bash scripts/codex/install-codex-integration.sh --check` must pass without
+`./install.sh --check` must pass without
 rewriting the composed file. The focused composer/convergence tests and the
 Rulesync MCP and generated-skills checks are the validation evidence for this
 boundary.
@@ -1012,7 +1012,7 @@ boundary.
 ### Hardening slice
 
 The Phase 1 portable-source boundary is now hardened. The stale caveat in
-`scripts/codex/config.autodev.toml` claiming that the source was not yet
+`config/config.autodev.toml` claiming that the source was not yet
 composed into the installed config was removed; the source now states that it
 is composed into `$CODEX_HOME/config.toml` by
 `src/config/compose-user-config.ts`. The frozen contract fixture
@@ -1288,7 +1288,7 @@ the tracked sources:
 - each target projects exactly the servers `.rulesync/mcp.jsonc` declares for
   it, with matching commands, arguments, URLs, and disabled state;
 - no forbidden server is declared;
-- `scripts/codex/config.autodev.toml` owns exactly `lsp`, `cocoindex-code`, and
+- `config/config.autodev.toml` owns exactly `lsp`, `cocoindex-code`, and
   `playwright`, with the same commands, arguments, and enabled state as the
   Codex declaration;
 - Rulesync stays pinned to an exact version.
@@ -1357,7 +1357,7 @@ bridged turn therefore sees exactly its contract's servers, never
   drafted but not filed.
 - A Rulesync config file with `global: true` generates nothing, so MCP
   generation passes flags.
-- At the time of this cutover, the former legacy seed `scripts/codex/config.toml`
+- At the time of this cutover, the former legacy seed `config/config.toml`
   still held MCP copies. The seed-retirement slice removed that tracked file;
   valid legacy symlink targets are materialized during upgrade, while broken
   targets fail closed.
@@ -1387,7 +1387,7 @@ contract fixture `tests/fixtures/contracts/rulesync-mcp-boundary.json` (schema
 for all four targets, including the `lsp`/`cocoindex-code` launcher arguments,
 OpenAI Developer Docs placement, Playwright disabled/absent behavior, and
 forbidden server absence. They also freeze the live ownership boundary:
-`scripts/codex/config.autodev.toml` remains authoritative for `lsp`,
+`config/config.autodev.toml` remains authoritative for `lsp`,
 `cocoindex-code`, and `playwright`, while installer/provider-specific MCP
 registries remain outside Rulesync. Temporary generation roots and fixture/live
 config immutability are asserted. The focused boundary plus existing MCP shadow
@@ -1455,7 +1455,7 @@ The permission source inventory is complete:
 `tests/rulesync-permissions-inventory.test.ts` snapshots and contract-tests
 the three live permission sources without writing to any of them —
 Codex's `approval_policy`/`sandbox_mode`/`sandbox_workspace_write.network_access`
-scalars in `scripts/codex/config.autodev.toml` and the per-server
+scalars in `config/config.autodev.toml` and the per-server
 `default_tools_approval_mode` in the `codexcli` section of
 `.rulesync/mcp.jsonc`, the role-dependent
 `--disallowed-tools`/`--allowed-tools` construction (`DISALLOWED_CLAUDE_TOOLS`,
@@ -1466,7 +1466,7 @@ scalars in `scripts/codex/config.autodev.toml` and the per-server
 `mcp(...)`/`read_file(...)`/`unsandboxed(...)` grant markers that
 `grant_agy_code_mcp_permissions`/`check_agy_code_mcp_permissions` compute
 against the machine-local `$HOME/.gemini/antigravity-cli/settings.json` in
-`scripts/codex/install-codex-integration.sh`. The test also asserts no
+`install.sh`. The test also asserts no
 `.rulesync/permissions.jsonc` source exists and that `permissions` is absent
 from `rulesync.jsonc`'s `features` array.
 
@@ -1556,13 +1556,13 @@ manifest at `config/otel/collector-artifacts.json` records official
 `darwin/{arm64,amd64}` and `linux/{arm64,amd64}` release assets and SHA-256
 checksums. `src/platform/otel-provision.ts` downloads only the host-matching
 asset, verifies its checksum, and installs the machine-local binary under
-`$CODEX_HOME/otelcol`; `scripts/codex/otel/provision-autodev-otel-collector.sh`
+`$CODEX_HOME/otelcol`; `scripts/otel/provision-autodev-otel-collector.sh`
 is only the process-dispatch shim, and no Collector binary is vendored in the
 repository.
 
 The runtime is supervised by
-`scripts/codex/launchagents/com.codex.otel-collector.plist` and the foreground
-runner/ensure hooks under `scripts/codex/otel/`. The runner validates the exact
+`config/launchagents/com.codex.otel-collector.plist` and the foreground
+runner/ensure hooks under `scripts/otel/`. The runner validates the exact
 Collector version and configuration before launch, binds the OTLP HTTP receiver
 on localhost, refuses duplicate/non-HTTP port conflicts, and keeps logs and
 transient state under the private `$CODEX_HOME/run` directory. The installer
@@ -1770,19 +1770,19 @@ at their source.
   install.
 
 The running router keeps the previous code until the next installer run
-(`bash scripts/codex/install-codex-integration.sh --enable-otel-collector`),
+(`./install.sh --enable-otel-collector`),
 which restarts it.
 
 Enable/rollback procedure:
 
 ```bash
 # Optional: provision the pinned host-local binary explicitly.
-bash scripts/codex/otel/provision-autodev-otel-collector.sh
+bash scripts/otel/provision-autodev-otel-collector.sh
 
-bash scripts/codex/install-codex-integration.sh --enable-otel-collector
-bash scripts/codex/install-codex-integration.sh --check
-bash scripts/codex/install-codex-integration.sh --disable-otel-collector
-bash scripts/codex/install-codex-integration.sh --check
+./install.sh --enable-otel-collector
+./install.sh --check
+./install.sh --disable-otel-collector
+./install.sh --check
 ```
 
 Phase 4's gate evaluations are complete (2026-09-15). The Claude, GitHub

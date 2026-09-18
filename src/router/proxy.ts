@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { existsSync, readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import type { ServerResponse } from 'node:http';
 import {
   INCOMPLETE_REASON_INTERRUPTED,
@@ -83,12 +84,11 @@ export const CLIENT_DISCONNECT_CODES = Object.freeze(new Set([
   'ERR_STREAM_WRITE_AFTER_END',
 ]));
 
+const defaultContractPath = fileURLToPath(new URL('../../config/execution-contract.json', import.meta.url));
 const EXECUTION_CONTRACT_FILE = process.env.CODEX_EXECUTION_CONTRACT_FILE
-  ?? (existsSync(new URL('../../scripts/codex/execution-contract.json', import.meta.url).pathname)
-    ? new URL('../../scripts/codex/execution-contract.json', import.meta.url).pathname
-    : (existsSync(`${CODEX_HOME}/hooks/codex/execution-contract.json`)
-      ? `${CODEX_HOME}/hooks/codex/execution-contract.json`
-      : new URL('../../scripts/codex/execution-contract.json', import.meta.url).pathname));
+  ?? (existsSync(defaultContractPath)
+    ? defaultContractPath
+    : `${CODEX_HOME}/config/execution-contract.json`);
 
 let loadedExecutionContract: Record<string, unknown> = {};
 try {

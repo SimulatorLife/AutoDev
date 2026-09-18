@@ -1,5 +1,4 @@
-import { existsSync, readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
+import { readFileSync } from "node:fs";
 
 export interface RoleContract {
   mcp: string[];
@@ -18,11 +17,7 @@ export interface ExecutionContract {
   [key: string]: unknown;
 }
 
-const contractUrls = [
-  new URL("../../scripts/codex/execution-contract.json", import.meta.url),
-  new URL("../../hooks/codex/execution-contract.json", import.meta.url),
-];
-const CONTRACT_URL = contractUrls.find((url) => existsSync(fileURLToPath(url))) ?? contractUrls[0]!;
+const CONTRACT_URL = new URL("../../config/execution-contract.json", import.meta.url);
 const CONTRACT = Object.freeze(JSON.parse(readFileSync(CONTRACT_URL, "utf8")) as ExecutionContract);
 
 export const EXECUTION_CONTRACT = CONTRACT;

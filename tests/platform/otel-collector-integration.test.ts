@@ -10,7 +10,7 @@ import { once } from 'node:events';
 import test, { type TestContext } from 'node:test';
 
 const repositoryRoot = fileURLToPath(new URL('../../', import.meta.url));
-const runner = join(repositoryRoot, 'scripts/codex/otel/run-autodev-otel-collector.sh');
+const runner = join(repositoryRoot, 'scripts/otel/run-autodev-otel-collector.sh');
 const fixturePath = join(repositoryRoot, 'tests/fixtures/otel/collector-forwarded-otlp.json');
 const configuredBinary = process.env.AUTODEV_OTELCOL_BIN ?? null;
 

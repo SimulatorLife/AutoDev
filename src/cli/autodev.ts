@@ -14,11 +14,11 @@ import { dispatchRouterCommand, type RouterCommandBackend } from './router.ts';
 
 const repoRoot = resolve(fileURLToPath(new URL('../../', import.meta.url)));
 const defaults = {
-  agents: join(repoRoot, 'scripts/codex/agents'),
-  prompts: join(repoRoot, 'scripts/codex/prompts'),
-  mcp: join(repoRoot, 'scripts/codex/config.autodev.toml'),
-  rootConfig: join(repoRoot, 'scripts/codex/config.autodev.toml'),
-  contract: join(repoRoot, 'scripts/codex/execution-contract.json'),
+  agents: join(repoRoot, 'agents/roles'),
+  prompts: join(repoRoot, 'agents/prompts'),
+  mcp: join(repoRoot, 'config/config.autodev.toml'),
+  rootConfig: join(repoRoot, 'config/config.autodev.toml'),
+  contract: join(repoRoot, 'config/execution-contract.json'),
 };
 
 function versionAtLeast(actual: string, minimum: string): boolean {

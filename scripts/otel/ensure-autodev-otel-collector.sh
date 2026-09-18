@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# Process-dispatch shim. Collector validation and foreground lifecycle live in
-# the typed platform owner.
+# Process-dispatch shim. Collector readiness, duplicate protection, and
+# fallback ownership live in the typed platform owner.
 set -euo pipefail
 
 script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 codex_home="${CODEX_HOME:-$HOME/.codex}"
-source_root="$script_dir/../../../"
+source_root="$script_dir/../../"
 module="${AUTODEV_OTEL_MODULE:-$codex_home/src/platform/otel-collector.ts}"
 [[ -f "$module" ]] || module="$source_root/src/platform/otel-collector.ts"
 
@@ -17,5 +17,5 @@ resolve_node() {
   done
   return 1
 }
-node_bin="$(resolve_node)" || { echo "run-autodev-otel-collector: node not found" >&2; exit 127; }
-exec "$node_bin" "$module" run "$@"
+node_bin="$(resolve_node)" || { echo "ensure-autodev-otel-collector: node not found" >&2; exit 127; }
+exec "$node_bin" "$module" ensure "$@"

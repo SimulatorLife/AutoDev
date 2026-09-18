@@ -75,27 +75,27 @@ export function runInstallCheck(overrides: InstallCheckOptions = {}): number {
   const mode = readCollectorMode(join(codexHome, 'otel-collector.mode'));
   const projection = createCodexMcpSource(repositoryRoot);
   try {
-    for (const name of RULES) check(`rule link ${name}`, runtimeLinkMatches(join(repositoryRoot, 'scripts/codex/rules', name), join(rules, name)), failures);
+    for (const name of RULES) check(`rule link ${name}`, runtimeLinkMatches(join(repositoryRoot, 'agents/rules', name), join(rules, name)), failures);
     for (const name of SKILLS) check(`skill link ${join(userSkills, name)}`, skillLinkMatches(join(repositoryRoot, '.rulesync/skills', name), join(userSkills, name)), failures);
     for (const path of RUNTIME_MODULES) { check(`runtime ${path}`, runtimeFileMatches(join(repositoryRoot, path), runtimeTarget(path, codexHome, hooks)), failures); check(`tracked source ${path}`, tracked(repositoryRoot, join(repositoryRoot, path)), failures); }
     for (const path of OTEL_RUNTIME) check(`Collector runtime ${path}`, runtimeFileMatches(join(repositoryRoot, path), join(hooks, path.slice(8))), failures);
-    for (const role of PROMPT_ROLES) check(`prompt role ${role}`, runtimeFileMatches(join(repositoryRoot, `scripts/codex/prompts/roles/${role}.md`), join(hooks, `codex/prompts/roles/${role}.md`)), failures);
-    for (const name of MCP_LAUNCHERS) check(`MCP launcher ${name}`, runtimeLinkMatches(join(repositoryRoot, `scripts/codex/${name}`), join(hooks, name)), failures);
+    for (const role of PROMPT_ROLES) check(`prompt role ${role}`, runtimeFileMatches(join(repositoryRoot, `agents/prompts/roles/${role}.md`), runtimeTarget(`agents/prompts/roles/${role}.md`, codexHome, hooks)), failures);
+    for (const name of MCP_LAUNCHERS) check(`MCP launcher ${name}`, runtimeLinkMatches(join(repositoryRoot, `scripts/${name}`), join(hooks, name)), failures);
     for (const name of HOOKS) check(`hook ${name}`, runtimeFileMatches(join(repositoryRoot, `scripts/${name}`), join(hooks, name)), failures);
     for (const name of DASHBOARD) check(`dashboard ${name}`, runtimeFileMatches(join(repositoryRoot, `scripts/${name}`), join(hooks, name)), failures);
-    for (const name of PROFILES) check(`profile ${name}`, runtimeLinkMatches(join(repositoryRoot, `scripts/codex/profiles/${name}.config.toml`), join(codexHome, `${name}.config.toml`)), failures);
-    for (const name of CATALOGS) check(`catalog ${name}`, runtimeLinkMatches(join(repositoryRoot, `scripts/codex/catalogs/${name}-model-catalog.json`), join(codexHome, `${name}-model-catalog.json`)), failures);
-    check('model routing', runtimeLinkMatches(join(repositoryRoot, 'scripts/codex/model-routing.json'), join(codexHome, 'codex-model-routing.json')), failures);
-    const portable = readFileSync(join(repositoryRoot, 'scripts/codex/config.autodev.toml'), 'utf8');
+    for (const name of PROFILES) check(`profile ${name}`, runtimeLinkMatches(join(repositoryRoot, `config/profiles/${name}.config.toml`), join(codexHome, `${name}.config.toml`)), failures);
+    for (const name of CATALOGS) check(`catalog ${name}`, runtimeLinkMatches(join(repositoryRoot, `config/catalogs/${name}-model-catalog.json`), join(codexHome, `${name}-model-catalog.json`)), failures);
+    check('model routing', runtimeLinkMatches(join(repositoryRoot, 'config/model-routing.json'), join(codexHome, 'codex-model-routing.json')), failures);
+    const portable = readFileSync(join(repositoryRoot, 'config/config.autodev.toml'), 'utf8');
     for (const provider of ['local_model_router', 'claude_code_subscription', 'minimax', 'antigravity_cli']) check(`provider config ${provider}`, portable.includes(`[model_providers.${provider}]`), failures);
     check('provider auth boundary', portable.includes('requires_openai_auth = false'), failures);
-    check('user config', runCompose(join(repositoryRoot, 'scripts/codex/config.autodev.toml'), projection.source, join(codexHome, 'config.toml'), join(codexHome, 'config.toml'), true, mode) === 0, failures);
+    check('user config', runCompose(join(repositoryRoot, 'config/config.autodev.toml'), projection.source, join(codexHome, 'config.toml'), join(codexHome, 'config.toml'), true, mode) === 0, failures);
     const rendered = mkdtempSync(join(tmpdir(), 'autodev-check-agents-'));
-    try { renderAgentDirectory(join(repositoryRoot, 'scripts/codex/agents'), join(repositoryRoot, 'scripts/codex/prompts'), rendered, projection.source); for (const role of ROLES) check(`agent ${role}`, runtimeFileMatches(join(rendered, `${role}.toml`), join(agents, `${role}.toml`)), failures); }
+    try { renderAgentDirectory(join(repositoryRoot, 'agents/roles'), join(repositoryRoot, 'agents/prompts'), rendered, projection.source); for (const role of ROLES) check(`agent ${role}`, runtimeFileMatches(join(rendered, `${role}.toml`), join(agents, `${role}.toml`)), failures); }
     finally { rmSync(rendered, { recursive: true, force: true }); }
-    const expectedContract = `${JSON.stringify(renderExecutionContract(join(repositoryRoot, 'scripts/codex/agents'), projection.source, join(repositoryRoot, 'scripts/codex/execution-contract.json')), null, 2)}\n`;
-    check('execution contract', existsSync(join(repositoryRoot, 'scripts/codex/execution-contract.json')) && readFileSync(join(repositoryRoot, 'scripts/codex/execution-contract.json'), 'utf8') === expectedContract, failures);
-    try { renderProviderSkillViews(join(repositoryRoot, 'scripts/codex/execution-contract.json'), userSkills, join(codexHome, 'provider-runtime', 'claude'), 'claude', true); console.log('ok Claude role skill views'); } catch { console.log('missing-or-drifted Claude role skill views'); failures.value = 1; }
+    const expectedContract = `${JSON.stringify(renderExecutionContract(join(repositoryRoot, 'agents/roles'), projection.source, join(repositoryRoot, 'config/execution-contract.json')), null, 2)}\n`;
+    check('execution contract', existsSync(join(repositoryRoot, 'config/execution-contract.json')) && readFileSync(join(repositoryRoot, 'config/execution-contract.json'), 'utf8') === expectedContract, failures);
+    try { renderProviderSkillViews(join(repositoryRoot, 'config/execution-contract.json'), userSkills, join(codexHome, 'provider-runtime', 'claude'), 'claude', true); console.log('ok Claude role skill views'); } catch { console.log('missing-or-drifted Claude role skill views'); failures.value = 1; }
     check('bridge MCP catalogue', runBridgeMcpCatalogue(projection.source, join(codexHome, 'provider-runtime', 'mcp-servers.json'), true) === 0, failures);
     try { execFileSync(join(repositoryRoot, 'node_modules/.bin/rulesync'), ['generate', '--config', join(repositoryRoot, 'rulesync.jsonc'), '--check', '--silent'], { cwd: repositoryRoot, stdio: 'ignore' }); console.log(`ok repository outputs generated by ${repositoryRoot}/rulesync.jsonc`); } catch { console.log(`missing-or-drifted repository outputs generated by ${repositoryRoot}/rulesync.jsonc`); failures.value = 1; }
     const userTargets = [['claude', 'claudecode'], ['copilot', 'copilotcli'], ['agy', 'antigravity-cli'] as const].filter(([command]) => commandAvailable(command)).map(([, target]) => target).join(',');
@@ -123,7 +123,7 @@ export function runInstallCheck(overrides: InstallCheckOptions = {}): number {
         else console.log('ok Antigravity CLI permission grants (MCP and read_file)');
       }
       const skillsPath = join(home, '.gemini', 'config', 'skills.json');
-      const skillStatus = existsSync(skillsPath) ? antigravitySkillsStatus(skillsPath, join(repositoryRoot, '.rulesync', 'skills'), [join(repositoryRoot, 'scripts/codex/skills')]) : { missing: true, stale: [] };
+      const skillStatus = existsSync(skillsPath) ? antigravitySkillsStatus(skillsPath, join(repositoryRoot, '.rulesync', 'skills'), [join(repositoryRoot, 'agents/skills'), join(repositoryRoot, 'scripts/codex/skills')]) : { missing: true, stale: [] };
       check('Antigravity skills', !skillStatus.missing && skillStatus.stale.length === 0, failures);
     }
     try {
@@ -134,7 +134,7 @@ export function runInstallCheck(overrides: InstallCheckOptions = {}): number {
     if (checkCocoIndex(resolveDependencyOptions(process.env)) !== 0) failures.value = 1;
     if (checkPythonLanguageServer(resolveDependencyOptions(process.env)) !== 0) failures.value = 1;
     checkAuth({ codexHome }, failures); staleCheck({ repositoryRoot, home, codexHome }, failures);
-    for (const label of LAUNCH_LABELS) check(`LaunchAgent ${label}`, launchAgentMatches(join(repositoryRoot, `scripts/codex/launchagents/${label}.plist`), join(home, 'Library/LaunchAgents', `${label}.plist`), { codexHome, home, repositoryRoot }), failures);
+    for (const label of LAUNCH_LABELS) check(`LaunchAgent ${label}`, launchAgentMatches(join(repositoryRoot, `config/launchagents/${label}.plist`), join(home, 'Library/LaunchAgents', `${label}.plist`), { codexHome, home, repositoryRoot }), failures);
     return failures.value;
   } finally { rmSync(projection.root, { recursive: true, force: true }); }
 }

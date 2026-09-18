@@ -2,7 +2,7 @@
 //
 // Reads tests/fixtures/contracts/portable-autodev-config-contract.json and
 // asserts every invariant against the live
-// scripts/codex/config.autodev.toml portable source. The TOML is parsed by
+// config/config.autodev.toml portable source. The TOML is parsed by
 // the maintained parser shared with the TypeScript composer.
 //
 // Schema tag for this contract: autodev-portable-autodev-config-v1.
@@ -18,7 +18,7 @@ const FIXTURE_PATH = fileURLToPath(
   new URL("./fixtures/contracts/portable-autodev-config-contract.json", import.meta.url),
 );
 const PORTABLE_PATH = fileURLToPath(
-  new URL("../scripts/codex/config.autodev.toml", import.meta.url),
+  new URL("../config/config.autodev.toml", import.meta.url),
 );
 
 const EXPECTED_SCHEMA = "autodev-portable-autodev-config-v1";
@@ -63,7 +63,7 @@ async function readFixture(): Promise<PortableFixture> {
 test("schema tag pin and source path", async () => {
   const fixture = await readFixture();
   assert.equal(fixture.schema, EXPECTED_SCHEMA);
-  assert.equal(fixture.source, "scripts/codex/config.autodev.toml");
+  assert.equal(fixture.source, "config/config.autodev.toml");
   assert.equal(typeof fixture.description, "string");
   assert.ok(fixture.description.length > 0, "fixture description must be non-empty");
 });

@@ -22,7 +22,7 @@ Callers select a capability role, never a provider or model:
 
 All roles except `smart` use the configured `default` model tier. Only `smart` uses the configured `smart` tier. Every role uses the `local_model_router` with an `autodev/<role>` model alias.
 The editable provider/model choices live in
-`scripts/codex/model-routing.json`: `providerGroups` defines ordered fallback groups per capability tier,
+`config/model-routing.json`: `providerGroups` defines ordered fallback groups per capability tier,
 `providers.<name>.models` contains named tiers such as `default` and `smart` (specific tiers like `smart` are optional and fall back to that provider's `default` model if omitted), and
 `roles.<role>.tier` selects the tier for each capability role. For example, set
 Claude's smart model to `claude-opus-5` or Codex's to `gpt-5.6-sol` there; providers like MiniMax or Copilot that use the same model across tiers only need to define `default`. The installer materializes this file as
@@ -36,8 +36,8 @@ For the `default` capability tier, the router randomizes Claude, Gemini/Antigrav
 
 The root Codex orchestrator is not a leaf role, but it uses the same
 `providerGroups` fallback machinery through a dedicated `autodev/orchestrator`
-alias. `scripts/codex/config.autodev.toml` sets the parent `model` to that alias
-(composed into `$CODEX_HOME/config.toml`), and `scripts/codex/model-routing.json`
+alias. `config/config.autodev.toml` sets the parent `model` to that alias
+(composed into `$CODEX_HOME/config.toml`), and `config/model-routing.json`
 defines its chain under the top-level
 `orchestrator` block (`alias`, `tier`, and an optional per-provider
 `reasoningEffort` map) plus a `providerGroups.orchestrator` tier and an
@@ -81,7 +81,7 @@ logs, then classify the first failing boundary:
 - **Native spawn admission:** Codex's `multi_agent_v1__spawn_agent` can be
   rejected by the app's available-thread limit or the configured
   `max_concurrent_threads_per_session` (currently `2` in
-  `scripts/codex/config.autodev.toml`). This is an admission/configuration failure, not
+  `config/config.autodev.toml`). This is an admission/configuration failure, not
   a child code failure. A batch uses `Promise.allSettled`, so a rejected entry is
   returned as `Spawn failed: ...` and successful siblings remain trackable.
 - **Antigravity process startup/transport:** `agy` can exit without a terminal
@@ -154,7 +154,7 @@ ladder, and the tests that assert all bridges agree.
 All providers are treated as capable of MCP, skills, and subagent spawning;
 role TOMLs remain the sole source for role MCP/skill exposure and normal Codex inheritance.
 Routing does not gate on duplicated provider capability declarations in
-`scripts/codex/model-routing.json`. The orchestrator's entire job is delegating,
+`config/model-routing.json`. The orchestrator's entire job is delegating,
 so a provider serving it must have a viable delegation path. There are two
 delegation paths:
 - **Native Codex spawn** (`codex`, `minimax`): the parent drives Codex's own
@@ -260,7 +260,7 @@ pinned to `codex` with `minimax` in its fallback group, and a fresh turn is not
 a continuation and so is not pinned to the provider that served the last one,
 one failover is enough to end a session.
 
-`upstreamPayload` in `scripts/codex-model-router.mjs` therefore rewrites any
+`upstreamPayload` in `src/router/responses.ts` therefore rewrites any
 non-conforming id, using `src/shared/responses-item-ids.ts`. The router
 is the right place for it rather than each adapter: it is the one point every
 upstream call passes through, and since stored history is re-sent rather than
@@ -624,7 +624,7 @@ are not inferable from router traffic alone.
 The status payload carries no view of the Codex app-server's own threads. A
 `codexTasks` snapshot from `thread/list` was surfaced here for a while and has
 been removed (see "What the router deliberately does not do" below);
-`scripts/codex-model-router.test.mjs` asserts the field stays absent. The local
+`tests/router/model-router.test.ts` asserts the field stays absent. The local
 CLI view is:
 
   ```sh
@@ -965,7 +965,7 @@ derived workspace counters and bridge observations under its own
 
 The router is supervised by a `KeepAlive` launchd job
 (`com.codex.model-router`) so it survives app restarts, crashes, and sleep. The launchd plist lives at
-`scripts/codex/launchagents/com.codex.model-router.plist` and is materialized
+`config/launchagents/com.codex.model-router.plist` and is materialized
 under `~/Library/LaunchAgents/` by the installer. Five provider services are
 materialized from portable templates, and the installer verifies their rendered
 content before restarting them. Three contracts separate
@@ -1129,7 +1129,7 @@ The normal CLI path for an external role remains the repository launcher. It
 starts the selected provider hook and local CLI profile:
 
 ```sh
-/Users/henrykirk/AutoDev/scripts/codex/run-provider-agent.sh \
+/Users/henrykirk/AutoDev/scripts/run-provider-agent.sh \
   --role explorer --prompt 'Bounded task; report evidence.'
 ```
 
@@ -1208,7 +1208,7 @@ Codex must load the selected role TOML before the first child turn and expose th
 TOML's enabled MCP servers and skills; bridges must not attach skill paths or MCP
 lists per invocation.
 
-`scripts/codex/prompts/code-search.md` is the single shared prompt piece for
+`agents/prompts/code-search.md` is the single shared prompt piece for
 CocoIndex and LSP usage. It is included only when the role contract exposes
 both `cocoindex-code` and `lsp`, including the root orchestrator. Native role
 TOMLs use `{{AUTODEV_CODE_SEARCH_PROMPT}}`; bridges and the root hook load the
@@ -1264,7 +1264,7 @@ own harness guidance — which includes a standing instruction not to spawn agen
 unless asked, directly at odds with `orchestrator.md`. Replacement makes the
 role prompts the only policy in the turn.
 
-`scripts/codex/prompts/base.md` holds what the default prompt otherwise supplied
+`agents/prompts/base.md` holds what the default prompt otherwise supplied
 and the role prompts do not: tool-selection guidance, the destructive-action
 limits that matter because the bridge runs under `bypassPermissions`, and
 reporting-honesty rules. `system_prompt()` composes it as
@@ -1548,16 +1548,16 @@ therefore has effect only through the model the orchestrator tier selects.
 ### Reasoning effort on MiniMax
 
 MiniMax-M3 supports only `none` or `high` reasoning effort, as declared in its
-model catalog entries (`scripts/codex/catalogs/minimax-model-catalog.json` and
-`scripts/codex/catalogs/codex-model-catalog.json`). It does not support `medium`
+model catalog entries (`config/catalogs/minimax-model-catalog.json` and
+`config/catalogs/codex-model-catalog.json`). It does not support `medium`
 or `low` reasoning levels.
 
-Agent config TOML files under `scripts/codex/agents/` omit role-level
+Agent config TOML files under `agents/roles/` omit role-level
 `model_reasoning_effort` declarations so each child agent inherits
 the configured model reasoning effort (e.g. `default_subagent_reasoning_effort = "high"`
 under the MiniMax profile, or the orchestrator's pinned fallback effort). All
 roles inherit their model's effort cleanly without triggering invalid effort
-rejections on MiniMax. Similarly, `scripts/codex/run-provider-agent.sh` omits
+rejections on MiniMax. Similarly, `scripts/run-provider-agent.sh` omits
 `-c model_reasoning_effort=...` when role effort is absent, allowing configured
 model/profile effort to inherit rather than forcing a fallback medium effort.
 
@@ -1689,7 +1689,7 @@ The local router owns the GPT branch separately and forwards it to
 `https://chatgpt.com/backend-api/codex/responses` with the existing Codex OAuth
 token and account ID from `auth.json`.
 
-The five LaunchAgents under `scripts/codex/launchagents/` are the supported
+The five LaunchAgents under `config/launchagents/` are the supported
 persistence path for this Desktop host. The installer loads them with `KeepAlive`
 and also retains idempotent direct-start hooks as a fallback when `launchctl` is
 inaccessible.
@@ -1704,14 +1704,14 @@ being reported as a successful early turn.
 
 ## Versioned integration, source of truth, and setup
 
-`scripts/codex/` owns the versioned machine-local Codex integration materialized
+`agents/` and `config/` own the versioned machine-local Codex integration materialized
 into `$CODEX_HOME` through managed symlinks and runtime copies. Keep provider credentials in
 `/Users/henrykirk/.codex/.env` or Keychain; no secret belongs in this
 repository.
 
 All non-secret user-level provider configuration, profiles, model catalogs,
 provider adapters, startup hooks, shared skill content, and installer logic
-are versioned in this repository under `scripts/codex/` and `scripts/`. The
+are versioned in this repository under `agents/`, `config/`, and `scripts/`. The
 installer is the only supported materialization path into
 `/Users/henrykirk/.codex`; materialized runtime copies and symlinks, logs, and
 `.env` credentials remain machine-local and are not versioned.
@@ -1723,7 +1723,7 @@ installer is the only supported materialization path into
   canonical skill files without a second copied source of truth. Keep each
   source `SKILL.md` as a regular file; `--check` rejects file-level or relative
   skill links because Codex currently skips symlinked `SKILL.md` files.
-- Native command rules: `scripts/codex/rules/default.rules` is the versioned
+- Native command rules: `agents/rules/default.rules` is the versioned
   source for restrictive Codex `prefix_rule` entries. The installer symlinks it
   to `$CODEX_HOME/rules/default.rules`; it replaces the old custom Git hook and
   is testable with `codex execpolicy check` before restart. These prefix rules
@@ -1734,7 +1734,7 @@ installer is the only supported materialization path into
   Destructive `git clean`, `git rebase`, whole-tree `git restore`, force branch
   deletion, force push, superuser/raw-disk formatting, and root/home wildcard
   deletion commands are forbidden.
-- User-level role definitions: `scripts/codex/agents/*.toml`, rendered from
+- User-level role definitions: `agents/roles/*.toml`, rendered from
   the shared `base.md` + `leaf.md` prompt layers and materialized as managed
   regular-file copies under `$CODEX_HOME/agents/`. The role loader must receive
   regular files rather than symlinks; the installer replaces symlinks and
@@ -1756,10 +1756,10 @@ installer is the only supported materialization path into
   - It merges the Codex projection into `$CODEX_HOME/config.toml`.
   - Role TOMLs and the Claude bridge take their launch definitions from that
     generated output.
-- User-level provider/role configuration: `scripts/codex/config.autodev.toml` is
+- User-level provider/role configuration: `config/config.autodev.toml` is
   the authoritative portable configuration, composed into `$CODEX_HOME/config.toml`
   as an atomic regular file by `src/config/compose-user-config.ts`. The former
-  `scripts/codex/config.toml` seed is retired; valid legacy symlink
+  `config/config.toml` seed is retired; valid legacy symlink
   targets are migrated once and broken targets fail closed.
   Composition is required because Codex loads user-level settings at startup and
   project-local config cannot override provider/auth keys. The user layer registers
@@ -1770,15 +1770,15 @@ installer is the only supported materialization path into
   define a matching `[model_providers.<id>]` entry with `wire_api = "responses"`,
   and set `requires_openai_auth = false` when it uses its own credential or local
   gateway.
-- CLI profiles: `scripts/codex/profiles/*.config.toml`; these remain useful for
+- CLI profiles: `config/profiles/*.config.toml`; these remain useful for
   direct turns and provider-specific defaults, while the role registry remains
   shared across profiles. `run-provider-agent.sh` reads roles from
   `$CODEX_HOME/agents/`, just like the normal user-level Codex registry.
-- Model catalogs: `scripts/codex/catalogs/*.json`; the per-provider catalogs
+- Model catalogs: `config/catalogs/*.json`; the per-provider catalogs
   support CLI profiles and `codex-model-catalog.json` is the combined user
   catalog used by native app-server configuration.
 - Hooks, adapters, and direct-start scripts: `scripts/ensure-*`,
-  `scripts/run-*`, and the corresponding files in `scripts/codex/`; the
+  `scripts/run-*`, and the runtime files; the
   provider shell wrappers and Responses adapters from `scripts/` are
   checksum-checked runtime copies in `/Users/henrykirk/.codex/hooks/`. A
   direct symlink would be denied by macOS Desktop privacy controls when the
@@ -1832,8 +1832,8 @@ installer is the only supported materialization path into
 Install or repair the managed machine integration with:
 
 ```sh
-bash /Users/henrykirk/AutoDev/scripts/codex/install-codex-integration.sh
-bash /Users/henrykirk/AutoDev/scripts/codex/install-codex-integration.sh --check
+./install.sh
+./install.sh --check
 ```
 
 ## Build vs. delegate
@@ -1931,9 +1931,9 @@ Target state and current verification:
 
 | Requirement | State |
 | --- | --- |
-| OpenAI/Codex orchestrator and tracked user-level cross-provider TOMLs | Configured under `scripts/codex/agents/` and materialized as verified regular-file copies under `~/.codex/agents/`. The orchestrator runs on the `autodev/orchestrator` alias so it degrades to Claude Opus, MiniMax, then Gemini when Codex is out of usage. |
-| Shared user-level skills | Configured under the canonical `.rulesync/skills/` source as AutoDev-owned versioned directories and materialized under `~/.agents/skills/`; `install-codex-integration.sh --check` verifies every managed skill link. |
-| Versioned scripts/hooks/config installed into `~/.codex` | Configured; profiles/catalogs/config are symlinked and app-executed hooks are checksum-checked runtime copies; `install-codex-integration.sh --check` passes. |
+| OpenAI/Codex orchestrator and tracked user-level cross-provider TOMLs | Configured under `agents/roles/` and materialized as verified regular-file copies under `~/.codex/agents/`. The orchestrator runs on the `autodev/orchestrator` alias so it degrades to Claude Opus, MiniMax, then Gemini when Codex is out of usage. |
+| Shared user-level skills | Configured under the canonical `.rulesync/skills/` source as AutoDev-owned versioned directories and materialized under `~/.agents/skills/`; `install.sh --check` verifies every managed skill link. |
+| Versioned scripts/hooks/config installed into `~/.codex` | Configured; profiles/catalogs/config are symlinked and app-executed hooks are checksum-checked runtime copies; `install.sh --check` passes. |
 | Native app-server custom-provider routing | Verified: `thread/start` selects the custom provider; Claude reached its upstream session-limit response. |
 | Direct CLI provider turns | Transport paths verified; Claude was session-limited, MiniMax was upstream high-demand limited, and Antigravity was quota-limited. |
 | Desktop high-level native fanout across external models | Tracked model-router and user-level role/config wiring is installed; requires a fully restarted Desktop app and a new thread for fresh `spawn_agent` verification through `127.0.0.1:4100`. |
@@ -1946,11 +1946,11 @@ configured and validated.
 
 ### Cross-provider execution contract
 
-`/Users/henrykirk/AutoDev/scripts/codex/execution-contract.json` is the generated
+`/Users/henrykirk/AutoDev/config/execution-contract.json` is the generated
 shared contract for role kind, read-only intent, expected MCP/skill capabilities,
 and adapter spawn-tool metadata. It is projected from the native role TOMLs by
 `src/config/render-execution-contract.ts`; the installer rejects drift. The Claude, Antigravity, and Copilot bridge prompt paths append the canonical
-role fragment from `scripts/codex/prompts/roles/` and use this JSON only for
+role fragment from `agents/prompts/roles/` and use this JSON only for
 capability metadata. The installer deploys both beside the bridge runtime
 modules. Native TOML role files remain the Codex configuration surface; the
 installer renders their shared prompt markers before deployment. Prompt or
@@ -1959,11 +1959,11 @@ prompt-rendering tests.
 
 ### Route manifest ownership
 
-`/Users/henrykirk/AutoDev/scripts/codex/model-routing.json` now owns provider
+`/Users/henrykirk/AutoDev/config/model-routing.json` now owns provider
 route metadata: model-family patterns, local bridge URLs, health probes, and
 credential environment keys. The router derives its route table from that
 manifest and validates every provider entry. Native model capability metadata
-(such as supported reasoning levels) remains in `scripts/codex/catalogs/`, while
+(such as supported reasoning levels) remains in `config/catalogs/`, while
 role MCP and skill exposure remains in the native role TOMLs and their generated
 execution contract. Older installed routing files that lack the new `routes`
 block temporarily use the built-in migration defaults until the installer is

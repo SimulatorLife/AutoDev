@@ -12,7 +12,8 @@ function withTempDir<T>(callback: (directory: string) => T): T {
 }
 
 test('runtime targets preserve relative depth for scripts and source files', () => {
-  assert.equal(runtimeTarget('scripts/codex/prompts/base.md', '/runtime'), '/runtime/hooks/codex/prompts/base.md');
+  assert.equal(runtimeTarget('scripts/otel/run-autodev-otel-collector.sh', '/runtime'), '/runtime/hooks/otel/run-autodev-otel-collector.sh');
+  assert.equal(runtimeTarget('agents/prompts/base.md', '/runtime'), '/runtime/agents/prompts/base.md');
   assert.equal(runtimeTarget('src/platform/runtime-files.ts', '/runtime'), '/runtime/src/platform/runtime-files.ts');
 });
 

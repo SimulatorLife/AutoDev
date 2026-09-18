@@ -13,7 +13,7 @@ const REVIEWED_CLAUDE_TOKEN_CONSUMERS = new Set([
   'scripts/run-codex-claude-bridge.sh',
   'src/platform/claude-ensure.ts',
   '.github/workflows/claude-invoke.yml',
-  'scripts/codex/run-ci-provider.sh',
+  'scripts/run-ci-provider.sh',
   '.github/workflows/agent-invoke.yml',
 ]);
 const UNSUPPORTED_SUBSCRIPTION_TRANSPORTS = new Map([
@@ -55,7 +55,7 @@ for (const [needle, reason] of UNSUPPORTED_SUBSCRIPTION_TRANSPORTS) {
 }
 
 test('every Codex model provider targets a local adapter', () => {
-  const config = parse(readFileSync(join(REPO_ROOT, 'scripts/codex/config.autodev.toml'), 'utf8')) as JsonRecord;
+  const config = parse(readFileSync(join(REPO_ROOT, 'config/config.autodev.toml'), 'utf8')) as JsonRecord;
   const providers = (config.model_providers ?? {}) as JsonRecord;
   for (const [name, provider] of Object.entries(providers)) {
     assert.match(String((provider as JsonRecord).base_url ?? ''), /^http:\/\/127\.0\.0\.1:\d+\/v1$/, name);
@@ -78,7 +78,7 @@ test('the Claude bridge hands the token only to the Claude Code binary', () => {
 test('CI runs the pinned official Claude Code package', () => {
   const manifest = JSON.parse(readFileSync(join(REPO_ROOT, '.github/ci/provider-tools.json'), 'utf8')) as JsonRecord;
   assert.match(String(manifest.tools.claude.package), /^@anthropic-ai\/claude-code@\d+\.\d+\.\d+$/);
-  const branch = texts['scripts/codex/run-ci-provider.sh']!.split('  claude)', 2)[1]!.split(';;', 1)[0]!;
+  const branch = texts['scripts/run-ci-provider.sh']!.split('  claude)', 2)[1]!.split(';;', 1)[0]!;
   assert.match(branch, /pnpm --silent dlx "\$AUTODEV_CLAUDE_PACKAGE"/);
 });
 

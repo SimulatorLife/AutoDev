@@ -17,7 +17,7 @@
   <key>ProgramArguments</key>
   <array>
     <string>/bin/bash</string>
-  <string>__CODEX_HOME__/hooks/codex/otel/run-autodev-otel-collector.sh</string>
+  <string>__CODEX_HOME__/hooks/otel/run-autodev-otel-collector.sh</string>
   </array>
 
   <key>RunAtLoad</key>

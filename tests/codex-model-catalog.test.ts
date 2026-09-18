@@ -8,10 +8,10 @@ type Catalog = { models: Model[] };
 type Routing = { providers: { codex: { models: Record<string, string> } } };
 
 const catalog = JSON.parse(
-  await readFile(new URL('../scripts/codex/catalogs/codex-model-catalog.json', import.meta.url), 'utf8'),
+  await readFile(new URL('../config/catalogs/codex-model-catalog.json', import.meta.url), 'utf8'),
 ) as Catalog;
 const routing = JSON.parse(
-  await readFile(new URL('../scripts/codex/model-routing.json', import.meta.url), 'utf8'),
+  await readFile(new URL('../config/model-routing.json', import.meta.url), 'utf8'),
 ) as Routing;
 
 test('codex model catalog slugs are unique', () => {
@@ -30,7 +30,7 @@ test('every configured codex routing model has a catalog entry', () => {
 
 test('MiniMax-M3 catalog entries support only none or high reasoning effort', async () => {
   const minimaxCatalog = JSON.parse(
-    await readFile(new URL('../scripts/codex/catalogs/minimax-model-catalog.json', import.meta.url), 'utf8'),
+    await readFile(new URL('../config/catalogs/minimax-model-catalog.json', import.meta.url), 'utf8'),
   ) as Catalog;
   for (const [name, cat] of [['codex-model-catalog', catalog], ['minimax-model-catalog', minimaxCatalog] ] as Array<[string, Catalog]>) {
     const model = cat.models.find((m) => m.slug === 'MiniMax-M3');

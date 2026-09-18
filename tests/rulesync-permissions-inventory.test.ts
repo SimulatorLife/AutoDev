@@ -14,7 +14,7 @@ const asObject = (value: unknown): JsonObject => {
   return value as JsonObject;
 };
 
-const portableConfig = parse(read('scripts/codex/config.autodev.toml')) as unknown as JsonObject;
+const portableConfig = parse(read('config/config.autodev.toml')) as unknown as JsonObject;
 const rulesyncMcp = readJson('.rulesync/mcp.jsonc');
 
 test('Codex portable permission surface is explicit', () => {
@@ -70,7 +70,7 @@ test('Rulesync permissions and subagent generation remain deferred', () => {
   assert.equal(features.includes('subagents'), false);
   assert.equal(existsSync(join(repositoryRoot, '.rulesync', 'subagents')), false);
 
-  const contract = readJson('scripts/codex/execution-contract.json');
+  const contract = readJson('config/execution-contract.json');
   const providers = asObject(contract.providers);
   assert.deepEqual(
     Object.fromEntries(['codex', 'claude', 'antigravity', 'copilot', 'minimax'].map((name) => [name, asObject(providers[name]).delegation])),
@@ -82,7 +82,7 @@ test('Rulesync permissions and subagent generation remain deferred', () => {
 });
 
 test('the permission inventory reads sources without changing them', () => {
-  const paths = ['scripts/codex/config.autodev.toml', 'src/providers/claude.ts', 'scripts/codex/install-codex-integration.sh', 'rulesync.jsonc', '.rulesync/mcp.jsonc'];
+  const paths = ['config/config.autodev.toml', 'src/providers/claude.ts', 'install.sh', 'rulesync.jsonc', '.rulesync/mcp.jsonc'];
   const before = paths.map(read);
   for (const content of before) assert.ok(content.length > 0);
   assert.deepEqual(paths.map(read), before);

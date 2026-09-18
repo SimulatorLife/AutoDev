@@ -49,12 +49,16 @@ The TypeScript target state migration is fully completed across all twelve phase
 - The legacy Python test suite `tests/test_local_setup.py` is eliminated; its concerns are 100% covered by native TypeScript suites (`tests/platform/*.test.ts`, `tests/config/*.test.ts`, `tests/cli/*.test.ts`).
 - `package.json` test scripts are unified: `"test": "node --test tests/*.test.ts tests/**/*.test.ts"`.
 - Strict inventory validation (`pnpm run validate:inventory` with `AUTODEV_ENFORCE_INVENTORY=1`) passes with zero unapproved legacy files.
+- Declarative assets are migrated out of `scripts/codex/` into top-level `agents/` (`roles/`, `prompts/`, `rules/`) and `config/` (`catalogs/`, `profiles/`, `launchagents/`, `config.autodev.toml`, `model-routing.json`, `execution-contract.json`).
+- Root `install.sh` provides the canonical entrypoint delegating directly to `autodev install`.
+- Legacy `scripts/codex/` directory is completely eliminated with zero legacy compatibility shims.
 - The entire test suite (854 tests, 24 suites) passes with 0 failures under `node:test` on Node 24+ LTS.
 
 ### Current state and verification
 
 - Zero first-party `.cjs`, `.mjs`, or `.py` files remain in `src/`, `scripts/`, or `tests/`.
 - Shell scripts are strictly restricted to thin OS/process execution boundaries registered in `approvedLegacyFiles`.
+- Legacy directory `scripts/codex/` is completely deleted.
 - `pnpm run typecheck` (`tsc --noEmit`) passes with 0 errors.
 - `pnpm test` passes 100% across all 854 tests.
 - `pnpm run validate:actionlint` and `pnpm run validate:shell` pass with 0 warnings.
@@ -138,7 +142,7 @@ A shell file may reasonably locate an installation or `exec` another process. It
 
 Agent hooks do not inherently need shell. Prefer direct Node/TypeScript hook entry points where the host supports command execution
 
-The existing `scripts/codex/run-autodev-mcp.sh` is a reasonable candidate to remain a small shim if its final responsibility is only process dispatch. Large installer and `ensure-*` scripts should move behind typed commands
+The existing `scripts/run-autodev-mcp.sh` is a reasonable candidate to remain a small shim if its final responsibility is only process dispatch. Large installer and `ensure-*` scripts should move behind typed commands
 
 ## Target repository organization
 
@@ -181,7 +185,7 @@ docs/
 
 Do not introduce multiple pnpm workspace packages unless independently versioned/deployed package boundaries later justify them. Internal TypeScript modules are sufficient for the current control-plane architecture.
 
-Directory [scripts/](scripts) and [scripts/codex/](scripts/codex/) remain declarative/configuration and external process-boundary locations where required. The install script is now only a process-dispatch shim to the typed `autodev install` command and should be removed once downstream callers migrate.
+Declarative assets reside in top-level `agents/` (`roles/`, `prompts/`, `rules/`) and `config/` (`catalogs/`, `profiles/`, `launchagents/`, `config.autodev.toml`, `model-routing.json`, `execution-contract.json`), while `scripts/` contains only runtime launch shims (`scripts/run-*.sh` and `scripts/otel/`). The root `install.sh` acts as the repository-level installer entrypoint delegating directly to `autodev install`. Legacy `scripts/codex/` is eliminated completely.
 
 ## Single CLI boundary
 

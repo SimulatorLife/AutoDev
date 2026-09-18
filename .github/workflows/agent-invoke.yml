@@ -518,7 +518,7 @@ jobs:
           echo "[agent] Workflow branch: $(git branch --show-current)"
 
           script="$RUNNER_TEMP/agent_cmd.sh"
-          cp "${GITHUB_WORKSPACE}/.autodev/scripts/codex/run-ci-provider.sh" "$script"
+          cp "${GITHUB_WORKSPACE}/.autodev/scripts/run-ci-provider.sh" "$script"
           sed -i 's/\r$//' "$script"
           chmod 700 "$script"
 

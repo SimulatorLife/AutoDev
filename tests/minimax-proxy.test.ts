@@ -301,7 +301,7 @@ test("the proxy preserves web search and fetch tools instead of treating them as
 
 test("exec called as though it were exec_command becomes a runnable script", () => {
   const source = freeformInputFromArguments(
-    '{"cmd":"wc -l < scripts/codex/prompts/leaf.md","workdir":"/Users/henrykirk/AutoDev"}',
+    '{"cmd":"wc -l < agents/prompts/leaf.md","workdir":"/Users/henrykirk/AutoDev"}',
   );
   assert.ok(source);
   assert.match(source, /await tools\.exec_command\(/);
@@ -309,7 +309,7 @@ test("exec called as though it were exec_command becomes a runnable script", () 
   const match = source.match(/exec_command\((\{.*?\})\);/);
   assert.ok(match && match[1]);
   const call = JSON.parse(match[1]) as { cmd: string; workdir: string };
-  assert.deepEqual(call, { cmd: "wc -l < scripts/codex/prompts/leaf.md", workdir: "/Users/henrykirk/AutoDev" });
+  assert.deepEqual(call, { cmd: "wc -l < agents/prompts/leaf.md", workdir: "/Users/henrykirk/AutoDev" });
   assert.doesNotThrow(() => new Function(`return (async () => {\n${source}\n});`));
 });
 

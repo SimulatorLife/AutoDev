@@ -161,8 +161,8 @@ installer before checking live telemetry: it synchronizes those copies and
 restarts every service, so nothing is left running the code it replaced.
 
 ```bash
-bash /Users/henrykirk/AutoDev/scripts/codex/install-codex-integration.sh
-bash /Users/henrykirk/AutoDev/scripts/codex/install-codex-integration.sh --check
+./install.sh
+./install.sh --check
 curl --silent http://127.0.0.1:4100/status | jq '.codexTelemetry.skills'
 ```
 
@@ -601,7 +601,7 @@ Validate the active rules and telemetry receiver without running a model turn:
 
 ```bash
 codex execpolicy check --pretty \
-  --rules /Users/henrykirk/AutoDev/scripts/codex/rules/default.rules \
+  --rules /Users/henrykirk/AutoDev/agents/rules/default.rules \
   -- git status
 curl --silent http://127.0.0.1:4100/status | jq '.codexTelemetry'
 ```

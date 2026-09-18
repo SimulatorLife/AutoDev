@@ -13,7 +13,7 @@ type Hook = JsonObject & { type?: string; command?: string };
 const repositoryRoot = fileURLToPath(new URL('../', import.meta.url));
 const sourceRoot = join(repositoryRoot, '.rulesync');
 const hookSourcePath = join(sourceRoot, 'hooks.jsonc');
-const portableConfigPath = join(repositoryRoot, 'scripts/codex/config.autodev.toml');
+const portableConfigPath = join(repositoryRoot, 'config/config.autodev.toml');
 const targets = ['codexcli', 'claudecode', 'copilot', 'antigravity-cli'] as const;
 const hookPaths: Record<(typeof targets)[number], string> = {
   codexcli: '.codex/hooks.json',
@@ -85,7 +85,7 @@ test('portable config keeps hooks in Rulesync and install uses typed materializa
   assert.equal(Object.hasOwn(portable, 'hooks'), false);
   assert.doesNotMatch(readFileSync(hookSourcePath, 'utf8'), /prevent_idle_sleep/);
   assert.match(readFileSync(join(repositoryRoot, 'rulesync.jsonc'), 'utf8'), /"hooks"/);
-  assert.match(readFileSync(join(repositoryRoot, 'scripts/codex/install-codex-integration.sh'), 'utf8'), /src\/cli\/install\.ts/);
+  assert.match(readFileSync(join(repositoryRoot, 'install.sh'), 'utf8'), /src\/cli\/install\.ts/);
   const materializer = readFileSync(join(repositoryRoot, 'src/platform/install-materializer.ts'), 'utf8');
   assert.match(materializer, /config\.autodev\.toml/);
   assert.match(materializer, /runCompose/);

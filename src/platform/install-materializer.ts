@@ -20,8 +20,8 @@ export const RUNTIME_MODULES = [
   'src/router/auth.ts', 'src/router/events.ts', 'src/router/subagents.ts', 'src/router/persistence.ts', 'src/router/usage.ts',
   'src/router/otel.ts', 'src/router/proxy.ts', 'src/router/http.ts', 'src/router/server.ts', 'src/agents/bridge-spawn-session.ts', 'src/providers/minimax.ts',
   'src/providers/copilot.ts', 'src/providers/antigravity.ts', 'src/providers/claude.ts', 'src/mcp/spawn-shim.ts',
-  'src/shared/execution-contract.ts', 'src/router/status.ts', 'src/cli/router-status.ts', 'scripts/codex/execution-contract.json',
-  'scripts/codex/prompts/base.md', 'scripts/codex/prompts/leaf.md', 'scripts/codex/prompts/code-search.md', 'scripts/codex/prompts/orchestrator.md',
+  'src/shared/execution-contract.ts', 'src/router/status.ts', 'src/cli/router-status.ts', 'config/execution-contract.json',
+  'agents/prompts/base.md', 'agents/prompts/leaf.md', 'agents/prompts/code-search.md', 'agents/prompts/orchestrator.md',
   'src/hooks/command-utils.ts', 'src/hooks/skill-read-telemetry.ts', 'src/hooks/session-start.ts', 'src/hooks/subagent-start.ts',
   'src/platform/macos/launchd.ts', 'src/platform/macos/launchagent.ts', 'src/platform/router-ensure.ts', 'src/platform/copilot-ensure.ts',
   'src/platform/antigravity-ensure.ts', 'src/platform/claude-ensure.ts', 'src/platform/minimax-ensure.ts', 'src/platform/antigravity-settings.ts',
@@ -29,7 +29,7 @@ export const RUNTIME_MODULES = [
   'src/platform/otel-provision.ts', 'src/platform/install-state.ts', 'src/platform/dependencies.ts', 'src/platform/install-materializer.ts', 'src/platform/install-command.ts', 'src/platform/install-check.ts', 'src/hooks/root-delegation.ts',
   '.rulesync/skills/orchestration/SKILL.md',
 ] as const;
-export const OTEL_RUNTIME = ['scripts/codex/otel/provision-autodev-otel-collector.sh', 'scripts/codex/otel/ensure-autodev-otel-collector.sh', 'scripts/codex/otel/run-autodev-otel-collector.sh'] as const;
+export const OTEL_RUNTIME = ['scripts/otel/provision-autodev-otel-collector.sh', 'scripts/otel/ensure-autodev-otel-collector.sh', 'scripts/otel/run-autodev-otel-collector.sh'] as const;
 export const HOOKS = ['enforce-root-delegation.sh', 'ensure-codex-antigravity-proxy.sh', 'ensure-codex-claude-bridge.sh', 'ensure-codex-copilot-proxy.sh', 'ensure-codex-model-router.sh', 'ensure-codex-minimax-proxy.sh', 'run-codex-antigravity-proxy.sh', 'run-codex-claude-bridge.sh', 'run-codex-copilot-cli-responses-proxy.sh', 'run-codex-model-router.sh'] as const;
 export const DASHBOARD = ['codex-model-router-dashboard.html'] as const;
 export const MCP_LAUNCHERS = ['run-autodev-mcp.sh'] as const;
@@ -44,7 +44,7 @@ export const LAUNCH_LABELS = ['com.codex.model-router', 'com.codex.claude-bridge
 export const OBSOLETE_LAUNCH = ['com.codex.antigravity-litellm'] as const;
 export const OBSOLETE_PATHS = ['.config/litellm/antigravity.yaml', '.codex/codex-antigravity-litellm-config.sha256'] as const;
 export const OBSOLETE_HOOKS = ['codex-model-router.mjs', 'log-subagent-model.sh', 'run-codex-antigravity-litellm.sh', 'codex-minimax-responses-proxy.mjs', 'codex-copilot-cli-responses-proxy.mjs', 'codex-antigravity-cli-responses-proxy.mjs', 'codex-model-router-status.mjs', 'codex-claude-cli-responses-proxy.py'] as const;
-export const OBSOLETE_DIRS = ['scripts', 'codex/skills'] as const;
+export const OBSOLETE_DIRS = ['scripts', 'codex', 'codex/skills'] as const;
 
 interface MaterializeOptions { repositoryRoot: string; home: string; codexHome: string; otelMode: string; materializeOnly: boolean; codexMcpSource: string; }
 
@@ -81,35 +81,35 @@ export function materializeInstallation(options: MaterializeOptions): void {
   const target = (path: string) => runtimeTarget(path, options.codexHome, hooks);
   for (const path of RUNTIME_MODULES) materializeRuntimeFile(source(path), target(path), 0o644);
   for (const path of OTEL_RUNTIME) materializeRuntimeFile(source(path), target(path), 0o755);
-  for (const role of PROMPT_ROLES) materializeRuntimeFile(source(`scripts/codex/prompts/roles/${role}.md`), target(`scripts/codex/prompts/roles/${role}.md`), 0o644);
+  for (const role of PROMPT_ROLES) materializeRuntimeFile(source(`agents/prompts/roles/${role}.md`), target(`agents/prompts/roles/${role}.md`), 0o644);
   for (const name of HOOKS) { chmodSync(source(`scripts/${name}`), 0o755); materializeRuntimeFile(source(`scripts/${name}`), join(hooks, name), 0o755); }
   for (const name of DASHBOARD) materializeRuntimeFile(source(`scripts/${name}`), join(hooks, name), 0o644);
-  for (const name of MCP_LAUNCHERS) linkRuntimeSource(source(`scripts/codex/${name}`), join(hooks, name));
-  for (const name of PROFILES) linkRuntimeSource(source(`scripts/codex/profiles/${name}.config.toml`), join(options.codexHome, `${name}.config.toml`));
-  for (const name of CATALOGS) linkRuntimeSource(source(`scripts/codex/catalogs/${name}-model-catalog.json`), join(options.codexHome, `${name}-model-catalog.json`));
-  for (const name of RULES) linkRuntimeSource(source(`scripts/codex/rules/${name}`), join(rules, name));
+  for (const name of MCP_LAUNCHERS) linkRuntimeSource(source(`scripts/${name}`), join(hooks, name));
+  for (const name of PROFILES) linkRuntimeSource(source(`config/profiles/${name}.config.toml`), join(options.codexHome, `${name}.config.toml`));
+  for (const name of CATALOGS) linkRuntimeSource(source(`config/catalogs/${name}-model-catalog.json`), join(options.codexHome, `${name}-model-catalog.json`));
+  for (const name of RULES) linkRuntimeSource(source(`agents/rules/${name}`), join(rules, name));
   for (const name of SKILLS) {
     for (const legacy of LEGACY_SKILL_DIRS) { const path = join(options.codexHome, legacy, name); if (exists(path) && !isSymlink(path)) throw new Error(`refusing to replace obsolete non-symlink skill path: ${path}`); if (isSymlink(path)) rmSync(path); }
     linkSkillSource(join(skillsRoot, name), join(userSkills, name));
   }
   mkdirSync(agents, { recursive: true, mode: 0o700 });
   const rendered = mkdtempSync(join(options.codexHome, '.autodev-rendered-agents-'));
-  try { renderAgentDirectory(join(options.repositoryRoot, 'scripts/codex/agents'), join(options.repositoryRoot, 'scripts/codex/prompts'), rendered, options.codexMcpSource); for (const role of ROLES) materializeRuntimeFile(join(rendered, `${role}.toml`), join(agents, `${role}.toml`), 0o644); }
+  try { renderAgentDirectory(join(options.repositoryRoot, 'agents/roles'), join(options.repositoryRoot, 'agents/prompts'), rendered, options.codexMcpSource); for (const role of ROLES) materializeRuntimeFile(join(rendered, `${role}.toml`), join(agents, `${role}.toml`), 0o644); }
   finally { rmSync(rendered, { recursive: true, force: true }); }
-  renderProviderSkillViews(source('scripts/codex/execution-contract.json'), userSkills, join(options.codexHome, 'provider-runtime', 'claude'), 'claude');
+  renderProviderSkillViews(source('config/execution-contract.json'), userSkills, join(options.codexHome, 'provider-runtime', 'claude'), 'claude');
   runBridgeMcpCatalogue(options.codexMcpSource, join(options.codexHome, 'provider-runtime', 'mcp-servers.json'));
   rulesync(options, ['generate', '--config', join(options.repositoryRoot, 'rulesync.jsonc'), '--silent']);
   ensureExclude(options);
-  runCompose(source('scripts/codex/config.autodev.toml'), options.codexMcpSource, join(options.codexHome, 'config.toml'), join(options.codexHome, 'config.toml'), false, options.otelMode);
+  runCompose(source('config/config.autodev.toml'), options.codexMcpSource, join(options.codexHome, 'config.toml'), join(options.codexHome, 'config.toml'), false, options.otelMode);
   if (isSymlink(join(options.codexHome, 'config.toml'))) throw new Error(`refusing-symlinked-user-config ${join(options.codexHome, 'config.toml')}`);
-  linkRuntimeSource(source('scripts/codex/model-routing.json'), join(options.codexHome, 'codex-model-routing.json'));
+  linkRuntimeSource(source('config/model-routing.json'), join(options.codexHome, 'codex-model-routing.json'));
   const targets = ([['claude', 'claudecode'], ['copilot', 'copilotcli'], ['agy', 'antigravity-cli']] as const).filter(([command]) => commandAvailable(command)).map(([, targetName]) => targetName).join(',');
   if (targets) rulesync(options, ['generate', '--global', '--input-roots', join(options.repositoryRoot, '.rulesync'), '--targets', targets, '--features', 'mcp', '--silent']);
   if (!options.materializeOnly && commandAvailable('agy') && process.env.AUTODEV_SKIP_AGY_MCP !== '1') {
     updateAntigravityPermissions(join(options.home, '.gemini', 'antigravity-cli', 'settings.json'), roots(options), options.home);
-    updateAntigravitySkills(join(options.home, '.gemini', 'config', 'skills.json'), skillsRoot, [join(options.repositoryRoot, 'scripts/codex/skills')]);
+    updateAntigravitySkills(join(options.home, '.gemini', 'config', 'skills.json'), skillsRoot, [join(options.repositoryRoot, 'agents/skills'), join(options.repositoryRoot, 'scripts/codex/skills')]);
   }
-  for (const label of LAUNCH_LABELS) renderLaunchAgent(source(`scripts/codex/launchagents/${label}.plist`), join(options.home, 'Library', 'LaunchAgents', `${label}.plist`), { codexHome: options.codexHome, home: options.home, repositoryRoot: options.repositoryRoot });
+  for (const label of LAUNCH_LABELS) renderLaunchAgent(source(`config/launchagents/${label}.plist`), join(options.home, 'Library', 'LaunchAgents', `${label}.plist`), { codexHome: options.codexHome, home: options.home, repositoryRoot: options.repositoryRoot });
   const runDir = join(options.codexHome, 'run');
   mkdirSync(runDir, { recursive: true, mode: 0o700 });
   chmodSync(runDir, 0o700);

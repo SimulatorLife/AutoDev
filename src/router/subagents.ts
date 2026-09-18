@@ -1,4 +1,5 @@
 import { existsSync, readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { PROCESS_FALLBACK_SESSION_KEY } from './concurrency.ts';
 import type { AgentActivityTracker } from './concurrency.ts';
 export { PROCESS_FALLBACK_SESSION_KEY };
@@ -178,10 +179,11 @@ let cachedExecutionContract: Record<string, any> | null = null;
 export function getDefaultExecutionContract(): Record<string, any> {
   if (cachedExecutionContract) return cachedExecutionContract;
   const codexHome = process.env.CODEX_HOME ?? `${process.env.HOME ?? process.cwd()}/.codex`;
+  const defaultContract = fileURLToPath(new URL('../../config/execution-contract.json', import.meta.url));
   const candidates = [
     process.env.CODEX_EXECUTION_CONTRACT_FILE,
-    new URL('../../scripts/codex/execution-contract.json', import.meta.url).pathname,
-    `${codexHome}/hooks/codex/execution-contract.json`,
+    defaultContract,
+    `${codexHome}/config/execution-contract.json`,
   ].filter((p): p is string => typeof p === 'string' && p.length > 0 && existsSync(p));
 
   if (candidates.length > 0) {

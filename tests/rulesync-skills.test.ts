@@ -11,7 +11,7 @@ type RunResult = ReturnType<typeof spawnSync>;
 
 const repositoryRoot = fileURLToPath(new URL('../', import.meta.url));
 const sourceRoot = join(repositoryRoot, '.rulesync', 'skills');
-const installerPath = join(repositoryRoot, 'scripts', 'codex', 'install-codex-integration.sh');
+const installerPath = join(repositoryRoot, 'install.sh');
 const rulesyncConfigPath = join(repositoryRoot, 'rulesync.jsonc');
 const driftWorkflowPath = join(repositoryRoot, '.github', 'workflows', 'rulesync-mcp-shadow-drift.yml');
 const copilotSetupWorkflowPath = join(repositoryRoot, '.github', 'workflows', 'copilot-setup-steps.yml');

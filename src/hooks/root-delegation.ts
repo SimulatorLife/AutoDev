@@ -17,11 +17,6 @@ function parseInput(raw: string): HookInput {
   }
 }
 
-function runtimeRoot(): string {
-  const installed = join(codexHome(), 'hooks');
-  return existsSync(join(installed, 'codex')) ? installed : join(repositoryRoot(), 'scripts');
-}
-
 function runtimeSourceRoot(): string {
   const installed = codexHome();
   return existsSync(join(installed, 'src', 'agents', 'spawn-tools.ts')) ? installed : repositoryRoot();
@@ -55,10 +50,10 @@ export async function runRootDelegation(raw = readFileSync(0, 'utf8')): Promise<
   const model = typeof input.model === 'string' ? input.model : '';
   if (model === 'autodev/orchestrator' || /^(autodev\/|MiniMax-|sonnet$|opus$|haiku$|claude-|gemini-|copilot)/.test(model)) return 0;
 
-  const root = runtimeRoot();
-  const promptFile = join(root, 'codex', 'prompts', 'orchestrator.md');
-  const skillFile = join(root, '..', '.rulesync', 'skills', 'orchestration', 'SKILL.md');
-  const codeSearchFile = join(root, 'codex', 'prompts', 'code-search.md');
+  const root = runtimeSourceRoot();
+  const promptFile = join(root, 'agents', 'prompts', 'orchestrator.md');
+  const skillFile = join(root, '.rulesync', 'skills', 'orchestration', 'SKILL.md');
+  const codeSearchFile = join(root, 'agents', 'prompts', 'code-search.md');
   if (!existsSync(promptFile)) {
     console.error(`root-delegation: orchestrator prompt not found at ${promptFile}`);
     return 0;

@@ -147,7 +147,7 @@ export function validateRoutingConfig(value: unknown): RoutingConfig {
 function resolveConfigPath(environment: NodeJS.ProcessEnv): string {
   const explicit = environment.CODEX_ROUTER_CONFIG_FILE?.trim();
   if (explicit) return explicit;
-  const repositorySource = fileURLToPath(new URL('../../scripts/codex/model-routing.json', import.meta.url));
+  const repositorySource = fileURLToPath(new URL('../../config/model-routing.json', import.meta.url));
   if (existsSync(repositorySource)) return repositorySource;
   const installedSource = `${environment.CODEX_HOME ?? `${environment.HOME ?? process.cwd()}/.codex`}/codex-model-routing.json`;
   if (existsSync(installedSource)) return installedSource;

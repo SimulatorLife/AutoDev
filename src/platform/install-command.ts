@@ -28,7 +28,7 @@ function parseFlags(args: readonly string[]): InstallFlags {
       if (flags.otelMode === 'collector') throw new ConfigError('Collector enable/disable options are mutually exclusive.');
       flags.otelMode = 'direct';
     } else if (arg === '--check') {
-      throw new ConfigError('autodev install --check is still owned by the installer check boundary; run scripts/codex/install-codex-integration.sh --check');
+      throw new ConfigError('autodev install --check is still owned by the installer check boundary; run install.sh --check');
     } else {
       throw new ConfigError(arg === '--restart' ? 'unsupported install option: --restart; normal installs restart services, use --materialize-only for a live session' : `unsupported install option: ${arg}`);
     }

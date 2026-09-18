@@ -760,7 +760,7 @@ test("the shim tool is not counted as a bridge-native spawn", () => {
   // A shim spawn becomes an `autodev/<role>` router request, which the router
   // already records as router_alias. Reporting it over /v1/agent-events as well
   // would count the same child twice.
-  const contract = JSON.parse(read("scripts/codex/execution-contract.json"));
+  const contract = JSON.parse(read("config/execution-contract.json"));
   for (const [ provider, config ] of Object.entries(contract.providers as Record<string, { spawnTools?: string[] }>)) {
     const tools = config.spawnTools ?? [];
     assert.equal(tools.includes("spawn_subagent"), false, `${provider} must not treat the shim tool as an in-CLI spawn`);
