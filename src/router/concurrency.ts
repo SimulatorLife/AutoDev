@@ -46,6 +46,7 @@ export interface ConcurrencyManagerOptions {
   configFile?: string;
   configSource?: string;
   initialConfig?: ConcurrencyConfig;
+  getOrchestratorSession?: (sessionKey: string) => { provider?: string | null; model?: string | null; workspace?: string | null } | null;
 }
 
 export function defaultCodexConfigFile(): string {
@@ -104,6 +105,7 @@ export class ConcurrencyManager {
   private readonly agentActivity: AgentActivityTracker;
   private readonly config: ConcurrencyConfig;
   private readonly configSource: string;
+  private readonly getOrchestratorSession?: ((sessionKey: string) => { provider?: string | null; model?: string | null; workspace?: string | null } | null) | undefined;
   private readonly openSubagentSlots = new Map<string, string[]>();
   private subagentSlotSequence = 0;
   public readonly telemetry: ConcurrencyTelemetry = {
@@ -116,6 +118,7 @@ export class ConcurrencyManager {
     this.agentActivity = options.agentActivity;
     this.config = options.initialConfig ?? parseConcurrencyConfig(options.configFile);
     this.configSource = options.configSource ?? (process.env.CODEX_ROUTER_CODEX_CONFIG_FILE ? 'env_override' : 'default_codex_home');
+    this.getOrchestratorSession = options.getOrchestratorSession;
   }
 
   get configFile(): string {
@@ -144,6 +147,15 @@ export class ConcurrencyManager {
       tag: sessionKey,
       origin: 'subagent',
     });
+    const orch = this.getOrchestratorSession?.(sessionKey);
+    if (orch) {
+      this.agentActivity.noteSubagentWait(sessionKey, {
+        provider: orch.provider ?? null,
+        model: orch.model ?? null,
+        workspace: orch.workspace ?? null,
+        role: 'orchestrator',
+      });
+    }
     const stack = this.openSubagentSlots.get(sessionKey) ?? [];
     stack.push(subject);
     this.openSubagentSlots.set(sessionKey, stack);
@@ -156,9 +168,16 @@ export class ConcurrencyManager {
     const subject = stack.pop()!;
     if (stack.length === 0) this.openSubagentSlots.delete(sessionKey);
     this.agentActivity.finish(subject, { requestId: subject, outcome: 'success' });
+    const remaining = this.openSubagentSlots.get(sessionKey)?.length ?? 0;
+    if (remaining === 0 && this.getOrchestratorSession?.(sessionKey)) {
+      this.agentActivity.noteSubagentResolved(sessionKey);
+    }
   }
 
   touchOpenSubagentSlots(sessionKey: string): void {
+    if (this.getOrchestratorSession?.(sessionKey)) {
+      this.agentActivity.touch(sessionKey);
+    }
     const stack = this.openSubagentSlots.get(sessionKey);
     if (!stack) return;
     for (const subject of stack) {

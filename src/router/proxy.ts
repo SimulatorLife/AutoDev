@@ -39,6 +39,7 @@ import {
 } from './routing.ts';
 import {
   touchOpenSubagentSlots as touchManagerOpenSubagentSlots,
+  getDefaultConcurrencyManager,
 } from './concurrency.ts';
 import {
   classifyProviderFailure,
@@ -52,6 +53,7 @@ import {
   SESSION_SCOPE_HEADER,
   bridgeTelemetryHeaders as subagentBridgeTelemetryHeaders,
   closeBridgeSubagentsForRequest,
+  hasActiveBridgeSubagentsForSession,
   mcpContractForRole as subagentMcpContractForRole,
   noteBridgeRequest,
   noteBridgeSession,
@@ -1059,7 +1061,11 @@ export async function proxyFallbackChain(
   workspace: { key: string; cwd?: string | null } | null,
   clientSignal: AbortSignal | null = null,
 ): Promise<void> {
-  const activitySubject = sessionKey || `req:${requestId}`;
+  const isOrchestratorTurn = agentRole === ORCHESTRATOR_AGENT_ROLE;
+  const isKnownOrchestratorSession = Boolean(sessionKey && orchestratorProviderForSession(sessionKey));
+  const activitySubject = (!isOrchestratorTurn && isKnownOrchestratorSession)
+    ? `req:${requestId}`
+    : (sessionKey || `req:${requestId}`);
   const modelName = String(payload.model ?? '');
   if (!candidates || candidates.length === 0) {
     recordSpawnFailure({ requestId, role, requestedModel: modelName, reason: 'provider_exhausted' });
@@ -1101,15 +1107,18 @@ export async function proxyFallbackChain(
       provider: route.provider,
       model: route.model,
       role: activityRole,
-      origin: origin ?? usageOrigin(role, route.provider),
+      origin: origin ?? (isOrchestratorTurn ? 'orchestrator' : isKnownOrchestratorSession ? 'subagent' : usageOrigin(role, route.provider)),
       workspace: workspace?.key ?? null,
+      tag: (isKnownOrchestratorSession && !isOrchestratorTurn) ? sessionKey : null,
     });
     if (sessionKey) touchManagerOpenSubagentSlots(sessionKey);
     const bridgeContext = { provider: route.provider, model: route.model, role: role ?? (origin === 'orchestrator' ? 'orchestrator' : null), workspace: workspace?.key ?? null, sessionKey };
     noteBridgeRequest(requestId, bridgeContext);
     noteBridgeSession(sessionKey, { ...bridgeContext, requestId });
     recordNativeMcpExposure({ route, agentRole, workspace, requestId, sessionKey });
-    if (agentRole === ORCHESTRATOR_AGENT_ROLE) noteOrchestratorSession(sessionKey, route.provider);
+    if (agentRole === ORCHESTRATOR_AGENT_ROLE) {
+      noteOrchestratorSession(sessionKey, route.provider, { model: route.model, workspace: workspace?.key ?? null, requestId });
+    }
     incrementActiveRequests(route.provider);
 
     try {
@@ -1126,7 +1135,10 @@ export async function proxyFallbackChain(
             route.model,
             () => {
               getDefaultUsageTracker().activityTracker.touch(activitySubject);
-              if (sessionKey) touchManagerOpenSubagentSlots(sessionKey);
+              if (sessionKey) {
+                getDefaultUsageTracker().activityTracker.touch(sessionKey);
+                touchManagerOpenSubagentSlots(sessionKey);
+              }
             },
           );
           if (responseResult.failed) {
@@ -1138,7 +1150,15 @@ export async function proxyFallbackChain(
           }
           COOLDOWNS.clear(route.provider);
           recordRouterEvent({ phase: 'result', requestId, role, origin, requestedModel: modelName, provider: route.provider, model: route.model, workspace, outcome: 'success', status: result.upstream!.status, elapsedMs: Date.now() - attemptStartedAt, toolCalls: responseResult.toolCalls, selection });
-          getDefaultUsageTracker().activityTracker.endRequest(activitySubject, { requestId, outcome: 'success', hasToolCalls: responseResult.toolCalls > 0, inputRequired: Boolean(responseResult.inputRequired) });
+          getDefaultUsageTracker().activityTracker.endRequest(activitySubject, {
+            requestId,
+            outcome: 'success',
+            hasToolCalls: responseResult.toolCalls > 0,
+            inputRequired: Boolean(responseResult.inputRequired),
+            hasActiveSubagents: isOrchestratorTurn && sessionKey
+              ? (hasActiveBridgeSubagentsForSession(sessionKey) || getDefaultConcurrencyManager().activeSubagentThreads() > 0)
+              : false,
+          });
         } catch (streamError) {
           COOLDOWNS.cooldownProvider(route.provider, cooldownFor('upstream_error'));
           throw streamError;

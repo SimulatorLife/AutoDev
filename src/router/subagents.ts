@@ -142,6 +142,14 @@ export interface BridgeRequestContext {
   [key: string]: unknown;
 }
 
+export interface OrchestratorSessionEntry {
+  provider: string;
+  model: string | null;
+  workspace: string | null;
+  requestId: string | null;
+  updatedAt: number;
+}
+
 export interface BridgeSubagentUsageEntry {
   requestId: string;
   provider: string;
@@ -321,7 +329,7 @@ export class SubagentRegistry {
 
   readonly subagentTelemetry: SubagentTelemetry;
   readonly spawnFailureTelemetry: SpawnFailureTelemetry;
-  private readonly orchestratorProviderBySession = new Map<string, string>();
+  private readonly orchestratorSessions = new Map<string, OrchestratorSessionEntry>();
   private readonly workspaceMetadataBySession = new Map<string, string>();
   private readonly bridgeRequestContext = new Map<string, BridgeRequestContext>();
   private readonly bridgeSessionContext = new Map<string, { requestId: string | null; context: BridgeRequestContext }>();
@@ -374,19 +382,44 @@ export class SubagentRegistry {
     return this.workspaceMetadataBySession.get(sessionKey) ?? null;
   }
 
-  noteOrchestratorSession(sessionKey: string | null | undefined, provider: string | null | undefined): void {
+  noteOrchestratorSession(
+    sessionKey: string | null | undefined,
+    provider: string | null | undefined,
+    details: { model?: string | null; workspace?: string | null; requestId?: string | null } = {},
+  ): void {
     if (!sessionKey || sessionKey === PROCESS_FALLBACK_SESSION_KEY || !provider) return;
-    this.orchestratorProviderBySession.delete(sessionKey);
-    this.orchestratorProviderBySession.set(sessionKey, provider);
-    while (this.orchestratorProviderBySession.size > this.maxTrackedSessions) {
-      const oldest = this.orchestratorProviderBySession.keys().next().value;
-      if (oldest !== undefined) this.orchestratorProviderBySession.delete(oldest);
+    this.orchestratorSessions.delete(sessionKey);
+    this.orchestratorSessions.set(sessionKey, {
+      provider,
+      model: details.model ?? null,
+      workspace: details.workspace ?? null,
+      requestId: details.requestId ?? null,
+      updatedAt: Date.now(),
+    });
+    while (this.orchestratorSessions.size > this.maxTrackedSessions) {
+      const oldest = this.orchestratorSessions.keys().next().value;
+      if (oldest !== undefined) this.orchestratorSessions.delete(oldest);
     }
   }
 
   orchestratorProviderForSession(sessionKey: string | null | undefined): string | null {
     if (!sessionKey || sessionKey === PROCESS_FALLBACK_SESSION_KEY) return null;
-    return this.orchestratorProviderBySession.get(sessionKey) ?? null;
+    return this.orchestratorSessions.get(sessionKey)?.provider ?? null;
+  }
+
+  orchestratorSessionInfo(sessionKey: string | null | undefined): OrchestratorSessionEntry | null {
+    if (!sessionKey || sessionKey === PROCESS_FALLBACK_SESSION_KEY) return null;
+    const entry = this.orchestratorSessions.get(sessionKey);
+    return entry ? { ...entry } : null;
+  }
+
+  hasActiveBridgeSubagentsForSession(sessionKey: string | null | undefined): boolean {
+    if (!sessionKey || sessionKey === PROCESS_FALLBACK_SESSION_KEY) return false;
+    for (const entry of this.bridgeSubagentUsage.values()) {
+      const ctx = this.bridgeRequestContext.get(entry.requestId);
+      if (ctx?.sessionKey === sessionKey) return true;
+    }
+    return false;
   }
 
   noteBridgeRequest(requestId: string | null | undefined, context: BridgeRequestContext): void {
@@ -466,6 +499,12 @@ export class SubagentRegistry {
         requestId: parent.subject,
         outcome: parent.finished.outcome,
       });
+      const sessionKey = parent.context?.sessionKey;
+      if (sessionKey && this.orchestratorSessions.has(sessionKey)) {
+        if (!this.hasActiveBridgeSubagentsForSession(sessionKey)) {
+          this.agentActivity.noteSubagentResolved(sessionKey);
+        }
+      }
     }
     this.bridgeParentActivity.delete(requestId);
     return true;
@@ -502,6 +541,15 @@ export class SubagentRegistry {
     const parent = this.openBridgeParentActivity(requestId, context);
     if (parent) parent.children.add(key);
 
+    if (context.sessionKey && this.agentActivity) {
+      this.agentActivity.noteSubagentWait(context.sessionKey, {
+        provider: context.provider,
+        model: context.model,
+        role: ORCHESTRATOR_AGENT_ROLE,
+        workspace: context.workspace ?? null,
+      });
+    }
+
     if (this.agentActivity) {
       this.agentActivity.beginRequest(`bridge:${key}`, {
         requestId: key,
@@ -511,7 +559,8 @@ export class SubagentRegistry {
         origin: 'subagent',
         workspace: entry.workspace,
         kind: 'bridge_subagent',
-        tag: entry.requestId,
+        tag: context.sessionKey || entry.requestId,
+        parentRequestId: entry.requestId,
       });
     }
 
@@ -602,6 +651,13 @@ export class SubagentRegistry {
       parent.children.delete(key);
       this.closeBridgeParentActivity(entry.requestId);
     }
+
+    const sessionKey = this.bridgeRequestContext.get(entry.requestId)?.sessionKey;
+    if (sessionKey && this.agentActivity) {
+      if (!this.hasActiveBridgeSubagentsForSession(sessionKey)) {
+        this.agentActivity.noteSubagentResolved(sessionKey);
+      }
+    }
     return true;
   }
 
@@ -685,7 +741,7 @@ export class SubagentRegistry {
     this.subagentTelemetry.byRole = {};
     this.subagentTelemetry.byStatus = {};
     this.subagentTelemetry.recent = [];
-    this.orchestratorProviderBySession.clear();
+    this.orchestratorSessions.clear();
     this.bridgeRequestContext.clear();
     this.bridgeSessionContext.clear();
     for (const key of [...this.bridgeSubagentUsage.keys()]) {
@@ -820,12 +876,24 @@ export function setDefaultSubagentRegistry(registry: SubagentRegistry | null): v
   defaultSubagentRegistry = registry;
 }
 
-export function noteOrchestratorSession(sessionKey: string | null | undefined, provider: string | null | undefined): void {
-  getDefaultSubagentRegistry().noteOrchestratorSession(sessionKey, provider);
+export function noteOrchestratorSession(
+  sessionKey: string | null | undefined,
+  provider: string | null | undefined,
+  details: { model?: string | null; workspace?: string | null; requestId?: string | null } = {},
+): void {
+  getDefaultSubagentRegistry().noteOrchestratorSession(sessionKey, provider, details);
 }
 
 export function orchestratorProviderForSession(sessionKey: string | null | undefined): string | null {
   return getDefaultSubagentRegistry().orchestratorProviderForSession(sessionKey);
+}
+
+export function orchestratorSessionInfo(sessionKey: string | null | undefined): OrchestratorSessionEntry | null {
+  return getDefaultSubagentRegistry().orchestratorSessionInfo(sessionKey);
+}
+
+export function hasActiveBridgeSubagentsForSession(sessionKey: string | null | undefined): boolean {
+  return getDefaultSubagentRegistry().hasActiveBridgeSubagentsForSession(sessionKey);
 }
 
 export function noteBridgeRequest(requestId: string | null | undefined, context: BridgeRequestContext): void {

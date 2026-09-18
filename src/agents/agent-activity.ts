@@ -144,13 +144,14 @@ export function createAgentActivityTracker({ ttlMs = resolveAgentActivityTtlMs()
   const effectiveTtlMs = Number.isInteger(ttlMs) && ttlMs > 0 ? ttlMs : DEFAULT_AGENT_ACTIVITY_TTL_MS;
   const subjects = new Map();
 
-  function ensure(subject: string, { kind = "session", tag = null }: { kind?: string; tag?: string | null } = {}): ActivityRecord {
+  function ensure(subject: string, { kind = "session", tag = null, parentRequestId = null }: { kind?: string; tag?: string | null; parentRequestId?: string | null } = {}): ActivityRecord {
     let rec = subjects.get(subject);
     if (!rec) {
       rec = {
         subject,
         kind,
         tag,
+        parentRequestId,
         state: "active",
         provider: null,
         model: null,
@@ -187,9 +188,11 @@ export function createAgentActivityTracker({ ttlMs = resolveAgentActivityTtlMs()
    * for: a continuation is observable as a resume, not indistinguishable
    * from any other turn.
    */
-  function beginRequest(subject: string, { requestId = null, provider = null, model = null, role = null, origin = null, workspace = null, kind = "session", tag = null, timestamp }: ActivityOptions = {}): ActivityRecord | null {
+  function beginRequest(subject: string, { requestId = null, provider = null, model = null, role = null, origin = null, workspace = null, kind = "session", tag = null, parentRequestId = null, timestamp }: ActivityOptions = {}): ActivityRecord | null {
     if (!subject) return null;
-    const rec = ensure(subject, { kind, tag });
+    const rec = ensure(subject, { kind, tag, parentRequestId });
+    if (tag !== null && tag !== undefined) rec.tag = tag;
+    if (parentRequestId !== null && parentRequestId !== undefined) rec.parentRequestId = parentRequestId;
     if (requestId && rec.openRequestId === requestId && !TERMINAL_STATES.has(rec.state)) {
       // Exact duplicate of the currently open attempt: not a new transition,
       // but proof the same request is still genuinely open, so it refreshes
@@ -219,6 +222,8 @@ export function createAgentActivityTracker({ ttlMs = resolveAgentActivityTtlMs()
         rec.role = role ?? rec.role;
         rec.origin = origin ?? rec.origin;
         rec.workspace = workspace ?? rec.workspace;
+        rec.tag = tag ?? rec.tag;
+        rec.parentRequestId = parentRequestId ?? rec.parentRequestId;
         rec.requestId = requestId;
         rec.openRequestId = requestId;
         rec.settledRequestIds.clear();
@@ -244,14 +249,15 @@ export function createAgentActivityTracker({ ttlMs = resolveAgentActivityTtlMs()
    * the router-visible response body -- decides the gap state: a response
    * that ended with a tool call is followed by tool_wait. A response that
    * failed ends in failed (terminal). A successful response with an explicit
-   * inputRequired protocol marker enters user_wait. Normal final responses
-   * (no tool calls, no explicit input_required) transition to finished
-   * (terminal), so user_wait is reserved for explicit waits.
+   * inputRequired protocol marker enters user_wait. If the subject has active
+   * subagents or subagent slots, it enters subagent_wait. Normal final responses
+   * (no tool calls, no explicit input_required, no active subagents) transition
+   * to finished (terminal), so user_wait and subagent_wait are reserved for explicit waits.
    * Idempotent per (subject, requestId): a redelivered or duplicate result
    * for a request already settled is a no-op, and a terminal record is
    * never reopened by a later result.
    */
-  function endRequest(subject: string, { requestId = null, outcome = "success", hasToolCalls = false, inputRequired = false, timestamp }: ActivityOptions = {}): ActivityRecord | null {
+  function endRequest(subject: string, { requestId = null, outcome = "success", hasToolCalls = false, inputRequired = false, hasActiveSubagents = false, timestamp }: ActivityOptions = {}): ActivityRecord | null {
     const rec = subjects.get(subject);
     if (!rec) return null;
     if (TERMINAL_STATES.has(rec.state)) return snapshotRecord(rec, timestamp ?? now());
@@ -261,6 +267,8 @@ export function createAgentActivityTracker({ ttlMs = resolveAgentActivityTtlMs()
     rec.openRequestId = null;
     if (outcome !== "success") {
       transition(rec, "failed", timestamp);
+    } else if (hasActiveSubagents || (rec.role === "orchestrator" && hasLiveChildren(subject, Number.isFinite(timestamp) ? timestamp : now()))) {
+      transition(rec, "subagent_wait", timestamp);
     } else if (hasToolCalls) {
       transition(rec, "tool_wait", timestamp);
     } else if (inputRequired) {
@@ -320,13 +328,35 @@ export function createAgentActivityTracker({ ttlMs = resolveAgentActivityTtlMs()
     return snapshotRecord(rec, at);
   }
 
+  function hasLiveChildren(tag: string, at = now()): boolean {
+    if (!tag) return false;
+    for (const rec of subjects.values()) {
+      if (
+        (rec.tag === tag || rec.parentRequestId === tag) &&
+        LIVE_STATES.has(rec.state) &&
+        (rec.origin === "subagent" || rec.kind === "subagent_slot" || rec.kind === "bridge_subagent" || String(rec.subject).startsWith("bridge-parent:"))
+      ) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   /** The subject just spawned a subagent it is now waiting on. Idempotent (re-applying while already waiting is a no-op). */
-  function noteSubagentWait(subject: string, { timestamp, kind = "session", tag = null }: ActivityOptions = {}): ActivityRecord | null {
+  function noteSubagentWait(subject: string, { timestamp, kind = "session", tag = null, provider = null, model = null, role = null, workspace = null }: ActivityOptions = {}): ActivityRecord | null {
     if (!subject) return null;
     const rec = ensure(subject, { kind, tag });
-    if (TERMINAL_STATES.has(rec.state) || rec.state === "subagent_wait") return snapshotRecord(rec, timestamp ?? now());
-    transition(rec, "subagent_wait", timestamp);
-    return snapshotRecord(rec, timestamp ?? now());
+    if (provider !== null && provider !== undefined) rec.provider = provider;
+    if (model !== null && model !== undefined) rec.model = model;
+    if (role !== null && role !== undefined) rec.role = role;
+    if (workspace !== null && workspace !== undefined) rec.workspace = workspace;
+    const at = Number.isFinite(timestamp) ? timestamp : now();
+    if (rec.state === "subagent_wait") {
+      rec.updatedAt = at;
+      return snapshotRecord(rec, at);
+    }
+    transition(rec, "subagent_wait", at);
+    return snapshotRecord(rec, at);
   }
 
   /** The subagent the subject was waiting on reported back. A no-op unless the subject was actually in subagent_wait. */
@@ -334,8 +364,13 @@ export function createAgentActivityTracker({ ttlMs = resolveAgentActivityTtlMs()
     const rec = subjects.get(subject);
     if (!rec) return null;
     if (TERMINAL_STATES.has(rec.state) || rec.state !== "subagent_wait") return rec ? snapshotRecord(rec, timestamp ?? now()) : null;
-    transition(rec, "resumed", timestamp);
-    return snapshotRecord(rec, timestamp ?? now());
+    const at = Number.isFinite(timestamp) ? timestamp : now();
+    if (hasLiveChildren(subject, at)) {
+      rec.updatedAt = at;
+      return snapshotRecord(rec, at);
+    }
+    transition(rec, "resumed", at);
+    return snapshotRecord(rec, at);
   }
 
   /**
@@ -380,6 +415,11 @@ export function createAgentActivityTracker({ ttlMs = resolveAgentActivityTtlMs()
     let swept = 0;
     for (const rec of subjects.values()) {
       if (isStale(rec, at)) {
+        if (rec.role === "orchestrator" && hasLiveChildren(rec.subject, at)) {
+          rec.updatedAt = at;
+          rec.state = "subagent_wait";
+          continue;
+        }
         rec.state = "stale";
         swept += 1;
       }
@@ -509,6 +549,7 @@ export function createAgentActivityTracker({ ttlMs = resolveAgentActivityTtlMs()
     getState,
     getRecord,
     sweep,
+    hasLiveChildren,
     countLive,
     listLive,
     countByState,
