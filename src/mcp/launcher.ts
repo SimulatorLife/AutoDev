@@ -44,7 +44,7 @@ export function runMcp(name: string, repoRoot: string, env: NodeJS.ProcessEnv = 
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   try {
-    const repoRoot = fileURLToPath(new URL('../../', import.meta.url));
+    const repoRoot = process.env.AUTODEV_REPO_ROOT?.trim() || fileURLToPath(new URL('../../', import.meta.url));
     process.exitCode = runMcp(process.argv[2] ?? '', repoRoot);
   } catch (error) {
     console.error(`autodev mcp: ${error instanceof Error ? error.message : error}`);

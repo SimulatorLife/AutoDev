@@ -19,7 +19,7 @@ export const RUNTIME_MODULES = [
   'src/router/routing.ts', 'src/router/cooldown.ts', 'src/router/responses.ts', 'src/router/concurrency.ts', 'src/router/lifecycle.ts',
   'src/router/auth.ts', 'src/router/events.ts', 'src/router/subagents.ts', 'src/router/persistence.ts', 'src/router/usage.ts',
   'src/router/otel.ts', 'src/router/proxy.ts', 'src/router/http.ts', 'src/router/server.ts', 'src/agents/bridge-spawn-session.ts', 'src/providers/minimax.ts',
-  'src/providers/copilot.ts', 'src/providers/antigravity.ts', 'src/providers/claude.ts', 'src/mcp/spawn-shim.ts',
+  'src/providers/copilot.ts', 'src/providers/antigravity.ts', 'src/providers/claude.ts', 'src/mcp/spawn-shim.ts', 'src/mcp/launcher.ts',
   'src/shared/execution-contract.ts', 'src/router/status.ts', 'src/cli/router-status.ts', 'config/execution-contract.json',
   'agents/prompts/base.md', 'agents/prompts/leaf.md', 'agents/prompts/code-search.md', 'agents/prompts/orchestrator.md',
   'src/hooks/command-utils.ts', 'src/hooks/skill-read-telemetry.ts', 'src/hooks/session-start.ts', 'src/hooks/subagent-start.ts',
