@@ -14,7 +14,7 @@ export interface ConcurrencyConfig {
 }
 
 export interface ConcurrencyDenialRecord {
-  timestamp: string;
+  timestamp?: string;
   reason: string;
   sessionKey?: string;
   [key: string]: unknown;

@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { describe, test } from "node:test";
 
 import {
@@ -6,60 +7,92 @@ import {
   AGENT_ACTIVITY_STATES,
 } from "../src/agents/agent-activity.ts";
 
+type AgentActivityState = (typeof AGENT_ACTIVITY_STATES)[number];
+
 import {
-  agentActivity,
-  agentsStatus,
   concurrencyStatus,
-  projectLiveAgents,
   recordConcurrencyDenial,
   releaseSubagentSlot,
   resetConcurrencyTelemetry,
   tryAcquireSubagentSlot,
-} from "../scripts/codex-model-router.mjs";
+} from "../src/router/concurrency.ts";
+import { agentsStatus, agentActivity } from "../src/router/http.ts";
+import { projectLiveAgents } from "../src/router/usage.ts";
 
-// The router's slot kind and process-fallback tag are documented in
-// scripts/codex-model-router.mjs (SUBAGENT_SLOT_KIND = "subagent_slot",
-// PROCESS_FALLBACK_SESSION_KEY = "process-scope"). The router does not
-// re-export these constants, so the contract test pins them locally to
-// keep the test host-independent and to assert the contract rather than
-// the router's module-export shape.
 const SUBAGENT_SLOT_KIND = "subagent_slot";
-const PROCESS_FALLBACK_SESSION_KEY = "process-scope";
 
-const contract = await import("./fixtures/contracts/agent-reconciliation-contract.json", { with: { type: "json" } }).then((m) => m.default ?? m);
+interface ContractOp {
+  op: string;
+  field?: string;
+  expected?: unknown;
+  key?: string;
+  subject?: string;
+  requestId?: string;
+  kind?: string;
+  provider?: string | null;
+  model?: string | null;
+  role?: string | null;
+  origin?: string | null;
+  workspace?: string | null;
+  state?: AgentActivityState;
+  sessionKey?: string;
+  requestedModel?: string;
+  sessionScope?: string;
+  reason?: string;
+}
+
+interface ContractScenario {
+  operations?: ContractOp[];
+}
+
+interface ContractFixture {
+  schema: string;
+  statusAgentsSchema: string;
+  scenarios: Record<string, ContractScenario>;
+}
+
+const contract: ContractFixture = JSON.parse(
+  readFileSync(new URL("./fixtures/contracts/agent-reconciliation-contract.json", import.meta.url), "utf8"),
+);
 
 assert.equal(contract.schema, "autodev-agent-reconciliation-contract-v1", "agent reconciliation contract must match its schema tag");
 assert.equal(contract.statusAgentsSchema, "autodev-agent-status-v1", "the projected status.agents schema tag is frozen");
 
 const SCENARIOS = contract.scenarios;
 
-function getPath(obj, dotted) {
-  let cur = obj;
-  for (const part of dotted.split(".")) cur = cur?.[part];
+function getPath(obj: unknown, dotted: string): unknown {
+  let cur: unknown = obj;
+  for (const part of dotted.split(".")) {
+    if (cur !== null && typeof cur === "object") {
+      cur = (cur as Record<string, unknown>)[part];
+    } else {
+      return undefined;
+    }
+  }
   return cur;
 }
 
-function evalOps(name, operations, ctx) {
+function evalOps(name: string, operations: ContractOp[], ctx: { status: Record<string, unknown> }): void {
   for (const op of operations) {
     switch (op.op) {
       case "status_field": {
-        const value = getPath(ctx.status, op.field);
+        const value = getPath(ctx.status, op.field!);
         assert.equal(value, op.expected, `${name}: ${op.field}`);
         break;
       }
       case "status_deep_equal": {
-        const value = getPath(ctx.status, op.field);
+        const value = getPath(ctx.status, op.field!);
         assert.deepEqual(value, op.expected, `${name}: ${op.field}`);
         break;
       }
       case "status_no_key": {
-        assert.equal(Object.hasOwn(ctx.status, op.key), false, `${name}: ${op.key} must not appear on status.agents`);
+        assert.equal(Object.hasOwn(ctx.status, op.key!), false, `${name}: ${op.key} must not appear on status.agents`);
         break;
       }
       case "status_shape": {
-        const target = op.field ? ctx.status?.[op.field] : ctx.status;
-        const keys = Object.keys(target ?? {}).sort();
-        assert.deepEqual(keys, [...op.expected].sort(), `${name}: shape${op.field ? ` of ${op.field}` : ""}`);
+        const target = op.field ? getPath(ctx.status, op.field) : ctx.status;
+        const keys = Object.keys((target as Record<string, unknown>) ?? {}).sort();
+        assert.deepEqual(keys, [...(op.expected as string[])].sort(), `${name}: shape${op.field ? ` of ${op.field}` : ""}`);
         break;
       }
       default:
@@ -68,7 +101,7 @@ function evalOps(name, operations, ctx) {
   }
 }
 
-function runScenario(name, scenario) {
+function runScenario(name: string, scenario: ContractScenario): void {
   let slotSequence = 0;
   resetConcurrencyTelemetry();
   agentActivity.reset();
@@ -76,9 +109,9 @@ function runScenario(name, scenario) {
     for (const op of scenario.operations ?? []) {
       switch (op.op) {
         case "beginAgent": {
-          agentActivity.beginRequest(op.subject, {
-            requestId: op.requestId,
-            kind: op.kind,
+          agentActivity.beginRequest(op.subject!, {
+            requestId: op.requestId ?? op.subject,
+            kind: (op.kind ?? "session") as "session" | "bridge_subagent",
             provider: op.provider ?? null,
             model: op.model ?? null,
             role: op.role ?? null,
@@ -88,7 +121,7 @@ function runScenario(name, scenario) {
           break;
         }
         case "applyLifecycle": {
-          agentActivity.applyLifecycleEvent(op.subject, { state: op.state });
+          agentActivity.applyLifecycleEvent(op.subject!, { state: op.state! });
           break;
         }
         case "beginSlot": {
@@ -96,20 +129,20 @@ function runScenario(name, scenario) {
           const subject = op.subject ?? `subagent_slot:${op.sessionKey}:${slotSequence}`;
           agentActivity.beginRequest(subject, {
             requestId: subject,
-            kind: SUBAGENT_SLOT_KIND,
+            kind: SUBAGENT_SLOT_KIND as "session",
             tag: op.sessionKey,
           });
           break;
         }
         case "acquire": {
-          const denial = tryAcquireSubagentSlot(op.sessionKey);
+          const denial = tryAcquireSubagentSlot(op.sessionKey!);
           if (denial !== null && denial !== "max_concurrent_threads_per_session") {
             throw new Error(`${name}: unexpected denial ${denial}`);
           }
           break;
         }
         case "release": {
-          releaseSubagentSlot(op.sessionKey);
+          releaseSubagentSlot(op.sessionKey!);
           break;
         }
         case "recordDenial": {
@@ -118,7 +151,7 @@ function runScenario(name, scenario) {
             role: op.role,
             requestedModel: op.requestedModel,
             sessionScope: op.sessionScope,
-            reason: op.reason,
+            reason: op.reason ?? "",
           });
           break;
         }
@@ -153,34 +186,36 @@ describe("agent reconciliation contract: constants and module surface", () => {
     assert.equal(typeof agentsStatus, "function");
     const at = Date.now();
     const status = agentsStatus(at);
-    assert.equal(status.schema, "autodev-agent-status-v1");
-    assert.equal(typeof status.canonicalLiveCount, "number");
-    assert.equal(typeof status.missingProvider, "number");
-    assert.equal(typeof status.missingModel, "number");
-    assert.equal(status.reconciledWithConcurrency, true);
-    assert.equal(status.slotVsAgent.agentLive, status.canonicalLiveCount);
+    assert.equal(status["schema"], "autodev-agent-status-v1");
+    assert.equal(typeof status["canonicalLiveCount"], "number");
+    assert.equal(typeof status["missingProvider"], "number");
+    assert.equal(typeof status["missingModel"], "number");
+    assert.equal(status["reconciledWithConcurrency"], true);
+    const slotVsAgent = status["slotVsAgent"] as Record<string, unknown>;
+    assert.equal(slotVsAgent["agentLive"], status["canonicalLiveCount"]);
   });
 
   test("agentsStatus(at) and projectLiveAgents(at) agree on the canonical live count", () => {
     const at = Date.now();
     const status = agentsStatus(at);
     const projection = projectLiveAgents(at);
-    assert.equal(status.canonicalLiveCount, projection.canonicalTotal);
-    assert.equal(status.missingProvider, projection.missingProvider);
-    assert.equal(status.missingModel, projection.missingModel);
+    assert.equal(status["canonicalLiveCount"], projection.canonicalTotal);
+    assert.equal(status["missingProvider"], projection.missingProvider);
+    assert.equal(status["missingModel"], projection.missingModel);
   });
 
   test("agentsStatus(at) and concurrencyStatus(at) share the same `at` for slot reconciliation", () => {
     const at = Date.now();
     const agents = agentsStatus(at);
     const concurrency = concurrencyStatus(at);
-    assert.equal(agents.slotVsAgent.admissionSlots, concurrency.activeSubagentThreads);
-    assert.equal(agents.slotVsAgent.activeAdmissionSessions, concurrency.activeSessions);
-    assert.equal(agents.slotVsAgent.processFallbackActiveThreads, concurrency.processFallbackActiveThreads);
+    const slotVsAgent = agents["slotVsAgent"] as Record<string, unknown>;
+    assert.equal(slotVsAgent["admissionSlots"], concurrency.activeSubagentThreads);
+    assert.equal(slotVsAgent["activeAdmissionSessions"], concurrency.activeSessions);
+    assert.equal(slotVsAgent["processFallbackActiveThreads"], concurrency.processFallbackActiveThreads);
   });
 
   test("AGENT_ACTIVITY_KINDS exposes only session and bridge_subagent", () => {
-    assert.deepEqual([...AGENT_ACTIVITY_KINDS].sort(), [ "bridge_subagent", "session" ]);
+    assert.deepEqual([...AGENT_ACTIVITY_KINDS].sort(), ["bridge_subagent", "session"]);
   });
 
   test("AGENT_ACTIVITY_STATES includes the eight documented tracker states", () => {
@@ -203,9 +238,10 @@ describe("agent reconciliation contract: constants and module surface", () => {
       tryAcquireSubagentSlot("reconcile-slot-x");
       tryAcquireSubagentSlot("reconcile-slot-y");
       const status = agentsStatus(Date.now());
-      assert.equal(status.canonicalLiveCount, 0);
-      assert.equal(status.slotVsAgent.admissionSlots, 2);
-      assert.equal(status.slotVsAgent.activeAdmissionSessions, 2);
+      assert.equal(status["canonicalLiveCount"], 0);
+      const slotVsAgent = status["slotVsAgent"] as Record<string, unknown>;
+      assert.equal(slotVsAgent["admissionSlots"], 2);
+      assert.equal(slotVsAgent["activeAdmissionSessions"], 2);
     } finally {
       resetConcurrencyTelemetry();
       agentActivity.reset();
@@ -224,10 +260,10 @@ describe("agent reconciliation contract: constants and module surface", () => {
         workspace: "AutoDev",
       });
       const status = agentsStatus(Date.now());
-      assert.deepEqual(status.liveByProvider, { minimax: 1 });
-      assert.deepEqual(status.liveByModel, { "minimax/MiniMax-M3": 1 });
-      assert.equal(status.missingProvider, 0);
-      assert.equal(status.missingModel, 0);
+      assert.deepEqual(status["liveByProvider"], { minimax: 1 });
+      assert.deepEqual(status["liveByModel"], { "minimax/MiniMax-M3": 1 });
+      assert.equal(status["missingProvider"], 0);
+      assert.equal(status["missingModel"], 0);
     } finally {
       agentActivity.reset();
     }
@@ -253,11 +289,11 @@ describe("agent reconciliation contract: liveByRole / liveByOrigin / liveByWorks
         workspace: "AutoDev",
       });
       const status = agentsStatus(Date.now());
-      assert.deepEqual(status.liveByRole, { worker: 1, unattributed: 1 });
-      assert.deepEqual(status.liveByOrigin, { subagent: 1, direct: 1 });
-      assert.deepEqual(status.liveByWorkspace, { AutoDev: 2 });
-      assert.equal(status.missingProvider, 1);
-      assert.equal(status.missingModel, 1);
+      assert.deepEqual(status["liveByRole"], { worker: 1, unattributed: 1 });
+      assert.deepEqual(status["liveByOrigin"], { subagent: 1, direct: 1 });
+      assert.deepEqual(status["liveByWorkspace"], { AutoDev: 2 });
+      assert.equal(status["missingProvider"], 1);
+      assert.equal(status["missingModel"], 1);
     } finally {
       agentActivity.reset();
     }

@@ -3,15 +3,22 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { tmpdir } from "node:os";
+import type { ServerResponse } from "node:http";
 import test from "node:test";
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const DASHBOARD_PATH = join(REPO_ROOT, "scripts", "codex-model-router-dashboard.html");
 
+interface DashboardSkillHelpers {
+  normalizeWorkspaceNamedUsage: (namedUsage: unknown, nameKeys: string[]) => unknown[];
+  summarizeWorkspaceSkills: (skillRows: unknown[], exposedSkillRows: unknown[]) => { uses: number; exposed: number };
+  renderWorkspaceSkills: (skillRows: unknown[], exposedSkillRows: unknown[]) => string;
+}
+
 // Extracts the dashboard's pure workspace-skills rendering helpers straight
 // out of the shipped HTML/script, so this test exercises the exact functions
 // the dashboard runs in the browser rather than a reimplementation of them.
-async function loadDashboardSkillHelpers() {
+async function loadDashboardSkillHelpers(): Promise<DashboardSkillHelpers> {
   const rawDashboard = await readFile(DASHBOARD_PATH, "utf8");
   const escapeMatch = rawDashboard.match(/function escapeHtml\([\s\S]*?\n    \}/);
   const normalizeMatch = rawDashboard.match(/function normalizeWorkspaceNamedUsage\([\s\S]*?\n    \}/);
@@ -19,36 +26,47 @@ async function loadDashboardSkillHelpers() {
   const renderSkillsMatch = rawDashboard.match(/function renderWorkspaceSkills\([\s\S]*?\n    \}/);
   assert.ok(escapeMatch && normalizeMatch && summarizeSkillsMatch && renderSkillsMatch, "dashboard workspace-skills helpers must be present");
   const fnScope = `${escapeMatch[0]}; ${normalizeMatch[0]}; ${summarizeSkillsMatch[0]}; ${renderSkillsMatch[0]}; return { normalizeWorkspaceNamedUsage, summarizeWorkspaceSkills, renderWorkspaceSkills };`;
-  return new Function(fnScope)();
+  return new Function(fnScope)() as DashboardSkillHelpers;
 }
 
 import {
-  ingestOtelSignal,
   ingestAgentEvents,
-  recordRouterEvent,
+  resetRouterTelemetry,
+  getRouterStatus,
+  setCodexStateSnapshotForTests,
+} from "../src/router/http.ts";
+import {
+  ingestOtelSignal,
+  resetOtelTelemetry,
+  codexTelemetryStatus,
+} from "../src/router/otel.ts";
+import { recordRouterEvent } from "../src/router/events.ts";
+import {
   registerWorkspaceId,
   attributionDiagnosticsStatus,
   resetAttributionDiagnostics,
-  resetOtelTelemetry,
-  resetRouterTelemetry,
+} from "../src/router/usage.ts";
+import {
   resetSubagentTelemetry,
-  codexTelemetryStatus,
-  getRouterStatus,
+  noteBridgeRequest,
+} from "../src/router/subagents.ts";
+import {
   persistRouterStateNow,
   loadRouterState,
-  noteBridgeRequest,
-  proxyConcreteResponse,
-  setCodexStateSnapshotForTests,
-} from "../scripts/codex-model-router.mjs";
+} from "../src/router/persistence.ts";
+import { proxyConcreteResponse } from "../src/router/proxy.ts";
 
-const attrs = (entries) => entries.map(([ key, value ]) => ({ key, value: { stringValue: String(value) } }));
-const point = (entries, value, start = "1", time = "2") => ({
+const attrs = (entries: Array<[string, unknown]>): Array<{ key: string; value: { stringValue: string } }> =>
+  entries.map(([key, value]) => ({ key, value: { stringValue: String(value) } }));
+
+const point = (entries: Array<[string, unknown]>, value: unknown, start: string | number = "1", time: string | number = "2") => ({
   attributes: attrs(entries),
   startTimeUnixNano: String(start),
   timeUnixNano: String(time),
   asInt: String(value),
 });
-const histogramPoint = (entries, count, sum, start = "1", time = "2") => ({
+
+const histogramPoint = (entries: Array<[string, unknown]>, count: unknown, sum: unknown, start: string | number = "1", time: string | number = "2") => ({
   attributes: attrs(entries),
   startTimeUnixNano: String(start),
   timeUnixNano: String(time),
@@ -59,36 +77,34 @@ const histogramPoint = (entries, count, sum, start = "1", time = "2") => ({
 test("ingests codex.tool_result and separates executed from unattributed coverage", () => {
   resetOtelTelemetry();
   ingestOtelSignal("metrics", {
-    resourceMetrics: [ {
-      scopeMetrics: [ {
+    resourceMetrics: [{
+      scopeMetrics: [{
         metrics: [
           {
             name: "codex.tool_result",
             sum: {
               aggregationTemporality: 1,
               dataPoints: [
-                point([ [ "tool", "exec_command" ], [ "source", "builtin" ], [ "status", "ok" ], [ "call_id", "call-1" ] ], 4, 10, 20),
-                point([ [ "tool", "read_file" ], [ "source", "builtin" ], [ "status", "ok" ], [ "call_id", "call-2" ] ], 2, 11, 21),
-                point([ [ "tool", "exec_command" ], [ "source", "builtin" ], [ "status", "error" ] ], 3, 12, 22),
-                // Duplicate call_id (same call-1, different start/time):
-                // counted under unattributed.
-                point([ [ "tool", "exec_command" ], [ "source", "builtin" ], [ "status", "ok" ], [ "call_id", "call-1" ] ], 1, 13, 23),
+                point([["tool", "exec_command"], ["source", "builtin"], ["status", "ok"], ["call_id", "call-1"]], 4, 10, 20),
+                point([["tool", "read_file"], ["source", "builtin"], ["status", "ok"], ["call_id", "call-2"]], 2, 11, 21),
+                point([["tool", "exec_command"], ["source", "builtin"], ["status", "error"]], 3, 12, 22),
+                point([["tool", "exec_command"], ["source", "builtin"], ["status", "ok"], ["call_id", "call-1"]], 1, 13, 23),
               ],
             },
           },
         ],
-      } ],
-    } ],
+      }],
+    }],
   });
 
-  const telemetry = codexTelemetryStatus();
+  const telemetry = codexTelemetryStatus() as Record<string, any>;
   assert.equal(telemetry.toolResults.total, 10);
-  assert.equal(telemetry.toolResults.executed, 6); // 4 + 2 unique call ids
-  assert.equal(telemetry.toolResults.unattributed, 4); // 3 not joinable + 1 duplicate
+  assert.equal(telemetry.toolResults.executed, 6);
+  assert.equal(telemetry.toolResults.unattributed, 4);
   assert.equal(telemetry.toolResults.causeResolved, 6);
   assert.equal(telemetry.toolResults.causeUnresolved, 3);
-  const execRow = telemetry.toolResults.byTool.find((row) => row.tool === "exec_command");
-  assert.equal(execRow.count, 8); // byTool counts coverage regardless of cause
+  const execRow = telemetry.toolResults.byTool.find((row: { tool: string }) => row.tool === "exec_command");
+  assert.equal(execRow.count, 8);
   assert.equal(execRow.byStatus.ok, 5);
   assert.equal(execRow.byStatus.error, 3);
 
@@ -98,22 +114,22 @@ test("ingests codex.tool_result and separates executed from unattributed coverag
 test("aggregates codex.tool_result duration histograms", () => {
   resetOtelTelemetry();
   ingestOtelSignal("metrics", {
-    resourceMetrics: [ {
-      scopeMetrics: [ {
-        metrics: [ {
+    resourceMetrics: [{
+      scopeMetrics: [{
+        metrics: [{
           name: "codex.tool_result",
           histogram: {
             aggregationTemporality: 1,
             dataPoints: [
-              histogramPoint([ [ "tool", "exec_command" ], [ "source", "builtin" ] ], 3, 90, 10, 20),
-              histogramPoint([ [ "tool", "read_file" ], [ "source", "builtin" ] ], 2, 30, 10, 20),
+              histogramPoint([["tool", "exec_command"], ["source", "builtin"]], 3, 90, 10, 20),
+              histogramPoint([["tool", "read_file"], ["source", "builtin"]], 2, 30, 10, 20),
             ],
           },
-        } ],
-      } ],
-    } ],
+        }],
+      }],
+    }],
   });
-  const telemetry = codexTelemetryStatus();
+  const telemetry = codexTelemetryStatus() as Record<string, any>;
   assert.equal(telemetry.toolResults.executionDurationMs.count, 5);
   assert.equal(telemetry.toolResults.executionDurationMs.sum, 120);
   assert.equal(Math.round(telemetry.toolResults.executionDurationMs.average), 24);
@@ -122,67 +138,63 @@ test("aggregates codex.tool_result duration histograms", () => {
 
 test("dedupes codex.tool_result events with the same call id from the same window", () => {
   resetOtelTelemetry();
-  // First export resolves call-1, call-2
   ingestOtelSignal("metrics", {
-    resourceMetrics: [ {
-      scopeMetrics: [ {
-        metrics: [ {
-          name: "codex.tool_result",
-          sum: {
-            aggregationTemporality: 2, // CUMULATIVE
-            dataPoints: [
-              point([ [ "tool", "exec_command" ], [ "call_id", "call-A" ], [ "status", "ok" ] ], 1, 0, 100),
-              point([ [ "tool", "exec_command" ], [ "call_id", "call-B" ], [ "status", "ok" ] ], 1, 0, 100),
-            ],
-          },
-        } ],
-      } ],
-    } ],
-  });
-  let telemetry = codexTelemetryStatus();
-  assert.equal(telemetry.toolResults.executed, 2);
-  assert.equal(telemetry.toolResults.unattributed, 0);
-
-  // Same call ids, same timestamps -> delta is 0 -> counts are unchanged
-  ingestOtelSignal("metrics", {
-    resourceMetrics: [ {
-      scopeMetrics: [ {
-        metrics: [ {
+    resourceMetrics: [{
+      scopeMetrics: [{
+        metrics: [{
           name: "codex.tool_result",
           sum: {
             aggregationTemporality: 2,
             dataPoints: [
-              point([ [ "tool", "exec_command" ], [ "call_id", "call-A" ], [ "status", "ok" ] ], 1, 0, 100),
-              point([ [ "tool", "exec_command" ], [ "call_id", "call-B" ], [ "status", "ok" ] ], 1, 0, 100),
+              point([["tool", "exec_command"], ["call_id", "call-A"], ["status", "ok"]], 1, 0, 100),
+              point([["tool", "exec_command"], ["call_id", "call-B"], ["status", "ok"]], 1, 0, 100),
             ],
           },
-        } ],
-      } ],
-    } ],
+        }],
+      }],
+    }],
   });
-  telemetry = codexTelemetryStatus();
+  let telemetry = codexTelemetryStatus() as Record<string, any>;
   assert.equal(telemetry.toolResults.executed, 2);
   assert.equal(telemetry.toolResults.unattributed, 0);
 
-  // New call id and a bumped cumulative value for an existing one -> only
-  // the new delta applies
   ingestOtelSignal("metrics", {
-    resourceMetrics: [ {
-      scopeMetrics: [ {
-        metrics: [ {
+    resourceMetrics: [{
+      scopeMetrics: [{
+        metrics: [{
           name: "codex.tool_result",
           sum: {
             aggregationTemporality: 2,
             dataPoints: [
-              point([ [ "tool", "exec_command" ], [ "call_id", "call-A" ], [ "status", "ok" ] ], 1, 0, 100),
-              point([ [ "tool", "exec_command" ], [ "call_id", "call-C" ], [ "status", "ok" ] ], 1, 0, 200),
+              point([["tool", "exec_command"], ["call_id", "call-A"], ["status", "ok"]], 1, 0, 100),
+              point([["tool", "exec_command"], ["call_id", "call-B"], ["status", "ok"]], 1, 0, 100),
             ],
           },
-        } ],
-      } ],
-    } ],
+        }],
+      }],
+    }],
   });
-  telemetry = codexTelemetryStatus();
+  telemetry = codexTelemetryStatus() as Record<string, any>;
+  assert.equal(telemetry.toolResults.executed, 2);
+  assert.equal(telemetry.toolResults.unattributed, 0);
+
+  ingestOtelSignal("metrics", {
+    resourceMetrics: [{
+      scopeMetrics: [{
+        metrics: [{
+          name: "codex.tool_result",
+          sum: {
+            aggregationTemporality: 2,
+            dataPoints: [
+              point([["tool", "exec_command"], ["call_id", "call-A"], ["status", "ok"]], 1, 0, 100),
+              point([["tool", "exec_command"], ["call_id", "call-C"], ["status", "ok"]], 1, 0, 200),
+            ],
+          },
+        }],
+      }],
+    }],
+  });
+  telemetry = codexTelemetryStatus() as Record<string, any>;
   assert.equal(telemetry.toolResults.executed, 3);
   assert.equal(telemetry.toolResults.unattributed, 0);
   resetOtelTelemetry();
@@ -195,24 +207,23 @@ test("attaches unattributed coverage to the workspace bucket when workspace_id r
   registerWorkspaceId("ws-unattr-1", "SimulatorLife/RacingGame");
 
   ingestOtelSignal("metrics", {
-    resourceMetrics: [ {
-      resource: { attributes: attrs([ [ "workspace_id", "ws-unattr-1" ] ]) },
-      scopeMetrics: [ {
-        metrics: [ {
+    resourceMetrics: [{
+      resource: { attributes: attrs([["workspace_id", "ws-unattr-1"]]) },
+      scopeMetrics: [{
+        metrics: [{
           name: "codex.tool_result",
           sum: {
             aggregationTemporality: 1,
             dataPoints: [
-              // No call id + resolvable workspace -> toolsUnattributed counts
-              point([ [ "tool", "exec_command" ], [ "source", "builtin" ], [ "status", "ok" ] ], 2, 10, 20),
+              point([["tool", "exec_command"], ["source", "builtin"], ["status", "ok"]], 2, 10, 20),
             ],
           },
-        } ],
-      } ],
-    } ],
+        }],
+      }],
+    }],
   });
 
-  const ws = getRouterStatus().usage.byWorkspace[ "SimulatorLife/RacingGame" ];
+  const ws = (getRouterStatus() as Record<string, any>).usage.byWorkspace["SimulatorLife/RacingGame"];
   assert.equal(ws.toolsUnattributed, 2);
   resetOtelTelemetry();
   resetRouterTelemetry();
@@ -224,7 +235,6 @@ test("records bridge tool_executed / tool_requested / tool_unavailable observati
   resetRouterTelemetry();
   registerWorkspaceId("ws-bridge-1", "SimulatorLife/AutoDev");
 
-  // Anchor a bridge request so the agent-events endpoint has a context.
   noteBridgeRequest("req-bridge-1", { provider: "claude", model: "sonnet", role: "default", workspace: "SimulatorLife/AutoDev" });
   ingestAgentEvents({
     requestId: "req-bridge-1",
@@ -238,25 +248,23 @@ test("records bridge tool_executed / tool_requested / tool_unavailable observati
     ],
   });
 
-  const telemetry = codexTelemetryStatus();
+  const telemetry = codexTelemetryStatus() as Record<string, any>;
   assert.equal(telemetry.bridgeEvents.toolExecuted.total, 2);
   assert.equal(telemetry.bridgeEvents.toolRequested.total, 1);
   assert.equal(telemetry.bridgeEvents.toolUnavailable.total, 1);
   assert.equal(telemetry.bridgeEvents.toolUnavailable.byReason.denied, 1);
   assert.equal(telemetry.bridgeEvents.skillExposed.total, 2);
   const skillRows = telemetry.bridgeEvents.skillExposed.bySkill;
-  const ccc = skillRows.find((row) => row.skill === "ccc");
+  const ccc = skillRows.find((row: { skill: string; pluginId?: string }) => row.skill === "ccc");
   assert.equal(ccc?.pluginId, "user-ccc");
 
-  // The per-workspace counters must have been moved so the dashboard can
-  // surface "executed on this workspace" coverage directly.
-  const ws = getRouterStatus().usage.byWorkspace[ "SimulatorLife/AutoDev" ];
+  const ws = (getRouterStatus() as Record<string, any>).usage.byWorkspace["SimulatorLife/AutoDev"];
   assert.equal(ws.toolsExecuted, 2);
   assert.equal(ws.toolsRequested, 1);
   assert.equal(ws.toolsUnavailable, 1);
   assert.equal(ws.skillsExposed, 2);
-  assert.deepEqual(ws.bridgeTools.map((row) => row.tool).sort(), [ "apply_patch" ]);
-  assert.deepEqual(ws.bridgeSkills.map((row) => row.skill).sort(), [ "ccc", "lsp-mcp-server" ]);
+  assert.deepEqual(ws.bridgeTools.map((row: { tool: string }) => row.tool).sort(), ["apply_patch"]);
+  assert.deepEqual(ws.bridgeSkills.map((row: { skill: string }) => row.skill).sort(), ["ccc", "lsp-mcp-server"]);
 
   resetOtelTelemetry();
   resetRouterTelemetry();
@@ -282,10 +290,10 @@ test("tracks confirmed RacingGame skill reads separately from exposed skills", (
     ],
   });
 
-  let racingGame = getRouterStatus().usage.byWorkspace.RacingGame;
+  let racingGame = (getRouterStatus() as Record<string, any>).usage.byWorkspace.RacingGame;
   assert.equal(racingGame.skillUses, 1);
-  assert.equal(racingGame.bySkill.find((row) => row.skill === "orchestration")?.uses, 1);
-  assert.deepEqual(racingGame.bridgeSkills.map((row) => row.skill), [ "orchestration" ]);
+  assert.equal(racingGame.bySkill.find((row: { skill: string; uses: number }) => row.skill === "orchestration")?.uses, 1);
+  assert.deepEqual(racingGame.bridgeSkills.map((row: { skill: string }) => row.skill), ["orchestration"]);
 
   resetOtelTelemetry();
   resetRouterTelemetry();
@@ -297,12 +305,12 @@ test("tracks confirmed RacingGame skill reads separately from exposed skills", (
   });
   ingestAgentEvents({
     requestId: "req-racing-exposure",
-    events: [ { type: "skill_exposed", skill: "orchestration", source: "role_contract" } ],
+    events: [{ type: "skill_exposed", skill: "orchestration", source: "role_contract" }],
   });
-  racingGame = getRouterStatus().usage.byWorkspace.RacingGame;
+  racingGame = (getRouterStatus() as Record<string, any>).usage.byWorkspace.RacingGame;
   assert.equal(racingGame.skillUses, 0);
   assert.equal(racingGame.bySkill.length, 0);
-  assert.deepEqual(racingGame.bridgeSkills, [ { skill: "orchestration", count: 1 } ]);
+  assert.deepEqual(racingGame.bridgeSkills, [{ skill: "orchestration", count: 1 }]);
 
   resetOtelTelemetry();
   resetRouterTelemetry();
@@ -320,50 +328,33 @@ test("a skill_used/skill_read event from a shell cat-style read updates global s
     workspace: "SimulatorLife/AutoDev",
   });
 
-  // The router's `skill_used` schema does not distinguish a Read-tool hit
-  // from a shell `cat SKILL.md` hit: both the Codex JS hook's exec_command
-  // matcher and the Claude proxy's Bash-command matcher report the exact
-  // same event shape, with `eventId` following the `skill_read:<call-id>:<skill>`
-  // convention used for a Bash-detected read. There is no separate
-  // "shell read" metric or schema field -- a cat-style read is simply
-  // another confirmed `skill_read` source folded into the same counters.
   ingestAgentEvents({
     requestId: "req-shell-skill-read",
     events: [
       { type: "skill_exposed", skill: "ccc", source: "role_contract" },
       { type: "skill_used", skill: "ccc", source: "skill_read", eventId: "skill_read:call-shell-1:ccc" },
-      // A duplicate post for the same call/skill (e.g. a retried hook) must
-      // stay idempotent rather than double-counting the read.
       { type: "skill_used", skill: "ccc", source: "skill_read", eventId: "skill_read:call-shell-1:ccc" },
     ],
   });
 
-  // 1. Global skill telemetry (status.codexTelemetry.skills.used) is what the
-  // dashboard KPI tile reads its total from.
-  const telemetry = codexTelemetryStatus();
+  const telemetry = codexTelemetryStatus() as Record<string, any>;
   assert.equal(telemetry.skills.used.total, 1);
   assert.equal(telemetry.skills.used.byWorkspace["SimulatorLife/AutoDev"], 1);
-  const globalSkillRow = telemetry.skills.used.bySkill.find((row) => row.skill === "ccc");
+  const globalSkillRow = telemetry.skills.used.bySkill.find((row: { skill: string }) => row.skill === "ccc");
   assert.ok(globalSkillRow, "the global skills.used.bySkill breakdown must include the shell-read skill");
   assert.equal(globalSkillRow.total, 1);
   assert.equal(globalSkillRow.byWorkspace["SimulatorLife/AutoDev"], 1);
 
-  // 2. Per-workspace skillUses/bySkill (status.usage.byWorkspace[*]) is what
-  // the workspace usage table renders per-workspace.
-  const workspace = getRouterStatus().usage.byWorkspace["SimulatorLife/AutoDev"];
+  const workspace = (getRouterStatus() as Record<string, any>).usage.byWorkspace["SimulatorLife/AutoDev"];
   assert.equal(workspace.skillUses, 1);
-  const wsSkillRow = workspace.bySkill.find((row) => row.skill === "ccc");
+  const wsSkillRow = workspace.bySkill.find((row: { skill: string; uses: number }) => row.skill === "ccc");
   assert.ok(wsSkillRow, "workspace bySkill must include the shell-read skill");
   assert.equal(wsSkillRow.uses, 1);
-  assert.deepEqual(workspace.bridgeSkills.map((row) => row.skill), [ "ccc" ]);
+  assert.deepEqual(workspace.bridgeSkills.map((row: { skill: string }) => row.skill), ["ccc"]);
 
-  // 3. Dashboard-backed status data: feed the exact same router status
-  // through the dashboard's own rendering helpers and confirm the shell
-  // cat-style read surfaces as a normal confirmed use (1 / 1), not as an
-  // exposure-only or unavailable row.
   const { normalizeWorkspaceNamedUsage, summarizeWorkspaceSkills, renderWorkspaceSkills } = await loadDashboardSkillHelpers();
-  const wsSkillRows = normalizeWorkspaceNamedUsage(workspace.bySkill, [ "skill", "name" ]);
-  const wsExposedSkillRows = normalizeWorkspaceNamedUsage(workspace.bridgeSkills, [ "skill", "name" ]);
+  const wsSkillRows = normalizeWorkspaceNamedUsage(workspace.bySkill, ["skill", "name"]);
+  const wsExposedSkillRows = normalizeWorkspaceNamedUsage(workspace.bridgeSkills, ["skill", "name"]);
   const summary = summarizeWorkspaceSkills(wsSkillRows, wsExposedSkillRows);
   assert.deepEqual(summary, { uses: 1, exposed: 1 });
   const html = renderWorkspaceSkills(wsSkillRows, wsExposedSkillRows);
@@ -383,12 +374,12 @@ test("rejects unknown bridge event types while keeping accepted observations int
     requestId: "req-bridge-2",
     events: [
       { type: "tool_executed", tool: "exec_command", status: "ok" },
-      { type: "made_up_event", tool: "exec_command" },
+      { type: "made_up_event", tool: "exec_command" } as any,
     ],
   });
   assert.equal(result.accepted, 0);
   assert.equal(result.rejected, 1);
-  assert.equal(codexTelemetryStatus().bridgeEvents.toolExecuted.total, 1);
+  assert.equal((codexTelemetryStatus() as Record<string, any>).bridgeEvents.toolExecuted.total, 1);
   resetOtelTelemetry();
   resetRouterTelemetry();
   resetSubagentTelemetry();
@@ -404,21 +395,21 @@ test("byTool/bySkill default to null until a first-class event confirms the dime
     requestId: "req-dim",
     provider: "claude",
     model: "sonnet",
-    workspace: { key: "SimulatorLife/RacingGame" },
+    workspace: "SimulatorLife/RacingGame",
   });
   recordRouterEvent({
     phase: "result",
     requestId: "req-dim",
     provider: "claude",
     model: "sonnet",
-    workspace: { key: "SimulatorLife/RacingGame" },
+    workspace: "SimulatorLife/RacingGame",
     outcome: "success",
     status: 200,
     elapsedMs: 5,
     toolCalls: 1,
   });
 
-  const ws = getRouterStatus().usage.byWorkspace[ "SimulatorLife/RacingGame" ];
+  const ws = (getRouterStatus() as Record<string, any>).usage.byWorkspace["SimulatorLife/RacingGame"];
   assert.equal(ws.byTool, null);
   assert.equal(ws.bySkill, null);
   assert.equal(ws.toolsExecuted, 0);
@@ -445,30 +436,29 @@ test("persists and restores per-workspace tool/skill counters and bridge observa
       ],
     });
 
-    // Generate an unattributed coverage row to verify it persists.
     ingestOtelSignal("metrics", {
-      resourceMetrics: [ {
-        scopeMetrics: [ {
-          metrics: [ {
+      resourceMetrics: [{
+        scopeMetrics: [{
+          metrics: [{
             name: "codex.tool_result",
             sum: {
               aggregationTemporality: 1,
               dataPoints: [
-                point([ [ "tool", "exec_command" ], [ "source", "builtin" ], [ "status", "ok" ] ], 4, 10, 20),
+                point([["tool", "exec_command"], ["source", "builtin"], ["status", "ok"]], 4, 10, 20),
               ],
             },
-          } ],
-        } ],
-      } ],
+          }],
+        }],
+      }],
     });
 
     await persistRouterStateNow(stateFile);
-    const raw = JSON.parse(await readFile(stateFile, "utf8"));
+    const raw = JSON.parse(await readFile(stateFile, "utf8")) as Record<string, any>;
     assert.equal(raw.usage.schemaVersion, 8);
-    const persistedWs = raw.usage.byWorkspace[ "SimulatorLife/AutoDev" ];
+    const persistedWs = raw.usage.byWorkspace["SimulatorLife/AutoDev"];
     assert.equal(persistedWs.toolsExecuted, 1);
     assert.equal(persistedWs.skillsExposed, 1);
-    assert.deepEqual(persistedWs.bridgeSkills.map((entry) => entry.skill), [ "ccc" ]);
+    assert.deepEqual(persistedWs.bridgeSkills.map((entry: { skill: string }) => entry.skill), ["ccc"]);
     assert.ok(Array.isArray(persistedWs.bridgeTools));
     assert.equal(raw.otelTelemetry.toolResults.total, 4);
     assert.equal(raw.otelTelemetry.bridgeEvents.toolExecuted.total, 1);
@@ -478,11 +468,11 @@ test("persists and restores per-workspace tool/skill counters and bridge observa
     resetRouterTelemetry();
     assert.equal(loadRouterState(stateFile), true);
 
-    const restored = getRouterStatus().usage.byWorkspace[ "SimulatorLife/AutoDev" ];
+    const restored = (getRouterStatus() as Record<string, any>).usage.byWorkspace["SimulatorLife/AutoDev"];
     assert.equal(restored.toolsExecuted, 1);
     assert.equal(restored.skillsExposed, 1);
-    assert.deepEqual(restored.bridgeSkills.map((entry) => entry.skill).sort(), [ "ccc" ]);
-    const restoredTelemetry = codexTelemetryStatus();
+    assert.deepEqual(restored.bridgeSkills.map((entry: { skill: string }) => entry.skill).sort(), ["ccc"]);
+    const restoredTelemetry = codexTelemetryStatus() as Record<string, any>;
     assert.equal(restoredTelemetry.toolResults.total, 4);
     assert.equal(restoredTelemetry.bridgeEvents.toolExecuted.total, 1);
     assert.equal(restoredTelemetry.bridgeEvents.skillExposed.total, 1);
@@ -494,28 +484,27 @@ test("persists and restores per-workspace tool/skill counters and bridge observa
   }
 });
 
-
 test("joins semantic codex.tool_result OTLP logs to the local thread snapshot", () => {
   resetOtelTelemetry();
   resetRouterTelemetry();
   setCodexStateSnapshotForTests({ conversationThreads: {
     "thread-1": { threadId: "thread-1", workspaceKey: "SimulatorLife/RacingGame", cwdBasename: "RacingGame" },
-  } });
-  ingestOtelSignal("logs", { resourceLogs: [ {
-    scopeLogs: [ { logRecords: [ { attributes: attrs([
-      [ "event.name", "codex.tool_result" ],
-      [ "conversation.id", "thread-1" ],
-      [ "tool_name", "exec_command" ],
-      [ "tool_origin", "builtin" ],
-      [ "call_id", "call-log-1" ],
-      [ "success", "true" ],
-      [ "duration_ms", "12" ],
-    ]) } ] } ],
-  } ] });
-  const ws = getRouterStatus().usage.byWorkspace["SimulatorLife/RacingGame"];
-  assert.equal(ws.byTool.find((row) => row.tool === "exec_command")?.count, 1);
+  } as any });
+  ingestOtelSignal("logs", { resourceLogs: [{
+    scopeLogs: [{ logRecords: [{ attributes: attrs([
+      ["event.name", "codex.tool_result"],
+      ["conversation.id", "thread-1"],
+      ["tool_name", "exec_command"],
+      ["tool_origin", "builtin"],
+      ["call_id", "call-log-1"],
+      ["success", "true"],
+      ["duration_ms", "12"],
+    ]) }] }],
+  }] });
+  const ws = (getRouterStatus() as Record<string, any>).usage.byWorkspace["SimulatorLife/RacingGame"];
+  assert.equal(ws.byTool.find((row: { tool: string; count: number }) => row.tool === "exec_command")?.count, 1);
   assert.equal(ws.toolsExecuted, 0);
-  assert.equal(codexTelemetryStatus().toolResults.executed, 1);
+  assert.equal((codexTelemetryStatus() as Record<string, any>).toolResults.executed, 1);
   setCodexStateSnapshotForTests(null);
   resetOtelTelemetry();
   resetRouterTelemetry();
@@ -526,24 +515,24 @@ test("deduplicates one tool result reported through both semantic logs and metri
   resetRouterTelemetry();
   setCodexStateSnapshotForTests({ conversationThreads: {
     "thread-dupe": { threadId: "thread-dupe", projectKey: "SimulatorLife/RacingGame", workspaceKey: "SimulatorLife/RacingGame", cwdBasename: "RacingGame" },
-  } });
+  } as any });
   const logAttributes = attrs([
-    [ "event.name", "codex.tool_result" ],
-    [ "conversation.id", "thread-dupe" ],
-    [ "tool_name", "exec_command" ],
-    [ "tool_origin", "builtin" ],
-    [ "call_id", "same-call" ],
-    [ "success", "true" ],
-    [ "duration_ms", "9" ],
+    ["event.name", "codex.tool_result"],
+    ["conversation.id", "thread-dupe"],
+    ["tool_name", "exec_command"],
+    ["tool_origin", "builtin"],
+    ["call_id", "same-call"],
+    ["success", "true"],
+    ["duration_ms", "9"],
   ]);
-  ingestOtelSignal("logs", { resourceLogs: [ { scopeLogs: [ { logRecords: [ { attributes: logAttributes } ] } ] } ] });
-  ingestOtelSignal("metrics", { resourceMetrics: [ { scopeMetrics: [ { metrics: [ {
+  ingestOtelSignal("logs", { resourceLogs: [{ scopeLogs: [{ logRecords: [{ attributes: logAttributes }] }] }] });
+  ingestOtelSignal("metrics", { resourceMetrics: [{ scopeMetrics: [{ metrics: [{
     name: "codex.tool_result",
-    sum: { aggregationTemporality: 1, dataPoints: [ point([
-      [ "conversation.id", "thread-dupe" ], [ "tool_name", "exec_command" ], [ "source", "builtin" ], [ "call_id", "same-call" ], [ "status", "ok" ],
-    ], 1, "10", "20") ] },
-  } ] } ] } ] });
-  const toolResults = codexTelemetryStatus().toolResults;
+    sum: { aggregationTemporality: 1, dataPoints: [point([
+      ["conversation.id", "thread-dupe"], ["tool_name", "exec_command"], ["source", "builtin"], ["call_id", "same-call"], ["status", "ok"],
+    ], 1, "10", "20")] },
+  }] }] }] });
+  const toolResults = (codexTelemetryStatus() as Record<string, any>).toolResults;
   assert.equal(toolResults.total, 1);
   assert.equal(toolResults.executed, 1);
   assert.equal(toolResults.unattributed, 0);
@@ -557,7 +546,6 @@ test("tool/skill attribution capability is workspace-scoped, not a single proces
   resetRouterTelemetry();
   resetAttributionDiagnostics();
 
-  // One workspace proves both dimensions with first-class bridge events.
   noteBridgeRequest("req-has-evidence", { provider: "claude", model: "sonnet", role: "default", workspace: "SimulatorLife/HasEvidence" });
   ingestAgentEvents({
     requestId: "req-has-evidence",
@@ -567,14 +555,12 @@ test("tool/skill attribution capability is workspace-scoped, not a single proces
     ],
   });
 
-  // A second workspace with zero tool/skill evidence of its own must not
-  // inherit "capable" from the first workspace's proof.
-  recordRouterEvent({ phase: "selected", requestId: "req-blank", provider: "claude", model: "sonnet", workspace: { key: "SimulatorLife/NoEvidence" } });
-  recordRouterEvent({ phase: "result", requestId: "req-blank", provider: "claude", model: "sonnet", workspace: { key: "SimulatorLife/NoEvidence" }, outcome: "success", elapsedMs: 1 });
+  recordRouterEvent({ phase: "selected", requestId: "req-blank", provider: "claude", model: "sonnet", workspace: "SimulatorLife/NoEvidence" });
+  recordRouterEvent({ phase: "result", requestId: "req-blank", provider: "claude", model: "sonnet", workspace: "SimulatorLife/NoEvidence", outcome: "success", elapsedMs: 1 });
 
-  const usage = getRouterStatus().usage.byWorkspace;
-  const capable = usage[ "SimulatorLife/HasEvidence" ];
-  const blank = usage[ "SimulatorLife/NoEvidence" ];
+  const usage = (getRouterStatus() as Record<string, any>).usage.byWorkspace;
+  const capable = usage["SimulatorLife/HasEvidence"];
+  const blank = usage["SimulatorLife/NoEvidence"];
   assert.ok(Array.isArray(capable.byTool), "the workspace with its own evidence must report byTool rows");
   assert.ok(Array.isArray(capable.bySkill), "the workspace with its own evidence must report bySkill rows");
   assert.equal(blank.byTool, null, "a workspace with no evidence of its own must stay unavailable regardless of other workspaces");
@@ -598,24 +584,21 @@ test("mcp_exposed bridge observations populate per-workspace exposed rows withou
     ],
   });
 
-  const telemetry = codexTelemetryStatus();
-  // Duplicate observations for the same request/workspace/server are idempotent.
+  const telemetry = codexTelemetryStatus() as Record<string, any>;
   assert.equal(telemetry.bridgeEvents.mcpExposed.total, 2);
-  const playwrightRow = telemetry.bridgeEvents.mcpExposed.byServer.find((row) => row.server === "playwright");
+  const playwrightRow = telemetry.bridgeEvents.mcpExposed.byServer.find((row: { server: string }) => row.server === "playwright");
   assert.equal(playwrightRow?.count, 1);
 
-  const ws = getRouterStatus().usage.byWorkspace[ "SimulatorLife/AutoDev" ];
+  const ws = (getRouterStatus() as Record<string, any>).usage.byWorkspace["SimulatorLife/AutoDev"];
   assert.deepEqual(ws.mcpExposed, [
     { server: "lsp", count: 1 },
     { server: "playwright", count: 1 },
   ]);
-  // Exposure alone (the model was handed the server) is not a use.
   assert.deepEqual(ws.mcpUses, []);
   assert.deepEqual(ws.byMcp, {});
 
-  // A workspace with no MCP evidence must remain explicitly unavailable.
-  recordRouterEvent({ phase: "selected", requestId: "req-no-mcp", provider: "claude", model: "sonnet", workspace: { key: "SimulatorLife/NoMcpEvidence" } });
-  const noMcp = getRouterStatus().usage.byWorkspace[ "SimulatorLife/NoMcpEvidence" ];
+  recordRouterEvent({ phase: "selected", requestId: "req-no-mcp", provider: "claude", model: "sonnet", workspace: "SimulatorLife/NoMcpEvidence" });
+  const noMcp = (getRouterStatus() as Record<string, any>).usage.byWorkspace["SimulatorLife/NoMcpEvidence"];
   assert.equal(noMcp.byMcp, null);
   assert.equal(noMcp.mcpUses, null);
   assert.equal(noMcp.mcpExposed, null);
@@ -627,24 +610,22 @@ test("mcp_exposed bridge observations populate per-workspace exposed rows withou
 test("mcp uses are counted only from discovery spans and executed tool calls, never init/health spans", () => {
   resetOtelTelemetry();
   resetRouterTelemetry();
-  const mcpSpan = (name) => ({
+  const mcpSpan = (name: string) => ({
     name,
     startTimeUnixNano: "1",
     endTimeUnixNano: "2",
-    attributes: attrs([ [ "server_name", "playwright" ], [ "workspace", "SimulatorLife/RacingGame" ] ]),
+    attributes: attrs([["server_name", "playwright"], ["workspace", "SimulatorLife/RacingGame"]]),
   });
-  ingestOtelSignal("traces", { resourceSpans: [ {
-    scopeSpans: [ { spans: [
-      // An init/health span proves the server is reachable, not that it was used.
+  ingestOtelSignal("traces", { resourceSpans: [{
+    scopeSpans: [{ spans: [
       mcpSpan("make_rmcp_client"),
-      // A discovery span is a genuine "use".
       mcpSpan("list_tools_for_client_uncached"),
-    ] } ],
-  } ] });
+    ] }],
+  }] });
 
-  const ws = getRouterStatus().usage.byWorkspace[ "SimulatorLife/RacingGame" ];
+  const ws = (getRouterStatus() as Record<string, any>).usage.byWorkspace["SimulatorLife/RacingGame"];
   assert.equal(ws.byMcp.playwright, 1, "only the discovery span should count as a use");
-  assert.deepEqual(ws.mcpUses, [ { server: "playwright", count: 1 } ]);
+  assert.deepEqual(ws.mcpUses, [{ server: "playwright", count: 1 }]);
 
   resetOtelTelemetry();
   resetRouterTelemetry();
@@ -663,9 +644,9 @@ test("bridge tool_requested/tool_unavailable observations do not count as MCP us
     ],
   });
 
-  const ws = getRouterStatus().usage.byWorkspace[ "SimulatorLife/AutoDev" ];
+  const ws = (getRouterStatus() as Record<string, any>).usage.byWorkspace["SimulatorLife/AutoDev"];
   assert.equal(ws.byMcp.playwright, 1, "requested/unavailable must not count as uses, only the executed call does");
-  assert.deepEqual(ws.mcpUses, [ { server: "playwright", count: 1 } ]);
+  assert.deepEqual(ws.mcpUses, [{ server: "playwright", count: 1 }]);
 
   resetOtelTelemetry();
   resetRouterTelemetry();
@@ -684,31 +665,31 @@ test("concrete-model request session correlation resolves session-scoped agent e
     once() { },
     removeListener() { },
     headersSent: false,
-  };
+  } as unknown as ServerResponse;
   const route = {
     provider: "claude",
     baseUrl: "http://127.0.0.1:4011",
     model: "claude-3-5-sonnet",
   };
-  globalThis.fetch = async () => ({
+  globalThis.fetch = (async () => ({
     ok: true,
     status: 200,
     text: async () => JSON.stringify({ id: "resp_123", object: "response", status: "completed", output: [] }),
-  });
+  })) as any;
 
   try {
     const session = { key: "session-concrete-turn", scope: "identified" };
     const workspace = { key: "SimulatorLife/ConcreteWorkspace", cwd: null };
     await proxyConcreteResponse(
       fakeResponse,
-      route,
+      route as any,
       { model: "claude-3-5-sonnet", stream: false },
       false,
       "req-concrete-1",
       null,
-      workspace,
+      workspace as any,
       null,
-      session,
+      session as any,
     );
 
     const result = ingestAgentEvents({
@@ -720,7 +701,7 @@ test("concrete-model request session correlation resolves session-scoped agent e
     });
 
     assert.equal(result.reason, null, "session-keyed event must be accepted via concrete session correlation");
-    const ws = getRouterStatus().usage.byWorkspace["SimulatorLife/ConcreteWorkspace"];
+    const ws = (getRouterStatus() as Record<string, any>).usage.byWorkspace["SimulatorLife/ConcreteWorkspace"];
     assert.ok(ws, "workspace must receive the attributed activity");
     assert.equal(ws.byMcp.playwright, 1);
     assert.deepEqual(ws.mcpUses, [{ server: "playwright", count: 1 }]);
@@ -759,10 +740,10 @@ test("persisted state with schemaVersion 7 restores usage backward-safely withou
           skillUses: 1,
           byMcp: { lsp: 2 },
           byTool: [
-            { tool: "exec_command", source: "builtin", server: null, count: 2, byStatus: { ok: 2 }, durationCount: 2, durationMs: 100 }
+            { tool: "exec_command", source: "builtin", server: null, count: 2, byStatus: { ok: 2 }, durationCount: 2, durationMs: 100 },
           ],
           bySkill: [
-            { skill: "ccc", total: 1, byStatus: { ok: 1 }, byInvokeType: {}, byAgentKind: {}, byModel: {}, byPlugin: {} }
+            { skill: "ccc", total: 1, byStatus: { ok: 1 }, byInvokeType: {}, byAgentKind: {}, byModel: {}, byPlugin: {} },
           ],
         },
       },
@@ -775,7 +756,7 @@ test("persisted state with schemaVersion 7 restores usage backward-safely withou
     const loaded = loadRouterState(stateFile);
     assert.equal(loaded, true, "schemaVersion 7 state must load successfully");
 
-    const ws = getRouterStatus().usage.byWorkspace["SimulatorLife/LegacyProject"];
+    const ws = (getRouterStatus() as Record<string, any>).usage.byWorkspace["SimulatorLife/LegacyProject"];
     assert.ok(ws, "legacy workspace must be restored");
     assert.equal(ws.successes, 4);
     assert.equal(ws.failures, 1);

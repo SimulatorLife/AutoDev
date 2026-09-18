@@ -663,7 +663,7 @@ The router cleanly separates user-facing agent workflow activity from transport-
   `reconciledWithConcurrency: true` confirms all counters were evaluated
   at the same timestamp. The fixture and contract test in
   `tests/fixtures/contracts/agent-reconciliation-contract.json` and
-  `tests/agent-reconciliation-contract.test.mjs` freeze this shape.
+  `tests/agent-reconciliation-contract.test.ts` freeze this shape.
 - **`Active agents` KPI and role breakdown:** The dashboard reads
   `status.agents.canonicalLiveCount`, `status.agents.liveByRole`, and
   `status.agents.liveByWorkspace` directly. It never takes a `Math.max()`

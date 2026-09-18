@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { createServer } from "node:http";
+import { readFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
@@ -8,30 +9,68 @@ import {
   getRouterStatus,
   handle,
   ingestAgentEvents,
+  resetRouterTelemetry,
+  setCodexStateSnapshotForTests,
+} from "../src/router/http.ts";
+import {
   noteBridgeRequest,
   noteOrchestratorSession,
   orchestratorProviderForSession,
   recordSubagentSpawn,
-  resetRouterTelemetry,
-  setCodexStateSnapshotForTests,
-} from "../scripts/codex-model-router.mjs";
+} from "../src/router/subagents.ts";
 
-const contract = await import("./fixtures/contracts/dashboard-status-snapshot.json", { with: { type: "json" } })
-  .then((module) => module.default ?? module);
+interface ContractFixture {
+  fixedNow: string;
+  expectedStatusKeys: string[];
+  expectedShapes: Record<string, string[]>;
+  expectedProviderNames: string[];
+  pendingCodexState: unknown;
+  populatedCodexStateInput: unknown;
+  populatedCodexState: unknown;
+  spawnGrouping: {
+    operations: Array<{
+      op: string;
+      requestId?: string;
+      events?: unknown[];
+      session?: string;
+      provider?: string;
+      mechanism?: string;
+      role?: string;
+      tool?: string;
+      model?: string;
+      workspace?: string;
+    }>;
+    byMechanism: unknown;
+    byProvider: unknown;
+    byRole: unknown;
+    total: number;
+    groupedRows: unknown[];
+    cliSummary: string;
+  };
+  dashboard: {
+    recentTotalLabels: Array<{ recent: number; total: number; expected: string }>;
+    panels: string[];
+    emptyStates: string[];
+  };
+}
+
+const contract: ContractFixture = JSON.parse(
+  readFileSync(new URL("./fixtures/contracts/dashboard-status-snapshot.json", import.meta.url), "utf8"),
+);
 
 const ROOT = new URL("..", import.meta.url);
 const FIXED_NOW = Date.parse(contract.fixedNow);
 const dashboardPath = new URL("../scripts/codex-model-router-dashboard.html", import.meta.url);
 
-function assertKeys(value, expected, label) {
-  assert.deepEqual(Object.keys(value ?? {}).sort(), [...expected].sort(), `${label} key set`);
+function assertKeys(value: unknown, expected: string[], label: string): void {
+  assert.deepEqual(Object.keys((value as Record<string, unknown>) ?? {}).sort(), [...expected].sort(), `${label} key set`);
 }
 
-function getPath(value, dottedPath) {
-  return dottedPath.split(".").reduce((current, part) => current?.[part], value);
+function getPath(value: unknown, dottedPath: string): unknown {
+  return dottedPath.split(".").reduce((current: unknown, part: string) => (current as Record<string, unknown>)?.[part], value);
 }
 
-const statusShapePaths = {
+const statusShapePaths: Record<string, string> = {
   telemetryPersistence: "telemetryPersistence",
   authentication: "authentication",
   routing: "routing",
@@ -57,7 +96,7 @@ const statusShapePaths = {
   codexStateLocalTelemetry: "codexState.localTelemetry",
 };
 
-function assertNoLeakedPaths(value, path = "$") {
+function assertNoLeakedPaths(value: unknown, path = "$"): void {
   if (typeof value === "string") {
     assert.doesNotMatch(value, /\/Users\/|\/home\/|CODEX_HOME/, `filesystem path leaked at ${path}`);
   } else if (Array.isArray(value)) {
@@ -67,19 +106,19 @@ function assertNoLeakedPaths(value, path = "$") {
   }
 }
 
-function escapeRegex(value) {
+function escapeRegex(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 // Extract a complete function rather than relying on a line range. This is
 // the same source-level evaluation pattern used by the existing dashboard
 // metrics tests, but it also handles nested blocks and template strings.
-function extractFunction(source, name) {
+function extractFunction(source: string, name: string): string {
   const start = source.indexOf(`function ${name}(`);
   assert.notEqual(start, -1, `${name} must exist in dashboard source`);
   const bodyStart = source.indexOf("{", start);
   let depth = 0;
-  let quote = null;
+  let quote: string | null = null;
   let escaped = false;
   for (let index = bodyStart; index < source.length; index += 1) {
     const character = source[index];
@@ -103,11 +142,11 @@ function extractFunction(source, name) {
   throw new Error(`unterminated dashboard function ${name}`);
 }
 
-function evaluateFunction(source, name, dependencies = "") {
-  return new Function(`${dependencies};${extractFunction(source, name)};return ${name};`)();
+function evaluateFunction(source: string, name: string, dependencies = ""): (...args: unknown[]) => unknown {
+  return new Function(`${dependencies};${extractFunction(source, name)};return ${name};`)() as (...args: unknown[]) => unknown;
 }
 
-function reset() {
+function reset(): void {
   setCodexStateSnapshotForTests(null);
   resetRouterTelemetry();
 }
@@ -115,7 +154,7 @@ function reset() {
 test("the frozen /status snapshot has exact fields and privacy-safe metadata", () => {
   reset();
   try {
-    const status = getRouterStatus(FIXED_NOW);
+    const status = getRouterStatus(FIXED_NOW) as Record<string, any>;
     assertKeys(status, contract.expectedStatusKeys, "status");
     for (const [shape, expected] of Object.entries(contract.expectedShapes)) {
       const path = statusShapePaths[shape];
@@ -143,13 +182,16 @@ test("pending and populated Codex state snapshots preserve safe metadata and det
   try {
     assert.deepEqual(getRouterStatus(FIXED_NOW).codexState, contract.pendingCodexState);
 
-    setCodexStateSnapshotForTests(contract.populatedCodexStateInput);
-    const populated = getRouterStatus(FIXED_NOW).codexState;
+    setCodexStateSnapshotForTests(contract.populatedCodexStateInput as Parameters<typeof setCodexStateSnapshotForTests>[0]);
+    const populated = getRouterStatus(FIXED_NOW).codexState as {
+      localTelemetry: Record<string, unknown>;
+      recentThreads: Array<{ id: string; updatedAt: string }>;
+    };
     assert.deepEqual(populated, contract.populatedCodexState);
     assert.equal(Object.hasOwn(populated.localTelemetry, "path"), false);
     assertNoLeakedPaths(populated);
-    assert.equal(populated.recentThreads[0].id, "thread-001");
-    assert.equal(populated.recentThreads[0].updatedAt, "2026-09-13T23:00:00.000Z");
+    assert.equal(populated.recentThreads[0]?.id, "thread-001");
+    assert.equal(populated.recentThreads[0]?.updatedAt, "2026-09-13T23:00:00.000Z");
   } finally {
     reset();
   }
@@ -160,14 +202,14 @@ test("provider rows and grouped spawn rows follow the frozen status dimensions",
   try {
     for (const operation of contract.spawnGrouping.operations) {
       if (operation.op === "bridgeRequest") {
-        noteBridgeRequest(operation.requestId, operation);
+        noteBridgeRequest(operation.requestId, operation as Parameters<typeof noteBridgeRequest>[1]);
       } else if (operation.op === "bridgeEvents") {
-        ingestAgentEvents({ requestId: operation.requestId, events: operation.events });
+        ingestAgentEvents({ requestId: operation.requestId!, events: operation.events as Parameters<typeof ingestAgentEvents>[0]["events"] });
       } else if (operation.op === "routerSession") {
-        noteOrchestratorSession(operation.session, operation.provider);
+        noteOrchestratorSession(operation.session!, operation.provider);
       } else if (operation.op === "routerSpawn") {
         recordSubagentSpawn({
-          mechanism: operation.mechanism,
+          mechanism: operation.mechanism as "router_alias" | "codex_exec" | "bridge_native",
           provider: orchestratorProviderForSession("session-router-001"),
           role: operation.role,
           tool: operation.tool,
@@ -175,15 +217,15 @@ test("provider rows and grouped spawn rows follow the frozen status dimensions",
       }
     }
 
-    const status = getRouterStatus(FIXED_NOW);
+    const status = getRouterStatus(FIXED_NOW) as Record<string, any>;
     assert.deepEqual(status.subagents.byMechanism, contract.spawnGrouping.byMechanism);
     assert.deepEqual(status.subagents.byProvider, contract.spawnGrouping.byProvider);
     assert.deepEqual(status.subagents.byRole, contract.spawnGrouping.byRole);
     assert.equal(status.subagents.total, contract.spawnGrouping.total);
 
-    const grouped = new Map();
+    const grouped = new Map<string, { provider: string; mechanism: string; role: string; tool: string; count: number }>();
     for (const row of status.subagents.recent) {
-      const key = [row.provider, row.mechanism, row.role, row.tool].join("\\0");
+      const key = [row.provider, row.mechanism, row.role, row.tool].join("\0");
       const current = grouped.get(key) ?? {
         provider: row.provider,
         mechanism: row.mechanism,
@@ -197,9 +239,9 @@ test("provider rows and grouped spawn rows follow the frozen status dimensions",
     assert.deepEqual([...grouped.values()].sort((a, b) => b.count - a.count), contract.spawnGrouping.groupedRows);
 
     for (const provider of Object.values(status.providers)) {
-      assertKeys(provider, contract.expectedShapes.provider, "provider row");
-      assertKeys(provider.limits, contract.expectedShapes.providerLimits, "provider limits");
-      assertKeys(provider.capabilities, contract.expectedShapes.providerCapabilities, "provider capabilities");
+      assertKeys(provider, contract.expectedShapes["provider"]!, "provider row");
+      assertKeys((provider as Record<string, unknown>)["limits"], contract.expectedShapes["providerLimits"]!, "provider limits");
+      assertKeys((provider as Record<string, unknown>)["capabilities"], contract.expectedShapes["providerCapabilities"]!, "provider capabilities");
     }
   } finally {
     reset();
@@ -209,7 +251,7 @@ test("provider rows and grouped spawn rows follow the frozen status dimensions",
 test("status CLI keeps the byMechanism summary deterministic", async () => {
   reset();
   const server = createServer((request, response) => { void handle(request, response); });
-  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  await new Promise<void>((resolve) => { server.listen(0, "127.0.0.1", () => resolve()); });
   try {
     noteBridgeRequest("req-cli-001", { provider: "claude", model: "sonnet", role: "orchestrator", workspace: "AutoDev" });
     ingestAgentEvents({
@@ -224,8 +266,8 @@ test("status CLI keeps the byMechanism summary deterministic", async () => {
       tool: "multi_agent_v1.spawn",
     });
 
-    const address = server.address();
-    const output = await new Promise((resolve, reject) => {
+    const address = server.address() as { port: number };
+    const output = await new Promise<{ stdout: string; stderr: string }>((resolve, reject) => {
       const child = spawn(process.execPath, ["src/cli/router-status.ts"], {
         cwd: new URL(".", ROOT),
         env: {
@@ -238,14 +280,14 @@ test("status CLI keeps the byMechanism summary deterministic", async () => {
       });
       let stdout = "";
       let stderr = "";
-      child.stdout.on("data", (chunk) => { stdout += chunk; });
-      child.stderr.on("data", (chunk) => { stderr += chunk; });
+      child.stdout.on("data", (chunk: Buffer) => { stdout += chunk; });
+      child.stderr.on("data", (chunk: Buffer) => { stderr += chunk; });
       child.once("error", reject);
       child.once("exit", (code) => code === 0 ? resolve({ stdout, stderr }) : reject(new Error(`status CLI exited ${code}: ${stderr}`)));
     });
     assert.match(output.stdout, new RegExp(escapeRegex(contract.spawnGrouping.cliSummary)));
   } finally {
-    await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
     reset();
   }
 });

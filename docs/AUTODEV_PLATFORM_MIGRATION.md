@@ -867,7 +867,7 @@ router exposes, the full tracker `byState` histogram, the live-only
 `liveByModel` / `liveByWorkspace` partitions, the slot-vs-agent
 reconciliation block, the explicit
 `unattributed` residual on role/origin/workspace, and the concrete-only `liveByProvider` / `liveByModel` partitions
-(matching `status.providers`). `tests/agent-reconciliation-contract.test.mjs`
+(matching `status.providers`). `tests/agent-reconciliation-contract.test.ts`
 drives every scenario through the exported `agentsStatus`,
 `agentActivity`, `tryAcquireSubagentSlot`, `releaseSubagentSlot`,
 `recordConcurrencyDenial`, and `resetConcurrencyTelemetry` helpers
@@ -885,7 +885,7 @@ are removed; the dashboard no longer tolerates a pre-reconciliation
 status payload, since the router now guarantees the frozen
 `autodev-agent-status-v1` projection on every `getRouterStatus()`
 response. **Completed slice only after verification.**
-`node --test tests/agent-reconciliation-contract.test.mjs` reports
+`node --test tests/agent-reconciliation-contract.test.ts` reports
 16 passing scenarios (constants + scenarios + role-residual regression)
 and the existing `scripts/codex-model-router.test.mjs` "active-agent
 reconciliation" suite still passes (181 + 1 new = 182 passing tests).
@@ -909,7 +909,7 @@ settlement, overflow failure, and the non-additive Codex-native spawn counter
 with spawn failures kept outside `status.subagents.total`. The dashboard/status
 snapshot fixture at `tests/fixtures/contracts/dashboard-status-snapshot.json`
 (schema `autodev-dashboard-status-snapshot-v1`) and
-`tests/dashboard-status-snapshot.test.mjs` freeze exact `/status` field
+`tests/dashboard-status-snapshot.test.ts` freeze exact `/status` field
 presence, privacy-safe metadata, pending/populated `codexState`, provider rows,
 dashboard grouping and empty states, totals-footer visibility, the status CLI
 `byMechanism` summary, and extract-and-evaluate HTML rendering without prompt,
@@ -920,7 +920,7 @@ footer and status CLI use the same distinction without fallback inflation.
 These two contracts mark `Native versus bridge-native child counts` and
 `Dashboard/status snapshots` frozen. **Validation.** The focused contracts
 pass exactly: `node --test tests/native-vs-bridge-child-counts.test.ts` ->
-24 pass, 0 fail; `node --test tests/dashboard-status-snapshot.test.mjs` ->
+24 pass, 0 fail; `node --test tests/dashboard-status-snapshot.test.ts` ->
 5 pass, 0 fail. The requested regression commands also pass: agent
 reconciliation 16, workspace attribution 8, concurrency 25, router 182,
 metrics 19, workspace telemetry 18, and router state snapshot 3, all with
@@ -930,7 +930,7 @@ metrics 19, workspace telemetry 18, and router state snapshot 3, all with
 reports 44 pass, 0 fail; and `git diff --check` is clean. LSP diagnostics
 for `src/cli/router-status.ts`,
 `tests/native-vs-bridge-child-counts.test.ts`, and
-`tests/dashboard-status-snapshot.test.mjs` report 0 errors, warnings, info,
+`tests/dashboard-status-snapshot.test.ts` report 0 errors, warnings, info,
 and hints. An independent validator reproduced 29/29 focused passes and
 reported no privacy, determinism, labeling, or documentation blockers.
 
@@ -1244,7 +1244,7 @@ fixture:
   `rulesync-skills.test.ts`.
 - The drift workflow keeps its name and job id, so required checks are
   unaffected. It no longer runs inline Rulesync generation. Instead it runs
-  `node --test tests/rulesync-mcp.test.ts tests/rulesync-hooks-shadow.test.ts tests/rulesync-skills.test.ts tests/rulesync-permissions-inventory.test.ts`, filtered on `.rulesync/**`,
+  `node --test tests/rulesync-mcp.test.ts tests/rulesync-hooks-shadow.test.ts tests/rulesync-skills.test.ts tests/rulesync-permissions-inventory.test.ts`,
   `rulesync.jsonc`, those tests, the MCP boundary contract, the live rule
   files, and the dependency manifests.
 - An upgrade that changes Rulesync output is caught by those assertions, not by
@@ -2139,7 +2139,7 @@ Each proxy responsibility was checked against five kinds of evidence:
 - The proxy is now a documented boundary adapter: an allowlisted header set,
   `client_metadata` removal, freeform coercion, and telemetry.
 - The duplicated flatten/re-expand helpers were deleted.
-- `tests/minimax-proxy.test.mjs` now pushes the router's real `downstreamHeaders`
+- `tests/minimax-proxy.test.ts` now pushes the router's real `downstreamHeaders`
   output plus Codex's native headers through the proxy, and requires that none
   of them, and no workspace path, reaches upstream.
 - The boundary fixture moved to `autodev-minimax-responses-contract-v2`:
@@ -2159,7 +2159,7 @@ whose script throws an explanation: it names only the argument keys, says `exec`
 takes raw JavaScript, and shows `await tools.exec_command({ cmd })`.
 - A hermetic `codex exec` through the adapter returned that message to the model
   as `Script error: …`, with no incompatible-payload abort.
-- Tests: `tests/minimax-proxy.test.mjs` covers the streaming and non-streaming
+- Tests: `tests/minimax-proxy.test.ts` covers the streaming and non-streaming
   paths and checks that values are never echoed. The contract fixture gained
   `freeform_unrecognised_feedback`.
 
@@ -2386,10 +2386,13 @@ source list and process-dispatch calls.
 The first test-stack slices are now complete: the AutoDev request-capture
 recorder and its contract suite, bridge-role contract, portable configuration
 contract, Copilot MCP contract, workflow contract, workspace-attribution
-contract, native-vs-bridge contract, agent-instructions contract,
-Rulesync-permissions contract, Collector config/runtime contracts, and
-root-delegation hook contract now use native TypeScript; the superseded `.mjs`
-and Python test files are removed. The vendored recorder remains repository-only
+contract, native-vs-bridge contract, agent-reconciliation contract,
+Antigravity delegation contract, router workspace-telemetry contract,
+dashboard/status contract, MiniMax proxy contract, agent-instructions
+contract, Rulesync-permissions/MCP/hooks contracts, Collector config/runtime
+contracts, and root-delegation hook contract now use native TypeScript; the superseded
+`.mjs` and Python files for those slices are removed. The final legacy suites
+are the metrics/telemetry tests and the local setup test. The vendored recorder remains repository-only
 skill content and is still offline; this does not change provider transport or
 capture privacy semantics.
 

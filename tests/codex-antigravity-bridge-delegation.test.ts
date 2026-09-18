@@ -8,22 +8,38 @@ import {
   isDelegationActive,
   isWaitStep,
   updateDelegationState,
+  type DelegationState,
 } from "../src/providers/antigravity.ts";
 
-const spawnTools = new Set([ "invoke_subagent", "manage_subagents" ]);
-const isSpawnTool = (name) => spawnTools.has(name);
+const spawnTools = new Set(["invoke_subagent", "manage_subagents"]);
+const isSpawnTool = (name: string): boolean => spawnTools.has(name);
 
-const freshState = () => ({ activeTool: null, activeStep: null, activatedAt: 0, pendingChildren: 0 });
+const freshState = (): DelegationState => ({
+  activeTool: null,
+  activeStep: null,
+  activatedAt: 0,
+  pendingChildren: 0,
+  activeCommands: 0,
+  activeWaits: 0,
+});
 
-function recordingReporter() {
-  const spawns = [];
-  const results = [];
+interface RecordingReporter {
+  spawns: unknown[];
+  results: unknown[];
+  isSpawnTool: (name: string) => boolean;
+  reportSpawns: (event: unknown) => Promise<void>;
+  reportResults: (event: unknown) => Promise<void>;
+}
+
+function recordingReporter(): RecordingReporter {
+  const spawns: unknown[] = [];
+  const results: unknown[] = [];
   return {
     spawns,
     results,
-    isSpawnTool: (name) => name === "invoke_subagent",
-    reportSpawns: async (event) => { spawns.push(event); },
-    reportResults: async (event) => { results.push(event); },
+    isSpawnTool: (name: string) => name === "invoke_subagent",
+    reportSpawns: async (event: unknown) => { spawns.push(event); },
+    reportResults: async (event: unknown) => { results.push(event); },
   };
 }
 
@@ -78,7 +94,7 @@ test("a non-spawn tool event also clears the tracker for the same step", () => {
 });
 
 test("ERROR / FAILED / CANCELLED on the active step also clears the tracker", () => {
-  for (const terminal of [ "ERROR", "FAILED", "CANCELLED" ]) {
+  for (const terminal of ["ERROR", "FAILED", "CANCELLED"]) {
     const state = freshState();
     updateDelegationState(state, { step_index: 5, state: "ACTIVE", tool_name: "invoke_subagent" }, isSpawnTool);
     const result = updateDelegationState(state, { step_index: 5, state: terminal, tool_name: "invoke_subagent" }, isSpawnTool);
@@ -110,7 +126,7 @@ test("a step_update without an index still tracks but cannot be paired by id", (
 });
 
 test("updateDelegationState tolerates a null state object", () => {
-  const result = updateDelegationState(null, { step_index: 1, state: "ACTIVE", tool_name: "invoke_subagent" }, isSpawnTool);
+  const result = updateDelegationState(null as unknown as DelegationState, { step_index: 1, state: "ACTIVE", tool_name: "invoke_subagent" }, isSpawnTool);
   assert.deepEqual(result, { kind: "unchanged" });
 });
 
@@ -119,7 +135,7 @@ test("updateDelegationState tolerates a missing isSpawnTool callback", () => {
   // Without an isSpawnTool callback every tool is treated as non-spawn. The
   // call must not throw -- the bridge must keep working when the router did
   // not advertise a spawn-tools header (and isSpawnTool is therefore falsy).
-  const result = updateDelegationState(state, { step_index: 1, state: "ACTIVE", tool_name: "invoke_subagent" }, undefined);
+  const result = updateDelegationState(state, { step_index: 1, state: "ACTIVE", tool_name: "invoke_subagent" }, undefined as unknown as (name: string) => boolean);
   assert.deepEqual(result, { kind: "unchanged" });
   assert.equal(state.activeTool, null);
 });
@@ -129,7 +145,7 @@ test("decideCloseOnDelegation says do-not-kill when a delegator is active", () =
   // delegator step is ACTIVE, the bridge must NOT kill agy. Killing here
   // strands the children agy has already spawned and is waiting on, and
   // throws away any partial work they had produced.
-  const state = { activeTool: "invoke_subagent", activeStep: 4, activatedAt: Date.now() };
+  const state: DelegationState = { activeTool: "invoke_subagent", activeStep: 4, activatedAt: Date.now(), pendingChildren: 0, activeCommands: 0, activeWaits: 0 };
   const decision = decideCloseOnDelegation(state);
   assert.equal(decision.kill, false);
   assert.equal(decision.reason, "client_disconnected");
@@ -148,15 +164,10 @@ test("decideCloseOnDelegation says kill when no delegator is active", () => {
 });
 
 test("decideCloseOnDelegation tolerates a null state", () => {
-  const decision = decideCloseOnDelegation(null);
+  const decision = decideCloseOnDelegation(null as unknown as DelegationState);
   assert.equal(decision.kill, true);
   assert.equal(decision.reason, "provider_interrupted");
 });
-
-// --- Pending-children lifecycle: ACTIVE -> DONE closes the dispatch step,
-// not the children invoke_subagent handed work off to. The bridge must not
-// read that DONE as "delegation is over" while the spawn tracker still has
-// children open.
 
 test("isDelegationActive stays true after ACTIVE -> DONE while children are still pending", () => {
   const state = freshState();
@@ -179,7 +190,7 @@ test("isDelegationActive stays true after ACTIVE -> DONE while children are stil
 });
 
 test("decideCloseOnDelegation does not kill while pending children exist, even with no active step", () => {
-  const state = { activeTool: null, activeStep: null, activatedAt: 0, pendingChildren: 2 };
+  const state: DelegationState = { activeTool: null, activeStep: null, activatedAt: 0, pendingChildren: 2, activeCommands: 0, activeWaits: 0 };
   const decision = decideCloseOnDelegation(state);
   assert.equal(decision.kill, false, "children invoke_subagent dispatched must not be stranded by a kill");
   assert.equal(decision.reason, "client_disconnected");
@@ -191,7 +202,7 @@ test("decideCloseOnDelegation still kills an ordinary disconnected turn with not
   // No delegator ever ran, or every dispatched child has already closed:
   // an ordinary idle/disconnected turn must still be killed, not left to run
   // to PRINT_TIMEOUT for no reason.
-  const state = { activeTool: null, activeStep: null, activatedAt: 0, pendingChildren: 0 };
+  const state: DelegationState = { activeTool: null, activeStep: null, activatedAt: 0, pendingChildren: 0, activeCommands: 0, activeWaits: 0 };
   const decision = decideCloseOnDelegation(state);
   assert.equal(decision.kill, true);
   assert.equal(decision.reason, "provider_interrupted");
@@ -203,7 +214,7 @@ test("the heartbeat's own gate (isDelegationActive) stays open across a dispatch
   // regression in that gate (reverting to `!delegation.activeTool`) is
   // caught without spinning up the HTTP server.
   const state = freshState();
-  const heartbeatShouldTick = () => isDelegationActive(state);
+  const heartbeatShouldTick = (): boolean => isDelegationActive(state);
 
   updateDelegationState(state, { step_index: 1, state: "ACTIVE", tool_name: "invoke_subagent" }, isSpawnTool);
   state.pendingChildren = 1;
@@ -221,10 +232,10 @@ test("an end-to-end dispatch: spawn tracker + delegation state agree children ou
   // same way the request handler does, so this exercises the actual
   // integration rather than two isolated units that happen to agree.
   const reporter = recordingReporter();
-  const tracker = createSpawnTracker(reporter);
+  const tracker = createSpawnTracker(reporter as unknown as Parameters<typeof createSpawnTracker>[0]);
   const state = freshState();
 
-  const active = { step_index: 3, state: "ACTIVE", step_type: "tool", tool_name: "invoke_subagent", tool_info: { args: { Subagents: [ { TypeName: "explorer" } ] } } };
+  const active = { step_index: 3, state: "ACTIVE", step_type: "tool", tool_name: "invoke_subagent", tool_info: { args: { Subagents: [{ TypeName: "explorer" }] } } };
   tracker.observeSpawnStep(active);
   state.pendingChildren = tracker.openSpawnCount();
   updateDelegationState(state, active, isSpawnTool);
@@ -281,7 +292,7 @@ test("delegation tracking still recognizes agy's own spawn tool when the router 
 });
 
 test("isDelegationActive treats active commands as live", () => {
-  const state = { activeTool: null, activeStep: null, activatedAt: 0, pendingChildren: 0, activeCommands: 1 };
+  const state: DelegationState = { activeTool: null, activeStep: null, activatedAt: 0, pendingChildren: 0, activeCommands: 1, activeWaits: 0 };
   assert.equal(isDelegationActive(state), true);
   state.activeCommands = 0;
   state.activeCommand = "run_command";
@@ -291,7 +302,7 @@ test("isDelegationActive treats active commands as live", () => {
 });
 
 test("isDelegationActive treats active waits as live", () => {
-  const state = { activeTool: null, activeStep: null, activatedAt: 0, pendingChildren: 0, activeWaits: 1 };
+  const state: DelegationState = { activeTool: null, activeStep: null, activatedAt: 0, pendingChildren: 0, activeCommands: 0, activeWaits: 1 };
   assert.equal(isDelegationActive(state), true);
   state.activeWaits = 0;
   state.activeWait = "ask_question";
@@ -301,14 +312,14 @@ test("isDelegationActive treats active waits as live", () => {
 });
 
 test("decideCloseOnDelegation does not kill while active commands or waits are running", () => {
-  const cmdState = { activeTool: null, activeStep: null, activatedAt: 0, pendingChildren: 0, activeCommands: 1, activeWaits: 0 };
+  const cmdState: DelegationState = { activeTool: null, activeStep: null, activatedAt: 0, pendingChildren: 0, activeCommands: 1, activeWaits: 0 };
   const cmdDecision = decideCloseOnDelegation(cmdState);
   assert.equal(cmdDecision.kill, false);
   assert.equal(cmdDecision.reason, "client_disconnected");
   assert.equal(cmdDecision.activeCommands, 1);
   assert.equal(cmdDecision.activeWaits, 0);
 
-  const waitState = { activeTool: null, activeStep: null, activatedAt: 0, pendingChildren: 0, activeCommands: 0, activeWaits: 1 };
+  const waitState: DelegationState = { activeTool: null, activeStep: null, activatedAt: 0, pendingChildren: 0, activeCommands: 0, activeWaits: 1 };
   const waitDecision = decideCloseOnDelegation(waitState);
   assert.equal(waitDecision.kill, false);
   assert.equal(waitDecision.reason, "client_disconnected");

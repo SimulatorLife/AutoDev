@@ -1748,3 +1748,4 @@ if (IS_MAIN) {
 }
 
 export { ANTIGRAVITY_MCP_EXPOSURE_SOURCE, ANTIGRAVITY_SKILL_EXPOSURE_SOURCE, ANTIGRAVITY_WEB_RESEARCH_TOOLS, agyArgs, agyErrorDetails, agyFailureMessage, agyPermissionFailure, antigravityToolServer, createSpawnTracker, createToolObserver, decideCloseOnDelegation, extractSkillReadPath, isCommandStep, isDelegationActive, isWaitStep, matchSkillReadPath, modelEffort, promptFromInput, resolveEffort, resolveModel, spawnedChildren, subagentModel, toolStepEvidence, updateDelegationState };
+export type { CloseDecision, DelegationState, DelegationTransition };

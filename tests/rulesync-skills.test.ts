@@ -129,12 +129,12 @@ test('generated documents preserve name, description, and body without targets',
 test('Rulesync check detects edited, stale, and missing generated skills', () => {
   assert.equal(runRulesync(generated, '--check').status, 0);
   for (const [label, damage] of [
-    ['edited', (root: string) => readFileSync(join(root, '.github/skills/ccc/SKILL.md'), 'utf8') && requireWrite(join(root, '.github/skills/ccc/SKILL.md'), 'drift\n')],
-    ['stale', (root: string) => { const path = join(root, '.github/skills/stale'); requireMkdir(path); requireWrite(join(path, 'SKILL.md'), 'x\n'); }],
-    ['missing', (root: string) => requireRemove(join(root, '.claude/skills/autodev-codex-request-capture/SKILL.md'))],
+    ['edited', (root: string) => writeFileSync(join(root, '.github/skills/ccc/SKILL.md'), 'drift\n')],
+    ['stale', (root: string) => { const path = join(root, '.github/skills/stale'); mkdirSync(path, { recursive: true }); writeFileSync(join(path, 'SKILL.md'), 'x\n'); }],
+    ['missing', (root: string) => rmSync(join(root, '.claude/skills/autodev-codex-request-capture/SKILL.md'))],
   ] as const) {
     const root = join(temporaryRoot, label);
-    mkdirForTest(root);
+    mkdirSync(root, { recursive: true });
     assert.equal(runRulesync(root).status, 0, label);
     damage(root);
     assert.notEqual(runRulesync(root, '--check').status, 0, label);
@@ -170,10 +170,3 @@ test('Rulesync config generates only repository skills and CI runs the Rulesync 
   assert.doesNotMatch(workflow, /rulesync generate/);
   assert.deepEqual(readdirSync(join(repositoryRoot, 'tests', 'fixtures'), { withFileTypes: true }).filter((entry) => entry.name.startsWith('rulesync-')), []);
 });
-
-// Small wrappers keep filesystem assertions above explicit while retaining the
-// test's synchronous setup/cleanup semantics.
-function mkdirForTest(path: string): void { mkdirSync(path, { recursive: true }); }
-function requireMkdir(path: string): void { mkdirSync(path, { recursive: true }); }
-function requireWrite(path: string, text: string): boolean { writeFileSync(path, text); return true; }
-function requireRemove(path: string): void { rmSync(path); }
