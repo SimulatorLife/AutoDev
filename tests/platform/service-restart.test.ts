@@ -59,6 +59,24 @@ test('direct mode never stops a foreign loaded service', async () => {
   assert.equal(fake.runs.length, 0);
 });
 
+test('a loaded service with an earlier install path under the same CODEX_HOME is adopted and restarted', async () => {
+  const fake = deps({
+    launchd: {
+      isLoaded: (label) => label === 'com.codex.otel-collector',
+      print: () => 'program = /bin/bash\narguments = { /home/.codex/hooks/codex/otel/run-autodev-otel-collector.sh }\nCODEX_HOME => /home/.codex',
+      bootout: (label) => { fake.calls.push(`bootout:${label}`); },
+      bootstrap: (plist) => { fake.calls.push(`bootstrap:${plist}`); },
+      enable: (label) => { fake.calls.push(`enable:${label}`); },
+      kickstart: (label) => { fake.calls.push(`kickstart:${label}`); },
+    },
+  });
+  assert.equal(await restartServices(options({ otelMode: 'collector' }), fake), 0);
+  assert.ok(fake.calls.includes('bootout:com.codex.otel-collector'));
+  assert.ok(fake.calls.includes('bootstrap:/home/Library/LaunchAgents/com.codex.otel-collector.plist'));
+  assert.ok(fake.calls.includes('enable:com.codex.otel-collector'));
+  assert.ok(fake.calls.includes('kickstart:com.codex.otel-collector'));
+});
+
 test('a runtime rooted at another CODEX_HOME is left untouched', async () => {
   const fake = deps({ readFile: () => '<key>CODEX_HOME</key><string>/other/.codex</string>' });
   assert.equal(await restartServices(options(), fake), 0);

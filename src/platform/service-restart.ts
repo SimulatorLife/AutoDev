@@ -172,6 +172,12 @@ async function runDirectEnsures(options: ServiceRestartOptions, deps: ServiceRes
   return 0;
 }
 
+function isOwnedService(options: ServiceRestartOptions, label: ManagedServiceLabel, jobDump: string): boolean {
+  if (jobDump.includes(serviceLauncher(options, label))) return true;
+  const hooks = join(options.codexHome, 'hooks');
+  return jobDump.includes(options.codexHome) || jobDump.includes(hooks);
+}
+
 /** Restart only services owned by this CODEX_HOME and run direct fallbacks when launchd is unavailable. */
 export async function restartServices(options: ServiceRestartOptions = resolveServiceRestartOptions(), deps: ServiceRestartDeps = defaultDeps()): Promise<number> {
   const owner = plistOwner(options, deps);
@@ -186,7 +192,7 @@ export async function restartServices(options: ServiceRestartOptions = resolveSe
     if (deps.launchd.isLoaded(label)) {
       let jobDump = '';
       try { jobDump = deps.launchd.print(label); } catch { /* treat as unavailable */ }
-      if (!jobDump.includes(serviceLauncher(options, label))) {
+      if (!isOwnedService(options, label, jobDump)) {
         console.error(`loaded ${label} belongs to another runtime; leaving it alone.`);
         launchdAvailable = false;
         foreignService = true;
