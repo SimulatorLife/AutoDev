@@ -71,6 +71,45 @@ Differences from a role request:
   degrades onto a bridge-backed provider receives the orchestrator policy
   rather than the leaf policy. See "Agent role across the bridge boundary".
 
+#### Active-subagent routing protection
+
+When an orchestrator spawns subagents and then waits for their results, its
+response turn ends but its session is not idle. The router keeps the
+orchestrator in `subagent_wait` on its original provider as long as any of
+these hold:
+
+- The caller declared `hasActiveSubagents` (open concurrency slots or pending
+  bridge children) when it ended the request.
+- The orchestrator's session key has live child activity records (children
+  tagged with the session key or referencing it as `parentRequestId`).
+
+Because `subagent_wait` is a live state, `countLiveAgentActivity({ provider })`
+still reflects the waiting orchestrator. The candidate ranking's
+`liveProviderCount` therefore penalizes the occupied provider, and subsequent
+orchestrator requests route to idle providers first. This prevents the
+following cascade:
+
+1. Orchestrator A starts on Claude and spawns subagents.
+2. A's response turn ends; A waits for children.
+3. **Without the protection**: Claude appears idle; the router sends
+   Orchestrator B to Claude. A's children finish and A resumes — now two
+   concurrent Claude orchestrators trigger rate limits.
+4. **With the protection**: Claude reports `liveProviderCount: 1`; the
+   router sends B to MiniMax, Gemini, or Copilot instead.
+
+Subagent turns executing under an orchestrator session use a distinct
+`req:<requestId>` activity subject tagged with the parent's session key, so
+they refresh the parent's TTL without overwriting its provider or role. When
+the last child settles (slots released and bridge subagents closed), the
+orchestrator transitions to `resumed` and continues its final integration
+turn. If no children remain and the orchestrator's own turn is also done, it
+transitions to `finished`.
+
+The staleness TTL still applies: an orchestrator in `subagent_wait` whose
+children all died without reporting back will age out of live counts once no
+heartbeat arrives within `CODEX_ROUTER_AGENT_ACTIVITY_TTL_MS`, preventing
+abandoned sessions from permanently blocking a provider.
+
 ### Diagnosing an agent that fails to create or stops unexpectedly
 
 The Desktop message `Failed to create an agent` is a wrapper around several
@@ -714,6 +753,12 @@ The router coordinates with agents and tool hosts via an explicit lifecycle even
   counted" bucket in the KPI -- stale activity simply stops contributing to
   the canonical live count, and `status.agents.byState.stale` reports the
   abandoned count separately for diagnostic visibility.
+- **Orchestrator `subagent_wait`:**
+  An orchestrator whose response turn has ended but whose children are still
+  active stays in `subagent_wait` on its original provider. Children's
+  streaming touches keep the parent's TTL fresh, and the parent transitions
+  to `resumed` only after all children settle. See "Active-subagent routing
+  protection" above for the routing implications.
 
 To verify the live router is receiving caller identities, inspect
 `.concurrency.lastDenial.sessionScope` in `/status`; `identified` means the

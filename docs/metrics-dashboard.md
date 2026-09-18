@@ -400,6 +400,17 @@ The router integrates with upstream agent runtimes through explicit agent activi
   surfaced in the KPI; stale activity simply stops contributing to the
   canonical live count, and the abandoned count is reported separately
   through `status.agents.byState.stale` for diagnostic visibility.
+- **Orchestrator `subagent_wait` routing protection:** An orchestrator whose
+  response turn has ended but whose spawned subagents are still active
+  remains in `subagent_wait` on its original provider rather than
+  transitioning to `finished`. Its children's streaming touches keep the
+  parent's TTL fresh. Because `subagent_wait` counts as live,
+  `canonicalLiveCount` and `liveProviderCount` reflect the occupied provider,
+  preventing the router from routing a second orchestrator to the same
+  provider and triggering rate-limit cascades. The orchestrator transitions
+  to `resumed` only when all children settle, and to `finished` when its own
+  final turn completes. The staleness TTL still applies to abandoned
+  orchestrators whose children died without reporting back.
 
 The dashboard's Operational summary groups Codex receiver, state-database,
 and concurrency values as category/metric/value rows instead of embedding those

@@ -161,6 +161,18 @@ Report rate limits, stalls, provider failures, skipped roles, and
 unavailable execution paths explicitly. Treat missing or partial delegated
 evidence as missing evidence, not as a successful result.
 
+### Routing protection while children are active
+
+The router keeps an orchestrator in `subagent_wait` on its original provider
+while any of its spawned children are still running. Because `subagent_wait`
+counts as live activity, the router's candidate ranking sees the occupied
+provider as active and routes subsequent orchestrators to idle providers
+first. This prevents a second orchestrator from landing on the same provider
+and triggering rate-limit cascades. Children's streaming progress refreshes
+the parent's TTL, and the parent transitions to `resumed` only when all
+children settle. The staleness TTL still applies: an orchestrator whose
+children all died without reporting back ages out of live counts normally.
+
 ## Workspace and prompt boundaries
 
 Pass the active repository or worktree context through the delegation tool and
