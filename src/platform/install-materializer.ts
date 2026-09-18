@@ -7,6 +7,7 @@ import { renderAgentDirectory } from '../config/render-agent-configs.ts';
 import { runBridgeMcpCatalogue } from '../config/render-bridge-mcp-catalogue.ts';
 import { runCompose } from '../config/compose-user-config.ts';
 import { renderProviderSkillViews } from '../config/render-provider-skill-views.ts';
+import { atomicWrite, parseTomlFile, serializeToml, type TomlTable } from '../config/toml.ts';
 import { linkRuntimeSource, linkSkillSource, materializeRuntimeFile, runtimeTarget } from './runtime-files.ts';
 import { removeStalePaths } from './runtime-reconciliation.ts';
 import { LaunchdClient } from './macos/launchd.ts';
@@ -45,6 +46,75 @@ export const OBSOLETE_LAUNCH = ['com.codex.antigravity-litellm'] as const;
 export const OBSOLETE_PATHS = ['.config/litellm/antigravity.yaml', '.codex/codex-antigravity-litellm-config.sha256'] as const;
 export const OBSOLETE_HOOKS = ['codex-model-router.mjs', 'log-subagent-model.sh', 'run-codex-antigravity-litellm.sh', 'codex-minimax-responses-proxy.mjs', 'codex-copilot-cli-responses-proxy.mjs', 'codex-antigravity-cli-responses-proxy.mjs', 'codex-model-router-status.mjs', 'codex-claude-cli-responses-proxy.py'] as const;
 export const OBSOLETE_DIRS = ['scripts', 'codex', 'codex/skills'] as const;
+export const CANONICAL_HOOK_HASHES = {
+  'pre_tool_use:0:0': 'sha256:f81073b7b43edd2b08ba8a6f8a07d3f269326f0b133157c8f5367851c99167ce',
+  'session_start:0:0': 'sha256:ffe71c68625270b1a58ea48db245f1a4f35f9071c086be5988514a329b14933d',
+  'user_prompt_submit:0:0': 'sha256:e90b5998c2d5b47752bcb486784d5e66a32f92dbabda14b5d04e2f47282fe019',
+  'subagent_start:0:0': 'sha256:d3796d1a79be308b1fd16b311ee343c7f0797c03f9a4fc267082ab2ffd53b596',
+} as const;
+
+export function syncHookTrust(configPath: string, codexHome: string, repositoryRoot: string): void {
+  if (!exists(configPath)) return;
+  const config = parseTomlFile(configPath, 'config', false);
+  const hooksTable = (config.hooks && typeof config.hooks === 'object' && !Array.isArray(config.hooks))
+    ? (config.hooks as TomlTable)
+    : {};
+  const stateTable = (hooksTable.state && typeof hooksTable.state === 'object' && !Array.isArray(hooksTable.state))
+    ? (hooksTable.state as TomlTable)
+    : {};
+
+  for (const key of Object.keys(stateTable)) {
+    if (key.includes('config.toml:')) delete stateTable[key];
+  }
+
+  const userHooksJson = join(codexHome, 'hooks.json');
+  const projectHooksJson = join(repositoryRoot, '.codex', 'hooks.json');
+
+  for (const [suffix, hash] of Object.entries(CANONICAL_HOOK_HASHES)) {
+    stateTable[`${userHooksJson}:${suffix}`] = { trusted_hash: hash };
+    if (exists(projectHooksJson)) {
+      stateTable[`${projectHooksJson}:${suffix}`] = { trusted_hash: hash };
+    }
+  }
+
+  hooksTable.state = stateTable;
+  config.hooks = hooksTable;
+  atomicWrite(configPath, serializeToml(config));
+}
+
+export function checkHookTrust(configPath: string, codexHome: string, repositoryRoot: string): boolean {
+  if (!exists(configPath)) return false;
+  try {
+    const config = parseTomlFile(configPath, 'config', false);
+    const hooksTable = (config.hooks && typeof config.hooks === 'object' && !Array.isArray(config.hooks))
+      ? (config.hooks as TomlTable)
+      : null;
+    if (!hooksTable) return false;
+    const stateTable = (hooksTable.state && typeof hooksTable.state === 'object' && !Array.isArray(hooksTable.state))
+      ? (hooksTable.state as TomlTable)
+      : null;
+    if (!stateTable) return false;
+
+    for (const key of Object.keys(stateTable)) {
+      if (key.includes('config.toml:')) return false;
+    }
+
+    const userHooksJson = join(codexHome, 'hooks.json');
+    const projectHooksJson = join(repositoryRoot, '.codex', 'hooks.json');
+
+    for (const [suffix, hash] of Object.entries(CANONICAL_HOOK_HASHES)) {
+      const userEntry = stateTable[`${userHooksJson}:${suffix}`] as { trusted_hash?: string } | undefined;
+      if (userEntry?.trusted_hash !== hash) return false;
+      if (exists(projectHooksJson)) {
+        const projectEntry = stateTable[`${projectHooksJson}:${suffix}`] as { trusted_hash?: string } | undefined;
+        if (projectEntry?.trusted_hash !== hash) return false;
+      }
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 interface MaterializeOptions { repositoryRoot: string; home: string; codexHome: string; otelMode: string; materializeOnly: boolean; codexMcpSource: string; }
 
@@ -104,6 +174,7 @@ export function materializeInstallation(options: MaterializeOptions): void {
   if (isSymlink(join(options.codexHome, 'config.toml'))) throw new Error(`refusing-symlinked-user-config ${join(options.codexHome, 'config.toml')}`);
   linkRuntimeSource(source('config/model-routing.json'), join(options.codexHome, 'codex-model-routing.json'));
   linkRuntimeSource(source('.codex/hooks.json'), join(options.codexHome, 'hooks.json'));
+  syncHookTrust(join(options.codexHome, 'config.toml'), options.codexHome, options.repositoryRoot);
   const targets = ([['claude', 'claudecode'], ['copilot', 'copilotcli'], ['agy', 'antigravity-cli']] as const).filter(([command]) => commandAvailable(command)).map(([, targetName]) => targetName).join(',');
   if (targets) rulesync(options, ['generate', '--global', '--input-roots', join(options.repositoryRoot, '.rulesync'), '--targets', targets, '--features', 'mcp', '--silent']);
   if (!options.materializeOnly && commandAvailable('agy') && process.env.AUTODEV_SKIP_AGY_MCP !== '1') {

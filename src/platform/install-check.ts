@@ -13,7 +13,7 @@ import { readCollectorMode } from './install-state.ts';
 import { launchAgentMatches } from './macos/launchagent.ts';
 import { antigravitySkillsStatus, missingAntigravityPermissions } from './antigravity-settings.ts';
 import { resolveCollectorOptions, runCollector } from './otel-collector.ts';
-import { RUNTIME_MODULES, OTEL_RUNTIME, HOOKS, DASHBOARD, MCP_LAUNCHERS, PROFILES, CATALOGS, ROLES, PROMPT_ROLES, SKILLS, RULES, LAUNCH_LABELS, OBSOLETE_HOOKS, OBSOLETE_DIRS } from './install-materializer.ts';
+import { RUNTIME_MODULES, OTEL_RUNTIME, HOOKS, DASHBOARD, MCP_LAUNCHERS, PROFILES, CATALOGS, ROLES, PROMPT_ROLES, SKILLS, RULES, LAUNCH_LABELS, OBSOLETE_HOOKS, OBSOLETE_DIRS, checkHookTrust } from './install-materializer.ts';
 import { runtimeFileMatches, runtimeLinkMatches, skillLinkMatches, runtimeTarget } from './runtime-files.ts';
 import { stalePaths } from './runtime-reconciliation.ts';
 
@@ -87,6 +87,7 @@ export function runInstallCheck(overrides: InstallCheckOptions = {}): number {
     for (const name of CATALOGS) check(`catalog ${name}`, runtimeLinkMatches(join(repositoryRoot, `config/catalogs/${name}-model-catalog.json`), join(codexHome, `${name}-model-catalog.json`)), failures);
     check('model routing', runtimeLinkMatches(join(repositoryRoot, 'config/model-routing.json'), join(codexHome, 'codex-model-routing.json')), failures);
     check('Codex hooks.json', runtimeLinkMatches(join(repositoryRoot, '.codex/hooks.json'), join(codexHome, 'hooks.json')), failures);
+    check('hook trust state', checkHookTrust(join(codexHome, 'config.toml'), codexHome, repositoryRoot), failures);
     const portable = readFileSync(join(repositoryRoot, 'config/config.autodev.toml'), 'utf8');
     for (const provider of ['local_model_router', 'claude_code_subscription', 'minimax', 'antigravity_cli']) check(`provider config ${provider}`, portable.includes(`[model_providers.${provider}]`), failures);
     check('provider auth boundary', portable.includes('requires_openai_auth = false'), failures);

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { appendFileSync, existsSync, readFileSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { codexHome, repositoryRoot } from './command-utils.ts';
@@ -25,6 +25,7 @@ function runtimeSourceRoot(): string {
 function logInput(input: HookInput): void {
   try {
     const logFile = join(codexHome(), 'hooks', 'hooks.log');
+    mkdirSync(dirname(logFile), { recursive: true });
     appendFileSync(logFile, `${JSON.stringify({
       time: new Date().toISOString(), event: input.hook_event_name, model: input.model,
       session: input.session_id, turn: input.turn_id ?? null,

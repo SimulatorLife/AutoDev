@@ -37,6 +37,9 @@ export function resolveMcpCommand(name: string, repoRoot: string, env: NodeJS.Pr
 export function runMcp(name: string, repoRoot: string, env: NodeJS.ProcessEnv = process.env): number {
   const command = resolveMcpCommand(name, repoRoot, env);
   if (!existsSync(command.binary) || !executable(command.binary)) throw new Error(`AutoDev MCP binary is missing or not executable: ${command.binary}`);
+  if (name === 'cocoindex-code' && !existsSync(join(process.cwd(), '.cocoindex_code'))) {
+    spawnSync(command.binary, ['init'], { cwd: process.cwd(), env, stdio: ['ignore', 'ignore', 'inherit'] });
+  }
   const result = spawnSync(command.binary, command.args, { cwd: process.cwd(), env, stdio: 'inherit' });
   if (result.error) throw result.error;
   return result.status ?? 1;
