@@ -35,27 +35,37 @@ function isRecord(value: unknown): value is ResponsesItem {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
+function classifyTailItem(
+  item: unknown
+): { item: ResponsesItem; output: boolean } | null {
+  if (!isRecord(item)) return null;
+  if (TOOL_OUTPUT_TYPES.has(String(item.type))) {
+    return { item, output: true };
+  }
+  if (
+    (item.type === undefined || item.type === "message") &&
+    INJECTED_ROLES.has(String(item.role))
+  ) {
+    return { item, output: false };
+  }
+  return null;
+}
+
+function collectTail(
+  input: unknown[]
+): Array<{ item: ResponsesItem; output: boolean }> {
+  const tail: Array<{ item: ResponsesItem; output: boolean }> = [];
+  for (let index = input.length - 1; index >= 0; index -= 1) {
+    const classified = classifyTailItem(input[index]);
+    if (!classified) break;
+    tail.unshift(classified);
+  }
+  return tail;
+}
+
 export function awaitedToolResults(input: unknown): AwaitedToolResults {
   const outputs = new Map<string, unknown>();
-  const tail: Array<{ item: ResponsesItem; output: boolean }> = [];
-  if (Array.isArray(input)) {
-    for (let index = input.length - 1; index >= 0; index -= 1) {
-      const item = input[index];
-      if (!isRecord(item)) break;
-      if (TOOL_OUTPUT_TYPES.has(String(item.type))) {
-        tail.unshift({ item, output: true });
-        continue;
-      }
-      if (
-        (item.type === undefined || item.type === "message") &&
-        INJECTED_ROLES.has(String(item.role))
-      ) {
-        tail.unshift({ item, output: false });
-        continue;
-      }
-      break;
-    }
-  }
+  const tail = Array.isArray(input) ? collectTail(input) : [];
   const firstOutput = tail.findIndex((entry) => entry.output);
   if (firstOutput === -1) return { outputs, messages: [] };
   const messages: ResponsesItem[] = [];

@@ -424,31 +424,247 @@ export interface TelemetryContext {
 export interface OtelTrackerOptions {
   healthTtlMs?: number;
   usageTracker?: UsageTracker;
-  getConversationThread?: (conversationId: string) => any;
-  getBridgeRequestContext?: (requestId: string) => any;
+  getConversationThread?: (conversationId: string) => RequestContext | null | undefined;
+  getBridgeRequestContext?: (requestId: string) => RequestContext | null | undefined;
   onSchedulePersist?: () => void;
 }
 
-export function otelAttributeValue(value: any): any {
-  if (!value || typeof value !== "object") return value;
-  if (Object.hasOwn(value, "stringValue")) return value.stringValue;
-  if (Object.hasOwn(value, "intValue")) return Number(value.intValue);
-  if (Object.hasOwn(value, "doubleValue")) return value.doubleValue;
-  if (Object.hasOwn(value, "boolValue")) return value.boolValue;
-  if (value.arrayValue?.values)
-    return value.arrayValue.values.map(otelAttributeValue);
-  return undefined;
+// Wire-level OTel attribute shapes (JSON-shaped OTLP records).
+export interface OtelAttributeValueRaw {
+  stringValue?: string;
+  intValue?: string | number;
+  doubleValue?: number;
+  boolValue?: boolean;
+  arrayValue?: { values?: OtelAttributeValueRaw[] };
 }
 
-export function otelAttributes(attributes: any = []): Record<string, any> {
+export interface OtelAttribute {
+  key: string;
+  value?: OtelAttributeValueRaw | undefined;
+}
+
+export type OtelAttributesInput = OtelAttribute[] | undefined | null;
+export type OtelAttributeMap = Record<string, unknown>;
+
+interface RequestContext {
+  workspace?: unknown;
+  role?: unknown;
+  model?: unknown;
+  requestedModel?: unknown;
+  childId?: unknown;
+  agentId?: unknown;
+  agent?: unknown;
+  agentKind?: unknown;
+  agentRole?: unknown;
+  projectKey?: string;
+  workspaceKey?: string;
+  cwdBasename?: string;
+  agentName?: unknown;
+  threadId?: string;
+  threadSource?: unknown;
+  source?: unknown;
+  [key: string]: unknown;
+}
+
+export interface OtelScope {
+  name?: string;
+  version?: string;
+}
+
+export interface OtelResource {
+  attributes?: OtelAttributesInput;
+}
+
+export interface OtelLogRecord {
+  timeUnixNano?: string | number | null;
+  observedTimeUnixNano?: string | number | null;
+  severityNumber?: number | string | null;
+  body?: unknown;
+  attributes?: OtelAttributesInput;
+}
+
+export interface OtelScopeLogs {
+  scope?: OtelScope;
+  logRecords?: OtelLogRecord[];
+}
+
+export interface OtelResourceLogs {
+  resource?: OtelResource;
+  scopeLogs?: OtelScopeLogs[];
+}
+
+export interface OtelSpan {
+  traceId?: string;
+  spanId?: string;
+  name?: string;
+  startTimeUnixNano?: string | number | null;
+  endTimeUnixNano?: string | number | null;
+  status?: { code?: string | number } | unknown;
+  attributes?: OtelAttributesInput;
+}
+
+export interface OtelScopeSpans {
+  scope?: OtelScope;
+  spans?: OtelSpan[];
+}
+
+export interface OtelResourceSpans {
+  resource?: OtelResource;
+  scopeSpans?: OtelScopeSpans[];
+}
+
+export interface OtelSum {
+  dataPoints?: OtelDataPoint[];
+  aggregationTemporality?: unknown;
+}
+
+export interface OtelHistogram {
+  dataPoints?: OtelDataPoint[];
+  aggregationTemporality?: unknown;
+}
+
+export interface OtelGauge {
+  dataPoints?: OtelDataPoint[];
+}
+
+export interface OtelExponentialHistogram {
+  dataPoints?: OtelDataPoint[];
+}
+
+export interface OtelDataPoint {
+  attributes?: OtelAttributesInput;
+  startTimeUnixNano?: string | number | null;
+  timeUnixNano?: string | number | null;
+  asInt?: string | number;
+  asDouble?: number;
+  count?: number | string;
+  sum?: number | string;
+}
+
+export interface OtelMetric {
+  name?: string;
+  sum?: OtelSum;
+  histogram?: OtelHistogram;
+  gauge?: OtelGauge;
+  exponentialHistogram?: OtelExponentialHistogram;
+}
+
+export interface OtelScopeMetrics {
+  scope?: OtelScope;
+  metrics?: OtelMetric[];
+}
+
+export interface OtelResourceMetrics {
+  resource?: OtelResource;
+  scopeMetrics?: OtelScopeMetrics[];
+}
+
+export interface OtelPayload {
+  resourceLogs?: OtelResourceLogs[];
+  resourceSpans?: OtelResourceSpans[];
+  resourceMetrics?: OtelResourceMetrics[];
+}
+
+export interface OtelMetricsSeriesEntry {
+  timestamp: bigint;
+  value: number;
+}
+
+export interface BridgeObservationEventInput {
+  type?: string;
+  tool?: unknown;
+  server?: unknown;
+  status?: unknown;
+  callId?: unknown;
+  reason?: unknown;
+  source?: unknown;
+  pluginId?: unknown;
+  skill?: unknown;
+  eventId?: unknown;
+  event_id?: unknown;
+  turnId?: unknown;
+  turn_id?: unknown;
+  call_id?: unknown;
+}
+
+export interface BridgeObservationContextInput {
+  workspace?: unknown;
+  [key: string]: unknown;
+}
+
+export interface ResolveTelemetryContextOptions {
+  context?: RequestContext | null | undefined;
+  requestId?: string | null | undefined;
+  timestamp?: string | null | undefined;
+  timeUnixNano?: string | number | null | undefined;
+  conversationId?: string | null | undefined;
+}
+
+export interface OtelRestoreSnapshot {
+  schemaVersion?: number;
+  receiver?: Partial<OtelReceiverTelemetry>;
+  turns?: Partial<OtelTelemetryState["turns"]>;
+  tokens?: Partial<OtelTelemetryState["tokens"]>;
+  dimensions?: Record<string, ContextDimensions>;
+  mcpServers?: Array<Record<string, unknown>>;
+  skills?: {
+    injected?: Record<string, unknown>;
+    used?: Record<string, unknown>;
+    threads?: Record<string, unknown>;
+  };
+  metrics?: { observed?: Array<Record<string, unknown>> };
+  tools?: { byTool?: Array<Record<string, unknown>> };
+  hooks?: { byHook?: Array<Record<string, unknown>> };
+  threads?: {
+    started?: Record<string, unknown>;
+    spawns?: Record<string, unknown>;
+  };
+  sqlite?: {
+    init?: { byDbStatus?: unknown };
+    fallbacks?: { byDbStatus?: unknown };
+    initDurationMs?: { byDbStatus?: unknown };
+  };
+  toolResults?: Record<string, unknown>;
+  bridgeEvents?: Record<string, unknown>;
+  series?: Array<Record<string, unknown>>;
+}
+
+export function otelAttributeValue(value: OtelAttributeValueRaw | undefined): unknown {
+  if (!value || typeof value !== "object") {
+    return value;
+  }
+  if (Object.hasOwn(value, "stringValue")) {
+    return value.stringValue;
+  }
+  if (Object.hasOwn(value, "intValue")) {
+    return Number(value.intValue);
+  }
+  if (Object.hasOwn(value, "doubleValue")) {
+    return value.doubleValue;
+  }
+  if (Object.hasOwn(value, "boolValue")) {
+    return value.boolValue;
+  }
+  // Unrecognized OTel value shapes are dropped (returning the input would
+  // let raw wrapper objects leak into attribute maps).
+  if (value.arrayValue?.values) {
+    return value.arrayValue.values.map(otelAttributeValue);
+  }
+  return value;
+}
+
+export function otelAttributes(attributes: OtelAttributeMap | OtelAttributesInput = []): OtelAttributeMap {
+  if (!Array.isArray(attributes)) {
+    return { ...(attributes as OtelAttributeMap) };
+  }
   return Object.fromEntries(
-    (Array.isArray(attributes) ? attributes : [])
+    (attributes as OtelAttribute[])
       .map((item) => [item.key, otelAttributeValue(item.value)])
       .filter(([key, value]) => typeof key === "string" && value !== undefined)
   );
 }
 
-export function otelTimestamp(value: any): string | null {
+export function otelTimestamp(value: unknown): string | null {
   if (value === undefined || value === null) return null;
   try {
     const nanos = BigInt(String(value));
@@ -458,7 +674,7 @@ export function otelTimestamp(value: any): string | null {
   }
 }
 
-export function otelNanoTimestamp(value: any): bigint {
+export function otelNanoTimestamp(value: unknown): bigint {
   try {
     return BigInt(String(value));
   } catch {
@@ -466,7 +682,7 @@ export function otelNanoTimestamp(value: any): bigint {
   }
 }
 
-export function otelDurationMs(span: any): number {
+export function otelDurationMs(span: OtelSpan): number {
   try {
     const start = BigInt(String(span.startTimeUnixNano));
     const end = BigInt(String(span.endTimeUnixNano));
@@ -476,7 +692,7 @@ export function otelDurationMs(span: any): number {
   }
 }
 
-export function numberAttribute(attributes: any, ...keys: string[]): number {
+export function numberAttribute(attributes: OtelAttributeMap, ...keys: string[]): number {
   for (const key of keys) {
     const value = Number(attributes?.[key]);
     if (Number.isFinite(value)) return value;
@@ -488,7 +704,7 @@ export function isDeltaTemporality(temporality: unknown): boolean {
   return OTEL_DELTA_TEMPORALITY_VALUES.has(temporality);
 }
 
-export function otelSumDataPointValue(dataPoint: any): number {
+export function otelSumDataPointValue(dataPoint: OtelDataPoint): number {
   if (dataPoint.asInt !== undefined)
     return numberAttribute({ value: dataPoint.asInt }, "value");
   if (dataPoint.asDouble !== undefined)
@@ -496,7 +712,7 @@ export function otelSumDataPointValue(dataPoint: any): number {
   return 0;
 }
 
-export function metricDataPointCount(metric: any): number {
+export function metricDataPointCount(metric: OtelMetric): number {
   return (
     (metric.sum?.dataPoints?.length ?? 0) +
     (metric.histogram?.dataPoints?.length ?? 0) +
@@ -505,7 +721,7 @@ export function metricDataPointCount(metric: any): number {
   );
 }
 
-export function toolStatusAttribute(attributes: any): string {
+export function toolStatusAttribute(attributes: OtelAttributeMap): string {
   if (typeof attributes.success === "boolean")
     return attributes.success ? "ok" : "error";
   if (typeof attributes.success === "string") {
@@ -518,7 +734,7 @@ export function toolStatusAttribute(attributes: any): string {
   return "unknown";
 }
 
-export function toolResultKey(attributes: any): string {
+export function toolResultKey(attributes: OtelAttributeMap): string {
   const callId =
     typeof attributes.call_id === "string" && attributes.call_id.trim()
       ? attributes.call_id.trim()
@@ -539,7 +755,7 @@ export function toolResultKey(attributes: any): string {
 }
 
 export function toolSeriesIdentity(
-  attributes: any,
+  attributes: OtelAttributeMap,
   workspaceId: string = ""
 ): Record<string, string> {
   return {
@@ -550,19 +766,21 @@ export function toolSeriesIdentity(
   };
 }
 
-export function hookKey(attributes: any): string {
+const UNKNOWN_HOOK_LABEL = "unknown-hook";
+const UNKNOWN_TOOL_LABEL = "unknown-tool";
+export function hookKey(attributes: OtelAttributeMap): string {
   return [
-    safeMetricLabel(attributes.hook_name, "unknown-hook"),
+    safeMetricLabel(attributes.hook_name, UNKNOWN_HOOK_LABEL),
     safeMetricLabel(attributes.source),
     safeMetricLabel(attributes.handler_type, "")
   ].join("::");
 }
 
-export function sqliteKey(attributes: any): string {
+export function sqliteKey(attributes: OtelAttributeMap): string {
   return `${safeMetricLabel(attributes.db)}::${safeMetricLabel(attributes.status)}`;
 }
 
-export function skillAgentKind(attributes: any): string {
+export function skillAgentKind(attributes: OtelAttributeMap): string {
   const sessionSource =
     typeof attributes.session_source === "string"
       ? attributes.session_source.trim()
@@ -600,9 +818,9 @@ export function otelRecordIdentity(kind: string, parts: unknown[]): string {
 }
 
 export function otelLogRecordIdentity(
-  record: any,
-  resourceAttributes: any,
-  scope: any
+  record: OtelLogRecord,
+  resourceAttributes: OtelAttributesInput,
+  scope: OtelScope | undefined
 ): string | null {
   const time = record.timeUnixNano ?? record.observedTimeUnixNano;
   if (
@@ -624,9 +842,9 @@ export function otelLogRecordIdentity(
 }
 
 export function otelSpanIdentity(
-  span: any,
-  resourceAttributes: any,
-  scope: any
+  span: OtelSpan,
+  resourceAttributes: OtelAttributesInput,
+  scope: OtelScope | undefined
 ): string | null {
   if (span.traceId && span.spanId) return `span:${span.traceId}:${span.spanId}`;
   if (!span.startTimeUnixNano && !span.endTimeUnixNano) return null;
@@ -644,8 +862,8 @@ export function otelSpanIdentity(
 export function datapointDiagnosticIdentity(
   kind: string,
   metricName: string,
-  dataPoint: any,
-  resourceAttributes: any
+  dataPoint: OtelDataPoint,
+  resourceAttributes: OtelAttributesInput
 ): string | null {
   if (!dataPoint?.timeUnixNano) return null;
   return otelRecordIdentity("datapoint", [
@@ -665,7 +883,9 @@ export function otelSeriesKey(
 ): string {
   const identity = JSON.stringify(
     Object.fromEntries(
-      Object.entries(attributes).sort(([a], [b]) => a.localeCompare(b))
+      Object.entries(attributes).sort(([a], [b]) =>
+        STRING_COLLATOR.compare(a, b)
+      )
     )
   );
   const digest = createHash("sha256").update(identity).digest("hex");
@@ -721,12 +941,13 @@ export function formatMcpDimensionBuckets(
   );
 }
 
-export function formatToolResults(toolResults: ToolResultsState): any {
+export function formatToolResults(toolResults: ToolResultsState): Record<string, unknown> {
   const byTool = Array.from(toolResults.byTool.values(), (entry) => ({
     ...entry,
     byStatus: { ...entry.byStatus }
   })).sort((a, b) =>
-    `${a.tool}/${a.source}/${a.server}`.localeCompare(
+    STRING_COLLATOR.compare(
+      `${a.tool}/${a.source}/${a.server}`,
       `${b.tool}/${b.source}/${b.server}`
     )
   );
@@ -750,14 +971,17 @@ export function formatToolResults(toolResults: ToolResultsState): any {
   };
 }
 
-export function formatBridgeEvents(events: BridgeEventsState): any {
+export function formatBridgeEvents(events: BridgeEventsState): Record<string, unknown> {
   const formatBucket = (bucket: BridgeToolBucket) => ({
     total: bucket.total,
     byTool: Array.from(bucket.byTool.values(), (entry) => ({
       ...entry,
       byStatus: { ...entry.byStatus }
     })).sort((a, b) =>
-      `${a.tool}/${a.server}`.localeCompare(`${b.tool}/${b.server}`)
+      STRING_COLLATOR.compare(
+        `${a.tool}/${a.server}`,
+        `${b.tool}/${b.server}`
+      )
     ),
     byWorkspace: Array.from(
       bucket.byWorkspace.entries(),
@@ -767,16 +991,16 @@ export function formatBridgeEvents(events: BridgeEventsState): any {
         byTool: Array.from(row.byTool.values(), (entry) => ({
           ...entry,
           byStatus: { ...entry.byStatus }
-        })).sort((a, b) => a.tool.localeCompare(b.tool)),
+        })).sort((a, b) => STRING_COLLATOR.compare(a.tool, b.tool)),
         bySkill: row.bySkill
           ? Array.from(row.bySkill.entries(), ([skill, count]) => ({
               skill,
               count
-            })).sort((a, b) => a.skill.localeCompare(b.skill))
+            })).sort((a, b) => STRING_COLLATOR.compare(a.skill, b.skill))
           : [],
         byStatus: { ...row.byStatus }
       })
-    ).sort((a, b) => a.workspaceKey.localeCompare(b.workspaceKey))
+    ).sort((a, b) => STRING_COLLATOR.compare(a.workspaceKey, b.workspaceKey))
   });
   return {
     toolExecuted: { ...formatBucket(events.toolExecuted), byReason: {} },
@@ -789,7 +1013,7 @@ export function formatBridgeEvents(events: BridgeEventsState): any {
       total: events.skillExposed.total,
       bySkill: Array.from(events.skillExposed.bySkill.values(), (entry) => ({
         ...entry
-      })).sort((a, b) => a.skill.localeCompare(b.skill)),
+      })).sort((a, b) => STRING_COLLATOR.compare(a.skill, b.skill)),
       byWorkspace: Array.from(
         events.skillExposed.byWorkspace.entries(),
         ([workspaceKey, row]) => ({
@@ -800,13 +1024,13 @@ export function formatBridgeEvents(events: BridgeEventsState): any {
             count
           }))
         })
-      ).sort((a, b) => a.workspaceKey.localeCompare(b.workspaceKey))
+      ).sort((a, b) => STRING_COLLATOR.compare(a.workspaceKey, b.workspaceKey))
     },
     skillUsed: {
       total: events.skillUsed.total,
       bySkill: Array.from(events.skillUsed.bySkill.values(), (entry) => ({
         ...entry
-      })).sort((a, b) => a.skill.localeCompare(b.skill)),
+      })).sort((a, b) => STRING_COLLATOR.compare(a.skill, b.skill)),
       byWorkspace: Array.from(
         events.skillUsed.byWorkspace.entries(),
         ([workspaceKey, row]) => ({
@@ -817,13 +1041,13 @@ export function formatBridgeEvents(events: BridgeEventsState): any {
             count
           }))
         })
-      )
+      ).sort((a, b) => STRING_COLLATOR.compare(a.workspaceKey, b.workspaceKey))
     },
     mcpExposed: {
       total: events.mcpExposed.total,
       byServer: Array.from(events.mcpExposed.byServer.values(), (entry) => ({
         ...entry
-      })).sort((a, b) => a.server.localeCompare(b.server)),
+      })).sort((a, b) => STRING_COLLATOR.compare(a.server, b.server)),
       byWorkspace: Array.from(
         events.mcpExposed.byWorkspace.entries(),
         ([workspaceKey, row]) => ({
@@ -834,7 +1058,7 @@ export function formatBridgeEvents(events: BridgeEventsState): any {
             count
           }))
         })
-      ).sort((a, b) => a.workspaceKey.localeCompare(b.workspaceKey))
+      ).sort((a, b) => STRING_COLLATOR.compare(a.workspaceKey, b.workspaceKey))
     }
   };
 }
@@ -844,7 +1068,7 @@ export function isAutodevAttributesEnabled(): boolean {
 }
 
 export function readAutodevAliasValue(
-  attributes: any,
+  attributes: OtelAttributesInput,
   aliases: string[]
 ): string | null {
   if (!Array.isArray(attributes) || !Array.isArray(aliases)) return null;
@@ -865,7 +1089,7 @@ export function readAutodevAliasValue(
 }
 
 export function pushAutodevStringAttr(
-  attributes: any,
+  attributes: OtelAttributesInput,
   key: string,
   value: unknown
 ): boolean {
@@ -884,7 +1108,7 @@ export function pushAutodevStringAttr(
   return true;
 }
 
-export function isAutodevSpawnLogAttributes(attributes: any): boolean {
+export function isAutodevSpawnLogAttributes(attributes: OtelAttributesInput): boolean {
   if (!Array.isArray(attributes)) return false;
   const eventName = readAutodevAliasValue(attributes, ["event.name"]);
   return (
@@ -892,37 +1116,34 @@ export function isAutodevSpawnLogAttributes(attributes: any): boolean {
   );
 }
 
-export function enrichAutodevResourceAttributes(resource: any): void {
+export function enrichAutodevResourceAttributes(
+  resource: { attributes?: OtelAttributeMap | OtelAttributesInput } | undefined
+): void {
   if (!resource || !Array.isArray(resource.attributes)) return;
+  const attrs = resource.attributes;
   pushAutodevStringAttr(
-    resource.attributes,
+    attrs,
     "autodev.role",
-    readAutodevAliasValue(resource.attributes, AUTODEV_RESOURCE_ROLE_ALIASES)
+    readAutodevAliasValue(attrs, AUTODEV_RESOURCE_ROLE_ALIASES)
   );
   pushAutodevStringAttr(
-    resource.attributes,
+    attrs,
     "autodev.workspace",
-    readAutodevAliasValue(
-      resource.attributes,
-      AUTODEV_RESOURCE_WORKSPACE_ALIASES
-    )
+    readAutodevAliasValue(attrs, AUTODEV_RESOURCE_WORKSPACE_ALIASES)
   );
   pushAutodevStringAttr(
-    resource.attributes,
+    attrs,
     "autodev.provider",
-    readAutodevAliasValue(
-      resource.attributes,
-      AUTODEV_RESOURCE_PROVIDER_ALIASES
-    )
+    readAutodevAliasValue(attrs, AUTODEV_RESOURCE_PROVIDER_ALIASES)
   );
   pushAutodevStringAttr(
-    resource.attributes,
+    attrs,
     "autodev.model",
-    readAutodevAliasValue(resource.attributes, AUTODEV_RESOURCE_MODEL_ALIASES)
+    readAutodevAliasValue(attrs, AUTODEV_RESOURCE_MODEL_ALIASES)
   );
 }
 
-export function enrichAutodevLogRecord(record: any): void {
+export function enrichAutodevLogRecord(record: OtelLogRecord): void {
   if (!record || !Array.isArray(record.attributes)) return;
   if (isAutodevSpawnLogAttributes(record.attributes)) {
     pushAutodevStringAttr(
@@ -943,7 +1164,7 @@ export function enrichAutodevLogRecord(record: any): void {
   );
 }
 
-export function enrichAutodevSpan(span: any): void {
+export function enrichAutodevSpan(span: OtelSpan): void {
   if (!span || !Array.isArray(span.attributes)) return;
   pushAutodevStringAttr(
     span.attributes,
@@ -952,7 +1173,7 @@ export function enrichAutodevSpan(span: any): void {
   );
 }
 
-export function enrichAutodevDataPoint(dataPoint: any): void {
+export function enrichAutodevDataPoint(dataPoint: OtelDataPoint): void {
   if (!dataPoint || !Array.isArray(dataPoint.attributes)) return;
   pushAutodevStringAttr(
     dataPoint.attributes,
@@ -961,48 +1182,66 @@ export function enrichAutodevDataPoint(dataPoint: any): void {
   );
 }
 
+function enrichAutodevLogs(clone: OtelPayload): void {
+  for (const resourceLog of clone.resourceLogs ?? []) {
+    enrichAutodevResourceAttributes(resourceLog.resource);
+    for (const scopeLog of resourceLog.scopeLogs ?? []) {
+      for (const record of scopeLog.logRecords ?? [])
+        enrichAutodevLogRecord(record);
+    }
+  }
+}
+
+function enrichAutodevTraces(clone: OtelPayload): void {
+  for (const resourceSpan of clone.resourceSpans ?? []) {
+    enrichAutodevResourceAttributes(resourceSpan.resource);
+    for (const scopeSpan of resourceSpan.scopeSpans ?? []) {
+      for (const span of scopeSpan.spans ?? []) enrichAutodevSpan(span);
+    }
+  }
+}
+
+function enrichAutodevMetricDataPoints(metric: OtelMetric): void {
+  for (const dataPoint of metric.sum?.dataPoints ?? [])
+    enrichAutodevDataPoint(dataPoint);
+  for (const dataPoint of metric.histogram?.dataPoints ?? [])
+    enrichAutodevDataPoint(dataPoint);
+  for (const dataPoint of metric.gauge?.dataPoints ?? [])
+    enrichAutodevDataPoint(dataPoint);
+}
+
+function enrichAutodevMetrics(clone: OtelPayload): void {
+  for (const resourceMetric of clone.resourceMetrics ?? []) {
+    enrichAutodevResourceAttributes(resourceMetric.resource);
+    for (const scopeMetric of resourceMetric.scopeMetrics ?? []) {
+      for (const metric of scopeMetric.metrics ?? [])
+        enrichAutodevMetricDataPoints(metric);
+    }
+  }
+}
+
+function autodevEnrichClone(
+  signal: OtelSignal | string,
+  clone: OtelPayload
+): void {
+  if (signal === "logs") enrichAutodevLogs(clone);
+  else if (signal === "traces") enrichAutodevTraces(clone);
+  else if (signal === "metrics") enrichAutodevMetrics(clone);
+}
+
 export function autodevEnrichOtlpPayload(
   signal: OtelSignal | string,
-  payload: any
-): any {
+  payload: OtelPayload
+): OtelPayload | null {
   if (!payload || typeof payload !== "object" || Array.isArray(payload))
     return null;
-  let clone: any;
+  let clone: OtelPayload;
   try {
-    clone = structuredClone(payload);
+    clone = structuredClone(payload) as OtelPayload;
   } catch {
     return null;
   }
-  if (signal === "logs") {
-    for (const resourceLog of clone.resourceLogs ?? []) {
-      enrichAutodevResourceAttributes(resourceLog.resource);
-      for (const scopeLog of resourceLog.scopeLogs ?? []) {
-        for (const record of scopeLog.logRecords ?? [])
-          enrichAutodevLogRecord(record);
-      }
-    }
-  } else if (signal === "traces") {
-    for (const resourceSpan of clone.resourceSpans ?? []) {
-      enrichAutodevResourceAttributes(resourceSpan.resource);
-      for (const scopeSpan of resourceSpan.scopeSpans ?? []) {
-        for (const span of scopeSpan.spans ?? []) enrichAutodevSpan(span);
-      }
-    }
-  } else if (signal === "metrics") {
-    for (const resourceMetric of clone.resourceMetrics ?? []) {
-      enrichAutodevResourceAttributes(resourceMetric.resource);
-      for (const scopeMetric of resourceMetric.scopeMetrics ?? []) {
-        for (const metric of scopeMetric.metrics ?? []) {
-          for (const dataPoint of metric.sum?.dataPoints ?? [])
-            enrichAutodevDataPoint(dataPoint);
-          for (const dataPoint of metric.histogram?.dataPoints ?? [])
-            enrichAutodevDataPoint(dataPoint);
-          for (const dataPoint of metric.gauge?.dataPoints ?? [])
-            enrichAutodevDataPoint(dataPoint);
-        }
-      }
-    }
-  }
+  autodevEnrichClone(signal, clone);
   return clone;
 }
 
@@ -1113,16 +1352,144 @@ export function createEmptyOtelTelemetry(): OtelTelemetryState {
   };
 }
 
+
+function firstString(values: Array<unknown>): string | null {
+  for (const value of values) {
+    if (typeof value === "string" && value.trim()) return value.trim();
+  }
+  return null;
+}
+
+function isFiniteNonnegative(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0;
+}
+
+function threadHistogramView(bucket: HistogramBucket): HistogramBucket {
+  return {
+    ...bucket,
+    average: bucket.count ? bucket.sum / bucket.count : 0
+  };
+}
+
+const METRIC_NAME_TRAILING_PARTS_PATTERN = /#(?:count|sum)$/;
+
+// Reusable collators used by hot sort paths. Hoisted so the same instance
+// can be shared across calls instead of constructing a new one each time.
+const STRING_COLLATOR = new Intl.Collator(undefined, {
+  sensitivity: "variant",
+  usage: "sort"
+});
+
+function restoreNumberFields(
+  target: Record<string, unknown>,
+  source: { [key: string]: unknown } | null | undefined,
+  fields: string[]
+): void {
+  for (const field of fields) {
+    const value = source?.[field];
+    if (isFiniteNonnegative(value)) target[field] = value;
+  }
+}
+
+function sqliteBucketView(
+  bucket: SqliteEntry | SqliteDurationEntry
+): SqliteEntry | SqliteDurationEntry {
+  const isDuration = Object.hasOwn(bucket, "sum");
+  if (!isDuration) return { ...bucket };
+  const sum = (bucket as SqliteDurationEntry).sum;
+  const average =
+    bucket.count && Number.isFinite(sum) ? sum / bucket.count : 0;
+  return { ...bucket, average };
+}
+
+function sqliteBucketsView(
+  collection: Map<string, SqliteEntry | SqliteDurationEntry>
+): Array<SqliteEntry | SqliteDurationEntry> {
+  return Array.from(collection.values(), sqliteBucketView).sort((a, b) =>
+    STRING_COLLATOR.compare(`${a.db}/${a.status}`, `${b.db}/${b.status}`)
+  );
+}
+
+interface DimensionSummaryBucket {
+  observed: number;
+  ready: number;
+  error: number;
+  stale: number;
+  lastSeenAt: string | null;
+}
+
+function bucketHealth(
+  bucket: { lastSeenAt: string | null; lastStatus: string },
+  now: number,
+  healthTtlMs: number
+): string {
+  const lastSeenMs = bucket.lastSeenAt
+    ? Date.parse(bucket.lastSeenAt)
+    : Number.NaN;
+  const fresh =
+    Number.isFinite(lastSeenMs) && now - lastSeenMs <= healthTtlMs;
+  return fresh ? bucket.lastStatus : "stale";
+}
+
+function mergeBucketSummary(
+  target: DimensionSummaryBucket,
+  health: string,
+  bucket: { lastSeenAt: string | null }
+): void {
+  target.observed += 1;
+  if (health === "ready") target.ready += 1;
+  else if (health === "error") target.error += 1;
+  else if (health === "stale") target.stale += 1;
+  if (
+    !target.lastSeenAt ||
+    (bucket.lastSeenAt &&
+      Date.parse(bucket.lastSeenAt) > Date.parse(target.lastSeenAt))
+  ) {
+    target.lastSeenAt = bucket.lastSeenAt;
+  }
+}
+
+function emptyDimensionSummary(): DimensionSummaryBucket {
+  return {
+    observed: 0,
+    ready: 0,
+    error: 0,
+    stale: 0,
+    lastSeenAt: null
+  };
+}
+
+function summarizeMcpDimension(
+  mcpServers: McpServerEntry[],
+  now: number,
+  healthTtlMs: number
+): (
+  dimension: "byRole" | "byWorkspace" | "byModel" | "byAgent"
+) => Record<string, DimensionSummaryBucket> {
+  return (dimension) => {
+    const summary: Record<string, DimensionSummaryBucket> = {};
+    for (const server of mcpServers) {
+      for (const [key, bucket] of Object.entries(server[dimension] ?? {})) {
+        const health = bucketHealth(bucket, now, healthTtlMs);
+        const target = summary[key] ?? emptyDimensionSummary();
+        mergeBucketSummary(target, health, bucket);
+        summary[key] = target;
+      }
+    }
+    return summary;
+  };
+}
+
 export class OtelTracker {
-  readonly healthTtlMs: number;
-  readonly usageTracker: UsageTracker;
-  readonly getConversationThread?:
-    ((conversationId: string) => any) | undefined;
-  readonly getBridgeRequestContext?: ((requestId: string) => any) | undefined;
-  readonly onSchedulePersist?: (() => void) | undefined;
+  healthTtlMs: number;
+  usageTracker: UsageTracker;
+  getConversationThread?:
+    ((conversationId: string) => RequestContext | null | undefined) | undefined;
+  getBridgeRequestContext?: ((requestId: string) => RequestContext | null | undefined) | undefined;
+  onSchedulePersist?: (() => void) | undefined;
 
   readonly telemetry: OtelTelemetryState;
-  readonly metricSeries: Map<string, { timestamp: bigint; value: number }>;
+  readonly metricSeries: Map<string, OtelMetricsSeriesEntry>;
   readonly pendingMcpModelAttribution: Map<
     string,
     Array<{ serverName: string; context: TelemetryContext; status: string }>
@@ -1141,16 +1508,14 @@ export class OtelTracker {
   }
 
   configure(options: Partial<OtelTrackerOptions>): this {
-    if (options.healthTtlMs !== undefined)
-      (this as any).healthTtlMs = options.healthTtlMs;
-    if (options.usageTracker !== undefined)
-      (this as any).usageTracker = options.usageTracker;
+    if (options.healthTtlMs !== undefined) this.healthTtlMs = options.healthTtlMs;
+    if (options.usageTracker !== undefined) this.usageTracker = options.usageTracker;
     if (options.getConversationThread !== undefined)
-      (this as any).getConversationThread = options.getConversationThread;
+      this.getConversationThread = options.getConversationThread;
     if (options.getBridgeRequestContext !== undefined)
-      (this as any).getBridgeRequestContext = options.getBridgeRequestContext;
+      this.getBridgeRequestContext = options.getBridgeRequestContext;
     if (options.onSchedulePersist !== undefined)
-      (this as any).onSchedulePersist = options.onSchedulePersist;
+      this.onSchedulePersist = options.onSchedulePersist;
     return this;
   }
 
@@ -1158,7 +1523,7 @@ export class OtelTracker {
     return this.telemetry;
   }
 
-  get otelMetricSeries(): Map<string, { timestamp: bigint; value: number }> {
+  get otelMetricSeries(): Map<string, OtelMetricsSeriesEntry> {
     return this.metricSeries;
   }
 
@@ -1184,9 +1549,9 @@ export class OtelTracker {
   }
 
   telemetryConversationId(
-    attributes: any = {},
-    resourceAttributes: any = {},
-    options: any = {}
+    attributes: OtelAttributeMap = {},
+    resourceAttributes: OtelAttributeMap = {},
+    options: { conversationId?: unknown } = {}
   ): string | null {
     const convId =
       attributes?.["conversation.id"] ??
@@ -1200,42 +1565,235 @@ export class OtelTracker {
   }
 
   localWorkspaceForConversation(
-    attributes: any,
-    resourceAttributes: any = {}
-  ): any {
+    attributes: OtelAttributeMap,
+    resourceAttributes: OtelAttributeMap = {}
+  ): unknown {
     const conversationId =
       attributes?.["conversation.id"] ??
       resourceAttributes?.["conversation.id"];
     if (typeof conversationId !== "string" || !conversationId.trim())
       return null;
-    const thread = this.getConversationThread?.(conversationId.trim());
+    const thread = this.getConversationThread?.(conversationId.trim()) ?? null;
+    const key = (thread as RequestContext | null)?.projectKey ?? (thread as RequestContext | null)?.workspaceKey;
     if (
       !thread ||
-      typeof (thread.projectKey ?? thread.workspaceKey) !== "string" ||
-      !(thread.projectKey ?? thread.workspaceKey).trim()
+      typeof key !== "string" ||
+      !key.trim()
     ) {
       return null;
     }
     return thread;
   }
 
-  resolveTelemetryContext(
-    attributes: any = {},
-    resourceAttributes: any = {},
-    options: any = {}
-  ): TelemetryContext {
-    const reqContext =
-      options?.context ??
-      (options?.requestId
-        ? this.getBridgeRequestContext?.(options.requestId)
-        : null) ??
-      (attributes?.requestId
-        ? this.getBridgeRequestContext?.(attributes.requestId)
-        : null) ??
-      (attributes?.request_id
-        ? this.getBridgeRequestContext?.(attributes.request_id)
-        : null);
+  private resolveWorkspaceDimension(
+    attributes: OtelAttributeMap,
+    resourceAttributes: OtelAttributeMap,
+    reqContext: RequestContext | null,
+    thread: RequestContext | null
+  ): string | null {
+    const dpWs = extractWorkspaceIdWithAmbiguity(attributes);
+    if (!dpWs.ambiguous && dpWs.id) {
+      const safeId = safeWorkspaceId(dpWs.id);
+      return (
+        this.usageTracker.workspaceIdRegistry.get(safeId) ??
+        safePrivacyWorkspace(dpWs.id)
+      );
+    }
+    const directWs = firstString([
+      attributes?.workspace,
+      attributes?.workspace_key,
+      attributes?.workspaceKey,
+      attributes?.project_key,
+      attributes?.projectKey
+    ]);
+    if (directWs) return safePrivacyWorkspace(directWs);
+    if (reqContext?.workspace) return safePrivacyWorkspace(reqContext.workspace);
+    if (thread) {
+      const key =
+        (thread as RequestContext).projectKey ??
+        (thread as RequestContext).workspaceKey ??
+        (thread as RequestContext).cwdBasename;
+      if (typeof key === "string" && key.trim()) {
+        return safePrivacyWorkspace(key);
+      }
+    }
+    const resWs = extractWorkspaceIdWithAmbiguity(resourceAttributes);
+    if (!resWs.ambiguous && resWs.id) {
+      const safeId = safeWorkspaceId(resWs.id);
+      return (
+        this.usageTracker.workspaceIdRegistry.get(safeId) ??
+        safePrivacyWorkspace(resWs.id)
+      );
+    }
+    if (
+      typeof resourceAttributes?.workspace === "string" &&
+      resourceAttributes.workspace.trim()
+    ) {
+      return safePrivacyWorkspace(resourceAttributes.workspace);
+    }
+    return null;
+  }
 
+  private resolveRoleDimension(
+    attributes: OtelAttributeMap,
+    resourceAttributes: OtelAttributeMap,
+    reqContext: RequestContext | null,
+    thread: RequestContext | null
+  ): string | null {
+    const direct = firstString([
+      attributes?.role,
+      attributes?.agent_role,
+      attributes?.["agent.role"]
+    ]);
+    if (direct) return safeMetricLabel(direct);
+    if (reqContext?.role) return safeMetricLabel(reqContext.role);
+    const threadRole = (thread as RequestContext | null)?.agentRole ?? (thread as RequestContext | null)?.role;
+    if (threadRole) {
+      return safeMetricLabel(threadRole);
+    }
+    const resource = firstString([
+      resourceAttributes?.role,
+      resourceAttributes?.agent_role,
+      resourceAttributes?.["agent.role"]
+    ]);
+    if (resource) return safeMetricLabel(resource);
+    return null;
+  }
+
+  private resolveModelDimension(
+    attributes: OtelAttributeMap,
+    resourceAttributes: OtelAttributeMap,
+    reqContext: RequestContext | null,
+    session: SessionEntry | null,
+    thread: RequestContext | null
+  ): string | null {
+    const direct = firstString([
+      attributes?.model,
+      attributes?.requested_model,
+      attributes?.["requested.model"],
+      attributes?.model_slug,
+      attributes?.["model.slug"]
+    ]);
+    if (direct) return safeMetricLabel(direct);
+    if (reqContext?.model ?? reqContext?.requestedModel) {
+      return safeMetricLabel(reqContext.model ?? reqContext.requestedModel);
+    }
+    if (session?.model) return safeMetricLabel(session.model as string);
+    const threadModel = (thread as RequestContext | null)?.model;
+    if (threadModel) return safeMetricLabel(threadModel);
+    const resource = firstString([
+      resourceAttributes?.model,
+      resourceAttributes?.requested_model,
+      resourceAttributes?.model_slug
+    ]);
+    if (resource) return safeMetricLabel(resource);
+    return null;
+  }
+
+  private resolveAgentDimension(
+    attributes: OtelAttributeMap,
+    resourceAttributes: OtelAttributeMap,
+    reqContext: RequestContext | null,
+    thread: RequestContext | null,
+    conversationId: string | null
+  ): string | null {
+    const direct = firstString([
+      attributes?.agent_id,
+      attributes?.["agent.id"],
+      attributes?.agentId,
+      attributes?.child_id,
+      attributes?.childId,
+      attributes?.agent_name,
+      attributes?.["agent.name"],
+      attributes?.agentName
+    ]);
+    if (direct) return safeAgentIdentity(direct);
+    if (reqContext?.childId ?? reqContext?.agentId ?? reqContext?.agent) {
+      return safeAgentIdentity(
+        reqContext.childId ?? reqContext.agentId ?? reqContext.agent
+      );
+    }
+    const threadAgent =
+      (thread as RequestContext | null)?.agentId ??
+      (thread as RequestContext | null)?.agent_id ??
+      (thread as RequestContext | null)?.threadId;
+    if (threadAgent) {
+      return safeAgentIdentity(threadAgent);
+    }
+    if (conversationId) return safeAgentIdentity(conversationId);
+    const resource = firstString([
+      resourceAttributes?.agent_id,
+      resourceAttributes?.["agent.id"],
+      resourceAttributes?.agentId,
+      resourceAttributes?.agent_name
+    ]);
+    if (resource) return safeAgentIdentity(resource);
+    return null;
+  }
+
+  private resolveAgentKindDimension(
+    attributes: OtelAttributeMap,
+    resourceAttributes: OtelAttributeMap,
+    reqContext: RequestContext | null,
+    thread: RequestContext | null
+  ): string | null {
+    const direct = firstString([
+      attributes?.agent_kind,
+      attributes?.agentKind,
+      attributes?.["agent.kind"]
+    ]);
+    if (direct) return safeMetricLabel(direct);
+    if (reqContext?.agentKind) return safeMetricLabel(reqContext.agentKind);
+    const sessionSource = firstString([
+      attributes?.session_source,
+      resourceAttributes?.session_source,
+      (thread as RequestContext | null)?.threadSource,
+      (thread as RequestContext | null)?.source
+    ]);
+    if (sessionSource) {
+      return sessionSource.trim().startsWith("subagent_thread_spawn_")
+        ? "subagent"
+        : "root";
+    }
+    const threadAgentRole = (thread as RequestContext | null)?.agentRole;
+    if (threadAgentRole) {
+      return threadAgentRole === "orchestrator" ? "root" : "subagent";
+    }
+    return null;
+  }
+
+  private resolveTelemetryTimestamp(
+    attributes: OtelAttributeMap,
+    options: ResolveTelemetryContextOptions
+  ): { timestamp: string; timestampSource: "source" | "ingestion" } {
+    if (options?.timestamp && typeof options.timestamp === "string") {
+      return { timestamp: options.timestamp, timestampSource: "source" };
+    }
+    if (attributes?.["event.timestamp"]) {
+      return {
+        timestamp: String(attributes["event.timestamp"]),
+        timestampSource: "source"
+      };
+    }
+    if (attributes?.timestamp) {
+      return {
+        timestamp: String(attributes.timestamp),
+        timestampSource: "source"
+      };
+    }
+    if (options?.timeUnixNano) {
+      const iso = otelTimestamp(options.timeUnixNano);
+      if (iso) return { timestamp: iso, timestampSource: "source" };
+    }
+    return { timestamp: new Date().toISOString(), timestampSource: "ingestion" };
+  }
+
+  resolveTelemetryContext(
+    attributes: OtelAttributeMap = {},
+    resourceAttributes: OtelAttributeMap = {},
+    options: ResolveTelemetryContextOptions = {}
+  ): TelemetryContext {
+    const reqContext = this.resolveRequestContext(attributes, options);
     const conversationId = this.telemetryConversationId(
       attributes,
       resourceAttributes,
@@ -1247,215 +1805,73 @@ export class OtelTracker {
     const session = conversationId
       ? (this.telemetry.sessions.get(conversationId) ?? null)
       : null;
-
-    // 1. Workspace
-    let resolvedWorkspace: string | null = null;
-    const dpWs = extractWorkspaceIdWithAmbiguity(attributes);
-    if (!dpWs.ambiguous && dpWs.id) {
-      const safeId = safeWorkspaceId(dpWs.id);
-      resolvedWorkspace =
-        this.usageTracker.workspaceIdRegistry.get(safeId) ??
-        safePrivacyWorkspace(dpWs.id);
-    }
-    if (!resolvedWorkspace) {
-      const directWs =
-        attributes?.workspace ??
-        attributes?.workspace_key ??
-        attributes?.workspaceKey ??
-        attributes?.project_key ??
-        attributes?.projectKey;
-      if (typeof directWs === "string" && directWs.trim()) {
-        resolvedWorkspace = safePrivacyWorkspace(directWs);
-      }
-    }
-    if (!resolvedWorkspace && reqContext?.workspace) {
-      resolvedWorkspace = safePrivacyWorkspace(reqContext.workspace);
-    }
-    if (!resolvedWorkspace && thread) {
-      const key =
-        thread.projectKey ?? thread.workspaceKey ?? thread.cwdBasename;
-      if (typeof key === "string" && key.trim()) {
-        resolvedWorkspace = safePrivacyWorkspace(key);
-      }
-    }
-    if (!resolvedWorkspace) {
-      const resWs = extractWorkspaceIdWithAmbiguity(resourceAttributes);
-      if (!resWs.ambiguous && resWs.id) {
-        const safeId = safeWorkspaceId(resWs.id);
-        resolvedWorkspace =
-          this.usageTracker.workspaceIdRegistry.get(safeId) ??
-          safePrivacyWorkspace(resWs.id);
-      }
-    }
-    if (
-      !resolvedWorkspace &&
-      typeof resourceAttributes?.workspace === "string" &&
-      resourceAttributes.workspace.trim()
-    ) {
-      resolvedWorkspace = safePrivacyWorkspace(resourceAttributes.workspace);
-    }
-    const workspace = resolvedWorkspace || UNATTRIBUTED_DIMENSION;
-
-    // 2. Role
-    let resolvedRole: string | null = null;
-    const directRole =
-      attributes?.role ?? attributes?.agent_role ?? attributes?.["agent.role"];
-    if (typeof directRole === "string" && directRole.trim()) {
-      resolvedRole = safeMetricLabel(directRole);
-    }
-    if (!resolvedRole && reqContext?.role) {
-      resolvedRole = safeMetricLabel(reqContext.role);
-    }
-    if (!resolvedRole && (thread?.agentRole ?? thread?.role)) {
-      resolvedRole = safeMetricLabel(thread.agentRole ?? thread.role);
-    }
-    if (!resolvedRole) {
-      const resRole =
-        resourceAttributes?.role ??
-        resourceAttributes?.agent_role ??
-        resourceAttributes?.["agent.role"];
-      if (typeof resRole === "string" && resRole.trim()) {
-        resolvedRole = safeMetricLabel(resRole);
-      }
-    }
-    const role = resolvedRole || UNATTRIBUTED_DIMENSION;
-
-    // 3. Model
-    let resolvedModel: string | null = null;
-    const directModel =
-      attributes?.model ??
-      attributes?.requested_model ??
-      attributes?.["requested.model"] ??
-      attributes?.model_slug ??
-      attributes?.["model.slug"];
-    if (typeof directModel === "string" && directModel.trim()) {
-      resolvedModel = safeMetricLabel(directModel);
-    }
-    if (!resolvedModel && (reqContext?.model ?? reqContext?.requestedModel)) {
-      resolvedModel = safeMetricLabel(
-        reqContext.model ?? reqContext.requestedModel
-      );
-    }
-    if (!resolvedModel && session?.model) {
-      resolvedModel = safeMetricLabel(session.model);
-    }
-    if (!resolvedModel && thread?.model) {
-      resolvedModel = safeMetricLabel(thread.model);
-    }
-    if (!resolvedModel) {
-      const resModel =
-        resourceAttributes?.model ??
-        resourceAttributes?.requested_model ??
-        resourceAttributes?.model_slug;
-      if (typeof resModel === "string" && resModel.trim()) {
-        resolvedModel = safeMetricLabel(resModel);
-      }
-    }
-    const model = resolvedModel || UNATTRIBUTED_DIMENSION;
-
-    // 4. Agent identity and kind
-    let resolvedAgent: string | null = null;
-    let resolvedAgentKind: string | null = null;
-    const directAgent =
-      attributes?.agent_id ??
-      attributes?.["agent.id"] ??
-      attributes?.agentId ??
-      attributes?.child_id ??
-      attributes?.childId ??
-      attributes?.agent_name ??
-      attributes?.["agent.name"] ??
-      attributes?.agentName;
-    if (typeof directAgent === "string" && directAgent.trim()) {
-      resolvedAgent = safeAgentIdentity(directAgent);
-    }
-    if (
-      !resolvedAgent &&
-      (reqContext?.childId ?? reqContext?.agentId ?? reqContext?.agent)
-    ) {
-      resolvedAgent = safeAgentIdentity(
-        reqContext.childId ?? reqContext.agentId ?? reqContext.agent
-      );
-    }
-    if (
-      !resolvedAgent &&
-      (thread?.agentId ?? thread?.agent_id ?? thread?.threadId)
-    ) {
-      resolvedAgent = safeAgentIdentity(
-        thread.agentId ?? thread.agent_id ?? thread.threadId
-      );
-    }
-    if (!resolvedAgent && conversationId) {
-      resolvedAgent = safeAgentIdentity(conversationId);
-    }
-    if (!resolvedAgent) {
-      const resAgent =
-        resourceAttributes?.agent_id ??
-        resourceAttributes?.["agent.id"] ??
-        resourceAttributes?.agentId ??
-        resourceAttributes?.agent_name;
-      if (typeof resAgent === "string" && resAgent.trim()) {
-        resolvedAgent = safeAgentIdentity(resAgent);
-      }
-    }
-    const agent = resolvedAgent || UNATTRIBUTED_DIMENSION;
-    const directAgentKind =
-      attributes?.agent_kind ??
-      attributes?.agentKind ??
-      attributes?.["agent.kind"];
-    if (typeof directAgentKind === "string" && directAgentKind.trim())
-      resolvedAgentKind = safeMetricLabel(directAgentKind);
-    if (!resolvedAgentKind && reqContext?.agentKind)
-      resolvedAgentKind = safeMetricLabel(reqContext.agentKind);
-    const sessionSource =
-      attributes?.session_source ??
-      resourceAttributes?.session_source ??
-      thread?.threadSource ??
-      thread?.source;
-    if (
-      !resolvedAgentKind &&
-      typeof sessionSource === "string" &&
-      sessionSource.trim()
-    ) {
-      resolvedAgentKind = sessionSource
-        .trim()
-        .startsWith("subagent_thread_spawn_")
-        ? "subagent"
-        : "root";
-    }
-    if (!resolvedAgentKind && thread?.agentRole)
-      resolvedAgentKind =
-        thread.agentRole === "orchestrator" ? "root" : "subagent";
-    const agentKind = resolvedAgentKind || UNATTRIBUTED_DIMENSION;
-
-    // 5. Timestamp (source or fallback to ingestion time)
-    let timestamp: string | null = null;
-    let timestampSource: "source" | "ingestion" = "ingestion";
-    if (options?.timestamp && typeof options.timestamp === "string") {
-      timestamp = options.timestamp;
-      timestampSource = "source";
-    } else if (attributes?.["event.timestamp"]) {
-      timestamp = String(attributes["event.timestamp"]);
-      timestampSource = "source";
-    } else if (attributes?.timestamp) {
-      timestamp = String(attributes.timestamp);
-      timestampSource = "source";
-    } else if (options?.timeUnixNano) {
-      timestamp = otelTimestamp(options.timeUnixNano);
-      timestampSource = "source";
-    }
-    if (!timestamp) {
-      timestamp = new Date().toISOString();
-    }
-
+    const workspace =
+      this.resolveWorkspaceDimension(
+        attributes,
+        resourceAttributes,
+        reqContext,
+        thread
+      ) || UNATTRIBUTED_DIMENSION;
+    const role =
+      this.resolveRoleDimension(
+        attributes,
+        resourceAttributes,
+        reqContext,
+        thread
+      ) || UNATTRIBUTED_DIMENSION;
+    const model =
+      this.resolveModelDimension(
+        attributes,
+        resourceAttributes,
+        reqContext,
+        session,
+        thread
+      ) || UNATTRIBUTED_DIMENSION;
+    const agent =
+      this.resolveAgentDimension(
+        attributes,
+        resourceAttributes,
+        reqContext,
+        thread,
+        conversationId
+      ) || UNATTRIBUTED_DIMENSION;
+    const agentKind =
+      this.resolveAgentKindDimension(
+        attributes,
+        resourceAttributes,
+        reqContext,
+        thread
+      ) || UNATTRIBUTED_DIMENSION;
+    const { timestamp, timestampSource } = this.resolveTelemetryTimestamp(
+      attributes,
+      options
+    );
     return {
-      workspace,
-      role,
-      model,
-      agent,
-      agentKind,
-      timestamp,
+      workspace: workspace as string,
+      role: role as string,
+      model: model as string,
+      agent: agent as string,
+      agentKind: agentKind as string,
+      timestamp: timestamp as string,
       timestampSource
     };
+  }
+
+  private resolveRequestContext(
+    attributes: OtelAttributeMap,
+    options: ResolveTelemetryContextOptions
+  ): RequestContext | null {
+    if (options?.context) return options.context;
+    if (options?.requestId) {
+      return this.getBridgeRequestContext?.(options.requestId) ?? null;
+    }
+    if (attributes?.requestId) {
+      return this.getBridgeRequestContext?.(attributes.requestId) ?? null;
+    }
+    if (attributes?.request_id) {
+      return this.getBridgeRequestContext?.(attributes.request_id) ?? null;
+    }
+    return null;
   }
 
   firstOtelRecordObservation(
@@ -1490,8 +1906,8 @@ export class OtelTracker {
   }
 
   noteConversation(
-    attributes: any,
-    resourceAttributes: any = {}
+    attributes: OtelAttributeMap,
+    resourceAttributes: OtelAttributeMap = {}
   ): SessionEntry | null {
     const id =
       attributes["conversation.id"] ?? resourceAttributes["conversation.id"];
@@ -1502,10 +1918,9 @@ export class OtelTracker {
       mcpServers: new Set(),
       lastSeenAt: null
     };
-    session.model =
-      attributes.model ?? resourceAttributes.model ?? session.model;
+    session.model = (attributes.model as string | undefined) ?? (resourceAttributes.model as string | undefined) ?? session.model;
     session.lastSeenAt =
-      attributes["event.timestamp"] ?? new Date().toISOString();
+      (attributes["event.timestamp"] as string | undefined) ?? new Date().toISOString();
     const names = resourceAttributes.mcp_servers;
     if (typeof names === "string") {
       for (const name of names
@@ -1742,13 +2157,13 @@ export class OtelTracker {
     serverByModel: Map<string, Record<string, McpServerDimensionBucket>>;
     dimensionByModel: Record<string, ContextDimensionBucket>;
   } {
-    const cloneBuckets = <T extends Record<string, any>>(
+    const cloneBuckets = <T extends Record<string, unknown>>(
       buckets: T | null | undefined
     ): T =>
       Object.fromEntries(
         Object.entries(buckets ?? {}).map(([key, bucket]) => [
           key,
-          { ...bucket }
+          { ...(bucket as object) }
         ])
       ) as T;
     const serverByModel = new Map<
@@ -1789,9 +2204,9 @@ export class OtelTracker {
 
   noteMcpServer(
     name: string | null | undefined,
-    span: any,
-    attributes: any = {},
-    resourceAttributes: any = {}
+    span: OtelSpan,
+    attributes: OtelAttributeMap = {},
+    resourceAttributes: OtelAttributeMap = {}
   ): void {
     const serverName =
       name ??
@@ -1810,7 +2225,7 @@ export class OtelTracker {
       resourceAttributes,
       { timestamp }
     );
-    const statusCode = span?.status?.code;
+    const statusCode = (span?.status as { code?: string | number } | undefined)?.code;
     if (
       !server.lastSeenAt ||
       timestampNotOlder(context.timestamp, server.lastSeenAt)
@@ -1864,8 +2279,11 @@ export class OtelTracker {
     }
   }
 
-  noteCodexToolResultLog(attributes: any, resourceAttributes: any = {}): void {
-    const tool = toolNameAttribute(attributes, "unknown-tool");
+  noteCodexToolResultLog(
+    attributes: OtelAttributeMap,
+    resourceAttributes: OtelAttributeMap = {}
+  ): void {
+    const tool = toolNameAttribute(attributes, UNKNOWN_TOOL_LABEL);
     const source = safeMetricLabel(
       attributes.tool_origin ?? attributes.source,
       "codex"
@@ -1964,71 +2382,90 @@ export class OtelTracker {
     }
   }
 
-  ingestOtelLogs(payload: any): void {
+  private recordTurnLogEvent(
+    eventName: unknown,
+    attributes: OtelAttributeMap
+  ): void {
+    if (eventName === "codex.conversation_starts") {
+      // Conversation start is already noted by noteConversation at the call site.
+      return;
+    }
+    if (eventName === "codex.user_prompt") {
+      this.telemetry.turns.prompts += 1;
+      this.telemetry.turns.promptLength += numberAttribute(
+        attributes,
+        "prompt_length"
+      );
+      return;
+    }
+    if (eventName === "codex.turn_ttft") {
+      const duration = numberAttribute(attributes, "duration_ms");
+      this.telemetry.turns.ttftMs += duration;
+      this.telemetry.turns.ttftCount += duration > 0 ? 1 : 0;
+      return;
+    }
+    if (eventName === "codex.tool_result") {
+      // Handled by noteCodexToolResultLog at the call site.
+      return;
+    }
+    if (
+      eventName === "codex.sse_event" &&
+      attributes["event.kind"] === "response.completed"
+    ) {
+      this.telemetry.turns.completed += 1;
+      this.telemetry.tokens.input += numberAttribute(
+        attributes,
+        "input_token_count"
+      );
+      this.telemetry.tokens.output += numberAttribute(
+        attributes,
+        "output_token_count"
+      );
+      this.telemetry.tokens.cached += numberAttribute(
+        attributes,
+        "cached_token_count"
+      );
+      this.telemetry.tokens.reasoning += numberAttribute(
+        attributes,
+        "reasoning_token_count"
+      );
+      this.telemetry.tokens.tool += numberAttribute(
+        attributes,
+        "tool_token_count"
+      );
+    }
+  }
+
+  ingestOtelLogs(payload: OtelPayload): void {
     for (const resourceLog of payload?.resourceLogs ?? []) {
       const resource = otelAttributes(resourceLog.resource?.attributes);
       for (const scopeLog of resourceLog.scopeLogs ?? []) {
         for (const record of scopeLog.logRecords ?? []) {
+          const recordIdentity = otelLogRecordIdentity(
+            record,
+            resourceLog.resource?.attributes,
+            scopeLog.scope
+          );
           if (
             !this.firstOtelRecordObservation(
               this.telemetry.recordIdentities.logs,
-              otelLogRecordIdentity(
-                record,
-                resourceLog.resource?.attributes,
-                scopeLog.scope
-              )
+              recordIdentity
             )
-          )
-            continue;
-          const attributes = otelAttributes(record.attributes);
-          const eventName = attributes["event.name"];
-          this.noteConversation(attributes, resource);
-          if (eventName === "codex.conversation_starts") {
-            this.noteConversation(attributes, resource);
-          } else if (eventName === "codex.user_prompt") {
-            this.telemetry.turns.prompts += 1;
-            this.telemetry.turns.promptLength += numberAttribute(
-              attributes,
-              "prompt_length"
-            );
-          } else if (eventName === "codex.turn_ttft") {
-            const duration = numberAttribute(attributes, "duration_ms");
-            this.telemetry.turns.ttftMs += duration;
-            this.telemetry.turns.ttftCount += duration > 0 ? 1 : 0;
-          } else if (eventName === "codex.tool_result") {
-            this.noteCodexToolResultLog(attributes, resource);
-          } else if (
-            eventName === "codex.sse_event" &&
-            attributes["event.kind"] === "response.completed"
           ) {
-            this.telemetry.turns.completed += 1;
-            this.telemetry.tokens.input += numberAttribute(
-              attributes,
-              "input_token_count"
-            );
-            this.telemetry.tokens.output += numberAttribute(
-              attributes,
-              "output_token_count"
-            );
-            this.telemetry.tokens.cached += numberAttribute(
-              attributes,
-              "cached_token_count"
-            );
-            this.telemetry.tokens.reasoning += numberAttribute(
-              attributes,
-              "reasoning_token_count"
-            );
-            this.telemetry.tokens.tool += numberAttribute(
-              attributes,
-              "tool_token_count"
-            );
+            continue;
+          }
+          const attributes = otelAttributes(record.attributes);
+          this.noteConversation(attributes, resource);
+          this.recordTurnLogEvent(attributes["event.name"], attributes);
+          if (attributes["event.name"] === "codex.tool_result") {
+            this.noteCodexToolResultLog(attributes, resource);
           }
         }
       }
     }
   }
 
-  ingestOtelTraces(payload: any): void {
+  ingestOtelTraces(payload: OtelPayload): void {
     for (const resourceSpan of payload?.resourceSpans ?? []) {
       const resource = otelAttributes(resourceSpan.resource?.attributes);
       for (const scopeSpan of resourceSpan.scopeSpans ?? []) {
@@ -2056,9 +2493,43 @@ export class OtelTracker {
     }
   }
 
+  private isWorkspaceAmbiguous(
+    dp: { id: string | null; ambiguous: boolean },
+    resource: { id: string | null; ambiguous: boolean },
+    dpId: string | null,
+    resourceId: string | null
+  ): boolean {
+    return (
+      dp.ambiguous ||
+      resource.ambiguous ||
+      (dpId !== null && resourceId !== null && dpId !== resourceId)
+    );
+  }
+
+  private recordUnattributedReason(
+    record: boolean,
+    reason: "ambiguous_resource" | "missing_workspace" | "unknown_workspace_id"
+  ): void {
+    if (!record) return;
+    this.usageTracker.attributionDiagnostics.total += 1;
+    this.usageTracker.attributionDiagnostics.unattributed += 1;
+    this.usageTracker.attributionDiagnostics.byReason[reason] += 1;
+  }
+
+  private rememberUnknownWorkspaceId(workspaceId: string): void {
+    const ids = this.usageTracker.attributionDiagnostics.unknownWorkspaceIds;
+    ids.delete(workspaceId);
+    ids.add(workspaceId);
+    while (ids.size > MAX_UNKNOWN_WORKSPACE_IDS) {
+      const oldest = ids.values().next().value;
+      if (oldest === undefined) break;
+      ids.delete(oldest);
+    }
+  }
+
   resolveDatapointWorkspace(
-    dataPointAttributes: any,
-    resourceAttributes: any = {},
+    dataPointAttributes: OtelAttributeMap,
+    resourceAttributes: OtelAttributeMap = {},
     diagnosticIdentity: string | null = null
   ): {
     status: "attributed" | "unattributed";
@@ -2075,16 +2546,8 @@ export class OtelTracker {
     const resource = extractWorkspaceIdWithAmbiguity(resourceAttributes);
     const dpId = dp.id ? safeWorkspaceId(dp.id) : null;
     const resourceId = resource.id ? safeWorkspaceId(resource.id) : null;
-    if (
-      dp.ambiguous ||
-      resource.ambiguous ||
-      (dpId && resourceId && dpId !== resourceId)
-    ) {
-      if (record) {
-        this.usageTracker.attributionDiagnostics.total += 1;
-        this.usageTracker.attributionDiagnostics.unattributed += 1;
-        this.usageTracker.attributionDiagnostics.byReason.ambiguous_resource += 1;
-      }
+    if (this.isWorkspaceAmbiguous(dp, resource, dpId, resourceId)) {
+      this.recordUnattributedReason(record, "ambiguous_resource");
       return {
         status: "unattributed",
         workspaceKey: null,
@@ -2097,11 +2560,7 @@ export class OtelTracker {
     const workspaceId = dpId ?? resourceId;
     const source = dpId ? "datapoint" : resourceId ? "resource" : null;
     if (!workspaceId) {
-      if (record) {
-        this.usageTracker.attributionDiagnostics.total += 1;
-        this.usageTracker.attributionDiagnostics.unattributed += 1;
-        this.usageTracker.attributionDiagnostics.byReason.missing_workspace += 1;
-      }
+      this.recordUnattributedReason(record, "missing_workspace");
       return {
         status: "unattributed",
         workspaceKey: null,
@@ -2124,29 +2583,8 @@ export class OtelTracker {
       return { status: "attributed", workspaceKey, workspaceId, source };
     }
 
-    if (record) {
-      this.usageTracker.attributionDiagnostics.unattributed += 1;
-      this.usageTracker.attributionDiagnostics.byReason.unknown_workspace_id += 1;
-    }
-    this.usageTracker.attributionDiagnostics.unknownWorkspaceIds.delete(
-      workspaceId
-    );
-    this.usageTracker.attributionDiagnostics.unknownWorkspaceIds.add(
-      workspaceId
-    );
-    while (
-      this.usageTracker.attributionDiagnostics.unknownWorkspaceIds.size >
-      MAX_UNKNOWN_WORKSPACE_IDS
-    ) {
-      const oldest =
-        this.usageTracker.attributionDiagnostics.unknownWorkspaceIds
-          .values()
-          .next().value;
-      if (oldest !== undefined)
-        this.usageTracker.attributionDiagnostics.unknownWorkspaceIds.delete(
-          oldest
-        );
-    }
+    this.recordUnattributedReason(record, "unknown_workspace_id");
+    this.rememberUnknownWorkspaceId(workspaceId);
     return {
       status: "unattributed",
       workspaceKey: null,
@@ -2223,11 +2661,11 @@ export class OtelTracker {
 
   noteSkillInjected(
     metricName: string,
-    attributes: any,
-    dataPoint: any,
-    temporality: any,
-    dpAttributes: any = null,
-    resourceAttributes: any = {}
+    attributes: OtelAttributeMap,
+    dataPoint: OtelDataPoint,
+    temporality: unknown,
+    dpAttributes: OtelAttributeMap = {},
+    resourceAttributes: OtelAttributeMap = {}
   ): void {
     const wsResolution = this.resolveDatapointWorkspace(
       dpAttributes ?? attributes,
@@ -2339,9 +2777,9 @@ export class OtelTracker {
   noteThreadSkillsHistogram(
     bucket: HistogramBucket,
     metricName: string,
-    attributes: any,
-    dataPoint: any,
-    temporality: any
+    attributes: OtelAttributeMap,
+    dataPoint: OtelDataPoint,
+    temporality: unknown
   ): void {
     const countDelta = this.otelSeriesDelta(
       otelSeriesKey(
@@ -2373,7 +2811,7 @@ export class OtelTracker {
     this.noteContextDimension("skills", context, countDelta);
   }
 
-  noteMetricInventory(metric: any): void {
+  noteMetricInventory(metric: OtelMetric): void {
     if (typeof metric.name !== "string" || !metric.name) return;
     const entry = this.telemetry.metricInventory.get(metric.name) ?? {
       name: metric.name,
@@ -2387,7 +2825,7 @@ export class OtelTracker {
 
   sqliteBucket(
     collection: Map<string, SqliteEntry>,
-    attributes: any
+    attributes: OtelAttributeMap
   ): SqliteEntry {
     const key = sqliteKey(attributes);
     if (!collection.has(key))
@@ -2399,7 +2837,7 @@ export class OtelTracker {
     return collection.get(key)!;
   }
 
-  sqliteDurationBucket(attributes: any): SqliteDurationEntry {
+  sqliteDurationBucket(attributes: OtelAttributeMap): SqliteDurationEntry {
     const key = sqliteKey(attributes);
     if (!this.telemetry.sqlite.initDurationMs.has(key)) {
       this.telemetry.sqlite.initDurationMs.set(key, {
@@ -2415,9 +2853,9 @@ export class OtelTracker {
   noteSqliteCounter(
     collection: Map<string, SqliteEntry>,
     metricName: string,
-    attributes: any,
-    dataPoint: any,
-    temporality: any
+    attributes: OtelAttributeMap,
+    dataPoint: OtelDataPoint,
+    temporality: unknown
   ): void {
     const value = otelSumDataPointValue(dataPoint);
     const delta = this.otelSeriesDelta(
@@ -2436,7 +2874,7 @@ export class OtelTracker {
     this.sqliteBucket(collection, attributes).count += delta;
   }
 
-  toolBucket(attributes: any): ToolEntry {
+  toolBucket(attributes: OtelAttributeMap): ToolEntry {
     const tool = toolNameAttribute(attributes);
     const source = safeMetricLabel(attributes.source);
     const server = toolServerAttribute(attributes);
@@ -2456,10 +2894,10 @@ export class OtelTracker {
 
   noteToolCounter(
     metricName: string,
-    attributes: any,
-    dataPoint: any,
-    temporality: any,
-    resourceAttributes: any = {}
+    attributes: OtelAttributeMap,
+    dataPoint: OtelDataPoint,
+    temporality: unknown,
+    resourceAttributes: OtelAttributeMap = {}
   ): void {
     const wsResolution = this.resolveDatapointWorkspace(
       attributes,
@@ -2510,10 +2948,10 @@ export class OtelTracker {
 
   noteToolDuration(
     metricName: string,
-    attributes: any,
-    dataPoint: any,
-    temporality: any,
-    resourceAttributes: any = {}
+    attributes: OtelAttributeMap,
+    dataPoint: OtelDataPoint,
+    temporality: unknown,
+    resourceAttributes: OtelAttributeMap = {}
   ): void {
     const wsResolution = this.resolveDatapointWorkspace(
       attributes,
@@ -2570,11 +3008,123 @@ export class OtelTracker {
     }
   }
 
+  private resolveToolResultCallId(attributes: OtelAttributeMap): string | null {
+    if (typeof attributes.call_id === "string" && attributes.call_id.trim()) {
+      return attributes.call_id.trim();
+    }
+    if (
+      typeof attributes.tool_call_id === "string" &&
+      attributes.tool_call_id.trim()
+    ) {
+      return attributes.tool_call_id.trim();
+    }
+    return null;
+  }
+
+  private recordToolResultStatus(
+    status: string,
+    delta: number
+  ): void {
+    this.telemetry.toolResults.byStatus[status] =
+      (this.telemetry.toolResults.byStatus[status] ?? 0) + delta;
+  }
+
+  private accumulateToolResultRow(
+    tool: string,
+    source: string,
+    server: string,
+    status: string,
+    delta: number
+  ): void {
+    if (!tool || tool === UNKNOWN_TOOL_LABEL) return;
+    const resultBucketKey = [tool, source, server].join("::");
+    const resultBucket =
+      this.telemetry.toolResults.byTool.get(resultBucketKey) ?? {
+        tool,
+        source,
+        server,
+        count: 0,
+        byStatus: {}
+      };
+    resultBucket.count += delta;
+    resultBucket.byStatus[status] =
+      (resultBucket.byStatus[status] ?? 0) + delta;
+    this.telemetry.toolResults.byTool.set(resultBucketKey, resultBucket);
+  }
+
+  private trimToolResultSeenKeys(): void {
+    while (this.telemetry.toolResults.seenKeys.size > 5000) {
+      const first = this.telemetry.toolResults.seenKeys.values().next().value;
+      if (first === undefined) break;
+      this.telemetry.toolResults.seenKeys.delete(first);
+    }
+  }
+
+  private applyToolResultCallAttribution(
+    callId: string | null,
+    duplicateMetric: boolean,
+    delta: number,
+    wsResolution: ReturnType<OtelTracker["resolveDatapointWorkspace"]>
+  ): void {
+    if (callId && !duplicateMetric) {
+      this.telemetry.toolResults.executed += delta;
+      this.telemetry.toolResults.causeResolved += delta;
+      this.trimToolResultSeenKeys();
+      return;
+    }
+    if (!duplicateMetric) {
+      this.telemetry.toolResults.unattributed += delta;
+      if (!callId) this.telemetry.toolResults.causeUnresolved += delta;
+      if (wsResolution.status === "attributed" && wsResolution.workspaceKey) {
+        const wsBucket = this.usageTracker.workspaceBucket(
+          this.usageTracker.usageTelemetry.byWorkspace,
+          wsResolution.workspaceKey
+        );
+        wsBucket.toolsUnattributed =
+          (wsBucket.toolsUnattributed ?? 0) + delta;
+      }
+    }
+  }
+
+  private recordToolResultMcpObservation(
+    attributes: OtelAttributeMap,
+    resourceAttributes: OtelAttributeMap,
+    dataPoint: OtelDataPoint,
+    server: string,
+    delta: number
+  ): void {
+    const context = this.resolveTelemetryContext(
+      attributes,
+      resourceAttributes,
+      { timeUnixNano: dataPoint.timeUnixNano }
+    );
+    const mcp = this.mcpServer(server);
+    this.noteMcpDimension(mcp, "byRole", context.role, context, "observed");
+    this.noteMcpDimension(
+      mcp,
+      "byWorkspace",
+      context.workspace,
+      context,
+      "observed"
+    );
+    this.noteMcpDimension(mcp, "byModel", context.model, context, "observed");
+    this.noteMcpDimension(mcp, "byAgent", context.agent, context, "observed");
+    this.noteContextDimension("tools", context, delta);
+    if (context.workspace !== UNATTRIBUTED_DIMENSION) {
+      const wsBucket = this.usageTracker.workspaceBucket(
+        this.usageTracker.usageTelemetry.byWorkspace,
+        context.workspace
+      );
+      wsBucket.mcpCapable = true;
+      wsBucket.byMcp[server] = (wsBucket.byMcp[server] ?? 0) + delta;
+    }
+  }
+
   noteToolResultCounter(
     metricName: string,
-    resourceAttributes: any,
-    dataPoints: any[],
-    temporality: any
+    resourceAttributes: OtelAttributeMap,
+    dataPoints: OtelDataPoint[],
+    temporality: unknown
   ): void {
     for (const dataPoint of dataPoints ?? []) {
       const attributes = otelAttributes(dataPoint.attributes);
@@ -2602,13 +3152,7 @@ export class OtelTracker {
       const source = safeMetricLabel(attributes.source);
       const server = toolServerAttribute(attributes);
       const status = toolStatusAttribute(attributes);
-      const callId =
-        typeof attributes.call_id === "string" && attributes.call_id.trim()
-          ? attributes.call_id.trim()
-          : typeof attributes.tool_call_id === "string" &&
-              attributes.tool_call_id.trim()
-            ? attributes.tool_call_id.trim()
-            : null;
+      const callId = this.resolveToolResultCallId(attributes);
       const resultIdentity = { ...identity, call_id: callId ?? "" };
       const delta = this.otelSeriesDelta(
         otelSeriesKey(
@@ -2636,97 +3180,31 @@ export class OtelTracker {
       } else {
         this.telemetry.toolResults.seenKeys.add(`metric:${resultKey}`);
       }
-      if (callId && !duplicateMetric) {
-        this.telemetry.toolResults.executed += delta;
-        this.telemetry.toolResults.causeResolved += delta;
-        while (this.telemetry.toolResults.seenKeys.size > 5000) {
-          const first = this.telemetry.toolResults.seenKeys
-            .values()
-            .next().value;
-          if (first === undefined) break;
-          this.telemetry.toolResults.seenKeys.delete(first);
-        }
-      } else if (!callId && !duplicateMetric) {
-        this.telemetry.toolResults.unattributed += delta;
-        this.telemetry.toolResults.causeUnresolved += delta;
-        if (wsResolution.status === "attributed" && wsResolution.workspaceKey) {
-          const wsBucket = this.usageTracker.workspaceBucket(
-            this.usageTracker.usageTelemetry.byWorkspace,
-            wsResolution.workspaceKey
-          );
-          wsBucket.toolsUnattributed =
-            (wsBucket.toolsUnattributed ?? 0) + delta;
-        }
-      } else if (!duplicateMetric) {
-        this.telemetry.toolResults.unattributed += delta;
-        if (wsResolution.status === "attributed" && wsResolution.workspaceKey) {
-          const wsBucket = this.usageTracker.workspaceBucket(
-            this.usageTracker.usageTelemetry.byWorkspace,
-            wsResolution.workspaceKey
-          );
-          wsBucket.toolsUnattributed =
-            (wsBucket.toolsUnattributed ?? 0) + delta;
-        }
-      }
-      this.telemetry.toolResults.byStatus[status] =
-        (this.telemetry.toolResults.byStatus[status] ?? 0) + delta;
-      if (tool && tool !== "unknown-tool") {
-        const resultBucketKey = [tool, source, server].join("::");
-        const resultBucket = this.telemetry.toolResults.byTool.get(
-          resultBucketKey
-        ) ?? { tool, source, server, count: 0, byStatus: {} };
-        resultBucket.count += delta;
-        resultBucket.byStatus[status] =
-          (resultBucket.byStatus[status] ?? 0) + delta;
-        this.telemetry.toolResults.byTool.set(resultBucketKey, resultBucket);
-      }
+      this.applyToolResultCallAttribution(
+        callId,
+        duplicateMetric,
+        delta,
+        wsResolution
+      );
+      this.recordToolResultStatus(status, delta);
+      this.accumulateToolResultRow(tool, source, server, status, delta);
       if (server && delta > 0 && !duplicateMetric) {
-        const context = this.resolveTelemetryContext(
+        this.recordToolResultMcpObservation(
           attributes,
           resourceAttributes,
-          { timeUnixNano: dataPoint.timeUnixNano }
+          dataPoint,
+          server,
+          delta
         );
-        const mcp = this.mcpServer(server);
-        this.noteMcpDimension(mcp, "byRole", context.role, context, "observed");
-        this.noteMcpDimension(
-          mcp,
-          "byWorkspace",
-          context.workspace,
-          context,
-          "observed"
-        );
-        this.noteMcpDimension(
-          mcp,
-          "byModel",
-          context.model,
-          context,
-          "observed"
-        );
-        this.noteMcpDimension(
-          mcp,
-          "byAgent",
-          context.agent,
-          context,
-          "observed"
-        );
-        this.noteContextDimension("tools", context, delta);
-        if (context.workspace !== UNATTRIBUTED_DIMENSION) {
-          const wsBucket = this.usageTracker.workspaceBucket(
-            this.usageTracker.usageTelemetry.byWorkspace,
-            context.workspace
-          );
-          wsBucket.mcpCapable = true;
-          wsBucket.byMcp[server] = (wsBucket.byMcp[server] ?? 0) + delta;
-        }
       }
     }
   }
 
   noteToolResultDuration(
     metricName: string,
-    resourceAttributes: any,
-    dataPoints: any[],
-    temporality: any
+    resourceAttributes: OtelAttributeMap,
+    dataPoints: OtelDataPoint[],
+    temporality: unknown
   ): void {
     for (const dataPoint of dataPoints ?? []) {
       const attributes = otelAttributes(dataPoint.attributes);
@@ -2776,8 +3254,8 @@ export class OtelTracker {
     }
   }
 
-  hookBucket(attributes: any): HookEntry {
-    const hook = safeMetricLabel(attributes.hook_name, "unknown-hook");
+  hookBucket(attributes: OtelAttributeMap): HookEntry {
+    const hook = safeMetricLabel(attributes.hook_name, UNKNOWN_HOOK_LABEL);
     const source = safeMetricLabel(attributes.source);
     const handlerType = safeMetricLabel(attributes.handler_type, "");
     const key = hookKey(attributes);
@@ -2796,13 +3274,13 @@ export class OtelTracker {
 
   noteHookCounter(
     metricName: string,
-    attributes: any,
-    dataPoint: any,
-    temporality: any,
-    resourceAttributes: any = {}
+    attributes: OtelAttributeMap,
+    dataPoint: OtelDataPoint,
+    temporality: unknown,
+    resourceAttributes: OtelAttributeMap = {}
   ): void {
     const identity = {
-      hook_name: safeMetricLabel(attributes.hook_name, "unknown-hook"),
+      hook_name: safeMetricLabel(attributes.hook_name, UNKNOWN_HOOK_LABEL),
       source: safeMetricLabel(attributes.source),
       handler_type: safeMetricLabel(attributes.handler_type, "")
     };
@@ -2847,13 +3325,13 @@ export class OtelTracker {
 
   noteHookDuration(
     metricName: string,
-    attributes: any,
-    dataPoint: any,
-    temporality: any,
-    resourceAttributes: any = {}
+    attributes: OtelAttributeMap,
+    dataPoint: OtelDataPoint,
+    temporality: unknown,
+    resourceAttributes: OtelAttributeMap = {}
   ): void {
     const identity = {
-      hook_name: safeMetricLabel(attributes.hook_name, "unknown-hook"),
+      hook_name: safeMetricLabel(attributes.hook_name, UNKNOWN_HOOK_LABEL),
       source: safeMetricLabel(attributes.source),
       handler_type: safeMetricLabel(attributes.handler_type, "")
     };
@@ -2886,13 +3364,13 @@ export class OtelTracker {
 
   noteHookHistogramCount(
     metricName: string,
-    attributes: any,
-    dataPoint: any,
-    temporality: any,
-    resourceAttributes: any = {}
+    attributes: OtelAttributeMap,
+    dataPoint: OtelDataPoint,
+    temporality: unknown,
+    resourceAttributes: OtelAttributeMap = {}
   ): void {
     const identity = {
-      hook_name: safeMetricLabel(attributes.hook_name, "unknown-hook"),
+      hook_name: safeMetricLabel(attributes.hook_name, UNKNOWN_HOOK_LABEL),
       source: safeMetricLabel(attributes.source),
       handler_type: safeMetricLabel(attributes.handler_type, "")
     };
@@ -2921,9 +3399,9 @@ export class OtelTracker {
 
   noteThreadStarted(
     metricName: string,
-    attributes: any,
-    dataPoint: any,
-    temporality: any
+    attributes: OtelAttributeMap,
+    dataPoint: OtelDataPoint,
+    temporality: unknown
   ): void {
     const source = safeMetricLabel(
       attributes.source ?? attributes.thread_source ?? attributes.origin
@@ -2942,9 +3420,9 @@ export class OtelTracker {
   noteHistogramCount(
     target: { total: number; bySource: Record<string, number> },
     metricName: string,
-    attributes: any,
-    dataPoint: any,
-    temporality: any
+    attributes: OtelAttributeMap,
+    dataPoint: OtelDataPoint,
+    temporality: unknown
   ): void {
     const source = safeMetricLabel(
       attributes.source ?? attributes.thread_source ?? attributes.origin
@@ -2965,9 +3443,9 @@ export class OtelTracker {
 
   noteThreadSpawn(
     metricName: string,
-    attributes: any,
-    dataPoint: any,
-    temporality: any
+    attributes: OtelAttributeMap,
+    dataPoint: OtelDataPoint,
+    temporality: unknown
   ): void {
     const role = safeMetricLabel(attributes.agent_role ?? attributes.role);
     const model = safeMetricLabel(
@@ -2989,7 +3467,7 @@ export class OtelTracker {
     spawns.byModel[model] = (spawns.byModel[model] ?? 0) + delta;
   }
 
-  ingestOtelMetrics(payload: any): void {
+  ingestOtelMetrics(payload: OtelPayload): void {
     for (const resourceMetric of payload?.resourceMetrics ?? []) {
       for (const scopeMetric of resourceMetric.scopeMetrics ?? []) {
         for (const metric of scopeMetric.metrics ?? []) {
@@ -3013,7 +3491,7 @@ export class OtelTracker {
             }
           } else if (metric.name && SKILL_TURN_HISTOGRAMS[metric.name]) {
             const histKey = SKILL_TURN_HISTOGRAMS[metric.name]!;
-            const bucket = (this.telemetry.skills.turnDuration as any)[histKey];
+            const bucket = this.telemetry.skills.turnDuration[histKey];
             const temporality = metric.histogram?.aggregationTemporality;
             for (const dataPoint of metric.histogram?.dataPoints ?? [])
               this.noteThreadSkillsHistogram(
@@ -3025,7 +3503,7 @@ export class OtelTracker {
               );
           } else if (metric.name && THREAD_SKILLS_HISTOGRAMS[metric.name]) {
             const histKey = THREAD_SKILLS_HISTOGRAMS[metric.name]!;
-            const bucket = (this.telemetry.skills.threads as any)[histKey];
+            const bucket = this.telemetry.skills.threads[histKey];
             const temporality = metric.histogram?.aggregationTemporality;
             for (const dataPoint of metric.histogram?.dataPoints ?? []) {
               this.noteThreadSkillsHistogram(
@@ -3199,7 +3677,7 @@ export class OtelTracker {
               this.noteThreadSpawn(
                 metric.name,
                 otelAttributes(dataPoint.attributes),
-                { ...dataPoint, asInt: dataPoint.count },
+                { ...dataPoint, asInt: dataPoint.count } as OtelDataPoint,
                 histogramTemporality
               );
           }
@@ -3208,7 +3686,7 @@ export class OtelTracker {
     }
   }
 
-  ingestOtelSignal(signal: OtelSignal, payload: any): void {
+  ingestOtelSignal(signal: OtelSignal, payload: OtelPayload): void {
     if (this.telemetry.receiver[signal] !== undefined) {
       this.telemetry.receiver[signal] += 1;
     }
@@ -3228,9 +3706,10 @@ export class OtelTracker {
     event,
     context
   }: {
-    event: any;
-    context: any;
+    event: BridgeObservationEventInput;
+    context: BridgeObservationContextInput;
   }): void {
+    const eventMap = event as unknown as OtelAttributeMap;
     const tool =
       typeof event.tool === "string" && event.tool.trim()
         ? safeMetricLabel(event.tool)
@@ -3261,7 +3740,7 @@ export class OtelTracker {
       bucket = this.telemetry.bridgeEvents.toolRequested;
     else bucket = this.telemetry.bridgeEvents.toolUnavailable;
     bucket.total += 1;
-    const ctx = this.resolveTelemetryContext(event, {}, { context });
+    const ctx = this.resolveTelemetryContext(eventMap, {}, { context });
     this.noteContextDimension("bridge", ctx);
     if (server) {
       const mcp = this.mcpServer(server);
@@ -3368,12 +3847,13 @@ export class OtelTracker {
   }: {
     server: string;
     source?: string | null;
-    context: any;
+    context: BridgeObservationContextInput;
     requestId?: string | null;
   }): boolean {
     if (typeof server !== "string" || !server.trim()) return false;
     const cleanServer = safeMetricLabel(server);
-    const mcpContext = this.resolveTelemetryContext({}, {}, { context });
+    const contextMap = context as unknown as OtelAttributeMap;
+    const mcpContext = this.resolveTelemetryContext({}, {}, { context: contextMap });
     const workspaceKey =
       typeof mcpContext.workspace === "string" ? mcpContext.workspace : null;
     const store = this.telemetry.bridgeEvents.mcpExposed;
@@ -3457,8 +3937,8 @@ export class OtelTracker {
     context,
     requestId = null
   }: {
-    event: any;
-    context: any;
+    event: BridgeObservationEventInput;
+    context: BridgeObservationContextInput;
     requestId?: string | null;
   }): boolean {
     return this.recordMcpExposure({
@@ -3473,9 +3953,10 @@ export class OtelTracker {
     event,
     context
   }: {
-    event: any;
-    context: any;
+    event: BridgeObservationEventInput;
+    context: BridgeObservationContextInput;
   }): void {
+    const eventMap = event as unknown as OtelAttributeMap;
     const skill =
       typeof event.skill === "string" && event.skill.trim()
         ? safeMetricLabel(event.skill)
@@ -3492,7 +3973,7 @@ export class OtelTracker {
     const workspaceKey =
       typeof context.workspace === "string" ? context.workspace : null;
     const bucket = this.telemetry.bridgeEvents.skillExposed;
-    const skillContext = this.resolveTelemetryContext(event, {}, { context });
+    const skillContext = this.resolveTelemetryContext(eventMap, {}, { context });
     this.noteContextDimension("bridge", skillContext);
     bucket.total += 1;
     const skillKey = `${skill}::${source ?? ""}::${pluginId ?? ""}`;
@@ -3531,9 +4012,10 @@ export class OtelTracker {
     event,
     context
   }: {
-    event: any;
-    context: any;
+    event: BridgeObservationEventInput;
+    context: BridgeObservationContextInput;
   }): boolean {
+    const eventMap = event as unknown as OtelAttributeMap;
     const skill =
       typeof event.skill === "string" && event.skill.trim()
         ? safeMetricLabel(event.skill)
@@ -3569,7 +4051,7 @@ export class OtelTracker {
       const first = store.seenKeys.values().next().value;
       if (first !== undefined) store.seenKeys.delete(first);
     }
-    const ctx = this.resolveTelemetryContext(event, {}, { context });
+    const ctx = this.resolveTelemetryContext(eventMap, {}, { context });
     const timestamp = ctx.timestamp;
     if (ctx.workspace !== UNATTRIBUTED_DIMENSION) {
       this.usageTracker.workspaceBucket(
@@ -3711,7 +4193,7 @@ export class OtelTracker {
     this.usageTracker.clearWorkspaceCapabilities();
   }
 
-  codexTelemetryStatus(now: number = Date.now()): any {
+  codexTelemetryStatus(now: number = Date.now()): Record<string, unknown> {
     const mcpModelView = this.mcpModelDimensionsView();
     const mcpServers = Array.from(
       this.telemetry.mcpServers.values(),
@@ -3749,43 +4231,10 @@ export class OtelTracker {
           )
         };
       }
-    ).sort((a, b) => a.name.localeCompare(b.name));
+    ).sort((a, b) => STRING_COLLATOR.compare(a.name, b.name));
     const sessions = [...this.telemetry.sessions.values()];
-    const summarizeDimension = (
-      dimension: "byRole" | "byWorkspace" | "byModel" | "byAgent"
-    ) => {
-      const summary: Record<string, any> = {};
-      for (const server of mcpServers) {
-        for (const [key, bucket] of Object.entries(server[dimension] ?? {})) {
-          const lastSeenMs = bucket.lastSeenAt
-            ? Date.parse(bucket.lastSeenAt)
-            : Number.NaN;
-          const fresh =
-            Number.isFinite(lastSeenMs) && now - lastSeenMs <= this.healthTtlMs;
-          const health = fresh ? bucket.lastStatus : "stale";
-          const target = summary[key] ?? {
-            observed: 0,
-            ready: 0,
-            error: 0,
-            stale: 0,
-            lastSeenAt: null
-          };
-          target.observed += 1;
-          if (health === "ready") target.ready += 1;
-          if (health === "error") target.error += 1;
-          if (health === "stale") target.stale += 1;
-          if (
-            !target.lastSeenAt ||
-            (bucket.lastSeenAt &&
-              Date.parse(bucket.lastSeenAt) > Date.parse(target.lastSeenAt))
-          )
-            target.lastSeenAt = bucket.lastSeenAt;
-          summary[key] = target;
-        }
-      }
-      return summary;
-    };
-    const mcpSummary: any = mcpServers.reduce(
+    const summarizeDimension = summarizeMcpDimension(mcpServers, now, this.healthTtlMs);
+    const mcpSummary: { observed: number; ready: number; error: number; stale: number; byRole?: Record<string, unknown>; byWorkspace?: Record<string, unknown>; byModel?: Record<string, unknown>; byAgent?: Record<string, unknown> } = mcpServers.reduce(
       (summary, server) => {
         summary.observed += 1;
         if (server.health === "ready") summary.ready += 1;
@@ -3821,19 +4270,8 @@ export class OtelTracker {
         byPlugin: { ...bucket.byPlugin }
       };
     });
-    const threadHistogram = (bucket: HistogramBucket) => ({
-      ...bucket,
-      average: bucket.count ? bucket.sum / bucket.count : 0
-    });
-    const sqliteBuckets = (collection: Map<string, any>) =>
-      Array.from(collection.values(), (bucket) => ({
-        ...bucket,
-        ...(Object.hasOwn(bucket, "sum")
-          ? { average: bucket.count ? bucket.sum / bucket.count : 0 }
-          : {})
-      })).sort((a, b) =>
-        `${a.db}/${a.status}`.localeCompare(`${b.db}/${b.status}`)
-      );
+    const threadHistogram = threadHistogramView;
+    const sqliteBuckets = sqliteBucketsView;
 
     const dimensions = formatContextDimensions(this.telemetry.dimensions);
     if (dimensions.mcp) {
@@ -3868,7 +4306,7 @@ export class OtelTracker {
       dimensions,
       metrics: {
         observed: [...this.telemetry.metricInventory.values()].sort((a, b) =>
-          a.name.localeCompare(b.name)
+          STRING_COLLATOR.compare(a.name, b.name)
         )
       },
       tools: {
@@ -3879,7 +4317,8 @@ export class OtelTracker {
             : 0,
           byStatus: { ...tool.byStatus }
         })).sort((a, b) =>
-          `${a.tool}/${a.source}/${a.server}`.localeCompare(
+          STRING_COLLATOR.compare(
+            `${a.tool}/${a.source}/${a.server}`,
             `${b.tool}/${b.source}/${b.server}`
           )
         )
@@ -3892,7 +4331,8 @@ export class OtelTracker {
             : 0,
           byStatus: { ...hook.byStatus }
         })).sort((a, b) =>
-          `${a.hook}/${a.source}/${a.handlerType}`.localeCompare(
+          STRING_COLLATOR.compare(
+            `${a.hook}/${a.source}/${a.handlerType}`,
             `${b.hook}/${b.source}/${b.handlerType}`
           )
         )
@@ -3953,7 +4393,7 @@ export class OtelTracker {
               byModel: { ...entry.byModel },
               byAgent: { ...entry.byAgent }
             })
-          ).sort((a, b) => a.skill.localeCompare(b.skill))
+          ).sort((a, b) => STRING_COLLATOR.compare(a.skill, b.skill))
         },
         injected: {
           total: skillsInjected.total,
@@ -3962,7 +4402,7 @@ export class OtelTracker {
           byAgentKind: { ...skillsInjected.byAgentKind },
           byModel: { ...skillsInjected.byModel },
           byPlugin: { ...skillsInjected.byPlugin },
-          bySkill: skillRows.sort((a, b) => a.skill.localeCompare(b.skill))
+          bySkill: skillRows.sort((a, b) => STRING_COLLATOR.compare(a.skill, b.skill))
         },
         turnDuration: {
           durationSeconds: threadHistogram(
@@ -3983,7 +4423,7 @@ export class OtelTracker {
     };
   }
 
-  otelPersistenceSnapshot(): any {
+  otelPersistenceSnapshot(): OtelRestoreSnapshot | Record<string, unknown> {
     const telemetry = this.codexTelemetryStatus();
     const mcpModelView = this.mcpModelDimensionsView();
     const dimensions = formatContextDimensions(this.telemetry.dimensions);
@@ -4021,7 +4461,7 @@ export class OtelTracker {
     };
   }
 
-  restoreOtelCounters(snapshot: any): void {
+  restoreOtelCounters(snapshot: OtelRestoreSnapshot): void {
     if (!snapshot || typeof snapshot !== "object") return;
     if (snapshot.toolResults && typeof snapshot.toolResults === "object") {
       const target = this.telemetry.toolResults;
@@ -4069,15 +4509,16 @@ export class OtelTracker {
       }
     }
     if (snapshot.bridgeEvents && typeof snapshot.bridgeEvents === "object") {
-      const target = this.telemetry.bridgeEvents as any;
-      for (const family of [
+      const target = this.telemetry.bridgeEvents;
+      const families: Array<keyof BridgeEventsState> = [
         "toolExecuted",
         "toolRequested",
         "toolUnavailable",
         "skillExposed",
         "skillUsed",
         "mcpExposed"
-      ]) {
+      ];
+      for (const family of families) {
         const source = snapshot.bridgeEvents[family];
         const destination = target[family];
         if (!source || typeof source !== "object") continue;
@@ -4113,12 +4554,12 @@ export class OtelTracker {
                   Object.fromEntries(
                     (row.bySkill ?? [])
                       .filter(
-                        (entry: any) =>
+                        (entry: { skill?: unknown; count?: unknown }) =>
                           entry &&
                           typeof entry.skill === "string" &&
                           Number.isFinite(entry.count)
                       )
-                      .map((entry: any) => [
+                      .map((entry: { skill?: unknown; count?: unknown }) => [
                         safeMetricLabel(entry.skill),
                         entry.count
                       ])
@@ -4157,12 +4598,12 @@ export class OtelTracker {
                   Object.fromEntries(
                     (row.byServer ?? [])
                       .filter(
-                        (entry: any) =>
+                        (entry: { server?: unknown; count?: unknown }) =>
                           entry &&
                           typeof entry.server === "string" &&
                           Number.isFinite(entry.count)
                       )
-                      .map((entry: any) => [
+                      .map((entry: { server?: unknown; count?: unknown }) => [
                         safeMetricLabel(entry.server),
                         entry.count
                       ])
@@ -4182,53 +4623,39 @@ export class OtelTracker {
     }
   }
 
-  restoreOtelTelemetry(snapshot: any): void {
+  restoreOtelTelemetry(snapshot: OtelRestoreSnapshot): void {
     if (
       !snapshot ||
       typeof snapshot !== "object" ||
       snapshot.schemaVersion !== OTEL_PERSISTENCE_SCHEMA_VERSION
     )
       return;
-    const isFiniteNonnegative = (value: unknown): value is number =>
-      typeof value === "number" && Number.isFinite(value) && value >= 0;
-    const restoreNumberFields = (
-      target: any,
-      source: any,
-      fields: string[]
-    ) => {
-      for (const field of fields)
-        if (isFiniteNonnegative(source?.[field])) target[field] = source[field];
-    };
+
     this.restoreOtelCounters(snapshot);
-    restoreNumberFields(this.telemetry.receiver, snapshot.receiver, [
-      "logs",
-      "traces",
-      "metrics",
-      "invalid"
-    ]);
+    restoreNumberFields(
+      this.telemetry.receiver as unknown as Record<string, unknown>,
+      snapshot.receiver,
+      ["logs", "traces", "metrics", "invalid"]
+    );
     if (
       snapshot.receiver?.lastReceivedAt === null ||
       typeof snapshot.receiver?.lastReceivedAt === "string"
     ) {
       this.telemetry.receiver.lastReceivedAt = snapshot.receiver.lastReceivedAt;
     }
-    restoreNumberFields(this.telemetry.turns, snapshot.turns, [
-      "prompts",
-      "completed",
-      "promptLength",
-      "ttftMs",
-      "ttftCount"
-    ]);
-    restoreNumberFields(this.telemetry.tokens, snapshot.tokens, [
-      "input",
-      "output",
-      "cached",
-      "reasoning",
-      "tool"
-    ]);
+    restoreNumberFields(
+      this.telemetry.turns as unknown as Record<string, unknown>,
+      snapshot.turns,
+      ["prompts", "completed", "promptLength", "ttftMs", "ttftCount"]
+    );
+    restoreNumberFields(
+      this.telemetry.tokens as unknown as Record<string, unknown>,
+      snapshot.tokens,
+      ["input", "output", "cached", "reasoning", "tool"]
+    );
     if (snapshot.dimensions && typeof snapshot.dimensions === "object") {
       for (const [family, value] of Object.entries(
-        snapshot.dimensions as Record<string, any>
+        snapshot.dimensions as Record<string, ContextDimensions>
       )) {
         if (
           !this.telemetry.dimensions[
@@ -4248,21 +4675,23 @@ export class OtelTracker {
             if (
               !bucket ||
               typeof bucket !== "object" ||
-              !isFiniteNonnegative((bucket as any).count)
+              !isFiniteNonnegative(
+                (bucket as { count?: unknown }).count
+              )
             )
               continue;
             this.telemetry.dimensions[
               family as keyof OtelTelemetryState["dimensions"]
             ][dimension][safeMetricLabel(key)] = {
-              count: (bucket as any).count,
+              count: bucket.count as number,
               lastSeenAt:
-                typeof (bucket as any).lastSeenAt === "string"
-                  ? (bucket as any).lastSeenAt
+                typeof bucket.lastSeenAt === "string"
+                  ? bucket.lastSeenAt
                   : null,
               ...(dimension === "byAgent"
                 ? {
                     agentKind: safeMetricLabel(
-                      (bucket as any).agentKind,
+                      (bucket as { agentKind?: unknown }).agentKind,
                       UNATTRIBUTED_DIMENSION
                     )
                   }
@@ -4297,13 +4726,11 @@ export class OtelTracker {
         byModel: {},
         byAgent: {}
       };
-      restoreNumberFields(restored, server, [
-        "initAttempts",
-        "toolDiscoveryAttempts",
-        "failures",
-        "durationMs",
-        "durationCount"
-      ]);
+      restoreNumberFields(
+        restored as unknown as Record<string, unknown>,
+        server,
+        ["initAttempts", "toolDiscoveryAttempts", "failures", "durationMs", "durationCount"]
+      );
       for (const dim of [
         "byRole",
         "byWorkspace",
@@ -4321,19 +4748,27 @@ export class OtelTracker {
             } else if (
               v &&
               typeof v === "object" &&
-              isFiniteNonnegative((v as any).observed)
+              isFiniteNonnegative(
+                (v as { observed?: unknown }).observed
+              )
             ) {
+              const dimBucket = v as {
+                observed?: unknown;
+                lastSeenAt?: unknown;
+                lastStatus?: unknown;
+                agentKind?: unknown;
+              };
               restored[dim][safeMetricLabel(k)] = {
                 observed: 1,
                 lastSeenAt:
-                  typeof (v as any).lastSeenAt === "string"
-                    ? (v as any).lastSeenAt
+                  typeof dimBucket.lastSeenAt === "string"
+                    ? dimBucket.lastSeenAt
                     : null,
-                lastStatus: safeMetricLabel((v as any).lastStatus, "observed"),
+                lastStatus: safeMetricLabel(dimBucket.lastStatus, "observed"),
                 ...(dim === "byAgent"
                   ? {
                       agentKind: safeMetricLabel(
-                        (v as any).agentKind,
+                        dimBucket.agentKind,
                         UNATTRIBUTED_DIMENSION
                       )
                     }
@@ -4347,9 +4782,11 @@ export class OtelTracker {
     }
     const skills = snapshot.skills;
     if (skills?.injected && typeof skills.injected === "object") {
-      restoreNumberFields(this.telemetry.skills.injected, skills.injected, [
-        "total"
-      ]);
+      restoreNumberFields(
+        this.telemetry.skills.injected as unknown as Record<string, unknown>,
+        skills.injected,
+        ["total"]
+      );
       for (const [status, count] of Object.entries(
         skills.injected.byStatus ?? {}
       ))
@@ -4387,7 +4824,7 @@ export class OtelTracker {
         : []) {
         if (!entry || typeof entry.skill !== "string") continue;
         const bucket = this.skillBucket(safeMetricLabel(entry.skill));
-        restoreNumberFields(bucket, entry, ["total"]);
+        restoreNumberFields(bucket as unknown as Record<string, unknown>, entry, ["total"]);
         for (const [status, count] of Object.entries(entry.byStatus ?? {}))
           if (isFiniteNonnegative(count))
             bucket.byStatus[safeMetricLabel(status)] = count;
@@ -4427,7 +4864,7 @@ export class OtelTracker {
       for (const entry of Array.isArray(used.bySkill) ? used.bySkill : []) {
         if (!entry || typeof entry.skill !== "string") continue;
         const bucket = this.skillUsedBucket(safeMetricLabel(entry.skill));
-        restoreNumberFields(bucket, entry, ["total"]);
+        restoreNumberFields(bucket as unknown as Record<string, unknown>, entry, ["total"]);
         if (typeof entry.lastSeenAt === "string")
           bucket.lastSeenAt = entry.lastSeenAt;
         for (const dimension of [
@@ -4449,7 +4886,7 @@ export class OtelTracker {
       ["descriptionTruncatedChars", "descriptionTruncatedChars"]
     ] as const) {
       restoreNumberFields(
-        (this.telemetry.skills.threads as any)[targetKey],
+        this.telemetry.skills.threads[targetKey],
         skills?.threads?.[sourceKey],
         ["count", "sum"]
       );
@@ -4476,9 +4913,9 @@ export class OtelTracker {
       ? snapshot.tools.byTool
       : []) {
       if (!entry || typeof entry.tool !== "string") continue;
-      if (entry.tool === "unknown-tool") continue;
+      if (entry.tool === UNKNOWN_TOOL_LABEL) continue;
       const restored: ToolEntry = {
-        tool: safeMetricLabel(entry.tool, "unknown-tool"),
+        tool: safeMetricLabel(entry.tool, UNKNOWN_TOOL_LABEL),
         source: safeMetricLabel(entry.source),
         server: toolServerAttribute({
           server: entry.server,
@@ -4489,11 +4926,11 @@ export class OtelTracker {
         durationCount: 0,
         durationMs: 0
       };
-      restoreNumberFields(restored, entry, [
-        "count",
-        "durationCount",
-        "durationMs"
-      ]);
+      restoreNumberFields(
+        restored as unknown as Record<string, unknown>,
+        entry,
+        ["count", "durationCount", "durationMs"]
+      );
       for (const [status, count] of Object.entries(entry.byStatus ?? {}))
         if (isFiniteNonnegative(count))
           restored.byStatus[safeMetricLabel(status)] = count;
@@ -4504,7 +4941,7 @@ export class OtelTracker {
       : []) {
       if (!entry || typeof entry.hook !== "string") continue;
       const restored: HookEntry = {
-        hook: safeMetricLabel(entry.hook, "unknown-hook"),
+        hook: safeMetricLabel(entry.hook, UNKNOWN_HOOK_LABEL),
         source: safeMetricLabel(entry.source),
         handlerType: safeMetricLabel(entry.handlerType, ""),
         count: 0,
@@ -4530,7 +4967,7 @@ export class OtelTracker {
       );
     }
     restoreNumberFields(
-      this.telemetry.threads.started,
+      this.telemetry.threads.started as unknown as Record<string, unknown>,
       snapshot.threads?.started,
       ["total"]
     );
@@ -4541,7 +4978,7 @@ export class OtelTracker {
         this.telemetry.threads.started.bySource[safeMetricLabel(source)] =
           count;
     restoreNumberFields(
-      this.telemetry.threads.spawns,
+      this.telemetry.threads.spawns as unknown as Record<string, unknown>,
       snapshot.threads?.spawns,
       ["total"]
     );
@@ -4566,17 +5003,19 @@ export class OtelTracker {
           typeof entry.status !== "string"
         )
           continue;
-        const restored: any = {
+        const baseKey: SqliteEntry = {
           db: safeMetricLabel(entry.db),
           status: safeMetricLabel(entry.status),
           count: 0
         };
-        restoreNumberFields(restored, entry, ["count"]);
+        restoreNumberFields(baseKey, entry, ["count"]);
         if (Object.hasOwn(entry, "sum")) {
-          restored.sum = 0;
+          const restored = { ...baseKey, sum: 0 } as SqliteDurationEntry;
           restoreNumberFields(restored, entry, ["sum"]);
+          target.set(sqliteKey(restored as unknown as OtelAttributeMap), restored);
+        } else {
+          target.set(sqliteKey(baseKey as unknown as OtelAttributeMap), baseKey);
         }
-        target.set(sqliteKey(restored), restored);
       }
     }
     for (const entry of Array.isArray(snapshot.series) ? snapshot.series : []) {
@@ -4587,9 +5026,11 @@ export class OtelTracker {
         !isFiniteNonnegative(entry.value)
       )
         continue;
-      const metricName = entry.key
-        .split("::", 1)[0]
-        .replace(/#(?:count|sum)$/, "");
+      const metricName = (() => {
+        const headEnd = entry.key.indexOf("::");
+        const head = headEnd === -1 ? entry.key : entry.key.slice(0, headEnd);
+        return head.replace(METRIC_NAME_TRAILING_PARTS_PATTERN, "");
+      })();
       if (REMOVED_SHADOW_SELECTION_METRICS.has(metricName)) continue;
       try {
         this.metricSeries.set(entry.key, {
@@ -4617,10 +5058,10 @@ export const otelTelemetry: OtelTelemetryState = new Proxy(
   {} as OtelTelemetryState,
   {
     get(_target, prop) {
-      return (defaultOtelTracker.telemetry as any)[prop];
+      return (defaultOtelTracker.telemetry as unknown as Record<string | symbol, unknown>)[prop as string];
     },
     set(_target, prop, value) {
-      (defaultOtelTracker.telemetry as any)[prop] = value;
+      (defaultOtelTracker.telemetry as unknown as Record<string | symbol, unknown>)[prop as string] = value;
       return true;
     },
     has(_target, prop) {
@@ -4635,7 +5076,7 @@ export const otelTelemetry: OtelTelemetryState = new Proxy(
           configurable: true,
           enumerable: true,
           writable: true,
-          value: (defaultOtelTracker.telemetry as any)[prop]
+          value: (defaultOtelTracker.telemetry as unknown as Record<string | symbol, unknown>)[prop as string]
         }
       );
     }
@@ -4647,13 +5088,13 @@ export const otelMetricSeries: Map<
   { timestamp: bigint; value: number }
 > = new Proxy(new Map(), {
   get(_target, prop) {
-    const val = (defaultOtelTracker.metricSeries as any)[prop];
+    const val = (defaultOtelTracker.metricSeries as unknown as Record<string | symbol, unknown>)[prop as string];
     return typeof val === "function"
       ? val.bind(defaultOtelTracker.metricSeries)
       : val;
   },
   set(_target, prop, value) {
-    (defaultOtelTracker.metricSeries as any)[prop] = value;
+    (defaultOtelTracker.metricSeries as unknown as Record<string | symbol, unknown>)[prop as string] = value;
     return true;
   },
   has(_target, prop) {
@@ -4666,13 +5107,13 @@ export const pendingMcpModelAttribution: Map<
   Array<{ serverName: string; context: TelemetryContext; status: string }>
 > = new Proxy(new Map(), {
   get(_target, prop) {
-    const val = (defaultOtelTracker.pendingMcpModelAttribution as any)[prop];
+    const val = (defaultOtelTracker.pendingMcpModelAttribution as unknown as Record<string | symbol, unknown>)[prop as string];
     return typeof val === "function"
       ? val.bind(defaultOtelTracker.pendingMcpModelAttribution)
       : val;
   },
   set(_target, prop, value) {
-    (defaultOtelTracker.pendingMcpModelAttribution as any)[prop] = value;
+    (defaultOtelTracker.pendingMcpModelAttribution as unknown as Record<string | symbol, unknown>)[prop as string] = value;
     return true;
   },
   has(_target, prop) {
@@ -4685,9 +5126,9 @@ export function mcpServer(name: string): McpServerEntry {
 }
 
 export function telemetryConversationId(
-  attributes: any = {},
-  resourceAttributes: any = {},
-  options: any = {}
+  attributes: OtelAttributeMap = {},
+  resourceAttributes: OtelAttributeMap = {},
+  options: { conversationId?: unknown } = {}
 ): string | null {
   return defaultOtelTracker.telemetryConversationId(
     attributes,
@@ -4697,9 +5138,9 @@ export function telemetryConversationId(
 }
 
 export function resolveTelemetryContext(
-  attributes: any = {},
-  resourceAttributes: any = {},
-  options: any = {}
+  attributes: OtelAttributeMap = {},
+  resourceAttributes: OtelAttributeMap = {},
+  options: ResolveTelemetryContextOptions = {}
 ): TelemetryContext {
   return defaultOtelTracker.resolveTelemetryContext(
     attributes,
@@ -4708,19 +5149,19 @@ export function resolveTelemetryContext(
   );
 }
 
-export function ingestOtelLogs(payload: any): void {
+export function ingestOtelLogs(payload: OtelPayload): void {
   defaultOtelTracker.ingestOtelLogs(payload);
 }
 
-export function ingestOtelTraces(payload: any): void {
+export function ingestOtelTraces(payload: OtelPayload): void {
   defaultOtelTracker.ingestOtelTraces(payload);
 }
 
-export function ingestOtelMetrics(payload: any): void {
+export function ingestOtelMetrics(payload: OtelPayload): void {
   defaultOtelTracker.ingestOtelMetrics(payload);
 }
 
-export function ingestOtelSignal(signal: OtelSignal, payload: any): void {
+export function ingestOtelSignal(signal: OtelSignal, payload: OtelPayload): void {
   defaultOtelTracker.ingestOtelSignal(signal, payload);
 }
 
@@ -4728,8 +5169,8 @@ export function recordBridgeToolObservation({
   event,
   context
 }: {
-  event: any;
-  context: any;
+  event: BridgeObservationEventInput;
+  context: BridgeObservationContextInput;
 }): void {
   defaultOtelTracker.recordBridgeToolObservation({ event, context });
 }
@@ -4742,7 +5183,7 @@ export function recordMcpExposure({
 }: {
   server: string;
   source?: string | null;
-  context: any;
+  context: BridgeObservationContextInput;
   requestId?: string | null;
 }): boolean {
   return defaultOtelTracker.recordMcpExposure({
@@ -4758,8 +5199,8 @@ export function recordBridgeMcpExposure({
   context,
   requestId = null
 }: {
-  event: any;
-  context: any;
+  event: BridgeObservationEventInput;
+  context: BridgeObservationContextInput;
   requestId?: string | null;
 }): boolean {
   return defaultOtelTracker.recordBridgeMcpExposure({
@@ -4773,8 +5214,8 @@ export function recordBridgeSkillExposure({
   event,
   context
 }: {
-  event: any;
-  context: any;
+  event: BridgeObservationEventInput;
+  context: BridgeObservationContextInput;
 }): void {
   defaultOtelTracker.recordBridgeSkillExposure({ event, context });
 }
@@ -4783,8 +5224,8 @@ export function recordBridgeSkillUsed({
   event,
   context
 }: {
-  event: any;
-  context: any;
+  event: BridgeObservationEventInput;
+  context: BridgeObservationContextInput;
 }): boolean {
   return defaultOtelTracker.recordBridgeSkillUsed({ event, context });
 }
@@ -4793,15 +5234,15 @@ export function resetOtelTelemetry(): void {
   defaultOtelTracker.resetOtelTelemetry();
 }
 
-export function codexTelemetryStatus(now: number = Date.now()): any {
+export function codexTelemetryStatus(now: number = Date.now()): Record<string, unknown> {
   return defaultOtelTracker.codexTelemetryStatus(now);
 }
 
-export function otelPersistenceSnapshot(): any {
+export function otelPersistenceSnapshot(): OtelRestoreSnapshot {
   return defaultOtelTracker.otelPersistenceSnapshot();
 }
 
-export function restoreOtelTelemetry(snapshot: any): void {
+export function restoreOtelTelemetry(snapshot: OtelRestoreSnapshot): void {
   defaultOtelTracker.restoreOtelTelemetry(snapshot);
 }
 

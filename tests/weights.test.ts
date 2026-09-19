@@ -28,6 +28,8 @@ const config = JSON.parse(
   )
 ) as WorkflowConfig;
 
+const COLLATOR = new Intl.Collator();
+
 function toSlots(weight: number): number {
   return Math.max(1, Math.round(weight * WEIGHT_SCALE));
 }
@@ -35,7 +37,7 @@ function toSlots(weight: number): number {
 function weightedCycle(items: WeightedItem[]): string[] {
   const sorted = [...items]
     .filter((item) => item.weight > 0)
-    .sort((a, b) => a.name.localeCompare(b.name));
+    .sort((a, b) => COLLATOR.compare(a.name, b.name));
   const maxSlots = Math.max(...sorted.map((item) => toSlots(item.weight)), 0);
   const cycle: string[] = [];
   for (let slot = 1; slot <= maxSlots; slot += 1) {

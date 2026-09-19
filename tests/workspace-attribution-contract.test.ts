@@ -85,44 +85,76 @@ function pathValue(object: unknown, path: string): unknown {
     );
 }
 
-function runOperation(
+function runAssertOperation(
   name: string,
   op: Operation,
   state: OperationState
-): void {
-  if (op.op === "record") {
-    recordRouterEvent({
-      phase: stringValue(op, "phase"),
-      requestId: stringValue(op, "requestId"),
-      provider: "claude",
-      model: "sonnet",
-      workspace: { key: stringValue(op, "workspace") },
-      outcome: "success",
-      elapsedMs: 1
-    });
-    return;
+): boolean {
+  if (op.op === "privacyHelper") {
+    assert.equal(
+      safePrivacyWorkspace(op.path),
+      op.expected,
+      `${name}: privacy normalization`
+    );
+    assert.equal(safePrivacyWorkspace(op.path).includes("/Users/"), false);
+    return true;
   }
-  if (op.op === "bridgeRequest") {
-    noteBridgeRequest(stringValue(op, "requestId"), {
-      activitySubject: `req:${stringValue(op, "requestId")}`,
-      provider: stringValue(op, "provider"),
-      model: stringValue(op, "model"),
-      role: stringValue(op, "role"),
-      workspace: stringValue(op, "workspace")
-    });
-    return;
+  if (op.op === "assert") {
+    assert.deepEqual(
+      pathValue(
+        workspace(stringValue(op, "workspace")),
+        stringValue(op, "field")
+      ),
+      op.expected,
+      `${name}: ${stringValue(op, "workspace")}.${stringValue(op, "field")}`
+    );
+    return true;
   }
-  if (op.op === "bridgeEvents") {
-    ingestAgentEvents({
-      requestId: stringValue(op, "requestId"),
-      events: op.events
-    });
-    return;
+  if (op.op === "diagnostics") {
+    assert.deepEqual(
+      pathValue(attributionDiagnosticsStatus(), stringValue(op, "field")),
+      op.expected,
+      `${name}: diagnostics.${stringValue(op, "field")}`
+    );
+    return true;
   }
-  if (op.op === "register") {
-    registerWorkspaceId(op.id, op.workspace);
-    return;
+  if (op.op === "assertAbsentWorkspace") {
+    assert.equal(
+      workspace(stringValue(op, "workspace")),
+      undefined,
+      `${name}: workspace ${stringValue(op, "workspace")} must not be guessed`
+    );
+    return true;
   }
+  if (op.op === "assertEnrichedNoPrompt") {
+    const emitted: Attribute[] = [];
+    for (const resourceLog of state.enriched?.resourceLogs ?? []) {
+      emitted.push(...(resourceLog.resource?.attributes ?? []));
+      for (const scopeLog of resourceLog.scopeLogs ?? []) {
+        for (const record of scopeLog.logRecords ?? [])
+          emitted.push(...(record.attributes ?? []));
+      }
+    }
+    assert.equal(
+      emitted
+        .filter((entry) => entry.key.startsWith("autodev."))
+        .some((entry) => JSON.stringify(entry).includes("secret")),
+      false,
+      `${name}: prompt content must not enter autodev attributes`
+    );
+    const workspaceAttribute = emitted.find(
+      (entry) => entry.key === "autodev.workspace"
+    );
+    assert.equal(
+      workspaceAttribute?.value?.stringValue,
+      stringValue(op, "expectedWorkspace")
+    );
+    return true;
+  }
+  return false;
+}
+
+function runOtelOperation(op: Operation): boolean {
   if (op.op === "metric") {
     ingestOtelSignal("metrics", {
       resourceMetrics: [
@@ -156,16 +188,7 @@ function runOperation(
         }
       ]
     });
-    return;
-  }
-  if (op.op === "privacyHelper") {
-    assert.equal(
-      safePrivacyWorkspace(op.path),
-      op.expected,
-      `${name}: privacy normalization`
-    );
-    assert.equal(safePrivacyWorkspace(op.path).includes("/Users/"), false);
-    return;
+    return true;
   }
   if (op.op === "ambiguousMetric") {
     ingestOtelSignal("metrics", {
@@ -198,7 +221,7 @@ function runOperation(
         }
       ]
     });
-    return;
+    return true;
   }
   if (op.op === "trace") {
     const spans = op.spans as Array<{ name: string; server: string }>;
@@ -221,6 +244,48 @@ function runOperation(
         }
       ]
     });
+    return true;
+  }
+  return false;
+}
+
+function runOperation(
+  name: string,
+  op: Operation,
+  state: OperationState
+): void {
+  if (runAssertOperation(name, op, state) || runOtelOperation(op)) return;
+  if (op.op === "record") {
+    recordRouterEvent({
+      phase: stringValue(op, "phase"),
+      requestId: stringValue(op, "requestId"),
+      provider: "claude",
+      model: "sonnet",
+      workspace: { key: stringValue(op, "workspace") },
+      outcome: "success",
+      elapsedMs: 1
+    });
+    return;
+  }
+  if (op.op === "bridgeRequest") {
+    noteBridgeRequest(stringValue(op, "requestId"), {
+      activitySubject: `req:${stringValue(op, "requestId")}`,
+      provider: stringValue(op, "provider"),
+      model: stringValue(op, "model"),
+      role: stringValue(op, "role"),
+      workspace: stringValue(op, "workspace")
+    });
+    return;
+  }
+  if (op.op === "bridgeEvents") {
+    ingestAgentEvents({
+      requestId: stringValue(op, "requestId"),
+      events: op.events
+    });
+    return;
+  }
+  if (op.op === "register") {
+    registerWorkspaceId(op.id, op.workspace);
     return;
   }
   if (op.op === "enrich") {
@@ -229,58 +294,6 @@ function runOperation(
       "logs",
       payload.logs
     ) as OperationState["enriched"];
-    return;
-  }
-  if (op.op === "assert") {
-    assert.deepEqual(
-      pathValue(
-        workspace(stringValue(op, "workspace")),
-        stringValue(op, "field")
-      ),
-      op.expected,
-      `${name}: ${stringValue(op, "workspace")}.${stringValue(op, "field")}`
-    );
-    return;
-  }
-  if (op.op === "diagnostics") {
-    assert.deepEqual(
-      pathValue(attributionDiagnosticsStatus(), stringValue(op, "field")),
-      op.expected,
-      `${name}: diagnostics.${stringValue(op, "field")}`
-    );
-    return;
-  }
-  if (op.op === "assertAbsentWorkspace") {
-    assert.equal(
-      workspace(stringValue(op, "workspace")),
-      undefined,
-      `${name}: workspace ${stringValue(op, "workspace")} must not be guessed`
-    );
-    return;
-  }
-  if (op.op === "assertEnrichedNoPrompt") {
-    const emitted: Attribute[] = [];
-    for (const resourceLog of state.enriched?.resourceLogs ?? []) {
-      emitted.push(...(resourceLog.resource?.attributes ?? []));
-      for (const scopeLog of resourceLog.scopeLogs ?? []) {
-        for (const record of scopeLog.logRecords ?? [])
-          emitted.push(...(record.attributes ?? []));
-      }
-    }
-    assert.equal(
-      emitted
-        .filter((entry) => entry.key.startsWith("autodev."))
-        .some((entry) => JSON.stringify(entry).includes("secret")),
-      false,
-      `${name}: prompt content must not enter autodev attributes`
-    );
-    const workspaceAttribute = emitted.find(
-      (entry) => entry.key === "autodev.workspace"
-    );
-    assert.equal(
-      workspaceAttribute?.value?.stringValue,
-      stringValue(op, "expectedWorkspace")
-    );
     return;
   }
   throw new Error(`${name}: unknown operation ${op.op}`);

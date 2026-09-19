@@ -8,7 +8,7 @@
 
 import { createHash } from "node:crypto";
 import { existsSync, statSync } from "node:fs";
-import { basename } from "node:path";
+import path from "node:path";
 
 export type SqliteRow = Record<string, unknown>;
 
@@ -163,60 +163,81 @@ export interface StateCollectorOptions {
 // Optional native sqlite binding: prefer the official `node:sqlite` shipped
 // with Node 24+. If unavailable, the collector runs in metadata-only mode and
 // reports `localTelemetry.status: "schema_only"`.
-let nativeSqlite: SqliteBinding | null = null;
-async function loadNativeSqlite(): Promise<SqliteBinding> {
-  if (nativeSqlite !== null) return nativeSqlite;
-  try {
-    const binding = await import("node:sqlite");
-    if (typeof binding.DatabaseSync === "function") {
-      nativeSqlite = {
-        available: true,
-        open: (path: string) =>
-          new binding.DatabaseSync(path, {
-            readOnly: true
-          }) as unknown as SqliteDatabase
-      };
-    } else {
-      nativeSqlite = {
-        available: false,
-        open: () => {
-          throw new Error("node:sqlite is unavailable");
-        }
-      };
-    }
-  } catch {
-    nativeSqlite = {
-      available: false,
-      open: () => {
-        throw new Error("node:sqlite is unavailable");
-      }
-    };
+//
+// The loader memoizes the *promise* (not the resolved binding) so concurrent
+// callers share a single in-flight import and the result is assigned exactly
+// once. Storing the resolved value in a module-scoped `let` and writing it
+// after `await` would re-trigger `require-atomic-updates`.
+const SQLITE_BINDING_UNAVAILABLE: SqliteBinding = {
+  available: false,
+  open: () => {
+    throw new Error("node:sqlite is unavailable");
   }
-  return nativeSqlite;
-}
+};
+
+const loadNativeSqlite = ((): SqliteLoader => {
+  let pending: Promise<SqliteBinding> | null = null;
+  return () => {
+    if (!pending) {
+      pending = (async (): Promise<SqliteBinding> => {
+        try {
+          const binding = await import("node:sqlite");
+          if (typeof binding.DatabaseSync === "function") {
+            return {
+              available: true,
+              open: (filePath: string) =>
+                new binding.DatabaseSync(filePath, {
+                  readOnly: true
+                }) as unknown as SqliteDatabase
+            };
+          }
+        } catch {
+          /* fall through to the unavailable binding */
+        }
+        return SQLITE_BINDING_UNAVAILABLE;
+      })();
+    }
+    return pending;
+  };
+})();
+
+// Repository and label regular expressions, hoisted to module scope so the
+// runtime only compiles them once for the lifetime of the process.
+const REPO_GIT_SCP_REGEX = /^git@([^:]+):/;
+const REPO_URL_FRAGMENT_REGEX = /[?#]/;
+const REPO_PATH_PART_REGEX = /[^A-Za-z0-9._-]/g;
+const REPO_GIT_SUFFIX_REGEX = /\.git$/i;
 
 function workspacePathLabel(value: unknown): string | null {
   if (typeof value !== "string" || !value.trim()) return null;
-  const label = basename(value.trim());
+  const label = path.basename(value.trim());
   return label && label !== "." && label !== "/" ? label : null;
+}
+
+// Parse a repository URL into a pathname, gracefully handling inputs that
+// `URL` cannot parse (e.g. bare SSH-style strings without a scheme).
+function parseRepositoryPathname(normalized: string): string {
+  try {
+    return new URL(normalized).pathname;
+  } catch {
+    return normalized.split(REPO_URL_FRAGMENT_REGEX, 1)[0] ?? "";
+  }
 }
 
 function repositoryIdentity(remote: unknown): string | null {
   if (typeof remote !== "string" || !remote.trim()) return null;
-  const normalized = remote.trim().replace(/^git@([^:]+):/, "https://$1/");
-  let pathname = "";
-  try {
-    pathname = new URL(normalized).pathname;
-  } catch {
-    pathname = normalized.split(/[?#]/, 1)[0] ?? "";
-  }
+  const normalized = remote.trim().replace(
+    REPO_GIT_SCP_REGEX,
+    "https://$1/"
+  );
+  const pathname = parseRepositoryPathname(normalized);
   const parts = pathname
     .split("/")
     .filter(Boolean)
-    .map((part) => part.replace(/\.git$/i, ""));
+    .map((part) => part.replace(REPO_GIT_SUFFIX_REGEX, ""));
   if (parts.length < 2) return null;
-  const owner = parts.at(-2)?.replaceAll(/[^A-Za-z0-9._-]/g, "") ?? "";
-  const repo = parts.at(-1)?.replaceAll(/[^A-Za-z0-9._-]/g, "") ?? "";
+  const owner = parts.at(-2)?.replaceAll(REPO_PATH_PART_REGEX, "") ?? "";
+  const repo = parts.at(-1)?.replaceAll(REPO_PATH_PART_REGEX, "") ?? "";
   return owner && repo ? `${owner}/${repo}` : null;
 }
 
@@ -241,13 +262,24 @@ function safeWorkspaceId(value: unknown): string | null {
   return trimmed.slice(0, 100);
 }
 
+// Strip ASCII control characters from a metric label. Implemented with
+// String.prototype.charCodeAt instead of a regex with control characters,
+// because eslint-plugin-regexp/no-control-regex forbids raw control
+// characters in regular expression patterns.
+function stripAsciiControlCharacters(value: string): string {
+  let stripped = "";
+  for (let index = 0; index < value.length; index += 1) {
+    const code = value.charCodeAt(index);
+    if (code < 0x20 || code === 0x7f) continue;
+    stripped += value[index];
+  }
+  return stripped;
+}
+
 function safeMetricLabel(value: unknown, fallback = "unknown"): string {
   if (typeof value !== "string" || !value.trim()) return fallback;
   return (
-    value
-      .trim()
-      .replaceAll(/[\u0000-\u001F\u007F]/g, "")
-      .slice(0, 100) || fallback
+    stripAsciiControlCharacters(value.trim()).slice(0, 100) || fallback
   );
 }
 
@@ -536,6 +568,7 @@ export class CodexStateCollector {
               /* subscriber errors are isolated */
             }
           }
+          return undefined;
         })
         .finally(() => {
           busy = false;
@@ -731,101 +764,179 @@ function collectRecentThreads(
   }
 }
 
+// Read an optional string column, returning `null` when the column is
+// absent from the schema. Centralising this pattern keeps the row
+// projector readable and lets the cognitive-complexity rule measure one
+// decision per column rather than three nested ternaries.
+function readOptionalStringColumn(
+  row: SqliteRow,
+  present: Record<string, boolean>,
+  column: string
+): string | null {
+  return present[column] ? stringOrNull(rowValue(row, column)) : null;
+}
+
+// Read an optional millisecond integer column, preferring the `_ms` variant
+// over the seconds-precision fallback when both are present.
+function readOptionalMsColumn(
+  row: SqliteRow,
+  present: Record<string, boolean>,
+  msColumn: string,
+  secondsColumn: string
+): number | null {
+  if (present[msColumn]) return readInteger(rowValue(row, msColumn));
+  if (present[secondsColumn])
+    return readInteger(rowValue(row, secondsColumn), 1000);
+  return null;
+}
+
+// Read an optional metric label column, returning `fallback` (or `null`) when
+// the column is absent.
+function readOptionalLabelColumn(
+  row: SqliteRow,
+  present: Record<string, boolean>,
+  column: string,
+  fallback: string | null
+): string | null {
+  if (!present[column]) return fallback;
+  return safeMetricLabel(rowValue(row, column), fallback ?? "unknown");
+}
+
+// Read an optional boolean column, returning `false` when the column is
+// absent.
+function readOptionalBooleanColumn(
+  row: SqliteRow,
+  present: Record<string, boolean>,
+  column: string
+): boolean {
+  return present[column] ? Boolean(rowValue(row, column)) : false;
+}
+
+function projectThreadWorkspaceMetadata(
+  cwd: string | null,
+  repository: string | null,
+  basenameLabel: string | null
+): {
+  projectKey: string;
+  workspaceIdentity: string | null;
+  workspaceKey: string;
+  workspaceSource: "git_origin_url" | "cwd" | "unknown";
+  attributionConfidence:
+    | "confirmed_git_origin"
+    | "cwd_fallback"
+    | "unattributed";
+} {
+  const projectKey = repository ?? basenameLabel ?? "unknown";
+  const workspaceSource: "git_origin_url" | "cwd" | "unknown" = repository
+    ? "git_origin_url"
+    : basenameLabel
+      ? "cwd"
+      : "unknown";
+  const attributionConfidence:
+    | "confirmed_git_origin"
+    | "cwd_fallback"
+    | "unattributed" = repository
+    ? "confirmed_git_origin"
+    : basenameLabel
+      ? "cwd_fallback"
+      : "unattributed";
+  return {
+    projectKey,
+    workspaceIdentity: safeWorkspaceId(cwd),
+    workspaceKey: projectKey,
+    workspaceSource,
+    attributionConfidence
+  };
+}
+
 function projectThreadRow(
   row: SqliteRow,
   present: Record<string, boolean>
 ): StateThread {
   const id = stringOrNull(rowValue(row, "id"));
-  const cwd = present.cwd ? stringOrNull(rowValue(row, "cwd")) : null;
-  const origin = present.git_origin_url
-    ? stringOrNull(rowValue(row, "git_origin_url"))
-    : null;
-  const repository = repositoryIdentity(origin);
+  const cwd = readOptionalStringColumn(row, present, "cwd");
+  const repository = repositoryIdentity(
+    readOptionalStringColumn(row, present, "git_origin_url")
+  );
   const basenameLabel = workspacePathLabel(cwd);
-  const projectKey = repository ?? basenameLabel ?? "unknown";
-  const workspaceIdentity = safeWorkspaceId(cwd);
-  const workspaceKey = projectKey;
-  const projectId = present.project_id
-    ? stringOrNull(rowValue(row, "project_id"))
-    : null;
-  const sectionId = present.thread_section_id
-    ? stringOrNull(rowValue(row, "thread_section_id"))
-    : null;
-  const updatedAtMs = present.updated_at_ms
-    ? readInteger(rowValue(row, "updated_at_ms"))
-    : present.updated_at
-      ? readInteger(rowValue(row, "updated_at"), 1000)
-      : null;
-  const createdAtMs = present.created_at_ms
-    ? readInteger(rowValue(row, "created_at_ms"))
-    : present.created_at
-      ? readInteger(rowValue(row, "created_at"), 1000)
-      : null;
-  const recencyAtMs = present.recency_at_ms
-    ? readInteger(rowValue(row, "recency_at_ms"))
-    : present.recency_at
-      ? readInteger(rowValue(row, "recency_at"), 1000)
-      : null;
+  const workspace = projectThreadWorkspaceMetadata(
+    cwd,
+    repository,
+    basenameLabel
+  );
   return {
     id,
-    projectKey,
-    workspaceKey,
-    workspaceIdentity,
+    projectKey: workspace.projectKey,
+    workspaceKey: workspace.workspaceKey,
+    workspaceIdentity: workspace.workspaceIdentity,
     displayName: basenameLabel,
-    workspaceSource: repository
-      ? "git_origin_url"
-      : basenameLabel
-        ? "cwd"
-        : "unknown",
-    attributionConfidence: repository
-      ? "confirmed_git_origin"
-      : basenameLabel
-        ? "cwd_fallback"
-        : "unattributed",
+    workspaceSource: workspace.workspaceSource,
+    attributionConfidence: workspace.attributionConfidence,
     cwdBasename: basenameLabel,
     repository,
-    projectId,
-    sectionId,
-    modelProvider: present.model_provider
-      ? safeMetricLabel(rowValue(row, "model_provider"))
-      : null,
-    source: present.source ? safeMetricLabel(rowValue(row, "source")) : null,
-    threadSource: present.thread_source
-      ? safeMetricLabel(rowValue(row, "thread_source"))
-      : null,
-    agentRole: present.agent_role
-      ? safeMetricLabel(rowValue(row, "agent_role"), "unknown")
-      : null,
-    agentNickname: present.agent_nickname
-      ? safeMetricLabel(rowValue(row, "agent_nickname"), "")
-      : null,
-    model: present.model
-      ? safeMetricLabel(rowValue(row, "model"), "unknown")
-      : null,
-    reasoningEffort: present.reasoning_effort
-      ? safeMetricLabel(rowValue(row, "reasoning_effort"), "")
-      : null,
-    historyMode: present.history_mode
-      ? safeMetricLabel(rowValue(row, "history_mode"), "legacy")
-      : "legacy",
-    archived: present.archived ? Boolean(rowValue(row, "archived")) : false,
-    archivedAtMs: present.archived_at
-      ? readInteger(rowValue(row, "archived_at"), 1000)
-      : null,
-    hasUserEvent: present.has_user_event
-      ? Boolean(rowValue(row, "has_user_event"))
-      : false,
-    tokensUsed: present.tokens_used
-      ? (readInteger(rowValue(row, "tokens_used")) ?? 0)
-      : 0,
-    updatedAtMs,
-    createdAtMs,
-    recencyAtMs,
-    gitBranch: present.git_branch
-      ? safeMetricLabel(rowValue(row, "git_branch"), "")
-      : null,
+    projectId: readOptionalStringColumn(row, present, "project_id"),
+    sectionId: readOptionalStringColumn(row, present, "thread_section_id"),
+    modelProvider: readOptionalLabelColumn(
+      row,
+      present,
+      "model_provider",
+      null
+    ),
+    source: readOptionalLabelColumn(row, present, "source", null),
+    threadSource: readOptionalLabelColumn(row, present, "thread_source", null),
+    agentRole: readOptionalLabelColumn(row, present, "agent_role", "unknown"),
+    agentNickname: readOptionalLabelColumn(
+      row,
+      present,
+      "agent_nickname",
+      ""
+    ),
+    model: readOptionalLabelColumn(row, present, "model", "unknown"),
+    reasoningEffort: readOptionalLabelColumn(
+      row,
+      present,
+      "reasoning_effort",
+      ""
+    ),
+    historyMode: readOptionalLabelColumn(
+      row,
+      present,
+      "history_mode",
+      "legacy"
+    ) ?? "legacy",
+    archived: readOptionalBooleanColumn(row, present, "archived"),
+    archivedAtMs: readOptionalMsColumn(
+      row,
+      present,
+      "archived_at_ms",
+      "archived_at"
+    ),
+    hasUserEvent: readOptionalBooleanColumn(row, present, "has_user_event"),
+    tokensUsed:
+      present.tokens_used && readInteger(rowValue(row, "tokens_used")) !== null
+        ? (readInteger(rowValue(row, "tokens_used")) ?? 0)
+        : 0,
+    updatedAtMs: readOptionalMsColumn(
+      row,
+      present,
+      "updated_at_ms",
+      "updated_at"
+    ),
+    createdAtMs: readOptionalMsColumn(
+      row,
+      present,
+      "created_at_ms",
+      "created_at"
+    ),
+    recencyAtMs: readOptionalMsColumn(
+      row,
+      present,
+      "recency_at_ms",
+      "recency_at"
+    ),
+    gitBranch: readOptionalLabelColumn(row, present, "git_branch", ""),
     gitOriginUrl: repository,
-    isPinned: present.is_pinned ? Boolean(rowValue(row, "is_pinned")) : false
+    isPinned: readOptionalBooleanColumn(row, present, "is_pinned")
   };
 }
 

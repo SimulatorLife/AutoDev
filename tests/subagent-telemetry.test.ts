@@ -1,14 +1,12 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { readFileSync } from "node:fs";
-import type { Server } from "node:http";
-import { createServer } from "node:http";
+import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { promisify } from "node:util";
 
 import {
   agyArgs,
@@ -39,6 +37,7 @@ import {
 } from "../src/providers/copilot.ts";
 import {
   AGENT_EVENTS_URL_HEADER,
+  type AgentEventReporter,
   REQUEST_ID_HEADER,
   resolveAgentEventReporter,
   resolveSkillReadReporter,
@@ -60,8 +59,6 @@ const close = (server: Server): Promise<void> =>
   new Promise((resolve, reject) => {
     server.close((error) => (error ? reject(error) : resolve()));
   });
-
-const execFileAsync = promisify(execFile);
 
 const read = (path: string) => {
   const text = readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
@@ -758,7 +755,7 @@ function recordingReporter() {
     reportResults: async (event: unknown) => {
       results.push(event);
     }
-  } as unknown as import("../src/telemetry/agent-events.ts").AgentEventReporter & {
+  } as unknown as AgentEventReporter & {
     spawns: any[];
     results: any[];
   };
@@ -1100,7 +1097,7 @@ test("the Antigravity bridge observes and reports tool requests, executions, and
       events.push({ type: "tool_executed", ...e }),
     reportToolUnavailable: async (e: any) =>
       events.push({ type: "tool_unavailable", ...e })
-  } as unknown as import("../src/telemetry/agent-events.ts").AgentEventReporter;
+  } as unknown as AgentEventReporter;
 
   const { observeToolStep, reportPermissionDenial } =
     createToolObserver(fakeReporter);
@@ -1357,10 +1354,8 @@ test("the Claude bridge posts tool and skill telemetry through the shared report
     });
   });
   const port = await listen(server);
-  const address = server.address();
-  assert.ok(address && typeof address !== "string");
   const reporter = resolveAgentEventReporter({
-    [AGENT_EVENTS_URL_HEADER]: `http://127.0.0.1:${address.port}/v1/agent-events`,
+    [AGENT_EVENTS_URL_HEADER]: `http://127.0.0.1:${port}/v1/agent-events`,
     [REQUEST_ID_HEADER]: "req-claude-1",
     [SUBAGENT_SPAWN_TOOLS_HEADER]: "Agent"
   });
@@ -1855,7 +1850,7 @@ test("the Antigravity bridge detects a successful canonical SKILL.md read", asyn
     reportToolExecuted: async () => {},
     reportToolUnavailable: async () => {},
     reportSkillUsed: async (e: any) => events.push(e)
-  } as unknown as import("../src/telemetry/agent-events.ts").AgentEventReporter;
+  } as unknown as AgentEventReporter;
   const { observeToolStep } = createToolObserver(fakeReporter);
 
   // A successful read reports skill_used, correlated to the tool call id.
@@ -2029,7 +2024,7 @@ test("the Copilot bridge detects a successful canonical SKILL.md read", () => {
   const events: any[] = [];
   const fakeReporter = {
     reportSkillUsed: async (e: any) => events.push(e)
-  } as unknown as import("../src/telemetry/agent-events.ts").AgentEventReporter;
+  } as unknown as AgentEventReporter;
   reportToolObservation(fakeReporter, {
     type: "skill_used",
     skill: "ccc",

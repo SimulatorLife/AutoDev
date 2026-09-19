@@ -1,5 +1,4 @@
 import assert from "node:assert/strict";
-import { EventEmitter } from "node:events";
 import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -11,14 +10,17 @@ import {
   ingestAgentEvents,
   loadCatalog,
   requestSession,
-  workspaceContextFromRequest
+  workspaceContextFromRequest,
+  workspaceMetadataForSession
 } from "../../src/router/http.ts";
 import {
+  getWorkspaceMetadata,
   noteBridgeRequest,
+  rememberWorkspaceMetadata,
   resetSubagentTelemetry
 } from "../../src/router/subagents.ts";
 
-class FakeRequest extends EventEmitter {
+class FakeRequest extends EventTarget {
   method: string;
   url: string;
   headers: Record<string, string>;
@@ -199,4 +201,55 @@ test("agent event ingestion accepts activity only for a router-owned request", (
     ingestAgentEvents({ requestId: "unknown", events: [] }).reason,
     "unknown_request_id"
   );
+});
+
+test("canonical Codex session-id header identifies metadata-less continuation and restores remembered workspace", () => {
+  // Repro of the RacingGame compaction failure: Codex 0.154.0+ sends the
+  // canonical `session-id` header on every request. Before the fix the
+  // resolver ignored that header and the request collapsed to the
+  // process-wide fallback session, so workspaceMetadataForSession never
+  // restored the previously-remembered workspace and the bridge received
+  // `workspace=unknown/cwd=null`.
+  resetSubagentTelemetry();
+  const sessionKey = "01a0ba14-d54c-78f2-9367-3f80e9a8f75f";
+  const remembered = "/Users/henrykirk/Desktop/RacingGame";
+  rememberWorkspaceMetadata(sessionKey, remembered);
+  try {
+    // Metadata-less compaction/continuation: no legacy alias headers,
+    // no payload workspace, no turn-metadata header.
+    const canonicalRequest = { headers: { "session-id": ` ${sessionKey} ` } };
+    const session = requestSession(canonicalRequest as any, {});
+    assert.deepEqual(session, {
+      key: sessionKey,
+      scope: "identified",
+      thread: null
+    });
+
+    // Sanity: the same canonical-header-only request was previously returning
+    // the process-wide fallback key. Without the fix this assertion would
+    // fail (the lookup returns null), which is the exact regression.
+    assert.ok(getWorkspaceMetadata(session.key));
+
+    // workspaceMetadataForSession must now restore the remembered workspace
+    // turn-metadata so the bridge downstream sees workspace metadata again.
+    const restored = workspaceMetadataForSession({}, null, session);
+    assert.ok(restored, "expected a restored turn-metadata header");
+    const parsed = JSON.parse(restored!);
+    assert.ok(parsed.workspaces, "expected turn-metadata to carry workspaces");
+    assert.ok(
+      Object.hasOwn(parsed.workspaces, remembered),
+      `expected remembered path ${remembered} in restored turn-metadata, got ${JSON.stringify(
+        parsed.workspaces
+      )}`
+    );
+
+    // The pre-fix behavior must still hold: a request that omits every
+    // session-id signal falls back to the process-wide bucket and never
+    // fan-outs into another session's remembered workspace.
+    const anonymous = requestSession({ headers: {} } as any, {});
+    assert.equal(anonymous.scope, "process-fallback");
+    assert.equal(workspaceMetadataForSession({}, null, anonymous), null);
+  } finally {
+    resetSubagentTelemetry();
+  }
 });

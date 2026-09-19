@@ -1086,6 +1086,16 @@ export function resolveTurnMetadataHeader(
  * share it) and the thread itself. Codex 0.154.0 sends both on every request
  * -- `session-id`/`thread-id` headers, `client_metadata`, and turn metadata --
  * and a subagent's thread differs from its session.
+ *
+ * The canonical Codex 0.154.0+ header (`session-id`) is recognized at the top
+ * of the precedence list so a metadata-less continuation/compaction request
+ * that supplies only the canonical header is still identified as the same
+ * session whose workspace metadata was previously remembered, instead of
+ * falling back to the process-wide anonymous bucket. The legacy
+ * `x-codex-session-id`/`x-session-id`/`x-conversation-id` aliases remain in
+ * the precedence list so already-remembered workspace metadata continues to
+ * resolve for older callers. The thread header is resolved the same way
+ * (`thread-id` first, then `x-codex-thread-id` as the legacy alias).
  */
 export function requestSession(
   request: IncomingMessage,
@@ -1096,6 +1106,11 @@ export function requestSession(
   scope: "identified" | "process-fallback";
   thread: string | null;
 } {
+  // Canonical Codex 0.154.0+ header takes precedence so a request that only
+  // carries `session-id` (e.g. an auto_compact continuation that is
+  // metadata-less) still resolves to the same identified session and the
+  // remembered workspace metadata can be restored.
+  const canonicalHeader = request.headers["session-id"];
   const header =
     request.headers["x-codex-session-id"] ??
     request.headers["x-session-id"] ??
@@ -1103,6 +1118,7 @@ export function requestSession(
   const metadata = payload?.metadata as Record<string, unknown> | undefined;
   const turnMetadata = parseTurnMetadataJson(turnMetadataHeader);
   const value =
+    (Array.isArray(canonicalHeader) ? canonicalHeader[0] : canonicalHeader) ??
     (Array.isArray(header) ? header[0] : header) ??
     (payload?.session_id as string | undefined) ??
     (payload?.conversation_id as string | undefined) ??

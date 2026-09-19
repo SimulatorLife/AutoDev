@@ -554,7 +554,10 @@ The router makes its effective choice visible in two ways:
   That fallback is a single shared bucket: unrelated sessions that omit an
   identifier can deny one another. The router cannot infer a logical session
   from an anonymous HTTP request, so callers must propagate
-  `x-codex-session-id` (or an equivalent supported field) for true independent
+  the canonical Codex `session-id` header for true independent per-session
+  capacity. The resolver also accepts `x-codex-session-id`, `x-session-id`, or
+  `x-conversation-id` as legacy aliases, and falls back to payload/turn
+  metadata when the header is absent.
   per-session capacity. `/status` exposes `processFallbackEnforcement` and
   `processFallbackActiveThreads` to make this unsafe fallback visible.
 - They also aggregate usage by origin (`orchestrator`,

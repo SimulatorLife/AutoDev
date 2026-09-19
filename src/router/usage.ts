@@ -9,6 +9,7 @@ import { safeMetricLabel } from "./subagents.ts";
 
 export const UNATTRIBUTED_DIMENSION = "unattributed";
 export const MAX_UNKNOWN_WORKSPACE_IDS = 100;
+const STRING_COLLATOR = new Intl.Collator();
 
 export interface UsageFailureInfo {
   timestamp: string;
@@ -128,7 +129,7 @@ export interface ProjectedAgent {
 
 export interface LiveAgentsProjection {
   at: number;
-  directAgents: any[];
+  directAgents: Record<string, unknown>[];
   allLiveAgents: ProjectedAgent[];
   canonicalTotal: number;
   missingProvider: number;
@@ -141,7 +142,7 @@ export interface LiveAgentsProjection {
 }
 
 export interface UsageStatus {
-  activity: any;
+  activity: Record<string, unknown>;
   totals: UsageBucket & { active: number; averageDurationMs: number };
   byRole: Record<
     string,
@@ -155,7 +156,7 @@ export interface UsageStatus {
     string,
     UsageBucket & { active: number; averageDurationMs: number }
   >;
-  byWorkspace: Record<string, any>;
+  byWorkspace: Record<string, unknown>;
 }
 
 export interface UsagePersistenceSnapshot {
@@ -186,7 +187,7 @@ export interface RecordUsageEventParams {
 }
 
 export interface UsageTrackerOptions {
-  activityTracker?: any;
+  activityTracker?: Record<string, unknown>;
   roleNames?: readonly string[];
 }
 
@@ -313,7 +314,7 @@ export function extractWorkspaceIdWithAmbiguity(attributes: unknown): {
 }
 
 export function readNamedAttribute(
-  attributes: any,
+  attributes: Record<string, unknown>,
   fallback: string,
   ...keys: string[]
 ): string {
@@ -326,7 +327,7 @@ export function readNamedAttribute(
 }
 
 export function toolServerAttribute(
-  attributes: any,
+  attributes: Record<string, unknown>,
   fallback: string = ""
 ): string {
   return readNamedAttribute(
@@ -340,7 +341,7 @@ export function toolServerAttribute(
 }
 
 export function toolNameAttribute(
-  attributes: any,
+  attributes: Record<string, unknown>,
   fallback: string = "unknown-tool"
 ): string {
   return readNamedAttribute(
@@ -352,7 +353,7 @@ export function toolNameAttribute(
   );
 }
 
-export function toolKey(attributes: any): string {
+export function toolKey(attributes: Record<string, unknown>): string {
   return [
     toolNameAttribute(attributes),
     safeMetricLabel(attributes?.source),
@@ -371,7 +372,8 @@ export function formatWorkspaceTools(
       : 0,
     byStatus: { ...tool.byStatus }
   })).sort((a, b) =>
-    `${a.tool}/${a.source}/${a.server}`.localeCompare(
+    STRING_COLLATOR.compare(
+      `${a.tool}/${a.source}/${a.server}`,
       `${b.tool}/${b.source}/${b.server}`
     )
   );
@@ -388,7 +390,7 @@ export function formatWorkspaceSkills(
     byAgentKind: { ...skill.byAgentKind },
     byModel: { ...skill.byModel },
     byPlugin: { ...skill.byPlugin }
-  })).sort((a, b) => a.skill.localeCompare(b.skill));
+  })).sort((a, b) => STRING_COLLATOR.compare(a.skill, b.skill));
 }
 
 export function formatWorkspaceMcpExposed(
@@ -396,7 +398,7 @@ export function formatWorkspaceMcpExposed(
 ): WorkspaceMcpEntry[] {
   if (!mcpExposedMap) return [];
   return Array.from(mcpExposedMap.values(), (row) => ({ ...row })).sort(
-    (a, b) => a.server.localeCompare(b.server)
+    (a, b) => STRING_COLLATOR.compare(a.server, b.server)
   );
 }
 
@@ -405,10 +407,10 @@ export function formatWorkspaceMcpUses(
 ): WorkspaceMcpEntry[] {
   return Object.entries(byMcp ?? {})
     .map(([server, count]) => ({ server, count }))
-    .sort((a, b) => a.server.localeCompare(b.server));
+    .sort((a, b) => STRING_COLLATOR.compare(a.server, b.server));
 }
 
-export function restoreUsageBucket(target: UsageBucket, saved: any): void {
+export function restoreUsageBucket(target: UsageBucket, saved: Record<string, unknown>): void {
   if (!saved || typeof saved !== "object") return;
   for (const field of [
     "attempts",
@@ -439,52 +441,27 @@ export function usageBucket(
   return collection[key];
 }
 
-export function workspaceBucket(
-  collection: Record<string, WorkspaceUsageBucket>,
-  key: string,
-  cwd: string | null = null
-): WorkspaceUsageBucket {
-  if (!collection[key]) {
-    collection[key] = {
-      ...emptyUsageBucket(),
-      cwd,
-      skillUses: 0,
-      skillContextsInjected: 0,
-      byRole: {},
-      byModel: {},
-      byProvider: {},
-      byMcp: {},
-      tools: new Map(),
-      skills: new Map(),
-      toolsUnattributed: 0,
-      skillsUnattributed: 0,
-      toolsExecuted: 0,
-      toolsRequested: 0,
-      toolsUnavailable: 0,
-      skillsExposed: 0,
-      toolsCapable: false,
-      skillsCapable: false,
-      mcpCapable: false,
-      mcpExposed: new Map(),
-      bridgeObservations: {
-        tools: new Map(),
-        skills: new Map()
-      }
-    };
-  }
-  const bucket = collection[key];
+function createWorkspaceBucket(cwd: string | null): WorkspaceUsageBucket {
+  return {
+    ...emptyUsageBucket(), cwd, skillUses: 0, skillContextsInjected: 0,
+    byRole: {}, byModel: {}, byProvider: {}, byMcp: {}, tools: new Map(),
+    skills: new Map(), toolsUnattributed: 0, skillsUnattributed: 0,
+    toolsExecuted: 0, toolsRequested: 0, toolsUnavailable: 0, skillsExposed: 0,
+    toolsCapable: false, skillsCapable: false, mcpCapable: false,
+    mcpExposed: new Map(), bridgeObservations: { tools: new Map(), skills: new Map() }
+  };
+}
+
+function normalizeWorkspaceBucket(bucket: WorkspaceUsageBucket, cwd: string | null): WorkspaceUsageBucket {
   if (cwd && !bucket.cwd) bucket.cwd = cwd;
   if (!bucket.byMcp) bucket.byMcp = {};
   if (!bucket.tools) bucket.tools = new Map();
   if (!bucket.skills) bucket.skills = new Map();
   if (!bucket.mcpExposed) bucket.mcpExposed = new Map();
   if (typeof bucket.skillUses !== "number") bucket.skillUses = 0;
-  if (typeof bucket.skillContextsInjected !== "number")
-    bucket.skillContextsInjected = 0;
-  if (typeof bucket.toolsUnattributed !== "number")
-    bucket.toolsUnattributed = 0;
-  if (typeof bucket.skillsUnattributed !== "number")
-    bucket.skillsUnattributed = 0;
+  if (typeof bucket.skillContextsInjected !== "number") bucket.skillContextsInjected = 0;
+  if (typeof bucket.toolsUnattributed !== "number") bucket.toolsUnattributed = 0;
+  if (typeof bucket.skillsUnattributed !== "number") bucket.skillsUnattributed = 0;
   if (typeof bucket.toolsExecuted !== "number") bucket.toolsExecuted = 0;
   if (typeof bucket.toolsRequested !== "number") bucket.toolsRequested = 0;
   if (typeof bucket.toolsUnavailable !== "number") bucket.toolsUnavailable = 0;
@@ -492,13 +469,17 @@ export function workspaceBucket(
   if (typeof bucket.toolsCapable !== "boolean") bucket.toolsCapable = false;
   if (typeof bucket.skillsCapable !== "boolean") bucket.skillsCapable = false;
   if (typeof bucket.mcpCapable !== "boolean") bucket.mcpCapable = false;
-  if (!bucket.bridgeObservations)
-    bucket.bridgeObservations = { tools: new Map(), skills: new Map() };
-  if (!bucket.bridgeObservations.tools)
-    bucket.bridgeObservations.tools = new Map();
-  if (!bucket.bridgeObservations.skills)
-    bucket.bridgeObservations.skills = new Map();
+  if (!bucket.bridgeObservations) bucket.bridgeObservations = { tools: new Map(), skills: new Map() };
+  if (!bucket.bridgeObservations.tools) bucket.bridgeObservations.tools = new Map();
+  if (!bucket.bridgeObservations.skills) bucket.bridgeObservations.skills = new Map();
   return bucket;
+}
+
+export function workspaceBucket(
+  collection: Record<string, WorkspaceUsageBucket>, key: string, cwd: string | null = null
+): WorkspaceUsageBucket {
+  if (!collection[key]) collection[key] = createWorkspaceBucket(cwd);
+  return normalizeWorkspaceBucket(collection[key], cwd);
 }
 
 export function workspaceMcpBucket(
@@ -513,7 +494,7 @@ export function workspaceMcpBucket(
 
 export function workspaceToolBucket(
   wsBucket: WorkspaceUsageBucket,
-  attributes: any
+  attributes: Record<string, unknown>
 ): WorkspaceTool {
   if (!wsBucket.tools) wsBucket.tools = new Map();
   const tool = toolNameAttribute(attributes);
@@ -575,7 +556,7 @@ export function matchesProjectedAgent(
   agent: ProjectedAgent,
   dimension: string,
   key: string,
-  extraFilter: Record<string, any> = {}
+  extraFilter: Record<string, unknown> = {}
 ): boolean {
   if (extraFilter.workspace !== undefined) {
     const wsTarget = extraFilter.workspace ?? UNATTRIBUTED_DIMENSION;
@@ -607,85 +588,80 @@ export function matchesProjectedAgent(
   return false;
 }
 
+function populateUsageSnapshot(
+  result: Record<string, UsageBucket & { active: number; averageDurationMs: number }>,
+  collection: Record<string, UsageBucket> | undefined,
+  dimension: string,
+  projection: LiveAgentsProjection,
+  extraFilter: Record<string, unknown>
+): void {
+  for (const [key, bucket] of Object.entries(collection ?? {})) {
+    if ((dimension === "provider" || dimension === "model") && key === UNATTRIBUTED_DIMENSION) continue;
+    const active = projection.allLiveAgents.filter((agent) => matchesProjectedAgent(agent, dimension, key, extraFilter)).length;
+    result[key] = {
+      ...bucket,
+      active,
+      averageDurationMs: bucket.successes + bucket.failures > 0
+        ? Math.round(bucket.durationMs / (bucket.successes + bucket.failures)) : 0
+    };
+  }
+}
+
+function liveSnapshotKeys(
+  dimension: string,
+  projection: LiveAgentsProjection,
+  extraFilter: Record<string, unknown>
+): Set<string> {
+  const keys = new Set<string>();
+  if (dimension === "role") keys.add("orchestrator");
+  for (const agent of projection.allLiveAgents) {
+    if (extraFilter.workspace !== undefined && (agent.workspace ?? UNATTRIBUTED_DIMENSION) !== (extraFilter.workspace ?? UNATTRIBUTED_DIMENSION)) continue;
+    if (dimension === "role") keys.add(agent.role ?? UNATTRIBUTED_DIMENSION);
+    else if (dimension === "origin") keys.add(agent.origin ?? UNATTRIBUTED_DIMENSION);
+    else if (dimension === "provider" && agent.provider) keys.add(agent.provider);
+    else if (dimension === "model" && agent.provider && agent.model) {
+      keys.add(agent.model.startsWith(`${agent.provider}/`) ? agent.model : `${agent.provider}/${agent.model}`);
+    } else if (dimension === "workspace") keys.add(agent.workspace ?? UNATTRIBUTED_DIMENSION);
+  }
+  return keys;
+}
+
+function addMissingLiveSnapshotKeys(
+  result: Record<string, UsageBucket & { active: number; averageDurationMs: number }>,
+  keys: Set<string>, dimension: string, projection: LiveAgentsProjection,
+  extraFilter: Record<string, unknown>
+): void {
+  for (const key of keys) {
+    if (result[key]) continue;
+    const active = projection.allLiveAgents.filter((agent) => matchesProjectedAgent(agent, dimension, key, extraFilter)).length;
+    if (active > 0 || (dimension === "role" && key === "orchestrator")) {
+      result[key] = { ...emptyUsageBucket(), active, averageDurationMs: 0 };
+    }
+  }
+}
+
 export function usageSnapshot(
   collection: Record<string, UsageBucket> | undefined,
   dimension: string,
   projection: LiveAgentsProjection,
-  extraFilter: Record<string, any> = {}
+  extraFilter: Record<string, unknown> = {}
 ): Record<string, UsageBucket & { active: number; averageDurationMs: number }> {
-  const activeProj = projection;
-  const result: Record<
-    string,
-    UsageBucket & { active: number; averageDurationMs: number }
-  > = {};
-
-  for (const [key, bucket] of Object.entries(collection ?? {})) {
-    if (
-      (dimension === "provider" || dimension === "model") &&
-      key === UNATTRIBUTED_DIMENSION
-    )
-      continue;
-    result[key] = {
-      ...bucket,
-      active: activeProj.allLiveAgents.filter((a) =>
-        matchesProjectedAgent(a, dimension, key, extraFilter)
-      ).length,
-      averageDurationMs:
-        bucket.successes + bucket.failures > 0
-          ? Math.round(bucket.durationMs / (bucket.successes + bucket.failures))
-          : 0
-    };
-  }
-
-  // Ensure relevant keys with active live agents (or orchestrator for role) are present
-  const liveKeys = new Set<string>();
-  if (dimension === "role") {
-    liveKeys.add("orchestrator");
-  }
-  for (const agent of activeProj.allLiveAgents) {
-    if (extraFilter.workspace !== undefined) {
-      const wsTarget = extraFilter.workspace ?? UNATTRIBUTED_DIMENSION;
-      const wsAgent = agent.workspace ?? UNATTRIBUTED_DIMENSION;
-      if (wsAgent !== wsTarget) continue;
-    }
-    if (dimension === "role")
-      liveKeys.add(agent.role ?? UNATTRIBUTED_DIMENSION);
-    else if (dimension === "origin")
-      liveKeys.add(agent.origin ?? UNATTRIBUTED_DIMENSION);
-    else if (dimension === "provider" && agent.provider)
-      liveKeys.add(agent.provider);
-    else if (dimension === "model") {
-      if (agent.provider && agent.model) {
-        const mKey = agent.model.startsWith(`${agent.provider}/`)
-          ? agent.model
-          : `${agent.provider}/${agent.model}`;
-        liveKeys.add(mKey);
-      }
-    } else if (dimension === "workspace")
-      liveKeys.add(agent.workspace ?? UNATTRIBUTED_DIMENSION);
-  }
-
-  for (const key of liveKeys) {
-    if (!result[key]) {
-      const active = activeProj.allLiveAgents.filter((a) =>
-        matchesProjectedAgent(a, dimension, key, extraFilter)
-      ).length;
-      if (active > 0 || (dimension === "role" && key === "orchestrator")) {
-        result[key] = {
-          ...emptyUsageBucket(),
-          active,
-          averageDurationMs: 0
-        };
-      }
-    }
-  }
-
+  const result: Record<string, UsageBucket & { active: number; averageDurationMs: number }> = {};
+  populateUsageSnapshot(result, collection, dimension, projection, extraFilter);
+  addMissingLiveSnapshotKeys(result, liveSnapshotKeys(dimension, projection, extraFilter), dimension, projection, extraFilter);
   return result;
+}
+
+function withoutActive(bucket: Record<string, unknown>): Record<string, unknown> {
+  const copy = { ...bucket };
+  delete copy.active; delete copy.workspace_id; delete copy.tools; delete copy.skills;
+  delete copy.bridgeObservations; delete copy.mcpExposed;
+  return copy;
 }
 
 export class UsageTracker {
   readonly roleNames: readonly string[];
-  activityTracker: any;
+  activityTracker: Record<string, unknown>;
   readonly usageTelemetry: UsageTelemetryState;
   readonly inFlightUsage: Map<
     string,
@@ -729,7 +705,7 @@ export class UsageTracker {
     };
   }
 
-  setActivityTracker(tracker: any): void {
+  setActivityTracker(tracker: Record<string, unknown>): void {
     this.activityTracker = tracker;
   }
 
@@ -764,7 +740,7 @@ export class UsageTracker {
 
   workspaceToolBucket(
     wsBucket: WorkspaceUsageBucket,
-    attributes: any
+    attributes: Record<string, unknown>
   ): WorkspaceTool {
     return workspaceToolBucket(wsBucket, attributes);
   }
@@ -992,10 +968,10 @@ export class UsageTracker {
 
   projectLiveAgents(
     at: number = Date.now(),
-    tracker?: any
+    tracker?: Record<string, unknown>
   ): LiveAgentsProjection {
     const activityTracker = tracker ?? this.activityTracker;
-    const directAgents: any[] = activityTracker
+    const directAgents: Record<string, unknown>[] = activityTracker
       ? activityTracker.listLive({}, at)
       : [];
 
@@ -1048,14 +1024,14 @@ export class UsageTracker {
     };
   }
 
-  canonicalLiveAgentCount(at: number = Date.now(), tracker?: any): number {
+  canonicalLiveAgentCount(at: number = Date.now(), tracker?: Record<string, unknown>): number {
     return this.projectLiveAgents(at, tracker).canonicalTotal;
   }
 
   countLiveAgentActivity(
-    filter: Record<string, any> = {},
+    filter: Record<string, unknown> = {},
     at: number = Date.now(),
-    tracker?: any
+    tracker?: Record<string, unknown>
   ): number {
     const activityTracker = tracker ?? this.activityTracker;
     if (!activityTracker) return 0;
@@ -1070,8 +1046,8 @@ export class UsageTracker {
     collection: Record<string, UsageBucket> | undefined,
     dimension: string,
     projection?: LiveAgentsProjection,
-    extraFilter: Record<string, any> = {},
-    tracker?: any
+    extraFilter: Record<string, unknown> = {},
+    tracker?: Record<string, unknown>
   ): Record<
     string,
     UsageBucket & { active: number; averageDurationMs: number }
@@ -1083,7 +1059,7 @@ export class UsageTracker {
   usageStatus(
     now: number = Date.now(),
     projection?: LiveAgentsProjection,
-    tracker?: any
+    tracker?: Record<string, unknown>
   ): UsageStatus {
     const activityTracker = tracker ?? this.activityTracker;
     const proj = projection ?? this.projectLiveAgents(now, activityTracker);
@@ -1156,7 +1132,7 @@ export class UsageTracker {
           skillsCapable: _skillsCapable,
           mcpCapable: _mcpCapable,
           ...publicBucket
-        } = bucket as any;
+        } = bucket as Record<string, unknown>;
         const toolsCapable =
           bucket.toolsCapable === true ||
           (bucket.toolsExecuted ?? 0) > 0 ||
@@ -1164,19 +1140,19 @@ export class UsageTracker {
           (bucket.toolsUnavailable ?? 0) > 0;
         const skillsCapable =
           bucket.skillsCapable === true || (bucket.skillsExposed ?? 0) > 0;
-        const formatBridgeTools = (map: Map<string, any> | undefined) =>
+        const formatBridgeTools = (map: Map<string, Record<string, unknown>> | undefined) =>
           map
             ? Array.from(map.values(), (entry) => ({
                 ...entry,
                 byStatus: { ...entry.byStatus }
-              })).sort((a, b) => a.tool.localeCompare(b.tool))
+              })).sort((a, b) => STRING_COLLATOR.compare(a.tool, b.tool))
             : [];
         const formatBridgeSkills = (map: Map<string, number> | undefined) =>
           map
             ? Array.from(map.entries(), ([skill, value]) => ({
                 skill,
                 count: value
-              })).sort((a, b) => a.skill.localeCompare(b.skill))
+              })).sort((a, b) => STRING_COLLATOR.compare(a.skill, b.skill))
             : [];
         return [
           key,
@@ -1256,16 +1232,6 @@ export class UsageTracker {
   }
 
   usagePersistenceSnapshot(): UsagePersistenceSnapshot {
-    const withoutActive = (bucket: any) => {
-      const copy = { ...bucket };
-      delete copy.active;
-      delete copy.workspace_id;
-      delete copy.tools;
-      delete copy.skills;
-      delete copy.bridgeObservations;
-      delete copy.mcpExposed;
-      return copy;
-    };
     return {
       schemaVersion: 8,
       totals: withoutActive(this.usageTelemetry.totals),
@@ -1347,7 +1313,7 @@ export class UsageTracker {
     };
   }
 
-  restoreUsagePersistenceSnapshot(savedUsage: any): void {
+  restoreUsagePersistenceSnapshot(savedUsage: Record<string, unknown>): void {
     if (
       !savedUsage ||
       typeof savedUsage !== "object" ||
@@ -1373,7 +1339,7 @@ export class UsageTracker {
     }
     if (savedUsage.byWorkspace && typeof savedUsage.byWorkspace === "object") {
       for (const [key, saved] of Object.entries(
-        savedUsage.byWorkspace as Record<string, any>
+        savedUsage.byWorkspace as Record<string, unknown>
       )) {
         if (!saved || typeof saved !== "object") continue;
         const current = workspaceBucket(
@@ -1594,19 +1560,19 @@ export function recordUsageEvent(params: RecordUsageEventParams): void {
 
 export function projectLiveAgents(
   at?: number,
-  tracker?: any
+  tracker?: Record<string, unknown>
 ): LiveAgentsProjection {
   return defaultUsageTracker.projectLiveAgents(at, tracker);
 }
 
-export function canonicalLiveAgentCount(at?: number, tracker?: any): number {
+export function canonicalLiveAgentCount(at?: number, tracker?: Record<string, unknown>): number {
   return defaultUsageTracker.canonicalLiveAgentCount(at, tracker);
 }
 
 export function countLiveAgentActivity(
-  filter?: Record<string, any>,
+  filter?: Record<string, unknown>,
   at?: number,
-  tracker?: any
+  tracker?: Record<string, unknown>
 ): number {
   return defaultUsageTracker.countLiveAgentActivity(filter, at, tracker);
 }
@@ -1614,7 +1580,7 @@ export function countLiveAgentActivity(
 export function usageStatus(
   now?: number,
   projection?: LiveAgentsProjection,
-  tracker?: any
+  tracker?: Record<string, unknown>
 ): UsageStatus {
   return defaultUsageTracker.usageStatus(now, projection, tracker);
 }
@@ -1623,7 +1589,7 @@ export function usagePersistenceSnapshot(): UsagePersistenceSnapshot {
   return defaultUsageTracker.usagePersistenceSnapshot();
 }
 
-export function restoreUsagePersistenceSnapshot(savedUsage: any): void {
+export function restoreUsagePersistenceSnapshot(savedUsage: Record<string, unknown>): void {
   defaultUsageTracker.restoreUsagePersistenceSnapshot(savedUsage);
 }
 

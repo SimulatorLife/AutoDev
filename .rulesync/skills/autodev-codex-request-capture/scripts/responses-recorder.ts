@@ -80,9 +80,9 @@ export function startRecorder({
       response.end(sseBody(turns[Math.min(count, turns.length) - 1] ?? []));
     });
   });
-  return new Promise((resolve) =>
-    server.listen(port, "127.0.0.1", () => resolve(server))
-  );
+  return new Promise((resolve) => {
+    server.listen(port, "127.0.0.1", () => resolve(server));
+  });
 }
 
 function argument(name: string): string | undefined {

@@ -125,10 +125,13 @@ test("CI runs the pinned official Claude Code package", () => {
     String(manifest.tools.claude.package),
     /^@anthropic-ai\/claude-code@\d+\.\d+\.\d+$/
   );
-  const branch = texts["scripts/run-ci-provider.sh"]!.split(
-    "  claude)",
-    2
-  )[1]!.split(";;", 1)[0]!;
+  const script = texts["scripts/run-ci-provider.sh"]!;
+  const claudeIndex = script.indexOf("  claude)");
+  const afterClaude =
+    claudeIndex === -1 ? "" : script.slice(claudeIndex + "  claude)".length);
+  const semiIndex = afterClaude.indexOf(";;");
+  const branch =
+    semiIndex === -1 ? afterClaude : afterClaude.slice(0, semiIndex);
   assert.match(branch, /pnpm --silent dlx "\$AUTODEV_CLAUDE_PACKAGE"/);
 });
 

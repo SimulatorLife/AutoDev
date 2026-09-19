@@ -33,7 +33,19 @@ import path from "node:path";
 import { createInterface } from "node:readline";
 import { pathToFileURL } from "node:url";
 
-type JsonRecord = Record<string, any>;
+interface JsonRecord {
+  [key: string]: unknown;
+}
+
+const COLLATOR = new Intl.Collator();
+const TASK_OR_TURN_REGEX = /task_|turn_/;
+const TIMESTAMP_REGEX = /"timestamp":"([^"]+)"/;
+const ACTIVE_PROCESS_REGEX =
+  /\/claude -p|\bagy\b.* -p|\bcopilot\b.* -p|codex-tools-shim|spawn-shim|lsp-mcp-server|typescript-language-server/;
+const WHITESPACE_SPLIT_REGEX = /\s+/;
+const SERVICE_PROCESS_REGEX =
+  /^\s*(\d+)\s+(\w{3}\s+\w{3}\s+\d+\s+[\d:]+\s+\d{4})\s+\S*node\S*\s+(\S*(?:router\/server|providers\/\w+)\.ts)/;
+const DIGITS_ONLY_REGEX = /^\d+$/;
 
 export interface TraceOptions {
   id: string;
@@ -287,7 +299,7 @@ export function recentSessions(
     sessions.set(sessionId, entry);
   }
   return [...sessions.values()]
-    .sort((a, b) => b.lastWrite.localeCompare(a.lastWrite))
+    .sort((a, b) => COLLATOR.compare(b.lastWrite, a.lastWrite))
     .slice(0, limit);
 }
 
@@ -330,111 +342,154 @@ function toolsOfCall(payload: JsonRecord): string[] {
   return [name];
 }
 
+interface ThreadTraceAccumulator {
+  counts: Record<string, number>;
+  turns: ThreadTrace["turns"];
+  open: Map<string, ThreadTrace["turns"][number]>;
+  items: NonNullable<ThreadTrace["items"]>;
+  gaps: ThreadTrace["gaps"];
+  tools: Record<string, number>;
+  toolFailures: ToolFailure[];
+  callTools: Map<string, string>;
+  previous: { at: string; label: string } | null;
+}
+
+function recordGapAndItems(
+  record: { type?: unknown },
+  at: string | null,
+  payload: JsonRecord,
+  withItems: boolean,
+  acc: ThreadTraceAccumulator
+): void {
+  if (
+    record.type === "response_item" ||
+    (record.type === "event_msg" && TASK_OR_TURN_REGEX.test(String(payload.type)))
+  ) {
+    const label =
+      record.type === "response_item"
+        ? `${payload.type}${payload.name ? `(${payload.name})` : ""}`
+        : String(payload.type);
+    if (at && acc.previous && acc.open.size > 0) {
+      const seconds = (Date.parse(at) - Date.parse(acc.previous.at)) / 1000;
+      if (seconds >= GAP_SECONDS)
+        acc.gaps.push({
+          seconds: Math.round(seconds),
+          after: acc.previous.label,
+          before: label,
+          at: acc.previous.at
+        });
+    }
+    if (at) acc.previous = { at, label };
+    if (withItems && record.type === "response_item" && at)
+      acc.items.push({
+        at,
+        kind: String(payload.type),
+        detail: itemDetail(payload)
+      });
+  }
+}
+
+function recordToolUsage(
+  record: { type?: unknown },
+  at: string | null,
+  payload: JsonRecord,
+  acc: ThreadTraceAccumulator
+): void {
+  if (
+    record.type === "response_item" &&
+    (payload.type === "custom_tool_call" || payload.type === "function_call")
+  ) {
+    const reached = toolsOfCall(payload);
+    for (const tool of reached) acc.tools[tool] = (acc.tools[tool] ?? 0) + 1;
+    acc.callTools.set(String(payload.call_id), reached.join("+"));
+  } else if (
+    record.type === "response_item" &&
+    (payload.type === "custom_tool_call_output" ||
+      payload.type === "function_call_output")
+  ) {
+    const text = outputText(payload.output);
+    const failure = TOOL_FAILURE.exec(text);
+    if (failure) {
+      acc.toolFailures.push({
+        at: at ?? "",
+        tool: acc.callTools.get(String(payload.call_id)) ?? "?",
+        callId: String(payload.call_id),
+        detail: excerpt(text.slice(Math.max(0, failure.index - 40)))
+      });
+    }
+  }
+}
+
+function recordTurnEvent(
+  record: { type?: unknown },
+  at: string | null,
+  payload: JsonRecord,
+  acc: ThreadTraceAccumulator
+): void {
+  if (record.type === "event_msg" && payload.type === "task_started") {
+    const turn = {
+      turnId: String(payload.turn_id),
+      started: at,
+      ended: null,
+      outcome: "running",
+      detail: null
+    };
+    acc.open.set(turn.turnId, turn);
+    acc.turns.push(turn);
+  } else if (
+    record.type === "event_msg" &&
+    (payload.type === "task_complete" || payload.type === "turn_aborted")
+  ) {
+    const turn = acc.open.get(String(payload.turn_id));
+    if (turn) {
+      turn.ended = at;
+      turn.outcome =
+        payload.type === "turn_aborted"
+          ? `aborted:${payload.reason ?? "?"}`
+          : payload.error
+            ? "failed"
+            : "completed";
+      const errorObj = payload.error as JsonRecord | undefined;
+      turn.detail = payload.error
+        ? excerpt(errorObj?.message ?? payload.error)
+        : payload.last_agent_message
+          ? excerpt(payload.last_agent_message)
+          : null;
+      acc.open.delete(turn.turnId);
+    }
+  }
+}
+
 export function traceThread(file: string, withItems: boolean): ThreadTrace {
   const records = readJsonl(file);
   const meta =
-    records.find((record) => record.type === "session_meta")?.payload ?? {};
+    (records.find((record) => record.type === "session_meta")?.payload ??
+      {}) as JsonRecord;
   const context =
-    records.find((record) => record.type === "turn_context")?.payload ?? {};
-  const counts: Record<string, number> = {};
-  const turns: ThreadTrace["turns"] = [];
-  const open = new Map<string, ThreadTrace["turns"][number]>();
-  const items: NonNullable<ThreadTrace["items"]> = [];
-  const gaps: ThreadTrace["gaps"] = [];
-  const tools: Record<string, number> = {};
-  const toolFailures: ToolFailure[] = [];
-  const callTools = new Map<string, string>();
-  let previous: { at: string; label: string } | null = null;
+    (records.find((record) => record.type === "turn_context")?.payload ??
+      {}) as JsonRecord;
+  const acc: ThreadTraceAccumulator = {
+    counts: {},
+    turns: [],
+    open: new Map(),
+    items: [],
+    gaps: [],
+    tools: {},
+    toolFailures: [],
+    callTools: new Map(),
+    previous: null
+  };
   for (const record of records) {
     const at = typeof record.timestamp === "string" ? record.timestamp : null;
-    const payload = record.payload ?? {};
+    const payload = (record.payload ?? {}) as JsonRecord;
     const kind =
       record.type === "response_item" || record.type === "event_msg"
         ? `${record.type}:${payload.type}`
         : String(record.type);
-    counts[kind] = (counts[kind] ?? 0) + 1;
-    // Measured before this record opens or closes a turn, so the silence that
-    // ends in an abort -- the usual stall -- is counted.
-    if (
-      record.type === "response_item" ||
-      (record.type === "event_msg" && /task_|turn_/.test(String(payload.type)))
-    ) {
-      const label =
-        record.type === "response_item"
-          ? `${payload.type}${payload.name ? `(${payload.name})` : ""}`
-          : String(payload.type);
-      if (at && previous && open.size > 0) {
-        const seconds = (Date.parse(at) - Date.parse(previous.at)) / 1000;
-        if (seconds >= GAP_SECONDS)
-          gaps.push({
-            seconds: Math.round(seconds),
-            after: previous.label,
-            before: label,
-            at: previous.at
-          });
-      }
-      if (at) previous = { at, label };
-      if (withItems && record.type === "response_item" && at)
-        items.push({
-          at,
-          kind: String(payload.type),
-          detail: itemDetail(payload)
-        });
-    }
-    if (
-      record.type === "response_item" &&
-      (payload.type === "custom_tool_call" || payload.type === "function_call")
-    ) {
-      const reached = toolsOfCall(payload);
-      for (const tool of reached) tools[tool] = (tools[tool] ?? 0) + 1;
-      callTools.set(String(payload.call_id), reached.join("+"));
-    } else if (
-      record.type === "response_item" &&
-      (payload.type === "custom_tool_call_output" ||
-        payload.type === "function_call_output")
-    ) {
-      const text = outputText(payload.output);
-      const failure = TOOL_FAILURE.exec(text);
-      if (failure) {
-        toolFailures.push({
-          at: at ?? "",
-          tool: callTools.get(String(payload.call_id)) ?? "?",
-          callId: String(payload.call_id),
-          detail: excerpt(text.slice(Math.max(0, failure.index - 40)))
-        });
-      }
-    }
-    if (record.type === "event_msg" && payload.type === "task_started") {
-      const turn = {
-        turnId: String(payload.turn_id),
-        started: at,
-        ended: null,
-        outcome: "running",
-        detail: null
-      };
-      open.set(turn.turnId, turn);
-      turns.push(turn);
-    } else if (
-      record.type === "event_msg" &&
-      (payload.type === "task_complete" || payload.type === "turn_aborted")
-    ) {
-      const turn = open.get(String(payload.turn_id));
-      if (turn) {
-        turn.ended = at;
-        turn.outcome =
-          payload.type === "turn_aborted"
-            ? `aborted:${payload.reason ?? "?"}`
-            : payload.error
-              ? "failed"
-              : "completed";
-        turn.detail = payload.error
-          ? excerpt(payload.error.message ?? payload.error)
-          : payload.last_agent_message
-            ? excerpt(payload.last_agent_message)
-            : null;
-        open.delete(turn.turnId);
-      }
-    }
+    acc.counts[kind] = (acc.counts[kind] ?? 0) + 1;
+    recordGapAndItems(record, at, payload, withItems, acc);
+    recordToolUsage(record, at, payload, acc);
+    recordTurnEvent(record, at, payload, acc);
   }
   const stamps = records
     .map((record) => record.timestamp)
@@ -476,7 +531,7 @@ export async function routerEvents(
     crlfDelay: Infinity
   });
   for await (const line of lines) {
-    const stamp = /"timestamp":"([^"]+)"/.exec(line)?.[1];
+    const stamp = TIMESTAMP_REGEX.exec(line)?.[1];
     if (
       !stamp ||
       stamp < start ||
@@ -589,12 +644,8 @@ function providerProcesses(): string[] {
   // Command lines can carry prompts; keep the executable and flags only.
   return run("ps", ["-Ao", "pid,ppid,etime,command"])
     .split("\n")
-    .filter((line) =>
-      /\/claude -p|\bagy\b.* -p|\bcopilot\b.* -p|codex-tools-shim|spawn-shim|lsp-mcp-server|typescript-language-server/.test(
-        line
-      )
-    )
-    .map((line) => line.trim().split(/\s+/).slice(0, 5).join(" "));
+    .filter((line) => ACTIVE_PROCESS_REGEX.test(line))
+    .map((line) => line.trim().split(WHITESPACE_SPLIT_REGEX).slice(0, 5).join(" "));
 }
 
 /** Router and bridge processes, with when they started -- a fix is live only in a process started after it was installed. */
@@ -602,10 +653,7 @@ function services(): LiveReport["services"] {
   return run("ps", ["-Ao", "pid,lstart,command"])
     .split("\n")
     .flatMap((line) => {
-      const match =
-        /^\s*(\d+)\s+(\w{3}\s+\w{3}\s+\d+\s+[\d:]+\s+\d{4})\s+\S*node\S*\s+(\S*(?:router\/server|providers\/\w+)\.ts)/.exec(
-          line
-        );
+      const match = SERVICE_PROCESS_REGEX.exec(line);
       return match
         ? [
             {
@@ -745,7 +793,7 @@ function logFreshness(codexHome: string): TraceReport["logs"] {
       const stat = statSync(file);
       return { file, modified: stat.mtime.toISOString(), bytes: stat.size };
     })
-    .sort((a, b) => b.modified.localeCompare(a.modified));
+    .sort((a, b) => COLLATOR.compare(b.modified, a.modified));
 }
 
 export async function buildReport(options: TraceOptions): Promise<TraceReport> {
@@ -775,6 +823,106 @@ export async function buildReport(options: TraceOptions): Promise<TraceReport> {
   };
 }
 
+function renderRouterDetails(router: RouterSummary): string[] {
+  const lines: string[] = [];
+  const providers = Object.entries(router.byProvider).map(
+    ([provider, entry]) =>
+      `${provider}: ${entry.requests} req, ${entry.failures} failed, ${Math.round(entry.elapsedMs / 1000)}s, tools=${entry.toolCalls}`
+  );
+  lines.push(
+    `   router (${router.matchedBy}) ${router.requests} requests; ${providers.join("; ") || "no results"}`
+  );
+  if (router.providerSequence.length > 1)
+    lines.push(`   PROVIDER HOPS ${router.providerSequence.join(" → ")}`);
+  for (const failure of router.failures)
+    lines.push(
+      `   ROUTER FAILURE ${failure.at.slice(11, 23)} ${failure.requestId.slice(0, 8)} ${failure.provider ?? "-"} ${failure.status ?? "-"} ${failure.failureClass ?? "-"} ${failure.elapsedMs ?? "-"}ms`
+    );
+  for (const event of router.events ?? []) {
+    lines.push(
+      `   ${event.at.slice(11, 23)} ${event.requestId.slice(0, 8)} ${event.phase} ${event.provider ?? "-"}/${event.model ?? "-"}` +
+        `${event.outcome ? ` ${event.outcome}` : ""}${event.status ? ` ${event.status}` : ""}${event.failureClass ? ` ${event.failureClass}` : ""}` +
+        `${event.elapsedMs === null ? "" : ` ${event.elapsedMs}ms`}${event.phase === "result" ? ` tools=${event.toolCalls ?? 0}` : ""}`
+    );
+  }
+  return lines;
+}
+
+function renderThreadSection(
+  thread: ThreadTrace,
+  router?: RouterSummary
+): string[] {
+  const lines: string[] = [
+    `== thread ${thread.id} ${thread.nickname ? `(${thread.nickname}) ` : ""}role=${thread.role ?? "-"} model=${thread.model ?? "-"} codex=${thread.cliVersion ?? "-"}`,
+    `   session=${thread.sessionId ?? "-"} parent=${thread.parentId ?? "-"} ${thread.start ?? "?"} → ${thread.end ?? "?"}`,
+    `   file=${thread.file}`
+  ];
+  for (const turn of thread.turns)
+    lines.push(
+      `   turn ${turn.turnId} ${turn.started ?? "?"} → ${turn.ended ?? "open"} ${turn.outcome}${turn.detail ? ` :: ${turn.detail}` : ""}`
+    );
+  for (const gap of thread.gaps)
+    lines.push(
+      `   GAP ${gap.seconds}s after ${gap.after} (${gap.at}) before ${gap.before}`
+    );
+  const tools = Object.entries(thread.tools).sort((a, b) => b[1] - a[1]);
+  if (tools.length > 0)
+    lines.push(
+      `   tools ${tools.map(([tool, count]) => `${tool}=${count}`).join(" ")}`
+    );
+  for (const failure of thread.toolFailures)
+    lines.push(
+      `   TOOL FAILED ${failure.at.slice(11, 19)} ${failure.tool} call=${failure.callId} :: ${failure.detail}`
+    );
+  if (router) {
+    lines.push(...renderRouterDetails(router));
+  }
+  for (const item of thread.items ?? [])
+    lines.push(`   ${item.at.slice(11, 19)} ${item.kind} ${item.detail}`);
+  return lines;
+}
+
+function renderLiveSection(live: LiveReport): string[] {
+  const {
+    router,
+    openThreads,
+    processes,
+    services: running,
+    drift
+  } = live;
+  const lines: string[] = [
+    "== live now",
+    router.reachable
+      ? `   router (started ${router.startedAt}) live agents=${router.canonicalLiveCount} byState=${JSON.stringify(router.byState)} byRole=${JSON.stringify(router.liveByRole)}`
+      : "   router /status unreachable",
+    `   threads with an open turn (written in the last 10 min): ${openThreads.length}${openThreads.length > 0 ? ` (${openThreads.map((thread) => thread.id).join(", ")})` : ""}`
+  ];
+  if (
+    router.canonicalLiveCount !== null &&
+    router.canonicalLiveCount !== openThreads.length
+  ) {
+    lines.push(
+      `   LIVE COUNT MISMATCH: router ${router.canonicalLiveCount} vs ${openThreads.length} open threads -- above: something keys activity per request; below: reports land on the wrong agent, or an agent went stale`
+    );
+  }
+  for (const service of running)
+    lines.push(
+      `   service pid=${service.pid} started=${service.started} ${service.script}`
+    );
+  if (drift) {
+    lines.push(
+      `   deployed $CODEX_HOME/src vs checkout: ${drift.checked} files, ${drift.differing.length} differ, ${drift.missing.length} not in checkout`
+    );
+    for (const file of drift.differing.slice(0, 15))
+      lines.push(`   DRIFT ${file}`);
+  }
+  lines.push(
+    `   provider CLIs / MCP servers running: ${processes.length === 0 ? "none" : ""}`
+  );
+  for (const line of processes) lines.push(`     ${line}`);
+  return lines;
+}
+
 export function renderReport(report: TraceReport): string {
   const out: string[] = [];
   if (report.threads.length === 0)
@@ -783,93 +931,10 @@ export function renderReport(report: TraceReport): string {
     );
   for (const thread of report.threads) {
     const router = report.router.find((entry) => entry.thread === thread.id);
-    out.push(
-      `== thread ${thread.id} ${thread.nickname ? `(${thread.nickname}) ` : ""}role=${thread.role ?? "-"} model=${thread.model ?? "-"} codex=${thread.cliVersion ?? "-"}`,
-      `   session=${thread.sessionId ?? "-"} parent=${thread.parentId ?? "-"} ${thread.start ?? "?"} → ${thread.end ?? "?"}`,
-      `   file=${thread.file}`
-    );
-    for (const turn of thread.turns)
-      out.push(
-        `   turn ${turn.turnId} ${turn.started ?? "?"} → ${turn.ended ?? "open"} ${turn.outcome}${turn.detail ? ` :: ${turn.detail}` : ""}`
-      );
-    for (const gap of thread.gaps)
-      out.push(
-        `   GAP ${gap.seconds}s after ${gap.after} (${gap.at}) before ${gap.before}`
-      );
-    const tools = Object.entries(thread.tools).sort((a, b) => b[1] - a[1]);
-    if (tools.length > 0)
-      out.push(
-        `   tools ${tools.map(([tool, count]) => `${tool}=${count}`).join(" ")}`
-      );
-    for (const failure of thread.toolFailures)
-      out.push(
-        `   TOOL FAILED ${failure.at.slice(11, 19)} ${failure.tool} call=${failure.callId} :: ${failure.detail}`
-      );
-    if (router) {
-      const providers = Object.entries(router.byProvider).map(
-        ([provider, entry]) =>
-          `${provider}: ${entry.requests} req, ${entry.failures} failed, ${Math.round(entry.elapsedMs / 1000)}s, tools=${entry.toolCalls}`
-      );
-      out.push(
-        `   router (${router.matchedBy}) ${router.requests} requests; ${providers.join("; ") || "no results"}`
-      );
-      if (router.providerSequence.length > 1)
-        out.push(`   PROVIDER HOPS ${router.providerSequence.join(" → ")}`);
-      for (const failure of router.failures)
-        out.push(
-          `   ROUTER FAILURE ${failure.at.slice(11, 23)} ${failure.requestId.slice(0, 8)} ${failure.provider ?? "-"} ${failure.status ?? "-"} ${failure.failureClass ?? "-"} ${failure.elapsedMs ?? "-"}ms`
-        );
-      for (const event of router.events ?? []) {
-        out.push(
-          `   ${event.at.slice(11, 23)} ${event.requestId.slice(0, 8)} ${event.phase} ${event.provider ?? "-"}/${event.model ?? "-"}` +
-            `${event.outcome ? ` ${event.outcome}` : ""}${event.status ? ` ${event.status}` : ""}${event.failureClass ? ` ${event.failureClass}` : ""}` +
-            `${event.elapsedMs === null ? "" : ` ${event.elapsedMs}ms`}${event.phase === "result" ? ` tools=${event.toolCalls ?? 0}` : ""}`
-        );
-      }
-    }
-    for (const item of thread.items ?? [])
-      out.push(`   ${item.at.slice(11, 19)} ${item.kind} ${item.detail}`);
+    out.push(...renderThreadSection(thread, router));
   }
   if (report.live) {
-    const {
-      router,
-      openThreads,
-      processes,
-      services: running,
-      drift
-    } = report.live;
-    out.push("== live now");
-    out.push(
-      router.reachable
-        ? `   router (started ${router.startedAt}) live agents=${router.canonicalLiveCount} byState=${JSON.stringify(router.byState)} byRole=${JSON.stringify(router.liveByRole)}`
-        : "   router /status unreachable"
-    );
-    out.push(
-      `   threads with an open turn (written in the last 10 min): ${openThreads.length}${openThreads.length > 0 ? ` (${openThreads.map((thread) => thread.id).join(", ")})` : ""}`
-    );
-    if (
-      router.canonicalLiveCount !== null &&
-      router.canonicalLiveCount !== openThreads.length
-    ) {
-      out.push(
-        `   LIVE COUNT MISMATCH: router ${router.canonicalLiveCount} vs ${openThreads.length} open threads -- above: something keys activity per request; below: reports land on the wrong agent, or an agent went stale`
-      );
-    }
-    for (const service of running)
-      out.push(
-        `   service pid=${service.pid} started=${service.started} ${service.script}`
-      );
-    if (drift) {
-      out.push(
-        `   deployed $CODEX_HOME/src vs checkout: ${drift.checked} files, ${drift.differing.length} differ, ${drift.missing.length} not in checkout`
-      );
-      for (const file of drift.differing.slice(0, 15))
-        out.push(`   DRIFT ${file}`);
-    }
-    out.push(
-      `   provider CLIs / MCP servers running: ${processes.length === 0 ? "none" : ""}`
-    );
-    for (const line of processes) out.push(`     ${line}`);
+    out.push(...renderLiveSection(report.live));
   }
   out.push(
     "== log freshness (bridge logs carry no timestamps; correlate by order and mtime)"
@@ -924,7 +989,7 @@ function parseArgs(
     else if (arg === "--codex-home") codexHome = argv[++index] ?? codexHome;
     else if (arg === "--router-log") routerLog = argv[++index] ?? "";
     else if (arg === "--recent")
-      recent = /^\d+$/.test(argv[index + 1] ?? "") ? Number(argv[++index]) : 10;
+      recent = DIGITS_ONLY_REGEX.test(argv[index + 1] ?? "") ? Number(argv[++index]) : 10;
     else if (!arg.startsWith("--")) id = arg;
   }
   if (!id && recent === null) return null;

@@ -24,15 +24,15 @@ const LIMIT_CLAUSE = /^ LIMIT \d+$/;
 
 export function parseLimitedTableSelect(
   statement: string
-): LimitedTableSelect | undefined {
+): LimitedTableSelect | null {
   const head = HEAD.exec(statement);
-  if (!head) return undefined;
+  if (!head) return null;
   let rest = statement.slice(head[0].length);
   const where = WHERE_CLAUSE.exec(rest);
   if (where) rest = rest.slice(where[0].length);
   const order = ORDER_CLAUSE.exec(rest);
   if (order) rest = rest.slice(order[0].length);
-  if (!LIMIT_CLAUSE.test(rest)) return undefined;
+  if (!LIMIT_CLAUSE.test(rest)) return null;
   return {
     columns: head[1]!.split(/,\s*/).map((col) => col.replaceAll(/^"|"$/g, "")),
     table: head[2]!,

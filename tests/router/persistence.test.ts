@@ -76,7 +76,6 @@ test("RouterPersistence persistNow writes atomically with mode 0o600", async () 
 
     // Verify content
     const loaded = new RouterPersistence({ stateFile: testFile });
-    const restoredSubagents: any = null;
     const ok = loaded.load();
     assert.equal(ok, true);
     assert.ok(loaded.getUpdatedAt() !== null);

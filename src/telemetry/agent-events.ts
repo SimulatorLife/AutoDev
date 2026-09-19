@@ -50,6 +50,36 @@ export const SESSION_ID_HEADER = "x-autodev-session-id";
 // without inflating or undercounting either.
 export const SKILL_READ_SOURCE = "skill_read";
 
+function trimmedStringOrNull(value: unknown): string | null {
+  return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function parseActivityInput(
+  stateOrOptions:
+    | string
+    | {
+        state?: string;
+        childIds?: unknown[];
+        child_ids?: unknown[];
+        minIntervalMs?: number;
+        timestamp?: number;
+      },
+  maybeChildIds: unknown[] | null
+): { cleanState: string; childIds: unknown[] | null } {
+  let state = null;
+  let childIds = null;
+  if (typeof stateOrOptions === "string") {
+    state = stateOrOptions;
+    childIds = maybeChildIds;
+  } else if (stateOrOptions && typeof stateOrOptions === "object") {
+    state = stateOrOptions.state;
+    childIds =
+      stateOrOptions.childIds ?? stateOrOptions.child_ids ?? maybeChildIds;
+  }
+  const cleanState = typeof state === "string" ? state.trim() : "";
+  return { cleanState, childIds };
+}
+
 function headerValue(
   headers: Record<string, unknown> | undefined,
   name: string
@@ -62,7 +92,7 @@ function headerValue(
   );
   const value = key === undefined ? undefined : headers[key];
   const single = Array.isArray(value) ? value[0] : value;
-  return typeof single === "string" && single.trim() ? single.trim() : null;
+  return trimmedStringOrNull(single);
 }
 
 export const DEFAULT_HEARTBEAT_THROTTLE_MS = 15_000;
@@ -98,8 +128,7 @@ export class AgentEventReporter {
     this.lastActivityState = null;
     this.lastHeartbeatAt = 0;
     const envThrottle = Number.parseInt(
-      process.env.CODEX_AGENT_HEARTBEAT_THROTTLE_MS ?? "",
-      10
+      process.env.CODEX_AGENT_HEARTBEAT_THROTTLE_MS ?? ""
     );
     this.heartbeatThrottleMs =
       typeof options?.heartbeatThrottleMs === "number" &&
@@ -226,25 +255,13 @@ export class AgentEventReporter {
         : [{ role: null }];
     const byRole = new Map();
     for (const child of list) {
-      const role =
-        typeof child?.role === "string" && child.role.trim()
-          ? child.role.trim()
-          : null;
-      const model =
-        typeof child?.model === "string" && child.model.trim()
-          ? child.model.trim()
-          : null;
-      const id =
-        typeof child?.id === "string" && child.id.trim()
-          ? child.id.trim()
-          : this.nextChildId();
+      const role = trimmedStringOrNull(child?.role);
+      const model = trimmedStringOrNull(child?.model);
+      const id = trimmedStringOrNull(child?.id) ?? this.nextChildId();
       // A CLI-delegated child leaves no rollout the router can read, so where
       // the bridge knows the CLI's own transcript path it is the only pointer
       // to what the child actually did. Carried only when present.
-      const logUri =
-        typeof child?.logUri === "string" && child.logUri.trim()
-          ? child.logUri.trim()
-          : null;
+      const logUri = trimmedStringOrNull(child?.logUri);
       if (!byRole.has(role)) byRole.set(role, []);
       byRole.get(role).push({
         id,
@@ -514,6 +531,38 @@ export class AgentEventReporter {
    *
    * { type: "activity", state: "subagent_wait" | "resumed" | "heartbeat", childIds? }
    */
+  private async reportHeartbeatActivity(
+    stateOrOptions:
+      | string
+      | {
+          minIntervalMs?: number;
+          timestamp?: number;
+        }
+  ): Promise<void> {
+    const minIntervalMs =
+      typeof stateOrOptions === "object" &&
+      typeof stateOrOptions.minIntervalMs === "number"
+        ? stateOrOptions.minIntervalMs
+        : 0;
+    const timestamp =
+      typeof stateOrOptions === "object"
+        ? stateOrOptions.timestamp
+        : undefined;
+    const now =
+      typeof timestamp === "number" && Number.isFinite(timestamp)
+        ? timestamp
+        : Date.now();
+    if (
+      minIntervalMs > 0 &&
+      this.lastHeartbeatAt > 0 &&
+      now - this.lastHeartbeatAt < minIntervalMs
+    ) {
+      return;
+    }
+    this.lastHeartbeatAt = now;
+    await this.post([{ type: "activity", state: "heartbeat" }]);
+  }
+
   async reportActivity(
     stateOrOptions:
       | string
@@ -526,42 +575,14 @@ export class AgentEventReporter {
         },
     maybeChildIds: unknown[] | null = null
   ) {
-    let state = null;
-    let childIds = null;
-    if (typeof stateOrOptions === "string") {
-      state = stateOrOptions;
-      childIds = maybeChildIds;
-    } else if (stateOrOptions && typeof stateOrOptions === "object") {
-      state = stateOrOptions.state;
-      childIds =
-        stateOrOptions.childIds ?? stateOrOptions.child_ids ?? maybeChildIds;
-    }
-    const cleanState = typeof state === "string" ? state.trim() : "";
+    const { cleanState, childIds } = parseActivityInput(
+      stateOrOptions,
+      maybeChildIds
+    );
     if (!VALID_ACTIVITY_STATES.has(cleanState)) return;
 
     if (cleanState === "heartbeat") {
-      const minIntervalMs =
-        typeof stateOrOptions === "object" &&
-        typeof stateOrOptions.minIntervalMs === "number"
-          ? stateOrOptions.minIntervalMs
-          : 0;
-      const timestamp =
-        typeof stateOrOptions === "object"
-          ? stateOrOptions.timestamp
-          : undefined;
-      const now =
-        typeof timestamp === "number" && Number.isFinite(timestamp)
-          ? timestamp
-          : Date.now();
-      if (
-        minIntervalMs > 0 &&
-        this.lastHeartbeatAt > 0 &&
-        now - this.lastHeartbeatAt < minIntervalMs
-      ) {
-        return;
-      }
-      this.lastHeartbeatAt = now;
-      await this.post([{ type: "activity", state: "heartbeat" }]);
+      await this.reportHeartbeatActivity(stateOrOptions);
       return;
     }
 

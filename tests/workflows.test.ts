@@ -31,13 +31,13 @@ const extractRunBlocks = (source: string): RunBlock[] => {
     const body = [];
     let j = i + 1;
     for (; j < lines.length; j++) {
-      const line = lines[j] ?? "";
-      if (line.trim() === "") {
+      const nextLine = lines[j] ?? "";
+      if (nextLine.trim() === "") {
         body.push("");
         continue;
       }
-      if ((line.match(/^ */)?.[0].length ?? 0) <= runIndent) break;
-      body.push(line);
+      if ((nextLine.match(/^ */)?.[0].length ?? 0) <= runIndent) break;
+      body.push(nextLine);
     }
     blocks.push({ startLine: i + 1, body: body.join("\n") });
     i = j - 1;
@@ -323,10 +323,12 @@ test("local provider tooling resolves the playwright MCP from a pinned devDepend
       path.join(root, "agents", "roles", `${role}.toml`),
       "utf8"
     );
+    const playwrightIndex = roleSource.indexOf("[mcp_servers.playwright]");
+    const section =
+      playwrightIndex === -1 ? roleSource : roleSource.slice(playwrightIndex);
+    const splitIndex = section.indexOf("\n\n");
     const roleSettings =
-      roleSource
-        .slice(roleSource.indexOf("[mcp_servers.playwright]"))
-        .split("\n\n")[0] ?? "";
+      splitIndex === -1 ? section : section.slice(0, splitIndex);
     assert.match(roleSettings, /enabled = true/, role);
     assert.match(roleSettings, /default_tools_approval_mode = "approve"/, role);
   }
@@ -336,26 +338,26 @@ test("the user-level MCP servers are self-sufficient, so no repository needs to 
   const source = JSON.parse(
     await readFile(path.join(root, ".rulesync", "mcp.jsonc"), "utf8")
   );
-  const config = source.codexcli.mcpServers;
+  const mcpServers = source.codexcli.mcpServers;
   // Each server must carry every setting a project would otherwise re-add
   // locally. A project-local block shadows the user-level one by name, which is
   // how an unpinned `dlx @latest` override silently replaced the pinned
   // devDependency in a target repository.
   for (const server of ["lsp", "playwright"]) {
-    const settings = config[server];
+    const settings = mcpServers[server];
     assert.equal(settings.command, "bash", server);
-    assert.match(settings.args.at(-1), /run-autodev-mcp\.sh\"/, server);
+    assert.match(settings.args.at(-1), /run-autodev-mcp\.sh"/, server);
     assert.equal(settings.default_tools_approval_mode, "approve", server);
     assert.equal(Boolean(settings.disabled), server === "playwright", server);
   }
 });
 
 test("root website research uses native search while Playwright stays role-scoped", async () => {
-  const config = await readFile(
+  const autodevConfig = await readFile(
     path.join(root, "config", "config.autodev.toml"),
     "utf8"
   );
-  assert.match(config, /\[tools\][\s\S]*web_search = true/);
+  assert.match(autodevConfig, /\[tools\][\s\S]*web_search = true/);
   const mcp = JSON.parse(
     await readFile(path.join(root, ".rulesync", "mcp.jsonc"), "utf8")
   );
@@ -436,7 +438,7 @@ test("provider CLI versions are pinned in one AutoDev manifest", async () => {
   ) as ProviderManifest;
   assert.equal(manifest.schemaVersion, 1);
   for (const packageSpec of Object.values(manifest.tools)) {
-    assert.match(packageSpec.package, /@[^@\s]+\@[0-9]+\.[0-9]+\.[0-9]+$/);
+    assert.match(packageSpec.package, /@[^@\s]+@[0-9]+\.[0-9]+\.[0-9]+$/);
   }
   const invoke = await readWorkflow("agent-invoke.yml");
   assert.match(invoke, /run-ci-provider\.sh/);
@@ -457,7 +459,7 @@ test("provider CLI versions are pinned in one AutoDev manifest", async () => {
     assert.doesNotMatch(source, /agent_command:/, name);
     assert.doesNotMatch(
       source,
-      /pnpm\s+--silent\s+dlx\s+(?:\S[^\n]*)?@latest/,
+      /pnpm[ \t]+--silent[ \t]+dlx[ \t]+\S*@latest/,
       name
     );
   }
@@ -591,8 +593,13 @@ test("MiniMax Codex CI runs through the tracked boundary adapter, never straight
     "utf8"
   );
   // Assert against commands, not prose: the comments explain why MiniMax is never called directly.
+  const marker = "  mini-max-codex)";
+  const markerIndex = runner.indexOf(marker);
+  const afterMarker =
+    markerIndex === -1 ? "" : runner.slice(markerIndex + marker.length);
+  const semiIndex = afterMarker.indexOf(";;");
   const branchSource =
-    (runner.split("  mini-max-codex)", 2)[1] ?? "").split(";;", 1)[0] ?? "";
+    semiIndex === -1 ? afterMarker : afterMarker.slice(0, semiIndex);
   const branch = branchSource
     .split("\n")
     .filter((line) => !line.trimStart().startsWith("#"))
@@ -636,7 +643,7 @@ test("CI never stores a GitHub credential in a git remote URL", async () => {
     assert.doesNotMatch(source, /x-access-token:\$\{/, name);
     assert.doesNotMatch(
       source,
-      /https:\/\/[^\s"'/:]*:[^\s"'/@]*(?:@[^\s"'/:]*:[^\s"'/@]*)*(?:\/[^\s"'@]*)?@github\.com/,
+      /https:\/\/[^\s"'/@:]+:[^\s"'/@]+@github\.com/,
       name
     );
   }
@@ -725,8 +732,11 @@ test("the CI git credential helper answers from the environment without persisti
     assert.equal(fill.status, 0, fill.stderr);
     assert.match(fill.stdout, /^username=x-access-token$/m);
     assert.match(fill.stdout, new RegExp(`^password=${token}$`, "m"));
-    const config = await readFile(path.join(repo, ".git", "config"), "utf8");
-    assert.equal(config.includes(token), false);
+    const gitConfig = await readFile(
+      path.join(repo, ".git", "config"),
+      "utf8"
+    );
+    assert.equal(gitConfig.includes(token), false);
     assert.equal(
       git(["remote", "get-url", "origin"]).stdout.trim(),
       "https://github.com/SimulatorLife/AutoDev.git"

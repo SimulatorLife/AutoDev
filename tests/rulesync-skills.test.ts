@@ -79,7 +79,7 @@ const repositorySkills: Record<string, readonly string[]> = {
 function readJson(path: string): JsonObject {
   return JSON.parse(readFileSync(path, "utf8")) as JsonObject;
 }
-function asObject(value: unknown): JsonObject {
+function _asObject(value: unknown): JsonObject {
   assert.ok(value && typeof value === "object" && !Array.isArray(value));
   return value as JsonObject;
 }
@@ -109,11 +109,25 @@ function splitFrontmatter(text: string): [string, string] {
   return [match.groups.front, match.groups.body.replaceAll(/^\n+|\n+$/gu, "")];
 }
 function description(frontmatter: string): string {
-  const folded = /^description:\s*>-\s*\n(?<body>(?:^[ \t].*\n?)+)/mu.exec(
-    frontmatter
-  );
-  const single = /^description:\s*(?<value>.+)$/mu.exec(frontmatter);
-  const value = folded?.groups?.body ?? single?.groups?.value;
+  const foldedMatch = /^description:[ \t]*>-[ \t]*\n/mu.exec(frontmatter);
+  let value: string | undefined;
+  if (foldedMatch) {
+    const bodyLines: string[] = [];
+    const remainder = frontmatter.slice(
+      foldedMatch.index + foldedMatch[0].length
+    );
+    for (const line of remainder.split("\n")) {
+      if (/^[ \t]/.test(line)) {
+        bodyLines.push(line);
+      } else {
+        break;
+      }
+    }
+    value = bodyLines.join("\n");
+  } else {
+    const single = /^description:[ \t]*(?<value>\S.*)$/mu.exec(frontmatter);
+    value = single?.groups?.value;
+  }
   assert.ok(value !== undefined, "missing skill description");
   return value
     .replaceAll(/\s+/gu, " ")

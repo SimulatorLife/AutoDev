@@ -3,8 +3,7 @@ import { spawn } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { createServer, type Server } from "node:http";
-import type { AddressInfo } from "node:net";
-import { connect } from "node:net";
+import { type AddressInfo, connect } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -1384,9 +1383,9 @@ test("an Antigravity batch spawn reaches the router as one count per child", asy
       router_alias: 0,
       bridge_native: 3
     });
-    for (const spawn of status.subagents.recent) {
-      assert.equal(spawn.tool, "invoke_subagent");
-      assert.equal(spawn.workspace, "SimulatorLife/RacingGame");
+    for (const recentSpawn of status.subagents.recent) {
+      assert.equal(recentSpawn.tool, "invoke_subagent");
+      assert.equal(recentSpawn.workspace, "SimulatorLife/RacingGame");
     }
   } finally {
     await closeServer(server);
@@ -6590,6 +6589,49 @@ test("requestSession derives identity from caller-supplied headers and payload f
     ).thread,
     "t-turn"
   );
+
+  // Codex 0.154.0+ canonical headers alone must identify the session so a
+  // metadata-less continuation/compaction request can still resolve the same
+  // session whose workspace metadata was previously remembered. Previously
+  // only the legacy alias headers were recognized, so a request carrying
+  // only the canonical `session-id` header collapsed to the process-wide
+  // anonymous bucket and workspace metadata could not be restored.
+  assert.deepEqual(
+    (requestSession as any)(
+      { headers: { "session-id": "root-canon-only" } },
+      {}
+    ),
+    { key: "root-canon-only", scope: "identified", thread: null }
+  );
+  assert.deepEqual(
+    (requestSession as any)(
+      { headers: { "session-id": "root-canon-only" } },
+      {}
+    ).thread,
+    null
+  );
+  // Canonical session header still wins when an alias also arrives.
+  assert.deepEqual(
+    (requestSession as any)(
+      {
+        headers: {
+          "session-id": "root-canon",
+          "x-codex-session-id": "root-alias"
+        }
+      },
+      {}
+    ),
+    { key: "root-canon", scope: "identified", thread: null }
+  );
+  // Alias headers remain accepted so already-remembered workspace metadata
+  // continues to resolve for older callers.
+  assert.deepEqual(
+    (requestSession as any)(
+      { headers: { "x-codex-session-id": "root-alias-only" } },
+      {}
+    ),
+    { key: "root-alias-only", scope: "identified", thread: null }
+  );
 });
 
 test("per-session slot limit gives distinct identified sessions independent capacity while capping a shared or missing identity", () => {
@@ -7453,8 +7495,8 @@ test("direct concrete request does not retry once the client signal is aborted",
   });
   for (const chunk of requestChunks) fakeRequest.push(chunk);
   fakeRequest.push(null);
-  let responseStatus = 0;
-  let responseBody = "";
+  let _responseStatus = 0;
+  let _responseBody = "";
   const headerStore: Record<string, any> = {};
   const fakeResponse = {
     headersSent: false,
@@ -7471,15 +7513,15 @@ test("direct concrete request does not retry once the client signal is aborted",
     },
     writeHead(status: number, headers?: any) {
       this.headersSent = true;
-      responseStatus = status;
+      _responseStatus = status;
       for (const [name, value] of Object.entries(headers ?? {}))
         headerStore[name] = value;
     },
     write(chunk: any) {
-      responseBody += String(chunk);
+      _responseBody += String(chunk);
     },
     end(chunk?: any) {
-      if (chunk !== undefined) responseBody += String(chunk);
+      if (chunk !== undefined) _responseBody += String(chunk);
       this.writableEnded = true;
     },
     once() {},
@@ -8098,7 +8140,6 @@ test("isClientDisconnectError correctly classifies client socket and broken pipe
 
 test("writeResponseStream emits active keep-alive comments down to the client during quiet streaming intervals", async () => {
   const originalFetch = globalThis.fetch;
-  const streamClosed = false;
   globalThis.fetch = async (url: any, options: any = {}) => {
     const target = String(url);
     if (target.endsWith("/responses")) {
@@ -8165,7 +8206,7 @@ test("writeResponseStream emits active keep-alive comments down to the client du
 
 test("abrupt client disconnect during SSE stream does not crash the router process", async () => {
   const originalFetch = globalThis.fetch;
-  let upstreamEmitted = 0;
+  let _upstreamEmitted = 0;
   globalThis.fetch = async (url: any, options: any = {}) => {
     const target = String(url);
     if (target.endsWith("/responses")) {
@@ -8176,7 +8217,7 @@ test("abrupt client disconnect during SSE stream does not crash the router proce
               'data: {"type":"response.output_text.delta","delta":"part1"}\n\n'
             )
           );
-          upstreamEmitted += 1;
+          _upstreamEmitted += 1;
           // Wait briefly, then emit more data after client has disconnected
           await new Promise((resolve) => setTimeout(resolve, 150));
           try {
@@ -8185,7 +8226,7 @@ test("abrupt client disconnect during SSE stream does not crash the router proce
                 'data: {"type":"response.output_text.delta","delta":"part2"}\n\n'
               )
             );
-            upstreamEmitted += 1;
+            _upstreamEmitted += 1;
             controller.enqueue(
               new TextEncoder().encode(
                 'data: {"type":"response.completed","response":{"status":"completed","output":[]}}\n\n'
@@ -8212,7 +8253,7 @@ test("abrupt client disconnect during SSE stream does not crash the router proce
   const port = (server.address() as AddressInfo).port;
   try {
     // Connect via raw TCP socket and abruptly destroy the socket after receiving initial data
-    await new Promise<void>((resolve, reject) => {
+    await new Promise<void>((resolve) => {
       const client = connect(port, "127.0.0.1", () => {
         const payload = JSON.stringify({ model: "sonnet", stream: true });
         client.write(
@@ -8329,17 +8370,22 @@ const DEFAULT_TIER = ["claude", "antigravity", "minimax", "copilot", "codex"];
 test("attempts a cooling provider as a last resort rather than stranding the caller", async () => {
   let responseCalls = 0;
   await withStubbedProviders(
-    (target: any) =>
-      healthyProbe(target) ??
-      (target.endsWith("/responses") ||
-      target.startsWith("https://chatgpt.com/")
-        ? ((responseCalls += 1),
-          jsonResponse({
-            id: "last-resort",
-            model: "sonnet",
-            output_text: "served"
-          }))
-        : null),
+    (target: any) => {
+      const probe = healthyProbe(target);
+      if (probe) return probe;
+      if (
+        target.endsWith("/responses") ||
+        target.startsWith("https://chatgpt.com/")
+      ) {
+        responseCalls += 1;
+        return jsonResponse({
+          id: "last-resort",
+          model: "sonnet",
+          output_text: "served"
+        });
+      }
+      return null;
+    },
     async ({ port, fetch: realFetch }: any) => {
       const response = await realFetch(
         `http://127.0.0.1:${port}/v1/responses`,
@@ -8387,18 +8433,21 @@ test("attempts a cooling provider as a last resort rather than stranding the cal
 test("bounds how many cooling providers the last-resort pass will try", async () => {
   let responseCalls = 0;
   await withStubbedProviders(
-    (target: any) =>
-      healthyProbe(target) ??
-      (target.endsWith("/responses") ||
-      target.startsWith("https://chatgpt.com/")
-        ? ((responseCalls += 1),
-          Response.json(
-            { error: "temporarily unavailable" },
-            {
-              status: 503
-            }
-          ))
-        : null),
+    (target: any) => {
+      const probe = healthyProbe(target);
+      if (probe) return probe;
+      if (
+        target.endsWith("/responses") ||
+        target.startsWith("https://chatgpt.com/")
+      ) {
+        responseCalls += 1;
+        return Response.json(
+          { error: "temporarily unavailable" },
+          { status: 503 }
+        );
+      }
+      return null;
+    },
     async ({ port, fetch: realFetch }: any) => {
       const response = await realFetch(
         `http://127.0.0.1:${port}/v1/responses`,
@@ -8432,12 +8481,18 @@ test("never re-attempts a provider that stated a reset time still in the future"
   let responseCalls = 0;
   const resetsAt = new Date(Date.now() + 3_600_000).toISOString();
   await withStubbedProviders(
-    (target: any) =>
-      healthyProbe(target) ??
-      (target.endsWith("/responses") ||
-      target.startsWith("https://chatgpt.com/")
-        ? ((responseCalls += 1), jsonResponse({ id: "x" }))
-        : null),
+    (target: any) => {
+      const probe = healthyProbe(target);
+      if (probe) return probe;
+      if (
+        target.endsWith("/responses") ||
+        target.startsWith("https://chatgpt.com/")
+      ) {
+        responseCalls += 1;
+        return jsonResponse({ id: "x" });
+      }
+      return null;
+    },
     async ({ port, fetch: realFetch }: any) => {
       const response = await realFetch(
         `http://127.0.0.1:${port}/v1/responses`,
@@ -8486,17 +8541,22 @@ test("never re-attempts a provider that stated a reset time still in the future"
 test("waits out a cooldown that is about to lapse instead of ending the turn", async () => {
   let responseCalls = 0;
   await withStubbedProviders(
-    (target: any) =>
-      healthyProbe(target) ??
-      (target.endsWith("/responses") ||
-      target.startsWith("https://chatgpt.com/")
-        ? ((responseCalls += 1),
-          jsonResponse({
-            id: "after-wait",
-            model: "sonnet",
-            output_text: "served"
-          }))
-        : null),
+    (target: any) => {
+      const probe = healthyProbe(target);
+      if (probe) return probe;
+      if (
+        target.endsWith("/responses") ||
+        target.startsWith("https://chatgpt.com/")
+      ) {
+        responseCalls += 1;
+        return jsonResponse({
+          id: "after-wait",
+          model: "sonnet",
+          output_text: "served"
+        });
+      }
+      return null;
+    },
     async ({ port, fetch: realFetch }: any) => {
       const response = await realFetch(
         `http://127.0.0.1:${port}/v1/responses`,
@@ -9579,7 +9639,7 @@ test("router status includes sanitized routing and limits metadata", () => {
   assert.ok(Array.isArray(status.routing.enabledProviders));
   assert.ok(Array.isArray(status.routing.disabledProviders));
   assert.equal(typeof status.routing.routes, "object");
-  for (const [provider, route] of Object.entries(status.routing.routes) as [
+  for (const [_provider, route] of Object.entries(status.routing.routes) as [
     string,
     any
   ][]) {
@@ -9833,7 +9893,7 @@ test("disabled providers are excluded across role aliases, orchestrator, and fal
   process.env.MINIMAX_API_KEY = "test-key";
 
   const attemptedProviders: string[] = [];
-  globalThis.fetch = async (url: any, options: any = {}) => {
+  globalThis.fetch = async (url: any, _options: any = {}) => {
     const target = String(url);
     if (target.includes("/health")) return new Response("ok", { status: 200 });
     let provider = null;
@@ -11694,7 +11754,7 @@ test("autodev attributes are off by default and require AUTODEV_OTEL_ATTRIBUTES=
     assert.equal(isAutodevAttributesEnabled(), false);
     resetOtelTelemetry();
     const payload = autodevBuildPayload();
-    const before = JSON.parse(JSON.stringify(payload));
+    const before = structuredClone(payload);
     ingestOtelSignal("logs", payload.logs);
     ingestOtelSignal("traces", payload.traces);
     ingestOtelSignal("metrics", payload.metrics);
@@ -11719,7 +11779,7 @@ test("AUTODEV_OTEL_ATTRIBUTES=v1 enriches resource and event keys without changi
     assert.equal(isAutodevAttributesEnabled(), true);
     resetOtelTelemetry();
     const payload = autodevBuildPayload();
-    const beforeSnapshot = JSON.parse(JSON.stringify(payload));
+    const beforeSnapshot = structuredClone(payload);
     ingestOtelSignal("logs", payload.logs);
     ingestOtelSignal("traces", payload.traces);
     ingestOtelSignal("metrics", payload.metrics);
@@ -11821,9 +11881,9 @@ test("autodevEnrichOtlpPayload is non-mutating: the input is left untouched", ()
   // returns a brand new top-level object; comparing identity alone is not
   // enough because structuredClone always produces a fresh tree.
   const payload = autodevBuildPayload();
-  const inputLogs = JSON.parse(JSON.stringify(payload.logs));
-  const inputTraces = JSON.parse(JSON.stringify(payload.traces));
-  const inputMetrics = JSON.parse(JSON.stringify(payload.metrics));
+  const inputLogs = structuredClone(payload.logs);
+  const inputTraces = structuredClone(payload.traces);
+  const inputMetrics = structuredClone(payload.metrics);
   const enrichedLogs = autodevEnrichOtlpPayload("logs", payload.logs);
   const enrichedTraces = autodevEnrichOtlpPayload("traces", payload.traces);
   const enrichedMetrics = autodevEnrichOtlpPayload("metrics", payload.metrics);
@@ -12035,7 +12095,7 @@ test("autodevEnrichOtlpPayload preserves aggregation semantics on metrics", () =
   // The opt-in emission must not change aggregations: number values, start/end
   // timestamps, temporality flags, and data point identity stay exactly the same.
   const payload = autodevBuildPayload();
-  const before = JSON.parse(JSON.stringify(payload.metrics));
+  const before = structuredClone(payload.metrics);
   const enriched = autodevEnrichOtlpPayload("metrics", payload.metrics);
   const dataPointBefore =
     before.resourceMetrics[0].scopeMetrics[0].metrics[0].sum.dataPoints[0];

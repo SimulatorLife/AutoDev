@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import type { RouterEvent } from "../../src/router/events.ts";
 import {
   classifyProviderFailure,
+  type RouterEvent,
   RouterEventRecorder
 } from "../../src/router/events.ts";
 

@@ -1,8 +1,27 @@
 import { existsSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
-import type { AgentActivityTracker } from "./concurrency.ts";
-import { PROCESS_FALLBACK_SESSION_KEY } from "./concurrency.ts";
+import type { ExecutionContract } from "../shared/execution-contract.ts";
+import {
+  type AgentActivityTracker,
+  PROCESS_FALLBACK_SESSION_KEY
+} from "./concurrency.ts";
+
+// Normalise the persisted `settled` counter block. The router records it
+// as `{ success, failure }`; persistence may hand back an object whose
+// fields have lost their numeric type, so this helper recovers the shape
+// without using `any`.
+function normalizeSettledTelemetry(value: unknown): {
+  success: number;
+  failure: number;
+} {
+  if (!value || typeof value !== "object") return { success: 0, failure: 0 };
+  const counters = value as { success?: unknown; failure?: unknown };
+  return {
+    success: Number(counters.success) || 0,
+    failure: Number(counters.failure) || 0
+  };
+}
 
 export const SUBAGENT_MECHANISMS = Object.freeze([
   "router_alias",
@@ -37,13 +56,24 @@ export const FORWARDED_REQUEST_HEADERS = Object.freeze([
   "x-codex-turn-metadata"
 ]);
 
+// Strip ASCII control characters from a metric label without using a
+// regular expression. `eslint-plugin-regexp/no-control-regex` rejects raw
+// control characters inside regex character classes, so we walk the string
+// once with `charCodeAt`.
+function stripAsciiControlCharacters(value: string): string {
+  let stripped = "";
+  for (let index = 0; index < value.length; index += 1) {
+    const code = value.charCodeAt(index);
+    if (code < 0x20 || code === 0x7f) continue;
+    stripped += value[index];
+  }
+  return stripped;
+}
+
 export function safeMetricLabel(value: unknown, fallback = "unknown"): string {
   if (typeof value !== "string" || !value.trim()) return fallback;
   return (
-    value
-      .trim()
-      .replaceAll(/[\u0000-\u001F\u007F]/g, "")
-      .slice(0, 100) || fallback
+    stripAsciiControlCharacters(value.trim()).slice(0, 100) || fallback
   );
 }
 
@@ -91,9 +121,11 @@ export function reportedChildren(event: {
   while (children.length < count) {
     children.push({ id: "", model: null });
   }
-  return children.map((child) =>
-    child.id ? child : { ...child, id: `anon${(anonymousChildSequence += 1)}` }
-  );
+  return children.map((child) => {
+    if (child.id) return child;
+    anonymousChildSequence += 1;
+    return { ...child, id: `anon${anonymousChildSequence}` };
+  });
 }
 
 export interface SubagentSpawnRecord {
@@ -219,9 +251,12 @@ export interface RoleCapabilityRequirements {
   };
 }
 
-let cachedExecutionContract: Record<string, any> | null = null;
+// In-memory cache of the execution contract document. The shared contract
+// type uses `[key: string]: unknown` for both providers and roles, which
+// keeps unknown fields addressable without resorting to `any`.
+let cachedExecutionContract: ExecutionContract | null = null;
 
-export function getDefaultExecutionContract(): Record<string, any> {
+export function getDefaultExecutionContract(): ExecutionContract {
   if (cachedExecutionContract) return cachedExecutionContract;
   const codexHome =
     process.env.CODEX_HOME ?? `${process.env.HOME ?? process.cwd()}/.codex`;
@@ -240,24 +275,24 @@ export function getDefaultExecutionContract(): Record<string, any> {
     try {
       cachedExecutionContract = JSON.parse(
         readFileSync(candidates[0]!, "utf8")
-      );
-      return cachedExecutionContract!;
+      ) as ExecutionContract;
+      return cachedExecutionContract;
     } catch {
       /* fallthrough to empty */
     }
   }
-  return {};
+  return { roles: {}, providers: {} };
 }
 
 export function setExecutionContractForTests(
-  contract: Record<string, any> | null
+  contract: ExecutionContract | null
 ): void {
   cachedExecutionContract = contract;
 }
 
 export function providerCapabilities(
   provider: string,
-  executionContract: Record<string, any> = getDefaultExecutionContract()
+  executionContract: ExecutionContract = getDefaultExecutionContract()
 ): ProviderCapabilities {
   const subagentSpawnTools = Array.isArray(
     executionContract.providers?.[provider]?.spawnTools
@@ -286,7 +321,7 @@ export function providerCapabilities(
 
 export function roleCapabilityRequirements(
   role: string | null | undefined,
-  executionContract: Record<string, any> = getDefaultExecutionContract()
+  executionContract: ExecutionContract = getDefaultExecutionContract()
 ): RoleCapabilityRequirements {
   const key =
     role === ORCHESTRATOR_AGENT_ROLE
@@ -319,14 +354,14 @@ export function roleCapabilityRequirements(
 
 export function subagentSpawnToolsFor(
   provider: string,
-  executionContract: Record<string, any> = getDefaultExecutionContract()
+  executionContract: ExecutionContract = getDefaultExecutionContract()
 ): string[] {
   return providerCapabilities(provider, executionContract).subagentSpawnTools;
 }
 
 export function mcpContractForRole(
   agentRole: string | null | undefined,
-  executionContract: Record<string, any> = getDefaultExecutionContract()
+  executionContract: ExecutionContract = getDefaultExecutionContract()
 ): string[] {
   const requested =
     typeof agentRole === "string" && agentRole.trim()
@@ -343,7 +378,7 @@ export function bridgeTelemetryHeaders(
   route: { provider?: string | null | undefined } | null | undefined,
   requestId: string | null | undefined,
   options: {
-    executionContract?: Record<string, any>;
+    executionContract?: ExecutionContract;
     agentEventsUrl?: string;
   } = {}
 ): Record<string, string> {
@@ -365,7 +400,7 @@ export function bridgeTelemetryHeaders(
 
 export interface SubagentRegistryOptions {
   agentActivity?: AgentActivityTracker | undefined;
-  executionContract?: Record<string, any> | undefined;
+  executionContract?: ExecutionContract | undefined;
   maxRecentSpawns?: number | undefined;
   maxTrackedSessions?: number | undefined;
   maxTrackedRequests?: number | undefined;
@@ -381,7 +416,7 @@ export interface SubagentRegistryOptions {
 
 export class SubagentRegistry {
   private readonly agentActivity?: AgentActivityTracker | undefined;
-  private readonly executionContract?: Record<string, any> | undefined;
+  private readonly executionContract?: ExecutionContract | undefined;
   private readonly maxRecentSpawns: number;
   private readonly maxTrackedSessions: number;
   private readonly maxTrackedRequests: number;
@@ -567,7 +602,7 @@ export class SubagentRegistry {
     const persisted: BridgeRequestContext = context
       ? { ...context }
       : { activitySubject: sessionKey };
-    delete (persisted as any).requestId;
+    delete persisted.requestId;
     this.bridgeSessionContext.delete(sessionKey);
     this.bridgeSessionContext.set(sessionKey, {
       requestId,
@@ -664,67 +699,22 @@ export class SubagentRegistry {
     const { requestId, context, role, childId, model } = input;
     const key = bridgeSubagentKey(requestId, childId);
     if (this.bridgeSubagentUsage.has(key)) return;
-    if (!context.provider || !context.model) {
-      if (!context.provider && this.onMissingProviderDiagnostic)
-        this.onMissingProviderDiagnostic(1);
-      if (!context.model && this.onMissingModelDiagnostic)
-        this.onMissingModelDiagnostic(1);
-      return;
-    }
+    if (!this.recordSubagentDiagnostics(context)) return;
 
     const settled = context.finished ?? null;
-    const childModel =
-      model && !INHERITED_CHILD_MODELS.has(model.toLowerCase())
-        ? model
-        : context.model;
-    const entry: BridgeSubagentUsageEntry = {
-      requestId,
-      provider: context.provider,
-      model: childModel,
-      role: role ?? UNATTRIBUTED_SUBAGENT_ROLE,
-      workspace: context.workspace ?? null,
-      startedAt: Date.now()
-    };
+    const entry = this.recordSubagentUsageEntry(
+      key,
+      context,
+      role ?? null,
+      model ?? null
+    );
     this.bridgeSubagentUsage.set(key, entry);
 
     const parent = this.openBridgeParentActivity(requestId, context);
     if (parent) parent.children.add(key);
 
-    if (context.sessionKey && this.agentActivity) {
-      this.agentActivity.noteSubagentWait(context.sessionKey, {
-        provider: context.provider,
-        model: context.model,
-        role: ORCHESTRATOR_AGENT_ROLE,
-        workspace: context.workspace ?? null
-      });
-    }
-
-    if (this.agentActivity) {
-      this.agentActivity.beginRequest(`bridge:${key}`, {
-        requestId: key,
-        provider: entry.provider,
-        model: entry.model,
-        role: entry.role,
-        origin: "subagent",
-        workspace: entry.workspace,
-        kind: "bridge_subagent",
-        tag: context.sessionKey || entry.requestId,
-        parentRequestId: entry.requestId
-      });
-    }
-
-    if (this.onRecordUsageEvent) {
-      this.onRecordUsageEvent({
-        phase: "selected",
-        requestId: key,
-        role: entry.role,
-        provider: entry.provider,
-        model: entry.model,
-        workspace: entry.workspace,
-        origin: "subagent",
-        timestamp: new Date().toISOString()
-      });
-    }
+    this.noteBridgeSubagentAgentActivity(key, entry, context);
+    this.emitBridgeSubagentUsageEvent(key, entry);
 
     if (settled) {
       this.closeBridgeSubagentUsage(key, {
@@ -736,14 +726,103 @@ export class SubagentRegistry {
       return;
     }
 
+    this.evictStaleSubagentUsageEntries();
+  }
+
+  // Record the missing-provider / missing-model diagnostics for a context
+  // that lacks the fields the registry needs to attribute the subagent.
+  // Returns `false` (caller should bail out) when either field is missing.
+  private recordSubagentDiagnostics(context: BridgeRequestContext): boolean {
+    const missingProvider = !context.provider;
+    const missingModel = !context.model;
+    if (missingProvider && this.onMissingProviderDiagnostic)
+      this.onMissingProviderDiagnostic(1);
+    if (missingModel && this.onMissingModelDiagnostic)
+      this.onMissingModelDiagnostic(1);
+    return !missingProvider && !missingModel;
+  }
+
+  // Build the usage entry the registry stores for a new bridge subagent,
+  // honouring the inherited-child-model contract for orchestrator routing.
+  private recordSubagentUsageEntry(
+    key: string,
+    context: BridgeRequestContext,
+    role: string | null,
+    model: string | null
+  ): BridgeSubagentUsageEntry {
+    const childModel =
+      model && !INHERITED_CHILD_MODELS.has(model.toLowerCase())
+        ? model
+        : context.model;
+    return {
+      requestId: key,
+      provider: context.provider,
+      model: childModel,
+      role: role ?? UNATTRIBUTED_SUBAGENT_ROLE,
+      workspace: context.workspace ?? null,
+      startedAt: Date.now()
+    };
+  }
+
+  // Forward the bridge subagent into the agent-activity tracker: a
+  // session-scoped wait marker (when the orchestrator has a session key) and
+  // a per-child `beginRequest` so the child shows up in live-agent views.
+  private noteBridgeSubagentAgentActivity(
+    key: string,
+    entry: BridgeSubagentUsageEntry,
+    context: BridgeRequestContext
+  ): void {
+    if (!this.agentActivity) return;
+    if (context.sessionKey) {
+      this.agentActivity.noteSubagentWait(context.sessionKey, {
+        provider: context.provider,
+        model: context.model,
+        role: ORCHESTRATOR_AGENT_ROLE,
+        workspace: context.workspace ?? null
+      });
+    }
+    this.agentActivity.beginRequest(`bridge:${key}`, {
+      requestId: key,
+      provider: entry.provider,
+      model: entry.model,
+      role: entry.role,
+      origin: "subagent",
+      workspace: entry.workspace,
+      kind: "bridge_subagent",
+      tag: context.sessionKey || entry.requestId,
+      parentRequestId: entry.requestId
+    });
+  }
+
+  // Emit the router's usage-telemetry "selected" event for the subagent so
+  // the entry is attributed consistently with non-bridge paths.
+  private emitBridgeSubagentUsageEvent(
+    key: string,
+    entry: BridgeSubagentUsageEntry
+  ): void {
+    if (!this.onRecordUsageEvent) return;
+    this.onRecordUsageEvent({
+      phase: "selected",
+      requestId: key,
+      role: entry.role,
+      provider: entry.provider,
+      model: entry.model,
+      workspace: entry.workspace,
+      origin: "subagent",
+      timestamp: new Date().toISOString()
+    });
+  }
+
+  // Evict the oldest tracked subagent entries once we exceed the configured
+  // ceiling, closing each evicted entry as a missing-result failure.
+  private evictStaleSubagentUsageEntries(): void {
     while (this.bridgeSubagentUsage.size > this.maxTrackedSubagents) {
       const oldestKey = this.bridgeSubagentUsage.keys().next().value;
-      if (oldestKey !== undefined) {
-        this.closeBridgeSubagentUsage(oldestKey, {
-          outcome: "failure",
-          failureClass: "subagent_result_missing"
-        });
-      }
+      if (oldestKey === undefined) return;
+      this.closeBridgeSubagentUsage(oldestKey, {
+        outcome: "failure",
+        failureClass: "subagent_result_missing"
+      });
     }
   }
 
@@ -1032,18 +1111,29 @@ export class SubagentRegistry {
     this.spawnFailureTelemetry.recent = [];
   }
 
-  restoreSubagentTelemetry(saved: any): void {
+  restoreSubagentTelemetry(saved: unknown): void {
     if (!saved || typeof saved !== "object") return;
-    if (Number.isInteger(saved.total) && saved.total >= 0)
-      this.subagentTelemetry.total = saved.total;
+    const doc = saved as {
+      total?: unknown;
+      byMechanism?: unknown;
+      byProvider?: unknown;
+      byRole?: unknown;
+      byStatus?: unknown;
+      recent?: unknown;
+    };
+    if (Number.isInteger(doc.total) && doc.total >= 0)
+      this.subagentTelemetry.total = doc.total;
     for (const section of [
       "byMechanism",
       "byProvider",
       "byRole",
       "byStatus"
     ] as const) {
-      if (saved[section] && typeof saved[section] === "object") {
-        for (const [key, count] of Object.entries(saved[section])) {
+      const entries = doc[section];
+      if (entries && typeof entries === "object") {
+        for (const [key, count] of Object.entries(
+          entries as Record<string, unknown>
+        )) {
           if (
             typeof count === "number" &&
             Number.isFinite(count) &&
@@ -1054,45 +1144,51 @@ export class SubagentRegistry {
         }
       }
     }
-    if (Array.isArray(saved.recent)) {
-      this.subagentTelemetry.recent = saved.recent
+    if (Array.isArray(doc.recent)) {
+      this.subagentTelemetry.recent = doc.recent
         .filter(
-          (entry: any): entry is SubagentSpawnRecord =>
-            entry && typeof entry === "object"
+          (entry: unknown): entry is SubagentSpawnRecord =>
+            Boolean(entry) && typeof entry === "object"
         )
         .slice(-this.maxRecentSpawns)
-        .map((entry: any) => ({
-          ...entry,
-          settled:
-            entry.settled && typeof entry.settled === "object"
-              ? {
-                  success: Number(entry.settled.success) || 0,
-                  failure: Number(entry.settled.failure) || 0
-                }
-              : { success: 0, failure: 0 }
-        }));
+        .map((entry) => {
+          const candidate = entry as SubagentSpawnRecord & {
+            settled?: unknown;
+          };
+          return {
+            ...candidate,
+            settled: normalizeSettledTelemetry(candidate.settled)
+          };
+        });
     }
   }
 
-  restoreSpawnFailureTelemetry(saved: any): void {
+  restoreSpawnFailureTelemetry(saved: unknown): void {
     if (!saved || typeof saved !== "object") return;
-    if (Number.isInteger(saved.total) && saved.total >= 0)
-      this.spawnFailureTelemetry.total = saved.total;
-    if (saved.byReason && typeof saved.byReason === "object") {
-      for (const [reason, count] of Object.entries(saved.byReason)) {
+    const doc = saved as {
+      total?: unknown;
+      byReason?: unknown;
+      recent?: unknown;
+    };
+    if (Number.isInteger(doc.total) && doc.total >= 0)
+      this.spawnFailureTelemetry.total = doc.total;
+    if (doc.byReason && typeof doc.byReason === "object") {
+      for (const [reason, count] of Object.entries(
+        doc.byReason as Record<string, unknown>
+      )) {
         if (typeof count === "number" && Number.isFinite(count) && count >= 0) {
           this.spawnFailureTelemetry.byReason[safeMetricLabel(reason)] = count;
         }
       }
     }
-    if (Array.isArray(saved.recent)) {
-      this.spawnFailureTelemetry.recent = saved.recent
+    if (Array.isArray(doc.recent)) {
+      this.spawnFailureTelemetry.recent = doc.recent
         .filter(
-          (item: any): item is SpawnFailureRecord =>
-            item && typeof item === "object"
+          (item: unknown): item is SpawnFailureRecord =>
+            Boolean(item) && typeof item === "object"
         )
         .slice(-MAX_RECENT_SPAWN_FAILURES)
-        .map((entry: any) => ({ ...entry }));
+        .map((entry) => ({ ...(entry as SpawnFailureRecord) }));
     }
   }
 }

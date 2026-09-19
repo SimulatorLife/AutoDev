@@ -60,7 +60,10 @@ function parseInlineList(value: string): YamlValue[] {
 function tokenize(text: string): Token[] {
   const tokens: Token[] = [];
   for (const rawLine of text.split("\n")) {
-    const line = rawLine.split("#", 1)[0]?.trimEnd() ?? "";
+    const commentIndex = rawLine.indexOf("#");
+    const line = (
+      commentIndex === -1 ? rawLine : rawLine.slice(0, commentIndex)
+    ).trimEnd();
     if (!line.trim()) continue;
     const stripped = line.trimStart();
     const indent = line.length - stripped.length;

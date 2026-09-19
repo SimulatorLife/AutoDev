@@ -18,7 +18,19 @@ import { homedir } from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
-type JsonRecord = Record<string, any>;
+type JsonRecord = Record<string, unknown>;
+
+interface JsonRpcMessage {
+  id?: number;
+  result?: {
+    tools?: Array<{ name: string }>;
+    content?: Array<{ text?: string; type?: string }>;
+    isError?: boolean;
+    [key: string]: unknown;
+  };
+  error?: unknown;
+  [key: string]: unknown;
+}
 
 export interface ProbeOptions {
   server: string;
@@ -37,6 +49,55 @@ export interface ProbeResult {
 }
 
 const EXCERPT = 400;
+
+function formatCallReply(
+  reply: JsonRpcMessage | null,
+  exited: ProbeResult["exited"]
+): { ok: boolean; text: string } {
+  if (reply === null) {
+    const text = exited
+      ? "no reply: the server exited"
+      : "no reply: timed out";
+    return { ok: false, text };
+  }
+  const content = reply.result?.content;
+  let text: string;
+  if (reply.error) {
+    text = `error: ${JSON.stringify(reply.error)}`;
+  } else if (Array.isArray(content)) {
+    text = content
+      .map((part) => part.text ?? `[${part.type}]`)
+      .join("\n");
+  } else {
+    text = JSON.stringify(reply.result);
+  }
+  return {
+    ok: !reply.error && !reply.result?.isError,
+    text: text.length > EXCERPT ? `${text.slice(0, EXCERPT)}…` : text
+  };
+}
+
+async function executeCalls(
+  calls: ProbeOptions["calls"],
+  rpc: (method: string, params: JsonRecord) => Promise<JsonRpcMessage | null>,
+  getExited: () => ProbeResult["exited"]
+): Promise<ProbeResult["calls"]> {
+  const results: ProbeResult["calls"] = [];
+  let chain: Promise<unknown> = Promise.resolve();
+  for (const call of calls) {
+    chain = chain.then(async () => {
+      const reply = await rpc("tools/call", {
+        name: call.tool,
+        arguments: call.args
+      });
+      const formatted = formatCallReply(reply, getExited());
+      results.push({ tool: call.tool, ...formatted });
+      return null;
+    });
+  }
+  await chain;
+  return results;
+}
 
 /** The environment Codex gives an MCP server: HOME and a system PATH, not your shell's. */
 export function codexLikeEnv(): NodeJS.ProcessEnv {
@@ -58,7 +119,7 @@ export async function probe(options: ProbeOptions): Promise<ProbeResult> {
   let buffer = "";
   let nextId = 0;
   let exited: ProbeResult["exited"] = null;
-  const pending = new Map<number, (message: JsonRecord | null) => void>();
+  const pending = new Map<number, (message: JsonRpcMessage | null) => void>();
   child.stderr.on("data", (chunk: Buffer) => {
     stderr += chunk.toString();
   });
@@ -69,9 +130,11 @@ export async function probe(options: ProbeOptions): Promise<ProbeResult> {
       const line = buffer.slice(0, newline);
       buffer = buffer.slice(newline + 1);
       try {
-        const message = JSON.parse(line) as JsonRecord;
-        pending.get(message.id)?.(message);
-        pending.delete(message.id);
+        const message = JSON.parse(line) as JsonRpcMessage;
+        if (typeof message.id === "number") {
+          pending.get(message.id)?.(message);
+          pending.delete(message.id);
+        }
       } catch {
         /* not a JSON-RPC line */
       }
@@ -85,20 +148,20 @@ export async function probe(options: ProbeOptions): Promise<ProbeResult> {
   const rpc = (
     method: string,
     params: JsonRecord
-  ): Promise<JsonRecord | null> =>
-    new Promise((settle) => {
+  ): Promise<JsonRpcMessage | null> =>
+    new Promise((resolve) => {
       if (exited) {
-        settle(null);
+        resolve(null);
         return;
       }
       const id = ++nextId;
       const timer = setTimeout(() => {
         pending.delete(id);
-        settle(null);
+        resolve(null);
       }, options.timeoutMs);
       pending.set(id, (message) => {
         clearTimeout(timer);
-        settle(message);
+        resolve(message);
       });
       child.stdin.write(
         `${JSON.stringify({ jsonrpc: "2.0", id, method, params })}\n`
@@ -121,33 +184,10 @@ export async function probe(options: ProbeOptions): Promise<ProbeResult> {
         `${JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" })}\n`
       );
       const listed = await rpc("tools/list", {});
-      result.tools = (listed?.result?.tools ?? []).map((tool: JsonRecord) =>
+      result.tools = (listed?.result?.tools ?? []).map((tool) =>
         String(tool.name)
       );
-      for (const call of options.calls) {
-        const reply = await rpc("tools/call", {
-          name: call.tool,
-          arguments: call.args
-        });
-        const content = reply?.result?.content;
-        const text =
-          reply === null
-            ? exited
-              ? "no reply: the server exited"
-              : "no reply: timed out"
-            : reply.error
-              ? `error: ${JSON.stringify(reply.error)}`
-              : Array.isArray(content)
-                ? content
-                    .map((part: JsonRecord) => part.text ?? `[${part.type}]`)
-                    .join("\n")
-                : JSON.stringify(reply.result);
-        result.calls.push({
-          tool: call.tool,
-          ok: reply !== null && !reply.error && !reply.result?.isError,
-          text: text.length > EXCERPT ? `${text.slice(0, EXCERPT)}…` : text
-        });
-      }
+      result.calls = await executeCalls(options.calls, rpc, () => exited);
     }
   } finally {
     result.exited = exited;

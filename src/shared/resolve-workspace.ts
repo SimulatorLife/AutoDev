@@ -117,6 +117,17 @@ export function resolveWorkspaceFromTurnMetadata(
   return fromValues[0] ?? null;
 }
 
+function findDirectoryInObject(
+  obj: JsonObject | null | undefined
+): string | null {
+  if (!obj || typeof obj !== "object") return null;
+  for (const key of WORKSPACE_KEYS) {
+    const value = obj[key];
+    if (isDirectory(value)) return value;
+  }
+  return null;
+}
+
 /**
  * Resolve a workspace from structured request fields only; task prose is
  * never consulted. The explicit operator override is provider-specific and is
@@ -127,22 +138,17 @@ export function resolveCwd(
   headers: RequestHeaders | null | undefined,
   projectRoot: string | null = null
 ): string {
-  for (const key of WORKSPACE_KEYS) {
-    const value = payload?.[key];
-    if (isDirectory(value)) return value;
-  }
+  const fromPayload = findDirectoryInObject(payload);
+  if (fromPayload) return fromPayload;
   const meta = payload?.metadata as JsonObject | undefined;
-  if (meta && typeof meta === "object") {
-    for (const key of WORKSPACE_KEYS) {
-      const value = meta[key];
-      if (isDirectory(value)) return value;
-    }
-  }
+  const fromMeta = findDirectoryInObject(meta);
+  if (fromMeta) return fromMeta;
+
   const turnMetadata = turnMetadataFrom(
     headers?.["x-codex-turn-metadata"],
     payload?.client_metadata
   );
-  let workspacePath = null;
+  let workspacePath: string | null;
   try {
     workspacePath = resolveWorkspaceFromTurnMetadata(turnMetadata);
   } catch (error) {
