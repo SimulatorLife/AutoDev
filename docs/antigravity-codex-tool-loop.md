@@ -326,74 +326,141 @@ Do not infer success because the model happened not to call a forbidden tool
 
 ---
 
-## The remaining hard problem: synchronous tool continuation
+## Continuation: prefer explicit Antigravity conversation resumption
 
-Tool exposure is only one half of the Claude-style architecture
+A Codex-driven tool loop still needs the model to request a Codex tool, receive its result, and continue reasoning with the prior context
 
-The model must also be able to request a Codex tool, wait for its result, and continue the **same reasoning turn**
-
-Claude currently does this by parking the CLI process:
+Current `agy` already exposes the core continuation primitive needed for this:
 
 ```text
-Claude requests tool
-        |
-bridge emits Responses tool call
-        |
-Codex executes tool
-        |
-next Responses request contains tool result
-        |
-bridge finds parked Claude turn
-        |
-MCP call resolves
-        |
-Claude continues
+--conversation <conversation-id>
 ```
 
-The current Antigravity spawn shim does not prove this general mechanism because delegation is deliberately dispatched rather than awaited. The bridge can collect the spawn request and emit a synthetic `exec` call after the `agy` turn finishes
+Headless `stream-json` emits a `conversation_id` in the `init` event and terminal result. Antigravity documents that `--conversation <id>` starts a new process while resuming that specific prior conversation
 
-That works for:
+This makes explicit conversation resumption the **preferred first implementation path**. AutoDev should not begin by cloning Claude's parked-process lifecycle
+
+### Preferred request/result loop
 
 ```text
-delegate -> end turn
+Codex request
+    |
+    v
+agy -p <turn> --agent autodev-bridge --output-format stream-json
+    |
+    +--> capture conversation_id = A
+    |
+    +--> model calls session-scoped AutoDev/Codex shim
+    |
+    v
+shim records structured requested Codex tool call
+    |
+    +--> tells agy the request was dispatched and this turn should end
+    |
+    v
+bridge emits the actual Responses tool call to Codex
+    |
+    v
+Codex executes the tool
+    |
+    v
+next /v1/responses carries *_tool_call_output
+    |
+    v
+agy -p <structured tool result + continue instruction>
+    --conversation A
+    --agent autodev-bridge
+    --output-format stream-json
+    |
+    v
+same Antigravity conversation continues
 ```
 
-It does not solve:
+The bridge should persist the exact Antigravity `conversation_id` against the Codex turn/conversation identity and the pending Codex call IDs needed to correlate continuation results
+
+Use `--conversation <id>`, not `--continue`, because AutoDev must resume the exact conversation associated with the Codex turn rather than whichever Antigravity conversation happens to be most recent in the workspace
+
+### Important semantic limitation
+
+`--conversation` solves **model-context continuity**, but current Antigravity headless input documentation exposes ordinary user input rather than an OpenAI-style native `function_call_output` / `custom_tool_call_output` input event
+
+Therefore the initial implementation will likely reintroduce the Codex result as a deterministic structured continuation message, for example:
 
 ```text
-read file -> inspect result -> run command -> inspect result -> edit -> continue
+Codex tool result
+call_id: call_123
+tool: exec
+status: success
+
+<result>
+...
+</result>
+
+Continue from the pending tool request
 ```
 
-A full migration therefore requires an Antigravity continuation design
+The tool request itself must remain structured through the session-scoped bridge/MCP shim. Do not parse tool requests from model prose
 
-### Preferred continuation approach
+This result-injection difference is a behavior to validate, not a reason to assume conversation resumption is inadequate
 
-First test whether current `agy` stream-json interactive mode can support a bridge-owned request/result loop without restarting the model context
+### Validation for conversation resumption
 
-The CLI supports a long-lived process with:
+Before building a more complex continuation runtime, prove the simple path against the installed `agy` version:
+
+1. Start a custom AutoDev main-agent turn and force one structured shim tool request
+2. Capture the emitted `conversation_id`
+3. End that `agy` turn after the request has been handed to Codex
+4. Simulate a successful Codex tool result
+5. Launch `agy --conversation <id>` with the structured result
+6. Verify the model associates the result with the pending request and continues rather than repeating the request
+7. Repeat with several sequential tool calls
+8. Repeat with tool errors, denied calls, large outputs, and user steering between calls
+9. Inspect the resumed `init` event and verify the expected custom agent and restricted `tools` inventory are still in force
+10. Verify a bridge restart can recover the mapping when the Antigravity conversation ID and pending call metadata have been persisted
+
+Do not rely on conversation history alone to preserve the security boundary. Resumed runs must continue to prove the expected tool inventory
+
+### Fallback continuation designs
+
+Only move to a more complex mechanism if explicit conversation resumption fails a required parity test
+
+**Fallback 1 — long-lived stream-json process**
+
+Antigravity supports:
 
 ```text
 --input-format stream-json
 --output-format stream-json
 ```
 
-and documents sending additional user events over stdin while retaining one `conversation_id`
+which maintains one continuous process/conversation and accepts one user event per turn over stdin. This can avoid process startup overhead and may simplify repeated tool-result injection, but introduces a live process lifecycle that AutoDev must own
 
-Determine whether a session-scoped MCP call can remain pending while the bridge:
+**Fallback 2 — parked synchronous MCP call**
 
-1. Emits the corresponding Responses tool call to Codex
-2. Ends or suspends the current Responses exchange without terminating `agy`
-3. Receives the Codex tool output on the continuation request
-4. Resolves the pending MCP call or otherwise injects its result into the same Antigravity session
-5. Lets `agy` continue naturally
+Keep the `agy` process and MCP call blocked while Codex executes the tool, then resolve that exact pending call with the result. This most closely resembles Claude's current bridge but is also the highest-complexity option and should be justified by a concrete fidelity problem with the simpler designs
 
-If Antigravity cannot support this safely, do not fake a synchronous loop by replaying guessed context or silently executing native tools
+### Why this differs from Claude
+
+Claude's current bridge keeps a CLI process parked because that adapter already has a synchronous MCP-to-Codex continuation mechanism
+
+Antigravity provides durable conversation IDs and explicit `--conversation` resumption, so its cleanest implementation may instead allow each `agy` process to finish and use Antigravity's own persisted conversation as the model-context store
+
+If validated, that avoids:
+
+```text
+long-lived parked CLI processes
+park timers
+process registries solely for context preservation
+keeping one provider process alive while Codex executes an arbitrary tool
+```
+
+The architecture should share Responses/tool-surface adaptation with Claude without forcing both providers to share the same process-lifetime strategy
 
 ---
 
 ## Shared bridge implementation
 
-Do not create an independent second implementation of the Claude machinery if the underlying abstractions are reusable
+Reuse Claude bridge machinery where the protocol abstractions are genuinely shared, but do not force Antigravity to inherit Claude's parked-process lifecycle when `--conversation` provides a simpler provider-native continuation primitive
 
 Prefer extracting provider-neutral components from:
 
@@ -408,8 +475,8 @@ Codex tool-surface parsing
 MCP tool-definition adaptation
 Responses tool-call item construction
 tool-call/result correlation
-parked turn registry
-continuation result matching
+provider-neutral continuation result matching
+Codex call/result correlation
 keepalive and cancellation semantics
 tool telemetry emitted from canonical Codex results
 ```
@@ -466,7 +533,18 @@ Exit condition: all AutoDev Antigravity child agents are real Codex child thread
 
 Generalize the session-scoped shim so Antigravity can request any tool Codex offered for the turn
 
-Implement the continuation lifecycle using shared bridge primitives where possible
+Implement explicit Antigravity conversation resumption first:
+
+- Capture and persist the `conversation_id` from each bridged `agy` turn
+- Correlate it with the Codex conversation/turn and pending tool call IDs
+- Emit the requested action as the normal Responses tool call
+- On `*_tool_call_output`, resume the exact Antigravity conversation with `agy --conversation <id>`
+- Inject the result using a deterministic structured continuation format
+- Revalidate the resumed custom-agent identity and `init.tools` inventory
+
+Do not use `--continue` because it resolves the most recent workspace conversation rather than the exact conversation AutoDev is servicing
+
+Only introduce a long-lived `--input-format stream-json` process or Claude-style parked MCP call if explicit `--conversation` resumption fails a required fidelity, latency, cancellation, or recovery test
 
 Validate sequential and multi-step calls, including:
 
@@ -474,12 +552,13 @@ Validate sequential and multi-step calls, including:
 - Read -> shell -> reason
 - MCP -> result -> follow-up MCP
 - Tool failure -> model recovery
-- User steering while a tool is running
-- Cancellation while parked
-- Provider timeout while parked
+- User steering between the tool request and result
+- Cancellation between tool request and continuation
+- Provider timeout on an initial or resumed turn
+- Bridge restart followed by persisted-conversation recovery
 - Multiple tool calls in one model message if supported
 
-Exit condition: Antigravity can complete normal coding turns without native file/shell/MCP execution
+Exit condition: Antigravity can complete normal coding turns without native file/shell/MCP execution, and repeated `--conversation` resumptions preserve both model context and the restricted AutoDev agent/tool surface
 
 ### Phase 4 — move role enforcement to Codex
 
@@ -519,7 +598,7 @@ Do not retire a current behavior until the replacement proves all applicable pro
 | --- | --- |
 | Tool isolation | Forbidden native tools absent from `init.tools` and hard-blocked by hook backstop |
 | Tool fidelity | Codex custom/function/freeform tools retain exact names, schemas, arguments, IDs, and outputs |
-| Continuation | Tool call -> result -> continued model reasoning works without lost context |
+| Continuation | Tool call -> result -> `agy --conversation <id>` -> continued model reasoning works without lost context, duplicated calls, or weakened tool restrictions |
 | Permissions | Codex remains the sole effective sandbox/approval boundary for bridged actions |
 | MCP isolation | Role-specific MCP exposure matches Codex role policy |
 | Skills | Skill visibility and usage semantics match native Codex expectations |
@@ -593,9 +672,11 @@ The final switch should be an explicit execution-mode change, not an accidental 
 - Does a custom agent's `tools` allowlist remain authoritative when that agent is selected as the primary agent through `agy --agent`
 - Can the custom main agent expose only the session-scoped AutoDev MCP shim plus selected native web tools
 - Does `agy` expose any non-tool execution path that can mutate the workspace despite the custom-agent allowlist
-- Can interactive stream-json support a pending MCP call across a Responses continuation cleanly
-- Can one `agy` process remain parked without its own timeout or client lifecycle conflicting with Codex's continuation lifecycle
-- Can the Claude parked-turn implementation be generalized without provider-specific conditionals dominating the shared abstraction
+- Does `agy --conversation <id>` reliably associate a structured resumed tool result with the immediately preceding shim request across repeated tool cycles
+- Does a resumed `--conversation` invocation preserve or correctly reapply the selected custom agent and its restricted `init.tools` inventory
+- What minimal state must AutoDev persist to recover `Codex conversation -> agy conversation_id -> pending call IDs` after a bridge restart
+- Does long-lived `--input-format stream-json` provide enough measurable latency benefit to justify owning a persistent process after the simpler resumption path works
+- Is a parked synchronous MCP call needed for any fidelity case that explicit conversation resumption cannot satisfy
 - Which current Antigravity telemetry paths become provably redundant once Codex executes every action
 - Can Rulesync become the canonical generator for the custom main agent and Antigravity permissions without weakening AutoDev's existing role contract
 - Which provider-native web capabilities must remain after the Codex tool loop is available
@@ -649,7 +730,8 @@ AutoDev:
 Upstream:
 
 - Antigravity custom agents: https://antigravity.google/docs/subagents?tab=cli
-- Antigravity CLI headless/stream-json: https://antigravity.google/docs/cli/headless/
+- Antigravity CLI headless/stream-json and conversation continuation: https://antigravity.google/docs/cli/headless/
+- Antigravity conversation resume command: https://antigravity.google/docs/cli/commands/resume
 - Antigravity hooks: https://antigravity.google/docs/hooks
 - Antigravity permissions: https://antigravity.google/docs/permissions?tab=cli
 - Antigravity CLI reference: https://antigravity.google/docs/cli/reference/
