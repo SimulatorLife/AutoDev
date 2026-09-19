@@ -1,6 +1,6 @@
 ---
 name: lsp-mcp-server
-description: Use whenever code navigation, analysis, refactoring, or diagnostics are needed on a project that has a Language Server Protocol implementation. Covers all 29 lsp_* MCP tools exposed by lsp-mcp-server (TypeScript, Python, Rust, Go, C/C++, Ruby, PHP, Elixir, Kotlin, Java, and any user-configured language). Use it instead of grep/find/Read for ANY task that touches definitions, references, types, hover docs, completions, diagnostics, rename, code actions, call/type hierarchy, document/workspace symbols, document highlights, inlay hints, selection ranges, folding ranges, or batch file indexing.
+description: Use whenever code navigation, analysis, refactoring, or diagnostics are needed on a project that has a Language Server Protocol implementation. Covers all 29 lsp_* MCP tools exposed by lsp-mcp-server (named mcp__lsp__lsp_* in agent runtimes) (TypeScript, Python, Rust, Go, C/C++, Ruby, PHP, Elixir, Kotlin, Java, and any user-configured language). Use it instead of grep/find/Read for ANY task that touches definitions, references, types, hover docs, completions, diagnostics, rename, code actions, call/type hierarchy, document/workspace symbols, document highlights, inlay hints, selection ranges, folding ranges, or batch file indexing.
 targets: ["copilot"]
 ---
 
@@ -16,6 +16,7 @@ This MCP server exposes a Language Server (LSP) to you as ~30 tools. LSP servers
 4. **All line / column numbers are 1-indexed** (what an editor shows). Internal conversion to LSP 0-indexed happens for you.
 5. **First-touch wakes the server.** Auto-start is on by default — you do not need `lsp_start_server`. The first tool call that takes a `file_path` will spawn the right language server and open the file. There is no need to ping `lsp_server_status` before each call.
 6. **Position points at the symbol, not whitespace.** When you pass `line`/`column`, point at any character of the identifier itself. Pointing at a space, the `(` after a function name, or a comma will give empty or surprising results.
+7. **The names below are the server's own; your runtime prefixes them.** In Codex code mode they are `tools.mcp__lsp__<name>` inside `exec` (e.g. `await tools.mcp__lsp__lsp_find_symbol({...})`); in Claude Code they are `mcp__lsp__<name>`. To check availability, search for `mcp__lsp__` (e.g. `ALL_TOOLS.filter((t) => t.name.startsWith("mcp__lsp__"))`), never for a bare `lsp_` prefix: that finds nothing and wrongly reads as "LSP is unavailable".
 
 ## Decision tree: pick the right tool
 

@@ -97,9 +97,16 @@ following cascade:
 4. **With the protection**: Claude reports `liveProviderCount: 1`; the
    router sends B to MiniMax, Gemini, or Copilot instead.
 
-Subagent turns executing under an orchestrator session use a distinct
-`req:<requestId>` activity subject tagged with the parent's session key, so
-they refresh the parent's TTL without overwriting its provider or role. When
+One agent is one Codex thread. A subagent shares its root's session key, so
+its requests use a distinct `thread:<threadId>` activity subject, taken from
+the `thread-id` header, `client_metadata.thread_id`, or the turn metadata
+Codex sends on every request, and tagged with the parent's session key. They
+refresh the parent's TTL without overwriting its provider or role, and all of
+one child's requests are one live agent: keying each request separately once
+counted a child making 45 tool calls as dozens of live agents, each parked in
+`tool_wait` until the TTL. The root's thread id equals its session key, so the
+root keeps that subject. A caller that sends no thread id falls back to a
+per-request `req:<requestId>` subject. When
 the last child settles (slots released and bridge subagents closed), the
 orchestrator transitions to `resumed` and continues its final integration
 turn. If no children remain and the orchestrator's own turn is also done, it

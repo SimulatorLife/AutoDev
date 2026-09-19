@@ -4,7 +4,14 @@ import { fileURLToPath } from 'node:url';
 import { join, delimiter } from 'node:path';
 
 export type McpName = 'lsp' | 'playwright' | 'cocoindex-code';
-export interface McpCommand { binary: string; args: string[] }
+/**
+ * `pathPrepend` holds directories the server needs ahead of the caller's PATH.
+ * lsp-mcp-server spawns its language servers (`typescript-language-server`)
+ * by bare name, and the environment Codex starts MCP servers in does not carry
+ * AutoDev's `node_modules/.bin`: without it every TypeScript request fails with
+ * ENOENT and lsp-mcp-server exits, which Codex reports as "Transport closed".
+ */
+export interface McpCommand { binary: string; args: string[]; pathPrepend: string[] }
 
 function executable(path: string): boolean {
   try { accessSync(path, constants.X_OK); return true; } catch { return false; }
@@ -21,15 +28,15 @@ function findExecutable(name: string, pathValue = process.env.PATH ?? ''): strin
 
 export function resolveMcpCommand(name: string, repoRoot: string, env: NodeJS.ProcessEnv = process.env): McpCommand {
   const tool = name as McpName;
-  if (tool === 'lsp') return { binary: join(repoRoot, 'node_modules/.bin/lsp-mcp-server'), args: [] };
-  if (tool === 'playwright') return { binary: join(repoRoot, 'node_modules/.bin/playwright-mcp'), args: [] };
+  if (tool === 'lsp') return { binary: join(repoRoot, 'node_modules/.bin/lsp-mcp-server'), args: [], pathPrepend: [ join(repoRoot, 'node_modules/.bin') ] };
+  if (tool === 'playwright') return { binary: join(repoRoot, 'node_modules/.bin/playwright-mcp'), args: [], pathPrepend: [] };
   if (tool === 'cocoindex-code') {
     const configured = env.AUTODEV_COCOINDEX_BIN;
     const binary = configured
       ?? (env.HOME ? join(env.HOME, '.local/bin/ccc') : null)
       ?? findExecutable('ccc', env.PATH);
     if (!binary) throw new Error('AutoDev CocoIndex MCP binary is missing; install ccc or set AUTODEV_COCOINDEX_BIN');
-    return { binary, args: ['mcp'] };
+    return { binary, args: ['mcp'], pathPrepend: [] };
   }
   throw new Error(`unsupported AutoDev MCP: ${name || '<missing>'}`);
 }
@@ -37,10 +44,13 @@ export function resolveMcpCommand(name: string, repoRoot: string, env: NodeJS.Pr
 export function runMcp(name: string, repoRoot: string, env: NodeJS.ProcessEnv = process.env): number {
   const command = resolveMcpCommand(name, repoRoot, env);
   if (!existsSync(command.binary) || !executable(command.binary)) throw new Error(`AutoDev MCP binary is missing or not executable: ${command.binary}`);
+  const childEnv = command.pathPrepend.length > 0
+    ? { ...env, PATH: [ ...command.pathPrepend, env.PATH ?? '' ].filter(Boolean).join(delimiter) }
+    : env;
   if (name === 'cocoindex-code' && !existsSync(join(process.cwd(), '.cocoindex_code'))) {
     spawnSync(command.binary, ['init'], { cwd: process.cwd(), env, stdio: ['ignore', 'ignore', 'inherit'] });
   }
-  const result = spawnSync(command.binary, command.args, { cwd: process.cwd(), env, stdio: 'inherit' });
+  const result = spawnSync(command.binary, command.args, { cwd: process.cwd(), env: childEnv, stdio: 'inherit' });
   if (result.error) throw result.error;
   return result.status ?? 1;
 }

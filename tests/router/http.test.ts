@@ -86,7 +86,7 @@ test('workspace and session resolution prefer explicit continuity metadata', () 
     { headers: { 'x-codex-session-id': ' session-7 ' } } as any,
     {},
   );
-  assert.deepEqual(session, { key: 'session-7', scope: 'identified' });
+  assert.deepEqual(session, { key: 'session-7', scope: 'identified', thread: null });
   assert.equal(requestSession({ headers: {} } as any, {}).scope, 'process-fallback');
 });
 

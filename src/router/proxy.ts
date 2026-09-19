@@ -211,6 +211,31 @@ export async function loadCodexAuth(): Promise<{ token: string; accountId: strin
   return { token, accountId };
 }
 
+/** A request's identity, as `requestSession` resolves it. */
+export interface RouterSession { key: string; scope: string; thread?: string | null }
+
+/**
+ * The live-activity subject for a request: one agent is one Codex thread.
+ *
+ * A subagent shares its root's session key, so keying by session folded every
+ * child into the orchestrator's record; keying each subagent request by its
+ * request id instead counted every request as a new live agent -- a child
+ * that made 45 tool calls in two minutes showed as dozens of agents, each
+ * parked in `tool_wait` until the TTL. The thread id names the agent itself:
+ * the root thread's equals its session key, so the root keeps its subject.
+ * Without a thread id (a caller that is not Codex) nothing better exists.
+ */
+export function activitySubjectFor(
+  requestId: string,
+  session: RouterSession | null,
+  { subagentOfKnownSession = false }: { subagentOfKnownSession?: boolean } = {},
+): string {
+  const thread = session?.thread ?? null;
+  if (thread) return thread === session?.key ? thread : `thread:${thread}`;
+  if (subagentOfKnownSession) return `req:${requestId}`;
+  return session?.key || `req:${requestId}`;
+}
+
 export function carriesPendingToolResult(payload: unknown): boolean {
   const input = payload && typeof payload === 'object' && 'input' in payload && Array.isArray((payload as { input: unknown[] }).input)
     ? (payload as { input: Array<Record<string, unknown>> }).input
@@ -270,7 +295,7 @@ export function downstreamHeaders(
   turnMetadataHeader: string | null,
   agentRole: string | null = null,
   requestId: string | null = null,
-  session: { key: string; scope: string } | null = null,
+  session: RouterSession | null = null,
 ): Record<string, string> {
   const headers: Record<string, string> = {
     'content-type': 'application/json',
@@ -600,7 +625,7 @@ export async function fetchUpstream(
   clientSignal: AbortSignal | null = null,
   agentRole: string | null = null,
   requestId: string | null = null,
-  session: { key: string; scope: string } | null = null,
+  session: RouterSession | null = null,
 ): Promise<FetchUpstreamResult> {
   let auth = null;
   if (route.provider === 'codex') {
@@ -874,9 +899,9 @@ export async function proxyConcreteResponse(
   turnMetadataHeader: string | null,
   workspace: { key: string; cwd?: string | null } | null,
   clientSignal: AbortSignal | null = null,
-  session: { key: string; scope: string } | null = null,
+  session: RouterSession | null = null,
 ): Promise<void> {
-  const activitySubject = `req:${requestId}`;
+  const activitySubject = activitySubjectFor(requestId, session);
   const modelName = typeof payload.model === 'string' ? payload.model : 'default';
   if (!ROUTING_POLICY.isProviderEnabled(route.provider)) {
     recordRouterEvent({ phase: 'skipped', requestId, requestedModel: modelName, provider: route.provider, model: modelName, workspace, failureClass: 'provider_disabled' });
@@ -1082,7 +1107,7 @@ export async function proxyFallbackChain(
     subject: string;
     agentRole?: string | null;
     sessionKey?: string | null;
-    session?: { key: string; scope: string } | null;
+    session?: RouterSession | null;
   },
   payload: Record<string, unknown>,
   wantsStream: boolean,
@@ -1093,9 +1118,9 @@ export async function proxyFallbackChain(
 ): Promise<void> {
   const isOrchestratorTurn = agentRole === ORCHESTRATOR_AGENT_ROLE;
   const isKnownOrchestratorSession = Boolean(sessionKey && orchestratorProviderForSession(sessionKey));
-  const activitySubject = (!isOrchestratorTurn && isKnownOrchestratorSession)
-    ? `req:${requestId}`
-    : (sessionKey || `req:${requestId}`);
+  const activitySubject = activitySubjectFor(requestId, session ?? (sessionKey ? { key: sessionKey, scope: 'identified' } : null), {
+    subagentOfKnownSession: !isOrchestratorTurn && isKnownOrchestratorSession,
+  });
   const modelName = String(payload.model ?? '');
   if (!candidates || candidates.length === 0) {
     recordSpawnFailure({ requestId, role, requestedModel: modelName, reason: 'provider_exhausted' });
@@ -1311,7 +1336,7 @@ export async function proxyRoleResponse(
   turnMetadataHeader: string | null,
   workspace: { key: string; cwd?: string | null } | null,
   clientSignal: AbortSignal | null = null,
-  session: { key: string; scope: string } | null = null,
+  session: RouterSession | null = null,
 ): Promise<void> {
   return proxyFallbackChain(
     response,
@@ -1340,7 +1365,7 @@ export async function proxyOrchestratorResponse(
   turnMetadataHeader: string | null,
   workspace: { key: string; cwd?: string | null } | null,
   clientSignal: AbortSignal | null = null,
-  session: { key: string; scope: string } | null = null,
+  session: RouterSession | null = null,
 ): Promise<void> {
   const sessionKey = session?.key ?? null;
   // The provider that issued the calls being answered comes first; otherwise

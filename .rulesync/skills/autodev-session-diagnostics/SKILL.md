@@ -91,6 +91,16 @@ same data for scripting; `--codex-home` points it at an isolated home.
   its work invisibly, or did none.
 - **Item id prefixes identify the minter**: `rs_`/`ctc_`/`fc_`/`msg_` from
   Codex-shaped providers; `<32 hex>_rs` and `<32 hex>_fc_<n>` from MiniMax.
+- **In Codex code mode MCP tools are `mcp__<server>__<tool>`** on the `tools`
+  global. An agent that searched `ALL_TOOLS` for a bare `lsp_` prefix found
+  nothing and wrongly concluded LSP was unavailable.
+- **`tool call failed for <server>/<tool>: Transport closed` means the MCP
+  server process died.** Reproduce by driving `$CODEX_HOME/hooks/run-autodev-mcp.sh
+  <server>` over stdio JSON-RPC with a minimal `PATH` (`env -i HOME=$HOME
+  PATH=/usr/bin:/bin`), the way Codex starts it, and read its stderr.
+- **Live-agent counts are per activity subject.** If `/status` `agents` shows
+  far more live agents than threads, check what the router keys a request's
+  subject by; one agent must be one Codex thread (`thread-id`).
 - **Live CLIs surface bugs fakes hide**: the Claude CLI truncates long MCP tool
   descriptions, for example.
 - **Never restart launchd services or run the installer without asking**: it

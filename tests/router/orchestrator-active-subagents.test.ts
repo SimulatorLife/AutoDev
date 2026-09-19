@@ -88,9 +88,9 @@ test('orchestrator-active-subagents: orchestrator remains in subagent_wait while
     const claudeLive = countLiveAgentActivity({ provider: orchestratorProvider });
     assert.equal(claudeLive, 1, 'claude provider must have 1 active orchestrator');
 
-    // 4. Subagent turn executes under its own requestId, tagged with sessionKey
+    // 4. Subagent turn executes under its own thread's subject, tagged with sessionKey
     const subagentRequestId = 'req-sub-turn-1';
-    const subagentSubject = `req:${subagentRequestId}`;
+    const subagentSubject = 'thread:child-thread-1';
     const subagentProvider = 'minimax';
     const subagentModel = 'MiniMax-M3';
 

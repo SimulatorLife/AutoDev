@@ -3520,26 +3520,36 @@ test("admission enforces the canonical limit, surfaces the same value on /status
 
 test("requestSession derives identity from caller-supplied headers and payload fields, never invents it", () => {
   const noSignal = (requestSession as any)({ headers: {} }, {});
-  assert.deepEqual(noSignal, { key: PROCESS_FALLBACK_SESSION_KEY, scope: "process-fallback" });
+  assert.deepEqual(noSignal, { key: PROCESS_FALLBACK_SESSION_KEY, scope: "process-fallback", thread: null });
 
-  assert.deepEqual((requestSession as any)({ headers: { "x-codex-session-id": "sess-header-1" } }, {}), { key: "sess-header-1", scope: "identified" });
-  assert.deepEqual((requestSession as any)({ headers: { "x-session-id": "sess-header-2" } }, {}), { key: "sess-header-2", scope: "identified" });
-  assert.deepEqual((requestSession as any)({ headers: { "x-conversation-id": "sess-header-3" } }, {}), { key: "sess-header-3", scope: "identified" });
-  assert.deepEqual((requestSession as any)({ headers: {} }, { session_id: "sess-body-1" }), { key: "sess-body-1", scope: "identified" });
-  assert.deepEqual((requestSession as any)({ headers: {} }, { conversation_id: "sess-body-2" }), { key: "sess-body-2", scope: "identified" });
-  assert.deepEqual((requestSession as any)({ headers: {} }, { metadata: { session_id: "sess-meta-1" } }), { key: "sess-meta-1", scope: "identified" });
-  assert.deepEqual((requestSession as any)({ headers: {} }, { metadata: { conversation_id: "sess-meta-2" } }), { key: "sess-meta-2", scope: "identified" });
+  assert.deepEqual((requestSession as any)({ headers: { "x-codex-session-id": "sess-header-1" } }, {}), { key: "sess-header-1", scope: "identified", thread: null });
+  assert.deepEqual((requestSession as any)({ headers: { "x-session-id": "sess-header-2" } }, {}), { key: "sess-header-2", scope: "identified", thread: null });
+  assert.deepEqual((requestSession as any)({ headers: { "x-conversation-id": "sess-header-3" } }, {}), { key: "sess-header-3", scope: "identified", thread: null });
+  assert.deepEqual((requestSession as any)({ headers: {} }, { session_id: "sess-body-1" }), { key: "sess-body-1", scope: "identified", thread: null });
+  assert.deepEqual((requestSession as any)({ headers: {} }, { conversation_id: "sess-body-2" }), { key: "sess-body-2", scope: "identified", thread: null });
+  assert.deepEqual((requestSession as any)({ headers: {} }, { metadata: { session_id: "sess-meta-1" } }), { key: "sess-meta-1", scope: "identified", thread: null });
+  assert.deepEqual((requestSession as any)({ headers: {} }, { metadata: { conversation_id: "sess-meta-2" } }), { key: "sess-meta-2", scope: "identified", thread: null });
   assert.deepEqual(
     (requestSession as any)({ headers: {} }, {}, JSON.stringify({ conversation_id: "sess-turn-metadata" })),
-    { key: "sess-turn-metadata", scope: "identified" },
+    { key: "sess-turn-metadata", scope: "identified", thread: null },
   );
 
   // Whitespace-only or non-string identity is treated as absent rather than trusted as-is.
-  assert.deepEqual((requestSession as any)({ headers: { "x-codex-session-id": "   " } }, {}), { key: PROCESS_FALLBACK_SESSION_KEY, scope: "process-fallback" });
-  assert.deepEqual((requestSession as any)({ headers: {} }, { session_id: 12345 }), { key: PROCESS_FALLBACK_SESSION_KEY, scope: "process-fallback" });
+  assert.deepEqual((requestSession as any)({ headers: { "x-codex-session-id": "   " } }, {}), { key: PROCESS_FALLBACK_SESSION_KEY, scope: "process-fallback", thread: null });
+  assert.deepEqual((requestSession as any)({ headers: {} }, { session_id: 12345 }), { key: PROCESS_FALLBACK_SESSION_KEY, scope: "process-fallback", thread: null });
 
   // A header takes priority over payload fields when both are present.
-  assert.deepEqual((requestSession as any)({ headers: { "x-codex-session-id": "sess-header" } }, { session_id: "sess-body" }), { key: "sess-header", scope: "identified" });
+  assert.deepEqual((requestSession as any)({ headers: { "x-codex-session-id": "sess-header" } }, { session_id: "sess-body" }), { key: "sess-header", scope: "identified", thread: null });
+
+  // Codex 0.154.0 names the thread as well; a subagent's differs from its session.
+  const child = (requestSession as any)(
+    { headers: { "session-id": "root-1", "thread-id": "child-1" } },
+    { client_metadata: { session_id: "root-1", thread_id: "child-1" } },
+    JSON.stringify({ session_id: "root-1", thread_id: "child-1", thread_source: "subagent" }),
+  );
+  assert.deepEqual(child, { key: "root-1", scope: "identified", thread: "child-1" });
+  assert.equal((requestSession as any)({ headers: {} }, { client_metadata: { thread_id: "t-meta" } }, JSON.stringify({ session_id: "s" })).thread, "t-meta");
+  assert.equal((requestSession as any)({ headers: {} }, {}, JSON.stringify({ session_id: "s", thread_id: "t-turn" })).thread, "t-turn");
 });
 
 test("per-session slot limit gives distinct identified sessions independent capacity while capping a shared or missing identity", () => {

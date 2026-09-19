@@ -156,6 +156,7 @@ import {
   ROUTER_INSTANCE_ID,
   activeProviderRequests,
   carriesPendingToolResult,
+  type RouterSession,
   decrementActiveRequests,
   getActiveRequests,
   incrementActiveRequests,
@@ -892,11 +893,17 @@ export function resolveTurnMetadataHeader(
   return null;
 }
 
+/**
+ * Who is asking: the session (a Codex root thread and its whole agent tree
+ * share it) and the thread itself. Codex 0.154.0 sends both on every request
+ * -- `session-id`/`thread-id` headers, `client_metadata`, and turn metadata --
+ * and a subagent's thread differs from its session.
+ */
 export function requestSession(
   request: IncomingMessage,
   payload: Record<string, unknown> | null | undefined,
   turnMetadataHeader: string | null = null,
-): { key: string; scope: 'identified' | 'process-fallback' } {
+): { key: string; scope: 'identified' | 'process-fallback'; thread: string | null } {
   const header = request.headers['x-codex-session-id'] ?? request.headers['x-session-id'] ?? request.headers['x-conversation-id'];
   const metadata = payload?.metadata as Record<string, unknown> | undefined;
   const turnMetadata = parseTurnMetadataJson(turnMetadataHeader);
@@ -907,8 +914,14 @@ export function requestSession(
     ?? (metadata?.conversation_id as string | undefined)
     ?? (turnMetadata?.session_id as string | undefined)
     ?? (turnMetadata?.conversation_id as string | undefined);
-  if (typeof value === 'string' && value.trim()) return { key: value.trim(), scope: 'identified' };
-  return { key: PROCESS_FALLBACK_SESSION_KEY, scope: 'process-fallback' };
+  const threadHeader = request.headers['thread-id'] ?? request.headers['x-codex-thread-id'];
+  const clientMetadata = payload?.client_metadata as Record<string, unknown> | undefined;
+  const threadValue = (Array.isArray(threadHeader) ? threadHeader[0] : threadHeader)
+    ?? (clientMetadata && typeof clientMetadata === 'object' ? clientMetadata.thread_id as string | undefined : undefined)
+    ?? (turnMetadata?.thread_id as string | undefined);
+  const thread = typeof threadValue === 'string' && threadValue.trim() ? threadValue.trim() : null;
+  if (typeof value === 'string' && value.trim()) return { key: value.trim(), scope: 'identified', thread };
+  return { key: PROCESS_FALLBACK_SESSION_KEY, scope: 'process-fallback', thread };
 }
 
 export function hasWorkspaceClaim(payload: Record<string, unknown> | null | undefined, turnMetadataHeader: string | null): boolean {
@@ -1014,7 +1027,7 @@ export function addWorkspaceIdToTurnMetadata(
 export function workspaceMetadataForSession(
   payload: Record<string, unknown> | null | undefined,
   turnMetadataHeader: string | null,
-  session: { key: string; scope: string } | null,
+  session: RouterSession | null,
 ): string | null {
   const headers = turnMetadataHeader ? { 'x-codex-turn-metadata': turnMetadataHeader } : {};
   let workspacePath: string | null = null;

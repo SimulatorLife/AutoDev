@@ -16,6 +16,9 @@ import {
   proxyRoleResponse,
 } from '../../src/router/proxy.ts';
 import { TOOL_CALL_OWNERSHIP } from '../../src/router/tool-call-ownership.ts';
+import { countLiveAgentActivity } from '../../src/router/usage.ts';
+import { agentActivity } from '../../src/router/server.ts';
+import { noteOrchestratorSession, resetSubagentTelemetry } from '../../src/router/subagents.ts';
 
 function responseRecorder(): any {
   const chunks: Buffer[] = [];
@@ -248,6 +251,48 @@ test('a tool result goes back to the provider that streamed the call', { concurr
       else process.env[key] = value;
     }
     TOOL_CALL_OWNERSHIP.clear();
+    COOLDOWNS.clearAll();
+  }
+});
+
+test('one subagent thread is one live agent, however many requests it makes', { concurrency: false }, async () => {
+  // Observed 2026-09-18: an explorer that made 45 tool calls in two minutes
+  // showed as dozens of live agents, because each request was its own
+  // activity subject and each one ending in a tool call stayed live in
+  // tool_wait until the TTL.
+  COOLDOWNS.clearAll();
+  agentActivity.reset();
+  resetSubagentTelemetry();
+  const originalFetch = globalThis.fetch;
+  const saved = { LITELLM_API_KEY: process.env.LITELLM_API_KEY, MINIMAX_API_KEY: process.env.MINIMAX_API_KEY };
+  process.env.LITELLM_API_KEY = 'claude-key';
+  process.env.MINIMAX_API_KEY = 'minimax-key';
+  let sequence = 0;
+  globalThis.fetch = (async () => {
+    sequence += 1;
+    const call = { type: 'function_call', id: `fc_${sequence}`, call_id: `call_${sequence}`, name: 'wait', arguments: '{}', status: 'completed' };
+    return jsonResponse({ id: `resp_${sequence}`, status: 'completed', output: [ call ] });
+  }) as typeof fetch;
+  try {
+    noteOrchestratorSession('root-1', 'codex', { model: 'gpt-5.6-luna', workspace: null, requestId: 'req-root' });
+    for (let turn = 0; turn < 5; turn += 1) {
+      await proxyRoleResponse(responseRecorder(), 'explorer', { model: 'autodev/explorer', input: [], stream: false }, false, `req-child-${turn}`, null, null, null,
+        { key: 'root-1', scope: 'identified', thread: 'child-1' });
+    }
+    assert.equal(countLiveAgentActivity({ role: 'explorer' }), 1);
+    assert.equal(agentActivity.getState('thread:child-1'), 'tool_wait');
+    // A second child of the same root is a second agent.
+    await proxyRoleResponse(responseRecorder(), 'explorer', { model: 'autodev/explorer', input: [], stream: false }, false, 'req-child2-0', null, null, null,
+      { key: 'root-1', scope: 'identified', thread: 'child-2' });
+    assert.equal(countLiveAgentActivity({ role: 'explorer' }), 2);
+  } finally {
+    globalThis.fetch = originalFetch;
+    for (const [ key, value ] of Object.entries(saved)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+    agentActivity.reset();
+    resetSubagentTelemetry();
     COOLDOWNS.clearAll();
   }
 });
