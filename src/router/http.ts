@@ -616,13 +616,22 @@ export const INGESTED_AGENT_EVENTS = Object.freeze(new Set([
   'heartbeat',
 ]));
 
+/**
+ * The lifecycle facts a bridge may report: only what the router cannot see.
+ *
+ * The router settles every request itself (`endRequest`), from the response it
+ * relays: whether it ended in a tool call, needs input, failed, or left live
+ * children. A bridge's own `tool_wait`/`user_wait`/`finished`/`failed` for the
+ * same request only repeat that -- late, over a separate channel, and about
+ * the request rather than the agent -- so a per-response `finished` arriving
+ * after the router had put the agent in `tool_wait` ended the agent between
+ * two of its tool calls. What a bridge alone knows is its own in-CLI
+ * delegation: `subagent_wait` while bridge-native children run, and `resumed`
+ * once they report back. Heartbeats keep a long request visibly alive.
+ */
 export const REPORTABLE_AGENT_ACTIVITY_STATES = Object.freeze(new Set([
-  'tool_wait',
-  'user_wait',
   'subagent_wait',
   'resumed',
-  'finished',
-  'failed',
   'heartbeat',
 ]));
 
@@ -640,7 +649,9 @@ export function ingestAgentEvents(payload: Record<string, unknown>): {
     const sessionContext = lookupBridgeSessionContext(sessionKey);
     const sessionRequestId = recallBridgeSessionRequestId(sessionKey);
     if (sessionContext && sessionRequestId) {
-      context = sessionContext;
+      // Reported against the session itself, so it describes the session's
+      // own agent, not whichever request of the session was noted last.
+      context = { ...sessionContext, activitySubject: sessionKey };
     }
   }
   if (!context) {
@@ -669,8 +680,7 @@ export function ingestAgentEvents(payload: Record<string, unknown>): {
     }
     if (event.type === 'tool_executed' || event.type === 'tool_requested' || event.type === 'tool_unavailable') {
       recordBridgeToolObservation({ event, context });
-      const subject = context.sessionKey || `req:${requestId}`;
-      getDefaultUsageTracker().activityTracker.touch(subject);
+      getDefaultUsageTracker().activityTracker.touch(context.activitySubject);
       if (context.sessionKey) touchManagerOpenSubagentSlots(context.sessionKey);
       continue;
     }
@@ -687,8 +697,7 @@ export function ingestAgentEvents(payload: Record<string, unknown>): {
       continue;
     }
     if (event.type === 'heartbeat' || (event.type === 'activity' && (event.state === 'heartbeat' || (typeof event.state === 'string' && event.state.trim() === 'heartbeat')))) {
-      const subject = context.sessionKey || `req:${requestId}`;
-      getDefaultUsageTracker().activityTracker.touch(subject);
+      getDefaultUsageTracker().activityTracker.touch(context.activitySubject);
       if (context.sessionKey) touchManagerOpenSubagentSlots(context.sessionKey);
       accepted += 1;
       continue;
@@ -699,22 +708,20 @@ export function ingestAgentEvents(payload: Record<string, unknown>): {
         rejected += 1;
         continue;
       }
-      const subject = context.sessionKey || `req:${requestId}`;
-      const activityRole = context.role ?? (context.provider === 'codex' ? 'orchestrator' : null);
-      const eventId = typeof event.eventId === 'string' && event.eventId.trim() ? event.eventId.trim() : null;
-      if (
-        getDefaultUsageTracker().activityTracker.applyLifecycleEvent(subject, {
-          state,
-          eventId,
-          provider: context.provider,
-          model: context.model,
-          role: activityRole,
-          origin: activityRole === 'orchestrator' ? 'orchestrator' : context.role ? 'subagent' : 'direct',
-          workspace: context.workspace,
-        })
-      ) {
-        accepted += 1;
+      const tracker = getDefaultUsageTracker().activityTracker;
+      if (state === 'subagent_wait') {
+        tracker.noteSubagentWait(context.activitySubject, {
+          provider: context.provider ?? null,
+          model: context.model ?? null,
+          role: context.role ?? null,
+          workspace: context.workspace ?? null,
+        });
+      } else {
+        // `resumed` resolves a bridge-native delegation; it is a no-op for an
+        // agent that was not waiting on one.
+        tracker.noteSubagentResolved(context.activitySubject);
       }
+      accepted += 1;
       continue;
     }
     const role = typeof event.role === 'string' && event.role.trim() ? safeMetricLabel(event.role) : null;

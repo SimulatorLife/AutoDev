@@ -101,7 +101,9 @@ every event and looked like "the router logged nothing".
   steers, `<turn_aborted>`).
 - **A subagent shares its root's session id but has its own thread id**
   (`thread-id` header, `client_metadata.thread_id`). One agent is one thread: a
-  live count far above the writing threads means something keys by request.
+  live count far above the writing threads means something keys by request; a
+  live count below them, or an orchestrator carrying a child's role, means
+  something applies a child's reports to the shared session key.
 - **In Codex code mode MCP tools are `mcp__<server>__<tool>`**; searching
   `ALL_TOOLS` for a bare `lsp_` finds nothing and reads as "LSP unavailable".
 - **`Transport closed` means the MCP server process died**; the probe shows why

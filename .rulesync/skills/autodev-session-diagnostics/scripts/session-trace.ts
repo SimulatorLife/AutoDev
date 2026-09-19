@@ -71,7 +71,7 @@ export interface RouterEventRow {
 export interface RouterSummary {
   thread: string;
   model: string | null;
-  /** `thread`: events name the thread. `model-window`: older events, matched by model and time, so same-model threads interleave. */
+  /** `thread`: every matched event names the thread. `model-window`: some are older events matched by model and time, so same-model threads may interleave. */
   matchedBy: "thread" | "model-window";
   requests: number;
   byProvider: Record<string, { requests: number; failures: number; elapsedMs: number; toolCalls: number }>;
@@ -318,10 +318,11 @@ export async function routerEvents(logFile: string, start: string, end: string):
 export function summarizeRouter(thread: ThreadTrace, rows: RouterEventRow[], withEvents: boolean): RouterSummary {
   const start = thread.start ? shift(thread.start, -5) : "";
   const end = thread.end ? shift(thread.end, 60) : "￿";
-  const exact = rows.some((row) => row.thread !== null);
-  const mine = exact
-    ? rows.filter((row) => row.thread === thread.id)
-    : rows.filter((row) => row.at >= start && row.at <= end && (!thread.model || !row.requestedModel || row.requestedModel === thread.model));
+  // Decided per event: a log spanning a router upgrade holds both kinds.
+  const mine = rows.filter((row) => row.thread !== null
+    ? row.thread === thread.id
+    : row.at >= start && row.at <= end && (!thread.model || !row.requestedModel || row.requestedModel === thread.model));
+  const guessed = mine.some((row) => row.thread === null);
   const byProvider: RouterSummary["byProvider"] = {};
   const failures: RouterSummary["failures"] = [];
   const providerSequence: string[] = [];
@@ -343,7 +344,7 @@ export function summarizeRouter(thread: ThreadTrace, rows: RouterEventRow[], wit
     }
   }
   return {
-    thread: thread.id, model: thread.model, matchedBy: exact ? "thread" : "model-window", requests: requests.size,
+    thread: thread.id, model: thread.model, matchedBy: guessed ? "model-window" : "thread", requests: requests.size,
     byProvider, failures, providerSequence, ...(withEvents ? { events: mine } : {}),
   };
 }

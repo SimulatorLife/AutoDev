@@ -60,13 +60,15 @@ function headerValue(headers: Record<string, unknown> | undefined, name: string)
 
 export const DEFAULT_HEARTBEAT_THROTTLE_MS = 15000;
 
+/**
+ * What a bridge may report about its request's lifecycle: its own in-CLI
+ * delegation and liveness. The router settles each request itself -- tool
+ * waits, input waits, completion, failure -- from the response it relays; see
+ * REPORTABLE_AGENT_ACTIVITY_STATES in src/router/http.ts.
+ */
 export const VALID_ACTIVITY_STATES = Object.freeze(new Set([
-  "tool_wait",
-  "user_wait",
   "subagent_wait",
   "resumed",
-  "finished",
-  "failed",
   "heartbeat",
 ]));
 
@@ -307,7 +309,7 @@ export class AgentEventReporter {
   /**
    * Post a single normalized activity observation.
    *
-   * { type: "activity", state: "tool_wait" | "user_wait" | "subagent_wait" | "resumed" | "finished" | "failed" | "heartbeat", childIds? }
+   * { type: "activity", state: "subagent_wait" | "resumed" | "heartbeat", childIds? }
    */
   async reportActivity(stateOrOptions: string | { state?: string; childIds?: unknown[]; child_ids?: unknown[]; minIntervalMs?: number; timestamp?: number } , maybeChildIds: unknown[] | null = null) {
     let state = null;
@@ -321,7 +323,6 @@ export class AgentEventReporter {
     }
     const cleanState = typeof state === "string" ? state.trim() : "";
     if (!VALID_ACTIVITY_STATES.has(cleanState)) return;
-    if (this.lastActivityState === "finished" || this.lastActivityState === "failed") return;
 
     if (cleanState === "heartbeat") {
       const minIntervalMs = typeof stateOrOptions === "object" && typeof stateOrOptions.minIntervalMs === "number" ? stateOrOptions.minIntervalMs : 0;

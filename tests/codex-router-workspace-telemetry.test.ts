@@ -235,7 +235,7 @@ test("records bridge tool_executed / tool_requested / tool_unavailable observati
   resetRouterTelemetry();
   registerWorkspaceId("ws-bridge-1", "SimulatorLife/AutoDev");
 
-  noteBridgeRequest("req-bridge-1", { provider: "claude", model: "sonnet", role: "default", workspace: "SimulatorLife/AutoDev" });
+  noteBridgeRequest("req-bridge-1", { activitySubject: `req:${"req-bridge-1"}`, provider: "claude", model: "sonnet", role: "default", workspace: "SimulatorLife/AutoDev" });
   ingestAgentEvents({
     requestId: "req-bridge-1",
     events: [
@@ -274,7 +274,7 @@ test("records bridge tool_executed / tool_requested / tool_unavailable observati
 test("tracks confirmed RacingGame skill reads separately from exposed skills", () => {
   resetOtelTelemetry();
   resetRouterTelemetry();
-  noteBridgeRequest("req-racing-skill", {
+  noteBridgeRequest("req-racing-skill", { activitySubject: `req:${"req-racing-skill"}`,
     provider: "antigravity",
     model: "gemini-3.8-flash-medium",
     role: "orchestrator",
@@ -297,7 +297,7 @@ test("tracks confirmed RacingGame skill reads separately from exposed skills", (
 
   resetOtelTelemetry();
   resetRouterTelemetry();
-  noteBridgeRequest("req-racing-exposure", {
+  noteBridgeRequest("req-racing-exposure", { activitySubject: `req:${"req-racing-exposure"}`,
     provider: "antigravity",
     model: "gemini-3.8-flash-medium",
     role: "orchestrator",
@@ -321,7 +321,7 @@ test("a skill_used/skill_read event from a shell cat-style read updates global s
   resetRouterTelemetry();
   resetSubagentTelemetry();
 
-  noteBridgeRequest("req-shell-skill-read", {
+  noteBridgeRequest("req-shell-skill-read", { activitySubject: `req:${"req-shell-skill-read"}`,
     provider: "claude",
     model: "sonnet",
     role: "default",
@@ -369,7 +369,7 @@ test("a skill_used/skill_read event from a shell cat-style read updates global s
 test("rejects unknown bridge event types while keeping accepted observations intact", () => {
   resetOtelTelemetry();
   resetRouterTelemetry();
-  noteBridgeRequest("req-bridge-2", { provider: "claude", model: "sonnet", role: "default", workspace: "SimulatorLife/AutoDev" });
+  noteBridgeRequest("req-bridge-2", { activitySubject: `req:${"req-bridge-2"}`, provider: "claude", model: "sonnet", role: "default", workspace: "SimulatorLife/AutoDev" });
   const result = ingestAgentEvents({
     requestId: "req-bridge-2",
     events: [
@@ -427,7 +427,7 @@ test("persists and restores per-workspace tool/skill counters and bridge observa
     resetOtelTelemetry();
     resetRouterTelemetry();
     registerWorkspaceId("ws-persist-1", "SimulatorLife/AutoDev");
-    noteBridgeRequest("req-persist-1", { provider: "minimax", model: "MiniMax-M3", role: "default", workspace: "SimulatorLife/AutoDev" });
+    noteBridgeRequest("req-persist-1", { activitySubject: `req:${"req-persist-1"}`, provider: "minimax", model: "MiniMax-M3", role: "default", workspace: "SimulatorLife/AutoDev" });
     ingestAgentEvents({
       requestId: "req-persist-1",
       events: [
@@ -546,7 +546,7 @@ test("tool/skill attribution capability is workspace-scoped, not a single proces
   resetRouterTelemetry();
   resetAttributionDiagnostics();
 
-  noteBridgeRequest("req-has-evidence", { provider: "claude", model: "sonnet", role: "default", workspace: "SimulatorLife/HasEvidence" });
+  noteBridgeRequest("req-has-evidence", { activitySubject: `req:${"req-has-evidence"}`, provider: "claude", model: "sonnet", role: "default", workspace: "SimulatorLife/HasEvidence" });
   ingestAgentEvents({
     requestId: "req-has-evidence",
     events: [
@@ -574,7 +574,7 @@ test("tool/skill attribution capability is workspace-scoped, not a single proces
 test("mcp_exposed bridge observations populate per-workspace exposed rows without inflating uses", () => {
   resetOtelTelemetry();
   resetRouterTelemetry();
-  noteBridgeRequest("req-mcp-exposed", { provider: "claude", model: "sonnet", role: "default", workspace: "SimulatorLife/AutoDev" });
+  noteBridgeRequest("req-mcp-exposed", { activitySubject: `req:${"req-mcp-exposed"}`, provider: "claude", model: "sonnet", role: "default", workspace: "SimulatorLife/AutoDev" });
   ingestAgentEvents({
     requestId: "req-mcp-exposed",
     events: [
@@ -634,7 +634,7 @@ test("mcp uses are counted only from discovery spans and executed tool calls, ne
 test("bridge tool_requested/tool_unavailable observations do not count as MCP uses, only tool_executed does", () => {
   resetOtelTelemetry();
   resetRouterTelemetry();
-  noteBridgeRequest("req-mcp-uses", { provider: "claude", model: "sonnet", role: "default", workspace: "SimulatorLife/AutoDev" });
+  noteBridgeRequest("req-mcp-uses", { activitySubject: `req:${"req-mcp-uses"}`, provider: "claude", model: "sonnet", role: "default", workspace: "SimulatorLife/AutoDev" });
   ingestAgentEvents({
     requestId: "req-mcp-uses",
     events: [

@@ -133,6 +133,14 @@ export interface SpawnFailureStatus {
 }
 
 export interface BridgeRequestContext {
+  /**
+   * The activity subject the router tracks this request under -- the agent
+   * the request belongs to. A bridge's reports about the request apply here
+   * and nowhere else: the session key is shared by an orchestrator and every
+   * subagent it spawns, so keying reports by it let a child overwrite its
+   * orchestrator's record.
+   */
+  activitySubject: string;
   provider?: string | null | undefined;
   model?: string | null | undefined;
   role?: string | null | undefined;
@@ -440,7 +448,7 @@ export class SubagentRegistry {
   noteBridgeSession(sessionKey: string | null | undefined, context: BridgeRequestContext | null | undefined): void {
     if (!sessionKey || sessionKey === PROCESS_FALLBACK_SESSION_KEY) return;
     const requestId = typeof context?.requestId === 'string' ? context.requestId : null;
-    const persisted = context ? { ...context } : {};
+    const persisted: BridgeRequestContext = context ? { ...context } : { activitySubject: sessionKey };
     delete (persisted as any).requestId;
     this.bridgeSessionContext.delete(sessionKey);
     this.bridgeSessionContext.set(sessionKey, { requestId, context: persisted });

@@ -969,7 +969,7 @@ export async function proxyConcreteResponse(
   };
 
   const sessionKey = session?.key ?? null;
-  const bridgeContext = { provider: route.provider, model: modelName, role: null, workspace: workspace?.key ?? null, sessionKey };
+  const bridgeContext = { activitySubject, provider: route.provider, model: modelName, role: null, workspace: workspace?.key ?? null, sessionKey };
   noteBridgeRequest(requestId, bridgeContext);
   noteBridgeSession(sessionKey, { ...bridgeContext, requestId });
   recordNativeMcpExposure({ route, agentRole: null, workspace, requestId, sessionKey });
@@ -1167,7 +1167,7 @@ export async function proxyFallbackChain(
       tag: (isKnownOrchestratorSession && !isOrchestratorTurn) ? sessionKey : null,
     });
     if (sessionKey) touchManagerOpenSubagentSlots(sessionKey);
-    const bridgeContext = { provider: route.provider, model: route.model, role: role ?? (origin === 'orchestrator' ? 'orchestrator' : null), workspace: workspace?.key ?? null, sessionKey };
+    const bridgeContext = { activitySubject, provider: route.provider, model: route.model, role: role ?? (origin === 'orchestrator' ? 'orchestrator' : null), workspace: workspace?.key ?? null, sessionKey };
     noteBridgeRequest(requestId, bridgeContext);
     noteBridgeSession(sessionKey, { ...bridgeContext, requestId });
     recordNativeMcpExposure({ route, agentRole, workspace, requestId, sessionKey });

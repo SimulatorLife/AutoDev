@@ -769,7 +769,7 @@ test("subagent telemetry counts both spawn mechanisms and attributes each to a p
   try {
     // A CLI bridge reports what its own runtime spawned; the router resolves
     // the provider from the request the bridge was serving.
-    noteBridgeRequest("request-1", { provider: "claude", model: "claude-opus-5", role: null, workspace: "AutoDev" });
+    noteBridgeRequest("request-1", { activitySubject: `req:${"request-1"}`, provider: "claude", model: "claude-opus-5", role: null, workspace: "AutoDev" });
     const accepted = ingestAgentEvents({
       requestId: "request-1",
       events: [
@@ -822,7 +822,7 @@ test("the router accepts a bridge spawn report over /v1/agent-events", async () 
   await listenServer(server);
   try {
     const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
-    noteBridgeRequest("request-live", { provider: "antigravity", model: "gemini-3.8-flash-high", role: null, workspace: "AutoDev" });
+    noteBridgeRequest("request-live", { activitySubject: `req:${"request-live"}`, provider: "antigravity", model: "gemini-3.8-flash-high", role: null, workspace: "AutoDev" });
     const post = (body: any) => fetch(`${base}${AGENT_EVENTS_PATH}`, {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -856,7 +856,7 @@ test("an Antigravity batch spawn reaches the router as one count per child", asy
   await listenServer(server);
   try {
     const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
-    noteBridgeRequest("request-batch", { provider: "antigravity", model: "gemini-3.8-flash-high", role: null, workspace: "SimulatorLife/RacingGame" });
+    noteBridgeRequest("request-batch", { activitySubject: `req:${"request-batch"}`, provider: "antigravity", model: "gemini-3.8-flash-high", role: null, workspace: "SimulatorLife/RacingGame" });
     const reporter = resolveAgentEventReporter({
       ...bridgeTelemetryHeaders({ provider: "antigravity" }, "request-batch"),
       [ AGENT_EVENTS_URL_HEADER ]: `${base}${AGENT_EVENTS_PATH}`,
@@ -901,7 +901,7 @@ test("a spawn breakdown says how its children ended, not only that they started"
   // these ever finished" about children that had all completed.
   resetSubagentTelemetry();
   try {
-    noteBridgeRequest("request-status", { provider: "antigravity", model: "gemini-3.8-flash-medium", role: null, workspace: "SimulatorLife/RacingGame" });
+    noteBridgeRequest("request-status", { activitySubject: `req:${"request-status"}`, provider: "antigravity", model: "gemini-3.8-flash-medium", role: null, workspace: "SimulatorLife/RacingGame" });
     ingestAgentEvents({
       requestId: "request-status",
       events: [ { type: "subagent_spawn", tool: "invoke_subagent", role: "research", count: 2, children: [ { id: "c1" }, { id: "c2" } ] } ],
@@ -939,7 +939,7 @@ test("a spawn row restored from an older state file still settles", async () => 
   const file = join(directory, "state.json");
   try {
     resetSubagentTelemetry();
-    noteBridgeRequest("request-old-row", { provider: "antigravity", model: "gemini-3.8-flash-medium", role: null, workspace: "SimulatorLife/RacingGame" });
+    noteBridgeRequest("request-old-row", { activitySubject: `req:${"request-old-row"}`, provider: "antigravity", model: "gemini-3.8-flash-medium", role: null, workspace: "SimulatorLife/RacingGame" });
     ingestAgentEvents({
       requestId: "request-old-row",
       events: [ { type: "subagent_spawn", tool: "invoke_subagent", role: "research", count: 1, children: [ { id: "c1" } ] } ],
@@ -952,7 +952,7 @@ test("a spawn row restored from an older state file still settles", async () => 
     assert.equal(loadRouterState(file), true);
     assert.deepEqual(subagentStatus().recent[ 0 ]!.settled, { success: 0, failure: 0 }, "a restored row is normalized, not left ragged");
 
-    noteBridgeRequest("request-old-row", { provider: "antigravity", model: "gemini-3.8-flash-medium", role: null, workspace: "SimulatorLife/RacingGame" });
+    noteBridgeRequest("request-old-row", { activitySubject: `req:${"request-old-row"}`, provider: "antigravity", model: "gemini-3.8-flash-medium", role: null, workspace: "SimulatorLife/RacingGame" });
     ingestAgentEvents({
       requestId: "request-old-row",
       events: [ { type: "subagent_spawn", tool: "invoke_subagent", role: "research", count: 1, children: [ { id: "c2" } ] } ],
@@ -975,7 +975,7 @@ test("children still running when the parent turn ends are settled by it", async
   // parent turn is the only honest bound on those children.
   resetSubagentTelemetry();
   try {
-    noteBridgeRequest("request-parent-close", { provider: "antigravity", model: "gemini-3.8-flash-medium", role: null, workspace: "SimulatorLife/RacingGame" });
+    noteBridgeRequest("request-parent-close", { activitySubject: `req:${"request-parent-close"}`, provider: "antigravity", model: "gemini-3.8-flash-medium", role: null, workspace: "SimulatorLife/RacingGame" });
     ingestAgentEvents({
       requestId: "request-parent-close",
       events: [ { type: "subagent_spawn", tool: "invoke_subagent", role: "research", count: 1, children: [ { id: "c1" } ] } ],
@@ -1003,7 +1003,7 @@ test("an Antigravity batch spawn contributes measured turns to the usage tables"
 
   resetSubagentTelemetry();
   try {
-    noteBridgeRequest("request-usage", { provider: "antigravity", model: "gemini-3.8-flash-medium", role: null, workspace: "SimulatorLife/RacingGame" });
+    noteBridgeRequest("request-usage", { activitySubject: `req:${"request-usage"}`, provider: "antigravity", model: "gemini-3.8-flash-medium", role: null, workspace: "SimulatorLife/RacingGame" });
     const stepUpdate = {
       step_index: 7,
       state: "ACTIVE",
@@ -1080,7 +1080,7 @@ test("an orchestrator handed no delegation tool is reported, not read as a refus
   const before = getRouterStatus().spawnFailures;
   const reasonCount = (snapshot: any) => Number(snapshot.byReason?.spawn_tool_unavailable ?? 0);
   try {
-    noteBridgeRequest("request-denied", { provider: "claude", model: "claude-opus-5", role: null, workspace: "SimulatorLife/RacingGame" });
+    noteBridgeRequest("request-denied", { activitySubject: `req:${"request-denied"}`, provider: "claude", model: "claude-opus-5", role: null, workspace: "SimulatorLife/RacingGame" });
     const result = ingestAgentEvents({
       requestId: "request-denied",
       events: [ { type: "subagent_tools_unavailable", expected: [ "Agent", "Task" ], available: [ "Read", "Bash", "Write" ] } ],
@@ -2542,7 +2542,7 @@ test("counts explicit skill activations separately from injected contexts and br
       point([["skill", "ccc"], ["status", "skipped"], ["invoke_type", "explicit"]], 1, 4),
     ] },
   }] }] }] });
-  noteBridgeRequest("req-skill-use", { provider: "claude", model: "sonnet", role: "worker", workspace: "SkillRepo" });
+  noteBridgeRequest("req-skill-use", { activitySubject: `req:${"req-skill-use"}`, provider: "claude", model: "sonnet", role: "worker", workspace: "SkillRepo" });
   const bridge = ingestAgentEvents({ requestId: "req-skill-use", events: [
     { type: "skill_exposed", skill: "ccc" },
     { type: "skill_used", skill: "ccc", eventId: "skill-call-1" },
@@ -2564,6 +2564,7 @@ test("counts explicit skill activations separately from injected contexts and br
 test("attributes session-keyed skill reads to the parent workspace", () => {
   resetRouterTelemetry();
   noteBridgeSession("session-skill-read", {
+    activitySubject: "session-skill-read",
     requestId: "parent-request",
     provider: "codex",
     model: "gpt-5.6-luna",
@@ -6106,36 +6107,28 @@ test("router-visible response tool calls and continuations drive session activit
   }
 });
 
-test("agent-events endpoint accepts normalized activity lifecycle events, idempotently, scoped to the request's session", () => {
+test("agent-events endpoint applies only bridge-only lifecycle facts, to the request's own agent", () => {
   resetRouterTelemetry();
   agentActivity.reset();
   const requestId = "lifecycle-req-1";
-  noteBridgeRequest(requestId, { provider: "claude", model: "sonnet", role: null, workspace: null, sessionKey: "lifecycle-session" });
-  agentActivity.beginRequest("lifecycle-session", { requestId, provider: "claude", model: "sonnet" });
+  noteBridgeRequest(requestId, { activitySubject: "lifecycle-agent", provider: "antigravity", model: "flash", role: null, workspace: null, sessionKey: "lifecycle-session" });
+  agentActivity.beginRequest("lifecycle-agent", { requestId, provider: "antigravity", model: "flash" });
 
-  const first = ingestAgentEvents({ requestId, events: [ { type: "activity", state: "user_wait", eventId: "evt-1" } ] });
-  assert.equal(first.accepted, 1);
-  assert.equal(agentActivity.getState("lifecycle-session"), "user_wait");
+  // A bridge's in-CLI delegation is the one lifecycle fact the router cannot see.
+  const waiting = ingestAgentEvents({ requestId, events: [ { type: "activity", state: "subagent_wait" } ] });
+  assert.equal(waiting.accepted, 1);
+  assert.equal(agentActivity.getState("lifecycle-agent"), "subagent_wait");
+  assert.equal(agentActivity.getState("lifecycle-session"), null, "the shared session key is never the subject");
 
-  // Redelivery of the same event id is idempotent.
-  const redelivered = ingestAgentEvents({ requestId, events: [ { type: "activity", state: "subagent_wait", eventId: "evt-1" } ] });
-  assert.equal(redelivered.accepted, 1, "an accepted duplicate still counts as accepted, but must not change state");
-  assert.equal(agentActivity.getState("lifecycle-session"), "user_wait", "a redelivered eventId is a no-op");
+  const resumed = ingestAgentEvents({ requestId, events: [ { type: "activity", state: "resumed" } ] });
+  assert.equal(resumed.accepted, 1);
+  assert.equal(agentActivity.getState("lifecycle-agent"), "resumed");
 
-  // A new event id is applied normally.
-  const advanced = ingestAgentEvents({ requestId, events: [ { type: "activity", state: "finished", eventId: "evt-2" } ] });
-  assert.equal(advanced.accepted, 1);
-  assert.equal(agentActivity.getState("lifecycle-session"), "finished");
-
-  // A terminal record cannot be reopened, even by an otherwise-valid event.
-  const afterTerminal = ingestAgentEvents({ requestId, events: [ { type: "activity", state: "user_wait", eventId: "evt-3" } ] });
-  assert.equal(afterTerminal.accepted, 1);
-  assert.equal(agentActivity.getState("lifecycle-session"), "finished");
-
-  // An unrecognized state is rejected, not silently accepted.
-  const rejected = ingestAgentEvents({ requestId, events: [ { type: "activity", state: "not_a_real_state" } ] });
-  assert.equal(rejected.rejected, 1);
-  assert.equal(rejected.accepted, 0);
+  // States the router settles from the response itself are refused.
+  const refused = ingestAgentEvents({ requestId, events: [ "tool_wait", "user_wait", "finished", "failed", "not_a_real_state" ].map((state) => ({ type: "activity", state })) });
+  assert.equal(refused.rejected, 5);
+  assert.equal(refused.accepted, 0);
+  assert.equal(agentActivity.getState("lifecycle-agent"), "resumed");
 
   agentActivity.reset();
   resetRouterTelemetry();
@@ -6282,43 +6275,27 @@ test("router: a live subagent is counted only when its activity is explicitly tr
   resetRouterTelemetry();
 });
 
-test("router: bridge heartbeat and tool observation events touch activity and slots without altering lifecycle state", () => {
+test("router: bridge heartbeat and tool observation events touch the request's agent without altering its state", () => {
   resetRouterTelemetry();
   agentActivity.reset();
   resetConcurrencyTelemetry();
 
   const requestId = "req-bridge-heartbeat";
-  noteBridgeRequest(requestId, {
-    provider: "claude",
-    model: "sonnet",
-    role: "worker",
-    workspace: "AutoDev",
-    sessionKey: "session-hb",
-  });
-
-  // Begin session and slot
-  agentActivity.beginRequest("session-hb", { requestId, provider: "claude", model: "sonnet", role: "worker", workspace: "AutoDev" });
+  noteBridgeRequest(requestId, { activitySubject: "thread:hb-child", provider: "claude", model: "sonnet", role: "worker", workspace: "AutoDev", sessionKey: "session-hb" });
+  agentActivity.beginRequest("thread:hb-child", { requestId, provider: "claude", model: "sonnet", role: "worker", workspace: "AutoDev", tag: "session-hb" });
   assert.equal(tryAcquireSubagentSlot("session-hb"), null);
+  agentActivity.endRequest("thread:hb-child", { requestId, outcome: "success", hasToolCalls: true });
+  assert.equal(agentActivity.getState("thread:hb-child"), "tool_wait");
 
-  // Bridge reports tool_wait
-  const waitReport = ingestAgentEvents({ requestId, events: [ { type: "activity", state: "tool_wait" } ] });
-  assert.equal(waitReport.accepted, 1);
-  assert.equal(agentActivity.getState("session-hb"), "tool_wait");
-
-  // Bridge emits a heartbeat event
+  const before = agentActivity.getRecord("thread:hb-child")!.updatedAt;
   const hbReport = ingestAgentEvents({ requestId, events: [ { type: "activity", state: "heartbeat" } ] });
   assert.equal(hbReport.accepted, 1);
-  // State remains tool_wait -- non-transitioning
-  assert.equal(agentActivity.getState("session-hb"), "tool_wait");
+  assert.equal(agentActivity.getState("thread:hb-child"), "tool_wait", "a heartbeat does not transition");
+  assert.ok(agentActivity.getRecord("thread:hb-child")!.updatedAt >= before);
 
-  // Tool execution observation also touches without state change
   ingestAgentEvents({ requestId, events: [ { type: "tool_executed", tool: "read_file", callId: "c1", status: "ok" } ] });
-  assert.equal(agentActivity.getState("session-hb"), "tool_wait");
-
-  // Resumed event transitions normally
-  const resumeReport = ingestAgentEvents({ requestId, events: [ { type: "activity", state: "resumed" } ] });
-  assert.equal(resumeReport.accepted, 1);
-  assert.equal(agentActivity.getState("session-hb"), "resumed");
+  assert.equal(agentActivity.getState("thread:hb-child"), "tool_wait");
+  assert.equal(agentActivity.getState("session-hb"), null, "no record is created under the shared session key");
 
   agentActivity.reset();
   resetConcurrencyTelemetry();

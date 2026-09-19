@@ -202,7 +202,7 @@ test("provider rows and grouped spawn rows follow the frozen status dimensions",
   try {
     for (const operation of contract.spawnGrouping.operations) {
       if (operation.op === "bridgeRequest") {
-        noteBridgeRequest(operation.requestId, operation as Parameters<typeof noteBridgeRequest>[1]);
+        noteBridgeRequest(operation.requestId, { activitySubject: `req:${operation.requestId}`, ...operation } as Parameters<typeof noteBridgeRequest>[1]);
       } else if (operation.op === "bridgeEvents") {
         ingestAgentEvents({ requestId: operation.requestId!, events: operation.events as Parameters<typeof ingestAgentEvents>[0]["events"] });
       } else if (operation.op === "routerSession") {
@@ -253,7 +253,7 @@ test("status CLI keeps the byMechanism summary deterministic", async () => {
   const server = createServer((request, response) => { void handle(request, response); });
   await new Promise<void>((resolve) => { server.listen(0, "127.0.0.1", () => resolve()); });
   try {
-    noteBridgeRequest("req-cli-001", { provider: "claude", model: "sonnet", role: "orchestrator", workspace: "AutoDev" });
+    noteBridgeRequest("req-cli-001", { activitySubject: `req:${"req-cli-001"}`, provider: "claude", model: "sonnet", role: "orchestrator", workspace: "AutoDev" });
     ingestAgentEvents({
       requestId: "req-cli-001",
       events: [{ type: "subagent_spawn", tool: "Agent", role: "worker", count: 3 }],

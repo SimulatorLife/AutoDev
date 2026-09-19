@@ -317,13 +317,10 @@ function reportToolObservation(agentEvents: AgentReporter | null, event: JsonRec
   if (!agentEvents) return;
   if (event.type === "tool_requested") {
     void agentEvents.reportToolRequested({ tool: event.tool, callId: event.callId, server: event.server });
-    if (typeof agentEvents.reportActivity === "function") void agentEvents.reportActivity({ state: String(event.tool ?? "").trim().toLowerCase() === "ask_question" ? "user_wait" : "tool_wait" });
   } else if (event.type === "tool_executed") {
     void agentEvents.reportToolExecuted({ tool: event.tool, callId: event.callId, status: event.status, durationMs: event.durationMs, server: event.server });
-    if (typeof agentEvents.reportActivity === "function") void agentEvents.reportActivity({ state: "resumed" });
   } else if (event.type === "tool_unavailable") {
     void agentEvents.reportToolUnavailable({ tool: event.tool, callId: event.callId, reason: event.reason, server: event.server });
-    if (typeof agentEvents.reportActivity === "function") void agentEvents.reportActivity({ state: "resumed" });
   } else if (event.type === "skill_used" && typeof agentEvents.reportSkillUsed === "function") {
     void agentEvents.reportSkillUsed({ skill: event.skill, source: SKILL_READ_SOURCE, eventId: event.eventId });
   }
@@ -730,11 +727,9 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
         output.push(spawnEvents[3][1].item as unknown as JsonRecord);
         console.error(`copilot delegating ${spawnChildren.length} subagent(s) through Codex`);
       }
-      if (typeof agentEvents?.reportActivity === "function") void agentEvents.reportActivity({ state: "finished" });
       sendJson(response, 200, responsePayload(payload.model, result.text, result.result, undefined, undefined, output));
     } catch (error) {
       if (spawnSession) spawnSessions.close(spawnSession);
-      if (typeof agentEvents?.reportActivity === "function") void agentEvents.reportActivity({ state: "failed" });
       const message = error instanceof Error ? error.message : String(error);
       sendJson(response, 503, { error: { type: "copilot_proxy_error", message } });
     }
@@ -855,13 +850,11 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
       console.error(`copilot delegating ${spawnChildren.length} subagent(s) through Codex`);
     }
     emit("response.completed", { type: "response.completed", response: completed });
-    if (typeof agentEvents?.reportActivity === "function") void agentEvents.reportActivity({ state: "finished" });
     if (isWritable()) {
       try { response.end("data: [DONE]\n\n"); } catch {}
     }
   } catch (error) {
     if (spawnSession) spawnSessions.close(spawnSession);
-    if (typeof agentEvents?.reportActivity === "function") void agentEvents.reportActivity({ state: "failed" });
     if (!isWritable()) return;
     const message = error instanceof Error ? error.message : String(error);
     const exitCode = typeof (error as { exitCode?: unknown } | null)?.exitCode === "number" ? (error as { exitCode: number }).exitCode : null;

@@ -118,6 +118,15 @@ test("router events that name their thread are matched exactly, not by model and
     assert.equal(router?.matchedBy, "thread");
     assert.deepEqual(router?.providerSequence, [ "claude" ]);
     assert.equal(router?.requests, 1);
+
+    // A log spanning a router upgrade: the older events have no thread and are still found.
+    writeFileSync(log, [
+      event("2026-09-18T21:20:30.000Z", { requestId: "before-upgrade", phase: "selected", requestedModel: "autodev/worker", provider: "antigravity" }),
+      event("2026-09-18T21:21:00.000Z", { requestId: "mine", thread: CHILD, phase: "selected", requestedModel: "autodev/worker", provider: "claude" }),
+    ].join("\n"));
+    const mixed = (await buildReport({ id: CHILD, codexHome: home, routerLog: log, items: false, offline: true })).router.find((entry) => entry.thread === CHILD);
+    assert.equal(mixed?.matchedBy, "model-window");
+    assert.deepEqual(mixed?.providerSequence, [ "antigravity", "claude" ]);
   } finally {
     cleanup();
   }

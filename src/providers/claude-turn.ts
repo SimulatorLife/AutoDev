@@ -47,8 +47,6 @@ export interface TurnFailure {
 export interface TurnReporter {
   toolRequested(tool: string, callId: string): void;
   toolExecuted(tool: string, callId: string, durationMs: number, status: "ok" | "error"): void;
-  finished(): void;
-  failed(): void;
   heartbeat(): void;
 }
 
@@ -435,7 +433,6 @@ export class ClaudeTurn {
     const stream = this.stream;
     this.detach();
     stream?.complete(event.usage);
-    this.reporter?.finished();
     this.options.registry.remove(this);
   }
 
@@ -456,7 +453,6 @@ export class ClaudeTurn {
     const stream = this.stream;
     this.detach();
     stream?.fail(failure, "claude");
-    this.reporter?.failed();
   }
 
   private scheduleGather(): void {
@@ -487,7 +483,6 @@ export class ClaudeTurn {
     }
     this.detach();
     stream.complete();
-    this.reporter?.finished();
     this.startParkTimer();
   }
 

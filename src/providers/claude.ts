@@ -600,22 +600,17 @@ export function describeFailure(error: unknown): TurnFailure {
  * Router telemetry for one request. A tool call is reported as requested on
  * the request that emits it and as executed on the request that returns its
  * output -- the same attribution the MiniMax adapter uses, with the duration
- * measured exactly because the bridge holds both ends.
+ * measured exactly because the bridge holds both ends. Lifecycle states are
+ * the router's: it settles every request from the response it relays.
  */
 function turnReporter(agentEvents: AgentEventReporter | null): TurnReporter {
   return {
     toolRequested(tool, callId) {
-      if (!agentEvents) return;
-      void agentEvents.reportToolRequested({ tool, callId, server: null });
-      void agentEvents.reportActivity({ state: tool === "request_user_input" ? "user_wait" : "tool_wait" });
+      if (agentEvents) void agentEvents.reportToolRequested({ tool, callId, server: null });
     },
     toolExecuted(tool, callId, durationMs, status) {
-      if (!agentEvents) return;
-      void agentEvents.reportToolExecuted({ tool, callId, status, server: null, durationMs });
-      void agentEvents.reportActivity({ state: "resumed" });
+      if (agentEvents) void agentEvents.reportToolExecuted({ tool, callId, status, server: null, durationMs });
     },
-    finished() { if (agentEvents) void agentEvents.reportActivity({ state: "finished" }); },
-    failed() { if (agentEvents) void agentEvents.reportActivity({ state: "failed" }); },
     heartbeat() { if (agentEvents) void agentEvents.reportHeartbeat({ minIntervalMs: 5000 }); },
   };
 }
@@ -701,7 +696,6 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
     environment = claudeEnvironment();
   } catch (error) {
     handleNonStreamingError(response, describeFailure(error));
-    reporter.failed();
     return;
   }
   const surface = codexToolSurface(payload);

@@ -130,7 +130,7 @@ test('HTTP endpoint routing keeps health, status, models, provider, and response
 
 test('agent event ingestion accepts activity only for a router-owned request', () => {
   resetSubagentTelemetry();
-  noteBridgeRequest('http-request', {
+  noteBridgeRequest('http-request', { activitySubject: `req:${'http-request'}`,
     provider: 'claude',
     model: 'sonnet',
     role: 'worker',

@@ -1079,259 +1079,93 @@ test("the skill-read telemetry hook dedupes per turn and emits one skill_used pe
   }
 });
 
-test("AgentEventReporter posts normalized activity events with requestId", async () => {
+/** A local agent-events endpoint that records every post. */
+async function withEventSink(run: (reporter: NonNullable<ReturnType<typeof resolveAgentEventReporter>>, received: any[]) => Promise<void>, requestId = "req-activity"): Promise<void> {
   const received: any[] = [];
   const server = createServer((request, response) => {
     let body = "";
     request.on("data", (chunk) => { body += chunk; });
     request.on("end", () => {
       received.push(JSON.parse(body));
-      response.writeHead(200, { "content-type": "application/json" });
+      response.writeHead(200, { "content-type": "application/json", connection: "close" });
       response.end("{}");
     });
   });
   const port = await listen(server);
-    try {
+  try {
     const reporter = resolveAgentEventReporter({
       [ AGENT_EVENTS_URL_HEADER ]: `http://127.0.0.1:${port}/v1/agent-events`,
-      [ REQUEST_ID_HEADER ]: "req-activity-1",
+      [ REQUEST_ID_HEADER ]: requestId,
       [ SUBAGENT_SPAWN_TOOLS_HEADER ]: "invoke_subagent",
     });
     assert.ok(reporter);
-
-    await reporter!.reportActivity({ state: "tool_wait" });
-    await reporter!.reportActivity({ state: "subagent_wait", childIds: [ "c1", "c2" ] });
-    await reporter!.reportActivity("resumed");
-    await reporter!.reportActivity({ state: "finished" });
-
-    assert.equal(received.length, 4);
-    assert.deepEqual(received[ 0 ], {
-      requestId: "req-activity-1",
-      events: [ { type: "activity", state: "tool_wait" } ],
-    });
-    assert.deepEqual(received[ 1 ], {
-      requestId: "req-activity-1",
-      events: [ { type: "activity", state: "subagent_wait", childIds: [ "c1", "c2" ] } ],
-    });
-    assert.deepEqual(received[ 2 ], {
-      requestId: "req-activity-1",
-      events: [ { type: "activity", state: "resumed" } ],
-    });
-    assert.deepEqual(received[ 3 ], {
-      requestId: "req-activity-1",
-      events: [ { type: "activity", state: "finished" } ],
-    });
+    await run(reporter!, received);
   } finally {
     await close(server);
   }
+}
+
+test("AgentEventReporter posts the lifecycle facts only a bridge can see, with the requestId", async () => {
+  await withEventSink(async (reporter, received) => {
+    await reporter.reportActivity({ state: "subagent_wait", childIds: [ "c1", "c2" ] });
+    await reporter.reportActivity("resumed");
+    assert.deepEqual(received, [
+      { requestId: "req-activity", events: [ { type: "activity", state: "subagent_wait", childIds: [ "c1", "c2" ] } ] },
+      { requestId: "req-activity", events: [ { type: "activity", state: "resumed" } ] },
+    ]);
+  });
 });
 
-test("activity reporting rejects invalid states and drops unapproved names", async () => {
-  assert.deepEqual(Array.from(VALID_ACTIVITY_STATES).sort(), [
-    "failed",
-    "finished",
-    "heartbeat",
-    "resumed",
-    "subagent_wait",
-    "tool_wait",
-    "user_wait",
-  ]);
-
-  const received: any[] = [];
-  const server = createServer((request, response) => {
-    let body = "";
-    request.on("data", (chunk) => { body += chunk; });
-    request.on("end", () => {
-      received.push(JSON.parse(body));
-      response.writeHead(200, { "content-type": "application/json" });
-      response.end("{}");
-    });
-  });
-  const port = await listen(server);
-    try {
-    const reporter = resolveAgentEventReporter({
-      [ AGENT_EVENTS_URL_HEADER ]: `http://127.0.0.1:${port}/v1/agent-events`,
-      [ REQUEST_ID_HEADER ]: "req-activity-2",
-      [ SUBAGENT_SPAWN_TOOLS_HEADER ]: "invoke_subagent",
-    });
-
-    await reporter!.reportActivity({ state: "invalid_state" });
-    await reporter!.reportActivity({ state: "running" });
-    await reporter!.reportActivity({ state: "" });
-    await reporter!.reportActivity(null as unknown as string);
-    await reporter!.reportActivity(undefined as unknown as string);
-
+test("activity reporting refuses the states the router settles itself", async () => {
+  // tool_wait/user_wait/finished/failed describe a request the router relays
+  // and settles; a bridge's copy arrived late and once ended a working agent
+  // between two of its tool calls.
+  assert.deepEqual(Array.from(VALID_ACTIVITY_STATES).sort(), [ "heartbeat", "resumed", "subagent_wait" ]);
+  await withEventSink(async (reporter, received) => {
+    for (const state of [ "tool_wait", "user_wait", "finished", "failed", "invalid_state", "running", "" ]) await reporter.reportActivity({ state });
+    await reporter.reportActivity(null as unknown as string);
+    await reporter.reportActivity(undefined as unknown as string);
     assert.equal(received.length, 0);
-  } finally {
-    await close(server);
-  }
+  });
 });
 
-test("activity reporting is idempotent against duplicate transitions and terminal states", async () => {
-  const received: any[] = [];
-  const server = createServer((request, response) => {
-    let body = "";
-    request.on("data", (chunk) => { body += chunk; });
-    request.on("end", () => {
-      received.push(JSON.parse(body));
-      response.writeHead(200, { "content-type": "application/json" });
-      response.end("{}");
-    });
-  });
-  const port = await listen(server);
-    try {
-    const reporter = resolveAgentEventReporter({
-      [ AGENT_EVENTS_URL_HEADER ]: `http://127.0.0.1:${port}/v1/agent-events`,
-      [ REQUEST_ID_HEADER ]: "req-activity-3",
-      [ SUBAGENT_SPAWN_TOOLS_HEADER ]: "invoke_subagent",
-    });
-
-    // Duplicate non-resumed transitions are dropped
-    await reporter!.reportActivity({ state: "tool_wait" });
-    await reporter!.reportActivity({ state: "tool_wait" });
+test("activity reporting drops a repeated delegation wait but repeats resumption", async () => {
+  await withEventSink(async (reporter, received) => {
+    await reporter.reportActivity({ state: "subagent_wait" });
+    await reporter.reportActivity({ state: "subagent_wait" });
     assert.equal(received.length, 1);
-
-    // Resumed transition can re-occur
-    await reporter!.reportActivity({ state: "resumed" });
-    await reporter!.reportActivity({ state: "resumed" });
+    await reporter.reportActivity({ state: "resumed" });
+    await reporter.reportActivity({ state: "resumed" });
     assert.equal(received.length, 3);
-
-    // Terminal state stops any further transitions
-    await reporter!.reportActivity({ state: "finished" });
+    // A second delegation after resuming is a new wait.
+    await reporter.reportActivity({ state: "subagent_wait" });
     assert.equal(received.length, 4);
-
-    await reporter!.reportActivity({ state: "tool_wait" });
-    await reporter!.reportActivity({ state: "resumed" });
-    await reporter!.reportActivity({ state: "failed" });
-    assert.equal(received.length, 4);
-  } finally {
-    await close(server);
-  }
+  });
 });
 
-test("the Claude bridge posts activity telemetry to the router", async () => {
-  const received: any[] = [];
-  const server = createServer((request, response) => {
-    let body = "";
-    request.on("data", (chunk) => { body += chunk; });
-    request.on("end", () => { received.push(JSON.parse(body)); response.writeHead(200); response.end("{}"); });
+test("AgentEventReporter delivers repeated heartbeats and throttles on request", async () => {
+  await withEventSink(async (reporter, received) => {
+    await reporter.reportActivity({ state: "subagent_wait" });
+    await reporter.reportHeartbeat({ minIntervalMs: 0 });
+    await reporter.reportHeartbeat({ minIntervalMs: 0 });
+    await reporter.reportHeartbeat({ minIntervalMs: 60000 });
+    // A heartbeat does not overwrite the lifecycle state, so resumption still posts.
+    await reporter.reportActivity("resumed");
+    assert.deepEqual(received.map((post) => post.events[ 0 ].state), [ "subagent_wait", "heartbeat", "heartbeat", "resumed" ]);
   });
-  const port = await listen(server);
-  const address = server.address();
-  assert.ok(address && typeof address !== "string");
-  const reporter = resolveAgentEventReporter({
-    [ AGENT_EVENTS_URL_HEADER ]: `http://127.0.0.1:${address.port}/v1/agent-events`,
-    [ REQUEST_ID_HEADER ]: "req-claude-act",
-    [ SUBAGENT_SPAWN_TOOLS_HEADER ]: "Agent",
-  });
-  assert.ok(reporter);
-  await reporter!.reportActivity({ state: "tool_wait" });
-  await reporter!.reportActivity({ state: "tool_wait" });
-  await reporter!.reportActivity({ state: "subagent_wait", childIds: [ "sub-1", "sub-2" ] });
-  await reporter!.reportActivity({ state: "resumed" });
-  await reporter!.reportActivity({ state: "finished" });
-  await reporter!.reportActivity({ state: "resumed" });
-  assert.equal(received.length, 4);
-  await close(server);
 });
 
-test("AgentEventReporter delivers repeated heartbeat activity events without dropping them", async () => {
-  const received: any[] = [];
-  const server = createServer((request, response) => {
-    let body = "";
-    request.on("data", (chunk) => { body += chunk; });
-    request.on("end", () => {
-      received.push(JSON.parse(body));
-      response.writeHead(200, { "content-type": "application/json" });
-      response.end("{}");
-    });
-  });
-  const port = await listen(server);
-    try {
-    const reporter = resolveAgentEventReporter({
-      [ AGENT_EVENTS_URL_HEADER ]: `http://127.0.0.1:${port}/v1/agent-events`,
-      [ REQUEST_ID_HEADER ]: "req-heartbeat-js",
-      [ SUBAGENT_SPAWN_TOOLS_HEADER ]: "invoke_subagent",
-    });
-
-    await reporter!.reportActivity({ state: "tool_wait" });
-    // Repeated heartbeats are delivered
-    await reporter!.reportHeartbeat({ minIntervalMs: 0 });
-    await reporter!.reportHeartbeat({ minIntervalMs: 0 });
-    // Throttled heartbeat with minIntervalMs > 0 drops immediate repeat
-    await reporter!.reportHeartbeat({ minIntervalMs: 60000 });
-    // Resumed still works after heartbeats because heartbeat did not overwrite lifecycle state
-    await reporter!.reportActivity("resumed");
-    await reporter!.reportActivity({ state: "finished" });
-
-    assert.equal(received.length, 5);
-    assert.deepEqual(received[ 0 ].events[ 0 ], { type: "activity", state: "tool_wait" });
-    assert.deepEqual(received[ 1 ].events[ 0 ], { type: "activity", state: "heartbeat" });
-    assert.deepEqual(received[ 2 ].events[ 0 ], { type: "activity", state: "heartbeat" });
-    assert.deepEqual(received[ 3 ].events[ 0 ], { type: "activity", state: "resumed" });
-    assert.deepEqual(received[ 4 ].events[ 0 ], { type: "activity", state: "finished" });
-  } finally {
-    await close(server);
-  }
-});
-
-test("the Claude bridge delivers repeated heartbeats to the router", async () => {
-  const received: any[] = [];
-  const server = createServer((request, response) => {
-    let body = "";
-    request.on("data", (chunk) => { body += chunk; });
-    request.on("end", () => { received.push(JSON.parse(body)); response.writeHead(200); response.end("{}"); });
-  });
-  const port = await listen(server);
-  const address = server.address();
-  assert.ok(address && typeof address !== "string");
-  const reporter = resolveAgentEventReporter({
-    [ AGENT_EVENTS_URL_HEADER ]: `http://127.0.0.1:${address.port}/v1/agent-events`,
-    [ REQUEST_ID_HEADER ]: "req-claude-hb",
-    [ SUBAGENT_SPAWN_TOOLS_HEADER ]: "Agent",
-  });
-  assert.ok(reporter);
-  await reporter!.reportActivity({ state: "tool_wait" });
-  await reporter!.reportHeartbeat({ minIntervalMs: 0 });
-  await reporter!.reportHeartbeat({ minIntervalMs: 0 });
-  await reporter!.reportHeartbeat({ minIntervalMs: 60000 });
-  await reporter!.reportActivity({ state: "resumed" });
-  await reporter!.reportActivity({ state: "finished" });
-  assert.equal(received.length, 5);
-  await close(server);
-});
-
-test("the provider bridges wire activity lifecycle telemetry", () => {
-  // Antigravity bridge source assertions
+test("bridges report only their own delegation; the router settles every request", () => {
+  // Antigravity delegates inside agy, which the router cannot see: it reports
+  // the wait when children start and the resumption when the last one closes.
   const agySource = read("src/providers/antigravity.ts");
-  assert.match(agySource, /tool === "ask_question"\) void agentEvents\.reportActivity\(\{ state: "user_wait" \}\)/);
-  assert.match(agySource, /void agentEvents\.reportActivity\(\{ state: "tool_wait" \}\)/);
   assert.match(agySource, /void agentEvents\.reportActivity\(\{ state: "subagent_wait", childIds: children\.map\(/);
-  assert.match(agySource, /void agentEvents\.reportActivity\(\{ state: "resumed" \}\)/);
-  assert.match(agySource, /void agentEvents\.reportActivity\(\{ state: "finished" \}\)/);
-  assert.match(agySource, /void agentEvents\.reportActivity\(\{ state: "failed" \}\)/);
-
-  // Copilot bridge source assertions
-  const copilotSource = read("src/providers/copilot.ts");
-  assert.match(copilotSource, /reportActivity\(\{ state: String\(event\.tool/);
-  assert.match(copilotSource, /void agentEvents\.reportActivity\(\{ state: "resumed" \}\)/);
-  assert.match(copilotSource, /void agentEvents\.reportActivity\(\{ state: "finished" \}\)/);
-  assert.match(copilotSource, /void agentEvents\.reportActivity\(\{ state: "failed" \}\)/);
-
-  // Claude bridge source assertions. Subagent waits are Codex's own
-  // multi_agent_v1 calls now, which the router observes like any Codex turn's.
-  const claudeSource = read("src/providers/claude.ts");
-  assert.match(claudeSource, /reportActivity\(\{ state: tool === "request_user_input" \? "user_wait" : "tool_wait" \}\)/);
-  assert.match(claudeSource, /reportActivity\(\{ state: "resumed"/);
-  assert.match(claudeSource, /reportActivity\(\{ state: "finished"/);
-  assert.match(claudeSource, /reportActivity\(\{ state: "failed"/);
-
-  // MiniMax bridge source assertions
-  const minimaxSource = read("src/providers/minimax.ts");
-  assert.match(minimaxSource, /reportActivity\(\{ state: tool\.toLowerCase\(\) === "ask_question"/);
-  assert.match(minimaxSource, /void agentEvents\.reportActivity\(\{ state: "resumed" \}\)/);
-  assert.match(minimaxSource, /void agentEvents\.reportActivity\(\{ state: "finished" \}\)/);
-  assert.match(minimaxSource, /void agentEvents\.reportActivity\(\{ state: "failed" \}\)/);
+  assert.match(agySource, /if \(openSpawns\.size === 0 && typeof agentEvents\?\.reportActivity === "function"\) \{\n\s+void agentEvents\.reportActivity\(\{ state: "resumed" \}\);/);
+  assert.equal((agySource.match(/reportActivity\(/g) ?? []).length, 2);
+  // Every other bridge's turn is visible to the router in full.
+  for (const path of [ "src/providers/copilot.ts", "src/providers/minimax.ts", "src/providers/claude.ts", "src/providers/claude-turn.ts" ]) {
+    assert.doesNotMatch(read(path), /reportActivity\(/, path);
+  }
 });
 
 // A canonical SKILL.md this checkout actually ships, so the matching logic

@@ -205,6 +205,7 @@ test('orchestrator-active-subagents: bridge subagent usage keeps orchestrator se
     openBridgeSubagentUsage({
       requestId: 'req-bridge-parent',
       context: {
+        activitySubject: sessionKey,
         provider,
         model,
         role: ORCHESTRATOR_AGENT_ROLE,

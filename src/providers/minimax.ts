@@ -366,11 +366,9 @@ function reportExecutedToolCalls(agentEvents: AgentReporter | null, payload: Jso
     if (outcome.kind === "unavailable") {
       if (!firstReport("unavailable", callId)) continue;
       void agentEvents.reportToolUnavailable({ tool, callId, reason: outcome.reason, server });
-      if (typeof agentEvents.reportActivity === "function") void agentEvents.reportActivity({ state: "resumed" });
     } else if (outcome.kind === "executed") {
       if (!firstReport("executed", callId)) continue;
       void agentEvents.reportToolExecuted({ tool, callId, status: outcome.status, durationMs: outcome.durationMs, server });
-      if (typeof agentEvents.reportActivity === "function") void agentEvents.reportActivity({ state: "resumed" });
     }
   }
 }
@@ -385,7 +383,6 @@ function reportRequestedToolCall(agentEvents: AgentReporter | null, item: JsonRe
     : (typeof item.namespace === "string" && item.namespace.trim() ? item.namespace.trim() : null);
   if (!tool || !firstReport("requested", callId)) return;
   void agentEvents.reportToolRequested({ tool, callId, server });
-  if (typeof agentEvents.reportActivity === "function") void agentEvents.reportActivity({ state: tool.toLowerCase() === "ask_question" ? "user_wait" : "tool_wait" });
 }
 
 /**
@@ -621,7 +618,6 @@ async function forward(request: IncomingMessage, response: ServerResponse): Prom
     const contentType = upstream.headers.get("content-type") ?? "";
     if (contentType.toLowerCase().includes("text/event-stream")) {
       await streamSse(upstream.body, response, coerce, observe, agentEvents);
-      if (typeof agentEvents?.reportActivity === "function") void agentEvents.reportActivity({ state: "finished" });
       return;
     }
 
@@ -633,16 +629,13 @@ async function forward(request: IncomingMessage, response: ServerResponse): Prom
         // rather than the event stream that would have carried it.
         observe?.(parsed);
         response.end(JSON.stringify(coerceResponseBody(parsed, freeformNames)));
-        if (typeof agentEvents?.reportActivity === "function") void agentEvents.reportActivity({ state: "finished" });
         return;
       } catch {
         // Preserve malformed/non-JSON upstream responses unchanged.
       }
     }
-    if (typeof agentEvents?.reportActivity === "function") void agentEvents.reportActivity({ state: "finished" });
     response.end(responseText);
   } catch (error) {
-    if (typeof agentEvents?.reportActivity === "function") void agentEvents.reportActivity({ state: "failed" });
     proxyError(response, error);
   } finally {
     request.removeListener("aborted", abortUpstream);

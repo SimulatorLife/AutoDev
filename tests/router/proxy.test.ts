@@ -13,11 +13,12 @@ import {
   payloadForCandidate,
   proxyConcreteResponse,
   proxyFallbackChain,
+  proxyOrchestratorResponse,
   proxyRoleResponse,
 } from '../../src/router/proxy.ts';
 import { TOOL_CALL_OWNERSHIP } from '../../src/router/tool-call-ownership.ts';
 import { countLiveAgentActivity } from '../../src/router/usage.ts';
-import { agentActivity } from '../../src/router/server.ts';
+import { agentActivity, ingestAgentEvents } from '../../src/router/server.ts';
 import { noteOrchestratorSession, resetSubagentTelemetry } from '../../src/router/subagents.ts';
 
 function responseRecorder(): any {
@@ -285,6 +286,67 @@ test('one subagent thread is one live agent, however many requests it makes', { 
     await proxyRoleResponse(responseRecorder(), 'explorer', { model: 'autodev/explorer', input: [], stream: false }, false, 'req-child2-0', null, null, null,
       { key: 'root-1', scope: 'identified', thread: 'child-2' });
     assert.equal(countLiveAgentActivity({ role: 'explorer' }), 2);
+  } finally {
+    globalThis.fetch = originalFetch;
+    for (const [ key, value ] of Object.entries(saved)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+    agentActivity.reset();
+    resetSubagentTelemetry();
+    COOLDOWNS.clearAll();
+  }
+});
+
+test("a subagent's bridge events describe the subagent, never its orchestrator", { concurrency: false }, async () => {
+  // Observed 2026-09-19 with a MiniMax-served explorer under a Codex-served
+  // orchestrator: every event the explorer's bridge posted landed on the
+  // shared session key -- the orchestrator's record -- so the dashboard showed
+  // no orchestrator, two explorers, and agents flipping in and out of view.
+  COOLDOWNS.clearAll();
+  agentActivity.reset();
+  resetSubagentTelemetry();
+  const originalFetch = globalThis.fetch;
+  const saved = { LITELLM_API_KEY: process.env.LITELLM_API_KEY, MINIMAX_API_KEY: process.env.MINIMAX_API_KEY };
+  process.env.LITELLM_API_KEY = 'claude-key';
+  process.env.MINIMAX_API_KEY = 'minimax-key';
+  let sequence = 0;
+  globalThis.fetch = (async (input: string | URL | Request) => {
+    sequence += 1;
+    const call = { type: 'custom_tool_call', id: `ctc_${sequence}`, call_id: `call_${sequence}`, name: 'exec', input: 'wait', status: 'completed' };
+    const completed = { id: `resp_${sequence}`, status: 'completed', output: [ call ] };
+    // Codex answers in SSE even to a non-streaming caller; the bridges answer in JSON.
+    if (String(input).startsWith('https://chatgpt.com/')) {
+      return new Response(`event: response.completed\ndata: ${JSON.stringify({ type: 'response.completed', response: completed })}\n\n`, { status: 200, headers: { 'content-type': 'text/event-stream' } });
+    }
+    return jsonResponse(completed);
+  }) as typeof fetch;
+  const root = { key: 'root-1', scope: 'identified', thread: 'root-1' };
+  const child = { key: 'root-1', scope: 'identified', thread: 'child-1' };
+  try {
+    await proxyOrchestratorResponse(responseRecorder(), { model: 'autodev/orchestrator', input: [], stream: false }, false, 'req-root-1', null, null, null, root);
+    await proxyRoleResponse(responseRecorder(), 'explorer', { model: 'autodev/explorer', input: [], stream: false }, false, 'req-child-1', null, null, null, child);
+    // The child's bridge reports that its request settled, as every bridge does at the end of a response.
+    ingestAgentEvents({ requestId: 'req-child-1', events: [ { type: 'activity', state: 'finished' }, { type: 'heartbeat' } ] });
+
+    const orchestrator = agentActivity.getRecord('root-1');
+    assert.equal(orchestrator?.role, 'orchestrator', 'the child must not overwrite the orchestrator');
+    assert.notEqual(orchestrator?.provider, 'minimax', "the child's provider must not replace the orchestrator's");
+    // It ended its request in a tool call (its wait on the child) and stays live; the
+    // child's per-request report must not have finished it.
+    assert.equal(orchestrator?.state, 'tool_wait');
+    // The router settled the child's request with a tool call: it is waiting on
+    // that tool, not finished, whatever its bridge said about the request.
+    assert.equal(agentActivity.getState('thread:child-1'), 'tool_wait');
+    assert.equal(countLiveAgentActivity({ role: 'explorer' }), 1);
+    assert.equal(countLiveAgentActivity({ role: 'orchestrator' }), 1);
+
+    // What a child's bridge alone can report -- its own in-CLI delegation --
+    // lands on the child.
+    ingestAgentEvents({ requestId: 'req-child-1', events: [ { type: 'activity', state: 'subagent_wait' } ] });
+    assert.equal(agentActivity.getState('thread:child-1'), 'subagent_wait');
+    assert.equal(agentActivity.getRecord('root-1')?.role, 'orchestrator');
+    assert.equal(agentActivity.getState('root-1'), 'tool_wait');
   } finally {
     globalThis.fetch = originalFetch;
     for (const [ key, value ] of Object.entries(saved)) {

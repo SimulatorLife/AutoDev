@@ -577,17 +577,12 @@ function createToolObserver(agentEvents: AgentReporter | null) {
       if (requested.has(key)) return;
       requested.add(key);
       void agentEvents.reportToolRequested({ tool, callId, server });
-      if (typeof agentEvents.reportActivity === "function") {
-        if (tool === "ask_question") void agentEvents.reportActivity({ state: "user_wait" });
-        else void agentEvents.reportActivity({ state: "tool_wait" });
-      }
       return;
     }
     if (evidence.kind === "unavailable") {
       if (settled.has(key)) return;
       settled.add(key);
       void agentEvents.reportToolUnavailable({ tool, callId, reason: evidence.reason, server });
-      if (typeof agentEvents.reportActivity === "function") void agentEvents.reportActivity({ state: "resumed" });
       return;
     }
     if (evidence.kind !== "executed" || settled.has(key)) return;
@@ -599,7 +594,6 @@ function createToolObserver(agentEvents: AgentReporter | null) {
       const args = structured(update?.tool_info?.args) ?? structured(update?.tool_input) ?? {};
       reportSkillReadIfMatched({ agentEvents, seenSkills, toolName: tool, args, callId });
     }
-    if (typeof agentEvents.reportActivity === "function") void agentEvents.reportActivity({ state: "resumed" });
   };
   // agy auto-denies a tool whose permission the run was not granted and says
   // so only on stderr, which this bridge already parses into the failure it
@@ -1356,10 +1350,8 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
         console.error(`agy delegating ${spawnChildren.length} subagent(s) through Codex`);
       }
       logTurnEnd("succeeded");
-      if (typeof agentEvents?.reportActivity === "function") void agentEvents.reportActivity({ state: "finished" });
       sendJson(response, 200, responsePayload(payload.model ?? model, result.text, result.result, undefined, undefined, output));
     } catch (error) {
-      if (typeof agentEvents?.reportActivity === "function") void agentEvents.reportActivity({ state: "failed" });
       flushSpawns("failure");
       reportPermissionDenial(error);
       if (spawnSession) spawnSessions.close(spawnSession);
@@ -1620,7 +1612,6 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
     if (clientDisconnectMidDelegation) {
       turnSettled = true;
       logTurnEnd("succeeded-mid-delegation", `agy finished after upstream close: ${clientDisconnectDetail}`);
-      if (typeof agentEvents?.reportActivity === "function") void agentEvents.reportActivity({ state: "finished" });
       for (const [ eventName, body ] of terminalIncompleteEvents({
         responseId,
         itemId,
@@ -1668,7 +1659,6 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
     }
     emit("response.completed", { type: "response.completed", response: completed });
     turnSettled = true;
-    if (typeof agentEvents?.reportActivity === "function") void agentEvents.reportActivity({ state: "finished" });
     logTurnEnd("succeeded");
     if (isWritable()) {
       try { response.end("data: [DONE]\n\n"); } catch { }
@@ -1681,7 +1671,6 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
     activeWaits.clear();
     delegation.activeCommands = 0;
     delegation.activeWaits = 0;
-    if (typeof agentEvents?.reportActivity === "function") void agentEvents.reportActivity({ state: "failed" });
     // Reported before the writability check below returns: a permission gap is
     // a fact about the workspace, not about whether the parent is still
     // listening, and it is the only unavailability agy ever states out loud.

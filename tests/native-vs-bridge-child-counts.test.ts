@@ -100,7 +100,7 @@ function runOperation(name: string, op: Operation): void {
     return;
   }
   if (op.op === "bridge_request") {
-    noteBridgeRequest(value<string>(op, "requestId"), { provider: value<string>(op, "provider"), model: value<string>(op, "model"), role: value<string | null | undefined>(op, "role") ?? null, workspace: value<string>(op, "workspace") });
+    noteBridgeRequest(value<string>(op, "requestId"), { activitySubject: `req:${value<string>(op, "requestId")}`, provider: value<string>(op, "provider"), model: value<string>(op, "model"), role: value<string | null | undefined>(op, "role") ?? null, workspace: value<string>(op, "workspace") });
     return;
   }
   if (op.op === "ingest_events") {
@@ -162,7 +162,7 @@ function runOperation(name: string, op: Operation): void {
     return;
   }
   if (op.op === "seed_bridge_children_overflow") {
-    noteBridgeRequest(value<string>(op, "requestId"), { provider: value<string>(op, "provider"), model: value<string>(op, "model"), role: null, workspace: value<string>(op, "workspace") });
+    noteBridgeRequest(value<string>(op, "requestId"), { activitySubject: `req:${value<string>(op, "requestId")}`, provider: value<string>(op, "provider"), model: value<string>(op, "model"), role: null, workspace: value<string>(op, "workspace") });
     const children = Array.from({ length: value<number>(op, "totalChildren") }, (_, i) => ({ id: `seed.${i}`, model: "inherit" }));
     const perBatch = 50;
     for (let offset = 0; offset < children.length; offset += perBatch) {

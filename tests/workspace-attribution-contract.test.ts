@@ -50,7 +50,7 @@ function runOperation(name: string, op: Operation, state: OperationState): void 
     return;
   }
   if (op.op === "bridgeRequest") {
-    noteBridgeRequest(stringValue(op, "requestId"), { provider: stringValue(op, "provider"), model: stringValue(op, "model"), role: stringValue(op, "role"), workspace: stringValue(op, "workspace") });
+    noteBridgeRequest(stringValue(op, "requestId"), { activitySubject: `req:${stringValue(op, "requestId")}`, provider: stringValue(op, "provider"), model: stringValue(op, "model"), role: stringValue(op, "role"), workspace: stringValue(op, "workspace") });
     return;
   }
   if (op.op === "bridgeEvents") {

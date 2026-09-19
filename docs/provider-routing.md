@@ -741,7 +741,7 @@ The router cleanly separates user-facing agent workflow activity from transport-
 The router coordinates with agents and tool hosts via an explicit lifecycle event contract:
 
 - **Normalized activity events (`{ type: "activity", state, childIds? }`):**
-  Provider bridges emit explicit `tool_wait`, `user_wait`, `subagent_wait`, `resumed`, `finished`, `failed`, or non-transitioning `heartbeat` events over the authorized agent-events channel; router-visible response tool calls and continuations supply the native path. User waits are never inferred from arbitrary assistant text.
+  the router settles every request itself from the response it relays -- a response ending in a tool call leaves the agent in `tool_wait`, one needing input in `user_wait`, a final answer `finished` (or `subagent_wait` while its children are live), an error `failed`. Provider bridges add only what the router cannot see: `{ type: "activity", state: "subagent_wait", childIds? }` while their own in-CLI subagents run and `resumed` when the last reports back (Antigravity), plus non-transitioning `heartbeat` refreshes. The endpoint refuses bridge-reported `tool_wait`/`user_wait`/`finished`/`failed`: they repeated the router's settlement late, and a per-response `finished` arriving after the router's `tool_wait` ended a working agent between two tool calls. Every event applies to the agent the reporting request belongs to (its activity subject, one per Codex thread), never to the session key an orchestrator shares with its subagents -- keyed that way, a MiniMax-served explorer's reports overwrote its orchestrator's record (observed 2026-09-19). User waits are never inferred from arbitrary assistant text.
 - **Configurable freshness TTL (`CODEX_ROUTER_AGENT_ACTIVITY_TTL_MS`):**
   Configured via `CODEX_ROUTER_AGENT_ACTIVITY_TTL_MS` (defaults to `300000` ms / 5 minutes).
 - **Activity states:**
@@ -753,9 +753,8 @@ The router coordinates with agents and tool hosts via an explicit lifecycle even
   as a heartbeat. `status.agents.canonicalLiveCount` -- and therefore the
   `Active agents` KPI total, its role breakdown, and the `workspaces with
   active agents` context count -- only counts entries whose heartbeat is
-  still within the TTL window above. If a bridge stops emitting lifecycle
-  events for an agent (for example, it crashed without emitting
-  `finished`/`failed`), that agent ages out of every one of those counts
+  still within the TTL window above. If an agent goes silent (its client
+  vanished, or a bridge crashed mid-request), that agent ages out of every one of those counts
   once its heartbeat exceeds the TTL; there is no separate "stale but still
   counted" bucket in the KPI -- stale activity simply stops contributing to
   the canonical live count, and `status.agents.byState.stale` reports the

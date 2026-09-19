@@ -82,11 +82,11 @@ test('SubagentRegistry tracks orchestrator sessions and workspace metadata ignor
 test('SubagentRegistry tracks bridge request and session contexts', () => {
   const registry = new SubagentRegistry();
 
-  registry.noteBridgeRequest('req-100', { provider: 'claude', model: 'sonnet', role: 'worker' });
-  assert.deepEqual(registry.getBridgeRequestContext('req-100'), { provider: 'claude', model: 'sonnet', role: 'worker' });
+  registry.noteBridgeRequest('req-100', { activitySubject: `req:${'req-100'}`, provider: 'claude', model: 'sonnet', role: 'worker' });
+  assert.deepEqual(registry.getBridgeRequestContext('req-100'), { activitySubject: 'req:req-100', provider: 'claude', model: 'sonnet', role: 'worker' });
   assert.equal(registry.getBridgeRequestContext('req-unknown'), null);
 
-  registry.noteBridgeSession('sess-100', { requestId: 'req-100', provider: 'claude', model: 'sonnet' });
+  registry.noteBridgeSession('sess-100', { activitySubject: 'sess-100', requestId: 'req-100', provider: 'claude', model: 'sonnet' });
   assert.equal(registry.recallBridgeSessionRequestId('sess-100'), 'req-100');
   const sessionCtx = registry.lookupBridgeSessionContext('sess-100');
   assert.equal(sessionCtx?.provider, 'claude');
@@ -212,8 +212,8 @@ test('convenience functions delegate to default SubagentRegistry', async () => {
   rememberWorkspaceMetadata('sess-default', '/test/workspace');
   assert.ok(getWorkspaceMetadata('sess-default')?.includes('/test/workspace'));
 
-  noteBridgeRequest('req-def', { provider: 'antigravity', model: 'flash' });
-  assert.deepEqual(getBridgeRequestContext('req-def'), { provider: 'antigravity', model: 'flash' });
+  noteBridgeRequest('req-def', { activitySubject: `req:${'req-def'}`, provider: 'antigravity', model: 'flash' });
+  assert.deepEqual(getBridgeRequestContext('req-def'), { activitySubject: 'req:req-def', provider: 'antigravity', model: 'flash' });
 
   recordSubagentSpawn({ mechanism: 'router_alias', count: 1, provider: 'codex', role: 'worker' });
   assert.equal(subagentStatus().total, 1);
@@ -236,7 +236,7 @@ test('synthetic bridge parent activity settles with the parent outcome', () => {
     },
   };
   const registry = new SubagentRegistry({ agentActivity: agentActivity as any });
-  const context = { provider: 'claude', model: 'sonnet', role: 'orchestrator', workspace: 'AutoDev' };
+  const context = { activitySubject: 'parent-failure-session', provider: 'claude', model: 'sonnet', role: 'orchestrator', workspace: 'AutoDev' };
   registry.noteBridgeRequest('parent-failure', context);
   registry.openBridgeSubagentUsage({ requestId: 'parent-failure', context, role: 'worker', childId: 'child-1' });
 
