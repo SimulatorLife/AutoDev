@@ -64,7 +64,8 @@ export function resolveAntigravityEnsureOptions(
     label,
     plist: path.join(home, "Library", "LaunchAgents", `${label}.plist`),
     launcher: path.join(codexHome, "hooks", "run-codex-antigravity-proxy.sh"),
-    cliPath: env.AGY_CLI_PATH?.trim() || path.join(home, ".local", "bin", "agy"),
+    cliPath:
+      env.AGY_CLI_PATH?.trim() || path.join(home, ".local", "bin", "agy"),
     settingsPath:
       env.AGY_SETTINGS_PATH?.trim() ||
       path.join(home, ".gemini", "config", "config.json"),
@@ -72,7 +73,10 @@ export function resolveAntigravityEnsureOptions(
       env.AGY_READY_TIMEOUT_MS,
       DEFAULT_TIMEOUT_MS
     ),
-    logPath: path.join(env.TMPDIR?.trim() || "/tmp", "codex-antigravity-proxy.log")
+    logPath: path.join(
+      env.TMPDIR?.trim() || "/tmp",
+      "codex-antigravity-proxy.log"
+    )
   };
 }
 

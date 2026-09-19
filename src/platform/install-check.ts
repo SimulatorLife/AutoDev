@@ -122,7 +122,11 @@ function staleCheck(
       "com.codex.antigravity-litellm.plist"
     ),
     path.join(options.home, ".config", "litellm", "antigravity.yaml"),
-    path.join(options.home, ".codex", "codex-antigravity-litellm-config.sha256"),
+    path.join(
+      options.home,
+      ".codex",
+      "codex-antigravity-litellm-config.sha256"
+    ),
     path.join(hooks, "codex", "lib", "codex-spawn-tools.mjs"),
     path.join(hooks, "codex", "lib", "codex-state-collector.mjs"),
     path.join(hooks, "codex", "lib", "spawn-shim-mcp.mjs"),
@@ -245,7 +249,9 @@ export function runInstallCheck(overrides: InstallCheckOptions = {}): number {
   const repositoryRoot = sourceRoot(overrides),
     home = overrides.home ?? process.env.HOME ?? homedir(),
     codexHome =
-      overrides.codexHome ?? process.env.CODEX_HOME ?? path.join(home, ".codex");
+      overrides.codexHome ??
+      process.env.CODEX_HOME ??
+      path.join(home, ".codex");
   const hooks = path.join(codexHome, "hooks"),
     userSkills = path.join(home, ".agents", "skills"),
     rules = path.join(codexHome, "rules"),
@@ -345,7 +351,10 @@ export function runInstallCheck(overrides: InstallCheckOptions = {}): number {
       check(
         `catalog ${name}`,
         runtimeLinkMatches(
-          path.join(repositoryRoot, `config/catalogs/${name}-model-catalog.json`),
+          path.join(
+            repositoryRoot,
+            `config/catalogs/${name}-model-catalog.json`
+          ),
           path.join(codexHome, `${name}-model-catalog.json`)
         ),
         failures
@@ -368,7 +377,11 @@ export function runInstallCheck(overrides: InstallCheckOptions = {}): number {
     );
     check(
       "hook trust state",
-      checkHookTrust(path.join(codexHome, "config.toml"), codexHome, repositoryRoot),
+      checkHookTrust(
+        path.join(codexHome, "config.toml"),
+        codexHome,
+        repositoryRoot
+      ),
       failures
     );
     const portable = readFileSync(
@@ -525,7 +538,11 @@ export function runInstallCheck(overrides: InstallCheckOptions = {}): number {
     for (const skill of SKILLS) {
       for (const legacy of ["skills", "agents/skills"]) {
         const filePath = path.join(codexHome, legacy, skill);
-        check(`obsolete skill path ${filePath}`, !lstatSafe(filePath), failures);
+        check(
+          `obsolete skill path ${filePath}`,
+          !lstatSafe(filePath),
+          failures
+        );
       }
     }
     if (commandAvailable("agy") && process.env.AUTODEV_SKIP_AGY_MCP !== "1") {

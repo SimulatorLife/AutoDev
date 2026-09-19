@@ -145,8 +145,14 @@ function resolveRouterEnsureOptionsFromEnv(
       fallbackPidFile,
       launcher: path.join(codexHome, "hooks", "run-codex-model-router.sh"),
       plistLink,
-      launchdLogOut: path.join(launchdRunDir, "codex-model-router.launchd.out.log"),
-      launchdLogErr: path.join(launchdRunDir, "codex-model-router.launchd.err.log")
+      launchdLogOut: path.join(
+        launchdRunDir,
+        "codex-model-router.launchd.out.log"
+      ),
+      launchdLogErr: path.join(
+        launchdRunDir,
+        "codex-model-router.launchd.err.log"
+      )
     },
     label,
     domain,
@@ -258,7 +264,8 @@ export function createDefaultRouterEnsureDeps(
         return null;
       }
     },
-    writeFile: (filePath, data) => writeFileP(filePath, data, { encoding: "utf8" }),
+    writeFile: (filePath, data) =>
+      writeFileP(filePath, data, { encoding: "utf8" }),
     readFile: async (filePath) => {
       try {
         return await readFileP(filePath, { encoding: "utf8" });

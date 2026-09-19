@@ -308,16 +308,19 @@ export class CodexStateCollector {
       options.recencyWindowMs ??
       Number.parseInt(
         process.env.CODEX_STATE_COLLECTOR_WINDOW_MS ??
-          `${DEFAULT_RECENT_WINDOW_MS}`);
+          `${DEFAULT_RECENT_WINDOW_MS}`
+      );
     this.limit =
       options.limit ??
       Number.parseInt(
-        process.env.CODEX_STATE_COLLECTOR_LIMIT ?? `${DEFAULT_LIMIT}`);
+        process.env.CODEX_STATE_COLLECTOR_LIMIT ?? `${DEFAULT_LIMIT}`
+      );
     this.pollIntervalMs =
       options.pollIntervalMs ??
       Number.parseInt(
         process.env.CODEX_STATE_COLLECTOR_POLL_MS ??
-          `${DEFAULT_POLL_INTERVAL_MS}`);
+          `${DEFAULT_POLL_INTERVAL_MS}`
+      );
     this.now = options.now ?? (() => Date.now());
     this.openSqlite = options.openSqlite ?? loadNativeSqlite;
     this.snapshot = emptySnapshot();

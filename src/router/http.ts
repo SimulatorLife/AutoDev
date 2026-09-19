@@ -155,7 +155,8 @@ export { errorBody, sendJson } from "./proxy.ts";
 
 export const HOST = process.env.CODEX_MODEL_ROUTER_HOST ?? "127.0.0.1";
 export const PORT = Number.parseInt(
-  process.env.CODEX_MODEL_ROUTER_PORT ?? "4100");
+  process.env.CODEX_MODEL_ROUTER_PORT ?? "4100"
+);
 export const AGENT_ACTIVITY_TTL_MS = resolveAgentActivityTtlMs();
 export const agentActivity = createAgentActivityTracker({
   ttlMs: AGENT_ACTIVITY_TTL_MS
@@ -179,7 +180,8 @@ const DASHBOARD_FILE = existsSync(dashboardSource)
   : dashboardInstalled;
 const ROUTER_STARTED_AT = new Date().toISOString();
 const SHUTDOWN_DRAIN_TIMEOUT_MS = Number.parseInt(
-  process.env.CODEX_ROUTER_SHUTDOWN_DRAIN_MS ?? "30000");
+  process.env.CODEX_ROUTER_SHUTDOWN_DRAIN_MS ?? "30000"
+);
 
 export const providerTelemetry = new Map(
   ROUTES.map(({ provider }) => [
@@ -210,7 +212,8 @@ const routerLifecycle = new RouterLifecycle({
 setDefaultRouterLifecycle(routerLifecycle);
 
 const MAX_RECENT_EVENTS = Number.parseInt(
-  process.env.CODEX_ROUTER_MAX_RECENT_EVENTS ?? "100");
+  process.env.CODEX_ROUTER_MAX_RECENT_EVENTS ?? "100"
+);
 const routerEvents = new RouterEventRecorder({
   maxRecentEvents: MAX_RECENT_EVENTS,
   routerInstanceId: ROUTER_INSTANCE_ID,

@@ -37,8 +37,7 @@ export class RouterLifecycle {
       options.startedAt ?? new Date().toISOString();
     this.defaultDrainTimeoutMs =
       options.drainTimeoutMs ??
-      Number.parseInt(
-        process.env.CODEX_ROUTER_SHUTDOWN_DRAIN_MS ?? "30000");
+      Number.parseInt(process.env.CODEX_ROUTER_SHUTDOWN_DRAIN_MS ?? "30000");
     this.routerInstanceId = options.routerInstanceId ?? "router-lifecycle";
   }
 

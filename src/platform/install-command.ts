@@ -92,7 +92,12 @@ export function createCodexMcpSource(repositoryRoot: string): {
     path.join(process.env.TMPDIR ?? "/tmp", "autodev-codex-mcp-")
   );
   try {
-    const rulesync = path.join(repositoryRoot, "node_modules", ".bin", "rulesync");
+    const rulesync = path.join(
+      repositoryRoot,
+      "node_modules",
+      ".bin",
+      "rulesync"
+    );
     if (!existsSync(rulesync))
       throw new ConfigError(
         `missing-rulesync ${rulesync}; run pnpm install --frozen-lockfile`

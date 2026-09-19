@@ -40,7 +40,8 @@ function positiveInteger(value: string | undefined, fallback: number): number {
 
 function repoRoot(env: NodeJS.ProcessEnv): string {
   return (
-    env.AUTODEV_OTEL_REPO_ROOT?.trim() || path.join(import.meta.dirname, "..", "..")
+    env.AUTODEV_OTEL_REPO_ROOT?.trim() ||
+    path.join(import.meta.dirname, "..", "..")
   );
 }
 

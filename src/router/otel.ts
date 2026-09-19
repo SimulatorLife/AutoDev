@@ -40,9 +40,10 @@ export const REMOVED_SHADOW_SELECTION_METRICS = new Set([
   "codex.skills.shadow_selection.duration_ms"
 ]);
 
-export const SKILL_TURN_HISTOGRAMS: Record<string, keyof SkillTurnHistograms> = {
-  "codex.skill.turn.duration_seconds": "durationSeconds"
-};
+export const SKILL_TURN_HISTOGRAMS: Record<string, keyof SkillTurnHistograms> =
+  {
+    "codex.skill.turn.duration_seconds": "durationSeconds"
+  };
 
 export const THREAD_SKILLS_HISTOGRAMS: Record<
   string,

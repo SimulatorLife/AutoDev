@@ -111,78 +111,81 @@ test(
   "the pinned Collector forwards all signals without prompt logging",
   { skip: collectorSkipReason(configuredBinary) },
   async () => {
-  const binary = configuredBinary!;
-  const temporary = mkdtempSync(join(tmpdir(), "autodev-otel-integration-"));
-  const receiverPort = await freePort();
-  const collectorPort = await freePort();
-  const config = join(temporary, "collector.yaml");
-  writeFileSync(
-    config,
-    readFileSync(join(repositoryRoot, "config/otel/collector.yaml"), "utf8")
-      .replaceAll("127.0.0.1:4318", `127.0.0.1:${collectorPort}`)
-      .replaceAll("127.0.0.1:4100", `127.0.0.1:${receiverPort}`)
-  );
-  const forwarded: Forwarded[] = [];
-  const receiver = createServer(
-    (request: IncomingMessage, response: ServerResponse) => {
-      const chunks: Buffer[] = [];
-      request.on("data", (chunk: Buffer) => chunks.push(chunk));
-      request.on("end", () => {
-        forwarded.push({
-          path: request.url ?? "",
-          body: Buffer.concat(chunks).toString("utf8")
+    const binary = configuredBinary!;
+    const temporary = mkdtempSync(join(tmpdir(), "autodev-otel-integration-"));
+    const receiverPort = await freePort();
+    const collectorPort = await freePort();
+    const config = join(temporary, "collector.yaml");
+    writeFileSync(
+      config,
+      readFileSync(join(repositoryRoot, "config/otel/collector.yaml"), "utf8")
+        .replaceAll("127.0.0.1:4318", `127.0.0.1:${collectorPort}`)
+        .replaceAll("127.0.0.1:4100", `127.0.0.1:${receiverPort}`)
+    );
+    const forwarded: Forwarded[] = [];
+    const receiver = createServer(
+      (request: IncomingMessage, response: ServerResponse) => {
+        const chunks: Buffer[] = [];
+        request.on("data", (chunk: Buffer) => chunks.push(chunk));
+        request.on("end", () => {
+          forwarded.push({
+            path: request.url ?? "",
+            body: Buffer.concat(chunks).toString("utf8")
+          });
+          response.writeHead(200, { "content-type": "application/json" });
+          response.end("{}");
         });
-        response.writeHead(200, { "content-type": "application/json" });
-        response.end("{}");
-      });
+      }
+    );
+    await new Promise<void>((resolve, reject) => {
+      receiver.once("error", reject);
+      receiver.listen(receiverPort, "127.0.0.1", () => resolve());
+    });
+    const environment = {
+      ...process.env,
+      AUTODEV_OTELCOL_BIN: binary,
+      AUTODEV_OTEL_CONFIG: config,
+      AUTODEV_OTEL_VERSION_FILE: join(
+        repositoryRoot,
+        "config/otel/collector.version"
+      ),
+      AUTODEV_OTEL_HOST: "127.0.0.1",
+      AUTODEV_OTEL_PORT: String(collectorPort)
+    };
+    const processHandle = spawn(runner, [], {
+      cwd: repositoryRoot,
+      env: environment,
+      stdio: ["ignore", "pipe", "pipe"]
+    });
+    try {
+      await waitForPort("127.0.0.1", collectorPort);
+      const fixture = JSON.parse(
+        replaceFixtureTimes(readFileSync(fixturePath, "utf8"))
+      ) as JsonObject;
+      for (const [path, key] of [
+        ["/v1/logs", "logs"],
+        ["/v1/traces", "traces"],
+        ["/v1/metrics", "metrics"]
+      ] as const)
+        await post(collectorPort, path, fixture[key]);
+      await post(collectorPort, "/v1/metrics", fixture.metrics);
+      await new Promise((resolve) => setTimeout(resolve, 1000));
+      assert.deepEqual(forwarded.map((entry) => entry.path).sort(), [
+        "/v1/logs",
+        "/v1/metrics",
+        "/v1/metrics",
+        "/v1/traces"
+      ]);
+    } finally {
+      processHandle.kill("SIGTERM");
+      await once(processHandle, "close").catch(() => undefined);
+      const stderr = processHandle.stderr?.read()?.toString("utf8") ?? "";
+      assert.doesNotMatch(
+        stderr,
+        /do-not-store-this-collector-forwarded-secret/
+      );
+      await new Promise<void>((resolve) => receiver.close(() => resolve()));
+      rmSync(temporary, { recursive: true, force: true });
     }
-  );
-  await new Promise<void>((resolve, reject) => {
-    receiver.once("error", reject);
-    receiver.listen(receiverPort, "127.0.0.1", () => resolve());
-  });
-  const environment = {
-    ...process.env,
-    AUTODEV_OTELCOL_BIN: binary,
-    AUTODEV_OTEL_CONFIG: config,
-    AUTODEV_OTEL_VERSION_FILE: join(
-      repositoryRoot,
-      "config/otel/collector.version"
-    ),
-    AUTODEV_OTEL_HOST: "127.0.0.1",
-    AUTODEV_OTEL_PORT: String(collectorPort)
-  };
-  const processHandle = spawn(runner, [], {
-    cwd: repositoryRoot,
-    env: environment,
-    stdio: ["ignore", "pipe", "pipe"]
-  });
-  try {
-    await waitForPort("127.0.0.1", collectorPort);
-    const fixture = JSON.parse(
-      replaceFixtureTimes(readFileSync(fixturePath, "utf8"))
-    ) as JsonObject;
-    for (const [path, key] of [
-      ["/v1/logs", "logs"],
-      ["/v1/traces", "traces"],
-      ["/v1/metrics", "metrics"]
-    ] as const)
-      await post(collectorPort, path, fixture[key]);
-    await post(collectorPort, "/v1/metrics", fixture.metrics);
-    await new Promise((resolve) => setTimeout(resolve, 1000));
-    assert.deepEqual(forwarded.map((entry) => entry.path).sort(), [
-      "/v1/logs",
-      "/v1/metrics",
-      "/v1/metrics",
-      "/v1/traces"
-    ]);
-  } finally {
-    processHandle.kill("SIGTERM");
-    await once(processHandle, "close").catch(() => undefined);
-    const stderr = processHandle.stderr?.read()?.toString("utf8") ?? "";
-    assert.doesNotMatch(stderr, /do-not-store-this-collector-forwarded-secret/);
-    await new Promise<void>((resolve) => receiver.close(() => resolve()));
-    rmSync(temporary, { recursive: true, force: true });
-  }
   }
 );

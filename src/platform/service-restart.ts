@@ -287,7 +287,11 @@ async function runDirectEnsures(
   ): number => deps.run("/bin/bash", [script], input, env);
   if (
     run(
-      path.join(options.repositoryRoot, "scripts", "ensure-codex-model-router.sh")
+      path.join(
+        options.repositoryRoot,
+        "scripts",
+        "ensure-codex-model-router.sh"
+      )
     ) !== 0
   )
     return 1;
@@ -334,7 +338,11 @@ async function runDirectEnsures(
   }
   if (
     run(
-      path.join(options.repositoryRoot, "scripts", "ensure-codex-copilot-proxy.sh")
+      path.join(
+        options.repositoryRoot,
+        "scripts",
+        "ensure-codex-copilot-proxy.sh"
+      )
     ) !== 0
   )
     writeErrorLine(
@@ -359,7 +367,10 @@ export async function restartServices(
   deps: ServiceRestartDeps = defaultDeps()
 ): Promise<number> {
   const owner = plistOwner(options, deps);
-  if (owner && path.join(options.codexHome, "hooks") !== path.join(owner, "hooks")) {
+  if (
+    owner &&
+    path.join(options.codexHome, "hooks") !== path.join(owner, "hooks")
+  ) {
     writeErrorLine(
       `materialized into ${path.join(options.codexHome, "hooks")}; leaving the services under ${path.join(owner, "hooks")} alone.`
     );

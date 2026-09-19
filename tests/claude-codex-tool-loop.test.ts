@@ -138,8 +138,7 @@ function isAlive(pid: number): boolean {
 
 async function exitsWithin(pid: number, ms: number): Promise<boolean> {
   const deadline = Date.now() + ms;
-  while (isAlive(pid) && Date.now() < deadline)
-    await delay(25);
+  while (isAlive(pid) && Date.now() < deadline) await delay(25);
   return !isAlive(pid);
 }
 
@@ -530,8 +529,7 @@ test("a client that disconnects mid-turn takes the CLI down with it", async () =
       assert.ok(isAlive(pid));
       controller.abort();
       const deadline = Date.now() + 5000;
-      while (isAlive(pid) && Date.now() < deadline)
-        await delay(50);
+      while (isAlive(pid) && Date.now() < deadline) await delay(50);
       assert.equal(
         isAlive(pid),
         false,

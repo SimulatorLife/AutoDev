@@ -321,7 +321,10 @@ function toolsOfCall(payload: JsonRecord): string[] {
     name === "exec" &&
     typeof payload.input === "string"
   ) {
-    const nested = Array.from(payload.input.matchAll(/tools\.([A-Za-z0-9_]+)\s*\(/g), (match) => match[1]!);
+    const nested = Array.from(
+      payload.input.matchAll(/tools\.([A-Za-z0-9_]+)\s*\(/g),
+      (match) => match[1]!
+    );
     return nested.length > 0 ? nested : ["exec"];
   }
   return [name];
@@ -727,13 +730,15 @@ async function liveReport(options: TraceOptions): Promise<LiveReport> {
 }
 
 function logFreshness(codexHome: string): TraceReport["logs"] {
-  const candidates = [path.join(codexHome, "run"), path.join(codexHome, "hooks")].flatMap(
-    (dir) =>
-      existsSync(dir)
-        ? readdirSync(dir)
-            .filter((name) => name.endsWith(".log"))
-            .map((name) => path.join(dir, name))
-        : []
+  const candidates = [
+    path.join(codexHome, "run"),
+    path.join(codexHome, "hooks")
+  ].flatMap((dir) =>
+    existsSync(dir)
+      ? readdirSync(dir)
+          .filter((name) => name.endsWith(".log"))
+          .map((name) => path.join(dir, name))
+      : []
   );
   return candidates
     .map((file) => {
@@ -779,10 +784,10 @@ export function renderReport(report: TraceReport): string {
   for (const thread of report.threads) {
     const router = report.router.find((entry) => entry.thread === thread.id);
     out.push(
-      `== thread ${thread.id} ${thread.nickname ? `(${thread.nickname}) ` : ""}role=${thread.role ?? "-"} model=${thread.model ?? "-"} codex=${thread.cliVersion ?? "-"}`
-    , 
-      `   session=${thread.sessionId ?? "-"} parent=${thread.parentId ?? "-"} ${thread.start ?? "?"} → ${thread.end ?? "?"}`
-    , `   file=${thread.file}`);
+      `== thread ${thread.id} ${thread.nickname ? `(${thread.nickname}) ` : ""}role=${thread.role ?? "-"} model=${thread.model ?? "-"} codex=${thread.cliVersion ?? "-"}`,
+      `   session=${thread.sessionId ?? "-"} parent=${thread.parentId ?? "-"} ${thread.start ?? "?"} → ${thread.end ?? "?"}`,
+      `   file=${thread.file}`
+    );
     for (const turn of thread.turns)
       out.push(
         `   turn ${turn.turnId} ${turn.started ?? "?"} → ${turn.ended ?? "open"} ${turn.outcome}${turn.detail ? ` :: ${turn.detail}` : ""}`
@@ -900,7 +905,8 @@ function repoRootFromScript(): string | null {
 function parseArgs(
   argv: string[]
 ): (TraceOptions & { json: boolean; recent: number | null }) | null {
-  const codexHomeDefault = process.env.CODEX_HOME ?? path.join(homedir(), ".codex");
+  const codexHomeDefault =
+    process.env.CODEX_HOME ?? path.join(homedir(), ".codex");
   let id = "";
   let codexHome = codexHomeDefault;
   let routerLog = "";
@@ -926,7 +932,8 @@ function parseArgs(
     id,
     codexHome,
     routerLog:
-      routerLog || path.join(codexHome, "run", "codex-model-router.launchd.err.log"),
+      routerLog ||
+      path.join(codexHome, "run", "codex-model-router.launchd.err.log"),
     items,
     events,
     json,

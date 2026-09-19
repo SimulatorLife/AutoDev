@@ -341,11 +341,7 @@ async function runStreamingCase(
         `${name}: response IDs require lifecycle events`
       );
       const created = createdEvent.data.response;
-      assert.equal(
-        created.id,
-        completed.id,
-        `${name}: response id continuity`
-      );
+      assert.equal(created.id, completed.id, `${name}: response id continuity`);
     }
     await delay(150);
     const reported = telemetry.events.filter(

@@ -107,7 +107,10 @@ export const RUNTIME_MODULES = [
   "src/hooks/block-ccc-cli.ts",
   ".rulesync/skills/orchestration/SKILL.md"
 ] as const;
-export const OBSOLETE_CLAUDE_SKILL_VIEWS = path.join("provider-runtime", "claude");
+export const OBSOLETE_CLAUDE_SKILL_VIEWS = path.join(
+  "provider-runtime",
+  "claude"
+);
 export const OTEL_RUNTIME = [
   "scripts/otel/provision-autodev-otel-collector.sh",
   "scripts/otel/ensure-autodev-otel-collector.sh",
@@ -377,7 +380,8 @@ export function materializeInstallation(options: MaterializeOptions): void {
     [path.join(options.codexHome, OBSOLETE_CLAUDE_SKILL_VIEWS)],
     "obsolete-runtime-directory"
   );
-  const source = (filePath: string) => path.join(options.repositoryRoot, filePath);
+  const source = (filePath: string) =>
+    path.join(options.repositoryRoot, filePath);
   const target = (filePath: string) =>
     runtimeTarget(filePath, options.codexHome, hooks);
   for (const filePath of RUNTIME_MODULES)
@@ -392,10 +396,18 @@ export function materializeInstallation(options: MaterializeOptions): void {
     );
   for (const name of HOOKS) {
     chmodSync(source(`scripts/${name}`), 0o755);
-    materializeRuntimeFile(source(`scripts/${name}`), path.join(hooks, name), 0o755);
+    materializeRuntimeFile(
+      source(`scripts/${name}`),
+      path.join(hooks, name),
+      0o755
+    );
   }
   for (const name of DASHBOARD)
-    materializeRuntimeFile(source(`scripts/${name}`), path.join(hooks, name), 0o644);
+    materializeRuntimeFile(
+      source(`scripts/${name}`),
+      path.join(hooks, name),
+      0o644
+    );
   for (const name of MCP_LAUNCHERS)
     linkRuntimeSource(source(`scripts/${name}`), path.join(hooks, name));
   for (const name of PROFILES)
@@ -562,7 +574,8 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
   try {
     const env = process.env;
     const repositoryRoot =
-      env.AUTODEV_REPO_ROOT ?? path.resolve(path.join(import.meta.dirname, "..", ".."));
+      env.AUTODEV_REPO_ROOT ??
+      path.resolve(path.join(import.meta.dirname, "..", ".."));
     const home = env.HOME ?? homedir();
     const codexHome = env.CODEX_HOME ?? path.join(home, ".codex");
     const mcp = env.AUTODEV_CODEX_MCP_SOURCE;

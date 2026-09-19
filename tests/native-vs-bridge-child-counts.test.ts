@@ -89,7 +89,9 @@ function resetAll() {
 type OperationHandler = (name: string, op: Operation) => void;
 
 const noteSuffix = (op: Operation): string =>
-  value<string | undefined>(op, "note") ? ` (${value<string>(op, "note")})` : "";
+  value<string | undefined>(op, "note")
+    ? ` (${value<string>(op, "note")})`
+    : "";
 
 function spawnInput(
   op: Operation,

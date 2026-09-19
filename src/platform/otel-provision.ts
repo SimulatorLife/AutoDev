@@ -54,7 +54,8 @@ export function resolveProvisionOptions(
   const home = env.HOME?.trim() || homedir();
   const codexHome = env.CODEX_HOME?.trim() || path.join(home, ".codex");
   const repositoryRoot =
-    env.AUTODEV_OTEL_REPO_ROOT?.trim() || path.join(import.meta.dirname, "..", "..");
+    env.AUTODEV_OTEL_REPO_ROOT?.trim() ||
+    path.join(import.meta.dirname, "..", "..");
   return {
     repositoryRoot,
     codexHome,
@@ -64,7 +65,8 @@ export function resolveProvisionOptions(
     versionFile:
       env.AUTODEV_OTEL_VERSION_FILE?.trim() ||
       path.join(repositoryRoot, "config", "otel", "collector.version"),
-    target: env.AUTODEV_OTELCOL_TARGET?.trim() || path.join(codexHome, "otelcol"),
+    target:
+      env.AUTODEV_OTELCOL_TARGET?.trim() || path.join(codexHome, "otelcol"),
     explicitBinary: env.AUTODEV_OTELCOL_BIN?.trim() || null
   };
 }
@@ -155,7 +157,8 @@ export async function provisionCollector(
       stdio: "ignore"
     });
     const binary = walkFiles(extracted).find(
-      (filePath) => path.basename(filePath) === "otelcol" && executable(filePath)
+      (filePath) =>
+        path.basename(filePath) === "otelcol" && executable(filePath)
     );
     if (!binary)
       fail("Collector archive did not contain an executable otelcol");

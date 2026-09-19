@@ -82,7 +82,9 @@ function appendToken(filePath: string, token: string): void {
     if (contents.length > 0 && !contents.endsWith("\n"))
       appendFileSync(filePath, "\n");
   }
-  appendFileSync(filePath, `${ROUTER_AUTH_VARIABLE}=${token}\n`, { mode: 0o600 });
+  appendFileSync(filePath, `${ROUTER_AUTH_VARIABLE}=${token}\n`, {
+    mode: 0o600
+  });
   chmodSync(filePath, 0o600);
 }
 
