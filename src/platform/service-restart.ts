@@ -6,13 +6,23 @@ import path from "node:path";
 import { writeErrorLine } from "../shared/output.ts";
 import { LaunchdClient } from "./macos/launchd.ts";
 
+const WHITESPACE_SPLIT_PATTERN = /\s+/u;
+const PID_NUMERIC_PATTERN = /^\d+$/u;
+const AUTH_TOKEN_PATTERN = /<key>CODEX_HOME<\/key>\s*<string>([^<]+)<\/string>/u;
+
+export const LABEL_MODEL_ROUTER = "com.codex.model-router";
+export const LABEL_CLAUDE_BRIDGE = "com.codex.claude-bridge";
+export const LABEL_MINIMAX_PROXY = "com.codex.minimax-proxy";
+export const LABEL_ANTIGRAVITY_PROXY = "com.codex.antigravity-proxy";
+export const LABEL_COPILOT_PROXY = "com.codex.copilot-proxy";
+export const LABEL_OTEL_COLLECTOR = "com.codex.otel-collector";
 export const MANAGED_SERVICE_LABELS = [
-  "com.codex.model-router",
-  "com.codex.claude-bridge",
-  "com.codex.minimax-proxy",
-  "com.codex.antigravity-proxy",
-  "com.codex.copilot-proxy",
-  "com.codex.otel-collector"
+  LABEL_MODEL_ROUTER,
+  LABEL_CLAUDE_BRIDGE,
+  LABEL_MINIMAX_PROXY,
+  LABEL_ANTIGRAVITY_PROXY,
+  LABEL_COPILOT_PROXY,
+  LABEL_OTEL_COLLECTOR
 ] as const;
 export type ManagedServiceLabel = (typeof MANAGED_SERVICE_LABELS)[number];
 export type OtelMode = "direct" | "collector";
@@ -49,14 +59,14 @@ export interface ServiceRestartDeps {
 
 const DEFAULT_ATTEMPTS = 80;
 const DEFAULT_DELAY_MS = 250;
-const SERVICE_PORTS: Record<ManagedServiceLabel, number> = {
-  "com.codex.model-router": 4100,
-  "com.codex.claude-bridge": 4000,
-  "com.codex.minimax-proxy": 18_765,
-  "com.codex.antigravity-proxy": 4002,
-  "com.codex.copilot-proxy": 4003,
-  "com.codex.otel-collector": 4318
-};
+const SERVICE_PORTS = {
+  [LABEL_MODEL_ROUTER]: 4100,
+  [LABEL_CLAUDE_BRIDGE]: 4000,
+  [LABEL_MINIMAX_PROXY]: 18_765,
+  [LABEL_ANTIGRAVITY_PROXY]: 4002,
+  [LABEL_COPILOT_PROXY]: 4003,
+  [LABEL_OTEL_COLLECTOR]: 4318
+} as const satisfies Record<ManagedServiceLabel, number>;
 
 export function resolveServiceRestartOptions(
   env: NodeJS.ProcessEnv = process.env
@@ -79,7 +89,7 @@ export function resolveServiceRestartOptions(
 }
 
 function positiveInteger(value: string | undefined, fallback: number): number {
-  const parsed = Number.parseInt(value ?? "", 10);
+  const parsed = Number.parseInt(value ?? "");
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
 }
 
@@ -104,13 +114,19 @@ function defaultDeps(): ServiceRestartDeps {
     },
     probe: async (url, method = "GET") => {
       try {
-        return (await fetch(url, { method, signal: AbortSignal.timeout(1000) }))
-          .ok;
+        const response = await fetch(url, {
+          method,
+          signal: AbortSignal.timeout(1000)
+        });
+        return response.ok;
       } catch {
         return false;
       }
     },
-    sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+    sleep: (ms) =>
+      new Promise((resolve) => {
+        setTimeout(resolve, ms);
+      }),
     run: (command, args, input, env) => {
       const stdio: "inherit" | ["pipe", "inherit", "inherit"] =
         input === undefined ? "inherit" : ["pipe", "inherit", "inherit"];
@@ -130,8 +146,8 @@ function defaultDeps(): ServiceRestartDeps {
           { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }
         );
         return output
-          .split(/\s+/)
-          .filter((pid) => /^[0-9]+$/.test(pid))
+          .split(WHITESPACE_SPLIT_PATTERN)
+          .filter((pid) => PID_NUMERIC_PATTERN.test(pid))
           .map(Number);
       } catch {
         return null;
@@ -170,23 +186,26 @@ function serviceLauncher(
 ): string {
   const hooks = path.join(options.codexHome, "hooks");
   switch (label) {
-    case "com.codex.model-router": {
+    case LABEL_MODEL_ROUTER: {
       return path.join(hooks, "run-codex-model-router.sh");
     }
-    case "com.codex.claude-bridge": {
+    case LABEL_CLAUDE_BRIDGE: {
       return path.join(hooks, "run-codex-claude-bridge.sh");
     }
-    case "com.codex.antigravity-proxy": {
+    case LABEL_ANTIGRAVITY_PROXY: {
       return path.join(hooks, "run-codex-antigravity-proxy.sh");
     }
-    case "com.codex.copilot-proxy": {
+    case LABEL_COPILOT_PROXY: {
       return path.join(hooks, "run-codex-copilot-cli-responses-proxy.sh");
     }
-    case "com.codex.minimax-proxy": {
+    case LABEL_MINIMAX_PROXY: {
       return path.join(hooks, "ensure-codex-minimax-proxy.sh");
     }
-    case "com.codex.otel-collector": {
+    case LABEL_OTEL_COLLECTOR: {
       return path.join(hooks, "otel", "run-autodev-otel-collector.sh");
+    }
+    default: {
+      throw new Error(`unknown managed service label: ${label}`);
     }
   }
 }
@@ -196,35 +215,38 @@ function serviceHook(
   label: ManagedServiceLabel
 ): string {
   switch (label) {
-    case "com.codex.model-router": {
+    case LABEL_MODEL_ROUTER: {
       return path.join(options.codexHome, "src", "router", "server.ts");
     }
-    case "com.codex.claude-bridge": {
+    case LABEL_CLAUDE_BRIDGE: {
       return path.join(options.codexHome, "src", "providers", "claude.ts");
     }
-    case "com.codex.antigravity-proxy": {
+    case LABEL_ANTIGRAVITY_PROXY: {
       return path.join(options.codexHome, "src", "providers", "antigravity.ts");
     }
-    case "com.codex.copilot-proxy": {
+    case LABEL_COPILOT_PROXY: {
       return path.join(options.codexHome, "src", "providers", "copilot.ts");
     }
-    case "com.codex.minimax-proxy": {
+    case LABEL_MINIMAX_PROXY: {
       return path.join(options.codexHome, "src", "providers", "minimax.ts");
     }
-    case "com.codex.otel-collector": {
+    case LABEL_OTEL_COLLECTOR: {
       return serviceLauncher(options, label);
+    }
+    default: {
+      throw new Error(`unknown managed service label: ${label}`);
     }
   }
 }
 
 function serviceProbe(label: ManagedServiceLabel): string {
-  if (label === "com.codex.model-router")
+  if (label === LABEL_MODEL_ROUTER)
     return "http://127.0.0.1:4100/health/readiness";
-  if (label === "com.codex.claude-bridge")
+  if (label === LABEL_CLAUDE_BRIDGE)
     return "http://127.0.0.1:4000/health/liveliness";
-  if (label === "com.codex.antigravity-proxy")
+  if (label === LABEL_ANTIGRAVITY_PROXY)
     return "http://127.0.0.1:4002/health/liveliness";
-  if (label === "com.codex.copilot-proxy")
+  if (label === LABEL_COPILOT_PROXY)
     return "http://127.0.0.1:4003/health/liveliness";
   return "http://127.0.0.1:18765/health";
 }
@@ -233,25 +255,38 @@ function plistOwner(
   options: ServiceRestartOptions,
   deps: ServiceRestartDeps
 ): string | null {
-  const filePath = plistPath(options, "com.codex.model-router");
+  const filePath = plistPath(options, LABEL_MODEL_ROUTER);
   if (!deps.fileExists(filePath)) return null;
-  const match = /<key>CODEX_HOME<\/key>\s*<string>([^<]+)<\/string>/u.exec(
-    deps.readFile(filePath)
-  );
+  const match = AUTH_TOKEN_PATTERN.exec(deps.readFile(filePath));
   return match?.[1] ?? null;
 }
 
-async function waitForProbe(
+async function pollServiceReady(
+  deps: ServiceRestartDeps,
+  url: string,
+  method: "GET" | "POST",
+  attempts: number,
+  delayMs: number
+): Promise<boolean> {
+  if (attempts <= 0) return false;
+  if (await deps.probe(url, method)) return true;
+  await deps.sleep(delayMs);
+  return pollServiceReady(deps, url, method, attempts - 1, delayMs);
+}
+
+function waitForProbe(
   deps: ServiceRestartDeps,
   url: string,
   options: ServiceRestartOptions,
   method: "GET" | "POST" = "GET"
 ): Promise<boolean> {
-  for (let attempt = 0; attempt < options.readyAttempts; attempt += 1) {
-    if (await deps.probe(url, method)) return true;
-    await deps.sleep(options.readyDelayMs);
-  }
-  return false;
+  return pollServiceReady(
+    deps,
+    url,
+    method,
+    options.readyAttempts,
+    options.readyDelayMs
+  );
 }
 
 function reapUnmanaged(
@@ -280,6 +315,7 @@ async function runDirectEnsures(
   options: ServiceRestartOptions,
   deps: ServiceRestartDeps
 ): Promise<number> {
+  await Promise.resolve();
   const run = (
     script: string,
     input?: string,
@@ -362,74 +398,129 @@ function isOwnedService(
 }
 
 /** Restart only services owned by this CODEX_HOME and run direct fallbacks when launchd is unavailable. */
-export async function restartServices(
-  options: ServiceRestartOptions = resolveServiceRestartOptions(),
-  deps: ServiceRestartDeps = defaultDeps()
-): Promise<number> {
-  const owner = plistOwner(options, deps);
-  if (
-    owner &&
-    path.join(options.codexHome, "hooks") !== path.join(owner, "hooks")
-  ) {
-    writeErrorLine(
-      `materialized into ${path.join(options.codexHome, "hooks")}; leaving the services under ${path.join(owner, "hooks")} alone.`
-    );
-    return 0;
+async function waitForSupervisedServices(
+  deps: ServiceRestartDeps,
+  options: ServiceRestartOptions,
+  includeCollector: boolean
+): Promise<void> {
+  if (!includeCollector) {
+    await pollBridgeReadiness(deps, options, 0);
+    return;
   }
+  await pollBridgeReadiness(deps, options, 0);
+  await waitForProbe(
+    deps,
+    "http://127.0.0.1:4318/v1/logs",
+    options,
+    "POST"
+  );
+}
 
-  let launchdAvailable = deps.commandAvailable("launchctl");
-  let foreignService = false;
-  for (const label of MANAGED_SERVICE_LABELS) {
-    if (deps.launchd.isLoaded(label)) {
-      let jobDump = "";
-      try {
-        jobDump = deps.launchd.print(label);
-      } catch {
-        /* treat as unavailable */
-      }
-      if (!isOwnedService(options, label, jobDump)) {
-        writeErrorLine(
-          `loaded ${label} belongs to another runtime; leaving it alone.`
-        );
-        launchdAvailable = false;
-        foreignService = true;
-        continue;
-      }
+async function pollBridgeReadiness(
+  deps: ServiceRestartDeps,
+  options: ServiceRestartOptions,
+  index: number
+): Promise<void> {
+  const labels = MANAGED_SERVICE_LABELS.slice(0, 5);
+  if (index >= labels.length) return;
+  const label = labels[index];
+  if (label) await waitForProbe(deps, serviceProbe(label), options);
+  await pollBridgeReadiness(deps, options, index + 1);
+}
+
+function foreignOwnedHookResult(
+  options: ServiceRestartOptions,
+  owner: string | null
+): number | null {
+  if (
+    !owner ||
+    path.join(options.codexHome, "hooks") === path.join(owner, "hooks")
+  )
+    return null;
+  writeErrorLine(
+    `materialized into ${path.join(options.codexHome, "hooks")}; leaving the services under ${path.join(owner, "hooks")} alone.`
+  );
+  return 0;
+}
+
+function readLaunchdJobDump(
+  deps: ServiceRestartDeps,
+  label: ManagedServiceLabel
+): string {
+  try {
+    return deps.launchd.print(label);
+  } catch {
+    /* treat as unavailable */
+  }
+  return "";
+}
+
+type ReloadResult = "ok" | "foreign" | "no-plist" | "disabled-otel" | "failed";
+
+function reloadOneLabel(
+  deps: ServiceRestartDeps,
+  options: ServiceRestartOptions,
+  label: ManagedServiceLabel
+): ReloadResult {
+  if (deps.launchd.isLoaded(label)) {
+    const jobDump = readLaunchdJobDump(deps, label);
+    if (!isOwnedService(options, label, jobDump)) {
+      writeErrorLine(
+        `loaded ${label} belongs to another runtime; leaving it alone.`
+      );
+      return "foreign";
     }
-    if (label === "com.codex.otel-collector" && options.otelMode === "direct") {
-      try {
-        deps.launchd.bootout(label);
-      } catch {
-        /* not loaded */
-      }
-      continue;
-    }
-    const plist = plistPath(options, label);
-    if (!deps.fileExists(plist)) {
-      launchdAvailable = false;
-      continue;
-    }
+  }
+  if (label === LABEL_OTEL_COLLECTOR && options.otelMode === "direct") {
     try {
       deps.launchd.bootout(label);
     } catch {
       /* not loaded */
     }
-    reapUnmanaged(options, label, deps);
+    return "disabled-otel";
+  }
+  const plist = plistPath(options, label);
+  if (!deps.fileExists(plist)) return "no-plist";
+  try {
+    deps.launchd.bootout(label);
+  } catch {
+    /* not loaded */
+  }
+  reapUnmanaged(options, label, deps);
+  try {
+    deps.launchd.bootstrap(plist);
     try {
-      deps.launchd.bootstrap(plist);
-      try {
-        deps.launchd.enable(label);
-      } catch {
-        /* best effort */
-      }
-      try {
-        deps.launchd.kickstart(label);
-      } catch {
-        launchdAvailable = false;
-      }
+      deps.launchd.enable(label);
     } catch {
-      launchdAvailable = false;
+      /* best effort */
     }
+    try {
+      deps.launchd.kickstart(label);
+    } catch {
+      return "failed";
+    }
+    return "ok";
+  } catch {
+    return "failed";
+  }
+}
+
+export async function restartServices(
+  options: ServiceRestartOptions = resolveServiceRestartOptions(),
+  deps: ServiceRestartDeps = defaultDeps()
+): Promise<number> {
+  const owner = plistOwner(options, deps);
+  const foreignOwnerResult = foreignOwnedHookResult(options, owner);
+  if (foreignOwnerResult !== null) return foreignOwnerResult;
+
+  let launchdAvailable = deps.commandAvailable("launchctl");
+  let foreignService = false;
+  for (const label of MANAGED_SERVICE_LABELS) {
+    const result = reloadOneLabel(deps, options, label);
+    if (result === "foreign") {
+      launchdAvailable = false;
+      foreignService = true;
+    } else if (result === "failed") launchdAvailable = false;
   }
   if (foreignService) {
     writeErrorLine(
@@ -437,29 +528,33 @@ export async function restartServices(
     );
     return 0;
   }
-  if (launchdAvailable) {
+  if (launchdAvailable)
     writeErrorLine(
       "Provider bridges supervised by launchd (KeepAlive; survive restart/crash/sleep)."
     );
-    for (const label of MANAGED_SERVICE_LABELS.slice(0, 5))
-      await waitForProbe(deps, serviceProbe(label), options);
-    if (options.otelMode === "collector")
-      await waitForProbe(
-        deps,
-        "http://127.0.0.1:4318/v1/logs",
-        options,
-        "POST"
-      );
-  } else {
+  else
     writeErrorLine(
       "launchctl unavailable (sandbox?); starting bridges through the direct ensure-hook path."
     );
-  }
+  await waitForSupervisedServices(
+    deps,
+    options,
+    launchdAvailable && options.otelMode === "collector"
+  );
   return runDirectEnsures(options, deps);
 }
 
 if (process.argv[1] === new URL(import.meta.url).pathname) {
-  restartServices().then((status) => {
-    process.exitCode = status;
-  });
+  restartServices()
+    .then((status) => {
+      process.exitCode = status;
+      return status;
+    })
+    .catch((error) => {
+      writeErrorLine(
+        `service-restart: ${error instanceof Error ? error.message : String(error)}`
+      );
+      process.exitCode = 1;
+      return 1;
+    });
 }

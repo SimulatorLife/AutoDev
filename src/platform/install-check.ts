@@ -60,6 +60,10 @@ export interface InstallCheckOptions {
   readonly materializeOnly?: boolean;
 }
 
+const LINE_SPLIT_PATTERN = /\r?\n/u;
+const WHITESPACE_SPLIT_PATTERN = /\s+/u;
+const CODEX_ROUTER_AUTH_TOKEN_PATTERN = /^CODEX_ROUTER_AUTH_TOKEN=([^\n]*)$/mu;
+
 function commandAvailable(command: string): boolean {
   try {
     execFileSync("which", [command], { stdio: "ignore" });
@@ -103,7 +107,7 @@ function tracked(repositoryRoot: string, filePath: string): boolean {
       ? filePath.slice(repositoryRoot.length + 1)
       : filePath;
     return files
-      .split(/\r?\n/u)
+      .split(LINE_SPLIT_PATTERN)
       .some((file) => file === relative || file.startsWith(`${relative}/`));
   } catch {
     return false;
@@ -153,7 +157,7 @@ function checkAuth(
   }
   const token =
     readFileSync(envFile, "utf8")
-      .match(/^CODEX_ROUTER_AUTH_TOKEN=([^\n]*)$/mu)?.[1]
+        .match(CODEX_ROUTER_AUTH_TOKEN_PATTERN)?.[1]
       ?.trim() ?? "";
   if (!token) {
     writeLine(
@@ -215,7 +219,7 @@ function checkAuth(
         stdio: ["ignore", "pipe", "ignore"]
       })
         .trim()
-        .split(/\s+/u)
+        .split(WHITESPACE_SPLIT_PATTERN)
         .filter(Boolean);
       stalePids = pids.filter((pid) => {
         try {
@@ -245,397 +249,520 @@ function checkAuth(
   writeLine("ok router authentication is active");
 }
 
-export function runInstallCheck(overrides: InstallCheckOptions = {}): number {
-  const repositoryRoot = sourceRoot(overrides),
-    home = overrides.home ?? process.env.HOME ?? homedir(),
-    codexHome =
-      overrides.codexHome ??
-      process.env.CODEX_HOME ??
-      path.join(home, ".codex");
-  const hooks = path.join(codexHome, "hooks"),
-    userSkills = path.join(home, ".agents", "skills"),
-    rules = path.join(codexHome, "rules"),
-    agents = path.join(codexHome, "agents");
-  const failures = { value: 0 };
-  const mode = readCollectorMode(path.join(codexHome, "otel-collector.mode"));
-  const projection = createCodexMcpSource(repositoryRoot);
+interface RunInstallPaths {
+  repositoryRoot: string;
+  home: string;
+  codexHome: string;
+  hooks: string;
+  userSkills: string;
+  rules: string;
+  agents: string;
+}
+
+function resolveRunInstallPaths(
+  overrides: InstallCheckOptions
+): RunInstallPaths {
+  const repositoryRoot = sourceRoot(overrides);
+  const home = overrides.home ?? process.env.HOME ?? homedir();
+  const codexHome =
+    overrides.codexHome ??
+    process.env.CODEX_HOME ??
+    path.join(home, ".codex");
+  return {
+    repositoryRoot,
+    home,
+    codexHome,
+    hooks: path.join(codexHome, "hooks"),
+    userSkills: path.join(home, ".agents", "skills"),
+    rules: path.join(codexHome, "rules"),
+    agents: path.join(codexHome, "agents")
+  };
+}
+
+function checkRulesAndSkills(
+  paths: RunInstallPaths,
+  failures: { value: number }
+): void {
+  for (const name of RULES)
+    check(
+      `rule link ${name}`,
+      runtimeLinkMatches(
+        path.join(paths.repositoryRoot, "agents/rules", name),
+        path.join(paths.rules, name)
+      ),
+      failures
+    );
+  for (const name of SKILLS)
+    check(
+      `skill link ${path.join(paths.userSkills, name)}`,
+      skillLinkMatches(
+        path.join(paths.repositoryRoot, ".rulesync/skills", name),
+        path.join(paths.userSkills, name)
+      ),
+      failures
+    );
+}
+
+function checkRuntimeAndOt(
+  paths: RunInstallPaths,
+  failures: { value: number }
+): void {
+  for (const filePath of RUNTIME_MODULES) {
+    check(
+      `runtime ${filePath}`,
+      runtimeFileMatches(
+        path.join(paths.repositoryRoot, filePath),
+        runtimeTarget(filePath, paths.codexHome, paths.hooks)
+      ),
+      failures
+    );
+    check(
+      `tracked source ${filePath}`,
+      tracked(paths.repositoryRoot, path.join(paths.repositoryRoot, filePath)),
+      failures
+    );
+  }
+  for (const filePath of OTEL_RUNTIME)
+    check(
+      `Collector runtime ${filePath}`,
+      runtimeFileMatches(
+        path.join(paths.repositoryRoot, filePath),
+        path.join(paths.hooks, filePath.slice(8))
+      ),
+      failures
+    );
+  for (const role of PROMPT_ROLES)
+    check(
+      `prompt role ${role}`,
+      runtimeFileMatches(
+        path.join(paths.repositoryRoot, `agents/prompts/roles/${role}.md`),
+        runtimeTarget(`agents/prompts/roles/${role}.md`, paths.codexHome, paths.hooks)
+      ),
+      failures
+    );
+}
+
+function checkScripts(
+  paths: RunInstallPaths,
+  failures: { value: number }
+): void {
+  for (const name of MCP_LAUNCHERS)
+    check(
+      `MCP launcher ${name}`,
+      runtimeLinkMatches(
+        path.join(paths.repositoryRoot, `scripts/${name}`),
+        path.join(paths.hooks, name)
+      ),
+      failures
+    );
+  for (const name of HOOKS)
+    check(
+      `hook ${name}`,
+      runtimeFileMatches(
+        path.join(paths.repositoryRoot, `scripts/${name}`),
+        path.join(paths.hooks, name)
+      ),
+      failures
+    );
+  for (const name of DASHBOARD)
+    check(
+      `dashboard ${name}`,
+      runtimeFileMatches(
+        path.join(paths.repositoryRoot, `scripts/${name}`),
+        path.join(paths.hooks, name)
+      ),
+      failures
+    );
+}
+
+function checkProfilesAndCatalogs(
+  paths: RunInstallPaths,
+  failures: { value: number }
+): void {
+  for (const name of PROFILES)
+    check(
+      `profile ${name}`,
+      runtimeLinkMatches(
+        path.join(paths.repositoryRoot, `config/profiles/${name}.config.toml`),
+        path.join(paths.codexHome, `${name}.config.toml`)
+      ),
+      failures
+    );
+  for (const name of CATALOGS)
+    check(
+      `catalog ${name}`,
+      runtimeLinkMatches(
+        path.join(paths.repositoryRoot, `config/catalogs/${name}-model-catalog.json`),
+        path.join(paths.codexHome, `${name}-model-catalog.json`)
+      ),
+      failures
+    );
+  check(
+    "model routing",
+    runtimeLinkMatches(
+      path.join(paths.repositoryRoot, "config/model-routing.json"),
+      path.join(paths.codexHome, "codex-model-routing.json")
+    ),
+    failures
+  );
+  check(
+    "Codex hooks.json",
+    runtimeLinkMatches(
+      path.join(paths.repositoryRoot, ".codex/hooks.json"),
+      path.join(paths.codexHome, "hooks.json")
+    ),
+    failures
+  );
+}
+
+function checkPortableConfig(
+  paths: RunInstallPaths,
+  failures: { value: number }
+): void {
+  check(
+    "hook trust state",
+    checkHookTrust(
+      path.join(paths.codexHome, "config.toml"),
+      paths.codexHome,
+      paths.repositoryRoot
+    ),
+    failures
+  );
+  const portable = readFileSync(
+    path.join(paths.repositoryRoot, "config/config.autodev.toml"),
+    "utf8"
+  );
+  for (const provider of [
+    "local_model_router",
+    "claude_code_subscription",
+    "minimax",
+    "antigravity_cli"
+  ])
+    check(
+      `provider config ${provider}`,
+      portable.includes(`[model_providers.${provider}]`),
+      failures
+    );
+  check(
+    "provider auth boundary",
+    portable.includes("requires_openai_auth = false"),
+    failures
+  );
+}
+
+function checkUserConfigAndAgents(
+  paths: RunInstallPaths,
+  projection: ReturnType<typeof createCodexMcpSource>,
+  mode: string,
+  failures: { value: number }
+): void {
+  check(
+    "user config",
+    runCompose(
+      path.join(paths.repositoryRoot, "config/config.autodev.toml"),
+      projection.source,
+      path.join(paths.codexHome, "config.toml"),
+      path.join(paths.codexHome, "config.toml"),
+      true,
+      mode
+    ) === 0,
+    failures
+  );
+  const rendered = mkdtempSync(path.join(tmpdir(), "autodev-check-agents-"));
   try {
-    for (const name of RULES)
+    renderAgentDirectory(
+      path.join(paths.repositoryRoot, "agents/roles"),
+      path.join(paths.repositoryRoot, "agents/prompts"),
+      rendered,
+      projection.source
+    );
+    for (const role of ROLES)
       check(
-        `rule link ${name}`,
-        runtimeLinkMatches(
-          path.join(repositoryRoot, "agents/rules", name),
-          path.join(rules, name)
-        ),
-        failures
-      );
-    for (const name of SKILLS)
-      check(
-        `skill link ${path.join(userSkills, name)}`,
-        skillLinkMatches(
-          path.join(repositoryRoot, ".rulesync/skills", name),
-          path.join(userSkills, name)
-        ),
-        failures
-      );
-    for (const filePath of RUNTIME_MODULES) {
-      check(
-        `runtime ${filePath}`,
+        `agent ${role}`,
         runtimeFileMatches(
-          path.join(repositoryRoot, filePath),
-          runtimeTarget(filePath, codexHome, hooks)
+          path.join(rendered, `${role}.toml`),
+          path.join(paths.agents, `${role}.toml`)
         ),
         failures
       );
+  } finally {
+    rmSync(rendered, { recursive: true, force: true });
+  }
+  const expectedContract = `${JSON.stringify(renderExecutionContract(path.join(paths.repositoryRoot, "agents/roles"), projection.source, path.join(paths.repositoryRoot, "config/execution-contract.json")), null, 2)}\n`;
+  check(
+    "execution contract",
+    existsSync(path.join(paths.repositoryRoot, "config/execution-contract.json")) &&
+      readFileSync(
+        path.join(paths.repositoryRoot, "config/execution-contract.json"),
+        "utf8"
+      ) === expectedContract,
+    failures
+  );
+  check(
+    "bridge MCP catalogue",
+    runBridgeMcpCatalogue(
+      projection.source,
+      path.join(paths.codexHome, "provider-runtime", "mcp-servers.json"),
+      true
+    ) === 0,
+    failures
+  );
+}
+
+function checkRulesync(
+  paths: RunInstallPaths,
+  failures: { value: number }
+): void {
+  try {
+    execFileSync(
+      path.join(paths.repositoryRoot, "node_modules/.bin/rulesync"),
+      [
+        "generate",
+        "--config",
+        path.join(paths.repositoryRoot, "rulesync.jsonc"),
+        "--check",
+        "--silent"
+      ],
+      { cwd: paths.repositoryRoot, stdio: "ignore" }
+    );
+    writeLine(
+      `ok repository outputs generated by ${paths.repositoryRoot}/rulesync.jsonc`
+    );
+  } catch {
+    writeLine(
+      `missing-or-drifted repository outputs generated by ${paths.repositoryRoot}/rulesync.jsonc`
+    );
+    failures.value = 1;
+  }
+  const userTargets = [
+    ["claude", "claudecode"],
+    ["copilot", "copilotcli"],
+    ["agy", "antigravity-cli"] as const
+  ]
+    .filter(([command]) => commandAvailable(command))
+    .map(([, target]) => target)
+    .join(",");
+  if (!userTargets) return;
+  try {
+    execFileSync(
+      path.join(paths.repositoryRoot, "node_modules/.bin/rulesync"),
+      [
+        "generate",
+        "--global",
+        "--input-roots",
+        path.join(paths.repositoryRoot, ".rulesync"),
+        "--targets",
+        userTargets,
+        "--features",
+        "mcp",
+        "--check",
+        "--silent"
+      ],
+      { cwd: paths.repositoryRoot, stdio: "ignore" }
+    );
+    writeLine(
+      `ok user-level MCP (${userTargets}) generated from ${paths.repositoryRoot}/.rulesync/mcp.jsonc`
+    );
+  } catch {
+    writeLine(`missing-or-drifted user-level MCP (${userTargets})`);
+    failures.value = 1;
+  }
+}
+
+function checkCollector(
+  paths: RunInstallPaths,
+  mode: string,
+  failures: { value: number }
+): void {
+  check(
+    `Collector mode ${mode}`,
+    mode === "direct" || mode === "collector",
+    failures
+  );
+  const collector = resolveCollectorOptions({
+    ...process.env,
+    AUTODEV_OTEL_REPO_ROOT: paths.repositoryRoot,
+    CODEX_HOME: paths.codexHome
+  });
+  if (mode === "collector") {
+    try {
       check(
-        `tracked source ${filePath}`,
-        tracked(repositoryRoot, path.join(repositoryRoot, filePath)),
+        "Collector binary/config",
+        runCollector(collector, true) === 0,
+        failures
+      );
+    } catch {
+      writeLine("missing-or-drifted Collector binary/config");
+      failures.value = 1;
+    }
+  } else
+    writeLine(
+      "ok OpenTelemetry Collector is disabled (direct OTLP ingress on 127.0.0.1:4100)"
+    );
+}
+
+function checkObsoleteSkillPaths(
+  paths: RunInstallPaths,
+  failures: { value: number }
+): void {
+  for (const skill of SKILLS) {
+    for (const legacy of ["skills", "agents/skills"]) {
+      const filePath = path.join(paths.codexHome, legacy, skill);
+      check(
+        `obsolete skill path ${filePath}`,
+        !lstatSafe(filePath),
         failures
       );
     }
-    for (const filePath of OTEL_RUNTIME)
-      check(
-        `Collector runtime ${filePath}`,
-        runtimeFileMatches(
-          path.join(repositoryRoot, filePath),
-          path.join(hooks, filePath.slice(8))
-        ),
-        failures
-      );
-    for (const role of PROMPT_ROLES)
-      check(
-        `prompt role ${role}`,
-        runtimeFileMatches(
-          path.join(repositoryRoot, `agents/prompts/roles/${role}.md`),
-          runtimeTarget(`agents/prompts/roles/${role}.md`, codexHome, hooks)
-        ),
-        failures
-      );
-    for (const name of MCP_LAUNCHERS)
-      check(
-        `MCP launcher ${name}`,
-        runtimeLinkMatches(
-          path.join(repositoryRoot, `scripts/${name}`),
-          path.join(hooks, name)
-        ),
-        failures
-      );
-    for (const name of HOOKS)
-      check(
-        `hook ${name}`,
-        runtimeFileMatches(
-          path.join(repositoryRoot, `scripts/${name}`),
-          path.join(hooks, name)
-        ),
-        failures
-      );
-    for (const name of DASHBOARD)
-      check(
-        `dashboard ${name}`,
-        runtimeFileMatches(
-          path.join(repositoryRoot, `scripts/${name}`),
-          path.join(hooks, name)
-        ),
-        failures
-      );
-    for (const name of PROFILES)
-      check(
-        `profile ${name}`,
-        runtimeLinkMatches(
-          path.join(repositoryRoot, `config/profiles/${name}.config.toml`),
-          path.join(codexHome, `${name}.config.toml`)
-        ),
-        failures
-      );
-    for (const name of CATALOGS)
-      check(
-        `catalog ${name}`,
-        runtimeLinkMatches(
-          path.join(
-            repositoryRoot,
-            `config/catalogs/${name}-model-catalog.json`
-          ),
-          path.join(codexHome, `${name}-model-catalog.json`)
-        ),
-        failures
-      );
-    check(
-      "model routing",
-      runtimeLinkMatches(
-        path.join(repositoryRoot, "config/model-routing.json"),
-        path.join(codexHome, "codex-model-routing.json")
-      ),
-      failures
+  }
+}
+
+function checkAntigravityCli(
+  paths: RunInstallPaths,
+  failures: { value: number }
+): void {
+  if (!commandAvailable("agy") || process.env.AUTODEV_SKIP_AGY_MCP === "1")
+    return;
+  const home = paths.home;
+  const settingsPath = path.join(
+    home,
+    ".gemini",
+    "antigravity-cli",
+    "settings.json"
+  );
+  const readRoots = process.env.AUTODEV_AGY_READ_ROOTS?.split(":").filter(
+    Boolean
+  ) ?? [paths.repositoryRoot];
+  if (existsSync(settingsPath)) {
+    const missing = missingAntigravityPermissions(
+      settingsPath,
+      readRoots,
+      home
     );
-    check(
-      "Codex hooks.json",
-      runtimeLinkMatches(
-        path.join(repositoryRoot, ".codex/hooks.json"),
-        path.join(codexHome, "hooks.json")
-      ),
-      failures
+    if (missing.length > 0) {
+      writeLine(
+        `missing Antigravity CLI permission grants: ${missing.join(", ")}`
+      );
+      failures.value = 1;
+    } else
+      writeLine("ok Antigravity CLI permission grants (MCP and read_file)");
+  } else {
+    writeLine(
+      `missing Antigravity CLI permission settings ${settingsPath}`
     );
-    check(
-      "hook trust state",
-      checkHookTrust(
-        path.join(codexHome, "config.toml"),
-        codexHome,
-        repositoryRoot
-      ),
-      failures
-    );
-    const portable = readFileSync(
-      path.join(repositoryRoot, "config/config.autodev.toml"),
-      "utf8"
-    );
-    for (const provider of [
-      "local_model_router",
-      "claude_code_subscription",
-      "minimax",
-      "antigravity_cli"
+    failures.value = 1;
+  }
+  const skillsPath = path.join(home, ".gemini", "config", "skills.json");
+  const skillStatus = existsSync(skillsPath)
+    ? antigravitySkillsStatus(
+        skillsPath,
+        path.join(paths.repositoryRoot, ".rulesync", "skills"),
+        [
+          path.join(paths.repositoryRoot, "agents/skills"),
+          path.join(paths.repositoryRoot, "scripts/codex/skills")
+        ]
+      )
+    : { missing: true, stale: [] };
+  check(
+    "Antigravity skills",
+    !skillStatus.missing && skillStatus.stale.length === 0,
+    failures
+  );
+}
+
+function checkGitExcludes(
+  paths: RunInstallPaths,
+  failures: { value: number }
+): void {
+  try {
+    const exclude = execFileSync(
+      "git",
+      [
+        "-C",
+        paths.repositoryRoot,
+        "rev-parse",
+        "--path-format=absolute",
+        "--git-path",
+        "info/exclude"
+      ],
+      { encoding: "utf8" }
+    ).trim();
+    const content = readFileSync(exclude, "utf8");
+    for (const entry of [
+      "/.agents/skills/",
+      "/.codex/hooks.json",
+      "/.claude/settings.json",
+      "/.github/hooks/",
+      "/.agents/hooks.json"
     ])
       check(
-        `provider config ${provider}`,
-        portable.includes(`[model_providers.${provider}]`),
+        `git exclude ${entry}`,
+        content.split(LINE_SPLIT_PATTERN).includes(entry),
         failures
       );
+  } catch {
+    check("git excludes", false, failures);
+  }
+}
+
+function checkDependencies(
+  paths: RunInstallPaths,
+  failures: { value: number }
+): void {
+  if (checkCocoIndex(resolveDependencyOptions(process.env)) !== 0)
+    failures.value = 1;
+  if (checkPythonLanguageServer(resolveDependencyOptions(process.env)) !== 0)
+    failures.value = 1;
+}
+
+function checkLaunchAgents(
+  paths: RunInstallPaths,
+  failures: { value: number }
+): void {
+  for (const label of LAUNCH_LABELS)
     check(
-      "provider auth boundary",
-      portable.includes("requires_openai_auth = false"),
+      `LaunchAgent ${label}`,
+      launchAgentMatches(
+        path.join(paths.repositoryRoot, `config/launchagents/${label}.plist`),
+        path.join(paths.home, "Library/LaunchAgents", `${label}.plist`),
+        {
+          codexHome: paths.codexHome,
+          home: paths.home,
+          repositoryRoot: paths.repositoryRoot
+        }
+      ),
       failures
     );
-    check(
-      "user config",
-      runCompose(
-        path.join(repositoryRoot, "config/config.autodev.toml"),
-        projection.source,
-        path.join(codexHome, "config.toml"),
-        path.join(codexHome, "config.toml"),
-        true,
-        mode
-      ) === 0,
+}
+
+export function runInstallCheck(overrides: InstallCheckOptions = {}): number {
+  const paths = resolveRunInstallPaths(overrides);
+  const failures = { value: 0 };
+  const mode = readCollectorMode(path.join(paths.codexHome, "otel-collector.mode"));
+  const projection = createCodexMcpSource(paths.repositoryRoot);
+  try {
+    checkRulesAndSkills(paths, failures);
+    checkRuntimeAndOt(paths, failures);
+    checkScripts(paths, failures);
+    checkProfilesAndCatalogs(paths, failures);
+    checkPortableConfig(paths, failures);
+    checkUserConfigAndAgents(paths, projection, mode, failures);
+    checkRulesync(paths, failures);
+    checkCollector(paths, mode, failures);
+    checkObsoleteSkillPaths(paths, failures);
+    checkAntigravityCli(paths, failures);
+    checkGitExcludes(paths, failures);
+    checkDependencies(paths, failures);
+    checkAuth({ codexHome: paths.codexHome }, failures);
+    staleCheck(
+      {
+        repositoryRoot: paths.repositoryRoot,
+        home: paths.home,
+        codexHome: paths.codexHome
+      },
       failures
     );
-    const rendered = mkdtempSync(path.join(tmpdir(), "autodev-check-agents-"));
-    try {
-      renderAgentDirectory(
-        path.join(repositoryRoot, "agents/roles"),
-        path.join(repositoryRoot, "agents/prompts"),
-        rendered,
-        projection.source
-      );
-      for (const role of ROLES)
-        check(
-          `agent ${role}`,
-          runtimeFileMatches(
-            path.join(rendered, `${role}.toml`),
-            path.join(agents, `${role}.toml`)
-          ),
-          failures
-        );
-    } finally {
-      rmSync(rendered, { recursive: true, force: true });
-    }
-    const expectedContract = `${JSON.stringify(renderExecutionContract(path.join(repositoryRoot, "agents/roles"), projection.source, path.join(repositoryRoot, "config/execution-contract.json")), null, 2)}\n`;
-    check(
-      "execution contract",
-      existsSync(path.join(repositoryRoot, "config/execution-contract.json")) &&
-        readFileSync(
-          path.join(repositoryRoot, "config/execution-contract.json"),
-          "utf8"
-        ) === expectedContract,
-      failures
-    );
-    check(
-      "bridge MCP catalogue",
-      runBridgeMcpCatalogue(
-        projection.source,
-        path.join(codexHome, "provider-runtime", "mcp-servers.json"),
-        true
-      ) === 0,
-      failures
-    );
-    try {
-      execFileSync(
-        path.join(repositoryRoot, "node_modules/.bin/rulesync"),
-        [
-          "generate",
-          "--config",
-          path.join(repositoryRoot, "rulesync.jsonc"),
-          "--check",
-          "--silent"
-        ],
-        { cwd: repositoryRoot, stdio: "ignore" }
-      );
-      writeLine(
-        `ok repository outputs generated by ${repositoryRoot}/rulesync.jsonc`
-      );
-    } catch {
-      writeLine(
-        `missing-or-drifted repository outputs generated by ${repositoryRoot}/rulesync.jsonc`
-      );
-      failures.value = 1;
-    }
-    const userTargets = [
-      ["claude", "claudecode"],
-      ["copilot", "copilotcli"],
-      ["agy", "antigravity-cli"] as const
-    ]
-      .filter(([command]) => commandAvailable(command))
-      .map(([, target]) => target)
-      .join(",");
-    if (userTargets) {
-      try {
-        execFileSync(
-          path.join(repositoryRoot, "node_modules/.bin/rulesync"),
-          [
-            "generate",
-            "--global",
-            "--input-roots",
-            path.join(repositoryRoot, ".rulesync"),
-            "--targets",
-            userTargets,
-            "--features",
-            "mcp",
-            "--check",
-            "--silent"
-          ],
-          { cwd: repositoryRoot, stdio: "ignore" }
-        );
-        writeLine(
-          `ok user-level MCP (${userTargets}) generated from ${repositoryRoot}/.rulesync/mcp.jsonc`
-        );
-      } catch {
-        writeLine(`missing-or-drifted user-level MCP (${userTargets})`);
-        failures.value = 1;
-      }
-    }
-    check(
-      `Collector mode ${mode}`,
-      mode === "direct" || mode === "collector",
-      failures
-    );
-    const collector = resolveCollectorOptions({
-      ...process.env,
-      AUTODEV_OTEL_REPO_ROOT: repositoryRoot,
-      CODEX_HOME: codexHome
-    });
-    if (mode === "collector") {
-      try {
-        check(
-          "Collector binary/config",
-          runCollector(collector, true) === 0,
-          failures
-        );
-      } catch {
-        writeLine("missing-or-drifted Collector binary/config");
-        failures.value = 1;
-      }
-    } else
-      writeLine(
-        "ok OpenTelemetry Collector is disabled (direct OTLP ingress on 127.0.0.1:4100)"
-      );
-    for (const skill of SKILLS) {
-      for (const legacy of ["skills", "agents/skills"]) {
-        const filePath = path.join(codexHome, legacy, skill);
-        check(
-          `obsolete skill path ${filePath}`,
-          !lstatSafe(filePath),
-          failures
-        );
-      }
-    }
-    if (commandAvailable("agy") && process.env.AUTODEV_SKIP_AGY_MCP !== "1") {
-      const settingsPath = path.join(
-        home,
-        ".gemini",
-        "antigravity-cli",
-        "settings.json"
-      );
-      const readRoots = process.env.AUTODEV_AGY_READ_ROOTS?.split(":").filter(
-        Boolean
-      ) ?? [repositoryRoot];
-      if (existsSync(settingsPath)) {
-        const missing = missingAntigravityPermissions(
-          settingsPath,
-          readRoots,
-          home
-        );
-        if (missing.length > 0) {
-          writeLine(
-            `missing Antigravity CLI permission grants: ${missing.join(", ")}`
-          );
-          failures.value = 1;
-        } else
-          writeLine("ok Antigravity CLI permission grants (MCP and read_file)");
-      } else {
-        writeLine(
-          `missing Antigravity CLI permission settings ${settingsPath}`
-        );
-        failures.value = 1;
-      }
-      const skillsPath = path.join(home, ".gemini", "config", "skills.json");
-      const skillStatus = existsSync(skillsPath)
-        ? antigravitySkillsStatus(
-            skillsPath,
-            path.join(repositoryRoot, ".rulesync", "skills"),
-            [
-              path.join(repositoryRoot, "agents/skills"),
-              path.join(repositoryRoot, "scripts/codex/skills")
-            ]
-          )
-        : { missing: true, stale: [] };
-      check(
-        "Antigravity skills",
-        !skillStatus.missing && skillStatus.stale.length === 0,
-        failures
-      );
-    }
-    try {
-      const exclude = execFileSync(
-        "git",
-        [
-          "-C",
-          repositoryRoot,
-          "rev-parse",
-          "--path-format=absolute",
-          "--git-path",
-          "info/exclude"
-        ],
-        { encoding: "utf8" }
-      ).trim();
-      const content = readFileSync(exclude, "utf8");
-      for (const entry of [
-        "/.agents/skills/",
-        "/.codex/hooks.json",
-        "/.claude/settings.json",
-        "/.github/hooks/",
-        "/.agents/hooks.json"
-      ])
-        check(
-          `git exclude ${entry}`,
-          content.split(/\r?\n/u).includes(entry),
-          failures
-        );
-    } catch {
-      check("git excludes", false, failures);
-    }
-    if (checkCocoIndex(resolveDependencyOptions(process.env)) !== 0)
-      failures.value = 1;
-    if (checkPythonLanguageServer(resolveDependencyOptions(process.env)) !== 0)
-      failures.value = 1;
-    checkAuth({ codexHome }, failures);
-    staleCheck({ repositoryRoot, home, codexHome }, failures);
-    for (const label of LAUNCH_LABELS)
-      check(
-        `LaunchAgent ${label}`,
-        launchAgentMatches(
-          path.join(repositoryRoot, `config/launchagents/${label}.plist`),
-          path.join(home, "Library/LaunchAgents", `${label}.plist`),
-          { codexHome, home, repositoryRoot }
-        ),
-        failures
-      );
+    checkLaunchAgents(paths, failures);
     return failures.value;
   } finally {
     rmSync(projection.root, { recursive: true, force: true });

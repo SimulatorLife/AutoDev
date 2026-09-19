@@ -73,6 +73,9 @@ export interface RoutingRuntimeState {
   disabledProviders: string[];
 }
 
+const ORCHESTRATOR_ALIAS_PATTERN = /^autodev\/[a-z0-9-]+$/u;
+const AUTODEV_ROLE_PATTERN = /^autodev\/([a-z0-9-]+)$/iu;
+
 const DEFAULT_ROUTES: readonly ProviderRoute[] = [
   {
     provider: "claude",
@@ -156,44 +159,37 @@ function validateTierGroups(
   }
 }
 
-export function validateRoutingConfig(value: unknown): RoutingConfig {
-  const config = rawConfig(value);
-  if (!isRecord(config.providerGroups))
-    throw new Error("Routing config requires providerGroups.");
-  if (!isRecord(config.providers))
-    throw new Error("Routing config requires providers.");
-  if (config.routes !== undefined) {
-    if (!isRecord(config.routes))
-      throw new Error("Routing config routes must be an object.");
-    for (const provider of Object.keys(config.providers)) {
-      const route = config.routes[provider];
-      if (
-        !isRecord(route) ||
-        !nonEmptyString(route.pattern) ||
-        !nonEmptyString(route.baseUrl)
-      ) {
-        throw new Error(
-          `Routing config provider ${provider} must define a route with pattern and baseUrl.`
-        );
-      }
-      if (route.healthUrl !== undefined && typeof route.healthUrl !== "string")
-        throw new Error(
-          `Routing config provider ${provider} route healthUrl must be a string.`
-        );
-      if (
-        route.envKey !== undefined &&
-        route.envKey !== null &&
-        typeof route.envKey !== "string"
-      )
-        throw new Error(
-          `Routing config provider ${provider} route envKey must be a string or null.`
-        );
+function validateRoutesBlock(config: Record<string, unknown>): void {
+  if (config.routes === undefined) return;
+  if (!isRecord(config.routes))
+    throw new Error("Routing config routes must be an object.");
+  for (const provider of Object.keys(config.providers)) {
+    const route = config.routes[provider];
+    if (
+      !isRecord(route) ||
+      !nonEmptyString(route.pattern) ||
+      !nonEmptyString(route.baseUrl)
+    ) {
+      throw new Error(
+        `Routing config provider ${provider} must define a route with pattern and baseUrl.`
+      );
     }
+    if (route.healthUrl !== undefined && typeof route.healthUrl !== "string")
+      throw new Error(
+        `Routing config provider ${provider} route healthUrl must be a string.`
+      );
+    if (
+      route.envKey !== undefined &&
+      route.envKey !== null &&
+      typeof route.envKey !== "string"
+    )
+      throw new Error(
+        `Routing config provider ${provider} route envKey must be a string or null.`
+      );
   }
-  if (!isRecord(config.roles))
-    throw new Error("Routing config requires roles.");
-  if (!isRecord(config.orchestrator))
-    throw new Error("Routing config requires an orchestrator block.");
+}
+
+function validateProvidersBlock(config: Record<string, unknown>): void {
   for (const [provider, info] of Object.entries(config.providers)) {
     if (!isRecord(info) || !isRecord(info.models))
       throw new Error(
@@ -204,16 +200,22 @@ export function validateRoutingConfig(value: unknown): RoutingConfig {
         `Routing config provider ${provider} must define a default model.`
       );
   }
+}
+
+function validateRolesBlock(config: Record<string, unknown>): void {
   for (const role of ROLE_NAMES) {
     const roleConfig = config.roles[role];
     if (!isRecord(roleConfig) || !nonEmptyString(roleConfig.tier))
       throw new Error(`Routing config role ${role} must define a tier.`);
     validateTierGroups(config, roleConfig.tier);
   }
+}
+
+function validateOrchestratorBlock(config: Record<string, unknown>): void {
   const orchestrator = config.orchestrator;
   if (
     !nonEmptyString(orchestrator.alias) ||
-    !/^autodev\/[a-z0-9-]+$/u.test(orchestrator.alias.trim())
+    !ORCHESTRATOR_ALIAS_PATTERN.test(orchestrator.alias.trim())
   ) {
     throw new Error(
       "Routing config orchestrator.alias must be an autodev/<name> alias."
@@ -222,24 +224,39 @@ export function validateRoutingConfig(value: unknown): RoutingConfig {
   if (!nonEmptyString(orchestrator.tier))
     throw new Error("Routing config orchestrator must define a tier.");
   validateTierGroups(config, orchestrator.tier);
-  if (orchestrator.reasoningEffort !== undefined) {
-    if (!isRecord(orchestrator.reasoningEffort))
+  if (orchestrator.reasoningEffort === undefined) return;
+  if (!isRecord(orchestrator.reasoningEffort))
+    throw new Error(
+      "Routing config orchestrator.reasoningEffort must be an object mapping providers to effort strings."
+    );
+  for (const [provider, effort] of Object.entries(
+    orchestrator.reasoningEffort
+  )) {
+    if (!Object.hasOwn(config.providers, provider))
       throw new Error(
-        "Routing config orchestrator.reasoningEffort must be an object mapping providers to effort strings."
+        `Routing config orchestrator.reasoningEffort references unknown provider ${provider}.`
       );
-    for (const [provider, effort] of Object.entries(
-      orchestrator.reasoningEffort
-    )) {
-      if (!Object.hasOwn(config.providers, provider))
-        throw new Error(
-          `Routing config orchestrator.reasoningEffort references unknown provider ${provider}.`
-        );
-      if (!nonEmptyString(effort))
-        throw new Error(
-          `Routing config orchestrator.reasoningEffort.${provider} must be a non-empty string.`
-        );
-    }
+    if (!nonEmptyString(effort))
+      throw new Error(
+        `Routing config orchestrator.reasoningEffort.${provider} must be a non-empty string.`
+      );
   }
+}
+
+export function validateRoutingConfig(value: unknown): RoutingConfig {
+  const config = rawConfig(value);
+  if (!isRecord(config.providerGroups))
+    throw new Error("Routing config requires providerGroups.");
+  if (!isRecord(config.providers))
+    throw new Error("Routing config requires providers.");
+  validateRoutesBlock(config);
+  if (!isRecord(config.roles))
+    throw new Error("Routing config requires roles.");
+  if (!isRecord(config.orchestrator))
+    throw new Error("Routing config requires an orchestrator block.");
+  validateProvidersBlock(config);
+  validateRolesBlock(config);
+  validateOrchestratorBlock(config);
   return config as unknown as RoutingConfig;
 }
 
@@ -384,7 +401,7 @@ export class RoutingPolicy {
 
   roleForModel(model: unknown): string | null {
     if (typeof model !== "string") return null;
-    const match = model.trim().match(/^autodev\/([a-z0-9-]+)$/iu);
+    const match = model.trim().match(AUTODEV_ROLE_PATTERN);
     return match && this.config.roles[match[1]!.toLowerCase()]
       ? match[1]!.toLowerCase()
       : null;

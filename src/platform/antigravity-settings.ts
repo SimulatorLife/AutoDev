@@ -228,6 +228,53 @@ export function antigravitySkillsStatus(
   return { missing: !managed, stale };
 }
 
+function runPermissions(
+  filePath: string,
+  check: boolean,
+  rest: string[]
+): number {
+  if (!check) {
+    updateAntigravityPermissions(filePath, rest);
+    writeErrorLine("ok Antigravity CLI permissions granted (MCP and read_file)");
+    return 0;
+  }
+  const missing = missingAntigravityPermissions(filePath, rest);
+  if (missing.length === 0) {
+    writeLine("ok Antigravity CLI permission grants (MCP and read_file)");
+    return 0;
+  }
+  writeLine(`missing Antigravity CLI permission grants: ${missing.join(", ")}`);
+  return 1;
+}
+
+function runSkills(
+  filePath: string,
+  check: boolean,
+  rest: string[]
+): number {
+  const expected = rest.shift();
+  if (!expected)
+    throw new Error(
+      "usage: antigravity-settings skills [--check] <path> <expected> [obsolete...]"
+    );
+  if (!check) {
+    updateAntigravitySkills(filePath, expected, rest);
+    writeErrorLine("ok agy code skills registered (ccc, lsp-mcp-server)");
+    return 0;
+  }
+  const status = antigravitySkillsStatus(filePath, expected, rest);
+  if (status.stale.length > 0) {
+    writeLine(`obsolete agy skill registration ${status.stale.join(", ")}`);
+    return 1;
+  }
+  if (status.missing) {
+    writeLine("missing agy global ccc/lsp skill registration");
+    return 1;
+  }
+  writeLine("ok agy code skills (ccc, lsp-mcp-server)");
+  return 0;
+}
+
 function cli(argv: string[]): number {
   const [kind, modeOrPath, ...rest] = argv;
   const check = modeOrPath === "--check";
@@ -236,47 +283,8 @@ function cli(argv: string[]): number {
     throw new Error(
       "usage: antigravity-settings permissions|skills [--check] <path> ..."
     );
-  if (kind === "permissions") {
-    if (check) {
-      const missing = missingAntigravityPermissions(filePath, rest);
-      if (missing.length > 0) {
-        writeLine(
-          `missing Antigravity CLI permission grants: ${missing.join(", ")}`
-        );
-        return 1;
-      }
-      writeLine("ok Antigravity CLI permission grants (MCP and read_file)");
-    } else {
-      updateAntigravityPermissions(filePath, rest);
-      writeErrorLine(
-        "ok Antigravity CLI permissions granted (MCP and read_file)"
-      );
-    }
-    return 0;
-  }
-  if (kind === "skills") {
-    const expected = rest.shift();
-    if (!expected)
-      throw new Error(
-        "usage: antigravity-settings skills [--check] <path> <expected> [obsolete...]"
-      );
-    if (check) {
-      const status = antigravitySkillsStatus(filePath, expected, rest);
-      if (status.stale.length > 0) {
-        writeLine(`obsolete agy skill registration ${status.stale.join(", ")}`);
-        return 1;
-      }
-      if (status.missing) {
-        writeLine("missing agy global ccc/lsp skill registration");
-        return 1;
-      }
-      writeLine("ok agy code skills (ccc, lsp-mcp-server)");
-    } else {
-      updateAntigravitySkills(filePath, expected, rest);
-      writeErrorLine("ok agy code skills registered (ccc, lsp-mcp-server)");
-    }
-    return 0;
-  }
+  if (kind === "permissions") return runPermissions(filePath, check, rest);
+  if (kind === "skills") return runSkills(filePath, check, rest);
   throw new Error(
     "usage: antigravity-settings permissions|skills [--check] <path> ..."
   );

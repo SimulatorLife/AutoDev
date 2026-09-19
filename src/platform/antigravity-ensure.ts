@@ -48,7 +48,7 @@ export function isAntigravityModel(input: string): boolean {
 }
 
 function positiveInteger(value: string | undefined, fallback: number): number {
-  const parsed = Number.parseInt(value ?? "", 10);
+  const parsed = Number.parseInt(value ?? "");
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
 }
 
@@ -86,13 +86,18 @@ function defaultDeps(options: AntigravityEnsureOptions): AntigravityEnsureDeps {
     launchd: new LaunchdClient(),
     probe: async () => {
       try {
-        return (await fetch(endpoint, { signal: AbortSignal.timeout(1000) }))
-          .ok;
+        const response = await fetch(endpoint, {
+          signal: AbortSignal.timeout(1000)
+        });
+        return response.ok;
       } catch {
         return false;
       }
     },
-    sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+    sleep: (ms) =>
+      new Promise((resolve) => {
+        setTimeout(resolve, ms);
+      }),
     cliAvailable: () => existsSync(options.cliPath),
     settingsValid: () => {
       try {
@@ -127,16 +132,21 @@ function defaultDeps(options: AntigravityEnsureOptions): AntigravityEnsureDeps {
   };
 }
 
-async function waitForProbe(
+async function pollProbeUntilDeadline(
+  deps: AntigravityEnsureDeps,
+  deadline: number
+): Promise<boolean> {
+  if (Date.now() >= deadline) return deps.probe();
+  if (await deps.probe()) return true;
+  await deps.sleep(100);
+  return pollProbeUntilDeadline(deps, deadline);
+}
+
+function waitForProbe(
   deps: AntigravityEnsureDeps,
   timeoutMs: number
 ): Promise<boolean> {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    if (await deps.probe()) return true;
-    await deps.sleep(100);
-  }
-  return deps.probe();
+  return pollProbeUntilDeadline(deps, Date.now() + timeoutMs);
 }
 
 /** Best-effort lifecycle owner for Antigravity's retained CLI bridge. */

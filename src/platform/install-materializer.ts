@@ -191,6 +191,11 @@ export const CANONICAL_HOOK_HASHES = {
     "sha256:d3796d1a79be308b1fd16b311ee343c7f0797c03f9a4fc267082ab2ffd53b596"
 } as const;
 
+const CONFIG_TOML_KEY_PREFIX = "config.toml:";
+const HOOKS_JSON = "hooks.json";
+const OBSOLETE_RUNTIME_DIRECTORY = "obsolete-runtime-directory";
+const CONFIG_TOML_FILE = "config.toml";
+
 export function syncHookTrust(
   configPath: string,
   codexHome: string,
@@ -212,11 +217,11 @@ export function syncHookTrust(
       : {};
 
   for (const key of Object.keys(stateTable)) {
-    if (key.includes("config.toml:")) delete stateTable[key];
+    if (key.includes(CONFIG_TOML_KEY_PREFIX)) delete stateTable[key];
   }
 
-  const userHooksJson = path.join(codexHome, "hooks.json");
-  const projectHooksJson = path.join(repositoryRoot, ".codex", "hooks.json");
+  const userHooksJson = path.join(codexHome, HOOKS_JSON);
+  const projectHooksJson = path.join(repositoryRoot, ".codex", HOOKS_JSON);
 
   for (const [suffix, hash] of Object.entries(CANONICAL_HOOK_HASHES)) {
     stateTable[`${userHooksJson}:${suffix}`] = { trusted_hash: hash };
@@ -254,11 +259,11 @@ export function checkHookTrust(
     if (!stateTable) return false;
 
     for (const key of Object.keys(stateTable)) {
-      if (key.includes("config.toml:")) return false;
+      if (key.includes(CONFIG_TOML_KEY_PREFIX)) return false;
     }
 
-    const userHooksJson = path.join(codexHome, "hooks.json");
-    const projectHooksJson = path.join(repositoryRoot, ".codex", "hooks.json");
+    const userHooksJson = path.join(codexHome, HOOKS_JSON);
+    const projectHooksJson = path.join(repositoryRoot, ".codex", HOOKS_JSON);
 
     for (const [suffix, hash] of Object.entries(CANONICAL_HOOK_HASHES)) {
       const userEntry = stateTable[`${userHooksJson}:${suffix}`] as
@@ -304,6 +309,8 @@ function rulesync(options: MaterializeOptions, args: readonly string[]): void {
     options.repositoryRoot
   );
 }
+const LINE_SPLIT_PATTERN = /\r?\n/u;
+
 function ensureExclude(options: MaterializeOptions): void {
   const exclude = execFileSync(
     "git",
@@ -320,7 +327,7 @@ function ensureExclude(options: MaterializeOptions): void {
   ];
   const existing = readFileSync(exclude, "utf8");
   const missing = entries.filter(
-    (entry) => !existing.split(/\r?\n/u).includes(entry)
+    (entry) => !existing.split(LINE_SPLIT_PATTERN).includes(entry)
   );
   if (missing.length > 0)
     writeFileSync(
@@ -345,13 +352,7 @@ function roots(options: MaterializeOptions): string[] {
   ];
 }
 
-export function materializeInstallation(options: MaterializeOptions): void {
-  const hooks = path.join(options.codexHome, "hooks"),
-    agents = path.join(options.codexHome, "agents"),
-    rules = path.join(options.codexHome, "rules"),
-    userSkills = path.join(options.home, ".agents", "skills"),
-    skillsRoot = path.join(options.repositoryRoot, ".rulesync", "skills");
-  const launchd = new LaunchdClient();
+function bootoutObsoleteLaunchLabels(launchd: LaunchdClient): void {
   for (const label of OBSOLETE_LAUNCH) {
     try {
       launchd.bootout(label);
@@ -359,8 +360,15 @@ export function materializeInstallation(options: MaterializeOptions): void {
       /* obsolete job may not be loaded */
     }
   }
+}
+
+function removeObsoleteRuntimeArtifacts(
+  codexHome: string,
+  home: string,
+  hooks: string
+): void {
   const obsoletePaths = [
-    ...OBSOLETE_PATHS.map((filePath) => path.join(options.home, filePath)),
+    ...OBSOLETE_PATHS.map((filePath) => path.join(home, filePath)),
     path.join(hooks, "codex/lib/codex-spawn-tools.mjs"),
     path.join(hooks, "codex/lib/codex-state-collector.mjs"),
     path.join(hooks, "codex/lib/spawn-shim-mcp.mjs")
@@ -372,18 +380,22 @@ export function materializeInstallation(options: MaterializeOptions): void {
   );
   removeStalePaths(
     OBSOLETE_DIRS.map((name) => path.join(hooks, name)),
-    "obsolete-runtime-directory"
+    OBSOLETE_RUNTIME_DIRECTORY
   );
   // Claude reads skills through Codex's tools now, so its generated per-role
   // skill views have no reader.
   removeStalePaths(
-    [path.join(options.codexHome, OBSOLETE_CLAUDE_SKILL_VIEWS)],
-    "obsolete-runtime-directory"
+    [path.join(codexHome, OBSOLETE_CLAUDE_SKILL_VIEWS)],
+    OBSOLETE_RUNTIME_DIRECTORY
   );
-  const source = (filePath: string) =>
-    path.join(options.repositoryRoot, filePath);
-  const target = (filePath: string) =>
-    runtimeTarget(filePath, options.codexHome, hooks);
+}
+
+type FileTarget = (filePath: string) => string;
+
+function materializeRuntimeSources(
+  source: FileTarget,
+  target: FileTarget
+): void {
   for (const filePath of RUNTIME_MODULES)
     materializeRuntimeFile(source(filePath), target(filePath), 0o644);
   for (const filePath of OTEL_RUNTIME)
@@ -394,6 +406,12 @@ export function materializeInstallation(options: MaterializeOptions): void {
       target(`agents/prompts/roles/${role}.md`),
       0o644
     );
+}
+
+function materializeScripts(
+  hooks: string,
+  source: FileTarget
+): void {
   for (const name of HOOKS) {
     chmodSync(source(`scripts/${name}`), 0o755);
     materializeRuntimeFile(
@@ -410,21 +428,35 @@ export function materializeInstallation(options: MaterializeOptions): void {
     );
   for (const name of MCP_LAUNCHERS)
     linkRuntimeSource(source(`scripts/${name}`), path.join(hooks, name));
+}
+
+function linkRuntimeConfigs(
+  codexHome: string,
+  source: FileTarget,
+  rules: string
+): void {
   for (const name of PROFILES)
     linkRuntimeSource(
       source(`config/profiles/${name}.config.toml`),
-      path.join(options.codexHome, `${name}.config.toml`)
+      path.join(codexHome, `${name}.config.toml`)
     );
   for (const name of CATALOGS)
     linkRuntimeSource(
       source(`config/catalogs/${name}-model-catalog.json`),
-      path.join(options.codexHome, `${name}-model-catalog.json`)
+      path.join(codexHome, `${name}-model-catalog.json`)
     );
   for (const name of RULES)
     linkRuntimeSource(source(`agents/rules/${name}`), path.join(rules, name));
+}
+
+function replaceSkillSymlinks(
+  codexHome: string,
+  skillsRoot: string,
+  userSkills: string
+): void {
   for (const name of SKILLS) {
     for (const legacy of LEGACY_SKILL_DIRS) {
-      const filePath = path.join(options.codexHome, legacy, name);
+      const filePath = path.join(codexHome, legacy, name);
       if (exists(filePath) && !isSymlink(filePath))
         throw new Error(
           `refusing to replace obsolete non-symlink skill path: ${filePath}`
@@ -433,16 +465,23 @@ export function materializeInstallation(options: MaterializeOptions): void {
     }
     linkSkillSource(path.join(skillsRoot, name), path.join(userSkills, name));
   }
+}
+
+function materializeRenderedAgents(
+  repositoryRoot: string,
+  agents: string,
+  codexMcpSource: string
+): void {
   mkdirSync(agents, { recursive: true, mode: 0o700 });
   const rendered = mkdtempSync(
-    path.join(options.codexHome, ".autodev-rendered-agents-")
+    path.join(repositoryRoot, ".autodev-rendered-agents-")
   );
   try {
     renderAgentDirectory(
-      path.join(options.repositoryRoot, "agents/roles"),
-      path.join(options.repositoryRoot, "agents/prompts"),
+      path.join(repositoryRoot, "agents/roles"),
+      path.join(repositoryRoot, "agents/prompts"),
       rendered,
-      options.codexMcpSource
+      codexMcpSource
     );
     for (const role of ROLES)
       materializeRuntimeFile(
@@ -453,22 +492,17 @@ export function materializeInstallation(options: MaterializeOptions): void {
   } finally {
     rmSync(rendered, { recursive: true, force: true });
   }
-  runBridgeMcpCatalogue(
-    options.codexMcpSource,
-    path.join(options.codexHome, "provider-runtime", "mcp-servers.json")
-  );
-  rulesync(options, [
-    "generate",
-    "--config",
-    path.join(options.repositoryRoot, "rulesync.jsonc"),
-    "--silent"
-  ]);
-  ensureExclude(options);
+}
+
+function composeAndLinkConfigs(
+  options: MaterializeOptions,
+  source: FileTarget
+): void {
   runCompose(
     source("config/config.autodev.toml"),
     options.codexMcpSource,
-    path.join(options.codexHome, "config.toml"),
-    path.join(options.codexHome, "config.toml"),
+    path.join(options.codexHome, CONFIG_TOML_FILE),
+    path.join(options.codexHome, CONFIG_TOML_FILE),
     false,
     options.otelMode
   );
@@ -485,10 +519,13 @@ export function materializeInstallation(options: MaterializeOptions): void {
     path.join(options.codexHome, "hooks.json")
   );
   syncHookTrust(
-    path.join(options.codexHome, "config.toml"),
+    path.join(options.codexHome, CONFIG_TOML_FILE),
     options.codexHome,
     options.repositoryRoot
   );
+}
+
+function renderGlobalMcpIfNeeded(options: MaterializeOptions): void {
   const targets = (
     [
       ["claude", "claudecode"],
@@ -511,36 +548,48 @@ export function materializeInstallation(options: MaterializeOptions): void {
       "mcp",
       "--silent"
     ]);
+}
+
+function applyAntigravityIfInstalled(
+  options: MaterializeOptions,
+  skillsRoot: string
+): void {
   if (
-    !options.materializeOnly &&
-    commandAvailable("agy") &&
-    process.env.AUTODEV_SKIP_AGY_MCP !== "1"
-  ) {
-    updateAntigravityPermissions(
-      path.join(options.home, ".gemini", "antigravity-cli", "settings.json"),
-      roots(options),
-      options.home
-    );
-    updateAntigravitySkills(
-      path.join(options.home, ".gemini", "config", "skills.json"),
-      skillsRoot,
-      [
-        path.join(options.repositoryRoot, "agents/skills"),
-        path.join(options.repositoryRoot, "scripts/codex/skills")
-      ]
-    );
-  }
+    options.materializeOnly ||
+    !commandAvailable("agy") ||
+    process.env.AUTODEV_SKIP_AGY_MCP === "1"
+  )
+    return;
+  updateAntigravityPermissions(
+    path.join(options.home, ".gemini", "antigravity-cli", "settings.json"),
+    roots(options),
+    options.home
+  );
+  updateAntigravitySkills(
+    path.join(options.home, ".gemini", "config", "skills.json"),
+    skillsRoot,
+    [
+      path.join(options.repositoryRoot, "agents/skills"),
+      path.join(options.repositoryRoot, "scripts/codex/skills")
+    ]
+  );
+}
+
+function renderLaunchAgentsFor(
+  repositoryRoot: string,
+  home: string,
+  codexHome: string
+): void {
   for (const label of LAUNCH_LABELS)
     renderLaunchAgent(
-      source(`config/launchagents/${label}.plist`),
-      path.join(options.home, "Library", "LaunchAgents", `${label}.plist`),
-      {
-        codexHome: options.codexHome,
-        home: options.home,
-        repositoryRoot: options.repositoryRoot
-      }
+      path.join(repositoryRoot, `config/launchagents/${label}.plist`),
+      path.join(home, "Library", "LaunchAgents", `${label}.plist`),
+      { codexHome, home, repositoryRoot }
     );
-  const runDir = path.join(options.codexHome, "run");
+}
+
+function prepareRunLogs(codexHome: string): void {
+  const runDir = path.join(codexHome, "run");
   mkdirSync(runDir, { recursive: true, mode: 0o700 });
   chmodSync(runDir, 0o700);
   for (const name of [
@@ -553,6 +602,42 @@ export function materializeInstallation(options: MaterializeOptions): void {
     if (!exists(filePath)) writeFileSync(filePath, "", { mode: 0o600 });
     chmodSync(filePath, 0o600);
   }
+}
+
+export function materializeInstallation(options: MaterializeOptions): void {
+  const hooks = path.join(options.codexHome, "hooks"),
+    agents = path.join(options.codexHome, "agents"),
+    rules = path.join(options.codexHome, "rules"),
+    userSkills = path.join(options.home, ".agents", "skills"),
+    skillsRoot = path.join(options.repositoryRoot, ".rulesync", "skills");
+  const launchd = new LaunchdClient();
+  bootoutObsoleteLaunchLabels(launchd);
+  removeObsoleteRuntimeArtifacts(options.codexHome, options.home, hooks);
+  const source: FileTarget = (filePath) =>
+    path.join(options.repositoryRoot, filePath);
+  const target: FileTarget = (filePath) =>
+    runtimeTarget(filePath, options.codexHome, hooks);
+  materializeRuntimeSources(source, target);
+  materializeScripts(hooks, source);
+  linkRuntimeConfigs(options.codexHome, source, rules);
+  replaceSkillSymlinks(options.codexHome, skillsRoot, userSkills);
+  materializeRenderedAgents(options.repositoryRoot, agents, options.codexMcpSource);
+  runBridgeMcpCatalogue(
+    options.codexMcpSource,
+    path.join(options.codexHome, "provider-runtime", "mcp-servers.json")
+  );
+  rulesync(options, [
+    "generate",
+    "--config",
+    path.join(options.repositoryRoot, "rulesync.jsonc"),
+    "--silent"
+  ]);
+  ensureExclude(options);
+  composeAndLinkConfigs(options, source);
+  renderGlobalMcpIfNeeded(options);
+  applyAntigravityIfInstalled(options, skillsRoot);
+  renderLaunchAgentsFor(options.repositoryRoot, options.home, options.codexHome);
+  prepareRunLogs(options.codexHome);
 }
 function exists(filePath: string): boolean {
   try {

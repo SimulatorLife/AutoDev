@@ -2,7 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { type IncomingMessage, type ServerResponse } from "node:http";
-import { basename } from "node:path";
+import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { brotliDecompressSync, gunzipSync, inflateSync } from "node:zlib";
 
@@ -110,6 +110,7 @@ import {
 } from "./state-collector.ts";
 import {
   AGENT_EVENTS_PATH,
+  type BridgeRequestContext,
   bridgeSubagentKey,
   closeBridgeSubagentsForRequest,
   closeBridgeSubagentUsage,
@@ -150,6 +151,14 @@ import {
   usagePersistenceSnapshot,
   usageStatus
 } from "./usage.ts";
+
+const GIT_REMOTE_PATTERN = /^git@([^:]+):/;
+const GIT_EXTENSION_PATTERN = /\.git$/i;
+const REPO_ID_SANITIZE_PATTERN = /[^A-Za-z0-9._-]/g;
+const URL_QUERY_FRAGMENT_SPLIT_PATTERN = /[?#]/;
+const PROVIDER_ROUTE_PATH_PATTERN = /^\/v1\/providers\/([a-zA-Z0-9._-]+)$/;
+
+
 
 export { errorBody, sendJson } from "./proxy.ts";
 
@@ -242,13 +251,13 @@ const routerEvents = new RouterEventRecorder({
         toolCalls: event.toolCalls,
         timestamp: event.timestamp,
         origin:
-          effectiveOrigin ?? usageOrigin(event.role, event.provider as any)
-      } as any);
+          effectiveOrigin ?? usageOrigin(event.role, String(event.provider ?? ""))
+      });
     }
     if (event.phase === "result")
       closeBridgeSubagentsForRequest(
-        event.requestId as any,
-        event.outcome as any,
+        String(event.requestId ?? ""),
+        String(event.outcome ?? "") as "success" | "failure",
         event.elapsedMs
       );
     const state = event.provider ? providerState(event.provider) : null;
@@ -283,8 +292,10 @@ setDefaultRouterEventRecorder(routerEvents);
 const subagentRegistry = new SubagentRegistry({
   agentActivity,
   executionContract: getDefaultExecutionContract(),
-  onRecordRouterEvent: (event) => recordRouterEvent(event as any),
-  onRecordUsageEvent: (event) => recordUsageEvent(event as any),
+  onRecordRouterEvent: (event) =>
+    recordRouterEvent(event as Parameters<typeof recordRouterEvent>[0]),
+  onRecordUsageEvent: (event) =>
+    recordUsageEvent(event as Parameters<typeof recordUsageEvent>[0]),
   onSchedulePersist: () => scheduleRouterStatePersist(),
   onMissingProviderDiagnostic: (count) => {
     attributionDiagnostics.byReason.missing_provider += count;
@@ -305,7 +316,10 @@ const otelTracker = new OtelTracker({
   usageTracker: getDefaultUsageTracker(),
   getConversationThread: (id) =>
     (codexState.lastSnapshot &&
-      (codexState.lastSnapshot as any).conversationThreads?.[id]) ??
+      (codexState.lastSnapshot as Record<string, unknown>).conversationThreads && 
+      typeof (codexState.lastSnapshot as Record<string, unknown>).conversationThreads === "object"
+        ? ((codexState.lastSnapshot as Record<string, unknown>).conversationThreads as Record<string, unknown>)[id as string] ?? null
+        : null) ??
     null,
   getBridgeRequestContext: (id) => subagentRegistry.getBridgeRequestContext(id),
   onSchedulePersist: () => scheduleRouterStatePersist()
@@ -374,28 +388,89 @@ export const codexState = {
 
 export async function refreshCodexState(): Promise<void> {
   try {
-    codexState.lastSnapshot =
+    const snapshot =
       (await codexState.collector.collectSnapshot()) as unknown as Record<
         string,
         unknown
       >;
+    assignCodexSnapshot(snapshot);
   } catch (error) {
-    codexState.lastSnapshot = {
+    assignCodexSnapshot({
       localTelemetry: {
         status: "error",
         pathConfigured: true,
         reason: error instanceof Error ? error.message : String(error),
         collectedAt: new Date().toISOString()
       }
-    };
+    });
   }
+}
+
+function restorePersistedSection(args: {
+  section: string;
+  value: unknown;
+  parsed: Record<string, unknown>;
+}): void {
+  const { section, value, parsed } = args;
+  if (section === "providerTelemetry") {
+    restoreProviderTelemetrySection(providerTelemetry, value);
+    return;
+  }
+  if (section === "usage") {
+    restoreUsagePersistenceSnapshot(value);
+    return;
+  }
+  if (section === "concurrency" && value && typeof value === "object") {
+    concurrencyManager.restoreTelemetry(value);
+    return;
+  }
+  if (section === "spawnFailures" && value && typeof value === "object") {
+    subagentRegistry.restoreSpawnFailureTelemetry(value);
+    return;
+  }
+  if (section === "otelTelemetry") {
+    restoreOtelTelemetry(value);
+    return;
+  }
+  if (section === "subagents" && value && typeof value === "object") {
+    subagentRegistry.restoreSubagentTelemetry(value);
+    return;
+  }
+  if (section === "providerCooldowns" && Array.isArray(value)) {
+    COOLDOWNS.restoreHardEntries(value, Date.now());
+    return;
+  }
+  if (section === "disabledProviders") {
+    ROUTING_POLICY.restoreRuntimeState({ disabledProviders: value });
+    return;
+  }
+  if (section === "recentEvents" && Array.isArray(value)) {
+    restoreRecentEvents(value, parsed);
+  }
+}
+
+function restoreRecentEvents(
+  value: unknown[],
+  parsed: Record<string, unknown>
+): void {
+  routerEvents.restore(value);
+  if (parsed.usage) return;
+  resetUsageTelemetry();
+  for (const event of routerEvents.getRecentEvents()) {
+    if (event.provider && event.model && event.phase)
+      recordUsageEvent(event as Parameters<typeof recordUsageEvent>[0]);
+  }
+  inFlightUsage.clear();
+}
+
+function assignCodexSnapshot(snapshot: Record<string, unknown>): void {
+  codexState.lastSnapshot = snapshot;
 }
 
 export function setCodexStateSnapshotForTests(
   snapshot: Record<string, unknown> | null
 ): void {
-  codexState.lastSnapshot =
-    snapshot && typeof snapshot === "object" ? snapshot : null;
+  assignCodexSnapshot(snapshot && typeof snapshot === "object" ? snapshot : { empty: true });
 }
 
 export function codexStateStatus(): Record<string, unknown> {
@@ -467,41 +542,7 @@ const routerPersistence = new RouterPersistence({
     otelTelemetry: otelPersistenceSnapshot()
   }),
   restoreSection: (section, value, parsed) => {
-    if (section === "providerTelemetry") {
-      restoreProviderTelemetrySection(providerTelemetry, value);
-    } else if (section === "usage") {
-      restoreUsagePersistenceSnapshot(value);
-    } else if (
-      section === "concurrency" &&
-      value &&
-      typeof value === "object"
-    ) {
-      concurrencyManager.restoreTelemetry(value);
-    } else if (
-      section === "spawnFailures" &&
-      value &&
-      typeof value === "object"
-    ) {
-      subagentRegistry.restoreSpawnFailureTelemetry(value);
-    } else if (section === "otelTelemetry") {
-      restoreOtelTelemetry(value);
-    } else if (section === "subagents" && value && typeof value === "object") {
-      subagentRegistry.restoreSubagentTelemetry(value);
-    } else if (section === "providerCooldowns" && Array.isArray(value)) {
-      COOLDOWNS.restoreHardEntries(value, Date.now());
-    } else if (section === "disabledProviders") {
-      ROUTING_POLICY.restoreRuntimeState({ disabledProviders: value });
-    } else if (section === "recentEvents" && Array.isArray(value)) {
-      routerEvents.restore(value);
-      if (!parsed.usage) {
-        resetUsageTelemetry();
-        for (const event of routerEvents.getRecentEvents()) {
-          if (event.provider && event.model && event.phase)
-            recordUsageEvent(event as any);
-        }
-        inFlightUsage.clear();
-      }
-    }
+    restorePersistedSection({ section, value, parsed });
   }
 });
 setDefaultPersistenceManager(routerPersistence);
@@ -730,15 +771,54 @@ export const REPORTABLE_AGENT_ACTIVITY_STATES = Object.freeze(
   new Set(["subagent_wait", "resumed", "heartbeat"])
 );
 
-export function ingestAgentEvents(payload: Record<string, unknown>): {
-  accepted: number;
-  closed: number;
-  unavailable: number;
-  rejected: number;
-  reason: string | null;
-} {
-  const requestId =
-    typeof payload?.requestId === "string" ? payload.requestId.trim() : "";
+// Per-event helpers used by ingestAgentEvents. Each handles exactly one
+// event type and reports any counters it changes back to the caller so
+// cognitive complexity stays bounded.
+function isValidAgentEvent(event: unknown): event is Record<string, unknown> {
+  if (!event || typeof event !== "object") return false;
+  return INGESTED_AGENT_EVENTS.has(
+    (event as Record<string, unknown>).type as string
+  );
+}
+
+function touchAgentActivity(context: BridgeRequestContext): void {
+  getDefaultUsageTracker().activityTracker.touch(context.activitySubject);
+  if (context.sessionKey)
+    touchManagerOpenSubagentSlots(context.sessionKey);
+}
+
+function noteBridgeAgentActivity(
+  state: string,
+  context: BridgeRequestContext
+): void {
+  const tracker = getDefaultUsageTracker().activityTracker;
+  if (state === "subagent_wait") {
+    tracker.noteSubagentWait(context.activitySubject, {
+      provider: context.provider ?? null,
+      model: context.model ?? null,
+      role: context.role ?? null,
+      workspace: context.workspace ?? null
+    });
+  } else {
+    // `resumed` resolves a bridge-native delegation; it is a no-op for an
+    // agent that was not waiting on one.
+    tracker.noteSubagentResolved(context.activitySubject);
+  }
+}
+
+function isHeartbeatAgentEvent(event: Record<string, unknown>): boolean {
+  return (
+    event.type === "heartbeat" ||
+    (event.type === "activity" &&
+      (event.state === "heartbeat" ||
+        (typeof event.state === "string" &&
+          event.state.trim() === "heartbeat")))
+  );
+}
+
+function resolveIngestContext(
+  requestId: string
+): BridgeRequestContext | null {
   let context = requestId
     ? getDefaultSubagentRegistry().getBridgeRequestContext(requestId)
     : undefined;
@@ -752,6 +832,155 @@ export function ingestAgentEvents(payload: Record<string, unknown>): {
       context = { ...sessionContext, activitySubject: sessionKey };
     }
   }
+  return context ?? null;
+}
+
+function applyAgentActivityEvent(
+  event: Record<string, unknown>,
+  context: BridgeRequestContext,
+  counters: AgentEventCounters
+): void {
+  const state = typeof event.state === "string" ? event.state.trim() : "";
+  if (!REPORTABLE_AGENT_ACTIVITY_STATES.has(state)) {
+    counters.rejected += 1;
+    return;
+  }
+  noteBridgeAgentActivity(state, context);
+  counters.accepted += 1;
+}
+
+function closeSubagentResultUsage(
+  event: Record<string, unknown>,
+  requestId: string,
+  counters: AgentEventCounters
+): void {
+  const outcome = event.outcome === "failure" ? "failure" : "success";
+  const durationMs = Number.isFinite(event.durationMs)
+    ? Math.max(0, event.durationMs as number)
+    : null;
+  for (const child of reportedChildren(event)) {
+    if (
+      closeBridgeSubagentUsage(bridgeSubagentKey(requestId, child.id), {
+        outcome,
+        elapsedMs: durationMs,
+        failureClass: outcome === "failure" ? "subagent_failed" : null
+      })
+    ) {
+      counters.closed += 1;
+    }
+  }
+}
+
+function recordSubagentSpawnUsage(
+  event: Record<string, unknown>,
+  context: BridgeRequestContext,
+  requestId: string,
+  counters: AgentEventCounters
+): void {
+  const role =
+    typeof event.role === "string" && event.role.trim()
+      ? safeMetricLabel(event.role)
+      : null;
+  const children = reportedChildren(event);
+  const count = children.length;
+  recordSubagentSpawn({
+    mechanism: "bridge_native",
+    provider: context.provider,
+    role,
+    status:
+      typeof event.status === "string" && event.status.trim()
+        ? safeMetricLabel(event.status)
+        : "started",
+    tool:
+      typeof event.tool === "string" && event.tool.trim()
+        ? safeMetricLabel(event.tool)
+        : null,
+    requestId,
+    workspace: context.workspace ?? null,
+    count
+  });
+  for (const child of children) {
+    openBridgeSubagentUsage({
+      requestId,
+      context,
+      role,
+      childId: child.id,
+      model: child.model
+    });
+  }
+  counters.accepted += count;
+}
+
+function applyAgentEvent(
+  event: Record<string, unknown>,
+  context: BridgeRequestContext,
+  requestId: string,
+  counters: AgentEventCounters
+): void {
+  const type = event.type as string;
+  if (type === "subagent_tools_unavailable") {
+    recordSpawnFailure({
+      requestId,
+      role: null,
+      requestedModel: context.model ?? null,
+      reason: "spawn_tool_unavailable"
+    });
+    counters.unavailable += 1;
+    return;
+  }
+  if (
+    type === "tool_executed" ||
+    type === "tool_requested" ||
+    type === "tool_unavailable"
+  ) {
+    recordBridgeToolObservation({ event, context });
+    touchAgentActivity(context);
+    return;
+  }
+  if (type === "skill_exposed") {
+    recordBridgeSkillExposure({ event, context });
+    return;
+  }
+  if (type === "skill_used") {
+    if (recordBridgeSkillUsed({ event, context })) counters.accepted += 1;
+    return;
+  }
+  if (type === "mcp_exposed") {
+    recordBridgeMcpExposure({ event, context, requestId });
+    return;
+  }
+  if (isHeartbeatAgentEvent(event)) {
+    touchAgentActivity(context);
+    counters.accepted += 1;
+    return;
+  }
+  if (type === "activity") {
+    applyAgentActivityEvent(event, context, counters);
+    return;
+  }
+  if (type === "subagent_result") {
+    closeSubagentResultUsage(event, requestId, counters);
+    return;
+  }
+  // Default: bridge-native subagent_spawn reporting.
+  recordSubagentSpawnUsage(event, context, requestId, counters);
+}
+
+type AgentEventCounters = {
+  accepted: number;
+  closed: number;
+  unavailable: number;
+  rejected: number;
+};
+
+export function ingestAgentEvents(
+  payload: Record<string, unknown>
+): AgentEventCounters & { reason: string | null } {
+  const requestId =
+    typeof payload?.requestId === "string"
+      ? payload.requestId.trim()
+      : "";
+  const context = resolveIngestContext(requestId);
   if (!context) {
     return {
       accepted: 0,
@@ -764,166 +993,52 @@ export function ingestAgentEvents(payload: Record<string, unknown>): {
   const events = Array.isArray(payload.events)
     ? (payload.events as Array<Record<string, unknown>>)
     : [];
-  let accepted = 0;
-  let closed = 0;
-  let unavailable = 0;
-  let rejected = 0;
+  const counters: AgentEventCounters = {
+    accepted: 0,
+    closed: 0,
+    unavailable: 0,
+    rejected: 0
+  };
   for (const event of events) {
-    if (
-      !event ||
-      typeof event !== "object" ||
-      !INGESTED_AGENT_EVENTS.has(event.type as string)
-    ) {
-      rejected += 1;
+    if (!isValidAgentEvent(event)) {
+      counters.rejected += 1;
       continue;
     }
-    if (event.type === "subagent_tools_unavailable") {
-      recordSpawnFailure({
-        requestId,
-        role: null,
-        requestedModel: context.model ?? null,
-        reason: "spawn_tool_unavailable"
-      });
-      unavailable += 1;
-      continue;
-    }
-    if (
-      event.type === "tool_executed" ||
-      event.type === "tool_requested" ||
-      event.type === "tool_unavailable"
-    ) {
-      recordBridgeToolObservation({ event, context });
-      getDefaultUsageTracker().activityTracker.touch(context.activitySubject);
-      if (context.sessionKey) touchManagerOpenSubagentSlots(context.sessionKey);
-      continue;
-    }
-    if (event.type === "skill_exposed") {
-      recordBridgeSkillExposure({ event, context });
-      continue;
-    }
-    if (event.type === "skill_used") {
-      if (recordBridgeSkillUsed({ event, context })) accepted += 1;
-      continue;
-    }
-    if (event.type === "mcp_exposed") {
-      recordBridgeMcpExposure({ event, context, requestId });
-      continue;
-    }
-    if (
-      event.type === "heartbeat" ||
-      (event.type === "activity" &&
-        (event.state === "heartbeat" ||
-          (typeof event.state === "string" &&
-            event.state.trim() === "heartbeat")))
-    ) {
-      getDefaultUsageTracker().activityTracker.touch(context.activitySubject);
-      if (context.sessionKey) touchManagerOpenSubagentSlots(context.sessionKey);
-      accepted += 1;
-      continue;
-    }
-    if (event.type === "activity") {
-      const state = typeof event.state === "string" ? event.state.trim() : "";
-      if (!REPORTABLE_AGENT_ACTIVITY_STATES.has(state)) {
-        rejected += 1;
-        continue;
-      }
-      const tracker = getDefaultUsageTracker().activityTracker;
-      if (state === "subagent_wait") {
-        tracker.noteSubagentWait(context.activitySubject, {
-          provider: context.provider ?? null,
-          model: context.model ?? null,
-          role: context.role ?? null,
-          workspace: context.workspace ?? null
-        });
-      } else {
-        // `resumed` resolves a bridge-native delegation; it is a no-op for an
-        // agent that was not waiting on one.
-        tracker.noteSubagentResolved(context.activitySubject);
-      }
-      accepted += 1;
-      continue;
-    }
-    const role =
-      typeof event.role === "string" && event.role.trim()
-        ? safeMetricLabel(event.role)
-        : null;
-    const children = reportedChildren(event);
-    const count = children.length;
-    if (event.type === "subagent_result") {
-      const outcome = event.outcome === "failure" ? "failure" : "success";
-      const durationMs = Number.isFinite(event.durationMs)
-        ? Math.max(0, event.durationMs as number)
-        : null;
-      for (const child of children) {
-        if (
-          closeBridgeSubagentUsage(bridgeSubagentKey(requestId, child.id), {
-            outcome,
-            elapsedMs: durationMs,
-            failureClass: outcome === "failure" ? "subagent_failed" : null
-          })
-        ) {
-          closed += 1;
-        }
-      }
-      continue;
-    }
-    recordSubagentSpawn({
-      mechanism: "bridge_native",
-      provider: context.provider,
-      role,
-      status:
-        typeof event.status === "string" && event.status.trim()
-          ? safeMetricLabel(event.status)
-          : "started",
-      tool:
-        typeof event.tool === "string" && event.tool.trim()
-          ? safeMetricLabel(event.tool)
-          : null,
-      requestId,
-      workspace: context.workspace ?? null,
-      count
-    });
-    for (const child of children) {
-      openBridgeSubagentUsage({
-        requestId,
-        context,
-        role,
-        childId: child.id,
-        model: child.model
-      });
-    }
-    accepted += count;
+    applyAgentEvent(event, context, requestId, counters);
   }
-  return { accepted, closed, unavailable, rejected, reason: null };
+  return { ...counters, reason: null };
 }
 
-export function getRouterStatus(now = Date.now()): Record<string, unknown> {
-  const projection = projectLiveAgents(now);
-  const providers = Object.fromEntries(
-    ROUTES.map((route) => {
+function providerTierPriorities(provider: string): string[] {
+  const priorities: string[] = [];
+  for (const [tier, groups] of Object.entries(ROUTING.providerGroups)) {
+    for (const [groupIndex, group] of groups.entries()) {
+      if (
+        group.some(
+          (name) => String(name).toLowerCase() === provider.toLowerCase()
+        )
+      ) {
+        priorities.push(`${tier}: P${groupIndex + 1}`);
+        break;
+      }
+    }
+  }
+  return priorities;
+}
+
+function routerProviderStatus(
+  route: (typeof ROUTES)[number],
+  now: number,
+  projection: ReturnType<typeof projectLiveAgents>
+): [string, Record<string, unknown>] {
+
       const state = providerState(route.provider);
       const cooldown = COOLDOWNS.get(route.provider, now);
       const inFlightRequests = getActiveRequests(route.provider);
       const active = projection.byProvider[route.provider] ?? 0;
       const coolingDown = cooldown !== null;
       const enabled = ROUTING_POLICY.isProviderEnabled(route.provider);
-      const tierPrios: string[] = [];
-      for (const [tier, groups] of Object.entries(ROUTING.providerGroups)) {
-        if (Array.isArray(groups)) {
-          for (const [gIdx, group] of groups.entries()) {
-            if (
-              Array.isArray(group) &&
-              group.some(
-                (name) =>
-                  String(name).toLowerCase() === route.provider.toLowerCase()
-              )
-            ) {
-              tierPrios.push(`${tier}: P${gIdx + 1}`);
-              break;
-            }
-          }
-        }
-      }
+      const tierPrios = providerTierPriorities(route.provider);
       return [
         route.provider,
         {
@@ -976,7 +1091,13 @@ export function getRouterStatus(now = Date.now()): Record<string, unknown> {
           lastFailure: state.lastFailure
         }
       ];
-    })
+    
+}
+
+export function getRouterStatus(now = Date.now()): Record<string, unknown> {
+  const projection = projectLiveAgents(now);
+  const providers = Object.fromEntries(
+    ROUTES.map((route) => routerProviderStatus(route, now, projection))
   );
 
   return {
@@ -1183,27 +1304,112 @@ export function hasWorkspaceClaim(
 
 export function workspacePathLabel(value: unknown): string | null {
   if (typeof value !== "string" || !value.trim()) return null;
-  const label = basename(value.trim());
+  const label = path.basename(value.trim());
   return label && label !== "." && label !== "/" ? label : null;
 }
 
 export function repositoryIdentity(remote: unknown): string | null {
   if (typeof remote !== "string" || !remote.trim()) return null;
-  const normalized = remote.trim().replace(/^git@([^:]+):/, "https://$1/");
+  const normalized = remote.trim().replace(GIT_REMOTE_PATTERN, "https://$1/");
   let pathname: string;
   try {
     pathname = new URL(normalized).pathname;
   } catch {
-    pathname = normalized.split(/[?#]/, 1)[0]!;
+    pathname = normalized.split(URL_QUERY_FRAGMENT_SPLIT_PATTERN, 1)[0]!;
   }
   const parts = pathname
     .split("/")
     .filter(Boolean)
-    .map((part) => part.replace(/\.git$/i, ""));
+    .map((part) => part.replace(GIT_EXTENSION_PATTERN, ""));
   if (parts.length < 2) return null;
-  const owner = parts.at(-2)!.replaceAll(/[^A-Za-z0-9._-]/g, "");
-  const repo = parts.at(-1)!.replaceAll(/[^A-Za-z0-9._-]/g, "");
+  const owner = parts.at(-2)!.replaceAll(REPO_ID_SANITIZE_PATTERN, "");
+  const repo = parts.at(-1)!.replaceAll(REPO_ID_SANITIZE_PATTERN, "");
   return owner && repo ? `${owner}/${repo}` : null;
+}
+
+function resolveTurnMetadataWorkspaces(
+  turnMetadataHeader: string | null
+): Record<string, Record<string, unknown>> {
+  const turnMetadata = parseTurnMetadataJson(turnMetadataHeader);
+  if (
+    !turnMetadata ||
+    !turnMetadata.workspaces ||
+    typeof turnMetadata.workspaces !== "object" ||
+    Array.isArray(turnMetadata.workspaces)
+  )
+    return {};
+  return turnMetadata.workspaces as Record<string, Record<string, unknown>>;
+}
+
+function resolveExplicitWorkspacePaths(
+  payload: Record<string, unknown> | null | undefined
+): unknown[] {
+  const metadata = payload?.metadata as Record<string, unknown> | undefined;
+  return [
+    ...WORKSPACE_KEYS.map((key) => payload?.[key]),
+    ...(metadata && typeof metadata === "object"
+      ? WORKSPACE_KEYS.map((key) => metadata[key])
+      : [])
+  ];
+}
+
+function resolveWorkspacePathCandidate(
+  explicitPaths: unknown[],
+  resolvableKeys: string[]
+): string | null {
+  const explicit = explicitPaths.find(
+    (value) => typeof value === "string" && value.trim()
+  ) as string | undefined;
+  if (explicit) return explicit;
+  if (resolvableKeys.length === 1) return resolvableKeys[0] ?? null;
+  return null;
+}
+
+function resolveWorkspaceMatchEntry(
+  workspaces: Record<string, Record<string, unknown>>,
+  workspacePath: string | null,
+  resolvableKeys: string[],
+  workspaceKeys: string[]
+): Record<string, unknown> | null {
+  if (workspacePath && workspaces[workspacePath]) return workspaces[workspacePath];
+  if (resolvableKeys.length === 1) {
+    const key = resolvableKeys[0];
+    return key ? workspaces[key] ?? null : null;
+  }
+  if (workspaceKeys.length === 1) {
+    const key = workspaceKeys[0];
+    return key ? workspaces[key] ?? null : null;
+  }
+  return null;
+}
+
+function resolveRepositoryFromEntry(
+  entry: Record<string, unknown> | null
+): string | null {
+  const remotes = entry?.associated_remote_urls;
+  if (!remotes || typeof remotes !== "object") return null;
+  for (const value of Object.values(remotes)) {
+    const id = repositoryIdentity(value);
+    if (id) return id;
+  }
+  return null;
+}
+
+function resolveWorkspaceId(
+  entry: Record<string, unknown> | null,
+  turnMetadata: Record<string, unknown> | undefined,
+  key: string
+): string | null {
+  const rawId =
+    (entry?.workspace_id as string | undefined) ??
+    (entry?.workspaceId as string | undefined) ??
+    (entry?.id as string | undefined) ??
+    (turnMetadata?.workspace_id as string | undefined) ??
+    (turnMetadata?.workspaceId as string | undefined) ??
+    null;
+  if (typeof rawId === "string" && rawId.trim()) return safeWorkspaceId(rawId);
+  if (key === "unknown") return null;
+  return `ws_${createHash("sha256").update(key).digest("hex").slice(0, 12)}`;
 }
 
 export function workspaceContextFromRequest(
@@ -1212,71 +1418,43 @@ export function workspaceContextFromRequest(
   turnMetadataHeader: string | null
 ): { key: string; cwd: string | null; workspace_id?: string } {
   const turnMetadata = parseTurnMetadataJson(turnMetadataHeader);
-  const workspaces =
-    turnMetadata?.workspaces &&
-    typeof turnMetadata.workspaces === "object" &&
-    !Array.isArray(turnMetadata.workspaces)
-      ? (turnMetadata.workspaces as Record<string, Record<string, unknown>>)
-      : {};
-  const metadata = payload?.metadata as Record<string, unknown> | undefined;
-  const explicitPaths = [
-    ...WORKSPACE_KEYS.map((key) => payload?.[key]),
-    ...(metadata && typeof metadata === "object"
-      ? WORKSPACE_KEYS.map((key) => metadata[key])
-      : [])
-  ];
+  const workspaces = resolveTurnMetadataWorkspaces(turnMetadataHeader);
+  const explicitPaths = resolveExplicitWorkspacePaths(payload);
   const resolvableKeys = Object.keys(workspaces).filter(
     (value) => typeof value === "string" && value.trim() && isDirectory(value)
   );
-  const path =
-    (explicitPaths.find(
-      (value) => typeof value === "string" && value.trim()
-    ) as string | undefined) ??
-    (resolvableKeys.length === 1 ? resolvableKeys[0] : null) ??
-    null;
+  const workspacePath = resolveWorkspacePathCandidate(
+    explicitPaths,
+    resolvableKeys
+  );
   const workspaceKeys = Object.keys(workspaces);
   const labelPath =
-    path ??
+    workspacePath ??
     (resolvableKeys.length === 0 && workspaceKeys.length === 1
       ? workspaceKeys[0]
       : null);
-  const matchingEntry =
-    path && workspaces[path]
-      ? workspaces[path]
-      : resolvableKeys.length === 1
-        ? workspaces[resolvableKeys[0]!]
-        : workspaceKeys.length === 1
-          ? workspaces[workspaceKeys[0]!]
-          : null;
-  const remotes = matchingEntry?.associated_remote_urls as
-    Record<string, string> | undefined;
-  const repository =
-    remotes && typeof remotes === "object"
-      ? (Object.values(remotes).map(repositoryIdentity).find(Boolean) ?? null)
-      : null;
+  const matchingEntry = resolveWorkspaceMatchEntry(
+    workspaces,
+    workspacePath,
+    resolvableKeys,
+    workspaceKeys
+  );
+  const repository = resolveRepositoryFromEntry(matchingEntry);
   const key = repository ?? workspacePathLabel(labelPath) ?? "unknown";
   const cwd = workspacePathLabel(labelPath);
-
-  const rawId =
-    (matchingEntry?.workspace_id as string | undefined) ??
-    (matchingEntry?.workspaceId as string | undefined) ??
-    (matchingEntry?.id as string | undefined) ??
-    (turnMetadata?.workspace_id as string | undefined) ??
-    (turnMetadata?.workspaceId as string | undefined) ??
-    null;
-
-  const derivedId =
-    key === "unknown"
-      ? null
-      : `ws_${createHash("sha256").update(key).digest("hex").slice(0, 12)}`;
-  const workspaceId =
-    typeof rawId === "string" && rawId.trim()
-      ? safeWorkspaceId(rawId)
-      : derivedId;
+  const workspaceId = resolveWorkspaceId(
+    matchingEntry,
+    turnMetadata as Record<string, unknown> | undefined,
+    key
+  );
 
   if (key !== "unknown") {
     if (workspaceId) registerWorkspaceId(workspaceId, key);
-    if (derivedId) registerWorkspaceId(derivedId, key);
+    if (workspaceId)
+      registerWorkspaceId(
+        `ws_${createHash("sha256").update(key).digest("hex").slice(0, 12)}`,
+        key
+      );
   }
 
   const context: { key: string; cwd: string | null; workspace_id?: string } = {
@@ -1365,48 +1543,12 @@ export async function loadCatalog(
   }
 }
 
-export async function handleRequest(
+async function handleProviderAdminRoute(
+  pathname: string,
   request: IncomingMessage,
   response: ServerResponse
-): Promise<void> {
-  const pathname = new URL(request.url ?? "/", `http://${HOST}:${PORT}`)
-    .pathname;
-  if (pathname === "/health" || pathname === "/health/liveliness") {
-    sendJson(response, 200, { status: "ok", router: "codex-model-router" });
-    return;
-  }
-  if (pathname === "/health/readiness") {
-    if (getDefaultRouterLifecycle().isDraining()) {
-      sendJson(
-        response,
-        503,
-        errorBody("Router is draining for shutdown.", "router_draining", {
-          code: "router_draining",
-          retryable: true
-        })
-      );
-      return;
-    }
-    sendJson(response, 200, {
-      status: "ready",
-      router: "codex-model-router",
-      lifecycle: getDefaultRouterLifecycle().getLifecycleStatus()
-    });
-    return;
-  }
-  if (pathname === "/dashboard" && request.method === "GET") {
-    await sendDashboard(response);
-    return;
-  }
-  if (pathname === "/status" && request.method === "GET") {
-    sendJson(response, 200, getRouterStatus(), { "cache-control": "no-store" });
-    return;
-  }
-  if (pathname === "/v1/models" && request.method === "GET") {
-    sendJson(response, 200, await loadCatalog());
-    return;
-  }
-  const providerMatch = pathname.match(/^\/v1\/providers\/([a-zA-Z0-9._-]+)$/);
+): Promise<boolean> {
+  const providerMatch = pathname.match(PROVIDER_ROUTE_PATH_PATTERN);
   if (providerMatch) {
     if (request.method !== "POST") {
       sendJson(
@@ -1417,7 +1559,7 @@ export async function handleRequest(
         }),
         { allow: "POST" }
       );
-      return;
+      return true;
     }
     const remoteAddress = request.socket?.remoteAddress;
     if (!isLoopbackAddress(remoteAddress)) {
@@ -1430,7 +1572,7 @@ export async function handleRequest(
           { code: "router_access_denied" }
         )
       );
-      return;
+      return true;
     }
     const providerParam = providerMatch[1]!;
     const provider = providerParam.toLowerCase().trim();
@@ -1447,18 +1589,18 @@ export async function handleRequest(
           { code: "router_unknown_provider" }
         )
       );
-      return;
+      return true;
     }
     let payload: Record<string, unknown>;
     try {
       payload = JSON.parse(await requestBody(request));
     } catch {
       sendJson(response, 400, errorBody("request body must be valid JSON"));
-      return;
+      return true;
     }
     if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
       sendJson(response, 400, errorBody("request body must be a JSON object"));
-      return;
+      return true;
     }
     if (typeof payload.enabled !== "boolean") {
       sendJson(
@@ -1466,7 +1608,7 @@ export async function handleRequest(
         400,
         errorBody("request body requires boolean 'enabled'")
       );
-      return;
+      return true;
     }
     ROUTING_POLICY.setProviderEnabled(provider, payload.enabled);
     await persistRouterStateNow();
@@ -1480,57 +1622,17 @@ export async function handleRequest(
           : "ready"
         : "disabled"
     });
-    return;
+    return true;
   }
-  if (
-    pathname === "/v1/responses" &&
-    request.method === "POST" &&
-    !routerAuthorizationValid(request)
-  ) {
-    sendRouterAuthFailure(response);
-    return;
-  }
-  if (pathname === AGENT_EVENTS_PATH && request.method === "POST") {
-    try {
-      const result = ingestAgentEvents(JSON.parse(await requestBody(request)));
-      if (result.reason === "unknown_request_id") {
-        sendJson(
-          response,
-          404,
-          errorBody(
-            "No router request matches the reported request id.",
-            "router_unknown_request",
-            { code: "router_unknown_request" }
-          )
-        );
-        return;
-      }
-      sendJson(response, 200, result);
-    } catch {
-      sendJson(
-        response,
-        400,
-        errorBody("Agent event request must be valid JSON")
-      );
-    }
-    return;
-  }
-  const otelSignals: Record<string, "logs" | "traces" | "metrics"> = {
-    "/v1/logs": "logs",
-    "/v1/traces": "traces",
-    "/v1/metrics": "metrics"
-  };
-  if (request.method === "POST" && otelSignals[pathname]) {
-    try {
-      const payload = JSON.parse(await requestBody(request));
-      ingestOtelSignal(otelSignals[pathname]!, payload);
-      sendJson(response, 200, {});
-    } catch {
-      getDefaultOtelTracker().otelTelemetry.receiver.invalid += 1;
-      sendJson(response, 400, errorBody("OTLP request must be valid JSON"));
-    }
-    return;
-  }
+
+  return false;
+}
+
+async function handleResponseRequest(
+  pathname: string,
+  request: IncomingMessage,
+  response: ServerResponse
+): Promise<void> {
   if (pathname !== "/v1/responses" || request.method !== "POST") {
     sendJson(response, 404, errorBody("not found"));
     return;
@@ -1696,12 +1798,116 @@ export async function handleRequest(
   }
 }
 
+export async function handleRequest(
+  request: IncomingMessage,
+  response: ServerResponse
+): Promise<void> {
+  const pathname = new URL(request.url ?? "/", `http://${HOST}:${PORT}`)
+    .pathname;
+  if (await handlePreflightRoutes(pathname, request, response)) return;
+  if (
+    pathname === "/v1/responses" &&
+    request.method === "POST" &&
+    !routerAuthorizationValid(request)
+  ) {
+    sendRouterAuthFailure(response);
+    return;
+  }
+  if (pathname === AGENT_EVENTS_PATH && request.method === "POST") {
+    try {
+      const result = ingestAgentEvents(JSON.parse(await requestBody(request)));
+      if (result.reason === "unknown_request_id") {
+        sendJson(
+          response,
+          404,
+          errorBody(
+            "No router request matches the reported request id.",
+            "router_unknown_request",
+            { code: "router_unknown_request" }
+          )
+        );
+        return;
+      }
+      sendJson(response, 200, result);
+    } catch {
+      sendJson(
+        response,
+        400,
+        errorBody("Agent event request must be valid JSON")
+      );
+    }
+    return;
+  }
+
+  await handleResponseRequest(pathname, request, response);
+}
+
+async function handlePreflightRoutes(
+  pathname: string,
+  request: IncomingMessage,
+  response: ServerResponse
+): Promise<boolean> {
+  if (pathname === "/health" || pathname === "/health/liveliness") {
+    sendJson(response, 200, { status: "ok", router: "codex-model-router" });
+    return true;
+  }
+  if (pathname === "/health/readiness") {
+    if (getDefaultRouterLifecycle().isDraining()) {
+      sendJson(
+        response,
+        503,
+        errorBody("Router is draining for shutdown.", "router_draining", {
+          code: "router_draining",
+          retryable: true
+        })
+      );
+      return true;
+    }
+    sendJson(response, 200, {
+      status: "ready",
+      router: "codex-model-router",
+      lifecycle: getDefaultRouterLifecycle().getLifecycleStatus()
+    });
+    return true;
+  }
+  if (pathname === "/dashboard" && request.method === "GET") {
+    await sendDashboard(response);
+    return true;
+  }
+  if (pathname === "/status" && request.method === "GET") {
+    sendJson(response, 200, getRouterStatus(), { "cache-control": "no-store" });
+    return true;
+  }
+  if (pathname === "/v1/models" && request.method === "GET") {
+    sendJson(response, 200, await loadCatalog());
+    return true;
+  }
+  if (await handleProviderAdminRoute(pathname, request, response)) return true;
+  const otelSignals: Record<string, "logs" | "traces" | "metrics"> = {
+    "/v1/logs": "logs",
+    "/v1/traces": "traces",
+    "/v1/metrics": "metrics"
+  };
+  if (request.method === "POST" && otelSignals[pathname]) {
+    try {
+      const payload = JSON.parse(await requestBody(request));
+      ingestOtelSignal(otelSignals[pathname]!, payload);
+      sendJson(response, 200, {});
+    } catch {
+      getDefaultOtelTracker().otelTelemetry.receiver.invalid += 1;
+      sendJson(response, 400, errorBody("OTLP request must be valid JSON"));
+    }
+    return true;
+  }
+  return false;
+}
+
 export async function handle(
   request: IncomingMessage,
   response: ServerResponse
 ): Promise<void> {
   try {
-    return await handleRequest(request, response);
+    await handleRequest(request, response);
   } catch (error) {
     const info = transportErrorInfo(error);
     writeErrorLine(
@@ -1723,7 +1929,9 @@ export async function handle(
           response.write(
             responseFailureEvent("The router could not complete the request.")
           );
-        } catch {}
+        } catch {
+          /* stream already closed */
+        }
         response.end();
       } else {
         sendJson(

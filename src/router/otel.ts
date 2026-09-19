@@ -3467,220 +3467,310 @@ export class OtelTracker {
     spawns.byModel[model] = (spawns.byModel[model] ?? 0) + delta;
   }
 
+  private dispatchSkillInjected(
+    metric: OtelMetric,
+    resourceAttributes: OtelAttributeMap
+  ): void {
+    const temporality = metric.sum?.aggregationTemporality;
+    for (const dataPoint of metric.sum?.dataPoints ?? []) {
+      const dpAttributes = otelAttributes(dataPoint.attributes);
+      this.noteSkillInjected(
+        metric.name ?? "",
+        { ...resourceAttributes, ...dpAttributes },
+        dataPoint,
+        temporality,
+        dpAttributes,
+        resourceAttributes
+      );
+    }
+  }
+
+  private dispatchSkillTurnHistogram(metric: OtelMetric): void {
+    const name = metric.name ?? "";
+    const histKey = SKILL_TURN_HISTOGRAMS[name]!;
+    const bucket = this.telemetry.skills.turnDuration[histKey];
+    const temporality = metric.histogram?.aggregationTemporality;
+    for (const dataPoint of metric.histogram?.dataPoints ?? []) {
+      this.noteThreadSkillsHistogram(
+        bucket,
+        name,
+        otelAttributes(dataPoint.attributes),
+        dataPoint,
+        temporality
+      );
+    }
+  }
+
+  private dispatchThreadSkillsHistogram(metric: OtelMetric): void {
+    const name = metric.name ?? "";
+    const histKey = THREAD_SKILLS_HISTOGRAMS[name]!;
+    const bucket = this.telemetry.skills.threads[histKey];
+    const temporality = metric.histogram?.aggregationTemporality;
+    for (const dataPoint of metric.histogram?.dataPoints ?? []) {
+      this.noteThreadSkillsHistogram(
+        bucket,
+        name,
+        otelAttributes(dataPoint.attributes),
+        dataPoint,
+        temporality
+      );
+    }
+  }
+
+  private dispatchSqliteCounter(metric: OtelMetric): void {
+    const name = metric.name ?? "";
+    const collection = name.endsWith("fallback.count")
+      ? this.telemetry.sqlite.fallbacks
+      : this.telemetry.sqlite.init;
+    const temporality = metric.sum?.aggregationTemporality;
+    for (const dataPoint of metric.sum?.dataPoints ?? []) {
+      this.noteSqliteCounter(
+        collection,
+        name,
+        otelAttributes(dataPoint.attributes),
+        dataPoint,
+        temporality
+      );
+    }
+  }
+
+  private dispatchSqliteInitDuration(metric: OtelMetric): void {
+    const temporality = metric.histogram?.aggregationTemporality;
+    for (const dataPoint of metric.histogram?.dataPoints ?? []) {
+      const attributes = otelAttributes(dataPoint.attributes);
+      const identity = {
+        db: safeMetricLabel(attributes.db),
+        status: safeMetricLabel(attributes.status)
+      };
+      const count = this.otelSeriesDelta(
+        otelSeriesKey(
+          `${metric.name}#count`,
+          identity,
+          dataPoint.startTimeUnixNano
+        ),
+        dataPoint.timeUnixNano,
+        numberAttribute({ count: dataPoint.count }, "count"),
+        temporality
+      );
+      const sum = this.otelSeriesDelta(
+        otelSeriesKey(
+          `${metric.name}#sum`,
+          identity,
+          dataPoint.startTimeUnixNano
+        ),
+        dataPoint.timeUnixNano,
+        numberAttribute({ sum: dataPoint.sum }, "sum"),
+        temporality
+      );
+      const bucket = this.sqliteDurationBucket(attributes);
+      bucket.count += count;
+      bucket.sum += sum;
+    }
+  }
+
+  private dispatchToolCall(
+    metric: OtelMetric,
+    resourceAttributes: OtelAttributeMap
+  ): void {
+    const temporality = metric.sum?.aggregationTemporality;
+    for (const dataPoint of metric.sum?.dataPoints ?? []) {
+      this.noteToolCounter(
+        metric.name ?? "",
+        otelAttributes(dataPoint.attributes),
+        dataPoint,
+        temporality,
+        resourceAttributes
+      );
+    }
+  }
+
+  private dispatchToolResult(metric: OtelMetric, resourceAttributes: OtelAttributeMap): void {
+    const name = metric.name ?? "";
+    this.noteToolResultCounter(
+      name,
+      resourceAttributes,
+      metric.sum?.dataPoints ?? [],
+      metric.sum?.aggregationTemporality
+    );
+    const histogramTemporality = metric.histogram?.aggregationTemporality;
+    if (metric.histogram?.dataPoints?.length) {
+      this.noteToolResultDuration(
+        name,
+        resourceAttributes,
+        metric.histogram.dataPoints,
+        histogramTemporality
+      );
+    }
+  }
+
+  private dispatchToolCallDuration(
+    metric: OtelMetric,
+    resourceAttributes: OtelAttributeMap
+  ): void {
+    const temporality = metric.histogram?.aggregationTemporality;
+    for (const dataPoint of metric.histogram?.dataPoints ?? []) {
+      this.noteToolDuration(
+        metric.name ?? "",
+        otelAttributes(dataPoint.attributes),
+        dataPoint,
+        temporality,
+        resourceAttributes
+      );
+    }
+  }
+
+  private dispatchHooksRun(
+    metric: OtelMetric,
+    resourceAttributes: OtelAttributeMap
+  ): void {
+    const name = metric.name ?? "";
+    const temporality = metric.sum?.aggregationTemporality;
+    for (const dataPoint of metric.sum?.dataPoints ?? []) {
+      this.noteHookCounter(
+        name,
+        otelAttributes(dataPoint.attributes),
+        dataPoint,
+        temporality,
+        resourceAttributes
+      );
+    }
+    const histogramTemporality = metric.histogram?.aggregationTemporality;
+    for (const dataPoint of metric.histogram?.dataPoints ?? []) {
+      this.noteHookHistogramCount(
+        name,
+        otelAttributes(dataPoint.attributes),
+        dataPoint,
+        histogramTemporality,
+        resourceAttributes
+      );
+    }
+  }
+
+  private dispatchHooksRunDuration(
+    metric: OtelMetric,
+    resourceAttributes: OtelAttributeMap
+  ): void {
+    const temporality = metric.histogram?.aggregationTemporality;
+    for (const dataPoint of metric.histogram?.dataPoints ?? []) {
+      this.noteHookDuration(
+        metric.name ?? "",
+        otelAttributes(dataPoint.attributes),
+        dataPoint,
+        temporality,
+        resourceAttributes
+      );
+    }
+  }
+
+  private dispatchThreadStarted(metric: OtelMetric): void {
+    const name = metric.name ?? "";
+    const temporality = metric.sum?.aggregationTemporality;
+    for (const dataPoint of metric.sum?.dataPoints ?? []) {
+      this.noteThreadStarted(
+        name,
+        otelAttributes(dataPoint.attributes),
+        dataPoint,
+        temporality
+      );
+    }
+    const histogramTemporality = metric.histogram?.aggregationTemporality;
+    for (const dataPoint of metric.histogram?.dataPoints ?? []) {
+      this.noteHistogramCount(
+        this.telemetry.threads.started,
+        name,
+        otelAttributes(dataPoint.attributes),
+        dataPoint,
+        histogramTemporality
+      );
+    }
+  }
+
+  private dispatchMultiAgentSpawn(metric: OtelMetric): void {
+    const name = metric.name ?? "";
+    const temporality = metric.sum?.aggregationTemporality;
+    for (const dataPoint of metric.sum?.dataPoints ?? []) {
+      this.noteThreadSpawn(
+        name,
+        otelAttributes(dataPoint.attributes),
+        dataPoint,
+        temporality
+      );
+    }
+    const histogramTemporality = metric.histogram?.aggregationTemporality;
+    for (const dataPoint of metric.histogram?.dataPoints ?? []) {
+      this.noteThreadSpawn(
+        name,
+        otelAttributes(dataPoint.attributes),
+        { ...dataPoint, asInt: dataPoint.count } as OtelDataPoint,
+        histogramTemporality
+      );
+    }
+  }
+
+  private dispatchOtelMetric(
+    metric: OtelMetric,
+    resourceAttributes: OtelAttributeMap
+  ): void {
+    const name = metric.name;
+    if (name === "codex.skill.injected") {
+      this.dispatchSkillInjected(metric, resourceAttributes);
+      return;
+    }
+    if (name && SKILL_TURN_HISTOGRAMS[name]) {
+      this.dispatchSkillTurnHistogram(metric);
+      return;
+    }
+    if (name && THREAD_SKILLS_HISTOGRAMS[name]) {
+      this.dispatchThreadSkillsHistogram(metric);
+      return;
+    }
+    if (name === "codex.sqlite.init.count" || name === "codex.sqlite.fallback.count") {
+      this.dispatchSqliteCounter(metric);
+      return;
+    }
+    if (name === "codex.sqlite.init.duration_ms") {
+      this.dispatchSqliteInitDuration(metric);
+      return;
+    }
+    if (name === "codex.tool.call") {
+      this.dispatchToolCall(metric, resourceAttributes);
+      return;
+    }
+    if (name === "codex.tool_result") {
+      this.dispatchToolResult(metric, resourceAttributes);
+      return;
+    }
+    if (name === "codex.tool.call.duration_ms") {
+      this.dispatchToolCallDuration(metric, resourceAttributes);
+      return;
+    }
+    if (name === "codex.hooks.run") {
+      this.dispatchHooksRun(metric, resourceAttributes);
+      return;
+    }
+    if (name === "codex.hooks.run.duration_ms") {
+      this.dispatchHooksRunDuration(metric, resourceAttributes);
+      return;
+    }
+    if (name === "codex.thread.started") {
+      this.dispatchThreadStarted(metric);
+      return;
+    }
+    if (name === "codex.multi_agent.spawn") {
+      this.dispatchMultiAgentSpawn(metric);
+    }
+  }
+
   ingestOtelMetrics(payload: OtelPayload): void {
     for (const resourceMetric of payload?.resourceMetrics ?? []) {
       for (const scopeMetric of resourceMetric.scopeMetrics ?? []) {
         for (const metric of scopeMetric.metrics ?? []) {
           if (REMOVED_SHADOW_SELECTION_METRICS.has(metric.name)) continue;
           this.noteMetricInventory(metric);
-          if (metric.name === "codex.skill.injected") {
-            const temporality = metric.sum?.aggregationTemporality;
-            const resourceAttributes = otelAttributes(
-              resourceMetric.resource?.attributes
-            );
-            for (const dataPoint of metric.sum?.dataPoints ?? []) {
-              const dpAttributes = otelAttributes(dataPoint.attributes);
-              this.noteSkillInjected(
-                metric.name,
-                { ...resourceAttributes, ...dpAttributes },
-                dataPoint,
-                temporality,
-                dpAttributes,
-                resourceAttributes
-              );
-            }
-          } else if (metric.name && SKILL_TURN_HISTOGRAMS[metric.name]) {
-            const histKey = SKILL_TURN_HISTOGRAMS[metric.name]!;
-            const bucket = this.telemetry.skills.turnDuration[histKey];
-            const temporality = metric.histogram?.aggregationTemporality;
-            for (const dataPoint of metric.histogram?.dataPoints ?? [])
-              this.noteThreadSkillsHistogram(
-                bucket,
-                metric.name,
-                otelAttributes(dataPoint.attributes),
-                dataPoint,
-                temporality
-              );
-          } else if (metric.name && THREAD_SKILLS_HISTOGRAMS[metric.name]) {
-            const histKey = THREAD_SKILLS_HISTOGRAMS[metric.name]!;
-            const bucket = this.telemetry.skills.threads[histKey];
-            const temporality = metric.histogram?.aggregationTemporality;
-            for (const dataPoint of metric.histogram?.dataPoints ?? []) {
-              this.noteThreadSkillsHistogram(
-                bucket,
-                metric.name,
-                otelAttributes(dataPoint.attributes),
-                dataPoint,
-                temporality
-              );
-            }
-          } else if (
-            metric.name === "codex.sqlite.init.count" ||
-            metric.name === "codex.sqlite.fallback.count"
-          ) {
-            const collection = metric.name.endsWith("fallback.count")
-              ? this.telemetry.sqlite.fallbacks
-              : this.telemetry.sqlite.init;
-            const temporality = metric.sum?.aggregationTemporality;
-            for (const dataPoint of metric.sum?.dataPoints ?? [])
-              this.noteSqliteCounter(
-                collection,
-                metric.name,
-                otelAttributes(dataPoint.attributes),
-                dataPoint,
-                temporality
-              );
-          } else if (metric.name === "codex.sqlite.init.duration_ms") {
-            const temporality = metric.histogram?.aggregationTemporality;
-            for (const dataPoint of metric.histogram?.dataPoints ?? []) {
-              const attributes = otelAttributes(dataPoint.attributes);
-              const identity = {
-                db: safeMetricLabel(attributes.db),
-                status: safeMetricLabel(attributes.status)
-              };
-              const count = this.otelSeriesDelta(
-                otelSeriesKey(
-                  `${metric.name}#count`,
-                  identity,
-                  dataPoint.startTimeUnixNano
-                ),
-                dataPoint.timeUnixNano,
-                numberAttribute({ count: dataPoint.count }, "count"),
-                temporality
-              );
-              const sum = this.otelSeriesDelta(
-                otelSeriesKey(
-                  `${metric.name}#sum`,
-                  identity,
-                  dataPoint.startTimeUnixNano
-                ),
-                dataPoint.timeUnixNano,
-                numberAttribute({ sum: dataPoint.sum }, "sum"),
-                temporality
-              );
-              const bucket = this.sqliteDurationBucket(attributes);
-              bucket.count += count;
-              bucket.sum += sum;
-            }
-          } else if (metric.name === "codex.tool.call") {
-            const temporality = metric.sum?.aggregationTemporality;
-            const resourceAttributes = otelAttributes(
-              resourceMetric.resource?.attributes
-            );
-            for (const dataPoint of metric.sum?.dataPoints ?? [])
-              this.noteToolCounter(
-                metric.name,
-                otelAttributes(dataPoint.attributes),
-                dataPoint,
-                temporality,
-                resourceAttributes
-              );
-          } else if (metric.name === "codex.tool_result") {
-            const resourceAttributes = otelAttributes(
-              resourceMetric.resource?.attributes
-            );
-            this.noteToolResultCounter(
-              metric.name,
-              resourceAttributes,
-              metric.sum?.dataPoints ?? [],
-              metric.sum?.aggregationTemporality
-            );
-            const histogramTemporality =
-              metric.histogram?.aggregationTemporality;
-            if (metric.histogram?.dataPoints?.length)
-              this.noteToolResultDuration(
-                metric.name,
-                resourceAttributes,
-                metric.histogram.dataPoints,
-                histogramTemporality
-              );
-          } else if (metric.name === "codex.tool.call.duration_ms") {
-            const temporality = metric.histogram?.aggregationTemporality;
-            const resourceAttributes = otelAttributes(
-              resourceMetric.resource?.attributes
-            );
-            for (const dataPoint of metric.histogram?.dataPoints ?? [])
-              this.noteToolDuration(
-                metric.name,
-                otelAttributes(dataPoint.attributes),
-                dataPoint,
-                temporality,
-                resourceAttributes
-              );
-          } else if (metric.name === "codex.hooks.run") {
-            const temporality = metric.sum?.aggregationTemporality;
-            const resourceAttributes = otelAttributes(
-              resourceMetric.resource?.attributes
-            );
-            for (const dataPoint of metric.sum?.dataPoints ?? [])
-              this.noteHookCounter(
-                metric.name,
-                otelAttributes(dataPoint.attributes),
-                dataPoint,
-                temporality,
-                resourceAttributes
-              );
-            const histogramTemporality =
-              metric.histogram?.aggregationTemporality;
-            for (const dataPoint of metric.histogram?.dataPoints ?? [])
-              this.noteHookHistogramCount(
-                metric.name,
-                otelAttributes(dataPoint.attributes),
-                dataPoint,
-                histogramTemporality,
-                resourceAttributes
-              );
-          } else if (metric.name === "codex.hooks.run.duration_ms") {
-            const temporality = metric.histogram?.aggregationTemporality;
-            const resourceAttributes = otelAttributes(
-              resourceMetric.resource?.attributes
-            );
-            for (const dataPoint of metric.histogram?.dataPoints ?? [])
-              this.noteHookDuration(
-                metric.name,
-                otelAttributes(dataPoint.attributes),
-                dataPoint,
-                temporality,
-                resourceAttributes
-              );
-          } else if (metric.name === "codex.thread.started") {
-            const temporality = metric.sum?.aggregationTemporality;
-            for (const dataPoint of metric.sum?.dataPoints ?? [])
-              this.noteThreadStarted(
-                metric.name,
-                otelAttributes(dataPoint.attributes),
-                dataPoint,
-                temporality
-              );
-            const histogramTemporality =
-              metric.histogram?.aggregationTemporality;
-            for (const dataPoint of metric.histogram?.dataPoints ?? [])
-              this.noteHistogramCount(
-                this.telemetry.threads.started,
-                metric.name,
-                otelAttributes(dataPoint.attributes),
-                dataPoint,
-                histogramTemporality
-              );
-          } else if (metric.name === "codex.multi_agent.spawn") {
-            const temporality = metric.sum?.aggregationTemporality;
-            for (const dataPoint of metric.sum?.dataPoints ?? [])
-              this.noteThreadSpawn(
-                metric.name,
-                otelAttributes(dataPoint.attributes),
-                dataPoint,
-                temporality
-              );
-            const histogramTemporality =
-              metric.histogram?.aggregationTemporality;
-            for (const dataPoint of metric.histogram?.dataPoints ?? [])
-              this.noteThreadSpawn(
-                metric.name,
-                otelAttributes(dataPoint.attributes),
-                { ...dataPoint, asInt: dataPoint.count } as OtelDataPoint,
-                histogramTemporality
-              );
-          }
+          this.dispatchOtelMetric(
+            metric,
+            otelAttributes(resourceMetric.resource?.attributes)
+          );
         }
       }
     }
@@ -3700,6 +3790,142 @@ export class OtelTracker {
     if (signal === "traces") this.ingestOtelTraces(ingestPayload);
     if (signal === "metrics") this.ingestOtelMetrics(ingestPayload);
     this.onSchedulePersist?.();
+  }
+
+  private bridgeToolObservationStatus(event: BridgeObservationEventInput): string {
+    if (event.type === "tool_unavailable") return "unavailable";
+    if (event.status === "error" || event.status === "failure") return "error";
+    if (event.status === "ok" || event.status === "success") return "ok";
+    return "unknown";
+  }
+
+  private bridgeToolBucketFor(eventType: unknown): BridgeToolBucket {
+    if (eventType === "tool_executed") return this.telemetry.bridgeEvents.toolExecuted;
+    if (eventType === "tool_requested") return this.telemetry.bridgeEvents.toolRequested;
+    return this.telemetry.bridgeEvents.toolUnavailable;
+  }
+
+  private incrementBridgeToolRow(
+    bucket: BridgeToolBucket,
+    toolBucketKey: string,
+    tool: string,
+    server: string | null,
+    callId: string | null,
+    statusKey: string
+  ): void {
+    const toolRow = bucket.byTool.get(toolBucketKey) ?? {
+      tool,
+      server: server ?? "",
+      callId: callId ?? null,
+      count: 0,
+      byStatus: {}
+    };
+    toolRow.count += 1;
+    if (server && !toolRow.server) toolRow.server = server;
+    const statusMap = toolRow.byStatus as Record<string, number>;
+    statusMap[statusKey] = (statusMap[statusKey] ?? 0) + 1;
+    bucket.byTool.set(toolBucketKey, toolRow);
+  }
+
+  private incrementBridgeWorkspaceRow(
+    bucket: BridgeToolBucket,
+    workspaceKey: string,
+    tool: string,
+    server: string | null,
+    statusKey: string
+  ): void {
+    const wsRow = bucket.byWorkspace.get(workspaceKey) ?? {
+      workspaceKey,
+      count: 0,
+      byTool: new Map(),
+      byStatus: {}
+    };
+    wsRow.count += 1;
+    (wsRow.byStatus as Record<string, number>)[statusKey] =
+      ((wsRow.byStatus as Record<string, number>)[statusKey] ?? 0) + 1;
+    const wsToolRow = wsRow.byTool.get(tool) ?? {
+      tool,
+      server: server ?? "",
+      count: 0,
+      byStatus: {}
+    };
+    wsToolRow.count += 1;
+    if (server && !wsToolRow.server) wsToolRow.server = server;
+    (wsToolRow.byStatus as Record<string, number>)[statusKey] =
+      ((wsToolRow.byStatus as Record<string, number>)[statusKey] ?? 0) + 1;
+    wsRow.byTool.set(tool, wsToolRow);
+    bucket.byWorkspace.set(workspaceKey, wsRow);
+  }
+
+  private accumulateBridgeUnavailableReason(
+    bucket: BridgeToolBucket & { byReason?: Record<string, number> },
+    reason: unknown
+  ): void {
+    const cleanReason =
+      typeof reason === "string" && reason.trim()
+        ? reason.trim().slice(0, 64)
+        : "denied";
+    bucket.byReason = bucket.byReason ?? {};
+    bucket.byReason[cleanReason] = (bucket.byReason[cleanReason] ?? 0) + 1;
+  }
+
+  private accumulateWorkspaceBridgeObservation(
+    workspaceKey: string,
+    tool: string,
+    server: string | null,
+    statusKey: string
+  ): void {
+    const wsBucket = this.usageTracker.workspaceBucket(
+      this.usageTracker.usageTelemetry.byWorkspace,
+      workspaceKey
+    );
+    wsBucket.toolsCapable = true;
+    wsBucket.toolsExecuted = (wsBucket.toolsExecuted ?? 0) + 1;
+    const toolBucket = wsBucket.bridgeObservations.tools.get(tool) ?? {
+      tool,
+      server: server ?? "",
+      count: 0,
+      byStatus: {}
+    };
+    toolBucket.count += 1;
+    if (server && !toolBucket.server) toolBucket.server = server;
+    toolBucket.byStatus[statusKey] =
+      (toolBucket.byStatus[statusKey] ?? 0) + 1;
+    wsBucket.bridgeObservations.tools.set(tool, toolBucket);
+  }
+
+  private incrementWorkspaceCounter(
+    workspaceKey: string,
+    field: "toolsRequested" | "toolsUnavailable"
+  ): void {
+    const wsBucket = this.usageTracker.workspaceBucket(
+      this.usageTracker.usageTelemetry.byWorkspace,
+      workspaceKey
+    );
+    wsBucket[field] = (wsBucket[field] ?? 0) + 1;
+  }
+
+  private noteBridgeToolMcpObservation(
+    server: string,
+    ctx: TelemetryContext,
+    eventType: unknown
+  ): void {
+    const mcp = this.mcpServer(server);
+    this.noteMcpDimension(mcp, "byRole", ctx.role, ctx, "observed");
+    this.noteMcpDimension(mcp, "byWorkspace", ctx.workspace, ctx, "observed");
+    this.noteMcpDimension(mcp, "byModel", ctx.model, ctx, "observed");
+    this.noteMcpDimension(mcp, "byAgent", ctx.agent, ctx, "observed");
+    if (
+      ctx.workspace !== UNATTRIBUTED_DIMENSION &&
+      eventType === "tool_executed"
+    ) {
+      const wsBucket = this.usageTracker.workspaceBucket(
+        this.usageTracker.usageTelemetry.byWorkspace,
+        ctx.workspace
+      );
+      wsBucket.mcpCapable = true;
+      wsBucket.byMcp[server] = (wsBucket.byMcp[server] ?? 0) + 1;
+    }
   }
 
   recordBridgeToolObservation({
@@ -3725,117 +3951,30 @@ export class OtelTracker {
       typeof event.callId === "string" && event.callId.trim()
         ? event.callId.trim()
         : null;
-    const status =
-      event.type === "tool_unavailable"
-        ? "unavailable"
-        : event.status === "error" || event.status === "failure"
-          ? "error"
-          : event.status === "ok" || event.status === "success"
-            ? "ok"
-            : "unknown";
-    let bucket: BridgeToolBucket;
-    if (event.type === "tool_executed")
-      bucket = this.telemetry.bridgeEvents.toolExecuted;
-    else if (event.type === "tool_requested")
-      bucket = this.telemetry.bridgeEvents.toolRequested;
-    else bucket = this.telemetry.bridgeEvents.toolUnavailable;
+    const status = this.bridgeToolObservationStatus(event);
+    const bucket = this.bridgeToolBucketFor(event.type);
     bucket.total += 1;
     const ctx = this.resolveTelemetryContext(eventMap, {}, { context });
     this.noteContextDimension("bridge", ctx);
     if (server) {
-      const mcp = this.mcpServer(server);
-      this.noteMcpDimension(mcp, "byRole", ctx.role, ctx, "observed");
-      this.noteMcpDimension(mcp, "byWorkspace", ctx.workspace, ctx, "observed");
-      this.noteMcpDimension(mcp, "byModel", ctx.model, ctx, "observed");
-      this.noteMcpDimension(mcp, "byAgent", ctx.agent, ctx, "observed");
-      if (
-        ctx.workspace !== UNATTRIBUTED_DIMENSION &&
-        event.type === "tool_executed"
-      ) {
-        const wsBucket = this.usageTracker.workspaceBucket(
-          this.usageTracker.usageTelemetry.byWorkspace,
-          ctx.workspace
-        );
-        wsBucket.mcpCapable = true;
-        wsBucket.byMcp[server] = (wsBucket.byMcp[server] ?? 0) + 1;
-      }
+      this.noteBridgeToolMcpObservation(server, ctx, event.type);
     }
     const toolBucketKey = callId ? `${tool}::${callId}` : tool;
-    const toolRow = bucket.byTool.get(toolBucketKey) ?? {
-      tool,
-      server: server ?? "",
-      callId: callId ?? null,
-      count: 0,
-      byStatus: {}
-    };
-    toolRow.count += 1;
-    if (server && !toolRow.server) toolRow.server = server;
-    const statusKey = status as string;
-    (toolRow.byStatus as Record<string, number>)[statusKey] =
-      ((toolRow.byStatus as Record<string, number>)[statusKey] ?? 0) + 1;
-    bucket.byTool.set(toolBucketKey, toolRow);
+    this.incrementBridgeToolRow(bucket, toolBucketKey, tool, server, callId, status);
     if (workspaceKey) {
-      const wsRow = bucket.byWorkspace.get(workspaceKey) ?? {
-        workspaceKey,
-        count: 0,
-        byTool: new Map(),
-        byStatus: {}
-      };
-      wsRow.count += 1;
-      (wsRow.byStatus as Record<string, number>)[statusKey] =
-        ((wsRow.byStatus as Record<string, number>)[statusKey] ?? 0) + 1;
-      const wsToolRow = wsRow.byTool.get(tool) ?? {
-        tool,
-        server: server ?? "",
-        count: 0,
-        byStatus: {}
-      };
-      wsToolRow.count += 1;
-      if (server && !wsToolRow.server) wsToolRow.server = server;
-      (wsToolRow.byStatus as Record<string, number>)[statusKey] =
-        ((wsToolRow.byStatus as Record<string, number>)[statusKey] ?? 0) + 1;
-      wsRow.byTool.set(tool, wsToolRow);
-      bucket.byWorkspace.set(workspaceKey, wsRow);
+      this.incrementBridgeWorkspaceRow(bucket, workspaceKey, tool, server, status);
     }
     if (event.type === "tool_unavailable") {
-      const reason =
-        typeof event.reason === "string" && event.reason.trim()
-          ? event.reason.trim().slice(0, 64)
-          : "denied";
-      bucket.byReason = bucket.byReason ?? {};
-      bucket.byReason[reason] = (bucket.byReason[reason] ?? 0) + 1;
+      this.accumulateBridgeUnavailableReason(bucket, event.reason);
     }
     if (workspaceKey && event.type === "tool_executed") {
-      const wsBucket = this.usageTracker.workspaceBucket(
-        this.usageTracker.usageTelemetry.byWorkspace,
-        workspaceKey
-      );
-      wsBucket.toolsCapable = true;
-      wsBucket.toolsExecuted = (wsBucket.toolsExecuted ?? 0) + 1;
-      const toolBucket = wsBucket.bridgeObservations.tools.get(tool) ?? {
-        tool,
-        server: server ?? "",
-        count: 0,
-        byStatus: {}
-      };
-      toolBucket.count += 1;
-      if (server && !toolBucket.server) toolBucket.server = server;
-      toolBucket.byStatus[status] = (toolBucket.byStatus[status] ?? 0) + 1;
-      wsBucket.bridgeObservations.tools.set(tool, toolBucket);
+      this.accumulateWorkspaceBridgeObservation(workspaceKey, tool, server, status);
     }
     if (workspaceKey && event.type === "tool_requested") {
-      const wsBucket = this.usageTracker.workspaceBucket(
-        this.usageTracker.usageTelemetry.byWorkspace,
-        workspaceKey
-      );
-      wsBucket.toolsRequested = (wsBucket.toolsRequested ?? 0) + 1;
+      this.incrementWorkspaceCounter(workspaceKey, "toolsRequested");
     }
     if (workspaceKey && event.type === "tool_unavailable") {
-      const wsBucket = this.usageTracker.workspaceBucket(
-        this.usageTracker.usageTelemetry.byWorkspace,
-        workspaceKey
-      );
-      wsBucket.toolsUnavailable = (wsBucket.toolsUnavailable ?? 0) + 1;
+      this.incrementWorkspaceCounter(workspaceKey, "toolsUnavailable");
     }
   }
 
@@ -4464,52 +4603,9 @@ export class OtelTracker {
   restoreOtelCounters(snapshot: OtelRestoreSnapshot): void {
     if (!snapshot || typeof snapshot !== "object") return;
     if (snapshot.toolResults && typeof snapshot.toolResults === "object") {
-      const target = this.telemetry.toolResults;
-      for (const field of [
-        "total",
-        "executed",
-        "unattributed",
-        "causeResolved",
-        "causeUnresolved"
-      ] as const) {
-        if (
-          Number.isFinite(snapshot.toolResults[field]) &&
-          snapshot.toolResults[field] >= 0
-        ) {
-          target[field] = snapshot.toolResults[field];
-        }
-      }
-      if (
-        snapshot.toolResults.byStatus &&
-        typeof snapshot.toolResults.byStatus === "object"
-      ) {
-        for (const [k, v] of Object.entries(snapshot.toolResults.byStatus)) {
-          if (Number.isFinite(v) && (v as number) >= 0)
-            target.byStatus[safeMetricLabel(k)] = v as number;
-        }
-      }
-      if (
-        snapshot.toolResults.executionDurationMs &&
-        typeof snapshot.toolResults.executionDurationMs === "object"
-      ) {
-        if (
-          Number.isFinite(snapshot.toolResults.executionDurationMs.count) &&
-          snapshot.toolResults.executionDurationMs.count >= 0
-        ) {
-          target.executionDurationMs.count =
-            snapshot.toolResults.executionDurationMs.count;
-        }
-        if (
-          Number.isFinite(snapshot.toolResults.executionDurationMs.sum) &&
-          snapshot.toolResults.executionDurationMs.sum >= 0
-        ) {
-          target.executionDurationMs.sum =
-            snapshot.toolResults.executionDurationMs.sum;
-        }
-      }
+      this.restoreToolResultsCounters(snapshot.toolResults);
     }
     if (snapshot.bridgeEvents && typeof snapshot.bridgeEvents === "object") {
-      const target = this.telemetry.bridgeEvents;
       const families: Array<keyof BridgeEventsState> = [
         "toolExecuted",
         "toolRequested",
@@ -4520,118 +4616,201 @@ export class OtelTracker {
       ];
       for (const family of families) {
         const source = snapshot.bridgeEvents[family];
-        const destination = target[family];
-        if (!source || typeof source !== "object") continue;
-        if (Number.isFinite(source.total) && source.total >= 0)
-          destination.total = source.total;
-        if (family === "skillUsed") {
-          for (const entry of source.bySkill ?? []) {
-            if (
-              !entry ||
-              typeof entry.skill !== "string" ||
-              !Number.isFinite(entry.count)
-            )
-              continue;
-            destination.bySkill.set(safeMetricLabel(entry.skill), {
-              skill: safeMetricLabel(entry.skill),
-              source: safeMetricLabel(entry.source, ""),
-              pluginId: safeMetricLabel(entry.pluginId, ""),
-              count: entry.count
-            });
-          }
-          for (const row of source.byWorkspace ?? []) {
-            if (
-              !row ||
-              typeof row.workspaceKey !== "string" ||
-              !Number.isFinite(row.count)
-            )
-              continue;
-            destination.byWorkspace.set(safeMetricLabel(row.workspaceKey), {
-              workspaceKey: safeMetricLabel(row.workspaceKey),
-              count: row.count,
-              bySkill: new Map(
-                Object.entries(
-                  Object.fromEntries(
-                    (row.bySkill ?? [])
-                      .filter(
-                        (entry: { skill?: unknown; count?: unknown }) =>
-                          entry &&
-                          typeof entry.skill === "string" &&
-                          Number.isFinite(entry.count)
-                      )
-                      .map((entry: { skill?: unknown; count?: unknown }) => [
-                        safeMetricLabel(entry.skill),
-                        entry.count
-                      ])
-                  )
-                )
-              )
-            });
-          }
-        }
-        if (family === "mcpExposed") {
-          for (const entry of source.byServer ?? []) {
-            if (
-              !entry ||
-              typeof entry.server !== "string" ||
-              !Number.isFinite(entry.count)
-            )
-              continue;
-            destination.byServer.set(safeMetricLabel(entry.server), {
-              server: safeMetricLabel(entry.server),
-              source: safeMetricLabel(entry.source, ""),
-              count: entry.count
-            });
-          }
-          for (const row of source.byWorkspace ?? []) {
-            if (
-              !row ||
-              typeof row.workspaceKey !== "string" ||
-              !Number.isFinite(row.count)
-            )
-              continue;
-            destination.byWorkspace.set(safeMetricLabel(row.workspaceKey), {
-              workspaceKey: safeMetricLabel(row.workspaceKey),
-              count: row.count,
-              byServer: new Map(
-                Object.entries(
-                  Object.fromEntries(
-                    (row.byServer ?? [])
-                      .filter(
-                        (entry: { server?: unknown; count?: unknown }) =>
-                          entry &&
-                          typeof entry.server === "string" &&
-                          Number.isFinite(entry.count)
-                      )
-                      .map((entry: { server?: unknown; count?: unknown }) => [
-                        safeMetricLabel(entry.server),
-                        entry.count
-                      ])
-                  )
-                )
-              )
-            });
-          }
-        }
-        if (source.byReason && typeof source.byReason === "object") {
-          for (const [k, v] of Object.entries(source.byReason)) {
-            if (Number.isFinite(v) && (v as number) >= 0)
-              destination.byReason[safeMetricLabel(k)] = v;
-          }
+        if (source && typeof source === "object") {
+          this.restoreBridgeFamily(
+            family,
+            source as unknown as Record<string, unknown>
+          );
         }
       }
     }
   }
 
-  restoreOtelTelemetry(snapshot: OtelRestoreSnapshot): void {
-    if (
-      !snapshot ||
-      typeof snapshot !== "object" ||
-      snapshot.schemaVersion !== OTEL_PERSISTENCE_SCHEMA_VERSION
-    )
-      return;
+  private restoreToolResultsCounters(
+    source: Record<string, unknown>
+  ): void {
+    const target = this.telemetry.toolResults;
+    for (const field of [
+      "total",
+      "executed",
+      "unattributed",
+      "causeResolved",
+      "causeUnresolved"
+    ] as const) {
+      const value = source[field as string];
+      if (typeof value === "number" && value >= 0) {
+        target[field] = value;
+      }
+    }
+    const byStatus = source.byStatus;
+    if (byStatus && typeof byStatus === "object") {
+      for (const [k, v] of Object.entries(byStatus)) {
+        if (typeof v === "number" && v >= 0) {
+          target.byStatus[safeMetricLabel(k)] = v;
+        }
+      }
+    }
+    const exec = source.executionDurationMs as
+      | { count?: unknown; sum?: unknown }
+      | undefined;
+    if (exec && typeof exec === "object") {
+      if (typeof exec.count === "number" && exec.count >= 0) {
+        target.executionDurationMs.count = exec.count;
+      }
+      if (typeof exec.sum === "number" && exec.sum >= 0) {
+        target.executionDurationMs.sum = exec.sum;
+      }
+    }
+  }
 
-    this.restoreOtelCounters(snapshot);
+  private restoreSkillUsedEntries(
+    source: { bySkill?: Array<Record<string, unknown>> }
+  ): void {
+    const destination = this.telemetry.bridgeEvents.skillUsed;
+    for (const entry of source.bySkill ?? []) {
+      if (
+        !entry ||
+        typeof entry.skill !== "string" ||
+        typeof entry.count !== "number"
+      ) {
+        continue;
+      }
+      destination.bySkill.set(safeMetricLabel(entry.skill), {
+        skill: safeMetricLabel(entry.skill),
+        source: safeMetricLabel(entry.source, ""),
+        pluginId: safeMetricLabel(entry.pluginId, ""),
+        count: entry.count
+      });
+    }
+  }
+
+  private buildSkillWorkspaceMap(
+    row: { bySkill?: Array<Record<string, unknown>> }
+  ): Map<string, number> {
+    const entries = (row.bySkill ?? []).filter(
+      (entry): entry is { skill: string; count: number } =>
+        !!entry &&
+        typeof entry.skill === "string" &&
+        typeof entry.count === "number"
+    );
+    return new Map(
+      entries.map((entry) => [safeMetricLabel(entry.skill), entry.count])
+    );
+  }
+
+  private restoreSkillUsedWorkspaces(
+    source: { byWorkspace?: Array<Record<string, unknown>> }
+  ): void {
+    const destination = this.telemetry.bridgeEvents.skillUsed;
+    for (const row of source.byWorkspace ?? []) {
+      if (
+        !row ||
+        typeof row.workspaceKey !== "string" ||
+        typeof row.count !== "number"
+      ) {
+        continue;
+      }
+      destination.byWorkspace.set(safeMetricLabel(row.workspaceKey), {
+        workspaceKey: safeMetricLabel(row.workspaceKey),
+        count: row.count,
+        bySkill: this.buildSkillWorkspaceMap(row)
+      });
+    }
+  }
+
+  private restoreMcpExposedServers(
+    source: { byServer?: Array<Record<string, unknown>> }
+  ): void {
+    const destination = this.telemetry.bridgeEvents.mcpExposed;
+    for (const entry of source.byServer ?? []) {
+      if (
+        !entry ||
+        typeof entry.server !== "string" ||
+        typeof entry.count !== "number"
+      ) {
+        continue;
+      }
+      destination.byServer.set(safeMetricLabel(entry.server), {
+        server: safeMetricLabel(entry.server),
+        source: safeMetricLabel(entry.source, ""),
+        count: entry.count
+      });
+    }
+  }
+
+  private buildMcpWorkspaceMap(
+    row: { byServer?: Array<Record<string, unknown>> }
+  ): Map<string, number> {
+    const entries = (row.byServer ?? []).filter(
+      (entry): entry is { server: string; count: number } =>
+        !!entry &&
+        typeof entry.server === "string" &&
+        typeof entry.count === "number"
+    );
+    return new Map(
+      entries.map((entry) => [safeMetricLabel(entry.server), entry.count])
+    );
+  }
+
+  private restoreMcpExposedWorkspaces(
+    source: { byWorkspace?: Array<Record<string, unknown>> }
+  ): void {
+    const destination = this.telemetry.bridgeEvents.mcpExposed;
+    for (const row of source.byWorkspace ?? []) {
+      if (
+        !row ||
+        typeof row.workspaceKey !== "string" ||
+        typeof row.count !== "number"
+      ) {
+        continue;
+      }
+      destination.byWorkspace.set(safeMetricLabel(row.workspaceKey), {
+        workspaceKey: safeMetricLabel(row.workspaceKey),
+        count: row.count,
+        byServer: this.buildMcpWorkspaceMap(row)
+      });
+    }
+  }
+
+  private restoreBridgeFamilyReasons(
+    source: { byReason?: Record<string, unknown> } | undefined,
+    destination: { byReason?: Record<string, number> }
+  ): void {
+    if (!source?.byReason || typeof source.byReason !== "object") return;
+    destination.byReason = destination.byReason ?? {};
+    for (const [k, v] of Object.entries(source.byReason)) {
+      if (typeof v === "number" && v >= 0) {
+        destination.byReason[safeMetricLabel(k)] = v;
+      }
+    }
+  }
+
+  private restoreBridgeFamily(
+    family: keyof BridgeEventsState,
+    source: Record<string, unknown>
+  ): void {
+    const destination = this.telemetry.bridgeEvents[family] as unknown as {
+      total: number;
+      byReason?: Record<string, number>;
+    };
+    if (!source || typeof source !== "object") return;
+    if (typeof source.total === "number" && source.total >= 0) {
+      destination.total = source.total;
+    }
+    if (family === "skillUsed") {
+      this.restoreSkillUsedEntries(source);
+      this.restoreSkillUsedWorkspaces(source);
+    } else if (family === "mcpExposed") {
+      this.restoreMcpExposedServers(source);
+      this.restoreMcpExposedWorkspaces(source);
+    }
+    this.restoreBridgeFamilyReasons(
+      source as { byReason?: Record<string, unknown> },
+      destination
+    );
+  }
+
+  private restoreOtelReceiver(snapshot: OtelRestoreSnapshot): void {
     restoreNumberFields(
       this.telemetry.receiver as unknown as Record<string, unknown>,
       snapshot.receiver,
@@ -4643,242 +4822,242 @@ export class OtelTracker {
     ) {
       this.telemetry.receiver.lastReceivedAt = snapshot.receiver.lastReceivedAt;
     }
+  }
+
+  private restoreOtelTurns(snapshot: OtelRestoreSnapshot): void {
     restoreNumberFields(
       this.telemetry.turns as unknown as Record<string, unknown>,
       snapshot.turns,
       ["prompts", "completed", "promptLength", "ttftMs", "ttftCount"]
     );
+  }
+
+  private restoreOtelTokens(snapshot: OtelRestoreSnapshot): void {
     restoreNumberFields(
       this.telemetry.tokens as unknown as Record<string, unknown>,
       snapshot.tokens,
       ["input", "output", "cached", "reasoning", "tool"]
     );
-    if (snapshot.dimensions && typeof snapshot.dimensions === "object") {
-      for (const [family, value] of Object.entries(
-        snapshot.dimensions as Record<string, ContextDimensions>
-      )) {
-        if (
-          !this.telemetry.dimensions[
-            family as keyof OtelTelemetryState["dimensions"]
-          ] ||
-          !value ||
-          typeof value !== "object"
-        )
-          continue;
-        for (const dimension of [
-          "byRole",
-          "byWorkspace",
-          "byModel",
-          "byAgent"
-        ] as const) {
-          for (const [key, bucket] of Object.entries(value[dimension] ?? {})) {
-            if (
-              !bucket ||
-              typeof bucket !== "object" ||
-              !isFiniteNonnegative(
-                (bucket as { count?: unknown }).count
-              )
-            )
-              continue;
-            this.telemetry.dimensions[
-              family as keyof OtelTelemetryState["dimensions"]
-            ][dimension][safeMetricLabel(key)] = {
-              count: bucket.count as number,
-              lastSeenAt:
-                typeof bucket.lastSeenAt === "string"
-                  ? bucket.lastSeenAt
-                  : null,
-              ...(dimension === "byAgent"
-                ? {
-                    agentKind: safeMetricLabel(
-                      (bucket as { agentKind?: unknown }).agentKind,
-                      UNATTRIBUTED_DIMENSION
-                    )
-                  }
-                : {})
-            };
-          }
+  }
+
+  private restoreOtelDimensionBucket(
+    dimension: "byRole" | "byWorkspace" | "byModel" | "byAgent",
+    bucket: { count?: unknown; lastSeenAt?: unknown; agentKind?: unknown }
+  ): ContextDimensionBucket {
+    return {
+      count: isFiniteNonnegative(bucket.count) ? bucket.count : 0,
+      lastSeenAt: typeof bucket.lastSeenAt === "string" ? bucket.lastSeenAt : null,
+      ...(dimension === "byAgent"
+        ? {
+          agentKind: safeMetricLabel(bucket.agentKind, UNATTRIBUTED_DIMENSION)
         }
+        : {})
+    };
+  }
+
+  private restoreOtelDimensionsFamily(
+    family: keyof OtelTelemetryState["dimensions"],
+    value: Record<string, unknown>
+  ): void {
+    if (!this.telemetry.dimensions[family] || !value || typeof value !== "object") return;
+    for (const dimension of ["byRole", "byWorkspace", "byModel", "byAgent"] as const) {
+      const dimMap = value[dimension] as Record<string, unknown> | undefined;
+      if (!dimMap || typeof dimMap !== "object") continue;
+      for (const [key, bucket] of Object.entries(dimMap)) {
+        if (!bucket || typeof bucket !== "object") continue;
+        const bucketEntry = bucket as { count?: unknown; lastSeenAt?: unknown; agentKind?: unknown };
+        if (!isFiniteNonnegative(bucketEntry.count)) continue;
+        this.telemetry.dimensions[family][dimension][safeMetricLabel(key)] =
+          this.restoreOtelDimensionBucket(dimension, bucketEntry);
       }
     }
-    for (const server of Array.isArray(snapshot.mcpServers)
-      ? snapshot.mcpServers
-      : []) {
+  }
+
+  private restoreOtelDimensions(snapshot: OtelRestoreSnapshot): void {
+    if (!snapshot.dimensions || typeof snapshot.dimensions !== "object") return;
+    for (const [family, value] of Object.entries(
+      snapshot.dimensions as Record<string, ContextDimensions>
+    )) {
+      this.restoreOtelDimensionsFamily(
+        family as keyof OtelTelemetryState["dimensions"],
+        value as unknown as Record<string, unknown>
+      );
+    }
+  }
+
+  private restoreOtelMcpServers(snapshot: OtelRestoreSnapshot): void {
+    const servers = Array.isArray(snapshot.mcpServers) ? snapshot.mcpServers : [];
+    for (const server of servers) {
       if (
         !server ||
         typeof server !== "object" ||
         typeof server.name !== "string" ||
         !server.name
-      )
+      ) {
         continue;
-      const restored: McpServerEntry = {
-        name: safeMetricLabel(server.name),
-        lastSeenAt:
-          typeof server.lastSeenAt === "string" ? server.lastSeenAt : null,
-        initAttempts: 0,
-        toolDiscoveryAttempts: 0,
-        failures: 0,
-        durationMs: 0,
-        durationCount: 0,
-        lastStatus: safeMetricLabel(server.lastStatus),
-        byRole: {},
-        byWorkspace: {},
-        byModel: {},
-        byAgent: {}
-      };
-      restoreNumberFields(
-        restored as unknown as Record<string, unknown>,
-        server,
-        ["initAttempts", "toolDiscoveryAttempts", "failures", "durationMs", "durationCount"]
-      );
-      for (const dim of [
-        "byRole",
-        "byWorkspace",
-        "byModel",
-        "byAgent"
-      ] as const) {
-        if (server[dim] && typeof server[dim] === "object") {
-          for (const [k, v] of Object.entries(server[dim])) {
-            if (isFiniteNonnegative(v)) {
-              restored[dim][safeMetricLabel(k)] = {
-                observed: 1,
-                lastSeenAt: null,
-                lastStatus: "observed"
-              };
-            } else if (
-              v &&
-              typeof v === "object" &&
-              isFiniteNonnegative(
-                (v as { observed?: unknown }).observed
-              )
-            ) {
-              const dimBucket = v as {
-                observed?: unknown;
-                lastSeenAt?: unknown;
-                lastStatus?: unknown;
-                agentKind?: unknown;
-              };
-              restored[dim][safeMetricLabel(k)] = {
-                observed: 1,
-                lastSeenAt:
-                  typeof dimBucket.lastSeenAt === "string"
-                    ? dimBucket.lastSeenAt
-                    : null,
-                lastStatus: safeMetricLabel(dimBucket.lastStatus, "observed"),
-                ...(dim === "byAgent"
-                  ? {
-                      agentKind: safeMetricLabel(
-                        dimBucket.agentKind,
-                        UNATTRIBUTED_DIMENSION
-                      )
-                    }
-                  : {})
-              };
-            }
-          }
+      }
+      this.restoreSingleMcpServer(server as Record<string, unknown>);
+    }
+  }
+
+  private restoreMcpServerDimensionBucket(
+    v: { observed?: unknown; lastSeenAt?: unknown; lastStatus?: unknown; agentKind?: unknown }
+  ): McpServerDimensionBucket {
+    return {
+      observed: 1,
+      lastSeenAt: typeof v.lastSeenAt === "string" ? v.lastSeenAt : null,
+      lastStatus: safeMetricLabel(v.lastStatus, "observed")
+    };
+  }
+
+  private restoreMcpServerDimension(
+    restored: McpServerEntry,
+    server: Record<string, unknown>,
+    dim: "byRole" | "byWorkspace" | "byModel" | "byAgent"
+  ): void {
+    const dimSource = server[dim];
+    if (!dimSource || typeof dimSource !== "object") return;
+    for (const [k, v] of Object.entries(dimSource)) {
+      if (isFiniteNonnegative(v)) {
+        restored[dim][safeMetricLabel(k)] = {
+          observed: 1,
+          lastSeenAt: null,
+          lastStatus: "observed"
+        };
+      } else if (v && typeof v === "object") {
+        const dimBucket = v as {
+          observed?: unknown;
+          lastSeenAt?: unknown;
+          lastStatus?: unknown;
+          agentKind?: unknown;
+        };
+        if (!isFiniteNonnegative(dimBucket.observed)) continue;
+        const restoredBucket = this.restoreMcpServerDimensionBucket(dimBucket);
+        if (dim === "byAgent") {
+          restoredBucket.agentKind = safeMetricLabel(dimBucket.agentKind, UNATTRIBUTED_DIMENSION);
         }
-      }
-      this.telemetry.mcpServers.set(restored.name, restored);
-    }
-    const skills = snapshot.skills;
-    if (skills?.injected && typeof skills.injected === "object") {
-      restoreNumberFields(
-        this.telemetry.skills.injected as unknown as Record<string, unknown>,
-        skills.injected,
-        ["total"]
-      );
-      for (const [status, count] of Object.entries(
-        skills.injected.byStatus ?? {}
-      ))
-        if (isFiniteNonnegative(count))
-          this.telemetry.skills.injected.byStatus[safeMetricLabel(status)] =
-            count;
-      for (const [invokeType, count] of Object.entries(
-        skills.injected.byInvokeType ?? {}
-      ))
-        if (isFiniteNonnegative(count))
-          this.telemetry.skills.injected.byInvokeType[
-            safeMetricLabel(invokeType)
-          ] = count;
-      for (const [agentKind, count] of Object.entries(
-        skills.injected.byAgentKind ?? {}
-      ))
-        if (isFiniteNonnegative(count))
-          this.telemetry.skills.injected.byAgentKind[
-            safeMetricLabel(agentKind)
-          ] = count;
-      for (const [model, count] of Object.entries(
-        skills.injected.byModel ?? {}
-      ))
-        if (isFiniteNonnegative(count))
-          this.telemetry.skills.injected.byModel[safeMetricLabel(model)] =
-            count;
-      for (const [plugin, count] of Object.entries(
-        skills.injected.byPlugin ?? {}
-      ))
-        if (isFiniteNonnegative(count))
-          this.telemetry.skills.injected.byPlugin[safeMetricLabel(plugin)] =
-            count;
-      for (const entry of Array.isArray(skills.injected.bySkill)
-        ? skills.injected.bySkill
-        : []) {
-        if (!entry || typeof entry.skill !== "string") continue;
-        const bucket = this.skillBucket(safeMetricLabel(entry.skill));
-        restoreNumberFields(bucket as unknown as Record<string, unknown>, entry, ["total"]);
-        for (const [status, count] of Object.entries(entry.byStatus ?? {}))
-          if (isFiniteNonnegative(count))
-            bucket.byStatus[safeMetricLabel(status)] = count;
-        for (const [invokeType, count] of Object.entries(
-          entry.byInvokeType ?? {}
-        ))
-          if (isFiniteNonnegative(count))
-            bucket.byInvokeType[safeMetricLabel(invokeType)] = count;
-        for (const [agentKind, count] of Object.entries(
-          entry.byAgentKind ?? {}
-        ))
-          if (isFiniteNonnegative(count))
-            bucket.byAgentKind[safeMetricLabel(agentKind)] = count;
-        for (const [model, count] of Object.entries(entry.byModel ?? {}))
-          if (isFiniteNonnegative(count))
-            bucket.byModel[safeMetricLabel(model)] = count;
-        for (const [plugin, count] of Object.entries(entry.byPlugin ?? {}))
-          if (isFiniteNonnegative(count))
-            bucket.byPlugin[safeMetricLabel(plugin)] = count;
+        restored[dim][safeMetricLabel(k)] = restoredBucket;
       }
     }
-    const used = snapshot.skills?.used;
-    if (used && typeof used === "object") {
-      restoreNumberFields(this.telemetry.skills.used, used, ["total"]);
-      if (typeof used.lastSeenAt === "string")
-        this.telemetry.skills.used.lastSeenAt = used.lastSeenAt;
-      for (const dimension of [
-        "byRole",
-        "byWorkspace",
-        "byModel",
-        "byAgent"
-      ] as const) {
-        for (const [key, count] of Object.entries(used[dimension] ?? {}))
-          if (isFiniteNonnegative(count))
-            this.telemetry.skills.used[dimension][safeMetricLabel(key)] = count;
-      }
-      for (const entry of Array.isArray(used.bySkill) ? used.bySkill : []) {
-        if (!entry || typeof entry.skill !== "string") continue;
-        const bucket = this.skillUsedBucket(safeMetricLabel(entry.skill));
-        restoreNumberFields(bucket as unknown as Record<string, unknown>, entry, ["total"]);
-        if (typeof entry.lastSeenAt === "string")
-          bucket.lastSeenAt = entry.lastSeenAt;
-        for (const dimension of [
-          "byRole",
-          "byWorkspace",
-          "byModel",
-          "byAgent"
-        ] as const) {
-          for (const [key, count] of Object.entries(entry[dimension] ?? {}))
-            if (isFiniteNonnegative(count))
-              bucket[dimension][safeMetricLabel(key)] = count;
+  }
+
+  private restoreSingleMcpServer(server: Record<string, unknown>): void {
+    const restored: McpServerEntry = {
+      name: safeMetricLabel(server.name),
+      lastSeenAt: typeof server.lastSeenAt === "string" ? server.lastSeenAt : null,
+      initAttempts: 0,
+      toolDiscoveryAttempts: 0,
+      failures: 0,
+      durationMs: 0,
+      durationCount: 0,
+      lastStatus: safeMetricLabel(server.lastStatus),
+      byRole: {},
+      byWorkspace: {},
+      byModel: {},
+      byAgent: {}
+    };
+    restoreNumberFields(
+      restored as unknown as Record<string, unknown>,
+      server,
+      ["initAttempts", "toolDiscoveryAttempts", "failures", "durationMs", "durationCount"]
+    );
+    for (const dim of ["byRole", "byWorkspace", "byModel", "byAgent"] as const) {
+      this.restoreMcpServerDimension(restored, server, dim);
+    }
+    this.telemetry.mcpServers.set(restored.name, restored);
+  }
+
+  private restoreSkillInjectedState(source: Record<string, unknown>): void {
+    restoreNumberFields(
+      this.telemetry.skills.injected as unknown as Record<string, unknown>,
+      source,
+      ["total"]
+    );
+    for (const field of ["byStatus", "byInvokeType", "byAgentKind", "byModel", "byPlugin"] as const) {
+      const map = source[field] as Record<string, unknown> | undefined;
+      if (!map || typeof map !== "object") continue;
+      for (const [k, v] of Object.entries(map)) {
+        if (isFiniteNonnegative(v)) {
+          this.telemetry.skills.injected[field][safeMetricLabel(k)] = v;
         }
       }
     }
+    const bySkillRows = source.bySkill;
+    if (Array.isArray(bySkillRows)) {
+      for (const entry of bySkillRows) {
+        if (!entry || typeof entry.skill !== "string") continue;
+        this.restoreSkillInjectedBucketEntry(entry as Record<string, unknown>);
+      }
+    }
+  }
+
+  private restoreSkillInjectedBucketEntry(entry: Record<string, unknown>): void {
+    const bucket = this.skillBucket(safeMetricLabel(entry.skill));
+    restoreNumberFields(
+      bucket as unknown as Record<string, unknown>,
+      entry,
+      ["total"]
+    );
+    for (const field of ["byStatus", "byInvokeType", "byAgentKind", "byModel", "byPlugin"] as const) {
+      const map = entry[field] as Record<string, unknown> | undefined;
+      if (!map || typeof map !== "object") continue;
+      for (const [k, v] of Object.entries(map)) {
+        if (isFiniteNonnegative(v)) {
+          bucket[field][safeMetricLabel(k)] = v;
+        }
+      }
+    }
+  }
+
+  private restoreSkillUsedState(source: Record<string, unknown>): void {
+    restoreNumberFields(
+      this.telemetry.skills.used as unknown as Record<string, unknown>,
+      source,
+      ["total"]
+    );
+    if (typeof source.lastSeenAt === "string") {
+      this.telemetry.skills.used.lastSeenAt = source.lastSeenAt;
+    }
+    for (const dimension of ["byRole", "byWorkspace", "byModel", "byAgent"] as const) {
+      const map = source[dimension] as Record<string, unknown> | undefined;
+      if (!map || typeof map !== "object") continue;
+      for (const [k, v] of Object.entries(map)) {
+        if (isFiniteNonnegative(v)) {
+          this.telemetry.skills.used[dimension][safeMetricLabel(k)] = v;
+        }
+      }
+    }
+    const bySkillRows = source.bySkill;
+    if (Array.isArray(bySkillRows)) {
+      for (const entry of bySkillRows) {
+        if (!entry || typeof entry.skill !== "string") continue;
+        this.restoreSkillUsedBucketEntry(entry as Record<string, unknown>);
+      }
+    }
+  }
+
+  private restoreSkillUsedBucketEntry(entry: Record<string, unknown>): void {
+    const bucket = this.skillUsedBucket(safeMetricLabel(entry.skill));
+    restoreNumberFields(
+      bucket as unknown as Record<string, unknown>,
+      entry,
+      ["total"]
+    );
+    if (typeof entry.lastSeenAt === "string") {
+      bucket.lastSeenAt = entry.lastSeenAt;
+    }
+    for (const dimension of ["byRole", "byWorkspace", "byModel", "byAgent"] as const) {
+      const map = entry[dimension] as Record<string, unknown> | undefined;
+      if (!map || typeof map !== "object") continue;
+      for (const [k, v] of Object.entries(map)) {
+        if (isFiniteNonnegative(v)) {
+          bucket[dimension][safeMetricLabel(k)] = v;
+        }
+      }
+    }
+  }
+
+  private restoreSkillThreadHistograms(source: Record<string, unknown>): void {
     for (const [targetKey, sourceKey] of [
       ["enabled", "enabledTotal"],
       ["kept", "keptTotal"],
@@ -4886,151 +5065,220 @@ export class OtelTracker {
       ["descriptionTruncatedChars", "descriptionTruncatedChars"]
     ] as const) {
       restoreNumberFields(
-        this.telemetry.skills.threads[targetKey],
-        skills?.threads?.[sourceKey],
+        this.telemetry.skills.threads[targetKey] as unknown as Record<string, unknown>,
+        source[sourceKey] as Record<string, unknown> | undefined,
         ["count", "sum"]
       );
     }
-    for (const entry of Array.isArray(snapshot.metrics?.observed)
+  }
+
+  private restoreOtelSkills(snapshot: OtelRestoreSnapshot): void {
+    const skills = snapshot.skills;
+    if (skills?.injected && typeof skills.injected === "object") {
+      this.restoreSkillInjectedState(skills.injected);
+    }
+    if (skills?.used && typeof skills.used === "object") {
+      this.restoreSkillUsedState(skills.used);
+    }
+    if (skills?.threads) {
+      this.restoreSkillThreadHistograms(skills.threads);
+    }
+  }
+
+  private restoreOtelMetricInventory(snapshot: OtelRestoreSnapshot): void {
+    const observed = Array.isArray(snapshot.metrics?.observed)
       ? snapshot.metrics.observed
-      : []) {
+      : [];
+    for (const entry of observed) {
       if (
         !entry ||
         typeof entry.name !== "string" ||
         !entry.name ||
         REMOVED_SHADOW_SELECTION_METRICS.has(entry.name)
-      )
+      ) {
         continue;
+      }
       const restored = {
         name: safeMetricLabel(entry.name),
         exports: 0,
         dataPoints: 0
       };
-      restoreNumberFields(restored, entry, ["exports", "dataPoints"]);
+      restoreNumberFields(restored, entry as Record<string, unknown>, ["exports", "dataPoints"]);
       this.telemetry.metricInventory.set(restored.name, restored);
     }
-    for (const entry of Array.isArray(snapshot.tools?.byTool)
-      ? snapshot.tools.byTool
-      : []) {
+  }
+
+  private restoreToolStatusMap(source: Record<string, unknown>): Record<string, number> {
+    const map: Record<string, number> = {};
+    const byStatus = source.byStatus;
+    if (!byStatus || typeof byStatus !== "object") return map;
+    for (const [status, count] of Object.entries(byStatus)) {
+      if (isFiniteNonnegative(count)) {
+        map[safeMetricLabel(status)] = count;
+      }
+    }
+    return map;
+  }
+
+  private restoreSingleToolEntry(entry: Record<string, unknown>): void {
+    if (entry.tool === UNKNOWN_TOOL_LABEL) return;
+    const restored: ToolEntry = {
+      tool: safeMetricLabel(entry.tool, UNKNOWN_TOOL_LABEL),
+      source: safeMetricLabel(entry.source),
+      server: toolServerAttribute({
+        server: entry.server,
+        mcp_server: entry.mcp_server
+      }),
+      count: 0,
+      byStatus: {},
+      durationCount: 0,
+      durationMs: 0
+    };
+    restoreNumberFields(
+      restored as unknown as Record<string, unknown>,
+      entry,
+      ["count", "durationCount", "durationMs"]
+    );
+    restored.byStatus = this.restoreToolStatusMap(entry);
+    this.telemetry.tools.set(toolKey(restored), restored);
+  }
+
+  private restoreOtelTools(snapshot: OtelRestoreSnapshot): void {
+    const byTool = Array.isArray(snapshot.tools?.byTool) ? snapshot.tools.byTool : [];
+    for (const entry of byTool) {
       if (!entry || typeof entry.tool !== "string") continue;
-      if (entry.tool === UNKNOWN_TOOL_LABEL) continue;
-      const restored: ToolEntry = {
-        tool: safeMetricLabel(entry.tool, UNKNOWN_TOOL_LABEL),
-        source: safeMetricLabel(entry.source),
-        server: toolServerAttribute({
-          server: entry.server,
-          mcp_server: entry.mcp_server
-        }),
-        count: 0,
-        byStatus: {},
-        durationCount: 0,
-        durationMs: 0
-      };
-      restoreNumberFields(
-        restored as unknown as Record<string, unknown>,
-        entry,
-        ["count", "durationCount", "durationMs"]
-      );
-      for (const [status, count] of Object.entries(entry.byStatus ?? {}))
-        if (isFiniteNonnegative(count))
-          restored.byStatus[safeMetricLabel(status)] = count;
-      this.telemetry.tools.set(toolKey(restored), restored);
+      this.restoreSingleToolEntry(entry as Record<string, unknown>);
     }
-    for (const entry of Array.isArray(snapshot.hooks?.byHook)
-      ? snapshot.hooks.byHook
-      : []) {
+  }
+
+  private restoreSingleHookEntry(entry: Record<string, unknown>): void {
+    const restored: HookEntry = {
+      hook: safeMetricLabel(entry.hook, UNKNOWN_HOOK_LABEL),
+      source: safeMetricLabel(entry.source),
+      handlerType: safeMetricLabel(entry.handlerType, ""),
+      count: 0,
+      byStatus: {},
+      durationCount: 0,
+      durationMs: 0
+    };
+    restoreNumberFields(
+      restored as unknown as Record<string, unknown>,
+      entry,
+      ["count", "durationCount", "durationMs"]
+    );
+    restored.byStatus = this.restoreToolStatusMap(entry);
+    this.telemetry.hooks.set(
+      hookKey({
+        hook_name: restored.hook,
+        source: restored.source,
+        handler_type: restored.handlerType
+      }),
+      restored
+    );
+  }
+
+  private restoreOtelHooks(snapshot: OtelRestoreSnapshot): void {
+    const byHook = Array.isArray(snapshot.hooks?.byHook) ? snapshot.hooks.byHook : [];
+    for (const entry of byHook) {
       if (!entry || typeof entry.hook !== "string") continue;
-      const restored: HookEntry = {
-        hook: safeMetricLabel(entry.hook, UNKNOWN_HOOK_LABEL),
-        source: safeMetricLabel(entry.source),
-        handlerType: safeMetricLabel(entry.handlerType, ""),
-        count: 0,
-        byStatus: {},
-        durationCount: 0,
-        durationMs: 0
-      };
-      restoreNumberFields(restored, entry, [
-        "count",
-        "durationCount",
-        "durationMs"
-      ]);
-      for (const [status, count] of Object.entries(entry.byStatus ?? {}))
-        if (isFiniteNonnegative(count))
-          restored.byStatus[safeMetricLabel(status)] = count;
-      this.telemetry.hooks.set(
-        hookKey({
-          hook_name: restored.hook,
-          source: restored.source,
-          handler_type: restored.handlerType
-        }),
-        restored
-      );
+      this.restoreSingleHookEntry(entry as Record<string, unknown>);
     }
+  }
+
+  private restoreThreadStartedState(source: Record<string, unknown> | undefined): void {
     restoreNumberFields(
       this.telemetry.threads.started as unknown as Record<string, unknown>,
-      snapshot.threads?.started,
+      source,
       ["total"]
     );
-    for (const [source, count] of Object.entries(
-      snapshot.threads?.started?.bySource ?? {}
-    ))
-      if (isFiniteNonnegative(count))
-        this.telemetry.threads.started.bySource[safeMetricLabel(source)] =
-          count;
+    const startedBySource = source?.bySource;
+    if (!startedBySource || typeof startedBySource !== "object") return;
+    for (const [srcKey, count] of Object.entries(startedBySource)) {
+      if (isFiniteNonnegative(count)) {
+        this.telemetry.threads.started.bySource[safeMetricLabel(srcKey)] = count;
+      }
+    }
+  }
+
+  private restoreThreadSpawnsState(source: Record<string, unknown> | undefined): void {
     restoreNumberFields(
       this.telemetry.threads.spawns as unknown as Record<string, unknown>,
-      snapshot.threads?.spawns,
+      source,
       ["total"]
     );
     for (const target of ["byStatus", "byRole", "byModel"] as const) {
-      for (const [key, count] of Object.entries(
-        snapshot.threads?.spawns?.[target] ?? {}
-      )) {
-        if (isFiniteNonnegative(count))
+      const map = source?.[target] as Record<string, unknown> | undefined;
+      if (!map || typeof map !== "object") continue;
+      for (const [key, count] of Object.entries(map)) {
+        if (isFiniteNonnegative(count)) {
           this.telemetry.threads.spawns[target][safeMetricLabel(key)] = count;
-      }
-    }
-    const sqlite = snapshot.sqlite;
-    for (const [target, source] of [
-      [this.telemetry.sqlite.init, sqlite?.init?.byDbStatus],
-      [this.telemetry.sqlite.fallbacks, sqlite?.fallbacks?.byDbStatus],
-      [this.telemetry.sqlite.initDurationMs, sqlite?.initDurationMs?.byDbStatus]
-    ] as const) {
-      for (const entry of Array.isArray(source) ? source : []) {
-        if (
-          !entry ||
-          typeof entry.db !== "string" ||
-          typeof entry.status !== "string"
-        )
-          continue;
-        const baseKey: SqliteEntry = {
-          db: safeMetricLabel(entry.db),
-          status: safeMetricLabel(entry.status),
-          count: 0
-        };
-        restoreNumberFields(baseKey, entry, ["count"]);
-        if (Object.hasOwn(entry, "sum")) {
-          const restored = { ...baseKey, sum: 0 } as SqliteDurationEntry;
-          restoreNumberFields(restored, entry, ["sum"]);
-          target.set(sqliteKey(restored as unknown as OtelAttributeMap), restored);
-        } else {
-          target.set(sqliteKey(baseKey as unknown as OtelAttributeMap), baseKey);
         }
       }
     }
-    for (const entry of Array.isArray(snapshot.series) ? snapshot.series : []) {
+  }
+
+  private restoreOtelThreads(snapshot: OtelRestoreSnapshot): void {
+    this.restoreThreadStartedState(snapshot.threads?.started);
+    this.restoreThreadSpawnsState(snapshot.threads?.spawns);
+  }
+
+  private restoreSqliteEntry(source: Record<string, unknown>): SqliteEntry | SqliteDurationEntry | null {
+    if (typeof source.db !== "string" || typeof source.status !== "string") return null;
+    const baseKey: SqliteEntry = {
+      db: safeMetricLabel(source.db),
+      status: safeMetricLabel(source.status),
+      count: 0
+    };
+    restoreNumberFields(
+      baseKey as unknown as Record<string, unknown>,
+      source,
+      ["count"]
+    );
+    if (Object.hasOwn(source, "sum")) {
+      const restored = { ...baseKey, sum: 0 } as SqliteDurationEntry;
+      restoreNumberFields(
+        restored as unknown as Record<string, unknown>,
+        source,
+        ["sum"]
+      );
+      return restored;
+    }
+    return baseKey;
+  }
+
+  private restoreOtelSqlite(snapshot: OtelRestoreSnapshot): void {
+    const sqlite = snapshot.sqlite;
+    const collections = [
+      [this.telemetry.sqlite.init, sqlite?.init?.byDbStatus],
+      [this.telemetry.sqlite.fallbacks, sqlite?.fallbacks?.byDbStatus],
+      [this.telemetry.sqlite.initDurationMs, sqlite?.initDurationMs?.byDbStatus]
+    ] as const;
+    for (const [target, source] of collections) {
+      const rows = Array.isArray(source) ? source : [];
+      for (const entry of rows) {
+        if (!entry || typeof entry !== "object") continue;
+        const restored = this.restoreSqliteEntry(entry as Record<string, unknown>);
+        if (restored) {
+          target.set(sqliteKey(restored as unknown as OtelAttributeMap), restored);
+        }
+      }
+    }
+  }
+
+  private restoreOtelSeries(snapshot: OtelRestoreSnapshot): void {
+    const series = Array.isArray(snapshot.series) ? snapshot.series : [];
+    for (const entry of series) {
       if (
         !entry ||
         typeof entry.key !== "string" ||
         typeof entry.timestamp !== "string" ||
         !isFiniteNonnegative(entry.value)
-      )
+      ) {
         continue;
-      const metricName = (() => {
-        const headEnd = entry.key.indexOf("::");
-        const head = headEnd === -1 ? entry.key : entry.key.slice(0, headEnd);
-        return head.replace(METRIC_NAME_TRAILING_PARTS_PATTERN, "");
-      })();
+      }
+      const headEnd = entry.key.indexOf("::");
+      const head = headEnd === -1 ? entry.key : entry.key.slice(0, headEnd);
+      const metricName = head.replace(METRIC_NAME_TRAILING_PARTS_PATTERN, "");
       if (REMOVED_SHADOW_SELECTION_METRICS.has(metricName)) continue;
       try {
         this.metricSeries.set(entry.key, {
@@ -5042,6 +5290,30 @@ export class OtelTracker {
       }
     }
   }
+
+  restoreOtelTelemetry(snapshot: OtelRestoreSnapshot): void {
+    if (
+      !snapshot ||
+      typeof snapshot !== "object" ||
+      snapshot.schemaVersion !== OTEL_PERSISTENCE_SCHEMA_VERSION
+    ) {
+      return;
+    }
+    this.restoreOtelCounters(snapshot);
+    this.restoreOtelReceiver(snapshot);
+    this.restoreOtelTurns(snapshot);
+    this.restoreOtelTokens(snapshot);
+    this.restoreOtelDimensions(snapshot);
+    this.restoreOtelMcpServers(snapshot);
+    this.restoreOtelSkills(snapshot);
+    this.restoreOtelMetricInventory(snapshot);
+    this.restoreOtelTools(snapshot);
+    this.restoreOtelHooks(snapshot);
+    this.restoreOtelThreads(snapshot);
+    this.restoreOtelSqlite(snapshot);
+    this.restoreOtelSeries(snapshot);
+  }
+
 }
 
 let defaultOtelTracker = new OtelTracker();

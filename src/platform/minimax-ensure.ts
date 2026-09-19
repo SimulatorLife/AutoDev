@@ -38,7 +38,7 @@ export interface MiniMaxEnsureDeps {
 const DEFAULT_TIMEOUT_MS = 5000;
 
 function positiveInteger(value: string | undefined, fallback: number): number {
-  const parsed = Number.parseInt(value ?? "", 10);
+  const parsed = Number.parseInt(value ?? "");
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
 }
 
@@ -110,13 +110,18 @@ function defaultDeps(options: MiniMaxEnsureOptions): MiniMaxEnsureDeps {
     launchd: new LaunchdClient(),
     probe: async () => {
       try {
-        return (await fetch(endpoint, { signal: AbortSignal.timeout(1000) }))
-          .ok;
+        const response = await fetch(endpoint, {
+          signal: AbortSignal.timeout(1000)
+        });
+        return response.ok;
       } catch {
         return false;
       }
     },
-    sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+    sleep: (ms) =>
+      new Promise((resolve) => {
+        setTimeout(resolve, ms);
+      }),
     nodeAvailable: () => options.nodeBin.length > 0,
     plistExists: () => existsSync(options.plist),
     startFallback: (current) => {
@@ -140,16 +145,21 @@ function defaultDeps(options: MiniMaxEnsureOptions): MiniMaxEnsureDeps {
   };
 }
 
-async function waitForProbe(
+async function pollProbeUntilDeadline(
+  deps: MiniMaxEnsureDeps,
+  deadline: number
+): Promise<boolean> {
+  if (Date.now() >= deadline) return deps.probe();
+  if (await deps.probe()) return true;
+  await deps.sleep(100);
+  return pollProbeUntilDeadline(deps, deadline);
+}
+
+function waitForProbe(
   deps: MiniMaxEnsureDeps,
   timeoutMs: number
 ): Promise<boolean> {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    if (await deps.probe()) return true;
-    await deps.sleep(100);
-  }
-  return deps.probe();
+  return pollProbeUntilDeadline(deps, Date.now() + timeoutMs);
 }
 
 /** Own MiniMax's model gate and compatibility-proxy lifecycle without shell policy. */
@@ -189,7 +199,16 @@ export async function ensureMiniMaxProxy(
 }
 
 if (process.argv[1] === new URL(import.meta.url).pathname) {
-  ensureMiniMaxProxy().then((status) => {
-    process.exitCode = status;
-  });
+  ensureMiniMaxProxy()
+    .then((status) => {
+      process.exitCode = status;
+      return status;
+    })
+    .catch((error) => {
+      writeErrorLine(
+        `minimax-ensure: ${error instanceof Error ? error.message : String(error)}`
+      );
+      process.exitCode = 1;
+      return 1;
+    });
 }

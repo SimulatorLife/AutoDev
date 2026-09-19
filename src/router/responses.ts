@@ -104,6 +104,7 @@ const TOOL_OUTPUT_TYPES = new Set([
   "custom_tool_call",
   "code_interpreter_call"
 ]);
+const SSE_LINE_WITH_NEWLINE_PATTERN = /(\r?\n)/;
 
 function getNamespacePrefix(ns: string): string {
   const match = FLATTENED_NAMESPACES.find((entry) => entry[0] === ns);
@@ -213,7 +214,7 @@ export function rewriteResponseValue(
 
 export function transformSseEvent(event: string, publicModel: string): string {
   return event
-    .split(/(\r?\n)/)
+    .split(SSE_LINE_WITH_NEWLINE_PATTERN)
     .map((line) => {
       if (!line.startsWith("data: ") || line.slice(6) === "[DONE]") return line;
       try {
@@ -269,7 +270,7 @@ export function countToolCallsFromSse(
   seen: Set<string> = new Set()
 ): number {
   let count = 0;
-  for (const line of body.split(/\r?\n/)) {
+  for (const line of body.split(SSE_LINE_WITH_NEWLINE_PATTERN)) {
     if (!line.startsWith("data: ") || line.slice(6) === "[DONE]") continue;
     try {
       const event = JSON.parse(line.slice(6));
@@ -299,7 +300,7 @@ export function countToolCallsFromSse(
 export function responseTextFromSse(body: string): RouterResponseEnvelope {
   let text = "";
   let completed: unknown = null;
-  for (const line of body.split(/\r?\n/)) {
+  for (const line of body.split(SSE_LINE_WITH_NEWLINE_PATTERN)) {
     if (!line.startsWith("data: ") || line.slice(6) === "[DONE]") continue;
     try {
       const event = JSON.parse(line.slice(6));

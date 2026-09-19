@@ -37,7 +37,7 @@ function baseFiles(directory: string): void {
   writeFileSync(join(directory, "collector.version"), "v0.160.0\n");
 }
 
-function fakeBinary(directory: string, version = "v0.160.0"): string {
+function fakeBinary(directory: string, version = "0.160.0"): string {
   const binary = join(directory, "otelcol");
   const validated = join(directory, "validated");
   const args = join(directory, "args");
@@ -94,10 +94,18 @@ test("Collector run uses an explicit binary and exact version/config", () =>
     );
   }));
 
+test("Collector run accepts v-prefixed version output", () =>
+  withTempDir((directory) => {
+    baseFiles(directory);
+    const binary = fakeBinary(directory, "v0.160.0");
+    const result = runCollector(options(directory, binary));
+    assert.equal(result, 0);
+  }));
+
 test("Collector run rejects a pinned-version mismatch before validation", () =>
   withTempDir((directory) => {
     baseFiles(directory);
-    const binary = fakeBinary(directory, "v0.160.1");
+    const binary = fakeBinary(directory, "0.160.1");
     assert.throws(
       () => runCollector(options(directory, binary)),
       /version mismatch/

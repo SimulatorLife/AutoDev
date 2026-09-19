@@ -11,6 +11,12 @@ export type AgentName = (typeof AGENT_NAMES)[number];
 
 const AGENT_BRANCH =
   /^(copilot|claude|codex|gemini|qwen|mini-max|mini-max-codex)(?:\/|$)/i;
+const AGENT_TITLE_PREFIX_PATTERN = /^(?:Agent|Codex):\s/i;
+const INVOCATION_COMMENT_PATTERN =
+  INVOCATION_COMMENT_PATTERNu;
+const LINE_SPLIT_PATTERN = /\r?\n/;
+const TIMESTAMP_SUFFIX_PATTERN = /\.\d{3}Z\$/;
+const COLLATOR = new Intl.Collator("en");
 export const JANITOR_MARKER = "<!-- autodev-target-pr-janitor -->";
 
 export interface InvocationComment {
@@ -154,7 +160,7 @@ export function agentFromPull(pull: PullLike): string {
   if (label) return label;
   const branchMatch = String(pull.head?.ref ?? "").match(AGENT_BRANCH);
   if (branchMatch?.[1]) return normalizeAgent(branchMatch[1]);
-  if (/^(?:Agent|Codex):\s/i.test(pull.title ?? "")) return "unknown";
+  if (AGENT_TITLE_PREFIX_PATTERN.test(pull.title ?? "")) return "unknown";
   return "";
 }
 
@@ -165,9 +171,7 @@ export function isAgentPull(pull: PullLike): boolean {
 export function parseInvocationComment(
   body: unknown
 ): InvocationComment | null {
-  const match = String(body ?? "").match(
-    /\*\*\[🤖\s*([^\]]+)\]\*\*\s+Hi, I've received[\s\S]*?actions\/runs\/(\d+)/i
-  );
+  const match = INVOCATION_COMMENT_PATTERN.exec(String(body ?? ""));
   if (!match?.[1] || !match[2]) return null;
   return {
     agent: normalizeAgent(match[1]) || match[1].trim().toLowerCase(),
@@ -175,29 +179,35 @@ export function parseInvocationComment(
   };
 }
 
-export async function listRecentPulls({
+export function listRecentPulls({
   github,
   owner,
   repo,
   sinceDate
 }: ListRecentPullsOptions): Promise<PullSummary[]> {
-  const pulls: PullSummary[] = [];
-  for (let page = 1; page <= 50; page += 1) {
-    const { data } = await github.rest.pulls.list({
-      owner,
-      repo,
-      state: "all",
-      per_page: 100,
-      page,
-      sort: "created",
-      direction: "desc"
-    });
-    pulls.push(...data);
-    const last = data.at(-1);
-    if (data.length < 100 || (last && new Date(last.created_at) < sinceDate))
-      break;
-  }
-  return pulls;
+  return fetchRecentPullPages({ github, owner, repo, sinceDate }, [], 1);
+}
+
+async function fetchRecentPullPages(
+  options: ListRecentPullsOptions,
+  acc: PullSummary[],
+  page: number
+): Promise<PullSummary[]> {
+  if (page > 50) return acc;
+  const { data } = await options.github.rest.pulls.list({
+    owner: options.owner,
+    repo: options.repo,
+    state: "all",
+    per_page: 100,
+    page,
+    sort: "created",
+    direction: "desc"
+  });
+  const next = [...acc, ...data];
+  const last = data.at(-1);
+  if (data.length < 100 || (last && new Date(last.created_at) < options.sinceDate))
+    return next;
+  return fetchRecentPullPages(options, next, page + 1);
 }
 
 function emptyCounter(): InvocationCounter {
@@ -209,6 +219,144 @@ function addInvocation(counter: InvocationCounter, conclusion: string): void {
   if (conclusion === "success") counter.succeeded += 1;
   else if (conclusion === "failure") counter.failed += 1;
   else counter.other += 1;
+}
+
+interface CollectProviderInvocationsContext {
+  providerWorkflows: ReadonlyArray<[string, string]>;
+  github: CollectMetricsOptions["github"];
+  owner: string;
+  autoDevRepo: string;
+  since: string;
+  perAgent: Record<string, InvocationCounter>;
+  perRepository: Record<string, RepositoryMetrics>;
+  repositories: string[];
+}
+
+async function collectProviderWorkflow(
+  context: CollectProviderInvocationsContext,
+  index: number
+): Promise<void> {
+  if (index >= context.providerWorkflows.length) return;
+  const entry = context.providerWorkflows[index];
+  if (!entry) return;
+  const [workflowId, agent] = entry;
+  const runs = await context.github.paginate<WorkflowRunItem>(
+    context.github.rest.actions.listWorkflowRuns,
+    {
+      owner: context.owner,
+      repo: context.autoDevRepo,
+      workflow_id: workflowId,
+      created: `>=${context.since}`,
+      per_page: 100
+    }
+  );
+  for (const run of runs) {
+    const outcome = run.conclusion || run.status || "unknown";
+    const agentCounter = context.perAgent[agent];
+    if (agentCounter) addInvocation(agentCounter, outcome);
+    const runTitle = run.display_title ?? "";
+    const target = context.repositories.find((repository) =>
+      runTitle.includes(repository)
+    );
+    if (target && context.perRepository[target]) {
+      addInvocation(context.perRepository[target].agentInvokes, outcome);
+    } else if (context.perAgent.unattributed) {
+      addInvocation(context.perAgent.unattributed, outcome);
+    }
+  }
+  await collectProviderWorkflow(context, index + 1);
+}
+
+function collectProviderInvocations(
+  context: CollectProviderInvocationsContext
+): Promise<void> {
+  return collectProviderWorkflow(context, 0);
+}
+
+interface CollectRepositoryPullsContext {
+  repositories: string[];
+  github: CollectMetricsOptions["github"];
+  sinceDate: Date;
+  perRepository: Record<string, RepositoryMetrics>;
+  recentPrs: RecentPr[];
+  mutateTotals: {
+    bumpRaised: () => number;
+    bumpMerged: () => number;
+    bumpStale: () => number;
+  };
+}
+
+async function collectRepository(
+  context: CollectRepositoryPullsContext,
+  index: number,
+  sinceDate: Date
+): Promise<void> {
+  if (index >= context.repositories.length) return;
+  const fullName = context.repositories[index];
+  if (fullName === undefined) return;
+  const [targetOwner, targetRepo] = fullName.split("/");
+  if (!targetOwner || !targetRepo) {
+    await collectRepository(context, index + 1, sinceDate);
+    return;
+  }
+  const pulls = await listRecentPulls({
+    github: context.github,
+    owner: targetOwner,
+    repo: targetRepo,
+    sinceDate
+  });
+  applyPullsToTotals(context, sinceDate, fullName, pulls);
+  await collectRepository(context, index + 1, sinceDate);
+}
+
+function applyPullsToTotals(
+  context: CollectRepositoryPullsContext,
+  sinceDate: Date,
+  fullName: string,
+  pulls: PullSummary[]
+): void {
+  for (const summary of pulls) {
+    const createdRecently = new Date(summary.created_at) >= sinceDate;
+    const closedRecently =
+      summary.state === "closed" &&
+      summary.closed_at &&
+      new Date(summary.closed_at) >= sinceDate;
+    if (
+      closedRecently &&
+      (summary.labels ?? []).some(
+        (label) => label.name === "autodev-stale-closed"
+      )
+    ) {
+      const repoEntry = context.perRepository[fullName];
+      if (repoEntry) repoEntry.staleEmptyPrsClosed += 1;
+      context.mutateTotals.bumpStale();
+    }
+    const agent = agentFromPull(summary);
+    if (!agent || !createdRecently) continue;
+    context.mutateTotals.bumpRaised();
+    const repoEntry = context.perRepository[fullName];
+    if (repoEntry) repoEntry.agentPrsRaised += 1;
+    if (summary.merged_at) {
+      context.mutateTotals.bumpMerged();
+      if (repoEntry) repoEntry.agentPrsMerged += 1;
+    }
+    context.recentPrs.push({
+      repository: fullName,
+      number: summary.number,
+      title: summary.title,
+      url: summary.html_url,
+      state: summary.state,
+      createdAt: summary.created_at,
+      mergedAt: summary.merged_at,
+      agent
+    });
+  }
+}
+
+function collectRepositoryPulls(
+  context: CollectRepositoryPullsContext
+): Promise<void> {
+  return collectRepository(context, 0, context.sinceDate);
 }
 
 interface WorkflowRunItem {
@@ -253,82 +401,41 @@ export async function collectMetrics({
   let agentPrsMerged = 0;
   let staleEmptyPrsClosed = 0;
 
-  for (const [workflowId, agent] of providerWorkflows) {
-    const runs = await github.paginate<WorkflowRunItem>(
-      github.rest.actions.listWorkflowRuns,
-      {
-        owner,
-        repo: autoDevRepo,
-        workflow_id: workflowId,
-        created: `>=${since}`,
-        per_page: 100
-      }
-    );
-    for (const run of runs) {
-      const outcome = run.conclusion || run.status || "unknown";
-      const agentCounter = perAgent[agent];
-      if (agentCounter) addInvocation(agentCounter, outcome);
-      const runTitle = run.display_title ?? "";
-      const target = repositories.find((repository) =>
-        runTitle.includes(repository)
-      );
-      if (target && perRepository[target]) {
-        addInvocation(perRepository[target].agentInvokes, outcome);
-      } else if (perAgent.unattributed) {
-        addInvocation(perAgent.unattributed, outcome);
-      }
-    }
-  }
+  await collectProviderInvocations({
+    providerWorkflows,
+    github,
+    owner,
+    autoDevRepo,
+    since,
+    perAgent,
+    perRepository,
+    repositories
+  });
 
-  for (const fullName of repositories) {
-    const [targetOwner, targetRepo] = fullName.split("/");
-    if (!targetOwner || !targetRepo) continue;
-    const pulls = await listRecentPulls({
-      github,
-      owner: targetOwner,
-      repo: targetRepo,
-      sinceDate
-    });
-    for (const summary of pulls) {
-      const createdRecently = new Date(summary.created_at) >= sinceDate;
-      const closedRecently =
-        summary.state === "closed" &&
-        summary.closed_at &&
-        new Date(summary.closed_at) >= sinceDate;
-      if (
-        closedRecently &&
-        (summary.labels ?? []).some(
-          (label) => label.name === "autodev-stale-closed"
-        )
-      ) {
-        const repoEntry = perRepository[fullName];
-        if (repoEntry) repoEntry.staleEmptyPrsClosed += 1;
-        staleEmptyPrsClosed += 1;
-      }
-      const agent = agentFromPull(summary);
-      if (!agent || !createdRecently) continue;
-      agentPrsRaised += 1;
-      const repoEntry = perRepository[fullName];
-      if (repoEntry) repoEntry.agentPrsRaised += 1;
-      if (summary.merged_at) {
+  await collectRepositoryPulls({
+    repositories,
+    github,
+    sinceDate,
+    perRepository,
+    recentPrs,
+    mutateTotals: {
+      bumpRaised: () => {
+        agentPrsRaised += 1;
+        return agentPrsRaised;
+      },
+      bumpMerged: () => {
         agentPrsMerged += 1;
-        if (repoEntry) repoEntry.agentPrsMerged += 1;
+        return agentPrsMerged;
+      },
+      bumpStale: () => {
+        staleEmptyPrsClosed += 1;
+        return staleEmptyPrsClosed;
       }
-      recentPrs.push({
-        repository: fullName,
-        number: summary.number,
-        title: summary.title,
-        url: summary.html_url,
-        state: summary.state,
-        createdAt: summary.created_at,
-        mergedAt: summary.merged_at,
-        agent
-      });
     }
-  }
+  });
 
   recentPrs.sort((left, right) =>
-    right.createdAt.localeCompare(left.createdAt)
+    COLLATOR.compare(right.createdAt, left.createdAt)
   );
   return {
     schema: "autodev-metrics-v1",
@@ -383,13 +490,13 @@ function formatTimestampToMinute(value: string): string {
 function markdownCell(value: unknown): string {
   return String(value ?? "")
     .replaceAll("|", String.raw`\|`)
-    .replaceAll(/\r?\n/g, " ");
+    .replaceAll(LINE_SPLIT_PATTERN, " ");
 }
 
 export function renderDashboard(metrics: CollectedMetrics): string {
   const generated = metrics.generatedAt
     .replace("T", " ")
-    .replace(/\.\d{3}Z$/, " UTC");
+    .replace(TIMESTAMP_SUFFIX_PATTERN, " UTC");
   const lines = [
     "<!-- autodev-metrics-dashboard-v1 -->",
     "# AutoDev metrics dashboard",

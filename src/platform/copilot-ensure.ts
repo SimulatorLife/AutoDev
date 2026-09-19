@@ -29,7 +29,7 @@ export interface CopilotEnsureDeps {
 const DEFAULT_TIMEOUT_MS = 5000;
 
 function positiveInteger(value: string | undefined, fallback: number): number {
-  const parsed = Number.parseInt(value ?? "", 10);
+  const parsed = Number.parseInt(value ?? "");
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
 }
 
@@ -68,13 +68,18 @@ function defaultDeps(options: CopilotEnsureOptions): CopilotEnsureDeps {
     launchd: new LaunchdClient(),
     probe: async () => {
       try {
-        return (await fetch(endpoint, { signal: AbortSignal.timeout(1000) }))
-          .ok;
+        const response = await fetch(endpoint, {
+          signal: AbortSignal.timeout(1000)
+        });
+        return response.ok;
       } catch {
         return false;
       }
     },
-    sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+    sleep: (ms) =>
+      new Promise((resolve) => {
+        setTimeout(resolve, ms);
+      }),
     commandAvailable: (command) => {
       try {
         execFileSync("which", [command], { stdio: "ignore" });
@@ -98,16 +103,21 @@ function defaultDeps(options: CopilotEnsureOptions): CopilotEnsureDeps {
   };
 }
 
-async function waitForProbe(
+async function pollProbeUntilDeadline(
+  deps: CopilotEnsureDeps,
+  deadline: number
+): Promise<boolean> {
+  if (Date.now() >= deadline) return deps.probe();
+  if (await deps.probe()) return true;
+  await deps.sleep(100);
+  return pollProbeUntilDeadline(deps, deadline);
+}
+
+function waitForProbe(
   deps: CopilotEnsureDeps,
   timeoutMs: number
 ): Promise<boolean> {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    if (await deps.probe()) return true;
-    await deps.sleep(100);
-  }
-  return deps.probe();
+  return pollProbeUntilDeadline(deps, Date.now() + timeoutMs);
 }
 
 /**
@@ -149,11 +159,20 @@ export async function ensureCopilotProxy(
 }
 
 if (process.argv[1] === new URL(import.meta.url).pathname) {
-  ensureCopilotProxy().then((ready) => {
-    if (!ready)
+  ensureCopilotProxy()
+    .then((ready) => {
+      if (!ready)
+        writeErrorLine(
+          "Copilot Responses proxy did not become ready; router will route around it."
+        );
+      process.exitCode = ready ? 0 : 1;
+      return ready ? 0 : 1;
+    })
+    .catch((error) => {
       writeErrorLine(
-        "Copilot Responses proxy did not become ready; router will route around it."
+        `copilot-ensure: ${error instanceof Error ? error.message : String(error)}`
       );
-    process.exitCode = ready ? 0 : 1;
-  });
+      process.exitCode = 1;
+      return 1;
+    });
 }

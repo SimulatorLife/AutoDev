@@ -43,6 +43,27 @@ function options(directory: string, binary: string): CollectorOptions {
   };
 }
 
+function baseFiles(directory: string): void {
+  writeFileSync(join(directory, "collector.yaml"), "receivers: {}\n");
+  writeFileSync(join(directory, "collector.version"), "v0.160.0\n");
+}
+
+function fakeBinary(directory: string, version = "0.160.0"): string {
+  const binary = join(directory, "otelcol");
+  const validated = join(directory, "validated");
+  const args = join(directory, "args");
+  writeFileSync(
+    binary,
+    String.raw`#!/bin/sh
+if [ "$1" = "--version" ]; then echo 'otelcol version ${version}'; exit 0; fi
+if [ "$1" = "validate" ]; then : > '${validated}'; exit 0; fi
+printf '%s\n' "$@" > '${args}'
+`
+  );
+  chmodSync(binary, 0o700);
+  return binary;
+}
+
 test("Collector option resolution keeps repository and CODEX_HOME boundaries explicit", () => {
   const result = resolveCollectorOptions({
     HOME: "/home/test",
@@ -57,32 +78,29 @@ test("Collector option resolution keeps repository and CODEX_HOME boundaries exp
 
 test("Collector run validates exact version/config before foreground execution", () =>
   withTempDir((directory) => {
-    const binary = join(directory, "otelcol");
-    const validated = join(directory, "validated");
-    const args = join(directory, "args");
-    writeFileSync(join(directory, "collector.yaml"), "receivers: {}\n");
-    writeFileSync(join(directory, "collector.version"), "v0.160.0\n");
-    writeFileSync(
-      binary,
-      `#!/bin/sh\nif [ "$1" = "--version" ]; then echo 'otelcol version v0.160.0'; exit 0; fi\nif [ "$1" = "validate" ]; then touch '${validated}'; exit 0; fi\nprintf '%s\\n' "$@" > '${args}'\n`
-    );
-    chmodSync(binary, 0o700);
+    baseFiles(directory);
+    const binary = fakeBinary(directory);
     const result = runCollector(options(directory, binary));
     assert.equal(result, 0);
     assert.equal(
-      readFileSync(args, "utf8").trim(),
+      readFileSync(join(directory, "args"), "utf8").trim(),
       `--config\n${join(directory, "collector.yaml")}`
     );
-    assert.equal(readFileSync(validated, "utf8"), "");
+    assert.equal(readFileSync(join(directory, "validated"), "utf8"), "");
+  }));
+
+test("Collector run accepts v-prefixed version output", () =>
+  withTempDir((directory) => {
+    baseFiles(directory);
+    const binary = fakeBinary(directory, "v0.160.0");
+    const result = runCollector(options(directory, binary));
+    assert.equal(result, 0);
   }));
 
 test("Collector run rejects a pinned-version mismatch before validation", () =>
   withTempDir((directory) => {
-    const binary = join(directory, "otelcol");
-    writeFileSync(join(directory, "collector.yaml"), "receivers: {}\n");
-    writeFileSync(join(directory, "collector.version"), "v0.160.0\n");
-    writeFileSync(binary, '#!/bin/sh\necho "otelcol version v0.160.1"\n');
-    chmodSync(binary, 0o700);
+    baseFiles(directory);
+    const binary = fakeBinary(directory, "0.160.1");
     assert.throws(
       () => runCollector(options(directory, binary)),
       /version mismatch/

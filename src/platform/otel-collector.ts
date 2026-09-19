@@ -1,4 +1,4 @@
-import { execFileSync, spawn, spawnSync } from "node:child_process";
+import { type ChildProcess,execFileSync, spawn, spawnSync } from "node:child_process";
 import {
   accessSync,
   chmodSync,
@@ -31,10 +31,28 @@ export interface CollectorOptions {
   readonly startTimeoutSeconds: number;
 }
 
-const DEFAULT_VERSION = /^v[0-9]+\.[0-9]+\.[0-9]+(?:-[A-Za-z0-9.-]+)?$/u;
+const HTTP_STATUS_PATTERN = /^[1-5][0-9][0-9]$/u;
+const COLLECTOR_VERSION_OUTPUT_PATTERN = /v?\d+\.\d+\.\d+(?:-[A-Za-z0-9.-]+|)/u;
+
+
+const DIGIT_ONLY_PATTERN = /^\d+$/u;
+const PRERELEASE_PATTERN = /^[A-Za-z0-9.-]+$/u;
+
+function isValidPinnedVersion(value: string): boolean {
+  if (!value.startsWith("v")) return false;
+  const tail = value.slice(1);
+  const dashIndex = tail.indexOf("-");
+  const core = dashIndex === -1 ? tail : tail.slice(0, dashIndex);
+  const dotParts = core.split(".");
+  if (dotParts.length !== 3) return false;
+  if (!dotParts.every((part) => DIGIT_ONLY_PATTERN.test(part))) return false;
+  if (dashIndex === -1) return true;
+  const prerelease = tail.slice(dashIndex + 1);
+  return prerelease.length > 0 && PRERELEASE_PATTERN.test(prerelease);
+}
 
 function positiveInteger(value: string | undefined, fallback: number): number {
-  const parsed = Number.parseInt(value ?? "", 10);
+  const parsed = Number.parseInt(value ?? "");
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
 }
 
@@ -105,7 +123,7 @@ function httpStatus(options: CollectorOptions): string {
 }
 
 function ready(options: CollectorOptions): boolean {
-  return /^[1-5][0-9][0-9]$/u.test(httpStatus(options));
+  return HTTP_STATUS_PATTERN.test(httpStatus(options));
 }
 
 function tcpBusy(options: CollectorOptions): boolean {
@@ -128,7 +146,7 @@ function expectedVersion(options: CollectorOptions): string {
   if (!existsSync(options.versionFile))
     fail(`collector version file is missing: ${options.versionFile}`);
   const version = readFileSync(options.versionFile, "utf8").trim();
-  if (!DEFAULT_VERSION.test(version))
+  if (!isValidPinnedVersion(version))
     fail(`collector.version is not a well-formed pinned version: '${version}'`);
   return version;
 }
@@ -179,10 +197,10 @@ function validateBinary(
     stdio: ["ignore", "pipe", "pipe"]
   });
   if (versionOutput.status !== 0) fail("collector --version failed");
-  const match =
-    `${versionOutput.stdout ?? ""}${versionOutput.stderr ?? ""}`
-      .replaceAll("\r", "")
-      .match(/v?[0-9]+\.[0-9]+\.[0-9]+(?:-[A-Za-z0-9.-]+)?/u)?.[0] ?? "";
+  const raw = `${versionOutput.stdout ?? ""}${versionOutput.stderr ?? ""}`
+    .replaceAll("\r", "");
+  const versionMatch = COLLECTOR_VERSION_OUTPUT_PATTERN.exec(raw);
+  const match = versionMatch?.[0] ?? "";
   const actual = match.startsWith("v") ? match : `v${match}`;
   if (actual !== version)
     fail(`collector version mismatch: expected ${version}`);
@@ -232,6 +250,20 @@ function runCommand(options: CollectorOptions): {
     : { command: "/bin/bash", args: [options.runner] };
 }
 
+async function pollCollectorReady(
+  options: CollectorOptions,
+  child: ChildProcess,
+  deadline: number
+): Promise<boolean> {
+  if (Date.now() >= deadline) return false;
+  if (ready(options)) return true;
+  if (child.exitCode !== null) fail("collector exited before becoming ready");
+  await new Promise((resolve) => {
+    setTimeout(resolve, 100);
+  });
+  return pollCollectorReady(options, child, deadline);
+}
+
 export async function ensureCollector(
   options: CollectorOptions = resolveCollectorOptions()
 ): Promise<number> {
@@ -268,20 +300,18 @@ export async function ensureCollector(
   writeFileSync(options.pidFile, `${child.pid ?? ""}\n`, { mode: 0o600 });
   try {
     const deadline = Date.now() + options.startTimeoutSeconds * 1000;
-    while (Date.now() < deadline) {
-      if (ready(options)) return 0;
-      if (child.exitCode !== null)
-        fail("collector exited before becoming ready");
-      await new Promise((resolve) => setTimeout(resolve, 100));
+    const readyBeforeDeadline = await pollCollectorReady(options, child, deadline);
+    if (!readyBeforeDeadline) {
+      try {
+        child.kill();
+      } catch {
+        /* already exited */
+      }
+      return fail(
+        `collector did not become ready within ${options.startTimeoutSeconds}s`
+      );
     }
-    try {
-      child.kill();
-    } catch {
-      /* already exited */
-    }
-    return fail(
-      `collector did not become ready within ${options.startTimeoutSeconds}s`
-    );
+    return 0;
   } finally {
     try {
       rmSync(options.pidFile, { force: true });
@@ -302,9 +332,18 @@ if (process.argv[1] === new URL(import.meta.url).pathname) {
   try {
     const result = cli(process.argv.slice(2));
     if (result instanceof Promise)
-      result.then((status) => {
-        process.exitCode = status;
-      });
+      result
+        .then((status) => {
+          process.exitCode = status;
+          return status;
+        })
+        .catch((error) => {
+          writeErrorLine(
+            `otel-collector: ${error instanceof Error ? error.message : String(error)}`
+          );
+          process.exitCode = 1;
+          return 1;
+        });
     else process.exitCode = result;
   } catch (error) {
     writeErrorLine(

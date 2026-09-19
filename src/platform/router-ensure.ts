@@ -13,6 +13,7 @@ import {
 import { homedir } from "node:os";
 import path from "node:path";
 
+import { writeErrorLine } from "../shared/output.ts";
 import { ensureCopilotProxy } from "./copilot-ensure.ts";
 import { LaunchdClient } from "./macos/launchd.ts";
 
@@ -101,10 +102,13 @@ const FALLBACK_LOG_MAX_BYTES = 10 * 1024 * 1024;
 const READY_TIMEOUT_MS_DEFAULT = 5000;
 const INITIAL_BACKOFF_MS_DEFAULT = 50;
 const MAX_BACKOFF_MS_DEFAULT = 1000;
+const PID_PATTERN = /^\d+$/u;
+const LAUNCHD_PID_LINE_PATTERN = /^\s*pid\s*=\s*(\d+)\s*$/u;
+const LOG_LINE_SPLIT_PATTERN = /\r?\n/u;
 
 function positiveInteger(value: string | undefined, fallback: number): number {
   if (value === undefined || value === "") return fallback;
-  const parsed = Number.parseInt(value, 10);
+  const parsed = Number.parseInt(value);
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
 }
 
@@ -197,8 +201,9 @@ function readListenerPid(port: number): number | null {
       ["-nP", "-a", `-iTCP:${port}`, "-sTCP:LISTEN", "-t"],
       { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }
     );
-    const first = stdout.split("\n", 1)[0]?.trim() ?? "";
-    return /^[0-9]+$/.test(first) ? Number.parseInt(first, 10) : null;
+    const newlineIndex = stdout.indexOf("\n");
+    const first = (newlineIndex === -1 ? stdout : stdout.slice(0, newlineIndex)).trim();
+    return PID_PATTERN.test(first) ? Number.parseInt(first) : null;
   } catch {
     return null;
   }
@@ -251,7 +256,10 @@ export function createDefaultRouterEnsureDeps(
         return false;
       }
     },
-    sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+    sleep: (ms) =>
+      new Promise((resolve) => {
+        setTimeout(resolve, ms);
+      }),
     now: () => Date.now(),
     mkdir: async (filePath, opts) => {
       await mkdirP(filePath, opts);
@@ -304,25 +312,46 @@ export { resolveRouterEnsureOptionsFromEnv as resolveRouterEnsureOptions };
 
 function parseLaunchdPid(output: string): number | null {
   for (const line of output.split("\n")) {
-    const match = /^\s*pid\s*=\s*([0-9]+)\s*$/.exec(line);
-    if (match && match[1] !== undefined) return Number.parseInt(match[1], 10);
+    const match = LAUNCHD_PID_LINE_PATTERN.exec(line);
+    if (match && match[1] !== undefined) return Number.parseInt(match[1]);
   }
   return null;
 }
 
-async function waitForProbe(
+async function pollRouterReadyWithBackoff(
+  deps: RouterEnsureDeps,
+  options: RouterEnsureOptions,
+  deadline: number,
+  backoff: number
+): Promise<boolean> {
+  if (await deps.probe()) return true;
+  if (deps.now() >= deadline) return false;
+  await deps.sleep(backoff);
+  const nextBackoff = Math.min(backoff * 2, options.maxBackoffMs);
+  return pollRouterReadyWithBackoff(deps, options, deadline, nextBackoff);
+}
+
+function waitForProbe(
   deps: RouterEnsureDeps,
   options: RouterEnsureOptions
 ): Promise<boolean> {
-  const startMs = deps.now();
-  const deadline = startMs + options.readyTimeoutMs;
-  let backoff = options.initialBackoffMs;
-  while (true) {
-    if (await deps.probe()) return true;
-    if (deps.now() >= deadline) return false;
-    await deps.sleep(backoff);
-    backoff = Math.min(backoff * 2, options.maxBackoffMs);
-  }
+  const deadline = deps.now() + options.readyTimeoutMs;
+  return pollRouterReadyWithBackoff(
+    deps,
+    options,
+    deadline,
+    options.initialBackoffMs
+  );
+}
+
+async function waitForProcessExit(
+  deps: RouterEnsureDeps,
+  pid: number
+): Promise<void> {
+  if (!deps.pidExists(pid)) return;
+  await deps.sleep(100);
+  if (!deps.pidExists(pid)) return;
+  await waitForProcessExit(deps, pid);
 }
 
 async function secureLogFile(
@@ -353,8 +382,8 @@ async function acquireLock(
   if (await tryMakeLockDir(deps, paths.lockDir, options.myPid)) return true;
 
   const ownerRaw = await deps.readFile(path.join(paths.lockDir, "pid"));
-  const owner = /^[0-9]+$/.test(ownerRaw.trim())
-    ? Number.parseInt(ownerRaw.trim(), 10)
+  const owner = PID_PATTERN.test(ownerRaw.trim())
+    ? Number.parseInt(ownerRaw.trim())
     : Number.NaN;
   if (Number.isFinite(owner) && !deps.pidExists(owner)) {
     const stale = `${paths.lockDir}.stale.${options.myPid}`;
@@ -494,18 +523,15 @@ async function ensureViaFallback(
   }
 
   const existingPidRaw = await deps.readFile(options.paths.fallbackPidFile);
-  const existingPid = /^[0-9]+$/.test(existingPidRaw.trim())
-    ? Number.parseInt(existingPidRaw.trim(), 10)
+  const existingPid = PID_PATTERN.test(existingPidRaw.trim())
+    ? Number.parseInt(existingPidRaw.trim())
     : Number.NaN;
 
   if (Number.isFinite(existingPid) && deps.pidExists(existingPid)) {
     if (fallbackPidOwned(deps, existingPid)) {
       if (await deps.probe()) return 0;
       deps.signalPid(existingPid, "SIGTERM");
-      for (let i = 0; i < 50; i += 1) {
-        if (!deps.pidExists(existingPid)) break;
-        await deps.sleep(100);
-      }
+      await waitForProcessExit(deps, existingPid);
       if (deps.pidExists(existingPid)) deps.signalPid(existingPid, "SIGKILL");
     }
     await deps.unlink(options.paths.fallbackPidFile);
@@ -543,7 +569,7 @@ async function readLogTail(
 ): Promise<string[]> {
   const raw = await deps.readFile(logPath);
   if (!raw) return [];
-  const lines = raw.split(/\r?\n/);
+  const lines = raw.split(LOG_LINE_SPLIT_PATTERN);
   return lines
     .slice(Math.max(0, lines.length - 1 - lineCount), -1)
     .filter((line) => line.length > 0);
@@ -642,13 +668,20 @@ export const __testing = {
 
 if (process.argv[1] === new URL(import.meta.url).pathname) {
   const options = resolveRouterEnsureOptionsFromEnv(process.env, process.pid);
-  runRouterEnsure(createDefaultRouterEnsureDeps(options), options).then(
-    (result) => {
+  runRouterEnsure(createDefaultRouterEnsureDeps(options), options)
+    .then((result) => {
       if (result.message && result.exitCode !== 0)
         process.stderr.write(`${result.message}\n`);
       for (const line of result.logTail ?? [])
         process.stderr.write(`${line}\n`);
       process.exitCode = result.exitCode;
-    }
-  );
+      return result.exitCode;
+    })
+    .catch((error) => {
+      writeErrorLine(
+        `router-ensure: ${error instanceof Error ? error.message : String(error)}`
+      );
+      process.exitCode = 1;
+      return 1;
+    });
 }

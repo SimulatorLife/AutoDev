@@ -38,6 +38,47 @@ export interface StateProviderTelemetryEntry {
   lastFailure: unknown;
 }
 
+function lookupCurrentEntry(
+  currentCollection:
+    | Map<string, StateProviderTelemetryEntry>
+    | Record<string, StateProviderTelemetryEntry>
+    | ((provider: string) => StateProviderTelemetryEntry | null | undefined),
+  provider: string
+): StateProviderTelemetryEntry | null | undefined {
+  if (typeof currentCollection === "function") return currentCollection(provider);
+  if (currentCollection instanceof Map) return currentCollection.get(provider);
+  return currentCollection[provider];
+}
+
+function applyNumericFields(
+  current: StateProviderTelemetryEntry,
+  saved: Record<string, unknown>
+): void {
+  for (const field of ["attempts", "successes", "failures", "skipped"] as const) {
+    const val = saved[field];
+    if (Number.isInteger(val) && (val as number) >= 0) {
+      current[field] = val as number;
+    }
+  }
+}
+
+function applyStringFields(
+  current: StateProviderTelemetryEntry,
+  saved: Record<string, unknown>
+): void {
+  for (const field of [
+    "lastAttemptAt",
+    "lastSuccessAt",
+    "lastFailureAt",
+    "lastFailureClass"
+  ] as const) {
+    const val = saved[field];
+    if (val === null || typeof val === "string") {
+      current[field] = val;
+    }
+  }
+}
+
 export function restoreProviderTelemetrySection(
   currentCollection:
     | Map<string, StateProviderTelemetryEntry>
@@ -50,39 +91,11 @@ export function restoreProviderTelemetrySection(
     savedSection as Record<string, unknown>
   )) {
     if (!saved || typeof saved !== "object") continue;
-    let current: StateProviderTelemetryEntry | null | undefined;
-    if (typeof currentCollection === "function") {
-      current = currentCollection(provider);
-    } else if (currentCollection instanceof Map) {
-      current = currentCollection.get(provider);
-    } else {
-      current = currentCollection[provider];
-    }
+    const current = lookupCurrentEntry(currentCollection, provider);
     if (!current) continue;
-
     const savedEntry = saved as Record<string, unknown>;
-    for (const field of [
-      "attempts",
-      "successes",
-      "failures",
-      "skipped"
-    ] as const) {
-      const val = savedEntry[field];
-      if (Number.isInteger(val) && (val as number) >= 0) {
-        current[field] = val as number;
-      }
-    }
-    for (const field of [
-      "lastAttemptAt",
-      "lastSuccessAt",
-      "lastFailureAt",
-      "lastFailureClass"
-    ] as const) {
-      const val = savedEntry[field];
-      if (val === null || typeof val === "string") {
-        current[field] = val;
-      }
-    }
+    applyNumericFields(current, savedEntry);
+    applyStringFields(current, savedEntry);
     if (
       savedEntry.lastFailure === null ||
       (savedEntry.lastFailure && typeof savedEntry.lastFailure === "object")
@@ -210,7 +223,7 @@ export class RouterPersistence {
     }
   }
 
-  async persistNow(file?: string): Promise<void> {
+  persistNow(file?: string): Promise<void> {
     if (this.persistTimeout) {
       clearTimeout(this.persistTimeout);
       this.persistTimeout = null;
@@ -227,11 +240,13 @@ export class RouterPersistence {
         });
         await rename(temporaryFile, targetFile);
         this.persistedStateUpdatedAt = new Date().toISOString();
+        return undefined;
       })
       .catch((error) => {
         writeErrorLine(
           `Warning: could not persist router state to ${targetFile}: ${error instanceof Error ? error.message : String(error)}`
         );
+        return undefined;
       });
 
     return this.persistChain;

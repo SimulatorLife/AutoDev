@@ -19,6 +19,10 @@ import path from "node:path";
 
 import { writeErrorLine, writeLine } from "../shared/output.ts";
 
+const COLLECTOR_PINNED_VERSION_PATTERN = /^v[0-9]+\.[0-9]+\.[0-9]+$/u;
+const TAR_GZ_ARCHIVE_PATTERN = /^[^/]+\.tar\.gz$/u;
+const SHA256_HEX_PATTERN = /^[0-9a-f]{64}$/u;
+
 interface Artifact {
   name: string;
   sha256: string;
@@ -125,13 +129,13 @@ export async function provisionCollector(
   if (!existsSync(options.versionFile))
     fail(`collector version file is missing: ${options.versionFile}`);
   const version = readFileSync(options.versionFile, "utf8").trim();
-  if (!/^v[0-9]+\.[0-9]+\.[0-9]+$/u.test(version))
+  if (!COLLECTOR_PINNED_VERSION_PATTERN.test(version))
     fail(`invalid pinned Collector version: ${version}`);
   const asset = readManifest(options, version).assets[platformKey()];
   if (
     !asset ||
-    !/^[^/]+\.tar\.gz$/u.test(asset.name) ||
-    !/^[0-9a-f]{64}$/u.test(asset.sha256)
+    !TAR_GZ_ARCHIVE_PATTERN.test(asset.name) ||
+    !SHA256_HEX_PATTERN.test(asset.sha256)
   )
     fail(`no valid Collector artifact is pinned for ${platformKey()}`);
 
@@ -176,11 +180,13 @@ if (process.argv[1] === new URL(import.meta.url).pathname) {
   provisionCollector()
     .then((status) => {
       process.exitCode = status;
+      return status;
     })
     .catch((error) => {
       writeErrorLine(
         `provision-autodev-otel-collector: ${error instanceof Error ? error.message : String(error)}`
       );
       process.exitCode = 1;
+      return 1;
     });
 }

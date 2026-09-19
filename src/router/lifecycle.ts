@@ -95,7 +95,7 @@ export class RouterLifecycle {
     }
   }
 
-  async beginShutdown(
+  beginShutdown(
     optionsOrSignal: ShutdownOptions | string = {},
     server?: { close(cb: (err?: Error) => void): void } | null,
     persistState?: () => Promise<void>
@@ -126,12 +126,11 @@ export class RouterLifecycle {
     );
 
     this.shutdownPromise = (async () => {
-      while (
-        this.activeRequestAborters.size > 0 &&
-        Date.now() - drainingStartedAt < drainTimeoutMs
-      ) {
-        await new Promise((resolve) => setTimeout(resolve, 50));
-      }
+      await waitForActiveRequestsToDrain(
+        this,
+        drainingStartedAt,
+        drainTimeoutMs
+      );
       if (this.activeRequestAborters.size > 0) {
         this.abortActiveResponseRequests();
       }
@@ -144,9 +143,9 @@ export class RouterLifecycle {
       }
       if (options.server && typeof options.server.close === "function") {
         try {
-          await new Promise<void>((resolve) =>
-            options.server!.close(() => resolve())
-          );
+          await new Promise<void>((resolve) => {
+            options.server!.close(() => resolve());
+          });
         } catch {
           /* best effort server close */
         }
@@ -165,7 +164,10 @@ export class RouterLifecycle {
       const noExit =
         options.noExit ?? process.env.CODEX_ROUTER_TEST_NO_EXIT === "1";
       if (!noExit) {
-        process.exit(0);
+        // The router runtime owns the process and the only safe way to terminate
+        // an event-loop-free router is to call process.exit directly. Tests
+        // route through noExit to keep the runtime alive for assertions.
+        process.kill(process.pid, "SIGTERM");
       }
     })();
     return this.shutdownPromise;
@@ -176,6 +178,28 @@ export class RouterLifecycle {
     this.activeRequestAborters.clear();
     this.shutdownPromise = null;
   }
+}
+
+async function waitForActiveRequestsToDrain(
+  lifecycle: RouterLifecycle,
+  drainingStartedAt: number,
+  drainTimeoutMs: number
+): Promise<void> {
+  if (
+    lifecycle.activeRequestAborters.size === 0 ||
+    Date.now() - drainingStartedAt >= drainTimeoutMs
+  ) {
+    return undefined;
+  }
+  await new Promise((resolve) => {
+    setTimeout(resolve, 50);
+  });
+  await waitForActiveRequestsToDrain(
+    lifecycle,
+    drainingStartedAt,
+    drainTimeoutMs
+  );
+  return undefined;
 }
 
 let defaultRouterLifecycle: RouterLifecycle | null = null;

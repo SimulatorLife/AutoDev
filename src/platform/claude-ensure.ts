@@ -33,10 +33,11 @@ export interface ClaudeEnsureDeps {
   readonly startFallback: (launcher: string, logPath: string) => void;
 }
 
+const CLAUDE_MODEL_PATTERN = /^(sonnet|opus|haiku|claude-[a-z0-9][a-z0-9.-]*)$/iu;
 const DEFAULT_TIMEOUT_MS = 5000;
 
 function positiveInteger(value: string | undefined, fallback: number): number {
-  const parsed = Number.parseInt(value ?? "", 10);
+  const parsed = Number.parseInt(value ?? "");
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
 }
 
@@ -73,7 +74,7 @@ export function isClaudeModel(input: string): boolean {
         : null;
     return (
       typeof model === "string" &&
-      /^(sonnet|opus|haiku|claude-[a-z0-9][a-z0-9.-]*)$/iu.test(model.trim())
+      CLAUDE_MODEL_PATTERN.test(model.trim())
     );
   } catch {
     return false;
@@ -107,13 +108,18 @@ function defaultDeps(options: ClaudeEnsureOptions): ClaudeEnsureDeps {
     launchd: new LaunchdClient(),
     probe: async () => {
       try {
-        return (await fetch(endpoint, { signal: AbortSignal.timeout(1000) }))
-          .ok;
+        const response = await fetch(endpoint, {
+          signal: AbortSignal.timeout(1000)
+        });
+        return response.ok;
       } catch {
         return false;
       }
     },
-    sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+    sleep: (ms) =>
+      new Promise((resolve) => {
+        setTimeout(resolve, ms);
+      }),
     tokenAvailable: () =>
       options.oauthToken.length > 0 || keychainToken(process.env).length > 0,
     plistExists: () => existsSync(options.plist),
@@ -133,16 +139,21 @@ function defaultDeps(options: ClaudeEnsureOptions): ClaudeEnsureDeps {
   };
 }
 
-async function waitForProbe(
+async function pollProbeUntilDeadline(
+  deps: ClaudeEnsureDeps,
+  deadline: number
+): Promise<boolean> {
+  if (Date.now() >= deadline) return deps.probe();
+  if (await deps.probe()) return true;
+  await deps.sleep(100);
+  return pollProbeUntilDeadline(deps, deadline);
+}
+
+function waitForProbe(
   deps: ClaudeEnsureDeps,
   timeoutMs: number
 ): Promise<boolean> {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    if (await deps.probe()) return true;
-    await deps.sleep(100);
-  }
-  return deps.probe();
+  return pollProbeUntilDeadline(deps, Date.now() + timeoutMs);
 }
 
 /** Own the Claude bridge's model gate, credential check, and launchd fallback. */
@@ -195,7 +206,16 @@ export async function ensureClaudeBridge(
 }
 
 if (process.argv[1] === new URL(import.meta.url).pathname) {
-  ensureClaudeBridge().then((status) => {
-    process.exitCode = status;
-  });
+  ensureClaudeBridge()
+    .then((status) => {
+      process.exitCode = status;
+      return status;
+    })
+    .catch((error) => {
+      writeErrorLine(
+        `claude-ensure: ${error instanceof Error ? error.message : String(error)}`
+      );
+      process.exitCode = 1;
+      return 1;
+    });
 }
