@@ -132,3 +132,15 @@ test('RouterEventRecorder uses resolveOrigin to derive orchestrator role for cod
   assert.equal(event.role, 'orchestrator');
   assert.equal(passedOrigin, 'orchestrator');
 });
+
+test('every event of a request names the Codex thread that sent it', () => {
+  // Without it, per-thread diagnostics could only guess by model and time
+  // window, and concurrent threads on the same role interleaved.
+  const recorder = new RouterEventRecorder({ logger: null });
+  recorder.noteRequestThread('req-child', 'thread-child');
+  assert.equal(recorder.record({ phase: 'selected', requestId: 'req-child' }).thread, 'thread-child');
+  assert.equal(recorder.record({ phase: 'result', requestId: 'req-child', outcome: 'success' }).thread, 'thread-child');
+  assert.equal(recorder.record({ phase: 'selected', requestId: 'req-anonymous' }).thread, null);
+  recorder.noteRequestThread('req-none', null);
+  assert.equal(recorder.record({ phase: 'selected', requestId: 'req-none' }).thread, null);
+});

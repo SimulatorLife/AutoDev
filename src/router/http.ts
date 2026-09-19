@@ -54,6 +54,7 @@ import {
   RouterEventRecorder,
   classifyProviderFailure,
   getDefaultRouterEventRecorder,
+  noteRequestThread,
   recordRouterEvent,
   setDefaultRouterEventRecorder,
 } from './events.ts';
@@ -1208,6 +1209,7 @@ export async function handleRequest(request: IncomingMessage, response: ServerRe
   const wantsStream = payload.stream !== false;
   const turnMetadataHeader = resolveTurnMetadataHeader(request, payload);
   const session = requestSession(request, payload, turnMetadataHeader);
+  noteRequestThread(requestId, session.thread);
   const effectiveTurnMetadataHeader = workspaceMetadataForSession(payload, turnMetadataHeader, session);
   const workspace = workspaceContextFromRequest(request, payload, effectiveTurnMetadataHeader);
   const clientAbort = new AbortController();

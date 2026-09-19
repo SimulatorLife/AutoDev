@@ -48,6 +48,19 @@ function argument(name: string): string | undefined {
   return index === -1 ? undefined : process.argv[index + 1];
 }
 
+/**
+ * A turns file is `{ "turns": [ [event, ...], ... ] }`. Anything else is an
+ * error: treating it as "no turns" silently switches to capture mode, and every
+ * request then gets the capture error instead of the scripted reply.
+ */
+export function parseTurnsFile(value: unknown): SseEvent[][] {
+  const turns = value && typeof value === 'object' && !Array.isArray(value) ? (value as { turns?: unknown }).turns : undefined;
+  if (!Array.isArray(turns) || turns.length === 0 || !turns.every(Array.isArray)) {
+    throw new Error('--turns file must be an object whose "turns" is a non-empty array of SSE event arrays: { "turns": [ [ ... ], ... ] }');
+  }
+  return turns as SseEvent[][];
+}
+
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   const record = argument('--record');
   if (!record) {
@@ -55,13 +68,16 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     process.exit(2);
   }
   const turnsFile = argument('--turns');
-  const turnsValue: unknown = turnsFile ? JSON.parse(readFileSync(turnsFile, 'utf8')) : null;
-  const turns = turnsValue && typeof turnsValue === 'object' && !Array.isArray(turnsValue) ? (turnsValue as { turns?: unknown }).turns : null;
-  if (turns !== null && (!Array.isArray(turns) || turns.length === 0)) {
-    process.stderr.write('--turns file must contain a non-empty "turns" array of SSE event arrays\n');
-    process.exit(2);
+  let turns: SseEvent[][] | null = null;
+  if (turnsFile) {
+    try {
+      turns = parseTurnsFile(JSON.parse(readFileSync(turnsFile, 'utf8')));
+    } catch (error) {
+      process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
+      process.exit(2);
+    }
   }
-  const server = await startRecorder({ port: Number(argument('--port') ?? 0), record, turns: turns as SseEvent[][] | null });
+  const server = await startRecorder({ port: Number(argument('--port') ?? 0), record, turns });
   const address = server.address();
   const port = address && typeof address === 'object' ? address.port : 0;
   process.stderr.write(`responses recorder listening ${port}\n`);

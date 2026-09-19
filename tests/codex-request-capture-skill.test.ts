@@ -6,7 +6,7 @@ import { join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
-import { redactHeaders, sseBody, startRecorder, type RecorderOptions, type SseEvent } from "../.rulesync/skills/autodev-codex-request-capture/scripts/responses-recorder.ts";
+import { parseTurnsFile, redactHeaders, sseBody, startRecorder, type RecorderOptions, type SseEvent } from "../.rulesync/skills/autodev-codex-request-capture/scripts/responses-recorder.ts";
 
 const SKILL_DIR = fileURLToPath(new URL("../.rulesync/skills/autodev-codex-request-capture/", import.meta.url));
 const RECORDER = join(SKILL_DIR, "scripts", "responses-recorder.ts");
@@ -94,4 +94,13 @@ test("the example turns reproduce MiniMax-M3's nested exec_command call, then fi
   assert.deepEqual(JSON.parse(call.arguments), { cmd: "echo autodev-probe" });
   assert.equal(turns[ 1 ]?.at(-1)?.type, "response.completed");
   for (const turn of turns) assert.equal(turn.at(-1)?.type, "response.completed");
+});
+
+test("a turns file that is not { turns: [...] } is refused instead of silently falling back to capture mode", () => {
+  const turn = [ { type: "response.created", response: { id: "r1" } } ];
+  assert.deepEqual(parseTurnsFile({ turns: [ turn ] }), [ turn ]);
+  // A bare array of turns once ran as capture mode, answering every request with an error.
+  assert.throws(() => parseTurnsFile([ turn ]), /"turns" is a non-empty array/);
+  assert.throws(() => parseTurnsFile({ turns: [] }), /non-empty/);
+  assert.throws(() => parseTurnsFile({ turns: [ "not an event array" ] }), /SSE event arrays/);
 });

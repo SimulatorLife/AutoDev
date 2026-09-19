@@ -1,12 +1,13 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
-import { buildReport, findSessionRollouts, renderReport } from "../.rulesync/skills/autodev-session-diagnostics/scripts/session-trace.ts";
+import { buildReport, findSessionRollouts, recentSessions, renderReport } from "../.rulesync/skills/autodev-session-diagnostics/scripts/session-trace.ts";
+import { probe } from "../.rulesync/skills/autodev-session-diagnostics/scripts/mcp-probe.ts";
 
 const SCRIPT = fileURLToPath(new URL("../.rulesync/skills/autodev-session-diagnostics/scripts/session-trace.ts", import.meta.url));
 const ROOT = "01a0b662-0000-7000-8000-000000000001";
@@ -35,6 +36,8 @@ function fixture(): { home: string; cleanup: () => void } {
     line("2026-09-18T21:20:00.200Z", "event_msg", { type: "task_started", turn_id: "t-child" }),
     line("2026-09-18T21:20:01.000Z", "response_item", { type: "message", role: "user", content: [ { type: "input_text", text: "implement it" } ] }),
     line("2026-09-18T21:25:03.000Z", "response_item", { type: "reasoning", id: "06fcdf5c2897fecf8516745cbeb71597_rs", summary: [], content: [ { type: "reasoning_text", text: "Let me start" } ] }),
+    line("2026-09-18T21:25:04.000Z", "response_item", { type: "custom_tool_call", name: "exec", call_id: "call_lsp", input: "const r = await tools.mcp__lsp__lsp_index_files({ files: [] }); text(r);" }),
+    line("2026-09-18T21:25:05.000Z", "response_item", { type: "custom_tool_call_output", call_id: "call_lsp", output: [ { type: "input_text", text: "Script completed" }, { type: "input_text", text: "tool call error: tool call failed for `lsp/lsp_index_files`\n\nCaused by:\n Transport closed" } ] }),
     line("2026-09-18T21:32:48.000Z", "event_msg", { type: "turn_aborted", turn_id: "t-child", reason: "interrupted" }),
   ]);
   rollout(OTHER, [ line("2026-09-18T21:21:00.000Z", "session_meta", { id: OTHER, session_id: OTHER, thread_source: "user" }) ]);
@@ -44,6 +47,7 @@ function fixture(): { home: string; cleanup: () => void } {
     event("2026-09-18T21:20:00.500Z", { requestId: "req-a", phase: "selected", role: "worker", requestedModel: "autodev/worker", provider: "antigravity", model: "gemini" }),
     event("2026-09-18T21:25:01.000Z", { requestId: "req-a", phase: "result", role: "worker", requestedModel: "autodev/worker", provider: "antigravity", outcome: "failure", status: 502, failureClass: "unavailable", elapsedMs: 300500, toolCalls: 0 }),
     event("2026-09-18T21:25:02.000Z", { requestId: "req-b", phase: "selected", role: "worker", requestedModel: "autodev/worker", provider: "claude", model: "sonnet" }),
+    event("2026-09-18T21:32:00.000Z", { requestId: "req-b", phase: "result", role: "worker", requestedModel: "autodev/worker", provider: "claude", outcome: "success", status: 200, elapsedMs: 418000, toolCalls: 0 }),
     event("2026-09-18T21:25:02.000Z", { requestId: "req-x", phase: "selected", role: "explorer", requestedModel: "autodev/explorer", provider: "minimax" }),
     event("2026-09-19T09:00:00.000Z", { requestId: "req-late", phase: "selected", role: "worker", requestedModel: "autodev/worker", provider: "minimax" }),
   ].join("\n"));
@@ -64,27 +68,100 @@ test("a thread id finds its whole session, and a session id finds its subagents"
   }
 });
 
-test("the report surfaces gaps, aborted turns, and the providers each request used", async () => {
+test("the report surfaces gaps, aborted turns, tool failures, and provider hops", async () => {
   const { home, cleanup } = fixture();
   try {
-    const report = await buildReport({ id: CHILD, codexHome: home, routerLog: join(home, "run", "codex-model-router.launchd.err.log"), items: true, processes: false });
+    const report = await buildReport({ id: CHILD, codexHome: home, routerLog: join(home, "run", "codex-model-router.launchd.err.log"), items: true, events: true, offline: true });
     const child = report.threads.find((thread) => thread.id === CHILD);
     assert.ok(child);
     assert.equal(child.role, "worker");
     assert.equal(child.model, "autodev/worker");
     assert.deepEqual(child.turns.map((turn) => turn.outcome), [ "aborted:interrupted" ]);
-    assert.deepEqual(child.gaps.map((gap) => gap.seconds), [ 465, 302 ]);
-    assert.equal(child.items?.[1]?.kind, "reasoning");
-    const events = report.router.find((entry) => entry.thread === CHILD)?.events ?? [];
-    // Only this thread's model, only its window: the explorer and the next-day request are excluded.
-    assert.deepEqual(events.map((row) => `${row.requestId}:${row.phase}:${row.provider}`), [ "req-a:selected:antigravity", "req-a:result:antigravity", "req-b:selected:claude" ]);
-    assert.equal(events[1]?.failureClass, "unavailable");
+    assert.deepEqual(child.gaps.map((gap) => gap.seconds), [ 463, 302 ]);
+    // A tool called inside `exec` is counted under its own MCP name, and its failure is surfaced.
+    assert.equal(child.tools["mcp__lsp__lsp_index_files"], 1);
+    assert.equal(child.toolFailures.length, 1);
+    assert.equal(child.toolFailures[0]?.tool, "mcp__lsp__lsp_index_files");
+    assert.match(child.toolFailures[0]?.detail ?? "", /Transport closed/);
+    const router = report.router.find((entry) => entry.thread === CHILD);
+    assert.ok(router);
+    // Old events carry no thread: matched by model and window, so the explorer and the next-day request are excluded.
+    assert.equal(router.matchedBy, "model-window");
+    assert.equal(router.requests, 2);
+    assert.deepEqual(router.providerSequence, [ "antigravity", "claude" ]);
+    assert.deepEqual(router.failures.map((failure) => `${failure.provider}:${failure.status}:${failure.failureClass}`), [ "antigravity:502:unavailable" ]);
+    assert.deepEqual(router.events?.map((row) => `${row.requestId}:${row.phase}`), [ "req-a:selected", "req-a:result", "req-b:selected", "req-b:result" ]);
+    assert.equal(report.live, null, "offline reads no live state");
     const text = renderReport(report);
     assert.match(text, /== thread 01a0b664-0000-7000-8000-000000000002 \(ImplementationCoder\) role=worker model=autodev\/worker/);
-    assert.match(text, /GAP 465s after reasoning/);
-    assert.match(text, /req-a result role=worker antigravity\/- failure 502 unavailable 300500ms tools=0/);
+    assert.match(text, /GAP 463s after custom_tool_call_output/);
+    assert.match(text, /TOOL FAILED 21:25:05 mcp__lsp__lsp_index_files call=call_lsp :: .*Transport closed/);
+    assert.match(text, /PROVIDER HOPS antigravity → claude/);
+    assert.match(text, /ROUTER FAILURE .* antigravity 502 unavailable 300500ms/);
   } finally {
     cleanup();
+  }
+});
+
+test("router events that name their thread are matched exactly, not by model and window", async () => {
+  const { home, cleanup } = fixture();
+  try {
+    const log = join(home, "run", "codex-model-router.launchd.err.log");
+    const event = (timestamp: string, fields: Record<string, unknown>) => JSON.stringify({ schema: "autodev-router-event-v1", timestamp, ...fields });
+    // Two workers on the same model at once: only the thread field tells them apart.
+    writeFileSync(log, [
+      event("2026-09-18T21:21:00.000Z", { requestId: "mine", thread: CHILD, phase: "selected", requestedModel: "autodev/worker", provider: "claude" }),
+      event("2026-09-18T21:21:01.000Z", { requestId: "theirs", thread: "another-worker", phase: "selected", requestedModel: "autodev/worker", provider: "minimax" }),
+    ].join("\n"));
+    const report = await buildReport({ id: CHILD, codexHome: home, routerLog: log, items: false, offline: true });
+    const router = report.router.find((entry) => entry.thread === CHILD);
+    assert.equal(router?.matchedBy, "thread");
+    assert.deepEqual(router?.providerSequence, [ "claude" ]);
+    assert.equal(router?.requests, 1);
+  } finally {
+    cleanup();
+  }
+});
+
+test("--recent lists the newest sessions with their thread counts", () => {
+  const { home, cleanup } = fixture();
+  try {
+    const sessions = recentSessions(join(home, "sessions"), 5);
+    const root = sessions.find((session) => session.id === ROOT);
+    assert.equal(root?.threads, 2);
+    assert.equal(root?.cwd, "/tmp/repo");
+    assert.ok(sessions.some((session) => session.id === OTHER));
+  } finally {
+    cleanup();
+  }
+});
+
+test("the MCP probe reports the tools, each call, and the stderr of a server that dies", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "autodev-mcp-probe-"));
+  try {
+    // A tiny MCP server: one tool that works, one that makes it exit like lsp-mcp-server did.
+    const server = join(dir, "server.mjs");
+    writeFileSync(server, `import { createInterface } from "node:readline";
+const send = (m) => process.stdout.write(JSON.stringify(m) + "\\n");
+createInterface({ input: process.stdin }).on("line", (line) => {
+  const m = JSON.parse(line);
+  if (m.method === "initialize") send({ jsonrpc: "2.0", id: m.id, result: { protocolVersion: "2025-06-18", capabilities: { tools: {} } } });
+  else if (m.method === "tools/list") send({ jsonrpc: "2.0", id: m.id, result: { tools: [ { name: "ok_tool" }, { name: "crash_tool" } ] } });
+  else if (m.method === "tools/call" && m.params.name === "ok_tool") send({ jsonrpc: "2.0", id: m.id, result: { content: [ { type: "text", text: "fine" } ] } });
+  else if (m.method === "tools/call") { process.stderr.write("spawn typescript-language-server ENOENT\\n"); process.exit(1); }
+});
+`);
+    const launcher = join(dir, "launcher.sh");
+    writeFileSync(launcher, `#!/bin/sh\nexec "${process.execPath}" "${server}"\n`);
+    chmodSync(launcher, 0o755);
+    const result = await probe({ server: "fake", cwd: dir, launcher, calls: [ { tool: "ok_tool", args: {} }, { tool: "crash_tool", args: {} } ], timeoutMs: 5000 });
+    assert.deepEqual(result.tools, [ "ok_tool", "crash_tool" ]);
+    assert.deepEqual(result.calls.map((call) => [ call.tool, call.ok ]), [ [ "ok_tool", true ], [ "crash_tool", false ] ]);
+    assert.match(result.calls[1]?.text ?? "", /server exited/);
+    assert.equal(result.exited?.code, 1);
+    assert.match(result.stderrTail, /ENOENT/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
   }
 });
 
@@ -94,11 +171,11 @@ test("the CLI documents its usage and emits JSON on request", () => {
   assert.match(usage.stderr, /usage: session-trace\.ts <session-or-thread-id>/);
   const { home, cleanup } = fixture();
   try {
-    const run = spawnSync(process.execPath, [ SCRIPT, ROOT, "--json", "--no-processes", "--codex-home", home ], { encoding: "utf8" });
+    const run = spawnSync(process.execPath, [ SCRIPT, ROOT, "--json", "--offline", "--codex-home", home ], { encoding: "utf8" });
     assert.equal(run.status, 0, run.stderr);
     const report = JSON.parse(run.stdout);
     assert.equal(report.threads.length, 2);
-    assert.deepEqual(report.processes, []);
+    assert.equal(report.live, null);
   } finally {
     cleanup();
   }

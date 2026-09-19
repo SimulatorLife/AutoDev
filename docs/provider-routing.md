@@ -794,7 +794,11 @@ scope any external inspection.
 Router stderr is structured JSON (`autodev-router-event-v1`) and is retained by
 launchd in `$CODEX_HOME/run/codex-model-router.launchd.err.log` (stdout uses
 the sibling `*.out.log` so structured events are never interleaved with
-incidental output). The direct ensure fallback writes its own log at
+incidental output). Every event of a request carries the Codex `thread` that
+sent it (from the `thread-id` header or `client_metadata.thread_id`, noted
+once when the request arrives), so a subagent's requests can be told apart
+from a sibling's on the same role; the `autodev-session-diagnostics` skill
+relies on it. The direct ensure fallback writes its own log at
 `$CODEX_HOME/run/codex-model-router.fallback.log` and records its tracked
 PID at `$CODEX_HOME/run/codex-model-router.fallback.pid`; both files are
 created with mode 0600 inside a mode 0700 directory so the local user keeps

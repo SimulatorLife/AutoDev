@@ -21,6 +21,8 @@ export interface RouterEvent {
   timestamp: string;
   routerInstanceId: string;
   requestId: string | null;
+  /** The Codex thread the request came from, when the caller named one. */
+  thread: string | null;
   phase: string;
   role: string | null;
   requestedModel: string | null | undefined;
@@ -46,6 +48,7 @@ export interface RouterEvent {
 export interface RecordRouterEventInput {
   phase: string;
   requestId?: string | null | undefined;
+  thread?: string | null | undefined;
   role?: string | null | undefined;
   requestedModel?: string | null | undefined;
   provider?: string | null | undefined;
@@ -92,6 +95,10 @@ export interface RouterEventRecorderOptions {
 
 export class RouterEventRecorder {
   private readonly recentEvents: RouterEvent[] = [];
+  // Which thread each in-flight request belongs to. The many call sites that
+  // record a request's events know its id, not its thread, so the thread is
+  // noted once when the request arrives. Bounded, oldest first.
+  private readonly requestThreads = new Map<string, string>();
   private readonly maxRecentEvents: number;
   private readonly routerInstanceId: string;
   private readonly logger: ((event: RouterEvent) => void) | null;
@@ -126,6 +133,16 @@ export class RouterEventRecorder {
     this.recentEvents.push(...valid.slice(-this.maxRecentEvents));
   }
 
+  noteRequestThread(requestId: string, thread: string | null): void {
+    if (!thread) return;
+    this.requestThreads.set(requestId, thread);
+    while (this.requestThreads.size > 4096) {
+      const oldest = this.requestThreads.keys().next().value;
+      if (oldest === undefined) break;
+      this.requestThreads.delete(oldest);
+    }
+  }
+
   record(input: RecordRouterEventInput): RouterEvent {
     const timestamp = new Date().toISOString();
     const rawWorkspace = input.workspace;
@@ -147,6 +164,7 @@ export class RouterEventRecorder {
       timestamp,
       routerInstanceId: this.routerInstanceId,
       requestId: input.requestId ?? null,
+      thread: input.thread ?? (input.requestId ? this.requestThreads.get(input.requestId) ?? null : null),
       phase: input.phase,
       role: effectiveRole,
       requestedModel: input.requestedModel,
@@ -209,6 +227,11 @@ export function setDefaultRouterEventRecorder(recorder: RouterEventRecorder | nu
 
 export function recordRouterEvent(input: RecordRouterEventInput): RouterEvent {
   return getDefaultRouterEventRecorder().record(input);
+}
+
+/** Attribute every later event of this request to the Codex thread that sent it. */
+export function noteRequestThread(requestId: string, thread: string | null): void {
+  getDefaultRouterEventRecorder().noteRequestThread(requestId, thread);
 }
 
 export function getRecentRouterEvents(reversed = false): RouterEvent[] {
