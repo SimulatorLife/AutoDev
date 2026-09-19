@@ -11,7 +11,6 @@ import {
   type SqliteDatabase,
   type SqliteRow
 } from "../src/router/state-collector.ts";
-
 import { parseLimitedTableSelect } from "./sqlite-select-stub.ts";
 
 // A minimal in-memory stub of the `node:sqlite` binding. The collector only

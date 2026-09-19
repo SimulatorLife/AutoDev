@@ -10,7 +10,6 @@ import {
   CodexStateCollector,
   loadCodexStateCollectorConfig
 } from "../src/router/state-collector.ts";
-
 import { parseLimitedTableSelect } from "./sqlite-select-stub.ts";
 
 type JsonRecord = Record<string, any>;

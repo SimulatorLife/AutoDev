@@ -5,15 +5,15 @@ import {
   lstatSync,
   mkdirSync,
   mkdtempSync,
-  readFileSync,
   readdirSync,
+  readFileSync,
   rmSync,
   writeFileSync
 } from "node:fs";
-import { join, relative } from "node:path";
-import { fileURLToPath } from "node:url";
 import { tmpdir } from "node:os";
+import { join, relative } from "node:path";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 
 type JsonObject = Record<string, unknown>;
 type RunResult = ReturnType<typeof spawnSync>;
@@ -106,7 +106,7 @@ function splitFrontmatter(text: string): [string, string] {
     match?.groups?.front !== undefined && match.groups.body !== undefined,
     "missing skill frontmatter"
   );
-  return [match.groups.front, match.groups.body.replace(/^\n+|\n+$/gu, "")];
+  return [match.groups.front, match.groups.body.replaceAll(/^\n+|\n+$/gu, "")];
 }
 function description(frontmatter: string): string {
   const folded = /^description:\s*>-\s*\n(?<body>(?:^[ \t].*\n?)+)/mu.exec(
@@ -116,9 +116,9 @@ function description(frontmatter: string): string {
   const value = folded?.groups?.body ?? single?.groups?.value;
   assert.ok(value !== undefined, "missing skill description");
   return value
-    .replace(/\s+/gu, " ")
+    .replaceAll(/\s+/gu, " ")
     .trim()
-    .replace(/^['"]|['"]$/gu, "");
+    .replaceAll(/^['"]|['"]$/gu, "");
 }
 function files(directory: string): string[] {
   const output: string[] = [];
@@ -236,7 +236,7 @@ test("repository folders never duplicate user-level skills", () => {
   );
   const match = /export const SKILLS = \[(.*?)\]/su.exec(materializer);
   assert.ok(match?.[1] !== undefined);
-  const userLevel = new Set(match[1].match(/[A-Za-z0-9-]+/gu) ?? []);
+  const userLevel = new Set(match[1].match(/[A-Za-z0-9-]+/gu));
   for (const folder of [".claude/skills", ".agents/skills"]) {
     const projected = new Set(
       readdirSync(join(generated, folder), { withFileTypes: true })
