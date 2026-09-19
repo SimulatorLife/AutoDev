@@ -30,13 +30,20 @@
 /** Sessions the router could not identify never collect delegation state. */
 export const UNIDENTIFIED_SESSION_SCOPE = "process-fallback";
 
-export interface SpawnChild { agentType: string | null; message: string }
+export interface SpawnChild {
+  agentType: string | null;
+  message: string;
+}
 export interface SpawnSession {
   orchestrator: boolean;
   children: SpawnChild[];
   updatedAt: number;
 }
-export interface SpawnRegistryOptions { maxSessions?: number; idleMs?: number; now?: () => number }
+export interface SpawnRegistryOptions {
+  maxSessions?: number;
+  idleMs?: number;
+  now?: () => number;
+}
 
 // Defence in depth only: every turn closes its own session in a finally block,
 // so reaching either of these means a turn died in a way that skipped it.
@@ -49,7 +56,11 @@ export class SpawnSessionRegistry {
   private readonly now: () => number;
   private readonly sessions = new Map<string, SpawnSession>();
 
-  constructor({ maxSessions = DEFAULT_MAX_SESSIONS, idleMs = DEFAULT_IDLE_MS, now = () => Date.now() }: SpawnRegistryOptions = {}) {
+  constructor({
+    maxSessions = DEFAULT_MAX_SESSIONS,
+    idleMs = DEFAULT_IDLE_MS,
+    now = () => Date.now()
+  }: SpawnRegistryOptions = {}) {
     this.maxSessions = maxSessions;
     this.idleMs = idleMs;
     this.now = now;
@@ -57,7 +68,11 @@ export class SpawnSessionRegistry {
 
   /** Whether this turn may collect delegation state at all. */
   static canHold(sessionKey: unknown, sessionScope: unknown): boolean {
-    return typeof sessionKey === "string" && sessionKey.trim().length > 0 && sessionScope !== UNIDENTIFIED_SESSION_SCOPE;
+    return (
+      typeof sessionKey === "string" &&
+      sessionKey.trim().length > 0 &&
+      sessionScope !== UNIDENTIFIED_SESSION_SCOPE
+    );
   }
 
   /**
@@ -65,14 +80,26 @@ export class SpawnSessionRegistry {
    * turn on that conversation is over, and carrying its children forward would
    * spawn them twice.
    */
-  open(sessionKey: string, { orchestrator = false }: { orchestrator?: boolean } = {}): void {
+  open(
+    sessionKey: string,
+    { orchestrator = false }: { orchestrator?: boolean } = {}
+  ): void {
     this.sweep();
-    while (this.sessions.size >= this.maxSessions && !this.sessions.has(sessionKey)) {
-      const oldest = [ ...this.sessions.entries() ].sort((a, b) => a[ 1 ].updatedAt - b[ 1 ].updatedAt)[ 0 ];
+    while (
+      this.sessions.size >= this.maxSessions &&
+      !this.sessions.has(sessionKey)
+    ) {
+      const oldest = [...this.sessions.entries()].sort(
+        (a, b) => a[1].updatedAt - b[1].updatedAt
+      )[0];
       if (!oldest) break;
-      this.sessions.delete(oldest[ 0 ]);
+      this.sessions.delete(oldest[0]);
     }
-    this.sessions.set(sessionKey, { orchestrator, children: [], updatedAt: this.now() });
+    this.sessions.set(sessionKey, {
+      orchestrator,
+      children: [],
+      updatedAt: this.now()
+    });
   }
 
   /**
@@ -83,24 +110,58 @@ export class SpawnSessionRegistry {
    * session state is an admission failure with no child to close; a bounded
    * leaf may instead be told to do the work directly.
    */
-  record(sessionKey: string, children: unknown): { accepted: boolean; message?: string; children?: SpawnChild[]; roles?: string; count?: number } {
+  record(
+    sessionKey: string,
+    children: unknown
+  ): {
+    accepted: boolean;
+    message?: string;
+    children?: SpawnChild[];
+    roles?: string;
+    count?: number;
+  } {
     const session = this.sessions.get(sessionKey);
-    if (!session) return { accepted: false, message: "Delegation is unavailable in this session; no child was created. Do not retry blindly or take over delegated scopes. Report the unavailable delegation path." };
-    if (!session.orchestrator) return { accepted: false, message: "This is a bounded leaf turn and may not delegate. Do the work directly." };
+    if (!session)
+      return {
+        accepted: false,
+        message:
+          "Delegation is unavailable in this session; no child was created. Do not retry blindly or take over delegated scopes. Report the unavailable delegation path."
+      };
+    if (!session.orchestrator)
+      return {
+        accepted: false,
+        message:
+          "This is a bounded leaf turn and may not delegate. Do the work directly."
+      };
 
     const accepted: SpawnChild[] = [];
     for (const child of Array.isArray(children) ? children : []) {
       const message = child?.message;
       if (typeof message !== "string" || !message.trim()) continue;
-      const agentType = typeof child?.agent_type === "string" && child.agent_type.trim() ? child.agent_type.trim() : null;
+      const agentType =
+        typeof child?.agent_type === "string" && child.agent_type.trim()
+          ? child.agent_type.trim()
+          : null;
       accepted.push({ agentType, message });
     }
-    if (accepted.length === 0) return { accepted: false, message: "Every child needs a non-empty `message`. Nothing was dispatched." };
+    if (accepted.length === 0)
+      return {
+        accepted: false,
+        message:
+          "Every child needs a non-empty `message`. Nothing was dispatched."
+      };
 
     session.children.push(...accepted);
     session.updatedAt = this.now();
-    const roles = [ ...new Set(accepted.map((c) => c.agentType ?? "default")) ].sort().join(", ");
-    return { accepted: true, children: accepted, roles, count: accepted.length };
+    const roles = [...new Set(accepted.map((c) => c.agentType ?? "default"))]
+      .sort()
+      .join(", ");
+    return {
+      accepted: true,
+      children: accepted,
+      roles,
+      count: accepted.length
+    };
   }
 
   /** Whether this turn is allowed to delegate, for the tool-offer handshake. */
@@ -118,7 +179,9 @@ export class SpawnSessionRegistry {
   /** Drop entries whose turn evidently died without closing them. */
   sweep(): string[] {
     const deadline = this.now() - this.idleMs;
-    const expired = [ ...this.sessions.entries() ].filter(([ , s ]) => s.updatedAt < deadline).map(([ key ]) => key);
+    const expired = [...this.sessions.entries()]
+      .filter(([, s]) => s.updatedAt < deadline)
+      .map(([key]) => key);
     for (const key of expired) this.sessions.delete(key);
     return expired;
   }

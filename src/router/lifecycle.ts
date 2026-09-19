@@ -1,4 +1,6 @@
-export type RouterLifecycleState = 'ready' | 'draining';
+import { writeErrorLine } from "../shared/output.ts";
+
+export type RouterLifecycleState = "ready" | "draining";
 
 export interface RouterLifecycleStatus {
   state: RouterLifecycleState;
@@ -23,7 +25,7 @@ export interface ShutdownOptions {
 }
 
 export class RouterLifecycle {
-  private lifecycleState: RouterLifecycleState = 'ready';
+  private lifecycleState: RouterLifecycleState = "ready";
   private lifecycleStateChangedAt: string;
   private readonly activeRequestAborters = new Set<AbortController>();
   private shutdownPromise: Promise<void> | null = null;
@@ -31,13 +33,17 @@ export class RouterLifecycle {
   private readonly routerInstanceId: string;
 
   constructor(options: RouterLifecycleOptions = {}) {
-    this.lifecycleStateChangedAt = options.startedAt ?? new Date().toISOString();
-    this.defaultDrainTimeoutMs = options.drainTimeoutMs ?? Number.parseInt(process.env.CODEX_ROUTER_SHUTDOWN_DRAIN_MS ?? '30000', 10);
-    this.routerInstanceId = options.routerInstanceId ?? 'router-lifecycle';
+    this.lifecycleStateChangedAt =
+      options.startedAt ?? new Date().toISOString();
+    this.defaultDrainTimeoutMs =
+      options.drainTimeoutMs ??
+      Number.parseInt(
+        process.env.CODEX_ROUTER_SHUTDOWN_DRAIN_MS ?? "30000");
+    this.routerInstanceId = options.routerInstanceId ?? "router-lifecycle";
   }
 
   isDraining(): boolean {
-    return this.lifecycleState !== 'ready';
+    return this.lifecycleState !== "ready";
   }
 
   get state(): RouterLifecycleState {
@@ -57,7 +63,7 @@ export class RouterLifecycle {
       state: this.lifecycleState,
       draining: this.isDraining(),
       changedAt: this.lifecycleStateChangedAt,
-      activeResponseRequests: this.activeRequestAborters.size,
+      activeResponseRequests: this.activeRequestAborters.size
     };
   }
 
@@ -66,12 +72,16 @@ export class RouterLifecycle {
     this.lifecycleStateChangedAt = new Date().toISOString();
   }
 
-  registerActiveRequest(abortController: AbortController | null | undefined): void {
+  registerActiveRequest(
+    abortController: AbortController | null | undefined
+  ): void {
     if (!abortController) return;
     this.activeRequestAborters.add(abortController);
   }
 
-  unregisterActiveRequest(abortController: AbortController | null | undefined): void {
+  unregisterActiveRequest(
+    abortController: AbortController | null | undefined
+  ): void {
     if (!abortController) return;
     this.activeRequestAborters.delete(abortController);
   }
@@ -92,29 +102,35 @@ export class RouterLifecycle {
     persistState?: () => Promise<void>
   ): Promise<void> {
     if (this.shutdownPromise) return this.shutdownPromise;
-    const options: ShutdownOptions = typeof optionsOrSignal === 'string'
-      ? { signal: optionsOrSignal, server, persistState }
-      : optionsOrSignal;
-    this.setLifecycleState('draining');
+    const options: ShutdownOptions =
+      typeof optionsOrSignal === "string"
+        ? { signal: optionsOrSignal, server, persistState }
+        : optionsOrSignal;
+    this.setLifecycleState("draining");
     const drainingStartedAt = Date.now();
     const activeAtStart = this.activeRequestAborters.size;
     const drainTimeoutMs = options.drainTimeoutMs ?? this.defaultDrainTimeoutMs;
     const instanceId = options.routerInstanceId ?? this.routerInstanceId;
-    const signal = options.signal ?? 'SIGTERM';
+    const signal = options.signal ?? "SIGTERM";
 
-    console.error(JSON.stringify({
-      schema: 'autodev-router-event-v1',
-      timestamp: new Date().toISOString(),
-      routerInstanceId: instanceId,
-      requestId: null,
-      phase: 'shutdown_started',
-      signal,
-      inFlightRequests: activeAtStart,
-      drainTimeoutMs,
-    }));
+    writeErrorLine(
+      JSON.stringify({
+        schema: "autodev-router-event-v1",
+        timestamp: new Date().toISOString(),
+        routerInstanceId: instanceId,
+        requestId: null,
+        phase: "shutdown_started",
+        signal,
+        inFlightRequests: activeAtStart,
+        drainTimeoutMs
+      })
+    );
 
     this.shutdownPromise = (async () => {
-      while (this.activeRequestAborters.size > 0 && Date.now() - drainingStartedAt < drainTimeoutMs) {
+      while (
+        this.activeRequestAborters.size > 0 &&
+        Date.now() - drainingStartedAt < drainTimeoutMs
+      ) {
         await new Promise((resolve) => setTimeout(resolve, 50));
       }
       if (this.activeRequestAborters.size > 0) {
@@ -127,23 +143,28 @@ export class RouterLifecycle {
           /* logging handled by persist callback */
         }
       }
-      if (options.server && typeof options.server.close === 'function') {
+      if (options.server && typeof options.server.close === "function") {
         try {
-          await new Promise<void>((resolve) => options.server!.close(() => resolve()));
+          await new Promise<void>((resolve) =>
+            options.server!.close(() => resolve())
+          );
         } catch {
           /* best effort server close */
         }
       }
-      console.error(JSON.stringify({
-        schema: 'autodev-router-event-v1',
-        timestamp: new Date().toISOString(),
-        routerInstanceId: instanceId,
-        requestId: null,
-        phase: 'shutdown_complete',
-        durationMs: Date.now() - drainingStartedAt,
-        abortedInFlight: this.activeRequestAborters.size > 0,
-      }));
-      const noExit = options.noExit ?? (process.env.CODEX_ROUTER_TEST_NO_EXIT === '1');
+      writeErrorLine(
+        JSON.stringify({
+          schema: "autodev-router-event-v1",
+          timestamp: new Date().toISOString(),
+          routerInstanceId: instanceId,
+          requestId: null,
+          phase: "shutdown_complete",
+          durationMs: Date.now() - drainingStartedAt,
+          abortedInFlight: this.activeRequestAborters.size > 0
+        })
+      );
+      const noExit =
+        options.noExit ?? process.env.CODEX_ROUTER_TEST_NO_EXIT === "1";
       if (!noExit) {
         process.exit(0);
       }
@@ -152,7 +173,7 @@ export class RouterLifecycle {
   }
 
   resetLifecycleForTests(): void {
-    this.setLifecycleState('ready');
+    this.setLifecycleState("ready");
     this.activeRequestAborters.clear();
     this.shutdownPromise = null;
   }
@@ -160,14 +181,18 @@ export class RouterLifecycle {
 
 let defaultRouterLifecycle: RouterLifecycle | null = null;
 
-export function getDefaultRouterLifecycle(options?: RouterLifecycleOptions): RouterLifecycle {
+export function getDefaultRouterLifecycle(
+  options?: RouterLifecycleOptions
+): RouterLifecycle {
   if (!defaultRouterLifecycle) {
     defaultRouterLifecycle = new RouterLifecycle(options);
   }
   return defaultRouterLifecycle;
 }
 
-export function setDefaultRouterLifecycle(lifecycle: RouterLifecycle | null): void {
+export function setDefaultRouterLifecycle(
+  lifecycle: RouterLifecycle | null
+): void {
   defaultRouterLifecycle = lifecycle;
 }
 
@@ -183,11 +208,15 @@ export function setLifecycleState(next: RouterLifecycleState): void {
   getDefaultRouterLifecycle().setLifecycleState(next);
 }
 
-export function registerActiveRequest(abortController: AbortController | null | undefined): void {
+export function registerActiveRequest(
+  abortController: AbortController | null | undefined
+): void {
   getDefaultRouterLifecycle().registerActiveRequest(abortController);
 }
 
-export function unregisterActiveRequest(abortController: AbortController | null | undefined): void {
+export function unregisterActiveRequest(
+  abortController: AbortController | null | undefined
+): void {
   getDefaultRouterLifecycle().unregisterActiveRequest(abortController);
 }
 
@@ -200,7 +229,11 @@ export function beginShutdown(
   server?: { close(cb: (err?: Error) => void): void } | null,
   persistState?: () => Promise<void>
 ): Promise<void> {
-  return getDefaultRouterLifecycle().beginShutdown(optionsOrSignal, server, persistState);
+  return getDefaultRouterLifecycle().beginShutdown(
+    optionsOrSignal,
+    server,
+    persistState
+  );
 }
 
 export function resetLifecycleForTests(): void {

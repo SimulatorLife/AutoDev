@@ -1,13 +1,37 @@
-import { execFileSync, spawnSync } from 'node:child_process';
-import { accessSync, constants as fsConstants, existsSync, readFileSync, readdirSync } from 'node:fs';
-import { homedir } from 'node:os';
-import { join, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
-import { parseTomlFile, type TomlValue } from '../config/toml.ts';
-import { createDefaultRouterEnsureDeps, resolveRouterEnsureOptions, runRouterEnsure } from '../platform/router-ensure.ts';
+import { execFileSync, spawnSync } from "node:child_process";
+import {
+  accessSync,
+  constants as fsConstants,
+  existsSync,
+  readdirSync,
+  readFileSync
+} from "node:fs";
+import { homedir } from "node:os";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 
-const repositoryRoot = resolve(fileURLToPath(new URL('../../', import.meta.url)));
-const SUPPORTED_ROLES = ['default', 'docs-researcher', 'browser-tester', 'explorer', 'worker', 'validator', 'smart'] as const;
+import { parseTomlFile, type TomlValue } from "../config/toml.ts";
+import {
+  createDefaultRouterEnsureDeps,
+  resolveRouterEnsureOptions,
+  runRouterEnsure
+} from "../platform/router-ensure.ts";
+import { writeErrorLine } from "../shared/output.ts";
+
+const repositoryRoot = path.resolve(
+  fileURLToPath(new URL("../../", import.meta.url))
+);
+const SUPPORTED_ROLES = [
+  "default",
+  "docs-researcher",
+  "browser-tester",
+  "explorer",
+  "worker",
+  "validator",
+  "smart"
+] as const;
+const NUMERIC_COLLATOR = new Intl.Collator(undefined, { numeric: true });
+const LINE_BREAK = /\r?\n/u;
 export type ProviderAgentRole = (typeof SUPPORTED_ROLES)[number];
 
 export interface ProviderAgentOptions {
@@ -30,7 +54,12 @@ export interface RoleExecutionSettings {
 
 export interface ProviderAgentDeps {
   readonly ensureRouter?: (environment: NodeJS.ProcessEnv) => Promise<void>;
-  readonly runCodex?: (binary: string, args: string[], environment: NodeJS.ProcessEnv, checkOnly: boolean) => number;
+  readonly runCodex?: (
+    binary: string,
+    args: string[],
+    environment: NodeJS.ProcessEnv,
+    checkOnly: boolean
+  ) => number;
 }
 
 function usage(): string {
@@ -52,8 +81,13 @@ function isRole(value: string): value is ProviderAgentRole {
   return (SUPPORTED_ROLES as readonly string[]).includes(value);
 }
 
-function executable(path: string): boolean {
-  try { accessSync(path, fsConstants.X_OK); return true; } catch { return false; }
+function executable(candidate: string): boolean {
+  try {
+    accessSync(candidate, fsConstants.X_OK);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function resolveCodexBinary(env: NodeJS.ProcessEnv, home: string): string {
@@ -63,83 +97,107 @@ function resolveCodexBinary(env: NodeJS.ProcessEnv, home: string): string {
     throw new Error(`Codex CLI is not executable: ${configured}`);
   }
   try {
-    const found = execFileSync('which', ['codex'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
+    const found = execFileSync("which", ["codex"], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"]
+    }).trim();
     if (executable(found)) return found;
-  } catch { /* try the version-managed installation below */ }
-  const nvmRoot = join(home, '.nvm', 'versions', 'node');
+  } catch {
+    /* try the version-managed installation below */
+  }
+  const nvmRoot = path.join(home, ".nvm", "versions", "node");
   if (existsSync(nvmRoot)) {
     const versions = readdirSync(nvmRoot, { withFileTypes: true })
       .filter((entry) => entry.isDirectory())
       .map((entry) => entry.name)
-      .sort((left, right) => right.localeCompare(left, undefined, { numeric: true }));
+      .sort((left, right) => NUMERIC_COLLATOR.compare(right, left));
     for (const version of versions) {
-      const candidate = join(nvmRoot, version, 'bin', 'codex');
+      const candidate = path.join(nvmRoot, version, "bin", "codex");
       if (executable(candidate)) return candidate;
     }
   }
-  throw new Error('Codex CLI not found; set CODEX_BIN to the current codex executable.');
+  throw new Error(
+    "Codex CLI not found; set CODEX_BIN to the current codex executable."
+  );
 }
 
 function stringValue(value: TomlValue | undefined): string {
-  return typeof value === 'string' ? value : '';
+  return typeof value === "string" ? value : "";
 }
 
-export function readRoleExecutionSettings(roleFile: string): RoleExecutionSettings {
-  const config = parseTomlFile(roleFile, 'role configuration');
+export function readRoleExecutionSettings(
+  roleFile: string
+): RoleExecutionSettings {
+  const config = parseTomlFile(roleFile, "role configuration");
   return {
     developerInstructions: stringValue(config.developer_instructions),
     reasoningEffort: stringValue(config.model_reasoning_effort),
     reasoningSummary: stringValue(config.model_reasoning_summary),
-    sandboxMode: stringValue(config.sandbox_mode),
+    sandboxMode: stringValue(config.sandbox_mode)
   };
 }
 
-function readPromptFile(path: string): string {
-  return readFileSync(path === '-' ? 0 : path, 'utf8');
+function readPromptFile(file: string): string {
+  return readFileSync(file === "-" ? 0 : file, "utf8");
 }
 
-export function parseProviderAgentArgs(argv: readonly string[], env: NodeJS.ProcessEnv = process.env): ProviderAgentOptions {
-  let role = 'default';
+export function parseProviderAgentArgs(
+  argv: readonly string[],
+  env: NodeJS.ProcessEnv = process.env
+): ProviderAgentOptions {
+  let role = "default";
   let workspace = env.AUTODEV_REPO_ROOT?.trim() || repositoryRoot;
-  let prompt = '';
-  let promptFile = '';
+  let prompt = "";
+  let promptFile = "";
   let checkOnly = false;
   for (let index = 0; index < argv.length; index += 1) {
     const argument = argv[index];
     switch (argument) {
-      case '--role':
-        role = argv[index += 1] ?? '';
+      case "--role": {
+        role = argv[(index += 1)] ?? "";
         break;
-      case '--prompt':
-        prompt = argv[index += 1] ?? '';
+      }
+      case "--prompt": {
+        prompt = argv[(index += 1)] ?? "";
         break;
-      case '--prompt-file':
-        promptFile = argv[index += 1] ?? '';
+      }
+      case "--prompt-file": {
+        promptFile = argv[(index += 1)] ?? "";
         break;
-      case '--cwd':
-      case '-C':
-        workspace = argv[index += 1] ?? '';
+      }
+      case "--cwd":
+      case "-C": {
+        workspace = argv[(index += 1)] ?? "";
         break;
-      case '--check':
+      }
+      case "--check": {
         checkOnly = true;
         break;
-      case '--help':
-      case '-h':
+      }
+      case "--help":
+      case "-h": {
         throw new Error(usage());
-      case '--provider':
-        throw new Error('--provider is obsolete; select a capability role with --role instead.');
-      default:
-        throw new Error(`Unknown option: ${argument ?? ''}\n${usage()}`);
+      }
+      case "--provider": {
+        throw new Error(
+          "--provider is obsolete; select a capability role with --role instead."
+        );
+      }
+      default: {
+        throw new Error(`Unknown option: ${argument ?? ""}\n${usage()}`);
+      }
     }
   }
   if (!isRole(role)) throw new Error(`Unsupported role: ${role}\n${usage()}`);
   if (promptFile) prompt = readPromptFile(promptFile);
-  if (!workspace || !existsSync(workspace)) throw new Error(`Workspace is not a directory: ${workspace}`);
-  const normalizedWorkspace = resolve(workspace);
+  if (!workspace || !existsSync(workspace))
+    throw new Error(`Workspace is not a directory: ${workspace}`);
+  const normalizedWorkspace = path.resolve(workspace);
   const home = env.HOME?.trim() || homedir();
-  const codexHome = env.CODEX_HOME?.trim() || join(home, '.codex');
-  const roleFile = join(codexHome, 'agents', `${role}.toml`);
-  if (!existsSync(roleFile)) throw new Error(`Missing materialized role: ${roleFile}`);
+  const codexHome = env.CODEX_HOME?.trim() || path.join(home, ".codex");
+  const roleFile = path.join(codexHome, "agents", `${role}.toml`);
+  if (!existsSync(roleFile))
+    throw new Error(`Missing materialized role: ${roleFile}`);
   return {
     role,
     workspace: normalizedWorkspace,
@@ -148,22 +206,29 @@ export function parseProviderAgentArgs(argv: readonly string[], env: NodeJS.Proc
     repositoryRoot: env.AUTODEV_REPO_ROOT?.trim() || repositoryRoot,
     codexHome,
     codexBinary: resolveCodexBinary(env, home),
-    roleFile,
+    roleFile
   };
 }
 
-function loadEnvironmentFile(path: string, environment: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
-  if (!existsSync(path)) return environment;
+function loadEnvironmentFile(
+  file: string,
+  environment: NodeJS.ProcessEnv
+): NodeJS.ProcessEnv {
+  if (!existsSync(file)) return environment;
   const result = { ...environment };
-  for (const rawLine of readFileSync(path, 'utf8').split(/\r?\n/u)) {
+  for (const rawLine of readFileSync(file, "utf8").split(LINE_BREAK)) {
     const line = rawLine.trim();
-    if (!line || line.startsWith('#')) continue;
-    const assignment = line.startsWith('export ') ? line.slice(7) : line;
-    const separator = assignment.indexOf('=');
+    if (!line || line.startsWith("#")) continue;
+    const assignment = line.startsWith("export ") ? line.slice(7) : line;
+    const separator = assignment.indexOf("=");
     if (separator < 1) continue;
     const key = assignment.slice(0, separator).trim();
     let value = assignment.slice(separator + 1).trim();
-    if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) value = value.slice(1, -1);
+    if (
+      (value.startsWith('"') && value.endsWith('"')) ||
+      (value.startsWith("'") && value.endsWith("'"))
+    )
+      value = value.slice(1, -1);
     result[key] = value;
   }
   return result;
@@ -171,25 +236,45 @@ function loadEnvironmentFile(path: string, environment: NodeJS.ProcessEnv): Node
 
 async function ensureRouter(environment: NodeJS.ProcessEnv): Promise<void> {
   const options = resolveRouterEnsureOptions(environment, process.pid);
-  const result = await runRouterEnsure(createDefaultRouterEnsureDeps(options), options);
-  if (result.exitCode !== 0) throw new Error(result.message ?? 'model router ensure failed');
+  const result = await runRouterEnsure(
+    createDefaultRouterEnsureDeps(options),
+    options
+  );
+  if (result.exitCode !== 0)
+    throw new Error(result.message ?? "model router ensure failed");
 }
 
-export function buildProviderPrompt(prompt: string, settings: RoleExecutionSettings): string {
+export function buildProviderPrompt(
+  prompt: string,
+  settings: RoleExecutionSettings
+): string {
   return `Provider-neutral role instructions:\n${settings.developerInstructions}\n\nBounded task:\n${prompt}`;
 }
 
-function runCodex(binary: string, args: string[], environment: NodeJS.ProcessEnv, checkOnly: boolean): number {
-  if (checkOnly) return spawnSync(binary, args, { stdio: 'ignore', env: environment }).status ?? 1;
-  return spawnSync(binary, args, { stdio: ['ignore', 'inherit', 'inherit'], env: environment }).status ?? 1;
+function runCodex(
+  binary: string,
+  args: string[],
+  environment: NodeJS.ProcessEnv,
+  checkOnly: boolean
+): number {
+  if (checkOnly)
+    return (
+      spawnSync(binary, args, { stdio: "ignore", env: environment }).status ?? 1
+    );
+  return (
+    spawnSync(binary, args, {
+      stdio: ["ignore", "inherit", "inherit"],
+      env: environment
+    }).status ?? 1
+  );
 }
 
 export async function runProviderAgent(
   argv: readonly string[] = process.argv.slice(2),
   env: NodeJS.ProcessEnv = process.env,
-  deps: ProviderAgentDeps = {},
+  deps: ProviderAgentDeps = {}
 ): Promise<number> {
-  if (argv.some((argument) => argument === '--help' || argument === '-h')) {
+  if (argv.some((argument) => argument === "--help" || argument === "-h")) {
     process.stdout.write(`${usage()}\n`);
     return 0;
   }
@@ -197,22 +282,60 @@ export async function runProviderAgent(
   await (deps.ensureRouter ?? ensureRouter)(env);
   const execute = deps.runCodex ?? runCodex;
   if (options.checkOnly) {
-    const result = execute(options.codexBinary, ['--strict-config', '-C', options.repositoryRoot, 'exec', '--model', `autodev/${options.role}`, '--help'], env, true);
-    if (result !== 0) throw new Error(`Codex role validation failed for ${options.role}`);
-    process.stdout.write(`role=${options.role} model=autodev/${options.role} router=http://127.0.0.1:4100/v1 status=ready\n`);
+    const result = execute(
+      options.codexBinary,
+      [
+        "--strict-config",
+        "-C",
+        options.repositoryRoot,
+        "exec",
+        "--model",
+        `autodev/${options.role}`,
+        "--help"
+      ],
+      env,
+      true
+    );
+    if (result !== 0)
+      throw new Error(`Codex role validation failed for ${options.role}`);
+    process.stdout.write(
+      `role=${options.role} model=autodev/${options.role} router=http://127.0.0.1:4100/v1 status=ready\n`
+    );
     return 0;
   }
-  if (!options.prompt) throw new Error('Provide --prompt or --prompt-file (use - for stdin).');
-  const environment = loadEnvironmentFile(env.CODEX_ENV_FILE?.trim() || join(options.codexHome, '.env'), env);
+  if (!options.prompt)
+    throw new Error("Provide --prompt or --prompt-file (use - for stdin).");
+  const environment = loadEnvironmentFile(
+    env.CODEX_ENV_FILE?.trim() || path.join(options.codexHome, ".env"),
+    env
+  );
   const settings = readRoleExecutionSettings(options.roleFile);
-  const args = ['--strict-config', '-C', options.workspace];
-  if (settings.reasoningEffort) args.push('-c', `model_reasoning_effort=${settings.reasoningEffort}`);
-  if (settings.reasoningSummary) args.push('-c', `model_reasoning_summary=${settings.reasoningSummary}`);
-  if (settings.sandboxMode) args.push('-c', `sandbox_mode=${settings.sandboxMode}`);
-  args.push('exec', '--model', `autodev/${options.role}`, '--ephemeral', '--json', '--skip-git-repo-check', buildProviderPrompt(options.prompt, settings));
+  const args = ["--strict-config", "-C", options.workspace];
+  if (settings.reasoningEffort)
+    args.push("-c", `model_reasoning_effort=${settings.reasoningEffort}`);
+  if (settings.reasoningSummary)
+    args.push("-c", `model_reasoning_summary=${settings.reasoningSummary}`);
+  if (settings.sandboxMode)
+    args.push("-c", `sandbox_mode=${settings.sandboxMode}`);
+  args.push(
+    "exec",
+    "--model",
+    `autodev/${options.role}`,
+    "--ephemeral",
+    "--json",
+    "--skip-git-repo-check",
+    buildProviderPrompt(options.prompt, settings)
+  );
   return execute(options.codexBinary, args, environment, false);
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
-  runProviderAgent().then((status) => { process.exitCode = status; }).catch((error: unknown) => { console.error(`run-provider-agent: ${error instanceof Error ? error.message : String(error)}`); process.exitCode = 2; });
+  try {
+    process.exitCode = await runProviderAgent();
+  } catch (error: unknown) {
+    writeErrorLine(
+      `run-provider-agent: ${error instanceof Error ? error.message : String(error)}`
+    );
+    process.exitCode = 2;
+  }
 }

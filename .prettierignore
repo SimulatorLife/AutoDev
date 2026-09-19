@@ -1,0 +1,13 @@
+# Ignore dependencies, generated output, and files owned by other formatters.
+node_modules/
+**/node_modules/
+coverage/
+.DS_Store
+*.eslintcache
+**/*.d.ts
+pnpm-lock.yaml
+
+# Generated from .rulesync/ by `rulesync generate`; the source is formatted.
+.agents/
+.claude/
+.github/skills/

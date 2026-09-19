@@ -1,5 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
+
 import { roleContract } from "../shared/execution-contract.ts";
 
 // Router-generated request header naming the agent role a provider bridge is
@@ -15,35 +16,71 @@ const PROMPTS = Object.freeze({
   leaf: new URL("leaf.md", promptRoot),
   codeSearch: new URL("code-search.md", promptRoot),
   orchestrator: new URL("orchestrator.md", promptRoot),
-  roleDirectory: new URL("roles/", promptRoot),
+  roleDirectory: new URL("roles/", promptRoot)
 });
 // The canonical skill source is the repository's `.rulesync/skills`. The
 // installer maps non-`scripts/` assets under $CODEX_HOME at the same depth, so
 // this one specifier resolves in a checkout and in the installed hooks copy.
-const ORCHESTRATION_SKILL_CANDIDATES = [new URL("../../.rulesync/skills/orchestration/SKILL.md", import.meta.url), new URL("../../hooks/../.agents/skills/orchestration/SKILL.md", import.meta.url)];
-const ORCHESTRATION_SKILL = ORCHESTRATION_SKILL_CANDIDATES.find((url) => existsSync(fileURLToPath(url))) ?? ORCHESTRATION_SKILL_CANDIDATES[0]!;
-const ROLE_PROMPT_NAMES = new Set(["browser-tester", "default", "docs-researcher", "explorer", "orchestrator", "smart", "validator", "worker"]);
+const ORCHESTRATION_SKILL_CANDIDATES = [
+  new URL("../../.rulesync/skills/orchestration/SKILL.md", import.meta.url),
+  new URL(
+    "../../hooks/../.agents/skills/orchestration/SKILL.md",
+    import.meta.url
+  )
+];
+const ORCHESTRATION_SKILL =
+  ORCHESTRATION_SKILL_CANDIDATES.find((url) =>
+    existsSync(fileURLToPath(url))
+  ) ?? ORCHESTRATION_SKILL_CANDIDATES[0]!;
+const ROLE_PROMPT_NAMES = new Set([
+  "browser-tester",
+  "default",
+  "docs-researcher",
+  "explorer",
+  "orchestrator",
+  "smart",
+  "validator",
+  "worker"
+]);
 const cache = new Map();
 const BASE_PROMPT = readFileSync(PROMPTS.base, "utf8").trim();
 const CODE_SEARCH_PROMPT = readFileSync(PROMPTS.codeSearch, "utf8").trim();
 
-function headerValue(headers: Record<string, unknown> | null | undefined, name: string): string | null {
+function headerValue(
+  headers: Record<string, unknown> | null | undefined,
+  name: string
+): string | null {
   if (!headers || typeof headers !== "object") return null;
   // Node lowercases inbound header names, but LiteLLM and other intermediaries
   // can preserve the case the router sent, so match without regard to it.
-  const key = Object.keys(headers).find((candidate) => candidate.toLowerCase() === name);
+  const key = Object.keys(headers).find(
+    (candidate) => candidate.toLowerCase() === name
+  );
   const value = key === undefined ? undefined : headers[key];
   const single = Array.isArray(value) ? value[0] : value;
-  return typeof single === "string" && single.trim() ? single.trim().toLowerCase() : null;
+  return typeof single === "string" && single.trim()
+    ? single.trim().toLowerCase()
+    : null;
 }
 
 /** The agent role the router assigned to this request, or null when it sent none. */
-export function resolveAgentRole(headers: Record<string, unknown> | null | undefined): string | null {
+export function resolveAgentRole(
+  headers: Record<string, unknown> | null | undefined
+): string | null {
   return headerValue(headers, AGENT_ROLE_HEADER);
 }
 
 export function isOrchestratorRole(role: string | null | undefined): boolean {
   return role === ORCHESTRATOR_AGENT_ROLE;
+}
+
+/** The role prompt file (without extension) for `role`, falling back to "default" for unknown roles. */
+function rolePromptName(role: string | null | undefined): string {
+  let requested = "default";
+  if (isOrchestratorRole(role)) requested = "orchestrator";
+  else if (typeof role === "string" && role.trim())
+    requested = role.trim().toLowerCase();
+  return ROLE_PROMPT_NAMES.has(requested) ? requested : "default";
 }
 
 /**
@@ -60,20 +97,28 @@ export function roleInstructions(role: string | null | undefined): string {
   const cacheKey = `${key}:${contractKey ?? "default"}`;
   if (!cache.has(cacheKey)) {
     const bootstrap = readFileSync(PROMPTS[key], "utf8").trim();
-    const canonical = key === "orchestrator"
-      ? `\n\n## Canonical orchestration skill\n\n${readFileSync(ORCHESTRATION_SKILL, "utf8").trim()}`
-      : "";
-    const codeSearch = contract.mcp.includes("lsp") && contract.mcp.includes("cocoindex-code")
-      ? `\n\n${CODE_SEARCH_PROMPT}`
-      : "";
-    const requestedRolePrompt = isOrchestratorRole(role) ? "orchestrator" : (typeof role === "string" && role.trim() ? role.trim().toLowerCase() : "default");
-    const rolePromptKey = ROLE_PROMPT_NAMES.has(requestedRolePrompt) ? requestedRolePrompt : "default";
-    const rolePrompt = readFileSync(new URL(`${rolePromptKey}.md`, PROMPTS.roleDirectory), "utf8").trim();
-    const tools = contract.mcp.length > 0 ? contract.mcp.join(", ") : "none declared";
-    const webResearch = contract.webResearch?.search && contract.webResearch?.fetch
-      ? " Website research is available through the provider's native search/fetch tools; use those for public documentation and URLs, never Playwright."
-      : "";
-    cache.set(cacheKey, `${bootstrap}${canonical}${codeSearch}\n\n## Effective role contract\n\n${rolePrompt}\n\nExpected MCP/tool capabilities: ${tools}.${webResearch} If a required capability is unavailable, report that fact instead of silently substituting a different workflow.`);
+    const canonical =
+      key === "orchestrator"
+        ? `\n\n## Canonical orchestration skill\n\n${readFileSync(ORCHESTRATION_SKILL, "utf8").trim()}`
+        : "";
+    const codeSearch =
+      contract.mcp.includes("lsp") && contract.mcp.includes("cocoindex-code")
+        ? `\n\n${CODE_SEARCH_PROMPT}`
+        : "";
+    const rolePrompt = readFileSync(
+      new URL(`${rolePromptName(role)}.md`, PROMPTS.roleDirectory),
+      "utf8"
+    ).trim();
+    const tools =
+      contract.mcp.length > 0 ? contract.mcp.join(", ") : "none declared";
+    const webResearch =
+      contract.webResearch?.search && contract.webResearch?.fetch
+        ? " Website research is available through the provider's native search/fetch tools; use those for public documentation and URLs, never Playwright."
+        : "";
+    cache.set(
+      cacheKey,
+      `${bootstrap}${canonical}${codeSearch}\n\n## Effective role contract\n\n${rolePrompt}\n\nExpected MCP/tool capabilities: ${tools}.${webResearch} If a required capability is unavailable, report that fact instead of silently substituting a different workflow.`
+    );
   }
   return cache.get(cacheKey);
 }
@@ -85,9 +130,13 @@ export function roleInstructions(role: string | null | undefined): string {
  * only the downstream CLI invocation differs. Native Codex role configs use
  * render-agent-configs.py to materialize this same base+leaf+role-fragment composition.
  */
-export function composeProviderPrompt(role: string | null | undefined, cwd: string | null = null): string {
-  const workspace = typeof cwd === "string" && cwd.trim()
-    ? `\n\n## Workspace\n\nWorking directory: ${cwd}\nPlatform: ${process.platform}`
-    : "";
+export function composeProviderPrompt(
+  role: string | null | undefined,
+  cwd: string | null = null
+): string {
+  const workspace =
+    typeof cwd === "string" && cwd.trim()
+      ? `\n\n## Workspace\n\nWorking directory: ${cwd}\nPlatform: ${process.platform}`
+      : "";
   return `${BASE_PROMPT}${workspace}\n\n${roleInstructions(role)}`;
 }

@@ -16,14 +16,17 @@
  * the next provider continues from the replayed history.
  */
 
-import { awaitedToolResults } from '../shared/responses-continuation.ts';
+import { awaitedToolResults } from "../shared/responses-continuation.ts";
 
 const DEFAULT_LIMIT = 4096;
 
 /** Call ids of the tool results a request hands back: the calls the model awaits. */
 export function awaitedCallIds(payload: unknown): string[] {
-  const input = payload !== null && typeof payload === 'object' && !Array.isArray(payload) ? (payload as { input?: unknown }).input : undefined;
-  return [ ...awaitedToolResults(input).outputs.keys() ];
+  const input =
+    payload !== null && typeof payload === "object" && !Array.isArray(payload)
+      ? (payload as { input?: unknown }).input
+      : undefined;
+  return [...awaitedToolResults(input).outputs.keys()];
 }
 
 export class ToolCallOwnership {

@@ -22,20 +22,20 @@
 // bounded so a stuck hook cannot leak disk.
 
 import { createHash } from "node:crypto";
-import { existsSync, readFileSync } from "node:fs";
-import { mkdir, readFile, writeFile, rename } from "node:fs/promises";
-import { join, isAbsolute, resolve, sep } from "node:path";
+import { existsSync } from "node:fs";
+import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
+import path from "node:path";
 import process from "node:process";
 
 import {
   AGENT_EVENTS_URL_HEADER,
-  SESSION_ID_HEADER,
-  SKILL_READ_SOURCE,
   resolveSkillReadReporter,
+  SESSION_ID_HEADER,
+  SKILL_READ_SOURCE
 } from "../telemetry/agent-events.ts";
 
-const STATE_DIR = join(homedir(), ".codex", "run", "skill-read-telemetry");
+const STATE_DIR = path.join(homedir(), ".codex", "run", "skill-read-telemetry");
 const SEEN_KEYS_LIMIT = 4096;
 const SEEN_VALUE_LIMIT = 4096;
 type JsonPrimitive = string | number | boolean | null;
@@ -45,7 +45,9 @@ type SeenTurn = { has: string[]; tool: string };
 type SeenState = { turns: Record<string, SeenTurn>; keys: string[] };
 
 function asObject(value: JsonValue | undefined): JsonObject {
-  return value !== null && typeof value === "object" && !Array.isArray(value) ? value : {};
+  return value !== null && typeof value === "object" && !Array.isArray(value)
+    ? value
+    : {};
 }
 
 function asSeenState(value: JsonValue): SeenState {
@@ -54,16 +56,22 @@ function asSeenState(value: JsonValue): SeenState {
   const rawTurns = asObject(object.turns);
   for (const [turnId, rawTurn] of Object.entries(rawTurns)) {
     const turn = asObject(rawTurn);
-    const has = Array.isArray(turn.has) ? turn.has.filter((entry): entry is string => typeof entry === "string") : [];
+    const has = Array.isArray(turn.has)
+      ? turn.has.filter((entry): entry is string => typeof entry === "string")
+      : [];
     const tool = typeof turn.tool === "string" ? turn.tool : "";
     turns[turnId] = { has, tool };
   }
-  const keys = Array.isArray(object.keys) ? object.keys.filter((entry): entry is string => typeof entry === "string") : [];
+  const keys = Array.isArray(object.keys)
+    ? object.keys.filter((entry): entry is string => typeof entry === "string")
+    : [];
   return { turns, keys };
 }
 
 const HOME = homedir();
-const REPO_ROOT = process.env.AUTODEV_REPO_ROOT || resolve(join(import.meta.dirname, "..", ".."));
+const REPO_ROOT =
+  process.env.AUTODEV_REPO_ROOT ||
+  path.resolve(path.join(import.meta.dirname, "..", ".."));
 // Source roots whose SKILL.md reads count as skill activation telemetry.
 // Mirrors the install-time contract in scripts/install.sh and is
 // intentionally narrow: a path under a recognised root that ends in `SKILL.md`
@@ -71,20 +79,34 @@ const REPO_ROOT = process.env.AUTODEV_REPO_ROOT || resolve(join(import.meta.dirn
 // resolve outside the root, non-canonical locations, files that just happen
 // to be named SKILL.md in a transitive include -- is ignored.
 const SKILL_ROOTS = [
-  join(HOME, ".agents", "skills"),
-  join(HOME, ".codex", "skills"),
-  join(HOME, "AutoDev", ".agents", "skills"),
-  join(HOME, "AutoDev", ".rulesync", "skills"),
-  join(REPO_ROOT, ".agents", "skills"),
-  join(REPO_ROOT, ".rulesync", "skills"),
-].filter((path) => existsSync(path));
+  path.join(HOME, ".agents", "skills"),
+  path.join(HOME, ".codex", "skills"),
+  path.join(HOME, "AutoDev", ".agents", "skills"),
+  path.join(HOME, "AutoDev", ".rulesync", "skills"),
+  path.join(REPO_ROOT, ".agents", "skills"),
+  path.join(REPO_ROOT, ".rulesync", "skills")
+].filter((filePath) => existsSync(filePath));
 
-const TOOL_NAME_KEYS = [ "tool_name", "toolName", "name" ];
-const ARGUMENT_KEYS = [ "arguments", "args", "input", "params", "tool_input", "toolInput" ];
-const SESSION_ID_KEYS = [ "session_id", "sessionId" ];
-const TURN_ID_KEYS = [ "turn_id", "turnId" ];
+const TOOL_NAME_KEYS = ["tool_name", "toolName", "name"];
+const ARGUMENT_KEYS = [
+  "arguments",
+  "args",
+  "input",
+  "params",
+  "tool_input",
+  "toolInput"
+];
+const SESSION_ID_KEYS = ["session_id", "sessionId"];
+const TURN_ID_KEYS = ["turn_id", "turnId"];
 const CODEX_SESSION_KEY = "x-codex-session-id";
-const SKILL_READ_TOOL_NAMES = new Set(["read_file", "readfile", "read", "exec_command", "execcommand", "bash"]);
+const SKILL_READ_TOOL_NAMES = new Set([
+  "read_file",
+  "readfile",
+  "read",
+  "exec_command",
+  "execcommand",
+  "bash"
+]);
 
 async function readStdin() {
   const chunks = [];
@@ -92,7 +114,10 @@ async function readStdin() {
   return Buffer.concat(chunks).toString("utf8");
 }
 
-function pickString(payload: JsonValue | undefined, keys: string[]): string | null {
+function pickString(
+  payload: JsonValue | undefined,
+  keys: string[]
+): string | null {
   const object = asObject(payload);
   for (const key of keys) {
     const value = object[key];
@@ -101,15 +126,20 @@ function pickString(payload: JsonValue | undefined, keys: string[]): string | nu
   return null;
 }
 
-function pickObject(payload: JsonValue | undefined, keys: string[]): JsonObject | null {
+function pickObject(
+  payload: JsonValue | undefined,
+  keys: string[]
+): JsonObject | null {
   const object = asObject(payload);
   for (const key of keys) {
     const value = object[key];
-    if (value && typeof value === "object" && !Array.isArray(value)) return value;
+    if (value && typeof value === "object" && !Array.isArray(value))
+      return value;
     if (typeof value === "string" && value.trim().startsWith("{")) {
       try {
         const parsed = JSON.parse(value);
-        if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) return parsed as JsonObject;
+        if (parsed && typeof parsed === "object" && !Array.isArray(parsed))
+          return parsed as JsonObject;
       } catch {
         // A non-JSON argument string is handled by the command matcher below.
       }
@@ -118,7 +148,10 @@ function pickObject(payload: JsonValue | undefined, keys: string[]): JsonObject 
   return null;
 }
 
-function pickValue(payload: JsonValue | undefined, keys: string[]): JsonValue | null {
+function pickValue(
+  payload: JsonValue | undefined,
+  keys: string[]
+): JsonValue | null {
   const object = asObject(payload);
   for (const key of keys) {
     if (object[key] !== undefined && object[key] !== null) return object[key];
@@ -127,14 +160,21 @@ function pickValue(payload: JsonValue | undefined, keys: string[]): JsonValue | 
 }
 
 function normaliseToolName(name: unknown): string {
-  return typeof name === "string" ? name.trim().toLowerCase().replace(/[\s-]+/g, "_") : "";
+  return typeof name === "string"
+    ? name
+        .trim()
+        .toLowerCase()
+        .replaceAll(/[\s-]+/g, "_")
+    : "";
 }
 
 // The payload Codex sends uses different spellings across versions; this
 // walks every plausible key and only accepts the payload if at least one tool
 // name was present. A pre-tool hook that saw no tool name is a firehose we
 // have no signal on, so we drop it instead of guessing.
-function extractToolCall(payload: JsonValue): { toolName: string; args: JsonValue } | null {
+function extractToolCall(
+  payload: JsonValue
+): { toolName: string; args: JsonValue } | null {
   const toolName = pickString(payload, TOOL_NAME_KEYS);
   if (!toolName) return null;
   const rawArguments = pickValue(payload, ARGUMENT_KEYS);
@@ -149,19 +189,27 @@ function extractToolCall(payload: JsonValue): { toolName: string; args: JsonValu
 // from the helper means "this tool call is not a SKILL.md read"; the hook
 // drops it silently rather than logging anything.
 function extractReadPath(argsObject: JsonValue): string | null {
-  if (typeof argsObject === "string") return matchExecCommandPaths(argsObject)[0] ?? null;
-  if (!argsObject || typeof argsObject !== "object" || Array.isArray(argsObject)) return null;
+  if (typeof argsObject === "string")
+    return matchExecCommandPaths(argsObject)[0] ?? null;
+  if (
+    !argsObject ||
+    typeof argsObject !== "object" ||
+    Array.isArray(argsObject)
+  )
+    return null;
   const args = argsObject as JsonObject;
-  const directKeys = [ "file_path", "filePath", "path", "filepath" ];
+  const directKeys = ["file_path", "filePath", "path", "filepath"];
   for (const key of directKeys) {
     const value = args[key];
     if (typeof value === "string" && value.trim()) return value.trim();
   }
-  const arrayKeys = [ "files", "paths", "file_paths" ];
+  const arrayKeys = ["files", "paths", "file_paths"];
   for (const key of arrayKeys) {
     const value = args[key];
     if (Array.isArray(value) && value.length > 0) {
-      const first = value.find((entry) => typeof entry === "string" && entry.trim());
+      const first = value.find(
+        (entry) => typeof entry === "string" && entry.trim()
+      );
       if (typeof first === "string") return first.trim();
     }
   }
@@ -184,8 +232,16 @@ function extractReadPath(argsObject: JsonValue): string | null {
 // explicit `p`) form, matching the print-a-range idiom Codex itself favours;
 // a plain `sed 's/a/b/' file` mutates output rather than dumping the file, so
 // it is intentionally excluded.
-const SKILL_READ_COMMANDS = new Set([ "cat", "head", "tail", "less", "more", "awk", "grep" ]);
-const SHELL_CONTROL_TOKENS = new Set([ "|", "&&", "||", ";", "&" ]);
+const SKILL_READ_COMMANDS = new Set([
+  "cat",
+  "head",
+  "tail",
+  "less",
+  "more",
+  "awk",
+  "grep"
+]);
+const SHELL_CONTROL_TOKENS = new Set(["|", "&&", "||", ";", "&"]);
 
 // Splits a shell command into words, honouring single- and double-quoted
 // spans so a quoted path containing a space (`cat "/a b/SKILL.md"`) is not
@@ -199,7 +255,10 @@ function tokenizeShellWords(cmd: string): string[] {
   let match;
   while ((match = re.exec(cmd)) !== null) {
     let token = match[0];
-    if ((token.startsWith("'") && token.endsWith("'")) || (token.startsWith('"') && token.endsWith('"'))) {
+    if (
+      (token.startsWith("'") && token.endsWith("'")) ||
+      (token.startsWith('"') && token.endsWith('"'))
+    ) {
       token = token.slice(1, -1);
     }
     tokens.push(token);
@@ -227,7 +286,8 @@ function flattenCommandValue(raw: JsonValue | undefined): string | null {
   let value = raw;
   if (value && typeof value === "object" && !Array.isArray(value)) {
     const object = value as JsonObject;
-    value = object.cmd ?? object.command ?? object.script ?? object.value ?? null;
+    value =
+      object.cmd ?? object.command ?? object.script ?? object.value ?? null;
   }
   if (Array.isArray(value)) {
     return value.filter((entry) => typeof entry === "string").join(" ");
@@ -255,8 +315,8 @@ function matchExecCommandPaths(raw: JsonValue | undefined): string[] {
     for (let j = start; j < tokens.length && j < start + 8; j++) {
       const next = tokens[j] ?? "";
       if (SHELL_CONTROL_TOKENS.has(next)) break;
-      const path = isPathLikeToken(next);
-      if (path) candidates.push(path);
+      const filePath = isPathLikeToken(next);
+      if (filePath) candidates.push(filePath);
     }
   }
   return candidates;
@@ -264,12 +324,12 @@ function matchExecCommandPaths(raw: JsonValue | undefined): string[] {
 
 function normalisePath(raw: unknown): string | null {
   if (typeof raw !== "string") return null;
-  const trimmed = raw.trim().replace(/^['"]|['"]$/g, "");
+  const trimmed = raw.trim().replaceAll(/^['"]|['"]$/g, "");
   if (!trimmed) return null;
-  let path = trimmed;
-  if (path.startsWith("~")) path = join(HOME, path.slice(1));
-  if (!isAbsolute(path)) path = resolve(path);
-  return path;
+  let filePath = trimmed;
+  if (filePath.startsWith("~")) filePath = path.join(HOME, filePath.slice(1));
+  if (!path.isAbsolute(filePath)) filePath = path.resolve(filePath);
+  return filePath;
 }
 
 // True when `path` resolves to a `<root>/<skill-name>/SKILL.md` for one of
@@ -277,18 +337,29 @@ function normalisePath(raw: unknown): string | null {
 // `{ skill }` rather than just true preserves the directory name as the
 // canonical skill identifier the dashboard renders; we deliberately do not
 // keep absolute paths in telemetry.
-function matchSkillPath(path: string | null): { skill: string; root: string } | null {
-  if (!path) return null;
-  const normalised = path.replace(/[\\/]+/g, sep);
+const LEADING_SEPARATORS = /^[\\/]+/;
+const PATH_SEPARATOR = /[\\/]/;
+
+function matchSkillPath(
+  filePath: string | null
+): { skill: string; root: string } | null {
+  if (!filePath) return null;
+  const normalised = filePath.replaceAll(/[\\/]+/g, path.sep);
   for (const rootRaw of SKILL_ROOTS) {
-    const root = rootRaw.replace(/[\\/]+/g, sep);
-    const rootWithSep = root.endsWith(sep) ? root : root + sep;
+    const root = rootRaw.replaceAll(/[\\/]+/g, path.sep);
+    const rootWithSep = root.endsWith(path.sep) ? root : root + path.sep;
     if (!normalised.startsWith(rootWithSep)) continue;
-    const relative = normalised.slice(root.length).replace(/^[\\/]+/, "");
-    if (!relative.endsWith(`${sep}SKILL.md`) && !relative.endsWith("/SKILL.md")) continue;
-    const segments = relative.split(/[\\/]/).filter(Boolean);
+    const relative = normalised
+      .slice(root.length)
+      .replace(LEADING_SEPARATORS, "");
+    if (
+      !relative.endsWith(`${path.sep}SKILL.md`) &&
+      !relative.endsWith("/SKILL.md")
+    )
+      continue;
+    const segments = relative.split(PATH_SEPARATOR).filter(Boolean);
     if (segments.length !== 2) continue;
-    const [ skill ] = segments;
+    const [skill] = segments;
     if (!skill || skill.includes("..")) continue;
     return { skill, root };
   }
@@ -299,32 +370,58 @@ function hashKey(...parts: string[]): string {
   return createHash("sha256").update(parts.join("\0")).digest("hex");
 }
 
-async function readSeenState(sessionId: string): Promise<{ path: string; value: SeenState }> {
-  const path = join(STATE_DIR, `${sessionId}.json`);
+async function readSeenState(
+  sessionId: string
+): Promise<{ path: string; value: SeenState }> {
+  const filePath = path.join(STATE_DIR, `${sessionId}.json`);
   try {
-    const raw = await readFile(path, "utf8");
+    const raw = await readFile(filePath, "utf8");
     const parsed = JSON.parse(raw);
-    if (parsed && typeof parsed === "object") return { path, value: asSeenState(parsed as JsonValue) };
+    if (parsed && typeof parsed === "object")
+      return { path: filePath, value: asSeenState(parsed as JsonValue) };
   } catch (error) {
-    if (!(error && typeof error === "object" && "code" in error && error.code === "ENOENT")) throw error;
+    if (
+      !error ||
+      typeof error !== "object" ||
+      !("code" in error) ||
+      error.code !== "ENOENT"
+    )
+      throw error;
   }
-  return { path, value: { turns: {}, keys: [] } };
+  return { path: filePath, value: { turns: {}, keys: [] } };
 }
 
-async function writeSeenState({ path, value }: { path: string; value: SeenState }): Promise<void> {
+async function writeSeenState({
+  path: filePath,
+  value
+}: {
+  path: string;
+  value: SeenState;
+}): Promise<void> {
   await mkdir(STATE_DIR, { recursive: true });
-  const tmp = `${path}.tmp`;
+  const tmp = `${filePath}.tmp`;
   await writeFile(tmp, JSON.stringify(value));
-  await rename(tmp, path);
+  await rename(tmp, filePath);
 }
 
 function pruneKeys(keys: string[], keep: string[]): void {
   const keepSet = new Set(keep);
-  for (const key of keys) if (!keepSet.has(key)) keys.splice(keys.indexOf(key), 1);
+  for (const key of keys)
+    if (!keepSet.has(key)) keys.splice(keys.indexOf(key), 1);
   while (keys.length > SEEN_KEYS_LIMIT) keys.shift();
 }
 
-async function alreadyReported({ sessionId, turnId, skill, root }: { sessionId: string; turnId: string; skill: string; root: string }): Promise<boolean> {
+async function alreadyReported({
+  sessionId,
+  turnId,
+  skill,
+  root
+}: {
+  sessionId: string;
+  turnId: string;
+  skill: string;
+  root: string;
+}): Promise<boolean> {
   const state = await readSeenState(sessionId);
   const turn = state.value.turns[turnId];
   if (!turn) return false;
@@ -333,11 +430,24 @@ async function alreadyReported({ sessionId, turnId, skill, root }: { sessionId: 
   return false;
 }
 
-async function markReported({ sessionId, turnId, skill, root, toolName }: { sessionId: string; turnId: string; skill: string; root: string; toolName: string }): Promise<void> {
+async function markReported({
+  sessionId,
+  turnId,
+  skill,
+  root,
+  toolName
+}: {
+  sessionId: string;
+  turnId: string;
+  skill: string;
+  root: string;
+  toolName: string;
+}): Promise<void> {
   const state = await readSeenState(sessionId);
   if (!state.value.turns) state.value.turns = {};
   if (!state.value.keys) state.value.keys = [];
-  if (!state.value.turns[turnId]) state.value.turns[turnId] = { has: [], tool: toolName };
+  if (!state.value.turns[turnId])
+    state.value.turns[turnId] = { has: [], tool: toolName };
   state.value.turns[turnId].has.push(hashKey(skill, root));
   state.value.keys.push(hashKey(sessionId, turnId, skill, root));
   pruneKeys(state.value.keys, state.value.keys.slice(-SEEN_VALUE_LIMIT));
@@ -362,10 +472,20 @@ function resolveEventsUrl() {
   return "http://127.0.0.1:4100/v1/agent-events";
 }
 
-async function postSkillUsed({ sessionId, skill, root, toolName, turnId }: { sessionId: string; skill: string; root: string; toolName: string; turnId: string }): Promise<void> {
+async function postSkillUsed({
+  sessionId,
+  skill,
+  root,
+  turnId
+}: {
+  sessionId: string;
+  skill: string;
+  root: string;
+  turnId: string;
+}): Promise<void> {
   const reporter = resolveSkillReadReporter({
-    [ AGENT_EVENTS_URL_HEADER ]: resolveEventsUrl(),
-    [ SESSION_ID_HEADER ]: sessionId,
+    [AGENT_EVENTS_URL_HEADER]: resolveEventsUrl(),
+    [SESSION_ID_HEADER]: sessionId
   });
   if (!reporter) return;
   const eventId = `read:${sessionId}:${turnId}:${hashKey(skill, root).slice(0, 12)}`;
@@ -375,7 +495,7 @@ async function postSkillUsed({ sessionId, skill, root, toolName, turnId }: { ses
   await reporter.reportSkillUsed({
     skill,
     source: SKILL_READ_SOURCE,
-    eventId,
+    eventId
   });
 }
 
@@ -388,7 +508,7 @@ function payloadCwd(payload: JsonValue): string | null {
     object.working_directory,
     object.workingDirectory,
     object.workspace_cwd,
-    object.repository_cwd,
+    object.repository_cwd
   ];
   for (const value of candidates) {
     if (typeof value === "string" && value.trim()) return value.trim();
@@ -418,16 +538,49 @@ async function run(): Promise<void> {
   if (!candidatePath) return;
   const normalised = normalisePath(candidatePath);
   if (!normalised) return;
-  const match = matchSkillPath(normalised)
+  const match = matchSkillPath(normalised);
   if (!match) return;
   const payloadObject = asObject(payload);
-  const sessionId = pickString(payload, SESSION_ID_KEYS) ?? pickString(payloadObject.metadata, SESSION_ID_KEYS) ?? (typeof payloadObject[CODEX_SESSION_KEY] === "string" ? payloadObject[CODEX_SESSION_KEY] : null);
+  const sessionId =
+    pickString(payload, SESSION_ID_KEYS) ??
+    pickString(payloadObject.metadata, SESSION_ID_KEYS) ??
+    (typeof payloadObject[CODEX_SESSION_KEY] === "string"
+      ? payloadObject[CODEX_SESSION_KEY]
+      : null);
   if (!sessionId) return;
-  const turnId = pickString(payload, TURN_ID_KEYS) ?? pickString(payloadObject.metadata, TURN_ID_KEYS) ?? "no-turn";
-  if (await alreadyReported({ sessionId, turnId, skill: match.skill, root: match.root })) return;
-  await markReported({ sessionId, turnId, skill: match.skill, root: match.root, toolName: tool.toolName });
-  await postSkillUsed({ sessionId, skill: match.skill, root: match.root, toolName: tool.toolName, turnId });
+  const turnId =
+    pickString(payload, TURN_ID_KEYS) ??
+    pickString(payloadObject.metadata, TURN_ID_KEYS) ??
+    "no-turn";
+  if (
+    await alreadyReported({
+      sessionId,
+      turnId,
+      skill: match.skill,
+      root: match.root
+    })
+  )
+    return;
+  await markReported({
+    sessionId,
+    turnId,
+    skill: match.skill,
+    root: match.root,
+    toolName: tool.toolName
+  });
+  await postSkillUsed({
+    sessionId,
+    skill: match.skill,
+    root: match.root,
+    turnId
+  });
   payloadCwd(payload); // retained for symmetry; not forwarded in the post
 }
 
-run().catch(() => { /* fail-open by design */ }).finally(() => process.exit(0));
+try {
+  await run();
+} catch {
+  /* fail-open by design */
+} finally {
+  process.exit(0);
+}

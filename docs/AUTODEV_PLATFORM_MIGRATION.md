@@ -1190,6 +1190,15 @@ server exactly as Codex does and exercises it. Router events carry the Codex
 like the capture skill, and `tests/session-diagnostics-skill.test.ts` covers
 both scripts.
 
+The third repository-only skill, `opentelemetry` (added 2026-09-19), defines
+OpenTelemetry architecture, ownership, semantic-convention, instrumentation,
+and telemetry-quality rules for AutoDev itself. It establishes that OpenTelemetry
+serves as AutoDev's standard telemetry transport and interoperability layer while
+keeping AutoDev-specific semantic truth in AutoDev, governing OTLP ingestion,
+Collector configuration, telemetry attributes, traces, metrics, logs, and dashboard
+projections. Like the other repository-only skills, it is exposed across each tool's
+repository-scoped discovery folders and tested by `tests/opentelemetry-skill.test.ts`.
+
 **Completed generated repository skill surfaces — only `.rulesync/skills` is
 tracked (added item, 2026-09-15).** Git tracked Rulesync output in three
 places: SKILL.md-only copies in `.github/skills/`, repository-only skill

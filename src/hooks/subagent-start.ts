@@ -1,9 +1,10 @@
 #!/usr/bin/env node
 
-import { readFileSync } from 'node:fs';
-import { ensureAntigravityProxy } from '../platform/antigravity-ensure.ts';
-import { ensureClaudeBridge } from '../platform/claude-ensure.ts';
-import { ensureMiniMaxProxy } from '../platform/minimax-ensure.ts';
+import { readFileSync } from "node:fs";
+
+import { ensureAntigravityProxy } from "../platform/antigravity-ensure.ts";
+import { ensureClaudeBridge } from "../platform/claude-ensure.ts";
+import { ensureMiniMaxProxy } from "../platform/minimax-ensure.ts";
 
 export interface SubagentStartEnsurers {
   readonly claude: (input: string) => Promise<number>;
@@ -14,7 +15,7 @@ export interface SubagentStartEnsurers {
 const defaultEnsurers: SubagentStartEnsurers = {
   claude: (input) => ensureClaudeBridge(input),
   minimax: (input) => ensureMiniMaxProxy(input),
-  antigravity: (input) => ensureAntigravityProxy(input),
+  antigravity: (input) => ensureAntigravityProxy(input)
 };
 
 /**
@@ -22,10 +23,17 @@ const defaultEnsurers: SubagentStartEnsurers = {
  * lifecycle decisions belong to typed platform owners; this hook only keeps
  * their model-gated calls in a stable order and fails closed on failure.
  */
-export function createSubagentStart(ensurers: SubagentStartEnsurers = defaultEnsurers): (input?: Buffer | string) => Promise<number> {
+export function createSubagentStart(
+  ensurers: SubagentStartEnsurers = defaultEnsurers
+): (input?: Buffer | string) => Promise<number> {
   return async function runSubagentStart(input = readFileSync(0)) {
-    const raw = typeof input === 'string' ? input : input.toString('utf8');
-    for (const ensure of [ensurers.claude, ensurers.minimax, ensurers.antigravity]) {
+    const raw = typeof input === "string" ? input : input.toString("utf8");
+    for (const ensure of [
+      ensurers.claude,
+      ensurers.minimax,
+      ensurers.antigravity
+    ]) {
+      // eslint-disable-next-line no-await-in-loop -- ensurers run in a fixed order and stop at the first failure (fail closed)
       const status = await ensure(raw);
       if (status !== 0) return status;
     }
@@ -36,5 +44,5 @@ export function createSubagentStart(ensurers: SubagentStartEnsurers = defaultEns
 export const runSubagentStart = createSubagentStart();
 
 if (process.argv[1] === new URL(import.meta.url).pathname) {
-  runSubagentStart().then((status) => { process.exitCode = status; });
+  process.exitCode = await runSubagentStart();
 }

@@ -1,12 +1,17 @@
 import assert from "node:assert/strict";
 import { mkdtempSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
 
-import { CodexStateCollector, loadCodexStateCollectorConfig } from "../src/router/state-collector.ts";
 import { getRouterStatus, resetRouterTelemetry } from "../src/router/http.ts";
 import { resetOtelTelemetry } from "../src/router/otel.ts";
+import {
+  CodexStateCollector,
+  loadCodexStateCollectorConfig
+} from "../src/router/state-collector.ts";
+
+import { parseLimitedTableSelect } from "./sqlite-select-stub.ts";
 
 type JsonRecord = Record<string, any>;
 
@@ -15,63 +20,126 @@ function createStubBinding(db: any): any {
     available: true,
     open: () => ({
       prepare(sql: string) {
-        const statement = sql.replace(/\s+/g, " ").trim();
+        const statement = sql.replaceAll(/\s+/g, " ").trim();
         if (statement.startsWith("PRAGMA table_info")) {
           const table = statement.match(/PRAGMA table_info\((\w+)\)/)?.[1];
           return { all: () => db.tableInfo(table) };
         }
         if (statement.startsWith("SELECT name FROM sqlite_master")) {
-          return { get: (value: string) => (db.tables[value] ? { name: value } : undefined) };
+          return {
+            get: (value: string) =>
+              db.tables[value] ? { name: value } : undefined
+          };
         }
-        const tableSelect = statement.match(/^SELECT (.+?) FROM (\w+)(?:\s+WHERE\s+COALESCE\("?(\w+)"?, 0\) >= \?)?(?:\s+ORDER BY "?(\w+)"? DESC)?\s+LIMIT \d+$/);
+        const tableSelect = parseLimitedTableSelect(statement);
         if (tableSelect) {
-          const selectList = tableSelect[1]!.split(/,\s*/).map((col: string) => col.replace(/^"|"$/g, ""));
-          const tableName = tableSelect[2];
-          const orderColumn = tableSelect[4] ?? null;
+          const {
+            columns: selectList,
+            table: tableName,
+            filterColumn,
+            orderColumn
+          } = tableSelect;
           return {
             all: (...params: any[]) => {
-              let rows = db.records(tableName).map((row: any) => Object.fromEntries(selectList.map((column: string) => [column, row[column]])));
-              if (tableSelect[3]) {
-                const filterColumn = tableSelect[3];
+              let rows = db
+                .records(tableName)
+                .map((row: any) =>
+                  Object.fromEntries(
+                    selectList.map((column: string) => [column, row[column]])
+                  )
+                );
+              if (filterColumn) {
                 const cutoff = params[0];
-                rows = rows.filter((row: any) => Number(row[filterColumn]) >= cutoff);
+                rows = rows.filter(
+                  (row: any) => Number(row[filterColumn]) >= cutoff
+                );
               }
-              if (orderColumn) rows.sort((a: any, b: any) => Number(b[orderColumn]) - Number(a[orderColumn]));
+              if (orderColumn)
+                rows.sort(
+                  (a: any, b: any) =>
+                    Number(b[orderColumn]) - Number(a[orderColumn])
+                );
               return rows;
-            },
+            }
           };
         }
-        if (statement.startsWith("SELECT") && statement.includes("FROM projects")) {
-          const selectList = (statement.match(/SELECT (.+?) FROM/)?.[1] ?? "").split(/,\s*/).map((col: string) => col.replace(/^"|"$/g, "")) ?? [];
+        if (
+          statement.startsWith("SELECT") &&
+          statement.includes("FROM projects")
+        ) {
+          const selectList =
+            (statement.match(/SELECT (.+?) FROM/)?.[1] ?? "")
+              .split(/,\s*/)
+              .map((col: string) => col.replaceAll(/^"|"$/g, "")) ?? [];
           return {
-            all: () => db.records("projects").map((row: any) => Object.fromEntries(selectList.map((column: string) => [column, row[column]]))).sort((a: any, b: any) => Number(a.position) - Number(b.position)),
+            all: () =>
+              db
+                .records("projects")
+                .map((row: any) =>
+                  Object.fromEntries(
+                    selectList.map((column: string) => [column, row[column]])
+                  )
+                )
+                .sort(
+                  (a: any, b: any) => Number(a.position) - Number(b.position)
+                )
           };
         }
-        if (statement.startsWith("SELECT") && statement.includes("FROM thread_spawn_edges")) {
-          const selectList = (statement.match(/SELECT (.+?) FROM/)?.[1] ?? "").split(/,\s*/).map((col: string) => col.replace(/^"|"$/g, "")) ?? [];
+        if (
+          statement.startsWith("SELECT") &&
+          statement.includes("FROM thread_spawn_edges")
+        ) {
+          const selectList =
+            (statement.match(/SELECT (.+?) FROM/)?.[1] ?? "")
+              .split(/,\s*/)
+              .map((col: string) => col.replaceAll(/^"|"$/g, "")) ?? [];
           return {
-            all: () => db.records("thread_spawn_edges").map((row: any) => Object.fromEntries(selectList.map((column: string) => [column, row[column]]))),
+            all: () =>
+              db
+                .records("thread_spawn_edges")
+                .map((row: any) =>
+                  Object.fromEntries(
+                    selectList.map((column: string) => [column, row[column]])
+                  )
+                )
           };
         }
         throw new Error(`unhandled stub query: ${sql}`);
       },
-      close() {},
-    }),
+      close() {}
+    })
   };
 }
 
 function newDatabase(rows: any): any {
-  const tables = { threads: rows.threads ?? [], projects: rows.projects ?? [], thread_spawn_edges: rows.edges ?? [], thread_sections: [] };
+  const tables = {
+    threads: rows.threads ?? [],
+    projects: rows.projects ?? [],
+    thread_spawn_edges: rows.edges ?? [],
+    thread_sections: []
+  };
   return {
     tables,
     tableInfo(name: string) {
-      if (!tables[name as keyof typeof tables] || tables[name as keyof typeof tables].length === 0) return [];
+      if (
+        !tables[name as keyof typeof tables] ||
+        tables[name as keyof typeof tables].length === 0
+      )
+        return [];
       const sample = tables[name as keyof typeof tables][0];
-      return Object.keys(sample).map((column, index) => ({ name: column, type: "TEXT", notnull: 0, dflt_value: null, pk: index === 0 ? 1 : 0 }));
+      return Object.keys(sample).map((column, index) => ({
+        name: column,
+        type: "TEXT",
+        notnull: 0,
+        dflt_value: null,
+        pk: index === 0 ? 1 : 0
+      }));
     },
     records(name: string) {
-      return (tables[name as keyof typeof tables] ?? []).map((row: any) => ({ ...row }));
-    },
+      return (tables[name as keyof typeof tables] ?? []).map((row: any) => ({
+        ...row
+      }));
+    }
   };
 }
 
@@ -89,15 +157,22 @@ function makeFile(content: string = ""): string {
 const LEAKED_PATH_PATTERN = /\/Users\/|\/home\/|CODEX_HOME/;
 function assertNoLeakedPaths(value: any, path: string = "$"): void {
   if (typeof value === "string") {
-    assert.equal(LEAKED_PATH_PATTERN.test(value), false, `leaked filesystem path at ${path}: ${value}`);
+    assert.equal(
+      LEAKED_PATH_PATTERN.test(value),
+      false,
+      `leaked filesystem path at ${path}: ${value}`
+    );
     return;
   }
   if (Array.isArray(value)) {
-    value.forEach((item: any, index: number) => assertNoLeakedPaths(item, `${path}[${index}]`));
+    value.forEach((item: any, index: number) =>
+      assertNoLeakedPaths(item, `${path}[${index}]`)
+    );
     return;
   }
   if (value && typeof value === "object") {
-    for (const [key, nested] of Object.entries(value)) assertNoLeakedPaths(nested, `${path}.${key}`);
+    for (const [key, nested] of Object.entries(value))
+      assertNoLeakedPaths(nested, `${path}.${key}`);
   }
 }
 
@@ -106,7 +181,10 @@ test("codexStateStatus surfaces the pending envelope before the first snapshot",
   resetOtelTelemetry();
   const status = getRouterStatus() as JsonRecord;
   assert.equal(status.codexState.localTelemetry.status, "pending");
-  assert.equal(status.codexState.localTelemetry.reason, "collector_initializing");
+  assert.equal(
+    status.codexState.localTelemetry.reason,
+    "collector_initializing"
+  );
   assert.equal(status.codexState.localTelemetry.pathConfigured, true);
   assert.equal(Object.hasOwn(status.codexState.localTelemetry, "path"), false);
   assertNoLeakedPaths(status);
@@ -115,29 +193,45 @@ test("codexStateStatus surfaces the pending envelope before the first snapshot",
 test("codexStateStatus surfaces a successful snapshot when refreshed via the exported helper", async () => {
   const now = Date.now();
   const db = newDatabase({
-    threads: [ {
-      id: "thread-1",
-      cwd: "/Users/henrykirk/Desktop/RacingGame",
-      git_origin_url: "https://github.com/SimulatorLife/RacingGame.git",
-      git_branch: "main",
-      model_provider: "local_model_router",
-      source: "vscode",
-      title: "T",
-      sandbox_policy: "workspace-write",
-      approval_mode: "on-request",
-      tokens_used: 100,
-      has_user_event: 1,
-      archived: 0,
-      cli_version: "0.1.0",
-      model: "autodev/default",
-      agent_role: "default",
-      is_pinned: 0,
-      updated_at_ms: now,
-      created_at_ms: now - 100,
-      project_id: null,
-    } ],
-    projects: [ { id: "p-1", name: "RacingGame", position: 0, created_at_ms: now - 1000, updated_at_ms: now } ],
-    edges: [ { parent_thread_id: "thread-2", child_thread_id: "thread-1", status: "active" } ],
+    threads: [
+      {
+        id: "thread-1",
+        cwd: "/Users/henrykirk/Desktop/RacingGame",
+        git_origin_url: "https://github.com/SimulatorLife/RacingGame.git",
+        git_branch: "main",
+        model_provider: "local_model_router",
+        source: "vscode",
+        title: "T",
+        sandbox_policy: "workspace-write",
+        approval_mode: "on-request",
+        tokens_used: 100,
+        has_user_event: 1,
+        archived: 0,
+        cli_version: "0.1.0",
+        model: "autodev/default",
+        agent_role: "default",
+        is_pinned: 0,
+        updated_at_ms: now,
+        created_at_ms: now - 100,
+        project_id: null
+      }
+    ],
+    projects: [
+      {
+        id: "p-1",
+        name: "RacingGame",
+        position: 0,
+        created_at_ms: now - 1000,
+        updated_at_ms: now
+      }
+    ],
+    edges: [
+      {
+        parent_thread_id: "thread-2",
+        child_thread_id: "thread-1",
+        status: "active"
+      }
+    ]
   });
   const file = makeFile();
   const collector = new CodexStateCollector({
@@ -145,7 +239,7 @@ test("codexStateStatus surfaces a successful snapshot when refreshed via the exp
     recencyWindowMs: 60_000,
     limit: 10,
     openSqlite: async () => createStubBinding(db),
-    now: () => now,
+    now: () => now
   });
   // Re-export codexState with a fixture collector. We cannot mutate the
   // module-level `codexState` directly, but the collector itself runs the
@@ -155,14 +249,23 @@ test("codexStateStatus surfaces a successful snapshot when refreshed via the exp
   await collector.collectSnapshot();
   // Verify the same snapshot shape that getRouterStatus().codexState
   // will surface once a live collector has run.
-  const expected = await collector.collectSnapshot() as JsonRecord;
+  const expected = (await collector.collectSnapshot()) as JsonRecord;
   assert.equal(expected.localTelemetry.status, "ok");
-  assert.equal(expected.recentThreads[0].workspaceKey, "SimulatorLife/RacingGame");
-  assert.equal(expected.conversationThreads["thread-1"].workspaceKey, "SimulatorLife/RacingGame");
+  assert.equal(
+    expected.recentThreads[0].workspaceKey,
+    "SimulatorLife/RacingGame"
+  );
+  assert.equal(
+    expected.conversationThreads["thread-1"].workspaceKey,
+    "SimulatorLife/RacingGame"
+  );
   assert.equal(expected.spawnEdges[0].childThreadId, "thread-1");
 });
 
 test("loadCodexStateCollectorConfig respects CODEX_HOME for default path", () => {
-  const config = loadCodexStateCollectorConfig({ CODEX_HOME: "/tmp/codex-home" }, {});
+  const config = loadCodexStateCollectorConfig(
+    { CODEX_HOME: "/tmp/codex-home" },
+    {}
+  );
   assert.equal(config.path, "/tmp/codex-home/state_5.sqlite");
 });

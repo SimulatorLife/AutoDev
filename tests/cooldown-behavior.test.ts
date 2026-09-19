@@ -1,21 +1,35 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { describe, test } from "node:test";
+
 import { COOLDOWNS as cooldowns } from "../src/router/cooldown.ts";
 import { ROUTING_POLICY as routing } from "../src/router/routing.ts";
 
 type JsonRecord = Record<string, any>;
-cooldowns.setRuntime({ isProviderEnabled: (provider) => routing.isProviderEnabled(provider) });
+cooldowns.setRuntime({
+  isProviderEnabled: (provider) => routing.isProviderEnabled(provider)
+});
 
 const contract = JSON.parse(
-  await readFile(new URL("./fixtures/contracts/cooldown-behavior.json", import.meta.url), "utf8"),
+  await readFile(
+    new URL("fixtures/contracts/cooldown-behavior.json", import.meta.url),
+    "utf8"
+  )
 ) as JsonRecord;
 
-assert.equal(contract.schema, "autodev-cooldown-behavior-v1", "cooldown behavior contract must match its schema tag");
-assert.equal(typeof contract.now, "number", "cooldown behavior contract must fix `now` to an epoch millisecond value");
+assert.equal(
+  contract.schema,
+  "autodev-cooldown-behavior-v1",
+  "cooldown behavior contract must match its schema tag"
+);
+assert.equal(
+  typeof contract.now,
+  "number",
+  "cooldown behavior contract must fix `now` to an epoch millisecond value"
+);
 
 const NOW = contract.now;
-const PROVIDERS = [ "claude", "antigravity", "minimax", "copilot", "codex" ];
+const PROVIDERS = ["claude", "antigravity", "minimax", "copilot", "codex"];
 
 function cleanState() {
   for (const provider of PROVIDERS) cooldowns.clear(provider);
@@ -28,7 +42,10 @@ function applySetup(setup: JsonRecord[] | undefined): void {
       routing.setProviderEnabled(step.disable, false);
       continue;
     }
-    cooldowns.cooldownProvider(step.provider, { now: NOW, ...(step.args ?? {}) });
+    cooldowns.cooldownProvider(step.provider, {
+      now: NOW,
+      ...step.args
+    });
   }
 }
 
@@ -41,7 +58,7 @@ function runScenario(name: string, scenario: JsonRecord): void {
     assert.equal(
       scenario.setup.length,
       scenario.expectedStreaks.length,
-      `${name}: ladder setup length must match expected streak length`,
+      `${name}: ladder setup length must match expected streak length`
     );
     for (let i = 0; i < scenario.setup.length; i += 1) {
       const step = scenario.setup[i];
@@ -52,13 +69,35 @@ function runScenario(name: string, scenario: JsonRecord): void {
       // args and assert the return shape matches the expected streak.
       for (let j = 0; j < i; j += 1) {
         const inner = scenario.setup[j];
-        cooldowns.cooldownProvider(inner.provider, { now: NOW, ...(inner.args ?? {}) });
+        cooldowns.cooldownProvider(inner.provider, {
+          now: NOW,
+          ...inner.args
+        });
       }
-      const final = cooldowns.cooldownProvider(step.provider, { now: NOW, ...(step.args ?? {}) });
-      assert.equal(final.provider, step.provider, `${name}: ladder step returns the expected provider`);
-      assert.equal(final.kind, expected.kind, `${name}: ladder step ${i + 1} kind`);
-      assert.equal(final.streak, expected.streak, `${name}: ladder step ${i + 1} streak`);
-      assert.equal(final.durationMs, expected.durationMs, `${name}: ladder step ${i + 1} durationMs`);
+      const final = cooldowns.cooldownProvider(step.provider, {
+        now: NOW,
+        ...step.args
+      });
+      assert.equal(
+        final.provider,
+        step.provider,
+        `${name}: ladder step returns the expected provider`
+      );
+      assert.equal(
+        final.kind,
+        expected.kind,
+        `${name}: ladder step ${i + 1} kind`
+      );
+      assert.equal(
+        final.streak,
+        expected.streak,
+        `${name}: ladder step ${i + 1} streak`
+      );
+      assert.equal(
+        final.durationMs,
+        expected.durationMs,
+        `${name}: ladder step ${i + 1} durationMs`
+      );
     }
     return;
   }
@@ -69,7 +108,7 @@ function runScenario(name: string, scenario: JsonRecord): void {
     assert.equal(
       cooldowns.allowsLastResort(scenario.entry, at),
       scenario.expected,
-      `${name}: cooldownAllowsLastResort decision`,
+      `${name}: cooldownAllowsLastResort decision`
     );
     return;
   }
@@ -80,7 +119,7 @@ function runScenario(name: string, scenario: JsonRecord): void {
     assert.deepEqual(
       cooldowns.summary(scenario.providers, at),
       scenario.expected,
-      `${name}: providerCooldownSummary shape`,
+      `${name}: providerCooldownSummary shape`
     );
     return;
   }
@@ -91,7 +130,7 @@ function runScenario(name: string, scenario: JsonRecord): void {
     assert.equal(
       cooldowns.nextRetryMs(scenario.providers, at),
       scenario.expected,
-      `${name}: nextProviderRetryMs returns the earliest remaining ms`,
+      `${name}: nextProviderRetryMs returns the earliest remaining ms`
     );
     return;
   }
@@ -101,21 +140,44 @@ function runScenario(name: string, scenario: JsonRecord): void {
   // single-provider snapshot (state, failureClass, resetsAt, retryAfterMs).
   if ("state" in scenario.expected) {
     assert.deepEqual(
-      cooldowns.summary([ "claude" ], NOW + 1)[0],
+      cooldowns.summary(["claude"], NOW + 1)[0],
       scenario.expected,
-      `${name}: single-provider providerCooldownSummary shape`,
+      `${name}: single-provider providerCooldownSummary shape`
     );
     return;
   }
 
   cleanState();
   const last = scenario.setup.at(-1) ?? { provider: "claude", args: {} };
-  const final = cooldowns.cooldownProvider(last.provider, { now: NOW, ...(last.args ?? {}) });
-  assert.equal(final.kind, scenario.expected.kind, `${name}: cooldownProvider kind`);
-  assert.equal(final.streak, scenario.expected.streak, `${name}: cooldownProvider streak`);
-  assert.equal(final.durationMs, scenario.expected.durationMs, `${name}: cooldownProvider durationMs`);
-  assert.equal(final.cooldownUntil, NOW + scenario.expected.cooldownUntilDeltaMs, `${name}: cooldownProvider cooldownUntil`);
-  assert.equal(final.resetsAt, scenario.expected.resetsAt, `${name}: cooldownProvider resetsAt`);
+  const final = cooldowns.cooldownProvider(last.provider, {
+    now: NOW,
+    ...last.args
+  });
+  assert.equal(
+    final.kind,
+    scenario.expected.kind,
+    `${name}: cooldownProvider kind`
+  );
+  assert.equal(
+    final.streak,
+    scenario.expected.streak,
+    `${name}: cooldownProvider streak`
+  );
+  assert.equal(
+    final.durationMs,
+    scenario.expected.durationMs,
+    `${name}: cooldownProvider durationMs`
+  );
+  assert.equal(
+    final.cooldownUntil,
+    NOW + scenario.expected.cooldownUntilDeltaMs,
+    `${name}: cooldownProvider cooldownUntil`
+  );
+  assert.equal(
+    final.resetsAt,
+    scenario.expected.resetsAt,
+    `${name}: cooldownProvider resetsAt`
+  );
 }
 
 describe("cooldown behavior", () => {
@@ -124,11 +186,13 @@ describe("cooldown behavior", () => {
     assert.equal(contract.constants.providerCooldownMaxMs, 600_000);
     assert.equal(contract.constants.hardCooldownMs, 900_000);
     assert.equal(contract.constants.hardCooldownMaxMs, 21_600_000);
-    assert.equal(contract.constants.probeCooldownMs, 5_000);
+    assert.equal(contract.constants.probeCooldownMs, 5000);
     assert.equal(contract.constants.probeCooldownMaxMs, 30_000);
   });
 
-  for (const [ name, scenario ] of Object.entries(contract.scenarios as JsonRecord) as Array<[string, JsonRecord]>) {
+  for (const [name, scenario] of Object.entries(
+    contract.scenarios as JsonRecord
+  ) as Array<[string, JsonRecord]>) {
     test(`${name}`, () => {
       try {
         runScenario(name, scenario);
@@ -141,8 +205,21 @@ describe("cooldown behavior", () => {
   test("cooldownProvider return shape covers config/probe/transient/hard", () => {
     try {
       cleanState();
-      const cfg = cooldowns.cooldownProvider("claude", { now: NOW, failureClass: "authentication" });
-      assert.deepEqual(Object.keys(cfg).sort(), [ "cooldownUntil", "durationMs", "kind", "provider", "resetsAt", "streak" ].sort());
+      const cfg = cooldowns.cooldownProvider("claude", {
+        now: NOW,
+        failureClass: "authentication"
+      });
+      assert.deepEqual(
+        Object.keys(cfg).sort(),
+        [
+          "cooldownUntil",
+          "durationMs",
+          "kind",
+          "provider",
+          "resetsAt",
+          "streak"
+        ].sort()
+      );
       assert.equal(cfg.provider, "claude");
       assert.equal(cfg.kind, "config");
       assert.equal(cfg.streak, 0);
@@ -151,7 +228,10 @@ describe("cooldown behavior", () => {
       assert.equal(cfg.resetsAt, null);
 
       cleanState();
-      const probe = cooldowns.cooldownProvider("antigravity", { now: NOW, failureClass: "probe_unavailable" });
+      const probe = cooldowns.cooldownProvider("antigravity", {
+        now: NOW,
+        failureClass: "probe_unavailable"
+      });
       assert.equal(probe.kind, "probe");
       assert.equal(probe.streak, 1);
       assert.equal(probe.durationMs, contract.constants.probeCooldownMs);
@@ -168,7 +248,12 @@ describe("cooldown behavior", () => {
 
       cleanState();
       const reset = new Date(NOW + 3_600_000).toISOString();
-      const hard = cooldowns.cooldownProvider("claude", { now: NOW, failureClass: "quota_exhausted", resetsAt: reset, structured: true });
+      const hard = cooldowns.cooldownProvider("claude", {
+        now: NOW,
+        failureClass: "quota_exhausted",
+        resetsAt: reset,
+        structured: true
+      });
       assert.equal(hard.kind, "hard");
       assert.equal(hard.streak, 0);
       assert.equal(hard.durationMs, 3_600_000);
@@ -181,11 +266,20 @@ describe("cooldown behavior", () => {
 
   test("clearProviderCooldown wipes both cooldowns and the failure/probe streaks", () => {
     try {
-      cooldowns.cooldownProvider("claude", { now: NOW, failureClass: "probe_unavailable" });
+      cooldowns.cooldownProvider("claude", {
+        now: NOW,
+        failureClass: "probe_unavailable"
+      });
       cooldowns.cooldownProvider("claude", { now: NOW });
       cooldowns.clear("claude");
-      assert.deepEqual(cooldowns.summary([ "claude" ], NOW + 1), [
-        { provider: "claude", state: "available", failureClass: null, resetsAt: null, retryAfterMs: 0 },
+      assert.deepEqual(cooldowns.summary(["claude"], NOW + 1), [
+        {
+          provider: "claude",
+          state: "available",
+          failureClass: null,
+          resetsAt: null,
+          retryAfterMs: 0
+        }
       ]);
       const fresh = cooldowns.cooldownProvider("claude", { now: NOW });
       assert.equal(fresh.kind, "transient");
@@ -197,15 +291,30 @@ describe("cooldown behavior", () => {
   });
 
   test("every fixture scenario stays within the contract ceilings", () => {
-    for (const [ name, scenario ] of Object.entries(contract.scenarios as JsonRecord) as Array<[string, JsonRecord]>) {
+    for (const [name, scenario] of Object.entries(
+      contract.scenarios as JsonRecord
+    ) as Array<[string, JsonRecord]>) {
       try {
         cleanState();
         applySetup(scenario.setup);
         if (scenario.expectedStreaks) continue;
         if ("providers" in scenario && Array.isArray(scenario.expected)) {
-          const rows = cooldowns.summary(scenario.providers, NOW + (scenario.atDeltaMs ?? 0));
+          const rows = cooldowns.summary(
+            scenario.providers,
+            NOW + (scenario.atDeltaMs ?? 0)
+          );
           for (const row of rows) {
-            assert.ok([ "available", "config", "probe", "transient", "hard", "disabled" ].includes(row.state), `${name}: state must be a known cooldown kind`);
+            assert.ok(
+              [
+                "available",
+                "config",
+                "probe",
+                "transient",
+                "hard",
+                "disabled"
+              ].includes(row.state),
+              `${name}: state must be a known cooldown kind`
+            );
             assert.equal(typeof row.provider, "string");
             assert.equal(typeof row.retryAfterMs, "number");
           }
@@ -215,13 +324,21 @@ describe("cooldown behavior", () => {
         const last = scenario.setup.at(-1);
         if (!last) continue;
         cleanState();
-        const sentinel = last.provider === "antigravity" ? "claude" : "antigravity";
-        const final = cooldowns.cooldownProvider(sentinel, { now: NOW, ...(last.args ?? {}) });
-        assert.ok(final.durationMs <= Math.max(
-          contract.constants.providerCooldownMaxMs,
-          contract.constants.hardCooldownMaxMs,
-          contract.constants.probeCooldownMaxMs,
-        ), `${name}: durationMs must respect the contract ceilings`);
+        const sentinel =
+          last.provider === "antigravity" ? "claude" : "antigravity";
+        const final = cooldowns.cooldownProvider(sentinel, {
+          now: NOW,
+          ...last.args
+        });
+        assert.ok(
+          final.durationMs <=
+            Math.max(
+              contract.constants.providerCooldownMaxMs,
+              contract.constants.hardCooldownMaxMs,
+              contract.constants.probeCooldownMaxMs
+            ),
+          `${name}: durationMs must respect the contract ceilings`
+        );
       } finally {
         cleanState();
       }

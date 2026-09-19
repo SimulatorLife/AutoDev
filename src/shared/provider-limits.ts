@@ -50,10 +50,19 @@ export const INCOMPLETE_REASON_CLIENT_DISCONNECTED = "client_disconnected";
 
 // Classes that mean "this provider will not serve again until its window
 // resets", as opposed to a transient failure worth retrying in seconds.
-export const HARD_LIMIT_CLASSES = Object.freeze(["quota_exhausted", "session_limit"]);
+export const HARD_LIMIT_CLASSES = Object.freeze([
+  "quota_exhausted",
+  "session_limit"
+]);
 
-export type LimitClass = "quota_exhausted" | "session_limit" | "throttled" | "capacity" | (string & {});
-export type LimitSource = typeof LIMIT_SOURCE_REPORTED | typeof LIMIT_SOURCE_INFERRED;
+export type LimitClass =
+  | "quota_exhausted"
+  | "session_limit"
+  | "throttled"
+  | "capacity"
+  | (string & {});
+export type LimitSource =
+  typeof LIMIT_SOURCE_REPORTED | typeof LIMIT_SOURCE_INFERRED;
 export interface ProviderLimit {
   limitClass: LimitClass;
   limitType?: string | null;
@@ -76,35 +85,54 @@ export function isHardLimitClass(limitClass: string): boolean {
  * a wrong reset time is worse than none, because the router trusts it.
  */
 export function normalizeResetsAt(value: unknown): string | null {
-  if (value === null || value === undefined || value === "") return null;
-  let ms = null;
-  if (typeof value === "number" && Number.isFinite(value)) {
-    // Epoch seconds and epoch milliseconds are told apart by magnitude: a
-    // seconds value large enough to be ambiguous would be in the year 33658.
-    ms = value > 1e11 ? value : value * 1000;
-  } else if (typeof value === "string") {
-    const trimmed = value.trim();
-    if (!trimmed) return null;
-    if (/^\d+$/.test(trimmed)) {
-      const numeric = Number(trimmed);
-      ms = numeric > 1e11 ? numeric : numeric * 1000;
-    } else {
-      const parsed = Date.parse(trimmed);
-      ms = Number.isNaN(parsed) ? null : parsed;
-    }
-  }
+  const ms = resetTimeMs(value);
   if (ms === null || !Number.isFinite(ms)) return null;
   const date = new Date(ms);
   return Number.isNaN(date.getTime()) ? null : date.toISOString();
 }
 
+const DIGITS_ONLY_PATTERN = /^\d+$/;
+
+/**
+ * Epoch seconds and epoch milliseconds are told apart by magnitude: a seconds
+ * value large enough to be ambiguous would be in the year 33658.
+ */
+function epochToMs(epoch: number): number {
+  return epoch > 1e11 ? epoch : epoch * 1000;
+}
+
+function resetTimeMs(value: unknown): number | null {
+  if (typeof value === "number" && Number.isFinite(value))
+    return epochToMs(value);
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  if (DIGITS_ONLY_PATTERN.test(trimmed)) return epochToMs(Number(trimmed));
+  const parsed = Date.parse(trimmed);
+  return Number.isNaN(parsed) ? null : parsed;
+}
+
 const CLI_LIMIT_PATTERNS = Object.freeze([
-  { limitClass: "quota_exhausted", limitType: "quota", pattern: /quota (?:exceeded|exhausted)|out of (?:credit|quota)|insufficient (?:credit|quota|fund)|billing|usage limit reached|weekly limit/i },
-  { limitClass: "session_limit", limitType: "session", pattern: /session limit|concurrent session|session capacity/i },
-  { limitClass: "throttled", limitType: "rate", pattern: /rate.?limit|too many requests|429/i },
+  {
+    limitClass: "quota_exhausted",
+    limitType: "quota",
+    pattern:
+      /quota (?:exceeded|exhausted)|out of (?:credit|quota)|insufficient (?:credit|quota|fund)|billing|usage limit reached|weekly limit/i
+  },
+  {
+    limitClass: "session_limit",
+    limitType: "session",
+    pattern: /session limit|concurrent session|session capacity/i
+  },
+  {
+    limitClass: "throttled",
+    limitType: "rate",
+    pattern: /rate.?limit|too many requests|429/i
+  }
 ]);
 
-const RESETS_AT_PATTERN = /reset(?:s|ting)?(?: at| on| in)?[:\s]+([0-9TZ:.\-+ ]{4,40})/i;
+const RESETS_AT_PATTERN =
+  /reset(?:s|ting)?(?: at| on| in)?[:\s]+([0-9TZ:.\-+ ]{4,40})/i;
 
 /**
  * Best-effort classification of a CLI failure message. Always reports
@@ -113,7 +141,10 @@ const RESETS_AT_PATTERN = /reset(?:s|ting)?(?: at| on| in)?[:\s]+([0-9TZ:.\-+ ]{
  * hard-cooldown window on the strength of one keyword. It is enough to pick a
  * better HTTP status and a retry hint, which is what it is used for.
  */
-export function classifyCliLimit(message: unknown, exitCode: number | null = null): ProviderLimit | null {
+export function classifyCliLimit(
+  message: unknown,
+  exitCode: number | null = null
+): ProviderLimit | null {
   const text = String(message ?? "");
   if (!text.trim()) return null;
   const match = CLI_LIMIT_PATTERNS.find(({ pattern }) => pattern.test(text));
@@ -122,30 +153,47 @@ export function classifyCliLimit(message: unknown, exitCode: number | null = nul
   return {
     limitClass: match.limitClass,
     limitType: match.limitType,
-    resetsAt: resetsMatch?.[1] ? normalizeResetsAt(resetsMatch[1].trim()) : null,
+    resetsAt: resetsMatch?.[1]
+      ? normalizeResetsAt(resetsMatch[1].trim())
+      : null,
     source: LIMIT_SOURCE_INFERRED,
-    exitCode: Number.isInteger(exitCode) ? exitCode : null,
+    exitCode: Number.isInteger(exitCode) ? exitCode : null
   };
 }
 
 /** Response headers describing a limit. Absent fields are omitted, never sent empty. */
-export function limitResponseHeaders(limit: ProviderLimit | null | undefined): Record<string, string> {
+export function limitResponseHeaders(
+  limit: ProviderLimit | null | undefined
+): Record<string, string> {
   if (!limit || typeof limit !== "object" || !limit.limitClass) return {};
-  const headers: Record<string, string> = { [LIMIT_HEADER_CLASS]: limit.limitClass };
+  const headers: Record<string, string> = {
+    [LIMIT_HEADER_CLASS]: limit.limitClass
+  };
   if (limit.limitType) headers[LIMIT_HEADER_TYPE] = limit.limitType;
   if (limit.resetsAt) headers[LIMIT_HEADER_RESETS_AT] = limit.resetsAt;
-  headers[LIMIT_HEADER_SOURCE] = limit.source === LIMIT_SOURCE_REPORTED ? LIMIT_SOURCE_REPORTED : LIMIT_SOURCE_INFERRED;
+  headers[LIMIT_HEADER_SOURCE] =
+    limit.source === LIMIT_SOURCE_REPORTED
+      ? LIMIT_SOURCE_REPORTED
+      : LIMIT_SOURCE_INFERRED;
   return headers;
 }
 
-function headerValue(headers: LimitHeaders | Headers | null | undefined, name: string): string | null {
+function headerValue(
+  headers: LimitHeaders | Headers | null | undefined,
+  name: string
+): string | null {
   if (!headers) return null;
-  const get = headers instanceof Headers ? (key: string) => headers.get(key) : null;
-  const raw = get ? get(name) : (() => {
-    const record = headers as LimitHeaders;
-    const key = Object.keys(record).find((candidate: string) => candidate.toLowerCase() === name);
-    return key === undefined ? undefined : record[key];
-  })();
+  const get =
+    headers instanceof Headers ? (key: string) => headers.get(key) : null;
+  const raw = get
+    ? get(name)
+    : (() => {
+        const record = headers as LimitHeaders;
+        const key = Object.keys(record).find(
+          (candidate: string) => candidate.toLowerCase() === name
+        );
+        return key === undefined ? undefined : record[key];
+      })();
   const single = Array.isArray(raw) ? raw[0] : raw;
   return typeof single === "string" && single.trim() ? single.trim() : null;
 }
@@ -155,7 +203,9 @@ function headerValue(headers: LimitHeaders | Headers | null | undefined, name: s
  * upstream response. Returns null when the provider said nothing structural, so
  * the caller can tell "no limit reported" from "limit reported without a reset".
  */
-export function readLimitHeaders(headers: LimitHeaders | Headers | null | undefined): ProviderLimit | null {
+export function readLimitHeaders(
+  headers: LimitHeaders | Headers | null | undefined
+): ProviderLimit | null {
   const limitClass = headerValue(headers, LIMIT_HEADER_CLASS);
   if (!limitClass) return null;
   const source = headerValue(headers, LIMIT_HEADER_SOURCE);
@@ -163,12 +213,18 @@ export function readLimitHeaders(headers: LimitHeaders | Headers | null | undefi
     limitClass: limitClass.toLowerCase(),
     limitType: headerValue(headers, LIMIT_HEADER_TYPE)?.toLowerCase() ?? null,
     resetsAt: normalizeResetsAt(headerValue(headers, LIMIT_HEADER_RESETS_AT)),
-    source: source === LIMIT_SOURCE_REPORTED ? LIMIT_SOURCE_REPORTED : LIMIT_SOURCE_INFERRED,
+    source:
+      source === LIMIT_SOURCE_REPORTED
+        ? LIMIT_SOURCE_REPORTED
+        : LIMIT_SOURCE_INFERRED
   };
 }
 
 /** Seconds until the limit's stated reset, or null when it stated none. */
-export function retryAfterSecondsFromLimit(limit: ProviderLimit | null | undefined, now = Date.now()): number | null {
+export function retryAfterSecondsFromLimit(
+  limit: ProviderLimit | null | undefined,
+  now = Date.now()
+): number | null {
   if (!limit?.resetsAt) return null;
   const resetsAtMs = Date.parse(limit.resetsAt);
   if (Number.isNaN(resetsAtMs)) return null;
@@ -180,21 +236,38 @@ export function retryAfterSecondsFromLimit(limit: ProviderLimit | null | undefin
  * `incomplete_details.provider_limit` and for `error.limit` on a non-streamed
  * failure, so the router reads one shape wherever it finds it.
  */
-export function limitPayload(limit: ProviderLimit | null | undefined): Record<string, string | null> | null {
+export function limitPayload(
+  limit: ProviderLimit | null | undefined
+): Record<string, string | null> | null {
   if (!limit?.limitClass) return null;
   return {
     class: limit.limitClass,
     type: limit.limitType ?? null,
     resets_at: limit.resetsAt ?? null,
-    source: limit.source ?? LIMIT_SOURCE_INFERRED,
+    source: limit.source ?? LIMIT_SOURCE_INFERRED
   };
 }
 
-export function incompleteDetails(reason: string, limit: ProviderLimit | null = null): Record<string, unknown> {
+export function incompleteDetails(
+  reason: string,
+  limit: ProviderLimit | null = null
+): Record<string, unknown> {
   const details: Record<string, unknown> = { reason };
   const payload = limitPayload(limit);
   if (payload) details.provider_limit = payload;
   return details;
+}
+
+/** Why the turn stopped, phrased to follow "The provider". */
+function truncationCause(limit: ProviderLimit | null, reason: string): string {
+  if (limit?.limitClass === "capacity") return "was over capacity";
+  if (reason === INCOMPLETE_REASON_TIMEOUT) return "timed out";
+  if (reason === INCOMPLETE_REASON_INTERRUPTED) return "stopped unexpectedly";
+  if (reason === INCOMPLETE_REASON_CLIENT_DISCONNECTED)
+    return "was disconnected mid-delegation";
+  if (limit?.limitClass === "session_limit") return "reached its session limit";
+  if (limit?.limitClass === "throttled") return "was rate limited";
+  return "ran out of usage";
 }
 
 /**
@@ -203,21 +276,17 @@ export function incompleteDetails(reason: string, limit: ProviderLimit | null = 
  * and that nothing after it ran -- a partial answer read as a complete one is
  * worse than a failure.
  */
-export function truncationNotice({ provider = null, limit = null, reason = INCOMPLETE_REASON_PROVIDER_LIMIT }: { provider?: string | null; limit?: ProviderLimit | null; reason?: string } = {}): string {
+export function truncationNotice({
+  provider = null,
+  limit = null,
+  reason = INCOMPLETE_REASON_PROVIDER_LIMIT
+}: {
+  provider?: string | null;
+  limit?: ProviderLimit | null;
+  reason?: string;
+} = {}): string {
   const who = provider ? `The ${provider} provider` : "The provider";
-  const cause = limit?.limitClass === "capacity"
-    ? "was over capacity"
-    : reason === INCOMPLETE_REASON_TIMEOUT
-      ? "timed out"
-      : reason === INCOMPLETE_REASON_INTERRUPTED
-        ? "stopped unexpectedly"
-        : reason === INCOMPLETE_REASON_CLIENT_DISCONNECTED
-          ? "was disconnected mid-delegation"
-          : limit?.limitClass === "session_limit"
-            ? "reached its session limit"
-            : limit?.limitClass === "throttled"
-              ? "was rate limited"
-              : "ran out of usage";
+  const cause = truncationCause(limit, reason);
   const resets = limit?.resetsAt ? ` Usage resets at ${limit.resetsAt}.` : "";
   return `\n\n[Incomplete: ${who} ${cause} and this turn stopped here. Everything above is work that finished; nothing after it ran.${resets}]`;
 }
@@ -240,31 +309,126 @@ export function terminalIncompleteEvents({
   reason = INCOMPLETE_REASON_PROVIDER_LIMIT,
   limit = null,
   provider = null,
-  response = null,
-}: { responseId: string; itemId: string; reasoningId: string; text?: string; reasoningText?: string; reason?: string; limit?: ProviderLimit | null; provider?: string | null; response?: Record<string, unknown> | null }): Array<[string, Record<string, unknown>]> {
+  response = null
+}: {
+  responseId: string;
+  itemId: string;
+  reasoningId: string;
+  text?: string;
+  reasoningText?: string;
+  reason?: string;
+  limit?: ProviderLimit | null;
+  provider?: string | null;
+  response?: Record<string, unknown> | null;
+}): Array<[string, Record<string, unknown>]> {
   const notice = truncationNotice({ provider, limit, reason });
   const finalText = `${text}${notice}`;
   const details = incompleteDetails(reason, limit);
-  const completedReasoning = { id: reasoningId, type: "reasoning", status: "incomplete", summary: [{ type: "summary_text", text: reasoningText }], content: [] };
-  const completedMessage = { id: itemId, type: "message", role: "assistant", status: "incomplete", content: [{ type: "output_text", text: finalText, annotations: [] }] };
+  const completedReasoning = {
+    id: reasoningId,
+    type: "reasoning",
+    status: "incomplete",
+    summary: [{ type: "summary_text", text: reasoningText }],
+    content: []
+  };
+  const completedMessage = {
+    id: itemId,
+    type: "message",
+    role: "assistant",
+    status: "incomplete",
+    content: [{ type: "output_text", text: finalText, annotations: [] }]
+  };
   const payload = {
-    ...(response ?? { id: responseId, object: "response", created_at: Math.floor(Date.now() / 1000), output: [] }),
+    ...(response ?? {
+      id: responseId,
+      object: "response",
+      created_at: Math.floor(Date.now() / 1000),
+      output: []
+    }),
     id: responseId,
     status: "incomplete",
     incomplete_details: details,
     output: [completedReasoning, completedMessage],
-    output_text: finalText,
+    output_text: finalText
   };
   return [
     // The notice goes out as a delta first so a client rendering the stream
     // live sees it in place, not only in the terminal snapshot.
-    ["response.output_text.delta", { type: "response.output_text.delta", item_id: itemId, delta: notice, content_index: 0, output_index: 1 }],
-    ["response.reasoning_summary_text.done", { type: "response.reasoning_summary_text.done", item_id: reasoningId, output_index: 0, summary_index: 0, text: reasoningText }],
-    ["response.reasoning_summary_part.done", { type: "response.reasoning_summary_part.done", item_id: reasoningId, output_index: 0, summary_index: 0, part: { type: "summary_text", text: reasoningText } }],
-    ["response.output_item.done", { type: "response.output_item.done", output_index: 0, item: completedReasoning }],
-    ["response.output_text.done", { type: "response.output_text.done", item_id: itemId, text: finalText, content_index: 0, output_index: 1 }],
-    ["response.content_part.done", { type: "response.content_part.done", item_id: itemId, output_index: 1, content_index: 0, part: { type: "output_text", text: finalText, annotations: [] } }],
-    ["response.output_item.done", { type: "response.output_item.done", output_index: 1, item: completedMessage }],
-    ["response.completed", { type: "response.completed", response: payload }],
+    [
+      "response.output_text.delta",
+      {
+        type: "response.output_text.delta",
+        item_id: itemId,
+        delta: notice,
+        content_index: 0,
+        output_index: 1
+      }
+    ],
+    ...reasoningDoneEvents(completedReasoning, reasoningText),
+    ...messageDoneEvents(completedMessage, finalText),
+    ["response.completed", { type: "response.completed", response: payload }]
+  ];
+}
+
+type TerminalEvent = [string, Record<string, unknown>];
+const OUTPUT_ITEM_DONE = "response.output_item.done";
+
+/** The events that close the reasoning item at output index 0. */
+function reasoningDoneEvents(
+  item: { id: string },
+  reasoningText: string
+): TerminalEvent[] {
+  return [
+    [
+      "response.reasoning_summary_text.done",
+      {
+        type: "response.reasoning_summary_text.done",
+        item_id: item.id,
+        output_index: 0,
+        summary_index: 0,
+        text: reasoningText
+      }
+    ],
+    [
+      "response.reasoning_summary_part.done",
+      {
+        type: "response.reasoning_summary_part.done",
+        item_id: item.id,
+        output_index: 0,
+        summary_index: 0,
+        part: { type: "summary_text", text: reasoningText }
+      }
+    ],
+    [OUTPUT_ITEM_DONE, { type: OUTPUT_ITEM_DONE, output_index: 0, item }]
+  ];
+}
+
+/** The events that close the assistant message item at output index 1. */
+function messageDoneEvents(
+  item: { id: string },
+  finalText: string
+): TerminalEvent[] {
+  return [
+    [
+      "response.output_text.done",
+      {
+        type: "response.output_text.done",
+        item_id: item.id,
+        text: finalText,
+        content_index: 0,
+        output_index: 1
+      }
+    ],
+    [
+      "response.content_part.done",
+      {
+        type: "response.content_part.done",
+        item_id: item.id,
+        output_index: 1,
+        content_index: 0,
+        part: { type: "output_text", text: finalText, annotations: [] }
+      }
+    ],
+    [OUTPUT_ITEM_DONE, { type: OUTPUT_ITEM_DONE, output_index: 1, item }]
   ];
 }

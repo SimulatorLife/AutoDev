@@ -1,14 +1,16 @@
+import { writeErrorLine } from "../shared/output.ts";
+
 export type ProviderFailureClass =
-  | 'session_limit'
-  | 'quota_exhausted'
-  | 'throttled'
-  | 'capacity'
-  | 'timeout'
-  | 'unavailable'
-  | 'invalid_model'
-  | 'authentication'
-  | 'upstream_error'
-  | 'request_error';
+  | "session_limit"
+  | "quota_exhausted"
+  | "throttled"
+  | "capacity"
+  | "timeout"
+  | "unavailable"
+  | "invalid_model"
+  | "authentication"
+  | "upstream_error"
+  | "request_error";
 
 export interface WorkspaceInput {
   key?: string | null | undefined;
@@ -17,7 +19,7 @@ export interface WorkspaceInput {
 }
 
 export interface RouterEvent {
-  schema: 'autodev-router-event-v1';
+  schema: "autodev-router-event-v1";
   timestamp: string;
   routerInstanceId: string;
   requestId: string | null;
@@ -71,26 +73,53 @@ export interface RecordRouterEventInput {
   droppedReasoningItems?: number | undefined;
 }
 
-export function classifyProviderFailure(status: number, body: unknown = ''): ProviderFailureClass {
-  const text = String(body ?? '');
-  if (/session.?limit|session.*(?:exhaust|capacity)|concurrent session/i.test(text)) return 'session_limit';
-  if (/quota|credit|billing|usage.?limit|usage exhausted|insufficient.*(?:fund|quota)/i.test(text)) return 'quota_exhausted';
-  if (status === 429 || /rate.?limit|weekly.?limit|throttl|too many requests/i.test(text)) return 'throttled';
-  if (/high.?demand|overloaded|capacity/i.test(text)) return 'capacity';
-  if (status === 408 || /timeout|timed.?out/i.test(text)) return 'timeout';
-  if ([502, 503, 504].includes(status) || /temporarily unavailable|unavailable/i.test(text)) return 'unavailable';
-  if (/invalid model|model name.*(?:invalid|not found)|unknown model/i.test(text)) return 'invalid_model';
-  if ([401, 403].includes(status)) return 'authentication';
-  if (typeof status === 'number' && status >= 500) return 'upstream_error';
-  return 'request_error';
+const SESSION_LIMIT_PATTERN =
+  /session.?limit|session.*(?:exhaust|capacity)|concurrent session/i;
+const QUOTA_EXHAUSTED_PATTERN =
+  /quota|credit|billing|usage.?limit|usage exhausted|insufficient.*(?:fund|quota)/i;
+const THROTTLED_PATTERN =
+  /rate.?limit|weekly.?limit|throttl|too many requests/i;
+const CAPACITY_PATTERN = /high.?demand|overloaded|capacity/i;
+const TIMEOUT_PATTERN = /timeout|timed.?out/i;
+const UNAVAILABLE_PATTERN = /temporarily unavailable|unavailable/i;
+const INVALID_MODEL_PATTERN =
+  /invalid model|model name.*(?:invalid|not found)|unknown model/i;
+
+export function classifyProviderFailure(
+  status: number,
+  body: unknown = ""
+): ProviderFailureClass {
+  const text = String(body ?? "");
+  if (SESSION_LIMIT_PATTERN.test(text)) return "session_limit";
+  if (QUOTA_EXHAUSTED_PATTERN.test(text)) return "quota_exhausted";
+  if (status === 429 || THROTTLED_PATTERN.test(text)) return "throttled";
+  if (CAPACITY_PATTERN.test(text)) return "capacity";
+  if (status === 408 || TIMEOUT_PATTERN.test(text)) return "timeout";
+  if ([502, 503, 504].includes(status) || UNAVAILABLE_PATTERN.test(text))
+    return "unavailable";
+  if (INVALID_MODEL_PATTERN.test(text)) return "invalid_model";
+  if ([401, 403].includes(status)) return "authentication";
+  if (typeof status === "number" && status >= 500) return "upstream_error";
+  return "request_error";
 }
 
 export interface RouterEventRecorderOptions {
   maxRecentEvents?: number | undefined;
   routerInstanceId?: string | undefined;
   logger?: ((event: RouterEvent) => void) | null | undefined;
-  resolveOrigin?: ((role: string | null | undefined, provider: string | null | undefined) => string | null | undefined) | undefined;
-  onEvent?: ((event: RouterEvent, input: RecordRouterEventInput, effectiveOrigin: string | null) => void) | undefined;
+  resolveOrigin?:
+    | ((
+        role: string | null | undefined,
+        provider: string | null | undefined
+      ) => string | null | undefined)
+    | undefined;
+  onEvent?:
+    | ((
+        event: RouterEvent,
+        input: RecordRouterEventInput,
+        effectiveOrigin: string | null
+      ) => void)
+    | undefined;
 }
 
 export class RouterEventRecorder {
@@ -102,14 +131,30 @@ export class RouterEventRecorder {
   private readonly maxRecentEvents: number;
   private readonly routerInstanceId: string;
   private readonly logger: ((event: RouterEvent) => void) | null;
-  private readonly resolveOrigin?: ((role: string | null | undefined, provider: string | null | undefined) => string | null | undefined) | undefined;
-  private readonly onEventListener?: ((event: RouterEvent, input: RecordRouterEventInput, effectiveOrigin: string | null) => void) | undefined;
+  private readonly resolveOrigin?:
+    | ((
+        role: string | null | undefined,
+        provider: string | null | undefined
+      ) => string | null | undefined)
+    | undefined;
+  private readonly onEventListener?:
+    | ((
+        event: RouterEvent,
+        input: RecordRouterEventInput,
+        effectiveOrigin: string | null
+      ) => void)
+    | undefined;
 
   constructor(options: RouterEventRecorderOptions = {}) {
-    const rawMax = options.maxRecentEvents ?? Number.parseInt(process.env.CODEX_ROUTER_MAX_RECENT_EVENTS ?? '100', 10);
+    const rawMax =
+      options.maxRecentEvents ??
+      Number.parseInt(process.env.CODEX_ROUTER_MAX_RECENT_EVENTS ?? "100");
     this.maxRecentEvents = Math.max(1, Number.isFinite(rawMax) ? rawMax : 100);
-    this.routerInstanceId = options.routerInstanceId ?? 'router-event-recorder';
-    this.logger = options.logger === undefined ? (event) => console.error(JSON.stringify(event)) : options.logger;
+    this.routerInstanceId = options.routerInstanceId ?? "router-event-recorder";
+    this.logger =
+      options.logger === undefined
+        ? (event) => writeErrorLine(JSON.stringify(event))
+        : options.logger;
     this.resolveOrigin = options.resolveOrigin;
     this.onEventListener = options.onEvent;
   }
@@ -129,7 +174,9 @@ export class RouterEventRecorder {
   restore(events: unknown[]): void {
     this.clear();
     if (!Array.isArray(events)) return;
-    const valid = events.filter((e): e is RouterEvent => e !== null && typeof e === 'object');
+    const valid = events.filter(
+      (e): e is RouterEvent => e !== null && typeof e === "object"
+    );
     this.recentEvents.push(...valid.slice(-this.maxRecentEvents));
   }
 
@@ -149,22 +196,33 @@ export class RouterEventRecorder {
     let workspaceKey: string | null = null;
     let cwd: string | null = input.cwd ?? null;
 
-    if (typeof rawWorkspace === 'string') {
+    if (typeof rawWorkspace === "string") {
       workspaceKey = rawWorkspace;
-    } else if (rawWorkspace && typeof rawWorkspace === 'object') {
+    } else if (rawWorkspace && typeof rawWorkspace === "object") {
       workspaceKey = rawWorkspace.key ?? null;
       cwd = (rawWorkspace.cwd as string | undefined) ?? cwd;
     }
 
-    const effectiveOrigin = input.origin ?? (this.resolveOrigin ? this.resolveOrigin(input.role, input.provider) : null) ?? null;
-    const effectiveRole = input.role ?? (effectiveOrigin === 'orchestrator' ? 'orchestrator' : null);
+    const effectiveOrigin =
+      input.origin ??
+      (this.resolveOrigin
+        ? this.resolveOrigin(input.role, input.provider)
+        : null) ??
+      null;
+    const effectiveRole =
+      input.role ??
+      (effectiveOrigin === "orchestrator" ? "orchestrator" : null);
 
     const event: RouterEvent = {
-      schema: 'autodev-router-event-v1',
+      schema: "autodev-router-event-v1",
       timestamp,
       routerInstanceId: this.routerInstanceId,
       requestId: input.requestId ?? null,
-      thread: input.thread ?? (input.requestId ? this.requestThreads.get(input.requestId) ?? null : null),
+      thread:
+        input.thread ??
+        (input.requestId
+          ? (this.requestThreads.get(input.requestId) ?? null)
+          : null),
       phase: input.phase,
       role: effectiveRole,
       requestedModel: input.requestedModel,
@@ -184,7 +242,7 @@ export class RouterEventRecorder {
       syscall: input.syscall ?? null,
       selection: input.selection ?? null,
       normalizedItemIds: input.normalizedItemIds ?? 0,
-      droppedReasoningItems: input.droppedReasoningItems ?? 0,
+      droppedReasoningItems: input.droppedReasoningItems ?? 0
     };
 
     this.recentEvents.push(event);
@@ -195,8 +253,8 @@ export class RouterEventRecorder {
     if (this.onEventListener) {
       try {
         this.onEventListener(event, input, effectiveOrigin);
-      } catch (err) {
-        console.error('Error in onEvent listener:', err);
+      } catch (error) {
+        writeErrorLine("Error in onEvent listener:", error);
       }
     }
 
@@ -221,7 +279,9 @@ export function getDefaultRouterEventRecorder(): RouterEventRecorder {
   return defaultRouterEventRecorder;
 }
 
-export function setDefaultRouterEventRecorder(recorder: RouterEventRecorder | null): void {
+export function setDefaultRouterEventRecorder(
+  recorder: RouterEventRecorder | null
+): void {
   defaultRouterEventRecorder = recorder;
 }
 
@@ -230,7 +290,10 @@ export function recordRouterEvent(input: RecordRouterEventInput): RouterEvent {
 }
 
 /** Attribute every later event of this request to the Codex thread that sent it. */
-export function noteRequestThread(requestId: string, thread: string | null): void {
+export function noteRequestThread(
+  requestId: string,
+  thread: string | null
+): void {
   getDefaultRouterEventRecorder().noteRequestThread(requestId, thread);
 }
 

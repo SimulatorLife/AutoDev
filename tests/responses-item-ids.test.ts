@@ -3,32 +3,44 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import {
-  RESPONSES_ITEM_ID_PREFIXES,
-  normalizeItemId,
-  normalizeInputItemIds,
   dropUnresolvableReasoning,
+  normalizeInputItemIds,
+  normalizeItemId,
+  RESPONSES_ITEM_ID_PREFIXES
 } from "../src/shared/responses-item-ids.ts";
 
 type JsonItem = Record<string, any>;
 
 const conforms = (item: JsonItem) => {
-  const prefix = RESPONSES_ITEM_ID_PREFIXES[item.type as keyof typeof RESPONSES_ITEM_ID_PREFIXES];
+  const prefix =
+    RESPONSES_ITEM_ID_PREFIXES[
+      item.type as keyof typeof RESPONSES_ITEM_ID_PREFIXES
+    ];
   return !prefix || typeof item.id !== "string" || item.id.startsWith(prefix);
 };
 
 test("a MiniMax-minted id is rewritten to its type's prefix for self-contained items", () => {
-  const customId = normalizeItemId("custom_tool_call", "06ef3bc08924acade1facee14da0af2e_fc_0");
+  const customId = normalizeItemId(
+    "custom_tool_call",
+    "06ef3bc08924acade1facee14da0af2e_fc_0"
+  );
   assert.ok(customId);
   assert.match(customId, /^ctc_[0-9a-f]{32}$/);
-  const functionId = normalizeItemId("function_call", "06a9c3a9e1f7e0da8b8f2979b8775435_fc_1");
+  const functionId = normalizeItemId(
+    "function_call",
+    "06a9c3a9e1f7e0da8b8f2979b8775435_fc_1"
+  );
   assert.ok(functionId);
   assert.match(functionId, /^fc_[0-9a-f]{32}$/);
   // Reasoning items are not self-contained; they are excluded from id rewriting.
-  assert.equal(normalizeItemId("reasoning", "06eea1506b9c37f6f3f4bb02f90abd28_rs"), null);
+  assert.equal(
+    normalizeItemId("reasoning", "06eea1506b9c37f6f3f4bb02f90abd28_rs"),
+    null
+  );
 });
 
 test("an id that already conforms is left exactly as it is", () => {
-  for (const [ type, prefix ] of Object.entries(RESPONSES_ITEM_ID_PREFIXES)) {
+  for (const [type, prefix] of Object.entries(RESPONSES_ITEM_ID_PREFIXES)) {
     assert.equal(normalizeItemId(type, `${prefix}abc123`), null, type);
   }
 });
@@ -45,10 +57,12 @@ test("ctco_ is not mistaken for a conforming ctc_ id", () => {
 
 test("an item with no id keeps having no id", () => {
   assert.equal(normalizeItemId("custom_tool_call_output", undefined), null);
-  const input = [ { type: "custom_tool_call_output", call_id: "call_1", output: "x" } ];
+  const input = [
+    { type: "custom_tool_call_output", call_id: "call_1", output: "x" }
+  ];
   const { input: out, changed } = normalizeInputItemIds(input);
   assert.equal(changed, 0);
-  assert.equal((out as JsonItem[])[ 0 ]?.id, undefined);
+  assert.equal((out as JsonItem[])[0]?.id, undefined);
 });
 
 test("an unrecognised item type is passed through untouched", () => {
@@ -58,27 +72,62 @@ test("an unrecognised item type is passed through untouched", () => {
 
 test("call_id is never rewritten", () => {
   const input = [
-    { type: "custom_tool_call", id: "06ef_fc_0", call_id: "call_8ec20ad454e0460d9d4b6662", name: "exec" },
-    { type: "custom_tool_call_output", id: "ctco_1", call_id: "call_8ec20ad454e0460d9d4b6662", output: "ok" },
+    {
+      type: "custom_tool_call",
+      id: "06ef_fc_0",
+      call_id: "call_8ec20ad454e0460d9d4b6662",
+      name: "exec"
+    },
+    {
+      type: "custom_tool_call_output",
+      id: "ctco_1",
+      call_id: "call_8ec20ad454e0460d9d4b6662",
+      output: "ok"
+    }
   ];
   const { input: out } = normalizeInputItemIds(input);
-  assert.equal((out as JsonItem[])[ 0 ]?.call_id, "call_8ec20ad454e0460d9d4b6662");
-  assert.equal((out as JsonItem[])[ 1 ]?.call_id, "call_8ec20ad454e0460d9d4b6662");
+  assert.equal(
+    (out as JsonItem[])[0]?.call_id,
+    "call_8ec20ad454e0460d9d4b6662"
+  );
+  assert.equal(
+    (out as JsonItem[])[1]?.call_id,
+    "call_8ec20ad454e0460d9d4b6662"
+  );
   // The pair still resolves to each other, which is the only thing that makes
   // a tool result attach to its call.
-  assert.equal((out as JsonItem[])[ 0 ]?.call_id, (out as JsonItem[])[ 1 ]?.call_id);
+  assert.equal(
+    (out as JsonItem[])[0]?.call_id,
+    (out as JsonItem[])[1]?.call_id
+  );
 });
 
 test("normalisation is deterministic, so a replayed turn hashes the same way", () => {
-  const first = normalizeItemId("custom_tool_call", "06ef3bc08924acade1facee14da0af2e_fc_0");
-  const second = normalizeItemId("custom_tool_call", "06ef3bc08924acade1facee14da0af2e_fc_0");
+  const first = normalizeItemId(
+    "custom_tool_call",
+    "06ef3bc08924acade1facee14da0af2e_fc_0"
+  );
+  const second = normalizeItemId(
+    "custom_tool_call",
+    "06ef3bc08924acade1facee14da0af2e_fc_0"
+  );
   assert.equal(first, second);
   // Distinct originals stay distinct: two items must never collapse onto one id.
-  assert.notEqual(first, normalizeItemId("custom_tool_call", "06ef3bc08924acade1facee14da0af2e_fc_1"));
+  assert.notEqual(
+    first,
+    normalizeItemId("custom_tool_call", "06ef3bc08924acade1facee14da0af2e_fc_1")
+  );
 });
 
 test("normalisation is idempotent", () => {
-  const input = [ { type: "custom_tool_call", id: "06ef3bc08924acade1facee14da0af2e_fc_0", call_id: "call_1", name: "exec" } ];
+  const input = [
+    {
+      type: "custom_tool_call",
+      id: "06ef3bc08924acade1facee14da0af2e_fc_0",
+      call_id: "call_1",
+      name: "exec"
+    }
+  ];
   const once = normalizeInputItemIds(input);
   const twice = normalizeInputItemIds(once.input);
   assert.equal(once.changed, 1);
@@ -87,22 +136,32 @@ test("normalisation is idempotent", () => {
 });
 
 test("an input needing no repair is returned as the same array", () => {
-  const input = [ { type: "message", id: "msg_1", role: "user" } ];
+  const input = [{ type: "message", id: "msg_1", role: "user" }];
   const { input: out, changed } = normalizeInputItemIds(input);
   assert.equal(changed, 0);
   assert.equal(out, input);
 });
 
 test("a non-array input is handled without throwing", () => {
-  for (const value of [ undefined, null, "text", 7, {} ]) {
-    assert.deepEqual(normalizeInputItemIds(value), { input: value, changed: 0 });
+  for (const value of [undefined, null, "text", 7, {}]) {
+    assert.deepEqual(normalizeInputItemIds(value), {
+      input: value,
+      changed: 0
+    });
   }
 });
 
 test("other fields on a repaired item survive the rewrite", () => {
-  const item = { type: "custom_tool_call", id: "06ef_fc_0", call_id: "call_1", name: "exec", input: "await tools.exec_command({})", status: "completed" };
-  const { input: normalized } = normalizeInputItemIds([ item ]);
-  const out = (normalized as JsonItem[])[ 0]!;
+  const item = {
+    type: "custom_tool_call",
+    id: "06ef_fc_0",
+    call_id: "call_1",
+    name: "exec",
+    input: "await tools.exec_command({})",
+    status: "completed"
+  };
+  const { input: normalized } = normalizeInputItemIds([item]);
+  const out = (normalized as JsonItem[])[0]!;
   assert.deepEqual({ ...out, id: item.id }, item);
 });
 
@@ -112,27 +171,47 @@ test("other fields on a repaired item survive the rewrite", () => {
 // fixture is the item skeleton of that rollout, with the upstream error it
 // produced.
 test("the rollout that crashed the orchestrator normalises cleanly", () => {
-  const fixture = JSON.parse(readFileSync(new URL("./fixtures/poisoned-rollout-items.json", import.meta.url), "utf8")) as { upstreamError: JsonItem; items: JsonItem[] };
+  const fixture = JSON.parse(
+    readFileSync(
+      new URL("fixtures/poisoned-rollout-items.json", import.meta.url),
+      "utf8"
+    )
+  ) as { upstreamError: JsonItem; items: JsonItem[] };
 
   assert.equal(fixture.upstreamError.param, "input[18].id");
-  const namedItem = fixture.items[ 18 ];
+  const namedItem = fixture.items[18];
   assert.ok(namedItem);
   assert.equal(namedItem.type, "custom_tool_call");
-  assert.equal(conforms(namedItem), false, "input[18] is the item the upstream named");
+  assert.equal(
+    conforms(namedItem),
+    false,
+    "input[18] is the item the upstream named"
+  );
 
   const poisoned = fixture.items.filter((item) => !conforms(item));
   assert.equal(poisoned.length, 9);
 
   const { input, changed } = normalizeInputItemIds(fixture.items);
   assert.equal(changed, 9);
-  assert.deepEqual((input as JsonItem[]).filter((item: JsonItem) => !conforms(item)), [], "no item is left violating the contract");
-  assert.match(String((input as JsonItem[])[ 18 ]?.id), /^ctc_/);
-  assert.deepEqual((input as JsonItem[]).map((item) => item.call_id), fixture.items.map((item) => item.call_id));
+  assert.deepEqual(
+    (input as JsonItem[]).filter((item: JsonItem) => !conforms(item)),
+    [],
+    "no item is left violating the contract"
+  );
+  assert.match(String((input as JsonItem[])[18]?.id), /^ctc_/);
+  assert.deepEqual(
+    (input as JsonItem[]).map((item) => item.call_id),
+    fixture.items.map((item) => item.call_id)
+  );
 
   // Genuine reasoning items in the real session carry encrypted_content and survive.
   const { input: resolvable, dropped } = dropUnresolvableReasoning(input);
   assert.equal(dropped, 0);
-  assert.equal((resolvable as JsonItem[]).filter((item) => item.type === "reasoning").length, 4);
+  assert.equal(
+    (resolvable as JsonItem[]).filter((item) => item.type === "reasoning")
+      .length,
+    4
+  );
 });
 
 test("dropUnresolvableReasoning drops reasoning items lacking encrypted_content", () => {
@@ -141,21 +220,28 @@ test("dropUnresolvableReasoning drops reasoning items lacking encrypted_content"
     { type: "reasoning", id: "06eea1506b9c37f6f3f4bb02f90abd28_rs" },
     { type: "reasoning", id: "rs_bridge1234567890123456" },
     { type: "reasoning", id: "rs_empty", encrypted_content: "" },
-    { type: "reasoning", id: "rs_0252e954049dbf1c016aa00850d46087d1853ed6aa5cb47915", encrypted_content: "enc_valid" },
-    { type: "custom_tool_call", id: "ctc_1", call_id: "call_1", name: "exec" },
+    {
+      type: "reasoning",
+      id: "rs_0252e954049dbf1c016aa00850d46087d1853ed6aa5cb47915",
+      encrypted_content: "enc_valid"
+    },
+    { type: "custom_tool_call", id: "ctc_1", call_id: "call_1", name: "exec" }
   ];
   const { input: filtered, dropped } = dropUnresolvableReasoning(input);
   assert.equal(dropped, 3);
   assert.equal((filtered as JsonItem[]).length, 3);
-  assert.equal((filtered as JsonItem[])[ 0 ]?.id, "msg_1");
-  assert.equal((filtered as JsonItem[])[ 1 ]?.id, "rs_0252e954049dbf1c016aa00850d46087d1853ed6aa5cb47915");
-  assert.equal((filtered as JsonItem[])[ 2 ]?.id, "ctc_1");
+  assert.equal((filtered as JsonItem[])[0]?.id, "msg_1");
+  assert.equal(
+    (filtered as JsonItem[])[1]?.id,
+    "rs_0252e954049dbf1c016aa00850d46087d1853ed6aa5cb47915"
+  );
+  assert.equal((filtered as JsonItem[])[2]?.id, "ctc_1");
 });
 
 test("dropUnresolvableReasoning preserves inputs with only valid encrypted reasoning or no reasoning", () => {
   const input = [
     { type: "message", id: "msg_1" },
-    { type: "reasoning", id: "rs_1", encrypted_content: "valid" },
+    { type: "reasoning", id: "rs_1", encrypted_content: "valid" }
   ];
   const { input: out, dropped } = dropUnresolvableReasoning(input);
   assert.equal(dropped, 0);
@@ -163,7 +249,10 @@ test("dropUnresolvableReasoning preserves inputs with only valid encrypted reaso
 });
 
 test("dropUnresolvableReasoning handles non-array input without throwing", () => {
-  for (const value of [ undefined, null, "text", 7, {} ]) {
-    assert.deepEqual(dropUnresolvableReasoning(value), { input: value, dropped: 0 });
+  for (const value of [undefined, null, "text", 7, {}]) {
+    assert.deepEqual(dropUnresolvableReasoning(value), {
+      input: value,
+      dropped: 0
+    });
   }
 });

@@ -18,13 +18,13 @@ const copilotSetupWorkflowPath = join(repositoryRoot, '.github', 'workflows', 'c
 const targets = ['copilot', 'claudecode', 'codexcli', 'antigravity-cli'] as const;
 const canonicalSkills = [
   'autodev-codex-request-capture', 'autodev-session-diagnostics', 'ccc', 'code-simplification', 'diagnosing-bugs',
-  'doubt-driven-development', 'improve-codebase-architecture', 'lsp-mcp-server',
+  'doubt-driven-development', 'improve-codebase-architecture', 'lsp-mcp-server', 'opentelemetry',
   'orchestration', 'remove-legacy-shims', 'resolve-merge-conflicts', 'writing-agent-skills',
 ] as const;
 const repositorySkills: Record<string, readonly string[]> = {
-  '.github/skills': ['autodev-codex-request-capture', 'autodev-session-diagnostics', 'ccc', 'lsp-mcp-server', 'orchestration'],
-  '.claude/skills': ['autodev-codex-request-capture', 'autodev-session-diagnostics'],
-  '.agents/skills': ['autodev-codex-request-capture', 'autodev-session-diagnostics'],
+  '.github/skills': ['autodev-codex-request-capture', 'autodev-session-diagnostics', 'ccc', 'lsp-mcp-server', 'opentelemetry', 'orchestration'],
+  '.claude/skills': ['autodev-codex-request-capture', 'autodev-session-diagnostics', 'opentelemetry'],
+  '.agents/skills': ['autodev-codex-request-capture', 'autodev-session-diagnostics', 'opentelemetry'],
 };
 
 function readJson(path: string): JsonObject { return JSON.parse(readFileSync(path, 'utf8')) as JsonObject; }

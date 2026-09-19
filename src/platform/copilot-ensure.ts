@@ -1,8 +1,10 @@
-import { execFileSync, spawn } from 'node:child_process';
-import { chmodSync, existsSync, mkdirSync, openSync } from 'node:fs';
-import { homedir } from 'node:os';
-import { dirname, join } from 'node:path';
-import { LaunchdClient } from './macos/launchd.ts';
+import { execFileSync, spawn } from "node:child_process";
+import { chmodSync, existsSync, mkdirSync, openSync } from "node:fs";
+import { homedir } from "node:os";
+import path from "node:path";
+
+import { writeErrorLine } from "../shared/output.ts";
+import { LaunchdClient } from "./macos/launchd.ts";
 
 export interface CopilotEnsureOptions {
   readonly host: string;
@@ -17,37 +19,46 @@ export interface CopilotEnsureOptions {
 }
 
 export interface CopilotEnsureDeps {
-  readonly launchd: Pick<LaunchdClient, 'isLoaded' | 'kickstart' | 'bootstrap'>;
+  readonly launchd: Pick<LaunchdClient, "isLoaded" | "kickstart" | "bootstrap">;
   readonly probe: () => Promise<boolean>;
   readonly sleep: (ms: number) => Promise<void>;
   readonly commandAvailable: (command: string) => boolean;
   readonly startFallback: (launcher: string, logPath: string) => void;
 }
 
-const DEFAULT_TIMEOUT_MS = 5_000;
+const DEFAULT_TIMEOUT_MS = 5000;
 
 function positiveInteger(value: string | undefined, fallback: number): number {
-  const parsed = Number.parseInt(value ?? '', 10);
+  const parsed = Number.parseInt(value ?? "", 10);
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
 }
 
-export function resolveCopilotEnsureOptions(env: NodeJS.ProcessEnv = process.env): CopilotEnsureOptions {
+export function resolveCopilotEnsureOptions(
+  env: NodeJS.ProcessEnv = process.env
+): CopilotEnsureOptions {
   const home = env.HOME?.trim() || homedir();
-  const codexHome = env.CODEX_HOME?.trim() || join(home, '.codex');
-  const host = env.CODEX_COPILOT_PROXY_HOST?.trim() || '127.0.0.1';
+  const codexHome = env.CODEX_HOME?.trim() || path.join(home, ".codex");
+  const host = env.CODEX_COPILOT_PROXY_HOST?.trim() || "127.0.0.1";
   const port = positiveInteger(env.CODEX_COPILOT_PROXY_PORT, 4003);
-  const label = 'com.codex.copilot-proxy';
-  const uid = typeof process.getuid === 'function' ? process.getuid() : 0;
+  const label = "com.codex.copilot-proxy";
+  const uid = typeof process.getuid === "function" ? process.getuid() : 0;
   return {
     host,
     port,
     label,
     domain: `gui/${uid}`,
-    plist: join(home, 'Library', 'LaunchAgents', `${label}.plist`),
-    launcher: join(codexHome, 'hooks', 'run-codex-copilot-cli-responses-proxy.sh'),
-    copilotBin: env.COPILOT_BIN?.trim() || 'copilot',
-    readyTimeoutMs: positiveInteger(env.CODEX_COPILOT_READY_TIMEOUT_MS, DEFAULT_TIMEOUT_MS),
-    logPath: join(codexHome, 'run', 'codex-copilot-proxy.fallback.log'),
+    plist: path.join(home, "Library", "LaunchAgents", `${label}.plist`),
+    launcher: path.join(
+      codexHome,
+      "hooks",
+      "run-codex-copilot-cli-responses-proxy.sh"
+    ),
+    copilotBin: env.COPILOT_BIN?.trim() || "copilot",
+    readyTimeoutMs: positiveInteger(
+      env.CODEX_COPILOT_READY_TIMEOUT_MS,
+      DEFAULT_TIMEOUT_MS
+    ),
+    logPath: path.join(codexHome, "run", "codex-copilot-proxy.fallback.log")
   };
 }
 
@@ -56,25 +67,41 @@ function defaultDeps(options: CopilotEnsureOptions): CopilotEnsureDeps {
   return {
     launchd: new LaunchdClient(),
     probe: async () => {
-      try { return (await fetch(endpoint, { signal: AbortSignal.timeout(1_000) })).ok; } catch { return false; }
+      try {
+        return (await fetch(endpoint, { signal: AbortSignal.timeout(1000) }))
+          .ok;
+      } catch {
+        return false;
+      }
     },
     sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
     commandAvailable: (command) => {
-      try { execFileSync('which', [command], { stdio: 'ignore' }); return true; } catch { return false; }
+      try {
+        execFileSync("which", [command], { stdio: "ignore" });
+        return true;
+      } catch {
+        return false;
+      }
     },
     startFallback: (launcher, logPath) => {
-      const runDir = dirname(logPath);
+      const runDir = path.dirname(logPath);
       mkdirSync(runDir, { recursive: true, mode: 0o700 });
       chmodSync(runDir, 0o700);
-      const fd = openSync(logPath, 'a', 0o600);
+      const fd = openSync(logPath, "a", 0o600);
       chmodSync(logPath, 0o600);
-      const child = spawn('/bin/bash', [launcher], { detached: true, stdio: ['ignore', fd, fd] });
+      const child = spawn("/bin/bash", [launcher], {
+        detached: true,
+        stdio: ["ignore", fd, fd]
+      });
       child.unref();
-    },
+    }
   };
 }
 
-async function waitForProbe(deps: CopilotEnsureDeps, timeoutMs: number): Promise<boolean> {
+async function waitForProbe(
+  deps: CopilotEnsureDeps,
+  timeoutMs: number
+): Promise<boolean> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     if (await deps.probe()) return true;
@@ -90,13 +117,17 @@ async function waitForProbe(deps: CopilotEnsureDeps, timeoutMs: number): Promise
  */
 export async function ensureCopilotProxy(
   options: CopilotEnsureOptions = resolveCopilotEnsureOptions(),
-  deps: CopilotEnsureDeps = defaultDeps(options),
+  deps: CopilotEnsureDeps = defaultDeps(options)
 ): Promise<boolean> {
   if (await deps.probe()) return true;
   if (!deps.commandAvailable(options.copilotBin)) return true;
 
   if (deps.launchd.isLoaded(options.label)) {
-    try { deps.launchd.kickstart(options.label); } catch { /* best effort */ }
+    try {
+      deps.launchd.kickstart(options.label);
+    } catch {
+      /* best effort */
+    }
     return waitForProbe(deps, options.readyTimeoutMs);
   }
 
@@ -105,7 +136,9 @@ export async function ensureCopilotProxy(
       deps.launchd.bootstrap(options.plist);
       deps.launchd.kickstart(options.label);
       if (await waitForProbe(deps, options.readyTimeoutMs)) return true;
-    } catch { /* fall through to the sandbox fallback */ }
+    } catch {
+      /* fall through to the sandbox fallback */
+    }
   }
 
   if (existsSync(options.launcher)) {
@@ -117,7 +150,10 @@ export async function ensureCopilotProxy(
 
 if (process.argv[1] === new URL(import.meta.url).pathname) {
   ensureCopilotProxy().then((ready) => {
-    if (!ready) console.error("Copilot Responses proxy did not become ready; router will route around it.");
+    if (!ready)
+      writeErrorLine(
+        "Copilot Responses proxy did not become ready; router will route around it."
+      );
     process.exitCode = ready ? 0 : 1;
   });
 }

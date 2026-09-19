@@ -53,7 +53,7 @@
  */
 
 export const AGENT_ACTIVITY_TTL_ENV = "CODEX_ROUTER_AGENT_ACTIVITY_TTL_MS";
-export const DEFAULT_AGENT_ACTIVITY_TTL_MS = 300000;
+export const DEFAULT_AGENT_ACTIVITY_TTL_MS = 300_000;
 
 export const AGENT_ACTIVITY_STATES = Object.freeze([
   "active",
@@ -63,28 +63,113 @@ export const AGENT_ACTIVITY_STATES = Object.freeze([
   "resumed",
   "finished",
   "failed",
-  "stale",
+  "stale"
 ]);
 
 const TERMINAL_STATES = new Set(["finished", "failed"]);
 const WAIT_STATES = new Set(["tool_wait", "user_wait", "subagent_wait"]);
 // "Live" is every state that represents activity still in progress -- the
 // complement of terminal (finished/failed) and stale (abandoned).
-const LIVE_STATES = new Set(["active", "tool_wait", "user_wait", "subagent_wait", "resumed"]);
+const LIVE_STATES = new Set([
+  "active",
+  "tool_wait",
+  "user_wait",
+  "subagent_wait",
+  "resumed"
+]);
 
 // The kinds that represent an agent actually doing work, as opposed to
 // bookkeeping records (e.g. `subagent_slot`, a held concurrency admission)
 // that ride the same tracker for TTL/staleness reuse but must not inflate
 // agent-facing live/usage/provider/top-level counts. See the module doc for
 // how this interacts with `matches()` and `snapshot()`.
-export const AGENT_ACTIVITY_KINDS = Object.freeze(["session", "bridge_subagent"]);
+export const AGENT_ACTIVITY_KINDS = Object.freeze([
+  "session",
+  "bridge_subagent"
+]);
 
-const LIFECYCLE_EVENT_STATES = new Set(["user_wait", "subagent_wait", "tool_wait", "resumed", "finished", "failed"]);
+const LIFECYCLE_EVENT_STATES = new Set([
+  "user_wait",
+  "subagent_wait",
+  "tool_wait",
+  "resumed",
+  "finished",
+  "failed"
+]);
 
 /** Bound on retained per-record idempotency markers, so a long-lived subject cannot grow without bound. */
 const MAX_TRACKED_EVENT_IDS = 64;
-type ActivityRecord = Record<string, any>;
-type ActivityOptions = Record<string, any>;
+type NullableText = string | null | undefined;
+
+/** The tracker's internal, mutable per-subject record. */
+interface ActivityRecord {
+  subject: string;
+  kind: string;
+  tag: string | null;
+  parentRequestId: string | null;
+  state: string;
+  provider: string | null;
+  model: string | null;
+  role: string | null;
+  origin: string | null;
+  workspace: string | null;
+  requestId: string | null;
+  startedAt: number;
+  updatedAt: number;
+  ttlMs: number;
+  openRequestId: string | null;
+  settledRequestIds: Set<string>;
+  lifecycleEventIds: Set<string>;
+}
+
+/** The read-only view of a record handed to callers. */
+interface AgentActivitySnapshot {
+  subject: string;
+  kind: string;
+  tag: string | null;
+  state: string;
+  provider: string | null;
+  model: string | null;
+  role: string | null;
+  origin: string | null;
+  workspace: string | null;
+  requestId: string | null;
+  startedAt: number;
+  updatedAt: number;
+}
+
+/** Options accepted by the tracker's mutators and filters. */
+interface AgentActivityOptions {
+  requestId?: NullableText;
+  provider?: NullableText;
+  model?: NullableText;
+  role?: NullableText;
+  origin?: NullableText;
+  workspace?: NullableText;
+  kind?: string | undefined;
+  tag?: NullableText;
+  parentRequestId?: NullableText;
+  timestamp?: number | undefined;
+  outcome?: string | undefined;
+  hasToolCalls?: boolean | undefined;
+  inputRequired?: boolean | undefined;
+  hasActiveSubagents?: boolean | undefined;
+}
+
+/** A normalized lifecycle event, as accepted over the agent-events endpoint. */
+interface AgentLifecycleEvent extends AgentActivityOptions {
+  state?: string | undefined;
+  eventId?: unknown;
+}
+
+const FILTER_FIELDS = [
+  "tag",
+  "provider",
+  "model",
+  "role",
+  "origin",
+  "workspace"
+] as const;
 
 function trackEventId(set: Set<string>, eventId: unknown): boolean {
   if (!eventId) return false;
@@ -99,12 +184,19 @@ function trackEventId(set: Set<string>, eventId: unknown): boolean {
 }
 
 /** Reads the TTL from the environment, falling back to the documented default for anything unset or invalid. */
-export function resolveAgentActivityTtlMs(env: Record<string, string | undefined> = process.env): number {
-  const parsed = Number.parseInt(env?.[AGENT_ACTIVITY_TTL_ENV] ?? "", 10);
-  return Number.isInteger(parsed) && parsed > 0 ? parsed : DEFAULT_AGENT_ACTIVITY_TTL_MS;
+export function resolveAgentActivityTtlMs(
+  env: Record<string, string | undefined> = process.env
+): number {
+  const parsed = Number.parseInt(env?.[AGENT_ACTIVITY_TTL_ENV] ?? "");
+  return Number.isInteger(parsed) && parsed > 0
+    ? parsed
+    : DEFAULT_AGENT_ACTIVITY_TTL_MS;
 }
 
-function snapshotRecord(rec: ActivityRecord, at: number): ActivityRecord {
+function snapshotRecord(
+  rec: ActivityRecord,
+  at: number
+): AgentActivitySnapshot {
   return {
     subject: rec.subject,
     kind: rec.kind,
@@ -117,7 +209,7 @@ function snapshotRecord(rec: ActivityRecord, at: number): ActivityRecord {
     workspace: rec.workspace,
     requestId: rec.requestId,
     startedAt: rec.startedAt,
-    updatedAt: rec.updatedAt,
+    updatedAt: rec.updatedAt
   };
 }
 
@@ -127,12 +219,83 @@ function isStale(rec: ActivityRecord, at: number): boolean {
   // than its last timestamp: the request/stream itself is still in flight.
   // It will settle through endRequest/finish, while admission-slot records
   // intentionally remain TTL-bound so an abandoned slot cannot leak forever.
-  if (AGENT_ACTIVITY_KINDS.includes(rec.kind) && rec.openRequestId) return false;
+  if (AGENT_ACTIVITY_KINDS.includes(rec.kind) && rec.openRequestId)
+    return false;
   return at - rec.updatedAt > rec.ttlMs;
 }
 
-function emptyStateCounts() {
+function isFiniteInstant(value: number | undefined): value is number {
+  return Number.isFinite(value);
+}
+
+function emptyStateCounts(): Record<string, number> {
   return Object.fromEntries(AGENT_ACTIVITY_STATES.map((state) => [state, 0]));
+}
+
+type StateCountsByKey = Record<string, Record<string, number>>;
+
+function addStateCount(
+  collection: StateCountsByKey,
+  key: string | null,
+  state: string,
+  { skipMissing = false }: { skipMissing?: boolean } = {}
+): void {
+  if (skipMissing && (key === null || key === "")) return;
+  const counts = (collection[key ?? "unattributed"] ??= emptyStateCounts());
+  counts[state] = (counts[state] ?? 0) + 1;
+}
+
+type RecordAttribution = Pick<
+  ActivityRecord,
+  | "provider"
+  | "model"
+  | "role"
+  | "origin"
+  | "workspace"
+  | "tag"
+  | "parentRequestId"
+>;
+
+/**
+ * An exact duplicate of the currently open attempt: not a new transition,
+ * but proof the same request is still genuinely open, so it refreshes the
+ * staleness clock exactly as an explicit touch() would -- the open leg stays
+ * live until it actually settles rather than going stale out from under a
+ * request the router knows perfectly well is still going.
+ */
+function refreshOpenAttempt(
+  rec: ActivityRecord,
+  at: number
+): AgentActivitySnapshot {
+  if (isStale(rec, at)) {
+    rec.state = "stale";
+    return snapshotRecord(rec, at);
+  }
+  rec.updatedAt = at;
+  return snapshotRecord(rec, at);
+}
+
+/** Starts a new activity span on a terminal record for a later, different request. */
+function reopenRecord(
+  rec: ActivityRecord,
+  requestId: string,
+  attribution: RecordAttribution,
+  at: number
+): void {
+  rec.state = "active";
+  rec.startedAt = at;
+  rec.updatedAt = at;
+  rec.provider = attribution.provider ?? rec.provider;
+  rec.model = attribution.model ?? rec.model;
+  rec.role = attribution.role ?? rec.role;
+  rec.origin = attribution.origin ?? rec.origin;
+  rec.workspace = attribution.workspace ?? rec.workspace;
+  rec.tag = attribution.tag ?? rec.tag;
+  rec.parentRequestId = attribution.parentRequestId ?? rec.parentRequestId;
+  rec.requestId = requestId;
+  rec.openRequestId = requestId;
+  rec.settledRequestIds.clear();
+  rec.lifecycleEventIds.clear();
 }
 
 /**
@@ -140,11 +303,33 @@ function emptyStateCounts() {
  * gets its own instance rather than reaching into shared module state, which
  * is what makes the TTL/stale behaviour testable with a fake clock.
  */
-export function createAgentActivityTracker({ ttlMs = resolveAgentActivityTtlMs(), now = () => Date.now() }: { ttlMs?: number; now?: () => number } = {}): ActivityOptions {
-  const effectiveTtlMs = Number.isInteger(ttlMs) && ttlMs > 0 ? ttlMs : DEFAULT_AGENT_ACTIVITY_TTL_MS;
-  const subjects = new Map();
+export function createAgentActivityTracker({
+  ttlMs = resolveAgentActivityTtlMs(),
+  now = () => Date.now()
+}: { ttlMs?: number; now?: () => number } = {}) {
+  const effectiveTtlMs =
+    Number.isInteger(ttlMs) && ttlMs > 0
+      ? ttlMs
+      : DEFAULT_AGENT_ACTIVITY_TTL_MS;
+  const subjects = new Map<string, ActivityRecord>();
 
-  function ensure(subject: string, { kind = "session", tag = null, parentRequestId = null }: { kind?: string; tag?: string | null; parentRequestId?: string | null } = {}): ActivityRecord {
+  /** A caller-supplied timestamp when it is a finite number, otherwise the tracker clock. */
+  function instantOf(timestamp: number | undefined): number {
+    return isFiniteInstant(timestamp) ? timestamp : now();
+  }
+
+  function ensure(
+    subject: string,
+    {
+      kind = "session",
+      tag = null,
+      parentRequestId = null
+    }: {
+      kind?: string;
+      tag?: string | null;
+      parentRequestId?: string | null;
+    } = {}
+  ): ActivityRecord {
     let rec = subjects.get(subject);
     if (!rec) {
       rec = {
@@ -167,16 +352,20 @@ export function createAgentActivityTracker({ ttlMs = resolveAgentActivityTtlMs()
         // spurious active -> resumed -> active bounce.
         openRequestId: null,
         settledRequestIds: new Set(),
-        lifecycleEventIds: new Set(),
+        lifecycleEventIds: new Set()
       };
       subjects.set(subject, rec);
     }
     return rec;
   }
 
-  function transition(rec: ActivityRecord, state: string, at: number | undefined): void {
+  function transition(
+    rec: ActivityRecord,
+    state: string,
+    at: number | undefined
+  ): void {
     rec.state = state;
-    rec.updatedAt = Number.isFinite(at) ? at : now();
+    rec.updatedAt = instantOf(at);
   }
 
   /**
@@ -188,24 +377,32 @@ export function createAgentActivityTracker({ ttlMs = resolveAgentActivityTtlMs()
    * for: a continuation is observable as a resume, not indistinguishable
    * from any other turn.
    */
-  function beginRequest(subject: string, { requestId = null, provider = null, model = null, role = null, origin = null, workspace = null, kind = "session", tag = null, parentRequestId = null, timestamp }: ActivityOptions = {}): ActivityRecord | null {
+  function beginRequest(
+    subject: string,
+    {
+      requestId = null,
+      provider = null,
+      model = null,
+      role = null,
+      origin = null,
+      workspace = null,
+      kind = "session",
+      tag = null,
+      parentRequestId = null,
+      timestamp
+    }: AgentActivityOptions = {}
+  ): AgentActivitySnapshot | null {
     if (!subject) return null;
     const rec = ensure(subject, { kind, tag, parentRequestId });
     if (tag !== null && tag !== undefined) rec.tag = tag;
-    if (parentRequestId !== null && parentRequestId !== undefined) rec.parentRequestId = parentRequestId;
-    if (requestId && rec.openRequestId === requestId && !TERMINAL_STATES.has(rec.state)) {
-      // Exact duplicate of the currently open attempt: not a new transition,
-      // but proof the same request is still genuinely open, so it refreshes
-      // the staleness clock exactly as an explicit touch() would -- the open
-      // leg stays live until it actually settles rather than going stale out
-      // from under a request the router knows perfectly well is still going.
-      const at = Number.isFinite(timestamp) ? timestamp : now();
-      if (isStale(rec, at)) {
-        rec.state = "stale";
-        return snapshotRecord(rec, at);
-      }
-      rec.updatedAt = at;
-      return snapshotRecord(rec, at);
+    if (parentRequestId !== null && parentRequestId !== undefined)
+      rec.parentRequestId = parentRequestId;
+    if (
+      requestId &&
+      rec.openRequestId === requestId &&
+      !TERMINAL_STATES.has(rec.state)
+    ) {
+      return refreshOpenAttempt(rec, instantOf(timestamp));
     }
     if (TERMINAL_STATES.has(rec.state)) {
       // A terminal record is closed for the request that settled it, but an
@@ -213,21 +410,13 @@ export function createAgentActivityTracker({ ttlMs = resolveAgentActivityTtlMs()
       // A different requestId starts that new activity span; the same id
       // remains an idempotent duplicate and never reopens.
       if (requestId && requestId !== rec.requestId) {
-        const at = Number.isFinite(timestamp) ? timestamp : now();
-        rec.state = "active";
-        rec.startedAt = at;
-        rec.updatedAt = at;
-        rec.provider = provider ?? rec.provider;
-        rec.model = model ?? rec.model;
-        rec.role = role ?? rec.role;
-        rec.origin = origin ?? rec.origin;
-        rec.workspace = workspace ?? rec.workspace;
-        rec.tag = tag ?? rec.tag;
-        rec.parentRequestId = parentRequestId ?? rec.parentRequestId;
-        rec.requestId = requestId;
-        rec.openRequestId = requestId;
-        rec.settledRequestIds.clear();
-        rec.lifecycleEventIds.clear();
+        const at = instantOf(timestamp);
+        reopenRecord(
+          rec,
+          requestId,
+          { provider, model, role, origin, workspace, tag, parentRequestId },
+          at
+        );
         return snapshotRecord(rec, at);
       }
       return snapshotRecord(rec, timestamp ?? now());
@@ -257,17 +446,31 @@ export function createAgentActivityTracker({ ttlMs = resolveAgentActivityTtlMs()
    * for a request already settled is a no-op, and a terminal record is
    * never reopened by a later result.
    */
-  function endRequest(subject: string, { requestId = null, outcome = "success", hasToolCalls = false, inputRequired = false, hasActiveSubagents = false, timestamp }: ActivityOptions = {}): ActivityRecord | null {
+  function endRequest(
+    subject: string,
+    {
+      requestId = null,
+      outcome = "success",
+      hasToolCalls = false,
+      inputRequired = false,
+      hasActiveSubagents = false,
+      timestamp
+    }: AgentActivityOptions = {}
+  ): AgentActivitySnapshot | null {
     const rec = subjects.get(subject);
     if (!rec) return null;
-    if (TERMINAL_STATES.has(rec.state)) return snapshotRecord(rec, timestamp ?? now());
+    if (TERMINAL_STATES.has(rec.state))
+      return snapshotRecord(rec, timestamp ?? now());
     if (requestId && trackEventId(rec.settledRequestIds, requestId)) {
       return snapshotRecord(rec, timestamp ?? now());
     }
     rec.openRequestId = null;
     if (outcome !== "success") {
       transition(rec, "failed", timestamp);
-    } else if (hasActiveSubagents || (rec.role === "orchestrator" && hasLiveChildren(subject, Number.isFinite(timestamp) ? timestamp : now()))) {
+    } else if (
+      hasActiveSubagents ||
+      (rec.role === "orchestrator" && hasLiveChildren(subject))
+    ) {
       transition(rec, "subagent_wait", timestamp);
     } else if (hasToolCalls) {
       transition(rec, "tool_wait", timestamp);
@@ -288,10 +491,18 @@ export function createAgentActivityTracker({ ttlMs = resolveAgentActivityTtlMs()
    * concurrency slot being released, or an explicit close). Idempotent per
    * (subject, requestId) and never reopens a terminal record.
    */
-  function finish(subject: string, { requestId = null, outcome = "success", timestamp }: ActivityOptions = {}): ActivityRecord | null {
+  function finish(
+    subject: string,
+    {
+      requestId = null,
+      outcome = "success",
+      timestamp
+    }: AgentActivityOptions = {}
+  ): AgentActivitySnapshot | null {
     const rec = subjects.get(subject);
     if (!rec) return null;
-    if (TERMINAL_STATES.has(rec.state)) return snapshotRecord(rec, timestamp ?? now());
+    if (TERMINAL_STATES.has(rec.state))
+      return snapshotRecord(rec, timestamp ?? now());
     if (requestId && trackEventId(rec.settledRequestIds, requestId)) {
       return snapshotRecord(rec, timestamp ?? now());
     }
@@ -315,7 +526,10 @@ export function createAgentActivityTracker({ ttlMs = resolveAgentActivityTtlMs()
    * reopens or otherwise touches a terminal record -- a terminal record's
    * staleness is moot, and touching it would misreport when it actually ended.
    */
-  function touch(subject: string, { timestamp }: ActivityOptions = {}): ActivityRecord | null {
+  function touch(
+    subject: string,
+    { timestamp }: AgentActivityOptions = {}
+  ): AgentActivitySnapshot | null {
     const rec = subjects.get(subject);
     if (!rec) return null;
     const at = timestamp ?? now();
@@ -324,17 +538,20 @@ export function createAgentActivityTracker({ ttlMs = resolveAgentActivityTtlMs()
       rec.state = "stale";
       return snapshotRecord(rec, at);
     }
-    rec.updatedAt = Number.isFinite(timestamp) ? timestamp : at;
+    rec.updatedAt = isFiniteInstant(timestamp) ? timestamp : at;
     return snapshotRecord(rec, at);
   }
 
-  function hasLiveChildren(tag: string, at = now()): boolean {
+  function hasLiveChildren(tag: string): boolean {
     if (!tag) return false;
     for (const rec of subjects.values()) {
       if (
         (rec.tag === tag || rec.parentRequestId === tag) &&
         LIVE_STATES.has(rec.state) &&
-        (rec.origin === "subagent" || rec.kind === "subagent_slot" || rec.kind === "bridge_subagent" || String(rec.subject).startsWith("bridge-parent:"))
+        (rec.origin === "subagent" ||
+          rec.kind === "subagent_slot" ||
+          rec.kind === "bridge_subagent" ||
+          String(rec.subject).startsWith("bridge-parent:"))
       ) {
         return true;
       }
@@ -343,14 +560,26 @@ export function createAgentActivityTracker({ ttlMs = resolveAgentActivityTtlMs()
   }
 
   /** The subject just spawned a subagent it is now waiting on. Idempotent (re-applying while already waiting is a no-op). */
-  function noteSubagentWait(subject: string, { timestamp, kind = "session", tag = null, provider = null, model = null, role = null, workspace = null }: ActivityOptions = {}): ActivityRecord | null {
+  function noteSubagentWait(
+    subject: string,
+    {
+      timestamp,
+      kind = "session",
+      tag = null,
+      provider = null,
+      model = null,
+      role = null,
+      workspace = null
+    }: AgentActivityOptions = {}
+  ): AgentActivitySnapshot | null {
     if (!subject) return null;
     const rec = ensure(subject, { kind, tag });
     if (provider !== null && provider !== undefined) rec.provider = provider;
     if (model !== null && model !== undefined) rec.model = model;
     if (role !== null && role !== undefined) rec.role = role;
-    if (workspace !== null && workspace !== undefined) rec.workspace = workspace;
-    const at = Number.isFinite(timestamp) ? timestamp : now();
+    if (workspace !== null && workspace !== undefined)
+      rec.workspace = workspace;
+    const at = instantOf(timestamp);
     if (rec.state === "subagent_wait") {
       rec.updatedAt = at;
       return snapshotRecord(rec, at);
@@ -360,12 +589,16 @@ export function createAgentActivityTracker({ ttlMs = resolveAgentActivityTtlMs()
   }
 
   /** The subagent the subject was waiting on reported back. A no-op unless the subject was actually in subagent_wait. */
-  function noteSubagentResolved(subject: string, { timestamp }: ActivityOptions = {}): ActivityRecord | null {
+  function noteSubagentResolved(
+    subject: string,
+    { timestamp }: AgentActivityOptions = {}
+  ): AgentActivitySnapshot | null {
     const rec = subjects.get(subject);
     if (!rec) return null;
-    if (TERMINAL_STATES.has(rec.state) || rec.state !== "subagent_wait") return rec ? snapshotRecord(rec, timestamp ?? now()) : null;
-    const at = Number.isFinite(timestamp) ? timestamp : now();
-    if (hasLiveChildren(subject, at)) {
+    if (TERMINAL_STATES.has(rec.state) || rec.state !== "subagent_wait")
+      return rec ? snapshotRecord(rec, timestamp ?? now()) : null;
+    const at = instantOf(timestamp);
+    if (hasLiveChildren(subject)) {
       rec.updatedAt = at;
       return snapshotRecord(rec, at);
     }
@@ -382,19 +615,30 @@ export function createAgentActivityTracker({ ttlMs = resolveAgentActivityTtlMs()
    * Idempotent by eventId when the caller supplies one; a terminal record
    * never reopens, including via a duplicated terminal event.
    */
-  function applyLifecycleEvent(subject: string, event: ActivityOptions): ActivityRecord | null {
+  function applyLifecycleEvent(
+    subject: string,
+    event: AgentLifecycleEvent
+  ): AgentActivitySnapshot | null {
     if (!subject || !event || typeof event !== "object") return null;
     const state = event.state;
-    if (!LIFECYCLE_EVENT_STATES.has(state)) return null;
-    const rec = ensure(subject, { kind: event.kind ?? "session", tag: event.tag ?? null });
+    if (state === undefined || !LIFECYCLE_EVENT_STATES.has(state)) return null;
+    const rec = ensure(subject, {
+      kind: event.kind ?? "session",
+      tag: event.tag ?? null
+    });
     if (event.provider !== undefined) rec.provider = event.provider;
     if (event.model !== undefined) rec.model = event.model;
     if (event.role !== undefined) rec.role = event.role;
     if (event.origin !== undefined) rec.origin = event.origin;
     if (event.workspace !== undefined) rec.workspace = event.workspace;
-    if (TERMINAL_STATES.has(rec.state)) return snapshotRecord(rec, event.timestamp ?? now());
-    const eventId = typeof event.eventId === "string" && event.eventId.trim() ? event.eventId.trim() : null;
-    if (eventId && trackEventId(rec.lifecycleEventIds, eventId)) return snapshotRecord(rec, event.timestamp ?? now());
+    if (TERMINAL_STATES.has(rec.state))
+      return snapshotRecord(rec, event.timestamp ?? now());
+    const eventId =
+      typeof event.eventId === "string" && event.eventId.trim()
+        ? event.eventId.trim()
+        : null;
+    if (eventId && trackEventId(rec.lifecycleEventIds, eventId))
+      return snapshotRecord(rec, event.timestamp ?? now());
     transition(rec, state, event.timestamp);
     return snapshotRecord(rec, event.timestamp ?? now());
   }
@@ -405,7 +649,10 @@ export function createAgentActivityTracker({ ttlMs = resolveAgentActivityTtlMs()
     return isStale(rec, at) ? "stale" : rec.state;
   }
 
-  function getRecord(subject: string, at = now()): ActivityRecord | null {
+  function getRecord(
+    subject: string,
+    at = now()
+  ): AgentActivitySnapshot | null {
     const rec = subjects.get(subject);
     return rec ? snapshotRecord(rec, at) : null;
   }
@@ -415,7 +662,7 @@ export function createAgentActivityTracker({ ttlMs = resolveAgentActivityTtlMs()
     let swept = 0;
     for (const rec of subjects.values()) {
       if (isStale(rec, at)) {
-        if (rec.role === "orchestrator" && hasLiveChildren(rec.subject, at)) {
+        if (rec.role === "orchestrator" && hasLiveChildren(rec.subject)) {
           rec.updatedAt = at;
           rec.state = "subagent_wait";
           continue;
@@ -427,7 +674,10 @@ export function createAgentActivityTracker({ ttlMs = resolveAgentActivityTtlMs()
     return swept;
   }
 
-  function matches(rec: ActivityRecord, filter: ActivityOptions = {}): boolean {
+  function matches(
+    rec: ActivityRecord,
+    filter: AgentActivityOptions = {}
+  ): boolean {
     if (Object.hasOwn(filter, "kind")) {
       if (rec.kind !== filter.kind) return false;
     } else if (!AGENT_ACTIVITY_KINDS.includes(rec.kind)) {
@@ -437,16 +687,15 @@ export function createAgentActivityTracker({ ttlMs = resolveAgentActivityTtlMs()
       // explicitly (see activeSubagentThreads() and friends in the router).
       return false;
     }
-    for (const field of ["tag", "provider", "model", "role", "origin", "workspace"]) {
+    for (const field of FILTER_FIELDS) {
       if (!Object.hasOwn(filter, field)) continue;
       if (rec[field] !== filter[field]) return false;
     }
     return true;
   }
 
-
   /** Count of subjects currently in a live (non-terminal, non-stale) state, optionally filtered. Never negative by construction: it is a fresh count over records, not a running counter. */
-  function countLive(filter: ActivityOptions = {}, at = now()): number {
+  function countLive(filter: AgentActivityOptions = {}, at = now()): number {
     sweep(at);
     let count = 0;
     for (const rec of subjects.values()) {
@@ -458,7 +707,10 @@ export function createAgentActivityTracker({ ttlMs = resolveAgentActivityTtlMs()
   }
 
   /** List of subjects currently in a live (non-terminal, non-stale) state, optionally filtered. Excludes bookkeeping kinds (e.g. subagent_slot) unless kind is explicitly filtered. */
-  function listLive(filter: ActivityOptions = {}, at = now()): ActivityRecord[] {
+  function listLive(
+    filter: AgentActivityOptions = {},
+    at = now()
+  ): AgentActivitySnapshot[] {
     sweep(at);
     const live = [];
     for (const rec of subjects.values()) {
@@ -470,7 +722,10 @@ export function createAgentActivityTracker({ ttlMs = resolveAgentActivityTtlMs()
   }
 
   /** Count of subjects grouped by state, optionally filtered. */
-  function countByState(filter: ActivityOptions = {}, at = now()): Record<string, number> {
+  function countByState(
+    filter: AgentActivityOptions = {},
+    at = now()
+  ): Record<string, number> {
     sweep(at);
     const counts = emptyStateCounts();
     for (const rec of subjects.values()) {
@@ -481,7 +736,10 @@ export function createAgentActivityTracker({ ttlMs = resolveAgentActivityTtlMs()
   }
 
   /** Distinct `tag` values with at least one live record of `kind`. */
-  function distinctTags({ kind }: { kind?: string } = {}, at = now()): string[] {
+  function distinctTags(
+    { kind }: { kind?: string } = {},
+    at = now()
+  ): string[] {
     sweep(at);
     const tags = new Set<string>();
     for (const rec of subjects.values()) {
@@ -493,29 +751,30 @@ export function createAgentActivityTracker({ ttlMs = resolveAgentActivityTtlMs()
   }
 
   /** A status-shaped snapshot: totals, live count, and per-provider/per-model state breakdowns, for surfacing on /status. */
-  function snapshot(at = now()): ActivityOptions {
+  function snapshot(at = now()) {
     sweep(at);
-    const byProvider = {};
-    const byModel = {};
-    const byRole = {};
-    const byOrigin = {};
-    const byWorkspace = {};
-    const add = (collection: Record<string, Record<string, number>>, key: unknown, rec: ActivityRecord, { skipMissing = false }: { skipMissing?: boolean } = {}) => {
-      if (skipMissing && (key === null || key === undefined || key === "")) return;
-      const normalized = String(key ?? "unattributed");
-      collection[normalized] ??= emptyStateCounts();
-      collection[normalized][rec.state] = (collection[normalized][rec.state] ?? 0) + 1;
-    };
+    const byProvider: StateCountsByKey = {};
+    const byModel: StateCountsByKey = {};
+    const byRole: StateCountsByKey = {};
+    const byOrigin: StateCountsByKey = {};
+    const byWorkspace: StateCountsByKey = {};
     for (const rec of subjects.values()) {
       // A held `subagent_slot` has no provider/model/role of its own -- it
       // would otherwise fall into the "unattributed" bucket of byRole/
       // byOrigin/byWorkspace and inflate them with bookkeeping, not agents.
       if (!AGENT_ACTIVITY_KINDS.includes(rec.kind)) continue;
-      add(byProvider, rec.provider, rec, { skipMissing: true });
-      add(byModel, rec.provider && rec.model ? `${rec.provider}/${rec.model}` : null, rec, { skipMissing: true });
-      add(byRole, rec.role, rec);
-      add(byOrigin, rec.origin, rec);
-      add(byWorkspace, rec.workspace, rec);
+      addStateCount(byProvider, rec.provider, rec.state, {
+        skipMissing: true
+      });
+      addStateCount(
+        byModel,
+        rec.provider && rec.model ? `${rec.provider}/${rec.model}` : null,
+        rec.state,
+        { skipMissing: true }
+      );
+      addStateCount(byRole, rec.role, rec.state);
+      addStateCount(byOrigin, rec.origin, rec.state);
+      addStateCount(byWorkspace, rec.workspace, rec.state);
     }
     const byState = countByState({}, at);
     return {
@@ -530,7 +789,7 @@ export function createAgentActivityTracker({ ttlMs = resolveAgentActivityTtlMs()
       byModel,
       byRole,
       byOrigin,
-      byWorkspace,
+      byWorkspace
     };
   }
 
@@ -556,6 +815,8 @@ export function createAgentActivityTracker({ ttlMs = resolveAgentActivityTtlMs()
     distinctTags,
     snapshot,
     reset,
-    get size() { return subjects.size; },
+    get size() {
+      return subjects.size;
+    }
   };
 }

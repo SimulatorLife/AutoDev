@@ -28,8 +28,14 @@ import { createHash } from "node:crypto";
 
 export type ResponsesItem = Record<string, unknown>;
 export type ResponsesInput = ResponsesItem[] | unknown;
-export interface NormalizedItemsResult { input: ResponsesInput; changed: number }
-export interface DroppedItemsResult { input: ResponsesInput; dropped: number }
+export interface NormalizedItemsResult {
+  input: ResponsesInput;
+  changed: number;
+}
+export interface DroppedItemsResult {
+  input: ResponsesInput;
+  dropped: number;
+}
 
 /**
  * The prefix each item type's id must carry.
@@ -45,7 +51,7 @@ export const RESPONSES_ITEM_ID_PREFIXES = Object.freeze({
   function_call: "fc_",
   custom_tool_call: "ctc_",
   function_call_output: "fco_",
-  custom_tool_call_output: "ctco_",
+  custom_tool_call_output: "ctco_"
 });
 
 /**
@@ -70,7 +76,7 @@ const SELF_CONTAINED_ITEM_TYPES = Object.freeze([
   "function_call",
   "custom_tool_call",
   "function_call_output",
-  "custom_tool_call_output",
+  "custom_tool_call_output"
 ]);
 
 /**
@@ -84,8 +90,10 @@ const SELF_CONTAINED_ITEM_TYPES = Object.freeze([
  * two items can never collapse onto one id.
  */
 export function normalizeItemId(type: unknown, id: unknown): string | null {
-  if (typeof type !== "string" || !SELF_CONTAINED_ITEM_TYPES.includes(type)) return null;
-  const prefix = RESPONSES_ITEM_ID_PREFIXES[type as keyof typeof RESPONSES_ITEM_ID_PREFIXES];
+  if (typeof type !== "string" || !SELF_CONTAINED_ITEM_TYPES.includes(type))
+    return null;
+  const prefix =
+    RESPONSES_ITEM_ID_PREFIXES[type as keyof typeof RESPONSES_ITEM_ID_PREFIXES];
   if (!prefix) return null;
   // An absent id is legal -- Codex omits it on some tool outputs -- and an
   // invented one would name an item the upstream never issued.
@@ -104,7 +112,9 @@ export function normalizeItemId(type: unknown, id: unknown): string | null {
  * Returns the original array when nothing changed, so the ordinary case --
  * every id already well-formed -- allocates nothing.
  */
-export function normalizeInputItemIds(input: ResponsesInput): NormalizedItemsResult {
+export function normalizeInputItemIds(
+  input: ResponsesInput
+): NormalizedItemsResult {
   if (!Array.isArray(input)) return { input, changed: 0 };
   let changed = 0;
   const normalized = input.map((item) => {
@@ -136,11 +146,17 @@ export function normalizeInputItemIds(input: ResponsesInput): NormalizedItemsRes
  * This is why it is not applied to every route: on the provider that minted
  * them, those same items are live reasoning continuity.
  */
-export function dropUnresolvableReasoning(input: ResponsesInput): DroppedItemsResult {
+export function dropUnresolvableReasoning(
+  input: ResponsesInput
+): DroppedItemsResult {
   if (!Array.isArray(input)) return { input, dropped: 0 };
   const kept = input.filter((item) => {
-    if (item === null || typeof item !== "object" || item.type !== "reasoning") return true;
-    return typeof item.encrypted_content === "string" && item.encrypted_content.length > 0;
+    if (item === null || typeof item !== "object" || item.type !== "reasoning")
+      return true;
+    return (
+      typeof item.encrypted_content === "string" &&
+      item.encrypted_content.length > 0
+    );
   });
   const dropped = input.length - kept.length;
   return dropped ? { input: kept, dropped } : { input, dropped: 0 };

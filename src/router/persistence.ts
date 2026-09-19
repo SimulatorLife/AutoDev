@@ -1,19 +1,26 @@
-import { existsSync, readFileSync } from 'node:fs';
-import { rename, writeFile } from 'node:fs/promises';
+import { existsSync, readFileSync } from "node:fs";
+import { rename, writeFile } from "node:fs/promises";
 
-export const PERSISTED_STATE_SCHEMA = 'autodev-router-persisted-state';
-export const PERSISTED_STATE_VERSION = 'v3';
+import { writeErrorLine } from "../shared/output.ts";
+
+export const PERSISTED_STATE_SCHEMA = "autodev-router-persisted-state";
+export const PERSISTED_STATE_VERSION = "v3";
 
 export function defaultCodexHome(): string {
-  return process.env.CODEX_HOME ?? `${process.env.HOME ?? process.cwd()}/.codex`;
+  return (
+    process.env.CODEX_HOME ?? `${process.env.HOME ?? process.cwd()}/.codex`
+  );
 }
 
 export function defaultStateFile(): string {
-  return process.env.CODEX_ROUTER_STATE_FILE ?? `${defaultCodexHome()}/codex-router-state.json`;
+  return (
+    process.env.CODEX_ROUTER_STATE_FILE ??
+    `${defaultCodexHome()}/codex-router-state.json`
+  );
 }
 
 export function effectiveStateFile(customFile?: string | null): string {
-  if (typeof customFile === 'string' && customFile.trim()) {
+  if (typeof customFile === "string" && customFile.trim()) {
     return customFile.trim();
   }
   return process.env.CODEX_ROUTER_STATE_FILE ?? defaultStateFile();
@@ -36,13 +43,15 @@ export function restoreProviderTelemetrySection(
     | Map<string, StateProviderTelemetryEntry>
     | Record<string, StateProviderTelemetryEntry>
     | ((provider: string) => StateProviderTelemetryEntry | null | undefined),
-  savedSection: unknown,
+  savedSection: unknown
 ): void {
-  if (!savedSection || typeof savedSection !== 'object') return;
-  for (const [provider, saved] of Object.entries(savedSection as Record<string, unknown>)) {
-    if (!saved || typeof saved !== 'object') continue;
+  if (!savedSection || typeof savedSection !== "object") return;
+  for (const [provider, saved] of Object.entries(
+    savedSection as Record<string, unknown>
+  )) {
+    if (!saved || typeof saved !== "object") continue;
     let current: StateProviderTelemetryEntry | null | undefined;
-    if (typeof currentCollection === 'function') {
+    if (typeof currentCollection === "function") {
       current = currentCollection(provider);
     } else if (currentCollection instanceof Map) {
       current = currentCollection.get(provider);
@@ -52,19 +61,32 @@ export function restoreProviderTelemetrySection(
     if (!current) continue;
 
     const savedEntry = saved as Record<string, unknown>;
-    for (const field of ['attempts', 'successes', 'failures', 'skipped'] as const) {
+    for (const field of [
+      "attempts",
+      "successes",
+      "failures",
+      "skipped"
+    ] as const) {
       const val = savedEntry[field];
       if (Number.isInteger(val) && (val as number) >= 0) {
         current[field] = val as number;
       }
     }
-    for (const field of ['lastAttemptAt', 'lastSuccessAt', 'lastFailureAt', 'lastFailureClass'] as const) {
+    for (const field of [
+      "lastAttemptAt",
+      "lastSuccessAt",
+      "lastFailureAt",
+      "lastFailureClass"
+    ] as const) {
       const val = savedEntry[field];
-      if (val === null || typeof val === 'string') {
+      if (val === null || typeof val === "string") {
         current[field] = val;
       }
     }
-    if (savedEntry.lastFailure === null || (savedEntry.lastFailure && typeof savedEntry.lastFailure === 'object')) {
+    if (
+      savedEntry.lastFailure === null ||
+      (savedEntry.lastFailure && typeof savedEntry.lastFailure === "object")
+    ) {
       current.lastFailure = savedEntry.lastFailure;
     }
   }
@@ -90,7 +112,13 @@ export interface RouterPersistenceOptions {
   isMain?: boolean | undefined;
   debounceMs?: number | undefined;
   getSnapshot?: (() => Record<string, unknown>) | undefined;
-  restoreSection?: ((section: string, value: unknown, fullParsed: Record<string, unknown>) => void) | undefined;
+  restoreSection?:
+    | ((
+        section: string,
+        value: unknown,
+        fullParsed: Record<string, unknown>
+      ) => void)
+    | undefined;
   onPostRestore?: ((parsed: Record<string, unknown>) => void) | undefined;
 }
 
@@ -100,9 +128,14 @@ export class RouterPersistence {
   private readonly debounceMs: number;
   private readonly getSnapshot?: (() => Record<string, unknown>) | undefined;
   private readonly restoreSectionCallback?:
-    | ((section: string, value: unknown, fullParsed: Record<string, unknown>) => void)
+    | ((
+        section: string,
+        value: unknown,
+        fullParsed: Record<string, unknown>
+      ) => void)
     | undefined;
-  private readonly onPostRestoreCallback?: ((parsed: Record<string, unknown>) => void) | undefined;
+  private readonly onPostRestoreCallback?:
+    ((parsed: Record<string, unknown>) => void) | undefined;
 
   persistedStateUpdatedAt: string | null = null;
   private persistTimeout: NodeJS.Timeout | null = null;
@@ -118,13 +151,16 @@ export class RouterPersistence {
   }
 
   getStateFile(override?: string | null): string {
-    if (typeof override === 'string' && override.trim()) {
+    if (typeof override === "string" && override.trim()) {
       return override.trim();
     }
-    if (typeof this.stateFileOption === 'function') {
+    if (typeof this.stateFileOption === "function") {
       return this.stateFileOption();
     }
-    if (typeof this.stateFileOption === 'string' && this.stateFileOption.trim()) {
+    if (
+      typeof this.stateFileOption === "string" &&
+      this.stateFileOption.trim()
+    ) {
       return this.stateFileOption.trim();
     }
     return effectiveStateFile();
@@ -135,7 +171,7 @@ export class RouterPersistence {
     const payload: RouterPersistenceSnapshot = {
       schema: `${PERSISTED_STATE_SCHEMA}-${PERSISTED_STATE_VERSION}`,
       updatedAt: new Date().toISOString(),
-      ...base,
+      ...base
     };
     return JSON.stringify(payload, null, 2);
   }
@@ -144,14 +180,17 @@ export class RouterPersistence {
     const targetFile = this.getStateFile(file);
     if (!existsSync(targetFile)) return false;
     try {
-      const parsed = JSON.parse(readFileSync(targetFile, 'utf8'));
-      if (typeof parsed?.schema !== 'string' || !parsed.schema.startsWith(PERSISTED_STATE_SCHEMA)) {
+      const parsed = JSON.parse(readFileSync(targetFile, "utf8"));
+      if (
+        typeof parsed?.schema !== "string" ||
+        !parsed.schema.startsWith(PERSISTED_STATE_SCHEMA)
+      ) {
         return false;
       }
 
       if (this.restoreSectionCallback) {
         for (const [section, value] of Object.entries(parsed)) {
-          if (section === 'schema' || section === 'updatedAt') continue;
+          if (section === "schema" || section === "updatedAt") continue;
           this.restoreSectionCallback(section, value, parsed);
         }
       }
@@ -160,11 +199,12 @@ export class RouterPersistence {
         this.onPostRestoreCallback(parsed);
       }
 
-      this.persistedStateUpdatedAt = typeof parsed.updatedAt === 'string' ? parsed.updatedAt : null;
+      this.persistedStateUpdatedAt =
+        typeof parsed.updatedAt === "string" ? parsed.updatedAt : null;
       return true;
     } catch (error) {
-      console.error(
-        `Warning: could not load router state from ${targetFile}: ${error instanceof Error ? error.message : String(error)}`,
+      writeErrorLine(
+        `Warning: could not load router state from ${targetFile}: ${error instanceof Error ? error.message : String(error)}`
       );
       return false;
     }
@@ -181,13 +221,16 @@ export class RouterPersistence {
     this.persistChain = this.persistChain
       .catch(() => {})
       .then(async () => {
-        await writeFile(temporaryFile, this.serialize(), { encoding: 'utf8', mode: 0o600 });
+        await writeFile(temporaryFile, this.serialize(), {
+          encoding: "utf8",
+          mode: 0o600
+        });
         await rename(temporaryFile, targetFile);
         this.persistedStateUpdatedAt = new Date().toISOString();
       })
       .catch((error) => {
-        console.error(
-          `Warning: could not persist router state to ${targetFile}: ${error instanceof Error ? error.message : String(error)}`,
+        writeErrorLine(
+          `Warning: could not persist router state to ${targetFile}: ${error instanceof Error ? error.message : String(error)}`
         );
       });
 
@@ -227,11 +270,15 @@ export function getDefaultPersistenceManager(): RouterPersistence {
   return defaultPersistenceManager;
 }
 
-export function setDefaultPersistenceManager(manager: RouterPersistence | null): void {
+export function setDefaultPersistenceManager(
+  manager: RouterPersistence | null
+): void {
   defaultPersistenceManager = manager;
 }
 
-export function serializeRouterState(customSnapshot?: Record<string, unknown>): string {
+export function serializeRouterState(
+  customSnapshot?: Record<string, unknown>
+): string {
   return getDefaultPersistenceManager().serialize(customSnapshot);
 }
 

@@ -5,24 +5,39 @@ import { join } from "node:path";
 import { describe, test } from "node:test";
 
 import {
+  type ConcurrencyDenialRecord,
   concurrencyStatus,
   parseConcurrencyConfig,
   PROCESS_FALLBACK_SESSION_KEY,
   recordConcurrencyDenial,
   releaseSubagentSlot,
   resetConcurrencyTelemetry,
-  tryAcquireSubagentSlot,
-  type ConcurrencyDenialRecord,
+  tryAcquireSubagentSlot
 } from "../src/router/concurrency.ts";
 
 type JsonRecord = Record<string, any>;
 
-const contract = await import("./fixtures/contracts/concurrency-contract.json", { with: { type: "json" } }).then((m) => (m.default ?? m) as JsonRecord);
+const contract = await import(
+  "./fixtures/contracts/concurrency-contract.json",
+  { with: { type: "json" } }
+).then((m) => (m.default ?? m) as JsonRecord);
 
-assert.equal(contract.schema, "autodev-concurrency-contract-v1", "concurrency contract must match its schema tag");
-assert.equal(contract.canonicalKey, "max_concurrent_threads_per_session", "canonical key is frozen");
+assert.equal(
+  contract.schema,
+  "autodev-concurrency-contract-v1",
+  "concurrency contract must match its schema tag"
+);
+assert.equal(
+  contract.canonicalKey,
+  "max_concurrent_threads_per_session",
+  "canonical key is frozen"
+);
 assert.equal(contract.legacyAlias, "max_threads", "legacy alias is frozen");
-assert.equal(contract.denialReason, "max_concurrent_threads_per_session", "denial reason is frozen");
+assert.equal(
+  contract.denialReason,
+  "max_concurrent_threads_per_session",
+  "denial reason is frozen"
+);
 
 const SCENARIOS = contract.scenarios as Record<string, JsonRecord>;
 
@@ -37,7 +52,9 @@ function runParseScenario(name: string, scenario: JsonRecord): Promise<void> {
     throw new Error(`${name}: parse scenarios must declare source or missing`);
   }
   return (async () => {
-    const directory = await mkdtemp(join(tmpdir(), "autodev-concurrency-contract-"));
+    const directory = await mkdtemp(
+      join(tmpdir(), "autodev-concurrency-contract-")
+    );
     const configFile = join(directory, "config.toml");
     try {
       if (scenario.missing) {
@@ -46,11 +63,19 @@ function runParseScenario(name: string, scenario: JsonRecord): Promise<void> {
         await writeFile(configFile, scenario.source);
       }
       const result = parseConcurrencyConfig(configFile) as JsonRecord;
-      assert.equal(Object.hasOwn(result, "maxThreads"), false, `${name}: result must not expose maxThreads`);
+      assert.equal(
+        Object.hasOwn(result, "maxThreads"),
+        false,
+        `${name}: result must not expose maxThreads`
+      );
       for (const [key, value] of Object.entries(scenario.expected)) {
         assert.equal(result[key], value, `${name}: ${key}`);
       }
-      assert.equal(Object.keys(result).sort().join(","), ["file", ...Object.keys(scenario.expected)].sort().join(","), `${name}: result key set`);
+      assert.equal(
+        Object.keys(result).sort().join(","),
+        ["file", ...Object.keys(scenario.expected)].sort().join(","),
+        `${name}: result key set`
+      );
     } finally {
       await rm(directory, { recursive: true, force: true });
     }
@@ -68,7 +93,12 @@ function runAdmissionScenario(name: string, scenario: JsonRecord): void {
       switch (op.op) {
         case "acquire": {
           const denial = tryAcquireSubagentSlot(op.sessionKey);
-          if (Object.hasOwn(op, "expected")) assert.equal(denial, op.expected, `${name}: acquire ${op.sessionKey} returns expected denial`);
+          if (Object.hasOwn(op, "expected"))
+            assert.equal(
+              denial,
+              op.expected,
+              `${name}: acquire ${op.sessionKey} returns expected denial`
+            );
           break;
         }
         case "release": {
@@ -82,7 +112,7 @@ function runAdmissionScenario(name: string, scenario: JsonRecord): void {
             requestedModel: op.requestedModel,
             sessionScope: op.sessionScope,
             reason: op.reason,
-            timestamp: new Date().toISOString(),
+            timestamp: new Date().toISOString()
           } as ConcurrencyDenialRecord);
           break;
         }
@@ -93,15 +123,24 @@ function runAdmissionScenario(name: string, scenario: JsonRecord): void {
         }
         case "status_shape": {
           const keys = Object.keys(concurrencyStatus()).sort();
-          assert.deepEqual(keys, [...op.expected].sort(), `${name}: status shape`);
+          assert.deepEqual(
+            keys,
+            [...op.expected].sort(),
+            `${name}: status shape`
+          );
           break;
         }
         case "status_no_key": {
-          assert.equal(Object.hasOwn(concurrencyStatus(), op.key), false, `${name}: ${op.key} must not appear on /status`);
+          assert.equal(
+            Object.hasOwn(concurrencyStatus(), op.key),
+            false,
+            `${name}: ${op.key} must not appear on /status`
+          );
           break;
         }
-        default:
+        default: {
           throw new Error(`${name}: unknown op ${op.op}`);
+        }
       }
     }
   } finally {
@@ -123,9 +162,17 @@ describe("concurrency contract admission scenarios", () => {
     if (!("configuredLimit" in scenario)) continue;
     const actualLimit = concurrencyStatus().effectivePerSessionLimit;
     const limitMatches = actualLimit === scenario.configuredLimit;
-    test(name, { skip: limitMatches ? false : `requires effective limit ${scenario.configuredLimit}; host has ${actualLimit ?? "no configured limit"}` }, () => {
-      runAdmissionScenario(name, scenario);
-    });
+    test(
+      name,
+      {
+        skip: limitMatches
+          ? false
+          : `requires effective limit ${scenario.configuredLimit}; host has ${actualLimit ?? "no configured limit"}`
+      },
+      () => {
+        runAdmissionScenario(name, scenario);
+      }
+    );
   }
 });
 

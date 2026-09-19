@@ -17,13 +17,13 @@
  * Namespace flattening and item-id normalization belong to the router, which
  * applies them to every provider route.
  */
+import type { IncomingMessage, ServerResponse } from "node:http";
 import { createServer } from "node:http";
 import { pathToFileURL } from "node:url";
-import type { IncomingMessage, ServerResponse } from "node:http";
 
-import { resolveAgentEventReporter } from "../telemetry/agent-events.ts";
 import { resolveAgentRole } from "../agents/bridge-role.ts";
 import { roleContract } from "../shared/execution-contract.ts";
+import { resolveAgentEventReporter } from "../telemetry/agent-events.ts";
 
 const MCP_EXPOSURE_SOURCE = "role_contract";
 
@@ -37,11 +37,13 @@ type AgentReporter = import("../telemetry/agent-events.ts").AgentEventReporter;
 // Bind the port only when run as a program. The rewriting helpers below are
 // pure and worth testing directly; importing this file must not take the port
 // out from under the running proxy. Mirrors the Antigravity bridge.
-const IS_MAIN = process.argv[ 1 ] && import.meta.url === pathToFileURL(process.argv[ 1 ]).href;
+const IS_MAIN =
+  process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
 
 const host = process.env.MINIMAX_PROXY_HOST ?? "127.0.0.1";
 const port = Number.parseInt(process.env.MINIMAX_PROXY_PORT ?? "18765", 10);
-const upstreamBaseUrl = process.env.MINIMAX_PROXY_UPSTREAM_BASE_URL ?? "https://api.minimax.io";
+const upstreamBaseUrl =
+  process.env.MINIMAX_PROXY_UPSTREAM_BASE_URL ?? "https://api.minimax.io";
 // The only request headers that leave the machine. Codex attaches session,
 // thread, window, and request identifiers plus `x-codex-turn-metadata`
 // (absolute workspace paths, git remote URLs, commit hashes), and the router
@@ -49,14 +51,23 @@ const upstreamBaseUrl = process.env.MINIMAX_PROXY_UPSTREAM_BASE_URL ?? "https://
 // None of them mean anything to a remote API, so the upstream request is built
 // from an allowlist rather than a denylist that would have to track every new
 // local header. The MiniMax Responses API needs nothing beyond these.
-const forwardedRequestHeaders = [ "accept", "authorization", "content-type" ];
+const forwardedRequestHeaders = ["accept", "authorization", "content-type"];
 
-const WEB_RESEARCH_TOOL_NAMES = new Set([ "web_search", "web_fetch" ]);
+const WEB_RESEARCH_TOOL_NAMES = new Set(["web_search", "web_fetch"]);
 
 function isWebResearchTool(tool: JsonRecord | null | undefined): boolean {
   if (!tool || typeof tool !== "object") return false;
-  if (WEB_RESEARCH_TOOL_NAMES.has(tool.type) || WEB_RESEARCH_TOOL_NAMES.has(tool.name)) return true;
-  if (tool.function && typeof tool.function.name === "string" && WEB_RESEARCH_TOOL_NAMES.has(tool.function.name)) return true;
+  if (
+    WEB_RESEARCH_TOOL_NAMES.has(tool.type) ||
+    WEB_RESEARCH_TOOL_NAMES.has(tool.name)
+  )
+    return true;
+  if (
+    tool.function &&
+    typeof tool.function.name === "string" &&
+    WEB_RESEARCH_TOOL_NAMES.has(tool.function.name)
+  )
+    return true;
   return false;
 }
 
@@ -65,8 +76,11 @@ function isWebResearchTool(tool: JsonRecord | null | undefined): boolean {
 // in the request body. It is Codex-internal correlation that the MiniMax
 // Responses API does not define, so it is removed before the payload leaves
 // the machine. Everything else is the caller's own payload and is forwarded.
-function rewriteOutboundPayload(payload: JsonRecord | null | undefined): JsonRecord | null | undefined {
-  if (payload === null || typeof payload !== "object" || Array.isArray(payload)) return payload;
+function rewriteOutboundPayload(
+  payload: JsonRecord | null | undefined
+): JsonRecord | null | undefined {
+  if (payload === null || typeof payload !== "object" || Array.isArray(payload))
+    return payload;
   const { client_metadata: _clientMetadata, ...rewritten } = payload;
   return rewritten;
 }
@@ -84,11 +98,19 @@ function rewriteOutboundPayload(payload: JsonRecord | null | undefined): JsonRec
 // `additional_tools` input item rather than the top-level `tools` array. A
 // renamed or additional freeform tool is therefore picked up automatically, and
 // a payload that declares none leaves the response untouched.
-function collectFreeformToolNames(payload: JsonRecord | null | undefined, names: Set<string> = new Set<string>()): Set<string> {
+function collectFreeformToolNames(
+  payload: JsonRecord | null | undefined,
+  names: Set<string> = new Set<string>()
+): Set<string> {
   const visit = (tools: unknown): void => {
     for (const tool of Array.isArray(tools) ? tools : []) {
       if (!tool || typeof tool !== "object") continue;
-      if (tool.type === "custom" && typeof tool.name === "string" && !isWebResearchTool(tool)) names.add(tool.name);
+      if (
+        tool.type === "custom" &&
+        typeof tool.name === "string" &&
+        !isWebResearchTool(tool)
+      )
+        names.add(tool.name);
       if (Array.isArray(tool.tools)) visit(tool.tools);
     }
   };
@@ -118,16 +140,22 @@ function freeformInputFromArguments(argumentsText: unknown): string | null {
     return raw;
   }
   if (typeof parsed === "string") return parsed;
-  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed))
+    return null;
 
   // The model understood code mode and just wrapped the source in an object.
-  for (const key of [ "input", "code", "script", "source", "js", "javascript" ]) {
-    if (typeof parsed[ key ] === "string" && parsed[ key ].trim()) return parsed[ key ];
+  for (const key of ["input", "code", "script", "source", "js", "javascript"]) {
+    if (typeof parsed[key] === "string" && parsed[key].trim())
+      return parsed[key];
   }
 
   // The common failure: `exec` was called as though it were `exec_command`.
   // Preserve the intent by making the script do what those arguments asked for.
-  if (typeof parsed.cmd === "string" || Array.isArray(parsed.cmd) || typeof parsed.command === "string") {
+  if (
+    typeof parsed.cmd === "string" ||
+    Array.isArray(parsed.cmd) ||
+    typeof parsed.command === "string"
+  ) {
     const call = { ...parsed };
     if (call.command !== undefined && call.cmd === undefined) {
       call.cmd = call.command;
@@ -136,7 +164,7 @@ function freeformInputFromArguments(argumentsText: unknown): string | null {
     return [
       `const result = await tools.exec_command(${JSON.stringify(call)});`,
       `text(typeof result === "string" ? result : JSON.stringify(result));`,
-      "",
+      ""
     ].join("\n");
   }
 
@@ -150,7 +178,10 @@ function freeformInputFromArguments(argumentsText: unknown): string | null {
 // were followed by another identical broken one. The call instead becomes a
 // script that fails with an explanation naming only the argument keys (never
 // their values), so the model learns what the tool expects and can correct it.
-function unrecognisedFreeformFeedback(toolName: string, argumentsText: unknown): string {
+function unrecognisedFreeformFeedback(
+  toolName: string,
+  argumentsText: unknown
+): string {
   const raw = typeof argumentsText === "string" ? argumentsText.trim() : "";
   let shape = "no arguments";
   if (raw) {
@@ -158,7 +189,10 @@ function unrecognisedFreeformFeedback(toolName: string, argumentsText: unknown):
       const parsed = JSON.parse(raw);
       if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
         const keys = Object.keys(parsed);
-        shape = keys.length ? `a JSON object with keys ${keys.map((key) => JSON.stringify(key)).join(", ")}` : "an empty JSON object";
+        shape =
+          keys.length > 0
+            ? `a JSON object with keys ${keys.map((key) => JSON.stringify(key)).join(", ")}`
+            : "an empty JSON object";
       } else {
         shape = `a JSON ${Array.isArray(parsed) ? "array" : parsed === null ? "null" : typeof parsed}`;
       }
@@ -171,7 +205,10 @@ function unrecognisedFreeformFeedback(toolName: string, argumentsText: unknown):
 }
 
 function freeformSourceFor(toolName: string, argumentsText: unknown): string {
-  return freeformInputFromArguments(argumentsText) ?? unrecognisedFreeformFeedback(toolName, argumentsText);
+  return (
+    freeformInputFromArguments(argumentsText) ??
+    unrecognisedFreeformFeedback(toolName, argumentsText)
+  );
 }
 
 /**
@@ -187,39 +224,77 @@ function createFreeformCoercion(freeformNames: Set<string>): EventTransform {
   const coerced = new Map(); // item_id -> { source }
 
   const isFreeform = (item: JsonRecord | null | undefined): boolean =>
-    item?.type === "function_call" && typeof item.name === "string" && freeformNames.has(item.name) && !isWebResearchTool(item);
+    item?.type === "function_call" &&
+    typeof item.name === "string" &&
+    freeformNames.has(item.name) &&
+    !isWebResearchTool(item);
 
   return function coerce(event: JsonRecord): JsonRecord | JsonRecord[] | null {
     if (!event || typeof event !== "object") return event;
 
     if (event.type === "response.output_item.added" && isFreeform(event.item)) {
       coerced.set(event.item.id, { name: event.item.name, source: null });
-      const { arguments: _arguments, namespace: _namespace, ...rest } = event.item;
-      return { ...event, item: { ...rest, type: "custom_tool_call", input: "" } };
+      const {
+        arguments: _arguments,
+        namespace: _namespace,
+        ...rest
+      } = event.item;
+      return {
+        ...event,
+        item: { ...rest, type: "custom_tool_call", input: "" }
+      };
     }
 
-    if (event.type === "response.function_call_arguments.delta" && coerced.has(event.item_id)) {
+    if (
+      event.type === "response.function_call_arguments.delta" &&
+      coerced.has(event.item_id)
+    ) {
       return null; // Partial JSON cannot be translated; the full source follows.
     }
 
-    if (event.type === "response.function_call_arguments.done" && coerced.has(event.item_id)) {
+    if (
+      event.type === "response.function_call_arguments.done" &&
+      coerced.has(event.item_id)
+    ) {
       const entry = coerced.get(event.item_id);
       const source = freeformSourceFor(entry.name, event.arguments);
       coerced.set(event.item_id, { ...entry, source });
       return [
-        { type: "response.custom_tool_call_input.delta", item_id: event.item_id, output_index: event.output_index, delta: source },
-        { type: "response.custom_tool_call_input.done", item_id: event.item_id, output_index: event.output_index, input: source },
+        {
+          type: "response.custom_tool_call_input.delta",
+          item_id: event.item_id,
+          output_index: event.output_index,
+          delta: source
+        },
+        {
+          type: "response.custom_tool_call_input.done",
+          item_id: event.item_id,
+          output_index: event.output_index,
+          input: source
+        }
       ];
     }
 
-    if (event.type === "response.output_item.done" && coerced.has(event.item?.id)) {
+    if (
+      event.type === "response.output_item.done" &&
+      coerced.has(event.item?.id)
+    ) {
       const entry = coerced.get(event.item.id);
-      const source = entry.source ?? freeformSourceFor(event.item.name, event.item.arguments);
+      const source =
+        entry.source ??
+        freeformSourceFor(event.item.name, event.item.arguments);
       // Keep the entry: the terminal snapshot below still has to find its
       // source, and `response.completed` arrives after this.
       coerced.set(event.item.id, { ...entry, source, closed: true });
-      const { arguments: _arguments, namespace: _namespace, ...rest } = event.item;
-      return { ...event, item: { ...rest, type: "custom_tool_call", input: source } };
+      const {
+        arguments: _arguments,
+        namespace: _namespace,
+        ...rest
+      } = event.item;
+      return {
+        ...event,
+        item: { ...rest, type: "custom_tool_call", input: source }
+      };
     }
 
     // Terminal and progress snapshots repeat the whole output array. Leaving
@@ -231,7 +306,9 @@ function createFreeformCoercion(freeformNames: Set<string>): EventTransform {
       let changed = false;
       const output = event.response.output.map((item: JsonRecord) => {
         if (!isFreeform(item)) return item;
-        const source = coerced.get(item.id)?.source ?? freeformSourceFor(item.name, item.arguments);
+        const source =
+          coerced.get(item.id)?.source ??
+          freeformSourceFor(item.name, item.arguments);
         changed = true;
         const { arguments: _arguments, namespace: _namespace, ...rest } = item;
         return { ...rest, type: "custom_tool_call", input: source };
@@ -247,14 +324,29 @@ function createFreeformCoercion(freeformNames: Set<string>): EventTransform {
  * The same coercion for a non-streaming response, where the whole item is
  * present at once and no cross-line state is needed.
  */
-function coerceResponseBody(body: JsonRecord | null | undefined, freeformNames: Set<string>): JsonRecord | null | undefined {
-  if (!body || typeof body !== "object" || !(freeformNames instanceof Set) || freeformNames.size === 0) return body;
+function coerceResponseBody(
+  body: JsonRecord | null | undefined,
+  freeformNames: Set<string>
+): JsonRecord | null | undefined {
+  if (
+    !body ||
+    typeof body !== "object" ||
+    !(freeformNames instanceof Set) ||
+    freeformNames.size === 0
+  )
+    return body;
   const output = body.response?.output ?? body.output;
   if (!Array.isArray(output)) return body;
 
   let changed = false;
   const coercedOutput = output.map((item) => {
-    if (item?.type !== "function_call" || typeof item.name !== "string" || !freeformNames.has(item.name) || isWebResearchTool(item)) return item;
+    if (
+      item?.type !== "function_call" ||
+      typeof item.name !== "string" ||
+      !freeformNames.has(item.name) ||
+      isWebResearchTool(item)
+    )
+      return item;
     const source = freeformSourceFor(item.name, item.arguments);
     changed = true;
     const { arguments: _arguments, namespace: _namespace, ...rest } = item;
@@ -302,40 +394,72 @@ function firstReport(kind: string, callId: unknown): boolean {
   reportedCalls.set(key, true);
   // Bounded: a long-lived proxy must not keep every call id it ever saw. Map
   // iterates in insertion order, so the oldest entry is the one that goes.
-  if (reportedCalls.size > REPORTED_CALL_LIMIT) reportedCalls.delete(reportedCalls.keys().next().value);
+  if (reportedCalls.size > REPORTED_CALL_LIMIT)
+    reportedCalls.delete(reportedCalls.keys().next().value);
   return true;
 }
 
-const TOOL_CALL_ITEM_TYPES = new Set([ "function_call", "custom_tool_call" ]);
-const TOOL_OUTPUT_ITEM_TYPES = new Set([ "function_call_output", "custom_tool_call_output" ]);
+const TOOL_CALL_ITEM_TYPES = new Set(["function_call", "custom_tool_call"]);
+const TOOL_OUTPUT_ITEM_TYPES = new Set([
+  "function_call_output",
+  "custom_tool_call_output"
+]);
 
-const MINIMAX_DENIED_PATTERN = /permission[_\s-]?denied|auto[_\s-]?denied|denied|not[_\s-]?permitted|not[_\s-]?allowed|user[_\s-]?rejected|tool[_\s-]?not[_\s-]?found|no such tool/i;
+const MINIMAX_DENIED_PATTERN =
+  /permission[_\s-]?denied|auto[_\s-]?denied|denied|not[_\s-]?permitted|not[_\s-]?allowed|user[_\s-]?rejected|tool[_\s-]?not[_\s-]?found|no such tool/i;
 
 /** How a tool call ended, as far as its output item says. */
 function toolOutputOutcome(item: JsonRecord | null | undefined): JsonRecord {
   const raw = typeof item?.output === "string" ? item.output : null;
   let payload = null;
   if (raw) {
-    try { payload = JSON.parse(raw); } catch { payload = null; }
+    try {
+      payload = JSON.parse(raw);
+    } catch {
+      payload = null;
+    }
   }
-  const metadata = payload && typeof payload === "object" && !Array.isArray(payload) ? payload.metadata : null;
-  const exitCode = metadata && Number.isFinite(metadata.exit_code) ? metadata.exit_code : null;
-  const durationSeconds = metadata && Number.isFinite(metadata.duration_seconds) ? metadata.duration_seconds : null;
+  const metadata =
+    payload && typeof payload === "object" && !Array.isArray(payload)
+      ? payload.metadata
+      : null;
+  const exitCode =
+    metadata && Number.isFinite(metadata.exit_code) ? metadata.exit_code : null;
+  const durationSeconds =
+    metadata && Number.isFinite(metadata.duration_seconds)
+      ? metadata.duration_seconds
+      : null;
   const statusStr = String(item?.status ?? payload?.status ?? "");
   const errorStr = String(item?.error ?? payload?.error ?? "");
-  if (item?.denied === true || statusStr === "denied" || MINIMAX_DENIED_PATTERN.test(statusStr) || MINIMAX_DENIED_PATTERN.test(errorStr) || (raw && MINIMAX_DENIED_PATTERN.test(raw))) {
+  if (
+    item?.denied === true ||
+    statusStr === "denied" ||
+    MINIMAX_DENIED_PATTERN.test(statusStr) ||
+    MINIMAX_DENIED_PATTERN.test(errorStr) ||
+    (raw && MINIMAX_DENIED_PATTERN.test(raw))
+  ) {
     return { kind: "unavailable", reason: "denied" };
   }
-  const failed = statusStr === "failed" || statusStr === "error" || item?.success === false || (exitCode !== null && exitCode !== 0);
+  const failed =
+    statusStr === "failed" ||
+    statusStr === "error" ||
+    item?.success === false ||
+    (exitCode !== null && exitCode !== 0);
   return {
     kind: "executed",
     status: failed ? "error" : "ok",
-    durationMs: durationSeconds === null ? null : Math.max(0, Math.round(durationSeconds * 1000)),
+    durationMs:
+      durationSeconds === null
+        ? null
+        : Math.max(0, Math.round(durationSeconds * 1000))
   };
 }
 
 /** Report every tool call this request carries the output of. */
-function reportExecutedToolCalls(agentEvents: AgentReporter | null, payload: JsonRecord | null | undefined): void {
+function reportExecutedToolCalls(
+  agentEvents: AgentReporter | null,
+  payload: JsonRecord | null | undefined
+): void {
   if (!agentEvents || !payload || typeof payload !== "object") return;
   const input = Array.isArray(payload.input) ? payload.input : [];
   // An output item names only the call id it settles, so the name comes from
@@ -343,44 +467,96 @@ function reportExecutedToolCalls(agentEvents: AgentReporter | null, payload: Jso
   const names = new Map();
   const servers = new Map();
   for (const item of input) {
-    if (!item || typeof item !== "object" || !TOOL_CALL_ITEM_TYPES.has(item.type)) continue;
-    const callId = typeof item.call_id === "string" && item.call_id.trim() ? item.call_id.trim() : null;
-    const name = typeof item.name === "string" && item.name.trim() ? item.name.trim() : null;
+    if (
+      !item ||
+      typeof item !== "object" ||
+      !TOOL_CALL_ITEM_TYPES.has(item.type)
+    )
+      continue;
+    const callId =
+      typeof item.call_id === "string" && item.call_id.trim()
+        ? item.call_id.trim()
+        : null;
+    const name =
+      typeof item.name === "string" && item.name.trim()
+        ? item.name.trim()
+        : null;
     if (callId && name) {
       names.set(callId, name);
-      const server = typeof item.server === "string" && item.server.trim()
-        ? item.server.trim()
-        : (typeof item.namespace === "string" && item.namespace.trim() ? item.namespace.trim() : null);
+      const server =
+        typeof item.server === "string" && item.server.trim()
+          ? item.server.trim()
+          : typeof item.namespace === "string" && item.namespace.trim()
+            ? item.namespace.trim()
+            : null;
       if (server) servers.set(callId, server);
     }
   }
   for (const item of input) {
-    if (!item || typeof item !== "object" || !TOOL_OUTPUT_ITEM_TYPES.has(item.type)) continue;
-    const callId = typeof item.call_id === "string" && item.call_id.trim() ? item.call_id.trim() : null;
+    if (
+      !item ||
+      typeof item !== "object" ||
+      !TOOL_OUTPUT_ITEM_TYPES.has(item.type)
+    )
+      continue;
+    const callId =
+      typeof item.call_id === "string" && item.call_id.trim()
+        ? item.call_id.trim()
+        : null;
     const tool = callId ? names.get(callId) : null;
     // A call whose name is not in this request's history is unattributable,
     // and the router has nothing to file an unnamed tool under.
     if (!tool) continue;
-    const server = (callId ? servers.get(callId) : null) ?? (typeof item.server === "string" && item.server.trim() ? item.server.trim() : null);
+    const server =
+      (callId ? servers.get(callId) : null) ??
+      (typeof item.server === "string" && item.server.trim()
+        ? item.server.trim()
+        : null);
     const outcome = toolOutputOutcome(item);
     if (outcome.kind === "unavailable") {
       if (!firstReport("unavailable", callId)) continue;
-      void agentEvents.reportToolUnavailable({ tool, callId, reason: outcome.reason, server });
+      void agentEvents.reportToolUnavailable({
+        tool,
+        callId,
+        reason: outcome.reason,
+        server
+      });
     } else if (outcome.kind === "executed") {
       if (!firstReport("executed", callId)) continue;
-      void agentEvents.reportToolExecuted({ tool, callId, status: outcome.status, durationMs: outcome.durationMs, server });
+      void agentEvents.reportToolExecuted({
+        tool,
+        callId,
+        status: outcome.status,
+        durationMs: outcome.durationMs,
+        server
+      });
     }
   }
 }
 
 /** Report a tool call the model just asked for, once per call id. */
-function reportRequestedToolCall(agentEvents: AgentReporter | null, item: JsonRecord | null | undefined): void {
-  if (!agentEvents || !item || typeof item !== "object" || !TOOL_CALL_ITEM_TYPES.has(item.type)) return;
+function reportRequestedToolCall(
+  agentEvents: AgentReporter | null,
+  item: JsonRecord | null | undefined
+): void {
+  if (
+    !agentEvents ||
+    !item ||
+    typeof item !== "object" ||
+    !TOOL_CALL_ITEM_TYPES.has(item.type)
+  )
+    return;
   const tool = typeof item.name === "string" ? item.name.trim() : "";
-  const callId = typeof item.call_id === "string" && item.call_id.trim() ? item.call_id.trim() : null;
-  const server = typeof item.server === "string" && item.server.trim()
-    ? item.server.trim()
-    : (typeof item.namespace === "string" && item.namespace.trim() ? item.namespace.trim() : null);
+  const callId =
+    typeof item.call_id === "string" && item.call_id.trim()
+      ? item.call_id.trim()
+      : null;
+  const server =
+    typeof item.server === "string" && item.server.trim()
+      ? item.server.trim()
+      : typeof item.namespace === "string" && item.namespace.trim()
+        ? item.namespace.trim()
+        : null;
   if (!tool || !firstReport("requested", callId)) return;
   void agentEvents.reportToolRequested({ tool, callId, server });
 }
@@ -390,14 +566,25 @@ function reportRequestedToolCall(agentEvents: AgentReporter | null, item: JsonRe
  * and terminal snapshots repeat the whole output array, which is why the
  * de-duplication above is what makes this safe to call on every event.
  */
-function observeResponseEvent(agentEvents: AgentReporter | null, event: JsonRecord | null | undefined): void {
+function observeResponseEvent(
+  agentEvents: AgentReporter | null,
+  event: JsonRecord | null | undefined
+): void {
   if (!agentEvents || !event || typeof event !== "object") return;
   if (event.item) reportRequestedToolCall(agentEvents, event.item);
-  for (const item of Array.isArray(event.response?.output) ? event.response.output : []) reportRequestedToolCall(agentEvents, item);
-  for (const item of Array.isArray(event.output) ? event.output : []) reportRequestedToolCall(agentEvents, item);
+  for (const item of Array.isArray(event.response?.output)
+    ? event.response.output
+    : [])
+    reportRequestedToolCall(agentEvents, item);
+  for (const item of Array.isArray(event.output) ? event.output : [])
+    reportRequestedToolCall(agentEvents, item);
 }
 
-function rewriteSseLine(line: string, coerce: EventTransform | null = null, observe: ((event: JsonRecord) => void) | null = null): string | null {
+function rewriteSseLine(
+  line: string,
+  coerce: EventTransform | null = null,
+  observe: ((event: JsonRecord) => void) | null = null
+): string | null {
   const lineEnding = line.endsWith("\r") ? "\r" : "";
   const content = lineEnding ? line.slice(0, -1) : line;
   if (!content.startsWith("data:")) {
@@ -414,8 +601,10 @@ function rewriteSseLine(line: string, coerce: EventTransform | null = null, obse
     observe?.(parsed);
     const coerced = coerce ? coerce(parsed) : parsed;
     if (coerced === null) return null;
-    const events = Array.isArray(coerced) ? coerced : [ coerced ];
-    return events.map((event) => `data: ${JSON.stringify(event)}${lineEnding}`).join("\n");
+    const events = Array.isArray(coerced) ? coerced : [coerced];
+    return events
+      .map((event) => `data: ${JSON.stringify(event)}${lineEnding}`)
+      .join("\n");
   } catch {
     return line;
   }
@@ -424,7 +613,10 @@ function rewriteSseLine(line: string, coerce: EventTransform | null = null, obse
 function requestHeaders(request: IncomingMessage): Headers {
   const headers = new Headers();
   for (const [name, value] of Object.entries(request.headers)) {
-    if (value === undefined || !forwardedRequestHeaders.includes(name.toLowerCase())) {
+    if (
+      value === undefined ||
+      !forwardedRequestHeaders.includes(name.toLowerCase())
+    ) {
       continue;
     }
     headers.set(name, Array.isArray(value) ? value.join(", ") : value);
@@ -432,24 +624,41 @@ function requestHeaders(request: IncomingMessage): Headers {
   return headers;
 }
 
-async function requestBody(request: IncomingMessage): Promise<string | undefined> {
+async function requestBody(
+  request: IncomingMessage
+): Promise<string | undefined> {
   const chunks = [];
   for await (const chunk of request) {
     chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
   }
-  return chunks.length === 0 ? undefined : Buffer.concat(chunks).toString("utf8");
+  return chunks.length === 0
+    ? undefined
+    : Buffer.concat(chunks).toString("utf8");
 }
 
 function upstreamHeaders(response: ServerResponse, upstream: Response): void {
   for (const [name, value] of upstream.headers) {
-    if (["connection", "content-encoding", "content-length", "transfer-encoding"].includes(name.toLowerCase())) {
+    if (
+      [
+        "connection",
+        "content-encoding",
+        "content-length",
+        "transfer-encoding"
+      ].includes(name.toLowerCase())
+    ) {
       continue;
     }
     response.setHeader(name, value);
   }
 }
 
-async function streamSse(body: ReadableStream<Uint8Array>, response: ServerResponse, coerce: EventTransform | null = null, observe: ((event: JsonRecord) => void) | null = null, agentEvents: AgentReporter | null = null): Promise<void> {
+async function streamSse(
+  body: ReadableStream<Uint8Array>,
+  response: ServerResponse,
+  coerce: EventTransform | null = null,
+  observe: ((event: JsonRecord) => void) | null = null,
+  agentEvents: AgentReporter | null = null
+): Promise<void> {
   const reader = body.getReader();
   const decoder = new TextDecoder();
   let bufferedLine = "";
@@ -500,7 +709,11 @@ async function streamSse(body: ReadableStream<Uint8Array>, response: ServerRespo
       .map((dataLine) => {
         const body = dataLine.replace(/^data:\s*/, "").replace(/\r$/, "");
         let type = null;
-        try { type = JSON.parse(body)?.type ?? null; } catch { /* keep the held header */ }
+        try {
+          type = JSON.parse(body)?.type ?? null;
+        } catch {
+          /* keep the held header */
+        }
         return `${typeof type === "string" ? `event: ${type}` : held}\n${dataLine}`;
       })
       .join("\n");
@@ -543,15 +756,21 @@ function proxyError(response: ServerResponse, error: unknown): void {
     return;
   }
   response.writeHead(502, { "content-type": "application/json" });
-  response.end(JSON.stringify({
-    error: {
-      message: error instanceof Error ? error.message : "Upstream request failed.",
-      type: "minimax_responses_proxy_error"
-    }
-  }));
+  response.end(
+    JSON.stringify({
+      error: {
+        message:
+          error instanceof Error ? error.message : "Upstream request failed.",
+        type: "minimax_responses_proxy_error"
+      }
+    })
+  );
 }
 
-async function forward(request: IncomingMessage, response: ServerResponse): Promise<void> {
+async function forward(
+  request: IncomingMessage,
+  response: ServerResponse
+): Promise<void> {
   if (request.url === "/health") {
     response.writeHead(200, { "content-type": "text/plain" });
     response.end("ok\n");
@@ -566,9 +785,14 @@ async function forward(request: IncomingMessage, response: ServerResponse): Prom
   if (agentEvents) {
     for (const server of contract.mcp ?? []) {
       if (typeof agentEvents.reportMcpExposed === "function") {
-        void agentEvents.reportMcpExposed({ server, source: MCP_EXPOSURE_SOURCE });
+        void agentEvents.reportMcpExposed({
+          server,
+          source: MCP_EXPOSURE_SOURCE
+        });
       } else if (typeof agentEvents.post === "function") {
-        void agentEvents.post([ { type: "mcp_exposed", server, source: MCP_EXPOSURE_SOURCE } ]);
+        void agentEvents.post([
+          { type: "mcp_exposed", server, source: MCP_EXPOSURE_SOURCE }
+        ]);
       }
     }
   }
@@ -582,7 +806,10 @@ async function forward(request: IncomingMessage, response: ServerResponse): Prom
   });
 
   try {
-    const rawBody = request.method === "GET" || request.method === "HEAD" ? undefined : await requestBody(request);
+    const rawBody =
+      request.method === "GET" || request.method === "HEAD"
+        ? undefined
+        : await requestBody(request);
     let body = rawBody;
     // Which tools this turn declared as freeform, so the response can be
     // coerced back into the shape Codex will accept.
@@ -599,8 +826,11 @@ async function forward(request: IncomingMessage, response: ServerResponse): Prom
         // Preserve malformed JSON unchanged.
       }
     }
-    const coerce = freeformNames.size > 0 ? createFreeformCoercion(freeformNames) : null;
-    const observe: ((event: JsonRecord) => void) | null = agentEvents ? (event) => observeResponseEvent(agentEvents, event) : null;
+    const coerce =
+      freeformNames.size > 0 ? createFreeformCoercion(freeformNames) : null;
+    const observe: ((event: JsonRecord) => void) | null = agentEvents
+      ? (event) => observeResponseEvent(agentEvents, event)
+      : null;
 
     const upstream = await fetch(new URL(request.url ?? "/", upstreamBaseUrl), {
       ...(body === undefined ? {} : { body }),
@@ -646,20 +876,22 @@ if (IS_MAIN) {
   createServer((request, response) => {
     void forward(request, response);
   }).listen(port, host, () => {
-    process.stderr.write(`MiniMax Responses proxy listening at http://${host}:${port}.\n`);
+    process.stderr.write(
+      `MiniMax Responses proxy listening at http://${host}:${port}.\n`
+    );
   });
 }
 
 export {
-  MCP_EXPOSURE_SOURCE,
   coerceResponseBody,
   forwardedRequestHeaders,
   freeformInputFromArguments,
   isWebResearchTool,
+  MCP_EXPOSURE_SOURCE,
   observeResponseEvent,
   reportExecutedToolCalls,
   reportRequestedToolCall,
   rewriteOutboundPayload,
   toolOutputOutcome,
-  unrecognisedFreeformFeedback,
+  unrecognisedFreeformFeedback
 };

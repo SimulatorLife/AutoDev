@@ -53,7 +53,11 @@ export interface RouterStatus {
     codexNativeSpawns?: number;
     [key: string]: unknown;
   };
-  spawnFailures?: { total?: number; byReason?: RouterCountMap; [key: string]: unknown };
+  spawnFailures?: {
+    total?: number;
+    byReason?: RouterCountMap;
+    [key: string]: unknown;
+  };
   usage?: {
     byOrigin?: Record<string, Record<string, unknown>>;
     byRole?: Record<string, Record<string, unknown>>;
@@ -68,8 +72,8 @@ export interface RouterStatus {
 }
 
 function asStatus(value: unknown): RouterStatus {
-  if (value === null || typeof value !== 'object' || Array.isArray(value)) {
-    throw new TypeError('Router status response must be a JSON object');
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    throw new TypeError("Router status response must be a JSON object");
   }
   return value as RouterStatus;
 }

@@ -10,15 +10,19 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
-import { fileURLToPath } from "node:url";
-import { parse } from "smol-toml";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
+
+import { parse } from "smol-toml";
 
 const FIXTURE_PATH = fileURLToPath(
-  new URL("./fixtures/contracts/portable-autodev-config-contract.json", import.meta.url),
+  new URL(
+    "fixtures/contracts/portable-autodev-config-contract.json",
+    import.meta.url
+  )
 );
 const PORTABLE_PATH = fileURLToPath(
-  new URL("../config/config.autodev.toml", import.meta.url),
+  new URL("../config/config.autodev.toml", import.meta.url)
 );
 
 const EXPECTED_SCHEMA = "autodev-portable-autodev-config-v1";
@@ -30,15 +34,19 @@ const EXPECTED_SECTIONS = Object.freeze([
   "tools",
   "skills",
   "shell_environment_policy",
-  "plugins",
+  "plugins"
 ]);
 const EXPECTED_MODEL_PROVIDERS = Object.freeze([
   "claude_code_subscription",
   "local_model_router",
   "minimax",
-  "antigravity_cli",
+  "antigravity_cli"
 ]);
-const EXPECTED_SKILLS = Object.freeze(["lsp-mcp-server", "ccc", "orchestration"]);
+const EXPECTED_SKILLS = Object.freeze([
+  "lsp-mcp-server",
+  "ccc",
+  "orchestration"
+]);
 
 type PortableFixture = {
   schema: string;
@@ -54,7 +62,10 @@ type PortableFixture = {
 };
 
 function loadPortable(absoluteTomlPath: string): Record<string, unknown> {
-  return parse(readFileSync(absoluteTomlPath, "utf8")) as unknown as Record<string, unknown>;
+  return parse(readFileSync(absoluteTomlPath, "utf8")) as unknown as Record<
+    string,
+    unknown
+  >;
 }
 
 async function readFixture(): Promise<PortableFixture> {
@@ -66,7 +77,10 @@ test("schema tag pin and source path", async () => {
   assert.equal(fixture.schema, EXPECTED_SCHEMA);
   assert.equal(fixture.source, "config/config.autodev.toml");
   assert.equal(typeof fixture.description, "string");
-  assert.ok(fixture.description.length > 0, "fixture description must be non-empty");
+  assert.ok(
+    fixture.description.length > 0,
+    "fixture description must be non-empty"
+  );
 });
 
 test("portable scalars are byte-for-byte pinned", async () => {
@@ -75,18 +89,18 @@ test("portable scalars are byte-for-byte pinned", async () => {
 
   assert.deepEqual(
     [...fixture.portableScalars].sort(),
-    Object.keys(fixture.scalars).sort(),
+    Object.keys(fixture.scalars).sort()
   );
 
   for (const [key, expected] of Object.entries(fixture.scalars)) {
     assert.ok(
-      Object.prototype.hasOwnProperty.call(portable, key),
-      `portable source missing scalar: ${key}`,
+      Object.hasOwn(portable, key),
+      `portable source missing scalar: ${key}`
     );
     assert.deepEqual(
       portable[key],
       expected,
-      `scalar ${key} drifted from the contract fixture`,
+      `scalar ${key} drifted from the contract fixture`
     );
   }
 
@@ -94,11 +108,12 @@ test("portable scalars are byte-for-byte pinned", async () => {
   // not declare: drift must surface on the source side instead.
   const fixtureScalars = new Set(Object.keys(fixture.scalars));
   for (const [key, value] of Object.entries(portable)) {
-    const isScalar = value === null || (typeof value !== "object" && !Array.isArray(value));
+    const isScalar =
+      value === null || (typeof value !== "object" && !Array.isArray(value));
     if (!isScalar) continue;
     assert.ok(
       fixtureScalars.has(key),
-      `portable source declared a new scalar ${key} that is not pinned by the contract fixture`,
+      `portable source declared a new scalar ${key} that is not pinned by the contract fixture`
     );
   }
 });
@@ -108,17 +123,20 @@ test("eight required sections are present and shaped", async () => {
   const portable = loadPortable(PORTABLE_PATH);
 
   assert.deepEqual(fixture.requiredSections, EXPECTED_SECTIONS);
-  assert.deepEqual([...fixture.requiredSections].sort(), [...EXPECTED_SECTIONS].sort());
+  assert.deepEqual(
+    [...fixture.requiredSections].sort(),
+    [...EXPECTED_SECTIONS].sort()
+  );
 
   for (const section of EXPECTED_SECTIONS) {
     assert.ok(
-      Object.prototype.hasOwnProperty.call(portable, section),
-      `portable source missing required section: ${section}`,
+      Object.hasOwn(portable, section),
+      `portable source missing required section: ${section}`
     );
     assert.deepEqual(
       portable[section],
       fixture.sectionShapes[section],
-      `section ${section} drifted from the contract fixture`,
+      `section ${section} drifted from the contract fixture`
     );
   }
 
@@ -130,16 +148,12 @@ test("eight required sections are present and shaped", async () => {
     if (!value || typeof value !== "object" || Array.isArray(value)) continue;
     // model_providers, agents, hooks are containers of named entries tested
     // separately; skip them here.
-    if (
-      key === "model_providers" ||
-      key === "agents" ||
-      key === "hooks"
-    ) {
+    if (key === "model_providers" || key === "agents" || key === "hooks") {
       continue;
     }
     assert.ok(
       sourceTopLevelSections.has(key),
-      `portable source declared a new top-level section ${key} not pinned by the contract fixture`,
+      `portable source declared a new top-level section ${key} not pinned by the contract fixture`
     );
   }
 });
@@ -151,38 +165,44 @@ test("four model_providers entries are pinned with byte-for-byte attributes", as
   assert.deepEqual(fixture.modelProviderOrder, EXPECTED_MODEL_PROVIDERS);
 
   const providers = (portable.model_providers ?? {}) as Record<string, unknown>;
-  assert.ok(providers && !Array.isArray(providers), "model_providers must be a TOML table");
+  assert.ok(
+    providers && !Array.isArray(providers),
+    "model_providers must be a TOML table"
+  );
 
   for (const name of EXPECTED_MODEL_PROVIDERS) {
     assert.ok(
-      Object.prototype.hasOwnProperty.call(providers, name),
-      `portable source missing model_providers entry: ${name}`,
+      Object.hasOwn(providers, name),
+      `portable source missing model_providers entry: ${name}`
     );
   }
   assert.deepEqual(
     Object.keys(providers).sort(),
     [...EXPECTED_MODEL_PROVIDERS].sort(),
-    `portable source must declare exactly ${EXPECTED_MODEL_PROVIDERS.length} model_providers entries`,
+    `portable source must declare exactly ${EXPECTED_MODEL_PROVIDERS.length} model_providers entries`
   );
 
   const fixtureByName = new Map(
-    fixture.modelProviders.map((entry) => [entry.name, entry.attributes]),
+    fixture.modelProviders.map((entry) => [entry.name, entry.attributes])
   );
   for (const name of EXPECTED_MODEL_PROVIDERS) {
     assert.deepEqual(
       providers[name],
       fixtureByName.get(name),
-      `model_providers.${name} drifted from the contract fixture`,
+      `model_providers.${name} drifted from the contract fixture`
     );
   }
 });
 
 test("hook declarations stay in Rulesync, not the portable Codex source", async () => {
   const portable = loadPortable(PORTABLE_PATH);
-  assert.equal(Object.prototype.hasOwnProperty.call(portable, "hooks"), false);
+  assert.equal(Object.hasOwn(portable, "hooks"), false);
   assert.equal(
-    readFileSync(fileURLToPath(new URL("../.rulesync/hooks.jsonc", import.meta.url)), "utf8").includes('"hooks"'),
-    true,
+    readFileSync(
+      fileURLToPath(new URL("../.rulesync/hooks.jsonc", import.meta.url)),
+      "utf8"
+    ).includes('"hooks"'),
+    true
   );
 });
 
@@ -190,18 +210,24 @@ test("MCP servers stay out of the portable source and skills.config.name is pinn
   const fixture = await readFixture();
   const portable = loadPortable(PORTABLE_PATH);
 
-  assert.deepEqual(fixture.skillsConfigNamesRequired, [...EXPECTED_SKILLS].sort());
+  assert.deepEqual(
+    fixture.skillsConfigNamesRequired,
+    [...EXPECTED_SKILLS].sort()
+  );
 
   // `.rulesync/mcp.jsonc` is the only MCP source; the installer composes its
   // Codex projection into the user config.
   assert.ok(
-    !Object.prototype.hasOwnProperty.call(portable, "mcp_servers"),
-    "portable source must not declare mcp_servers",
+    !Object.hasOwn(portable, "mcp_servers"),
+    "portable source must not declare mcp_servers"
   );
 
   const skills = portable.skills as Record<string, unknown> | undefined;
   const skillsConfig = skills?.config ?? [];
-  assert.ok(Array.isArray(skillsConfig), "skills.config must be an array of tables");
+  assert.ok(
+    Array.isArray(skillsConfig),
+    "skills.config must be an array of tables"
+  );
   const names = skillsConfig
     .filter((entry) => entry && typeof entry === "object")
     .map((entry) => entry.name);
@@ -211,6 +237,6 @@ test("MCP servers stay out of the portable source and skills.config.name is pinn
   assert.deepEqual(
     names.slice().sort(),
     [...EXPECTED_SKILLS].sort(),
-    "skills.config.name set drifted from the contract fixture",
+    "skills.config.name set drifted from the contract fixture"
   );
 });

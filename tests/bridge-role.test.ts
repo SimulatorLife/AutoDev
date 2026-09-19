@@ -4,24 +4,40 @@ import test from "node:test";
 
 import {
   AGENT_ROLE_HEADER,
-  ORCHESTRATOR_AGENT_ROLE,
   composeProviderPrompt,
-  roleInstructions,
   isOrchestratorRole,
+  ORCHESTRATOR_AGENT_ROLE,
   resolveAgentRole,
+  roleInstructions
 } from "../src/agents/bridge-role.ts";
-import { EXECUTION_CONTRACT, roleContract } from "../src/shared/execution-contract.ts";
 import { promptFromInput } from "../src/providers/antigravity.ts";
-import { inputText } from "../src/providers/copilot.ts";
 import { renderCodexTranscript } from "../src/providers/claude-codex-tools.ts";
+import { inputText } from "../src/providers/copilot.ts";
+import {
+  EXECUTION_CONTRACT,
+  roleContract
+} from "../src/shared/execution-contract.ts";
+import { normalizedSource } from "./source-text.ts";
 
-const read = (path: string): string => readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
+const read = (path: string): string => {
+  const text = readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
+  return path.endsWith(".ts") ? normalizedSource(text) : text;
+};
 
 test("the agent role is read only from the router-generated header", () => {
   assert.equal(AGENT_ROLE_HEADER, "x-autodev-agent-role");
-  assert.equal(resolveAgentRole({ [ AGENT_ROLE_HEADER ]: "orchestrator" }), "orchestrator");
-  assert.equal(resolveAgentRole({ "X-Autodev-Agent-Role": " Orchestrator " }), "orchestrator");
-  assert.equal(resolveAgentRole({ [ AGENT_ROLE_HEADER ]: [ "explorer" ] }), "explorer");
+  assert.equal(
+    resolveAgentRole({ [AGENT_ROLE_HEADER]: "orchestrator" }),
+    "orchestrator"
+  );
+  assert.equal(
+    resolveAgentRole({ "X-Autodev-Agent-Role": " Orchestrator " }),
+    "orchestrator"
+  );
+  assert.equal(
+    resolveAgentRole({ [AGENT_ROLE_HEADER]: ["explorer"] }),
+    "explorer"
+  );
   assert.equal(resolveAgentRole({}), null);
   assert.equal(resolveAgentRole(null), null);
   // Task prose and body fields are never a role claim; only the header is.
@@ -30,8 +46,20 @@ test("the agent role is read only from the router-generated header", () => {
 
 test("only the exact orchestrator role escapes the leaf policy", () => {
   assert.ok(isOrchestratorRole(ORCHESTRATOR_AGENT_ROLE));
-  for (const role of [ null, undefined, "", "explorer", "worker", "orchestrator-ish", "root" ]) {
-    assert.equal(isOrchestratorRole(role), false, `${String(role)} must be treated as a leaf`);
+  for (const role of [
+    null,
+    undefined,
+    "",
+    "explorer",
+    "worker",
+    "orchestrator-ish",
+    "root"
+  ]) {
+    assert.equal(
+      isOrchestratorRole(role),
+      false,
+      `${String(role)} must be treated as a leaf`
+    );
   }
 });
 
@@ -41,11 +69,23 @@ test("the execution contract preserves role-specific capabilities across bridge 
   assert.ok(roleContract("explorer").mcp.includes("lsp"));
   assert.ok(roleContract("browser-tester").mcp.includes("playwright"));
   assert.equal(roleContract("orchestrator").kind, "orchestrator");
-  assert.deepEqual(roleContract("orchestrator").webResearch, { search: true, fetch: true, optionalMcp: [] });
-  assert.deepEqual(roleContract("smart").webResearch, { search: true, fetch: true, optionalMcp: ["playwright"] });
+  assert.deepEqual(roleContract("orchestrator").webResearch, {
+    search: true,
+    fetch: true,
+    optionalMcp: []
+  });
+  assert.deepEqual(roleContract("smart").webResearch, {
+    search: true,
+    fetch: true,
+    optionalMcp: ["playwright"]
+  });
   assert.deepEqual(roleContract("explorer").skills, ["ccc", "lsp-mcp-server"]);
   for (const contract of Object.values(EXECUTION_CONTRACT.roles)) {
-    assert.equal("instructions" in contract, false, "role prose belongs to prompts/roles, not capability metadata");
+    assert.equal(
+      "instructions" in contract,
+      false,
+      "role prose belongs to prompts/roles, not capability metadata"
+    );
   }
   assert.match(roleInstructions("explorer"), /Effective role contract/);
   assert.match(roleInstructions("explorer"), /read-only codebase explorer/i);
@@ -53,21 +93,51 @@ test("the execution contract preserves role-specific capabilities across bridge 
 
 test("provider adapters put the complete shared prompt in the actual CLI prompt", () => {
   const leaf = composeProviderPrompt("explorer", "/tmp/workspace");
-  const orchestrator = composeProviderPrompt(ORCHESTRATOR_AGENT_ROLE, "/tmp/workspace");
+  const orchestrator = composeProviderPrompt(
+    ORCHESTRATOR_AGENT_ROLE,
+    "/tmp/workspace"
+  );
   const base = read("agents/prompts/base.md").trim();
   assert.ok(leaf.startsWith(base));
   assert.match(leaf, /## Workspace[\s\S]*Working directory: \/tmp\/workspace/);
   assert.match(leaf, /You are a bounded leaf agent executing/);
-  assert.match(leaf, /Use CocoIndex \(`ccc`, `cocoindex-code`\)[\s\S]*Use LSP \(`lsp-mcp-server`, `lsp`\)/);
+  assert.match(
+    leaf,
+    /Use CocoIndex \(`ccc`, `cocoindex-code`\)[\s\S]*Use LSP \(`lsp-mcp-server`, `lsp`\)/
+  );
   assert.doesNotMatch(leaf, /# Root orchestrator bootstrap/);
   assert.ok(orchestrator.startsWith(base));
   assert.match(orchestrator, /## Canonical orchestration skill/);
-  assert.match(orchestrator, /Use CocoIndex \(`ccc`, `cocoindex-code`\)[\s\S]*Use LSP \(`lsp-mcp-server`, `lsp`\)/);
+  assert.match(
+    orchestrator,
+    /Use CocoIndex \(`ccc`, `cocoindex-code`\)[\s\S]*Use LSP \(`lsp-mcp-server`, `lsp`\)/
+  );
   assert.doesNotMatch(orchestrator, /You are a bounded leaf agent executing/);
   assert.equal(promptFromInput("leaf task", leaf), `${leaf}\n\nleaf task`);
-  assert.equal(inputText("root task", orchestrator), `${orchestrator}\n\nDelegated task:\nroot task`);
-  assert.match(promptFromInput([{ role: "system", content: "ignored" }, { role: "user", content: "structured task" }], composeProviderPrompt("explorer", "/tmp/workspace")), /structured task$/);
-  assert.match(inputText([{ role: "developer", content: "ignored" }, { role: "user", content: "structured task" }], composeProviderPrompt(ORCHESTRATOR_AGENT_ROLE, "/tmp/workspace")), /Delegated task:\nstructured task$/);
+  assert.equal(
+    inputText("root task", orchestrator),
+    `${orchestrator}\n\nDelegated task:\nroot task`
+  );
+  assert.match(
+    promptFromInput(
+      [
+        { role: "system", content: "ignored" },
+        { role: "user", content: "structured task" }
+      ],
+      composeProviderPrompt("explorer", "/tmp/workspace")
+    ),
+    /structured task$/
+  );
+  assert.match(
+    inputText(
+      [
+        { role: "developer", content: "ignored" },
+        { role: "user", content: "structured task" }
+      ],
+      composeProviderPrompt(ORCHESTRATOR_AGENT_ROLE, "/tmp/workspace")
+    ),
+    /Delegated task:\nstructured task$/
+  );
 });
 
 test("Claude receives Codex's own context, developer instructions included", () => {
@@ -75,27 +145,51 @@ test("Claude receives Codex's own context, developer instructions included", () 
   // what a Codex-native model is given: the role policy arrives in Codex's own
   // developer message rather than as a second copy the bridge composes.
   const transcript = renderCodexTranscript([
-    { role: "developer", content: [{ type: "input_text", text: "role policy" }] },
-    { role: "user", content: [{ type: "input_text", text: "review the changes" }] },
-    { role: "user", content: [{ type: "text", text: "run the validator" }] },
+    {
+      role: "developer",
+      content: [{ type: "input_text", text: "role policy" }]
+    },
+    {
+      role: "user",
+      content: [{ type: "input_text", text: "review the changes" }]
+    },
+    { role: "user", content: [{ type: "text", text: "run the validator" }] }
   ]);
-  assert.equal(transcript, "<developer>\nrole policy\n</developer>\n\n<user>\nreview the changes\n</user>\n\n<user>\nrun the validator\n</user>");
+  assert.equal(
+    transcript,
+    "<developer>\nrole policy\n</developer>\n\n<user>\nreview the changes\n</user>\n\n<user>\nrun the validator\n</user>"
+  );
 });
 
 test("the orchestrator is never handed the leaf prompt, and the leaf is never handed the orchestrator prompt", () => {
   const orchestrator = roleInstructions(ORCHESTRATOR_AGENT_ROLE);
-  assert.match(orchestrator, new RegExp(read("agents/prompts/orchestrator.md").trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+  assert.match(
+    orchestrator,
+    new RegExp(
+      read("agents/prompts/orchestrator.md")
+        .trim()
+        .replaceAll(/[.*+?^${}()|[\]\\]/g, String.raw`\$&`)
+    )
+  );
   assert.match(orchestrator, /# Root orchestrator bootstrap/);
   assert.match(orchestrator, /## Canonical orchestration skill/);
   assert.match(orchestrator, /## Root orchestrator contract/);
   assert.doesNotMatch(orchestrator, /You are a bounded leaf agent executing/);
   assert.doesNotMatch(orchestrator, /Do \*not\* spawn child agents/);
 
-  for (const role of [ null, undefined, "explorer", "worker", "smart" ]) {
+  for (const role of [null, undefined, "explorer", "worker", "smart"]) {
     const leaf = roleInstructions(role);
-    assert.match(leaf, new RegExp(read("agents/prompts/leaf.md").trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&")), `${String(role)} must get the leaf prompt`);
+    assert.match(
+      leaf,
+      new RegExp(
+        read("agents/prompts/leaf.md")
+          .trim()
+          .replaceAll(/[.*+?^${}()|[\]\\]/g, String.raw`\$&`)
+      ),
+      `${String(role)} must get the leaf prompt`
+    );
     assert.match(leaf, /bounded leaf agent/);
-    assert.match(leaf, /Do (?:\*{1,2})?not(?:\*{1,2})?\s+spawn\s+child agents/);
+    assert.match(leaf, /Do \*{0,2}not\*{0,2}\s+spawn\s+child agents/);
   }
 });
 
@@ -130,17 +224,20 @@ test("a leaf is told to ignore a spawn tool its runtime leaks to it", () => {
   // that has no business calling it. The leaf prompt is the only lever there.
   const leaf = roleInstructions("explorer");
   assert.match(leaf, /multi_agent_v1__spawn_agent/);
-  assert.match(leaf, /\*\*not\*\*\s+yours to call|not\s+(?:\*\*)?yours to call/);
+  assert.match(
+    leaf,
+    /\*\*not\*\*\s+yours to call|not\s+(?:\*\*)?yours to call/
+  );
 });
 
 test("every provider bridge picks its instructions from the shared role prompts", () => {
   // Every converted bridge lives under src/providers/, so each imports the
   // sibling agents/bridge-role.ts module at the same relative depth.
   const bridgeRoleImports: ReadonlyArray<readonly [string, RegExp]> = [
-    [ "src/providers/antigravity.ts", /from "\.\.\/agents\/bridge-role\.ts"/ ],
-    [ "src/providers/copilot.ts", /from "\.\.\/agents\/bridge-role\.ts"/ ],
+    ["src/providers/antigravity.ts", /from "\.\.\/agents\/bridge-role\.ts"/],
+    ["src/providers/copilot.ts", /from "\.\.\/agents\/bridge-role\.ts"/]
   ];
-  for (const [ path, bridgeRoleImportPattern ] of bridgeRoleImports) {
+  for (const [path, bridgeRoleImportPattern] of bridgeRoleImports) {
     const source = read(path);
     assert.match(source, bridgeRoleImportPattern, path);
     assert.match(source, /composeProviderPrompt\(agentRole, cwd\)/, path);
@@ -176,50 +273,79 @@ test("the installer ships every shared module the bridges import", () => {
   // it is the installed router crash-looping under launchd on
   // ERR_MODULE_NOT_FOUND, which reaches the operator as nothing more
   // informative than "Connection failed: error sending request".
-  const installer = read("scripts/install.sh");
   const materializer = read("src/platform/install-materializer.ts");
   const sources = [
     "src/router/server.ts",
     "src/providers/antigravity.ts",
     "src/providers/minimax.ts",
-    "src/providers/copilot.ts",
+    "src/providers/copilot.ts"
   ];
   const imported = new Set<string>();
   for (const source of sources) {
-    for (const match of read(source).matchAll(/from ["']\.\/(codex\/lib\/[a-z-]+\.mjs)["']/g)) {
-      imported.add(`scripts/${match[ 1 ]}`);
+    for (const match of read(source).matchAll(
+      /from ["']\.\/(codex\/lib\/[a-z-]+\.mjs)["']/g
+    )) {
+      imported.add(`scripts/${match[1]}`);
     }
-    for (const match of read(source).matchAll(/from ["']\.\.\/src\/([^"']+\.ts)["']/g)) {
-      imported.add(`src/${match[ 1 ]}`);
+    for (const match of read(source).matchAll(
+      /from ["']\.\.\/src\/([^"']+\.ts)["']/g
+    )) {
+      imported.add(`src/${match[1]}`);
     }
     if (source === "src/router/server.ts") {
-      for (const match of read(source).matchAll(/from ["']\.\/([^"']+\.ts)["']/g)) {
-        imported.add(`src/router/${match[ 1 ]}`);
+      for (const match of read(source).matchAll(
+        /from ["']\.\/([^"']+\.ts)["']/g
+      )) {
+        imported.add(`src/router/${match[1]}`);
       }
     }
   }
-  assert.ok(imported.size >= 3, "expected the bridges to share several modules");
+  assert.ok(
+    imported.size >= 3,
+    "expected the bridges to share several modules"
+  );
   for (const asset of [
     ...imported,
     "agents/prompts/base.md",
     "agents/prompts/leaf.md",
     "agents/prompts/orchestrator.md",
     "agents/prompts/code-search.md",
-    ".rulesync/skills/orchestration/SKILL.md",
+    ".rulesync/skills/orchestration/SKILL.md"
   ]) {
-    assert.ok(materializer.includes(asset), `materializer must deploy ${asset}`);
+    assert.ok(
+      materializer.includes(asset),
+      `materializer must deploy ${asset}`
+    );
   }
   assert.match(materializer, /agents\/prompts\/roles/);
-  for (const role of ["browser-tester", "default", "docs-researcher", "explorer", "orchestrator", "smart", "validator", "worker"]) {
-    assert.ok(read(`agents/prompts/roles/${role}.md`).trim(), `missing role prompt ${role}`);
+  for (const role of [
+    "browser-tester",
+    "default",
+    "docs-researcher",
+    "explorer",
+    "orchestrator",
+    "smart",
+    "validator",
+    "worker"
+  ]) {
+    assert.ok(
+      read(`agents/prompts/roles/${role}.md`).trim(),
+      `missing role prompt ${role}`
+    );
   }
 });
 
 test("the root delegation hook injects the same orchestrator prompt the bridges use", () => {
   const hook = read("scripts/enforce-root-delegation.sh");
   const typedHook = read("src/hooks/root-delegation.ts");
-  assert.match(typedHook, /join\(root, ['\"]agents['\"], ['\"]prompts['\"], ['\"]orchestrator\.md['\"]\)/);
-  assert.match(typedHook, /join\(root, ['\"]agents['\"], ['\"]prompts['\"], ['\"]code-search\.md['\"]\)/);
+  assert.match(
+    typedHook,
+    /join\(root, ["']agents["'], ["']prompts["'], ["']orchestrator\.md["']\)/
+  );
+  assert.match(
+    typedHook,
+    /join\(root, ["']agents["'], ["']prompts["'], ["']code-search\.md["']\)/
+  );
   // The policy text lives in one file; neither dispatch shim nor typed hook
   // carries an obsolete duplicate.
   assert.doesNotMatch(hook, /ROOT ORCHESTRATOR POLICY/);
@@ -241,7 +367,10 @@ test("web research policy and Playwright boundaries are enforced in role prompts
   assert.match(orchestrator, /strictly for delegated UI and browser testing/i);
 
   const browserTester = read("agents/prompts/roles/browser-tester.md");
-  assert.match(browserTester, /Playwright is strictly for UI and browser testing/);
+  assert.match(
+    browserTester,
+    /Playwright is strictly for UI and browser testing/
+  );
   assert.match(browserTester, /do not invent a generic browser substitute/);
   assert.match(browserTester, /Remain Playwright-only/);
 });

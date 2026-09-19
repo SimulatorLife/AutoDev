@@ -47,7 +47,7 @@ export const CODEX_TOOLS_SERVER = "codex";
 // Codex's default namespace. Its members are called by their bare names, as
 // recorded rollouts of Codex-served turns show (`exec`, `wait`).
 const DEFAULT_NAMESPACE = "functions";
-const HOSTED_WEB_SEARCH_TYPES = new Set([ "web_search", "web_search_preview" ]);
+const HOSTED_WEB_SEARCH_TYPES = new Set(["web_search", "web_search_preview"]);
 // MCP tool names must match this; a Codex tool that cannot be named in MCP
 // cannot be offered, and is skipped rather than renamed into something Codex
 // would not recognise on the way back.
@@ -57,7 +57,12 @@ function isRecord(value: unknown): value is JsonRecord {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
-function collect(entries: unknown, namespace: string | null, surface: CodexToolSurface, seen: Set<string>): void {
+function collect(
+  entries: unknown,
+  namespace: string | null,
+  surface: CodexToolSurface,
+  seen: Set<string>
+): void {
   for (const entry of Array.isArray(entries) ? entries : []) {
     if (!isRecord(entry)) continue;
     const type = entry.type;
@@ -66,22 +71,33 @@ function collect(entries: unknown, namespace: string | null, surface: CodexToolS
       continue;
     }
     if (type === "namespace") {
-      const name = typeof entry.name === "string" && entry.name.trim() ? entry.name.trim() : null;
+      const name =
+        typeof entry.name === "string" && entry.name.trim()
+          ? entry.name.trim()
+          : null;
       collect(entry.tools, name, surface, seen);
       continue;
     }
     if (type !== "custom" && type !== "function") continue;
     // Chat-completions style function tools nest their definition one level down.
-    const definition = type === "function" && isRecord(entry.function) ? entry.function : entry;
-    const name = typeof definition.name === "string" ? definition.name.trim() : "";
+    const definition =
+      type === "function" && isRecord(entry.function) ? entry.function : entry;
+    const name =
+      typeof definition.name === "string" ? definition.name.trim() : "";
     if (!MCP_TOOL_NAME.test(name) || seen.has(name)) continue;
     seen.add(name);
     surface.tools.push({
       kind: type,
       name,
-      description: typeof definition.description === "string" ? definition.description : "",
-      parameters: type === "function" && isRecord(definition.parameters) ? definition.parameters : null,
-      namespace: namespace && namespace !== DEFAULT_NAMESPACE ? namespace : null,
+      description:
+        typeof definition.description === "string"
+          ? definition.description
+          : "",
+      parameters:
+        type === "function" && isRecord(definition.parameters)
+          ? definition.parameters
+          : null,
+      namespace: namespace && namespace !== DEFAULT_NAMESPACE ? namespace : null
     });
   }
 }
@@ -93,7 +109,8 @@ export function codexToolSurface(payload: unknown): CodexToolSurface {
   const seen = new Set<string>();
   collect(payload.tools, null, surface, seen);
   for (const item of Array.isArray(payload.input) ? payload.input : []) {
-    if (isRecord(item) && item.type === "additional_tools") collect(item.tools, null, surface, seen);
+    if (isRecord(item) && item.type === "additional_tools")
+      collect(item.tools, null, surface, seen);
   }
   return surface;
 }
@@ -109,12 +126,15 @@ export function codexToolSurface(payload: unknown): CodexToolSurface {
  * entries point to it.
  */
 export function codexToolReference(tools: readonly CodexTool[]): string {
-  return tools.map((tool) => {
-    const input = tool.kind === "custom"
-      ? "Input: the tool's raw text, passed as the `input` string (for `exec`, JavaScript source with no markdown fences)."
-      : `Arguments (JSON schema): ${JSON.stringify(tool.parameters ?? { type: "object", properties: {} })}`;
-    return `### \`${tool.name}\`\n\n${tool.description.trim()}\n\n${input}`;
-  }).join("\n\n");
+  return tools
+    .map((tool) => {
+      const input =
+        tool.kind === "custom"
+          ? "Input: the tool's raw text, passed as the `input` string (for `exec`, JavaScript source with no markdown fences)."
+          : `Arguments (JSON schema): ${JSON.stringify(tool.parameters ?? { type: "object", properties: {} })}`;
+      return `### \`${tool.name}\`\n\n${tool.description.trim()}\n\n${input}`;
+    })
+    .join("\n\n");
 }
 
 /** The MCP `tools/list` entry that stands in for one Codex tool. */
@@ -130,21 +150,42 @@ export function mcpToolDefinition(tool: CodexTool): JsonRecord {
       description,
       inputSchema: {
         type: "object",
-        properties: { input: { type: "string", description: "The tool's raw input text." } },
-        required: [ "input" ],
-      },
+        properties: {
+          input: { type: "string", description: "The tool's raw input text." }
+        },
+        required: ["input"]
+      }
     };
   }
-  return { name: tool.name, description, inputSchema: tool.parameters ?? { type: "object", properties: {} } };
+  return {
+    name: tool.name,
+    description,
+    inputSchema: tool.parameters ?? { type: "object", properties: {} }
+  };
 }
 
-export interface ToolCallIds { itemId: string; callId: string }
+export interface ToolCallIds {
+  itemId: string;
+  callId: string;
+}
 
 /** The completed Responses output item for one call Claude made. */
-export function codexToolCallItem(tool: CodexTool, args: unknown, ids: ToolCallIds): JsonRecord {
+export function codexToolCallItem(
+  tool: CodexTool,
+  args: unknown,
+  ids: ToolCallIds
+): JsonRecord {
   if (tool.kind === "custom") {
-    const input = isRecord(args) && typeof args.input === "string" ? args.input : "";
-    return { id: ids.itemId, type: "custom_tool_call", status: "completed", call_id: ids.callId, name: tool.name, input };
+    const input =
+      isRecord(args) && typeof args.input === "string" ? args.input : "";
+    return {
+      id: ids.itemId,
+      type: "custom_tool_call",
+      status: "completed",
+      call_id: ids.callId,
+      name: tool.name,
+      input
+    };
   }
   return {
     id: ids.itemId,
@@ -153,49 +194,118 @@ export function codexToolCallItem(tool: CodexTool, args: unknown, ids: ToolCallI
     call_id: ids.callId,
     name: tool.name,
     ...(tool.namespace ? { namespace: tool.namespace } : {}),
-    arguments: JSON.stringify(isRecord(args) ? args : {}),
+    arguments: JSON.stringify(isRecord(args) ? args : {})
   };
 }
 
 /** The SSE events that stream one call item, emitted whole once the call is known. */
-export function codexToolCallEvents(item: JsonRecord, outputIndex: number): Array<[ string, JsonRecord ]> {
+export function codexToolCallEvents(
+  item: JsonRecord,
+  outputIndex: number
+): Array<[string, JsonRecord]> {
   const itemId = String(item.id);
   if (item.type === "custom_tool_call") {
     const input = String(item.input ?? "");
     return [
-      [ "response.output_item.added", { type: "response.output_item.added", output_index: outputIndex, item: { ...item, input: "", status: "in_progress" } } ],
-      [ "response.custom_tool_call_input.delta", { type: "response.custom_tool_call_input.delta", item_id: itemId, output_index: outputIndex, delta: input } ],
-      [ "response.custom_tool_call_input.done", { type: "response.custom_tool_call_input.done", item_id: itemId, output_index: outputIndex, input } ],
-      [ "response.output_item.done", { type: "response.output_item.done", output_index: outputIndex, item } ],
+      [
+        "response.output_item.added",
+        {
+          type: "response.output_item.added",
+          output_index: outputIndex,
+          item: { ...item, input: "", status: "in_progress" }
+        }
+      ],
+      [
+        "response.custom_tool_call_input.delta",
+        {
+          type: "response.custom_tool_call_input.delta",
+          item_id: itemId,
+          output_index: outputIndex,
+          delta: input
+        }
+      ],
+      [
+        "response.custom_tool_call_input.done",
+        {
+          type: "response.custom_tool_call_input.done",
+          item_id: itemId,
+          output_index: outputIndex,
+          input
+        }
+      ],
+      [
+        "response.output_item.done",
+        { type: "response.output_item.done", output_index: outputIndex, item }
+      ]
     ];
   }
   const argumentsText = String(item.arguments ?? "");
   return [
-    [ "response.output_item.added", { type: "response.output_item.added", output_index: outputIndex, item: { ...item, arguments: "", status: "in_progress" } } ],
-    [ "response.function_call_arguments.delta", { type: "response.function_call_arguments.delta", item_id: itemId, output_index: outputIndex, delta: argumentsText } ],
-    [ "response.function_call_arguments.done", { type: "response.function_call_arguments.done", item_id: itemId, output_index: outputIndex, arguments: argumentsText } ],
-    [ "response.output_item.done", { type: "response.output_item.done", output_index: outputIndex, item } ],
+    [
+      "response.output_item.added",
+      {
+        type: "response.output_item.added",
+        output_index: outputIndex,
+        item: { ...item, arguments: "", status: "in_progress" }
+      }
+    ],
+    [
+      "response.function_call_arguments.delta",
+      {
+        type: "response.function_call_arguments.delta",
+        item_id: itemId,
+        output_index: outputIndex,
+        delta: argumentsText
+      }
+    ],
+    [
+      "response.function_call_arguments.done",
+      {
+        type: "response.function_call_arguments.done",
+        item_id: itemId,
+        output_index: outputIndex,
+        arguments: argumentsText
+      }
+    ],
+    [
+      "response.output_item.done",
+      { type: "response.output_item.done", output_index: outputIndex, item }
+    ]
   ];
 }
 
-const TOOL_OUTPUT_TYPES = new Set([ "function_call_output", "custom_tool_call_output" ]);
+const TOOL_OUTPUT_TYPES = new Set([
+  "function_call_output",
+  "custom_tool_call_output"
+]);
 
 /** An MCP `tools/call` result carrying what Codex returned for the call. */
 export function mcpResultFromCodexOutput(output: unknown): JsonRecord {
   const content: JsonRecord[] = [];
-  const addText = (text: string) => { if (text) content.push({ type: "text", text }); };
+  const addText = (text: string) => {
+    if (text) content.push({ type: "text", text });
+  };
   if (typeof output === "string") addText(output);
   else if (Array.isArray(output)) {
     for (const part of output) {
-      if (typeof part === "string") { addText(part); continue; }
+      if (typeof part === "string") {
+        addText(part);
+        continue;
+      }
       if (!isRecord(part)) continue;
-      if (typeof part.text === "string") { addText(part.text); continue; }
+      if (typeof part.text === "string") {
+        addText(part.text);
+        continue;
+      }
       const url = typeof part.image_url === "string" ? part.image_url : null;
       const match = url ? /^data:([^;,]+);base64,(.*)$/s.exec(url) : null;
-      if (match) content.push({ type: "image", mimeType: match[1], data: match[2] });
+      if (match)
+        content.push({ type: "image", mimeType: match[1], data: match[2] });
     }
-  } else if (isRecord(output) && typeof output.content === "string") addText(output.content);
-  else if (output !== undefined && output !== null) addText(JSON.stringify(output));
+  } else if (isRecord(output) && typeof output.content === "string")
+    addText(output.content);
+  else if (output !== undefined && output !== null)
+    addText(JSON.stringify(output));
   if (content.length === 0) content.push({ type: "text", text: "(no output)" });
   return { content };
 }
@@ -214,19 +324,24 @@ export function codexOutputFailed(output: unknown): boolean {
 function textOf(content: unknown): string {
   if (typeof content === "string") return content;
   if (!Array.isArray(content)) return "";
-  return content.map((part) => {
-    if (typeof part === "string") return part;
-    if (!isRecord(part)) return "";
-    if (typeof part.text === "string") return part.text;
-    if (typeof part.image_url === "string" || part.type === "input_image") return "[image]";
-    return "";
-  }).filter(Boolean).join("\n");
+  return content
+    .map((part) => {
+      if (typeof part === "string") return part;
+      if (!isRecord(part)) return "";
+      if (typeof part.text === "string") return part.text;
+      if (typeof part.image_url === "string" || part.type === "input_image")
+        return "[image]";
+      return "";
+    })
+    .filter(Boolean)
+    .join("\n");
 }
 
 function outputText(output: unknown): string {
   if (typeof output === "string") return output;
   if (Array.isArray(output)) return textOf(output);
-  if (isRecord(output) && typeof output.content === "string") return output.content;
+  if (isRecord(output) && typeof output.content === "string")
+    return output.content;
   return output === undefined || output === null ? "" : JSON.stringify(output);
 }
 
@@ -241,22 +356,37 @@ function outputText(output: unknown): string {
  */
 export function renderCodexTranscript(input: unknown): string {
   if (typeof input === "string") return `<user>\n${input}\n</user>`;
-  if (!Array.isArray(input)) return `<user>\n${JSON.stringify(input ?? "")}\n</user>`;
+  if (!Array.isArray(input))
+    return `<user>\n${JSON.stringify(input ?? "")}\n</user>`;
   const parts: string[] = [];
   for (const item of input) {
-    if (typeof item === "string") { parts.push(`<user>\n${item}\n</user>`); continue; }
+    if (typeof item === "string") {
+      parts.push(`<user>\n${item}\n</user>`);
+      continue;
+    }
     if (!isRecord(item)) continue;
     const type = typeof item.type === "string" ? item.type : "message";
     if (type === "message") {
-      const role = item.role === "assistant" || item.role === "developer" || item.role === "system" ? item.role : "user";
+      const role =
+        item.role === "assistant" ||
+        item.role === "developer" ||
+        item.role === "system"
+          ? item.role
+          : "user";
       const text = textOf(item.content ?? item.text);
       if (text) parts.push(`<${role}>\n${text}\n</${role}>`);
     } else if (type === "custom_tool_call") {
-      parts.push(`<tool_call name="${String(item.name)}" call_id="${String(item.call_id)}">\n${String(item.input ?? "")}\n</tool_call>`);
+      parts.push(
+        `<tool_call name="${String(item.name)}" call_id="${String(item.call_id)}">\n${String(item.input ?? "")}\n</tool_call>`
+      );
     } else if (type === "function_call") {
-      parts.push(`<tool_call name="${String(item.name)}" call_id="${String(item.call_id)}">\n${String(item.arguments ?? "")}\n</tool_call>`);
+      parts.push(
+        `<tool_call name="${String(item.name)}" call_id="${String(item.call_id)}">\n${String(item.arguments ?? "")}\n</tool_call>`
+      );
     } else if (TOOL_OUTPUT_TYPES.has(type)) {
-      parts.push(`<tool_output call_id="${String(item.call_id)}">\n${outputText(item.output)}\n</tool_output>`);
+      parts.push(
+        `<tool_output call_id="${String(item.call_id)}">\n${outputText(item.output)}\n</tool_output>`
+      );
     }
     // Reasoning items are opaque references to another provider's state, and
     // `additional_tools` is the tool surface itself; neither is conversation.

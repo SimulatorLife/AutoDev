@@ -77,6 +77,11 @@ jobs:
       - name: Validate Shell scripts
         run: pnpm run validate:shell
 
+      - name: Validate formatting and lint
+        run: |
+          pnpm run format:check
+          pnpm run lint:ci
+
       - name: Validate AutoDev tests
         run: |
           pnpm run typecheck

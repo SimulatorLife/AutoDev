@@ -20,7 +20,8 @@ import { pathToFileURL } from "node:url";
 const BRIDGE_URL = process.env.AUTODEV_BRIDGE_URL ?? "";
 const BRIDGE_TOKEN = process.env.AUTODEV_BRIDGE_TOKEN ?? "";
 const SESSION = process.env.AUTODEV_SPAWN_SESSION ?? "";
-const CALL_TIMEOUT_MS = Number.parseInt(process.env.AUTODEV_SPAWN_CALL_TIMEOUT_MS ?? "", 10) || 600_000;
+const CALL_TIMEOUT_MS =
+  Number.parseInt(process.env.AUTODEV_SPAWN_CALL_TIMEOUT_MS ?? "") || 600_000;
 const PROTOCOL_VERSION = "2025-06-18";
 
 type JsonRpcId = string | number | null;
@@ -51,7 +52,7 @@ const TOOL = {
     "",
     "Spawn a whole batch in one call when the work is independent -- that is cheaper",
     "and runs in parallel. Each child must get the full context it needs: it cannot",
-    "see this conversation.",
+    "see this conversation."
   ].join("\n"),
   inputSchema: {
     type: "object",
@@ -65,19 +66,20 @@ const TOOL = {
           properties: {
             agent_type: {
               type: "string",
-              description: "Configured role: explorer, worker, validator, docs-researcher, browser-tester, smart, or default.",
+              description:
+                "Configured role: explorer, worker, validator, docs-researcher, browser-tester, smart, or default."
             },
             message: {
               type: "string",
-              description: "The complete, self-contained task for this child.",
-            },
+              description: "The complete, self-contained task for this child."
+            }
           },
-          required: ["message"],
-        },
-      },
+          required: ["message"]
+        }
+      }
     },
-    required: ["children"],
-  },
+    required: ["children"]
+  }
 } as const;
 
 type Send = (message: JsonObject) => void;
@@ -86,20 +88,36 @@ function send(message: JsonObject): void {
   process.stdout.write(`${JSON.stringify(message)}\n`);
 }
 
-function reply(id: JsonRpcId | undefined, result: unknown, emit: Send = send): void {
+function reply(
+  id: JsonRpcId | undefined,
+  result: unknown,
+  emit: Send = send
+): void {
   emit({ jsonrpc: "2.0", id, result });
 }
 
-function fail(id: JsonRpcId | undefined, code: number, message: string, emit: Send = send): void {
+function fail(
+  id: JsonRpcId | undefined,
+  code: number,
+  message: string,
+  emit: Send = send
+): void {
   emit({ jsonrpc: "2.0", id, error: { code, message } });
 }
 
 /** A tool result the model reads as a failure, not as a transport error. */
-function toolError(id: JsonRpcId | undefined, text: string, emit: Send = send): void {
+function toolError(
+  id: JsonRpcId | undefined,
+  text: string,
+  emit: Send = send
+): void {
   reply(id, { content: [{ type: "text", text }], isError: true }, emit);
 }
 
-async function callBridge(path: string, body: JsonObject): Promise<BridgeResponse> {
+async function callBridge(
+  path: string,
+  body: JsonObject
+): Promise<BridgeResponse> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), CALL_TIMEOUT_MS);
   try {
@@ -107,10 +125,10 @@ async function callBridge(path: string, body: JsonObject): Promise<BridgeRespons
       method: "POST",
       headers: {
         "content-type": "application/json",
-        ...(BRIDGE_TOKEN ? { authorization: `Bearer ${BRIDGE_TOKEN}` } : {}),
+        ...(BRIDGE_TOKEN ? { authorization: `Bearer ${BRIDGE_TOKEN}` } : {})
       },
       body: JSON.stringify({ session: SESSION, ...body }),
-      signal: controller.signal,
+      signal: controller.signal
     });
     const text = await response.text();
     let parsed: JsonObject | null = null;
@@ -126,57 +144,96 @@ async function callBridge(path: string, body: JsonObject): Promise<BridgeRespons
   }
 }
 
-export async function handleMessage(message: JsonRpcMessage, emit: Send = send): Promise<void> {
+/** Whether the bridge lets this turn delegate. An unreachable bridge means no tool rather than a broken one. */
+async function spawnOffered(): Promise<boolean> {
+  try {
+    const attach = await callBridge("/v1/bridge-spawn/attach", {
+      pid: process.pid,
+      ppid: process.ppid
+    });
+    return attach.ok && attach.body?.spawnAllowed === true;
+  } catch {
+    return false;
+  }
+}
+
+async function callSpawnTool(
+  id: JsonRpcId | undefined,
+  params: JsonObject | undefined,
+  emit: Send
+): Promise<void> {
+  const name = params?.name;
+  if (name !== TOOL.name) {
+    fail(id, -32_602, `unknown tool: ${String(name)}`, emit);
+    return;
+  }
+  const argumentsObject = isRecord(params?.arguments) ? params.arguments : null;
+  const children = argumentsObject?.children;
+  if (!Array.isArray(children) || children.length === 0) {
+    toolError(
+      id,
+      "spawn_subagent requires a non-empty `children` array.",
+      emit
+    );
+    return;
+  }
+  try {
+    const result = await callBridge("/v1/bridge-spawn/call", {
+      children,
+      pid: process.pid,
+      ppid: process.ppid
+    });
+    if (!result.ok) {
+      const error =
+        typeof result.body?.error === "string"
+          ? result.body.error
+          : `Delegation failed (HTTP ${result.status}); no child was created. Do not retry blindly or take over delegated scopes.`;
+      toolError(id, error, emit);
+      return;
+    }
+    const text =
+      typeof result.body?.text === "string" ? result.body.text : result.text;
+    reply(id, { content: [{ type: "text", text }] }, emit);
+  } catch (error: unknown) {
+    const reason = isAbortError(error) ? "timed out" : "failed";
+    toolError(
+      id,
+      `Delegation ${reason}; no child was created. Do not retry blindly or take over delegated scopes. Close known terminal child handles, retry once if appropriate, otherwise report that delegation is unavailable.`,
+      emit
+    );
+  }
+}
+
+export async function handleMessage(
+  message: JsonRpcMessage,
+  emit: Send = send
+): Promise<void> {
   const { id, method, params } = message;
 
   if (method === "initialize") {
-    reply(id, {
-      protocolVersion: typeof params?.protocolVersion === "string" ? params.protocolVersion : PROTOCOL_VERSION,
-      capabilities: { tools: {} },
-      serverInfo: { name: "autodev-spawn", version: "1.0.0" },
-    }, emit);
+    reply(
+      id,
+      {
+        protocolVersion:
+          typeof params?.protocolVersion === "string"
+            ? params.protocolVersion
+            : PROTOCOL_VERSION,
+        capabilities: { tools: {} },
+        serverInfo: { name: "autodev-spawn", version: "1.0.0" }
+      },
+      emit
+    );
     return;
   }
 
   if (method === "tools/list") {
-    // The bridge decides whether this turn may delegate at all. An unreachable
-    // bridge means no tool rather than a broken one.
-    let offered = false;
-    try {
-      const attach = await callBridge("/v1/bridge-spawn/attach", { pid: process.pid, ppid: process.ppid });
-      offered = attach.ok && attach.body?.spawnAllowed === true;
-    } catch {
-      offered = false;
-    }
-    reply(id, { tools: offered ? [TOOL] : [] }, emit);
+    // The bridge decides whether this turn may delegate at all.
+    reply(id, { tools: (await spawnOffered()) ? [TOOL] : [] }, emit);
     return;
   }
 
   if (method === "tools/call") {
-    const name = params?.name;
-    if (name !== TOOL.name) {
-      fail(id, -32602, `unknown tool: ${String(name)}`, emit);
-      return;
-    }
-    const argumentsObject = isRecord(params?.arguments) ? params.arguments : null;
-    const children = argumentsObject?.children;
-    if (!Array.isArray(children) || children.length === 0) {
-      toolError(id, "spawn_subagent requires a non-empty `children` array.", emit);
-      return;
-    }
-    try {
-      const result = await callBridge("/v1/bridge-spawn/call", { children, pid: process.pid, ppid: process.ppid });
-      if (!result.ok) {
-        const error = typeof result.body?.error === "string" ? result.body.error : `Delegation failed (HTTP ${result.status}); no child was created. Do not retry blindly or take over delegated scopes.`;
-        toolError(id, error, emit);
-        return;
-      }
-      const text = typeof result.body?.text === "string" ? result.body.text : result.text;
-      reply(id, { content: [{ type: "text", text }] }, emit);
-    } catch (error: unknown) {
-      const reason = isAbortError(error) ? "timed out" : "failed";
-      toolError(id, `Delegation ${reason}; no child was created. Do not retry blindly or take over delegated scopes. Close known terminal child handles, retry once if appropriate, otherwise report that delegation is unavailable.`, emit);
-    }
+    await callSpawnTool(id, params, emit);
     return;
   }
 
@@ -186,7 +243,9 @@ export async function handleMessage(message: JsonRpcMessage, emit: Send = send):
 
 export function runStdio(): void {
   if (!BRIDGE_URL) {
-    process.stderr.write("autodev-spawn: AUTODEV_BRIDGE_URL is unset; the spawn tool will not be offered.\n");
+    process.stderr.write(
+      "autodev-spawn: AUTODEV_BRIDGE_URL is unset; the spawn tool will not be offered.\n"
+    );
   }
   const rl = createInterface({ input: process.stdin });
   rl.on("line", (line: string) => {
@@ -199,12 +258,13 @@ export function runStdio(): void {
     }
     if (!isRecord(parsed)) return;
     const message: JsonRpcMessage = {
-      ...(parsed.id !== undefined ? { id: asJsonRpcId(parsed.id) } : {}),
+      ...(parsed.id === undefined ? {} : { id: asJsonRpcId(parsed.id) }),
       ...(typeof parsed.method === "string" ? { method: parsed.method } : {}),
-      ...(isRecord(parsed.params) ? { params: parsed.params } : {}),
+      ...(isRecord(parsed.params) ? { params: parsed.params } : {})
     };
     void handleMessage(message).catch((error: unknown) => {
-      if (message.id !== undefined) fail(message.id, -32603, errorMessage(error));
+      if (message.id !== undefined)
+        fail(message.id, -32_603, errorMessage(error));
     });
   });
 }
@@ -214,7 +274,11 @@ function isRecord(value: unknown): value is JsonObject {
 }
 
 function asJsonRpcId(value: unknown): JsonRpcId {
-  return typeof value === "string" || typeof value === "number" || value === null ? value : String(value);
+  return typeof value === "string" ||
+    typeof value === "number" ||
+    value === null
+    ? value
+    : String(value);
 }
 
 function isAbortError(error: unknown): boolean {
@@ -225,6 +289,9 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (
+  process.argv[1] &&
+  import.meta.url === pathToFileURL(process.argv[1]).href
+) {
   runStdio();
 }

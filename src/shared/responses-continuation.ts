@@ -25,8 +25,11 @@ export interface AwaitedToolResults {
   messages: ResponsesItem[];
 }
 
-const TOOL_OUTPUT_TYPES = new Set([ "function_call_output", "custom_tool_call_output" ]);
-const INJECTED_ROLES = new Set([ "user", "developer" ]);
+const TOOL_OUTPUT_TYPES = new Set([
+  "function_call_output",
+  "custom_tool_call_output"
+]);
+const INJECTED_ROLES = new Set(["user", "developer"]);
 
 function isRecord(value: unknown): value is ResponsesItem {
   return value !== null && typeof value === "object" && !Array.isArray(value);
@@ -43,7 +46,10 @@ export function awaitedToolResults(input: unknown): AwaitedToolResults {
         tail.unshift({ item, output: true });
         continue;
       }
-      if ((item.type === undefined || item.type === "message") && INJECTED_ROLES.has(String(item.role))) {
+      if (
+        (item.type === undefined || item.type === "message") &&
+        INJECTED_ROLES.has(String(item.role))
+      ) {
         tail.unshift({ item, output: false });
         continue;
       }
@@ -51,11 +57,12 @@ export function awaitedToolResults(input: unknown): AwaitedToolResults {
     }
   }
   const firstOutput = tail.findIndex((entry) => entry.output);
-  if (firstOutput < 0) return { outputs, messages: [] };
+  if (firstOutput === -1) return { outputs, messages: [] };
   const messages: ResponsesItem[] = [];
   for (const { item, output } of tail.slice(firstOutput)) {
     if (!output) messages.push(item);
-    else if (typeof item.call_id === "string" && item.call_id) outputs.set(item.call_id, item.output);
+    else if (typeof item.call_id === "string" && item.call_id)
+      outputs.set(item.call_id, item.output);
   }
   return { outputs, messages };
 }

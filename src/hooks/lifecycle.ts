@@ -1,9 +1,18 @@
-import { LaunchdClient } from '../platform/macos/launchd.ts';
+import { LaunchdClient } from "../platform/macos/launchd.ts";
 
-export interface ManagedService { label: string; plist: string }
-export interface ServiceLifecycle { bootstrap(service: ManagedService): void; restart(service: ManagedService): void; isHealthy(service: ManagedService): boolean }
+export interface ManagedService {
+  label: string;
+  plist: string;
+}
+export interface ServiceLifecycle {
+  bootstrap(service: ManagedService): void;
+  restart(service: ManagedService): void;
+  isHealthy(service: ManagedService): boolean;
+}
 
-export function createMacosServiceLifecycle(client = new LaunchdClient()): ServiceLifecycle {
+export function createMacosServiceLifecycle(
+  client = new LaunchdClient()
+): ServiceLifecycle {
   return {
     bootstrap(service) {
       if (client.isLoaded(service.label)) client.bootout(service.label);
@@ -14,7 +23,10 @@ export function createMacosServiceLifecycle(client = new LaunchdClient()): Servi
       else client.bootstrap(service.plist);
     },
     isHealthy(service) {
-      return client.isLoaded(service.label) && client.print(service.label).includes(service.label);
-    },
+      return (
+        client.isLoaded(service.label) &&
+        client.print(service.label).includes(service.label)
+      );
+    }
   };
 }

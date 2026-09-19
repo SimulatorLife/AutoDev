@@ -101,7 +101,7 @@ export type ExecToolCallSseEvent = readonly [
   ["response.output_item.added", AddedToolCallPayload],
   ["response.custom_tool_call_input.delta", ToolCallInputDeltaPayload],
   ["response.custom_tool_call_input.done", ToolCallInputDonePayload],
-  ["response.output_item.done", CompletedToolCallPayload],
+  ["response.output_item.done", CompletedToolCallPayload]
 ];
 
 /**
@@ -120,7 +120,7 @@ export function buildRecoveryScript(parentId: string): string {
     `const recoveryParentId = ${encodedParent};`,
     `const recoveryTerminal = new Set(["completed", "errored", "interrupted", "shutdown", "not_found"]);`,
     "const recoveryObjects = (value, seen = new Set()) => {",
-    "  if (!value || typeof value !== \"object\" || seen.has(value)) return [];",
+    '  if (!value || typeof value !== "object" || seen.has(value)) return [];',
     "  seen.add(value);",
     "  const found = [value];",
     "  if (Array.isArray(value)) for (const item of value) found.push(...recoveryObjects(item, seen));",
@@ -128,35 +128,44 @@ export function buildRecoveryScript(parentId: string): string {
     "  return found;",
     "};",
     "const recoveryParse = (value) => {",
-    "  if (value && typeof value === \"object\") return value;",
-    "  if (typeof value !== \"string\") return null;",
+    '  if (value && typeof value === "object") return value;',
+    '  if (typeof value !== "string") return null;',
     "  try { return JSON.parse(value); } catch { return null; }",
     "};",
     "const recoverOwnedTerminalChildren = async () => {",
-    "  if (typeof tools.mcp__codex_app__read_thread !== \"function\") return;",
+    '  if (typeof tools.mcp__codex_app__read_thread !== "function") return;',
     "  let history;",
     "  try { history = await tools.mcp__codex_app__read_thread({ threadId: recoveryParentId, turnLimit: 10, includeOutputs: false, maxOutputCharsPerItem: 2000 }); } catch { return; }",
     "  const parsed = [history, ...(history?.content ?? [])].flatMap((value) => { const object = recoveryParse(value?.text ?? value); return object ? [object] : []; });",
-    "  const calls = recoveryObjects(parsed).filter((item) => item?.type === \"collabAgentToolCall\" && item.senderThreadId === recoveryParentId && Array.isArray(item.receiverThreadIds));",
-    "  const childIds = [...new Set(calls.flatMap((item) => item.receiverThreadIds.filter((id) => typeof id === \"string\" && id.trim())))];",
-    "  if (typeof tools.multi_agent_v1__wait_agent !== \"function\" || typeof tools.multi_agent_v1__close_agent !== \"function\") return;",
+    '  const calls = recoveryObjects(parsed).filter((item) => item?.type === "collabAgentToolCall" && item.senderThreadId === recoveryParentId && Array.isArray(item.receiverThreadIds));',
+    '  const childIds = [...new Set(calls.flatMap((item) => item.receiverThreadIds.filter((id) => typeof id === "string" && id.trim())))];',
+    '  if (typeof tools.multi_agent_v1__wait_agent !== "function" || typeof tools.multi_agent_v1__close_agent !== "function") return;',
     "  for (const childId of childIds) {",
     "    let waited;",
     "    try { waited = await tools.multi_agent_v1__wait_agent({ targets: [childId], timeout_ms: 30000 }); } catch { continue; }",
     "    const status = waited?.status?.[childId];",
-    "    const terminal = typeof status === \"string\" ? recoveryTerminal.has(status) : Boolean(status && typeof status === \"object\" && Object.keys(status).some((key) => recoveryTerminal.has(key)));",
+    '    const terminal = typeof status === "string" ? recoveryTerminal.has(status) : Boolean(status && typeof status === "object" && Object.keys(status).some((key) => recoveryTerminal.has(key)));',
     "    if (!terminal) continue;",
-    "    try { await tools.multi_agent_v1__close_agent({ target: childId }); text(JSON.stringify({ recovery_status: \"closed\", child_id: childId, previous_status: status })); } catch { }",
+    '    try { await tools.multi_agent_v1__close_agent({ target: childId }); text(JSON.stringify({ recovery_status: "closed", child_id: childId, previous_status: status })); } catch { }',
     "  }",
     "};",
     "await recoverOwnedTerminalChildren();",
-    "",
+    ""
   ].join("\n");
 }
 
-export function buildSpawnScript(children: readonly SpawnChild[], { yieldTimeMs = DEFAULT_YIELD_MS, recoverParentId = null }: SpawnScriptOptions = {}): string {
+export function buildSpawnScript(
+  children: readonly SpawnChild[],
+  {
+    yieldTimeMs = DEFAULT_YIELD_MS,
+    recoverParentId = null
+  }: SpawnScriptOptions = {}
+): string {
   const tasks = children.map((child) => {
-    const agentType = typeof child.agentType === "string" && child.agentType.trim() ? child.agentType.trim() : null;
+    const agentType =
+      typeof child.agentType === "string" && child.agentType.trim()
+        ? child.agentType.trim()
+        : null;
     const message = typeof child.message === "string" ? child.message : "";
     // JSON.stringify is the escaping here: the script is source text, and a
     // prompt containing quotes, newlines or a `*/` would otherwise end the
@@ -165,15 +174,17 @@ export function buildSpawnScript(children: readonly SpawnChild[], { yieldTimeMs 
       ? `{ agent_type: ${JSON.stringify(agentType)}, message: ${JSON.stringify(message)} }`
       : `{ message: ${JSON.stringify(message)} }`;
   });
-  if (tasks.length === 0) throw new Error("buildSpawnScript requires at least one child");
-  const recovery = recoverParentId === null ? "" : buildRecoveryScript(recoverParentId);
+  if (tasks.length === 0)
+    throw new Error("buildSpawnScript requires at least one child");
+  const recovery =
+    recoverParentId === null ? "" : buildRecoveryScript(recoverParentId);
   return [
     `// @exec: ${JSON.stringify({ yield_time_ms: yieldTimeMs })}`,
     ...(recovery ? [recovery] : []),
     `const tasks = [${tasks.join(", ")}];`,
     `const out = await Promise.allSettled(tasks.map((t) => tools.${SPAWN_TOOL}(t)));`,
     `out.forEach((result) => text(JSON.stringify(result.status === "fulfilled" ? { spawn_status: "created", ...(result.value && typeof result.value === "object" ? result.value : {}) } : { spawn_status: "rejected", agent_id: null, error: String(result.reason?.message ?? result.reason) })));`,
-    "",
+    ""
   ].join("\n");
 }
 
@@ -188,7 +199,15 @@ export function buildSpawnScript(children: readonly SpawnChild[], { yieldTimeMs 
  */
 export function parseSpawnResults(output: unknown): SpawnResult[] {
   const parts = Array.isArray(output)
-    ? output.map((part: unknown) => typeof part === "string" ? part : isRecord(part) ? part.text : undefined).filter((text): text is string => typeof text === "string")
+    ? output
+        .map((part: unknown) =>
+          typeof part === "string"
+            ? part
+            : isRecord(part)
+              ? part.text
+              : undefined
+        )
+        .filter((text): text is string => typeof text === "string")
     : [typeof output === "string" ? output : ""];
   const results: SpawnResult[] = [];
   for (const part of parts) {
@@ -197,8 +216,16 @@ export function parseSpawnResults(output: unknown): SpawnResult[] {
       if (!trimmed.startsWith("{")) continue;
       try {
         const parsed: unknown = JSON.parse(trimmed);
-        if (isRecord(parsed) && typeof parsed.agent_id === "string" && parsed.agent_id.trim()) {
-          results.push({ agentId: parsed.agent_id, nickname: typeof parsed.nickname === "string" ? parsed.nickname : null });
+        if (
+          isRecord(parsed) &&
+          typeof parsed.agent_id === "string" &&
+          parsed.agent_id.trim()
+        ) {
+          results.push({
+            agentId: parsed.agent_id,
+            nickname:
+              typeof parsed.nickname === "string" ? parsed.nickname : null
+          });
         }
       } catch {
         // Not a result line; the script may legitimately text() other things.
@@ -215,7 +242,10 @@ export function parseSpawnResults(output: unknown): SpawnResult[] {
  * session id, and a call id travels back through the model's own context.
  */
 export function mintCallId(sessionKey: string, sequence: number): string {
-  const digest = createHash("sha256").update(sessionKey).digest("hex").slice(0, 8);
+  const digest = createHash("sha256")
+    .update(sessionKey)
+    .digest("hex")
+    .slice(0, 8);
   return `call_${digest}_${sequence}`;
 }
 
@@ -231,14 +261,63 @@ export function mintCallItemId(): string {
  * mid-stream backstop reconstructs `output` from the items it saw and would
  * ship a call with truncated source for Codex to execute.
  */
-export function execToolCallSseEvents({ itemId, callId, source, outputIndex = 0 }: { itemId: string; callId: string; source: string; outputIndex?: number }): ExecToolCallSseEvent {
-  const base = { id: itemId, type: "custom_tool_call" as const, call_id: callId, name: EXEC_TOOL as typeof EXEC_TOOL };
-  const completed: CustomToolCallItem = { ...base, input: source, status: "completed" };
+export function execToolCallSseEvents({
+  itemId,
+  callId,
+  source,
+  outputIndex = 0
+}: {
+  itemId: string;
+  callId: string;
+  source: string;
+  outputIndex?: number;
+}): ExecToolCallSseEvent {
+  const base = {
+    id: itemId,
+    type: "custom_tool_call" as const,
+    call_id: callId,
+    name: EXEC_TOOL as typeof EXEC_TOOL
+  };
+  const completed: CustomToolCallItem = {
+    ...base,
+    input: source,
+    status: "completed"
+  };
   return [
-    ["response.output_item.added", { type: "response.output_item.added", output_index: outputIndex, item: { ...base, input: "", status: "in_progress" } }],
-    ["response.custom_tool_call_input.delta", { type: "response.custom_tool_call_input.delta", item_id: itemId, output_index: outputIndex, delta: source }],
-    ["response.custom_tool_call_input.done", { type: "response.custom_tool_call_input.done", item_id: itemId, output_index: outputIndex, input: source }],
-    ["response.output_item.done", { type: "response.output_item.done", output_index: outputIndex, item: completed }],
+    [
+      "response.output_item.added",
+      {
+        type: "response.output_item.added",
+        output_index: outputIndex,
+        item: { ...base, input: "", status: "in_progress" }
+      }
+    ],
+    [
+      "response.custom_tool_call_input.delta",
+      {
+        type: "response.custom_tool_call_input.delta",
+        item_id: itemId,
+        output_index: outputIndex,
+        delta: source
+      }
+    ],
+    [
+      "response.custom_tool_call_input.done",
+      {
+        type: "response.custom_tool_call_input.done",
+        item_id: itemId,
+        output_index: outputIndex,
+        input: source
+      }
+    ],
+    [
+      "response.output_item.done",
+      {
+        type: "response.output_item.done",
+        output_index: outputIndex,
+        item: completed
+      }
+    ]
   ];
 }
 
@@ -252,7 +331,12 @@ export function execToolCallSseEvents({ itemId, callId, source, outputIndex = 0 
 export function pendingToolCallOutputs(input: unknown): Map<string, unknown> {
   const outputs = new Map<string, unknown>();
   for (const item of Array.isArray(input) ? input : []) {
-    if (!isRecord(item) || (item.type !== "custom_tool_call_output" && item.type !== "function_call_output")) continue;
+    if (
+      !isRecord(item) ||
+      (item.type !== "custom_tool_call_output" &&
+        item.type !== "function_call_output")
+    )
+      continue;
     if (typeof item.call_id !== "string" || !item.call_id) continue;
     outputs.set(item.call_id, item.output);
   }

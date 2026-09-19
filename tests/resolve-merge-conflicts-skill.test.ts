@@ -2,13 +2,17 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 
-const read = (path: string): string => readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
+const read = (path: string): string =>
+  readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
 
-const installer = read("scripts/install.sh");
 const materializer = read("src/platform/install-materializer.ts");
 const skill = read(".rulesync/skills/resolve-merge-conflicts/SKILL.md");
-const helper = read(".rulesync/skills/resolve-merge-conflicts/scripts/extract_conflict_context.py");
-const notices = read(".rulesync/skills/resolve-merge-conflicts/THIRD_PARTY_NOTICES.md");
+const helper = read(
+  ".rulesync/skills/resolve-merge-conflicts/scripts/extract_conflict_context.py"
+);
+const notices = read(
+  ".rulesync/skills/resolve-merge-conflicts/THIRD_PARTY_NOTICES.md"
+);
 
 test("resolve-merge-conflicts is installed as a user-level skill", () => {
   assert.match(materializer, /code-simplification/);
@@ -18,7 +22,10 @@ test("resolve-merge-conflicts is installed as a user-level skill", () => {
 
 test("merge conflict skill uses the compact extractor before full-file inspection", () => {
   assert.match(skill, /## Compact Conflict Context First/);
-  assert.match(skill, /\$HOME\/\.agents\/skills\/resolve-merge-conflicts\/scripts\/extract_conflict_context\.py/);
+  assert.match(
+    skill,
+    /\$HOME\/\.agents\/skills\/resolve-merge-conflicts\/scripts\/extract_conflict_context\.py/
+  );
   assert.match(skill, /--file path\/to\/file/);
   assert.match(skill, /--all/);
   assert.match(skill, /--json/);
@@ -38,7 +45,10 @@ test("bundled conflict helper extracts index and marker context without resolvin
   assert.match(helper, /--json/);
   assert.match(helper, /--context/);
   assert.match(helper, /--max-lines/);
-  assert.doesNotMatch(helper, /\["git",[^\n]*(?:add|checkout|merge|rebase|cherry-pick)/);
+  assert.doesNotMatch(
+    helper,
+    /\["git",[^\n]*(?:add|checkout|merge|rebase|cherry-pick)/
+  );
 });
 
 test("Warp helper license notice is retained", () => {

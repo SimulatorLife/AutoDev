@@ -54,6 +54,8 @@ Run the focused policy, workflow, shell, and local setup checks locally with:
 
 ```bash
 pnpm install --frozen-lockfile
+pnpm run format:check        # Prettier; `pnpm run format` rewrites
+pnpm run lint                # ESLint; `pnpm run lint:fix` applies safe fixes
 pnpm run typecheck
 pnpm test
 pnpm run validate:inventory  # migration gate; fails while legacy files remain
@@ -66,6 +68,18 @@ ShellCheck package, then runs both checks as mandatory gates. actionlint also
 passes embedded workflow shell through ShellCheck; the repository config ignores
 only the existing SC2016 and SC2129 style-only findings in workflow snippets.
 Install `actionlint` and `shellcheck` locally before running those commands.
+
+Formatting and lint follow SimulatorLife/RacingGame's configuration
+(`.prettierrc`, `eslint.config.js`), adapted to a Node-only codebase. Both are
+CI gates at zero warnings. The ESLint config also encodes AutoDev's module
+layers (`eslint-plugin-boundaries`): `shared` at the bottom; `agents`,
+`telemetry`, `config`, and `mcp` over it; the router and the provider bridges
+side by side, neither importing the other; `platform` over `config`; and the
+CLI and hooks on top. Process output goes through `src/shared/output.ts`
+(`writeLine` for command output on stdout, `writeErrorLine` for logs on
+stderr); `console` is a lint error everywhere else. Do not relax a rule to make
+a change pass: fix the code, or add a narrowly scoped disable with a
+`-- reason`.
 
 AutoDev owns the organization workflows and local AI/provider setup. RacingGame intentionally retains only product-specific tooling such as build, performance, CSS-token, and source-boundary scripts; those are not organization automation and are not duplicated here.
 
