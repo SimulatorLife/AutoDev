@@ -32,7 +32,7 @@ Router matching says `thread` (exact) or `model-window` (older events without a
 thread id: same-model threads interleave).
 
 The `live now` section compares the router's live-agent count with the threads
-actually writing, lists router/bridge processes with their start times, the
+whose turn is still open (a recently written thread may already be finished), lists router/bridge processes with their start times, the
 installed runtime files that differ from the checkout (`DRIFT`), and running
 provider CLIs and MCP servers. `--offline` skips it; `--json` for scripting.
 

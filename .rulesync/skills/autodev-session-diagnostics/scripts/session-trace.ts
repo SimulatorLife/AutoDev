@@ -83,7 +83,8 @@ export interface RouterSummary {
 
 export interface LiveReport {
   router: { reachable: boolean; canonicalLiveCount: number | null; byState: JsonRecord | null; liveByRole: JsonRecord | null; startedAt: string | null };
-  writingThreads: Array<{ id: string; modified: string }>;
+  /** Recently written threads whose latest turn has not ended: the agents actually live. */
+  openThreads: Array<{ id: string; modified: string }>;
   processes: string[];
   services: Array<{ pid: string; started: string; script: string }>;
   drift: { checked: number; differing: string[]; missing: string[] } | null;
@@ -372,6 +373,28 @@ function services(): LiveReport["services"] {
   });
 }
 
+/** Whether the rollout's latest turn has started and not yet completed or aborted, read from its tail. */
+export function hasOpenTurn(file: string): boolean {
+  const size = statSync(file).size;
+  const length = Math.min(size, 256 * 1024);
+  const fd = openSync(file, "r");
+  try {
+    const buffer = Buffer.alloc(length);
+    readSync(fd, buffer, 0, length, size - length);
+    // A long turn's start can lie far before the tail; read the whole file then.
+    const text = buffer.toString("utf8");
+    const markers = (source: string) => ({
+      started: source.lastIndexOf('"type":"task_started"'),
+      ended: Math.max(source.lastIndexOf('"type":"task_complete"'), source.lastIndexOf('"type":"turn_aborted"')),
+    });
+    let { started, ended } = markers(text);
+    if (started < 0 && ended < 0 && length < size) ({ started, ended } = markers(readFileSync(file, "utf8")));
+    return started > ended;
+  } finally {
+    closeSync(fd);
+  }
+}
+
 function sha(path: string): string {
   return createHash("sha256").update(readFileSync(path)).digest("hex");
 }
@@ -413,12 +436,12 @@ async function liveReport(options: TraceOptions): Promise<LiveReport> {
     };
   } catch { /* router down or not reachable: reported as such */ }
   const cutoff = Date.now() - WRITING_WINDOW_MS;
-  const writingThreads = rolloutFiles(join(options.codexHome, "sessions")).reverse().slice(0, 200).flatMap((file) => {
+  const openThreads = rolloutFiles(join(options.codexHome, "sessions")).reverse().slice(0, 200).flatMap((file) => {
     const modified = statSync(file).mtimeMs;
-    if (modified < cutoff) return [];
+    if (modified < cutoff || !hasOpenTurn(file)) return [];
     return [ { id: String(firstLine(file)?.payload?.id ?? file), modified: new Date(modified).toISOString() } ];
   });
-  return { router, writingThreads, processes: providerProcesses(), services: services(), drift: deploymentDrift(options.codexHome, options.repoRoot) };
+  return { router, openThreads, processes: providerProcesses(), services: services(), drift: deploymentDrift(options.codexHome, options.repoRoot) };
 }
 
 function logFreshness(codexHome: string): TraceReport["logs"] {
@@ -468,14 +491,14 @@ export function renderReport(report: TraceReport): string {
     for (const item of thread.items ?? []) out.push(`   ${item.at.slice(11, 19)} ${item.kind} ${item.detail}`);
   }
   if (report.live) {
-    const { router, writingThreads, processes, services: running, drift } = report.live;
+    const { router, openThreads, processes, services: running, drift } = report.live;
     out.push("== live now");
     out.push(router.reachable
       ? `   router (started ${router.startedAt}) live agents=${router.canonicalLiveCount} byState=${JSON.stringify(router.byState)} byRole=${JSON.stringify(router.liveByRole)}`
       : "   router /status unreachable");
-    out.push(`   threads writing in the last 10 min: ${writingThreads.length}${writingThreads.length ? ` (${writingThreads.map((thread) => thread.id).join(", ")})` : ""}`);
-    if (router.canonicalLiveCount !== null && router.canonicalLiveCount > writingThreads.length) {
-      out.push(`   LIVE COUNT EXCEEDS WRITING THREADS (${router.canonicalLiveCount} > ${writingThreads.length}): check how the router keys activity subjects`);
+    out.push(`   threads with an open turn (written in the last 10 min): ${openThreads.length}${openThreads.length ? ` (${openThreads.map((thread) => thread.id).join(", ")})` : ""}`);
+    if (router.canonicalLiveCount !== null && router.canonicalLiveCount !== openThreads.length) {
+      out.push(`   LIVE COUNT MISMATCH: router ${router.canonicalLiveCount} vs ${openThreads.length} open threads -- above: something keys activity per request; below: reports land on the wrong agent, or an agent went stale`);
     }
     for (const service of running) out.push(`   service pid=${service.pid} started=${service.started} ${service.script}`);
     if (drift) {

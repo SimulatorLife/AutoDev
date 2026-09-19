@@ -6,7 +6,7 @@ import { join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
-import { buildReport, findSessionRollouts, recentSessions, renderReport } from "../.rulesync/skills/autodev-session-diagnostics/scripts/session-trace.ts";
+import { buildReport, findSessionRollouts, hasOpenTurn, recentSessions, renderReport } from "../.rulesync/skills/autodev-session-diagnostics/scripts/session-trace.ts";
 import { probe } from "../.rulesync/skills/autodev-session-diagnostics/scripts/mcp-probe.ts";
 
 const SCRIPT = fileURLToPath(new URL("../.rulesync/skills/autodev-session-diagnostics/scripts/session-trace.ts", import.meta.url));
@@ -185,6 +185,23 @@ test("the CLI documents its usage and emits JSON on request", () => {
     const report = JSON.parse(run.stdout);
     assert.equal(report.threads.length, 2);
     assert.equal(report.live, null);
+  } finally {
+    cleanup();
+  }
+});
+
+test("an open turn is one that started and has not completed or aborted", () => {
+  const { home, cleanup } = fixture();
+  try {
+    const [ root, child ] = findSessionRollouts(join(home, "sessions"), ROOT).sort((a, b) => (a.includes(ROOT) ? -1 : 1) - (b.includes(ROOT) ? -1 : 1));
+    assert.equal(hasOpenTurn(root!), false, "completed");
+    assert.equal(hasOpenTurn(child!), false, "aborted");
+    writeFileSync(child!, `${JSON.stringify({ timestamp: "2026-09-18T21:40:00.000Z", type: "event_msg", payload: { type: "task_started", turn_id: "t-next" } })}\n`, { flag: "a" });
+    assert.equal(hasOpenTurn(child!), true, "a new turn started");
+    // A turn whose start lies beyond the tail that is read first (a long orchestrator turn).
+    const filler = `${JSON.stringify({ type: "response_item", payload: { type: "message", role: "assistant", content: [ { type: "output_text", text: "x".repeat(4096) } ] } })}\n`.repeat(80);
+    writeFileSync(child!, filler, { flag: "a" });
+    assert.equal(hasOpenTurn(child!), true, "still open after 300 KB of items");
   } finally {
     cleanup();
   }
