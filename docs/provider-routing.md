@@ -1738,7 +1738,9 @@ the workspace (observed 2026-09-18, worker thread
   interrupted turn keeps what already happened. A failure after output has
   streamed ends the response `incomplete` with the shared limit notice.
 - **Cancellation.** A client that disconnects mid-response cancels the turn and
-  kills the CLI; nothing keeps working after its client went away.
+  kills the CLI; nothing keeps working after its client went away. Stopping the
+  bridge (SIGTERM/SIGINT, as a launchd restart or reinstall does) cancels every
+  live turn first, so no parked CLI survives as an orphan.
 - **Telemetry.** A call is reported `tool_requested` on the request that emits
   it and `tool_executed` (with the exact wait) on the request that returns its
   output, as the MiniMax adapter does. Skill reads go through Codex's tools and

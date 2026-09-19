@@ -746,7 +746,18 @@ function handleNonStreamingError(response: ServerResponse, failure: TurnFailure)
 }
 
 if (IS_MAIN) {
-  createServer((request, response) => { void handle(request, response); }).listen(PORT, HOST, () => {
+  const server = createServer((request, response) => { void handle(request, response); }).listen(PORT, HOST, () => {
     console.error(`Claude Responses proxy listening at http://${HOST}:${PORT}`);
   });
+  // A turn's CLI is this process's child, and a child outlives a parent that
+  // is merely signalled: every launchd restart or reinstall would leave parked
+  // CLIs running, orphaned, still able to act on the workspace.
+  for (const signal of [ "SIGTERM", "SIGINT" ] as const) {
+    process.once(signal, () => {
+      const cancelled = turns.cancelAll();
+      if (cancelled > 0) console.error(`claude bridge stopping: cancelled ${cancelled} live turn(s)`);
+      server.close();
+      process.exit(0);
+    });
+  }
 }

@@ -94,7 +94,7 @@ function renderCommand(kind: string, argv: string[]): number {
 }
 
 function usage(): void {
-  console.log(`Usage: node src/cli/autodev.ts <command> [subcommand] [options]\n\nCommands:\n  check\n  render agents|contract|skills|mcp\n  router run|ensure|status\n  provider <name>\n  hook <name>\n  install\n`);
+  console.log(`Usage: node src/cli/autodev.ts <command> [subcommand] [options]\n\nCommands:\n  check\n  render agents|contract|mcp\n  router run|ensure|status\n  provider <name>\n  hook <name>\n  install\n`);
 }
 
 export interface CliBackends {

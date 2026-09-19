@@ -572,6 +572,13 @@ export class ClaudeTurnRegistry {
     return null;
   }
 
+  /** Cancel every live turn, killing its CLI. Returns how many there were. */
+  cancelAll(): number {
+    const live = [ ...this.turns.values() ];
+    for (const turn of live) turn.cancel();
+    return live.length;
+  }
+
   remove(turn: ClaudeTurn): void {
     this.turns.delete(turn.id);
     for (const [ callId, owner ] of this.calls) if (owner === turn) this.calls.delete(callId);

@@ -118,7 +118,17 @@ function isAlive(pid: number): boolean {
   try { process.kill(pid, 0); return true; } catch { return false; }
 }
 
-async function withBridge(script: JsonRecord[], body: (context: { port: number; record: () => Promise<JsonRecord> }) => Promise<void>): Promise<void> {
+async function exitsWithin(pid: number, ms: number): Promise<boolean> {
+  const deadline = Date.now() + ms;
+  while (isAlive(pid) && Date.now() < deadline) await new Promise((resolveSleep) => setTimeout(resolveSleep, 25));
+  return !isAlive(pid);
+}
+
+async function readRecord(path: string): Promise<JsonRecord | null> {
+  try { return JSON.parse(await readFile(path, "utf8")); } catch { return null; }
+}
+
+async function withBridge(script: JsonRecord[], body: (context: { port: number; record: () => Promise<JsonRecord>; stopBridge: () => Promise<void> }) => Promise<void>): Promise<void> {
   const temp = await mkdtemp(join(tmpdir(), "autodev-claude-loop-"));
   const cli = join(temp, "fake-claude.mjs");
   const recordPath = join(temp, "record.json");
@@ -144,6 +154,12 @@ async function withBridge(script: JsonRecord[], body: (context: { port: number; 
   });
   let stderr = "";
   bridge.stderr.on("data", (chunk) => { stderr += chunk; });
+  const stopBridge = async (): Promise<void> => {
+    if (bridge.exitCode !== null || bridge.signalCode !== null) return;
+    const exited = once(bridge, "exit");
+    bridge.kill("SIGTERM");
+    await exited;
+  };
   try {
     const deadline = Date.now() + 5000;
     for (;;) {
@@ -151,12 +167,16 @@ async function withBridge(script: JsonRecord[], body: (context: { port: number; 
       if (Date.now() > deadline) throw new Error(`bridge did not start: ${stderr}`);
       await new Promise((resolveSleep) => setTimeout(resolveSleep, 50));
     }
-    await body({ port, record: async () => JSON.parse(await readFile(recordPath, "utf8")) });
+    await body({ port, record: async () => JSON.parse(await readFile(recordPath, "utf8")), stopBridge });
+    // Stopping the bridge must stop every CLI it started; a survivor is an
+    // orphan that keeps acting on the workspace.
+    await stopBridge();
+    const cli = await readRecord(recordPath);
+    if (cli) assert.ok(await exitsWithin(cli.pid, 5000), `the CLI (pid ${cli.pid}) outlived its bridge`);
   } catch (error) {
     throw new Error(`${error instanceof Error ? error.stack : error}\n--- bridge stderr ---\n${stderr}`);
   } finally {
-    bridge.kill("SIGTERM");
-    if (bridge.exitCode === null) await once(bridge, "exit");
+    await stopBridge();
     await rm(temp, { recursive: true, force: true });
   }
 }
@@ -279,6 +299,19 @@ test("a continuation for a turn the bridge no longer holds starts over from the 
     const cli = await record();
     assert.match(cli.prompt, /<tool_call name="exec" call_id="call_elsewhere_1">\ntext\(1\)\n<\/tool_call>/);
     assert.match(cli.prompt, /<tool_output call_id="call_elsewhere_1">\nearlier output\n<\/tool_output>/);
+  });
+});
+
+test("stopping the bridge stops the CLIs parked on Codex", async () => {
+  // A launchd restart or reinstall signals the bridge. Its parked CLI is a
+  // child that survives a signalled parent, and the real CLI keeps working
+  // after its tool call fails -- here it goes on "working" for 30 seconds.
+  await withBridge([ { call: "exec", arguments: { input: "text(1)" } }, { sleep: 30_000 }, { say: "orphaned" } ], async ({ port, record, stopBridge }) => {
+    await (await codexRequest(port, [ CODEX_TOOLS, { type: "message", role: "user", content: "go" } ])).text();
+    const { pid } = await record();
+    assert.ok(isAlive(pid), "parked on the call");
+    await stopBridge();
+    assert.ok(await exitsWithin(pid, 5000), "the parked CLI must not outlive its bridge");
   });
 });
 

@@ -17,14 +17,14 @@ const driftWorkflowPath = join(repositoryRoot, '.github', 'workflows', 'rulesync
 const copilotSetupWorkflowPath = join(repositoryRoot, '.github', 'workflows', 'copilot-setup-steps.yml');
 const targets = ['copilot', 'claudecode', 'codexcli', 'antigravity-cli'] as const;
 const canonicalSkills = [
-  'autodev-codex-request-capture', 'ccc', 'code-simplification', 'diagnosing-bugs',
+  'autodev-codex-request-capture', 'autodev-session-diagnostics', 'ccc', 'code-simplification', 'diagnosing-bugs',
   'doubt-driven-development', 'improve-codebase-architecture', 'lsp-mcp-server',
   'orchestration', 'remove-legacy-shims', 'resolve-merge-conflicts', 'writing-agent-skills',
 ] as const;
 const repositorySkills: Record<string, readonly string[]> = {
-  '.github/skills': ['autodev-codex-request-capture', 'ccc', 'lsp-mcp-server', 'orchestration'],
-  '.claude/skills': ['autodev-codex-request-capture'],
-  '.agents/skills': ['autodev-codex-request-capture'],
+  '.github/skills': ['autodev-codex-request-capture', 'autodev-session-diagnostics', 'ccc', 'lsp-mcp-server', 'orchestration'],
+  '.claude/skills': ['autodev-codex-request-capture', 'autodev-session-diagnostics'],
+  '.agents/skills': ['autodev-codex-request-capture', 'autodev-session-diagnostics'],
 };
 
 function readJson(path: string): JsonObject { return JSON.parse(readFileSync(path, 'utf8')) as JsonObject; }

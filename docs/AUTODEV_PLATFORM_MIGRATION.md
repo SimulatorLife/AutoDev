@@ -1177,6 +1177,15 @@ see exactly what Codex sends a provider without contacting any API, and bundles
   link.
 - `tests/codex-request-capture-skill.test.ts` covers the recorder.
 
+The second repository-only skill, `autodev-session-diagnostics` (added
+2026-09-18), is the live-evidence counterpart: it diagnoses AutoDev problems
+from session rollouts, router events, bridge logs, router status, and running
+processes, and bundles `scripts/session-trace.ts`, which builds the joined
+per-session report (threads, turn outcomes, silent gaps, per-request providers,
+log freshness, orphaned CLIs). It is exposed exactly like the capture skill,
+and `tests/session-diagnostics-skill.test.ts` covers the script against a
+synthetic `CODEX_HOME`.
+
 **Completed generated repository skill surfaces — only `.rulesync/skills` is
 tracked (added item, 2026-09-15).** Git tracked Rulesync output in three
 places: SKILL.md-only copies in `.github/skills/`, repository-only skill

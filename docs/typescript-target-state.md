@@ -44,6 +44,7 @@ The TypeScript target state migration is fully completed across all twelve phase
 - Collector mode persistence and router-auth token creation/publication live in `src/platform/install-state.ts`.
 - External dependency availability, pipx provisioning, pinned CocoIndex/Python-LSP installation, macOS SDK/compiler environment preparation, and executable checks live in `src/platform/dependencies.ts`.
 - The AutoDev request-capture recorder and its contract suite run as native TypeScript (`.rulesync/skills/autodev-codex-request-capture/scripts/responses-recorder.ts` and `tests/codex-request-capture-skill.test.ts`).
+- The AutoDev session-diagnostics trace script and its suite run as native TypeScript (`.rulesync/skills/autodev-session-diagnostics/scripts/session-trace.ts` and `tests/session-diagnostics-skill.test.ts`).
 - The install materialization sequence lives in `src/platform/install-materializer.ts`.
 - The concrete `autodev install` command runs through `src/platform/install-command.ts`. Installation drift diagnostics live in `src/platform/install-check.ts`.
 - The legacy Python test suite `tests/test_local_setup.py` is eliminated; its concerns are 100% covered by native TypeScript suites (`tests/platform/*.test.ts`, `tests/config/*.test.ts`, `tests/cli/*.test.ts`).
