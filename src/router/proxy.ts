@@ -15,6 +15,7 @@ import {
   type ProviderLimit,
 } from '../shared/provider-limits.ts';
 import {
+  collectToolCallIds,
   countToolCallsFromSse,
   countToolCallsInResponse,
   responseTextFromSse,
@@ -23,6 +24,7 @@ import {
   upstreamPayload,
   type RouterProviderRouteLike,
 } from './responses.ts';
+import { TOOL_CALL_OWNERSHIP } from './tool-call-ownership.ts';
 import {
   COOLDOWN_CONFIG,
   COOLDOWNS,
@@ -399,6 +401,8 @@ export function responseFailureEvent(message: string): string {
 
 export interface StreamWriteResult {
   toolCalls: number;
+  /** Call ids of the tool calls the provider emitted, for result affinity. */
+  toolCallIds: Set<string>;
   failed: boolean;
   incompleteReason: string | null;
   limit: ProviderLimit | null;
@@ -414,6 +418,7 @@ export async function writeResponseStream(
 ): Promise<StreamWriteResult> {
   const decoder = new TextDecoder();
   const seenToolCalls = new Set<string>();
+  const toolCallIds = new Set<string>();
   let toolCalls = 0;
   let buffer = '';
   let terminal: 'completed' | 'failed' | null = null;
@@ -458,6 +463,9 @@ export async function writeResponseStream(
         } else if (parsed.type === 'response.output_item.added') {
           if (parsed.item?.type === 'reasoning') streamState.reasoningId = parsed.item.id ?? streamState.reasoningId;
           if (parsed.item?.type === 'message') streamState.itemId = parsed.item.id ?? streamState.itemId;
+          collectToolCallIds(parsed.item, toolCallIds);
+        } else if (parsed.type === 'response.output_item.done') {
+          collectToolCallIds(parsed.item, toolCallIds);
         } else if (parsed.type === 'response.output_text.delta') {
           streamState.text += String(parsed.delta ?? '');
           streamState.itemId = parsed.item_id ?? streamState.itemId;
@@ -467,6 +475,7 @@ export async function writeResponseStream(
         } else if (parsed.type === 'response.failed') {
           terminal = 'failed';
         } else if (parsed.type === 'response.completed') {
+          collectToolCallIds(parsed.response, toolCallIds);
           terminal = responseWasNotCompleted(parsed.response) ? 'failed' : 'completed';
           const details = parsed.response?.incomplete_details;
           if (details?.reason) incompleteReason = details.reason;
@@ -528,6 +537,7 @@ export async function writeResponseStream(
 
   const streamResult = (): StreamWriteResult => ({
     toolCalls,
+    toolCallIds,
     failed: terminal !== 'completed',
     incompleteReason,
     limit: reportedLimit,
@@ -690,6 +700,22 @@ export async function writeSuccessfulResponse(
   resolvedModel: string,
   onHeartbeat: (() => void) | null = null,
 ): Promise<StreamWriteResult> {
+  const written = await writeProviderResponse(response, route, result, wantsStream, publicModel, requestId, resolvedModel, onHeartbeat);
+  // Whoever asked for these calls gets their results: see tool-call-ownership.ts.
+  TOOL_CALL_OWNERSHIP.record(written.toolCallIds, route.provider);
+  return written;
+}
+
+async function writeProviderResponse(
+  response: ServerResponse,
+  route: ProviderRoute,
+  result: { upstream: Response; signal: AbortSignal },
+  wantsStream: boolean,
+  publicModel: string,
+  requestId: string,
+  resolvedModel: string,
+  onHeartbeat: (() => void) | null,
+): Promise<StreamWriteResult> {
   const responseHeaders = {
     'x-autodev-provider': route.provider,
     'x-autodev-model': resolvedModel,
@@ -722,7 +748,9 @@ export async function writeSuccessfulResponse(
     const parsed = rewriteResponseValue(responseTextFromSse(body), publicModel) as Record<string, unknown>;
     sendJson(response, upstream.status, parsed, responseHeaders);
     const incomplete = incompleteFromResponse(parsed);
-    return { toolCalls, failed: responseWasNotCompleted(parsed), ...incomplete, inputRequired: hasInputRequired(parsed, incomplete) };
+    const toolCallIds = new Set<string>();
+    collectToolCallIds(parsed, toolCallIds);
+    return { toolCalls, toolCallIds, failed: responseWasNotCompleted(parsed), ...incomplete, inputRequired: hasInputRequired(parsed, incomplete) };
   }
   try {
     const parsed = JSON.parse(body);
@@ -730,11 +758,13 @@ export async function writeSuccessfulResponse(
     const rewritten = rewriteResponseValue(parsed, publicModel) as Record<string, unknown>;
     sendJson(response, upstream.status, rewritten, responseHeaders);
     const incomplete = incompleteFromResponse(rewritten);
-    return { toolCalls, failed: responseWasNotCompleted(rewritten), ...incomplete, inputRequired: hasInputRequired(rewritten, incomplete) };
+    const toolCallIds = new Set<string>();
+    collectToolCallIds(rewritten, toolCallIds);
+    return { toolCalls, toolCallIds, failed: responseWasNotCompleted(rewritten), ...incomplete, inputRequired: hasInputRequired(rewritten, incomplete) };
   } catch {
     response.writeHead(upstream.status, { ...responseHeaders, 'content-type': upstream.headers.get('content-type') ?? 'application/json' });
     response.end(body);
-    return { toolCalls: 0, failed: false, incompleteReason: null, limit: null, inputRequired: false };
+    return { toolCalls: 0, toolCallIds: new Set(), failed: false, incompleteReason: null, limit: null, inputRequired: false };
   }
 }
 
@@ -1286,7 +1316,7 @@ export async function proxyRoleResponse(
   return proxyFallbackChain(
     response,
     {
-      candidates: ROUTING_POLICY.roleCandidates(role),
+      candidates: ROUTING_POLICY.roleCandidates(role, Math.random, TOOL_CALL_OWNERSHIP.ownerFor(payload)),
       role,
       agentRole: role,
       subject: `role ${role}`,
@@ -1313,7 +1343,10 @@ export async function proxyOrchestratorResponse(
   session: { key: string; scope: string } | null = null,
 ): Promise<void> {
   const sessionKey = session?.key ?? null;
-  const preferred = carriesPendingToolResult(payload) ? orchestratorProviderForSession(sessionKey) : null;
+  // The provider that issued the calls being answered comes first; otherwise
+  // an orchestrator mid-session stays with the provider it started on.
+  const preferred = TOOL_CALL_OWNERSHIP.ownerFor(payload)
+    ?? (carriesPendingToolResult(payload) ? orchestratorProviderForSession(sessionKey) : null);
   return proxyFallbackChain(
     response,
     {

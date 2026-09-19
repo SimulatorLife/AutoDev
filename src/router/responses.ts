@@ -165,6 +165,16 @@ export function transformSseEvent(event: string, publicModel: string): string {
   }).join('');
 }
 
+/** Collect the call ids of the tool calls in a response, or in one output item. */
+export function collectToolCallIds(value: unknown, into: Set<string>): void {
+  if (!isRecord(value)) return;
+  if (Array.isArray(value.output)) {
+    for (const item of value.output) collectToolCallIds(item, into);
+    return;
+  }
+  if (typeof value.type === 'string' && TOOL_OUTPUT_TYPES.has(value.type) && typeof value.call_id === 'string' && value.call_id) into.add(value.call_id);
+}
+
 export function countToolCallsInResponse(response: unknown, seen: Set<string> = new Set()): number {
   if (!isRecord(response) || !Array.isArray(response.output)) return 0;
   let count = 0;

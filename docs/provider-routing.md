@@ -220,20 +220,20 @@ delegation paths:
   The canonical `orchestration` skill documents this contract, and
   `src/agents/spawn-tools.ts` builds the call for any component
   that needs to emit one.
-- **Bridge-native spawn** (`claude`, `antigravity`): the CLI behind the bridge
-  delegates inside its own runtime -- Claude's `Agent` tool, Antigravity's
-  `invoke_subagent` -- and no router request is made for
-  the child. Watched spawn tool names are defined in the execution contract
+- **Bridge-native spawn** (`antigravity`): the CLI behind the bridge
+  delegates inside its own runtime -- Antigravity's `invoke_subagent` -- and no
+  router request is made for the child. Claude is not in this category: it acts
+  only through Codex's tools (see "Claude bridge: Codex executes every tool"),
+  so a Claude orchestrator spawns with `tools.multi_agent_v1__spawn_agent`
+  inside `exec`, exactly like a Codex-served one. Watched spawn tool names are defined in the execution contract
   (`providers.<provider>.spawnTools`); see "Counting subagents across providers".
 
     Browser-capable bridge roles follow the same role contract as native Codex
-    roles. The Claude bridge passes `--strict-mcp-config` and an inline
-    `--mcp-config` holding exactly the role contract's servers. Their launch
-    definitions come from the composed `$CODEX_HOME/config.toml`, which is
-    generated from `.rulesync/mcp.jsonc`. Only `browser-tester` and `smart`
-    receive Playwright, through the pinned launcher, and the bridge denies
-    unneeded browser tools. Claude explicitly allows `WebSearch` and `WebFetch`
-    for research-capable roles (`docs-researcher`, `smart`, `orchestrator`).
+    roles. A Claude turn reaches its role's MCP servers through Codex's own
+    `tools` global, so Codex's role TOML -- including the Playwright tool
+    allowlist -- is the only MCP boundary it has. Claude keeps its native
+    `WebSearch` and `WebFetch` only on turns where Codex offered its hosted
+    `web_search` tool, which no tool script can perform.
     Playwright is strictly reserved for UI and browser testing and is never exposed
     to the orchestrator. Because Antigravity's MCP configuration is global, registering
     Playwright for `agy` would expose it across all roles (including the orchestrator);
@@ -1199,11 +1199,13 @@ they represent an explicit provider choice; use a role alias for fallback.
 All spawned roles are leaf agents. Native role aliases (`autodev/<role>`) and
 external-provider model aliases are therefore excluded from the root
 delegation hook; only the configured parent model receives that instruction.
-For a delegated Claude turn the bridge is a leaf-provider gateway: it launches
-the real Claude Code CLI with `--disallowed-tools Agent,Task`. `Agent` is
-the current Claude Code subagent tool and `Task` is the legacy name. That CLI
-flag is the enforcement: this repository carries no `.claude/settings.json`, so
-a direct Claude Code session opened here is not bounded by it.
+For a Claude turn the bridge launches the real Claude Code CLI with
+`--tools ""` (only `WebSearch,WebFetch` when Codex offered web search), so the
+CLI has no `Agent`/`Task` tool and no other built-in tool at all. That CLI flag
+is the enforcement: this repository carries no `.claude/settings.json`, so a
+direct Claude Code session opened here is not bounded by it. Whether a Claude
+turn may spawn is decided by Codex, exactly as for a Codex-served turn: only
+the orchestrator's `tools` global carries `multi_agent_v1__spawn_agent`.
 The root-delegation hook also exempts Claude model aliases,
 while native `autodev/*` roles are excluded by their role alias, so leaf
 providers do not receive the parent-only instruction to spawn more agents.
@@ -1239,14 +1241,15 @@ transport responsible only for composing them:
 | --- | --- | --- |
 | Native Codex child | `base.md` + `leaf.md` + optional `code-search.md` + role-specific `developer_instructions` | `src/config/render-agent-configs.ts` materializes the complete role TOML under `~/.codex/agents`; `agent_type` selects it at spawn time |
 | Antigravity/Copilot bridge | `base.md` + workspace + `leaf.md` (or `orchestrator.md` + orchestration skill) + optional `code-search.md` + role fragment + capability metadata | `composeProviderPrompt(role, cwd)` then appends the delegated task |
-| Claude bridge | `base.md` + workspace + `leaf.md` (or `orchestrator.md` + orchestration skill) + optional `code-search.md` + role fragment + capability metadata | `system_prompt()` passes the composed text as the replacement CLI system prompt |
+| Claude bridge | Codex's own request context, like a native child: the role TOML's `developer_instructions`, the root bootstrap hook, and the conversation | `renderCodexTranscript()` feeds Codex's input to the CLI on stdin; `systemPrompt()` replaces the CLI's system prompt with only how to act through Codex's tools, plus the workspace |
 | MiniMax pass-through | Native Codex request, including the rendered role configuration | The proxy remains transport-only and does not author a competing prompt |
 
 The orchestration skill is the single source of truth for delegation procedure,
 child lifecycle, recovery, and role selection. The orchestrator prompt is only a
 small bootstrap of root identity and a pointer to the canonical policy. The native root
-hook injects the same skill content and recovery preflight; provider bridges use
-`src/agents/bridge-role.ts` to assemble the same role prompt. Execution-contract JSON is a
+hook injects the same skill content and recovery preflight; the Antigravity and
+Copilot bridges use `src/agents/bridge-role.ts` to assemble the same role prompt,
+and the Claude bridge passes Codex's own context through unchanged. Execution-contract JSON is a
 generated projection for provider diagnostics; it is not a second editable role
 capability list. Native child calls carry only `agent_type` and the task message.
 Codex must load the selected role TOML before the first child turn and expose that
@@ -1280,15 +1283,13 @@ The canonical `orchestration` skill requires it to be withheld by default.
 Several orchestrators can run on this machine at once, each with its own agent
 tree. An agent's reach is meant to stop at that tree, in both directions.
 
-- **Claude.** `CROSS_SESSION_CLAUDE_TOOLS` (`SendMessage`, `ListAgents`) is
-  denied to *every* role, orchestrator included, since reaching another
-  orchestrator is out of bounds regardless of who does it. Measured on Claude
-  Code 2.1.260, a `-p` print-mode process does not join the peer socket bus
-  under `/tmp/cc-socks/` at all, so this denies nothing that is currently
-  reachable. It is pinned precisely because the isolation otherwise rests on an
-  undocumented property of print mode. Peer messaging between the user's own
-  *interactive* sessions is a separate, deliberate Claude Code feature that
-  AutoDev neither creates nor can disable.
+- **Claude.** The CLI runs with `--tools ""` (web research aside), so it has
+  no `SendMessage`, `ListAgents`, or any other built-in tool that could reach
+  another session, whatever a future release exposes in print mode. Its reach
+  is exactly Codex's tool surface for the turn, the same as a Codex-served
+  agent's. Peer messaging between the user's own *interactive* sessions is a
+  separate, deliberate Claude Code feature that AutoDev neither creates nor can
+  disable.
 - **Antigravity.** `manage_subagents` is already scoped by `agy`: `list`
   reports "active **direct** subagents", and `kill` refuses an id that "is not a
   known active subagent". `send_message` takes an arbitrary "Conversation ID of
@@ -1300,49 +1301,42 @@ tree. An agent's reach is meant to stop at that tree, in both directions.
   any agent id that did not come from spawning it or from the runtime-supplied
   parent id.
 
-### The Claude bridge owns the whole system prompt
+### The Claude bridge serves Codex's own context
 
 The Claude bridge passes `--system-prompt`, which *replaces* the Claude CLI's
 default prompt, rather than `--append-system-prompt`, which leaves it in force
-underneath. Appending puts AutoDev role policy in competition with Claude Code's
-own harness guidance — which includes a standing instruction not to spawn agents
-unless asked, directly at odds with `orchestrator.md`. Replacement makes the
-role prompts the only policy in the turn.
+underneath. The default prompt's harness guidance describes tools a bridged
+turn does not have and competes with the role policy.
 
-`agents/prompts/base.md` holds what the default prompt otherwise supplied
-and the role prompts do not: tool-selection guidance, the destructive-action
-limits that matter because the bridge runs under `bypassPermissions`, and
-reporting-honesty rules. `system_prompt()` composes it as
-base + workspace + role policy, role last.
+The replacement prompt (`systemPrompt()` in `src/providers/claude.ts`) says only
+how to act: the conversation that follows is the Codex agent's own context,
+every action goes through the session's Codex tools, and the final message is
+the agent's reply. It also states the workspace the bridge resolved from
+structured request metadata, because a replaced prompt loses the CLI's
+per-machine sections (`--exclude-dynamic-system-prompt-sections` is ignored
+with `--system-prompt`).
 
-Two consequences of replacement are load-bearing:
-
-- **The per-machine sections are gone.** A default-prompt session is told its
-  working directory, platform, and git status; a replaced prompt is told
-  nothing (`--exclude-dynamic-system-prompt-sections` is ignored with
-  `--system-prompt`). The bridge therefore states the workspace it resolved from
-  structured request metadata in the prompt itself. Without that block the agent
-  begins the turn not knowing which repository it is in, which is why the prompt
-  is built per request rather than read from one static file.
-- **`AGENTS.md` is not injected either way.** Claude Code auto-loads `CLAUDE.md`
-  (this survives prompt replacement) but not `AGENTS.md`, so a repository whose
-  guidance lives only in `AGENTS.md` never has it in context. `base.md` tells
-  the agent to read both from the workspace root. Symlinking `CLAUDE.md` to
-  `AGENTS.md` restores automatic injection; AutoDev's own `CLAUDE.md` is that
-  symlink.
+Role policy is not in that prompt. It arrives in Codex's own context, which the
+bridge renders with `renderCodexTranscript()` and writes to the CLI's stdin:
+the role TOML's `developer_instructions` (`base.md` + `leaf.md` + optional
+`code-search.md` + role fragment, as rendered for every Codex child), the root
+bootstrap the `UserPromptSubmit` hook injects, Codex's skills catalogue and
+environment context, `AGENTS.md`, and the whole conversation so far, including
+every tool call and its output. A Claude turn therefore gets exactly the policy
+a Codex-served turn gets, from the same source, with no second composed copy
+to drift from it.
 
 The bridge also exports `CLAUDE_CODE_DISABLE_BUNDLED_SKILLS=1`. Claude Code's
-bundled skill catalogue is a second, unversioned source of instructions that no
-role prompt accounts for; a bridge turn is governed by the role prompts and the
-target repository's own skills.
+bundled skill catalogue is a second, unversioned source of instructions; a
+bridged turn reads the skills Codex lists, through Codex's tools.
 
 Anything that is not exactly `orchestrator` is treated as a leaf, so a missing
 or unrecognized header fails closed to the bounded policy. The
 `enforce-root-delegation.sh` `UserPromptSubmit` hook injects the orchestrator
 bootstrap and the canonical `orchestration` skill, so the root agent gets one
-delegation policy no matter which provider serves it. The JavaScript bridges
-share `src/agents/bridge-role.ts`; the Claude bridge reads the same
-prompt files and skill from Python. The installer copies `src/` runtime modules
+delegation policy no matter which provider serves it. The Antigravity and
+Copilot bridges share `src/agents/bridge-role.ts`; the Claude bridge takes the
+same prompts from Codex's context. The installer copies `src/` runtime modules
 under `$CODEX_HOME/src/` and script-backed bridge assets under the hooks
 runtime, so a bridge uses the same relative layout in a checkout and an
 installation: `../src/…` for typed modules and `./codex/prompts/…` for prompt
@@ -1350,24 +1344,13 @@ assets. That is what makes the bridges runnable and importable straight from a
 checkout, so their pure request-shaping helpers can be unit-tested rather than
 asserted against source text.
 
-This role-aware boundary is the *only* place the recursion limit belongs. A
-target repository must not also list `Agent` (or `Task`) under
-`permissions.deny` in its `.claude/settings.json`: Claude Code resolves project
-settings from the bridge-selected workspace `cwd`, deny rules outrank both
-`--allowed-tools` and `--permission-mode bypassPermissions`, and no CLI flag can
-re-grant a denied tool. Such a rule is role-blind, so it silently strips `Agent`
-from the root turn as well, and the orchestrator then truthfully reports that it
-has no subagent tool and does the work itself — the exact failure the role header
-exists to prevent. Leaf turns stay bounded without it, because the bridge already
-passes `--disallowed-tools Agent,Task` for every non-orchestrator role. Denying
-the background-task tools (`TaskCreate`, `TaskOutput`, `TaskList`, `TaskUpdate`,
-`TaskGet`) is unrelated and safe; those are not the subagent tool.
-
-Excluding project settings from the bridge instead (`--setting-sources user`)
-does restore `Agent`, but it discards the target repository's whole deny list —
-including its `Bash(git push *)`, `Bash(rm -rf *)`, and `Read(./.env)` rules,
-which under `bypassPermissions` are the only remaining guardrail on an
-autonomous turn. Fix the deny list, not the setting sources.
+A Claude turn has no delegation tool of its own to bound: the CLI runs without
+`Agent`/`Task`, and delegation is Codex's `multi_agent_v1__spawn_agent`, which
+Codex offers only to the orchestrator. A target repository's
+`.claude/settings.json` deny list likewise no longer guards anything a bridged
+turn does, because shell commands and file edits run in Codex under the role's
+sandbox mode and AutoDev's Codex rules (`agents/rules/`), exactly as they do
+for a Codex-served turn.
 
 MiniMax is the exception, and it needs no role prompt: its adapter
 (`src/providers/minimax.ts`) is a pass-through to
@@ -1436,22 +1419,17 @@ spawn itself. Set `AGY_LOG_SPAWN_STEPS=1` on the Antigravity proxy to print the
 structure of each spawn step (keys kept, string values truncated, so delegation
 prompts stay out of the log) when confirming the shape against a new agy build.
 
-Claude's `Agent` tool is one call per child, and the Claude bridge reads the
-child's role from the call's `subagent_type`.
-
 #### When the workspace removes the delegation tool
 
-The bridge keeps `Agent`/`Task` for the orchestrator and denies them to every
-leaf, but that is not the last word on which tools a turn gets. A project
-`.claude/settings.json` in the *target* workspace that lists `Agent` under
-`permissions.deny` strips it from the orchestrator too, and
-`--permission-mode bypassPermissions` does not override a deny. The turn then
-does all the work itself and reports zero subagents -- the exact reading as a
-provider that chose not to delegate.
+A bridge-native CLI's own settings can remove its delegation tool from under an
+orchestrator turn, which then does all the work itself and reports zero
+subagents -- the exact reading as a provider that chose not to delegate. (A
+Claude turn cannot hit this: it delegates through Codex's spawn tool, not a
+CLI tool.)
 
-The CLI's `system` init event is the only place that absence is observable: a
-denied tool is simply missing from its `tools` list and nothing later mentions
-it. On an orchestrator turn the bridge compares that list against the router's
+The CLI's tool inventory is the only place that absence is observable: a
+denied tool is simply missing from it and nothing later mentions it. On an
+orchestrator turn the bridge compares that list against the router's
 watchlist and, when none of the spawn tools are present, logs the workspace and
 posts `{ type: "subagent_tools_unavailable", expected, available }`. The router
 records it as a `spawn_tool_unavailable` spawn failure -- with the model that
@@ -1564,13 +1542,13 @@ Two details follow from that:
   status CLI label the summary and totals as `X recent / Y total`; they never
   inflate the recent subtotal to match all-time history.
 
-The shared reporter is `src/telemetry/agent-events.ts`; the typed Claude bridge
-imports it directly. The installer ships the module beside the bridges that
-import it. The native spawn script/SSE helper is now `src/agents/spawn-tools.ts`.
-The typed Claude bridge uses the shared spawn contract and its per-turn
-`autodev_spawn` server launches the shared
-`src/mcp/spawn-shim.ts`. The Claude bridge reports spawns but not closes, so its
-children are measured against the parent turn until it adopts `reportResults`.
+The shared reporter is `src/telemetry/agent-events.ts`; the bridges import it
+directly, and the installer ships the module beside them. The native spawn
+script/SSE helper is `src/agents/spawn-tools.ts`, and the Antigravity and
+Copilot bridges' per-turn `autodev_spawn` server launches the shared
+`src/mcp/spawn-shim.ts`. Claude children are `router_alias` spawns: a Claude
+orchestrator spawns through Codex, so its children are ordinary
+`autodev/<role>` requests.
 
 ### Reasoning effort on the Antigravity bridge
 
@@ -1609,13 +1587,13 @@ model/profile effort to inherit rather than forcing a fallback medium effort.
 ### Streaming provider progress back to the parent
 
 A bridge that reports only the final assistant message leaves the parent (and
-the operator watching it) with a silent gap for the whole turn. Every bridge
-therefore streams the provider's intermediate output as Responses reasoning
-summary events (`response.reasoning_summary_text.delta` on a `reasoning` item
-at output index 0) alongside the answer text at output index 1:
+the operator watching it) with a silent gap for the whole turn. The Antigravity
+and Copilot bridges therefore stream the provider's intermediate output as
+Responses reasoning summary events (`response.reasoning_summary_text.delta` on
+a `reasoning` item at output index 0) alongside the answer text at output
+index 1. The Claude bridge instead emits each item as it finishes -- see
+"Claude bridge: Codex executes every tool":
 
-- Claude: reasoning (`thinking_delta`), each tool it starts, and the CLI's own
-  `task_summary` details.
 - Antigravity: `step_update` tool and step activity.
 - Copilot: `commentary`-phase message deltas, `report_intent` narration, and
   each `tool.execution_start`, parsed from the CLI's `--output-format json`
@@ -1709,27 +1687,82 @@ intended repository, and inspect the app task/log event for those failures.
 | Local router | Codex Responses -> `127.0.0.1:4100` -> model-based provider dispatch | GPT/Codex models use the stored Codex OAuth; external model names use the existing local bridges. |
 
 The Claude Responses adapter is not the GPT passthrough: it launches the
-OAuth-authenticated Claude CLI and translates Claude's stream into Responses events. The
-`LITELLM_API_KEY` used between the local router and local bridge is only a
-localhost gateway credential; it is removed, along with Anthropic API-key
-variables, before the Claude CLI subprocess starts.
-When Claude emits both `stream_event` text deltas and full `assistant` message
-snapshots, the bridge forwards only the canonical deltas so subagent
-commentary is not rendered twice; assistant-only streams remain supported.
-The bridge also passes the approved runtime directories in
-`CLAUDE_CODE_ADDITIONAL_DIRS` to Claude Code via `--add-dir`; it defaults to
-`~/.codex`. AutoDev skills use a generated role-specific view under
-`$CODEX_HOME/provider-runtime/claude/<role>/.claude/skills/`, because Claude's
-additional-directory discovery does not treat `~/.agents/skills` as a skill root.
-This lets read-only roles inspect materialized role/config and
-telemetry state outside the repository while their role instructions continue
-to forbid edits outside the active workspace. The bridge uses Claude Code's
-`bypassPermissions` mode by default so approved runtime reads and localhost
-diagnostics are not blocked by an interactive approval gate; override
-`CLAUDE_CODE_PERMISSION_MODE` when a stricter provider policy is required.
+OAuth-authenticated Claude CLI. The `LITELLM_API_KEY` used between the local
+router and local bridge is only a localhost gateway credential; it is removed,
+along with Anthropic API-key variables, before the Claude CLI subprocess starts.
 The bridge intentionally does not pass Claude's `--bare` flag: Claude documents
 that mode as skipping OAuth/keychain authentication, while AutoDev relies on
 `CLAUDE_CODE_OAUTH_TOKEN` and the first-party subscription flow.
+
+### Claude bridge: Codex executes every tool
+
+Claude is served as the model behind a Codex agent turn, not as a second agent
+runtime. Before this design the CLI ran its own `Read`, `Edit`, `Bash`, `Skill`,
+and `Agent` tools inside its process: Codex saw none of them, the app showed a
+Claude-served thread with no tool calls, skills, or thinking, an interrupted
+turn left no trace in the thread history, and a later provider continuing the
+thread truthfully reported that nothing had been done while the edits sat in
+the workspace (observed 2026-09-18, worker thread
+`01a0b664-aa5f-7dd0-b848-3f321b1f680a`).
+
+- **Tool surface.** `src/providers/claude-codex-tools.ts` mirrors the tools on
+  Codex's request -- in code mode the `functions` namespace inside the
+  `additional_tools` input item: the `exec` custom tool (JavaScript against a
+  `tools` global carrying `exec_command`, `apply_patch`, the role's MCP servers,
+  and, for an orchestrator, `multi_agent_v1__*`) and function tools such as
+  `wait` -- into an MCP server, `src/mcp/codex-tools-shim.ts`, that the CLI is
+  given with `--strict-mcp-config`. The CLI runs with `--tools ""`: no built-in
+  tool, except `WebSearch`/`WebFetch` on turns where Codex offered its hosted
+  `web_search`, which no tool script can perform.
+- **Parking.** When Claude calls a mirrored tool, the shim blocks and the bridge
+  (`src/providers/claude-turn.ts`) emits the call as a `custom_tool_call` or
+  `function_call` item, completes the response, and keeps the CLI parked. Codex
+  runs the call in the turn's sandbox with its approvals and hooks, the app
+  renders it, and Codex's next request carries the output; the bridge matches
+  its `call_id`, resolves the shim call, and streams the rest of the turn into
+  that request's response. Calls from one assistant message go out together.
+  Codex appends its own messages after a call's output -- a
+  `<subagent_notification>`, a user's steer, a `<turn_aborted>` notice -- so the
+  awaited results are the outputs in the input's tail, allowing such messages
+  (`src/shared/responses-continuation.ts`), and those messages reach the parked
+  turn with the results rather than being lost.
+  `CLAUDE_CODE_BRIDGE_PARK_SECONDS` (default 1800) bounds how long a parked turn
+  waits; the CLI's idle timeout does not run while Codex holds a call.
+- **Resuming without the CLI.** A continuation whose calls the bridge no longer
+  holds (a restart, or a park timeout) starts a fresh CLI from the rendered
+  transcript, which includes every earlier tool call and output, so the turn
+  continues rather than starting over blind.
+- **Incremental items.** Each thinking block, text block, tool call, and native
+  web-research step (`Searched the web: …`) is emitted as its own item and
+  finished as soon as it ends, so Codex records it immediately and an
+  interrupted turn keeps what already happened. A failure after output has
+  streamed ends the response `incomplete` with the shared limit notice.
+- **Cancellation.** A client that disconnects mid-response cancels the turn and
+  kills the CLI; nothing keeps working after its client went away.
+- **Telemetry.** A call is reported `tool_requested` on the request that emits
+  it and `tool_executed` (with the exact wait) on the request that returns its
+  output, as the MiniMax adapter does. Skill reads go through Codex's tools and
+  are observed by Codex's own skill-read hook.
+- **Routing.** The router prefers the provider that issued the calls a request
+  is answering (see "Tool-result affinity"), so the continuation reaches the
+  parked turn.
+
+### Tool-result affinity
+
+The router picks a provider per request, and Codex sends a tool's output on a
+new request. Without affinity that request can land on a different provider
+from the one that asked for the call, so a single turn hops providers mid-step
+(the 2026-09-18 worker turn went Antigravity → MiniMax → Claude). The router
+therefore records the `call_id` of every tool call a provider streams
+(`src/router/tool-call-ownership.ts`, bounded to the most recent 4096), and a
+request whose input ends in outputs for those calls -- after which Codex may
+have appended its own user or developer messages -- moves the issuing provider
+to the front of its candidates, for role and orchestrator turns alike.
+It is a preference, not a pin: a disabled or cooling provider is skipped as
+usual and the next provider continues from the replayed history. An
+orchestrator with no owned calls to answer keeps its existing session
+preference.
+
 The local router owns the GPT branch separately and forwards it to
 `https://chatgpt.com/backend-api/codex/responses` with the existing Codex OAuth
 token and account ID from `auth.json`.
@@ -1799,8 +1832,9 @@ installer is the only supported materialization path into
   - The installer writes `~/.claude.json`, `~/.copilot/mcp-config.json`, and
     `~/.gemini/config/mcp_config.json` from it with `rulesync generate --global`.
   - It merges the Codex projection into `$CODEX_HOME/config.toml`.
-  - Role TOMLs and the Claude bridge take their launch definitions from that
-    generated output.
+  - Role TOMLs, and the Antigravity and Copilot bridges, take their launch
+    definitions from that generated output. A Claude turn reaches MCP servers
+    through Codex's tools, so it needs none.
 - User-level provider/role configuration: `config/config.autodev.toml` is
   the authoritative portable configuration, composed into `$CODEX_HOME/config.toml`
   as an atomic regular file by `src/config/compose-user-config.ts`. The former
@@ -1861,10 +1895,8 @@ installer is the only supported materialization path into
   child work enters the multi-provider priority groups instead of bypassing
   them with a concrete Codex model.
 - `[agents].max_depth = 1` in the Codex config limits native Codex child
-  creation; it does not remove tools from the separate Claude Code process
-  launched by the Claude bridge. `--disallowed-tools Agent,Task` and the
-  Claude settings deny list are the authoritative no-descendant controls for
-  that process.
+  creation, including a Claude turn's: the Claude CLI runs with no built-in
+  tools, so it can only delegate through Codex's own spawn tool.
 - All five services -- the router and the four provider bridges -- are launchd
   agents with `RunAtLoad` and `KeepAlive`, managed by the installer.
   `launchctl bootout`/`bootstrap`/`kickstart` refresh every one of them on each
@@ -1891,9 +1923,12 @@ be re-derived.
 
 ### The provider bridges are not model gateways
 
-Three of the four bridges spawn a subscription-authenticated coding-agent CLI
-and return a *completed agent turn* -- file edits, tool calls, and for Claude
-and Antigravity their own subagents -- not a model completion:
+Three of the four bridges spawn a subscription-authenticated coding-agent CLI.
+The Antigravity and Copilot bridges return a *completed agent turn* -- file
+edits, tool calls, and for Antigravity its own subagents -- not a model
+completion. The Claude bridge is the exception: it serves Claude as a model
+whose every tool call Codex executes (see "Claude bridge: Codex executes every
+tool"):
 
 | Bridge | Authenticates as |
 | --- | --- |
@@ -1994,9 +2029,10 @@ configured and validated.
 `/Users/henrykirk/AutoDev/config/execution-contract.json` is the generated
 shared contract for role kind, read-only intent, expected MCP/skill capabilities,
 and adapter spawn-tool metadata. It is projected from the native role TOMLs by
-`src/config/render-execution-contract.ts`; the installer rejects drift. The Claude, Antigravity, and Copilot bridge prompt paths append the canonical
+`src/config/render-execution-contract.ts`; the installer rejects drift. The Antigravity and Copilot bridge prompt paths append the canonical
 role fragment from `agents/prompts/roles/` and use this JSON only for
-capability metadata. The installer deploys both beside the bridge runtime
+capability metadata; the Claude bridge receives the rendered role TOML's
+instructions in Codex's own context. The installer deploys both beside the bridge runtime
 modules. Native TOML role files remain the Codex configuration surface; the
 installer renders their shared prompt markers before deployment. Prompt or
 capability changes must be validated with the bridge-role matrix and native

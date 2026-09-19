@@ -13,7 +13,9 @@ import {
   payloadForCandidate,
   proxyConcreteResponse,
   proxyFallbackChain,
+  proxyRoleResponse,
 } from '../../src/router/proxy.ts';
+import { TOOL_CALL_OWNERSHIP } from '../../src/router/tool-call-ownership.ts';
 
 function responseRecorder(): any {
   const chunks: Buffer[] = [];
@@ -193,6 +195,59 @@ test('fallback chain tries candidates in declared order and stops after success'
     else process.env.LITELLM_API_KEY = previousClaude;
     if (previousMiniMax === undefined) delete process.env.MINIMAX_API_KEY;
     else process.env.MINIMAX_API_KEY = previousMiniMax;
+    COOLDOWNS.clearAll();
+  }
+});
+
+test('a tool result goes back to the provider that streamed the call', { concurrency: false }, async () => {
+  COOLDOWNS.clearAll();
+  TOOL_CALL_OWNERSHIP.clear();
+  const originalFetch = globalThis.fetch;
+  const saved = { LITELLM_API_KEY: process.env.LITELLM_API_KEY, MINIMAX_API_KEY: process.env.MINIMAX_API_KEY };
+  process.env.LITELLM_API_KEY = 'claude-key';
+  process.env.MINIMAX_API_KEY = 'minimax-key';
+  const call = { type: 'custom_tool_call', id: 'ctc_owned', call_id: 'call_owned_1', name: 'exec', input: 'text(1)', status: 'completed' };
+  const sse = [
+    { type: 'response.created', response: { id: 'resp_call', status: 'in_progress', output: [] } },
+    { type: 'response.output_item.added', output_index: 0, item: { ...call, input: '', status: 'in_progress' } },
+    { type: 'response.output_item.done', output_index: 0, item: call },
+    { type: 'response.completed', response: { id: 'resp_call', status: 'completed', output: [ call ] } },
+  ].map((event) => `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`).join('');
+  try {
+    globalThis.fetch = (async () => new Response(sse, { status: 200, headers: { 'content-type': 'text/event-stream' } })) as typeof fetch;
+    await proxyFallbackChain(
+      responseRecorder(),
+      { candidates: [ { ...route('claude', 'LITELLM_API_KEY'), model: 'sonnet' } ], role: 'worker', subject: 'worker turn' },
+      { model: 'autodev/worker', input: [], stream: true },
+      true,
+      'req-issue',
+      null,
+      null,
+    );
+    const answering = { model: 'autodev/worker', stream: false, input: [ call, { type: 'custom_tool_call_output', call_id: 'call_owned_1', output: 'ok' } ] };
+    assert.equal(TOOL_CALL_OWNERSHIP.ownerFor(answering), 'claude');
+
+    // The worker tier shuffles its providers per request, so one draw could
+    // land on Claude by chance; every draw must.
+    const firstTried: string[] = [];
+    let current: string[] = [];
+    globalThis.fetch = (async (input: string | URL | Request) => {
+      current.push(String(input));
+      return jsonResponse({ id: 'resp_next', status: 'completed', output: [] });
+    }) as typeof fetch;
+    for (let draw = 0; draw < 12; draw += 1) {
+      current = [];
+      await proxyRoleResponse(responseRecorder(), 'worker', answering, false, `req-answer-${draw}`, null, null);
+      firstTried.push(current[0] ?? '');
+    }
+    for (const url of firstTried) assert.match(url, /127\.0\.0\.1:4000/, 'the Claude bridge, which issued the call, is tried first');
+  } finally {
+    globalThis.fetch = originalFetch;
+    for (const [ key, value ] of Object.entries(saved)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+    TOOL_CALL_OWNERSHIP.clear();
     COOLDOWNS.clearAll();
   }
 });

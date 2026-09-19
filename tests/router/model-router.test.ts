@@ -727,14 +727,14 @@ test("agent-events reporting is decoupled from spawn-tool availability", () => {
     [ SUBAGENT_SPAWN_TOOLS_HEADER ]: "invoke_subagent",
     [ AGENT_EVENTS_URL_HEADER ]: `http://127.0.0.1:4100${AGENT_EVENTS_PATH}`,
   });
-  assert.equal(bridgeTelemetryHeaders({ provider: "claude" }, "request-1")[ SUBAGENT_SPAWN_TOOLS_HEADER ], "Agent,Task");
   // Native Codex is observed through OTLP and the router-side role contract,
   // so local agent-events headers must not be sent to the remote Codex API.
   assert.deepEqual(bridgeTelemetryHeaders({ provider: "codex" }, "request-1"), {});
-  // MiniMax and Copilot still run tools, expose skills, and reach MCP servers
-  // over the same request -- those observations must not go unreported just
-  // because the spawn watchlist is empty.
-  for (const provider of [ "minimax", "copilot" ]) {
+  // MiniMax, Copilot, and Claude still run tools, expose skills, and reach MCP
+  // servers over the same request -- those observations must not go
+  // unreported just because the spawn watchlist is empty. (Claude delegates
+  // through Codex's own spawn tool, so it has no bridge spawn tool to watch.)
+  for (const provider of [ "minimax", "copilot", "claude" ]) {
     assert.deepEqual(bridgeTelemetryHeaders({ provider }, "request-1"), {
       [ "x-autodev-request-id" ]: "request-1",
       [ AGENT_EVENTS_URL_HEADER ]: `http://127.0.0.1:4100${AGENT_EVENTS_PATH}`,

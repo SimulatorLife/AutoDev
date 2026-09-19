@@ -490,19 +490,18 @@ test("an Antigravity turn that dies names its own cause in the log", () => {
   assert.match(source, /turnSettled = true;/);
 });
 
-test("the Claude bridge reports the spawns its Agent tool makes in-process", () => {
+test("a Claude orchestrator delegates through Codex, not inside its CLI", () => {
+  // Claude acts only through Codex's tools, so an orchestrator spawns with
+  // Codex's own multi_agent_v1__spawn_agent inside an `exec` call, exactly as
+  // a Codex-served orchestrator does. The CLI has no Agent/Task tool to spawn
+  // invisible children with, and the bridge holds no delegation state.
   const source = read("src/providers/claude.ts");
-  assert.match(source, /class ToolUseAccumulator/);
-  assert.match(source, /input_json_delta/);
-  assert.match(source, /subagentRoleFromInput\(block\)/);
-  assert.match(source, /reportSpawnToolsUnavailable/);
-  assert.match(source, /event\.kind === "tools"/);
-  assert.match(source, /agentEvents\.isSpawnTool\(name\)/);
-  assert.match(source, /DISALLOWED_CLAUDE_TOOLS = \[ "Agent", "Task" \]/);
-  assert.match(source, /CROSS_SESSION_CLAUDE_TOOLS = \[ "SendMessage", "ListAgents" \]/);
-  assert.match(source, /buildSpawnScript\(spawnChildren/);
-  assert.match(source, /resolveAgentEventReporter/);
-  assert.match(source, /x-autodev-session-id/);
+  assert.match(source, /"--tools", builtIns\.join\(","\)/);
+  for (const obsolete of [ "SpawnSessionRegistry", "buildSpawnScript", "bridge-spawn", "isSpawnTool", "reportSpawn" ]) {
+    assert.doesNotMatch(source, new RegExp(obsolete), obsolete);
+  }
+  const contract = JSON.parse(read("config/execution-contract.json"));
+  assert.deepEqual(contract.providers.claude, { spawnTools: [], permissionMode: "native", delegation: "native" });
 });
 
 test("the installer ships the reporting module the bridges import at runtime", () => {
@@ -892,20 +891,17 @@ test("the Copilot bridge evaluates tool outcomes and reports telemetry", () => {
   assert.match(source, /agentEvents\.reportToolUnavailable\(\{ tool: event\.tool, callId: event\.callId, reason: event\.reason, server: event\.server \}\)/);
 });
 
-test("the Claude bridge exposes telemetry API methods and wires tool reporting", () => {
+test("the Claude bridge reports each Codex tool call it emits and each result Codex returns", () => {
   const source = read("src/providers/claude.ts");
   for (const marker of [
     "resolveAgentEventReporter",
-    "reportToolExecuted",
-    "reportToolRequested",
-    "reportToolUnavailable",
-    "reportSkillExposed",
-    "reportMcpExposed",
-    "CLAUDE_SKILL_EXPOSURE_SOURCE",
-    "CLAUDE_MCP_EXPOSURE_SOURCE",
-    'classification.kind === "unavailable"',
-    'classification.detail === "ok"',
+    "reportToolRequested\\(\\{ tool, callId, server: null \\}\\)",
+    "reportToolExecuted\\(\\{ tool, callId, status, server: null, durationMs \\}\\)",
+    "reportMcpExposed\\(\\{ server, source: CLAUDE_MCP_EXPOSURE_SOURCE \\}\\)",
   ]) assert.match(source, new RegExp(marker));
+  const turn = read("src/providers/claude-turn.ts");
+  assert.match(turn, /this\.reporter\?\.toolRequested\(call\.tool\.name, callId\)/);
+  assert.match(turn, /reporter\.toolExecuted\(call\.tool\.name, callId, Date\.now\(\) - call\.emittedAt, codexOutputFailed\(output\) \? "error" : "ok"\)/);
 });
 
 test("the Claude bridge posts tool and skill telemetry through the shared reporter", async () => {
@@ -1322,11 +1318,10 @@ test("the provider bridges wire activity lifecycle telemetry", () => {
   assert.match(copilotSource, /void agentEvents\.reportActivity\(\{ state: "finished" \}\)/);
   assert.match(copilotSource, /void agentEvents\.reportActivity\(\{ state: "failed" \}\)/);
 
-  // Claude bridge source assertions
+  // Claude bridge source assertions. Subagent waits are Codex's own
+  // multi_agent_v1 calls now, which the router observes like any Codex turn's.
   const claudeSource = read("src/providers/claude.ts");
-  assert.match(claudeSource, /reportActivity\(\{ state: "subagent_wait"/);
-  assert.match(claudeSource, /reportActivity\(\{ state: "tool_wait"/);
-  assert.match(claudeSource, /ask_question/);
+  assert.match(claudeSource, /reportActivity\(\{ state: tool === "request_user_input" \? "user_wait" : "tool_wait" \}\)/);
   assert.match(claudeSource, /reportActivity\(\{ state: "resumed"/);
   assert.match(claudeSource, /reportActivity\(\{ state: "finished"/);
   assert.match(claudeSource, /reportActivity\(\{ state: "failed"/);
@@ -1436,19 +1431,12 @@ test("the Copilot bridge detects a successful canonical SKILL.md read", () => {
   assert.match(source, /const skillEvent = skillReadEvent\(\{ seenSkills, toolName, args: open\?\.args \?\? data\.arguments, callId \}\);/);
 });
 
-test("the Claude bridge detects a successful canonical SKILL.md read", async () => {
+test("a Claude turn reads skills through Codex, where Codex's own hooks observe it", () => {
+  // The CLI has no Read or Bash of its own, so a SKILL.md read is a Codex tool
+  // call and reaches the same skill-read hook as any Codex-served model's.
+  // The bridge therefore keeps no second, CLI-specific detector.
   const source = read("src/providers/claude.ts");
-  assert.match(source, /CLAUDE_SKILL_READ_SOURCE = SKILL_READ_SOURCE/);
-  assert.match(source, /if \(classification\.detail === "ok"\)/);
-  assert.match(source, /seenSkillReads/);
-  const previousRoot = process.env.AUTODEV_REPO_ROOT;
-  process.env.AUTODEV_REPO_ROOT = REPO_ROOT;
-  const { extractSkillReadPath, matchSkillReadPath } = (await import("../src/providers/claude.ts" as string)) as any;
-  if (previousRoot === undefined) delete process.env.AUTODEV_REPO_ROOT; else process.env.AUTODEV_REPO_ROOT = previousRoot;
-  assert.equal(extractSkillReadPath("Read", { file_path: CANONICAL_SKILL_PATH }), CANONICAL_SKILL_PATH);
-  assert.equal(extractSkillReadPath("Read", { AbsolutePath: CANONICAL_SKILL_PATH }), CANONICAL_SKILL_PATH);
-  assert.equal(extractSkillReadPath("Bash", { command: `cat ${CANONICAL_SKILL_PATH}` }), CANONICAL_SKILL_PATH);
-  assert.equal(extractSkillReadPath("Write", { file_path: CANONICAL_SKILL_PATH }), null);
-  assert.equal(matchSkillReadPath(CANONICAL_SKILL_PATH), "ccc");
-  assert.equal(matchSkillReadPath(OTHER_FILE_PATH), null);
+  for (const obsolete of [ "extractSkillReadPath", "matchSkillReadPath", "reportSkillUsed", "claudeSkillViewForRole" ]) {
+    assert.doesNotMatch(source, new RegExp(obsolete), obsolete);
+  }
 });

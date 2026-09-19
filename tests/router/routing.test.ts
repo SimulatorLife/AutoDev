@@ -58,3 +58,15 @@ test('routing policy preserves seeded ordering while honoring load and disabled-
   const preferred = policy.orchestratorCandidates(seeded(0xC0FFEE), 'claude');
   assert.equal(preferred[0]?.provider, 'claude');
 });
+
+test('a role turn prefers the provider whose tool calls it is answering', () => {
+  const policy = new RoutingPolicy(ROUTING_POLICY.config, ROUTING_POLICY.configFile, process.env);
+  const baseline = policy.roleCandidates('worker', seeded(7)).map((candidate) => candidate.provider);
+  const owner = baseline.at(-1)!;
+  const preferred = policy.roleCandidates('worker', seeded(7), owner).map((candidate) => candidate.provider);
+  assert.equal(preferred[0], owner);
+  assert.deepEqual(preferred.slice(1), baseline.filter((provider) => provider !== owner), 'the rest keep their order');
+  // A disabled owner is skipped like any other provider; the history replays elsewhere.
+  policy.setProviderEnabled(owner, false);
+  assert.equal(policy.roleCandidates('worker', seeded(7), owner).some((candidate) => candidate.provider === owner), false);
+});

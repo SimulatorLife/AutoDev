@@ -1,6 +1,6 @@
 {
   "schema": "autodev-claude-responses-contract-v1",
-  "description": "Offline stream-json inputs and expected boundary invariants for the Claude Responses bridge. Each case feeds a fake Claude CLI subprocess whose stdout is the JSONL event sequence; the bridge is exercised through the real Python HTTP server and a local telemetry collector, so Anthropic is never contacted and no real OAuth credentials are required. Cases cover: normal streaming text deltas with reasoning and completion, direct file-tool skill reads, shell skill reads through bash, multi-call continuation with item-id continuity, permission-denied tool unavailability, rate-limit-event incomplete output with classified limit, missing-bearer 401 from the gateway auth check, and missing-Claude-OAuth 502 from the bridge subprocess guard. Expected IDs are normalized before assertion, and the prompt content used by every case is asserted absent from both the SSE body and the telemetry channel.",
+  "description": "Offline stream-json inputs and expected boundary invariants for the Claude Responses bridge. Each case feeds a fake Claude CLI subprocess whose stdout is the JSONL event sequence; the bridge is exercised through its real HTTP server and a local telemetry collector, so Anthropic is never contacted and no real OAuth credentials are required. Cases cover: plain streamed text, a thinking block finished as its own reasoning item before the answer, native web research recorded as a finished step, a rejected attempt at a tool the CLI does not have left unrecorded, a rate-limit event ending the response incomplete with the classified limit after the streamed text, missing-bearer 401 from the gateway auth check, and missing-Claude-OAuth 502 from the bridge's environment guard. The Codex-tool loop, where every other action runs, is covered by tests/claude-codex-tool-loop.test.ts. Expected IDs are normalized before assertion, and the prompt content used by every case is asserted absent from both the SSE body and the telemetry channel.",
   "cases": {
     "normal_stream": {
       "request": {
@@ -12,10 +12,7 @@
           {
             "type": "system",
             "subtype": "init",
-            "tools": [
-              "Read",
-              "Bash"
-            ]
+            "tools": []
           },
           {
             "type": "stream_event",
@@ -85,14 +82,9 @@
         "eventTypes": [
           "response.created",
           "response.output_item.added",
-          "response.reasoning_summary_part.added",
-          "response.output_item.added",
           "response.content_part.added",
           "response.output_text.delta",
           "response.output_text.delta",
-          "response.reasoning_summary_text.done",
-          "response.reasoning_summary_part.done",
-          "response.output_item.done",
           "response.output_text.done",
           "response.content_part.done",
           "response.output_item.done",
@@ -102,10 +94,13 @@
         "telemetryTypes": [
           "mcp_exposed",
           "activity"
+        ],
+        "outputTypes": [
+          "message"
         ]
       }
     },
-    "direct_skill_read": {
+    "thinking_before_answer": {
       "request": {
         "stream": true,
         "model": "claude-subscription"
@@ -115,10 +110,13 @@
           {
             "type": "system",
             "subtype": "init",
-            "tools": [
-              "Read",
-              "Bash"
-            ]
+            "tools": []
+          },
+          {
+            "type": "stream_event",
+            "event": {
+              "type": "message_start"
+            }
           },
           {
             "type": "stream_event",
@@ -126,10 +124,8 @@
               "type": "content_block_start",
               "index": 0,
               "content_block": {
-                "type": "tool_use",
-                "id": "toolu_direct_01",
-                "name": "Read",
-                "input": {}
+                "type": "thinking",
+                "thinking": ""
               }
             }
           },
@@ -139,8 +135,8 @@
               "type": "content_block_delta",
               "index": 0,
               "delta": {
-                "type": "input_json_delta",
-                "partial_json": "{\"file_path\":\"<REPO_ROOT>/.rulesync/skills/ccc/SKILL.md\"}"
+                "type": "thinking_delta",
+                "thinking": "weighing the options"
               }
             }
           },
@@ -149,26 +145,6 @@
             "event": {
               "type": "content_block_stop",
               "index": 0
-            }
-          },
-          {
-            "type": "user",
-            "message": {
-              "role": "user",
-              "content": [
-                {
-                  "type": "tool_result",
-                  "tool_use_id": "toolu_direct_01",
-                  "content": "skill body",
-                  "is_error": false
-                }
-              ]
-            }
-          },
-          {
-            "type": "stream_event",
-            "event": {
-              "type": "message_start"
             }
           },
           {
@@ -189,7 +165,7 @@
               "index": 1,
               "delta": {
                 "type": "text_delta",
-                "text": "skill inspected"
+                "text": "the answer"
               }
             }
           },
@@ -201,14 +177,19 @@
             }
           },
           {
+            "type": "stream_event",
+            "event": {
+              "type": "message_stop"
+            }
+          },
+          {
             "type": "result",
-            "result": "skill inspected",
+            "result": "the answer",
             "is_error": false,
             "subtype": "success",
-            "duration_ms": 240,
-            "modelUsage": {
-              "input_tokens": 11,
-              "output_tokens": 5
+            "usage": {
+              "input_tokens": 9,
+              "output_tokens": 4
             }
           }
         ],
@@ -217,383 +198,60 @@
       },
       "expected": {
         "status": 200,
-        "outputText": "skill inspected",
+        "outputText": "the answer",
         "completedStatus": "completed",
-        "telemetryTypes": [
-          "mcp_exposed",
-          "tool_requested",
-          "tool_executed",
-          "skill_used"
-        ],
-        "tool": "Read",
-        "skill": "ccc",
         "eventTypes": [
           "response.created",
           "response.output_item.added",
           "response.reasoning_summary_part.added",
-          "response.output_item.added",
-          "response.content_part.added",
           "response.reasoning_summary_text.delta",
-          "response.output_text.delta",
           "response.reasoning_summary_text.done",
           "response.reasoning_summary_part.done",
           "response.output_item.done",
+          "response.output_item.added",
+          "response.content_part.added",
+          "response.output_text.delta",
           "response.output_text.done",
           "response.content_part.done",
           "response.output_item.done",
           "response.completed",
           "[DONE]"
+        ],
+        "outputTypes": [
+          "reasoning",
+          "message"
+        ],
+        "reasoningSummaries": [
+          "weighing the options"
+        ],
+        "telemetryTypes": [
+          "mcp_exposed",
+          "activity"
         ]
       }
     },
-    "shell_skill_read": {
+    "web_research_progress": {
       "request": {
         "stream": true,
-        "model": "claude-subscription"
-      },
-      "cli": {
-        "events": [
-          {
-            "type": "system",
-            "subtype": "init",
-            "tools": [
-              "Read",
-              "Bash"
-            ]
-          },
-          {
-            "type": "stream_event",
-            "event": {
-              "type": "content_block_start",
-              "index": 0,
-              "content_block": {
-                "type": "tool_use",
-                "id": "toolu_shell_01",
-                "name": "Bash",
-                "input": {}
-              }
-            }
-          },
-          {
-            "type": "stream_event",
-            "event": {
-              "type": "content_block_delta",
-              "index": 0,
-              "delta": {
-                "type": "input_json_delta",
-                "partial_json": "{\"command\":\"cat <REPO_ROOT>/.rulesync/skills/ccc/SKILL.md\"}"
-              }
-            }
-          },
-          {
-            "type": "stream_event",
-            "event": {
-              "type": "content_block_stop",
-              "index": 0
-            }
-          },
-          {
-            "type": "user",
-            "message": {
-              "role": "user",
-              "content": [
-                {
-                  "type": "tool_result",
-                  "tool_use_id": "toolu_shell_01",
-                  "content": "skill body",
-                  "is_error": false
-                }
-              ]
-            }
-          },
-          {
-            "type": "stream_event",
-            "event": {
-              "type": "message_start"
-            }
-          },
-          {
-            "type": "stream_event",
-            "event": {
-              "type": "content_block_start",
-              "index": 1,
-              "content_block": {
-                "type": "text",
-                "text": ""
-              }
-            }
-          },
-          {
-            "type": "stream_event",
-            "event": {
-              "type": "content_block_delta",
-              "index": 1,
-              "delta": {
-                "type": "text_delta",
-                "text": "shell skill inspected"
-              }
-            }
-          },
-          {
-            "type": "stream_event",
-            "event": {
-              "type": "content_block_stop",
-              "index": 1
-            }
-          },
-          {
-            "type": "result",
-            "result": "shell skill inspected",
-            "is_error": false,
-            "subtype": "success",
-            "duration_ms": 260,
-            "modelUsage": {
-              "input_tokens": 13,
-              "output_tokens": 5
-            }
-          }
-        ],
-        "exitCode": 0,
-        "stderr": ""
-      },
-      "expected": {
-        "status": 200,
-        "outputText": "shell skill inspected",
-        "completedStatus": "completed",
-        "telemetryTypes": [
-          "mcp_exposed",
-          "tool_requested",
-          "tool_executed",
-          "skill_used"
-        ],
-        "tool": "Bash",
-        "skill": "ccc",
-        "eventTypes": [
-          "response.created",
-          "response.output_item.added",
-          "response.reasoning_summary_part.added",
-          "response.output_item.added",
-          "response.content_part.added",
-          "response.reasoning_summary_text.delta",
-          "response.output_text.delta",
-          "response.reasoning_summary_text.done",
-          "response.reasoning_summary_part.done",
-          "response.output_item.done",
-          "response.output_text.done",
-          "response.content_part.done",
-          "response.output_item.done",
-          "response.completed",
-          "[DONE]"
-        ]
-      }
-    },
-    "tool_continuation": {
-      "request": {
-        "stream": true,
-        "model": "claude-subscription"
-      },
-      "cli": {
-        "events": [
-          {
-            "type": "system",
-            "subtype": "init",
-            "tools": [
-              "Read",
-              "Bash"
-            ]
-          },
-          {
-            "type": "stream_event",
-            "event": {
-              "type": "content_block_start",
-              "index": 0,
-              "content_block": {
-                "type": "tool_use",
-                "id": "toolu_cont_read",
-                "name": "Read",
-                "input": {}
-              }
-            }
-          },
-          {
-            "type": "stream_event",
-            "event": {
-              "type": "content_block_delta",
-              "index": 0,
-              "delta": {
-                "type": "input_json_delta",
-                "partial_json": "{\"file_path\":\"<REPO_ROOT>/.rulesync/skills/ccc/SKILL.md\"}"
-              }
-            }
-          },
-          {
-            "type": "stream_event",
-            "event": {
-              "type": "content_block_stop",
-              "index": 0
-            }
-          },
-          {
-            "type": "user",
-            "message": {
-              "role": "user",
-              "content": [
-                {
-                  "type": "tool_result",
-                  "tool_use_id": "toolu_cont_read",
-                  "content": "skill body",
-                  "is_error": false
-                }
-              ]
-            }
-          },
-          {
-            "type": "stream_event",
-            "event": {
-              "type": "content_block_start",
-              "index": 1,
-              "content_block": {
-                "type": "tool_use",
-                "id": "toolu_cont_bash",
-                "name": "Bash",
-                "input": {}
-              }
-            }
-          },
-          {
-            "type": "stream_event",
-            "event": {
-              "type": "content_block_delta",
-              "index": 1,
-              "delta": {
-                "type": "input_json_delta",
-                "partial_json": "{\"command\":\"cat <REPO_ROOT>/.rulesync/skills/lsp-mcp-server/SKILL.md\"}"
-              }
-            }
-          },
-          {
-            "type": "stream_event",
-            "event": {
-              "type": "content_block_stop",
-              "index": 1
-            }
-          },
-          {
-            "type": "user",
-            "message": {
-              "role": "user",
-              "content": [
-                {
-                  "type": "tool_result",
-                  "tool_use_id": "toolu_cont_bash",
-                  "content": "lsp skill body",
-                  "is_error": false
-                }
-              ]
-            }
-          },
-          {
-            "type": "stream_event",
-            "event": {
-              "type": "message_start"
-            }
-          },
-          {
-            "type": "stream_event",
-            "event": {
-              "type": "content_block_start",
-              "index": 2,
-              "content_block": {
-                "type": "text",
-                "text": ""
-              }
-            }
-          },
-          {
-            "type": "stream_event",
-            "event": {
-              "type": "content_block_delta",
-              "index": 2,
-              "delta": {
-                "type": "text_delta",
-                "text": "both skills inspected"
-              }
-            }
-          },
-          {
-            "type": "stream_event",
-            "event": {
-              "type": "content_block_stop",
-              "index": 2
-            }
-          },
-          {
-            "type": "result",
-            "result": "both skills inspected",
-            "is_error": false,
-            "subtype": "success",
-            "duration_ms": 380,
-            "modelUsage": {
-              "input_tokens": 21,
-              "output_tokens": 6
-            }
-          }
-        ],
-        "exitCode": 0,
-        "stderr": ""
-      },
-      "expected": {
-        "status": 200,
-        "outputText": "both skills inspected",
-        "completedStatus": "completed",
-        "telemetryTypes": [
-          "mcp_exposed",
-          "tool_requested",
-          "tool_executed",
-          "skill_used"
-        ],
+        "model": "claude-subscription",
         "tools": [
-          "Read",
-          "Bash"
-        ],
-        "skills": [
-          "ccc",
-          "lsp-mcp-server"
-        ],
-        "eventTypes": [
-          "response.created",
-          "response.output_item.added",
-          "response.reasoning_summary_part.added",
-          "response.output_item.added",
-          "response.content_part.added",
-          "response.reasoning_summary_text.delta",
-          "response.reasoning_summary_text.delta",
-          "response.output_text.delta",
-          "response.reasoning_summary_text.done",
-          "response.reasoning_summary_part.done",
-          "response.output_item.done",
-          "response.output_text.done",
-          "response.content_part.done",
-          "response.output_item.done",
-          "response.completed",
-          "[DONE]"
+          {
+            "type": "web_search"
+          }
         ]
-      }
-    },
-    "permission_denied": {
-      "request": {
-        "stream": true,
-        "model": "claude-subscription"
       },
       "cli": {
         "events": [
           {
             "type": "system",
             "subtype": "init",
-            "tools": [
-              "Read",
-              "Bash"
-            ]
+            "tools": []
+          },
+          {
+            "type": "stream_event",
+            "event": {
+              "type": "message_start"
+            }
           },
           {
             "type": "stream_event",
@@ -602,8 +260,8 @@
               "index": 0,
               "content_block": {
                 "type": "tool_use",
-                "id": "toolu_perm_01",
-                "name": "Bash",
+                "id": "toolu_search",
+                "name": "WebSearch",
                 "input": {}
               }
             }
@@ -615,7 +273,7 @@
               "index": 0,
               "delta": {
                 "type": "input_json_delta",
-                "partial_json": "{\"command\":\"cat /private/secret\"}"
+                "partial_json": "{\"query\":\"codex responses api\"}"
               }
             }
           },
@@ -627,14 +285,183 @@
             }
           },
           {
+            "type": "stream_event",
+            "event": {
+              "type": "message_stop"
+            }
+          },
+          {
             "type": "user",
             "message": {
               "role": "user",
               "content": [
                 {
                   "type": "tool_result",
-                  "tool_use_id": "toolu_perm_01",
-                  "content": "Permission for this tool use was denied: it requires interactive approval",
+                  "tool_use_id": "toolu_search",
+                  "content": "results",
+                  "is_error": false
+                }
+              ]
+            }
+          },
+          {
+            "type": "stream_event",
+            "event": {
+              "type": "message_start"
+            }
+          },
+          {
+            "type": "stream_event",
+            "event": {
+              "type": "content_block_start",
+              "index": 0,
+              "content_block": {
+                "type": "text",
+                "text": ""
+              }
+            }
+          },
+          {
+            "type": "stream_event",
+            "event": {
+              "type": "content_block_delta",
+              "index": 0,
+              "delta": {
+                "type": "text_delta",
+                "text": "found it"
+              }
+            }
+          },
+          {
+            "type": "stream_event",
+            "event": {
+              "type": "content_block_stop",
+              "index": 0
+            }
+          },
+          {
+            "type": "stream_event",
+            "event": {
+              "type": "message_stop"
+            }
+          },
+          {
+            "type": "result",
+            "result": "found it",
+            "is_error": false,
+            "subtype": "success",
+            "usage": {
+              "input_tokens": 12,
+              "output_tokens": 3
+            }
+          }
+        ],
+        "exitCode": 0,
+        "stderr": ""
+      },
+      "expected": {
+        "status": 200,
+        "outputText": "found it",
+        "completedStatus": "completed",
+        "eventTypes": [
+          "response.created",
+          "response.output_item.added",
+          "response.reasoning_summary_part.added",
+          "response.reasoning_summary_text.delta",
+          "response.reasoning_summary_text.done",
+          "response.reasoning_summary_part.done",
+          "response.output_item.done",
+          "response.output_item.added",
+          "response.content_part.added",
+          "response.output_text.delta",
+          "response.output_text.done",
+          "response.content_part.done",
+          "response.output_item.done",
+          "response.completed",
+          "[DONE]"
+        ],
+        "outputTypes": [
+          "reasoning",
+          "message"
+        ],
+        "reasoningSummaries": [
+          "Searched the web: codex responses api"
+        ],
+        "telemetryTypes": [
+          "mcp_exposed",
+          "activity"
+        ]
+      }
+    },
+    "rejected_tool_attempt": {
+      "request": {
+        "stream": true,
+        "model": "claude-subscription",
+        "tools": [
+          {
+            "type": "web_search"
+          }
+        ]
+      },
+      "cli": {
+        "events": [
+          {
+            "type": "system",
+            "subtype": "init",
+            "tools": []
+          },
+          {
+            "type": "stream_event",
+            "event": {
+              "type": "message_start"
+            }
+          },
+          {
+            "type": "stream_event",
+            "event": {
+              "type": "content_block_start",
+              "index": 0,
+              "content_block": {
+                "type": "tool_use",
+                "id": "toolu_guess",
+                "name": "exec_command",
+                "input": {}
+              }
+            }
+          },
+          {
+            "type": "stream_event",
+            "event": {
+              "type": "content_block_delta",
+              "index": 0,
+              "delta": {
+                "type": "input_json_delta",
+                "partial_json": "{\"cmd\":\"ls\"}"
+              }
+            }
+          },
+          {
+            "type": "stream_event",
+            "event": {
+              "type": "content_block_stop",
+              "index": 0
+            }
+          },
+          {
+            "type": "stream_event",
+            "event": {
+              "type": "message_stop"
+            }
+          },
+          {
+            "type": "user",
+            "message": {
+              "role": "user",
+              "content": [
+                {
+                  "type": "tool_result",
+                  "tool_use_id": "toolu_guess",
+                  "content": "Error: No such tool available: exec_command",
                   "is_error": true
                 }
               ]
@@ -650,7 +477,7 @@
             "type": "stream_event",
             "event": {
               "type": "content_block_start",
-              "index": 1,
+              "index": 0,
               "content_block": {
                 "type": "text",
                 "text": ""
@@ -661,10 +488,10 @@
             "type": "stream_event",
             "event": {
               "type": "content_block_delta",
-              "index": 1,
+              "index": 0,
               "delta": {
                 "type": "text_delta",
-                "text": "permission handled"
+                "text": "recovered"
               }
             }
           },
@@ -672,18 +499,23 @@
             "type": "stream_event",
             "event": {
               "type": "content_block_stop",
-              "index": 1
+              "index": 0
+            }
+          },
+          {
+            "type": "stream_event",
+            "event": {
+              "type": "message_stop"
             }
           },
           {
             "type": "result",
-            "result": "permission handled",
+            "result": "recovered",
             "is_error": false,
             "subtype": "success",
-            "duration_ms": 300,
-            "modelUsage": {
-              "input_tokens": 9,
-              "output_tokens": 5
+            "usage": {
+              "input_tokens": 5,
+              "output_tokens": 1
             }
           }
         ],
@@ -692,31 +524,25 @@
       },
       "expected": {
         "status": 200,
-        "outputText": "permission handled",
+        "outputText": "recovered",
         "completedStatus": "completed",
-        "telemetryTypes": [
-          "mcp_exposed",
-          "tool_requested",
-          "tool_unavailable"
-        ],
-        "tool": "Bash",
-        "unavailableReason": "permission_denied",
         "eventTypes": [
           "response.created",
           "response.output_item.added",
-          "response.reasoning_summary_part.added",
-          "response.output_item.added",
           "response.content_part.added",
-          "response.reasoning_summary_text.delta",
           "response.output_text.delta",
-          "response.reasoning_summary_text.done",
-          "response.reasoning_summary_part.done",
-          "response.output_item.done",
           "response.output_text.done",
           "response.content_part.done",
           "response.output_item.done",
           "response.completed",
           "[DONE]"
+        ],
+        "outputTypes": [
+          "message"
+        ],
+        "telemetryTypes": [
+          "mcp_exposed",
+          "activity"
         ]
       }
     },
@@ -730,10 +556,7 @@
           {
             "type": "system",
             "subtype": "init",
-            "tools": [
-              "Read",
-              "Bash"
-            ]
+            "tools": []
           },
           {
             "type": "stream_event",
@@ -796,14 +619,14 @@
         "eventTypes": [
           "response.created",
           "response.output_item.added",
-          "response.reasoning_summary_part.added",
+          "response.content_part.added",
+          "response.output_text.delta",
+          "response.output_text.done",
+          "response.content_part.done",
+          "response.output_item.done",
           "response.output_item.added",
           "response.content_part.added",
           "response.output_text.delta",
-          "response.output_text.delta",
-          "response.reasoning_summary_text.done",
-          "response.reasoning_summary_part.done",
-          "response.output_item.done",
           "response.output_text.done",
           "response.content_part.done",
           "response.output_item.done",
@@ -813,6 +636,10 @@
         "telemetryTypes": [
           "mcp_exposed",
           "activity"
+        ],
+        "outputTypes": [
+          "message",
+          "message"
         ]
       }
     },

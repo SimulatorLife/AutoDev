@@ -289,8 +289,10 @@ test('provider bridges explicitly expose code MCP capabilities', async () => {
   assert.match(copilot, /--allow-tool=web_search/);
   assert.match(copilot, /--allow-tool=web_fetch/);
   const claude = await readFile(path.join(root, 'src', 'providers', 'claude.ts'), 'utf8');
-  assert.match(claude, /bridgeMcpServers/);
-  assert.match(claude, /claudeToolServer|bridgeMcpServers/);
+  // Claude reaches a role's MCP servers through Codex's own tools (Codex
+  // loads them from the role TOML), and keeps only its native web research.
+  assert.match(claude, /codexToolsMcpConfig/);
+  assert.doesNotMatch(claude, /bridgeMcpServers/);
   assert.match(claude, /WebSearch/);
   assert.match(claude, /WebFetch/);
   const antigravity = await readFile(path.join(root, 'src', 'providers', 'antigravity.ts'), 'utf8');

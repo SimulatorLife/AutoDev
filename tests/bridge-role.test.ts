@@ -13,7 +13,7 @@ import {
 import { EXECUTION_CONTRACT, roleContract } from "../src/shared/execution-contract.ts";
 import { promptFromInput } from "../src/providers/antigravity.ts";
 import { inputText } from "../src/providers/copilot.ts";
-import { promptFromInput as claudePromptFromInput } from "../src/providers/claude.ts";
+import { renderCodexTranscript } from "../src/providers/claude-codex-tools.ts";
 
 const read = (path: string): string => readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
 
@@ -67,19 +67,19 @@ test("provider adapters put the complete shared prompt in the actual CLI prompt"
   assert.equal(promptFromInput("leaf task", leaf), `${leaf}\n\nleaf task`);
   assert.equal(inputText("root task", orchestrator), `${orchestrator}\n\nDelegated task:\nroot task`);
   assert.match(promptFromInput([{ role: "system", content: "ignored" }, { role: "user", content: "structured task" }], composeProviderPrompt("explorer", "/tmp/workspace")), /structured task$/);
-  assert.match(claudePromptFromInput([{ role: "developer", content: "ignored" }, { role: "user", content: [{ type: "input_text", text: "structured task" }] }], composeProviderPrompt("explorer", "/tmp/workspace")), /structured task$/);
   assert.match(inputText([{ role: "developer", content: "ignored" }, { role: "user", content: "structured task" }], composeProviderPrompt(ORCHESTRATOR_AGENT_ROLE, "/tmp/workspace")), /Delegated task:\nstructured task$/);
 });
 
-test("Claude prompt extraction accepts input_text and text parts without losing task text", () => {
-  assert.equal(
-    claudePromptFromInput([{ role: "user", content: [{ type: "input_text", text: "review the changes" }] }]),
-    "Delegated task:\nreview the changes",
-  );
-  assert.equal(
-    claudePromptFromInput([{ role: "user", content: [{ type: "text", text: "run the validator" }] }]),
-    "Delegated task:\nrun the validator",
-  );
+test("Claude receives Codex's own context, developer instructions included", () => {
+  // Claude is served as the model behind a Codex turn, so it is given exactly
+  // what a Codex-native model is given: the role policy arrives in Codex's own
+  // developer message rather than as a second copy the bridge composes.
+  const transcript = renderCodexTranscript([
+    { role: "developer", content: [{ type: "input_text", text: "role policy" }] },
+    { role: "user", content: [{ type: "input_text", text: "review the changes" }] },
+    { role: "user", content: [{ type: "text", text: "run the validator" }] },
+  ]);
+  assert.equal(transcript, "<developer>\nrole policy\n</developer>\n\n<user>\nreview the changes\n</user>\n\n<user>\nrun the validator\n</user>");
 });
 
 test("the orchestrator is never handed the leaf prompt, and the leaf is never handed the orchestrator prompt", () => {
@@ -151,20 +151,21 @@ test("every provider bridge picks its instructions from the shared role prompts"
 
   const claude = read("src/providers/claude.ts");
   assert.match(claude, /resolveAgentRole\(request\.headers/);
-  assert.match(claude, /composeProviderPrompt\([^\n]+cwd/);
-  assert.match(claude, /export function systemPrompt/);
+  // Claude takes its role policy from Codex's developer instructions, like a
+  // Codex-native model; a second composed copy would compete with them.
+  assert.doesNotMatch(claude, /composeProviderPrompt/);
+  assert.match(claude, /renderCodexTranscript\(payload\.input/);
 });
 
 test("the Claude bridge replaces the CLI's own system prompt instead of appending to it", () => {
   const claude = read("src/providers/claude.ts");
   // Appending leaves Claude Code's default prompt in force, whose harness
-  // guidance competes with the role policy the bridge is responsible for.
+  // guidance describes tools a bridged turn does not have.
   assert.doesNotMatch(claude, /--append-system-prompt/);
-  assert.match(claude, /"--system-prompt",/);
-  assert.match(claude, /composeProviderPrompt/);
+  assert.match(claude, /"--system-prompt", options\.systemPrompt/);
   // `--system-prompt` drops the CLI's per-machine sections, so the resolved
   // workspace has to be stated in the prompt the bridge builds.
-  assert.match(read("src/agents/bridge-role.ts"), /Working directory/);
+  assert.match(claude, /Working directory: \$\{cwd\}/);
   // The bundled skill catalogue is a second, unversioned source of policy.
   assert.match(claude, /CLAUDE_CODE_DISABLE_BUNDLED_SKILLS = "1"/);
 });

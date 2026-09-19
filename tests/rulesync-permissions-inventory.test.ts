@@ -35,17 +35,23 @@ test('Codex portable permission surface is explicit', () => {
   }
 });
 
-test('Claude bridge permission policy remains role-aware', () => {
+test('Claude bridge acts only through Codex tools', () => {
+  // Codex, not the CLI, enforces each role's sandbox, MCP allowlist, and
+  // approvals, because every action a Claude turn takes is a Codex tool call.
+  // The CLI keeps no built-in tool except web research, and only when Codex
+  // offered its hosted web search, which no tool script can perform.
   const source = read('src/providers/claude.ts');
   for (const marker of [
-    'DISALLOWED_CLAUDE_TOOLS = [ "Agent", "Task" ]',
-    'DISALLOWED_CLI_COMMANDS = [ "Bash(ccc *)", "Bash(ccc)" ]',
-    'CROSS_SESSION_CLAUDE_TOOLS = [ "SendMessage", "ListAgents" ]',
-    'CLAUDE_RESEARCH_ALLOWED_TOOLS = [ "WebSearch", "WebFetch" ]',
-    'PLAYWRIGHT_AGENT_ROLES', 'PLAYWRIGHT_DISALLOWED_TOOLS', 'RESEARCH_CAPABLE_ROLES',
-    'denied.push("Bash", "Edit", "Write", "NotebookEdit")', '"--allowed-tools"',
+    'const CLAUDE_WEB_TOOLS = [ "WebSearch", "WebFetch" ]',
+    'const builtIns = options.webSearch ? CLAUDE_WEB_TOOLS : []',
+    '"--tools", builtIns.join(",")',
+    '"--strict-mcp-config"',
+    '`mcp__${CODEX_TOOLS_SERVER}`',
     '"--permission-mode"', 'CLAUDE_CODE_PERMISSION_MODE ?? "bypassPermissions"',
   ]) assert.ok(source.includes(marker), marker);
+  for (const obsolete of [ '--disallowed-tools', '--add-dir', 'bridgeMcpServers', 'Bash(ccc' ]) {
+    assert.ok(!source.includes(obsolete), `the Claude bridge no longer grants or filters CLI-native tools: ${obsolete}`);
+  }
 });
 
 test('Antigravity permissions are dynamic and machine-local', () => {
@@ -75,7 +81,7 @@ test('Rulesync permissions and subagent generation remain deferred', () => {
   const providers = asObject(contract.providers);
   assert.deepEqual(
     Object.fromEntries(['codex', 'claude', 'antigravity', 'copilot', 'minimax'].map((name) => [name, asObject(providers[name]).delegation])),
-    { codex: 'native', claude: 'codex-shim', antigravity: 'codex-shim', copilot: 'codex-shim', minimax: 'none' },
+    { codex: 'native', claude: 'native', antigravity: 'codex-shim', copilot: 'codex-shim', minimax: 'none' },
   );
   const mcpTargets = asObject(rulesyncMcp);
   assert.ok(Object.hasOwn(asObject(asObject(mcpTargets['antigravity-cli']).mcpServers), 'autodev_spawn'));

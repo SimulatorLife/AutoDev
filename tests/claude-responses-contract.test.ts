@@ -211,10 +211,13 @@ async function runStreamingCase(name: string, rawCase: ContractCase, telemetry: 
     }
     assert.equal(sse.filter(({ event }) => event === "response.completed").length, 1, `${name}: one completion`);
     for (const entry of sse.filter(({ data }) => data?.sequence_number !== undefined)) assert.equal(typeof entry.data.sequence_number, "number");
-    if (item.expected.tool || item.expected.tools) {
-      const expectedTools = new Set([...(item.expected.tool ? [item.expected.tool] : []), ...(item.expected.tools ?? [])]);
-      assert.ok(expectedTools.size > 0, `${name}: expected tool set must be non-empty`);
-      assert.ok(sse.find(({ event }) => event === "response.created"), `${name}: response.created present`);
+    if (item.expected.outputTypes) {
+      assert.deepEqual(completed.output.map((entry: JsonRecord) => entry.type), item.expected.outputTypes, `${name}: items in the order they finished`);
+      assert.equal(sse.filter(({ event }) => event === "response.output_item.done").length, item.expected.outputTypes.length, `${name}: every item is finished on the wire`);
+    }
+    if (item.expected.reasoningSummaries) {
+      const summaries = completed.output.filter((entry: JsonRecord) => entry.type === "reasoning").map((entry: JsonRecord) => entry.summary[0]?.text);
+      assert.deepEqual(summaries, item.expected.reasoningSummaries, `${name}: reasoning summaries`);
     }
     const itemIds = collectItemIds(sse);
     if (itemIds.length > 0) {
@@ -228,22 +231,6 @@ async function runStreamingCase(name: string, rawCase: ContractCase, telemetry: 
     await new Promise((resolveEvents) => setTimeout(resolveEvents, 150));
     const reported = telemetry.events.filter((event) => event.requestId === requestId);
     for (const type of item.expected.telemetryTypes ?? []) assert.ok(reported.some((event) => event.type === type), `${name}: telemetry ${type}: ${JSON.stringify(reported.map(e => e.type))}`);
-    if (item.expected.tool) assert.ok(reported.some((event) => event.type === "tool_requested" && event.tool === item.expected.tool), `${name}: requested tool telemetry`);
-    if (item.expected.tools) {
-      for (const tool of item.expected.tools) assert.ok(reported.some((event) => event.type === "tool_requested" && event.tool === tool), `${name}: requested tool ${tool} telemetry`);
-      for (const tool of item.expected.tools) assert.ok(reported.some((event) => event.type === "tool_executed" && event.tool === tool), `${name}: executed tool ${tool} telemetry`);
-    }
-    if (item.expected.skill) {
-      const skillUses = reported.filter((event) => event.type === "skill_used");
-      assert.ok(skillUses.some((event) => event.skill === item.expected.skill), `${name}: skill_used for ${item.expected.skill}`);
-    }
-    if (item.expected.skills) {
-      const skillUses = reported.filter((event) => event.type === "skill_used");
-      for (const skill of item.expected.skills) assert.ok(skillUses.some((event) => event.skill === skill), `${name}: skill_used for ${skill}`);
-    }
-    if (item.expected.unavailableReason) {
-      assert.ok(reported.some((event) => event.type === "tool_unavailable" && event.tool === item.expected.tool && event.reason === item.expected.unavailableReason), `${name}: denial telemetry`);
-    }
     const normalizedSse = scrub(sse);
     const serializedSse = JSON.stringify(normalizedSse);
     assert.match(serializedSse, /<RESPONSE_ID>/, `${name}: response IDs must be normalized`);
@@ -349,7 +336,7 @@ test("Claude Responses contract fixture is exercised through the offline proxy b
   const before = await readFile(CONTRACT_PATH);
   const telemetry = await startTelemetryServer();
   try {
-    const streamingCases = ["normal_stream", "direct_skill_read", "shell_skill_read", "tool_continuation", "permission_denied", "provider_limit_incomplete"];
+    const streamingCases = ["normal_stream", "thinking_before_answer", "web_research_progress", "rejected_tool_attempt", "provider_limit_incomplete"];
     for (const name of streamingCases) {
       const entry = contract.cases[name];
       assert.ok(entry, `${name}: contract case must exist`);

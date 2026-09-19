@@ -447,7 +447,7 @@ Its own FAQ points broader project-level rule generation toward tools such as Ru
 | “Adopt a single monorepo” as a migration | Misframed | AutoDev is already a single repo; reorganize incrementally inside it |
 | Add `apps/`, `packages/`, `pnpm-workspace.yaml` immediately | Unjustified churn | Keep one package until multiple independently packageable JS components exist |
 | Rulesync likely removes role renderers early | Overstated | Use Rulesync for portable config first; retain AutoDev role/execution semantics |
-| Rulesync likely removes Claude role skill views immediately | Unproven | Retain until per-role skill filtering parity is demonstrated |
+| Rulesync likely removes Claude role skill views immediately | Superseded | Removed outright on 2026-09-18: Claude turns act only through Codex's tools and read skills from Codex's own catalogue, so no Claude-specific view remains |
 | LiteLLM pilot starts with a generic API provider | Too vague | Prioritize provider paths that could delete real CLI/proxy layers, but only after provider-specific parity testing |
 | Copilot likely remains a CLI adapter | Outdated capability assumption | LiteLLM has direct OAuth + Responses support; test it, but retain the CLI/proxy unless parity passes |
 | Claude Code must remain because it is the agent runtime | Incorrect rationale | Current bridge disables Claude `Agent`/`Task`; Codex remains the harness, so direct Claude OAuth is worth testing, not presumed sufficient |
@@ -1441,12 +1441,11 @@ emits only `PreToolUse` for Antigravity, and Codex-only fields such as
 limitations.
 
 MCP servers and the repository skill folders are the live Rulesync surfaces.
-Live hooks, Codex user-level skills, Claude role-specific skill views, and
-Antigravity skill registration remain AutoDev-owned, so target-specific guidance
+Live hooks, Codex user-level skills, and Antigravity skill registration remain
+AutoDev-owned, so target-specific guidance
 and runtime enforcement are not silently removed. Per-role skill and MCP
 assignment and exposure remain AutoDev-owned:
 - the role TOMLs and the execution contract;
-- the provider skill-view renderer and the Claude role views;
 - Antigravity `include_only` registration and the symlink installer;
 - the MCP launcher and the provider bridges;
 - hooks and permissions.

@@ -6,7 +6,6 @@ import { homedir } from 'node:os';
 import { renderAgentDirectory } from '../config/render-agent-configs.ts';
 import { runBridgeMcpCatalogue } from '../config/render-bridge-mcp-catalogue.ts';
 import { runCompose } from '../config/compose-user-config.ts';
-import { renderProviderSkillViews } from '../config/render-provider-skill-views.ts';
 import { atomicWrite, parseTomlFile, serializeToml, type TomlTable } from '../config/toml.ts';
 import { linkRuntimeSource, linkSkillSource, materializeRuntimeFile, runtimeTarget } from './runtime-files.ts';
 import { removeStalePaths } from './runtime-reconciliation.ts';
@@ -16,11 +15,12 @@ import { updateAntigravityPermissions, updateAntigravitySkills } from './antigra
 
 export const RUNTIME_MODULES = [
   'src/shared/resolve-workspace.ts', 'src/agents/bridge-role.ts', 'src/telemetry/agent-events.ts', 'src/agents/agent-activity.ts',
-  'src/shared/provider-limits.ts', 'src/shared/responses-item-ids.ts', 'src/agents/spawn-tools.ts', 'src/router/state-collector.ts',
+  'src/shared/provider-limits.ts', 'src/shared/responses-item-ids.ts', 'src/shared/responses-continuation.ts', 'src/agents/spawn-tools.ts', 'src/router/state-collector.ts',
   'src/router/routing.ts', 'src/router/cooldown.ts', 'src/router/responses.ts', 'src/router/concurrency.ts', 'src/router/lifecycle.ts',
   'src/router/auth.ts', 'src/router/events.ts', 'src/router/subagents.ts', 'src/router/persistence.ts', 'src/router/usage.ts',
   'src/router/otel.ts', 'src/router/proxy.ts', 'src/router/http.ts', 'src/router/server.ts', 'src/agents/bridge-spawn-session.ts', 'src/providers/minimax.ts',
-  'src/providers/copilot.ts', 'src/providers/antigravity.ts', 'src/providers/claude.ts', 'src/mcp/spawn-shim.ts', 'src/mcp/launcher.ts',
+  'src/providers/copilot.ts', 'src/providers/antigravity.ts', 'src/providers/claude.ts', 'src/providers/claude-codex-tools.ts', 'src/providers/claude-turn.ts',
+  'src/mcp/spawn-shim.ts', 'src/mcp/codex-tools-shim.ts', 'src/mcp/launcher.ts', 'src/router/tool-call-ownership.ts',
   'src/shared/execution-contract.ts', 'src/router/status.ts', 'src/cli/router-status.ts', 'config/execution-contract.json',
   'agents/prompts/base.md', 'agents/prompts/leaf.md', 'agents/prompts/code-search.md', 'agents/prompts/orchestrator.md',
   'src/hooks/command-utils.ts', 'src/hooks/skill-read-telemetry.ts', 'src/hooks/session-start.ts', 'src/hooks/subagent-start.ts',
@@ -31,6 +31,7 @@ export const RUNTIME_MODULES = [
   'src/hooks/block-ccc-cli.ts',
   '.rulesync/skills/orchestration/SKILL.md',
 ] as const;
+export const OBSOLETE_CLAUDE_SKILL_VIEWS = join('provider-runtime', 'claude');
 export const OTEL_RUNTIME = ['scripts/otel/provision-autodev-otel-collector.sh', 'scripts/otel/ensure-autodev-otel-collector.sh', 'scripts/otel/run-autodev-otel-collector.sh'] as const;
 export const HOOKS = ['enforce-root-delegation.sh', 'ensure-codex-antigravity-proxy.sh', 'ensure-codex-claude-bridge.sh', 'ensure-codex-copilot-proxy.sh', 'ensure-codex-model-router.sh', 'ensure-codex-minimax-proxy.sh', 'run-codex-antigravity-proxy.sh', 'run-codex-claude-bridge.sh', 'run-codex-copilot-cli-responses-proxy.sh', 'run-codex-model-router.sh'] as const;
 export const DASHBOARD = ['codex-model-router-dashboard.html'] as const;
@@ -149,6 +150,9 @@ export function materializeInstallation(options: MaterializeOptions): void {
   removeStalePaths(obsoletePaths, 'obsolete-runtime-path');
   removeStalePaths(OBSOLETE_HOOKS.map((name) => join(hooks, name)), 'obsolete-runtime-hook');
   removeStalePaths(OBSOLETE_DIRS.map((name) => join(hooks, name)), 'obsolete-runtime-directory');
+  // Claude reads skills through Codex's tools now, so its generated per-role
+  // skill views have no reader.
+  removeStalePaths([ join(options.codexHome, OBSOLETE_CLAUDE_SKILL_VIEWS) ], 'obsolete-runtime-directory');
   const source = (path: string) => join(options.repositoryRoot, path);
   const target = (path: string) => runtimeTarget(path, options.codexHome, hooks);
   for (const path of RUNTIME_MODULES) materializeRuntimeFile(source(path), target(path), 0o644);
@@ -168,7 +172,6 @@ export function materializeInstallation(options: MaterializeOptions): void {
   const rendered = mkdtempSync(join(options.codexHome, '.autodev-rendered-agents-'));
   try { renderAgentDirectory(join(options.repositoryRoot, 'agents/roles'), join(options.repositoryRoot, 'agents/prompts'), rendered, options.codexMcpSource); for (const role of ROLES) materializeRuntimeFile(join(rendered, `${role}.toml`), join(agents, `${role}.toml`), 0o644); }
   finally { rmSync(rendered, { recursive: true, force: true }); }
-  renderProviderSkillViews(source('config/execution-contract.json'), userSkills, join(options.codexHome, 'provider-runtime', 'claude'), 'claude');
   runBridgeMcpCatalogue(options.codexMcpSource, join(options.codexHome, 'provider-runtime', 'mcp-servers.json'));
   rulesync(options, ['generate', '--config', join(options.repositoryRoot, 'rulesync.jsonc'), '--silent']);
   ensureExclude(options);

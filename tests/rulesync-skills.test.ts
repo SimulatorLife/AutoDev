@@ -148,7 +148,8 @@ test('installer delegates repository skill generation and checking to typed mate
   assert.match(materializer, /rulesync\.jsonc/);
   assert.match(materializer, /rulesync/);
   assert.match(materializer, /ensureExclude/);
-  assert.match(materializer, /renderProviderSkillViews/);
+  assert.doesNotMatch(materializer, /renderProviderSkillViews/);
+  assert.match(materializer, /OBSOLETE_CLAUDE_SKILL_VIEWS/);
 });
 
 test('Copilot cloud setup generates repository skills after installing dependencies', () => {

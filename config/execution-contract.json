@@ -157,12 +157,9 @@
   },
   "providers": {
     "claude": {
-      "spawnTools": [
-        "Agent",
-        "Task"
-      ],
-      "permissionMode": "configured",
-      "delegation": "codex-shim"
+      "spawnTools": [],
+      "permissionMode": "native",
+      "delegation": "native"
     },
     "antigravity": {
       "spawnTools": [

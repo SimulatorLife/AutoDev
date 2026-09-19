@@ -270,8 +270,8 @@ export class RoutingPolicy {
     });
   }
 
-  roleCandidates(role: string | null | undefined, random = Math.random): Candidate[] {
-    return this.tierCandidates(typeof role === 'string' ? this.config.roles[role]?.tier : undefined, random);
+  roleCandidates(role: string | null | undefined, random = Math.random, preferred: string | null = null): Candidate[] {
+    return this.preferProvider(this.tierCandidates(typeof role === 'string' ? this.config.roles[role]?.tier : undefined, random), preferred);
   }
 
   orchestratorCandidates(random = Math.random, preferred: string | null = null): OrchestratorCandidate[] {
@@ -280,6 +280,11 @@ export class RoutingPolicy {
       ...candidate,
       reasoningEffort: effort[candidate.provider] ?? null,
     }));
+    return this.preferProvider(candidates, preferred);
+  }
+
+  /** Move an enabled preferred provider to the front; the rest keep their order. */
+  private preferProvider<T extends Candidate>(candidates: T[], preferred: string | null): T[] {
     if (!preferred || !this.isProviderEnabled(preferred)) return candidates;
     const index = candidates.findIndex((candidate) => candidate.provider === preferred);
     if (index <= 0) return candidates;

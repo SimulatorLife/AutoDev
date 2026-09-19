@@ -139,8 +139,13 @@ test("the typed Claude bridge uses the shared limit boundary", () => {
   const bridge = read("src/providers/claude.ts");
   assert.match(bridge, /from "\.\.\/shared\/provider-limits\.ts"/);
   assert.match(bridge, /classifyCliLimit/);
-  assert.match(bridge, /terminalIncompleteEvents/);
   assert.match(bridge, /ClaudeRateLimitError/);
   assert.match(bridge, /INCOMPLETE_REASON_PROVIDER_LIMIT/);
   assert.match(bridge, /limitResponseHeaders/);
+  // A Claude turn emits its items as they finish, so it ends an interrupted
+  // response from the shared details and notice rather than a fixed layout.
+  const turn = read("src/providers/claude-turn.ts");
+  assert.match(turn, /from "\.\.\/shared\/provider-limits\.ts"/);
+  assert.match(turn, /incompleteDetails\(failure\.reason, failure\.limit\)/);
+  assert.match(turn, /truncationNotice\(\{ provider, limit: failure\.limit, reason: failure\.reason \}\)/);
 });

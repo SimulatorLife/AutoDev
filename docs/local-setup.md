@@ -80,13 +80,12 @@ Its rendered remote MCP entry sets `transport = "streamable_http"`, which the
 installed Codex 0.153.x role loader requires even when `url` is present.
 The Playwright MCP remains strictly for UI and browser testing roles and is disabled
 for `docs-researcher`, which must explicitly use web search/fetch tools and never Playwright.
-`smart` and `orchestrator` follow the web-research policy. The Claude bridge passes
-`--strict-mcp-config` and a per-turn inline `--mcp-config` holding exactly the role
-contract's servers, with launch definitions read from the composed Codex config. User-level
-`~/.claude.json` servers and a workspace's own `.mcp.json` therefore never reach a bridged
-turn. Only `browser-tester` and `smart` receive Playwright, and the bridge denies the unneeded
-evaluate, upload, navigation-back, and unsafe code-execution tools. Playwright is never
-exposed to the root orchestrator. Because Antigravity's
+`smart` and `orchestrator` follow the web-research policy. A Claude-served turn acts only
+through Codex's own tools, so it reaches exactly the MCP servers and Playwright tools its
+Codex role TOML enables; the Claude bridge passes `--strict-mcp-config` with only the
+per-turn Codex tools server, so user-level `~/.claude.json` servers and a workspace's own
+`.mcp.json` never reach a bridged turn. Only `browser-tester` and `smart` receive Playwright.
+Playwright is never exposed to the root orchestrator. Because Antigravity's
 MCP configuration is global, registering Playwright globally would expose it across all
 roles including the orchestrator; rather than falsely claiming per-role isolation, Playwright
 registration and `browser-tester` routing are removed for Antigravity. For documentation
@@ -114,11 +113,10 @@ with both capabilities to use CocoIndex before deeper inspection and LSP for
 semantic navigation; provider bridges wire the same MCP servers explicitly.
 
 The installer exposes these AutoDev-owned shared skill directories in
-`$HOME/.agents/skills/` through symlinks. Claude additionally receives
-role-specific views under `$CODEX_HOME/provider-runtime/claude/<role>/.claude/skills/`;
-these views contain symlinks only for skills enabled by the role TOML because
-Claude's `--add-dir` discovery does not treat `~/.agents/skills` as a skill root.
-The root `orchestration` skill is
+`$HOME/.agents/skills/` through symlinks. A Claude-served turn reads them through
+Codex's tools from the skills catalogue in Codex's own context, like any Codex-served
+turn, so there is no Claude-specific skill view; the installer removes the obsolete
+`$CODEX_HOME/provider-runtime/claude/` views. The root `orchestration` skill is
 also enabled in the parent user config and injected deterministically into root
 turns by the delegation hook and provider bridges; leaf role TOMLs keep it
 disabled so child agents do not inherit parent orchestration policy.

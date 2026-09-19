@@ -5,7 +5,6 @@ import { join, resolve } from 'node:path';
 import { renderAgentDirectory } from '../config/render-agent-configs.ts';
 import { renderBridgeMcpCatalogue, runBridgeMcpCatalogue } from '../config/render-bridge-mcp-catalogue.ts';
 import { renderExecutionContract, runExecutionContract } from '../config/render-execution-contract.ts';
-import { renderProviderSkillViews } from '../config/render-provider-skill-views.ts';
 import { ConfigError, parseArgs, requiredArg } from '../config/toml.ts';
 import { dispatchHookCommand, type HookCommandBackend } from './hook.ts';
 import { dispatchInstallCommand, type InstallCommandBackend } from './install.ts';
@@ -90,10 +89,6 @@ function renderCommand(kind: string, argv: string[]): number {
     const source = requiredArg(values, 'mcp-source');
     const output = requiredArg(values, 'output');
     return runBridgeMcpCatalogue(source, output, flags.has('check'));
-  }
-  if (kind === 'skills') {
-    renderProviderSkillViews(requiredArg(values, 'contract'), requiredArg(values, 'canonical-root'), requiredArg(values, 'output-root'), values.provider ?? 'claude', flags.has('check'));
-    return 0;
   }
   throw new ConfigError(`unsupported render target: ${kind}`);
 }
