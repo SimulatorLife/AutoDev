@@ -2,6 +2,7 @@ import {
   isHardLimitClass,
   normalizeResetsAt
 } from "../shared/provider-limits.ts";
+import type { ProviderRole } from "./routing.ts";
 
 export type CooldownKind = "config" | "probe" | "hard" | "transient";
 
@@ -56,7 +57,7 @@ export interface CooldownConfig {
 }
 
 export interface CooldownRuntime {
-  isProviderEnabled?: (provider: string) => boolean;
+  isProviderEnabled?: (provider: string, role: ProviderRole) => boolean;
   isKnownProvider?: (provider: string) => boolean;
   lastFailureClass?: (provider: string) => string | null;
 }
@@ -251,11 +252,15 @@ export class ProviderCooldowns {
     return true;
   }
 
-  summary(providers: readonly string[], now = Date.now()): CooldownSummary[] {
+  summary(
+    providers: readonly string[],
+    now = Date.now(),
+    role: ProviderRole = "subagent"
+  ): CooldownSummary[] {
     return Array.from(new Set(providers), (provider) => {
       if (
         this.runtime.isProviderEnabled &&
-        !this.runtime.isProviderEnabled(provider)
+        !this.runtime.isProviderEnabled(provider, role)
       ) {
         return {
           provider,

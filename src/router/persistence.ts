@@ -4,7 +4,7 @@ import { rename, writeFile } from "node:fs/promises";
 import { writeErrorLine } from "../shared/output.ts";
 
 export const PERSISTED_STATE_SCHEMA = "autodev-router-persisted-state";
-export const PERSISTED_STATE_VERSION = "v3";
+export const PERSISTED_STATE_VERSION = "v4";
 
 export function defaultCodexHome(): string {
   return (
@@ -45,7 +45,8 @@ function lookupCurrentEntry(
     | ((provider: string) => StateProviderTelemetryEntry | null | undefined),
   provider: string
 ): StateProviderTelemetryEntry | null | undefined {
-  if (typeof currentCollection === "function") return currentCollection(provider);
+  if (typeof currentCollection === "function")
+    return currentCollection(provider);
   if (currentCollection instanceof Map) return currentCollection.get(provider);
   return currentCollection[provider];
 }
@@ -54,7 +55,12 @@ function applyNumericFields(
   current: StateProviderTelemetryEntry,
   saved: Record<string, unknown>
 ): void {
-  for (const field of ["attempts", "successes", "failures", "skipped"] as const) {
+  for (const field of [
+    "attempts",
+    "successes",
+    "failures",
+    "skipped"
+  ] as const) {
     const val = saved[field];
     if (Number.isInteger(val) && (val as number) >= 0) {
       current[field] = val as number;
@@ -108,7 +114,8 @@ export function restoreProviderTelemetrySection(
 export interface RouterPersistenceSnapshot {
   schema: string;
   updatedAt: string;
-  disabledProviders?: string[] | undefined;
+  disabledOrchestratorProviders?: string[] | undefined;
+  disabledSubagentProviders?: string[] | undefined;
   providerTelemetry?: Record<string, unknown> | undefined;
   usage?: unknown;
   concurrency?: unknown;
@@ -116,6 +123,7 @@ export interface RouterPersistenceSnapshot {
   spawnFailures?: unknown;
   providerCooldowns?: unknown[] | undefined;
   recentEvents?: unknown[] | undefined;
+  liveFeed?: unknown[] | undefined;
   otelTelemetry?: unknown;
   [key: string]: unknown;
 }

@@ -69,8 +69,11 @@ export interface RoutingRuntime {
   liveProviderCount?: (provider: string) => number;
 }
 
+export type ProviderRole = "orchestrator" | "subagent";
+
 export interface RoutingRuntimeState {
-  disabledProviders: string[];
+  disabledOrchestratorProviders: string[];
+  disabledSubagentProviders: string[];
 }
 
 const ORCHESTRATOR_ALIAS_PATTERN = /^autodev\/[a-z0-9-]+$/u;
@@ -313,7 +316,8 @@ export class RoutingPolicy {
   readonly routes: readonly ProviderRoute[];
   readonly configFile: string;
   private runtime: RoutingRuntime;
-  private readonly disabledProviders = new Set<string>();
+  private readonly disabledOrchestratorProviders = new Set<string>();
+  private readonly disabledSubagentProviders = new Set<string>();
 
   constructor(
     config: RoutingConfig,
@@ -331,38 +335,67 @@ export class RoutingPolicy {
     this.runtime = runtime;
   }
 
-  isProviderEnabled(provider: unknown): boolean {
-    return (
-      typeof provider === "string" &&
-      provider.trim().length > 0 &&
-      !this.disabledProviders.has(provider.toLowerCase().trim())
-    );
+  isProviderEnabledForRole(provider: unknown, role: ProviderRole): boolean {
+    if (typeof provider !== "string" || provider.trim().length === 0)
+      return false;
+    const disabled =
+      role === "orchestrator"
+        ? this.disabledOrchestratorProviders
+        : this.disabledSubagentProviders;
+    return !disabled.has(provider.toLowerCase().trim());
   }
 
-  setProviderEnabled(provider: unknown, enabled: boolean): void {
+  setProviderEnabledForRole(
+    provider: unknown,
+    role: ProviderRole,
+    enabled: boolean
+  ): void {
     if (typeof provider !== "string" || !provider.trim()) return;
     const key = provider.toLowerCase().trim();
-    if (enabled) this.disabledProviders.delete(key);
-    else this.disabledProviders.add(key);
+    const disabled =
+      role === "orchestrator"
+        ? this.disabledOrchestratorProviders
+        : this.disabledSubagentProviders;
+    if (enabled) disabled.delete(key);
+    else disabled.add(key);
   }
 
-  resetDisabledProviders(): void {
-    this.disabledProviders.clear();
+  resetDisabledProvidersForRole(role: ProviderRole): void {
+    (role === "orchestrator"
+      ? this.disabledOrchestratorProviders
+      : this.disabledSubagentProviders
+    ).clear();
   }
 
   runtimeState(): RoutingRuntimeState {
-    return { disabledProviders: [...this.disabledProviders].sort() };
+    return {
+      disabledOrchestratorProviders: [
+        ...this.disabledOrchestratorProviders
+      ].sort(),
+      disabledSubagentProviders: [...this.disabledSubagentProviders].sort()
+    };
   }
 
   restoreRuntimeState(state: unknown): void {
-    this.disabledProviders.clear();
-    if (!isRecord(state) || !Array.isArray(state.disabledProviders)) return;
-    for (const provider of state.disabledProviders) {
-      if (
-        typeof provider === "string" &&
-        Object.hasOwn(this.config.providers, provider.toLowerCase())
-      )
-        this.disabledProviders.add(provider.toLowerCase());
+    this.disabledOrchestratorProviders.clear();
+    this.disabledSubagentProviders.clear();
+    if (!isRecord(state)) return;
+    for (const [role, disabled] of [
+      ["orchestrator", state.disabledOrchestratorProviders],
+      ["subagent", state.disabledSubagentProviders]
+    ] as const) {
+      if (!Array.isArray(disabled)) continue;
+      const target =
+        role === "orchestrator"
+          ? this.disabledOrchestratorProviders
+          : this.disabledSubagentProviders;
+      for (const provider of disabled) {
+        if (
+          typeof provider === "string" &&
+          Object.hasOwn(this.config.providers, provider.toLowerCase())
+        )
+          target.add(provider.toLowerCase());
+      }
     }
   }
 
@@ -385,13 +418,21 @@ export class RoutingPolicy {
     return items;
   }
 
-  providerPriority(tier: string, random = Math.random): string[] {
+  providerPriority(
+    tier: string,
+    random = Math.random,
+    role: ProviderRole = "subagent"
+  ): string[] {
     const providers: string[] = [];
     const seen = new Set<string>();
     for (const rawGroup of this.config.providerGroups[tier] ?? []) {
       const group = rawGroup.map((provider) => provider.trim().toLowerCase());
       for (const provider of this.shuffleGroup(group, random)) {
-        if (!this.isProviderEnabled(provider) || seen.has(provider)) continue;
+        if (
+          !this.isProviderEnabledForRole(provider, role) ||
+          seen.has(provider)
+        )
+          continue;
         seen.add(provider);
         providers.push(provider);
       }
@@ -415,9 +456,13 @@ export class RoutingPolicy {
     return this.routes.find((route) => route.pattern.test(trimmed)) ?? null;
   }
 
-  tierCandidates(tier: string | undefined, random = Math.random): Candidate[] {
+  tierCandidates(
+    tier: string | undefined,
+    random = Math.random,
+    role: ProviderRole = "subagent"
+  ): Candidate[] {
     if (!tier) return [];
-    return this.providerPriority(tier, random).flatMap((provider) => {
+    return this.providerPriority(tier, random, role).flatMap((provider) => {
       const providerModels = this.config.providers[provider]?.models;
       const model = providerModels?.[tier] || providerModels?.default;
       if (!model) return [];
@@ -434,9 +479,11 @@ export class RoutingPolicy {
     return this.preferProvider(
       this.tierCandidates(
         typeof role === "string" ? this.config.roles[role]?.tier : undefined,
-        random
+        random,
+        "subagent"
       ),
-      preferred
+      preferred,
+      "subagent"
     );
   }
 
@@ -447,20 +494,23 @@ export class RoutingPolicy {
     const effort = this.config.orchestrator.reasoningEffort ?? {};
     const candidates = this.tierCandidates(
       this.config.orchestrator.tier,
-      random
+      random,
+      "orchestrator"
     ).map((candidate) => ({
       ...candidate,
       reasoningEffort: effort[candidate.provider] ?? null
     }));
-    return this.preferProvider(candidates, preferred);
+    return this.preferProvider(candidates, preferred, "orchestrator");
   }
 
   /** Move an enabled preferred provider to the front; the rest keep their order. */
   private preferProvider<T extends Candidate>(
     candidates: T[],
-    preferred: string | null
+    preferred: string | null,
+    role: ProviderRole
   ): T[] {
-    if (!preferred || !this.isProviderEnabled(preferred)) return candidates;
+    if (!preferred || !this.isProviderEnabledForRole(preferred, role))
+      return candidates;
     const index = candidates.findIndex(
       (candidate) => candidate.provider === preferred
     );

@@ -873,6 +873,48 @@ export class UsageTracker {
     timestamp,
     origin: originOverride = null
   }: RecordUsageEventParams): void {
+    const buckets = this.collectUsageBuckets({
+      role,
+      provider,
+      model,
+      workspace,
+      origin: originOverride
+    });
+    const key = usageKey(requestId, provider, model);
+    if (phase === "selected") {
+      this.recordSelectedPhase(key, buckets, timestamp);
+      return;
+    }
+    if (phase === "skipped") {
+      this.recordSkippedPhase(buckets);
+      return;
+    }
+    if (phase !== "result") return;
+    this.recordResultPhase({
+      key,
+      buckets,
+      outcome,
+      elapsedMs,
+      toolCalls,
+      timestamp,
+      failureClass,
+      status
+    });
+  }
+
+  private collectUsageBuckets({
+    role,
+    provider,
+    model,
+    workspace,
+    origin: originOverride
+  }: {
+    role: RecordUsageEventParams["role"];
+    provider: RecordUsageEventParams["provider"];
+    model: RecordUsageEventParams["model"];
+    workspace: RecordUsageEventParams["workspace"];
+    origin: RecordUsageEventParams["origin"];
+  }): UsageBucket[] {
     const workspaceContext =
       typeof workspace === "string" ? { key: workspace, cwd: null } : workspace;
     const origin = originOverride ?? usageOrigin(role, provider);
@@ -885,59 +927,118 @@ export class UsageTracker {
       usageBucket(this.usageTelemetry.byModel, modelKey),
       usageBucket(this.usageTelemetry.byOrigin, origin)
     ];
-    if (workspaceContext?.key) {
-      if (workspaceContext.workspace_id) {
-        this.registerWorkspaceId(
-          workspaceContext.workspace_id,
-          workspaceContext.key
-        );
-      }
-      const workspaceUsage = workspaceBucket(
-        this.usageTelemetry.byWorkspace,
-        workspaceContext.key,
-        workspaceContext.cwd
-      );
-      buckets.push(
-        workspaceUsage,
-        ...workspaceDimensionBuckets(workspaceUsage, {
-          role: role ?? (origin === "orchestrator" ? "orchestrator" : null),
-          provider,
-          model
-        })
+    if (!workspaceContext?.key) return buckets;
+    if (workspaceContext.workspace_id) {
+      this.registerWorkspaceId(
+        workspaceContext.workspace_id,
+        workspaceContext.key
       );
     }
-    const key = usageKey(requestId, provider, model);
-    if (phase === "selected") {
-      this.inFlightUsage.set(key, { startedAt: Date.now(), buckets });
-      for (const bucket of buckets) {
-        bucket.attempts += 1;
-        bucket.lastUsedAt = timestamp;
-      }
-      return;
+    const workspaceUsage = workspaceBucket(
+      this.usageTelemetry.byWorkspace,
+      workspaceContext.key,
+      workspaceContext.cwd
+    );
+    buckets.push(
+      workspaceUsage,
+      ...workspaceDimensionBuckets(workspaceUsage, {
+        role: role ?? (origin === "orchestrator" ? "orchestrator" : null),
+        provider,
+        model
+      })
+    );
+    return buckets;
+  }
+
+  private recordSelectedPhase(
+    key: string,
+    buckets: UsageBucket[],
+    timestamp: string
+  ): void {
+    this.inFlightUsage.set(key, { startedAt: Date.now(), buckets });
+    for (const bucket of buckets) {
+      bucket.attempts += 1;
+      bucket.lastUsedAt = timestamp;
     }
-    if (phase === "skipped") {
-      for (const bucket of buckets) bucket.skipped += 1;
-      return;
-    }
-    if (phase !== "result") return;
+  }
+
+  private recordSkippedPhase(buckets: UsageBucket[]): void {
+    for (const bucket of buckets) bucket.skipped += 1;
+  }
+
+  private recordResultPhase({
+    key,
+    buckets,
+    outcome,
+    elapsedMs,
+    toolCalls,
+    timestamp,
+    failureClass,
+    status
+  }: {
+    key: string;
+    buckets: UsageBucket[];
+    outcome: RecordUsageEventParams["outcome"];
+    elapsedMs: RecordUsageEventParams["elapsedMs"];
+    toolCalls: number;
+    timestamp: string;
+    failureClass: RecordUsageEventParams["failureClass"];
+    status: RecordUsageEventParams["status"];
+  }): void {
     const active = this.inFlightUsage.get(key);
-    const duration = Number.isFinite(elapsedMs)
-      ? Math.max(0, elapsedMs!)
-      : active
-        ? Math.max(0, Date.now() - active.startedAt)
-        : 0;
+    const duration = this.resolveUsageDuration(elapsedMs, active);
     const resultBuckets = active?.buckets ?? buckets;
     for (const bucket of resultBuckets) {
-      if (outcome === "success") bucket.successes += 1;
-      else bucket.failures += 1;
-      bucket.durationMs += duration;
-      bucket.maxDurationMs = Math.max(bucket.maxDurationMs, duration);
-      bucket.toolCalls +=
-        Number.isInteger(toolCalls) && toolCalls > 0 ? toolCalls : 0;
-      if (outcome !== "success")
-        bucket.lastFailure = { timestamp, class: failureClass, status };
+      this.applyUsageResultToBucket({
+        bucket,
+        outcome,
+        duration,
+        toolCalls,
+        timestamp,
+        failureClass,
+        status
+      });
     }
     this.inFlightUsage.delete(key);
+  }
+
+  private resolveUsageDuration(
+    elapsedMs: RecordUsageEventParams["elapsedMs"],
+    active: { startedAt: number; buckets: UsageBucket[] } | undefined
+  ): number {
+    if (Number.isFinite(elapsedMs)) {
+      return Math.max(0, elapsedMs!);
+    }
+    if (!active) return 0;
+    return Math.max(0, Date.now() - active.startedAt);
+  }
+
+  private applyUsageResultToBucket({
+    bucket,
+    outcome,
+    duration,
+    toolCalls,
+    timestamp,
+    failureClass,
+    status
+  }: {
+    bucket: UsageBucket;
+    outcome: RecordUsageEventParams["outcome"];
+    duration: number;
+    toolCalls: number;
+    timestamp: string;
+    failureClass: RecordUsageEventParams["failureClass"];
+    status: RecordUsageEventParams["status"];
+  }): void {
+    if (outcome === "success") bucket.successes += 1;
+    else bucket.failures += 1;
+    bucket.durationMs += duration;
+    bucket.maxDurationMs = Math.max(bucket.maxDurationMs, duration);
+    bucket.toolCalls +=
+      Number.isInteger(toolCalls) && toolCalls > 0 ? toolCalls : 0;
+    if (outcome !== "success") {
+      bucket.lastFailure = { timestamp, class: failureClass, status };
+    }
   }
 
   resetUsageTelemetry(): void {
@@ -1314,213 +1415,181 @@ export class UsageTracker {
   }
 
   restoreUsagePersistenceSnapshot(savedUsage: Record<string, unknown>): void {
-    if (
-      !savedUsage ||
-      typeof savedUsage !== "object" ||
-      (savedUsage.schemaVersion !== 7 && savedUsage.schemaVersion !== 8)
-    ) {
-      return;
-    }
-    if (Array.isArray(savedUsage.workspaceRegistry)) {
-      for (const [id, key] of savedUsage.workspaceRegistry) {
-        if (typeof id === "string" && typeof key === "string") {
-          this.registerWorkspaceId(id, key);
-        }
-      }
-    }
-    for (const section of ["byRole", "byModel", "byOrigin"] as const) {
-      if (!savedUsage[section] || typeof savedUsage[section] !== "object")
-        continue;
-      for (const [key, saved] of Object.entries(savedUsage[section])) {
-        if (!saved || typeof saved !== "object") continue;
-        const current = usageBucket(this.usageTelemetry[section], key);
-        restoreUsageBucket(current, saved);
-      }
-    }
-    if (savedUsage.byWorkspace && typeof savedUsage.byWorkspace === "object") {
-      for (const [key, saved] of Object.entries(
-        savedUsage.byWorkspace as Record<string, unknown>
-      )) {
-        if (!saved || typeof saved !== "object") continue;
-        const current = workspaceBucket(
-          this.usageTelemetry.byWorkspace,
-          key,
-          typeof saved.cwd === "string" ? saved.cwd : null
-        );
-        restoreUsageBucket(current, saved);
-        if (Number.isInteger(saved.skillUses) && saved.skillUses >= 0) {
-          current.skillUses = saved.skillUses;
-        }
-        if (
-          Number.isInteger(saved.skillContextsInjected) &&
-          saved.skillContextsInjected >= 0
-        ) {
-          current.skillContextsInjected = saved.skillContextsInjected;
-        }
-        for (const counter of [
-          "toolsUnattributed",
-          "skillsUnattributed",
-          "toolsExecuted",
-          "toolsRequested",
-          "toolsUnavailable",
-          "skillsExposed"
-        ] as const) {
-          if (Number.isInteger(saved[counter]) && saved[counter] >= 0) {
-            current[counter] = saved[counter];
-          }
-        }
-        for (const flag of [
-          "toolsCapable",
-          "skillsCapable",
-          "mcpCapable"
-        ] as const) {
-          if (saved[flag] === true) current[flag] = true;
-        }
-        if (saved.byMcp && typeof saved.byMcp === "object") {
-          for (const [mcp, cnt] of Object.entries(saved.byMcp)) {
-            if (typeof cnt === "number" && Number.isFinite(cnt) && cnt >= 0) {
-              current.byMcp[safeMetricLabel(mcp)] = cnt;
-              current.mcpCapable = true;
-            }
-          }
-        }
-        if (Array.isArray(saved.mcpExposed)) {
-          for (const row of saved.mcpExposed) {
-            if (
-              row &&
-              typeof row.server === "string" &&
-              row.server.trim() &&
-              typeof row.count === "number" &&
-              row.count >= 0
-            ) {
-              const server = safeMetricLabel(row.server);
-              const restored = workspaceMcpBucket(current, server);
-              restored.count = row.count;
-              current.mcpCapable = true;
-            }
-          }
-        }
-        if (Array.isArray(saved.bridgeTools)) {
-          for (const tool of saved.bridgeTools) {
-            if (tool && typeof tool.tool === "string") {
-              const restored = {
-                tool: safeMetricLabel(tool.tool),
-                server:
-                  typeof tool.server === "string"
-                    ? safeMetricLabel(tool.server)
-                    : "",
-                count: 0,
-                byStatus: {} as Record<string, number>
-              };
-              if (typeof tool.count === "number" && tool.count >= 0)
-                restored.count = tool.count;
-              if (tool.byStatus && typeof tool.byStatus === "object") {
-                for (const [st, cnt] of Object.entries(tool.byStatus)) {
-                  if (typeof cnt === "number" && cnt >= 0)
-                    restored.byStatus[safeMetricLabel(st)] = cnt;
-                }
-              }
-              current.bridgeObservations.tools.set(restored.tool, restored);
-            }
-          }
-        }
-        if (Array.isArray(saved.bridgeSkills)) {
-          for (const skill of saved.bridgeSkills) {
-            if (
-              skill &&
-              typeof skill.skill === "string" &&
-              typeof skill.count === "number" &&
-              skill.count >= 0
-            ) {
-              current.bridgeObservations.skills.set(
-                safeMetricLabel(skill.skill),
-                skill.count
-              );
-            }
-          }
-        }
-        for (const section of ["byRole", "byModel", "byProvider"] as const) {
-          if (!saved[section] || typeof saved[section] !== "object") continue;
-          for (const [name, value] of Object.entries(saved[section])) {
-            restoreUsageBucket(usageBucket(current[section], name), value);
-          }
-        }
-        if (Array.isArray(saved.byTool)) {
-          for (const tool of saved.byTool) {
-            if (tool && typeof tool.tool === "string") {
-              const restoredTool = {
-                tool: safeMetricLabel(tool.tool, "unknown-tool"),
-                source: safeMetricLabel(tool.source),
-                server: toolServerAttribute({
-                  server: tool.server,
-                  mcp_server: tool.mcp_server
-                }),
-                count: 0,
-                byStatus: {} as Record<string, number>,
-                durationCount: 0,
-                durationMs: 0
-              };
-              for (const field of [
-                "count",
-                "durationCount",
-                "durationMs"
-              ] as const) {
-                if (typeof tool[field] === "number" && tool[field] >= 0)
-                  restoredTool[field] = tool[field];
-              }
-              if (tool.byStatus && typeof tool.byStatus === "object") {
-                for (const [st, cnt] of Object.entries(tool.byStatus)) {
-                  if (typeof cnt === "number" && cnt >= 0)
-                    restoredTool.byStatus[safeMetricLabel(st)] = cnt;
-                }
-              }
-              current.tools.set(toolKey(restoredTool), restoredTool);
-            }
-          }
-        }
-        if (Array.isArray(saved.bySkill)) {
-          for (const skill of saved.bySkill) {
-            if (skill && typeof skill.skill === "string") {
-              const restoredSkill = {
-                skill: safeMetricLabel(skill.skill),
-                total: 0,
-                uses: 0,
-                byStatus: {} as Record<string, number>,
-                byInvokeType: {} as Record<string, number>,
-                byAgentKind: {} as Record<string, number>,
-                byModel: {} as Record<string, number>,
-                byPlugin: {} as Record<string, number>
-              };
-              if (typeof skill.total === "number" && skill.total >= 0)
-                restoredSkill.total = skill.total;
-              if (typeof skill.uses === "number" && skill.uses >= 0)
-                restoredSkill.uses = skill.uses;
-              for (const dict of [
-                "byStatus",
-                "byInvokeType",
-                "byAgentKind",
-                "byModel",
-                "byPlugin"
-              ] as const) {
-                if (skill[dict] && typeof skill[dict] === "object") {
-                  for (const [k, cnt] of Object.entries(skill[dict])) {
-                    if (typeof cnt === "number" && cnt >= 0)
-                      restoredSkill[dict][safeMetricLabel(k)] = cnt;
-                  }
-                }
-              }
-              current.skills.set(restoredSkill.skill, restoredSkill);
-            }
-          }
-        }
-      }
-    }
-    const savedTotals = savedUsage.totals;
-    if (savedTotals && typeof savedTotals === "object") {
-      restoreUsageBucket(this.usageTelemetry.totals, savedTotals);
+    if (!isValidUsageSnapshot(savedUsage)) return;
+    restoreWorkspaceRegistry(this, savedUsage);
+    restoreUsageSections(this, savedUsage);
+    restoreWorkspaceSnapshots(this, savedUsage);
+    restoreUsageTotals(this, savedUsage);
+  }
+}
+
+function isValidUsageSnapshot(saved: Record<string, unknown>): boolean {
+  return (
+    saved.schemaVersion === 7 || saved.schemaVersion === 8
+  );
+}
+
+function restoreWorkspaceRegistry(
+  tracker: UsageTracker,
+  saved: Record<string, unknown>
+): void {
+  if (!Array.isArray(saved.workspaceRegistry)) return;
+  for (const [id, key] of saved.workspaceRegistry) {
+    if (typeof id === "string" && typeof key === "string") {
+      tracker.registerWorkspaceId(id, key);
     }
   }
 }
+
+function restoreUsageSections(
+  tracker: UsageTracker,
+  saved: Record<string, unknown>
+): void {
+  for (const section of ["byRole", "byModel", "byOrigin"] as const) {
+    const values = saved[section];
+    if (!values || typeof values !== "object") continue;
+    for (const [key, value] of Object.entries(values)) {
+      if (!value || typeof value !== "object") continue;
+      restoreUsageBucket(usageBucket(tracker.usageTelemetry[section], key), value);
+    }
+  }
+}
+
+function restoreWorkspaceSnapshots(
+  tracker: UsageTracker,
+  saved: Record<string, unknown>
+): void {
+  const workspaces = saved.byWorkspace;
+  if (!workspaces || typeof workspaces !== "object") return;
+  for (const [key, value] of Object.entries(workspaces)) {
+    if (!value || typeof value !== "object") continue;
+    const workspace = workspaceBucket(
+      tracker.usageTelemetry.byWorkspace,
+      key,
+      typeof value.cwd === "string" ? value.cwd : null
+    );
+    restoreUsageBucket(workspace, value);
+    restoreWorkspaceCounters(workspace, value);
+    restoreWorkspaceMcp(workspace, value);
+    restoreWorkspaceBridgeData(workspace, value);
+    restoreWorkspaceUsageDimensions(workspace, value);
+  }
+}
+
+function restoreWorkspaceCounters(
+  current: WorkspaceUsageBucket,
+  saved: Record<string, unknown>
+): void {
+  if (Number.isInteger(saved.skillUses) && saved.skillUses >= 0) current.skillUses = saved.skillUses;
+  if (Number.isInteger(saved.skillContextsInjected) && saved.skillContextsInjected >= 0) current.skillContextsInjected = saved.skillContextsInjected;
+  for (const counter of ["toolsUnattributed", "skillsUnattributed", "toolsExecuted", "toolsRequested", "toolsUnavailable", "skillsExposed"] as const) {
+    if (Number.isInteger(saved[counter]) && saved[counter] >= 0) current[counter] = saved[counter];
+  }
+  for (const flag of ["toolsCapable", "skillsCapable", "mcpCapable"] as const) {
+    if (saved[flag] === true) current[flag] = true;
+  }
+}
+
+function restoreWorkspaceMcp(
+  current: WorkspaceUsageBucket,
+  saved: Record<string, unknown>
+): void {
+  if (saved.byMcp && typeof saved.byMcp === "object") {
+    for (const [mcp, count] of Object.entries(saved.byMcp)) {
+      if (typeof count === "number" && Number.isFinite(count) && count >= 0) {
+        current.byMcp[safeMetricLabel(mcp)] = count;
+        current.mcpCapable = true;
+      }
+    }
+  }
+  if (!Array.isArray(saved.mcpExposed)) return;
+  for (const row of saved.mcpExposed) {
+    if (row && typeof row.server === "string" && row.server.trim() && typeof row.count === "number" && row.count >= 0) {
+      const restored = workspaceMcpBucket(current, safeMetricLabel(row.server));
+      restored.count = row.count;
+      current.mcpCapable = true;
+    }
+  }
+}
+
+function restoreWorkspaceBridgeData(current: WorkspaceUsageBucket, saved: Record<string, unknown>): void {
+  restoreWorkspaceBridgeTools(current, saved);
+  restoreWorkspaceBridgeSkills(current, saved);
+}
+
+function restoreWorkspaceBridgeTools(current: WorkspaceUsageBucket, saved: Record<string, unknown>): void {
+  if (!Array.isArray(saved.bridgeTools)) return;
+  for (const tool of saved.bridgeTools) {
+    if (!tool || typeof tool.tool !== "string") continue;
+    const restored = { tool: safeMetricLabel(tool.tool), server: typeof tool.server === "string" ? safeMetricLabel(tool.server) : "", count: typeof tool.count === "number" && tool.count >= 0 ? tool.count : 0, byStatus: {} as Record<string, number> };
+    restoreBridgeToolStatuses(restored, tool);
+    current.bridgeObservations.tools.set(restored.tool, restored);
+  }
+}
+
+function restoreBridgeToolStatuses(restored: { byStatus: Record<string, number> }, tool: Record<string, unknown>): void {
+  if (!tool.byStatus || typeof tool.byStatus !== "object") return;
+  for (const [status, count] of Object.entries(tool.byStatus)) {
+    if (typeof count === "number" && count >= 0) restored.byStatus[safeMetricLabel(status)] = count;
+  }
+}
+
+function restoreWorkspaceBridgeSkills(current: WorkspaceUsageBucket, saved: Record<string, unknown>): void {
+  if (!Array.isArray(saved.bridgeSkills)) return;
+  for (const skill of saved.bridgeSkills) {
+    if (skill && typeof skill.skill === "string" && typeof skill.count === "number" && skill.count >= 0) current.bridgeObservations.skills.set(safeMetricLabel(skill.skill), skill.count);
+  }
+}
+
+function restoreWorkspaceUsageDimensions(
+  current: WorkspaceUsageBucket,
+  saved: Record<string, unknown>
+): void {
+  for (const section of ["byRole", "byModel", "byProvider"] as const) {
+    if (!saved[section] || typeof saved[section] !== "object") continue;
+    for (const [name, value] of Object.entries(saved[section])) restoreUsageBucket(usageBucket(current[section], name), value);
+  }
+  restoreWorkspaceTools(current, saved);
+  restoreWorkspaceSkills(current, saved);
+}
+
+function restoreWorkspaceTools(current: WorkspaceUsageBucket, saved: Record<string, unknown>): void {
+  if (!Array.isArray(saved.byTool)) return;
+  for (const tool of saved.byTool) {
+    if (!tool || typeof tool.tool !== "string") continue;
+    const restored = { tool: safeMetricLabel(tool.tool, "unknown-tool"), source: safeMetricLabel(tool.source), server: toolServerAttribute({ server: tool.server, mcp_server: tool.mcp_server }), count: 0, byStatus: {} as Record<string, number>, durationCount: 0, durationMs: 0 };
+    restoreToolCounters(restored, tool);
+    current.tools.set(toolKey(restored), restored);
+  }
+}
+
+function restoreToolCounters(restored: { count: number; durationCount: number; durationMs: number; byStatus: Record<string, number> }, tool: Record<string, unknown>): void {
+  for (const field of ["count", "durationCount", "durationMs"] as const) if (typeof tool[field] === "number" && tool[field] >= 0) restored[field] = tool[field];
+  restoreBridgeToolStatuses(restored, tool);
+}
+
+function restoreWorkspaceSkills(current: WorkspaceUsageBucket, saved: Record<string, unknown>): void {
+  if (!Array.isArray(saved.bySkill)) return;
+  for (const skill of saved.bySkill) {
+    if (!skill || typeof skill.skill !== "string") continue;
+    const restored = { skill: safeMetricLabel(skill.skill), total: typeof skill.total === "number" && skill.total >= 0 ? skill.total : 0, uses: typeof skill.uses === "number" && skill.uses >= 0 ? skill.uses : 0, byStatus: {}, byInvokeType: {}, byAgentKind: {}, byModel: {}, byPlugin: {} } as WorkspaceSkill;
+    restoreSkillDimensions(restored, skill);
+    current.skills.set(restored.skill, restored);
+  }
+}
+
+function restoreSkillDimensions(restored: WorkspaceSkill, skill: Record<string, unknown>): void {
+  for (const dict of ["byStatus", "byInvokeType", "byAgentKind", "byModel", "byPlugin"] as const) {
+    const values = skill[dict];
+    if (!values || typeof values !== "object") continue;
+    for (const [key, count] of Object.entries(values)) if (typeof count === "number" && count >= 0) restored[dict][safeMetricLabel(key)] = count;
+  }
+}
+
+function restoreUsageTotals(tracker: UsageTracker, saved: Record<string, unknown>): void {
+  if (saved.totals && typeof saved.totals === "object") restoreUsageBucket(tracker.usageTelemetry.totals, saved.totals);
+}
+
 
 let defaultUsageTracker = new UsageTracker();
 

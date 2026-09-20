@@ -12,7 +12,8 @@
     "authentication",
     "routing",
     "limits",
-    "disabledProviders",
+    "disabledOrchestratorProviders",
+    "disabledSubagentProviders",
     "usage",
     "attributionDiagnostics",
     "liveAgentAttribution",
@@ -25,18 +26,12 @@
     "liveActivity",
     "providers",
     "recentEvents",
+    "liveFeed",
     "codexState"
   ],
   "expectedShapes": {
-    "telemetryPersistence": [
-      "enabled",
-      "source",
-      "exists",
-      "updatedAt"
-    ],
-    "authentication": [
-      "responseRequests"
-    ],
+    "telemetryPersistence": ["enabled", "source", "exists", "updatedAt"],
+    "authentication": ["responseRequests"],
     "routing": [
       "configSource",
       "configFileExists",
@@ -45,22 +40,14 @@
       "providerGroups",
       "priorities",
       "configuredProviders",
-      "enabledProviders",
-      "disabledProviders",
+      "enabledOrchestratorProviders",
+      "disabledOrchestratorProviders",
+      "enabledSubagentProviders",
+      "disabledSubagentProviders",
       "routes"
     ],
-    "routingOrchestrator": [
-      "alias",
-      "tier",
-      "reasoningEffort"
-    ],
-    "routingRoutes": [
-      "claude",
-      "minimax",
-      "antigravity",
-      "codex",
-      "copilot"
-    ],
+    "routingOrchestrator": ["alias", "tier", "reasoningEffort"],
+    "routingRoutes": ["claude", "minimax", "antigravity", "codex", "copilot"],
     "limits": [
       "providerCooldownMs",
       "providerCooldownMaxMs",
@@ -120,10 +107,7 @@
       "bySource",
       "unknownWorkspaceIds"
     ],
-    "liveAgentAttribution": [
-      "missingProvider",
-      "missingModel"
-    ],
+    "liveAgentAttribution": ["missingProvider", "missingModel"],
     "codexTelemetry": [
       "receiver",
       "sessionsObserved",
@@ -142,13 +126,7 @@
       "toolResults",
       "bridgeEvents"
     ],
-    "codexReceiver": [
-      "logs",
-      "traces",
-      "metrics",
-      "invalid",
-      "lastReceivedAt"
-    ],
+    "codexReceiver": ["logs", "traces", "metrics", "invalid", "lastReceivedAt"],
     "codexTurns": [
       "prompts",
       "completed",
@@ -157,14 +135,7 @@
       "ttftCount",
       "averageTtftMs"
     ],
-    "codexTokens": [
-      "input",
-      "output",
-      "cached",
-      "reasoning",
-      "tool",
-      "total"
-    ],
+    "codexTokens": ["input", "output", "cached", "reasoning", "tool", "total"],
     "codexMcpSummary": [
       "observed",
       "ready",
@@ -230,15 +201,13 @@
       "spawnCapableProviders",
       "recent"
     ],
-    "spawnFailures": [
-      "scope",
-      "total",
-      "byReason",
-      "recent"
-    ],
+    "spawnFailures": ["scope", "total", "byReason", "recent"],
     "provider": [
-      "enabled",
+      "orchestratorEnabled",
       "status",
+      "subagentEnabled",
+      "orchestratorStatus",
+      "subagentStatus",
       "routingPriority",
       "limits",
       "active",
@@ -275,9 +244,7 @@
       "subagentSpawnTools",
       "normalizeItemIds"
     ],
-    "codexStatePending": [
-      "localTelemetry"
-    ],
+    "codexStatePending": ["localTelemetry"],
     "codexStateLocalTelemetry": [
       "status",
       "pathConfigured",

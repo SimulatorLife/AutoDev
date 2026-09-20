@@ -105,6 +105,38 @@ try {
   loadedExecutionContract = {};
 }
 
+const NOOP = () => {};
+const INVALID_MODEL_REGEX =
+  /invalid model|model name.*(invalid|not found)|unknown model/i;
+const FALLBACKABLE_BODY_REGEX =
+  /quota|rate.?limit|weekly.?limit|usage.?limit|usage exhausted|session|high.?demand|credit|timeout|timed.?out|overloaded|temporarily unavailable|unavailable/i;
+const SSE_LINE_BREAK = /\r?\n/;
+const SSE_EVENT_BOUNDARY = /\r?\n\r?\n/;
+
+function pickString(value: unknown): string | null {
+  return typeof value === "string" && value ? value : null;
+}
+
+function pickBool(value: unknown): boolean | null {
+  return typeof value === "boolean" ? value : null;
+}
+
+function hasInputRequired(
+  parsed: Record<string, unknown> | null,
+  incomplete: { incompleteReason: string | null } | null
+): boolean {
+  return (
+    parsed?.status === "requires_action" ||
+    parsed?.status === "input_required" ||
+    incomplete?.incompleteReason === "input_required" ||
+    incomplete?.incompleteReason === "requires_action"
+  );
+}
+
+function servedOutcome(outcome: string): boolean {
+  return outcome === "served" || outcome === "terminal";
+}
+
 export function positiveDuration(
   value: string | undefined,
   fallback: number
@@ -248,7 +280,9 @@ export async function jitteredBackoff(): Promise<number> {
     Math.min(CONCRETE_RETRY_MAX_MS, CONCRETE_RETRY_BASE_MS * 2)
   );
   const delayMs = floor + Math.floor(Math.random() * (ceiling - floor + 1));
-  await new Promise((resolve) => setTimeout(resolve, delayMs));
+  await new Promise((resolve) => {
+    setTimeout(resolve, delayMs);
+  });
   return delayMs;
 }
 
@@ -445,16 +479,9 @@ export function cooldownFor(
 
 export function fallbackable(status: number, body: unknown): boolean {
   if ([401, 408, 429, 500, 502, 503, 504].includes(status)) return true;
-  if (
-    status === 400 &&
-    /invalid model|model name.*(invalid|not found)|unknown model/i.test(
-      String(body ?? "")
-    )
-  )
+  if (status === 400 && INVALID_MODEL_REGEX.test(String(body ?? "")))
     return true;
-  return /(quota|rate.?limit|weekly.?limit|usage.?limit|usage exhausted|session|high.?demand|credit|timeout|timed.?out|overloaded|temporarily unavailable|unavailable)/i.test(
-    String(body ?? "")
-  );
+  return FALLBACKABLE_BODY_REGEX.test(String(body ?? ""));
 }
 
 export async function providerAvailable(
@@ -551,6 +578,259 @@ export interface StreamWriteResult {
   inputRequired: boolean;
 }
 
+function applyParsedSseEvent(
+  parsed: { type?: string; [key: string]: unknown },
+  streamState: {
+    sawCreated: boolean;
+    responseId: string | null;
+    itemId: string | null;
+    reasoningId: string | null;
+    text: string;
+    reasoning: string;
+  },
+  toolCallIds: Set<string>,
+  setTerminal: (value: "completed" | "failed") => void,
+  setIncompleteReason: (value: string) => void,
+  setReportedLimit: (value: ProviderLimit) => void
+): void {
+  switch (parsed.type) {
+    case "response.created": {
+      streamState.sawCreated = true;
+      streamState.responseId =
+        (parsed.response as { id?: string } | undefined)?.id ??
+        streamState.responseId;
+      break;
+    }
+    case "response.output_item.added": {
+      const item = parsed.item as { id?: string; type?: string } | undefined;
+      if (item?.type === "reasoning")
+        streamState.reasoningId = item.id ?? streamState.reasoningId;
+      if (item?.type === "message")
+        streamState.itemId = item.id ?? streamState.itemId;
+      collectToolCallIds(parsed.item, toolCallIds);
+      break;
+    }
+    case "response.output_item.done": {
+      collectToolCallIds(parsed.item, toolCallIds);
+      break;
+    }
+    case "response.output_text.delta": {
+      streamState.text += String(parsed.delta ?? "");
+      streamState.itemId =
+        (parsed.item_id as string | undefined) ?? streamState.itemId;
+      break;
+    }
+    case "response.reasoning_summary_text.delta": {
+      streamState.reasoning += String(parsed.delta ?? "");
+      streamState.reasoningId =
+        (parsed.item_id as string | undefined) ?? streamState.reasoningId;
+      break;
+    }
+    case "response.failed": {
+      setTerminal("failed");
+      break;
+    }
+    case "response.completed": {
+      const response = parsed.response as Record<string, unknown> | undefined;
+      collectToolCallIds(response, toolCallIds);
+      setTerminal(responseWasNotCompleted(response) ? "failed" : "completed");
+      const details = response?.incomplete_details as
+        Record<string, unknown> | undefined;
+      if (details?.reason) setIncompleteReason(String(details.reason));
+      const declared = details?.provider_limit as
+        Record<string, unknown> | undefined;
+      if (declared?.class) {
+        setReportedLimit({
+          limitClass: String(declared.class).toLowerCase(),
+          limitType: declared.type ? String(declared.type).toLowerCase() : null,
+          resetsAt: normalizeResetsAt(declared.resets_at),
+          source:
+            declared.source === LIMIT_SOURCE_REPORTED
+              ? LIMIT_SOURCE_REPORTED
+              : "inferred"
+        });
+      }
+      break;
+    }
+    default: {
+      break;
+    }
+  }
+}
+
+function inspectSseEvent(
+  event: string,
+  streamState: {
+    sawCreated: boolean;
+    responseId: string | null;
+    itemId: string | null;
+    reasoningId: string | null;
+    text: string;
+    reasoning: string;
+  },
+  toolCallIds: Set<string>,
+  setTerminal: (value: "completed" | "failed") => void,
+  setIncompleteReason: (value: string) => void,
+  setReportedLimit: (value: ProviderLimit) => void
+): void {
+  for (const line of event.split(SSE_LINE_BREAK)) {
+    if (!line.startsWith("data: ") || line.slice(6) === "[DONE]") continue;
+    let parsed: { type?: string; [key: string]: unknown };
+    try {
+      parsed = JSON.parse(line.slice(6));
+    } catch {
+      continue;
+    }
+    applyParsedSseEvent(
+      parsed,
+      streamState,
+      toolCallIds,
+      setTerminal,
+      setIncompleteReason,
+      setReportedLimit
+    );
+  }
+}
+
+function flushSseBuffer(args: {
+  buffer: string;
+  flush: boolean;
+  isWritable: () => boolean;
+  safeWrite: (chunk: string | Uint8Array) => boolean;
+  publicModel: string;
+  seenToolCalls: Set<string>;
+  toolCallIds: Set<string>;
+  streamState: {
+    sawCreated: boolean;
+    responseId: string | null;
+    itemId: string | null;
+    reasoningId: string | null;
+    text: string;
+    reasoning: string;
+  };
+  setTerminal: (value: "completed" | "failed") => void;
+  setIncompleteReason: (value: string) => void;
+  setReportedLimit: (value: ProviderLimit) => void;
+  onConsumed: (toolCallDelta: number) => void;
+  onBufferUpdated: (next: string) => void;
+}): void {
+  let working = args.buffer;
+  while (args.isWritable()) {
+    const boundary = working.match(SSE_EVENT_BOUNDARY);
+    if (!boundary) break;
+    const end = boundary.index! + boundary[0]!.length;
+    const event = working.slice(0, end);
+    inspectSseEvent(
+      event,
+      args.streamState,
+      args.toolCallIds,
+      args.setTerminal,
+      args.setIncompleteReason,
+      args.setReportedLimit
+    );
+    args.onConsumed(countToolCallsFromSse(event, args.seenToolCalls));
+    args.safeWrite(transformSseEvent(event, args.publicModel));
+    working = working.slice(end);
+  }
+  if (args.flush && working && args.isWritable()) {
+    inspectSseEvent(
+      working,
+      args.streamState,
+      args.toolCallIds,
+      args.setTerminal,
+      args.setIncompleteReason,
+      args.setReportedLimit
+    );
+    args.onConsumed(countToolCallsFromSse(working, args.seenToolCalls));
+    args.safeWrite(transformSseEvent(working, args.publicModel));
+    working = "";
+  }
+  args.onBufferUpdated(working);
+}
+
+function closeSseStream(args: {
+  streamState: {
+    sawCreated: boolean;
+    responseId: string | null;
+    itemId: string | null;
+    reasoningId: string | null;
+    text: string;
+    reasoning: string;
+  };
+  reportedLimit: ProviderLimit | null;
+  publicModel: string;
+  incompleteReason: string | null;
+  isWritable: () => boolean;
+  safeWrite: (chunk: string | Uint8Array) => boolean;
+  reason: string;
+  message: string;
+  setIncompleteReason: (value: string) => void;
+}): void {
+  if (!args.isWritable()) return;
+  if (!args.streamState.sawCreated) {
+    args.safeWrite(responseFailureEvent(args.message));
+    return;
+  }
+  args.setIncompleteReason(args.incompleteReason ?? args.reason);
+  for (const [eventName, body] of terminalIncompleteEvents({
+    responseId: args.streamState.responseId ?? `router_${Date.now()}`,
+    itemId: args.streamState.itemId ?? `msg_${Date.now()}`,
+    reasoningId: args.streamState.reasoningId ?? `rs_${Date.now()}`,
+    text: args.streamState.text,
+    reasoningText: args.streamState.reasoning,
+    reason: args.reason,
+    limit: args.reportedLimit,
+    response: {
+      id: args.streamState.responseId,
+      object: "response",
+      created_at: Math.floor(Date.now() / 1000),
+      model: args.publicModel
+    }
+  })) {
+    args.safeWrite(`event: ${eventName}
+data: ${JSON.stringify(body)}
+
+`);
+  }
+}
+
+function isTimeoutAbort(signal: AbortSignal | null): boolean {
+  return Boolean(
+    signal?.aborted &&
+    (signal.reason as { name?: string } | undefined)?.name === "TimeoutError"
+  );
+}
+
+function upstreamErrorMessage(
+  error: unknown,
+  signal: AbortSignal | null
+): string {
+  if (isTimeoutAbort(signal)) {
+    return `Upstream provider exceeded the ${Math.ceil(
+      UPSTREAM_TIMEOUT_MS / 1000
+    )}s response timeout.`;
+  }
+  return error instanceof Error ? error.message : String(error);
+}
+
+async function drainSseBody(args: {
+  body: AsyncIterable<Uint8Array>;
+  decoder: TextDecoder;
+  isWritable: () => boolean;
+  append: (chunk: string) => void;
+  flushEvents: (flush: boolean) => void;
+}): Promise<void> {
+  for await (const chunk of args.body) {
+    if (!args.isWritable()) break;
+    args.append(args.decoder.decode(chunk, { stream: true }));
+    args.flushEvents(false);
+  }
+  if (args.isWritable()) {
+    args.append(args.decoder.decode());
+    args.flushEvents(true);
+  }
+}
+
 export async function writeResponseStream(
   response: ServerResponse,
   upstream: Response,
@@ -576,15 +856,14 @@ export async function writeResponseStream(
   let incompleteReason: string | null = null;
   let reportedLimit: ProviderLimit | null = null;
 
-  const onResponseError = () => {};
-  response.on("error", onResponseError);
+  response.on("error", NOOP);
 
-  const isWritable = () =>
+  const isWritable = (): boolean =>
     !response.writableEnded &&
     !response.destroyed &&
     !response.closed &&
     !signal?.aborted;
-  const safeWrite = (chunk: string | Uint8Array) => {
+  const safeWrite = (chunk: string | Uint8Array): boolean => {
     if (!isWritable()) return false;
     try {
       return response.write(chunk);
@@ -592,108 +871,50 @@ export async function writeResponseStream(
       return false;
     }
   };
-
-  const keepAlive = setInterval(() => {
-    safeWrite(": codex-router keep-alive\n\n");
-    onHeartbeat?.();
-  }, 2000);
-
-  const inspectEvent = (event: string) => {
-    for (const line of event.split(/\r?\n/)) {
-      if (!line.startsWith("data: ") || line.slice(6) === "[DONE]") continue;
-      try {
-        const parsed = JSON.parse(line.slice(6));
-        if (parsed.type === "response.created") {
-          streamState.sawCreated = true;
-          streamState.responseId =
-            parsed.response?.id ?? streamState.responseId;
-        } else if (parsed.type === "response.output_item.added") {
-          if (parsed.item?.type === "reasoning")
-            streamState.reasoningId = parsed.item.id ?? streamState.reasoningId;
-          if (parsed.item?.type === "message")
-            streamState.itemId = parsed.item.id ?? streamState.itemId;
-          collectToolCallIds(parsed.item, toolCallIds);
-        } else if (parsed.type === "response.output_item.done") {
-          collectToolCallIds(parsed.item, toolCallIds);
-        } else if (parsed.type === "response.output_text.delta") {
-          streamState.text += String(parsed.delta ?? "");
-          streamState.itemId = parsed.item_id ?? streamState.itemId;
-        } else if (parsed.type === "response.reasoning_summary_text.delta") {
-          streamState.reasoning += String(parsed.delta ?? "");
-          streamState.reasoningId = parsed.item_id ?? streamState.reasoningId;
-        } else if (parsed.type === "response.failed") {
-          terminal = "failed";
-        } else if (parsed.type === "response.completed") {
-          collectToolCallIds(parsed.response, toolCallIds);
-          terminal = responseWasNotCompleted(parsed.response)
-            ? "failed"
-            : "completed";
-          const details = parsed.response?.incomplete_details;
-          if (details?.reason) incompleteReason = details.reason;
-          const declared = details?.provider_limit;
-          if (declared?.class) {
-            reportedLimit = {
-              limitClass: String(declared.class).toLowerCase(),
-              limitType: declared.type
-                ? String(declared.type).toLowerCase()
-                : null,
-              resetsAt: normalizeResetsAt(declared.resets_at),
-              source:
-                declared.source === LIMIT_SOURCE_REPORTED
-                  ? LIMIT_SOURCE_REPORTED
-                  : "inferred"
-            };
-          }
-        }
-      } catch {
-        /* tolerant parsing */
-      }
-    }
+  const captureTerminal = (value: "completed" | "failed"): void => {
+    terminal = value;
   };
-
-  const flushEvents = (flush = false) => {
-    while (isWritable()) {
-      const boundary = buffer.match(/\r?\n\r?\n/);
-      if (!boundary) break;
-      const end = boundary.index! + boundary[0]!.length;
-      const event = buffer.slice(0, end);
-      inspectEvent(event);
-      toolCalls += countToolCallsFromSse(event, seenToolCalls);
-      safeWrite(transformSseEvent(event, publicModel));
-      buffer = buffer.slice(end);
-    }
-    if (flush && buffer && isWritable()) {
-      inspectEvent(buffer);
-      toolCalls += countToolCallsFromSse(buffer, seenToolCalls);
-      safeWrite(transformSseEvent(buffer, publicModel));
-      buffer = "";
-    }
+  const captureIncompleteReason = (value: string): void => {
+    incompleteReason = value;
   };
-
-  const closeIncomplete = (reason: string, message: string) => {
-    if (!isWritable()) return;
-    if (!streamState.sawCreated) {
-      safeWrite(responseFailureEvent(message));
-      return;
-    }
-    incompleteReason = incompleteReason ?? reason;
-    for (const [eventName, body] of terminalIncompleteEvents({
-      responseId: streamState.responseId ?? `router_${Date.now()}`,
-      itemId: streamState.itemId ?? `msg_${Date.now()}`,
-      reasoningId: streamState.reasoningId ?? `rs_${Date.now()}`,
-      text: streamState.text,
-      reasoningText: streamState.reasoning,
+  const captureReportedLimit = (value: ProviderLimit): void => {
+    reportedLimit = value;
+  };
+  const captureToolCalls = (delta: number): void => {
+    toolCalls += delta;
+  };
+  const captureBuffer = (next: string): void => {
+    buffer = next;
+  };
+  const flushEvents = (flush: boolean): void => {
+    flushSseBuffer({
+      buffer,
+      flush,
+      isWritable,
+      safeWrite,
+      publicModel,
+      seenToolCalls,
+      toolCallIds,
+      streamState,
+      setTerminal: captureTerminal,
+      setIncompleteReason: captureIncompleteReason,
+      setReportedLimit: captureReportedLimit,
+      onConsumed: captureToolCalls,
+      onBufferUpdated: captureBuffer
+    });
+  };
+  const closeIncomplete = (reason: string, message: string): void => {
+    closeSseStream({
+      streamState,
+      reportedLimit,
+      publicModel,
+      incompleteReason,
+      isWritable,
+      safeWrite,
       reason,
-      limit: reportedLimit,
-      response: {
-        id: streamState.responseId,
-        object: "response",
-        created_at: Math.floor(Date.now() / 1000),
-        model: publicModel
-      }
-    })) {
-      safeWrite(`event: ${eventName}\ndata: ${JSON.stringify(body)}\n\n`);
-    }
+      message,
+      setIncompleteReason: captureIncompleteReason
+    });
   };
 
   const streamResult = (): StreamWriteResult => ({
@@ -707,45 +928,41 @@ export async function writeResponseStream(
       incompleteReason === "requires_action"
   });
 
+  const keepAlive = setInterval(() => {
+    safeWrite(": codex-router keep-alive\n\n");
+    onHeartbeat?.();
+  }, 2000);
+
   if (!upstream.body) {
     clearInterval(keepAlive);
     safeWrite(
       responseFailureEvent("Upstream provider returned no response body.")
     );
-    response.removeListener("error", onResponseError);
+    response.removeListener("error", NOOP);
     return streamResult();
   }
 
   try {
-    for await (const chunk of upstream.body as AsyncIterable<Uint8Array>) {
-      if (!isWritable()) break;
-      buffer += decoder.decode(chunk, { stream: true });
-      flushEvents();
-    }
-    if (isWritable()) {
-      buffer += decoder.decode();
-      flushEvents(true);
-    }
+    await drainSseBody({
+      body: upstream.body as AsyncIterable<Uint8Array>,
+      decoder,
+      isWritable,
+      append(chunk) {
+        buffer += chunk;
+      },
+      flushEvents
+    });
   } catch (error) {
-    if (isWritable()) {
-      const timedOut =
-        signal?.aborted &&
-        (signal.reason as { name?: string } | undefined)?.name ===
-          "TimeoutError";
-      const message = timedOut
-        ? `Upstream provider exceeded the ${Math.ceil(UPSTREAM_TIMEOUT_MS / 1000)}s response timeout.`
-        : error instanceof Error
-          ? error.message
-          : String(error);
-      closeIncomplete(
-        timedOut ? INCOMPLETE_REASON_TIMEOUT : INCOMPLETE_REASON_INTERRUPTED,
-        message
-      );
-    }
+    closeIncomplete(
+      isTimeoutAbort(signal)
+        ? INCOMPLETE_REASON_TIMEOUT
+        : INCOMPLETE_REASON_INTERRUPTED,
+      upstreamErrorMessage(error, signal)
+    );
     return streamResult();
   } finally {
     clearInterval(keepAlive);
-    response.removeListener("error", onResponseError);
+    response.removeListener("error", NOOP);
   }
 
   if (terminal === null) {
@@ -757,7 +974,6 @@ export async function writeResponseStream(
 
   return streamResult();
 }
-
 export interface FetchUpstreamResult {
   ok: boolean;
   upstream?: Response;
@@ -857,10 +1073,6 @@ export function errorBody(
     details?: Record<string, unknown> | null;
   } = {}
 ): Record<string, unknown> {
-  const pickString = (value: unknown) =>
-    typeof value === "string" && value ? value : null;
-  const pickBool = (value: unknown) =>
-    typeof value === "boolean" ? value : null;
   return {
     error: {
       message,
@@ -944,20 +1156,13 @@ async function writeProviderResponse(
     if (!response.writableEnded && !response.destroyed && !response.closed) {
       try {
         response.end();
-      } catch {}
+      } catch {
+        NOOP();
+      }
     }
     return streamResult;
   }
   const body = await upstream.text();
-  const hasInputRequired = (
-    parsed: Record<string, unknown> | null,
-    incomplete: { incompleteReason: string | null } | null
-  ) =>
-    parsed?.status === "requires_action" ||
-    parsed?.status === "input_required" ||
-    incomplete?.incompleteReason === "input_required" ||
-    incomplete?.incompleteReason === "requires_action";
-
   if (route.provider === "codex") {
     const toolCalls = countToolCallsFromSse(body);
     const parsed = rewriteResponseValue(
@@ -1133,6 +1338,153 @@ export function exhaustionHeaders({
   return headers;
 }
 
+type ConcreteRequestContext = {
+  response: ServerResponse;
+  route: ProviderRoute;
+  payload: Record<string, unknown>;
+  wantsStream: boolean;
+  requestId: string;
+  turnMetadataHeader: string | null;
+  workspace: { key: string; cwd?: string | null } | null;
+  clientSignal: AbortSignal | null;
+  session: RouterSession | null;
+  activitySubject: string;
+  modelName: string;
+  sessionKey: string | null;
+  startedAt: number;
+};
+
+function recordConcreteResult(
+  ctx: ConcreteRequestContext,
+  outcome: "success" | "failure",
+  status: number | null,
+  failureClass: string | null,
+  toolCalls?: number
+): void {
+  recordRouterEvent({
+    phase: "result",
+    requestId: ctx.requestId,
+    requestedModel: ctx.modelName,
+    provider: ctx.route.provider,
+    model: ctx.modelName,
+    workspace: ctx.workspace,
+    outcome,
+    status,
+    failureClass,
+    elapsedMs: Date.now() - ctx.startedAt,
+    ...(toolCalls === undefined ? {} : { toolCalls })
+  });
+}
+
+function recordConcreteRetry(
+  ctx: ConcreteRequestContext,
+  status: number,
+  failureClass: string
+): void {
+  recordRouterEvent({
+    phase: "retry",
+    requestId: ctx.requestId,
+    requestedModel: ctx.modelName,
+    provider: ctx.route.provider,
+    model: ctx.modelName,
+    workspace: ctx.workspace,
+    status,
+    failureClass,
+    elapsedMs: Date.now() - ctx.startedAt
+  });
+}
+
+function recordConcreteAbort(ctx: ConcreteRequestContext): void {
+  recordRouterEvent({
+    phase: "result",
+    requestId: ctx.requestId,
+    requestedModel: ctx.modelName,
+    provider: ctx.route.provider,
+    model: ctx.modelName,
+    workspace: ctx.workspace,
+    outcome: "failure",
+    status: 499,
+    failureClass: "client_aborted",
+    elapsedMs: Date.now() - ctx.startedAt
+  });
+}
+
+function endConcreteRequest(
+  activitySubject: string,
+  requestId: string,
+  outcome: "success" | "failure",
+  details: {
+    hasToolCalls?: boolean;
+    inputRequired?: boolean;
+    hasActiveSubagents?: boolean;
+  } = {}
+): void {
+  getDefaultUsageTracker().activityTracker.endRequest(activitySubject, {
+    requestId,
+    outcome,
+    ...details
+  });
+}
+
+function sendConcreteFailureResponse(args: {
+  response: ServerResponse;
+  route: ProviderRoute;
+  requestId: string;
+  modelName: string;
+  status: number;
+  failureClass: string;
+}): void {
+  const { response, route, requestId, modelName, status, failureClass } = args;
+  if (response.writableEnded) return;
+  if (response.headersSent) {
+    try {
+      response.write(
+        responseFailureEvent(
+          `Direct request to ${modelName} failed with HTTP ${status}.`
+        )
+      );
+    } catch {
+      NOOP();
+    }
+    response.end();
+    return;
+  }
+  const errorType =
+    status === 401
+      ? "router_authentication_error"
+      : status === 502 || status === 503 || status === 504
+        ? "router_provider_unavailable"
+        : "router_upstream_error";
+  const retryable = status === 502 || status === 503 || status === 504;
+  const retryAfterMs = retryable ? COOLDOWNS.nextRetryMs([route.provider]) : 0;
+  const retryAfterSeconds =
+    retryAfterMs > 0 ? Math.max(1, Math.ceil(retryAfterMs / 1000)) : null;
+  sendJson(
+    response,
+    status,
+    errorBody(
+      status === 401
+        ? `Direct concrete request to ${modelName} (${route.provider}) could not authenticate.`
+        : `Direct concrete request to ${modelName} (${route.provider}) failed with HTTP ${status}.`,
+      errorType,
+      {
+        code: errorType,
+        retryable,
+        failureClass,
+        provider: route.provider,
+        model: modelName,
+        requestId
+      }
+    ),
+    {
+      "x-autodev-provider": route.provider,
+      "x-autodev-model": modelName,
+      "x-autodev-request-id": requestId,
+      ...(retryAfterSeconds ? { "retry-after": String(retryAfterSeconds) } : {})
+    }
+  );
+}
+
 export async function proxyConcreteResponse(
   response: ServerResponse,
   route: ProviderRoute,
@@ -1147,51 +1499,30 @@ export async function proxyConcreteResponse(
   const activitySubject = activitySubjectFor(requestId, session);
   const modelName =
     typeof payload.model === "string" ? payload.model : "default";
-  if (!ROUTING_POLICY.isProviderEnabled(route.provider)) {
-    recordRouterEvent({
-      phase: "skipped",
-      requestId,
-      requestedModel: modelName,
-      provider: route.provider,
-      model: modelName,
-      workspace,
-      failureClass: "provider_disabled"
-    });
-    recordRouterEvent({
-      phase: "result",
-      requestId,
-      requestedModel: modelName,
-      provider: route.provider,
-      model: modelName,
-      workspace,
-      outcome: "failure",
-      status: 503,
-      failureClass: "provider_disabled"
-    });
-    sendJson(
-      response,
-      503,
-      errorBody(
-        `Direct concrete request to ${modelName} (${route.provider}) is unavailable because provider ${route.provider} is disabled.`,
-        "router_provider_unavailable",
-        {
-          code: "router_provider_unavailable",
-          retryable: false,
-          failureClass: "provider_disabled",
-          provider: route.provider,
-          model: modelName,
-          requestId
-        }
-      ),
-      {
-        "x-autodev-provider": route.provider,
-        "x-autodev-model": modelName,
-        "x-autodev-request-id": requestId
-      }
-    );
+
+  if (!ROUTING_POLICY.isProviderEnabledForRole(route.provider, "subagent")) {
+    rejectConcreteRequest(response, route, requestId, modelName, workspace);
     return;
   }
+
   const startedAt = Date.now();
+  const sessionKey = session?.key ?? null;
+  const ctx: ConcreteRequestContext = {
+    response,
+    route,
+    payload,
+    wantsStream,
+    requestId,
+    turnMetadataHeader,
+    workspace,
+    clientSignal,
+    session,
+    activitySubject,
+    modelName,
+    sessionKey,
+    startedAt
+  };
+
   recordRouterEvent({
     phase: "selected",
     requestId,
@@ -1211,67 +1542,6 @@ export async function proxyConcreteResponse(
     origin: usageOrigin(null, route.provider),
     workspace: workspace?.key ?? null
   });
-  incrementActiveRequests(route.provider);
-
-  let attempts = 0;
-  const maxAttempts = Math.max(
-    CONCRETE_STATUS_MAX_ATTEMPTS,
-    CONCRETE_TRANSPORT_MAX_ATTEMPTS
-  );
-  const sendFailureResponse = (status: number, failureClass: string) => {
-    if (response.writableEnded) return;
-    if (response.headersSent) {
-      try {
-        response.write(
-          responseFailureEvent(
-            `Direct request to ${modelName} failed with HTTP ${status}.`
-          )
-        );
-      } catch {}
-      response.end();
-      return;
-    }
-    const errorType =
-      status === 401
-        ? "router_authentication_error"
-        : status === 502 || status === 503 || status === 504
-          ? "router_provider_unavailable"
-          : "router_upstream_error";
-    const retryable = status === 502 || status === 503 || status === 504;
-    const retryAfterMs = retryable
-      ? COOLDOWNS.nextRetryMs([route.provider])
-      : 0;
-    const retryAfterSeconds =
-      retryAfterMs > 0 ? Math.max(1, Math.ceil(retryAfterMs / 1000)) : null;
-    sendJson(
-      response,
-      status,
-      errorBody(
-        status === 401
-          ? `Direct concrete request to ${modelName} (${route.provider}) could not authenticate.`
-          : `Direct concrete request to ${modelName} (${route.provider}) failed with HTTP ${status}.`,
-        errorType,
-        {
-          code: errorType,
-          retryable,
-          failureClass,
-          provider: route.provider,
-          model: modelName,
-          requestId
-        }
-      ),
-      {
-        "x-autodev-provider": route.provider,
-        "x-autodev-model": modelName,
-        "x-autodev-request-id": requestId,
-        ...(retryAfterSeconds
-          ? { "retry-after": String(retryAfterSeconds) }
-          : {})
-      }
-    );
-  };
-
-  const sessionKey = session?.key ?? null;
   const bridgeContext = {
     activitySubject,
     provider: route.provider,
@@ -1289,299 +1559,435 @@ export async function proxyConcreteResponse(
     requestId,
     sessionKey
   });
+  incrementActiveRequests(route.provider);
 
   try {
-    while (attempts < maxAttempts) {
-      try {
-        const result = await fetchUpstream(
-          route,
-          payload,
-          wantsStream,
-          turnMetadataHeader,
-          clientSignal,
-          null,
-          requestId,
-          session
-        );
-        if (!result.ok) {
-          const failureClass = classifyProviderFailure(
-            result.status ?? 500,
-            result.body
-          );
-          const canRetry =
-            result.retryable &&
-            attempts < CONCRETE_STATUS_MAX_ATTEMPTS - 1 &&
-            !clientSignal?.aborted &&
-            !response.headersSent;
-          if (canRetry) {
-            recordRouterEvent({
-              phase: "retry",
-              requestId,
-              requestedModel: modelName,
-              provider: route.provider,
-              model: modelName,
-              workspace,
-              status: result.status,
-              failureClass,
-              elapsedMs: Date.now() - startedAt
-            });
-            attempts += 1;
-            await jitteredBackoff();
-            if (clientSignal?.aborted) {
-              recordRouterEvent({
-                phase: "result",
-                requestId,
-                requestedModel: modelName,
-                provider: route.provider,
-                model: modelName,
-                workspace,
-                outcome: "failure",
-                status: 499,
-                failureClass: "client_aborted",
-                elapsedMs: Date.now() - startedAt
-              });
-              getDefaultUsageTracker().activityTracker.endRequest(
-                activitySubject,
-                { requestId, outcome: "failure", hasToolCalls: false }
-              );
-              return;
-            }
-            continue;
-          }
-          recordRouterEvent({
-            phase: "result",
-            requestId,
-            requestedModel: modelName,
-            provider: route.provider,
-            model: modelName,
-            workspace,
-            outcome: "failure",
-            status: result.status,
-            failureClass,
-            elapsedMs: Date.now() - startedAt
-          });
-          getDefaultUsageTracker().activityTracker.endRequest(activitySubject, {
-            requestId,
-            outcome: "failure",
-            hasToolCalls: false
-          });
-          if (result.retryable)
-            COOLDOWNS.cooldownProvider(
-              route.provider,
-              cooldownFor(failureClass, result.limit)
-            );
-          sendFailureResponse(result.status ?? 500, failureClass);
-          return;
-        }
-        const responseResult = await writeSuccessfulResponse(
-          response,
-          route,
-          { upstream: result.upstream!, signal: result.signal! },
-          wantsStream,
-          modelName,
-          requestId,
-          modelName,
-          () => getDefaultUsageTracker().activityTracker.touch(activitySubject)
-        );
-        recordRouterEvent({
-          phase: "result",
-          requestId,
-          requestedModel: modelName,
-          provider: route.provider,
-          model: modelName,
-          workspace,
-          outcome: responseResult.failed ? "failure" : "success",
-          status: result.upstream!.status,
-          failureClass: responseResult.failed ? "upstream_error" : null,
-          elapsedMs: Date.now() - startedAt,
-          toolCalls: responseResult.toolCalls
-        });
-        getDefaultUsageTracker().activityTracker.endRequest(activitySubject, {
-          requestId,
-          outcome: responseResult.failed ? "failure" : "success",
-          hasToolCalls: responseResult.toolCalls > 0,
-          inputRequired: Boolean(responseResult.inputRequired)
-        });
-        return;
-      } catch (error) {
-        logTransportError({
-          requestId,
-          provider: route.provider,
-          model: modelName,
-          error,
-          workspace
-        });
-        if (
-          error &&
-          typeof error === "object" &&
-          (error as { code?: string }).code === "router_auth_unavailable"
-        ) {
-          recordRouterEvent({
-            phase: "result",
-            requestId,
-            requestedModel: modelName,
-            provider: route.provider,
-            model: modelName,
-            workspace,
-            outcome: "failure",
-            status: 401,
-            failureClass: "authentication",
-            elapsedMs: Date.now() - startedAt
-          });
-          getDefaultUsageTracker().activityTracker.endRequest(activitySubject, {
-            requestId,
-            outcome: "failure",
-            hasToolCalls: false
-          });
-          sendFailureResponse(401, "authentication");
-          return;
-        }
-        if (clientSignal?.aborted) {
-          recordRouterEvent({
-            phase: "result",
-            requestId,
-            requestedModel: modelName,
-            provider: route.provider,
-            model: modelName,
-            workspace,
-            outcome: "failure",
-            status: 499,
-            failureClass: "client_aborted",
-            elapsedMs: Date.now() - startedAt
-          });
-          getDefaultUsageTracker().activityTracker.endRequest(activitySubject, {
-            requestId,
-            outcome: "failure",
-            hasToolCalls: false
-          });
-          return;
-        }
-        if (
-          attempts < CONCRETE_TRANSPORT_MAX_ATTEMPTS - 1 &&
-          !response.headersSent
-        ) {
-          const failureClass = classifyProviderFailure(
-            502,
-            error instanceof Error ? error.message : String(error)
-          );
-          recordRouterEvent({
-            phase: "retry",
-            requestId,
-            requestedModel: modelName,
-            provider: route.provider,
-            model: modelName,
-            workspace,
-            status: 502,
-            failureClass,
-            elapsedMs: Date.now() - startedAt
-          });
-          attempts += 1;
-          await jitteredBackoff();
-          if (clientSignal?.aborted) {
-            recordRouterEvent({
-              phase: "result",
-              requestId,
-              requestedModel: modelName,
-              provider: route.provider,
-              model: modelName,
-              workspace,
-              outcome: "failure",
-              status: 499,
-              failureClass: "client_aborted",
-              elapsedMs: Date.now() - startedAt
-            });
-            getDefaultUsageTracker().activityTracker.endRequest(
-              activitySubject,
-              { requestId, outcome: "failure", hasToolCalls: false }
-            );
-            return;
-          }
-          continue;
-        }
-        const failureClass = classifyProviderFailure(
-          502,
-          error instanceof Error ? error.message : String(error)
-        );
-        recordRouterEvent({
-          phase: "result",
-          requestId,
-          requestedModel: modelName,
-          provider: route.provider,
-          model: modelName,
-          workspace,
-          outcome: "failure",
-          status: 502,
-          failureClass,
-          elapsedMs: Date.now() - startedAt
-        });
-        getDefaultUsageTracker().activityTracker.endRequest(activitySubject, {
-          requestId,
-          outcome: "failure",
-          hasToolCalls: false
-        });
-        COOLDOWNS.cooldownProvider(route.provider, cooldownFor(failureClass));
-        sendFailureResponse(502, failureClass);
-        return;
-      }
-    }
+    await runConcreteAttempts(ctx, 0);
   } catch (error) {
+    handleConcreteOuterFailure(ctx, error);
+  } finally {
+    decrementActiveRequests(route.provider);
+  }
+}
+
+function rejectConcreteRequest(
+  response: ServerResponse,
+  route: ProviderRoute,
+  requestId: string,
+  modelName: string,
+  workspace: { key: string; cwd?: string | null } | null
+): void {
+  recordRouterEvent({
+    phase: "skipped",
+    requestId,
+    requestedModel: modelName,
+    provider: route.provider,
+    model: modelName,
+    workspace,
+    failureClass: "provider_disabled"
+  });
+  recordRouterEvent({
+    phase: "result",
+    requestId,
+    requestedModel: modelName,
+    provider: route.provider,
+    model: modelName,
+    workspace,
+    outcome: "failure",
+    status: 503,
+    failureClass: "provider_disabled"
+  });
+  sendJson(
+    response,
+    503,
+    errorBody(
+      `Direct concrete request to ${modelName} (${route.provider}) is unavailable because provider ${route.provider} is disabled.`,
+      "router_provider_unavailable",
+      {
+        code: "router_provider_unavailable",
+        retryable: false,
+        failureClass: "provider_disabled",
+        provider: route.provider,
+        model: modelName,
+        requestId
+      }
+    ),
+    {
+      "x-autodev-provider": route.provider,
+      "x-autodev-model": modelName,
+      "x-autodev-request-id": requestId
+    }
+  );
+}
+
+async function runConcreteAttempts(
+  ctx: ConcreteRequestContext,
+  attempts: number
+): Promise<void> {
+  const maxAttempts = Math.max(
+    CONCRETE_STATUS_MAX_ATTEMPTS,
+    CONCRETE_TRANSPORT_MAX_ATTEMPTS
+  );
+  if (attempts >= maxAttempts) return;
+
+  const {
+    route,
+    payload,
+    wantsStream,
+    requestId,
+    turnMetadataHeader,
+    clientSignal,
+    session
+  } = ctx;
+
+  try {
+    const result = await fetchUpstream(
+      route,
+      payload,
+      wantsStream,
+      turnMetadataHeader,
+      clientSignal,
+      null,
+      requestId,
+      session
+    );
+    if (!result.ok) {
+      await handleConcreteStatusFailure(ctx, result, attempts);
+      return;
+    }
+    await handleConcreteSuccess(ctx, result);
+  } catch (error) {
+    await handleConcreteTransportError(ctx, error, attempts);
+  }
+}
+
+async function handleConcreteStatusFailure(
+  ctx: ConcreteRequestContext,
+  result: FetchUpstreamResult,
+  attempts: number
+): Promise<void> {
+  const {
+    response,
+    route,
+    activitySubject,
+    clientSignal,
+    requestId,
+    modelName
+  } = ctx;
+  const failureClass = classifyProviderFailure(
+    result.status ?? 500,
+    result.body
+  );
+  const canRetry =
+    result.retryable &&
+    attempts < CONCRETE_STATUS_MAX_ATTEMPTS - 1 &&
+    !clientSignal?.aborted &&
+    !response.headersSent;
+  if (canRetry) {
+    recordConcreteRetry(ctx, result.status ?? 500, failureClass);
+    await jitteredBackoff();
+    if (clientSignal?.aborted) {
+      recordConcreteAbort(ctx);
+      endConcreteRequest(activitySubject, requestId, "failure");
+      return;
+    }
+    await runConcreteAttempts(ctx, attempts + 1);
+    return;
+  }
+  recordConcreteResult(ctx, "failure", result.status ?? 500, failureClass);
+  endConcreteRequest(activitySubject, requestId, "failure");
+  if (result.retryable)
+    COOLDOWNS.cooldownProvider(
+      route.provider,
+      cooldownFor(failureClass, result.limit)
+    );
+  sendConcreteFailureResponse({
+    response,
+    route,
+    requestId,
+    modelName,
+    status: result.status ?? 500,
+    failureClass
+  });
+}
+
+async function handleConcreteSuccess(
+  ctx: ConcreteRequestContext,
+  result: { upstream: Response; signal: AbortSignal }
+): Promise<void> {
+  const responseResult = await writeSuccessfulResponse(
+    ctx.response,
+    ctx.route,
+    { upstream: result.upstream, signal: result.signal },
+    ctx.wantsStream,
+    ctx.modelName,
+    ctx.requestId,
+    ctx.modelName,
+    () => getDefaultUsageTracker().activityTracker.touch(ctx.activitySubject)
+  );
+  recordConcreteResult(
+    ctx,
+    responseResult.failed ? "failure" : "success",
+    result.upstream.status,
+    responseResult.failed ? "upstream_error" : null,
+    responseResult.toolCalls
+  );
+  endConcreteRequest(
+    ctx.activitySubject,
+    ctx.requestId,
+    responseResult.failed ? "failure" : "success",
+    {
+      hasToolCalls: responseResult.toolCalls > 0,
+      inputRequired: Boolean(responseResult.inputRequired)
+    }
+  );
+}
+
+async function handleConcreteTransportError(
+  ctx: ConcreteRequestContext,
+  error: unknown,
+  attempts: number
+): Promise<void> {
+  const {
+    route,
+    activitySubject,
+    requestId,
+    modelName,
+    clientSignal,
+    response
+  } = ctx;
+  logTransportError({
+    requestId,
+    provider: route.provider,
+    model: modelName,
+    error,
+    workspace: ctx.workspace
+  });
+  if (
+    error &&
+    typeof error === "object" &&
+    (error as { code?: string }).code === "router_auth_unavailable"
+  ) {
+    recordConcreteResult(ctx, "failure", 401, "authentication");
+    endConcreteRequest(activitySubject, requestId, "failure");
+    sendConcreteFailureResponse({
+      response,
+      route,
+      requestId,
+      modelName,
+      status: 401,
+      failureClass: "authentication"
+    });
+    return;
+  }
+  if (clientSignal?.aborted) {
+    recordConcreteAbort(ctx);
+    endConcreteRequest(activitySubject, requestId, "failure");
+    return;
+  }
+  if (attempts < CONCRETE_TRANSPORT_MAX_ATTEMPTS - 1 && !response.headersSent) {
     const failureClass = classifyProviderFailure(
       502,
       error instanceof Error ? error.message : String(error)
     );
-    recordRouterEvent({
-      phase: "result",
-      requestId,
-      requestedModel: modelName,
-      provider: route.provider,
-      model: modelName,
-      workspace,
-      outcome: "failure",
-      status: 502,
-      failureClass,
-      elapsedMs: Date.now() - startedAt
-    });
-    getDefaultUsageTracker().activityTracker.endRequest(activitySubject, {
-      requestId,
-      outcome: "failure",
-      hasToolCalls: false
-    });
-    if (!response.writableEnded) {
-      if (response.headersSent) {
-        try {
-          response.write(
-            responseFailureEvent(
-              `Direct request to ${modelName} could not be completed.`
-            )
-          );
-        } catch {}
-        response.end();
-      } else {
-        sendJson(
-          response,
-          502,
-          errorBody(
-            `Direct concrete request to ${modelName} (${route.provider}) could not be completed.`,
-            "router_upstream_error",
-            {
-              code: "router_upstream_error",
-              retryable: true,
-              failureClass,
-              provider: route.provider,
-              model: modelName,
-              requestId
-            }
-          ),
-          {
-            "x-autodev-provider": route.provider,
-            "x-autodev-model": modelName,
-            "x-autodev-request-id": requestId
-          }
-        );
-      }
+    recordConcreteRetry(ctx, 502, failureClass);
+    await jitteredBackoff();
+    if (clientSignal?.aborted) {
+      recordConcreteAbort(ctx);
+      endConcreteRequest(activitySubject, requestId, "failure");
+      return;
     }
-  } finally {
-    decrementActiveRequests(route.provider);
+    await runConcreteAttempts(ctx, attempts + 1);
+    return;
+  }
+  const failureClass = classifyProviderFailure(
+    502,
+    error instanceof Error ? error.message : String(error)
+  );
+  recordConcreteResult(ctx, "failure", 502, failureClass);
+  endConcreteRequest(activitySubject, requestId, "failure");
+  COOLDOWNS.cooldownProvider(route.provider, cooldownFor(failureClass));
+  sendConcreteFailureResponse({
+    response,
+    route,
+    requestId,
+    modelName,
+    status: 502,
+    failureClass
+  });
+}
+
+function handleConcreteOuterFailure(
+  ctx: ConcreteRequestContext,
+  error: unknown
+): void {
+  const { response, route, activitySubject, requestId, modelName } = ctx;
+  const failureClass = classifyProviderFailure(
+    502,
+    error instanceof Error ? error.message : String(error)
+  );
+  recordConcreteResult(ctx, "failure", 502, failureClass);
+  endConcreteRequest(activitySubject, requestId, "failure");
+  if (response.writableEnded) return;
+  if (response.headersSent) {
+    try {
+      response.write(
+        responseFailureEvent(
+          `Direct request to ${modelName} could not be completed.`
+        )
+      );
+    } catch {
+      NOOP();
+    }
+    response.end();
+    return;
+  }
+  sendJson(
+    response,
+    502,
+    errorBody(
+      `Direct concrete request to ${modelName} (${route.provider}) could not be completed.`,
+      "router_upstream_error",
+      {
+        code: "router_upstream_error",
+        retryable: true,
+        failureClass,
+        provider: route.provider,
+        model: modelName,
+        requestId
+      }
+    ),
+    {
+      "x-autodev-provider": route.provider,
+      "x-autodev-model": modelName,
+      "x-autodev-request-id": requestId
+    }
+  );
+}
+type FallbackContext = {
+  response: ServerResponse;
+  candidates: Candidate[] | OrchestratorCandidate[];
+  role: string | null;
+  origin: string | null;
+  subject: string;
+  agentRole: string | null;
+  sessionKey: string | null;
+  session: RouterSession | null;
+  payload: Record<string, unknown>;
+  wantsStream: boolean;
+  requestId: string;
+  turnMetadataHeader: string | null;
+  workspace: { key: string; cwd?: string | null } | null;
+  clientSignal: AbortSignal | null;
+  providerRole: "orchestrator" | "subagent";
+  isOrchestratorTurn: boolean;
+  isKnownOrchestratorSession: boolean;
+  activitySubject: string;
+  modelName: string;
+  selectionDeadline: number;
+  startedAt: number;
+};
+
+function recordFallbackSkip(
+  ctx: FallbackContext,
+  route: Candidate,
+  why: string,
+  failureClass: string,
+  failures: string[]
+): void {
+  failures.push(`${route.provider}: ${why}`);
+  recordRouterEvent({
+    phase: "skipped",
+    requestId: ctx.requestId,
+    role: ctx.role,
+    origin: ctx.origin,
+    requestedModel: ctx.modelName,
+    provider: route.provider,
+    model: route.model,
+    workspace: ctx.workspace,
+    failureClass
+  });
+}
+
+function recordFallbackSelected(
+  ctx: FallbackContext,
+  route: Candidate,
+  selection: string
+): void {
+  recordRouterEvent({
+    phase: "selected",
+    requestId: ctx.requestId,
+    role: ctx.role,
+    origin: ctx.origin,
+    requestedModel: ctx.modelName,
+    provider: route.provider,
+    model: route.model,
+    workspace: ctx.workspace,
+    selection
+  });
+}
+
+function beginCandidateRequest(
+  ctx: FallbackContext,
+  route: Candidate
+): "orchestrator" | null {
+  const activityRole =
+    ctx.role ??
+    ((ctx.origin ?? usageOrigin(ctx.role, route.provider)) === "orchestrator"
+      ? "orchestrator"
+      : null);
+  getDefaultUsageTracker().activityTracker.beginRequest(ctx.activitySubject, {
+    requestId: ctx.requestId,
+    provider: route.provider,
+    model: route.model,
+    role: activityRole,
+    origin:
+      ctx.origin ??
+      (ctx.isOrchestratorTurn
+        ? "orchestrator"
+        : ctx.isKnownOrchestratorSession
+          ? "subagent"
+          : usageOrigin(ctx.role, route.provider)),
+    workspace: ctx.workspace?.key ?? null,
+    tag:
+      ctx.isKnownOrchestratorSession && !ctx.isOrchestratorTurn
+        ? ctx.sessionKey
+        : null
+  });
+  return activityRole;
+}
+
+function emitFallbackBridgeContext(
+  ctx: FallbackContext,
+  route: Candidate
+): void {
+  if (ctx.sessionKey) touchManagerOpenSubagentSlots(ctx.sessionKey);
+  const bridgeContext = {
+    activitySubject: ctx.activitySubject,
+    provider: route.provider,
+    model: route.model,
+    role: ctx.role ?? (ctx.origin === "orchestrator" ? "orchestrator" : null),
+    workspace: ctx.workspace?.key ?? null,
+    sessionKey: ctx.sessionKey
+  };
+  noteBridgeRequest(ctx.requestId, bridgeContext);
+  noteBridgeSession(ctx.sessionKey, {
+    ...bridgeContext,
+    requestId: ctx.requestId
+  });
+  recordNativeMcpExposure({
+    route,
+    agentRole: ctx.agentRole,
+    workspace: ctx.workspace,
+    requestId: ctx.requestId,
+    sessionKey: ctx.sessionKey
+  });
+  if (ctx.agentRole === ORCHESTRATOR_AGENT_ROLE) {
+    noteOrchestratorSession(ctx.sessionKey, route.provider, {
+      model: route.model,
+      workspace: ctx.workspace?.key ?? null,
+      requestId: ctx.requestId
+    });
   }
 }
 
@@ -1612,6 +2018,9 @@ export async function proxyFallbackChain(
   clientSignal: AbortSignal | null = null
 ): Promise<void> {
   const isOrchestratorTurn = agentRole === ORCHESTRATOR_AGENT_ROLE;
+  const providerRole: "orchestrator" | "subagent" = isOrchestratorTurn
+    ? "orchestrator"
+    : "subagent";
   const isKnownOrchestratorSession = Boolean(
     sessionKey && orchestratorProviderForSession(sessionKey)
   );
@@ -1624,41 +2033,14 @@ export async function proxyFallbackChain(
   );
   const modelName = String(payload.model ?? "");
   if (!candidates || candidates.length === 0) {
-    recordSpawnFailure({
-      requestId,
-      role,
-      requestedModel: modelName,
-      reason: "provider_exhausted"
-    });
-    closeBridgeSubagentsForRequest(requestId, "failure");
-    recordRouterEvent({
-      phase: "result",
+    rejectFallbackChain(
+      response,
       requestId,
       role,
       origin,
-      requestedModel: modelName,
-      provider: null,
-      model: null,
-      workspace,
-      outcome: "failure",
-      status: 503,
-      failureClass: "provider_disabled"
-    });
-    sendJson(
-      response,
-      503,
-      errorBody(
-        `No enabled providers available for ${subject}.`,
-        "router_provider_exhausted",
-        {
-          code: "router_provider_exhausted",
-          retryable: false,
-          failureClass: "provider_disabled",
-          model: modelName,
-          requestId
-        }
-      ),
-      { "x-autodev-request-id": requestId }
+      modelName,
+      subject,
+      workspace
     );
     return;
   }
@@ -1667,428 +2049,682 @@ export async function proxyFallbackChain(
   const skipped: Candidate[] = [];
   const startedAt = Date.now();
   const selectionDeadline = startedAt + CHAIN_SELECTION_DEADLINE_MS;
-  let deadlineReached = false;
-  let lastResortAttempts = 0;
-
-  const noteSkip = (route: Candidate, why: string, failureClass: string) => {
-    failures.push(`${route.provider}: ${why}`);
-    skipped.push(route);
-    recordRouterEvent({
-      phase: "skipped",
-      requestId,
-      role,
-      origin,
-      requestedModel: modelName,
-      provider: route.provider,
-      model: route.model,
-      workspace,
-      failureClass
-    });
+  const fbCtx: FallbackContext = {
+    response,
+    candidates,
+    role,
+    origin,
+    subject,
+    agentRole,
+    sessionKey,
+    session,
+    payload,
+    wantsStream,
+    requestId,
+    turnMetadataHeader,
+    workspace,
+    clientSignal,
+    providerRole,
+    isOrchestratorTurn,
+    isKnownOrchestratorSession,
+    activitySubject,
+    modelName,
+    selectionDeadline,
+    startedAt
   };
-
-  const attemptCandidate = async (
-    route: Candidate,
-    selection: string
-  ): Promise<"served" | "terminal" | "fallback"> => {
-    const attemptStartedAt = Date.now();
-    attempted.add(route.provider);
-    recordRouterEvent({
-      phase: "selected",
-      requestId,
-      role,
-      origin,
-      requestedModel: modelName,
-      provider: route.provider,
-      model: route.model,
-      workspace,
-      selection
-    });
-    const activityRole =
-      role ??
-      ((origin ?? usageOrigin(role, route.provider)) === "orchestrator"
-        ? "orchestrator"
-        : null);
-    getDefaultUsageTracker().activityTracker.beginRequest(activitySubject, {
-      requestId,
-      provider: route.provider,
-      model: route.model,
-      role: activityRole,
-      origin:
-        origin ??
-        (isOrchestratorTurn
-          ? "orchestrator"
-          : isKnownOrchestratorSession
-            ? "subagent"
-            : usageOrigin(role, route.provider)),
-      workspace: workspace?.key ?? null,
-      tag: isKnownOrchestratorSession && !isOrchestratorTurn ? sessionKey : null
-    });
-    if (sessionKey) touchManagerOpenSubagentSlots(sessionKey);
-    const bridgeContext = {
-      activitySubject,
-      provider: route.provider,
-      model: route.model,
-      role: role ?? (origin === "orchestrator" ? "orchestrator" : null),
-      workspace: workspace?.key ?? null,
-      sessionKey
-    };
-    noteBridgeRequest(requestId, bridgeContext);
-    noteBridgeSession(sessionKey, { ...bridgeContext, requestId });
-    recordNativeMcpExposure({
-      route,
-      agentRole,
-      workspace,
-      requestId,
-      sessionKey
-    });
-    if (agentRole === ORCHESTRATOR_AGENT_ROLE) {
-      noteOrchestratorSession(sessionKey, route.provider, {
-        model: route.model,
-        workspace: workspace?.key ?? null,
-        requestId
-      });
-    }
-    incrementActiveRequests(route.provider);
-
-    try {
-      const result = await fetchUpstream(
-        route,
-        payloadForCandidate(payload, route),
-        wantsStream,
-        turnMetadataHeader,
-        clientSignal,
-        agentRole,
-        requestId,
-        session
-      );
-      if (result.ok) {
-        try {
-          const responseResult = await writeSuccessfulResponse(
-            response,
-            route,
-            { upstream: result.upstream!, signal: result.signal! },
-            wantsStream,
-            modelName,
-            requestId,
-            route.model,
-            () => {
-              getDefaultUsageTracker().activityTracker.touch(activitySubject);
-              if (sessionKey) {
-                getDefaultUsageTracker().activityTracker.touch(sessionKey);
-                touchManagerOpenSubagentSlots(sessionKey);
-              }
-            }
-          );
-          if (responseResult.failed) {
-            const failureClass =
-              responseResult.limit?.limitClass ??
-              (responseResult.incompleteReason
-                ? "unavailable"
-                : "upstream_error");
-            COOLDOWNS.cooldownProvider(
-              route.provider,
-              cooldownFor(failureClass, responseResult.limit)
-            );
-            recordRouterEvent({
-              phase: "result",
-              requestId,
-              role,
-              origin,
-              requestedModel: modelName,
-              provider: route.provider,
-              model: route.model,
-              workspace,
-              outcome: "failure",
-              status: result.upstream!.status,
-              failureClass,
-              elapsedMs: Date.now() - attemptStartedAt,
-              toolCalls: responseResult.toolCalls,
-              selection
-            });
-            getDefaultUsageTracker().activityTracker.endRequest(
-              activitySubject,
-              {
-                requestId,
-                outcome: "failure",
-                hasToolCalls: responseResult.toolCalls > 0,
-                inputRequired: Boolean(responseResult.inputRequired)
-              }
-            );
-            return "served";
-          }
-          COOLDOWNS.clear(route.provider);
-          recordRouterEvent({
-            phase: "result",
-            requestId,
-            role,
-            origin,
-            requestedModel: modelName,
-            provider: route.provider,
-            model: route.model,
-            workspace,
-            outcome: "success",
-            status: result.upstream!.status,
-            elapsedMs: Date.now() - attemptStartedAt,
-            toolCalls: responseResult.toolCalls,
-            selection
-          });
-          getDefaultUsageTracker().activityTracker.endRequest(activitySubject, {
-            requestId,
-            outcome: "success",
-            hasToolCalls: responseResult.toolCalls > 0,
-            inputRequired: Boolean(responseResult.inputRequired),
-            hasActiveSubagents:
-              isOrchestratorTurn && sessionKey
-                ? hasActiveBridgeSubagentsForSession(sessionKey) ||
-                  getDefaultConcurrencyManager().activeSubagentThreads() > 0
-                : false
-          });
-        } catch (streamError) {
-          COOLDOWNS.cooldownProvider(
-            route.provider,
-            cooldownFor("upstream_error")
-          );
-          throw streamError;
-        }
-        return "served";
-      }
-      const failureClass =
-        result.limit?.limitClass ??
-        classifyProviderFailure(result.status ?? 500, result.body);
-      failures.push(`${route.provider}: HTTP ${result.status}`);
-      recordRouterEvent({
-        phase: "result",
-        requestId,
-        role,
-        origin,
-        requestedModel: modelName,
-        provider: route.provider,
-        model: route.model,
-        workspace,
-        outcome: "failure",
-        status: result.status,
-        failureClass,
-        elapsedMs: Date.now() - attemptStartedAt,
-        selection
-      });
-      if (!fallbackable(result.status ?? 500, result.body)) {
-        response.writeHead(result.status ?? 500, {
-          "content-type": "application/json",
-          "x-autodev-provider": route.provider,
-          "x-autodev-model": route.model,
-          "x-autodev-request-id": requestId,
-          "x-autodev-router-instance-id": ROUTER_INSTANCE_ID
-        });
-        response.end(result.body);
-        getDefaultUsageTracker().activityTracker.endRequest(activitySubject, {
-          requestId,
-          outcome: "failure",
-          hasToolCalls: false
-        });
-        return "terminal";
-      }
-      COOLDOWNS.cooldownProvider(
-        route.provider,
-        cooldownFor(failureClass, result.limit)
-      );
-      return "fallback";
-    } catch (error) {
-      const isAuthFailure =
-        (error as { code?: string } | undefined)?.code ===
-        "router_auth_unavailable";
-      const failureClass = isAuthFailure
-        ? "authentication"
-        : classifyProviderFailure(
-            502,
-            error instanceof Error ? error.message : String(error)
-          );
-      if (!isAuthFailure)
-        logTransportError({
-          requestId,
-          role,
-          requestedModel: modelName,
-          provider: route.provider,
-          model: route.model,
-          error,
-          workspace
-        });
-      failures.push(`${route.provider}: ${failureClass}`);
-      recordRouterEvent({
-        phase: "result",
-        requestId,
-        role,
-        origin,
-        requestedModel: modelName,
-        provider: route.provider,
-        model: route.model,
-        workspace,
-        outcome: "failure",
-        status: 502,
-        failureClass,
-        elapsedMs: Date.now() - attemptStartedAt,
-        selection
-      });
-      COOLDOWNS.cooldownProvider(route.provider, cooldownFor(failureClass));
-      if (response.headersSent) {
-        if (!response.writableEnded) {
-          try {
-            response.write(
-              responseFailureEvent(
-                `Router could not complete ${subject}: ${failureClass}.`
-              )
-            );
-          } catch {}
-          response.end();
-        }
-        getDefaultUsageTracker().activityTracker.endRequest(activitySubject, {
-          requestId,
-          outcome: "failure",
-          hasToolCalls: false
-        });
-        return "served";
-      }
-      return "fallback";
-    } finally {
-      decrementActiveRequests(route.provider);
-    }
+  const state = {
+    deadlineReached: false,
+    lastResortAttempts: 0
   };
 
   const tryCandidate = async (
     route: Candidate,
     selection: string
   ): Promise<"served" | "terminal" | "fallback" | "unavailable"> => {
-    if (!ROUTING_POLICY.isProviderEnabled(route.provider)) {
-      noteSkip(route, "disabled", "provider_disabled");
+    if (
+      !ROUTING_POLICY.isProviderEnabledForRole(
+        route.provider,
+        fbCtx.providerRole
+      )
+    ) {
+      recordFallbackSkip(
+        fbCtx,
+        route,
+        "disabled",
+        "provider_disabled",
+        failures
+      );
+      skipped.push(route);
       return "unavailable";
     }
     if (!(await providerAvailable(route))) {
       COOLDOWNS.cooldownProvider(route.provider, {
         failureClass: PROBE_FAILURE_CLASS
       });
-      noteSkip(route, "unavailable", PROBE_FAILURE_CLASS);
+      recordFallbackSkip(
+        fbCtx,
+        route,
+        "unavailable",
+        PROBE_FAILURE_CLASS,
+        failures
+      );
+      skipped.push(route);
       return "unavailable";
     }
-    return attemptCandidate(route, selection);
+    return attemptCandidate(fbCtx, route, selection, failures, attempted);
   };
-  const served = (outcome: string) =>
-    outcome === "served" || outcome === "terminal";
 
-  // Pass 1: candidates that are not cooling
-  for (const route of candidates) {
-    if (Date.now() > selectionDeadline) {
-      deadlineReached = true;
-      break;
-    }
-    if (!ROUTING_POLICY.isProviderEnabled(route.provider)) {
-      noteSkip(route, "disabled", "provider_disabled");
-      continue;
-    }
-    if (COOLDOWNS.isCooling(route.provider)) {
-      noteSkip(
-        route,
-        "cooldown active",
-        COOLDOWNS.get(route.provider)?.failureClass ?? "cooldown"
-      );
-      continue;
-    }
-    if (served(await tryCandidate(route, "primary"))) return;
-  }
+  const served = servedOutcome;
 
-  // Pass 2: last resort pass
-  if (!deadlineReached) {
-    const eligible = skipped
-      .filter(
-        (route) =>
-          ROUTING_POLICY.isProviderEnabled(route.provider) &&
-          !attempted.has(route.provider) &&
-          COOLDOWNS.allowsLastResort(COOLDOWNS.get(route.provider)) &&
-          countLiveAgentActivity({ provider: route.provider }) === 0
-      )
-      .sort(
-        (a, b) =>
-          (COOLDOWNS.get(a.provider)?.until ?? 0) -
-          (COOLDOWNS.get(b.provider)?.until ?? 0)
-      )
-      .slice(0, LAST_RESORT_MAX_ATTEMPTS);
-    for (const route of eligible) {
-      if (Date.now() > selectionDeadline) {
-        deadlineReached = true;
-        break;
+  if (
+    await runPrimaryPass(
+      fbCtx,
+      candidates,
+      state,
+      skipped,
+      tryCandidate,
+      served
+    )
+  )
+    return;
+
+  if (
+    !state.deadlineReached &&
+    (await runLastResortPass(
+      fbCtx,
+      skipped,
+      state,
+      triedCandidates(attempted),
+      tryCandidate,
+      served
+    ))
+  )
+    return;
+
+  await runExhaustionWait(fbCtx, candidates, state, tryCandidate, served);
+
+  finalizeFallbackFailure(
+    response,
+    fbCtx,
+    failures,
+    state.lastResortAttempts,
+    state.deadlineReached,
+    attempted
+  );
+}
+
+function rejectFallbackChain(
+  response: ServerResponse,
+  requestId: string,
+  role: string | null,
+  origin: string | null,
+  modelName: string,
+  subject: string,
+  workspace: { key: string; cwd?: string | null } | null
+): void {
+  recordSpawnFailure({
+    requestId,
+    role,
+    requestedModel: modelName,
+    reason: "provider_exhausted"
+  });
+  closeBridgeSubagentsForRequest(requestId, "failure");
+  recordRouterEvent({
+    phase: "result",
+    requestId,
+    role,
+    origin,
+    requestedModel: modelName,
+    provider: null,
+    model: null,
+    workspace,
+    outcome: "failure",
+    status: 503,
+    failureClass: "provider_disabled"
+  });
+  sendJson(
+    response,
+    503,
+    errorBody(
+      `No enabled providers available for ${subject}.`,
+      "router_provider_exhausted",
+      {
+        code: "router_provider_exhausted",
+        retryable: false,
+        failureClass: "provider_disabled",
+        model: modelName,
+        requestId
       }
-      lastResortAttempts += 1;
-      if (served(await tryCandidate(route, "last_resort"))) return;
-    }
-  }
+    ),
+    { "x-autodev-request-id": requestId }
+  );
+}
 
-  // Pass 3: exhaustion wait
+function triedCandidates(
+  attempted: Set<string>
+): (provider: string) => boolean {
+  return (provider: string) => attempted.has(provider);
+}
+
+async function tryPrimaryRoute(
+  ctx: FallbackContext,
+  candidates: Candidate[] | OrchestratorCandidate[],
+  index: number,
+  state: { deadlineReached: boolean; lastResortAttempts: number },
+  skipped: Candidate[],
+  tryCandidate: (
+    route: Candidate,
+    selection: string
+  ) => Promise<"served" | "terminal" | "fallback" | "unavailable">,
+  served: (outcome: string) => boolean
+): Promise<boolean> {
+  if (index >= candidates.length) return false;
+  const route = candidates[index]!;
+  if (Date.now() > ctx.selectionDeadline) {
+    state.deadlineReached = true;
+    return false;
+  }
+  if (
+    !ROUTING_POLICY.isProviderEnabledForRole(route.provider, ctx.providerRole)
+  ) {
+    recordFallbackSkip(ctx, route, "disabled", "provider_disabled", []);
+    skipped.push(route);
+    return tryPrimaryRoute(
+      ctx,
+      candidates,
+      index + 1,
+      state,
+      skipped,
+      tryCandidate,
+      served
+    );
+  }
+  if (COOLDOWNS.isCooling(route.provider)) {
+    recordFallbackSkip(
+      ctx,
+      route,
+      "cooldown active",
+      COOLDOWNS.get(route.provider)?.failureClass ?? "cooldown",
+      []
+    );
+    skipped.push(route);
+    return tryPrimaryRoute(
+      ctx,
+      candidates,
+      index + 1,
+      state,
+      skipped,
+      tryCandidate,
+      served
+    );
+  }
+  if (served(await tryCandidate(route, "primary"))) return true;
+  return tryPrimaryRoute(
+    ctx,
+    candidates,
+    index + 1,
+    state,
+    skipped,
+    tryCandidate,
+    served
+  );
+}
+
+function runPrimaryPass(
+  ctx: FallbackContext,
+  candidates: Candidate[] | OrchestratorCandidate[],
+  state: { deadlineReached: boolean; lastResortAttempts: number },
+  skipped: Candidate[],
+  tryCandidate: (
+    route: Candidate,
+    selection: string
+  ) => Promise<"served" | "terminal" | "fallback" | "unavailable">,
+  served: (outcome: string) => boolean
+): Promise<boolean> {
+  return tryPrimaryRoute(
+    ctx,
+    candidates,
+    0,
+    state,
+    skipped,
+    tryCandidate,
+    served
+  );
+}
+
+async function tryLastResortRoute(
+  ctx: FallbackContext,
+  eligible: Candidate[],
+  index: number,
+  state: { deadlineReached: boolean; lastResortAttempts: number },
+  tryCandidate: (
+    route: Candidate,
+    selection: string
+  ) => Promise<"served" | "terminal" | "fallback" | "unavailable">,
+  served: (outcome: string) => boolean
+): Promise<boolean> {
+  if (index >= eligible.length) return false;
+  const route = eligible[index]!;
+  if (Date.now() > ctx.selectionDeadline) {
+    state.deadlineReached = true;
+    return false;
+  }
+  state.lastResortAttempts += 1;
+  if (served(await tryCandidate(route, "last_resort"))) return true;
+  return tryLastResortRoute(
+    ctx,
+    eligible,
+    index + 1,
+    state,
+    tryCandidate,
+    served
+  );
+}
+
+function runLastResortPass(
+  ctx: FallbackContext,
+  skipped: Candidate[],
+  state: { deadlineReached: boolean; lastResortAttempts: number },
+  isTried: (provider: string) => boolean,
+  tryCandidate: (
+    route: Candidate,
+    selection: string
+  ) => Promise<"served" | "terminal" | "fallback" | "unavailable">,
+  served: (outcome: string) => boolean
+): Promise<boolean> {
+  if (state.deadlineReached) return false;
+  const eligible = skipped
+    .filter(
+      (route) =>
+        ROUTING_POLICY.isProviderEnabledForRole(
+          route.provider,
+          ctx.providerRole
+        ) &&
+        !isTried(route.provider) &&
+        COOLDOWNS.allowsLastResort(COOLDOWNS.get(route.provider)) &&
+        countLiveAgentActivity({ provider: route.provider }) === 0
+    )
+    .sort(
+      (a, b) =>
+        (COOLDOWNS.get(a.provider)?.until ?? 0) -
+        (COOLDOWNS.get(b.provider)?.until ?? 0)
+    )
+    .slice(0, LAST_RESORT_MAX_ATTEMPTS);
+  return tryLastResortRoute(ctx, eligible, 0, state, tryCandidate, served);
+}
+
+async function runExhaustionWait(
+  ctx: FallbackContext,
+  candidates: Candidate[] | OrchestratorCandidate[],
+  state: { deadlineReached: boolean; lastResortAttempts: number },
+  tryCandidate: (
+    route: Candidate,
+    selection: string
+  ) => Promise<"served" | "terminal" | "fallback" | "unavailable">,
+  served: (outcome: string) => boolean
+): Promise<void> {
+  const attempted = new Set<string>(); // placeholder; actual set tracked elsewhere
   const waitCandidates = candidates.filter(
     (route) =>
-      ROUTING_POLICY.isProviderEnabled(route.provider) &&
-      !attempted.has(route.provider)
+      ROUTING_POLICY.isProviderEnabledForRole(
+        route.provider,
+        ctx.providerRole
+      ) && !attempted.has(route.provider)
   );
   const waitMs = COOLDOWNS.nextRetryMs(
     waitCandidates.map(({ provider }) => provider)
   );
   if (
-    !deadlineReached &&
+    !state.deadlineReached &&
     EXHAUSTION_WAIT_MS > 0 &&
     waitMs > 0 &&
     waitMs <= EXHAUSTION_WAIT_MS &&
-    !clientSignal?.aborted &&
-    !response.headersSent
+    !ctx.clientSignal?.aborted &&
+    !ctx.response.headersSent
   ) {
     recordRouterEvent({
       phase: "exhaustion_wait",
-      requestId,
-      role,
-      origin,
-      requestedModel: modelName,
+      requestId: ctx.requestId,
+      role: ctx.role,
+      origin: ctx.origin,
+      requestedModel: ctx.modelName,
       provider: null,
       model: null,
-      workspace,
+      workspace: ctx.workspace,
       elapsedMs: waitMs
     });
-    await delay(waitMs, clientSignal);
-    if (!clientSignal?.aborted) {
-      for (const route of waitCandidates) {
-        if (COOLDOWNS.isCooling(route.provider)) continue;
-        const outcome = await tryCandidate(route, "exhaustion_wait");
-        if (served(outcome)) return;
-        if (outcome !== "unavailable") break;
-      }
+    await delay(waitMs, ctx.clientSignal);
+    if (!ctx.clientSignal?.aborted) {
+      await tryExhaustionRoute(waitCandidates, 0, tryCandidate, served);
     }
   }
+}
 
+async function tryExhaustionRoute(
+  waitCandidates: Candidate[],
+  index: number,
+  tryCandidate: (
+    route: Candidate,
+    selection: string
+  ) => Promise<"served" | "terminal" | "fallback" | "unavailable">,
+  served: (outcome: string) => boolean
+): Promise<boolean> {
+  if (index >= waitCandidates.length) return false;
+  const route = waitCandidates[index]!;
+  if (COOLDOWNS.isCooling(route.provider)) {
+    return tryExhaustionRoute(waitCandidates, index + 1, tryCandidate, served);
+  }
+  const outcome = await tryCandidate(route, "exhaustion_wait");
+  if (served(outcome)) return true;
+  if (outcome !== "unavailable") return false;
+  return tryExhaustionRoute(waitCandidates, index + 1, tryCandidate, served);
+}
+
+function finalizeFallbackFailure(
+  response: ServerResponse,
+  ctx: FallbackContext,
+  failures: string[],
+  lastResortAttempts: number,
+  deadlineReached: boolean,
+  _attempted: Set<string>
+): void {
   recordSpawnFailure({
-    requestId,
-    role,
-    requestedModel: modelName,
+    requestId: ctx.requestId,
+    role: ctx.role,
+    requestedModel: ctx.modelName,
     reason: deadlineReached ? "selection_deadline" : "provider_exhausted"
   });
-  closeBridgeSubagentsForRequest(requestId, "failure");
-  getDefaultUsageTracker().activityTracker.endRequest(activitySubject, {
-    requestId,
+  closeBridgeSubagentsForRequest(ctx.requestId, "failure");
+  getDefaultUsageTracker().activityTracker.endRequest(ctx.activitySubject, {
+    requestId: ctx.requestId,
     outcome: "failure",
     hasToolCalls: false
   });
-  const summary = COOLDOWNS.summary(candidates.map(({ provider }) => provider));
+  const summary = COOLDOWNS.summary(
+    ctx.candidates.map(({ provider }) => provider),
+    Date.now(),
+    ctx.providerRole
+  );
   sendJson(
     response,
     503,
     exhaustionBody({
-      subject,
+      subject: ctx.subject,
       summary,
       failures,
-      model: modelName,
-      requestId,
+      model: ctx.modelName,
+      requestId: ctx.requestId,
       lastResortAttempts,
       deadlineReached
     }),
-    exhaustionHeaders({ summary, requestId })
+    exhaustionHeaders({ summary, requestId: ctx.requestId })
   );
 }
 
-export async function proxyRoleResponse(
+async function attemptCandidate(
+  ctx: FallbackContext,
+  route: Candidate,
+  selection: string,
+  failures: string[],
+  _attempted: Set<string>
+): Promise<"served" | "terminal" | "fallback"> {
+  const attemptStartedAt = Date.now();
+  _attempted.add(route.provider);
+  recordFallbackSelected(ctx, route, selection);
+  beginCandidateRequest(ctx, route);
+  emitFallbackBridgeContext(ctx, route);
+  incrementActiveRequests(route.provider);
+
+  try {
+    const result = await fetchUpstream(
+      route,
+      payloadForCandidate(ctx.payload, route),
+      ctx.wantsStream,
+      ctx.turnMetadataHeader,
+      ctx.clientSignal,
+      ctx.agentRole,
+      ctx.requestId,
+      ctx.session
+    );
+    if (result.ok) {
+      return await handleCandidateSuccess(
+        ctx,
+        route,
+        result,
+        selection,
+        attemptStartedAt
+      );
+    }
+    return handleCandidateUpstreamFailure(
+      ctx,
+      route,
+      result,
+      selection,
+      failures,
+      attemptStartedAt
+    );
+  } catch (error) {
+    return handleCandidateTransportError(
+      ctx,
+      route,
+      selection,
+      failures,
+      attemptStartedAt,
+      error
+    );
+  } finally {
+    decrementActiveRequests(route.provider);
+  }
+}
+
+async function handleCandidateSuccess(
+  ctx: FallbackContext,
+  route: Candidate,
+  result: { upstream: Response; signal: AbortSignal },
+  selection: string,
+  attemptStartedAt: number
+): Promise<"served" | "terminal" | "fallback"> {
+  try {
+    const responseResult = await writeSuccessfulResponse(
+      ctx.response,
+      route,
+      { upstream: result.upstream, signal: result.signal },
+      ctx.wantsStream,
+      ctx.modelName,
+      ctx.requestId,
+      route.model,
+      () => {
+        getDefaultUsageTracker().activityTracker.touch(ctx.activitySubject);
+        if (ctx.sessionKey) {
+          getDefaultUsageTracker().activityTracker.touch(ctx.sessionKey);
+          touchManagerOpenSubagentSlots(ctx.sessionKey);
+        }
+      }
+    );
+    if (responseResult.failed) {
+      const failureClass =
+        responseResult.limit?.limitClass ??
+        (responseResult.incompleteReason ? "unavailable" : "upstream_error");
+      COOLDOWNS.cooldownProvider(
+        route.provider,
+        cooldownFor(failureClass, responseResult.limit)
+      );
+      recordRouterEvent({
+        phase: "result",
+        requestId: ctx.requestId,
+        role: ctx.role,
+        origin: ctx.origin,
+        requestedModel: ctx.modelName,
+        provider: route.provider,
+        model: route.model,
+        workspace: ctx.workspace,
+        outcome: "failure",
+        status: result.upstream.status,
+        failureClass,
+        elapsedMs: Date.now() - attemptStartedAt,
+        toolCalls: responseResult.toolCalls,
+        selection
+      });
+      getDefaultUsageTracker().activityTracker.endRequest(ctx.activitySubject, {
+        requestId: ctx.requestId,
+        outcome: "failure",
+        hasToolCalls: responseResult.toolCalls > 0,
+        inputRequired: Boolean(responseResult.inputRequired)
+      });
+      return "served";
+    }
+    COOLDOWNS.clear(route.provider);
+    recordRouterEvent({
+      phase: "result",
+      requestId: ctx.requestId,
+      role: ctx.role,
+      origin: ctx.origin,
+      requestedModel: ctx.modelName,
+      provider: route.provider,
+      model: route.model,
+      workspace: ctx.workspace,
+      outcome: "success",
+      status: result.upstream.status,
+      elapsedMs: Date.now() - attemptStartedAt,
+      toolCalls: responseResult.toolCalls,
+      selection
+    });
+    getDefaultUsageTracker().activityTracker.endRequest(ctx.activitySubject, {
+      requestId: ctx.requestId,
+      outcome: "success",
+      hasToolCalls: responseResult.toolCalls > 0,
+      inputRequired: Boolean(responseResult.inputRequired),
+      hasActiveSubagents:
+        ctx.isOrchestratorTurn && ctx.sessionKey
+          ? hasActiveBridgeSubagentsForSession(ctx.sessionKey) ||
+            getDefaultConcurrencyManager().activeSubagentThreads() > 0
+          : false
+    });
+  } catch (streamError) {
+    COOLDOWNS.cooldownProvider(route.provider, cooldownFor("upstream_error"));
+    throw streamError;
+  }
+  return "served";
+}
+
+function handleCandidateUpstreamFailure(
+  ctx: FallbackContext,
+  route: Candidate,
+  result: FetchUpstreamResult,
+  selection: string,
+  failures: string[],
+  attemptStartedAt: number
+): "served" | "terminal" | "fallback" {
+  const failureClass =
+    result.limit?.limitClass ??
+    classifyProviderFailure(result.status ?? 500, result.body);
+  failures.push(`${route.provider}: HTTP ${result.status}`);
+  recordRouterEvent({
+    phase: "result",
+    requestId: ctx.requestId,
+    role: ctx.role,
+    origin: ctx.origin,
+    requestedModel: ctx.modelName,
+    provider: route.provider,
+    model: route.model,
+    workspace: ctx.workspace,
+    outcome: "failure",
+    status: result.status,
+    failureClass,
+    elapsedMs: Date.now() - attemptStartedAt,
+    selection
+  });
+  if (!fallbackable(result.status ?? 500, result.body)) {
+    ctx.response.writeHead(result.status ?? 500, {
+      "content-type": "application/json",
+      "x-autodev-provider": route.provider,
+      "x-autodev-model": route.model,
+      "x-autodev-request-id": ctx.requestId,
+      "x-autodev-router-instance-id": ROUTER_INSTANCE_ID
+    });
+    ctx.response.end(result.body);
+    getDefaultUsageTracker().activityTracker.endRequest(ctx.activitySubject, {
+      requestId: ctx.requestId,
+      outcome: "failure",
+      hasToolCalls: false
+    });
+    return "terminal";
+  }
+  COOLDOWNS.cooldownProvider(
+    route.provider,
+    cooldownFor(failureClass, result.limit)
+  );
+  return "fallback";
+}
+
+function handleCandidateTransportError(
+  ctx: FallbackContext,
+  route: Candidate,
+  selection: string,
+  failures: string[],
+  attemptStartedAt: number,
+  error: unknown
+): "served" | "terminal" | "fallback" {
+  const isAuthFailure =
+    (error as { code?: string } | undefined)?.code ===
+    "router_auth_unavailable";
+  const failureClass = isAuthFailure
+    ? "authentication"
+    : classifyProviderFailure(
+        502,
+        error instanceof Error ? error.message : String(error)
+      );
+  if (!isAuthFailure)
+    logTransportError({
+      requestId: ctx.requestId,
+      role: ctx.role,
+      requestedModel: ctx.modelName,
+      provider: route.provider,
+      model: route.model,
+      error,
+      workspace: ctx.workspace
+    });
+  failures.push(`${route.provider}: ${failureClass}`);
+  recordRouterEvent({
+    phase: "result",
+    requestId: ctx.requestId,
+    role: ctx.role,
+    origin: ctx.origin,
+    requestedModel: ctx.modelName,
+    provider: route.provider,
+    model: route.model,
+    workspace: ctx.workspace,
+    outcome: "failure",
+    status: 502,
+    failureClass,
+    elapsedMs: Date.now() - attemptStartedAt,
+    selection
+  });
+  COOLDOWNS.cooldownProvider(route.provider, cooldownFor(failureClass));
+  if (ctx.response.headersSent) {
+    if (!ctx.response.writableEnded) {
+      try {
+        ctx.response.write(
+          responseFailureEvent(
+            `Router could not complete ${ctx.subject}: ${failureClass}.`
+          )
+        );
+      } catch {
+        NOOP();
+      }
+      ctx.response.end();
+    }
+    getDefaultUsageTracker().activityTracker.endRequest(ctx.activitySubject, {
+      requestId: ctx.requestId,
+      outcome: "failure",
+      hasToolCalls: false
+    });
+    return "served";
+  }
+  return "fallback";
+}
+
+export function proxyRoleResponse(
   response: ServerResponse,
   role: string,
   payload: Record<string, unknown>,
@@ -2122,7 +2758,7 @@ export async function proxyRoleResponse(
   );
 }
 
-export async function proxyOrchestratorResponse(
+export function proxyOrchestratorResponse(
   response: ServerResponse,
   payload: Record<string, unknown>,
   wantsStream: boolean,

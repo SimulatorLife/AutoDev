@@ -7,7 +7,8 @@ import { ROUTING_POLICY as routing } from "../src/router/routing.ts";
 
 type JsonRecord = Record<string, any>;
 cooldowns.setRuntime({
-  isProviderEnabled: (provider) => routing.isProviderEnabled(provider)
+  isProviderEnabled: (provider, role) =>
+    routing.isProviderEnabledForRole(provider, role)
 });
 
 const contract = JSON.parse(
@@ -33,13 +34,14 @@ const PROVIDERS = ["claude", "antigravity", "minimax", "copilot", "codex"];
 
 function cleanState() {
   for (const provider of PROVIDERS) cooldowns.clear(provider);
-  routing.resetDisabledProviders();
+  routing.resetDisabledProvidersForRole("subagent");
+  routing.resetDisabledProvidersForRole("orchestrator");
 }
 
 function applySetup(setup: JsonRecord[] | undefined): void {
   for (const step of setup ?? []) {
     if (step && typeof step === "object" && typeof step.disable === "string") {
-      routing.setProviderEnabled(step.disable, false);
+      routing.setProviderEnabledForRole(step.disable, "subagent", false);
       continue;
     }
     cooldowns.cooldownProvider(step.provider, {

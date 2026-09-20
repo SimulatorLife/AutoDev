@@ -515,8 +515,9 @@ The router makes its effective choice visible in two ways:
   `primary`, `last_resort`, or `exhaustion_wait`. The `phase` is unchanged, so
   every existing counter keeps working; `selection` only says how hard the router
   had to look. A waiting request also emits its own `exhaustion_wait` event.
-- Per-provider `/status` entries report `enabled` (boolean indicating administrative enablement),
-  `status` (`"disabled"`, `"ready"`, or active cooldown failure class), `cooldownKind`,
+- Per-provider `/status` entries report `orchestratorEnabled` and `subagentEnabled`
+  (independent administrative booleans), `orchestratorStatus` and `subagentStatus`,
+  plus overall health `status` (`"ready"` or an active cooldown failure class), `cooldownKind`,
   `cooldownFailureClass`, `cooldownResetsAt`, `cooldownUntil`, `cooldownRemainingMs`,
   `lastResortEligible`, `failureStreak`, and `probeFailureStreak` alongside the
   cooldown countdown, configured models, capabilities, and attempt/outcome counters.
@@ -524,7 +525,8 @@ The router makes its effective choice visible in two ways:
   `configSource` (`"default_codex_home"` or `"env_override"`), `configFileExists`,
   `orchestrator` (`alias`, `tier`, and pinned `reasoningEffort`), configured capability `roles`,
   `providerGroups` (ordered priority groups per tier), `configuredProviders`,
-  `enabledProviders`, `disabledProviders`, and the active route map (`routes[*]` with
+  `enabledOrchestratorProviders`, `disabledOrchestratorProviders`,
+  `enabledSubagentProviders`, `disabledSubagentProviders`, and the active route map (`routes[*]` with
   pattern, `baseUrl`, `healthUrl`, `envKey`, and `credentialConfigured`). Secret API keys and
   absolute configuration paths are strictly excluded.
 - The status payload exposes structured `limits` metadata (`status.limits`):
@@ -611,7 +613,7 @@ The router makes its effective choice visible in two ways:
   health, Orchestrator & subagent usage (with Spawn breakdown and Spawn
   failures), Usage by workspace, Skill telemetry (with Skill context
   telemetry), Hooks & runtime telemetry, Operational summary (with Native
-  metrics observed), and Recent routing events. The renderer escapes live
+  metrics observed), and Live feed. The renderer escapes live
   labels and uses text-only updates for logs and status metadata.
   Both route cards display **observed** MCP server counts with role-specific union
   semantics using `/status` partitions: the Orchestrator card shows the unique
@@ -662,7 +664,7 @@ The router makes its effective choice visible in two ways:
   returns raw JSON regardless of the `Accept` header, including the current
   router instance, live agent activity, in-flight requests (`inFlightRequests`), configured models, cooldown countdowns,
   per-provider attempt and success/failure counters, the last classified
-  failure, and recent routing events. The status payload includes `spawnFailures` for failures visible at the router
+  failure, `liveFeed` telemetry records (routing, tools, hooks, skills, MCP, OTLP, and runtime), and the legacy bounded routing-event history. The status payload includes `spawnFailures` for failures visible at the router
 boundary: concurrency denials and role requests exhausted by provider failures.
 These records include counts by reason, recent request IDs, and the last reason.
 The dashboard renders the spawn-failure counts by reason/type in a table with
@@ -853,83 +855,61 @@ Content-Type: application/json
 
 - **Loopback-only access:** Enforced via `isLoopbackAddress` on the incoming socket
   `remoteAddress` (`127.0.0.1`, `::1`, `::ffff:127.0.0.1`, and `localhost`). Calls from
-  non-loopback IP addresses are rejected immediately with HTTP 403 `router_access_denied`
-  (`code: "router_access_denied"`).
-- **HTTP method restriction:** Only `POST` is permitted. Requests using any other HTTP
-  method (such as `GET`, `PUT`, or `DELETE`) return HTTP 405 `router_method_not_allowed`
-  with the `Allow: POST` header.
-- **Provider validation:** The `:provider` path parameter is case-insensitively trimmed and
-  validated against configured providers in `ROUTING.providers` and registered routes.
-  Requests naming an unconfigured provider return HTTP 404 `router_unknown_provider`.
-- **Payload validation:** The request body must be valid JSON containing a boolean `enabled`
-  property (`{ "enabled": true }` or `{ "enabled": false }`). Malformed JSON or non-boolean
-  `enabled` values return HTTP 400 `invalid_request_error`.
-- **Response shape:** On success, returns HTTP 200 JSON:
-  ```json
-  {
-    "ok": true,
-    "provider": "claude",
-    "enabled": false,
-    "status": "disabled"
-  }
-  ```
-  When re-enabled, `status` reflects `"ready"` (or the active cooldown failure class if currently cooling down).
+  non-loopback IP addresses are rejected immediately with HTTP 403 `router_access_denied`.
+- **HTTP method restriction:** Only `POST` is permitted; other methods return HTTP 405
+  `router_method_not_allowed` with `Allow: POST`.
+- **Provider validation:** `:provider` is trimmed case-insensitively and validated against
+  configured providers and registered routes; unknown providers return HTTP 404
+  `router_unknown_provider`.
+- **Payload validation:** The body must contain `role` (`"orchestrator"` or `"subagent"`)
+  and boolean `enabled`, for example `{ "role": "orchestrator", "enabled": false }`.
+  Invalid JSON, role, or enabled values return HTTP 400.
+- **Response shape:** Success returns HTTP 200 JSON containing `ok`, `provider`, `role`,
+  `enabled`, and the role's resulting status.
 
 #### Persistence and default behavior
 
-- **Default state:** All configured providers start enabled by default. The in-memory
-  `disabledProviders` set is empty unless restored from persistence or modified via the mutation API.
-- **Immediate atomic persistence:** Whenever a provider's enabled state is changed via
-  `POST /v1/providers/:provider`, the router immediately calls `persistRouterStateNow()`
-  to write the updated `disabledProviders: [...]` array atomically into
-  `$CODEX_HOME/codex-router-state.json`.
-- **Survives restarts:** On startup, `loadRouterState()` loads `disabledProviders` from the
-  persisted state file and re-populates the in-memory set. Disabled providers remain disabled
-  across process restarts, crash recoveries, and launchd reloads. Removing or resetting the state
-  file restores all providers to their default enabled state.
+- **Default state:** Every configured provider starts enabled for both roles.
+- **Immediate atomic persistence:** Each role mutation immediately calls
+  `persistRouterStateNow()` and writes `disabledOrchestratorProviders` and
+  `disabledSubagentProviders` atomically to `$CODEX_HOME/codex-router-state.json`.
+- **Survives restarts:** `loadRouterState()` restores both role-specific arrays.
+  The persistence envelope is version `v4`; old single-toggle state is not migrated.
+
 
 #### Disable semantics across routing tiers
 
-Disabling a provider takes effect immediately across all routing mechanisms:
+Role controls are independent:
 
-- **Capability role aliases (`autodev/<role>`):** Disabled providers are omitted from candidate
-  selection in `roleCandidates`. When a fallback chain traverses routes, any disabled candidate
-  is recorded with skip reason `"disabled"` and failure class `"provider_disabled"`. It is never
-  probed, attempted, or counted against attempt budgets.
-- **Orchestrator routing (`autodev/orchestrator`):** Disabled providers are excluded from
-  orchestrator candidates in `orchestratorCandidates`. If an orchestrator session continuation
-  requests its previously preferred provider, that preference is ignored if the provider is disabled.
-- **Direct concrete model requests:** Direct requests targeting a model on a disabled provider
-  (e.g. `POST /v1/responses` with `model: "gpt-5.6-luna"` or `model: "sonnet"`) are rejected
-  immediately with HTTP 503 `router_provider_unavailable`, carrying `code: "router_provider_unavailable"`,
-  `retryable: false`, and `failureClass: "provider_disabled"`. The router records a terminal result
-  event with outcome `"failure"`, status 503, and `failureClass: "provider_disabled"`.
-- **Exhaustion when all candidates disabled:** If all candidate providers for a requested role or
-  orchestrator tier are disabled (or cooling down), the fallback chain terminates immediately
-  with HTTP 503 `router_provider_exhausted` (`failureClass: "provider_disabled"`), recording a
-  `provider_exhausted` spawn failure and closing any bridge subagents without stalled delays.
-- **Exclusion from last-resort and bounded wait:** Disabled providers are excluded from Pass 2
-  last-resort attempts (`cooldownAllowsLastResort`) and Pass 3 bounded wait (`waitCandidates`).
-  A disabled provider is never attempted as a last resort and never waited on.
+- **Subagent role:** A provider disabled for subagents is omitted from capability role
+  aliases and all subagent fallback passes. Direct concrete model requests use this role
+  and fail with HTTP 503 `router_provider_unavailable` when their provider is disabled.
+- **Orchestrator role:** A provider disabled for orchestrators is omitted from
+  `autodev/orchestrator` candidates, including session-continuation preference hoisting.
+- **Both roles:** Disabling both roles reproduces full provider exclusion. If every provider
+  for a requested role is disabled, the router returns HTTP 503
+  `router_provider_exhausted` with `failureClass: "provider_disabled"`.
+
+Each skipped candidate records skip reason `"disabled"` and failure class
+`"provider_disabled"`; disabled providers are never probed, attempted, or counted against
+attempt budgets for that role.
 
 #### Live dashboard controls
 
 The local HTML dashboard at `http://127.0.0.1:4100/dashboard` provides operational controls in the
 **Provider health** panel:
 
-- **Toggle switch:** Each provider row contains an interactive iOS-like toggle switch (`.btn-provider-toggle`)
-  with no text words: green background when enabled, grey background when disabled.
-- **In-flight protection:** Clicking the toggle disables it and dims the switch while the request is in
-  flight without text changes. A client-side `pendingProviderToggles` set prevents concurrent duplicate
-  toggles for the same provider.
-- **Immediate refresh:** On successful `POST /v1/providers/:provider`, the dashboard triggers an immediate
-  call to `refresh()`, updating the table, health badges, routing priority, and panel header without waiting
-  for the next 3-second poll interval.
-- **Error feedback:** If the mutation request fails, the error message is rendered in the dashboard's
-  top-level `#error` container, and the toggle reverts to its active state.
-- **Visual styling:** Rows for disabled providers receive the `.provider-disabled` class, an error-styled
-  `<health-badge state="error">disabled</health-badge>`, and an off/grey toggle switch. The panel
-  header summarizes disabled providers alongside ready and active counts (e.g. `4 / 5 ready · 0 active · 1 disabled`).
+- **Role switches:** Each provider row contains independent labeled iOS-like switches for
+  **Orchestrator** and **Subagent**, using `.btn-provider-toggle` with green enabled and
+  grey disabled states.
+- **In-flight protection:** Each switch is disabled while its own mutation is in flight;
+  `pendingProviderToggles` keys requests by provider and role so the two controls do not
+  block one another.
+- **Immediate refresh:** On successful `POST /v1/providers/:provider` with a role payload,
+  the dashboard calls `refresh()` immediately.
+- **Error feedback:** Failed role mutations render in the top-level `#error` container
+  and re-enable only the affected switch. Provider health rows are not globally dimmed
+  when one role is disabled.
 
 ### Local, provider-controlled workspace telemetry
 

@@ -33,7 +33,8 @@ test("effectiveStateFile resolves custom, environment, or default path", () => {
 test("RouterPersistence serialize produces valid envelope with schema and timestamp", () => {
   const persistence = new RouterPersistence({
     getSnapshot: () => ({
-      disabledProviders: ["codex"],
+      disabledOrchestratorProviders: ["codex"],
+      disabledSubagentProviders: ["claude"],
       concurrency: { total: 5 }
     })
   });
@@ -41,9 +42,10 @@ test("RouterPersistence serialize produces valid envelope with schema and timest
   const serialized = persistence.serialize();
   const parsed = JSON.parse(serialized);
 
-  assert.equal(parsed.schema, `${PERSISTED_STATE_SCHEMA}-v3`);
+  assert.equal(parsed.schema, `${PERSISTED_STATE_SCHEMA}-v4`);
   assert.ok(typeof parsed.updatedAt === "string");
-  assert.deepEqual(parsed.disabledProviders, ["codex"]);
+  assert.deepEqual(parsed.disabledOrchestratorProviders, ["codex"]);
+  assert.deepEqual(parsed.disabledSubagentProviders, ["claude"]);
   assert.deepEqual(parsed.concurrency, { total: 5 });
 
   // Custom snapshot overrides
@@ -113,9 +115,10 @@ test("RouterPersistence load validates schema and dispatches sections", async ()
 
     // Valid state file loads and restores sections
     const state = {
-      schema: `${PERSISTED_STATE_SCHEMA}-v3`,
+      schema: `${PERSISTED_STATE_SCHEMA}-v4`,
       updatedAt: "2026-09-16T12:00:00.000Z",
-      disabledProviders: ["copilot"],
+      disabledOrchestratorProviders: ["copilot"],
+      disabledSubagentProviders: ["claude"],
       subagents: { total: 10 },
       customSection: { foo: "bar" }
     };
@@ -130,14 +133,15 @@ test("RouterPersistence load validates schema and dispatches sections", async ()
         restored[section] = value;
       },
       onPostRestore: (fullParsed) => {
-        assert.equal(fullParsed.schema, `${PERSISTED_STATE_SCHEMA}-v3`);
+        assert.equal(fullParsed.schema, `${PERSISTED_STATE_SCHEMA}-v4`);
         postRestoreCalled = true;
       }
     });
 
     assert.equal(loader.load(), true);
     assert.equal(loader.getUpdatedAt(), "2026-09-16T12:00:00.000Z");
-    assert.deepEqual(restored.disabledProviders, ["copilot"]);
+    assert.deepEqual(restored.disabledOrchestratorProviders, ["copilot"]);
+    assert.deepEqual(restored.disabledSubagentProviders, ["claude"]);
     assert.deepEqual(restored.subagents, { total: 10 });
     assert.deepEqual(restored.customSection, { foo: "bar" });
     assert.equal(postRestoreCalled, true);

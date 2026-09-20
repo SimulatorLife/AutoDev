@@ -48,22 +48,29 @@ writeLine(`Started: ${body.startedAt}`);
 
 const routing = body.routing ?? {};
 const providers: Record<string, RouterProviderStatus> = body.providers ?? {};
-const enabledProviders =
-  routing.enabledProviders ??
+const enabledOrchestratorProviders =
+  routing.enabledOrchestratorProviders ??
   Object.keys(providers).filter(
-    (p) =>
-      providers[p]?.enabled !== false && providers[p]?.status !== "disabled"
+    (p) => providers[p]?.orchestratorEnabled !== false
   );
-const disabledProviders =
-  routing.disabledProviders ??
+const disabledOrchestratorProviders =
+  routing.disabledOrchestratorProviders ??
   Object.keys(providers).filter(
-    (p) =>
-      providers[p]?.enabled === false || providers[p]?.status === "disabled"
+    (p) => providers[p]?.orchestratorEnabled === false
   );
+const enabledSubagentProviders =
+  routing.enabledSubagentProviders ??
+  Object.keys(providers).filter((p) => providers[p]?.subagentEnabled !== false);
+const disabledSubagentProviders =
+  routing.disabledSubagentProviders ??
+  Object.keys(providers).filter((p) => providers[p]?.subagentEnabled === false);
 
 writeLine("");
 writeLine(
-  `Providers: ${enabledProviders.length} enabled (${enabledProviders.join(", ") || "-"}), ${disabledProviders.length} disabled (${disabledProviders.join(", ") || "none"})`
+  `Orchestrators: ${enabledOrchestratorProviders.length} enabled (${enabledOrchestratorProviders.join(", ") || "-"}), ${disabledOrchestratorProviders.length} disabled (${disabledOrchestratorProviders.join(", ") || "none"})`
+);
+writeLine(
+  `Subagents: ${enabledSubagentProviders.length} enabled (${enabledSubagentProviders.join(", ") || "-"}), ${disabledSubagentProviders.length} disabled (${disabledSubagentProviders.join(", ") || "none"})`
 );
 
 if (routing.providerGroups && typeof routing.providerGroups === "object") {
@@ -156,11 +163,9 @@ writeLine(
   "-----------  --------  --------------------------------------  ---------------------------------------  ------  ---------  --------  ---------  --------  ------------"
 );
 for (const [provider, state] of Object.entries(providers)) {
-  const isEnabled =
-    state.enabled !== false &&
-    state.status !== "disabled" &&
-    !disabledProviders.includes(provider);
-  const stateLabel = isEnabled ? "enabled" : "disabled";
+  const isSubagentEnabled = state.subagentEnabled !== false;
+  const isOrchestratorEnabled = state.orchestratorEnabled !== false;
+  const stateLabel = isSubagentEnabled ? "enabled" : "disabled";
   const priority = formatProviderPriority(provider, state);
   const lastFailure = state.lastFailure
     ? `${state.lastFailure.class}${state.lastFailure.status ? ` (HTTP ${state.lastFailure.status})` : ""}`
@@ -186,12 +191,14 @@ for (const [provider, state] of Object.entries(providers)) {
         : ` (${cooldownKind ?? "cooldown"} ${Math.ceil(cooldownRemainingMs / 1000)}s)`
       : "";
   const displayStatus = String(
-    !isEnabled || state.status === "disabled" ? "disabled" : state.status
+    isSubagentEnabled
+      ? (state.subagentStatus ?? state.status ?? "ready")
+      : "disabled"
   );
   const activeCount = getProviderLiveActivity(state);
   const inFlightCount = getProviderInFlight(state);
   writeLine(
-    `${provider.padEnd(11)}  ${stateLabel.padEnd(8)}  ${priority.padEnd(38)}  ${(displayStatus + cooldown).padEnd(39)}  ${String(activeCount).padStart(6)}  ${String(inFlightCount).padStart(9)}  ${String(state.attempts).padStart(8)}  ${String(state.successes).padStart(9)}  ${String(state.failures).padStart(8)}  ${lastFailure}`
+    `${provider.padEnd(11)}  ${`${stateLabel}/${isOrchestratorEnabled ? "enabled" : "disabled"}`.padEnd(18)}  ${priority.padEnd(38)}  ${(displayStatus + cooldown).padEnd(39)}  ${String(activeCount).padStart(6)}  ${String(inFlightCount).padStart(9)}  ${String(state.attempts).padStart(8)}  ${String(state.successes).padStart(9)}  ${String(state.failures).padStart(8)}  ${lastFailure}`
   );
 
   const details: string[] = [];

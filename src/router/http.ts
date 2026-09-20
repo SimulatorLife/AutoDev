@@ -48,6 +48,7 @@ import {
   RouterLifecycle,
   setDefaultRouterLifecycle
 } from "./lifecycle.ts";
+import { type LiveFeedCategory, LiveFeedRecorder } from "./live-feed.ts";
 import {
   codexTelemetryStatus,
   getDefaultOtelTracker,
@@ -158,8 +159,6 @@ const REPO_ID_SANITIZE_PATTERN = /[^A-Za-z0-9._-]/g;
 const URL_QUERY_FRAGMENT_SPLIT_PATTERN = /[?#]/;
 const PROVIDER_ROUTE_PATH_PATTERN = /^\/v1\/providers\/([a-zA-Z0-9._-]+)$/;
 
-
-
 export { errorBody, sendJson } from "./proxy.ts";
 
 export const HOST = process.env.CODEX_MODEL_ROUTER_HOST ?? "127.0.0.1";
@@ -223,11 +222,27 @@ setDefaultRouterLifecycle(routerLifecycle);
 const MAX_RECENT_EVENTS = Number.parseInt(
   process.env.CODEX_ROUTER_MAX_RECENT_EVENTS ?? "100"
 );
+const liveFeedEvents = new LiveFeedRecorder(MAX_RECENT_EVENTS);
+
 const routerEvents = new RouterEventRecorder({
   maxRecentEvents: MAX_RECENT_EVENTS,
   routerInstanceId: ROUTER_INSTANCE_ID,
   resolveOrigin: (role, provider) => usageOrigin(role, provider),
   onEvent: (event, input, effectiveOrigin) => {
+    liveFeedEvents.record({
+      category: "routing",
+      type: `routing.${event.phase}`,
+      summary: `${event.phase}${event.provider ? ` ${event.provider}` : ""}${event.model ? `/${event.model}` : ""}`,
+      timestamp: event.timestamp,
+      requestId: event.requestId,
+      provider: event.provider,
+      model: event.model,
+      role: event.role,
+      workspace:
+        typeof input.workspace === "string"
+          ? input.workspace
+          : (input.workspace?.key ?? null)
+    });
     const workspaceContext =
       typeof input.workspace === "string"
         ? { key: input.workspace, cwd: null }
@@ -251,7 +266,8 @@ const routerEvents = new RouterEventRecorder({
         toolCalls: event.toolCalls,
         timestamp: event.timestamp,
         origin:
-          effectiveOrigin ?? usageOrigin(event.role, String(event.provider ?? ""))
+          effectiveOrigin ??
+          usageOrigin(event.role, String(event.provider ?? ""))
       });
     }
     if (event.phase === "result")
@@ -316,11 +332,14 @@ const otelTracker = new OtelTracker({
   usageTracker: getDefaultUsageTracker(),
   getConversationThread: (id) =>
     (codexState.lastSnapshot &&
-      (codexState.lastSnapshot as Record<string, unknown>).conversationThreads && 
-      typeof (codexState.lastSnapshot as Record<string, unknown>).conversationThreads === "object"
-        ? ((codexState.lastSnapshot as Record<string, unknown>).conversationThreads as Record<string, unknown>)[id as string] ?? null
-        : null) ??
-    null,
+    (codexState.lastSnapshot as Record<string, unknown>).conversationThreads &&
+    typeof (codexState.lastSnapshot as Record<string, unknown>)
+      .conversationThreads === "object"
+      ? ((
+          (codexState.lastSnapshot as Record<string, unknown>)
+            .conversationThreads as Record<string, unknown>
+        )[id as string] ?? null)
+      : null) ?? null,
   getBridgeRequestContext: (id) => subagentRegistry.getBridgeRequestContext(id),
   onSchedulePersist: () => scheduleRouterStatePersist()
 });
@@ -343,7 +362,8 @@ ROUTING_POLICY.setRuntime({
   liveProviderCount: (provider) => countLiveAgentActivity({ provider })
 });
 COOLDOWNS.setRuntime({
-  isProviderEnabled: (provider) => ROUTING_POLICY.isProviderEnabled(provider),
+  isProviderEnabled: (provider, role) =>
+    ROUTING_POLICY.isProviderEnabledForRole(provider, role),
   isKnownProvider: (provider) => Object.hasOwn(ROUTING.providers, provider),
   lastFailureClass: (provider) => providerState(provider).lastFailureClass
 });
@@ -440,8 +460,22 @@ function restorePersistedSection(args: {
     COOLDOWNS.restoreHardEntries(value, Date.now());
     return;
   }
-  if (section === "disabledProviders") {
-    ROUTING_POLICY.restoreRuntimeState({ disabledProviders: value });
+  if (section === "disabledOrchestratorProviders") {
+    ROUTING_POLICY.restoreRuntimeState({
+      ...ROUTING_POLICY.runtimeState(),
+      disabledOrchestratorProviders: value
+    });
+    return;
+  }
+  if (section === "disabledSubagentProviders") {
+    ROUTING_POLICY.restoreRuntimeState({
+      ...ROUTING_POLICY.runtimeState(),
+      disabledSubagentProviders: value
+    });
+    return;
+  }
+  if (section === "liveFeed" && Array.isArray(value)) {
+    liveFeedEvents.restore(value);
     return;
   }
   if (section === "recentEvents" && Array.isArray(value)) {
@@ -470,7 +504,9 @@ function assignCodexSnapshot(snapshot: Record<string, unknown>): void {
 export function setCodexStateSnapshotForTests(
   snapshot: Record<string, unknown> | null
 ): void {
-  assignCodexSnapshot(snapshot && typeof snapshot === "object" ? snapshot : { empty: true });
+  assignCodexSnapshot(
+    snapshot && typeof snapshot === "object" ? snapshot : { empty: true }
+  );
 }
 
 export function codexStateStatus(): Record<string, unknown> {
@@ -531,7 +567,10 @@ const routerPersistence = new RouterPersistence({
   ),
   debounceMs: 500,
   getSnapshot: () => ({
-    disabledProviders: ROUTING_POLICY.runtimeState().disabledProviders,
+    disabledOrchestratorProviders:
+      ROUTING_POLICY.runtimeState().disabledOrchestratorProviders,
+    disabledSubagentProviders:
+      ROUTING_POLICY.runtimeState().disabledSubagentProviders,
     providerTelemetry: Object.fromEntries(providerTelemetry),
     usage: usagePersistenceSnapshot(),
     concurrency: concurrencyManager.telemetry,
@@ -539,6 +578,7 @@ const routerPersistence = new RouterPersistence({
     spawnFailures: subagentRegistry.spawnFailureTelemetry,
     providerCooldowns: COOLDOWNS.persistedHardEntries(),
     recentEvents: routerEvents.getRecentEvents(false),
+    liveFeed: liveFeedEvents.getRecentEvents(false),
     otelTelemetry: otelPersistenceSnapshot()
   }),
   restoreSection: (section, value, parsed) => {
@@ -604,10 +644,16 @@ export function routingStatus(): Record<string, unknown> {
       })
     ),
     configuredProviders: Object.keys(ROUTING.providers),
-    enabledProviders: Object.keys(ROUTING.providers).filter((p) =>
-      ROUTING_POLICY.isProviderEnabled(p)
+    enabledOrchestratorProviders: Object.keys(ROUTING.providers).filter((p) =>
+      ROUTING_POLICY.isProviderEnabledForRole(p, "orchestrator")
     ),
-    disabledProviders: ROUTING_POLICY.runtimeState().disabledProviders,
+    enabledSubagentProviders: Object.keys(ROUTING.providers).filter((p) =>
+      ROUTING_POLICY.isProviderEnabledForRole(p, "subagent")
+    ),
+    disabledOrchestratorProviders:
+      ROUTING_POLICY.runtimeState().disabledOrchestratorProviders,
+    disabledSubagentProviders:
+      ROUTING_POLICY.runtimeState().disabledSubagentProviders,
     routes: Object.fromEntries(
       ROUTES.map((route) => [
         route.provider,
@@ -783,8 +829,7 @@ function isValidAgentEvent(event: unknown): event is Record<string, unknown> {
 
 function touchAgentActivity(context: BridgeRequestContext): void {
   getDefaultUsageTracker().activityTracker.touch(context.activitySubject);
-  if (context.sessionKey)
-    touchManagerOpenSubagentSlots(context.sessionKey);
+  if (context.sessionKey) touchManagerOpenSubagentSlots(context.sessionKey);
 }
 
 function noteBridgeAgentActivity(
@@ -816,9 +861,7 @@ function isHeartbeatAgentEvent(event: Record<string, unknown>): boolean {
   );
 }
 
-function resolveIngestContext(
-  requestId: string
-): BridgeRequestContext | null {
+function resolveIngestContext(requestId: string): BridgeRequestContext | null {
   let context = requestId
     ? getDefaultSubagentRegistry().getBridgeRequestContext(requestId)
     : undefined;
@@ -911,6 +954,35 @@ function recordSubagentSpawnUsage(
   counters.accepted += count;
 }
 
+function liveFeedCategoryForAgentEvent(type: string): LiveFeedCategory {
+  if (type.startsWith("tool_")) return "tools";
+  if (type.startsWith("skill_")) return "skills";
+  if (type.startsWith("mcp_")) return "mcp";
+  if (type.startsWith("hook_")) return "hooks";
+  return "runtime";
+}
+
+function recordAgentLiveFeedEvent(
+  event: Record<string, unknown>,
+  context: BridgeRequestContext,
+  requestId: string
+): void {
+  const type = typeof event.type === "string" ? event.type : "agent_event";
+  const detail = [event.tool, event.skill, event.server].find(
+    (value) => typeof value === "string" && Boolean(value.trim())
+  );
+  liveFeedEvents.record({
+    category: liveFeedCategoryForAgentEvent(type),
+    type,
+    summary: detail ? `${type}: ${detail}` : type,
+    requestId,
+    provider: context.provider,
+    model: context.model,
+    role: context.role,
+    workspace: context.workspace
+  });
+}
+
 function applyAgentEvent(
   event: Record<string, unknown>,
   context: BridgeRequestContext,
@@ -918,6 +990,7 @@ function applyAgentEvent(
   counters: AgentEventCounters
 ): void {
   const type = event.type as string;
+  recordAgentLiveFeedEvent(event, context, requestId);
   if (type === "subagent_tools_unavailable") {
     recordSpawnFailure({
       requestId,
@@ -977,9 +1050,7 @@ export function ingestAgentEvents(
   payload: Record<string, unknown>
 ): AgentEventCounters & { reason: string | null } {
   const requestId =
-    typeof payload?.requestId === "string"
-      ? payload.requestId.trim()
-      : "";
+    typeof payload?.requestId === "string" ? payload.requestId.trim() : "";
   const context = resolveIngestContext(requestId);
   if (!context) {
     return {
@@ -1031,67 +1102,81 @@ function routerProviderStatus(
   now: number,
   projection: ReturnType<typeof projectLiveAgents>
 ): [string, Record<string, unknown>] {
-
-      const state = providerState(route.provider);
-      const cooldown = COOLDOWNS.get(route.provider, now);
-      const inFlightRequests = getActiveRequests(route.provider);
-      const active = projection.byProvider[route.provider] ?? 0;
-      const coolingDown = cooldown !== null;
-      const enabled = ROUTING_POLICY.isProviderEnabled(route.provider);
-      const tierPrios = providerTierPriorities(route.provider);
-      return [
-        route.provider,
-        {
-          enabled,
-          status: enabled
-            ? coolingDown
-              ? (cooldown.failureClass ?? state.lastFailureClass ?? "cooldown")
-              : "ready"
-            : "disabled",
-          routingPriority: tierPrios.length > 0 ? tierPrios.join(" · ") : "—",
-          limits: {
-            cooldownKind: coolingDown ? cooldown.kind : null,
-            cooldownFailureClass: coolingDown
-              ? (cooldown.failureClass ?? null)
-              : null,
-            cooldownResetsAt: coolingDown ? (cooldown.resetsAt ?? null) : null,
-            cooldownUntil: coolingDown
-              ? new Date(cooldown.until).toISOString()
-              : null,
-            cooldownRemainingMs: coolingDown ? cooldown.until - now : 0,
-            lastResortEligible: coolingDown
-              ? COOLDOWNS.allowsLastResort(cooldown, now)
-              : true
-          },
-          active,
-          inFlightRequests,
-          cooldownUntil: coolingDown
-            ? new Date(cooldown.until).toISOString()
-            : null,
-          cooldownRemainingMs: coolingDown ? cooldown.until - now : 0,
-          cooldownKind: coolingDown ? cooldown.kind : null,
-          cooldownFailureClass: coolingDown
-            ? (cooldown.failureClass ?? null)
-            : null,
-          cooldownResetsAt: coolingDown ? (cooldown.resetsAt ?? null) : null,
-          lastResortEligible: coolingDown
-            ? COOLDOWNS.allowsLastResort(cooldown, now)
-            : true,
-          failureStreak: COOLDOWNS.failureStreak(route.provider) ?? 0,
-          probeFailureStreak: COOLDOWNS.probeFailureStreak(route.provider) ?? 0,
-          configuredModels: ROUTING.providers[route.provider]?.models ?? {},
-          capabilities: providerCapabilities(route.provider),
-          attempts: state.attempts,
-          successes: state.successes,
-          failures: state.failures,
-          skipped: state.skipped,
-          lastAttemptAt: state.lastAttemptAt,
-          lastSuccessAt: state.lastSuccessAt,
-          lastFailureAt: state.lastFailureAt,
-          lastFailure: state.lastFailure
-        }
-      ];
-    
+  const state = providerState(route.provider);
+  const cooldown = COOLDOWNS.get(route.provider, now);
+  const inFlightRequests = getActiveRequests(route.provider);
+  const active = projection.byProvider[route.provider] ?? 0;
+  const coolingDown = cooldown !== null;
+  const orchestratorEnabled = ROUTING_POLICY.isProviderEnabledForRole(
+    route.provider,
+    "orchestrator"
+  );
+  const subagentEnabled = ROUTING_POLICY.isProviderEnabledForRole(
+    route.provider,
+    "subagent"
+  );
+  const tierPrios = providerTierPriorities(route.provider);
+  return [
+    route.provider,
+    {
+      orchestratorEnabled,
+      subagentEnabled,
+      status: coolingDown
+        ? (cooldown.failureClass ?? state.lastFailureClass ?? "cooldown")
+        : "ready",
+      orchestratorStatus: orchestratorEnabled
+        ? coolingDown
+          ? (cooldown.failureClass ?? state.lastFailureClass ?? "cooldown")
+          : "ready"
+        : "disabled",
+      subagentStatus: subagentEnabled
+        ? coolingDown
+          ? (cooldown.failureClass ?? state.lastFailureClass ?? "cooldown")
+          : "ready"
+        : "disabled",
+      routingPriority: tierPrios.length > 0 ? tierPrios.join(" · ") : "—",
+      limits: {
+        cooldownKind: coolingDown ? cooldown.kind : null,
+        cooldownFailureClass: coolingDown
+          ? (cooldown.failureClass ?? null)
+          : null,
+        cooldownResetsAt: coolingDown ? (cooldown.resetsAt ?? null) : null,
+        cooldownUntil: coolingDown
+          ? new Date(cooldown.until).toISOString()
+          : null,
+        cooldownRemainingMs: coolingDown ? cooldown.until - now : 0,
+        lastResortEligible: coolingDown
+          ? COOLDOWNS.allowsLastResort(cooldown, now)
+          : true
+      },
+      active,
+      inFlightRequests,
+      cooldownUntil: coolingDown
+        ? new Date(cooldown.until).toISOString()
+        : null,
+      cooldownRemainingMs: coolingDown ? cooldown.until - now : 0,
+      cooldownKind: coolingDown ? cooldown.kind : null,
+      cooldownFailureClass: coolingDown
+        ? (cooldown.failureClass ?? null)
+        : null,
+      cooldownResetsAt: coolingDown ? (cooldown.resetsAt ?? null) : null,
+      lastResortEligible: coolingDown
+        ? COOLDOWNS.allowsLastResort(cooldown, now)
+        : true,
+      failureStreak: COOLDOWNS.failureStreak(route.provider) ?? 0,
+      probeFailureStreak: COOLDOWNS.probeFailureStreak(route.provider) ?? 0,
+      configuredModels: ROUTING.providers[route.provider]?.models ?? {},
+      capabilities: providerCapabilities(route.provider),
+      attempts: state.attempts,
+      successes: state.successes,
+      failures: state.failures,
+      skipped: state.skipped,
+      lastAttemptAt: state.lastAttemptAt,
+      lastSuccessAt: state.lastSuccessAt,
+      lastFailureAt: state.lastFailureAt,
+      lastFailure: state.lastFailure
+    }
+  ];
 }
 
 export function getRouterStatus(now = Date.now()): Record<string, unknown> {
@@ -1119,7 +1204,10 @@ export function getRouterStatus(now = Date.now()): Record<string, unknown> {
     authentication: authStatus(),
     routing: routingStatus(),
     limits: limitsStatus(),
-    disabledProviders: ROUTING_POLICY.runtimeState().disabledProviders,
+    disabledOrchestratorProviders:
+      ROUTING_POLICY.runtimeState().disabledOrchestratorProviders,
+    disabledSubagentProviders:
+      ROUTING_POLICY.runtimeState().disabledSubagentProviders,
     usage: usageStatus(now, projection),
     attributionDiagnostics: attributionDiagnosticsStatus(),
     liveAgentAttribution: {
@@ -1135,6 +1223,7 @@ export function getRouterStatus(now = Date.now()): Record<string, unknown> {
     liveActivity: projection.canonicalTotal,
     providers,
     recentEvents: getDefaultRouterEventRecorder().getRecentEvents(true),
+    liveFeed: liveFeedEvents.getRecentEvents(true),
     codexState: codexStateStatus()
   };
 }
@@ -1261,7 +1350,7 @@ export function requestSession(
     typeof threadValue === "string" && threadValue.trim()
       ? threadValue.trim()
       : null;
-  if (typeof value === "string" && value.trim())
+  if (typeof value === "string" && Boolean(value.trim()))
     return { key: value.trim(), scope: "identified", thread };
   return {
     key: PROCESS_FALLBACK_SESSION_KEY,
@@ -1358,7 +1447,7 @@ function resolveWorkspacePathCandidate(
   resolvableKeys: string[]
 ): string | null {
   const explicit = explicitPaths.find(
-    (value) => typeof value === "string" && value.trim()
+    (value) => typeof value === "string" && Boolean(value.trim())
   ) as string | undefined;
   if (explicit) return explicit;
   if (resolvableKeys.length === 1) return resolvableKeys[0] ?? null;
@@ -1371,14 +1460,15 @@ function resolveWorkspaceMatchEntry(
   resolvableKeys: string[],
   workspaceKeys: string[]
 ): Record<string, unknown> | null {
-  if (workspacePath && workspaces[workspacePath]) return workspaces[workspacePath];
+  if (workspacePath && workspaces[workspacePath])
+    return workspaces[workspacePath];
   if (resolvableKeys.length === 1) {
     const key = resolvableKeys[0];
-    return key ? workspaces[key] ?? null : null;
+    return key ? (workspaces[key] ?? null) : null;
   }
   if (workspaceKeys.length === 1) {
     const key = workspaceKeys[0];
-    return key ? workspaces[key] ?? null : null;
+    return key ? (workspaces[key] ?? null) : null;
   }
   return null;
 }
@@ -1421,7 +1511,8 @@ export function workspaceContextFromRequest(
   const workspaces = resolveTurnMetadataWorkspaces(turnMetadataHeader);
   const explicitPaths = resolveExplicitWorkspacePaths(payload);
   const resolvableKeys = Object.keys(workspaces).filter(
-    (value) => typeof value === "string" && value.trim() && isDirectory(value)
+    (value) =>
+      typeof value === "string" && Boolean(value.trim()) && isDirectory(value)
   );
   const workspacePath = resolveWorkspacePathCandidate(
     explicitPaths,
@@ -1543,89 +1634,124 @@ export async function loadCatalog(
   }
 }
 
+async function readAdminPayload(
+  request: IncomingMessage,
+  response: ServerResponse
+): Promise<Record<string, unknown> | null> {
+  let payload: Record<string, unknown>;
+  try {
+    payload = JSON.parse(await requestBody(request));
+  } catch {
+    sendJson(response, 400, errorBody("request body must be valid JSON"));
+    return null;
+  }
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+    sendJson(response, 400, errorBody("request body must be a JSON object"));
+    return null;
+  }
+  return payload;
+}
+
+function validateAdminPayloadFields(
+  payload: Record<string, unknown>,
+  response: ServerResponse
+): { role: "orchestrator" | "subagent"; enabled: boolean } | null {
+  const role = payload.role;
+  if (role !== "orchestrator" && role !== "subagent") {
+    sendJson(
+      response,
+      400,
+      errorBody(
+        "request body requires role 'orchestrator' or 'subagent'",
+        "router_invalid_role",
+        { code: "router_invalid_role" }
+      )
+    );
+    return null;
+  }
+  if (typeof payload.enabled !== "boolean") {
+    sendJson(
+      response,
+      400,
+      errorBody("request body requires boolean 'enabled'")
+    );
+    return null;
+  }
+  return { role, enabled: payload.enabled };
+}
+
+function providerAdminStatus(provider: string, enabled: boolean): string {
+  if (!enabled) return "disabled";
+  if (!COOLDOWNS.isCooling(provider)) return "ready";
+  return COOLDOWNS.get(provider)?.failureClass ?? "cooldown";
+}
+
 async function handleProviderAdminRoute(
   pathname: string,
   request: IncomingMessage,
   response: ServerResponse
 ): Promise<boolean> {
   const providerMatch = pathname.match(PROVIDER_ROUTE_PATH_PATTERN);
-  if (providerMatch) {
-    if (request.method !== "POST") {
-      sendJson(
-        response,
-        405,
-        errorBody("Method not allowed", "router_method_not_allowed", {
-          code: "router_method_not_allowed"
-        }),
-        { allow: "POST" }
-      );
-      return true;
-    }
-    const remoteAddress = request.socket?.remoteAddress;
-    if (!isLoopbackAddress(remoteAddress)) {
-      sendJson(
-        response,
-        403,
-        errorBody(
-          "Provider administration is restricted to loopback connections.",
-          "router_access_denied",
-          { code: "router_access_denied" }
-        )
-      );
-      return true;
-    }
-    const providerParam = providerMatch[1]!;
-    const provider = providerParam.toLowerCase().trim();
-    if (
-      !ROUTING.providers[provider] &&
-      !ROUTES.some((r) => r.provider === provider)
-    ) {
-      sendJson(
-        response,
-        404,
-        errorBody(
-          `Unknown provider: ${providerParam}`,
-          "router_unknown_provider",
-          { code: "router_unknown_provider" }
-        )
-      );
-      return true;
-    }
-    let payload: Record<string, unknown>;
-    try {
-      payload = JSON.parse(await requestBody(request));
-    } catch {
-      sendJson(response, 400, errorBody("request body must be valid JSON"));
-      return true;
-    }
-    if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
-      sendJson(response, 400, errorBody("request body must be a JSON object"));
-      return true;
-    }
-    if (typeof payload.enabled !== "boolean") {
-      sendJson(
-        response,
-        400,
-        errorBody("request body requires boolean 'enabled'")
-      );
-      return true;
-    }
-    ROUTING_POLICY.setProviderEnabled(provider, payload.enabled);
-    await persistRouterStateNow();
-    sendJson(response, 200, {
-      ok: true,
-      provider,
-      enabled: payload.enabled,
-      status: payload.enabled
-        ? COOLDOWNS.isCooling(provider)
-          ? (COOLDOWNS.get(provider)?.failureClass ?? "cooldown")
-          : "ready"
-        : "disabled"
-    });
+  if (!providerMatch) return false;
+  if (request.method !== "POST") {
+    sendJson(
+      response,
+      405,
+      errorBody("Method not allowed", "router_method_not_allowed", {
+        code: "router_method_not_allowed"
+      }),
+      { allow: "POST" }
+    );
     return true;
   }
-
-  return false;
+  const remoteAddress = request.socket?.remoteAddress;
+  if (!isLoopbackAddress(remoteAddress)) {
+    sendJson(
+      response,
+      403,
+      errorBody(
+        "Provider administration is restricted to loopback connections.",
+        "router_access_denied",
+        { code: "router_access_denied" }
+      )
+    );
+    return true;
+  }
+  const providerParam = providerMatch[1]!;
+  const provider = providerParam.toLowerCase().trim();
+  if (
+    !ROUTING.providers[provider] &&
+    !ROUTES.some((r) => r.provider === provider)
+  ) {
+    sendJson(
+      response,
+      404,
+      errorBody(
+        `Unknown provider: ${providerParam}`,
+        "router_unknown_provider",
+        { code: "router_unknown_provider" }
+      )
+    );
+    return true;
+  }
+  const payload = await readAdminPayload(request, response);
+  if (!payload) return true;
+  const fields = validateAdminPayloadFields(payload, response);
+  if (!fields) return true;
+  ROUTING_POLICY.setProviderEnabledForRole(
+    provider,
+    fields.role,
+    fields.enabled
+  );
+  await persistRouterStateNow();
+  sendJson(response, 200, {
+    ok: true,
+    provider,
+    role: fields.role,
+    enabled: fields.enabled,
+    status: providerAdminStatus(provider, fields.enabled)
+  });
+  return true;
 }
 
 async function handleResponseRequest(
@@ -1842,6 +1968,81 @@ export async function handleRequest(
   await handleResponseRequest(pathname, request, response);
 }
 
+function otelLiveFeedCategory(
+  signal: "logs" | "traces" | "metrics",
+  item: Record<string, unknown>
+): LiveFeedCategory {
+  const attributes =
+    item.attributes && typeof item.attributes === "object"
+      ? Object.values(item.attributes as Record<string, unknown>)
+      : [];
+  const text = [
+    item.name,
+    item.type,
+    item.event_name,
+    item.hook_name,
+    item.skill_name,
+    item.mcp_server,
+    ...attributes
+  ]
+    .filter((value): value is string => typeof value === "string")
+    .join(" ")
+    .toLowerCase();
+  if (text.includes("mcp")) return "mcp";
+  if (text.includes("skill")) return "skills";
+  if (text.includes("hook")) return "hooks";
+  if (text.includes("tool")) return "tools";
+  return signal === "logs" ? "runtime" : "telemetry";
+}
+
+function recordOtelLiveFeed(
+  signal: "logs" | "traces" | "metrics",
+  payload: Record<string, unknown>
+): void {
+  const records: Record<string, unknown>[] = [];
+  for (const resource of (payload.resourceLogs as
+    Record<string, unknown>[] | undefined) ?? [])
+    for (const scope of (resource.scopeLogs as
+      Record<string, unknown>[] | undefined) ?? [])
+      records.push(
+        ...((scope.logRecords as Record<string, unknown>[] | undefined) ?? [])
+      );
+  for (const resource of (payload.resourceSpans as
+    Record<string, unknown>[] | undefined) ?? [])
+    for (const scope of (resource.scopeSpans as
+      Record<string, unknown>[] | undefined) ?? [])
+      records.push(
+        ...((scope.spans as Record<string, unknown>[] | undefined) ?? [])
+      );
+  for (const resource of (payload.resourceMetrics as
+    Record<string, unknown>[] | undefined) ?? [])
+    for (const scope of (resource.scopeMetrics as
+      Record<string, unknown>[] | undefined) ?? [])
+      records.push(
+        ...((scope.metrics as Record<string, unknown>[] | undefined) ?? [])
+      );
+  if (records.length === 0) {
+    liveFeedEvents.record({
+      category: signal === "logs" ? "runtime" : "telemetry",
+      type: `otel.${signal}`,
+      summary: `OTLP ${signal} batch`
+    });
+    return;
+  }
+  for (const item of records) {
+    const name =
+      [item.name, item.type, item.event_name].find(
+        (value): value is string =>
+          typeof value === "string" && Boolean(value.trim())
+      ) ?? `OTLP ${signal} record`;
+    liveFeedEvents.record({
+      category: otelLiveFeedCategory(signal, item),
+      type: `otel.${signal}`,
+      summary: name
+    });
+  }
+}
+
 async function handlePreflightRoutes(
   pathname: string,
   request: IncomingMessage,
@@ -1891,6 +2092,7 @@ async function handlePreflightRoutes(
   if (request.method === "POST" && otelSignals[pathname]) {
     try {
       const payload = JSON.parse(await requestBody(request));
+      recordOtelLiveFeed(otelSignals[pathname]!, payload);
       ingestOtelSignal(otelSignals[pathname]!, payload);
       sendJson(response, 200, {});
     } catch {

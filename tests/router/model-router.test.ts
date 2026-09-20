@@ -9619,7 +9619,8 @@ transport = "streamable_http"
 });
 
 test("router status includes sanitized routing and limits metadata", () => {
-  routing.resetDisabledProviders();
+  routing.resetDisabledProvidersForRole("subagent");
+  routing.resetDisabledProvidersForRole("orchestrator");
   const status = getRouterStatus();
 
   // Status shape for routing metadata
@@ -9636,8 +9637,8 @@ test("router status includes sanitized routing and limits metadata", () => {
   assert.ok(Array.isArray(status.routing.configuredProviders));
   assert.ok(status.routing.configuredProviders.includes("claude"));
   assert.ok(status.routing.configuredProviders.includes("codex"));
-  assert.ok(Array.isArray(status.routing.enabledProviders));
-  assert.ok(Array.isArray(status.routing.disabledProviders));
+  assert.ok(Array.isArray(status.routing.enabledSubagentProviders));
+  assert.ok(Array.isArray(status.routing.disabledSubagentProviders));
   assert.equal(typeof status.routing.routes, "object");
   for (const [_provider, route] of Object.entries(status.routing.routes) as [
     string,
@@ -9671,8 +9672,10 @@ test("router status includes sanitized routing and limits metadata", () => {
   // Per-provider enabled property and status
   assert.ok(status.providers, "status must contain providers");
   for (const provider of Object.values(status.providers) as any[]) {
-    assert.equal(typeof provider.enabled, "boolean");
-    assert.equal(provider.enabled, true);
+    assert.equal(typeof provider.orchestratorEnabled, "boolean");
+    assert.equal(typeof provider.subagentEnabled, "boolean");
+    assert.equal(provider.orchestratorEnabled, true);
+    assert.equal(provider.subagentEnabled, true);
     assert.equal(provider.status, "ready");
   }
 
@@ -9703,7 +9706,8 @@ test("loopback-only POST /v1/providers/:provider endpoint validation and state p
 
   try {
     resetRouterTelemetry();
-    routing.resetDisabledProviders();
+    routing.resetDisabledProvidersForRole("subagent");
+    routing.resetDisabledProvidersForRole("orchestrator");
 
     // 1. Non-loopback request is rejected with 403
     const nonLoopbackRes = await originalFetch(
@@ -9714,7 +9718,7 @@ test("loopback-only POST /v1/providers/:provider endpoint validation and state p
           "content-type": "application/json",
           "x-test-remote-ip": "192.168.1.55"
         },
-        body: JSON.stringify({ enabled: false })
+        body: JSON.stringify({ role: "subagent", enabled: false })
       }
     );
     assert.equal(nonLoopbackRes.status, 403);
@@ -9742,7 +9746,7 @@ test("loopback-only POST /v1/providers/:provider endpoint validation and state p
       {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ enabled: false })
+        body: JSON.stringify({ role: "subagent", enabled: false })
       }
     );
     assert.equal(unknownRes.status, 404);
@@ -9763,7 +9767,7 @@ test("loopback-only POST /v1/providers/:provider endpoint validation and state p
       {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ enabled: "false" })
+        body: JSON.stringify({ role: "subagent", enabled: "false" })
       }
     );
     assert.equal(invalidPayloadRes1.status, 400);
@@ -9773,16 +9777,20 @@ test("loopback-only POST /v1/providers/:provider endpoint validation and state p
       {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({})
+        body: JSON.stringify({ role: "invalid", enabled: false })
       }
     );
     assert.equal(invalidPayloadRes2.status, 400);
+    assert.equal(
+      (await invalidPayloadRes2.clone().json()).error?.code,
+      "router_invalid_role"
+    );
 
-    // 6. Disable provider successfully
+    // 6. Disable provider for subagents successfully
     const disableRes = await originalFetch(`${baseUrl}/v1/providers/claude`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ enabled: false })
+      body: JSON.stringify({ role: "subagent", enabled: false })
     });
     assert.equal(disableRes.status, 200);
     const disableJson = await disableRes.json();
@@ -9792,46 +9800,103 @@ test("loopback-only POST /v1/providers/:provider endpoint validation and state p
     assert.equal(disableJson.status, "disabled");
 
     // In-memory status is updated
-    assert.equal(routing.isProviderEnabled("claude"), false);
+    assert.equal(routing.isProviderEnabledForRole("claude", "subagent"), false);
     const statusAfterDisable = getRouterStatus();
-    assert.equal(statusAfterDisable.providers.claude.enabled, false);
-    assert.equal(statusAfterDisable.providers.claude.status, "disabled");
-    assert.ok(statusAfterDisable.routing.disabledProviders.includes("claude"));
+    assert.equal(statusAfterDisable.providers.claude.subagentEnabled, false);
     assert.equal(
-      statusAfterDisable.routing.enabledProviders.includes("claude"),
+      statusAfterDisable.providers.claude.subagentStatus,
+      "disabled"
+    );
+    assert.ok(
+      statusAfterDisable.routing.disabledSubagentProviders.includes("claude")
+    );
+    assert.equal(
+      statusAfterDisable.routing.enabledSubagentProviders.includes("claude"),
       false
     );
 
-    // Persistence: verify state file written and loadable
+    const orchestratorDisableRes = await originalFetch(
+      `${baseUrl}/v1/providers/claude`,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ role: "orchestrator", enabled: false })
+      }
+    );
+    assert.equal(orchestratorDisableRes.status, 200);
+    const orchestratorDisableJson = await orchestratorDisableRes.json();
+    assert.equal(orchestratorDisableJson.role, "orchestrator");
+    assert.equal(orchestratorDisableJson.enabled, false);
+    const statusAfterBothDisabled = getRouterStatus();
+    assert.equal(
+      statusAfterBothDisabled.providers.claude.orchestratorEnabled,
+      false
+    );
+    assert.equal(
+      statusAfterBothDisabled.providers.claude.subagentEnabled,
+      false
+    );
+    assert.ok(
+      statusAfterBothDisabled.routing.disabledOrchestratorProviders.includes(
+        "claude"
+      )
+    );
+    assert.ok(
+      statusAfterBothDisabled.routing.disabledSubagentProviders.includes(
+        "claude"
+      )
+    );
+
+    // Persistence: verify both role states are written and loadable
     assert.equal(existsSync(stateFile), true);
     const savedState = JSON.parse(await readFile(stateFile, "utf8"));
-    assert.deepEqual(savedState.disabledProviders, ["claude"]);
+    assert.deepEqual(savedState.disabledOrchestratorProviders, ["claude"]);
+    assert.deepEqual(savedState.disabledSubagentProviders, ["claude"]);
 
     // Reset memory and restore from file
-    routing.resetDisabledProviders();
-    assert.equal(routing.isProviderEnabled("claude"), true);
+    routing.resetDisabledProvidersForRole("subagent");
+    routing.resetDisabledProvidersForRole("orchestrator");
+    assert.equal(routing.isProviderEnabledForRole("claude", "subagent"), true);
+    assert.equal(
+      routing.isProviderEnabledForRole("claude", "orchestrator"),
+      true
+    );
     assert.equal(loadRouterState(stateFile), true);
-    assert.equal(routing.isProviderEnabled("claude"), false);
+    assert.equal(routing.isProviderEnabledForRole("claude", "subagent"), false);
+    assert.equal(
+      routing.isProviderEnabledForRole("claude", "orchestrator"),
+      false
+    );
 
     // 7. Re-enable provider successfully
     const enableRes = await originalFetch(`${baseUrl}/v1/providers/claude`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ enabled: true })
+      body: JSON.stringify({ role: "subagent", enabled: true })
     });
     assert.equal(enableRes.status, 200);
     const enableJson = await enableRes.json();
     assert.equal(enableJson.ok, true);
     assert.equal(enableJson.provider, "claude");
+    assert.equal(enableJson.role, "subagent");
     assert.equal(enableJson.enabled, true);
     assert.equal(enableJson.status, "ready");
 
-    assert.equal(routing.isProviderEnabled("claude"), true);
+    assert.equal(routing.isProviderEnabledForRole("claude", "subagent"), true);
+    const orchestratorEnableRes = await originalFetch(
+      `${baseUrl}/v1/providers/claude`,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ role: "orchestrator", enabled: true })
+      }
+    );
+    assert.equal(orchestratorEnableRes.status, 200);
     const statusAfterEnable = getRouterStatus();
-    assert.equal(statusAfterEnable.providers.claude.enabled, true);
-    assert.equal(statusAfterEnable.providers.claude.status, "ready");
+    assert.equal(statusAfterEnable.providers.claude.subagentEnabled, true);
+    assert.equal(statusAfterEnable.providers.claude.subagentStatus, "ready");
     assert.equal(
-      statusAfterEnable.routing.disabledProviders.includes("claude"),
+      statusAfterEnable.routing.disabledSubagentProviders.includes("claude"),
       false
     );
   } finally {
@@ -9840,21 +9905,23 @@ test("loopback-only POST /v1/providers/:provider endpoint validation and state p
       delete process.env.CODEX_ROUTER_STATE_FILE;
     else process.env.CODEX_ROUTER_STATE_FILE = previousStateFile;
     await rm(directory, { recursive: true, force: true });
-    routing.resetDisabledProviders();
+    routing.resetDisabledProvidersForRole("subagent");
+    routing.resetDisabledProvidersForRole("orchestrator");
     resetRouterTelemetry();
   }
 });
 
 test("disabled providers are excluded across role aliases, orchestrator, and fallback chains", async () => {
   resetRouterTelemetry();
-  routing.resetDisabledProviders();
+  routing.resetDisabledProvidersForRole("subagent");
+  routing.resetDisabledProvidersForRole("orchestrator");
 
   // Baseline: all enabled
   const baselineCandidates = routing.roleCandidates("default", () => 0.5);
   assert.ok(baselineCandidates.some((c) => c.provider === "claude"));
 
   // 1. Role aliases exclude disabled provider
-  routing.setProviderEnabled("claude", false);
+  routing.setProviderEnabledForRole("claude", "subagent", false);
   const filteredCandidates = routing.roleCandidates("default", () => 0.5);
   assert.equal(
     filteredCandidates.some((c) => c.provider === "claude"),
@@ -9867,7 +9934,7 @@ test("disabled providers are excluded across role aliases, orchestrator, and fal
   const baselineOrch = routing.orchestratorCandidates(() => 0.5);
   assert.equal(baselineOrch[0]!.provider, "codex");
 
-  routing.setProviderEnabled("codex", false);
+  routing.setProviderEnabledForRole("codex", "orchestrator", false);
   const filteredOrch = routing.orchestratorCandidates(() => 0.5);
   assert.equal(
     filteredOrch.some((c) => c.provider === "codex"),
@@ -9985,23 +10052,32 @@ test("disabled providers are excluded across role aliases, orchestrator, and fal
       else process.env[key] = value;
     }
     resetRouterTelemetry();
-    routing.resetDisabledProviders();
+    routing.resetDisabledProvidersForRole("subagent");
+    routing.resetDisabledProvidersForRole("orchestrator");
   }
 });
 
 test("all-disabled behavior rejects aliases, orchestrator, and concrete requests", async () => {
   resetRouterTelemetry();
-  routing.resetDisabledProviders();
+  routing.resetDisabledProvidersForRole("subagent");
+  routing.resetDisabledProvidersForRole("orchestrator");
   const allProviders = ["claude", "antigravity", "minimax", "copilot", "codex"];
-  for (const provider of allProviders)
-    routing.setProviderEnabled(provider, false);
+  for (const provider of allProviders) {
+    routing.setProviderEnabledForRole(provider, "subagent", false);
+    routing.setProviderEnabledForRole(provider, "orchestrator", false);
+  }
 
   const status = getRouterStatus();
-  assert.equal(status.routing.enabledProviders.length, 0);
-  assert.deepEqual(status.routing.disabledProviders, allProviders.sort());
+  assert.equal(status.routing.enabledSubagentProviders.length, 0);
+  assert.deepEqual(
+    status.routing.disabledSubagentProviders,
+    allProviders.sort()
+  );
   for (const p of Object.values(status.providers) as any[]) {
-    assert.equal(p.enabled, false);
-    assert.equal(p.status, "disabled");
+    assert.equal(p.orchestratorEnabled, false);
+    assert.equal(p.subagentEnabled, false);
+    assert.equal(p.orchestratorStatus, "disabled");
+    assert.equal(p.subagentStatus, "disabled");
   }
 
   // Candidate lists are empty
@@ -10052,7 +10128,8 @@ test("all-disabled behavior rejects aliases, orchestrator, and concrete requests
     assert.equal(concreteJson.error?.provider, "codex");
   } finally {
     await closeServer(server);
-    routing.resetDisabledProviders();
+    routing.resetDisabledProvidersForRole("subagent");
+    routing.resetDisabledProvidersForRole("orchestrator");
     resetRouterTelemetry();
   }
 });

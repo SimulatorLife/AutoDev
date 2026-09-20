@@ -43,7 +43,7 @@ test("typed cooldowns preserve config, probe, transient, and hard ladders", () =
 
 test("typed cooldowns keep monotonic deadlines, last-resort policy, and retry summaries", () => {
   const cooldowns = new ProviderCooldowns(undefined, {
-    isProviderEnabled: (provider) => provider !== "disabled"
+    isProviderEnabled: (provider, _role) => provider !== "disabled"
   });
   const reset = new Date(NOW + 3_600_000).toISOString();
   cooldowns.cooldownProvider("claude", {

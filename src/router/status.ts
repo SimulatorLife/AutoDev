@@ -1,8 +1,11 @@
 export type RouterCountMap = Record<string, number>;
 
 export interface RouterProviderStatus {
-  enabled?: boolean;
+  orchestratorEnabled?: boolean;
+  subagentEnabled?: boolean;
   status?: string;
+  orchestratorStatus?: string;
+  subagentStatus?: string;
   routingPriority?: string;
   active?: number;
   inFlightRequests?: number;
@@ -34,8 +37,10 @@ export interface RouterStatus {
   routerInstanceId?: string;
   startedAt?: string;
   routing?: {
-    enabledProviders?: string[];
-    disabledProviders?: string[];
+    enabledOrchestratorProviders?: string[];
+    enabledSubagentProviders?: string[];
+    disabledOrchestratorProviders?: string[];
+    disabledSubagentProviders?: string[];
     providerGroups?: Record<string, unknown[]>;
     priorities?: Record<string, Record<string, unknown>>;
     [key: string]: unknown;
@@ -64,10 +69,13 @@ export interface RouterStatus {
     byModel?: Record<string, Record<string, unknown>>;
     [key: string]: unknown;
   };
+  disabledOrchestratorProviders?: string[];
+  disabledSubagentProviders?: string[];
   concurrency?: Record<string, unknown>;
   inFlightRequests?: Record<string, number>;
   codexTelemetry?: Record<string, unknown>;
   recentEvents?: Array<Record<string, unknown>>;
+  liveFeed?: Array<Record<string, unknown>>;
   [key: string]: unknown;
 }
 

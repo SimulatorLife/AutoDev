@@ -81,14 +81,15 @@ test("routing policy preserves seeded ordering while honoring load and disabled-
   );
   const baseline = policy.roleCandidates("default", seeded(0xc0_ff_ee));
   assert.ok(baseline.length > 0);
-  policy.setProviderEnabled("claude", false);
+  policy.setProviderEnabledForRole("claude", "subagent", false);
   assert.equal(
     policy
       .roleCandidates("default", seeded(0xc0_ff_ee))
       .some((candidate) => candidate.provider === "claude"),
     false
   );
-  policy.resetDisabledProviders();
+  policy.resetDisabledProvidersForRole("subagent");
+  policy.resetDisabledProvidersForRole("orchestrator");
   const preferred = policy.orchestratorCandidates(seeded(0xc0_ff_ee), "claude");
   assert.equal(preferred[0]?.provider, "claude");
 });
@@ -113,11 +114,48 @@ test("a role turn prefers the provider whose tool calls it is answering", () => 
     "the rest keep their order"
   );
   // A disabled owner is skipped like any other provider; the history replays elsewhere.
-  policy.setProviderEnabled(owner, false);
+  policy.setProviderEnabledForRole(owner, "subagent", false);
   assert.equal(
     policy
       .roleCandidates("worker", seeded(7), owner)
       .some((candidate) => candidate.provider === owner),
     false
   );
+});
+
+test("provider role administration is independent", () => {
+  const policy = new RoutingPolicy(
+    ROUTING_POLICY.config,
+    ROUTING_POLICY.configFile,
+    process.env
+  );
+
+  policy.setProviderEnabledForRole("claude", "orchestrator", false);
+  assert.equal(
+    policy.isProviderEnabledForRole("claude", "orchestrator"),
+    false
+  );
+  assert.equal(policy.isProviderEnabledForRole("claude", "subagent"), true);
+  assert.ok(
+    !policy
+      .orchestratorCandidates(seeded(7))
+      .some((candidate) => candidate.provider === "claude")
+  );
+  assert.ok(
+    policy
+      .roleCandidates("worker", seeded(7))
+      .some((candidate) => candidate.provider === "claude")
+  );
+
+  policy.setProviderEnabledForRole("claude", "subagent", false);
+  assert.deepEqual(policy.runtimeState(), {
+    disabledOrchestratorProviders: ["claude"],
+    disabledSubagentProviders: ["claude"]
+  });
+  policy.restoreRuntimeState({
+    disabledOrchestratorProviders: [],
+    disabledSubagentProviders: ["claude"]
+  });
+  assert.equal(policy.isProviderEnabledForRole("claude", "orchestrator"), true);
+  assert.equal(policy.isProviderEnabledForRole("claude", "subagent"), false);
 });

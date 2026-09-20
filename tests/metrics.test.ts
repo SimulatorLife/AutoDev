@@ -155,6 +155,39 @@ test("router dashboard exposes the component hierarchy and explicit workspace at
   assert.match(dashboard, /toggleProvider/);
 });
 
+test("router dashboard exposes the top-right EST5EDT lookback control and live filtering", async () => {
+  const rawDashboard = await readFile(
+    path.join(root, "scripts", "codex-model-router-dashboard.html"),
+    "utf8"
+  );
+  assert.match(rawDashboard, /class="lookback-control"/);
+  assert.match(
+    rawDashboard,
+    /id="lookback-select"[^>]*aria-label="Dashboard lookback window"/
+  );
+  assert.deepEqual(
+    Array.from(
+      rawDashboard.matchAll(/<option value="([^"]+)"[^>]*>([^<]+)<\/option>/g),
+      (match) => [match[1], match[2]]
+    ),
+    [
+      ["all", "All"],
+      ["today", "Today"],
+      ["1h", "1 hour"],
+      ["2h", "2 hours"],
+      ["5h", "5 hours"],
+      ["12h", "12 hours"]
+    ]
+  );
+  assert.match(rawDashboard, /const LOOKBACK_TIME_ZONE = "America\/New_York"/);
+  assert.match(rawDashboard, /function lookbackStartMs\(/);
+  assert.match(rawDashboard, /function timestampInLookback\(/);
+  assert.match(rawDashboard, /selectedLookback = "all"/);
+  assert.match(rawDashboard, /lookbackSelect\.addEventListener\("change"/);
+  assert.match(rawDashboard, /status = applyLookback\(status\)/);
+  assert.match(rawDashboard, /liveFeed: filterTimestampedEntries/);
+});
+
 test("router dashboard inline JavaScript has no unresolved identifiers", async () => {
   const rawDashboard = await readFile(
     path.join(root, "scripts", "codex-model-router-dashboard.html"),

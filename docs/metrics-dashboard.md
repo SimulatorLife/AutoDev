@@ -34,13 +34,38 @@ The page has one componentized hierarchy:
    coverage). Fail closed: a workspace without any bridge event or
    OTLP-resolved tool result keeps its per-workspace attribution at the
    `unavailable` state rather than reading as a zero.
-9. **Recent routing events**.
+9. **Live feed**: a multi-select category-filtered view of `status.liveFeed`.
 
 Panels, badges, metric bars, outcome bars, row toggles, and stat cards are
 custom elements. Live labels are escaped before HTML insertion, while event
 logs, metadata, and errors use text-only DOM updates. MCP lifecycle observations
 are shown in the relevant usage cards and operational summary; there is no
 standalone MCP panel.
+
+The dashboard header also provides a **Lookback** selector in the top-right corner. It supports **All** (the default), **Today**, **1 hour**, **2 hours**, **5 hours**, and **12 hours**. `Today` means the current calendar day in `EST5EDT` / `America/New_York`, including the correct daylight-saving offset. Changing the selector immediately re-renders timestamped metrics, counts, telemetry rows, and live-feed events from the cached `/status` payload; records without a timestamp remain visible because they cannot be safely assigned to a time window.
+
+The live feed replaces the previous "Recent routing events" log. The router
+publishes `status.liveFeed` as an array of `LiveFeedEvent` records; each
+record carries a `category` and a `type` field alongside per-event detail
+fields (`timestamp`, `requestId`, `phase`, `provider`, `model`,
+`requestedModel`, `outcome`, `failureClass`, `denialReason`,
+`spawnFailureReason`, and any category-specific payload). The dashboard
+recognises the router's published `LIVE_FEED_CATEGORIES` -- `routing`,
+`tools`, `hooks`, `skills`, `mcp`, `telemetry`, and `runtime` -- and exposes
+each as a category-filter chip in the panel header. The chips form a
+multi-select, multi-state group with **Routing selected by default** so the
+panel always boots into an operational view; toggling a chip immediately
+re-renders the table from the most recently cached `/status` payload
+(preserved across the 3 s polling refresh) instead of waiting for the next
+poll. Categories that match no record render an explicit "No live feed events
+match the selected categories" empty state rather than collapsing the table
+to a generic "No live feed events yet". Every dynamic cell value
+(timestamp, category pill, type, and the per-record detail fragments) is
+escaped through `escapeHtml` before insertion, and the empty/no-match
+branches stay text-only so the table can never be broken out of by a hostile
+payload. The panel summary remains tabular (`<n> shown` when the full set is
+visible, `<filtered> of <total> shown` when at least one category is hidden)
+so an operator can tell at a glance whether a category filter is active.
 
 Per-workspace usage always has reliable usage, role, and model dimensions.
 Named tool, named skill, and MCP server attribution at that same workspace granularity --
@@ -284,30 +309,29 @@ The **Provider health** table renders the operational state, routing priority, e
 - **Effective limits & cooldowns:** Formatted by `formatEffectiveLimitsAndCooldowns(p)`, this column displays active cooldown badges with cooldown kind (`transient`, `hard`, `probe`, `config`), failure class, remaining countdown duration, declared reset time (`resets <timestamp>`), and any live provider limit details (`p.effectiveLimits`, `p.liveLimits`, `p.limits`). This replaces the redundant `Last failure` column with comprehensive, real-time cooldown and limit diagnostics.
 - **Active:** Displays live agent workflow activity for the provider (`<status-badge>`), retaining non-zero counts and active styling during tool, user, and subagent waits. The table keeps only the `Active` column (transport-level in-flight requests are omitted from this table and surfaced separately under **Operational summary** and the Status CLI). Both the per-row badge and the panel header's `N active` summary read `status.providers[*].active` directly with no artificial floor: `isProviderLiveActive(p)` is defined as `active > 0`, so a live provider's `active` field is already `>= 1`, and the panel total (`activeReqSum`) is a plain sum of the same field the rows render -- it reconciles exactly with the sum of the visible per-row counts.
 - **No synthetic provider rows:** Provider health renders only configured router routes. Missing provider identity is reported through live-attribution diagnostics and remains available only in non-provider residual dimensions; it is never rendered as an `unattributed` provider or model row.
-- **Administrative toggle controls:** The **Control** column features an interactive iOS-like toggle switch (`.btn-provider-toggle`) to dynamically enable or disable a provider:
-  - Designed as a wordless iOS-style toggle switch: displays a green background (`#34c759`) when enabled and a grey background (`#48484a`) when disabled, with no text labels.
-  - Features `role="switch"`, `aria-checked`, dynamic `aria-label`, and `title` tooltip for accessibility.
-  - Clicking invokes `toggleProvider(providerName, shouldEnable, buttonEl)`.
-  - While pending, the button is disabled and dimmed, tracked in `pendingProviderToggles` to prevent duplicate concurrent submissions without misleading text transitions.
-  - The browser issues a `POST /v1/providers/:provider` request with JSON payload `{ "enabled": shouldEnable }`.
-  - Upon success, the dashboard triggers an immediate `refresh()` to re-fetch `/status` and re-render table state.
-  - If the request fails, the error message is displayed in the dashboard `#error` element and the button re-enables.
-  - Disabled providers are marked with `.provider-disabled` styling and an error-state health badge displaying `disabled`. The panel header displays a disabled provider count (e.g. `4 / 5 ready · 0 active · 1 disabled`) when nonzero.
+- **Administrative role controls:** The **Control** column features two independent iOS-like toggle switches for each provider: **Orchestrator** and **Subagent**. Each switch uses that role's `orchestratorEnabled` or `subagentEnabled` status boolean; provider health/status remains independent from role administration.
+  - Each switch is a labeled `role="switch"` control with accurate `aria-checked`, `aria-label`, and `title` values. Green means that role is enabled and grey means it is disabled.
+  - Clicking invokes `toggleProvider(providerName, role, shouldEnable, buttonEl)`. Pending state is keyed by `${providerName}:${role}`, so changing one role does not block or misrepresent the other.
+  - The browser issues `POST /v1/providers/:provider` with JSON payload `{ "role": "orchestrator" | "subagent", "enabled": boolean }`.
+  - Upon success, the endpoint response identifies the role and enabled state, and the dashboard triggers `refresh()` to re-fetch `/status` and render both role states.
+  - If the request fails, the role-specific error is displayed in the dashboard `#error` element and that switch re-enables. No whole-provider disabled styling or status override is inferred from either role switch.
+
 
 ### Provider administration and status contract
 
 The model router exposes provider state and administrative controls via the following contracts:
 
-- **Loopback mutation endpoint:** `POST /v1/providers/:provider` allows enabling or disabling a provider at runtime. The endpoint is strictly restricted to loopback connections (`127.0.0.1`, `::1`, `::ffff:127.0.0.1`, `localhost`); requests from other origins return HTTP 403 `router_access_denied`. Only `POST` is accepted (other methods return HTTP 405 `router_method_not_allowed`). The request body must be a JSON object containing boolean `enabled` (`{ "enabled": boolean }`).
-- **Persistence and default behavior:** Providers default to enabled. Disabling or enabling a provider immediately updates the in-memory `disabledProviders` set and calls `persistRouterStateNow()` to persist `disabledProviders` atomically to `$CODEX_HOME/codex-router-state.json`. On daemon startup, `loadRouterState()` reloads the persisted disabled list, preserving administrative state across restarts.
-- **Disable semantics:** Disabled providers are excluded from role alias candidates, orchestrator candidates (including session continuation hoisting), last-resort retry passes, and bounded exhaustion waits. A direct concrete model request to a disabled provider is immediately rejected with HTTP 503 `router_provider_unavailable` (`failureClass: "provider_disabled"`). If all providers for a tier are disabled, requests fail immediately with HTTP 503 `router_provider_exhausted`.
+- **Loopback mutation endpoint:** `POST /v1/providers/:provider` accepts a JSON object containing `role` (`"orchestrator"` or `"subagent"`) and boolean `enabled`. It returns the changed role and enabled state. The endpoint is strictly restricted to loopback connections (`127.0.0.1`, `::1`, `::ffff:127.0.0.1`, `localhost`); requests from other origins return HTTP 403 `router_access_denied`. Only `POST` is accepted (other methods return HTTP 405 `router_method_not_allowed`).
+- **Persistence and role-specific behavior:** Each role's enabled state is persisted independently and restored on daemon startup. Changing orchestrator administration does not change subagent administration, and vice versa. A disabled role is excluded from routing candidates for that role; provider health status and the other role's switch remain unchanged.
 - **Status payload additions (`/status`):**
-  - `status.routing`: Surfaces configuration source, existence, orchestrator configuration, role mappings, `providerGroups` priority hierarchy, `configuredProviders`, `enabledProviders`, `disabledProviders`, and sanitized route definitions.
+  - `status.routing`: Surfaces configuration source, existence, orchestrator configuration, role mappings, `providerGroups` priority hierarchy, `configuredProviders`, role-specific enabled/disabled provider arrays, and sanitized route definitions.
   - `status.limits`: Surfaces effective global cooldowns, probe timeouts, last-resort max attempts, exhaustion wait window, selection deadline, upstream timeout, concrete retries, shutdown drain timeout, and per-session concurrency limits.
-  - `status.providers[*].enabled`: Boolean flag reflecting administrative enabled state (`false` when disabled).
-  - `status.providers[*].status`: Reports `"disabled"` when disabled, `"ready"` when operational, or the active cooldown failure class.
+  - `status.providers[*].orchestratorEnabled`: Boolean flag reflecting whether the provider is enabled for orchestrator traffic.
+  - `status.providers[*].subagentEnabled`: Boolean flag reflecting whether the provider is enabled for subagent traffic.
+  - `status.providers[*].status`: Reports operational health (for example, `ready`, `cooldown`, or an active failure class); it is not replaced by a role's enabled state.
   - `status.providers[*].active`: Live agent activity for the provider (migrated from ambiguous `activeRequests`), representing active turn execution.
   - `status.inFlightRequests` / `status.providers[*].inFlightRequests`: Transport-layer diagnostic counters representing open HTTP connections to upstream provider models.
+
 
 ### Live agent activity vs. in-flight requests transport diagnostics
 
@@ -418,16 +442,16 @@ values in prose. Each panel heading owns its collapse toggle. Provider health,
 Orchestrator & subagent usage, Usage by workspace, Skill telemetry, and Hooks &
 runtime telemetry are expanded by default; Spawn breakdown, Spawn failures,
 Skill context telemetry, Native metrics observed, Operational summary, and
-Recent routing events are independently collapsible. The Subagents spawned
+Live feed are independently collapsible. The Subagents spawned
 roll-up remains in the orchestrator/subagent area rather than becoming a
 separate top-level panel.
 
 Totals footers are shown only for homogeneous roll-up tables: provider/usage,
 Skills injections, hook/runtime calls, observed metric counts, and spawn-failure
 reasons. Operational summary and Skill context telemetry intentionally have no
-totals because their rows mix incompatible units; recent routing events are an
-event view rather than an additive measurement. MCP observations likewise do
-not form a standalone table or panel.
+totals because their rows mix incompatible units; the live feed is an event
+view rather than an additive measurement, so it never gets a totals footer
+either. MCP observations likewise do not form a standalone table or panel.
 
 Totals footers are shown only when the section has at least 2 populated,
 non-total data rows. The renderer drives that policy through a single helper
