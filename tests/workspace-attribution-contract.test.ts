@@ -10,6 +10,7 @@ import {
 import {
   autodevEnrichOtlpPayload,
   ingestOtelSignal,
+  type OtelPayload,
   resetOtelTelemetry
 } from "../src/router/otel.ts";
 import {
@@ -292,7 +293,7 @@ function runOperation(
     const payload = op.payload as { logs: unknown };
     state.enriched = autodevEnrichOtlpPayload(
       "logs",
-      payload.logs
+      payload.logs as OtelPayload
     ) as OperationState["enriched"];
     return;
   }

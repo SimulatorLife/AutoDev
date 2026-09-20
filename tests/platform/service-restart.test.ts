@@ -196,3 +196,56 @@ test("only processes matching an installed service hook are reaped", async () =>
   assert.equal(killed, 1);
   assert.equal(MANAGED_SERVICE_LABELS.length, 6);
 });
+
+function captureStderr<T>(run: () => Promise<T>): Promise<[T, string]> {
+  const original = process.stderr.write.bind(process.stderr);
+  let captured = "";
+  process.stderr.write = ((chunk: string | Uint8Array): boolean => {
+    captured +=
+      typeof chunk === "string" ? chunk : Buffer.from(chunk).toString();
+    return true;
+  }) as typeof process.stderr.write;
+  return run().then(
+    (value): [T, string] => {
+      process.stderr.write = original;
+      return [value, captured];
+    },
+    (error: unknown) => {
+      process.stderr.write = original;
+      throw error;
+    }
+  );
+}
+
+test("a label launchd refuses to load is reported as a load failure, not a missing launchctl", async () => {
+  const fake = deps({
+    commandAvailable: () => true,
+    launchd: {
+      isLoaded: () => false,
+      print: () => "",
+      bootout: () => {},
+      bootstrap: (plist) => {
+        if (plist.endsWith("com.codex.claude-bridge.plist"))
+          throw new Error("Bootstrap failed: 5: Input/output error");
+      },
+      enable: () => {},
+      kickstart: () => {}
+    }
+  });
+  const [status, stderr] = await captureStderr(() =>
+    restartServices(options(), fake)
+  );
+  assert.equal(status, 0);
+  assert.match(stderr, /launchd could not load com\.codex\.claude-bridge/u);
+  assert.equal(stderr.includes("launchctl unavailable"), false);
+});
+
+test("a missing launchctl is reported as an unavailable supervisor and skips every launchd call", async () => {
+  const fake = deps({ commandAvailable: () => false });
+  const [status, stderr] = await captureStderr(() =>
+    restartServices(options(), fake)
+  );
+  assert.equal(status, 0);
+  assert.match(stderr, /launchctl unavailable \(sandbox\?\)/u);
+  assert.deepEqual(fake.calls, []);
+});

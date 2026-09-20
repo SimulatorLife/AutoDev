@@ -37,7 +37,8 @@ The TypeScript target state migration is fully completed across all twelve phase
 - Antigravity permission and global skill-registry reconciliation live in `src/platform/antigravity-settings.ts` with typed JSON validation.
 - Runtime file targeting, atomic materialization, symlink replacement/linking, skill-source validation, mode assignment, and drift comparison live in `src/platform/runtime-files.ts`.
 - Obsolete launch-agent, runtime-file, hook, and directory cleanup lives in `src/platform/runtime-reconciliation.ts`.
-- Launchd service ownership, foreign-runtime protection, stale-process reaping, readiness probes, service restart ordering, and direct fallback dispatch live in `src/platform/service-restart.ts`.
+- Launchd service ownership, foreign-runtime protection, stale-process reaping, readiness probes, service restart ordering, and direct fallback dispatch live in `src/platform/service-restart.ts`. A label launchd refuses to load and a missing `launchctl` are reported as distinct conditions; both fall back to the direct ensure-hook path.
+- `LaunchdClient.bootout` blocks until launchd has finished unloading the job. `launchctl bootout` returns before the teardown completes, so an immediate re-`bootstrap` of the same label fails with `Bootstrap failed: 5: Input/output error`.
 - Collector foreground validation, exact version/config checks, duplicate-listener protection, readiness, and ensure fallback live in `src/platform/otel-collector.ts`.
 - Pinned Collector artifact manifest validation, platform/architecture selection, download, SHA-256 verification, archive extraction, and private installation live in `src/platform/otel-provision.ts`.
 - LaunchAgent placeholder rendering and drift validation live in `src/platform/macos/launchagent.ts`.
@@ -45,7 +46,7 @@ The TypeScript target state migration is fully completed across all twelve phase
 - External dependency availability, pipx provisioning, pinned CocoIndex/Python-LSP installation, macOS SDK/compiler environment preparation, and executable checks live in `src/platform/dependencies.ts`.
 - The AutoDev request-capture recorder and its contract suite run as native TypeScript (`.rulesync/skills/autodev-codex-request-capture/scripts/responses-recorder.ts` and `tests/codex-request-capture-skill.test.ts`).
 - The AutoDev session-diagnostics trace script and its suite run as native TypeScript (`.rulesync/skills/autodev-session-diagnostics/scripts/session-trace.ts` and `tests/session-diagnostics-skill.test.ts`).
-- The install materialization sequence lives in `src/platform/install-materializer.ts`.
+- The install materialization sequence lives in `src/platform/install-materializer.ts`. Its `RUNTIME_MODULES` manifest is verified to be closed under relative imports by `tests/platform/runtime-manifest.test.ts`, so `$CODEX_HOME` never receives a module whose own imports were left behind.
 - The concrete `autodev install` command runs through `src/platform/install-command.ts`. Installation drift diagnostics live in `src/platform/install-check.ts`.
 - The legacy Python test suite `tests/test_local_setup.py` is eliminated; its concerns are 100% covered by native TypeScript suites (`tests/platform/*.test.ts`, `tests/config/*.test.ts`, `tests/cli/*.test.ts`).
 - `package.json` test scripts are unified: `"test": "node --test tests/*.test.ts tests/**/*.test.ts"`.

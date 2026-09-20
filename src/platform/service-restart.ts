@@ -513,14 +513,15 @@ export async function restartServices(
   const foreignOwnerResult = foreignOwnedHookResult(options, owner);
   if (foreignOwnerResult !== null) return foreignOwnerResult;
 
-  let launchdAvailable = deps.commandAvailable("launchctl");
+  const launchctlAvailable = deps.commandAvailable("launchctl");
   let foreignService = false;
+  const failedLabels: ManagedServiceLabel[] = [];
   for (const label of MANAGED_SERVICE_LABELS) {
-    const result = reloadOneLabel(deps, options, label);
-    if (result === "foreign") {
-      launchdAvailable = false;
-      foreignService = true;
-    } else if (result === "failed") launchdAvailable = false;
+    const result = launchctlAvailable
+      ? reloadOneLabel(deps, options, label)
+      : "failed";
+    if (result === "foreign") foreignService = true;
+    else if (result === "failed") failedLabels.push(label);
   }
   if (foreignService) {
     writeErrorLine(
@@ -528,9 +529,14 @@ export async function restartServices(
     );
     return 0;
   }
-  if (launchdAvailable)
+  const supervised = launchctlAvailable && failedLabels.length === 0;
+  if (supervised)
     writeErrorLine(
       "Provider bridges supervised by launchd (KeepAlive; survive restart/crash/sleep)."
+    );
+  else if (launchctlAvailable)
+    writeErrorLine(
+      `launchd could not load ${failedLabels.join(", ")}; starting bridges through the direct ensure-hook path.`
     );
   else
     writeErrorLine(
@@ -539,7 +545,7 @@ export async function restartServices(
   await waitForSupervisedServices(
     deps,
     options,
-    launchdAvailable && options.otelMode === "collector"
+    supervised && options.otelMode === "collector"
   );
   return runDirectEnsures(options, deps);
 }

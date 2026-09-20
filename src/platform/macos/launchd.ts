@@ -42,18 +42,39 @@ const defaultRunner: CommandRunner = (command, args) => {
 export interface LaunchdClientOptions {
   runner?: CommandRunner;
   uid?: number;
+  /** Bounded wait for `bootout` to finish unloading before the caller re-bootstraps. */
+  unloadAttempts?: number;
+  unloadDelayMs?: number;
+  sleep?: (ms: number) => void;
+}
+
+const UNLOAD_ATTEMPTS_DEFAULT = 100;
+const UNLOAD_DELAY_MS_DEFAULT = 100;
+
+/** `launchctl bootout` returns before launchd finishes tearing the job down. */
+function sleepSync(ms: number): void {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 }
 
 export class LaunchdClient {
   private readonly runner: CommandRunner;
   private readonly domain: string;
+  private readonly unloadAttempts: number;
+  private readonly unloadDelayMs: number;
+  private readonly sleep: (ms: number) => void;
 
   constructor({
     runner = defaultRunner,
-    uid = typeof process.getuid === "function" ? process.getuid() : 0
+    uid = typeof process.getuid === "function" ? process.getuid() : 0,
+    unloadAttempts = UNLOAD_ATTEMPTS_DEFAULT,
+    unloadDelayMs = UNLOAD_DELAY_MS_DEFAULT,
+    sleep = sleepSync
   }: LaunchdClientOptions = {}) {
     this.runner = runner;
     this.domain = `gui/${uid}`;
+    this.unloadAttempts = unloadAttempts;
+    this.unloadDelayMs = unloadDelayMs;
+    this.sleep = sleep;
   }
 
   bootstrap(plist: string): void {
@@ -62,8 +83,23 @@ export class LaunchdClient {
   enable(label: string): void {
     this.run(["enable", `${this.domain}/${label}`]);
   }
+  /**
+   * Unload a job and block until launchd has actually torn it down. `launchctl
+   * bootout` is asynchronous, so bootstrapping the same label immediately after
+   * it returns fails with `Bootstrap failed: 5: Input/output error`.
+   */
   bootout(label: string): void {
     this.run(["bootout", `${this.domain}/${label}`]);
+    this.waitUntilUnloaded(label);
+  }
+
+  /** True once the label is gone; false when it is still loaded after the bounded wait. */
+  waitUntilUnloaded(label: string): boolean {
+    for (let attempt = 0; attempt < this.unloadAttempts; attempt += 1) {
+      if (!this.isLoaded(label)) return true;
+      this.sleep(this.unloadDelayMs);
+    }
+    return !this.isLoaded(label);
   }
   kickstart(label: string): void {
     this.run(["kickstart", "-k", `${this.domain}/${label}`]);

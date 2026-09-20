@@ -777,6 +777,53 @@ test("runRouterEnsure returns launchd-failed when the loaded job is healthy but 
   });
 });
 
+test("launchd-failed reports the launchd error log and its tail", async () => {
+  await withTempHome(async (home) => {
+    const fs = new FakeFs();
+    const paths = defaultPaths(home);
+    fs.files.set(paths.launchdLogErr, {
+      kind: "file",
+      data: "Error [ERR_MODULE_NOT_FOUND]: Cannot find module live-feed.ts\n"
+    });
+    const deps = makeDeps({
+      home,
+      fake: {
+        calls: [],
+        loaded: true,
+        printOutput: "state = running\n    pid = 4242"
+      },
+      fs,
+      probeResult: true,
+      listenerPid: () => 9999
+    });
+    const result = await runRouterEnsure(deps, defaultOptions(home));
+    assert.equal(result.status, "launchd-failed");
+    assert.match(result.message ?? "", /codex-model-router\.launchd\.err\.log/);
+    assert.deepEqual(result.logTail, [
+      "Error [ERR_MODULE_NOT_FOUND]: Cannot find module live-feed.ts"
+    ]);
+  });
+});
+
+test("acquireLock rotates a launchd log that outgrew the size budget", async () => {
+  await withTempHome(async (home) => {
+    const fs = new FakeFs();
+    const paths = defaultPaths(home);
+    const oversized = "x".repeat(64);
+    fs.files.set(paths.launchdLogErr, { kind: "file", data: oversized });
+    const deps = makeDeps({
+      home,
+      fake: { calls: [], loaded: false, printOutput: "" },
+      fs
+    });
+    const options = defaultOptions(home, { fallbackLogMaxBytes: 32 });
+    assert.equal(await __testing.acquireLock(deps, options), true);
+    assert.equal(fs.has(`${paths.launchdLogErr}.1`), true);
+    const current = fs.get(paths.launchdLogErr);
+    assert.equal(current && current.kind === "file" ? current.data : null, "");
+  });
+});
+
 test("runRouterEnsure returns duplicate-detected when fallback sees an untracked healthy port", async () => {
   await withTempHome(async (home) => {
     const fs = new FakeFs();

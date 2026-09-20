@@ -81,6 +81,7 @@ test("orchestrator-active-subagents: orchestrator remains in subagent_wait while
     // Verify: Orchestrator session is in subagent_wait, NOT finished
     assert.equal(agentActivity.getState(sessionKey), "subagent_wait");
     const rec = agentActivity.getRecord(sessionKey);
+    assert.ok(rec, "expected record to exist");
     assert.equal(rec.provider, orchestratorProvider);
     assert.equal(rec.model, orchestratorModel);
     assert.equal(rec.role, ORCHESTRATOR_AGENT_ROLE);
@@ -118,11 +119,11 @@ test("orchestrator-active-subagents: orchestrator remains in subagent_wait while
     // Orchestrator session must NOT have its provider or role overwritten by the child
     assert.equal(agentActivity.getState(sessionKey), "subagent_wait");
     assert.equal(
-      agentActivity.getRecord(sessionKey).provider,
+      agentActivity.getRecord(sessionKey)!.provider,
       orchestratorProvider
     );
     assert.equal(
-      agentActivity.getRecord(sessionKey).role,
+      agentActivity.getRecord(sessionKey)!.role,
       ORCHESTRATOR_AGENT_ROLE
     );
 

@@ -811,6 +811,13 @@ sole read/write access. Override the fallback paths with
 when sandboxing requires a different writable location. The legacy world-
 writable `/tmp/codex-model-router.log` path is gone.
 
+The router ensure hook rotates the launchd and fallback logs to a `.1` sibling
+once they pass the same size budget, so a crash loop cannot fill the disk, and
+it prints the tail of `codex-model-router.launchd.err.log` when the router fails
+to come up under launchd. That tail is the first thing to read when an install
+reports a launchd start failure: a crash-looping router usually names its own
+cause there.
+
 `$CODEX_HOME/run/` is the canonical home for router run-time state. The
 installer creates it with mode 0700 on every run, and the launchd plist writes
 its logs there too, so all router
@@ -1336,6 +1343,14 @@ installation: `../src/…` for typed modules and `./codex/prompts/…` for promp
 assets. That is what makes the bridges runnable and importable straight from a
 checkout, so their pure request-shaping helpers can be unit-tested rather than
 asserted against source text.
+
+Because the copies keep their relative layout, the `RUNTIME_MODULES` manifest in
+`src/platform/install-materializer.ts` must be closed under relative imports: a
+module listed there whose own import is missing resolves in a checkout and fails
+with `ERR_MODULE_NOT_FOUND` under `$CODEX_HOME`, which crash-loops the service
+that imports it. `tests/platform/runtime-manifest.test.ts` walks the manifest's
+transitive relative imports and fails with the exact entries to add, so adding a
+new module under `src/` means adding it to the manifest in the same change.
 
 A Claude turn has no delegation tool of its own to bound: the CLI runs without
 `Agent`/`Task`, and delegation is Codex's `multi_agent_v1__spawn_agent`, which

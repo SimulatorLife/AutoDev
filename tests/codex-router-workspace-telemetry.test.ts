@@ -101,8 +101,8 @@ const point = (
 
 const histogramPoint = (
   entries: Array<[string, unknown]>,
-  count: unknown,
-  sum: unknown,
+  count: number | string,
+  sum: number | string,
   start: string | number = "1",
   time: string | number = "2"
 ) => ({

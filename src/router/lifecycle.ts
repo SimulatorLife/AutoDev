@@ -186,7 +186,7 @@ async function waitForActiveRequestsToDrain(
   drainTimeoutMs: number
 ): Promise<void> {
   if (
-    lifecycle.activeRequestAborters.size === 0 ||
+    lifecycle.activeRequestCount === 0 ||
     Date.now() - drainingStartedAt >= drainTimeoutMs
   ) {
     return undefined;

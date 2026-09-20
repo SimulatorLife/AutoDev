@@ -13,7 +13,7 @@ const AGENT_BRANCH =
   /^(copilot|claude|codex|gemini|qwen|mini-max|mini-max-codex)(?:\/|$)/i;
 const AGENT_TITLE_PREFIX_PATTERN = /^(?:Agent|Codex):\s/i;
 const INVOCATION_COMMENT_PATTERN =
-  INVOCATION_COMMENT_PATTERNu;
+  /\*\*\[🤖\s*([^\]]+)\]\*\*\s+Hi, I've received[\s\S]*?actions\/runs\/(\d+)/i;
 const LINE_SPLIT_PATTERN = /\r?\n/;
 const TIMESTAMP_SUFFIX_PATTERN = /\.\d{3}Z\$/;
 const COLLATOR = new Intl.Collator("en");

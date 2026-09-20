@@ -105,6 +105,8 @@ const MAX_BACKOFF_MS_DEFAULT = 1000;
 const PID_PATTERN = /^\d+$/u;
 const LAUNCHD_PID_LINE_PATTERN = /^\s*pid\s*=\s*(\d+)\s*$/u;
 const LOG_LINE_SPLIT_PATTERN = /\r?\n/u;
+const PROCESS_EXIT_ATTEMPTS = 50;
+const PROCESS_EXIT_DELAY_MS = 100;
 
 function positiveInteger(value: string | undefined, fallback: number): number {
   if (value === undefined || value === "") return fallback;
@@ -344,14 +346,19 @@ function waitForProbe(
   );
 }
 
+/**
+ * Bounded wait for a signalled process to exit. The wait must terminate so the
+ * caller can escalate to SIGKILL when the process ignores SIGTERM.
+ */
 async function waitForProcessExit(
   deps: RouterEnsureDeps,
-  pid: number
-): Promise<void> {
-  if (!deps.pidExists(pid)) return;
-  await deps.sleep(100);
-  if (!deps.pidExists(pid)) return;
-  await waitForProcessExit(deps, pid);
+  pid: number,
+  attempts = PROCESS_EXIT_ATTEMPTS
+): Promise<boolean> {
+  if (!deps.pidExists(pid)) return true;
+  if (attempts <= 0) return false;
+  await deps.sleep(PROCESS_EXIT_DELAY_MS);
+  return waitForProcessExit(deps, pid, attempts - 1);
 }
 
 async function secureLogFile(
@@ -376,8 +383,12 @@ async function acquireLock(
   await deps.mkdir(paths.launchdRunDir, { recursive: true });
   await deps.chmod(paths.launchdRunDir, 0o700);
   await deps.mkdir(path.dirname(paths.ensureLock), { recursive: true });
-  await secureLogFile(deps, paths.launchdLogOut);
-  await secureLogFile(deps, paths.launchdLogErr);
+  await Promise.all(
+    [paths.launchdLogOut, paths.launchdLogErr].map(async (logPath) => {
+      await rotateLog(deps, logPath, options.fallbackLogMaxBytes);
+      await secureLogFile(deps, logPath);
+    })
+  );
 
   if (await tryMakeLockDir(deps, paths.lockDir, options.myPid)) return true;
 
@@ -435,20 +446,18 @@ function fallbackPidOwned(deps: RouterEnsureDeps, pid: number): boolean {
   );
 }
 
-async function rotateFallbackLog(
+/** Keep a router log bounded so a crash loop cannot fill the disk. */
+async function rotateLog(
   deps: RouterEnsureDeps,
-  options: RouterEnsureOptions
+  filePath: string,
+  maxBytes: number
 ): Promise<void> {
-  const stat = await deps.stat(options.paths.fallbackLog);
-  if (stat && stat.size > options.fallbackLogMaxBytes) {
-    try {
-      await deps.rename(
-        options.paths.fallbackLog,
-        `${options.paths.fallbackLog}.1`
-      );
-    } catch {
-      /* ignore */
-    }
+  const stat = await deps.stat(filePath);
+  if (!stat || stat.size <= maxBytes) return;
+  try {
+    await deps.rename(filePath, `${filePath}.1`);
+  } catch {
+    /* ignore */
   }
 }
 
@@ -541,7 +550,7 @@ async function ensureViaFallback(
 
   if (await deps.probe()) return 3;
 
-  await rotateFallbackLog(deps, options);
+  await rotateLog(deps, options.paths.fallbackLog, options.fallbackLogMaxBytes);
   await deps.writeFile(options.paths.fallbackLog, "");
   await deps.chmod(options.paths.fallbackLog, 0o600);
 
@@ -625,7 +634,8 @@ export async function runRouterEnsure(
       return {
         status: "launchd-failed",
         exitCode: 1,
-        message: `Codex model router failed to start under launchd. LaunchAgent: ${options.paths.plistLink}`
+        message: `Codex model router failed to start under launchd. LaunchAgent: ${options.paths.plistLink}; log: ${options.paths.launchdLogErr}`,
+        logTail: await readLogTail(deps, options.paths.launchdLogErr)
       };
     }
 

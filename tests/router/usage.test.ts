@@ -423,7 +423,7 @@ test("projectLiveAgents and usageStatus reflect live agent activity", () => {
 
   const status = tracker.usageStatus(1000, projection);
   assert.equal(status.totals.active, 1);
-  assert.equal(status.byWorkspace.RepoX.active, 1);
+  assert.equal((status.byWorkspace.RepoX as Record<string, unknown>)?.active, 1);
   assert.equal(status.byRole.explorer!.active, 1);
 });
 
@@ -473,7 +473,7 @@ test("usagePersistenceSnapshot and restoreUsagePersistenceSnapshot preserve full
 
   // Restore into a clean tracker
   const cleanTracker = new UsageTracker();
-  cleanTracker.restoreUsagePersistenceSnapshot(snapshot);
+  cleanTracker.restoreUsagePersistenceSnapshot(snapshot as unknown as Record<string, unknown>);
 
   assert.equal(cleanTracker.usageTelemetry.totals.attempts, 1);
   assert.equal(cleanTracker.usageTelemetry.totals.successes, 1);
