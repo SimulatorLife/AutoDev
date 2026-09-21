@@ -115,14 +115,8 @@ authorization narrow and explicit in the prompt.
 
 ## Development lifecycle
 
-For repository changes, read and follow
-`references/development-lifecycle.md` before substantial implementation. The
-reference owns lifecycle phases and evidence gates; this skill owns orchestration
-mechanics.
-
-The root advances the lifecycle from delegated evidence and integrates results;
-delegated roles do not advance or redefine phases. Trivial or atomic changes may
-collapse phases, but applicable gates still apply.
+For repository changes, follow `references/development-lifecycle.md`. It owns
+the lifecycle phases and gates; this file owns orchestration mechanics.
 
 ## Concurrency and child-handle lifecycle
 
