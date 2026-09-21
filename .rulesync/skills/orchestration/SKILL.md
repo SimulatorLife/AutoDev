@@ -7,9 +7,8 @@ targets: ["copilot"]
 # Agent orchestration
 
 Use this skill to coordinate independent work across the configured capability
-roles. The root owns lifecycle progression, planning, integration, and gate
-decisions; delegated roles own substantive execution. Select explicit configured
-autodev/<role> model aliases rather than hard-coding a provider or concrete model.
+roles. Select explicit configured autodev/<role> model aliases rather than
+hard-coding a provider or concrete model.
 
 ## Root orchestrator contract
 
