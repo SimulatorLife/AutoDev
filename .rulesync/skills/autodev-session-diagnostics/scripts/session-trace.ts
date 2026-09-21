@@ -495,6 +495,7 @@ export function traceThread(file: string, withItems: boolean): ThreadTrace {
     .map((record) => record.timestamp)
     .filter((value): value is string => typeof value === "string")
     .sort();
+  const { counts, turns, gaps, tools, toolFailures, items } = acc;
   return {
     id: String(meta.id ?? file),
     sessionId: meta.session_id ?? null,
