@@ -1,100 +1,54 @@
 # Development lifecycle
 
-Use this lifecycle for repository changes. It defines the phases and gates; the
-orchestration skill defines role selection, delegation, concurrency, and child
-lifecycle.
+Use these phases for repository changes. Trivial work may collapse phases, but
+applicable gates still apply. Orchestration mechanics, including delegation and
+validation depth, are defined in the parent skill.
 
-## Contract
+## Invariants
 
-- Prefer one canonical live path; do not satisfy a change with an unused or parallel implementation
+- Keep one canonical active path; an unused or parallel implementation does not satisfy the change
 - Preserve intentional behavior unless the target state changes it
 - For replacements or migrations, move callers to the target path and remove obsolete paths unless staged coexistence is explicitly required
-- Never weaken requirements, tests, validation criteria, or performance thresholds to make a change pass
-- Report missing tools, checks, runtime evidence, and unresolved uncertainty
+- Keep scope to the request plus dependency work required for correctness
+- Report unavailable evidence and unresolved uncertainty
 
 ## 1. Understand
 
-Before editing, establish:
-
-- acceptance criteria, constraints, and non-goals
-- behavior that must remain unchanged
-- affected behavior, structure, interfaces, data, configuration, or documentation
-- evidence needed to prove completion
-
-Keep scope to the request plus dependency work required for correctness.
+Establish acceptance criteria, constraints, non-goals, behavior that must remain
+unchanged, affected surfaces, and evidence needed for completion.
 
 ## 2. Discover
 
-Identify:
-
-- the canonical implementation, entry points, tests, configuration, and documentation
-- important callers, consumers, ownership boundaries, and control/data flow
-- existing implementations that can be reused
-- active paths versus generated, dead, transitional, or compatibility-only paths
-
-Inspect the relevant call graph or ownership boundary rather than inferring it
-from filenames or isolated snippets.
+Identify the canonical implementation, entry points, tests, configuration,
+documentation, callers, ownership boundaries, and control/data flow. Distinguish
+active paths from generated, dead, transitional, or compatibility-only paths.
 
 ## 3. Plan
 
-Define the smallest coherent target state:
-
-- canonical implementation and ownership
-- files and callers to change, migrate, or remove
-- independent scopes worth delegating
-- validation needed for each meaningful slice
-
-A replacement or migration is not complete if it only adds a parallel path.
-If staged coexistence is required, define which path is authoritative and when
-the old path is removed.
+Define the target implementation and ownership, required caller/file migrations
+or removals, and validation needed for each meaningful slice. For staged
+migration, define the authoritative path and removal condition for the old one.
 
 ## 4. Implement
 
-Implement through the active canonical path:
+Change the active path end to end. Update required callers, tests, configuration,
+and documentation; remove superseded paths; edit generated artifacts through
+their source; avoid unrelated cleanup.
 
-- update required callers, tests, configuration, and documentation
-- keep ownership cohesive and dependencies directional
-- reuse or simplify existing abstractions before adding new ones where practical
-- remove superseded code, wrappers, shims, flags, helpers, and documentation
-- edit generated artifacts through their canonical source
-- avoid unrelated cleanup
+## 5. Validate
 
-A vertical slice is complete only when the repository actually uses it.
-
-## 5. Validate and review
-
-Apply the orchestration skill's complexity-scaled validation policy. Use the
-strongest relevant evidence available, such as:
-
-- targeted tests and regression checks
-- type, lint, schema, format, or static checks
-- integration, runtime, browser, CLI, API, or end-to-end checks
-
-Independent reviewers validate acceptance criteria, the actual diff and active
-paths, regression risk, ownership/complexity, stale or duplicate paths, and
-evidence quality. They must not validate scopes they implemented.
-
-Treat passing checks as evidence, not proof. Confirm they exercise the intended
-active path and report anything that could not be validated.
+Apply the parent skill's validation policy and the strongest relevant repository
+checks. Verify the intended active path is exercised, regressions are covered,
+and unavailable evidence is reported.
 
 ## 6. Repair
 
-For a blocking finding:
-
-1. fix the source cause
-2. rerun the failed and nearby relevant checks
-3. repeat independent review when the repair materially changes the reviewed behavior or architecture
-
-Do not advance with unresolved blocking findings.
+Resolve blocking findings at their source, rerun failed and nearby relevant
+checks, and repeat review when a repair materially changes the reviewed behavior
+or architecture.
 
 ## 7. Integrate
 
-Before completion, verify that:
-
-- acceptance criteria are satisfied
-- the intended implementation is the active canonical path
-- required callers are migrated and obsolete paths removed
-- tests, documentation, configuration, and generated outputs match the final state
-- the final diff has no accidental scope, temporary code, stale comments, or introduced unresolved TODOs
-
-Report validation performed, unavailable evidence, and remaining known risk.
+Before completion, confirm the acceptance criteria, canonical active path,
+caller migration/removal, supporting tests/configuration/documentation, and final
+diff are consistent with the target state. Report remaining known risk.
