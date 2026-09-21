@@ -36,15 +36,19 @@ Choose by capability first, then required sandbox. Use the smallest capable
 role and configured autodev/<role> aliases rather than hard-coding a provider or
 model.
 
+## Complexity
+
+Classify the change once using semantic impact, not line count:
+
+- **Trivial/atomic**: obvious, localized, low-risk work with direct verification
+- **Standard**: non-trivial but bounded work with meaningful behavioral, structural, interface, configuration, data, or regression risk
+- **High-risk/cross-cutting**: broad ownership or migration impact, runtime-critical behavior, substantial uncertainty, or high cost of a missed defect
+
 ## Delegate
 
-Scale delegation to semantic complexity: scope, risk, uncertainty, runtime
-impact, ownership boundaries, and cost of a missed defect. Do not use line count
-as the primary measure.
-
 - **Trivial/atomic**: the root may execute directly when delegation adds little value
-- **Normal**: delegate substantive implementation and useful discovery
-- **Large, uncertain, or cross-cutting**: decompose into bounded scopes and parallelize independent work where useful
+- **Standard**: delegate substantive implementation and useful discovery
+- **High-risk/cross-cutting**: decompose into bounded scopes and parallelize independent work where useful
 
 Give each mutable scope one primary implementer. Avoid concurrent edits to the
 same files unless the root is deliberately reconciling alternatives.
@@ -63,11 +67,9 @@ must not edit, stage, commit, or push.
 
 ## Validate
 
-Scale independent validation by semantic risk:
-
 - **Trivial/atomic**: direct verification may be sufficient
-- **Normal**: normally use one independent validator or tester
-- **Large/high-risk/cross-cutting**: normally use two complementary independent validation perspectives when capacity allows
+- **Standard**: normally use one independent validator or tester
+- **High-risk/cross-cutting**: normally use two complementary independent validation perspectives when capacity allows
 
 Prefer complementary evidence over duplicate reviewers, for example:
 
@@ -75,15 +77,13 @@ Prefer complementary evidence over duplicate reviewers, for example:
 - tests/static analysis + browser behavior
 - migration/call-path review + regression testing
 
-A validator must not validate a scope it implemented. Prefer fresh context so
-validation is based on requirements and repository state rather than the
-implementer's reasoning.
+A validator must not validate a scope it implemented. Give it the acceptance
+criteria, constraints, and current repository/diff state, but do not prime it
+with the implementer's conclusions or reasoning unless needed to investigate a
+specific finding.
 
 Do not spawn agents merely to satisfy a count. Each additional agent must add
 useful execution, expertise, or independent evidence.
-
-Validation applies to the reviewed repository state. Material changes invalidate
-affected evidence and require appropriate revalidation.
 
 Treat agent reports as evidence, not authority. The root resolves disagreements
 and decides whether lifecycle gates pass.
@@ -99,8 +99,5 @@ The root:
 2. checks them against acceptance criteria
 3. resolves conflicting findings
 4. integrates only relevant work
-5. advances or returns the development lifecycle as warranted
+5. advances lifecycle gates when their evidence is satisfied
 6. reports unavailable evidence and unresolved risk
-
-When a finding exposes an earlier lifecycle error, return to the phase that owns
-the problem rather than patching around it downstream.
