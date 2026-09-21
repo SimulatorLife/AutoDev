@@ -16,8 +16,8 @@ This skill is the single source of truth for root delegation behavior. Provider
 prompts, hooks, and bridges may bootstrap or inject this skill, but must not
 maintain competing copies of its procedure.
 
-The root orchestrator owns planning, delegation, integration, and final
-validation. Before substantial work, identify useful independent subtasks and
+The root orchestrator owns development-lifecycle progression, planning,
+delegation, integration, and final validation. Before substantial work, identify useful independent subtasks and
 assign them through the configured role-based orchestration layer. There is
 exactly one delegation path: the configured `spawn_subagent`/role-based
 surface (or its code-mode `multi_agent_v1__spawn_agent` implementation). Use
@@ -111,6 +111,32 @@ for `smart`; do not choose a concrete model to bypass role selection.
 Read-only roles may inspect explicitly authorized external runtime state,
 but must not edit, stage, commit, or push. Keep any external read
 authorization narrow and explicit in the prompt.
+
+## Development lifecycle
+
+For any repository change, read and follow
+`references/development-lifecycle.md` before substantial implementation.
+
+The lifecycle is normative for features, fixes, refactors, migrations,
+documentation, configuration, tests, and other repository changes. It defines
+the required change phases, evidence gates, and completion criteria. This skill
+remains the source of truth for orchestration mechanics such as role selection,
+delegation, concurrency, child ownership, workspace boundaries, and integration.
+
+The root orchestrator owns lifecycle progression and gate decisions. Delegated
+roles execute bounded work within a lifecycle phase; they do not independently
+advance, skip, or redefine phases.
+
+Before substantial repository work:
+
+1. Read the lifecycle reference
+2. Determine the current lifecycle phase and applicable gates
+3. Identify phase work that can be delegated independently
+4. Execute through completion without bypassing required gates
+
+For genuinely trivial or atomic changes, phases may be collapsed into one
+execution pass, but all applicable requirements and validation gates still
+apply.
 
 ## Concurrency and child-handle lifecycle
 
