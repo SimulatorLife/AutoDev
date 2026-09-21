@@ -7,8 +7,9 @@ targets: ["copilot"]
 # Agent orchestration
 
 Use this skill to coordinate independent work across the configured capability
-roles. The orchestrator owns the plan and integration; delegated roles own
-their bounded execution. Select explicit configured autodev/<role> model aliases rather than hard-coding a provider or concrete model.
+roles. The orchestrator owns lifecycle progression, planning, delegation,
+synthesis, integration, and gate decisions; delegated roles should perform the
+substantive discovery, implementation, testing, and validation work. Select explicit configured autodev/<role> model aliases rather than hard-coding a provider or concrete model.
 
 ## Root orchestrator contract
 
@@ -17,8 +18,11 @@ prompts, hooks, and bridges may bootstrap or inject this skill, but must not
 maintain competing copies of its procedure.
 
 The root orchestrator owns development-lifecycle progression, planning,
-delegation, integration, and final validation. Before substantial work, identify useful independent subtasks and
-assign them through the configured role-based orchestration layer. There is
+delegation, synthesis, integration, and final gate decisions. It should remain
+primarily a coordinator rather than becoming the default investigator,
+implementer, tester, or validator. Before substantial work, identify useful
+bounded subtasks and assign substantive discovery, implementation, testing, and
+validation through the configured role-based orchestration layer. There is
 exactly one delegation path: the configured `spawn_subagent`/role-based
 surface (or its code-mode `multi_agent_v1__spawn_agent` implementation). Use
 one whole batch call for independent work; do not substitute `create_thread`,
@@ -88,13 +92,15 @@ for `smart`; do not choose a concrete model to bypass role selection.
 
 ## Plan and delegate
 
-1. Before substantial investigation or implementation, identify useful,
-   independent subtasks. Skip delegation only for a genuinely trivial or
-   atomic task with no useful independent work.
-2. Give each independent item one primary implementer. Run independent items
-   in parallel when useful, but assign disjoint file ownership. Do not have
-   parallel roles edit the same file unless the parent is deliberately
-   reconciling the results.
+1. Assess the change's scope, risk, uncertainty, and validation needs before
+   deciding how much delegation is useful. For non-trivial work, delegate
+   substantive discovery, implementation, testing, and validation instead of
+   performing those phases in the root. Skip delegation only when the task is
+   genuinely trivial or atomic and delegation would add no useful independence.
+2. Give each independent implementation item one primary implementer. Run
+   independent items in parallel when useful, but assign disjoint file
+   ownership. Do not have parallel roles edit the same file unless the parent
+   is deliberately reconciling the results.
 3. Use the configured subagent tools for delegation. Do not use
    `create_thread`, `fork_thread`, or `handoff_thread` as substitutes for
    role-based delegation.
@@ -112,6 +118,31 @@ Read-only roles may inspect explicitly authorized external runtime state,
 but must not edit, stage, commit, or push. Keep any external read
 authorization narrow and explicit in the prompt.
 
+## Scale delegation to complexity
+
+Use the smallest agent set that provides useful execution and independent
+evidence. Complexity is determined by scope, risk, uncertainty, number of
+affected ownership boundaries, runtime behavior, and cost of a missed defect;
+do not use raw line count alone.
+
+- **Trivial/atomic**: the root may perform the change directly when it is
+  obvious, low-risk, and genuinely cheaper than delegation. A dedicated
+  validator is optional when independent validation would add negligible value.
+- **Small/moderate**: delegate the substantive implementation and any meaningful
+  discovery. Use an independent validator or tester when the change can affect
+  behavior, interfaces, ownership, data flow, configuration, or regressions.
+- **Large/high-risk/cross-cutting**: decompose discovery and implementation into
+  bounded subagents where practical, then use at least two independent
+  validation perspectives when capacity allows. Prefer complementary evidence,
+  such as a `validator` reviewing architecture/tests plus a
+  `browser-tester`, runtime tester, or second validator exercising behavior.
+- **Uncertain**: bias toward more independent discovery or validation when the
+  architecture, runtime behavior, migration surface, or failure modes are not
+  well understood.
+
+Do not spawn agents merely to satisfy a count. Additional agents should provide
+distinct scope, expertise, execution, or independent evidence.
+
 ## Development lifecycle
 
 For any repository change, read and follow
@@ -124,8 +155,10 @@ remains the source of truth for orchestration mechanics such as role selection,
 delegation, concurrency, child ownership, workspace boundaries, and integration.
 
 The root orchestrator owns lifecycle progression and gate decisions. Delegated
-roles execute bounded work within a lifecycle phase; they do not independently
-advance, skip, or redefine phases.
+roles execute bounded discovery, implementation, testing, and validation within
+a lifecycle phase; they do not independently advance, skip, or redefine phases.
+The root consumes their evidence, resolves conflicts, integrates results, and
+decides whether the lifecycle may advance.
 
 Before substantial repository work:
 
@@ -225,11 +258,23 @@ failure.
 
 ## Validation and integration
 
-Finish every significant coordinated change with an independent `validator`
-role that did not implement the change. Treat its report as evidence and
-resolve disagreements at the parent boundary. Never weaken requirements,
-tests, or performance thresholds to satisfy a validator.
+Delegate substantive validation rather than making the root the primary
+validator. Scale independent validation to the change:
 
-The parent reviews delegated changes, checks the reported file scope and
-validation, integrates only relevant results, and reports any unavailable
-roles or unresolved evidence instead of silently treating them as success.
+- trivial/atomic changes may omit a dedicated validator when the risk is
+  negligible and the result is directly verifiable
+- meaningful small/moderate changes should normally use at least one
+  independent `validator` or tester that did not implement the change
+- large, high-risk, cross-cutting, migration, or behavior-heavy changes should
+  normally use at least two independent validation perspectives when capacity
+  allows, preferably with complementary methods or roles
+
+Treat validator and tester reports as evidence. The root resolves disagreements,
+checks that evidence covers the acceptance criteria, and makes the final gate
+decision. Never weaken requirements, tests, or performance thresholds to
+satisfy a validator.
+
+The parent reviews delegated changes and reported scope at the integration
+boundary, integrates only relevant results, and reports unavailable roles,
+missing evidence, or unresolved findings instead of silently treating them as
+success.
