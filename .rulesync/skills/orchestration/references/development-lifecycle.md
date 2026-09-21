@@ -6,7 +6,9 @@ roles coordinate.
 
 ## Governing contract
 
-- The root orchestrator owns lifecycle progression and gate decisions
+- The root orchestrator owns lifecycle progression, synthesis, integration, and gate decisions
+- Delegate substantive discovery, implementation, testing, and validation to bounded subagents by default; the root should primarily coordinate and consume their evidence
+- Scale delegation and independent validation to scope, risk, uncertainty, runtime impact, and affected ownership boundaries rather than using a fixed agent count
 - Apply the lifecycle to features, fixes, refactors, migrations, documentation, configuration, tests, and infrastructure changes
 - Prefer one canonical implementation path over competing live paths
 - Do not claim completion from code that is merely added, staged, or isolated; the requested behavior must be integrated into the active repository path
@@ -30,6 +32,11 @@ include only the minimum required dependency work and make that relationship
 explicit.
 
 ## 2. Inspect the current state
+
+For non-trivial changes, delegate meaningful discovery to one or more
+read-oriented roles when that can reduce uncertainty or parallelize
+investigation. The root should synthesize their findings rather than duplicating
+the same investigation itself.
 
 Establish how the repository works today before designing the change:
 
@@ -59,6 +66,10 @@ authority, and removal criteria are defined.
 
 ## 4. Implement through the canonical path
 
+For non-trivial changes, assign bounded implementation scopes to `worker`,
+`default`, or another appropriate implementation role. The root coordinates
+scope and integrates results rather than serving as the default implementer.
+
 Implement the requested behavior or structure end to end:
 
 - Modify the active path rather than creating an unused alternate path
@@ -73,6 +84,27 @@ For a vertical slice, completion means the repository actually uses the changed
 path and its acceptance criteria are observable.
 
 ## 5. Validate the implementation
+
+Delegate substantive testing and validation to roles independent from the
+implementation when that independence adds useful evidence. The root selects
+the validation strategy, consumes the results, and decides whether the gate
+passes.
+
+Scale validation to the change:
+
+- **Trivial/atomic**: direct verification may be sufficient; a dedicated
+  validator is optional
+- **Small/moderate**: use at least one independent validator or tester when the
+  change has meaningful behavioral, structural, interface, configuration, data,
+  or regression risk
+- **Large/high-risk/cross-cutting**: use at least two independent validation
+  perspectives when capacity allows, preferably combining different methods or
+  roles rather than duplicating the same check
+- **Uncertain**: add independent discovery or validation until the important
+  unknowns are covered
+
+Do not spawn agents merely to satisfy a count. Each additional role should
+provide distinct execution, expertise, or evidence.
 
 Run the strongest relevant validation available for the changed surface:
 
@@ -90,8 +122,13 @@ If a required check cannot run, record exactly what was not validated and why.
 
 ## 6. Independently review
 
-For every significant coordinated change, use an independent validator that did
-not implement the change.
+Use independent review when warranted by the change's complexity and risk. A
+trivial, directly verifiable change may not need a dedicated reviewer; a
+meaningful change should normally have at least one independent reviewer or
+tester; a large or high-risk change should normally have two independent
+validation perspectives when capacity allows.
+
+Any independent reviewer must not have implemented the scope it is validating.
 
 Review against:
 
@@ -103,8 +140,8 @@ Review against:
 - Tests and evidence quality
 - Documentation and configuration consistency
 
-Independent review is evidence. The root orchestrator resolves disagreements and
-owns the decision to advance the lifecycle.
+Independent review is evidence. The root orchestrator synthesizes independent
+reports, resolves disagreements, and owns the decision to advance the lifecycle.
 
 ## 7. Repair and revalidate
 
