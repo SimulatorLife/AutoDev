@@ -12,6 +12,7 @@ defined in the parent skill.
 - For replacements or migrations, move callers to the target path and remove obsolete paths unless staged coexistence is explicitly required
 - Keep scope to the requested change plus dependency work required for correctness
 - Fix failures at the phase or source that owns them rather than masking them downstream
+- Validation evidence is state-specific; material changes invalidate affected evidence
 
 ## 1. Understand
 
@@ -57,8 +58,6 @@ Apply the parent skill's validation policy and the strongest relevant repository
 checks. Validate acceptance criteria, the active path, regressions, and affected
 boundaries. Record unavailable evidence explicitly.
 
-Material changes after validation invalidate affected evidence.
-
 **Gate:** available evidence supports the target state with no known blocking
 findings
 
@@ -69,7 +68,6 @@ For a blocking finding:
 1. identify the phase or source that owns the defect
 2. return there and correct it
 3. rerun affected downstream work and validation
-4. invalidate stale evidence when repository state materially changes
 
 Do not advance while a blocking finding remains unresolved.
 
@@ -80,3 +78,10 @@ supporting tests/configuration/documentation, and final diff are consistent with
 the target state.
 
 Report completed validation, unavailable evidence, and remaining known risk.
+
+## 8. Commit
+
+Commit the completed change to `main` with a concise message and push it to the
+remote repository.
+
+**Gate:** the completed repository state is committed and pushed
