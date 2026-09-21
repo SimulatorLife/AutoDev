@@ -6,9 +6,6 @@ lifecycle.
 
 ## Contract
 
-- The root owns lifecycle progression, synthesis, integration, and gate decisions
-- Delegate substantive discovery, implementation, testing, and validation for non-trivial work
-- Scale delegation and validation to scope, risk, uncertainty, runtime impact, and ownership boundaries
 - Prefer one canonical live path; do not satisfy a change with an unused or parallel implementation
 - Preserve intentional behavior unless the target state changes it
 - For replacements or migrations, move callers to the target path and remove obsolete paths unless staged coexistence is explicitly required
@@ -28,7 +25,6 @@ Keep scope to the request plus dependency work required for correctness.
 
 ## 2. Discover
 
-For non-trivial changes, delegate useful discovery and synthesize the results.
 Identify:
 
 - the canonical implementation, entry points, tests, configuration, and documentation
@@ -54,8 +50,7 @@ the old path is removed.
 
 ## 4. Implement
 
-Delegate bounded implementation scopes for non-trivial work. Implement through
-the active canonical path:
+Implement through the active canonical path:
 
 - update required callers, tests, configuration, and documentation
 - keep ownership cohesive and dependencies directional
