@@ -7,9 +7,9 @@ targets: ["copilot"]
 # Agent orchestration
 
 Use this skill to coordinate independent work across the configured capability
-roles. The orchestrator owns lifecycle progression, planning, delegation,
-synthesis, integration, and gate decisions; delegated roles should perform the
-substantive discovery, implementation, testing, and validation work. Select explicit configured autodev/<role> model aliases rather than hard-coding a provider or concrete model.
+roles. The root owns lifecycle progression, planning, integration, and gate
+decisions; delegated roles own substantive execution. Select explicit configured
+autodev/<role> model aliases rather than hard-coding a provider or concrete model.
 
 ## Root orchestrator contract
 
@@ -17,16 +17,14 @@ This skill is the single source of truth for root delegation behavior. Provider
 prompts, hooks, and bridges may bootstrap or inject this skill, but must not
 maintain competing copies of its procedure.
 
-The root orchestrator owns development-lifecycle progression, planning,
-delegation, synthesis, integration, and final gate decisions. It should remain
-primarily a coordinator rather than becoming the default investigator,
-implementer, tester, or validator. Before substantial work, identify useful
-bounded subtasks and assign substantive discovery, implementation, testing, and
-validation through the configured role-based orchestration layer. There is
-exactly one delegation path: the configured `spawn_subagent`/role-based
-surface (or its code-mode `multi_agent_v1__spawn_agent` implementation). Use
-one whole batch call for independent work; do not substitute `create_thread`,
-`fork_thread`, or provider-private task APIs for the role-based child path.
+The root orchestrator owns lifecycle progression, planning, delegation,
+synthesis, integration, and gate decisions. For non-trivial work, remain the
+coordinator and delegate substantive discovery, implementation, testing, and
+validation. There is exactly one delegation path: the configured
+`spawn_subagent`/role-based surface (or its code-mode
+`multi_agent_v1__spawn_agent` implementation). Use one whole batch call for
+independent work; do not substitute `create_thread`, `fork_thread`, or
+provider-private task APIs for the role-based child path.
 
 The parent may message, wait for, resume, and close only children in its own
 agent tree. Never act on an agent ID you did not receive from this parent's
@@ -92,11 +90,9 @@ for `smart`; do not choose a concrete model to bypass role selection.
 
 ## Plan and delegate
 
-1. Assess the change's scope, risk, uncertainty, and validation needs before
-   deciding how much delegation is useful. For non-trivial work, delegate
-   substantive discovery, implementation, testing, and validation instead of
-   performing those phases in the root. Skip delegation only when the task is
-   genuinely trivial or atomic and delegation would add no useful independence.
+1. Scale delegation to scope, risk, and uncertainty. Delegate substantive
+   discovery, implementation, testing, and validation for non-trivial work;
+   the root may handle genuinely trivial or atomic work directly.
 2. Give each independent implementation item one primary implementer. Run
    independent items in parallel when useful, but assign disjoint file
    ownership. Do not have parallel roles edit the same file unless the parent
@@ -118,58 +114,16 @@ Read-only roles may inspect explicitly authorized external runtime state,
 but must not edit, stage, commit, or push. Keep any external read
 authorization narrow and explicit in the prompt.
 
-## Scale delegation to complexity
-
-Use the smallest agent set that provides useful execution and independent
-evidence. Complexity is determined by scope, risk, uncertainty, number of
-affected ownership boundaries, runtime behavior, and cost of a missed defect;
-do not use raw line count alone.
-
-- **Trivial/atomic**: the root may perform the change directly when it is
-  obvious, low-risk, and genuinely cheaper than delegation. A dedicated
-  validator is optional when independent validation would add negligible value.
-- **Small/moderate**: delegate the substantive implementation and any meaningful
-  discovery. Use an independent validator or tester when the change can affect
-  behavior, interfaces, ownership, data flow, configuration, or regressions.
-- **Large/high-risk/cross-cutting**: decompose discovery and implementation into
-  bounded subagents where practical, then use at least two independent
-  validation perspectives when capacity allows. Prefer complementary evidence,
-  such as a `validator` reviewing architecture/tests plus a
-  `browser-tester`, runtime tester, or second validator exercising behavior.
-- **Uncertain**: bias toward more independent discovery or validation when the
-  architecture, runtime behavior, migration surface, or failure modes are not
-  well understood.
-
-Do not spawn agents merely to satisfy a count. Additional agents should provide
-distinct scope, expertise, execution, or independent evidence.
-
 ## Development lifecycle
 
-For any repository change, read and follow
-`references/development-lifecycle.md` before substantial implementation.
+For repository changes, read and follow
+`references/development-lifecycle.md` before substantial implementation. The
+reference owns lifecycle phases and evidence gates; this skill owns orchestration
+mechanics.
 
-The lifecycle is normative for features, fixes, refactors, migrations,
-documentation, configuration, tests, and other repository changes. It defines
-the required change phases, evidence gates, and completion criteria. This skill
-remains the source of truth for orchestration mechanics such as role selection,
-delegation, concurrency, child ownership, workspace boundaries, and integration.
-
-The root orchestrator owns lifecycle progression and gate decisions. Delegated
-roles execute bounded discovery, implementation, testing, and validation within
-a lifecycle phase; they do not independently advance, skip, or redefine phases.
-The root consumes their evidence, resolves conflicts, integrates results, and
-decides whether the lifecycle may advance.
-
-Before substantial repository work:
-
-1. Read the lifecycle reference
-2. Determine the current lifecycle phase and applicable gates
-3. Identify phase work that can be delegated independently
-4. Execute through completion without bypassing required gates
-
-For genuinely trivial or atomic changes, phases may be collapsed into one
-execution pass, but all applicable requirements and validation gates still
-apply.
+The root advances the lifecycle from delegated evidence and integrates results;
+delegated roles do not advance or redefine phases. Trivial or atomic changes may
+collapse phases, but applicable gates still apply.
 
 ## Concurrency and child-handle lifecycle
 
@@ -258,23 +212,16 @@ failure.
 
 ## Validation and integration
 
-Delegate substantive validation rather than making the root the primary
-validator. Scale independent validation to the change:
+Scale independent validation to the change:
 
-- trivial/atomic changes may omit a dedicated validator when the risk is
-  negligible and the result is directly verifiable
-- meaningful small/moderate changes should normally use at least one
-  independent `validator` or tester that did not implement the change
-- large, high-risk, cross-cutting, migration, or behavior-heavy changes should
-  normally use at least two independent validation perspectives when capacity
-  allows, preferably with complementary methods or roles
+- trivial/atomic: a dedicated validator is optional when direct verification is sufficient
+- meaningful small/moderate: normally use at least one independent validator or tester
+- large/high-risk/cross-cutting: normally use at least two complementary validation perspectives when capacity allows
 
-Treat validator and tester reports as evidence. The root resolves disagreements,
-checks that evidence covers the acceptance criteria, and makes the final gate
-decision. Never weaken requirements, tests, or performance thresholds to
-satisfy a validator.
+A validator or tester must not validate a scope it implemented. Do not spawn
+agents merely to satisfy a count; each should add distinct evidence.
 
-The parent reviews delegated changes and reported scope at the integration
-boundary, integrates only relevant results, and reports unavailable roles,
-missing evidence, or unresolved findings instead of silently treating them as
-success.
+The root checks that delegated evidence covers the acceptance criteria, resolves
+disagreements, integrates only relevant results, and reports missing evidence or
+unresolved findings. Never weaken requirements, tests, or performance thresholds
+to satisfy validation.
