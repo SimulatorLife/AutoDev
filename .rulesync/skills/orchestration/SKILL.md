@@ -8,6 +8,9 @@ targets: ["copilot"]
 
 Coordinate work; do not become the default worker.
 
+This file is the source of truth for orchestration policy. Provider prompts,
+hooks, and bridges may bootstrap it but must not maintain competing procedures.
+
 The root owns planning, task decomposition, delegation, synthesis, integration,
 lifecycle progression, and final gate decisions. For non-trivial work, delegate
 substantive discovery, implementation, testing, and validation to configured
