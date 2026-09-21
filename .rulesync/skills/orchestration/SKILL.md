@@ -6,215 +6,98 @@ targets: ["copilot"]
 
 # Agent orchestration
 
-Use this skill to coordinate independent work across the configured capability/agent
-roles. You, the orchestrator, owns the plan and integration; delegated roles own
-their bounded execution. Select explicit configured autodev/<role> model aliases rather than hard-coding a provider or concrete model.
+Coordinate work; do not become the default worker.
 
-## Root orchestrator contract
+This file is the source of truth for orchestration policy. Provider prompts,
+hooks, and bridges may bootstrap it but must not maintain competing procedures.
 
-This skill is the single source of truth for root delegation behavior. Provider
-prompts, hooks, and bridges may bootstrap or inject this skill, but must not
-maintain competing copies of its procedure.
+The root owns planning, task decomposition, delegation, synthesis, integration,
+lifecycle progression, and final gate decisions. For non-trivial work, delegate
+substantive discovery, implementation, testing, and validation to configured
+roles.
 
-The root orchestrator owns lifecycle progression, planning, delegation,
-synthesis, integration, and gate decisions. For non-trivial work, remain the
-coordinator and delegate substantive discovery, implementation, testing, and
-validation. There is exactly one delegation path: the configured
-`spawn_subagent`/role-based surface (or its code-mode
-`multi_agent_v1__spawn_agent` implementation). Use one whole batch call for
-independent work; do not substitute `create_thread`, `fork_thread`, or
-provider-private task APIs for the role-based child path.
-
-The parent may message, wait for, resume, and close only children in its own
-agent tree. Never act on an agent ID you did not receive from this parent's
-spawn call or recover from this parent's own Codex App history; never use IDs
-discovered by reading the filesystem, global task list, or another parent's
-output. Other orchestrators and their children are peers, not recovery
-candidates. Roles are leaves unless a task explicitly requires otherwise and
-has an approved nested-delegation design.
-
-For a native code-mode provider, the delegation call uses the runtime's
-`exec` surface and `tools.multi_agent_v1__spawn_agent` with `{ agent_type,
-message }`. Batch calls use `Promise.allSettled`, emit a structured
-`spawn_status: "created"` or `spawn_status: "rejected"` result per child, and
-never hide successful siblings behind one rejected child. Spawning is
-fire-and-forget: children continue under the orchestration layer after the
-spawn call returns, and the parent must not poll for their lifetime. Provider
-bridges use the same parent-owned path when available; bridge-native children
-remain provider-owned and are reported separately.
-
-A spawn failure never authorizes silent takeover of delegated implementation
-scopes. A rejected entry with no `agent_id` created no child handle. On an
-admission/thread-limit failure against the configured limit, stop repeated spawn
-attempts, recover known terminal children owned by this parent, retry the
-original batch once, and if that fails report the exact unavailable path while
-remaining the coordinator.
-
-When a child reaches `completed`, `errored`, `interrupted`, `shutdown`, or an
-explicit provider-incomplete terminal state, consume its result and call
-`close_agent` immediately. Completion does not release the child handle by
-itself. If the runtime offers owner-scoped `list_agents`/`manage_subagents`, use
-it during recovery. If only Codex App `read_thread` is available, recover IDs
-only from successful spawn results in this parent's history. Do not use global
-`list_threads`, filesystem state, telemetry, or UI listings as ownership proof.
-The root hook may inject an executable current-parent recovery preflight; run it
-before retrying admission failures. It must wait children, close terminal ones,
-and leave running or foreign children untouched.
-
-The router's active-child count is router-admission telemetry, not the Codex
-app's open child-handle count. A zero router count does not prove that the
-parent has no open handles. Keep the active workspace/worktree aligned with the
-parent and report missing roles, tools, provider limits, stalls, partial child
-results, and unavailable recovery surfaces explicitly.
+For repository changes, follow `references/development-lifecycle.md`.
+For spawning, waiting, recovery, or child cleanup, follow
+`references/runtime-contract.md`.
 
 ## Capability roles
 
-| Role | Capability | Sandbox |
+| Role | Use for | Sandbox |
 | --- | --- | --- |
 | `default` | General-purpose development | workspace-write |
 | `docs-researcher` | Targeted documentation research | read-only |
 | `browser-tester` | Browser and runtime evidence | read-only |
-| `explorer` | Architecture and dependency exploration | read-only |
+| `explorer` | Architecture, dependencies, and current-state discovery | read-only |
 | `worker` | Bounded implementation | workspace-write |
-| `validator` | Independent validation | workspace-write |
-| `smart` | Full-capability research, browser, and implementation work | workspace-write |
+| `validator` | Independent review and validation | workspace-write |
+| `smart` | Work requiring broader capability than normal roles | workspace-write |
 
-Choose a role by capability first, then by the required sandbox. Use the
-smallest role that can complete the work: `explorer`, `docs-researcher`, and
-`browser-tester` gather evidence; `worker` makes a bounded change; `default`
-handles general development; `validator` checks another role's work; and
-`smart` is reserved for work that genuinely needs its broader capabilities.
-Use the configured default tier for ordinary roles and reserve the smart tier
-for `smart`; do not choose a concrete model to bypass role selection.
+Choose by capability first, then required sandbox. Use the smallest capable
+role and configured autodev/<role> aliases rather than hard-coding a provider or
+model.
 
-## Plan and delegate
+## Complexity
 
-1. Scale delegation to scope, risk, and uncertainty. Delegate substantive
-   discovery, implementation, testing, and validation for non-trivial work;
-   the root may handle genuinely trivial or atomic work directly.
-2. Give each independent implementation item one primary implementer. Run
-   independent items in parallel when useful, but assign disjoint file
-   ownership. Do not have parallel roles edit the same file unless the parent
-   is deliberately reconciling the results.
-3. Use the configured subagent tools for delegation. Do not use
-   `create_thread`, `fork_thread`, or `handoff_thread` as substitutes for
-   role-based delegation.
-4. Keep every prompt bounded. State the exact outcome, allowed files or
-   read scope, whether edits are allowed, the validation expected, and the
-   repository/worktree the role must use.
-5. Roles are leaf agents. Do not ask a delegated role to spawn further
-   subagents. Keep the parent workspace aligned with the target repository
-   and do not let a role infer a different workspace from task prose.
-6. For important decisions, obtain an independent perspective through a
-   separate configured role or implementation path. A second perspective is
-   evidence, not permission to broaden the file scope or weaken requirements.
+Classify the change once using semantic impact, not line count:
 
-Read-only roles may inspect explicitly authorized external runtime state,
-but must not edit, stage, commit, or push. Keep any external read
-authorization narrow and explicit in the prompt.
+- **Trivial/atomic**: obvious, localized, low-risk work with direct verification
+- **Standard**: non-trivial but bounded work with meaningful behavioral, structural, interface, configuration, data, or regression risk
+- **High-risk/cross-cutting**: broad ownership or migration impact, runtime-critical behavior, substantial uncertainty, or high cost of a missed defect
 
-## Development lifecycle
+## Delegate
 
-For repository changes, follow `references/development-lifecycle.md`. It owns
-the lifecycle phases and gates; this file owns orchestration mechanics.
+- **Trivial/atomic**: the root may execute directly when delegation adds little value
+- **Standard**: delegate substantive implementation and useful discovery
+- **High-risk/cross-cutting**: decompose into bounded scopes and parallelize independent work where useful
 
-## Concurrency and child-handle lifecycle
+Give each mutable scope one primary implementer. Avoid concurrent edits to the
+same files unless the root is deliberately reconciling alternatives.
 
-Before creating parallel roles, check the available configured concurrency and
-never exceed it. Serialize work when capacity is unavailable or uncertain;
-do not retry by spawning more roles. Keep the smallest set of active roles
-that provides useful independence.
+Each delegated task must state:
 
-Treat each child handle as a two-phase resource:
+- concrete outcome and acceptance criteria
+- allowed read/write scope
+- important constraints and non-goals
+- expected tests, checks, or evidence
+- repository or worktree context
 
-- Wait only when the result is needed. A completion notification or terminal
-  status (`completed`, `errored`, `interrupted`, or `shutdown`) reports state
-  but does not release the handle.
-- After consuming a finished child's result, call `close_agent` immediately,
-  before spawning another role or ending the task.
-- If the turn is interrupted, close every child handle whose final status is
-  known before attempting new delegation. Stale handles can retain capacity
-  even when their work is no longer running.
-- Treat a rejected spawn with no returned child id as an admission failure, not
-  as a child that needs closing. If the runtime exposes an owner-scoped
-  `list_agents`/`manage_subagents` operation, enumerate this parent's children
-  before recovery. If only Codex App `read_thread` is available, recover IDs
-  only from successful spawn results in this parent's own history. Otherwise use
-  only IDs returned by this parent's spawn calls. `list_threads`, filesystem
-  state, telemetry, and UI listings are not child-handle enumeration. Close
-  only known terminal children owned by this parent, retry the original
-  delegation once, and then stop retrying.
-  Do not silently perform delegated implementation scopes after the bounded
-  recovery attempt fails; report the capacity/provider failure to the
-  parent/user.
-- Never perform a global cleanup or close a handle discovered outside this
-  parent tree. Router active-slot telemetry cannot prove that the Codex app has
-  no open child handles.
+Delegated roles are leaves unless nested delegation is explicitly designed for
+the task. Read-only roles may inspect explicitly authorized external state but
+must not edit, stage, commit, or push.
 
-Antigravity-orchestrated turns wrap their work in the CLI's own `invoke_subagent`
-and `manage_subagents` tools. Those children are subprocess calls inside agy,
-not `autodev/<role>` requests through the router, so per-session concurrency
-enforcement does not cover them; the antigravity bridge tracks the most recent
-delegator step and stops killing agy when the upstream goes away mid-delegation,
-emitting an `INCOMPLETE_REASON_CLIENT_DISCONNECTED` truncation instead of an
-`INCOMPLETE_REASON_INTERRUPTED` one when the cause was the parent stream going
-idle. Long delegations therefore surface in launchd logs as `agy turn aborted-
-delegation` with the delegator tool name, not `agy turn aborted`. Treat those
-as `agy turn succeeded after upstream close` for telemetry: the work ran, the
-parent just wasn't listening.
+## Validate
 
-Report rate limits, stalls, provider failures, skipped roles, and
-unavailable execution paths explicitly. Treat missing or partial delegated
-evidence as missing evidence, not as a successful result.
+- **Trivial/atomic**: direct verification may be sufficient
+- **Standard**: normally use one independent validator or tester
+- **High-risk/cross-cutting**: normally use two complementary independent validation perspectives when capacity allows
 
-### Routing protection while children are active
+Prefer complementary evidence over duplicate reviewers, for example:
 
-The router keeps an orchestrator in `subagent_wait` on its original provider
-while any of its spawned children are still running. Because `subagent_wait`
-counts as live activity, the router's candidate ranking sees the occupied
-provider as active and routes subsequent orchestrators to idle providers
-first. This prevents a second orchestrator from landing on the same provider
-and triggering rate-limit cascades. Children's streaming progress refreshes
-the parent's TTL, and the parent transitions to `resumed` only when all
-children settle. The staleness TTL still applies: an orchestrator whose
-children all died without reporting back ages out of live counts normally.
+- architecture/code review + runtime validation
+- tests/static analysis + browser behavior
+- migration/call-path review + regression testing
 
-## Workspace and prompt boundaries
+A validator must not validate a scope it implemented. Give it the acceptance
+criteria, constraints, and current repository/diff state, but do not prime it
+with the implementer's conclusions or reasoning unless needed to investigate a
+specific finding.
 
-Pass the active repository or worktree context through the delegation tool and
-keep it consistent with the parent task. Never rely on arbitrary task prose
-to select a workspace. Do not serialize parent-only instructions as if they
-were delegated user content; give each role only the task context it needs.
+Do not spawn agents merely to satisfy a count. Each additional agent must add
+useful execution, expertise, or independent evidence.
 
-For each delegated item, state:
+Treat agent reports as evidence, not authority. The root resolves disagreements
+and decides whether lifecycle gates pass.
 
-- the concrete outcome and acceptance criteria;
-- the exact files or directories it may read or edit;
-- whether it may make edits, and who owns integration;
-- tests, checks, or evidence it must return; and
-- any explicitly approved external paths or services it may inspect.
+Never weaken requirements, tests, or performance thresholds to obtain a passing
+result.
 
-The selected `agent_type` is the capability selector. Codex must resolve that
-role from its installed `agents/<agent_type>.toml` configuration before the
-child turn starts, including the role TOML's enabled MCP servers and skills.
-The spawn payload must contain only the selected role and task; do not attach
-skill paths or MCP lists per invocation. If the child runtime cannot resolve the
-role contract or expose its declared tools, report a child-bootstrap capability
-failure.
+## Integrate
 
+The root:
 
-## Validation and integration
-
-Scale independent validation to the change:
-
-- trivial/atomic: a dedicated validator is optional when direct verification is sufficient
-- meaningful small/moderate: normally use at least one independent validator or tester
-- large/high-risk/cross-cutting: normally use at least two complementary validation perspectives when capacity allows
-
-A validator or tester must not validate a scope it implemented. Do not spawn
-agents merely to satisfy a count; each should add distinct evidence.
-
-The root checks that delegated evidence covers the acceptance criteria, resolves
-disagreements, integrates only relevant results, and reports missing evidence or
-unresolved findings. Never weaken requirements, tests, or performance thresholds
-to satisfy validation.
+1. collects delegated results
+2. checks them against acceptance criteria
+3. resolves conflicting findings
+4. integrates only relevant work
+5. advances lifecycle gates when their evidence is satisfied
+6. reports unavailable evidence and unresolved risk
