@@ -14,6 +14,8 @@ provider-private task APIs for the configured child path.
 
 Batch independent spawns in one call when supported. Use isolated results such
 as `Promise.allSettled` so one rejected child does not hide successful siblings.
+Spawning is fire-and-forget when supported; children continue after the spawn
+call returns, so do not poll merely to keep them alive.
 
 ## Ownership
 
@@ -31,11 +33,13 @@ uncertain rather than spawning beyond the limit.
 
 A terminal child still owns a handle until explicitly closed where the runtime
 requires it. After consuming a terminal result, call `close_agent` before
-creating replacement work or ending the task.
+creating replacement work or ending the task. Router active-child telemetry is
+not proof that the parent has no open child handles.
 
 A rejected spawn with no child ID created no handle.
 
-On interruption or admission failure:
+On interruption or admission failure, run any injected current-parent recovery
+preflight first when available, then:
 
 1. enumerate this parent's children with owner-scoped `list_agents` or `manage_subagents` when available
 2. otherwise recover IDs only from this parent's verified spawn history, including Codex App `read_thread` when needed
