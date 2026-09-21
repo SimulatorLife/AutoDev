@@ -7,8 +7,8 @@ targets: ["copilot"]
 # Agent orchestration
 
 Use this skill to coordinate independent work across the configured capability
-roles. The orchestrator owns the plan and integration; delegated roles own
-their bounded execution. Select explicit configured autodev/<role> model aliases rather than hard-coding a provider or concrete model.
+roles. Select explicit configured autodev/<role> model aliases rather than
+hard-coding a provider or concrete model.
 
 ## Root orchestrator contract
 
@@ -16,13 +16,14 @@ This skill is the single source of truth for root delegation behavior. Provider
 prompts, hooks, and bridges may bootstrap or inject this skill, but must not
 maintain competing copies of its procedure.
 
-The root orchestrator owns planning, delegation, integration, and final
-validation. Before substantial work, identify useful independent subtasks and
-assign them through the configured role-based orchestration layer. There is
-exactly one delegation path: the configured `spawn_subagent`/role-based
-surface (or its code-mode `multi_agent_v1__spawn_agent` implementation). Use
-one whole batch call for independent work; do not substitute `create_thread`,
-`fork_thread`, or provider-private task APIs for the role-based child path.
+The root orchestrator owns lifecycle progression, planning, delegation,
+synthesis, integration, and gate decisions. For non-trivial work, remain the
+coordinator and delegate substantive discovery, implementation, testing, and
+validation. There is exactly one delegation path: the configured
+`spawn_subagent`/role-based surface (or its code-mode
+`multi_agent_v1__spawn_agent` implementation). Use one whole batch call for
+independent work; do not substitute `create_thread`, `fork_thread`, or
+provider-private task APIs for the role-based child path.
 
 The parent may message, wait for, resume, and close only children in its own
 agent tree. Never act on an agent ID you did not receive from this parent's
@@ -88,13 +89,13 @@ for `smart`; do not choose a concrete model to bypass role selection.
 
 ## Plan and delegate
 
-1. Before substantial investigation or implementation, identify useful,
-   independent subtasks. Skip delegation only for a genuinely trivial or
-   atomic task with no useful independent work.
-2. Give each independent item one primary implementer. Run independent items
-   in parallel when useful, but assign disjoint file ownership. Do not have
-   parallel roles edit the same file unless the parent is deliberately
-   reconciling the results.
+1. Scale delegation to scope, risk, and uncertainty. Delegate substantive
+   discovery, implementation, testing, and validation for non-trivial work;
+   the root may handle genuinely trivial or atomic work directly.
+2. Give each independent implementation item one primary implementer. Run
+   independent items in parallel when useful, but assign disjoint file
+   ownership. Do not have parallel roles edit the same file unless the parent
+   is deliberately reconciling the results.
 3. Use the configured subagent tools for delegation. Do not use
    `create_thread`, `fork_thread`, or `handoff_thread` as substitutes for
    role-based delegation.
@@ -111,6 +112,11 @@ for `smart`; do not choose a concrete model to bypass role selection.
 Read-only roles may inspect explicitly authorized external runtime state,
 but must not edit, stage, commit, or push. Keep any external read
 authorization narrow and explicit in the prompt.
+
+## Development lifecycle
+
+For repository changes, follow `references/development-lifecycle.md`. It owns
+the lifecycle phases and gates; this file owns orchestration mechanics.
 
 ## Concurrency and child-handle lifecycle
 
@@ -199,11 +205,16 @@ failure.
 
 ## Validation and integration
 
-Finish every significant coordinated change with an independent `validator`
-role that did not implement the change. Treat its report as evidence and
-resolve disagreements at the parent boundary. Never weaken requirements,
-tests, or performance thresholds to satisfy a validator.
+Scale independent validation to the change:
 
-The parent reviews delegated changes, checks the reported file scope and
-validation, integrates only relevant results, and reports any unavailable
-roles or unresolved evidence instead of silently treating them as success.
+- trivial/atomic: a dedicated validator is optional when direct verification is sufficient
+- meaningful small/moderate: normally use at least one independent validator or tester
+- large/high-risk/cross-cutting: normally use at least two complementary validation perspectives when capacity allows
+
+A validator or tester must not validate a scope it implemented. Do not spawn
+agents merely to satisfy a count; each should add distinct evidence.
+
+The root checks that delegated evidence covers the acceptance criteria, resolves
+disagreements, integrates only relevant results, and reports missing evidence or
+unresolved findings. Never weaken requirements, tests, or performance thresholds
+to satisfy validation.
