@@ -34,6 +34,14 @@
         "args": ["-lc", "exec \"${CODEX_HOME:-$HOME/.codex}/hooks/run-autodev-mcp.sh\" playwright"],
         "disabled": true,
         "default_tools_approval_mode": "approve"
+      },
+      "codex_app": {
+        "command": "/Users/henrykirk/.codex/plugins/cache/openai-bundled/codex-app-tools/0.1.4/scripts/launch_codex_app_tools_mcp",
+        "args": ["./server.mjs"],
+        "cwd": "/Users/henrykirk/.codex/plugins/cache/openai-bundled/codex-app-tools/0.1.4",
+        "default_tools_approval_mode": "approve",
+        "disabled": true,
+        "enabled_tools": ["request_user_input"]
       }
     }
   },

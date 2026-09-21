@@ -15,6 +15,12 @@ enabled = false
 [mcp_servers.autodev_spawn]
 enabled = true
 
+[mcp_servers.codex_app]
+enabled = true
+enabled_tools = [
+  "request_user_input",
+]
+
 [tools]
 web_search = true
 

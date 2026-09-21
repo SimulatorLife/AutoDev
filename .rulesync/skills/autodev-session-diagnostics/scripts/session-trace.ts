@@ -37,6 +37,102 @@ interface JsonRecord {
   [key: string]: unknown;
 }
 
+/** A JSON value: an object, an array, a primitive, or null. */
+type JsonValue = JsonRecord | JsonValue[] | string | number | boolean | null;
+
+/** The session_meta record, as it appears at the head of every rollout JSONL. */
+interface SessionMetaPayload {
+  id?: string;
+  session_id?: string;
+  parent_thread_id?: string;
+  thread_source?: string;
+  agent_role?: string;
+  agent_nickname?: string;
+  model_provider?: string;
+  cli_version?: string;
+  cwd?: string;
+  timestamp?: string;
+  [key: string]: unknown;
+}
+
+/** The turn_context record: carries the model the turn ran against. */
+interface TurnContextPayload {
+  model?: string;
+  [key: string]: unknown;
+}
+
+/** A single content part attached to a `response_item` of type `message` / `reasoning`. */
+interface ResponseContentPart {
+  type?: string;
+  text?: string;
+  [key: string]: unknown;
+}
+
+/** Discriminated union over the `response_item` variants the tracer cares about. */
+type ResponseItemPayload =
+  | { type: "message"; role?: string; content?: ResponseContentPart[]; [key: string]: unknown }
+  | { type: "reasoning"; id?: string; summary?: JsonValue[]; content?: ResponseContentPart[]; [key: string]: unknown }
+  | { type: "custom_tool_call" | "function_call"; name?: string; call_id?: string; id?: string; input?: JsonValue; arguments?: JsonValue; [key: string]: unknown }
+  | { type: "custom_tool_call_output" | "function_call_output"; call_id?: string; output?: JsonValue; [key: string]: unknown };
+
+/** Discriminated union over the `event_msg` variants the tracer cares about. */
+type EventMsgPayload =
+  | { type: "task_started"; turn_id?: string; [key: string]: unknown }
+  | { type: "task_complete"; turn_id?: string; last_agent_message?: string; error?: JsonValue; [key: string]: unknown }
+  | { type: "turn_aborted"; turn_id?: string; reason?: string; [key: string]: unknown }
+  | { type: string; [key: string]: unknown };
+
+/** A rollout JSONL line, discriminated by its `type` field. */
+type RolloutPayload =
+  | { type: "session_meta"; payload?: SessionMetaPayload; timestamp?: string }
+  | { type: "turn_context"; payload?: TurnContextPayload; timestamp?: string }
+  | { type: "response_item"; payload?: ResponseItemPayload; timestamp?: string }
+  | { type: "event_msg"; payload?: EventMsgPayload; timestamp?: string }
+  | { type: string; payload?: JsonRecord; timestamp?: string };
+
+/** The shape of the router /status `agents` block the live report exposes. */
+interface RouterAgentStatus {
+  schema?: string;
+  canonicalLiveCount?: number;
+  byState?: Record<string, number>;
+  liveByKind?: Record<string, number>;
+  liveByRole?: Record<string, number>;
+  liveByOrigin?: Record<string, number>;
+  liveByProvider?: Record<string, number>;
+  liveByModel?: Record<string, number>;
+  liveByWorkspace?: Record<string, number>;
+  missingProvider?: number;
+  missingModel?: number;
+  slotVsAgent?: Record<string, number>;
+  reconciledWithConcurrency?: boolean;
+  [key: string]: unknown;
+}
+
+/** The router-event fields we project into the per-thread summary. */
+interface RouterEventFields {
+  requestId?: string;
+  thread?: string;
+  phase?: string;
+  role?: string;
+  requestedModel?: string;
+  provider?: string;
+  model?: string;
+  outcome?: string;
+  status?: number;
+  failureClass?: string;
+  elapsedMs?: number;
+  toolCalls?: number;
+  selection?: string;
+  [key: string]: unknown;
+}
+
+/** The router /status top-level body the live report reads. */
+interface RouterStatusBody {
+  agents?: RouterAgentStatus;
+  startedAt?: string;
+  [key: string]: unknown;
+}
+
 const COLLATOR = new Intl.Collator();
 const TASK_OR_TURN_REGEX = /task_|turn_/;
 const TIMESTAMP_REGEX = /"timestamp":"([^"]+)"/;
@@ -181,13 +277,13 @@ function outputText(output: unknown): string {
   return JSON.stringify(output ?? "");
 }
 
-function readJsonl(file: string): JsonRecord[] {
+function readJsonl(file: string): RolloutPayload[] {
   return readFileSync(file, "utf8")
     .split("\n")
     .filter(Boolean)
     .flatMap((line) => {
       try {
-        return [JSON.parse(line) as JsonRecord];
+        return [JSON.parse(line) as RolloutPayload];
       } catch {
         return [];
       }
@@ -195,7 +291,7 @@ function readJsonl(file: string): JsonRecord[] {
 }
 
 /** The session_meta line, read without loading the whole rollout (they reach tens of MB). */
-function firstLine(file: string): JsonRecord | null {
+function firstLine(file: string): { payload?: SessionMetaPayload } | null {
   const fd = openSync(file, "r");
   try {
     const chunks: Buffer[] = [];
@@ -210,7 +306,9 @@ function firstLine(file: string): JsonRecord | null {
       if (newline !== -1) break;
       total += read;
     }
-    return JSON.parse(Buffer.concat(chunks).toString("utf8")) as JsonRecord;
+    return JSON.parse(Buffer.concat(chunks).toString("utf8")) as {
+      payload?: SessionMetaPayload;
+    };
   } catch {
     return null;
   } finally {
@@ -326,17 +424,20 @@ function itemDetail(payload: JsonRecord): string {
 }
 
 /** Tools a call reached: its own name, plus every `tools.<name>(` an `exec` script calls. */
-function toolsOfCall(payload: JsonRecord): string[] {
-  const name = String(payload.name ?? "?");
+function toolsOfCall(payload: ResponseItemPayload): string[] {
+  if (payload.type !== "custom_tool_call" && payload.type !== "function_call") {
+    return [];
+  }
+  const name = payload.name ?? "?";
   if (
     payload.type === "custom_tool_call" &&
     name === "exec" &&
     typeof payload.input === "string"
   ) {
-    const nested = Array.from(
-      payload.input.matchAll(/tools\.([A-Za-z0-9_]+)\s*\(/g),
-      (match) => match[1]!
-    );
+    const nested: string[] = [];
+    for (const match of payload.input.matchAll(/tools\.([A-Za-z0-9_]+)\s*\(/g)) {
+      if (match[1]) nested.push(match[1]);
+    }
     return nested.length > 0 ? nested : ["exec"];
   }
   return [name];
@@ -357,63 +458,66 @@ interface ThreadTraceAccumulator {
 function recordGapAndItems(
   record: { type?: unknown },
   at: string | null,
-  payload: JsonRecord,
+  payload: ResponseItemPayload | EventMsgPayload | undefined,
   withItems: boolean,
   acc: ThreadTraceAccumulator
 ): void {
-  if (
-    record.type === "response_item" ||
-    (record.type === "event_msg" && TASK_OR_TURN_REGEX.test(String(payload.type)))
-  ) {
-    const label =
-      record.type === "response_item"
-        ? `${payload.type}${payload.name ? `(${payload.name})` : ""}`
-        : String(payload.type);
-    if (at && acc.previous && acc.open.size > 0) {
-      const seconds = (Date.parse(at) - Date.parse(acc.previous.at)) / 1000;
-      if (seconds >= GAP_SECONDS)
-        acc.gaps.push({
-          seconds: Math.round(seconds),
-          after: acc.previous.label,
-          before: label,
-          at: acc.previous.at
-        });
-    }
-    if (at) acc.previous = { at, label };
-    if (withItems && record.type === "response_item" && at)
-      acc.items.push({
-        at,
-        kind: String(payload.type),
-        detail: itemDetail(payload)
+  const isResponse = record.type === "response_item";
+  const isTurnishEvent =
+    record.type === "event_msg" &&
+    typeof payload === "object" &&
+    payload !== null &&
+    TASK_OR_TURN_REGEX.test(payload.type);
+  if (!isResponse && !isTurnishEvent) return;
+  const label =
+    isResponse && payload && (payload.type === "custom_tool_call" || payload.type === "function_call")
+      ? `${payload.type}(${payload.name ?? ""})`
+      : isResponse && payload
+        ? payload.type
+        : payload && typeof payload === "object"
+          ? payload.type
+          : "";
+  if (at && acc.previous && acc.open.size > 0) {
+    const seconds = (Date.parse(at) - Date.parse(acc.previous.at)) / 1000;
+    if (seconds >= GAP_SECONDS)
+      acc.gaps.push({
+        seconds: Math.round(seconds),
+        after: acc.previous.label,
+        before: label,
+        at: acc.previous.at
       });
   }
+  if (at) acc.previous = { at, label };
+  if (withItems && isResponse && at && payload)
+    acc.items.push({
+      at,
+      kind: payload.type,
+      detail: itemDetail(payload)
+    });
 }
 
 function recordToolUsage(
   record: { type?: unknown },
   at: string | null,
-  payload: JsonRecord,
+  payload: ResponseItemPayload | undefined,
   acc: ThreadTraceAccumulator
 ): void {
-  if (
-    record.type === "response_item" &&
-    (payload.type === "custom_tool_call" || payload.type === "function_call")
-  ) {
+  if (record.type !== "response_item" || !payload) return;
+  if (payload.type === "custom_tool_call" || payload.type === "function_call") {
     const reached = toolsOfCall(payload);
     for (const tool of reached) acc.tools[tool] = (acc.tools[tool] ?? 0) + 1;
-    acc.callTools.set(String(payload.call_id), reached.join("+"));
+    if (payload.call_id !== undefined) acc.callTools.set(payload.call_id, reached.join("+"));
   } else if (
-    record.type === "response_item" &&
-    (payload.type === "custom_tool_call_output" ||
-      payload.type === "function_call_output")
+    payload.type === "custom_tool_call_output" ||
+    payload.type === "function_call_output"
   ) {
     const text = outputText(payload.output);
     const failure = TOOL_FAILURE.exec(text);
     if (failure) {
       acc.toolFailures.push({
         at: at ?? "",
-        tool: acc.callTools.get(String(payload.call_id)) ?? "?",
-        callId: String(payload.call_id),
+        tool: (payload.call_id !== undefined && acc.callTools.get(payload.call_id)) || "?",
+        callId: payload.call_id ?? "",
         detail: excerpt(text.slice(Math.max(0, failure.index - 40)))
       });
     }
@@ -423,39 +527,45 @@ function recordToolUsage(
 function recordTurnEvent(
   record: { type?: unknown },
   at: string | null,
-  payload: JsonRecord,
+  payload: EventMsgPayload | undefined,
   acc: ThreadTraceAccumulator
 ): void {
-  if (record.type === "event_msg" && payload.type === "task_started") {
+  if (record.type !== "event_msg" || !payload) return;
+  if (payload.type === "task_started") {
+    const turnId = payload.turn_id ?? "";
     const turn = {
-      turnId: String(payload.turn_id),
+      turnId,
       started: at,
       ended: null,
       outcome: "running",
       detail: null
     };
-    acc.open.set(turn.turnId, turn);
+    acc.open.set(turnId, turn);
     acc.turns.push(turn);
-  } else if (
-    record.type === "event_msg" &&
-    (payload.type === "task_complete" || payload.type === "turn_aborted")
-  ) {
-    const turn = acc.open.get(String(payload.turn_id));
+  } else if (payload.type === "task_complete" || payload.type === "turn_aborted") {
+    const turnId = payload.turn_id ?? "";
+    const turn = acc.open.get(turnId);
     if (turn) {
       turn.ended = at;
       turn.outcome =
         payload.type === "turn_aborted"
           ? `aborted:${payload.reason ?? "?"}`
-          : payload.error
+          : payload.error !== undefined
             ? "failed"
             : "completed";
-      const errorObj = payload.error as JsonRecord | undefined;
-      turn.detail = payload.error
-        ? excerpt(errorObj?.message ?? payload.error)
-        : payload.last_agent_message
-          ? excerpt(payload.last_agent_message)
-          : null;
-      acc.open.delete(turn.turnId);
+      if (payload.error !== undefined) {
+        const message =
+          payload.error && typeof payload.error === "object" && "message" in payload.error &&
+          typeof (payload.error as { message: unknown }).message === "string"
+            ? (payload.error as { message: string }).message
+            : payload.error;
+        turn.detail = excerpt(message);
+      } else if (typeof payload.last_agent_message === "string") {
+        turn.detail = excerpt(payload.last_agent_message);
+      } else {
+        turn.detail = null;
+      }
+      acc.open.delete(turnId);
     }
   }
 }
