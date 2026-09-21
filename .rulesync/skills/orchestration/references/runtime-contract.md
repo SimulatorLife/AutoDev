@@ -15,7 +15,8 @@ provider-private task APIs for the configured child path.
 Batch independent spawns in one call when supported. Use isolated results such
 as `Promise.allSettled` so one rejected child does not hide successful siblings.
 Spawning is fire-and-forget when supported; children continue after the spawn
-call returns, so do not poll merely to keep them alive.
+call returns. Wait when a child result is needed, but do not poll merely to keep
+children alive.
 
 ## Ownership
 
@@ -31,10 +32,12 @@ children are peers.
 Respect configured concurrency. Serialize when capacity is unavailable or
 uncertain rather than spawning beyond the limit.
 
-A terminal child still owns a handle until explicitly closed where the runtime
-requires it. After consuming a terminal result, call `close_agent` before
-creating replacement work or ending the task. Router active-child telemetry is
-not proof that the parent has no open child handles.
+Terminal states are `completed`, `errored`, `interrupted`, `shutdown`, and
+explicit provider-incomplete terminal states. A terminal child still owns a
+handle until explicitly closed where the runtime requires it. After consuming a
+terminal result, call `close_agent` before creating replacement work or ending
+the task. Router active-child telemetry is not proof that the parent has no open
+child handles.
 
 A rejected spawn with no child ID created no handle.
 
@@ -72,12 +75,13 @@ safe capacity recovery, and no global child cleanup.
 
 Antigravity's `invoke_subagent`/`manage_subagents` children are agy-owned
 subprocesses rather than router `autodev/<role>` children, so router
-per-session concurrency does not cover them. Preserve the bridge's disconnect
-semantics so upstream closure during delegation is reported as client
-disconnection rather than falsely treating the child work as interrupted.
+per-session concurrency does not cover them. When the parent stream disappears
+mid-delegation, the bridge must report
+`INCOMPLETE_REASON_CLIENT_DISCONNECTED` rather than
+`INCOMPLETE_REASON_INTERRUPTED`.
 
-While router-owned children are active, keep the parent in `subagent_wait` on
-its original provider so live-load routing can prefer idle providers. Child
+The router keeps a parent with active router-owned children in `subagent_wait`
+on its original provider so live-load routing can prefer idle providers. Child
 progress refreshes the parent's liveness; stale parents may age out normally
 after their children stop reporting.
 
