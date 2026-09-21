@@ -49,8 +49,19 @@ naming a server `.rulesync/mcp.jsonc` does not declare fails to render. Codex Ap
 servers and must not be represented as enabled-only role tables.
 
 `.rulesync/mcp.jsonc` declares the `lsp`, `cocoindex-code`, and `playwright` MCP
-servers through the installed `run-autodev-mcp.sh` launcher, and
-`openaiDeveloperDocs` by URL. The launcher resolves binaries from
+servers through the installed `run-autodev-mcp.sh` launcher, `openaiDeveloperDocs`
+by URL, and `context7` by URL. `context7` is the hosted
+`https://mcp.context7.com/mcp` server that resolves third-party library IDs and
+returns version-pinned docs and source snippets; the operator supplies the
+`CONTEXT7_API_KEY` env var and Codex's `bearer_token_env_var` plumbing forwards
+it as the bearer token, so the key never leaves the operator's shell. The
+`context7` entry is registered at user-level but the role TOMLs explicitly
+gate it: `docs-researcher` and `explorer` enable it (their bounded work
+frequently needs to answer "how do I call method X on library Y" or "what's the
+current signature for API Z"); `orchestrator` and `browser-tester` explicitly
+disable it so the root turn never picks it up and the UI-testing role never
+diverts from Playwright. Other roles (`default`, `worker`, `validator`,
+`smart`) intentionally omit `context7` and follow their existing MCP surface. The launcher resolves binaries from
 AutoDev's pinned devDependencies while preserving the active workspace as the
 MCP process cwd, so a target repository does not need to duplicate those
 packages. Both resolve from pinned AutoDev devDependencies (`lsp-mcp-server` and `@playwright/mcp`) rather

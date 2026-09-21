@@ -147,3 +147,70 @@ test("orchestrator codex_app MCP is scoped to a single tool", () => {
     );
   }
 });
+
+
+
+test("context7 is enabled on docs-researcher and explorer only", () => {
+  // Freeze the per-role context7 boundary. docs-researcher and explorer are
+  // the only roles the orchestrator enables Context7 on; every other role
+  // (including the root orchestrator itself and browser-tester) must not
+  // list context7 in its mcp set. This test reads the live contract so a
+  // render failure surfaces here before it reaches install --check.
+  const contract = JSON.parse(
+    readFileSync("config/execution-contract.json", "utf8")
+  ) as { roles: Record<string, { mcp?: string[] }> };
+
+  const enabledRoles = ["docs-researcher", "explorer"];
+  for (const roleName of enabledRoles) {
+    const roleCfg = contract.roles[roleName];
+    assert.ok(roleCfg, `${roleName} role must be declared`);
+    assert.ok(
+      (roleCfg.mcp ?? []).includes("context7"),
+      `${roleName} must enable context7`
+    );
+  }
+
+  const disabledRoles = [
+    "browser-tester",
+    "default",
+    "orchestrator",
+    "smart",
+    "validator",
+    "worker"
+  ];
+  for (const roleName of disabledRoles) {
+    const roleCfg = contract.roles[roleName];
+    assert.ok(roleCfg, `${roleName} role must be declared`);
+    assert.ok(
+      !(roleCfg.mcp ?? []).includes("context7"),
+      `${roleName} must not enable context7`
+    );
+  }
+
+  // Per-role MCP ordering must respect MCP_ORDER (lsp=0, cocoindex-code=1,
+  // playwright=2, openaiDeveloperDocs=3, context7=4, autodev_spawn=5,
+  // codex_app=6): within each role's mcp list, known servers appear in
+  // ascending MCP_ORDER index; unknown keys sort lexicographically after
+  // them. This protects against accidental reorderings.
+  const ORDER: Record<string, number> = {
+    lsp: 0,
+    "cocoindex-code": 1,
+    playwright: 2,
+    openaiDeveloperDocs: 3,
+    context7: 4,
+    autodev_spawn: 5,
+    codex_app: 6
+  };
+  for (const [roleName, roleCfg] of Object.entries(contract.roles)) {
+    const mcp = roleCfg.mcp ?? [];
+    let last = -1;
+    for (const name of mcp) {
+      const index = ORDER[name] ?? 99;
+      assert.ok(
+        index >= last,
+        `${roleName} mcp ordering violated: ${name} (${index}) after ${last}`
+      );
+      last = index;
+    }
+  }
+});

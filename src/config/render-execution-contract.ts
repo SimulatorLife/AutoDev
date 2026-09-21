@@ -17,8 +17,9 @@ const MCP_ORDER: Record<string, number> = {
   "cocoindex-code": 1,
   playwright: 2,
   openaiDeveloperDocs: 3,
-  autodev_spawn: 4,
-  codex_app: 5
+  context7: 4,
+  autodev_spawn: 5,
+  codex_app: 6
 };
 // MCPs whose existence is owned by Codex Desktop plugins rather than the
 // rulesync-generated Codex CLI catalog. They appear in the projection so

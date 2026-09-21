@@ -144,9 +144,12 @@ test("source declares each launch definition consistently", () => {
   );
   assert.deepEqual(Object.keys(shared).sort(), [
     "cocoindex-code",
+    "context7",
     "lsp",
     "openaiDeveloperDocs"
   ]);
+  assert.equal(shared.context7.url, "https://mcp.context7.com/mcp");
+  assert.equal(shared.context7.bearer_token_env_var, "CONTEXT7_API_KEY");
   for (const target of [
     "codexcli",
     "claudecode",
@@ -206,7 +209,13 @@ test("Codex projection matches the Codex declaration without mutating the portab
   assert.deepEqual(Object.keys(generated).sort(), Object.keys(expected).sort());
   for (const [name, server] of Object.entries(expected)) {
     const projected: JsonObject = {};
-    for (const key of ["command", "args", "url", "default_tools_approval_mode"])
+    for (const key of [
+      "command",
+      "args",
+      "url",
+      "bearer_token_env_var",
+      "default_tools_approval_mode"
+    ])
       if (Object.hasOwn(server, key)) projected[key] = server[key];
     if (server.disabled) projected.enabled = false;
     assert.deepEqual(generated[name], projected);

@@ -159,6 +159,7 @@ test("browser roles get the pinned Playwright launcher with the role's tool allo
   }
   assert.deepEqual(parse(copilotMcpArgs("browser-tester")).disabled.sort(), [
     "cocoindex-code",
+    "context7",
     "lsp"
   ]);
   const docsAdditional = parse(copilotMcpArgs("docs-researcher")).additional

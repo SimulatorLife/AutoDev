@@ -35,3 +35,6 @@ enabled = true
 [[skills.config]]
 name = "lsp-mcp-server"
 enabled = true
+
+[mcp_servers.context7]
+enabled = false

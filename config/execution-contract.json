@@ -47,7 +47,8 @@
       "kind": "leaf",
       "readOnly": true,
       "mcp": [
-        "openaiDeveloperDocs"
+        "openaiDeveloperDocs",
+        "context7"
       ],
       "skills": [],
       "webResearch": {
@@ -61,7 +62,8 @@
       "readOnly": true,
       "mcp": [
         "lsp",
-        "cocoindex-code"
+        "cocoindex-code",
+        "context7"
       ],
       "skills": [
         "ccc",

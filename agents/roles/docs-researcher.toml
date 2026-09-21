@@ -49,3 +49,6 @@ enabled = false
 [[skills.config]]
 name = "ccc"
 enabled = false
+
+[mcp_servers.context7]
+enabled = true

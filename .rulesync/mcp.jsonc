@@ -11,6 +11,10 @@
     },
     "openaiDeveloperDocs": {
       "url": "https://developers.openai.com/mcp"
+    },
+    "context7": {
+      "url": "https://mcp.context7.com/mcp",
+      "bearer_token_env_var": "CONTEXT7_API_KEY"
     }
   },
   "codexcli": {
@@ -27,6 +31,11 @@
       },
       "openaiDeveloperDocs": {
         "url": "https://developers.openai.com/mcp",
+        "disabled": true
+      },
+      "context7": {
+        "url": "https://mcp.context7.com/mcp",
+        "bearer_token_env_var": "CONTEXT7_API_KEY",
         "disabled": true
       },
       "playwright": {

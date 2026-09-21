@@ -1321,6 +1321,23 @@ owner, so the test enforces that they agree rather than merging them.
 *Superseded 2026-09-15:* the live Codex config no longer declares MCP servers;
 see "Completed MCP live cutover to Rulesync" below.
 
+**Context7 MCP added (2026-09-21).** Context7 is wired through the same
+Rulesync path: `.rulesync/mcp.jsonc` declares `context7` (URL
+`https://mcp.context7.com/mcp`, `bearer_token_env_var = "CONTEXT7_API_KEY"`),
+the role renderer propagates `bearer_token_env_var` alongside `command`/`args`/`url`
+so each rendered role TOML that names `context7` carries the full server
+definition, and `MCP_ORDER` in `src/config/render-execution-contract.ts`
+places it between `openaiDeveloperDocs` and `autodev_spawn`. The role
+TOMLs explicitly gate the server: `docs-researcher` and `explorer` enable
+it; `orchestrator` and `browser-tester` explicitly disable it so the root
+turn and the UI-testing role never pick it up. `default`, `worker`,
+`validator`, and `smart` are unchanged. The `CONTEXT7_API_KEY` env var
+is owned by the operator's shell; AutoDev never embeds or writes it.
+Validation: `tests/config/config-rendering.test.ts` asserts the per-role
+`context7` boundary and MCP ordering; `tests/rulesync-mcp.test.ts`
+asserts the shared `context7` entry plus `bearer_token_env_var` survives
+the Codex projection.
+
 **Completed MCP live cutover to Rulesync (added item, 2026-09-15).** The
 behavioural-equivalence decision below assumed Rulesync could not write
 AutoDev's live MCP files; tests against `16.30.2` in temporary homes disproved

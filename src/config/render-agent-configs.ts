@@ -17,7 +17,12 @@ export const BASE_MARKER = "{{AUTODEV_BASE_PROMPT}}";
 export const LEAF_MARKER = "{{AUTODEV_LEAF_PROMPT}}";
 export const CODE_SEARCH_MARKER = "{{AUTODEV_CODE_SEARCH_PROMPT}}";
 export const ROLE_MARKER = "{{AUTODEV_ROLE_PROMPT}}";
-const LAUNCH_KEYS = ["command", "args", "url"] as const;
+// Auth-related launch keys are propagated from .rulesync/mcp.jsonc into each
+// rendered role TOML so a Codex role loader that only sees `enabled = true`
+// still has the full server definition (url + transport + auth). HTTP MCP
+// servers use `bearer_token_env_var` (Codex-supported, mirrors the bundled
+// github plugin); `http_headers` is propagated for non-bearer HTTP auth.
+const LAUNCH_KEYS = ["command", "args", "url", "bearer_token_env_var", "http_headers"] as const;
 const HTTP_URL_PATTERN = /^(http|https):\/\//;
 const TABLE = /^\[mcp_servers\.(?:"([^"]+)"|([A-Za-z0-9_-]+))\]\s*$/gm;
 
