@@ -74,13 +74,19 @@
       "mcp": [
         "lsp",
         "cocoindex-code",
-        "autodev_spawn"
+        "autodev_spawn",
+        "codex_app"
       ],
       "skills": [
         "orchestration",
         "ccc",
         "lsp-mcp-server"
       ],
+      "mcpTools": {
+        "codex_app": [
+          "request_user_input"
+        ]
+      },
       "webResearch": {
         "search": true,
         "fetch": true,

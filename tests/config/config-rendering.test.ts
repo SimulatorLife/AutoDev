@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -108,4 +109,41 @@ test("execution-contract provider delegation is explicit and consistent", () => 
       }),
     /cannot declare spawnTools/
   );
+});
+
+test("orchestrator codex_app MCP is scoped to a single tool", () => {
+  // Read the live contract that install.sh materialises. The install flow
+  // re-renders this from `agents/roles/*.toml` against the rulesync
+  // projection, so a render failure in install --check would surface here.
+  const contract = JSON.parse(readFileSync("config/execution-contract.json", "utf8")) as {
+    roles: Record<
+      string,
+      { mcp?: string[]; mcpTools?: Record<string, string[]> }
+    >;
+  };
+  const orchestrator = contract.roles.orchestrator;
+  assert.ok(orchestrator, "orchestrator role must be declared");
+  assert.deepEqual(
+    orchestrator.mcp,
+    ["lsp", "cocoindex-code", "autodev_spawn", "codex_app"],
+    "orchestrator MCPs must include codex_app in deterministic order"
+  );
+  assert.deepEqual(
+    orchestrator.mcpTools,
+    { codex_app: ["request_user_input"] },
+    "codex_app must expose only request_user_input; thread tools belong to autodev_spawn"
+  );
+
+  // Every other role must not see codex_app — it is orchestrator-only.
+  for (const [roleName, roleCfg] of Object.entries(contract.roles)) {
+    if (roleName === "orchestrator") continue;
+    assert.ok(
+      !(roleCfg.mcp ?? []).includes("codex_app"),
+      `${roleName} must not list codex_app in mcp`
+    );
+    assert.ok(
+      !(roleCfg.mcpTools ?? {}).codex_app,
+      `${roleName} must not list codex_app in mcpTools`
+    );
+  }
 });

@@ -5,6 +5,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  readdirSync,
   rmSync,
   unlinkSync,
   writeFileSync
@@ -16,11 +17,13 @@ import { fileURLToPath } from "node:url";
 import { runCompose } from "../config/compose-user-config.ts";
 import { renderAgentDirectory } from "../config/render-agent-configs.ts";
 import { runBridgeMcpCatalogue } from "../config/render-bridge-mcp-catalogue.ts";
+import { runExecutionContract } from "../config/render-execution-contract.ts";
 import {
   atomicWrite,
   parseTomlFile,
   serializeToml,
-  type TomlTable
+  type TomlTable,
+  type TomlValue
 } from "../config/toml.ts";
 import { writeErrorLine } from "../shared/output.ts";
 import {
@@ -82,7 +85,6 @@ export const RUNTIME_MODULES = [
   "src/config/render-agent-configs.ts",
   "src/config/render-bridge-mcp-catalogue.ts",
   "src/config/render-execution-contract.ts",
-  "config/execution-contract.json",
   "agents/prompts/base.md",
   "agents/prompts/leaf.md",
   "agents/prompts/code-search.md",
@@ -610,6 +612,131 @@ function prepareRunLogs(codexHome: string): void {
   }
 }
 
+/**
+ * Re-render the execution contract from `agents/roles/*.toml` against the
+ * freshly-generated rulesync projection. The result is written in place to
+ * the repo's `config/execution-contract.json` so the existing
+ * `materializeRuntimeSources` step copies the fresh copy to the runtime
+ * target on the next loop. Idempotent: same inputs produce the same output.
+ */
+function renderAndMaterializeContract(
+  repositoryRoot: string,
+  codexMcpSource: string,
+  target: FileTarget
+): void {
+  const exitCode = runExecutionContract(
+    path.join(repositoryRoot, "agents/roles"),
+    codexMcpSource,
+    path.join(repositoryRoot, "config/execution-contract.json"),
+    target("config/execution-contract.json")
+  );
+  if (exitCode !== 0)
+    throw new Error(
+      `render-execution-contract exited with status ${exitCode}`
+    );
+}
+
+/**
+ * Idempotently enable the bundled `codex-app-tools` plugin in the user's
+ * composed Codex config. AutoDev declares the orchestrator's MCP contract
+ * with `request_user_input` exposed; Codex Desktop needs the plugin enabled
+ * at the user level before the MCP server can launch.
+ */
+const CODEX_APP_TOOLS_PLUGIN_ID = "codex-app-tools@openai-bundled";
+
+function ensureCodexAppPluginEnabled(codexHome: string): void {
+  const userConfig = path.join(codexHome, "config.toml");
+  let parsed: TomlTable;
+  try {
+    parsed = parseTomlFile(userConfig, "user config");
+  } catch (error) {
+    if ((error as { code?: string }).code === "ENOENT") return;
+    throw error;
+  }
+  const pluginsRaw = parsed.plugins;
+  if (
+    !pluginsRaw ||
+    typeof pluginsRaw !== "object" ||
+    Array.isArray(pluginsRaw) ||
+    pluginsRaw instanceof Date
+  )
+    return;
+  const plugins = pluginsRaw as Record<string, TomlValue>;
+  let touched = false;
+  for (const [name, value] of Object.entries(plugins)) {
+    if (name !== CODEX_APP_TOOLS_PLUGIN_ID) continue;
+    if (
+      !value ||
+      typeof value !== "object" ||
+      Array.isArray(value) ||
+      value instanceof Date
+    )
+      continue;
+    const entry = value as TomlTable;
+    if (entry.enabled === true) continue;
+    entry.enabled = true;
+    plugins[name] = entry;
+    touched = true;
+  }
+  if (!touched) return;
+  parsed.plugins = plugins;
+  writeFileSync(userConfig, serializeToml(parsed), "utf8");
+}
+
+/**
+ * Idempotently enable the `codex_app` MCP server inside the bundled
+ * `codex-app-tools` plugin cache. The plugin-level enabled flag controls
+ * whether Codex Desktop launches the MCP server at all; the per-server
+ * enabled flag inside `.mcp.json` is its secondary gate.
+ */
+function ensureCodexAppMcpServerEnabled(codexHome: string): void {
+  const cacheRoot = path.join(
+    codexHome,
+    "plugins",
+    "cache",
+    "openai-bundled",
+    "codex-app-tools"
+  );
+  let versions: string[];
+  try {
+    versions = readdirSync(cacheRoot).filter((entry) => {
+      try {
+        return lstatSync(path.join(cacheRoot, entry)).isDirectory();
+      } catch {
+        return false;
+      }
+    });
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+    throw error;
+  }
+  for (const version of versions) {
+    const configPath = path.join(cacheRoot, version, ".mcp.json");
+    let raw: string;
+    try {
+      raw = readFileSync(configPath, "utf8");
+    } catch (error) {
+      if ((error as { code?: string }).code === "ENOENT") continue;
+      throw error;
+    }
+    let parsed: Record<string, unknown>;
+    try {
+      parsed = JSON.parse(raw) as Record<string, unknown>;
+    } catch {
+      continue;
+    }
+    const servers = parsed.mcpServers;
+    if (!servers || typeof servers !== "object") continue;
+    const entry = (servers as Record<string, unknown>)["codex_app"];
+    if (!entry || typeof entry !== "object") continue;
+    const entryObj = entry as Record<string, unknown>;
+    if (entryObj.enabled === true) continue;
+    entryObj.enabled = true;
+    (servers as Record<string, unknown>)["codex_app"] = entryObj;
+    writeFileSync(configPath, JSON.stringify(parsed, null, 2) + "\n", "utf8");
+  }
+}
+
 export function materializeInstallation(options: MaterializeOptions): void {
   const hooks = path.join(options.codexHome, "hooks"),
     agents = path.join(options.codexHome, "agents"),
@@ -640,6 +767,13 @@ export function materializeInstallation(options: MaterializeOptions): void {
   ]);
   ensureExclude(options);
   composeAndLinkConfigs(options, source);
+  ensureCodexAppPluginEnabled(options.codexHome);
+  ensureCodexAppMcpServerEnabled(options.codexHome);
+  renderAndMaterializeContract(
+    options.repositoryRoot,
+    options.codexMcpSource,
+    target
+  );
   renderGlobalMcpIfNeeded(options);
   applyAntigravityIfInstalled(options, skillsRoot);
   renderLaunchAgentsFor(options.repositoryRoot, options.home, options.codexHome);

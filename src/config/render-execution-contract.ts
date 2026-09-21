@@ -17,8 +17,15 @@ const MCP_ORDER: Record<string, number> = {
   "cocoindex-code": 1,
   playwright: 2,
   openaiDeveloperDocs: 3,
-  autodev_spawn: 4
+  autodev_spawn: 4,
+  codex_app: 5
 };
+// MCPs whose existence is owned by Codex Desktop plugins rather than the
+// rulesync-generated Codex CLI catalog. They appear in the projection so
+// `fillLaunchKeys` can resolve launch keys for role TOMLs, but their
+// `enabled = false` flag keeps Codex CLI from launching them. The orchestrator
+// role can declare them without the renderer's root-config check complaining.
+const PLUGIN_MCPS = new Set(["codex_app"]);
 const SKILL_ORDER: Record<string, number> = {
   orchestration: 0,
   ccc: 1,
@@ -201,7 +208,10 @@ export function renderExecutionContract(
       .map(([name]) => name)
   );
   const missingRootMcp = roles.orchestrator.mcp.filter(
-    (name) => name !== "autodev_spawn" && !enabledRootMcp.has(name)
+    (name) =>
+      name !== "autodev_spawn" &&
+      !PLUGIN_MCPS.has(name) &&
+      !enabledRootMcp.has(name)
   );
   if (missingRootMcp.length > 0)
     throw new ConfigError(

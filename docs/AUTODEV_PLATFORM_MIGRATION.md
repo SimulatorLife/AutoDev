@@ -2642,3 +2642,70 @@ Only now test whether Rulesync can replace more AutoDev role rendering
 - Provider CLI bridges or narrow adapters for any provider whose candidate replacement does not satisfy the full contract
 
 The success criterion is therefore **not “delete the router or provider CLIs at all costs.”** It is to leave AutoDev with only the code that is still justified by SimulatorLife/AutoDev-specific semantics or by gaps in available dependencies, while preferring normal Codex model-provider entries and standard OAuth/API transports wherever they have been proven to replace the incumbent implementation safely
+
+## Orchestrator-only `codex_app` MCP for Plan-mode `request_user_input`
+
+The Plan-mode collaboration prompt tells the model to use `request_user_input`
+whenever it needs a user decision. The tool is provided by Codex Desktop's
+bundled `codex-app-tools` plugin (server name `codex_app`). Plan-mode
+breaks unless (a) the plugin is enabled at the user level, (b) Codex
+Desktop actually launches the MCP server, and (c) only `request_user_input`
+is exposed to the orchestrator model — the plugin's other tools
+(`fork_thread`, `create_thread`, `send_message_to_thread`, `handoff_thread`,
+`read_thread`, `wait_threads`, `list_threads`, `list_archived_threads`,
+`set_thread_pinned`, `set_thread_archived`, `set_thread_title`,
+`automation_update`) belong to the AutoDev delegation surface
+(`autodev_spawn` / `multi_agent_v1__spawn_agent`) and must not leak
+through `codex_app`.
+
+The install flow now keeps all three of these consistent on every run.
+
+- `scripts/install.sh` (the shim into the typed installer) does three
+  idempotent setup steps after composing the user config:
+  1. **Re-render the execution contract** from `agents/roles/*.toml` and
+     the freshly-generated rulesync projection. The previous behaviour
+     materialised the contract as a copy of the repo file, which drifted
+     the moment a role TOML changed. The renderer now writes directly to
+     the runtime target on every install.
+  2. **Enable the `codex-app-tools@openai-bundled` plugin** in the
+     composed `~/.codex/config.toml`. Touches only the existing
+     `[plugins."codex-app-tools@openai-bundled"]` table — never adds a
+     new entry — so user-owned plugin state for other plugins is
+     preserved.
+  3. **Enable the `codex_app` MCP server** inside the bundled plugin's
+     `.mcp.json` cache. Iterates every cached version directory, sets
+     `mcpServers.codex_app.enabled = true`, and skips the file if the
+     entry is missing or already enabled.
+
+- Source declarations that drive the contract shape:
+  - `agents/roles/orchestrator.toml` declares
+    `[mcp_servers.codex_app]` with `enabled = true` and
+    `enabled_tools = ["request_user_input"]`. This is the only role TOML
+    that mentions `codex_app`; every other role (default, worker,
+    validator, explorer, docs-researcher, browser-tester, smart) is
+    silently absent.
+  - `.rulesync/mcp.jsonc` declares `codex_app` under
+    `codexcli.mcpServers` with `disabled: true` and the same
+    `enabled_tools: ["request_user_input"]`. The Codex CLI projection
+    keeps the server disabled so Codex CLI sessions never spawn it,
+    but the entry exists so the renderer can resolve launch keys for
+    the orchestrator role TOML.
+  - `src/config/render-execution-contract.ts` adds `codex_app` to
+    `MCP_ORDER` and exempts it (and any future plugin-owned MCP) from
+    the "orchestrator MCP must be enabled in root config" check via a
+    `PLUGIN_MCPS` allowlist.
+
+- Lock-in test: `tests/config/config-rendering.test.ts` reads the
+  rendered `config/execution-contract.json` and asserts
+  `roles.orchestrator.mcp === ["lsp", "cocoindex-code", "autodev_spawn",
+  "codex_app"]` in deterministic order, that
+  `roles.orchestrator.mcpTools === { codex_app: ["request_user_input"]
+  }`, and that every other role has neither `codex_app` in `mcp` nor in
+  `mcpTools`. Any future drift on either the role TOML side or the
+  renderer side will fail this test before install --check gets a
+  chance.
+
+Re-running `scripts/install.sh` after editing a role TOML is enough to
+pick up the change; the steps are idempotent — running install twice in
+a row produces the same `~/.codex/src/config/execution-contract.json`,
+the same plugin enabled state, and the same MCP server enabled state.
