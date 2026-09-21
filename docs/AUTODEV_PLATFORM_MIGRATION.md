@@ -2709,3 +2709,55 @@ Re-running `scripts/install.sh` after editing a role TOML is enough to
 pick up the change; the steps are idempotent — running install twice in
 a row produces the same `~/.codex/src/config/execution-contract.json`,
 the same plugin enabled state, and the same MCP server enabled state.
+
+### Re-asserting the codex_app gates on every install
+
+Two independent gates must both be set before Codex Desktop launches the
+bundled `codex-app-tools` MCP server and exposes `request_user_input`:
+
+1. the user-level plugin declaration in `$CODEX_HOME/config.toml`
+   (`[plugins."codex-app-tools@openai-bundled"]` and its nested
+   `mcp_servers.codex_app` table), and
+2. the MCP-server entry inside the plugin's own cache at
+   `$CODEX_HOME/plugins/cache/openai-bundled/codex-app-tools/<version>/.mcp.json`.
+
+Both are now owned by the install, not patched after the fact.
+
+**Gate 1 is declared in the portable source.** `config/config.autodev.toml`
+carries `[plugins."codex-app-tools@openai-bundled"] enabled = true` plus
+`[plugins."codex-app-tools@openai-bundled".mcp_servers.codex_app]` with
+`enabled = true` and `enabled_tools = [ "request_user_input" ]`.
+`compose` treats portable keys as authoritative over existing user state, so
+every install re-asserts both values by construction. Previously the portable
+source declared the plugin `enabled = false` and the installer mutated the
+composed config afterwards — a band-aid that fought its own input. That
+mutation (`ensureCodexAppPluginEnabled`) is removed.
+
+**Gate 2 is re-asserted against a sentinel.** Codex Desktop regenerates the
+plugin cache on startup, which drops both the `enabled` flag and the tool
+allowlist. `ensureCodexAppMcpServerEnabled` therefore runs unconditionally on
+every install: for each cached plugin version it compares the cache against
+`CODEX_APP_ENABLED_TOOLS`, repairs any difference, and records the outcome in
+`$CODEX_HOME/autodev/codex-app-tools-state.json` — deliberately outside the
+regenerated cache. The sentinel records, per version, the `enabled` flag and
+tool allowlist observed *before* the repair, whether a repair was needed, and
+when it happened, plus a top-level `lastInstallRepairedDrift`. It is written on
+every install, including clean ones, so "Codex rewrote the cache again" is
+distinguishable from "nothing touched it". The sentinel is a record, never a
+short-circuit: a sentinel saying the gates were already asserted does not
+suppress the next install's check.
+
+Because `enabled_tools` is asserted at the plugin level as well as in
+`agents/roles/orchestrator.toml`, the plugin's thread-lifecycle tools
+(`create_thread`, `fork_thread`, `handoff_thread`, `read_thread`,
+`wait_threads`, `list_threads`, `list_archived_threads`,
+`send_message_to_thread`, `set_thread_pinned`, `set_thread_archived`,
+`set_thread_title`, `automation_update`) cannot reach any model through
+`codex_app`; delegation stays on `autodev_spawn`.
+
+Coverage lives in `tests/platform/codex-app-plugin-gate.test.ts`: cache repair
+and sentinel contents, narrowing a widened tool allowlist, idempotence across
+two installs, repair of drift reintroduced between installs, multi-version
+caches, an absent cache as a no-op, and the portable source declaring both
+user-level gates.
+

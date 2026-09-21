@@ -4,8 +4,8 @@ import {
   lstatSync,
   mkdirSync,
   mkdtempSync,
-  readFileSync,
   readdirSync,
+  readFileSync,
   rmSync,
   unlinkSync,
   writeFileSync
@@ -22,8 +22,7 @@ import {
   atomicWrite,
   parseTomlFile,
   serializeToml,
-  type TomlTable,
-  type TomlValue
+  type TomlTable
 } from "../config/toml.ts";
 import { writeErrorLine } from "../shared/output.ts";
 import {
@@ -416,10 +415,7 @@ function materializeRuntimeSources(
     );
 }
 
-function materializeScripts(
-  hooks: string,
-  source: FileTarget
-): void {
+function materializeScripts(hooks: string, source: FileTarget): void {
   for (const name of HOOKS) {
     chmodSync(source(`scripts/${name}`), 0o755);
     materializeRuntimeFile(
@@ -631,75 +627,153 @@ function renderAndMaterializeContract(
     target("config/execution-contract.json")
   );
   if (exitCode !== 0)
-    throw new Error(
-      `render-execution-contract exited with status ${exitCode}`
-    );
+    throw new Error(`render-execution-contract exited with status ${exitCode}`);
 }
 
 /**
- * Idempotently enable the bundled `codex-app-tools` plugin in the user's
- * composed Codex config. AutoDev declares the orchestrator's MCP contract
- * with `request_user_input` exposed; Codex Desktop needs the plugin enabled
- * at the user level before the MCP server can launch.
+ * The tools AutoDev exposes through the bundled Codex App tools plugin.
+ *
+ * Plan mode instructs the model to call `request_user_input`; everything else
+ * the plugin ships (thread create/fork/handoff/read/wait/list/archive,
+ * automations) belongs to the role-based delegation surface (`autodev_spawn`)
+ * and must not reach a model through `codex_app`.
  */
-const CODEX_APP_TOOLS_PLUGIN_ID = "codex-app-tools@openai-bundled";
+const CODEX_APP_ENABLED_TOOLS = ["request_user_input"] as const;
 
-function ensureCodexAppPluginEnabled(codexHome: string): void {
-  const userConfig = path.join(codexHome, "config.toml");
-  let parsed: TomlTable;
+/**
+ * Sentinel written under `$CODEX_HOME/autodev/`, outside the plugin cache that
+ * Codex Desktop regenerates on startup. It is the durable record of what the
+ * last install asserted and of the cache state that install found, so drift
+ * introduced between installs is visible rather than silently re-fixed.
+ */
+const AUTODEV_CODEX_APP_SENTINEL_PATH = path.join(
+  "autodev",
+  "codex-app-tools-state.json"
+);
+const AUTODEV_CODEX_APP_SENTINEL_TAG = "autodev-codex-app-tools-v1";
+
+interface CodexAppVersionState {
+  lastAssertedAt: string;
+  /** Cache `enabled` flag observed before this install re-asserted it. */
+  observedEnabled: boolean;
+  /** Cache tool allowlist observed before this install re-asserted it. */
+  observedTools: string[] | null;
+  /** Whether this install had to repair drift in the plugin cache. */
+  rewrotePluginCache: boolean;
+}
+interface CodexAppSentinel {
+  sentinel: string;
+  lastAssertedAt: string;
+  /** Whether the most recent install found and repaired cache drift. */
+  lastInstallRepairedDrift: boolean;
+  versions: Record<string, CodexAppVersionState>;
+}
+
+/** A sentinel with no usable prior state. */
+function emptyCodexAppSentinel(): CodexAppSentinel {
+  return {
+    sentinel: AUTODEV_CODEX_APP_SENTINEL_TAG,
+    lastAssertedAt: new Date(0).toISOString(),
+    lastInstallRepairedDrift: false,
+    versions: {}
+  };
+}
+
+/** Prior sentinel state, or a fresh one when it is absent or unrecognised. */
+function loadCodexAppSentinel(sentinelPath: string): CodexAppSentinel {
+  let parsed: Partial<CodexAppSentinel>;
   try {
-    parsed = parseTomlFile(userConfig, "user config");
+    parsed = JSON.parse(
+      readFileSync(sentinelPath, "utf8")
+    ) as Partial<CodexAppSentinel>;
   } catch (error) {
-    if ((error as { code?: string }).code === "ENOENT") return;
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    return emptyCodexAppSentinel();
+  }
+  const versions = parsed?.versions;
+  if (
+    parsed?.sentinel !== AUTODEV_CODEX_APP_SENTINEL_TAG ||
+    !versions ||
+    typeof versions !== "object" ||
+    Array.isArray(versions)
+  )
+    return emptyCodexAppSentinel();
+  return {
+    sentinel: AUTODEV_CODEX_APP_SENTINEL_TAG,
+    lastAssertedAt: parsed.lastAssertedAt ?? new Date(0).toISOString(),
+    lastInstallRepairedDrift: parsed.lastInstallRepairedDrift === true,
+    versions
+  };
+}
+
+/** The `codex_app` server entry in a cached `.mcp.json`, or null when absent. */
+function readCodexAppCacheEntry(configPath: string): {
+  document: Record<string, unknown>;
+  server: Record<string, unknown>;
+} | null {
+  let document: Record<string, unknown>;
+  try {
+    document = JSON.parse(readFileSync(configPath, "utf8")) as Record<
+      string,
+      unknown
+    >;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+    if (error instanceof SyntaxError) return null;
     throw error;
   }
-  const pluginsRaw = parsed.plugins;
-  if (
-    !pluginsRaw ||
-    typeof pluginsRaw !== "object" ||
-    Array.isArray(pluginsRaw) ||
-    pluginsRaw instanceof Date
-  )
-    return;
-  const plugins = pluginsRaw as Record<string, TomlValue>;
-  let touched = false;
-  for (const [name, value] of Object.entries(plugins)) {
-    if (name !== CODEX_APP_TOOLS_PLUGIN_ID) continue;
-    if (
-      !value ||
-      typeof value !== "object" ||
-      Array.isArray(value) ||
-      value instanceof Date
-    )
-      continue;
-    const entry = value as TomlTable;
-    if (entry.enabled === true) continue;
-    entry.enabled = true;
-    plugins[name] = entry;
-    touched = true;
-  }
-  if (!touched) return;
-  parsed.plugins = plugins;
-  writeFileSync(userConfig, serializeToml(parsed), "utf8");
+  const servers = document.mcpServers;
+  if (!servers || typeof servers !== "object") return null;
+  const server = (servers as Record<string, unknown>).codex_app;
+  if (!server || typeof server !== "object") return null;
+  return { document, server: server as Record<string, unknown> };
 }
 
 /**
- * Idempotently enable the `codex_app` MCP server inside the bundled
- * `codex-app-tools` plugin cache. The plugin-level enabled flag controls
- * whether Codex Desktop launches the MCP server at all; the per-server
- * enabled flag inside `.mcp.json` is its secondary gate.
+ * Re-assert one cached plugin version, returning what was observed before the
+ * assertion and whether the cache had to be repaired.
  */
-function ensureCodexAppMcpServerEnabled(codexHome: string): void {
-  const cacheRoot = path.join(
-    codexHome,
-    "plugins",
-    "cache",
-    "openai-bundled",
-    "codex-app-tools"
-  );
-  let versions: string[];
+function assertCodexAppCacheVersion(
+  configPath: string,
+  now: string
+): CodexAppVersionState | null {
+  const found = readCodexAppCacheEntry(configPath);
+  if (!found) return null;
+  const { document, server } = found;
+
+  const observedEnabled = server.enabled === true;
+  const observedTools = Array.isArray(server.enabled_tools)
+    ? (server.enabled_tools as unknown[]).filter(
+        (tool): tool is string => typeof tool === "string"
+      )
+    : null;
+  const toolsMatch =
+    observedTools?.length === CODEX_APP_ENABLED_TOOLS.length &&
+    CODEX_APP_ENABLED_TOOLS.every(
+      (tool, index) => observedTools[index] === tool
+    );
+
+  // Re-assert unconditionally: Codex Desktop regenerates this cache on
+  // startup, so "it was correct last install" is not evidence about now.
+  const rewrotePluginCache = !observedEnabled || !toolsMatch;
+  if (rewrotePluginCache) {
+    server.enabled = true;
+    server.enabled_tools = [...CODEX_APP_ENABLED_TOOLS];
+    writeFileSync(configPath, JSON.stringify(document, null, 2) + "\n", "utf8");
+  }
+
+  return {
+    lastAssertedAt: now,
+    observedEnabled,
+    observedTools,
+    rewrotePluginCache
+  };
+}
+
+/** Cached plugin version directories, newest-first order not required. */
+function codexAppCacheVersions(cacheRoot: string): string[] {
   try {
-    versions = readdirSync(cacheRoot).filter((entry) => {
+    return readdirSync(cacheRoot).filter((entry) => {
       try {
         return lstatSync(path.join(cacheRoot, entry)).isDirectory();
       } catch {
@@ -707,34 +781,55 @@ function ensureCodexAppMcpServerEnabled(codexHome: string): void {
       }
     });
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
     throw error;
   }
+}
+
+/**
+ * Idempotently re-assert the `codex_app` MCP server gates inside every cached
+ * version of the bundled `codex-app-tools` plugin, then record the outcome in
+ * the sentinel.
+ *
+ * Codex Desktop rewrites this cache on startup, so the assertion is
+ * unconditional: each install compares the cache against the declared
+ * `enabled`/`enabled_tools` state, repairs any difference, and writes the
+ * sentinel whether or not a repair was needed. The sentinel is a record, never
+ * a short-circuit. The user-level gate itself is declared in
+ * `config/config.autodev.toml` and re-asserted by `compose`.
+ */
+export function ensureCodexAppMcpServerEnabled(codexHome: string): void {
+  const cacheRoot = path.join(
+    codexHome,
+    "plugins",
+    "cache",
+    "openai-bundled",
+    "codex-app-tools"
+  );
+  const versions = codexAppCacheVersions(cacheRoot);
+  if (versions.length === 0) return;
+
+  const sentinelPath = path.join(codexHome, AUTODEV_CODEX_APP_SENTINEL_PATH);
+  const sentinel = loadCodexAppSentinel(sentinelPath);
+  const now = new Date().toISOString();
+
+  let repairedDrift = false;
   for (const version of versions) {
-    const configPath = path.join(cacheRoot, version, ".mcp.json");
-    let raw: string;
-    try {
-      raw = readFileSync(configPath, "utf8");
-    } catch (error) {
-      if ((error as { code?: string }).code === "ENOENT") continue;
-      throw error;
-    }
-    let parsed: Record<string, unknown>;
-    try {
-      parsed = JSON.parse(raw) as Record<string, unknown>;
-    } catch {
-      continue;
-    }
-    const servers = parsed.mcpServers;
-    if (!servers || typeof servers !== "object") continue;
-    const entry = (servers as Record<string, unknown>)["codex_app"];
-    if (!entry || typeof entry !== "object") continue;
-    const entryObj = entry as Record<string, unknown>;
-    if (entryObj.enabled === true) continue;
-    entryObj.enabled = true;
-    (servers as Record<string, unknown>)["codex_app"] = entryObj;
-    writeFileSync(configPath, JSON.stringify(parsed, null, 2) + "\n", "utf8");
+    const state = assertCodexAppCacheVersion(
+      path.join(cacheRoot, version, ".mcp.json"),
+      now
+    );
+    if (!state) continue;
+    sentinel.versions[version] = state;
+    repairedDrift ||= state.rewrotePluginCache;
   }
+
+  // Written on every install, including clean ones, so the next install can
+  // tell "Codex rewrote the cache again" from "nothing touched it".
+  sentinel.lastAssertedAt = now;
+  sentinel.lastInstallRepairedDrift = repairedDrift;
+  mkdirSync(path.dirname(sentinelPath), { recursive: true, mode: 0o700 });
+  writeFileSync(sentinelPath, JSON.stringify(sentinel, null, 2) + "\n", "utf8");
 }
 
 export function materializeInstallation(options: MaterializeOptions): void {
@@ -754,7 +849,11 @@ export function materializeInstallation(options: MaterializeOptions): void {
   materializeScripts(hooks, source);
   linkRuntimeConfigs(options.codexHome, source, rules);
   replaceSkillSymlinks(options.codexHome, skillsRoot, userSkills);
-  materializeRenderedAgents(options.repositoryRoot, agents, options.codexMcpSource);
+  materializeRenderedAgents(
+    options.repositoryRoot,
+    agents,
+    options.codexMcpSource
+  );
   runBridgeMcpCatalogue(
     options.codexMcpSource,
     path.join(options.codexHome, "provider-runtime", "mcp-servers.json")
@@ -767,7 +866,6 @@ export function materializeInstallation(options: MaterializeOptions): void {
   ]);
   ensureExclude(options);
   composeAndLinkConfigs(options, source);
-  ensureCodexAppPluginEnabled(options.codexHome);
   ensureCodexAppMcpServerEnabled(options.codexHome);
   renderAndMaterializeContract(
     options.repositoryRoot,
@@ -776,7 +874,11 @@ export function materializeInstallation(options: MaterializeOptions): void {
   );
   renderGlobalMcpIfNeeded(options);
   applyAntigravityIfInstalled(options, skillsRoot);
-  renderLaunchAgentsFor(options.repositoryRoot, options.home, options.codexHome);
+  renderLaunchAgentsFor(
+    options.repositoryRoot,
+    options.home,
+    options.codexHome
+  );
   prepareRunLogs(options.codexHome);
 }
 function exists(filePath: string): boolean {

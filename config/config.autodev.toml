@@ -151,5 +151,15 @@ NODE_OPTIONS = "--disable-warning=ExperimentalWarning"
 "PATH" = "include"
 "HOME" = "include"
 
+# The bundled Codex App tools plugin owns request_user_input, which Plan mode
+# instructs the model to call. AutoDev enables the plugin and narrows it to that
+# single tool: thread lifecycle (create/fork/handoff/read/wait/list/archive) is
+# owned by the role-based delegation surface (autodev_spawn), not by codex_app.
+# Declaring it here makes compose re-assert both gates on every install, even
+# after Codex Desktop regenerates its plugin cache.
 [plugins."codex-app-tools@openai-bundled"]
-enabled = false
+enabled = true
+
+[plugins."codex-app-tools@openai-bundled".mcp_servers.codex_app]
+enabled = true
+enabled_tools = [ "request_user_input" ]

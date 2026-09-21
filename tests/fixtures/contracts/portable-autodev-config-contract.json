@@ -118,7 +118,15 @@
     },
     "plugins": {
       "codex-app-tools@openai-bundled": {
-        "enabled": false
+        "enabled": true,
+        "mcp_servers": {
+          "codex_app": {
+            "enabled": true,
+            "enabled_tools": [
+              "request_user_input"
+            ]
+          }
+        }
       }
     }
   },
