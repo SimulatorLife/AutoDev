@@ -1,0 +1,81 @@
+# Orchestration runtime contract
+
+Use this reference when creating, waiting for, recovering, resuming, or closing
+delegated agents.
+
+## Delegation path
+
+Use the configured role-based `spawn_subagent` surface. Native code-mode
+providers use `exec` with `tools.multi_agent_v1__spawn_agent` and
+`{ agent_type, message }`.
+
+Do not substitute `create_thread`, `fork_thread`, `handoff_thread`, or
+provider-private task APIs for the configured child path.
+
+Batch independent spawns in one call when supported. Use isolated results such
+as `Promise.allSettled` so one rejected child does not hide successful siblings.
+
+## Ownership
+
+Manage only children created by this parent or recovered from this parent's
+verified spawn history.
+
+Do not use filesystem state, global thread/task listings, telemetry, UI state,
+or another parent's output as ownership proof. Other orchestrators and their
+children are peers.
+
+## Concurrency and child lifecycle
+
+Respect configured concurrency. Serialize when capacity is unavailable or
+uncertain rather than spawning beyond the limit.
+
+A terminal child still owns a handle until explicitly closed where the runtime
+requires it. After consuming a terminal result, call `close_agent` before
+creating replacement work or ending the task.
+
+A rejected spawn with no child ID created no handle.
+
+On interruption or admission failure:
+
+1. enumerate this parent's children with owner-scoped `list_agents` or `manage_subagents` when available
+2. otherwise recover IDs only from this parent's verified spawn history, including Codex App `read_thread` when needed
+3. close only known terminal children
+4. leave running or foreign children untouched
+5. retry the original delegation once if recovery freed capacity
+6. report the unavailable path if it still fails
+
+Never perform global cleanup. A spawn failure does not authorize silently taking
+over delegated implementation work.
+
+## Workspace and role resolution
+
+Keep delegated work in the parent-selected repository or worktree. Do not let
+task prose implicitly select another workspace.
+
+Give children only the task context they need. The spawn payload contains the
+selected role and task, not ad hoc skill paths or MCP lists.
+
+The selected `agent_type` must resolve through the installed
+`agents/<agent_type>.toml` contract, including that role's configured skills
+and MCP servers. Report missing role/tool configuration rather than silently
+substituting another path.
+
+## Provider-specific behavior
+
+Provider bridges may implement the common contract differently but must preserve
+parent-owned child identity, bounded scope, explicit terminal-result handling,
+safe capacity recovery, and no global child cleanup.
+
+Antigravity's `invoke_subagent`/`manage_subagents` children are agy-owned
+subprocesses rather than router `autodev/<role>` children, so router
+per-session concurrency does not cover them. Preserve the bridge's disconnect
+semantics so upstream closure during delegation is reported as client
+disconnection rather than falsely treating the child work as interrupted.
+
+While router-owned children are active, keep the parent in `subagent_wait` on
+its original provider so live-load routing can prefer idle providers. Child
+progress refreshes the parent's liveness; stale parents may age out normally
+after their children stop reporting.
+
+Report rate limits, stalls, provider failures, skipped roles, partial child
+results, and unavailable recovery surfaces explicitly.
