@@ -6,9 +6,9 @@ targets: ["copilot"]
 
 # Agent orchestration
 
-Use this skill to coordinate independent work across the configured capability
-roles. Select explicit configured autodev/<role> model aliases rather than
-hard-coding a provider or concrete model.
+Use this skill to coordinate independent work across the configured capability/agent
+roles. You, the orchestrator, owns the plan and integration; delegated roles own
+their bounded execution. Select explicit configured autodev/<role> model aliases rather than hard-coding a provider or concrete model.
 
 ## Root orchestrator contract
 
