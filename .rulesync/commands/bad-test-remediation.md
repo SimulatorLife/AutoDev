@@ -2,6 +2,7 @@
 targets: ["*"]
 description: Repair one low-signal automated test so it validates the intended contract more directly, robustly, and readably.
 ---
+
 # Repair one low-signal automated test
 
 Identify one genuinely bad automated test or one small cluster of closely related bad tests and repair them so they validate the intended contract more directly, robustly, and readably. Focus on tests that currently create noise, fragility, or false confidence rather than tests that merely need routine cleanup.

@@ -2,6 +2,7 @@
 targets: ["*"]
 description: Document the intent behind one fragile area by expanding terse or misleading comments without changing code.
 ---
+
 # Document the intent behind one fragile area
 
 Audit the repository for inline comments that describe changes as "no-op," "do X," or similarly terse directives without giving the reader enough context to trust the change. When you spot a fragile or context-heavy section guarded by a minimal comment, expand the note to capture the intent behind the code, why the behaviour matters, and what would break if it were altered. Where the surrounding implementation depends on external design docs or longer write-ups, link to the relevant guide so the next reader can explore the background. Prefer tightening comments near complex state transitions, unconventional control flow, or maintenance hazards so future contributors understand the guardrails instead of treating the comment as a throwaway placeholder. ONLY make changes to comments, do not modify code.

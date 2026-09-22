@@ -2,6 +2,7 @@
 targets: ["*"]
 description: Survey the codebase for outstanding gaps, inconsistencies, and tooling/telemetry misses, and prioritize the next high-value improvement.
 ---
+
 What gaps, issues, inconsistencies, permission/tooling issues, telemetry issues/misses are still outstanding in the codebase? Organizational issues? Across all, what is the next priority for the best improvement/consistency/DRY/hardening for the codebase?
 
 Consider the goals of the codebase:

@@ -2,6 +2,7 @@
 targets: ["*"]
 description: Fix the next major or outstanding issue or bug that most meaningfully advances the project.
 ---
+
 Fix the next major/outstanding issue or bug that most meaningfully advances the project.
 
 Start by checking the project's canonical backlog, TODO items, issue tracker, or equivalent source of outstanding bugs.

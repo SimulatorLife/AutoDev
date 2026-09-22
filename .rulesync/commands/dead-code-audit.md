@@ -2,6 +2,7 @@
 targets: ["*"]
 description: Audit one confirmed dead-code candidate and remove it with evidence-backed safety.
 ---
+
 # Audit one confirmed dead-code candidate
 
 Perform a conservative audit of the repository to locate **confirmed unused or legacy items**, such as: - Functions, variables, or classes that are never referenced or imported; - Files, assets, or documentation sections that are redundant or superseded; - Commented-out code blocks; - Deprecated configuration settings no longer in effect; - Empty directories or files; - Empty try/catch or conditional blocks that serve no purpose; - Outdated JSDoc comments that no longer correspond to current code behavior; - Duplicate definitions that can be safely consolidated.
