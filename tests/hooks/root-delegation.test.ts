@@ -136,3 +136,23 @@ test("root delegation logs hook input without putting it in the injected policy"
     rmSync(home, { recursive: true, force: true });
   }
 });
+
+test("root delegation emits a runtime-agnostic recovery preflight that names the native tools", () => {
+  const output = JSON.parse(
+    runHook("autodev/orchestrator", "orchestrator-runtime-agnostic-1")
+  ) as HookOutput;
+  const context = output.hookSpecificOutput?.additionalContext ?? "";
+  // The runtime-agnostic summary names the native tools the orchestrator
+  // must call directly. The previous code-mode-only JavaScript snippet made
+  // the model conclude the spawn surface was unavailable when the
+  // orchestrator turn was running in native function-call mode.
+  assert.match(context, /## Current-parent recovery preflight/);
+  assert.match(context, /mcp__codex_app__read_thread/);
+  assert.match(context, /multi_agent_v1__wait_agent/);
+  assert.match(context, /multi_agent_v1__close_agent/);
+  assert.match(context, /Do not infer child ids/);
+  // The natural-language instruction tells the model to call the tools
+  // itself, not to assume a code-mode `exec` runtime.
+  assert.match(context, /adapt the invocations to the surface your tools/);
+});
+

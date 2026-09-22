@@ -102,6 +102,48 @@ export async function runRootDelegation(
       ? input.session_id.trim()
       : null;
   const recovery = parentId ? await recoveryScript(parentId) : "";
+/**
+ * Format the parent-side recovery preflight in a form that is unambiguous
+ * regardless of whether the orchestrator turn runs in Codex code mode (one
+ * `exec` tool that takes raw JavaScript) or native function-call mode (named
+ * tools the model invokes directly). A previous version injected only a
+ * JavaScript snippet (`buildRecoveryScript` is a code-mode script); the model
+ * could not find a native function named `multi_agent_v1__spawn_agent` in its
+ * declared tool list and concluded the orchestration surface was unavailable.
+ * The natural-language summary below is runtime-agnostic; the optional JS
+ * block, when present, is labelled as code-mode-only.
+ */
+function buildRecoveryContext(recovery: string): string {
+  const header =
+    "\n\n## Current-parent recovery preflight\n" +
+    "If a thread-limit or admission failure leaves orphaned child threads " +
+    "under your session, recover before retrying. The recovery reads your " +
+    "spawn history, waits for every child, and closes only the ones that " +
+    "are terminal; foreign and still-running children are never touched.\n\n" +
+    "If you have a `mcp__codex_app__read_thread` tool, call it with " +
+    "`{ threadId: <your session id>, turnLimit: 10, includeOutputs: false, " +
+    "maxOutputCharsPerItem: 2000 }` to get the recent items. For every " +
+    "`collabAgentToolCall` whose `senderThreadId` matches your session id, " +
+    "collect the `receiverThreadIds`. Wait on each id with " +
+    "`multi_agent_v1__wait_agent({ targets: [<id>], timeout_ms: 30000 })` " +
+    "and close the terminal ones with " +
+    "`multi_agent_v1__close_agent({ target: <id> })`. Do not infer child ids " +
+    "from global task listings, telemetry, or any source other than your " +
+    "own session's spawn history.\n";
+  const codeBlock = recovery
+    ? "\nIf your runtime exposes a single `exec` tool that runs raw JavaScript " +
+      "(Codex code mode), the same steps are pre-bundled below as a " +
+      "reference script -- adapt the invocations to the surface your tools " +
+      "actually expose; do not assume the script runs as written.\n\n" +
+      "```js\n" +
+      recovery +
+      "\n```\n"
+    : "\nThe pre-bundled code-mode script was unavailable for this turn " +
+      "(the hook did not receive a parent session id or could not load the " +
+      "recovery helper). Use the natural-language steps above instead.\n";
+  return header + codeBlock;
+}
+
   const prompt = readFileSync(promptFile, "utf8").trim();
   const skill = existsSync(skillFile)
     ? `\n\n## Canonical orchestration skill\n\n${readFileSync(skillFile, "utf8").trim()}`
@@ -109,9 +151,7 @@ export async function runRootDelegation(
   const codeSearch = existsSync(codeSearchFile)
     ? `\n\n${readFileSync(codeSearchFile, "utf8").trim()}`
     : "\n\nShared codebase navigation prompt is unavailable; report that capability failure instead of silently substituting a workflow.";
-  const recoveryContext = recovery
-    ? `\n\n## Current-parent recovery preflight\nExecute this preflight before retrying a thread-limit/admission failure. It reads only the current parent task spawn history, waits for each child, and closes terminal handles; it never closes foreign or running children.\n\n\`\`\`js\n${recovery}\`\`\``
-    : "\n\nCurrent-parent recovery preflight is unavailable because the hook did not receive a parent session id or could not load the recovery helper. Do not infer child ids from global task listings.";
+  const recoveryContext = buildRecoveryContext(recovery);
   process.stdout.write(
     JSON.stringify({
       systemMessage:
