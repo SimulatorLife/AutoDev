@@ -234,6 +234,58 @@ inherit capabilities it does not need:
   engineering skills; their bounded work is Playwright UI testing and
   authoritative documentation research, respectively.
 
+### Skill-surface lockdown
+
+AutoDev's portable source (`config/config.autodev.toml`) suppresses Codex
+plugin families that are noise for this repository, so the root
+orchestrator turn's model context lists only `openai-docs`, the AutoDev
+skills under `.rulesync/skills/`, and the existing
+`ccc`/`lsp-mcp-server`/`orchestration` triple. Codex 0.154.0 distinguishes
+two skill-discovery surfaces, and the suppression uses the smallest knob
+that works for each:
+
+- **Whole-plugin disable** (`[plugins."<plugin>@<marketplace>"] enabled = false`)
+  is the only mechanism Codex 0.154.0 honours for plugin-provided
+  skills: `[[skills.config]] name = "<plugin-skill>" enabled = false`
+  does **not** gate them. With the plugin disabled, the marketplace
+  vanishes from the rendered request's `### Skill roots` and the plugin's
+  skills disappear from `### Available skills`. Captured against the live
+  plugin cache from an isolated CODEX_HOME pointed at the real
+  `~/.codex/plugins/cache`. Every skill-declaring plugin AutoDev does not
+  use is disabled: the whole `openai-primary-runtime` family (`pdf`,
+  `documents`, `presentations`, `spreadsheets`, `template-creator`),
+  `sites`, `openai-developers`, and `openai-templates` from
+  `openai-curated-remote`, and `sites`, `browser`, `computer-use`,
+  `unified-computer-use`, and `visualize` from `openai-bundled`. `sites`
+  ships from two marketplaces that declare the same
+  `sites-building`/`sites-hosting` skill names, so both copies must be
+  disabled. `plugin-management` is deliberately left enabled as the
+  operator's escape hatch for re-enabling any of the above. `codex-app-tools`
+  is explicitly enabled because AutoDev narrows its `codex_app` MCP to
+  `request_user_input`. Plugins that declare no skills (for example `github`)
+  are not named here at all and stay under the operator's local config.
+- **Per-skill disable** (`[[skills.config]] name = "<skill>" enabled = false`)
+  works for the four Codex `.system/` skills that are not relevant to
+  AutoDev: `imagegen`, `plugin-creator`, `skill-creator`,
+  `skill-installer`. `openai-docs` is intentionally kept because Codex
+  self-knowledge is directly relevant to this repository.
+- `[skills.bundled] enabled = false` is **not** used at user level
+  because it would also suppress `openai-docs`. `agents/roles/browser-tester.toml`
+  keeps that key because that role legitimately does not need
+  `openai-docs`; it is a valid key in 0.154.0 and removes the bundled
+  `.system/` skills for that role.
+
+The whole-plugin disables are written under the portable source so
+`compose-user-config.ts` re-asserts them on every install, even when Codex
+Desktop regenerates the user's local config. The composer treats
+AutoDev-owned `[plugins]` keys as authoritative against the operator's
+existing entries, so editing `~/.codex/config.toml` by hand does not
+survive: the next install re-asserts `enabled = false`. To use a
+suppressed plugin again, flip it in `config/config.autodev.toml` (or drop
+its entry entirely, which returns ownership of that plugin to the
+operator's local config) and re-run the installer. Only plugins the
+portable source does not name are left to machine-local state.
+
 `autodev-codex-request-capture`, `autodev-session-diagnostics`,
 `opentelemetry`, and `writing-agent-skills` are **AutoDev-repository-only**
 skills. They are intentionally not wired into any cross-workspace agent
