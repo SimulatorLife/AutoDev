@@ -35,3 +35,39 @@ default_tools_approval_mode = "approve"
 [[skills.config]]
 name = "ccc"
 enabled = true
+
+[[skills.config]]
+name = "autodev-codex-request-capture"
+enabled = true
+
+[[skills.config]]
+name = "autodev-session-diagnostics"
+enabled = true
+
+[[skills.config]]
+name = "code-simplification"
+enabled = true
+
+[[skills.config]]
+name = "diagnosing-bugs"
+enabled = true
+
+[[skills.config]]
+name = "doubt-driven-development"
+enabled = true
+
+[[skills.config]]
+name = "improve-codebase-architecture"
+enabled = true
+
+[[skills.config]]
+name = "opentelemetry"
+enabled = true
+
+[[skills.config]]
+name = "remove-legacy-shims"
+enabled = true
+
+[[skills.config]]
+name = "resolve-merge-conflicts"
+enabled = true

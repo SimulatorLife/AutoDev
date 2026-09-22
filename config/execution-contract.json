@@ -40,7 +40,13 @@
       ],
       "skills": [
         "ccc",
-        "lsp-mcp-server"
+        "lsp-mcp-server",
+        "code-simplification",
+        "diagnosing-bugs",
+        "improve-codebase-architecture",
+        "remove-legacy-shims",
+        "resolve-merge-conflicts",
+        "writing-agent-skills"
       ]
     },
     "docs-researcher": {
@@ -106,7 +112,16 @@
       ],
       "skills": [
         "ccc",
-        "lsp-mcp-server"
+        "lsp-mcp-server",
+        "code-simplification",
+        "improve-codebase-architecture",
+        "opentelemetry",
+        "remove-legacy-shims",
+        "resolve-merge-conflicts",
+        "doubt-driven-development",
+        "writing-agent-skills",
+        "autodev-codex-request-capture",
+        "autodev-session-diagnostics"
       ],
       "mcpTools": {
         "playwright": [
@@ -147,7 +162,10 @@
       ],
       "skills": [
         "ccc",
-        "lsp-mcp-server"
+        "lsp-mcp-server",
+        "diagnosing-bugs",
+        "opentelemetry",
+        "doubt-driven-development"
       ]
     },
     "worker": {
@@ -159,7 +177,16 @@
       ],
       "skills": [
         "ccc",
-        "lsp-mcp-server"
+        "lsp-mcp-server",
+        "code-simplification",
+        "diagnosing-bugs",
+        "improve-codebase-architecture",
+        "opentelemetry",
+        "remove-legacy-shims",
+        "resolve-merge-conflicts",
+        "doubt-driven-development",
+        "autodev-codex-request-capture",
+        "autodev-session-diagnostics"
       ]
     }
   },

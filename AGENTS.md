@@ -1,4 +1,4 @@
-You have access to skills; read them and use those applicable.
+You have access to skills and tools; read them and use those applicable.
 
 Ensure to update any documentation and tests accordingly to your changes.
 
