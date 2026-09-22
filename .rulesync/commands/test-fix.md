@@ -1,3 +1,7 @@
+---
+targets: ["*"]
+description: Investigate failing tests, classify each as legacy/regression/flaky, and fix the underlying code for tests that exercise real target behavior.
+---
 Investigate any/all failing tests in the codebase.
 
 Some may be failing due to being old/legacy-behavior tests, some may be testing real/expected/target functionality that is not yet working or has regressed. Some may just be flaky and need to be stabilized.

@@ -3,6 +3,7 @@ import {
   existsSync,
   lstatSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   rmSync
 } from "node:fs";
@@ -27,6 +28,7 @@ import { createCodexMcpSource } from "./install-command.ts";
 import {
   CATALOGS,
   checkHookTrust,
+  COMMANDS,
   DASHBOARD,
   HOOKS,
   LAUNCH_LABELS,
@@ -61,6 +63,7 @@ export interface InstallCheckOptions {
 }
 
 const LINE_SPLIT_PATTERN = /\r?\n/u;
+const MD_EXTENSION_PATTERN = /\.md$/u;
 const WHITESPACE_SPLIT_PATTERN = /\s+/u;
 const CODEX_ROUTER_AUTH_TOKEN_PATTERN = /^CODEX_ROUTER_AUTH_TOKEN=([^\n]*)$/mu;
 
@@ -257,6 +260,7 @@ interface RunInstallPaths {
   userSkills: string;
   rules: string;
   agents: string;
+  prompts: string;
 }
 
 function resolveRunInstallPaths(
@@ -275,7 +279,8 @@ function resolveRunInstallPaths(
     hooks: path.join(codexHome, "hooks"),
     userSkills: path.join(home, ".agents", "skills"),
     rules: path.join(codexHome, "rules"),
-    agents: path.join(codexHome, "agents")
+    agents: path.join(codexHome, "agents"),
+    prompts: path.join(codexHome, "prompts")
   };
 }
 
@@ -340,6 +345,89 @@ function checkRuntimeAndOt(
       ),
       failures
     );
+}
+
+function checkCommands(
+  paths: RunInstallPaths,
+  failures: { value: number }
+): void {
+  const rulesyncBin = path.join(
+    paths.repositoryRoot,
+    "node_modules",
+    ".bin",
+    "rulesync"
+  );
+  const rendered = mkdtempSync(path.join(tmpdir(), "autodev-check-prompts-"));
+  try {
+    execFileSync(
+      rulesyncBin,
+      [
+        "generate",
+        "--global",
+        "--input-roots",
+        path.join(paths.repositoryRoot, ".rulesync"),
+        "--targets",
+        "codexcli",
+        "--features",
+        "commands",
+        "--silent"
+      ],
+      {
+        cwd: paths.repositoryRoot,
+        env: { ...process.env, HOME: rendered },
+        stdio: "ignore"
+      }
+    );
+    const projectedDir = path.join(rendered, ".codex", "prompts");
+    const projectedFiles = readdirSync(projectedDir)
+      .filter((entry) => entry.endsWith(".md"))
+      .sort();
+    const catalog = new Set<string>(COMMANDS);
+    for (const name of COMMANDS) {
+      const installedPath = path.join(paths.prompts, `${name}.md`);
+      const projectedPath = path.join(projectedDir, `${name}.md`);
+      let match = false;
+      try {
+        const stat = lstatSync(installedPath);
+        if (stat.isFile() && !stat.isSymbolicLink()) {
+          match = readFileSync(installedPath).equals(
+            readFileSync(projectedPath)
+          );
+        }
+      } catch {
+        /* not installed */
+      }
+      check(`prompt ${name}`, match, failures);
+    }
+    const extraProjected = projectedFiles
+      .map((entry) => entry.replace(MD_EXTENSION_PATTERN, ""))
+      .find((name) => !catalog.has(name));
+    if (extraProjected !== undefined) {
+      writeLine(
+        `missing-or-drifted rulesync produced prompt "${extraProjected}" that is not in the COMMANDS catalog`
+      );
+      failures.value = 1;
+    }
+    if (existsSync(paths.prompts)) {
+      for (const entry of readdirSync(paths.prompts)) {
+        if (!entry.endsWith(".md")) continue;
+        const name = entry.replace(MD_EXTENSION_PATTERN, "");
+        if (!catalog.has(name)) {
+          writeLine(`obsolete-runtime-path ${path.join(paths.prompts, entry)}`);
+          failures.value = 1;
+        }
+      }
+    }
+  } catch (error) {
+    writeLine(
+      `missing-or-drifted commands check failed: ${
+        error instanceof Error ? error.message : String(error)
+      }`
+    );
+    failures.value = 1;
+  } finally {
+    rmSync(rendered, { recursive: true, force: true });
+  }
 }
 
 function checkScripts(
@@ -743,6 +831,7 @@ export function runInstallCheck(overrides: InstallCheckOptions = {}): number {
   try {
     checkRulesAndSkills(paths, failures);
     checkRuntimeAndOt(paths, failures);
+    checkCommands(paths, failures);
     checkScripts(paths, failures);
     checkProfilesAndCatalogs(paths, failures);
     checkPortableConfig(paths, failures);

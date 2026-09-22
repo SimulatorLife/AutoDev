@@ -185,11 +185,13 @@ reports the missing grants and exits with a non-zero status.
 - `ccc`
 - `code-simplification`
 - `diagnosing-bugs`
+- `doubt-driven-development`
 - `improve-codebase-architecture`
 - `lsp-mcp-server`
 - `orchestration`
 - `remove-legacy-shims`
 - `resolve-merge-conflicts`
+- `writing-agent-skills`
 
 The shared engineering skills are repository-agnostic and intended to apply
 across local Codex development. `code-simplification` focuses on DRY, KISS,
@@ -201,7 +203,39 @@ focuses on ownership, module depth, seams, dependency direction, locality, test
 surfaces, and structural change amplification. `resolve-merge-conflicts`
 provides an intent-preserving conflict-resolution workflow plus a bundled
 compact context extractor so agents can inspect unresolved paths and hunks
-without loading whole conflicted files by default.
+without loading whole conflicted files by default. `doubt-driven-development`
+applies adversarial verification before a meaningful change hardens, including
+ownership, coupling, and assumption checks. `writing-agent-skills` guides the
+design, revision, and validation of new `SKILL.md` content.
+
+Each agent role in `agents/roles/*.toml` declares which of these skills it
+enables through `[[skills.config]]` entries. The execution contract
+(`config/execution-contract.json`) projects that mapping for runtime
+consumers. Per-role enablement is intentionally narrow so a role does not
+inherit capabilities it does not need:
+
+- `default` (general-purpose developer) enables `code-simplification`,
+  `diagnosing-bugs`, `improve-codebase-architecture`,
+  `remove-legacy-shims`, `resolve-merge-conflicts`, and
+  `writing-agent-skills`.
+- `worker` (bounded implementation) enables every implementation-facing
+  skill: `autodev-codex-request-capture`, `autodev-session-diagnostics`,
+  `code-simplification`, `diagnosing-bugs`, `doubt-driven-development`,
+  `improve-codebase-architecture`, `opentelemetry`,
+  `remove-legacy-shims`, and `resolve-merge-conflicts`.
+- `smart` (full-capability, broad work) enables the same implementation set
+  plus `writing-agent-skills` for ad-hoc skill authorship.
+- `validator` (read-only verification) enables `diagnosing-bugs`,
+  `doubt-driven-development`, and `opentelemetry` so it can reason about
+  bugs, verification, and telemetry review without making changes.
+- `orchestrator` keeps `orchestration` plus the navigation pair
+  (`ccc`, `lsp-mcp-server`) and explicitly disables it on every leaf role so
+  children do not inherit parent delegation policy.
+- `explorer` keeps `ccc` and `lsp-mcp-server` for read-only codebase
+  navigation.
+- `browser-tester` and `docs-researcher` deliberately enable no
+  engineering skills; their bounded work is Playwright UI testing and
+  authoritative documentation research, respectively.
 
 Keep the canonical registered user-level skill content in AutoDev; update the
 skill directories there and rerun the installer when changing this setup. The
@@ -210,6 +244,60 @@ link an individual `SKILL.md` file because Codex currently skips file-level
 symlinks. Its `--check` mode rejects missing or relative skill-directory links
 and symlinked `SKILL.md` files. Restart Codex or start a new task after
 installation so user-level skill discovery refreshes.
+
+### Prompt catalog (Codex custom prompts)
+
+`.rulesync/commands/*.md` is the single tracked source for AutoDev's Codex
+custom prompts (slash commands). The file name is the prompt name; agents
+surface them as `/<name>`. Each file declares `targets: ["*"]` and a concise
+`description:` in YAML frontmatter, followed by the prompt body. The current
+catalog is:
+
+- `bug-fix` — pick the next major/outstanding issue and fix it at the source.
+- `build-fix` — fix outstanding build issues, failures, or errors.
+- `css-cleanup` — comprehensive CSS DRY / dedupe pass.
+- `dedupe-helper` — refactor code to use a shared helper or platform API.
+- `file-organize` — pick two organization issues and reorganize around them.
+- `lint-fix` — fix outstanding lint errors and warnings properly.
+- `merge-prs` — review open PRs against master, merge or re-implement worthwhile ones, and resolve local merge conflicts strategically.
+- `new-feature` — pick and implement a high-value scoped feature.
+- `optimize` — profile, measure, and fix performance bottlenecks.
+- `resolve-merges` — resolve local merge conflicts safely.
+- `test-fix` — investigate failing tests and fix root issues.
+
+The installer projects the catalog through Rulesync's `codexcli` commands
+feature into `$CODEX_HOME/prompts/<name>.md` (one regular file per catalog
+entry, mode `0o644`). Rulesync's `codexcli` commands feature is global-only
+and honors `$HOME` rather than `$CODEX_HOME`, so the installer runs Rulesync
+with `$HOME` pointed at a throwaway `mkdtempSync` directory and copies each
+generated prompt into the real `$CODEX_HOME/prompts/` via
+`materializeRuntimeFile`. The `COMMANDS` catalog constant in
+`src/platform/install-materializer.ts` is the single source of truth: the
+materializer fails loudly if a catalog entry produces no projection, if a
+projection names a prompt that is not in the catalog, and `checkCommands`
+verifies the installed file equals a fresh projection of the current source.
+The `$CODEX_HOME/prompts/` directory is AutoDev-owned and reconciled — any
+`*.md` not in `COMMANDS` is removed during install via
+`removeStalePaths` — so unmanaged prompts cannot drift in.
+
+Rulesync's `codexcli` commands feature is intentionally **not** added to the
+project-mode `rulesync.jsonc` `features` array: it would throw for the project
+mode of codexcli alongside the other targets, and the other targets do not
+need a parallel commands projection. The installer drives the commands
+projection directly.
+
+Upstream Codex marks custom prompts deprecated in favour of skills while
+they remain functional, so the catalog stays as prompts (not skills) and
+surfaces through `/<name>` invocations today. Re-running the installer is
+idempotent: `tests/rulesync-commands.test.ts` covers the catalog shape, the
+projection contract, the materialization, and the reconciliation; the typed
+install-check verifies the live `$CODEX_HOME/prompts/` matches a fresh
+projection. After editing `.rulesync/commands/*.md`, run:
+
+```bash
+node --test tests/rulesync-commands.test.ts
+bash scripts/install.sh --check
+```
 
 ### Seed-retirement acceptance
 
@@ -333,11 +421,12 @@ Repository agent instructions do not go through Rulesync. `AGENTS.md` is their o
 The suites generate from `.rulesync/` into temporary roots:
 - `tests/rulesync-mcp.test.ts` checks that the Codex projection and each user-level file list exactly the servers `.rulesync/mcp.jsonc` declares for that tool, that non-MCP keys survive, and that `--check` catches edited or extra servers.
 - `tests/rulesync-hooks-shadow.test.ts` checks the six command hooks across SessionStart, SubagentStart, UserPromptSubmit, and PreToolUse. Rulesync emits only the supported PreToolUse hook for Antigravity and omits Codex-only fields such as `prevent_idle_sleep`; Copilot and Antigravity projections are intentionally lossy and the tests freeze those limits.
+- `tests/rulesync-commands.test.ts` checks the `.rulesync/commands/*.md` catalog: every file carries valid frontmatter with `targets` and a non-empty `description`, the `COMMANDS` constant exactly matches the on-disk files, the rulesync `codexcli` commands projection produces one prompt per catalog entry with description-only frontmatter (no `targets` leak), the body is preserved verbatim through projection, a pre-existing non-catalog prompt is removed by reconciliation, and re-running is idempotent.
 
 AutoDev scripts remain the hook implementations, while Rulesync owns declarations. The installer materializes the generated projections in the active repository and validates them with `--check`; no duplicate hook declarations remain in `config.autodev.toml`. Rulesync permissions translation remains deferred until AutoDev has a complete portable permission source inventory. After changing `.rulesync/`, `rulesync.jsonc`, or the pinned Rulesync version, run the same suites CI runs:
 
 ```bash
-node --test tests/rulesync-mcp.test.ts tests/rulesync-hooks-shadow.test.ts tests/rulesync-skills.test.ts tests/rulesync-permissions-inventory.test.ts
+node --test tests/rulesync-mcp.test.ts tests/rulesync-hooks-shadow.test.ts tests/rulesync-skills.test.ts tests/rulesync-permissions-inventory.test.ts tests/rulesync-commands.test.ts
 ```
 
 Rulesync does not replace AutoDev's live hook enforcement or role filtering. `.rulesync/skills/` is the single tracked source for every AutoDev skill, and its generated repository skill folders are live output. The repository skill folders each tool discovers inside AutoDev (`.github/skills/` for Copilot, `.claude/skills/` for Claude Code, `.agents/skills/` for Codex and Antigravity) are untracked Rulesync output. The installer generates them by running the pinned `node_modules/.bin/rulesync` with `rulesync.jsonc` (run `pnpm install --frozen-lockfile` first). Its `--check` reports edited, stale, or missing copies. `.gitignore` lists the first two. The installer writes `/.agents/skills/` to `.git/info/exclude` instead, because Antigravity does not load a gitignored `.agents/skills/`. Copilot's cloud agent generates its folder in `copilot-setup-steps.yml`. Each skill's Rulesync `targets` frontmatter selects its folders. Repository-only development skills such as `autodev-codex-request-capture`, `autodev-session-diagnostics`, and `opentelemetry` keep the default and reach every tool, with their bundled scripts (if any). `ccc`, `lsp-mcp-server`, and `orchestration` target only `copilot`, because Copilot's cloud agent has no user level. The remaining skills target nothing, because they already reach local tools at user level and a repository copy would list them twice. Repository-only skills are never installed at user level. Tools that read the repository without running setup, such as github.com Copilot chat and code review, see no repository skills. `tests/rulesync-skills.test.ts` generates the folders fresh and freezes that exposure. The installer symlinks Codex/user-level skills from `.rulesync/skills/`, and Antigravity continues to use its explicit `include_only` registration. Claude-served turns read skills through Codex's tools, so there is no Claude-specific skill view. Hook declarations are Rulesync-owned and generated into each provider's active repository location; AutoDev continues to own the implementation scripts. Codex's `prevent_idle_sleep` field is a known projection limitation, and Copilot/Antigravity projections remain intentionally lossy.
