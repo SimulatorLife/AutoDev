@@ -4215,7 +4215,6 @@ test("counts explicit skill activations separately from injected contexts and br
   const status = getRouterStatus();
   const ws = status.usage.byWorkspace.SkillRepo;
   assert.equal(ws.skillUses, 2);
-  assert.equal(ws.skillContextsInjected, 4);
   assert.equal(status.codexTelemetry.skills.used.total, 2);
   assert.equal(status.codexTelemetry.skills.injected.total, 4);
   assert.equal(status.codexTelemetry.bridgeEvents.skillExposed.total, 1);

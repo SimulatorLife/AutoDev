@@ -2736,8 +2736,6 @@ export class OtelTracker {
         wsResolution.workspaceKey
       );
       wsBucket.skillsCapable = true;
-      wsBucket.skillContextsInjected =
-        (wsBucket.skillContextsInjected ?? 0) + delta;
       const explicitUse =
         invokeType === "explicit" && skillActivationStatus(status);
       if (explicitUse) {
@@ -3466,25 +3464,6 @@ export class OtelTracker {
     spawns.byRole[role] = (spawns.byRole[role] ?? 0) + delta;
     spawns.byModel[model] = (spawns.byModel[model] ?? 0) + delta;
   }
-
-  private dispatchSkillInjected(
-    metric: OtelMetric,
-    resourceAttributes: OtelAttributeMap
-  ): void {
-    const temporality = metric.sum?.aggregationTemporality;
-    for (const dataPoint of metric.sum?.dataPoints ?? []) {
-      const dpAttributes = otelAttributes(dataPoint.attributes);
-      this.noteSkillInjected(
-        metric.name ?? "",
-        { ...resourceAttributes, ...dpAttributes },
-        dataPoint,
-        temporality,
-        dpAttributes,
-        resourceAttributes
-      );
-    }
-  }
-
   private dispatchSkillTurnHistogram(metric: OtelMetric): void {
     const name = metric.name ?? "";
     const histKey = SKILL_TURN_HISTOGRAMS[name]!;
@@ -3712,10 +3691,6 @@ export class OtelTracker {
     resourceAttributes: OtelAttributeMap
   ): void {
     const name = metric.name;
-    if (name === "codex.skill.injected") {
-      this.dispatchSkillInjected(metric, resourceAttributes);
-      return;
-    }
     if (name && SKILL_TURN_HISTOGRAMS[name]) {
       this.dispatchSkillTurnHistogram(metric);
       return;

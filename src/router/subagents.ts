@@ -51,6 +51,24 @@ export const AGENT_EVENTS_PATH = "/v1/agent-events";
 export const DEFAULT_AGENT_EVENTS_URL = `http://127.0.0.1:4100${AGENT_EVENTS_PATH}`;
 
 export const AGENT_ROLE_HEADER = "x-autodev-agent-role";
+export const SANDBOX_MODE_HEADER = "x-autodev-sandbox-mode";
+/**
+ * Optional header a router-to-bridge forward may carry to give the bridge the
+ * Skill.md body the orchestrator injected for its own turn. Bridges hand it
+ * to spawned children whose `SpawnChild.selectedSkillContext` is otherwise
+ * empty so the child re-reads the same skill instead of inferring it from
+ * cwd + filename. The router only sets this on role-routed requests; it never
+ * ships on the orchestrator path.
+ */
+export const SKILL_CONTEXT_HEADER = "x-autodev-skill-context";
+/**
+ * Codex Desktop session id used by /v1/agent-events ingest as the secondary
+ * correlation key when a bridge did not issue a router request id. The hook
+ * `skill-read-telemetry` posts this so the router can attribute SKILL.md
+ * reads from child threads that never travelled through `/v1/responses`.
+ */
+export const CODEX_SESSION_HEADER = "x-autodev-codex-session";
+
 export const ORCHESTRATOR_AGENT_ROLE = "orchestrator";
 export const FORWARDED_REQUEST_HEADERS = Object.freeze([
   "x-codex-turn-metadata"

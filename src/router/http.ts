@@ -875,7 +875,37 @@ function resolveIngestContext(requestId: string): BridgeRequestContext | null {
       context = { ...sessionContext, activitySubject: sessionKey };
     }
   }
+  if (!context && requestId) {
+    // Last-resort fallback: Codex Desktop child threads fire BeforeToolCall
+    // hooks before the router has registered the session for the parent
+    // /v1/responses request (and may never, in the case of a turn that
+    // never opened one). When the registry has nothing under the request id
+    // AND nothing under the session id, treat the post as belonging to the
+    // workspace the hook stamped on the session. We attribute it to the
+    // session key as the activity subject so the post lands in the right
+    // workspace bucket instead of being silently dropped.
+    const fallback = sessionFallbackContext(requestId);
+    if (fallback) context = fallback;
+  }
   return context ?? null;
+}
+
+/**
+ * Best-effort session-id fallback for /v1/agent-events posts that arrive
+ * before the router has had a chance to register the parent request.
+ * Returns null when no workspace metadata can be recovered.
+ */
+function sessionFallbackContext(
+  sessionKey: string
+): BridgeRequestContext | null {
+  // The registry only knows about request ids, but the post arrived keyed
+  // on a Codex session id. Look up any workspace metadata cached against
+  // that session and synthesize a minimal context.
+  const remembered = lookupBridgeSessionContext(sessionKey);
+  if (remembered) {
+    return { ...remembered, activitySubject: sessionKey };
+  }
+  return null;
 }
 
 function applyAgentActivityEvent(
@@ -1020,6 +1050,18 @@ function applyAgentEvent(
   }
   if (type === "mcp_exposed") {
     recordBridgeMcpExposure({ event, context, requestId });
+    const server =
+      typeof event.server === "string" && event.server.trim()
+        ? event.server.trim()
+        : null;
+    const sessionKey = context.sessionKey ?? context.activitySubject;
+    if (server && typeof sessionKey === "string" && sessionKey.trim()) {
+      try {
+        registerLogical(sessionKey, server, getDefaultMcpProcessRegistry());
+      } catch {
+        // Defensive: registration must never fail an ingest.
+      }
+    }
     return;
   }
   if (isHeartbeatAgentEvent(event)) {

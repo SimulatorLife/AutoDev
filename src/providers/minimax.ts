@@ -23,6 +23,9 @@ import { pathToFileURL } from "node:url";
 
 import { resolveAgentRole } from "../agents/bridge-role.ts";
 import { roleContract } from "../shared/execution-contract.ts";
+import {
+  readOnlySystemPromptInjection
+} from "../agents/bridge-sandbox.ts";
 import { resolveAgentEventReporter } from "../telemetry/agent-events.ts";
 
 const MCP_EXPOSURE_SOURCE = "role_contract";
@@ -767,6 +770,62 @@ function proxyError(response: ServerResponse, error: unknown): void {
   );
 }
 
+
+/**
+ * Extract the MCP servers actually exposed by this turn's wire payload, not
+ * the role-contract's declarative list. A tool name like `mcp__lsp__lsp_diagnostics`
+ * proves lsp is wired in; a tool name like `mcp__context7__get-library-docs` proves
+ * context7 is wired in. The contract list is used only as a fallback when the
+ * payload declares no tools at all, so the router attribution is still
+ * informative for empty / tool-free turns.
+ */
+export function extractWireMcpServers(payload: unknown): string[] | null {
+  if (!payload || typeof payload !== "object") return null;
+  const root = payload as Record<string, unknown>;
+  const servers = new Set<string>();
+  // Top-level tools[] array.
+  if (Array.isArray(root.tools)) {
+    for (const tool of root.tools) collectMcpServer(tool, servers);
+  }
+  // Codex's code-mode puts MCP tools in additional_tools input items.
+  if (Array.isArray(root.input)) {
+    for (const item of root.input) collectMcpServer(item, servers);
+  }
+  return servers.size > 0 ? [...servers] : null;
+}
+
+function collectMcpServer(value: unknown, servers: Set<string>): void {
+  if (!value || typeof value !== "object") return;
+  const record = value as Record<string, unknown>;
+  const candidates: string[] = [];
+  const type = typeof record.type === "string" ? record.type : "";
+  if (type === "mcp" && typeof record.server_label === "string") {
+    candidates.push(record.server_label);
+  }
+  const functionRecord = record.function as Record<string, unknown> | undefined;
+  if (functionRecord && typeof functionRecord.name === "string") {
+    candidates.push(functionRecord.name);
+  }
+  if (typeof record.name === "string") candidates.push(record.name);
+  if (record.tools && typeof record.tools === "object") {
+    for (const t of Object.keys(record.tools as Record<string, unknown>)) {
+      candidates.push(t);
+    }
+  }
+  for (const candidate of candidates) {
+    const server = mcpServerFromToolName(candidate);
+    if (server) servers.add(server);
+  }
+}
+
+export function mcpServerFromToolName(name: string): string | null {
+  if (!name.startsWith("mcp__")) return null;
+  const rest = name.slice("mcp__".length);
+  const parts = rest.split("__");
+  if (parts.length >= 2 && parts[0]) return parts[0];
+  return null;
+}
+
 async function forward(
   request: IncomingMessage,
   response: ServerResponse
@@ -782,20 +841,9 @@ async function forward(
   const agentEvents = resolveAgentEventReporter(request.headers);
   const agentRole = resolveAgentRole(request.headers);
   const contract = roleContract(agentRole);
-  if (agentEvents) {
-    for (const server of contract.mcp ?? []) {
-      if (typeof agentEvents.reportMcpExposed === "function") {
-        void agentEvents.reportMcpExposed({
-          server,
-          source: MCP_EXPOSURE_SOURCE
-        });
-      } else if (typeof agentEvents.post === "function") {
-        void agentEvents.post([
-          { type: "mcp_exposed", server, source: MCP_EXPOSURE_SOURCE }
-        ]);
-      }
-    }
-  }
+  const sandboxInjection = readOnlySystemPromptInjection(
+    request.headers as Record<string, unknown>
+  );
   const abortController = new AbortController();
   const abortUpstream = () => abortController.abort();
   request.once("aborted", abortUpstream);
@@ -811,6 +859,44 @@ async function forward(
         ? undefined
         : await requestBody(request);
     let body = rawBody;
+    if (sandboxInjection && typeof body === "string") {
+      try {
+        const parsed = JSON.parse(body) as Record<string, unknown>;
+        if (parsed && typeof parsed === "object") {
+          const existing =
+            typeof parsed.instructions === "string" ? parsed.instructions : "";
+          parsed.instructions = `${existing}${sandboxInjection}`;
+          body = JSON.stringify(parsed);
+        }
+      } catch {
+        // Body is not JSON; nothing to do.
+      }
+    }
+    // Wire-verified MCP exposure: after the body is read, recompute the
+    // exposure from the actual tool names in this turn's payload. The
+    // contract list remains a fallback for tool-free turns so attribution
+    // is informative even when no MCP tools are declared.
+    if (agentEvents && rawBody && typeof rawBody === "string") {
+      let wireServers: string[] | null = null;
+      try {
+        wireServers = extractWireMcpServers(JSON.parse(rawBody));
+      } catch {
+        wireServers = null;
+      }
+      const reportedServers = wireServers ?? (contract.mcp ?? []);
+      for (const server of reportedServers) {
+        if (typeof agentEvents.reportMcpExposed === "function") {
+          void agentEvents.reportMcpExposed({
+            server,
+            source: MCP_EXPOSURE_SOURCE
+          });
+        } else if (typeof agentEvents.post === "function") {
+          void agentEvents.post([
+            { type: "mcp_exposed", server, source: MCP_EXPOSURE_SOURCE }
+          ]);
+        }
+      }
+    }
     // Which tools this turn declared as freeform, so the response can be
     // coerced back into the shape Codex will accept.
     let freeformNames: Set<string> = new Set<string>();

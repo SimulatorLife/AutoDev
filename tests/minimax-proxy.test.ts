@@ -873,3 +873,62 @@ test("a streamed unrecognised exec call reaches Codex as a custom tool call carr
     .map((line) => line.slice(7));
   assert.deepEqual(headers, types);
 });
+
+test("extractWireMcpServers reads MCP servers from declared tool names", async () => {
+  const { extractWireMcpServers, mcpServerFromToolName } = await import(
+    "../src/providers/minimax.ts"
+  );
+  assert.equal(mcpServerFromToolName("mcp__lsp__lsp_diagnostics"), "lsp");
+  assert.equal(
+    mcpServerFromToolName("mcp__cocoindex-code__search"),
+    "cocoindex-code"
+  );
+  assert.equal(
+    mcpServerFromToolName("mcp__autodev_spawn__spawn_subagent"),
+    "autodev_spawn"
+  );
+  assert.equal(mcpServerFromToolName("exec"), null);
+  assert.equal(mcpServerFromToolName(""), null);
+
+  const payload = {
+    tools: [
+      { type: "function", function: { name: "mcp__lsp__lsp_diagnostics" } },
+      {
+        type: "function",
+        function: { name: "mcp__cocoindex-code__search" }
+      },
+      { type: "function", function: { name: "exec" } }
+    ]
+  };
+  const servers = extractWireMcpServers(payload);
+  assert.deepEqual(servers?.sort(), ["cocoindex-code", "lsp"]);
+});
+
+test("extractWireMcpServers picks up additional_tools input items", async () => {
+  const { extractWireMcpServers } = await import(
+    "../src/providers/minimax.ts"
+  );
+  const payload = {
+    input: [
+      {
+        type: "function",
+        name: "mcp__autodev_spawn__spawn_subagent"
+      },
+      {
+        type: "function",
+        name: "mcp__lsp__lsp_workspace_symbols"
+      }
+    ]
+  };
+  const servers = extractWireMcpServers(payload);
+  assert.deepEqual(servers?.sort(), ["autodev_spawn", "lsp"]);
+});
+
+test("extractWireMcpServers returns null when payload declares no tools", async () => {
+  const { extractWireMcpServers } = await import(
+    "../src/providers/minimax.ts"
+  );
+  assert.equal(extractWireMcpServers({}), null);
+  assert.equal(extractWireMcpServers(null), null);
+  assert.equal(extractWireMcpServers({ tools: [] }), null);
+});

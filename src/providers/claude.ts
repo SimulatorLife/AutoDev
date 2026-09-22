@@ -28,6 +28,10 @@ import { createInterface } from "node:readline";
 import { pathToFileURL } from "node:url";
 
 import { resolveAgentRole } from "../agents/bridge-role.ts";
+import {
+  readOnlySystemPromptInjection,
+  bridgeSkillContext
+} from "../agents/bridge-sandbox.ts";
 import { roleContract } from "../shared/execution-contract.ts";
 import { writeErrorLine } from "../shared/output.ts";
 import type { LimitSource, ProviderLimit } from "../shared/provider-limits.ts";
@@ -570,6 +574,13 @@ interface ClaudeStreamOptions extends ClaudeCliOptions {
   signal: AbortSignal;
   /** True while the CLI is blocked on a tool Codex is running. */
   waitingOnCodex: () => boolean;
+  /**
+   * Optional selected-skill context the router forwarded for child turns.
+   * Appended to the system prompt so the bridge's child Claude turn runs
+   * with the same skill body the orchestrator saw, instead of `cat`-ing
+   * the file itself and risking a wrong cwd / filename match.
+   */
+  selectedSkillContext?: string | null;
 }
 
 /**
@@ -970,6 +981,14 @@ async function handle(
     return;
   }
   const surface = codexToolSurface(payload);
+  // Codex owns sandbox; the CLI receives no native --sandbox-mode flag, so
+  // the role's read-only contract is enforced via a system-prompt preamble.
+  const sandboxInjection = readOnlySystemPromptInjection(
+    request.headers as Record<string, unknown>
+  );
+  const orchestratorSkillContext = bridgeSkillContext(
+    request.headers as Record<string, unknown>
+  );
   const turn = new ClaudeTurn({
     tools: surface.tools,
     registry: turns,
@@ -990,7 +1009,18 @@ async function handle(
       },
       signal: turn.signal,
       waitingOnCodex: () => turn.waitingOnCodex,
-      systemPrompt: systemPrompt(cwd, surface),
+      systemPrompt:
+      systemPrompt(cwd, surface) +
+      sandboxInjection +
+      (orchestratorSkillContext
+        ? `
+
+## Selected skill context (propagated from orchestrator)
+
+${orchestratorSkillContext}
+`
+        : ""),
+      selectedSkillContext: orchestratorSkillContext,
       turnId: surface.tools.length > 0 ? turn.id : null,
       webSearch: surface.webSearch
     })

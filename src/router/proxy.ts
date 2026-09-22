@@ -46,7 +46,10 @@ import {
   AGENT_ROLE_HEADER,
   bridgeTelemetryHeaders as subagentBridgeTelemetryHeaders,
   closeBridgeSubagentsForRequest,
+  CODEX_SESSION_HEADER,
   FORWARDED_REQUEST_HEADERS,
+  SANDBOX_MODE_HEADER,
+  SKILL_CONTEXT_HEADER,
   hasActiveBridgeSubagentsForSession,
   mcpContractForRole as subagentMcpContractForRole,
   noteBridgeRequest,
@@ -60,6 +63,7 @@ import {
   SESSION_SCOPE_HEADER
 } from "./subagents.ts";
 import { TOOL_CALL_OWNERSHIP } from "./tool-call-ownership.ts";
+import { resolveSandboxMode } from "../shared/execution-contract.ts";
 import {
   countLiveAgentActivity,
   getDefaultUsageTracker,
@@ -69,6 +73,44 @@ import {
 
 const CODEX_HOME =
   process.env.CODEX_HOME ?? `${process.env.HOME ?? process.cwd()}/.codex`;
+
+/**
+ * Pull the `<skill>...</skill>` body the orchestrator received from its
+ * host's skills.instructions input item. The router forwards it to bridge
+ * role-routed requests so children inherit the same selected-skill context
+ * the orchestrator paid the prompt cost for, rather than re-catting the
+ * SKILL.md from cwd and risking a wrong file. Returns null when nothing
+ * is selected or the selection cannot be parsed.
+ */
+export function extractSelectedSkillContext(payload: unknown): string | null {
+  if (!payload || typeof payload !== "object") return null;
+  const root = payload as Record<string, unknown>;
+  const candidates: unknown[] = [];
+  if (Array.isArray(root.input)) candidates.push(...(root.input as unknown[]));
+  if (Array.isArray(root.messages)) candidates.push(...(root.messages as unknown[]));
+  for (const item of candidates) {
+    if (!item || typeof item !== "object") continue;
+    const entry = item as Record<string, unknown>;
+    const kinds = Array.isArray(entry.content_item_kinds)
+      ? (entry.content_item_kinds as unknown[])
+      : [];
+    const selected = kinds.some(
+      (kind) => typeof kind === "string" && kind === "skills.selected_skill_instructions"
+    );
+    if (!selected) continue;
+    const content = entry.content;
+    if (typeof content === "string" && content.trim()) return content;
+    if (Array.isArray(content)) {
+      for (const part of content) {
+        if (!part || typeof part !== "object") continue;
+        const piece = part as Record<string, unknown>;
+        if (typeof piece.text === "string" && piece.text.trim()) return piece.text;
+      }
+    }
+  }
+  return null;
+}
+
 const AUTH_FILE =
   process.env.CODEX_ROUTER_AUTH_FILE ?? `${CODEX_HOME}/auth.json`;
 const HOST = process.env.CODEX_MODEL_ROUTER_HOST ?? "127.0.0.1";
@@ -423,11 +465,68 @@ export function downstreamHeaders(
   if (turnMetadataHeader)
     headers[FORWARDED_REQUEST_HEADERS[0]!] = turnMetadataHeader;
   if (agentRole) headers[AGENT_ROLE_HEADER] = agentRole;
+  if (agentRole && agentRole !== ORCHESTRATOR_AGENT_ROLE) {
+    const mode = resolveSandboxMode(agentRole);
+    if (mode) headers[SANDBOX_MODE_HEADER] = mode;
+  }
   if (session?.key && route.provider !== "codex") {
     headers[SESSION_ID_HEADER] = session.key;
     headers[SESSION_SCOPE_HEADER] = session.scope ?? "identified";
   }
   return headers;
+}
+
+/**
+ * Variant of {@link downstreamHeaders} that also forwards the orchestrator's
+ * selected-skill body and the Codex session id so role-routed requests can
+ * propagate selected-skill context to bridge-spawned children.
+ */
+export function downstreamHeadersWithSkillContext(
+  route: ProviderRoute,
+  auth: { token: string; accountId: string } | null,
+  turnMetadataHeader: string | null,
+  agentRole: string | null,
+  requestId: string | null,
+  session: RouterSession | null,
+  options: { skillContext?: string | null; codexSessionId?: string | null } = {}
+): Record<string, string> {
+  const headers = downstreamHeaders(
+    route,
+    auth,
+    turnMetadataHeader,
+    agentRole,
+    requestId,
+    session
+  );
+  if (options.skillContext && options.skillContext.trim() && route.provider !== "codex") {
+    headers[SKILL_CONTEXT_HEADER] = options.skillContext;
+  }
+  if (options.codexSessionId && options.codexSessionId.trim()) {
+    headers[CODEX_SESSION_HEADER] = options.codexSessionId;
+  }
+  return headers;
+}
+
+/**
+ * Resolve the Codex session id from a router request payload. Used as the
+ * secondary correlation key for /v1/agent-events ingest when a child thread
+ * never travelled through /v1/responses.
+ */
+export function codexSessionIdFromPayload(payload: unknown): string | null {
+  if (!payload || typeof payload !== "object") return null;
+  const root = payload as Record<string, unknown>;
+  const candidates = [
+    root.session_id,
+    root.sessionId,
+    root.thread_id,
+    root.threadId,
+    (root.metadata as Record<string, unknown> | undefined)?.session_id,
+    (root.metadata as Record<string, unknown> | undefined)?.thread_id
+  ];
+  for (const value of candidates) {
+    if (typeof value === "string" && value.trim()) return value.trim();
+  }
+  return null;
 }
 
 export function declaredLimit(
@@ -1019,13 +1118,17 @@ export async function fetchUpstream(
     : timeoutSignal;
   const upstream = await fetch(`${route.baseUrl}/responses`, {
     method: "POST",
-    headers: downstreamHeaders(
+    headers: downstreamHeadersWithSkillContext(
       route,
       auth,
       turnMetadataHeader,
       agentRole,
       requestId,
-      session
+      session,
+      {
+        skillContext: extractSelectedSkillContext(payload),
+        codexSessionId: codexSessionIdFromPayload(payload)
+      }
     ),
     signal,
     body: JSON.stringify(requestPayload)

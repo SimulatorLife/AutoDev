@@ -92,6 +92,51 @@ test("downstream headers and payload candidates preserve router-owned boundaries
     assert.equal(headers["x-autodev-agent-role"], "worker");
     assert.equal(headers["x-autodev-session-id"], "session-1");
     assert.equal(headers["x-autodev-request-id"], "req-1");
+  } finally {
+    if (previousKey === undefined) delete process.env.TEST_PROVIDER_KEY;
+    else process.env.TEST_PROVIDER_KEY = previousKey;
+  }
+});
+
+test("downstream headers propagate the role sandbox mode for non-orchestrator roles", () => {
+  const previousKey = process.env.TEST_PROVIDER_KEY;
+  process.env.TEST_PROVIDER_KEY = "sk-test-provider";
+  try {
+    const claude = ROUTES.find((candidate) => candidate.provider === "claude")!;
+    const route = { ...claude, envKey: "TEST_PROVIDER_KEY" };
+    const explorerHeaders = downstreamHeaders(
+      route,
+      null,
+      null,
+      "explorer",
+      "req-2",
+      { key: "session-2", scope: "identified" }
+    );
+    assert.equal(explorerHeaders["x-autodev-sandbox-mode"], "read-only");
+
+    const workerHeaders = downstreamHeaders(
+      route,
+      null,
+      null,
+      "worker",
+      "req-3",
+      { key: "session-3", scope: "identified" }
+    );
+    assert.equal(workerHeaders["x-autodev-sandbox-mode"], "workspace-write");
+
+    const orchestratorHeaders = downstreamHeaders(
+      route,
+      null,
+      null,
+      "orchestrator",
+      "req-4",
+      { key: "session-4", scope: "identified" }
+    );
+    assert.equal(
+      orchestratorHeaders["x-autodev-sandbox-mode"],
+      undefined,
+      "orchestrator must not advertise a sandbox mode"
+    );
 
     assert.deepEqual(
       payloadForCandidate(
@@ -568,3 +613,72 @@ test(
     }
   }
 );
+
+test("extractSelectedSkillContext returns the body of the selected-skill input item", async () => {
+  const { extractSelectedSkillContext } = await import(
+    "../../src/router/proxy.ts"
+  );
+  const body = "<skill>...</skill>";
+  assert.equal(
+    extractSelectedSkillContext({
+      input: [
+        {
+          type: "message",
+          role: "user",
+          content_item_kinds: ["skills.selected_skill_instructions"],
+          content: body
+        }
+      ]
+    }),
+    body
+  );
+  // String content is supported.
+  assert.equal(
+    extractSelectedSkillContext({
+      messages: [
+        {
+          type: "message",
+          content_item_kinds: ["skills.selected_skill_instructions"],
+          content: body
+        }
+      ]
+    }),
+    body
+  );
+  // An item without the right content_item_kinds is ignored.
+  assert.equal(
+    extractSelectedSkillContext({
+      input: [
+        {
+          type: "message",
+          content_item_kinds: ["plugins.recommendations"],
+          content: body
+        }
+      ]
+    }),
+    null
+  );
+  assert.equal(extractSelectedSkillContext({}), null);
+  assert.equal(extractSelectedSkillContext(null), null);
+});
+
+test("downstreamHeadersWithSkillContext forwards skill context and codex session id", async () => {
+  const { downstreamHeadersWithSkillContext } = await import(
+    "../../src/router/proxy.ts"
+  );
+  const claude = ROUTES.find((candidate) => candidate.provider === "claude")!;
+  const headers = downstreamHeadersWithSkillContext(
+    { ...claude, envKey: "TEST_PROVIDER_KEY" },
+    null,
+    null,
+    "explorer",
+    "req-9",
+    { key: "session-9", scope: "identified" },
+    {
+      skillContext: "<skill>...</skill>",
+      codexSessionId: "codex-session-9"
+    }
+  );
+  assert.equal(headers["x-autodev-skill-context"], "<skill>...</skill>");
+  assert.equal(headers["x-autodev-codex-session"], "codex-session-9");
+});

@@ -2,6 +2,10 @@ import { existsSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
 import { roleContract } from "../shared/execution-contract.ts";
+import {
+  SANDBOX_MODE_HEADER,
+  SKILL_CONTEXT_HEADER
+} from "../router/subagents.ts";
 
 // Router-generated request header naming the agent role a provider bridge is
 // serving. The router builds its outbound header set from scratch, so this can
@@ -61,6 +65,29 @@ function headerValue(
   return typeof single === "string" && single.trim()
     ? single.trim().toLowerCase()
     : null;
+}
+
+/** The sandbox mode the router assigned to this request, or null when it sent none. */
+export function resolveSandboxModeFromHeaders(
+  headers: Record<string, unknown> | null | undefined
+): "read-only" | "workspace-write" | null {
+  const raw = headerValue(headers, SANDBOX_MODE_HEADER);
+  if (raw === "read-only" || raw === "workspace-write") return raw;
+  return null;
+}
+
+/** Optional selected-skill context the router forwarded for child turns. */
+export function resolveSkillContextFromHeaders(
+  headers: Record<string, unknown> | null | undefined
+): string | null {
+  if (!headers || typeof headers !== "object") return null;
+  const key = Object.keys(headers).find(
+    (candidate) => candidate.toLowerCase() === SKILL_CONTEXT_HEADER
+  );
+  if (key === undefined) return null;
+  const value = headers[key];
+  const single = Array.isArray(value) ? value[0] : value;
+  return typeof single === "string" && single.trim() ? single : null;
 }
 
 /** The agent role the router assigned to this request, or null when it sent none. */

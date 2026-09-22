@@ -68,7 +68,6 @@ export interface WorkspaceBridgeTool {
 export interface WorkspaceUsageBucket extends UsageBucket {
   cwd: string | null;
   skillUses: number;
-  skillContextsInjected: number;
   byRole: Record<string, UsageBucket>;
   byModel: Record<string, UsageBucket>;
   byProvider: Record<string, UsageBucket>;
@@ -443,7 +442,7 @@ export function usageBucket(
 
 function createWorkspaceBucket(cwd: string | null): WorkspaceUsageBucket {
   return {
-    ...emptyUsageBucket(), cwd, skillUses: 0, skillContextsInjected: 0,
+    ...emptyUsageBucket(), cwd, skillUses: 0,
     byRole: {}, byModel: {}, byProvider: {}, byMcp: {}, tools: new Map(),
     skills: new Map(), toolsUnattributed: 0, skillsUnattributed: 0,
     toolsExecuted: 0, toolsRequested: 0, toolsUnavailable: 0, skillsExposed: 0,
@@ -459,7 +458,6 @@ function normalizeWorkspaceBucket(bucket: WorkspaceUsageBucket, cwd: string | nu
   if (!bucket.skills) bucket.skills = new Map();
   if (!bucket.mcpExposed) bucket.mcpExposed = new Map();
   if (typeof bucket.skillUses !== "number") bucket.skillUses = 0;
-  if (typeof bucket.skillContextsInjected !== "number") bucket.skillContextsInjected = 0;
   if (typeof bucket.toolsUnattributed !== "number") bucket.toolsUnattributed = 0;
   if (typeof bucket.skillsUnattributed !== "number") bucket.skillsUnattributed = 0;
   if (typeof bucket.toolsExecuted !== "number") bucket.toolsExecuted = 0;
@@ -1201,7 +1199,6 @@ export class UsageTracker {
           ...emptyUsageBucket(),
           cwd: null,
           skillUses: 0,
-          skillContextsInjected: 0,
           byRole: {},
           byModel: {},
           byProvider: {},
@@ -1267,7 +1264,6 @@ export class UsageTracker {
                   )
                 : 0,
             skillUses: bucket.skillUses ?? 0,
-            skillContextsInjected: bucket.skillContextsInjected ?? 0,
             byRole: usageSnapshot(bucket.byRole, "role", proj, {
               workspace: key
             }),
@@ -1360,7 +1356,6 @@ export class UsageTracker {
           {
             ...withoutActive(bucket),
             skillUses: bucket.skillUses ?? 0,
-            skillContextsInjected: bucket.skillContextsInjected ?? 0,
             toolsUnattributed: bucket.toolsUnattributed ?? 0,
             skillsUnattributed: bucket.skillsUnattributed ?? 0,
             toolsExecuted: bucket.toolsExecuted ?? 0,
@@ -1481,7 +1476,6 @@ function restoreWorkspaceCounters(
   saved: Record<string, unknown>
 ): void {
   if (Number.isInteger(saved.skillUses) && saved.skillUses >= 0) current.skillUses = saved.skillUses;
-  if (Number.isInteger(saved.skillContextsInjected) && saved.skillContextsInjected >= 0) current.skillContextsInjected = saved.skillContextsInjected;
   for (const counter of ["toolsUnattributed", "skillsUnattributed", "toolsExecuted", "toolsRequested", "toolsUnavailable", "skillsExposed"] as const) {
     if (Number.isInteger(saved[counter]) && saved[counter] >= 0) current[counter] = saved[counter];
   }

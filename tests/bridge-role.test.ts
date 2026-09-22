@@ -374,3 +374,55 @@ test("web research policy and Playwright boundaries are enforced in role prompts
   assert.match(browserTester, /do not invent a generic browser substitute/);
   assert.match(browserTester, /Remain Playwright-only/);
 });
+
+test("resolveSandboxModeFromHeaders reads the sandbox header case-insensitively", async () => {
+  const { resolveSandboxModeFromHeaders } = await import(
+    "../src/agents/bridge-role.ts"
+  );
+  assert.equal(
+    resolveSandboxModeFromHeaders({
+      "x-autodev-sandbox-mode": "read-only"
+    }),
+    "read-only"
+  );
+  assert.equal(
+    resolveSandboxModeFromHeaders({
+      "X-Autodev-Sandbox-Mode": "workspace-write"
+    }),
+    "workspace-write"
+  );
+  assert.equal(resolveSandboxModeFromHeaders({}), null);
+  assert.equal(resolveSandboxModeFromHeaders(null), null);
+  // Unknown values are ignored.
+  assert.equal(
+    resolveSandboxModeFromHeaders({
+      "x-autodev-sandbox-mode": "full-access"
+    }),
+    null
+  );
+});
+
+test("resolveSkillContextFromHeaders returns the propagated skill body", async () => {
+  const { resolveSkillContextFromHeaders } = await import(
+    "../src/agents/bridge-role.ts"
+  );
+  const body = "<skill>...</skill>";
+  assert.equal(
+    resolveSkillContextFromHeaders({ "x-autodev-skill-context": body }),
+    body
+  );
+  assert.equal(
+    resolveSkillContextFromHeaders({
+      "X-Autodev-Skill-Context": body,
+      "content-type": "text/plain"
+    }),
+    body
+  );
+  assert.equal(resolveSkillContextFromHeaders({}), null);
+  assert.equal(resolveSkillContextFromHeaders(null), null);
+  // Empty body is treated as absent.
+  assert.equal(
+    resolveSkillContextFromHeaders({ "x-autodev-skill-context": "  " }),
+    null
+  );
+});

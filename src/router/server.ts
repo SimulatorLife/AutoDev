@@ -8,10 +8,20 @@ import { codexState, handle, HOST, PORT, refreshCodexState } from "./http.ts";
 import { beginShutdown } from "./lifecycle.ts";
 import { loadRouterState, persistRouterStateNow } from "./persistence.ts";
 import {
+  getDefaultMcpProcessRegistry
+} from "../mcp/process-registry.ts";
+import {
   isClientDisconnectError,
   ROUTER_INSTANCE_ID,
   transportErrorInfo
 } from "./proxy.ts";
+
+// Start the MCP server registry sweeper as soon as the router loads. The
+// 5-minute interval and 30-minute idle threshold match the registry defaults
+// and are intended to retire Codex Desktop MCP servers whose owning session
+// has been silent for too long, closing the orphan-leak gap reported in the
+// audit.
+getDefaultMcpProcessRegistry().startIdleSweeper();
 
 const IS_MAIN = Boolean(
   process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href

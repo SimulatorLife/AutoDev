@@ -19,6 +19,10 @@ import {
 } from "../agents/bridge-role.ts";
 import { SpawnSessionRegistry } from "../agents/bridge-spawn-session.ts";
 import {
+  bridgeSkillContext,
+  readOnlySystemPromptInjection
+} from "../agents/bridge-sandbox.ts";
+import {
   buildSpawnScript,
   execToolCallSseEvents,
   mintCallId,
@@ -1410,9 +1414,18 @@ function agyArgs(
   prompt: string,
   model: string,
   effort: string,
-  agentRole: string | null = null
+  agentRole: string | null = null,
+  sandboxMode: "read-only" | "workspace-write" | null = null
 ): string[] {
-  const readOnly = antigravityRoleContract(agentRole).readOnly;
+  // The router forwards the declared sandbox via x-autodev-sandbox-mode. We
+  // trust that header over roleContract(agentRole).readOnly because the
+  // header is the authoritative wire signal for this turn, and falls back
+  // to the contract for backwards compatibility with bridges that have not
+  // been updated to send it yet.
+  const readOnly =
+    sandboxMode === "read-only" ||
+    (sandboxMode !== "workspace-write" &&
+      antigravityRoleContract(agentRole).readOnly);
   const permissionArgs =
     AGY_SKIP_PERMISSIONS === "true" && !readOnly
       ? ["--dangerously-skip-permissions"]
@@ -1449,6 +1462,34 @@ function agyArgs(
   ];
 }
 
+/**
+ * Build the prompt agy will receive, with the read-only contract preamble
+ * the bridge role's contract already implies but the header-based sandbox
+ * mode confirms authoritatively on every turn.
+ */
+function buildAgyPrompt(
+  prompt: string,
+  agentRole: string | null,
+  sandboxMode: "read-only" | "workspace-write" | null,
+  skillContext: string | null
+): string {
+  const preamble = readOnlySystemPromptInjection(sandboxMode !== null
+    ? { "x-autodev-sandbox-mode": sandboxMode }
+    : null);
+  const skillPreamble = skillContext
+    ? `
+
+## Selected skill context (propagated from orchestrator)
+
+${skillContext}
+`
+    : "";
+  if (!preamble && !skillPreamble) return prompt;
+  return `${preamble}${skillPreamble}
+
+${prompt}`;
+}
+
 function runAgy(
   prompt: string,
   model: string,
@@ -1456,10 +1497,13 @@ function runAgy(
   cwd: string,
   onEvent: OnAgyEvent | null,
   spawnSession: string | null = null,
-  agentRole: string | null = null
+  agentRole: string | null = null,
+  sandboxMode: "read-only" | "workspace-write" | null = null,
+  skillContext: string | null = null
 ): Promise<RunAgyResult> {
   return new Promise<RunAgyResult>((resolve, reject) => {
-    const child = spawn(CLI, agyArgs(prompt, model, effort, agentRole), {
+    const finalPrompt = buildAgyPrompt(prompt, agentRole, sandboxMode, skillContext);
+    const child = spawn(CLI, agyArgs(finalPrompt, model, effort, agentRole, sandboxMode), {
       cwd,
       env: agyEnvironment(spawnSession),
       stdio: ["ignore", "pipe", "pipe"]
@@ -1725,6 +1769,23 @@ async function handle(
   // The router classifies the turn; only it can tell this bridge that it is
   // serving the root orchestrator rather than a delegated leaf.
   const agentRole = resolveAgentRole(request.headers);
+  const sandboxMode = readOnlySystemPromptInjection(
+    request.headers as Record<string, unknown>
+  ) !== ""
+    ? "read-only"
+    : resolveSandboxModeLocal(request.headers);
+  const skillContext = bridgeSkillContext(request.headers as Record<string, unknown>);
+  function resolveSandboxModeLocal(
+    headers: Record<string, unknown>
+  ): "read-only" | "workspace-write" | null {
+    const key = Object.keys(headers).find(
+      (c) => c.toLowerCase() === "x-autodev-sandbox-mode"
+    );
+    if (!key) return null;
+    const value = headers[key];
+    const single = Array.isArray(value) ? value[0] : value;
+    return single === "read-only" || single === "workspace-write" ? single : null;
+  }
   // agy delegates through its own `invoke_subagent` tool, so those children
   // never reach the router as requests. Report them, or an orchestrator turn
   // served here reads as "never delegated".
@@ -1859,7 +1920,9 @@ async function handle(
             }
           },
           spawnSession,
-          agentRole
+          agentRole,
+          sandboxMode,
+          skillContext
         );
       } finally {
         clearInterval(nonStreamHeartbeat);
@@ -2255,7 +2318,9 @@ async function handle(
         }
       },
       spawnSession,
-      agentRole
+      agentRole,
+      sandboxMode,
+      skillContext
     );
     clearInterval(keepAlive);
     stopDelegationHeartbeat();

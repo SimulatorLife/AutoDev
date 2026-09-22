@@ -19,6 +19,10 @@ import {
 } from "../agents/bridge-role.ts";
 import { SpawnSessionRegistry } from "../agents/bridge-spawn-session.ts";
 import {
+  bridgeSkillContext,
+  readOnlySystemPromptInjection
+} from "../agents/bridge-sandbox.ts";
+import {
   buildSpawnScript,
   execToolCallSseEvents,
   mintCallId,
@@ -88,6 +92,20 @@ function copilotRoleContract(role: unknown): CopilotRoleContract {
 // router's rows say which mechanism made the skill available.
 const SKILL_EXPOSURE_SOURCE = "role_contract";
 const MCP_EXPOSURE_SOURCE = "role_contract";
+
+function readOnlyHeaderValue(headers: Record<string, unknown>):
+  | "read-only"
+  | "workspace-write"
+  | null {
+  const key = Object.keys(headers).find(
+    (c) => c.toLowerCase() === "x-autodev-sandbox-mode"
+  );
+  if (!key) return null;
+  const value = headers[key];
+  const single = Array.isArray(value) ? value[0] : value;
+  return single === "read-only" || single === "workspace-write" ? single : null;
+}
+
 
 const spawnSessions = new SpawnSessionRegistry();
 
@@ -722,7 +740,9 @@ function runCopilot(
   cwd: string,
   onEvent: OnRunCopilotEvent | null = null,
   agentRole: string | null = null,
-  spawnSession: string | null = null
+  spawnSession: string | null = null,
+  sandboxMode: "read-only" | "workspace-write" | null = null,
+  skillContext: string | null = null
 ): Promise<RunCopilotResult> {
   return new Promise<RunCopilotResult>((resolvePromise, rejectPromise) => {
     const args = [
@@ -737,7 +757,13 @@ function runCopilot(
     args.push(...copilotMcpArgs(agentRole, spawnSession));
     if (isResearchRole(agentRole))
       args.push("--allow-tool=web_search", "--allow-tool=web_fetch");
-    if (!contract.readOnly)
+    // The router forwards the declared sandbox via x-autodev-sandbox-mode. We
+    // trust that header over roleContract(agentRole).readOnly because the
+    // header is the authoritative wire signal for this turn.
+    const readOnly =
+      sandboxMode === "read-only" ||
+      (sandboxMode !== "workspace-write" && contract.readOnly);
+    if (!readOnly)
       args.splice(
         4,
         0,
@@ -1053,10 +1079,27 @@ async function handle(
     });
     return;
   }
-  const prompt = inputText(
-    payload.input,
-    composeProviderPrompt(agentRole, cwd)
+  const sandboxModeHeader = readOnlyHeaderValue(
+    request.headers as Record<string, unknown>
   );
+  const skillContextHeader = bridgeSkillContext(
+    request.headers as Record<string, unknown>
+  );
+  const sandboxInjection = readOnlySystemPromptInjection(
+    request.headers as Record<string, unknown>
+  );
+  const composedPrompt = composeProviderPrompt(agentRole, cwd) + sandboxInjection;
+  const finalPrompt =
+    composedPrompt +
+    (skillContextHeader
+      ? `
+
+## Selected skill context (propagated from orchestrator)
+
+${skillContextHeader}
+`
+      : "");
+  const prompt = inputText(payload.input, finalPrompt);
   const sessionHeader = headerValue(request.headers, "x-autodev-session-id");
   const sessionScope = headerValue(request.headers, "x-autodev-session-scope");
   const spawnSession = SpawnSessionRegistry.canHold(sessionHeader, sessionScope)
@@ -1122,7 +1165,9 @@ async function handle(
             reportToolObservation(agentEvents, event);
           },
           agentRole,
-          spawnSession
+          spawnSession,
+          sandboxModeHeader,
+          skillContextHeader
         );
       } finally {
         clearInterval(nonStreamHeartbeat);
@@ -1347,7 +1392,9 @@ async function handle(
         );
       },
       agentRole,
-      spawnSession
+      spawnSession,
+      sandboxModeHeader,
+      skillContextHeader
     );
     startStream();
     const reasoningText = activityParts.join("");
