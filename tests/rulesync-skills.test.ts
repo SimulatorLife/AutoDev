@@ -350,10 +350,15 @@ test("Rulesync config generates only repository skills and CI runs the Rulesync 
   );
   assert.equal(workflow.match(/- "tests\/rulesync-\*\.test\.ts"/g)?.length, 2);
   assert.doesNotMatch(workflow, /rulesync generate/);
-  assert.deepEqual(
-    readdirSync(join(repositoryRoot, "tests", "fixtures"), {
-      withFileTypes: true
-    }).filter((entry) => entry.name.startsWith("rulesync-")),
-    []
-  );
+  // The AutoDev prompt-catalog migration owns the single allowed
+  // rulesync-prefixed fixture; everything else under tests/fixtures/ must
+  // not start with "rulesync-" so repository projections stay out of git.
+  const allowedRulesyncFixtures = new Set(["rulesync-command-sources.json"]);
+  const stray = readdirSync(join(repositoryRoot, "tests", "fixtures"), {
+    withFileTypes: true
+  })
+    .filter((entry) => entry.name.startsWith("rulesync-"))
+    .filter((entry) => !allowedRulesyncFixtures.has(entry.name))
+    .map((entry) => entry.name);
+  assert.deepEqual(stray, []);
 });

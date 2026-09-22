@@ -6,7 +6,7 @@ AutoDev is the SimulatorLife organization control plane for autonomous GitHub de
 
 1. `.github/workflows/_scheduler.yml` reads `weights.json` on its 15-minute schedule.
 2. It selects a generic prompt, eligible agent, and target repository using the configured weights.
-3. `run-prompt.yml` reads either an AutoDev generic prompt or the target repository's `.agents/prompts/*.md`, then `_agent-open-pr-and-ping.yml` creates the target PR with `GH_USER_TOKEN`.
+3. `run-prompt.yml` reads either an AutoDev generic prompt from `.rulesync/commands/*.md` or the target repository's `.agents/prompts/*.md`, then `_agent-open-pr-and-ping.yml` creates the target PR with `GH_USER_TOKEN`.
 4. Provider workflows call `agent-invoke.yml`, which continues working against the target repository and pushes through the PAT.
 
 ## Required GitHub configuration

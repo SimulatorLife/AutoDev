@@ -107,7 +107,7 @@
   "prompts": [
     {
       "name": "dry",
-      "path": ".agents/prompts/dry.md",
+      "path": ".rulesync/commands/dry.md",
       "title": "Agent: Reduce duplication",
       "weight": 0.7,
       "category": "code",
@@ -115,7 +115,7 @@
     },
     {
       "name": "kiss",
-      "path": ".agents/prompts/kiss.md",
+      "path": ".rulesync/commands/kiss.md",
       "title": "Agent: Keep the design simple",
       "weight": 0.5,
       "category": "code",
@@ -123,7 +123,7 @@
     },
     {
       "name": "organization",
-      "path": ".agents/prompts/organization.md",
+      "path": ".rulesync/commands/organization.md",
       "title": "Agent: Improve ownership and organization",
       "weight": 1,
       "category": "code",
@@ -131,7 +131,7 @@
     },
     {
       "name": "bug-fix",
-      "path": ".agents/prompts/bug-fix.md",
+      "path": ".rulesync/commands/bug-fix.md",
       "title": "Agent: Fix one real defect",
       "weight": 0.2,
       "category": "code",
@@ -139,7 +139,7 @@
     },
     {
       "name": "style-consistency",
-      "path": ".agents/prompts/style-consistency.md",
+      "path": ".rulesync/commands/style-consistency.md",
       "title": "Agent: Style Consistency",
       "weight": 0.2,
       "category": "code",
@@ -147,7 +147,7 @@
     },
     {
       "name": "consolidate-files",
-      "path": ".agents/prompts/consolidate-files.md",
+      "path": ".rulesync/commands/consolidate-files.md",
       "title": "Agent: Consolidate Files",
       "weight": 0.5,
       "category": "code",
@@ -155,7 +155,7 @@
     },
     {
       "name": "decouple-architecture",
-      "path": ".agents/prompts/decouple-architecture.md",
+      "path": ".rulesync/commands/decouple-architecture.md",
       "title": "Agent: Decouple Architecture",
       "weight": 0.2,
       "category": "code",
@@ -163,7 +163,7 @@
     },
     {
       "name": "dependency-hygiene",
-      "path": ".agents/prompts/dependency-hygiene.md",
+      "path": ".rulesync/commands/dependency-hygiene.md",
       "title": "Agent: Dependency Hygiene",
       "weight": 0.1,
       "category": "code",
@@ -171,7 +171,7 @@
     },
     {
       "name": "documentation-refresh",
-      "path": ".agents/prompts/documentation-refresh.md",
+      "path": ".rulesync/commands/documentation-refresh.md",
       "title": "Agent: Documentation Refresh",
       "weight": 0.1,
       "category": "code",
@@ -179,7 +179,7 @@
     },
     {
       "name": "parameter-flexibility",
-      "path": ".agents/prompts/parameter-flexibility.md",
+      "path": ".rulesync/commands/parameter-flexibility.md",
       "title": "Agent: Parameter Flexibility",
       "weight": 0.1,
       "category": "code",
@@ -187,7 +187,7 @@
     },
     {
       "name": "dead-code-audit",
-      "path": ".agents/prompts/dead-code-audit.md",
+      "path": ".rulesync/commands/dead-code-audit.md",
       "title": "Agent: Dead Code Audit",
       "weight": 0.33,
       "category": "code",
@@ -195,7 +195,7 @@
     },
     {
       "name": "error-handling",
-      "path": ".agents/prompts/error-handling.md",
+      "path": ".rulesync/commands/error-handling.md",
       "title": "Agent: Error Handling",
       "weight": 0.1,
       "category": "code",
@@ -203,7 +203,7 @@
     },
     {
       "name": "control-flow-clarity",
-      "path": ".agents/prompts/control-flow-clarity.md",
+      "path": ".rulesync/commands/control-flow-clarity.md",
       "title": "Agent: Control Flow Clarity",
       "weight": 0.25,
       "category": "code",
@@ -211,7 +211,7 @@
     },
     {
       "name": "micro-optimization",
-      "path": ".agents/prompts/micro-optimization.md",
+      "path": ".rulesync/commands/micro-optimization.md",
       "title": "Agent: Micro Optimization",
       "weight": 0.334,
       "category": "code",
@@ -219,7 +219,7 @@
     },
     {
       "name": "extensibility",
-      "path": ".agents/prompts/extensibility.md",
+      "path": ".rulesync/commands/extensibility.md",
       "title": "Agent: Extensibility",
       "weight": 0.1,
       "category": "code",
@@ -227,7 +227,7 @@
     },
     {
       "name": "lint-fix",
-      "path": ".agents/prompts/lint-fix.md",
+      "path": ".rulesync/commands/lint-fix.md",
       "title": "Agent: Lint Fix",
       "weight": 0.33,
       "category": "code",
@@ -235,7 +235,7 @@
     },
     {
       "name": "duplicate-report",
-      "path": ".agents/prompts/duplicate-report.md",
+      "path": ".rulesync/commands/duplicate-report.md",
       "title": "Agent: Duplicate Report",
       "weight": 0.3,
       "category": "code",
@@ -243,23 +243,15 @@
     },
     {
       "name": "docstrings-comments",
-      "path": ".agents/prompts/docstrings-comments.md",
+      "path": ".rulesync/commands/docstrings-comments.md",
       "title": "Agent: Docstrings Comments",
       "weight": 0.1,
       "category": "code",
       "complexity": 1
     },
     {
-      "name": "helper-substitution",
-      "path": ".agents/prompts/helper-substitution.md",
-      "title": "Agent: Helper Substitution",
-      "weight": 0.3,
-      "category": "code",
-      "complexity": 2
-    },
-    {
       "name": "logic-deduplication",
-      "path": ".agents/prompts/logic-deduplication.md",
+      "path": ".rulesync/commands/logic-deduplication.md",
       "title": "Agent: Logic Deduplication",
       "weight": 0.5,
       "category": "code",
@@ -267,7 +259,7 @@
     },
     {
       "name": "memory-footprint",
-      "path": ".agents/prompts/memory-footprint.md",
+      "path": ".rulesync/commands/memory-footprint.md",
       "title": "Agent: Memory Footprint",
       "weight": 0.2,
       "category": "code",
@@ -275,7 +267,7 @@
     },
     {
       "name": "validation-failure-recovery",
-      "path": ".agents/prompts/validation-failure-recovery.md",
+      "path": ".rulesync/commands/validation-failure-recovery.md",
       "title": "Agent: Validation Failure Recovery",
       "weight": 0.3,
       "category": "regressions",
@@ -283,7 +275,7 @@
     },
     {
       "name": "todo-implementation",
-      "path": ".agents/prompts/todo-implementation.md",
+      "path": ".rulesync/commands/todo-implementation.md",
       "title": "Agent: Todo Implementation",
       "weight": 0.1,
       "category": "code",
@@ -291,7 +283,7 @@
     },
     {
       "name": "nullability-guardrails",
-      "path": ".agents/prompts/nullability-guardrails.md",
+      "path": ".rulesync/commands/nullability-guardrails.md",
       "title": "Agent: Nullability Guardrails",
       "weight": 0.1,
       "category": "code",
@@ -299,7 +291,7 @@
     },
     {
       "name": "loop-mutation",
-      "path": ".agents/prompts/loop-mutation.md",
+      "path": ".rulesync/commands/loop-mutation.md",
       "title": "Agent: Loop Mutation",
       "weight": 0.1,
       "category": "code",
@@ -307,7 +299,7 @@
     },
     {
       "name": "resource-leak",
-      "path": ".agents/prompts/resource-leak.md",
+      "path": ".rulesync/commands/resource-leak.md",
       "title": "Agent: Resource Leak",
       "weight": 0.2,
       "category": "code",
@@ -315,7 +307,7 @@
     },
     {
       "name": "typed-flags",
-      "path": ".agents/prompts/typed-flags.md",
+      "path": ".rulesync/commands/typed-flags.md",
       "title": "Agent: Typed Flags",
       "weight": 0.1,
       "category": "code",
@@ -323,7 +315,7 @@
     },
     {
       "name": "floating-point-safety",
-      "path": ".agents/prompts/floating-point-safety.md",
+      "path": ".rulesync/commands/floating-point-safety.md",
       "title": "Agent: Floating Point Safety",
       "weight": 0.1,
       "category": "code",
@@ -331,7 +323,7 @@
     },
     {
       "name": "test-isolation",
-      "path": ".agents/prompts/test-isolation.md",
+      "path": ".rulesync/commands/test-isolation.md",
       "title": "Agent: Test Isolation",
       "weight": 0.4,
       "category": "code",
@@ -339,7 +331,7 @@
     },
     {
       "name": "legacy-api-migration",
-      "path": ".agents/prompts/legacy-api-migration.md",
+      "path": ".rulesync/commands/legacy-api-migration.md",
       "title": "Agent: Legacy Api Migration",
       "weight": 0.1,
       "category": "code",
@@ -347,7 +339,7 @@
     },
     {
       "name": "usability",
-      "path": ".agents/prompts/usability.md",
+      "path": ".rulesync/commands/usability.md",
       "title": "Agent: Usability",
       "weight": 0.2,
       "category": "code",
@@ -355,7 +347,7 @@
     },
     {
       "name": "architectural-audit",
-      "path": ".agents/prompts/architectural-audit.md",
+      "path": ".rulesync/commands/architectural-audit.md",
       "title": "Agent: Architectural Audit",
       "weight": 0.15,
       "category": "code",
@@ -363,7 +355,7 @@
     },
     {
       "name": "cohesion-refactor",
-      "path": ".agents/prompts/cohesion-refactor.md",
+      "path": ".rulesync/commands/cohesion-refactor.md",
       "title": "Agent: Cohesion Refactor",
       "weight": 0.3,
       "category": "code",
@@ -371,7 +363,7 @@
     },
     {
       "name": "composition-over-inheritance",
-      "path": ".agents/prompts/composition-over-inheritance.md",
+      "path": ".rulesync/commands/composition-over-inheritance.md",
       "title": "Agent: Composition Over Inheritance",
       "weight": 0.1,
       "category": "code",
@@ -379,7 +371,7 @@
     },
     {
       "name": "defensive-input",
-      "path": ".agents/prompts/defensive-input.md",
+      "path": ".rulesync/commands/defensive-input.md",
       "title": "Agent: Defensive Input",
       "weight": 0.1,
       "category": "code",
@@ -387,7 +379,7 @@
     },
     {
       "name": "demeter",
-      "path": ".agents/prompts/demeter.md",
+      "path": ".rulesync/commands/demeter.md",
       "title": "Agent: Demeter",
       "weight": 0.1,
       "category": "code",
@@ -395,7 +387,7 @@
     },
     {
       "name": "document-intent",
-      "path": ".agents/prompts/document-intent.md",
+      "path": ".rulesync/commands/document-intent.md",
       "title": "Agent: Document Intent",
       "weight": 0.1,
       "category": "code",
@@ -403,7 +395,7 @@
     },
     {
       "name": "interface-segregation",
-      "path": ".agents/prompts/interface-segregation.md",
+      "path": ".rulesync/commands/interface-segregation.md",
       "title": "Agent: Interface Segregation",
       "weight": 0.1,
       "category": "code",
@@ -411,7 +403,7 @@
     },
     {
       "name": "low-coupling",
-      "path": ".agents/prompts/low-coupling.md",
+      "path": ".rulesync/commands/low-coupling.md",
       "title": "Agent: Low Coupling",
       "weight": 0.2,
       "category": "code",
@@ -419,7 +411,7 @@
     },
     {
       "name": "polymorphic-collaborators",
-      "path": ".agents/prompts/polymorphic-collaborators.md",
+      "path": ".rulesync/commands/polymorphic-collaborators.md",
       "title": "Agent: Polymorphic Collaborators",
       "weight": 0.1,
       "category": "code",
@@ -427,7 +419,7 @@
     },
     {
       "name": "pola",
-      "path": ".agents/prompts/pola.md",
+      "path": ".rulesync/commands/pola.md",
       "title": "Agent: Pola",
       "weight": 0.1,
       "category": "code",
@@ -435,7 +427,7 @@
     },
     {
       "name": "policy-mechanism",
-      "path": ".agents/prompts/policy-mechanism.md",
+      "path": ".rulesync/commands/policy-mechanism.md",
       "title": "Agent: Policy Mechanism",
       "weight": 0.1,
       "category": "code",
@@ -443,7 +435,7 @@
     },
     {
       "name": "abstraction-layer",
-      "path": ".agents/prompts/abstraction-layer.md",
+      "path": ".rulesync/commands/abstraction-layer.md",
       "title": "Agent: Abstraction Layer",
       "weight": 0.15,
       "category": "code",
@@ -451,7 +443,7 @@
     },
     {
       "name": "single-responsibility",
-      "path": ".agents/prompts/single-responsibility.md",
+      "path": ".rulesync/commands/single-responsibility.md",
       "title": "Agent: Single Responsibility",
       "weight": 0.1,
       "category": "code",
@@ -459,7 +451,7 @@
     },
     {
       "name": "test-duration",
-      "path": ".agents/prompts/test-duration.md",
+      "path": ".rulesync/commands/test-duration.md",
       "title": "Agent: Test Duration",
       "weight": 1,
       "category": "code",
@@ -467,7 +459,7 @@
     },
     {
       "name": "generalization",
-      "path": ".agents/prompts/generalization.md",
+      "path": ".rulesync/commands/generalization.md",
       "title": "Agent: Generalization",
       "weight": 0.1,
       "category": "code",
@@ -475,7 +467,7 @@
     },
     {
       "name": "bloat-trimming",
-      "path": ".agents/prompts/bloat-trimming.md",
+      "path": ".rulesync/commands/bloat-trimming.md",
       "title": "Agent: Bloat Trimming",
       "weight": 0.25,
       "category": "code",
@@ -483,7 +475,7 @@
     },
     {
       "name": "split-long-file",
-      "path": ".agents/prompts/split-long-file.md",
+      "path": ".rulesync/commands/split-long-file.md",
       "title": "Agent: Split Long File",
       "weight": 0.125,
       "category": "code",
@@ -491,7 +483,7 @@
     },
     {
       "name": "legacy-shim-removal",
-      "path": ".agents/prompts/legacy-shim-removal.md",
+      "path": ".rulesync/commands/legacy-shim-removal.md",
       "title": "Agent: Legacy Shim Removal",
       "weight": 0.2,
       "category": "code",
@@ -499,7 +491,7 @@
     },
     {
       "name": "test-deduplication",
-      "path": ".agents/prompts/test-deduplication.md",
+      "path": ".rulesync/commands/test-deduplication.md",
       "title": "Agent: Test Deduplication",
       "weight": 0.5,
       "category": "code",
@@ -507,7 +499,7 @@
     },
     {
       "name": "bad-test-remediation",
-      "path": ".agents/prompts/bad-test-remediation.md",
+      "path": ".rulesync/commands/bad-test-remediation.md",
       "title": "Agent: Bad Test Remediation",
       "weight": 0.15,
       "category": "code",
@@ -515,7 +507,7 @@
     },
     {
       "name": "test-coverage",
-      "path": ".agents/prompts/test-coverage.md",
+      "path": ".rulesync/commands/test-coverage.md",
       "title": "Agent: Improve test coverage and quality",
       "weight": 0.5,
       "category": "code",
@@ -523,7 +515,7 @@
     },
     {
       "name": "configuration-improvement",
-      "path": ".agents/prompts/configuration-improvement.md",
+      "path": ".rulesync/commands/configuration-improvement.md",
       "title": "Agent: Improve one configuration surface",
       "weight": 0.2,
       "category": "code",

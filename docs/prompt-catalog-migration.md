@@ -61,6 +61,19 @@ The following historical workflows are represented as prompts in AutoDev:
   `.agents/prompts/` directory and are selected through the same generic
   runner using that repository as `prompt_repository`.
 
+
+
+## AutoDev catalog unification
+
+The historical AutoDev generic catalog (formerly `.agents/prompts/*.md` in
+this repository) is now unified under `.rulesync/commands/*.md`: the
+scheduler pipeline in `weights.json` references `.rulesync/commands/<slug>.md`
+for every AutoDev-owned prompt, and the `COMMANDS` catalog in
+`src/platform/install-materializer.ts` is the union of the prior AutoDev
+Codex prompt catalog and the migrated generic scheduler catalog. The
+GMLoop-to-AutoDev migration provenance above is preserved for context only
+and does not describe the current on-disk path layout.
+
 This keeps AutoDev's catalog generic while retaining the full set of useful
 organization-wide engineering workflows that used to be hidden inside the
 GMLoop repository.

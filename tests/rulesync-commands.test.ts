@@ -230,9 +230,13 @@ test("materializeCommands writes one prompt per catalog entry and is idempotent"
       ).replace(/^---\n[\s\S]*?\n---\n/u, "");
       const targetText = readFileSync(join(promptsDir, `${name}.md`), "utf8");
       const targetBody = targetText.replace(/^---\n[\s\S]*?\n---\n/u, "");
+      // Rulesync appends a trailing newline to the projected body regardless
+      // of whether the source body had one. Normalize so the verbatim-body
+      // assertion is meaningful for catalog entries that follow the AutoDev
+      // single-paragraph convention (e.g. advance-autodev.md).
       assert.equal(
-        targetBody,
-        sourceBody,
+        targetBody.replace(/\n?$/u, ""),
+        sourceBody.replace(/\n?$/u, ""),
         `${name} body must be preserved verbatim through projection`
       );
     }
@@ -321,4 +325,81 @@ test("drift workflow runs the commands suite alongside the other rulesync suites
     /node --test tests\/rulesync-mcp\.test\.ts tests\/rulesync-hooks-shadow\.test\.ts tests\/rulesync-skills\.test\.ts tests\/rulesync-permissions-inventory\.test\.ts tests\/rulesync-commands\.test\.ts/
   );
   assert.match(workflow, /- "tests\/rulesync-\*\.test\.ts"/);
+});
+
+const commandSourcesPath = join(
+  repositoryRoot,
+  "tests",
+  "fixtures",
+  "rulesync-command-sources.json"
+);
+
+/**
+ * Slugs whose body is the union of an existing `.rulesync/commands/<slug>.md`
+ * body and the migrated `.agents/prompts/<other>.md` body. For these, the
+ * original H1 heading lives in the merged source's section rather than at the
+ * very top of the body, so the "within first 200 chars" assertion only
+ * applies to the directly-migrated entries.
+ */
+const MERGED_SLUGS = new Set(["bug-fix", "lint-fix", "dedupe-helper"]);
+/**
+ * Slugs whose original `.agents/prompts/<slug>.md` body had no `# <Title>`
+ * H1 heading (the body opens with prose). The sidecar map records this with an
+ * empty string and the H1-presence assertions skip them, preserving the
+ * source byte-for-byte without inventing a heading.
+ */
+const HEADINGLESS_SLUGS = new Set(["advance-autodev"]);
+
+test("every migrated catalog entry preserves the original .agents/prompts source", () => {
+  const sources = JSON.parse(readFileSync(commandSourcesPath, "utf8")) as Record<
+    string,
+    string
+  >;
+  const catalogSlugs = new Set<string>(COMMANDS);
+  // The sidecar map lists every migrated entry (54 total: 51 directly moved
+  // plus the 3 in-place merges). Catalog entries that pre-date the migration
+  // (build-fix, css-cleanup, file-organize, merge-prs, new-feature, optimize,
+  // resolve-merges, test-fix) have no sidecar mapping and are skipped here.
+  for (const [slug, expectedHeading] of Object.entries(sources)) {
+    assert.ok(
+      catalogSlugs.has(slug),
+      `sidecar map references "${slug}" but the COMMANDS catalog does not`
+    );
+    if (HEADINGLESS_SLUGS.has(slug)) {
+      // The original source body had no `# <Title>` heading; the sidecar
+      // records this with an empty string so we can confirm the migration is
+      // not silently inventing content.
+      assert.equal(
+        expectedHeading,
+        "",
+        `${slug} is in HEADINGLESS_SLUGS but its sidecar entry is not empty`
+      );
+      continue;
+    }
+    assert.ok(
+      expectedHeading.startsWith("# "),
+      `${slug} sidecar heading must start with "# " (${JSON.stringify(
+        expectedHeading
+      )})`
+    );
+    const text = readFileSync(join(catalogRoot, `${slug}.md`), "utf8");
+    const match = /^---\n[\s\S]*?\n---\n(?<body>[\s\S]*)$/u.exec(text);
+    assert.ok(match?.groups?.body !== undefined, `${slug} body missing`);
+    const body = match.groups.body;
+    assert.ok(
+      body.includes(expectedHeading),
+      `${slug} body must contain the original H1 title ${JSON.stringify(
+        expectedHeading
+      )}`
+    );
+    if (!MERGED_SLUGS.has(slug)) {
+      const head = body.slice(0, 200);
+      assert.ok(
+        head.includes(expectedHeading),
+        `${slug} body must start with the original H1 title ${JSON.stringify(
+          expectedHeading
+        )}; got first 200 chars: ${JSON.stringify(head)}`
+      );
+    }
+  }
 });

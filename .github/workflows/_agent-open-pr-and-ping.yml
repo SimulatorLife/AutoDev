@@ -15,7 +15,7 @@ on:
         default: ""
         type: string
       prompt_path:
-        description: "Optional .agents/prompts/*.md path to load."
+        description: "Optional .agents/prompts/*.md or .rulesync/commands/*.md path to load."
         required: false
         default: ""
         type: string
@@ -111,7 +111,7 @@ jobs:
             }
           fi
           if [ -n "${PROMPT_PATH}" ] && [ "${PROMPT_REPOSITORY}" = "SimulatorLife/AutoDev" ]; then
-            case "${PROMPT_PATH}" in .agents/prompts/*.md) ;; *) echo "Invalid prompt_path" >&2; exit 1 ;; esac
+            case "${PROMPT_PATH}" in .rulesync/commands/*.md) ;; *) echo "AutoDev-owned prompt_path must be .rulesync/commands/*.md" >&2; exit 1 ;; esac
             cp ".autodev/${PROMPT_PATH}" "$RUNNER_TEMP/autodev-prompt.md"
           fi
 
@@ -149,8 +149,8 @@ jobs:
         run: |
           set -euo pipefail
           case "${PROMPT_PATH}" in
-            .agents/prompts/*.md) ;;
-            *) echo "prompt_path must be a repository-relative .agents/prompts/*.md path" >&2; exit 1 ;;
+            .agents/prompts/*.md|.rulesync/commands/*.md) ;;
+            *) echo "prompt_path must be a repository-relative .agents/prompts/*.md path (target repository) or .rulesync/commands/*.md path (AutoDev-owned)" >&2; exit 1 ;;
           esac
           if [ "${PROMPT_REPOSITORY}" = "SimulatorLife/AutoDev" ]; then
             prompt_file="$RUNNER_TEMP/autodev-prompt.md"

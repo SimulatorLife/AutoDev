@@ -164,28 +164,88 @@ export const SKILLS = [
 /**
  * Codex custom prompts (slash commands) installed at $CODEX_HOME/prompts/<name>.md.
  *
- * Source of truth is `.rulesync/commands/<name>.md`. Rulesync's codexcli commands
- * feature is global-only and respects $HOME rather than $CODEX_HOME, so the
- * materializer runs rulesync with $HOME pointed at a throwaway directory and
- * copies each generated prompt into the real $CODEX_HOME/prompts/. The
- * AutoDev-owned prompts directory is then reconciled against this catalog:
- * `*.md` files in $CODEX_HOME/prompts/ that are not listed here are removed
- * during install. Upstream Codex marks custom prompts deprecated in favour of
- * skills, but the catalog stays here because prompts remain functional and the
- * AutoDev agents surface them through `/<name>` invocations.
+ * Source of truth is `.rulesync/commands/<name>.md`. This catalog is the
+ * union of the prior AutoDev Codex prompt catalog (build-fix, css-cleanup,
+ * dedupe-helper, file-organize, merge-prs, new-feature, optimize,
+ * resolve-merges, test-fix) and the AutoDev-owned generic scheduler catalog
+ * formerly published at `.agents/prompts/*.md`. The three slugs that
+ * appeared under both names (bug-fix, lint-fix, dedupe-helper / former
+ * helper-substitution) were merged in place so the AutoDev rulesync body
+ * remains the only scheduled entry for each.
+ *
+ * Rulesync's codexcli commands feature is global-only and respects $HOME
+ * rather than $CODEX_HOME, so the materializer runs rulesync with $HOME
+ * pointed at a throwaway directory and copies each generated prompt into
+ * the real $CODEX_HOME/prompts/. The AutoDev-owned prompts directory is
+ * then reconciled against this catalog: `*.md` files in $CODEX_HOME/prompts/
+ * that are not listed here are removed during install. Upstream Codex marks
+ * custom prompts deprecated in favour of skills, but the catalog stays here
+ * because prompts remain functional and the AutoDev agents surface them
+ * through `/<name>` invocations.
  */
 export const COMMANDS = [
+  "abstraction-layer",
+  "advance-autodev",
+  "architectural-audit",
+  "bad-test-remediation",
+  "bloat-trimming",
   "bug-fix",
   "build-fix",
+  "cohesion-refactor",
+  "composition-over-inheritance",
+  "configuration-improvement",
+  "consolidate-files",
+  "control-flow-clarity",
   "css-cleanup",
+  "dead-code-audit",
+  "decouple-architecture",
   "dedupe-helper",
+  "defensive-input",
+  "demeter",
+  "dependency-hygiene",
+  "docstrings-comments",
+  "document-intent",
+  "documentation-refresh",
+  "dry",
+  "duplicate-report",
+  "error-handling",
+  "extensibility",
   "file-organize",
+  "floating-point-safety",
+  "generalization",
+  "interface-segregation",
+  "kiss",
+  "legacy-api-migration",
+  "legacy-shim-removal",
   "lint-fix",
+  "logic-deduplication",
+  "loop-mutation",
+  "low-coupling",
+  "memory-footprint",
   "merge-prs",
+  "micro-optimization",
   "new-feature",
+  "nullability-guardrails",
   "optimize",
+  "organization",
+  "parameter-flexibility",
+  "pola",
+  "policy-mechanism",
+  "polymorphic-collaborators",
   "resolve-merges",
-  "test-fix"
+  "resource-leak",
+  "single-responsibility",
+  "split-long-file",
+  "style-consistency",
+  "test-coverage",
+  "test-deduplication",
+  "test-duration",
+  "test-fix",
+  "test-isolation",
+  "todo-implementation",
+  "typed-flags",
+  "usability",
+  "validation-failure-recovery",
 ] as const;
 export const LEGACY_SKILL_DIRS = ["skills", "agents/skills"] as const;
 export const RULES = ["default.rules"] as const;

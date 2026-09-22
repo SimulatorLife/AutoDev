@@ -191,7 +191,6 @@ reports the missing grants and exits with a non-zero status.
 - `orchestration`
 - `remove-legacy-shims`
 - `resolve-merge-conflicts`
-- `writing-agent-skills`
 
 The shared engineering skills are repository-agnostic and intended to apply
 across local Codex development. `code-simplification` focuses on DRY, KISS,
@@ -216,18 +215,16 @@ inherit capabilities it does not need:
 
 - `default` (general-purpose developer) enables `code-simplification`,
   `diagnosing-bugs`, `improve-codebase-architecture`,
-  `remove-legacy-shims`, `resolve-merge-conflicts`, and
-  `writing-agent-skills`.
-- `worker` (bounded implementation) enables every implementation-facing
-  skill: `autodev-codex-request-capture`, `autodev-session-diagnostics`,
-  `code-simplification`, `diagnosing-bugs`, `doubt-driven-development`,
-  `improve-codebase-architecture`, `opentelemetry`,
   `remove-legacy-shims`, and `resolve-merge-conflicts`.
-- `smart` (full-capability, broad work) enables the same implementation set
-  plus `writing-agent-skills` for ad-hoc skill authorship.
-- `validator` (read-only verification) enables `diagnosing-bugs`,
-  `doubt-driven-development`, and `opentelemetry` so it can reason about
-  bugs, verification, and telemetry review without making changes.
+- `worker` (bounded implementation) enables the cross-workspace
+  implementation set: `code-simplification`, `diagnosing-bugs`,
+  `doubt-driven-development`, `improve-codebase-architecture`,
+  `remove-legacy-shims`, and `resolve-merge-conflicts`.
+- `smart` (full-capability, broad work) enables the same cross-workspace
+  set as `worker`.
+- `validator` (read-only verification) enables `diagnosing-bugs` and
+  `doubt-driven-development` so it can reason about bugs and apply
+  adversarial verification without making changes.
 - `orchestrator` keeps `orchestration` plus the navigation pair
   (`ccc`, `lsp-mcp-server`) and explicitly disables it on every leaf role so
   children do not inherit parent delegation policy.
@@ -236,6 +233,22 @@ inherit capabilities it does not need:
 - `browser-tester` and `docs-researcher` deliberately enable no
   engineering skills; their bounded work is Playwright UI testing and
   authoritative documentation research, respectively.
+
+`autodev-codex-request-capture`, `autodev-session-diagnostics`,
+`opentelemetry`, and `writing-agent-skills` are **AutoDev-repository-only**
+skills. They are intentionally not wired into any cross-workspace agent
+role because their guidance is meaningless outside of developing the AutoDev
+codebase itself (provider adapters and router routes, AutoDev session
+telemetry, OpenTelemetry semantic conventions, and AutoDev skill
+authorship). They still ship under `.rulesync/skills/` and reach the
+relevant tools through Rulesync's repository projection: the three
+`autodev-*` and `opentelemetry` skills carry no `targets` frontmatter, so
+they land in every tool's repository skills folder; only Copilot reaches
+`orchestration`, `ccc`, and `lsp-mcp-server` because Copilot has no
+user-level skills. A turn working on AutoDev itself still sees these
+AutoDev-only skills through its workspace's tool-specific skills folder,
+while a turn working on any other repository sees only the cross-workspace
+skills.
 
 Keep the canonical registered user-level skill content in AutoDev; update the
 skill directories there and rerun the installer when changing this setup. The
@@ -250,8 +263,16 @@ installation so user-level skill discovery refreshes.
 `.rulesync/commands/*.md` is the single tracked source for AutoDev's Codex
 custom prompts (slash commands). The file name is the prompt name; agents
 surface them as `/<name>`. Each file declares `targets: ["*"]` and a concise
-`description:` in YAML frontmatter, followed by the prompt body. The current
-catalog is:
+`description:` in YAML frontmatter, followed by the prompt body. The catalog is
+the union of the prior AutoDev Codex prompt catalog and the AutoDev-owned
+generic scheduler catalog formerly published at `.agents/prompts/*.md`:
+the eight pre-existing entries (build-fix, css-cleanup, file-organize,
+merge-prs, new-feature, optimize, resolve-merges, test-fix) keep their
+AutoDev Codex-specific bodies, the fifty-one directly-migrated entries keep
+the original `.agents/prompts/<slug>.md` body verbatim, and the three slugs
+that appeared under both names (bug-fix, lint-fix, dedupe-helper / former
+helper-substitution) were merged in place so the AutoDev rulesync body
+remains the only entry for each. The current catalog is:
 
 - `bug-fix` — pick the next major/outstanding issue and fix it at the source.
 - `build-fix` — fix outstanding build issues, failures, or errors.
