@@ -45,7 +45,11 @@ const EXPECTED_MODEL_PROVIDERS = Object.freeze([
 const EXPECTED_SKILLS = Object.freeze([
   "lsp-mcp-server",
   "ccc",
-  "orchestration"
+  "orchestration",
+  "imagegen",
+  "plugin-creator",
+  "skill-creator",
+  "skill-installer"
 ]);
 
 type PortableFixture = {

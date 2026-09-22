@@ -1,6 +1,6 @@
 {
   "schema": "autodev-portable-autodev-config-v1",
-  "description": "Deterministic portable-source contract for config/config.autodev.toml. Rulesync owns hook declarations and generated hook files; this fixture pins AutoDev's portable scalars, provider entries, required sections, explicit absence of hooks and mcp_servers, and the skills.config name set. src/config/compose-user-config.ts removes legacy hook event arrays while preserving machine-local hooks.state trusted hashes.",
+  "description": "Deterministic portable-source contract for config/config.autodev.toml. Rulesync owns hook declarations and generated hook files; this fixture pins AutoDev's portable scalars, provider entries, required sections, explicit absence of hooks and mcp_servers, and the skills.config name set. src/config/compose-user-config.ts removes legacy hook event arrays while preserving machine-local hooks.state trusted hashes. The portable source suppresses Codex plugin families that are irrelevant noise for AutoDev (openai-primary-runtime and openai-curated-remote artifact/site/dev skills) via whole-plugin `[plugins.\"<plugin>@<marketplace>\"]` disables, and disables the irrelevant Codex `.system/` skills (imagegen, plugin-creator, skill-creator, skill-installer) per-skill while keeping openai-docs. Codex 0.154.0 only honours `[[skills.config]]` against user-level skills; plugin-provided skills require whole-plugin disable. `[skills.bundled] enabled = false` would also suppress openai-docs, so it is not used at the user level.",
   "source": "config/config.autodev.toml",
   "portableScalars": [
     "approval_policy",
@@ -104,6 +104,22 @@
         {
           "name": "orchestration",
           "enabled": true
+        },
+        {
+          "name": "imagegen",
+          "enabled": false
+        },
+        {
+          "name": "plugin-creator",
+          "enabled": false
+        },
+        {
+          "name": "skill-creator",
+          "enabled": false
+        },
+        {
+          "name": "skill-installer",
+          "enabled": false
         }
       ]
     },
@@ -127,6 +143,42 @@
             ]
           }
         }
+      },
+      "pdf@openai-primary-runtime": {
+        "enabled": false
+      },
+      "documents@openai-primary-runtime": {
+        "enabled": false
+      },
+      "presentations@openai-primary-runtime": {
+        "enabled": false
+      },
+      "spreadsheets@openai-primary-runtime": {
+        "enabled": false
+      },
+      "template-creator@openai-primary-runtime": {
+        "enabled": false
+      },
+      "sites@openai-curated-remote": {
+        "enabled": false
+      },
+      "openai-developers@openai-curated-remote": {
+        "enabled": false
+      },
+      "sites@openai-bundled": {
+        "enabled": false
+      },
+      "openai-templates@openai-curated-remote": {
+        "enabled": false
+      },
+      "browser@openai-bundled": {
+        "enabled": false
+      },
+      "computer-use@openai-bundled": {
+        "enabled": false
+      },
+      "visualize@openai-bundled": {
+        "enabled": false
       }
     }
   },
@@ -192,12 +244,20 @@
   ],
   "skillsConfigNames": [
     "ccc",
+    "imagegen",
     "lsp-mcp-server",
-    "orchestration"
+    "orchestration",
+    "plugin-creator",
+    "skill-creator",
+    "skill-installer"
   ],
   "skillsConfigNamesRequired": [
     "ccc",
+    "imagegen",
     "lsp-mcp-server",
-    "orchestration"
+    "orchestration",
+    "plugin-creator",
+    "skill-creator",
+    "skill-installer"
   ]
 }

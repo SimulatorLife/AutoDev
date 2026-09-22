@@ -144,6 +144,104 @@ enabled = true
 name = "orchestration"
 enabled = true
 
+# Skill-surface lockdown for the root orchestrator turn.
+#
+# Codex 0.154.0 distinguishes two skill-discovery surfaces for plugins:
+#
+#   * `.system/` and user-level skill directories resolve through
+#     `[[skills.config]] name = "<skill>" enabled = false`. Confirmed by
+#     capturing the rendered request from an isolated CODEX_HOME pointed at
+#     the live plugin cache; that capture showed imagegen, plugin-creator,
+#     skill-creator, and skill-installer disappear from the model's
+#     "Available skills" list when disabled this way.
+#
+#   * Plugin-provided skills are surfaced directly by the plugin manifest
+#     and resolved through the marketplace root. `[[skills.config]]` does
+#     NOT gate them in 0.154.0 — the only effective mechanism is
+#     `[plugins."<plugin>@<marketplace>"] enabled = false`, which removes
+#     the entire marketplace from the skill roots. Captured evidence: with
+#     all five openai-primary-runtime plugins disabled, the rendered
+#     request's `### Skill roots` no longer mentions the marketplace and
+#     the five plugin skills vanish from `### Available skills`.
+#
+# The lockdown below suppresses the plugin families that are irrelevant
+# noise for AutoDev (OpenAI artifact builders, Sites, the OpenAI
+# developers skill bundle) plus the four irrelevant Codex `.system/`
+# skills. `openai-docs` is intentionally kept — Codex self-knowledge is
+# directly relevant to AutoDev's own configuration surface. Whole-plugin
+# disables are preferred where they fully remove a family; per-skill
+# `[[skills.config]]` entries are used for the `.system/` skills because
+# `[skills.bundled] enabled = false` would also suppress `openai-docs`.
+#
+# Whole-plugin disables are written under `[plugins."<plugin>@<marketplace>"]`
+# so compose re-asserts them on every install even if Codex Desktop
+# regenerates the user's local config; the resulting $CODEX_HOME/config.toml
+# wins the merge against the operator's existing plugin entries because
+# the composer treats AutoDev-owned keys as authoritative.
+[plugins."pdf@openai-primary-runtime"]
+enabled = false
+
+[plugins."documents@openai-primary-runtime"]
+enabled = false
+
+[plugins."presentations@openai-primary-runtime"]
+enabled = false
+
+[plugins."spreadsheets@openai-primary-runtime"]
+enabled = false
+
+[plugins."template-creator@openai-primary-runtime"]
+enabled = false
+
+[plugins."sites@openai-curated-remote"]
+enabled = false
+
+[plugins."openai-developers@openai-curated-remote"]
+enabled = false
+
+# `sites` ships from two marketplaces and both declare the same
+# `sites-building`/`sites-hosting` skill names, so suppressing only the
+# curated-remote copy would let the bundled copy resurface them.
+[plugins."sites@openai-bundled"]
+enabled = false
+
+# The remaining skill-declaring plugins AutoDev does not use. These are
+# already disabled in most machine-local configs, but pinning them here is
+# what makes the lockdown durable: compose re-asserts AutoDev-owned keys on
+# every install, so a Codex Desktop plugin-cache regeneration cannot quietly
+# re-expose them. `plugin-management` is deliberately NOT disabled - it is
+# the operator's escape hatch for re-enabling any of the above locally.
+[plugins."openai-templates@openai-curated-remote"]
+enabled = false
+
+[plugins."browser@openai-bundled"]
+enabled = false
+
+[plugins."computer-use@openai-bundled"]
+enabled = false
+
+[plugins."visualize@openai-bundled"]
+enabled = false
+
+# Per-skill disables for the irrelevant Codex `.system/` skills. Each
+# `imagegen`, `plugin-creator`, `skill-creator`, and `skill-installer` is
+# noise for AutoDev; only `openai-docs` is kept.
+[[skills.config]]
+name = "imagegen"
+enabled = false
+
+[[skills.config]]
+name = "plugin-creator"
+enabled = false
+
+[[skills.config]]
+name = "skill-creator"
+enabled = false
+
+[[skills.config]]
+name = "skill-installer"
+enabled = false
+
 [shell_environment_policy.set]
 NODE_OPTIONS = "--disable-warning=ExperimentalWarning"
 
