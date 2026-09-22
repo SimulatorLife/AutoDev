@@ -42,6 +42,7 @@ import { removeStalePaths } from "./runtime-reconciliation.ts";
 export const RUNTIME_MODULES = [
   "src/shared/resolve-workspace.ts",
   "src/agents/bridge-role.ts",
+  "src/agents/bridge-sandbox.ts",
   "src/telemetry/agent-events.ts",
   "src/agents/agent-activity.ts",
   "src/shared/provider-limits.ts",
@@ -75,6 +76,7 @@ export const RUNTIME_MODULES = [
   "src/mcp/spawn-shim.ts",
   "src/mcp/codex-tools-shim.ts",
   "src/mcp/launcher.ts",
+  "src/mcp/process-registry.ts",
   "src/router/tool-call-ownership.ts",
   "src/shared/execution-contract.ts",
   "src/router/status.ts",

@@ -12,7 +12,8 @@ import {
 const repositoryRoot = fileURLToPath(new URL("../../", import.meta.url));
 
 const STATIC_IMPORT_PATTERN =
-  /(?:^|\n)\s*(?:import|export)[\s\S]*?from\s+["'](\.[^"']+)["']/gu;
+  /(?:^|\n)\s*(?:import|export)\b[\s\S]*?\bfrom\s+["'](\.[^"']+)["']/gu;
+const SIDE_EFFECT_IMPORT_PATTERN = /(?:^|\n)\s*import\s+["'](\.[^"']+)["']/gu;
 const DYNAMIC_IMPORT_PATTERN = /import\(\s*["'](\.[^"']+)["']\s*\)/gu;
 
 function relativeImports(modulePath: string): string[] {
@@ -20,6 +21,7 @@ function relativeImports(modulePath: string): string[] {
   const directory = dirname(modulePath);
   return [
     ...source.matchAll(STATIC_IMPORT_PATTERN),
+    ...source.matchAll(SIDE_EFFECT_IMPORT_PATTERN),
     ...source.matchAll(DYNAMIC_IMPORT_PATTERN)
   ].map((match) => normalize(join(directory, match[1] ?? "")));
 }
