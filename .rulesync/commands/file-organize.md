@@ -1,3 +1,7 @@
+---
+targets: ["*"]
+description: Pick two organization issues from a defined list and consolidate, simplify, and reorganize the codebase around clearer ownership.
+---
 The codebase is really disorganized:
 
 1. There is disparate functionality mixed into the same file when there are already better locations it can and *should* live in

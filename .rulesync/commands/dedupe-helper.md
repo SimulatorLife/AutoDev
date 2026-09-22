@@ -1,3 +1,7 @@
+---
+targets: ["*"]
+description: Identify code that reimplements behavior already provided by a shared helper or platform API and refactor it to use that helper.
+---
 Identify code that reimplements behaviour already provided by a shared helper or
 well-supported platform API (serialization, cloning, range checks, deep merges,
 randomization, etc.). Refactor the chosen spot to use the established helper or a

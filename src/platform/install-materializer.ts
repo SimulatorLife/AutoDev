@@ -153,11 +153,39 @@ export const SKILLS = [
   "ccc",
   "code-simplification",
   "diagnosing-bugs",
+  "doubt-driven-development",
   "improve-codebase-architecture",
   "lsp-mcp-server",
   "orchestration",
   "remove-legacy-shims",
-  "resolve-merge-conflicts"
+  "resolve-merge-conflicts",
+  "writing-agent-skills"
+] as const;
+/**
+ * Codex custom prompts (slash commands) installed at $CODEX_HOME/prompts/<name>.md.
+ *
+ * Source of truth is `.rulesync/commands/<name>.md`. Rulesync's codexcli commands
+ * feature is global-only and respects $HOME rather than $CODEX_HOME, so the
+ * materializer runs rulesync with $HOME pointed at a throwaway directory and
+ * copies each generated prompt into the real $CODEX_HOME/prompts/. The
+ * AutoDev-owned prompts directory is then reconciled against this catalog:
+ * `*.md` files in $CODEX_HOME/prompts/ that are not listed here are removed
+ * during install. Upstream Codex marks custom prompts deprecated in favour of
+ * skills, but the catalog stays here because prompts remain functional and the
+ * AutoDev agents surface them through `/<name>` invocations.
+ */
+export const COMMANDS = [
+  "bug-fix",
+  "build-fix",
+  "css-cleanup",
+  "dedupe-helper",
+  "file-organize",
+  "lint-fix",
+  "merge-prs",
+  "new-feature",
+  "optimize",
+  "resolve-merges",
+  "test-fix"
 ] as const;
 export const LEGACY_SKILL_DIRS = ["skills", "agents/skills"] as const;
 export const RULES = ["default.rules"] as const;
@@ -305,18 +333,33 @@ function commandAvailable(command: string): boolean {
     return false;
   }
 }
-function run(command: string, args: readonly string[], cwd: string): void {
-  const result = execFileSync(command, [...args], { cwd, stdio: "inherit" });
+function run(
+  command: string,
+  args: readonly string[],
+  cwd: string,
+  env: NodeJS.ProcessEnv = process.env
+): void {
+  const result = execFileSync(command, [...args], {
+    cwd,
+    env: { ...env },
+    stdio: "inherit"
+  });
   void result;
 }
-function rulesync(options: MaterializeOptions, args: readonly string[]): void {
+function rulesync(
+  options: MaterializeOptions,
+  args: readonly string[],
+  env: NodeJS.ProcessEnv = process.env
+): void {
   run(
     path.join(options.repositoryRoot, "node_modules/.bin/rulesync"),
     args,
-    options.repositoryRoot
+    options.repositoryRoot,
+    env
   );
 }
 const LINE_SPLIT_PATTERN = /\r?\n/u;
+const MD_EXTENSION_PATTERN = /\.md$/u;
 
 function ensureExclude(options: MaterializeOptions): void {
   const exclude = execFileSync(
@@ -495,6 +538,89 @@ function materializeRenderedAgents(
       );
   } finally {
     rmSync(rendered, { recursive: true, force: true });
+  }
+}
+
+/**
+ * Project Codex custom prompts (`COMMANDS`) into $CODEX_HOME/prompts/.
+ *
+ * Rulesync's `codexcli` commands feature is global-only and honors `$HOME`
+ * rather than `$CODEX_HOME`, so we run rulesync with `$HOME` pointing at a
+ * throwaway directory (created via `mkdtempSync`, cleaned in `finally`,
+ * same spirit as `materializeRenderedAgents`) and copy each generated prompt
+ * into the real `$CODEX_HOME/prompts/` with `materializeRuntimeFile`. The
+ * prompts directory is then reconciled against the `COMMANDS` catalog via
+ * `removeStalePaths` so the catalog is the single source of truth: any
+ * `*.md` in the directory that is not in the catalog is removed.
+ */
+function materializeCommands(
+  options: MaterializeOptions,
+  promptsDir: string
+): void {
+  mkdirSync(promptsDir, { recursive: true, mode: 0o700 });
+  const projectedHome = mkdtempSync(
+    path.join(options.repositoryRoot, ".autodev-commands-home-")
+  );
+  try {
+    rulesync(
+      options,
+      [
+        "generate",
+        "--global",
+        "--input-roots",
+        path.join(options.repositoryRoot, ".rulesync"),
+        "--targets",
+        "codexcli",
+        "--features",
+        "commands",
+        "--silent"
+      ],
+      { ...process.env, HOME: projectedHome }
+    );
+    const projectedDir = path.join(projectedHome, ".codex", "prompts");
+    let projectedFiles: string[];
+    try {
+      projectedFiles = readdirSync(projectedDir)
+        .filter((entry) => entry.endsWith(".md"))
+        .sort();
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+        throw new Error(
+          `rulesync did not generate $CODEX_HOME/prompts under $HOME=${projectedHome}`
+        );
+      }
+      throw error;
+    }
+    const projectedNames = new Set(
+      projectedFiles.map((entry) => entry.replace(MD_EXTENSION_PATTERN, ""))
+    );
+    const catalog = new Set<string>(COMMANDS);
+    for (const entry of projectedFiles) {
+      const name = entry.replace(MD_EXTENSION_PATTERN, "");
+      if (!catalog.has(name))
+        throw new Error(
+          `rulesync produced prompt "${name}" that is not in the COMMANDS catalog`
+        );
+    }
+    for (const name of catalog) {
+      if (!projectedNames.has(name))
+        throw new Error(
+          `COMMANDS catalog entry "${name}" produced no rulesync projection`
+        );
+      materializeRuntimeFile(
+        path.join(projectedDir, `${name}.md`),
+        path.join(promptsDir, `${name}.md`),
+        0o644
+      );
+    }
+    const catalogSet = new Set<string>(COMMANDS);
+    const stale = readdirSync(promptsDir)
+      .filter((entry) => entry.endsWith(".md") && !catalogSet.has(entry.replace(MD_EXTENSION_PATTERN, "")))
+      .map((entry) => path.join(promptsDir, entry));
+    if (stale.length > 0)
+      removeStalePaths(stale, "obsolete-runtime-path");
+  } finally {
+    rmSync(projectedHome, { recursive: true, force: true });
   }
 }
 
@@ -836,6 +962,7 @@ export function materializeInstallation(options: MaterializeOptions): void {
   const hooks = path.join(options.codexHome, "hooks"),
     agents = path.join(options.codexHome, "agents"),
     rules = path.join(options.codexHome, "rules"),
+    prompts = path.join(options.codexHome, "prompts"),
     userSkills = path.join(options.home, ".agents", "skills"),
     skillsRoot = path.join(options.repositoryRoot, ".rulesync", "skills");
   const launchd = new LaunchdClient();
@@ -864,6 +991,7 @@ export function materializeInstallation(options: MaterializeOptions): void {
     path.join(options.repositoryRoot, "rulesync.jsonc"),
     "--silent"
   ]);
+  materializeCommands(options, prompts);
   ensureExclude(options);
   composeAndLinkConfigs(options, source);
   ensureCodexAppMcpServerEnabled(options.codexHome);

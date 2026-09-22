@@ -1,3 +1,7 @@
+---
+targets: ["*"]
+description: Resolve all local merge conflicts safely while preserving repository conventions and maintaining a clean commit history.
+---
 Resolve all local merge merge conflicts in the codebase safely while preserving repository conventions, minimizing accidental churn, and maintaining a clean commit history.
 
 ## Core Principles

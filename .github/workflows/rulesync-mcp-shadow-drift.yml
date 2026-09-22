@@ -51,4 +51,4 @@ jobs:
       # its projections from `.rulesync` into temporary roots with the pinned
       # Rulesync and asserts them, so the canonical source stays the only copy.
       - name: Check Rulesync projections generated from the canonical source
-        run: node --test tests/rulesync-mcp.test.ts tests/rulesync-hooks-shadow.test.ts tests/rulesync-skills.test.ts tests/rulesync-permissions-inventory.test.ts
+        run: node --test tests/rulesync-mcp.test.ts tests/rulesync-hooks-shadow.test.ts tests/rulesync-skills.test.ts tests/rulesync-permissions-inventory.test.ts tests/rulesync-commands.test.ts

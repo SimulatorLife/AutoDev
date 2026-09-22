@@ -1,3 +1,7 @@
+---
+targets: ["*"]
+description: Fix all outstanding lint errors and warnings properly, without disabling rules or weakening quality bars.
+---
 Fix any/all outstanding lint error(s) and warning(s) in the codebase properly and fully; don't suppress them, weaken the rule(s), or disable any rule(s).
 
 Don't remove unfinished/in-progress functionality if it is needed for the future/target-state of the project.
