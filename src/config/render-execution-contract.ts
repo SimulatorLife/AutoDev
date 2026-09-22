@@ -30,7 +30,17 @@ const PLUGIN_MCPS = new Set(["codex_app"]);
 const SKILL_ORDER: Record<string, number> = {
   orchestration: 0,
   ccc: 1,
-  "lsp-mcp-server": 2
+  "lsp-mcp-server": 2,
+  "code-simplification": 3,
+  "diagnosing-bugs": 4,
+  "improve-codebase-architecture": 5,
+  "opentelemetry": 6,
+  "remove-legacy-shims": 7,
+  "resolve-merge-conflicts": 8,
+  "doubt-driven-development": 9,
+  "writing-agent-skills": 10,
+  "autodev-codex-request-capture": 11,
+  "autodev-session-diagnostics": 12
 };
 const ROLE_FILE_EXTENSION = /\.toml$/u;
 const collator = new Intl.Collator();

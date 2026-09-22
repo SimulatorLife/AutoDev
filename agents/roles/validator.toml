@@ -35,3 +35,15 @@ default_tools_approval_mode = "approve"
 [[skills.config]]
 name = "ccc"
 enabled = true
+
+[[skills.config]]
+name = "diagnosing-bugs"
+enabled = true
+
+[[skills.config]]
+name = "doubt-driven-development"
+enabled = true
+
+[[skills.config]]
+name = "opentelemetry"
+enabled = true
