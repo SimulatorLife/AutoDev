@@ -37,14 +37,6 @@ name = "ccc"
 enabled = true
 
 [[skills.config]]
-name = "autodev-codex-request-capture"
-enabled = true
-
-[[skills.config]]
-name = "autodev-session-diagnostics"
-enabled = true
-
-[[skills.config]]
 name = "code-simplification"
 enabled = true
 
@@ -58,10 +50,6 @@ enabled = true
 
 [[skills.config]]
 name = "improve-codebase-architecture"
-enabled = true
-
-[[skills.config]]
-name = "opentelemetry"
 enabled = true
 
 [[skills.config]]

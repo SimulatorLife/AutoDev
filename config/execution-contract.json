@@ -45,8 +45,7 @@
         "diagnosing-bugs",
         "improve-codebase-architecture",
         "remove-legacy-shims",
-        "resolve-merge-conflicts",
-        "writing-agent-skills"
+        "resolve-merge-conflicts"
       ]
     },
     "docs-researcher": {
@@ -115,13 +114,9 @@
         "lsp-mcp-server",
         "code-simplification",
         "improve-codebase-architecture",
-        "opentelemetry",
         "remove-legacy-shims",
         "resolve-merge-conflicts",
-        "doubt-driven-development",
-        "writing-agent-skills",
-        "autodev-codex-request-capture",
-        "autodev-session-diagnostics"
+        "doubt-driven-development"
       ],
       "mcpTools": {
         "playwright": [
@@ -164,7 +159,6 @@
         "ccc",
         "lsp-mcp-server",
         "diagnosing-bugs",
-        "opentelemetry",
         "doubt-driven-development"
       ]
     },
@@ -181,12 +175,9 @@
         "code-simplification",
         "diagnosing-bugs",
         "improve-codebase-architecture",
-        "opentelemetry",
         "remove-legacy-shims",
         "resolve-merge-conflicts",
-        "doubt-driven-development",
-        "autodev-codex-request-capture",
-        "autodev-session-diagnostics"
+        "doubt-driven-development"
       ]
     }
   },

@@ -22,3 +22,15 @@ If no explicit open bugs exist, identify and select the highest-value issue in t
 5. **Validate thoroughly** that the root issue is fixed and remains fixed using the appropriate combination of unit, integration, browser/runtime, end-to-end, regression, and other applicable tests
 
 Prefer one correct, root-cause fix over multiple compensating patches.
+
+## Additional guidance
+
+The following guidance augments the AutoDev-specific rulesync command above with the AutoDev generic scheduler equivalent formerly published at `.agents/prompts/bug-fix.md`. It applies the same principle through the AutoDev catalog boundary: discover the target repository's documented conventions and validation commands before editing, do not assume a particular language, package manager, framework, fixture format, or directory layout, and keep the work to one bounded change without compatibility shims.
+
+# Fix one real defect
+
+Reproduce one concrete defect in the target repository, identify its authoritative
+owner, and fix the cause rather than masking downstream symptoms. Keep the
+change bounded, preserve unrelated behavior, add a focused regression test, and
+update the relevant documentation or issue-facing explanation. Do not invent a
+feature, weaken a test, or add compatibility code.

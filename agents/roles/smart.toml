@@ -68,14 +68,6 @@ name = "ccc"
 enabled = true
 
 [[skills.config]]
-name = "autodev-codex-request-capture"
-enabled = true
-
-[[skills.config]]
-name = "autodev-session-diagnostics"
-enabled = true
-
-[[skills.config]]
 name = "code-simplification"
 enabled = true
 
@@ -88,17 +80,9 @@ name = "improve-codebase-architecture"
 enabled = true
 
 [[skills.config]]
-name = "opentelemetry"
-enabled = true
-
-[[skills.config]]
 name = "remove-legacy-shims"
 enabled = true
 
 [[skills.config]]
 name = "resolve-merge-conflicts"
-enabled = true
-
-[[skills.config]]
-name = "writing-agent-skills"
 enabled = true
