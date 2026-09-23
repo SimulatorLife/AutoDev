@@ -58,7 +58,8 @@ export interface ServiceRestartDeps {
   readonly readFile: (filePath: string) => string;
   readonly logTail: (filePath: string, lines: number) => readonly string[];
   readonly commandAvailable: (command: string) => boolean;
-  readonly probe: (url: string, method?: "GET" | "POST") => Promise<boolean>;
+  /** GET the URL, or POST `jsonBody` as JSON when one is given. */
+  readonly probe: (url: string, jsonBody?: string) => Promise<boolean>;
   readonly sleep: (ms: number) => Promise<void>;
   readonly run: (
     command: string,
@@ -84,7 +85,7 @@ const LOG_TAIL_BYTES = 16_384;
 interface ServiceSpec {
   readonly label: ManagedServiceLabel;
   readonly probe: string;
-  readonly method: "GET" | "POST";
+  readonly jsonBody?: string;
   /** Only set where the launcher execs the server, so the job pid is the listener. */
   readonly ownedPort: number | null;
   readonly required: boolean;
@@ -103,35 +104,30 @@ const BRIDGE_SPECS: readonly ServiceSpec[] = [
   {
     label: LABEL_MODEL_ROUTER,
     probe: "http://127.0.0.1:4100/health/readiness",
-    method: "GET",
     ownedPort: SERVICE_PORTS[LABEL_MODEL_ROUTER],
     required: true
   },
   {
     label: LABEL_CLAUDE_BRIDGE,
     probe: "http://127.0.0.1:4000/health/liveliness",
-    method: "GET",
     ownedPort: SERVICE_PORTS[LABEL_CLAUDE_BRIDGE],
     required: false
   },
   {
     label: LABEL_MINIMAX_PROXY,
     probe: "http://127.0.0.1:18765/health",
-    method: "GET",
     ownedPort: SERVICE_PORTS[LABEL_MINIMAX_PROXY],
     required: false
   },
   {
     label: LABEL_ANTIGRAVITY_PROXY,
     probe: "http://127.0.0.1:4002/health/liveliness",
-    method: "GET",
     ownedPort: SERVICE_PORTS[LABEL_ANTIGRAVITY_PROXY],
     required: false
   },
   {
     label: LABEL_COPILOT_PROXY,
     probe: "http://127.0.0.1:4003/health/liveliness",
-    method: "GET",
     ownedPort: SERVICE_PORTS[LABEL_COPILOT_PROXY],
     required: false
   }
@@ -140,7 +136,8 @@ const BRIDGE_SPECS: readonly ServiceSpec[] = [
 const COLLECTOR_SPEC: ServiceSpec = {
   label: LABEL_OTEL_COLLECTOR,
   probe: "http://127.0.0.1:4318/v1/logs",
-  method: "POST",
+  // An empty OTLP export: a bare POST is refused with 415 by the receiver.
+  jsonBody: "{}",
   ownedPort: null,
   required: true
 };
@@ -210,10 +207,16 @@ function defaultDeps(): ServiceRestartDeps {
         return false;
       }
     },
-    probe: async (url, method = "GET") => {
+    probe: async (url, jsonBody) => {
       try {
         const response = await fetch(url, {
-          method,
+          ...(jsonBody === undefined
+            ? {}
+            : {
+                method: "POST",
+                headers: { "content-type": "application/json" },
+                body: jsonBody
+              }),
           signal: AbortSignal.timeout(1000)
         });
         return response.ok;
@@ -525,7 +528,7 @@ async function checkService(
       reason: `exited with code ${job.lastExitCode}`,
       stderrPath: job.stderrPath
     };
-  if (await deps.probe(spec.probe, spec.method)) {
+  if (await deps.probe(spec.probe, spec.jsonBody)) {
     if (spec.ownedPort === null) return { ready: true };
     const listeners = deps.listeningPids(spec.ownedPort) ?? [];
     if (job.pid !== null && listeners.includes(job.pid)) return { ready: true };

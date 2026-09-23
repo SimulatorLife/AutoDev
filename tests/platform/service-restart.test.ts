@@ -119,8 +119,8 @@ function deps(
     readFile: () => "",
     logTail: (filePath) => [`tail of ${filePath}`],
     commandAvailable: () => true,
-    probe: async (url) => {
-      probes.push(url);
+    probe: async (url, jsonBody) => {
+      probes.push(jsonBody === undefined ? url : `${url} ${jsonBody}`);
       return true;
     },
     sleep: async () => {},
@@ -208,7 +208,10 @@ test("collector mode verifies the collector alongside the bridges", async () => 
       `bootstrap:/home/Library/LaunchAgents/${LABEL_OTEL_COLLECTOR}.plist`
     )
   );
-  assert.ok(fake.probes.includes("http://127.0.0.1:4318/v1/logs"));
+  assert.ok(
+    fake.probes.includes("http://127.0.0.1:4318/v1/logs {}"),
+    "the OTLP receiver refuses a bare POST with 415; probe with an empty JSON export"
+  );
 });
 
 test("a crash-looping bridge is reported at once with its log, without holding up the install", async () => {
@@ -223,12 +226,12 @@ test("a crash-looping bridge is reported at once with its log, without holding u
   const [status, stderr] = await captureStderr(() =>
     restartServices(options({ readyAttempts: 80 }), {
       ...fake,
-      probe: async (url, method) => {
+      probe: async (url, jsonBody) => {
         if (url.includes(":4003/")) {
           copilotProbes.push(url);
           return false;
         }
-        return probe(url, method);
+        return probe(url, jsonBody);
       }
     })
   );

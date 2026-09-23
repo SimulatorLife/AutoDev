@@ -55,9 +55,10 @@
   <key>StandardErrorPath</key>
   <string>__CODEX_HOME__/run/autodev-otel-collector.err.log</string>
 
-  <!-- process-type=Background keeps launchd from surfacing the Collector as a
-       Dock app during boot, so the desktop session is untouched. -->
+  <!-- Standard, not Background: Background puts the Collector in the throttled
+       darwinbg tier, where a start during a busy install took over 40s. A
+       LaunchAgent without a GUI never appears in the Dock either way. -->
   <key>ProcessType</key>
-  <string>Background</string>
+  <string>Standard</string>
 </dict>
 </plist>

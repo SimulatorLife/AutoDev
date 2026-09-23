@@ -58,10 +58,11 @@
   <key>StandardErrorPath</key>
   <string>__CODEX_HOME__/run/codex-model-router.launchd.err.log</string>
 
-  <!-- process-type=Background keeps launchd from surfacing the router as an
-       app in the Dock/foreground during boot, so the desktop session stays
-       untouched. -->
+  <!-- Standard, not Background: every Codex request passes through the router,
+       and Background puts it in the throttled darwinbg tier (lowest CPU
+       priority, throttled disk I/O), so it stalls whenever the machine is busy.
+       A LaunchAgent without a GUI never appears in the Dock either way. -->
   <key>ProcessType</key>
-  <string>Background</string>
+  <string>Standard</string>
 </dict>
 </plist>

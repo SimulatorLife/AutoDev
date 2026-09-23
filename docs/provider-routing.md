@@ -1034,8 +1034,9 @@ content before restarting them. Three contracts separate
   forcefully aborting them. It then persists its state, closes any connection
   still open, and exits. The plist sets `ExitTimeOut` to 45s
   so launchd's SIGKILL lands after the drain window completes, not in the
-  middle of it. `ProcessType=Background` keeps the job out of the Dock so
-  the desktop session is never disturbed by a router lifecycle event.
+  middle of it. `ProcessType=Standard` keeps the router out of macOS's
+  throttled background tier: every Codex request passes through it, and a
+  `Background` job is starved of CPU and disk I/O whenever the machine is busy.
 
 The `scripts/ensure-codex-model-router.sh` hook prefers the installed launchd
 job and falls back to a direct `nohup` process only when launchd is genuinely

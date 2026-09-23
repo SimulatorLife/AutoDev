@@ -406,7 +406,8 @@ superuser/raw-disk commands, and catastrophic root/home recursive deletion.
 
 - Inspect launch-agent plists before loading them with `launchctl`. The model
   router plist keeps `KeepAlive` and `RunAtLoad`, separates stdout/stderr
-  under `$CODEX_HOME/run/`, uses `ProcessType=Background`, and sets an
+  under `$CODEX_HOME/run/`, uses `ProcessType=Standard` (Background would
+  throttle it into the lowest CPU and disk I/O tier), and sets an
   `ExitTimeOut` large enough for the router's drain timeout before launchd
   SIGKILLs it. Inspect the other provider plists independently; they may have
   different lifecycle and log-path contracts.
