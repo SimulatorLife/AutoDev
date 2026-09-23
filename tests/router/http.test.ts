@@ -253,3 +253,43 @@ test("canonical Codex session-id header identifies metadata-less continuation an
     resetSubagentTelemetry();
   }
 });
+
+test("Codex thread-id header identifies metadata-less continuation and restores remembered workspace", () => {
+  resetSubagentTelemetry();
+  const threadId = "01a0cf20-63b2-7561-a9ce-cb75be641638";
+  const remembered = "/Users/henrykirk/Desktop/RacingGame";
+  rememberWorkspaceMetadata(threadId, remembered);
+  try {
+    // Real Codex transport: sends `thread-id` without `session-id` header.
+    const threadRequest = { headers: { "thread-id": threadId } };
+    const session = requestSession(threadRequest as any, {});
+    assert.deepEqual(session, {
+      key: threadId,
+      scope: "identified",
+      thread: threadId
+    });
+
+    assert.ok(getWorkspaceMetadata(session.key));
+
+    // Goal continuation: turn-metadata arrives with empty workspaces or omitted workspaces
+    const emptyWorkspacesMeta = JSON.stringify({
+      thread_id: threadId,
+      turn_trigger: "goal",
+      workspaces: {}
+    });
+    const restored = workspaceMetadataForSession(
+      {},
+      emptyWorkspacesMeta,
+      session
+    );
+    assert.ok(restored, "expected restored turn-metadata");
+    const parsed = JSON.parse(restored!);
+    assert.ok(parsed.workspaces, "expected turn-metadata to carry workspaces");
+    assert.ok(Object.hasOwn(parsed.workspaces, remembered));
+    assert.equal(parsed.turn_trigger, "goal");
+    assert.equal(parsed.thread_id, threadId);
+  } finally {
+    resetSubagentTelemetry();
+  }
+});
+

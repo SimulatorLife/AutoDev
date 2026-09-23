@@ -1392,12 +1392,15 @@ export function requestSession(
     typeof threadValue === "string" && threadValue.trim()
       ? threadValue.trim()
       : null;
-  if (typeof value === "string" && Boolean(value.trim()))
-    return { key: value.trim(), scope: "identified", thread };
+  const explicitSession =
+    typeof value === "string" && Boolean(value.trim()) ? value.trim() : null;
+  const sessionKey = explicitSession ?? thread;
+  if (sessionKey)
+    return { key: sessionKey, scope: "identified", thread };
   return {
     key: PROCESS_FALLBACK_SESSION_KEY,
     scope: "process-fallback",
-    thread
+    thread: null
   };
 }
 
@@ -1423,14 +1426,24 @@ export function hasWorkspaceClaim(
     return true;
   const clientMetadata = payload?.client_metadata as
     Record<string, unknown> | undefined;
-  if (
-    clientMetadata &&
-    typeof clientMetadata === "object" &&
-    Object.hasOwn(clientMetadata, "x-codex-turn-metadata")
-  )
-    return true;
-  const turnMetadata = parseTurnMetadataJson(turnMetadataHeader);
-  return Boolean(turnMetadata && Object.hasOwn(turnMetadata, "workspaces"));
+  const embeddedMeta =
+    clientMetadata && typeof clientMetadata === "object"
+      ? clientMetadata["x-codex-turn-metadata"]
+      : undefined;
+  const effectiveMeta =
+    turnMetadataHeader ??
+    (typeof embeddedMeta === "string"
+      ? embeddedMeta
+      : embeddedMeta && typeof embeddedMeta === "object"
+        ? JSON.stringify(embeddedMeta)
+        : null);
+  const turnMetadata = parseTurnMetadataJson(effectiveMeta);
+  const workspaces = turnMetadata?.workspaces;
+  if (!workspaces || typeof workspaces !== "object" || Array.isArray(workspaces))
+    return false;
+  return Object.keys(workspaces).some(
+    (key) => typeof key === "string" && Boolean(key.trim())
+  );
 }
 
 export function workspacePathLabel(value: unknown): string | null {
@@ -1625,8 +1638,12 @@ export function workspaceMetadataForSession(
     /* ignore unresolvable */
   }
   if (workspacePath) {
-    if (session?.scope === "identified")
+    if (session?.scope === "identified") {
       rememberWorkspaceMetadata(session.key, workspacePath);
+      if (session.thread && session.thread !== session.key) {
+        rememberWorkspaceMetadata(session.thread, workspacePath);
+      }
+    }
     return addWorkspaceIdToTurnMetadata(
       payload,
       turnMetadataHeader ??
@@ -1637,7 +1654,22 @@ export function workspaceMetadataForSession(
     session?.scope === "identified" &&
     !hasWorkspaceClaim(payload, turnMetadataHeader)
   ) {
-    const metadata = getWorkspaceMetadata(session.key) ?? turnMetadataHeader;
+    const rememberedJson =
+      getWorkspaceMetadata(session.key) ??
+      (session.thread ? getWorkspaceMetadata(session.thread) : null);
+    let metadata = turnMetadataHeader;
+    if (rememberedJson) {
+      const rememberedParsed = parseTurnMetadataJson(rememberedJson);
+      const incomingParsed = parseTurnMetadataJson(turnMetadataHeader);
+      if (incomingParsed && rememberedParsed?.workspaces) {
+        metadata = JSON.stringify({
+          ...incomingParsed,
+          workspaces: rememberedParsed.workspaces
+        });
+      } else {
+        metadata = rememberedJson;
+      }
+    }
     return addWorkspaceIdToTurnMetadata(payload, metadata);
   }
   return turnMetadataHeader;

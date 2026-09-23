@@ -6670,6 +6670,15 @@ test("requestSession derives identity from caller-supplied headers and payload f
     ),
     { key: "root-alias-only", scope: "identified", thread: null }
   );
+
+  // Codex requests providing thread-id without session-id resolve to the thread identity.
+  assert.deepEqual(
+    (requestSession as any)(
+      { headers: { "thread-id": "root-thread-only" } },
+      {}
+    ),
+    { key: "root-thread-only", scope: "identified", thread: "root-thread-only" }
+  );
 });
 
 test("per-session slot limit gives distinct identified sessions independent capacity while capping a shared or missing identity", () => {

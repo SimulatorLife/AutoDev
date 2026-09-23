@@ -570,16 +570,16 @@ The router makes its effective choice visible in two ways:
   `[agents]` block or composer-generated inline `agents = { ... }` table --
   feeds admission. Role requests are gated before provider selection;
   direct concrete model requests
-  are not counted as subagent slots. If a session ID is not supplied by the
-  client, the router uses a process-wide fallback scope and reports that scope.
-  That fallback is a single shared bucket: unrelated sessions that omit an
-  identifier can deny one another. The router cannot infer a logical session
-  from an anonymous HTTP request, so callers must propagate
-  the canonical Codex `session-id` header for true independent per-session
-  capacity. The resolver also accepts `x-codex-session-id`, `x-session-id`, or
-  `x-conversation-id` as legacy aliases, and falls back to payload/turn
-  metadata when the header is absent.
-  per-session capacity. `/status` exposes `processFallbackEnforcement` and
+  are not counted as subagent slots. Session identification resolves explicit session
+  headers or metadata (`session-id`, `x-codex-session-id`, `x-session-id`,
+  `x-conversation-id`, `payload.session_id`, or turn metadata `session_id`).
+  When explicit session fields are absent, the resolver falls back to the
+  canonical Codex `thread-id` (or `x-thread-id` / metadata `thread_id`) as an
+  identified session key (`scope: "identified"`), matching root Codex threads
+  where thread ID equals root session ID. Only if neither session nor thread
+  identifiers are supplied does the router fall back to the process-wide shared
+  bucket (`scope: "process-fallback"`), where unrelated anonymous sessions can
+  deny one another. `/status` exposes `processFallbackEnforcement` and
   `processFallbackActiveThreads` to make this unsafe fallback visible.
 - They also aggregate usage by origin (`orchestrator`,
   `subagent`, or `direct`), role, and resolved provider/model. Each bucket
