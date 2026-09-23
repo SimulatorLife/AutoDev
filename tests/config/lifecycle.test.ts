@@ -61,7 +61,7 @@ test("macOS lifecycle uses typed launchd operations without shell interpolation"
   assert.deepEqual(sleeps, [100]);
 });
 
-test("bootout waits for launchd to finish unloading before the caller rebootstraps", () => {
+test("bootout throws when the job is still loaded after the bounded wait, so no caller bootstraps over it", () => {
   const calls: string[][] = [];
   const runner = (_command: string, args: string[]): CommandResult => {
     calls.push(args);
@@ -77,14 +77,36 @@ test("bootout waits for launchd to finish unloading before the caller rebootstra
     unloadDelayMs: 25,
     sleep: (ms) => sleeps.push(ms)
   });
-  client.bootout("com.autodev.router");
-  assert.equal(client.waitUntilUnloaded("com.autodev.router"), false);
-  assert.deepEqual(sleeps, [25, 25, 25, 25, 25, 25]);
+  assert.throws(
+    () => client.bootout("com.autodev.router"),
+    (error: unknown) => {
+      assert.equal(error instanceof LaunchdError, true);
+      assert.match(
+        (error as Error).message,
+        /gui\/501\/com\.autodev\.router was still loaded 75ms after bootout/u
+      );
+      return true;
+    }
+  );
+  assert.deepEqual(sleeps, [25, 25, 25]);
   assert.equal(
     calls.filter((args) => args[0] === "bootout").length,
     1,
     "bootout is issued once and then polled for completion"
   );
+});
+
+test("bootout of a job that is not loaded is a no-op", () => {
+  const calls: string[][] = [];
+  const client = new LaunchdClient({
+    runner: (_command, args) => {
+      calls.push(args);
+      return { stdout: "", stderr: "Could not find service", status: 113 };
+    },
+    uid: 501
+  });
+  client.bootout("com.autodev.router");
+  assert.deepEqual(calls, [["print", "gui/501/com.autodev.router"]]);
 });
 
 test("launchd failures preserve structured command evidence", () => {

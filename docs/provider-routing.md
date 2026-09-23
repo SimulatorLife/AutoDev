@@ -1031,7 +1031,8 @@ content before restarting them. Three contracts separate
 - **In-flight drain** — on `SIGTERM`/`SIGINT` the router stops accepting new
   `/v1/responses` work and gives in-flight requests up to
   `CODEX_ROUTER_SHUTDOWN_DRAIN_MS` (30s by default) to finish before
-  forcefully aborting them and exiting. The plist sets `ExitTimeOut` to 45s
+  forcefully aborting them. It then persists its state, closes any connection
+  still open, and exits. The plist sets `ExitTimeOut` to 45s
   so launchd's SIGKILL lands after the drain window completes, not in the
   middle of it. `ProcessType=Background` keeps the job out of the Dock so
   the desktop session is never disturbed by a router lifecycle event.
@@ -1041,8 +1042,9 @@ job and falls back to a direct `nohup` process only when launchd is genuinely
 unavailable (for example, from inside the Codex sandbox where `gui/$UID` is
 not reachable). It acquires an atomic private lock directory at
 `$CODEX_HOME/run/codex-model-router.ensure.lock.d` so concurrent invocations
-cannot race the bootstrap/nohup path. When launchd owns the job, the hook
-`launchctl kickstart -k`s it on cold start and leaves a healthy process
+cannot race the bootstrap/nohup path. When the job is not loaded, the hook
+bootstraps it (`RunAtLoad` starts it); when launchd owns a job that is not
+answering, the hook `launchctl kickstart -k`s it; a healthy process is left
 alone; the direct fallback is never allowed to start a duplicate `nohup`
 next to a launchd job that is bound to the port. When launchd is the
 supervisor but the router never becomes ready, the hook fails loudly

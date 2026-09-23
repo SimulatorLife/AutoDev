@@ -5,12 +5,20 @@ description: AutoDev-only. Diagnose and fix AutoDev issues from live evidence --
 
 # AutoDev session diagnostics (AutoDev development only)
 
-Diagnose from what the system recorded, not from what the code or docs say it
+Diagnose from what the system recorded, not from what the code or docs *say* it
 should do. Find the root cause at its source, then fix and prove it.
 
 Not for inspecting what Codex *would* send a provider offline -- that is the
 `autodev-codex-request-capture` skill, which this one hands off to when you need
 to reproduce a request shape.
+
+### Things to look for
+
+- Agents have the proper/expected skills, tools, MCPs, prompts, permissions, and other resources available/enabled
+- Agents do not have access to resources they should *not* have (e.g. a subagent reading an 'orchestration' skill when it does not and *should not* have agent-spawning tools/permissions)
+- Tools and MCP servers have consistent names across all model providers and are exposed in the same/consistent way to the agents
+- Orchestrator agents can properly spawn subagents and receive their reports
+- Telemetry and logging is complete and consistent/standardized across all agents, subagents, and providers
 
 ## 1. Build the evidence report
 

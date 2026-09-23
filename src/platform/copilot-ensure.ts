@@ -144,7 +144,6 @@ export async function ensureCopilotProxy(
   if (existsSync(options.plist)) {
     try {
       deps.launchd.bootstrap(options.plist);
-      deps.launchd.kickstart(options.label);
       if (await waitForProbe(deps, options.readyTimeoutMs)) return true;
     } catch {
       /* fall through to the sandbox fallback */

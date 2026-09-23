@@ -15,7 +15,7 @@ export function createMacosServiceLifecycle(
 ): ServiceLifecycle {
   return {
     bootstrap(service) {
-      if (client.isLoaded(service.label)) client.bootout(service.label);
+      client.bootout(service.label);
       client.bootstrap(service.plist);
     },
     restart(service) {

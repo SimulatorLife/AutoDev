@@ -1,5 +1,12 @@
 import { execFileSync, spawnSync } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
+import {
+  closeSync,
+  existsSync,
+  openSync,
+  readFileSync,
+  readSync,
+  statSync
+} from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
 
@@ -8,7 +15,12 @@ import { LaunchdClient } from "./macos/launchd.ts";
 
 const WHITESPACE_SPLIT_PATTERN = /\s+/u;
 const PID_NUMERIC_PATTERN = /^\d+$/u;
-const AUTH_TOKEN_PATTERN = /<key>CODEX_HOME<\/key>\s*<string>([^<]+)<\/string>/u;
+const AUTH_TOKEN_PATTERN =
+  /<key>CODEX_HOME<\/key>\s*<string>([^<]+)<\/string>/u;
+const JOB_PID_PATTERN = /^\tpid = (\d+)$/mu;
+const JOB_LAST_EXIT_PATTERN = /^\tlast exit code = (\d+)/mu;
+const JOB_STDERR_PATTERN = /^\tstderr path = (.+)$/mu;
+const LOG_LINE_SPLIT_PATTERN = /\r?\n/u;
 
 export const LABEL_MODEL_ROUTER = "com.codex.model-router";
 export const LABEL_CLAUDE_BRIDGE = "com.codex.claude-bridge";
@@ -26,6 +38,7 @@ export const MANAGED_SERVICE_LABELS = [
 ] as const;
 export type ManagedServiceLabel = (typeof MANAGED_SERVICE_LABELS)[number];
 export type OtelMode = "direct" | "collector";
+export type KillSignal = "SIGTERM" | "SIGKILL";
 
 export interface ServiceRestartOptions {
   readonly repositoryRoot: string;
@@ -39,10 +52,11 @@ export interface ServiceRestartOptions {
 export interface ServiceRestartDeps {
   readonly launchd: Pick<
     LaunchdClient,
-    "isLoaded" | "print" | "bootout" | "bootstrap" | "enable" | "kickstart"
+    "isLoaded" | "print" | "bootout" | "bootstrap" | "enable"
   >;
   readonly fileExists: (filePath: string) => boolean;
   readonly readFile: (filePath: string) => string;
+  readonly logTail: (filePath: string, lines: number) => readonly string[];
   readonly commandAvailable: (command: string) => boolean;
   readonly probe: (url: string, method?: "GET" | "POST") => Promise<boolean>;
   readonly sleep: (ms: number) => Promise<void>;
@@ -54,11 +68,28 @@ export interface ServiceRestartDeps {
   ) => number;
   readonly listeningPids: (port: number) => readonly number[] | null;
   readonly commandLine: (pid: number) => string | null;
-  readonly kill: (pid: number) => void;
+  readonly kill: (pid: number, signal: KillSignal) => void;
 }
 
 const DEFAULT_ATTEMPTS = 80;
 const DEFAULT_DELAY_MS = 250;
+// An unmanaged process gets the same graceful budget launchd gives the router
+// (ExitTimeOut 45s) before it is killed outright.
+const REAP_TERM_ATTEMPTS = 180;
+const REAP_KILL_ATTEMPTS = 20;
+const REAP_DELAY_MS = 250;
+const FAILURE_LOG_LINES = 8;
+const LOG_TAIL_BYTES = 16_384;
+
+interface ServiceSpec {
+  readonly label: ManagedServiceLabel;
+  readonly probe: string;
+  readonly method: "GET" | "POST";
+  /** Only set where the launcher execs the server, so the job pid is the listener. */
+  readonly ownedPort: number | null;
+  readonly required: boolean;
+}
+
 const SERVICE_PORTS = {
   [LABEL_MODEL_ROUTER]: 4100,
   [LABEL_CLAUDE_BRIDGE]: 4000,
@@ -67,6 +98,52 @@ const SERVICE_PORTS = {
   [LABEL_COPILOT_PROXY]: 4003,
   [LABEL_OTEL_COLLECTOR]: 4318
 } as const satisfies Record<ManagedServiceLabel, number>;
+
+const BRIDGE_SPECS: readonly ServiceSpec[] = [
+  {
+    label: LABEL_MODEL_ROUTER,
+    probe: "http://127.0.0.1:4100/health/readiness",
+    method: "GET",
+    ownedPort: SERVICE_PORTS[LABEL_MODEL_ROUTER],
+    required: true
+  },
+  {
+    label: LABEL_CLAUDE_BRIDGE,
+    probe: "http://127.0.0.1:4000/health/liveliness",
+    method: "GET",
+    ownedPort: SERVICE_PORTS[LABEL_CLAUDE_BRIDGE],
+    required: false
+  },
+  {
+    label: LABEL_MINIMAX_PROXY,
+    probe: "http://127.0.0.1:18765/health",
+    method: "GET",
+    ownedPort: SERVICE_PORTS[LABEL_MINIMAX_PROXY],
+    required: false
+  },
+  {
+    label: LABEL_ANTIGRAVITY_PROXY,
+    probe: "http://127.0.0.1:4002/health/liveliness",
+    method: "GET",
+    ownedPort: SERVICE_PORTS[LABEL_ANTIGRAVITY_PROXY],
+    required: false
+  },
+  {
+    label: LABEL_COPILOT_PROXY,
+    probe: "http://127.0.0.1:4003/health/liveliness",
+    method: "GET",
+    ownedPort: SERVICE_PORTS[LABEL_COPILOT_PROXY],
+    required: false
+  }
+];
+
+const COLLECTOR_SPEC: ServiceSpec = {
+  label: LABEL_OTEL_COLLECTOR,
+  probe: "http://127.0.0.1:4318/v1/logs",
+  method: "POST",
+  ownedPort: null,
+  required: true
+};
 
 export function resolveServiceRestartOptions(
   env: NodeJS.ProcessEnv = process.env
@@ -93,6 +170,26 @@ function positiveInteger(value: string | undefined, fallback: number): number {
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
 }
 
+function readLogTail(filePath: string, lines: number): string[] {
+  let fd: number | null = null;
+  try {
+    const size = statSync(filePath).size;
+    const length = Math.min(size, LOG_TAIL_BYTES);
+    const buffer = Buffer.alloc(length);
+    fd = openSync(filePath, "r");
+    readSync(fd, buffer, 0, length, size - length);
+    return buffer
+      .toString("utf8")
+      .split(LOG_LINE_SPLIT_PATTERN)
+      .filter((line) => line.trim().length > 0)
+      .slice(-lines);
+  } catch {
+    return [];
+  } finally {
+    if (fd !== null) closeSync(fd);
+  }
+}
+
 function defaultDeps(): ServiceRestartDeps {
   return {
     launchd: new LaunchdClient(),
@@ -104,6 +201,7 @@ function defaultDeps(): ServiceRestartDeps {
         return "";
       }
     },
+    logTail: readLogTail,
     commandAvailable: (command) => {
       try {
         execFileSync("which", [command], { stdio: "ignore" });
@@ -163,9 +261,9 @@ function defaultDeps(): ServiceRestartDeps {
         return null;
       }
     },
-    kill: (pid) => {
+    kill: (pid, signal) => {
       try {
-        process.kill(pid);
+        process.kill(pid, signal);
       } catch {
         /* process exited */
       }
@@ -239,18 +337,6 @@ function serviceHook(
   }
 }
 
-function serviceProbe(label: ManagedServiceLabel): string {
-  if (label === LABEL_MODEL_ROUTER)
-    return "http://127.0.0.1:4100/health/readiness";
-  if (label === LABEL_CLAUDE_BRIDGE)
-    return "http://127.0.0.1:4000/health/liveliness";
-  if (label === LABEL_ANTIGRAVITY_PROXY)
-    return "http://127.0.0.1:4002/health/liveliness";
-  if (label === LABEL_COPILOT_PROXY)
-    return "http://127.0.0.1:4003/health/liveliness";
-  return "http://127.0.0.1:18765/health";
-}
-
 function plistOwner(
   options: ServiceRestartOptions,
   deps: ServiceRestartDeps
@@ -261,54 +347,54 @@ function plistOwner(
   return match?.[1] ?? null;
 }
 
-async function pollServiceReady(
+function errorText(error: unknown): string {
+  return error instanceof Error ? error.message.trim() : String(error);
+}
+
+async function waitForPortRelease(
   deps: ServiceRestartDeps,
-  url: string,
-  method: "GET" | "POST",
-  attempts: number,
-  delayMs: number
+  port: number,
+  pid: number,
+  attempts: number
 ): Promise<boolean> {
+  if (!(deps.listeningPids(port) ?? []).includes(pid)) return true;
   if (attempts <= 0) return false;
-  if (await deps.probe(url, method)) return true;
-  await deps.sleep(delayMs);
-  return pollServiceReady(deps, url, method, attempts - 1, delayMs);
+  await deps.sleep(REAP_DELAY_MS);
+  return waitForPortRelease(deps, port, pid, attempts - 1);
 }
 
-function waitForProbe(
-  deps: ServiceRestartDeps,
-  url: string,
-  options: ServiceRestartOptions,
-  method: "GET" | "POST" = "GET"
-): Promise<boolean> {
-  return pollServiceReady(
-    deps,
-    url,
-    method,
-    options.readyAttempts,
-    options.readyDelayMs
-  );
-}
-
-function reapUnmanaged(
+/**
+ * Stop a process this CODEX_HOME's hook runs outside launchd, and wait until
+ * it has let go of the port: bootstrapping while it still listens starts a
+ * KeepAlive EADDRINUSE crash loop.
+ */
+async function reapUnmanaged(
   options: ServiceRestartOptions,
   label: ManagedServiceLabel,
-  deps: ServiceRestartDeps
-): void {
-  const pids = deps.listeningPids(SERVICE_PORTS[label]);
-  if (pids === null) return;
-  const hook = serviceHook(options, label);
-  for (const pid of pids) {
-    if (deps.commandLine(pid)?.includes(hook)) {
+  deps: ServiceRestartDeps,
+  pids: readonly number[] = deps.listeningPids(SERVICE_PORTS[label]) ?? []
+): Promise<boolean> {
+  const [pid, ...rest] = pids;
+  if (pid === undefined) return true;
+  const port = SERVICE_PORTS[label];
+  if (!deps.commandLine(pid)?.includes(serviceHook(options, label))) {
+    writeErrorLine(
+      `port ${port} held by a process this installer does not own (pid ${pid}); ${label} not started`
+    );
+    return false;
+  }
+  writeErrorLine(`reaping unmanaged ${label} on port ${port} (pid ${pid})`);
+  deps.kill(pid, "SIGTERM");
+  if (!(await waitForPortRelease(deps, port, pid, REAP_TERM_ATTEMPTS))) {
+    deps.kill(pid, "SIGKILL");
+    if (!(await waitForPortRelease(deps, port, pid, REAP_KILL_ATTEMPTS))) {
       writeErrorLine(
-        `reaping unmanaged ${label} on port ${SERVICE_PORTS[label]} (pid ${pid})`
+        `pid ${pid} still holds port ${port}; ${label} not started`
       );
-      deps.kill(pid);
-    } else {
-      writeErrorLine(
-        `port ${SERVICE_PORTS[label]} held by a process this installer does not own (pid ${pid}); ${label} not started`
-      );
+      return false;
     }
   }
+  return reapUnmanaged(options, label, deps, rest);
 }
 
 async function runDirectEnsures(
@@ -397,35 +483,95 @@ function isOwnedService(
   return jobDump.includes(options.codexHome) || jobDump.includes(hooks);
 }
 
-/** Restart only services owned by this CODEX_HOME and run direct fallbacks when launchd is unavailable. */
-async function waitForSupervisedServices(
-  deps: ServiceRestartDeps,
-  options: ServiceRestartOptions,
-  includeCollector: boolean
-): Promise<void> {
-  if (!includeCollector) {
-    await pollBridgeReadiness(deps, options, 0);
-    return;
-  }
-  await pollBridgeReadiness(deps, options, 0);
-  await waitForProbe(
-    deps,
-    "http://127.0.0.1:4318/v1/logs",
-    options,
-    "POST"
-  );
+interface JobState {
+  readonly pid: number | null;
+  readonly lastExitCode: number | null;
+  readonly stderrPath: string | null;
 }
 
-async function pollBridgeReadiness(
+function parseJobState(jobDump: string): JobState {
+  const pid = JOB_PID_PATTERN.exec(jobDump)?.[1];
+  const exit = JOB_LAST_EXIT_PATTERN.exec(jobDump)?.[1];
+  return {
+    pid: pid === undefined ? null : Number.parseInt(pid),
+    lastExitCode: exit === undefined ? null : Number.parseInt(exit),
+    stderrPath: JOB_STDERR_PATTERN.exec(jobDump)?.[1]?.trim() ?? null
+  };
+}
+
+type ServiceCheck =
+  | { readonly ready: true }
+  | {
+      readonly ready: false;
+      readonly reason: string;
+      readonly stderrPath: string | null;
+    };
+
+/**
+ * A freshly bootstrapped job has never exited, so any recorded exit code means
+ * it is crash-looping under KeepAlive: report that at once instead of waiting
+ * out the readiness budget on a process that will never answer.
+ */
+async function checkService(
   deps: ServiceRestartDeps,
   options: ServiceRestartOptions,
-  index: number
-): Promise<void> {
-  const labels = MANAGED_SERVICE_LABELS.slice(0, 5);
-  if (index >= labels.length) return;
-  const label = labels[index];
-  if (label) await waitForProbe(deps, serviceProbe(label), options);
-  await pollBridgeReadiness(deps, options, index + 1);
+  spec: ServiceSpec,
+  attempt = 0
+): Promise<ServiceCheck> {
+  const job = parseJobState(readLaunchdJobDump(deps, spec.label));
+  if (job.lastExitCode !== null && job.lastExitCode !== 0)
+    return {
+      ready: false,
+      reason: `exited with code ${job.lastExitCode}`,
+      stderrPath: job.stderrPath
+    };
+  if (await deps.probe(spec.probe, spec.method)) {
+    if (spec.ownedPort === null) return { ready: true };
+    const listeners = deps.listeningPids(spec.ownedPort) ?? [];
+    if (job.pid !== null && listeners.includes(job.pid)) return { ready: true };
+    return {
+      ready: false,
+      reason: `port ${spec.ownedPort} is served by pid ${listeners.join(", ") || "unknown"}, not the launchd job (pid ${job.pid ?? "none"})`,
+      stderrPath: job.stderrPath
+    };
+  }
+  if (attempt + 1 >= options.readyAttempts)
+    return {
+      ready: false,
+      reason: `did not become ready within ${options.readyAttempts * options.readyDelayMs}ms`,
+      stderrPath: job.stderrPath
+    };
+  await deps.sleep(options.readyDelayMs);
+  return checkService(deps, options, spec, attempt + 1);
+}
+
+/** Confirm every supervised service is up and owned by its launchd job. */
+async function verifySupervisedServices(
+  deps: ServiceRestartDeps,
+  options: ServiceRestartOptions
+): Promise<number> {
+  const specs =
+    options.otelMode === "collector"
+      ? [...BRIDGE_SPECS, COLLECTOR_SPEC]
+      : BRIDGE_SPECS;
+  const checks = await Promise.all(
+    specs.map((spec) => checkService(deps, options, spec))
+  );
+  let status = 0;
+  for (const [index, check] of checks.entries()) {
+    const spec = specs[index];
+    if (!spec || check.ready) continue;
+    writeErrorLine(
+      `${spec.label} is not running: ${check.reason}${spec.required ? "" : " (router will route around it)"}`
+    );
+    if (check.stderrPath) {
+      writeErrorLine(`  log: ${check.stderrPath}`);
+      for (const line of deps.logTail(check.stderrPath, FAILURE_LOG_LINES))
+        writeErrorLine(`  | ${line}`);
+    }
+    if (spec.required) status = 1;
+  }
+  return status;
 }
 
 function foreignOwnedHookResult(
@@ -455,54 +601,62 @@ function readLaunchdJobDump(
   return "";
 }
 
-type ReloadResult = "ok" | "foreign" | "no-plist" | "disabled-otel" | "failed";
+type ReloadResult = "ok" | "no-plist" | "disabled-otel" | "failed";
 
-function reloadOneLabel(
+function foreignLabels(
+  deps: ServiceRestartDeps,
+  options: ServiceRestartOptions
+): ManagedServiceLabel[] {
+  return MANAGED_SERVICE_LABELS.filter(
+    (label) =>
+      deps.launchd.isLoaded(label) &&
+      !isOwnedService(options, label, readLaunchdJobDump(deps, label))
+  );
+}
+
+/**
+ * Replace a label's job: unload the old one, clear stray listeners, then
+ * bootstrap. Every managed plist sets RunAtLoad, so bootstrap starts the
+ * service; a following `kickstart -k` would kill that fresh instance
+ * mid-startup and stall for launchd's ThrottleInterval before respawning it.
+ */
+async function reloadOneLabel(
   deps: ServiceRestartDeps,
   options: ServiceRestartOptions,
   label: ManagedServiceLabel
-): ReloadResult {
-  if (deps.launchd.isLoaded(label)) {
-    const jobDump = readLaunchdJobDump(deps, label);
-    if (!isOwnedService(options, label, jobDump)) {
-      writeErrorLine(
-        `loaded ${label} belongs to another runtime; leaving it alone.`
-      );
-      return "foreign";
-    }
-  }
-  if (label === LABEL_OTEL_COLLECTOR && options.otelMode === "direct") {
-    try {
-      deps.launchd.bootout(label);
-    } catch {
-      /* not loaded */
-    }
-    return "disabled-otel";
-  }
+): Promise<ReloadResult> {
+  const disableCollector =
+    label === LABEL_OTEL_COLLECTOR && options.otelMode === "direct";
   const plist = plistPath(options, label);
-  if (!deps.fileExists(plist)) return "no-plist";
+  if (!disableCollector && !deps.fileExists(plist)) return "no-plist";
   try {
     deps.launchd.bootout(label);
-  } catch {
-    /* not loaded */
-  }
-  reapUnmanaged(options, label, deps);
-  try {
-    deps.launchd.bootstrap(plist);
-    try {
-      deps.launchd.enable(label);
-    } catch {
-      /* best effort */
-    }
-    try {
-      deps.launchd.kickstart(label);
-    } catch {
-      return "failed";
-    }
-    return "ok";
-  } catch {
+  } catch (error) {
+    writeErrorLine(`could not unload ${label}: ${errorText(error)}`);
     return "failed";
   }
+  if (disableCollector) return "disabled-otel";
+  if (!(await reapUnmanaged(options, label, deps))) return "failed";
+  try {
+    deps.launchd.enable(label);
+    deps.launchd.bootstrap(plist);
+    return "ok";
+  } catch (error) {
+    writeErrorLine(`could not load ${label}: ${errorText(error)}`);
+    return "failed";
+  }
+}
+
+async function reloadLabels(
+  deps: ServiceRestartDeps,
+  options: ServiceRestartOptions,
+  index = 0,
+  results: ReloadResult[] = []
+): Promise<ReloadResult[]> {
+  const label = MANAGED_SERVICE_LABELS[index];
+  if (label === undefined) return results;
+  results.push(await reloadOneLabel(deps, options, label));
+  return reloadLabels(deps, options, index + 1, results);
 }
 
 export async function restartServices(
@@ -513,41 +667,37 @@ export async function restartServices(
   const foreignOwnerResult = foreignOwnedHookResult(options, owner);
   if (foreignOwnerResult !== null) return foreignOwnerResult;
 
-  const launchctlAvailable = deps.commandAvailable("launchctl");
-  let foreignService = false;
-  const failedLabels: ManagedServiceLabel[] = [];
-  for (const label of MANAGED_SERVICE_LABELS) {
-    const result = launchctlAvailable
-      ? reloadOneLabel(deps, options, label)
-      : "failed";
-    if (result === "foreign") foreignService = true;
-    else if (result === "failed") failedLabels.push(label);
+  if (!deps.commandAvailable("launchctl")) {
+    writeErrorLine(
+      "launchctl unavailable (sandbox?); starting bridges through the direct ensure-hook path."
+    );
+    return runDirectEnsures(options, deps);
   }
-  if (foreignService) {
+  const foreign = foreignLabels(deps, options);
+  if (foreign.length > 0) {
+    for (const label of foreign)
+      writeErrorLine(
+        `loaded ${label} belongs to another runtime; leaving it alone.`
+      );
     writeErrorLine(
       "another AutoDev runtime owns one or more labels; leaving all active services untouched."
     );
     return 0;
   }
-  const supervised = launchctlAvailable && failedLabels.length === 0;
-  if (supervised)
-    writeErrorLine(
-      "Provider bridges supervised by launchd (KeepAlive; survive restart/crash/sleep)."
-    );
-  else if (launchctlAvailable)
+  const results = await reloadLabels(deps, options);
+  const failedLabels = MANAGED_SERVICE_LABELS.filter(
+    (_label, index) => results[index] === "failed"
+  );
+  if (failedLabels.length > 0) {
     writeErrorLine(
       `launchd could not load ${failedLabels.join(", ")}; starting bridges through the direct ensure-hook path.`
     );
-  else
-    writeErrorLine(
-      "launchctl unavailable (sandbox?); starting bridges through the direct ensure-hook path."
-    );
-  await waitForSupervisedServices(
-    deps,
-    options,
-    supervised && options.otelMode === "collector"
+    return runDirectEnsures(options, deps);
+  }
+  writeErrorLine(
+    "Provider bridges supervised by launchd (KeepAlive; survive restart/crash/sleep)."
   );
-  return runDirectEnsures(options, deps);
+  return verifySupervisedServices(deps, options);
 }
 
 if (process.argv[1] === new URL(import.meta.url).pathname) {

@@ -49,6 +49,7 @@ export const RUNTIME_MODULES = [
   "src/shared/responses-item-ids.ts",
   "src/shared/responses-continuation.ts",
   "src/shared/output.ts",
+  "src/shared/tool-names.ts",
   "src/agents/spawn-tools.ts",
   "src/router/state-collector.ts",
   "src/router/routing.ts",
@@ -468,8 +469,10 @@ function bootoutObsoleteLaunchLabels(launchd: LaunchdClient): void {
   for (const label of OBSOLETE_LAUNCH) {
     try {
       launchd.bootout(label);
-    } catch {
-      /* obsolete job may not be loaded */
+    } catch (error) {
+      writeErrorLine(
+        `could not unload obsolete ${label}: ${error instanceof Error ? error.message : String(error)}`
+      );
     }
   }
 }

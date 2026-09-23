@@ -80,8 +80,12 @@ export function startRouterServer(port = PORT, host = HOST): Server {
   const server = createServer((request, response) => {
     void handle(request, response);
   });
+  // Exit once the shutdown finishes; the SIGTERM handler replaces Node's
+  // default exit, so without this the process outlives its launchd job.
   const sigtermHandler = (signal: string) => {
-    void beginShutdown(signal, server);
+    void beginShutdown(signal, server, persistRouterStateNow).then(() =>
+      process.exit(0)
+    );
   };
   process.on("SIGINT", () => sigtermHandler("SIGINT"));
   process.on("SIGTERM", () => sigtermHandler("SIGTERM"));

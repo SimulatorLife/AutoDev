@@ -503,15 +503,12 @@ async function ensureViaLaunchd(
 
   const plistExists = (await deps.stat(options.paths.plistLink)) !== null;
   if (!plistExists) return 2;
+  // RunAtLoad starts the router on bootstrap; kickstart -k here would kill that
+  // instance mid-startup and wait out ThrottleInterval before respawning it.
   try {
     deps.launchd.bootstrap(options.paths.plistLink);
   } catch {
     return 2;
-  }
-  try {
-    deps.launchd.kickstart(options.label);
-  } catch {
-    return 1;
   }
   const started = await waitForProbe(deps, options);
   const ownerPid = parseLaunchdPid(safeLaunchctlPrint(deps, options) ?? "");

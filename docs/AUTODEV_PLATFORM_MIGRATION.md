@@ -2377,10 +2377,19 @@ with explicit path-kind contracts and symlink-safe removal. The installer no lon
 service restart and Collector management are typed owners as well.
 
 The service-restart slice is now typed in `src/platform/service-restart.ts`.
-That owner protects foreign `CODEX_HOME` runtimes, coordinates launchd
-bootout/bootstrap/enable/kickstart ordering, reaps only matching stale
-listeners, waits on managed service readiness, and forwards the Collector
-configuration when direct fallback is required. The installer now invokes the
+That owner checks every label for a foreign `CODEX_HOME` runtime before it
+touches any of them, then per label: boots the old job out and waits until
+launchd has unloaded it (a job that outlives the wait is reported rather than
+bootstrapped over), stops any matching stale listener and waits for the port
+to be released, enables, and bootstraps. Every plist sets `RunAtLoad`, so
+bootstrap starts the service; there is no `kickstart -k`, which killed the
+fresh instance mid-startup and stalled each label for launchd's
+`ThrottleInterval`. It then checks all services in parallel: ready, and served
+by the launchd job's own process, with a crash-looping job reported at once
+alongside the tail of its log. A router or Collector that is not running fails
+the install; a provider bridge only warns. The direct ensure hooks run only
+when launchd is unavailable or refused a label, and the owner forwards the
+Collector configuration to them. The installer now invokes the
 owner as a process-dispatch boundary; installer-wide orchestration is now
 owned by the typed install coordinator.
 The Collector foreground and ensure slice is now typed in

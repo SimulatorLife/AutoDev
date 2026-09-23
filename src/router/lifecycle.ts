@@ -15,13 +15,17 @@ export interface RouterLifecycleOptions {
   routerInstanceId?: string;
 }
 
+export interface ShutdownServer {
+  close(cb: (err?: Error) => void): void;
+  closeAllConnections?(): void;
+}
+
 export interface ShutdownOptions {
   signal?: string | undefined;
-  server?: { close(cb: (err?: Error) => void): void } | null | undefined;
+  server?: ShutdownServer | null | undefined;
   persistState?: (() => Promise<void>) | undefined;
   drainTimeoutMs?: number | undefined;
   routerInstanceId?: string | undefined;
-  noExit?: boolean | undefined;
 }
 
 export class RouterLifecycle {
@@ -97,7 +101,7 @@ export class RouterLifecycle {
 
   beginShutdown(
     optionsOrSignal: ShutdownOptions | string = {},
-    server?: { close(cb: (err?: Error) => void): void } | null,
+    server?: ShutdownServer | null,
     persistState?: () => Promise<void>
   ): Promise<void> {
     if (this.shutdownPromise) return this.shutdownPromise;
@@ -142,9 +146,13 @@ export class RouterLifecycle {
         }
       }
       if (options.server && typeof options.server.close === "function") {
+        const httpServer = options.server;
         try {
           await new Promise<void>((resolve) => {
-            options.server!.close(() => resolve());
+            httpServer.close(() => resolve());
+            // The drain window is over: a keep-alive or stuck stream socket
+            // would otherwise hold close() open, and the old process with it.
+            httpServer.closeAllConnections?.();
           });
         } catch {
           /* best effort server close */
@@ -161,14 +169,6 @@ export class RouterLifecycle {
           abortedInFlight: this.activeRequestAborters.size > 0
         })
       );
-      const noExit =
-        options.noExit ?? process.env.CODEX_ROUTER_TEST_NO_EXIT === "1";
-      if (!noExit) {
-        // The router runtime owns the process and the only safe way to terminate
-        // an event-loop-free router is to call process.exit directly. Tests
-        // route through noExit to keep the runtime alive for assertions.
-        process.kill(process.pid, "SIGTERM");
-      }
     })();
     return this.shutdownPromise;
   }
@@ -249,7 +249,7 @@ export function abortActiveResponseRequests(): void {
 
 export function beginShutdown(
   optionsOrSignal?: ShutdownOptions | string,
-  server?: { close(cb: (err?: Error) => void): void } | null,
+  server?: ShutdownServer | null,
   persistState?: () => Promise<void>
 ): Promise<void> {
   return getDefaultRouterLifecycle().beginShutdown(

@@ -48,7 +48,9 @@ export interface LaunchdClientOptions {
   sleep?: (ms: number) => void;
 }
 
-const UNLOAD_ATTEMPTS_DEFAULT = 100;
+// Covers the longest ExitTimeOut we ship (the router's 45s drain budget):
+// launchd SIGKILLs a job by then, so unloading must have finished.
+const UNLOAD_ATTEMPTS_DEFAULT = 500;
 const UNLOAD_DELAY_MS_DEFAULT = 100;
 
 /** `launchctl bootout` returns before launchd finishes tearing the job down. */
@@ -84,13 +86,18 @@ export class LaunchdClient {
     this.run(["enable", `${this.domain}/${label}`]);
   }
   /**
-   * Unload a job and block until launchd has actually torn it down. `launchctl
-   * bootout` is asynchronous, so bootstrapping the same label immediately after
-   * it returns fails with `Bootstrap failed: 5: Input/output error`.
+   * Unload a job (a no-op when it is not loaded) and block until launchd has
+   * torn it down. `launchctl bootout` is asynchronous, and bootstrapping the
+   * same label while it is still loaded fails with `Bootstrap failed: 5:
+   * Input/output error`, so a job that outlives the wait is an error.
    */
   bootout(label: string): void {
+    if (!this.isLoaded(label)) return;
     this.run(["bootout", `${this.domain}/${label}`]);
-    this.waitUntilUnloaded(label);
+    if (!this.waitUntilUnloaded(label))
+      throw new LaunchdError(
+        `${this.domain}/${label} was still loaded ${this.unloadAttempts * this.unloadDelayMs}ms after bootout`
+      );
   }
 
   /** True once the label is gone; false when it is still loaded after the bounded wait. */

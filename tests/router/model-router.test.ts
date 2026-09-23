@@ -7782,14 +7782,9 @@ test("liveness stays 200 during draining while readiness returns 503 with struct
 
     // Trigger draining through the public lifecycle helper used by tests.
     resetLifecycleForTests();
-    // Use the exported beginShutdown with a no-op server reference and the
-    // test escape hatch so we can probe the endpoints while draining.
-    process.env.CODEX_ROUTER_TEST_NO_EXIT = "1";
-    try {
-      await beginShutdown("SIGTERM", null, stateFile as any);
-    } finally {
-      delete process.env.CODEX_ROUTER_TEST_NO_EXIT;
-    }
+    // Use the exported beginShutdown with a no-op server reference so we can
+    // probe the endpoints while draining; only the SIGTERM handler exits.
+    await beginShutdown("SIGTERM", null, stateFile as any);
     assert.equal(isDraining(), true);
     assert.equal(getLifecycleStatus().draining, true);
 
@@ -7837,7 +7832,6 @@ test("liveness stays 200 during draining while readiness returns 503 with struct
 
 test("graceful shutdown drains in-flight requests, persists state, and stops accepting new traffic", async () => {
   const originalFetch = globalThis.fetch;
-  process.env.CODEX_ROUTER_TEST_NO_EXIT = "1";
   const directory = await mkdtemp(join(tmpdir(), "autodev-shutdown-"));
   const stateFile = join(directory, "router-state.json");
   try {
@@ -7966,7 +7960,6 @@ test("graceful shutdown drains in-flight requests, persists state, and stops acc
       resetLifecycleForTests();
     }
   } finally {
-    delete process.env.CODEX_ROUTER_TEST_NO_EXIT;
     resetRouterTelemetry();
     activeProviderRequests.clear();
     cooldowns.clear("claude");
