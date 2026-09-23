@@ -78,7 +78,7 @@
       },
       {
         "provider": "claude",
-        "model": "claude-opus-5"
+        "model": "claude-opus-5.5"
       },
       {
         "provider": "codex",
@@ -105,7 +105,7 @@
       },
       {
         "provider": "claude",
-        "model": "claude-opus-5",
+        "model": "claude-opus-5.5",
         "reasoningEffort": "medium"
       }
     ],
@@ -128,7 +128,7 @@
         },
         {
           "provider": "claude",
-          "model": "claude-opus-5",
+          "model": "claude-opus-5.5",
           "reasoningEffort": "medium"
         }
       ],
@@ -150,7 +150,7 @@
         },
         {
           "provider": "claude",
-          "model": "claude-opus-5",
+          "model": "claude-opus-5.5",
           "reasoningEffort": "medium"
         }
       ],
@@ -172,14 +172,14 @@
         },
         {
           "provider": "claude",
-          "model": "claude-opus-5",
+          "model": "claude-opus-5.5",
           "reasoningEffort": "medium"
         }
       ],
       "claude": [
         {
           "provider": "claude",
-          "model": "claude-opus-5",
+          "model": "claude-opus-5.5",
           "reasoningEffort": "medium"
         },
         {
@@ -208,7 +208,7 @@
       }
     },
     "orchestratorFallback": {
-      "model": "claude-opus-5",
+      "model": "claude-opus-5.5",
       "reasoning": {
         "effort": "medium"
       }

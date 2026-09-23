@@ -25,7 +25,7 @@ The editable provider/model choices live in
 `config/model-routing.json`: `providerGroups` defines ordered fallback groups per capability tier,
 `providers.<name>.models` contains named tiers such as `default` and `smart` (specific tiers like `smart` are optional and fall back to that provider's `default` model if omitted), and
 `roles.<role>.tier` selects the tier for each capability role. For example, set
-Claude's smart model to `claude-opus-5` or Codex's to `gpt-5.6-sol` there; providers like MiniMax or Copilot that use the same model across tiers only need to define `default`. The installer materializes this file as
+Claude's smart model to `claude-opus-5.5` or Codex's to `gpt-5.6-sol` there; providers like MiniMax or Copilot that use the same model across tiers only need to define `default`. The installer materializes this file as
 `$CODEX_HOME/codex-model-routing.json`.
 For the `default` capability tier, the router randomizes Claude, Gemini/Antigravity, and MiniMax, then falls back to Copilot and OpenAI/Codex. For `smart`, it randomizes Claude and Gemini/Antigravity, then falls back directly to OpenAI/Codex Sol. Providers that are unavailable or return fallbackable limit errors are skipped and the next provider in the current group is tried before progressing to the next group. A skipped provider is not forgotten: if no candidate serves the turn, the router reconsiders the ones it skipped as a bounded last resort before giving up (see "Cooldowns and provider selection"):
 

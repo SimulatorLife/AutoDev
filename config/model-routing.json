@@ -77,8 +77,8 @@
     },
     "claude": {
       "models": {
-        "smart": "claude-opus-5",
-        "orchestrator": "claude-opus-5",
+        "smart": "claude-opus-5.5",
+        "orchestrator": "claude-opus-5.5",
         "default": "sonnet"
       }
     },

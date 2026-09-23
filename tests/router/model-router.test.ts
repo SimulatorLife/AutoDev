@@ -257,7 +257,7 @@ test("loads editable provider and role models from JSON routing config", async (
       "utf8"
     )
   );
-  assert.equal(config.providers.claude.models.smart, "claude-opus-5");
+  assert.equal(config.providers.claude.models.smart, "claude-opus-5.5");
   assert.equal(config.providers.codex.models.smart, "gpt-5.6-sol");
   assert.equal(config.providers.minimax.models.smart, undefined);
   assert.equal(config.providers.copilot.models.smart, undefined);
@@ -279,7 +279,7 @@ test("loads editable provider and role models from JSON routing config", async (
   assert.equal(config.orchestrator.alias, "autodev/orchestrator");
   assert.equal(config.orchestrator.tier, "orchestrator");
   assert.equal(config.providers.codex.models.orchestrator, "gpt-5.6-luna");
-  assert.equal(config.providers.claude.models.orchestrator, "claude-opus-5");
+  assert.equal(config.providers.claude.models.orchestrator, "claude-opus-5.5");
   assert.equal(
     config.providers.antigravity.models.orchestrator,
     "gemini-3.8-flash-high"
@@ -361,7 +361,7 @@ test("orchestrator alias degrades from the pinned primary provider to a load-bal
   const byProvider: Record<string, any> = Object.fromEntries(
     candidates.map((candidate: any) => [candidate.provider, candidate])
   );
-  assert.equal(byProvider.claude.model, "claude-opus-5");
+  assert.equal(byProvider.claude.model, "claude-opus-5.5");
   assert.equal(byProvider.claude.reasoningEffort, "medium");
   assert.equal(byProvider.copilot.model, "copilot");
   assert.equal(byProvider.copilot.reasoningEffort, null);
@@ -387,7 +387,7 @@ test("orchestrator alias degrades from the pinned primary provider to a load-bal
     },
     byProvider.claude
   );
-  assert.equal(swapped.model, "claude-opus-5");
+  assert.equal(swapped.model, "claude-opus-5.5");
   assert.deepEqual(swapped.reasoning, { summary: "auto", effort: "medium" });
 
   const primary = payloadForCandidate(
@@ -514,7 +514,7 @@ test("resolves role aliases through tier-specific randomized provider groups wit
     smartCandidates.map((c) => [c.provider, c.model])
   );
   assert.equal(smartModelMap.antigravity, "gemini-3.8-flash-high");
-  assert.equal(smartModelMap.claude, "claude-opus-5");
+  assert.equal(smartModelMap.claude, "claude-opus-5.5");
   assert.equal(smartModelMap.codex, "gpt-5.6-sol");
   assert.notDeepEqual(
     routing
@@ -868,9 +868,9 @@ test("orchestrator alias falls back to another provider when the primary is unav
     );
     assert.ok(
       orchestratorResponseProvider &&
-        !(orchestratorResponseProvider as string).startsWith(
-          "https://chatgpt.com/"
-        )
+      !(orchestratorResponseProvider as string).startsWith(
+        "https://chatgpt.com/"
+      )
     );
 
     const usage = getRouterStatus().usage;
@@ -1139,7 +1139,7 @@ test("agent-events reporting is decoupled from spawn-tool availability", () => {
     );
     assert.equal(
       SUBAGENT_SPAWN_TOOLS_HEADER in
-        bridgeTelemetryHeaders({ provider }, "request-1"),
+      bridgeTelemetryHeaders({ provider }, "request-1"),
       false,
       provider
     );
@@ -1188,7 +1188,7 @@ test("subagent telemetry counts both spawn mechanisms and attributes each to a p
     noteBridgeRequest("request-1", {
       activitySubject: `req:${"request-1"}`,
       provider: "claude",
-      model: "claude-opus-5",
+      model: "claude-opus-5.5",
       role: null,
       workspace: "AutoDev"
     });
@@ -1669,14 +1669,14 @@ test("an Antigravity batch spawn contributes measured turns to the usage tables"
     const usageOpen = getRouterStatus().usage;
     assert.equal(
       roleAttempts(usageOpen, "explorer") -
-        roleAttempts(usageBefore, "explorer"),
+      roleAttempts(usageBefore, "explorer"),
       2
     );
     // A roleless child must not land in the `unattributed` bucket: it has its
     // own subagent role bucket, so a delegation is not credited to its parent.
     assert.equal(
       roleAttempts(usageOpen, UNATTRIBUTED_SUBAGENT_ROLE) -
-        roleAttempts(usageBefore, UNATTRIBUTED_SUBAGENT_ROLE),
+      roleAttempts(usageBefore, UNATTRIBUTED_SUBAGENT_ROLE),
       1
     );
     assert.equal(
@@ -1686,17 +1686,17 @@ test("an Antigravity batch spawn contributes measured turns to the usage tables"
     // `inherit` is agy naming the parent's model rather than choosing one.
     assert.equal(
       modelAttempts(usageOpen, "antigravity/gemini-3.8-flash-medium") -
-        modelAttempts(usageBefore, "antigravity/gemini-3.8-flash-medium"),
+      modelAttempts(usageBefore, "antigravity/gemini-3.8-flash-medium"),
       2
     );
     assert.equal(
       modelAttempts(usageOpen, "antigravity/gemini-3.8-flash-high") -
-        modelAttempts(usageBefore, "antigravity/gemini-3.8-flash-high"),
+      modelAttempts(usageBefore, "antigravity/gemini-3.8-flash-high"),
       1
     );
     assert.equal(
       Number(usageOpen.byOrigin?.subagent?.active ?? 0) -
-        Number(usageBefore.byOrigin?.subagent?.active ?? 0),
+      Number(usageBefore.byOrigin?.subagent?.active ?? 0),
       3,
       "children are in flight until they are closed"
     );
@@ -1741,7 +1741,7 @@ test("an Antigravity batch spawn contributes measured turns to the usage tables"
     const usageClosed = getRouterStatus().usage;
     assert.equal(
       roleSuccesses(usageClosed, "explorer") -
-        roleSuccesses(usageBefore, "explorer"),
+      roleSuccesses(usageBefore, "explorer"),
       2
     );
     assert.equal(
@@ -1759,12 +1759,12 @@ test("an Antigravity batch spawn contributes measured turns to the usage tables"
     const usageSwept = getRouterStatus().usage;
     assert.equal(
       roleSuccesses(usageSwept, UNATTRIBUTED_SUBAGENT_ROLE) -
-        roleSuccesses(usageBefore, UNATTRIBUTED_SUBAGENT_ROLE),
+      roleSuccesses(usageBefore, UNATTRIBUTED_SUBAGENT_ROLE),
       1
     );
     assert.equal(
       Number(usageSwept.byOrigin?.subagent?.active ?? 0) -
-        Number(usageBefore.byOrigin?.subagent?.active ?? 0),
+      Number(usageBefore.byOrigin?.subagent?.active ?? 0),
       0
     );
     assert.equal(
@@ -1791,7 +1791,7 @@ test("an orchestrator handed no delegation tool is reported, not read as a refus
     noteBridgeRequest("request-denied", {
       activitySubject: `req:${"request-denied"}`,
       provider: "claude",
-      model: "claude-opus-5",
+      model: "claude-opus-5.5",
       role: null,
       workspace: "SimulatorLife/RacingGame"
     });
@@ -1821,7 +1821,7 @@ test("an orchestrator handed no delegation tool is reported, not read as a refus
     assert.equal(after.recent[0].reason, "spawn_tool_unavailable");
     assert.equal(
       after.recent[0].requestedModel,
-      "claude-opus-5",
+      "claude-opus-5.5",
       "the failure names the model that was left unable to delegate"
     );
   } finally {
@@ -3095,7 +3095,7 @@ test("downstreamHeaders names the agent role the router assigned, and omits it w
   );
   assert.equal(
     downstreamHeaders(route as any, null, null, ORCHESTRATOR_AGENT_ROLE)[
-      AGENT_ROLE_HEADER
+    AGENT_ROLE_HEADER
     ],
     "orchestrator"
   );
@@ -4030,12 +4030,12 @@ test("Collector-forwarded OTLP semantics do not depend on logs/traces/metrics ar
       ? value.map(withoutWallClock)
       : value && typeof value === "object"
         ? Object.fromEntries(
-            Object.entries(value)
-              .filter(
-                ([key]) => key !== "lastSeenAt" && key !== "lastReceivedAt"
-              )
-              .map(([key, entry]) => [key, withoutWallClock(entry)])
-          )
+          Object.entries(value)
+            .filter(
+              ([key]) => key !== "lastSeenAt" && key !== "lastReceivedAt"
+            )
+            .map(([key, entry]) => [key, withoutWallClock(entry)])
+        )
         : value;
   const semantics = (signals: any[]) => {
     resetOtelTelemetry();
@@ -4721,19 +4721,19 @@ test("ignores shadow-selection diagnostics instead of treating them as skill usa
     removed.map((name) =>
       name.endsWith("invocation")
         ? {
-            name,
-            sum: {
-              aggregationTemporality: 2,
-              dataPoints: [
-                {
-                  attributes: [],
-                  startTimeUnixNano: "1",
-                  timeUnixNano: "10",
-                  asInt: "3"
-                }
-              ]
-            }
+          name,
+          sum: {
+            aggregationTemporality: 2,
+            dataPoints: [
+              {
+                attributes: [],
+                startTimeUnixNano: "1",
+                timeUnixNano: "10",
+                asInt: "3"
+              }
+            ]
           }
+        }
         : histogram(name, 1, 8, 10)
     )
   );
@@ -6176,13 +6176,13 @@ test("byModel live activity count is separate from transport in-flight requests"
   recordRouterEvent({
     phase: "selected",
     requestId: "req-active-2",
-    requestedModel: "claude-opus-5",
+    requestedModel: "claude-opus-5.5",
     provider: "claude",
-    model: "claude-opus-5"
+    model: "claude-opus-5.5"
   });
   let usage = getRouterStatus().usage;
   assert.equal(usage.byModel["claude/sonnet"].active, 0);
-  assert.equal(usage.byModel["claude/claude-opus-5"].active, 0);
+  assert.equal(usage.byModel["claude/claude-opus-5.5"].active, 0);
   assert.equal(getRouterStatus().inFlightRequests.claude ?? 0, 0);
 
   recordRouterEvent({
@@ -6197,20 +6197,20 @@ test("byModel live activity count is separate from transport in-flight requests"
   });
   usage = getRouterStatus().usage;
   assert.equal(usage.byModel["claude/sonnet"].active, 0);
-  assert.equal(usage.byModel["claude/claude-opus-5"].active, 0);
+  assert.equal(usage.byModel["claude/claude-opus-5.5"].active, 0);
 
   recordRouterEvent({
     phase: "result",
     requestId: "req-active-2",
-    requestedModel: "claude-opus-5",
+    requestedModel: "claude-opus-5.5",
     provider: "claude",
-    model: "claude-opus-5",
+    model: "claude-opus-5.5",
     outcome: "success",
     status: 200,
     elapsedMs: 5
   });
   assert.equal(
-    getRouterStatus().usage.byModel["claude/claude-opus-5"].active,
+    getRouterStatus().usage.byModel["claude/claude-opus-5.5"].active,
     0
   );
   resetRouterTelemetry();
@@ -6427,7 +6427,7 @@ test("admission enforces the canonical limit, surfaces the same value on /status
   const configuredLimit = concurrencyStatus().effectivePerSessionLimit;
   assert.ok(
     configuredLimit === null ||
-      (Number.isInteger(configuredLimit) && configuredLimit > 0),
+    (Number.isInteger(configuredLimit) && configuredLimit > 0),
     "configured limit must be null or a positive integer"
   );
   if (configuredLimit !== null) {
@@ -7523,9 +7523,9 @@ test("direct concrete request does not retry once the client signal is aborted",
       if (chunk !== undefined) _responseBody += String(chunk);
       this.writableEnded = true;
     },
-    once() {},
-    on() {},
-    removeListener() {}
+    once() { },
+    on() { },
+    removeListener() { }
   };
   try {
     // Schedule the abort for the next tick so the upstream fetch is in
@@ -7623,13 +7623,13 @@ test("direct concrete request stops retrying once the client aborts mid-way thro
       for (const [name, value] of Object.entries(headers ?? {}))
         headerStore[name] = value;
     },
-    write() {},
+    write() { },
     end() {
       this.writableEnded = true;
     },
-    once() {},
-    on() {},
-    removeListener() {}
+    once() { },
+    on() { },
+    removeListener() { }
   };
   try {
     cooldowns.clear("claude");
@@ -7941,7 +7941,7 @@ test("graceful shutdown drains in-flight requests, persists state, and stops acc
       );
       assert.ok(
         typeof persisted.updatedAt === "string" &&
-          persisted.updatedAt.length > 0
+        persisted.updatedAt.length > 0
       );
       assert.equal(
         upstreamCalls,
@@ -8257,11 +8257,11 @@ test("abrupt client disconnect during SSE stream does not crash the router proce
         const payload = JSON.stringify({ model: "sonnet", stream: true });
         client.write(
           `POST /v1/responses HTTP/1.1\r\n` +
-            `Host: 127.0.0.1:${port}\r\n` +
-            `Content-Type: application/json\r\n` +
-            `Content-Length: ${Buffer.byteLength(payload)}\r\n` +
-            `Connection: close\r\n\r\n` +
-            payload
+          `Host: 127.0.0.1:${port}\r\n` +
+          `Content-Type: application/json\r\n` +
+          `Content-Length: ${Buffer.byteLength(payload)}\r\n` +
+          `Connection: close\r\n\r\n` +
+          payload
         );
       });
       client.on("data", () => {
@@ -8321,7 +8321,7 @@ const PROVIDER_KEYS = [
 async function withStubbedProviders(
   stub: any,
   body: any,
-  prepare: any = () => {}
+  prepare: any = () => { }
 ) {
   const originalFetch = globalThis.fetch;
   const originalCredentials = Object.fromEntries(
@@ -8694,21 +8694,21 @@ test("holds a provider until the reset time it declared in its response", async 
     (target: any) =>
       healthyProbe(target) ??
       (target.endsWith("/responses") ||
-      target.startsWith("https://chatgpt.com/")
+        target.startsWith("https://chatgpt.com/")
         ? Response.json(
-            {
-              error: { message: "out of usage", type: "rate_limit_error" }
-            },
-            {
-              status: 429,
-              headers: {
-                "x-autodev-limit-class": "quota_exhausted",
-                "x-autodev-limit-type": "weekly",
-                "x-autodev-limit-resets-at": resetsAt,
-                "x-autodev-limit-source": "reported"
-              }
+          {
+            error: { message: "out of usage", type: "rate_limit_error" }
+          },
+          {
+            status: 429,
+            headers: {
+              "x-autodev-limit-class": "quota_exhausted",
+              "x-autodev-limit-type": "weekly",
+              "x-autodev-limit-resets-at": resetsAt,
+              "x-autodev-limit-source": "reported"
             }
-          )
+          }
+        )
         : null),
     async ({ port, fetch: realFetch }: any) => {
       const response = await realFetch(
@@ -8749,11 +8749,11 @@ test("a turn a provider closed as incomplete reaches the caller and cools on the
     (target: any) =>
       healthyProbe(target) ??
       (target.endsWith("/responses") ||
-      target.startsWith("https://chatgpt.com/")
+        target.startsWith("https://chatgpt.com/")
         ? new Response(incomplete, {
-            status: 200,
-            headers: { "content-type": "text/event-stream" }
-          })
+          status: 200,
+          headers: { "content-type": "text/event-stream" }
+        })
         : null),
     async ({ port, fetch: realFetch }: any) => {
       const response = await realFetch(
@@ -8798,11 +8798,11 @@ test("closes an abandoned stream as incomplete, carrying what it already forward
     (target: any) =>
       healthyProbe(target) ??
       (target.endsWith("/responses") ||
-      target.startsWith("https://chatgpt.com/")
+        target.startsWith("https://chatgpt.com/")
         ? new Response(truncated, {
-            status: 200,
-            headers: { "content-type": "text/event-stream" }
-          })
+          status: 200,
+          headers: { "content-type": "text/event-stream" }
+        })
         : null),
     async ({ port, fetch: realFetch }: any) => {
       const response = await realFetch(
@@ -9311,7 +9311,7 @@ test("end-to-end: unresolvable reasoning items dropped and tool call ids normali
         const item = upstreamRequestBody.input[i];
         const prefix =
           RESPONSES_ITEM_ID_PREFIXES[
-            item.type as keyof typeof RESPONSES_ITEM_ID_PREFIXES
+          item.type as keyof typeof RESPONSES_ITEM_ID_PREFIXES
           ];
         if (
           prefix &&
@@ -9414,7 +9414,7 @@ test("end-to-end: unresolvable reasoning items dropped and tool call ids normali
     const nonConforming = upstreamRequestBody.input.filter((item: any) => {
       const prefix =
         RESPONSES_ITEM_ID_PREFIXES[
-          item.type as keyof typeof RESPONSES_ITEM_ID_PREFIXES
+        item.type as keyof typeof RESPONSES_ITEM_ID_PREFIXES
         ];
       return (
         prefix && typeof item.id === "string" && !item.id.startsWith(prefix)
@@ -10025,7 +10025,7 @@ test("disabled providers are excluded across role aliases, orchestrator, and fal
     );
     assert.ok(
       attemptedProviders.includes("antigravity") &&
-        attemptedProviders.includes("minimax")
+      attemptedProviders.includes("minimax")
     );
 
     // 4. Direct concrete request to disabled provider is rejected with 503
