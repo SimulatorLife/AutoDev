@@ -276,16 +276,19 @@ export function rateLimitEventError(
   if (!rateInfo || typeof rateInfo !== "object") return null;
   const info = rateInfo as JsonRecord;
   const status = info.status;
-  if (!status || status === "allowed") return null;
+  // Only "rejected" means Claude actually blocked the request. "allowed"
+  // and "allowed_warning" (an advisory that a window is close to its cap)
+  // both mean the request was served, so neither should abort the stream.
+  if (status !== "rejected") return null;
   const limitType = info.rateLimitType ?? "session";
   const resetsAt = normalizeResetsAt(info.resetsAt);
   // A rejected weekly or billing window is exhaustion until it resets; a
-  // rejected session window is a session limit; anything else is throttling
-  // that clears on its own.
-  let limitClass = "throttled";
-  if (/week|month|quota|billing|credit/i.test(String(limitType)))
-    limitClass = "quota_exhausted";
-  else if (status === "rejected") limitClass = "session_limit";
+  // rejected session window is a session limit.
+  const limitClass = /week|month|quota|billing|credit/i.test(
+    String(limitType)
+  )
+    ? "quota_exhausted"
+    : "session_limit";
   let message = `Claude rate limit (${limitType}): status is ${status}`;
   if (resetsAt) message += ` (resets at ${resetsAt})`;
   return new ClaudeRateLimitError(

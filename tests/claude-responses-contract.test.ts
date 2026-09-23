@@ -525,7 +525,8 @@ test("Claude Responses contract fixture is exercised through the offline proxy b
       "thinking_before_answer",
       "web_research_progress",
       "rejected_tool_attempt",
-      "provider_limit_incomplete"
+      "provider_limit_incomplete",
+      "rate_limit_warning_allowed"
     ];
     for (const name of streamingCases) {
       const entry = contract.cases[name];

@@ -1,6 +1,6 @@
 {
   "schema": "autodev-claude-responses-contract-v1",
-  "description": "Offline stream-json inputs and expected boundary invariants for the Claude Responses bridge. Each case feeds a fake Claude CLI subprocess whose stdout is the JSONL event sequence; the bridge is exercised through its real HTTP server and a local telemetry collector, so Anthropic is never contacted and no real OAuth credentials are required. Cases cover: plain streamed text, a thinking block finished as its own reasoning item before the answer, native web research recorded as a finished step, a rejected attempt at a tool the CLI does not have left unrecorded, a rate-limit event ending the response incomplete with the classified limit after the streamed text, missing-bearer 401 from the gateway auth check, and missing-Claude-OAuth 502 from the bridge's environment guard. The Codex-tool loop, where every other action runs, is covered by tests/claude-codex-tool-loop.test.ts. Expected IDs are normalized before assertion, and the prompt content used by every case is asserted absent from both the SSE body and the telemetry channel.",
+  "description": "Offline stream-json inputs and expected boundary invariants for the Claude Responses bridge. Each case feeds a fake Claude CLI subprocess whose stdout is the JSONL event sequence; the bridge is exercised through its real HTTP server and a local telemetry collector, so Anthropic is never contacted and no real OAuth credentials are required. Cases cover: plain streamed text, a thinking block finished as its own reasoning item before the answer, native web research recorded as a finished step, a rejected attempt at a tool the CLI does not have left unrecorded, a rate-limit event ending the response incomplete with the classified limit after the streamed text, a rate-limit event reporting an allowed warning (not a rejection) that must complete the response normally, missing-bearer 401 from the gateway auth check, and missing-Claude-OAuth 502 from the bridge's environment guard. The Codex-tool loop, where every other action runs, is covered by tests/claude-codex-tool-loop.test.ts. Expected IDs are normalized before assertion, and the prompt content used by every case is asserted absent from both the SSE body and the telemetry channel.",
   "cases": {
     "normal_stream": {
       "request": {
@@ -639,6 +639,100 @@
         ],
         "outputTypes": [
           "message",
+          "message"
+        ]
+      }
+    },
+    "rate_limit_warning_allowed": {
+      "request": {
+        "stream": true,
+        "model": "claude-subscription"
+      },
+      "cli": {
+        "events": [
+          {
+            "type": "system",
+            "subtype": "init",
+            "tools": []
+          },
+          {
+            "type": "stream_event",
+            "event": {
+              "type": "message_start"
+            }
+          },
+          {
+            "type": "stream_event",
+            "event": {
+              "type": "content_block_start",
+              "index": 0,
+              "content_block": {
+                "type": "text",
+                "text": ""
+              }
+            }
+          },
+          {
+            "type": "stream_event",
+            "event": {
+              "type": "content_block_delta",
+              "index": 0,
+              "delta": {
+                "type": "text_delta",
+                "text": "warned but fine"
+              }
+            }
+          },
+          {
+            "type": "rate_limit_event",
+            "rate_limit_info": {
+              "status": "allowed_warning",
+              "rateLimitType": "seven_day",
+              "resetsAt": "2099-01-02T03:04:05Z"
+            }
+          },
+          {
+            "type": "stream_event",
+            "event": {
+              "type": "content_block_stop",
+              "index": 0
+            }
+          },
+          {
+            "type": "result",
+            "result": "warned but fine",
+            "is_error": false,
+            "subtype": "success",
+            "duration_ms": 90,
+            "modelUsage": {
+              "input_tokens": 5,
+              "output_tokens": 4
+            }
+          }
+        ],
+        "exitCode": 0,
+        "stderr": ""
+      },
+      "expected": {
+        "status": 200,
+        "outputText": "warned but fine",
+        "completedStatus": "completed",
+        "eventTypes": [
+          "response.created",
+          "response.output_item.added",
+          "response.content_part.added",
+          "response.output_text.delta",
+          "response.output_text.done",
+          "response.content_part.done",
+          "response.output_item.done",
+          "response.completed",
+          "[DONE]"
+        ],
+        "telemetryTypes": [
+          "mcp_exposed",
+          "activity"
+        ],
+        "outputTypes": [
           "message"
         ]
       }

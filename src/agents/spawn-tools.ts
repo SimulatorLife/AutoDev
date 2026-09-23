@@ -32,11 +32,25 @@
 
 import { createHash, randomBytes } from "node:crypto";
 
-/** Codex's spawn function, as exposed on the isolate's `tools` global. */
-export const SPAWN_TOOL = "multi_agent_v1__spawn_agent" as const;
+import {
+  EXEC_TOOL as TOOL_EXEC,
+  MULTI_AGENT_SPAWN_TOOL as SPAWN_TOOL,
+  MULTI_AGENT_WAIT_TOOL as WAIT_TOOL,
+  MULTI_AGENT_CLOSE_TOOL as CLOSE_TOOL
+} from "../shared/tool-names.ts";
 
-/** The code-mode tool a bridge drives. Codex names it plainly, with no namespace. */
-export const EXEC_TOOL = "exec" as const;
+/**
+ * Re-exports of the canonical tool names. Importers that need a single
+ * string constant should pull from `../shared/tool-names.ts` directly so
+ * they get every other family at the same time; this re-export keeps the
+ * historical SPAWN_TOOL / EXEC_TOOL identifiers working for older callers
+ * and the spawned-code-template builder that lives below.
+ */
+export const EXEC_TOOL = TOOL_EXEC;
+// SPAWN_TOOL, WAIT_TOOL and CLOSE_TOOL are already in scope from the import
+// alias above; re-export them so historical `import { SPAWN_TOOL } from
+// "../agents/spawn-tools.ts"` callers keep working.
+export { SPAWN_TOOL, WAIT_TOOL, CLOSE_TOOL };
 
 // How long `exec` may run before Codex yields the script back. Spawning is
 // effectively instantaneous -- the observed wall time for a three-agent batch
