@@ -721,7 +721,7 @@ export class SubagentRegistry {
 
     const settled = context.finished ?? null;
     const entry = this.recordSubagentUsageEntry(
-      key,
+      requestId,
       context,
       role ?? null,
       model ?? null
@@ -763,7 +763,7 @@ export class SubagentRegistry {
   // Build the usage entry the registry stores for a new bridge subagent,
   // honouring the inherited-child-model contract for orchestrator routing.
   private recordSubagentUsageEntry(
-    key: string,
+    requestId: string,
     context: BridgeRequestContext,
     role: string | null,
     model: string | null
@@ -773,7 +773,7 @@ export class SubagentRegistry {
         ? model
         : context.model;
     return {
-      requestId: key,
+      requestId,
       provider: context.provider,
       model: childModel,
       role: role ?? UNATTRIBUTED_SUBAGENT_ROLE,

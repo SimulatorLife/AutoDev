@@ -1806,13 +1806,16 @@ persistence path for this Desktop host. The installer loads them with `KeepAlive
 and also retains idempotent direct-start hooks as a fallback when `launchctl` is
 inaccessible.
 
-The router applies a 900-second total upstream response timeout by default,
-including streaming response bodies; override it with the positive
-`CODEX_ROUTER_UPSTREAM_TIMEOUT_MS` environment variable when the provider's
-turn budget is intentionally different. Client disconnects abort the
-upstream request and release the subagent slot, while an upstream stream that
-ends without `response.completed` is surfaced as `response.failed` instead of
-being reported as a successful early turn.
+Long-running agent turns are supported with two complementary watchdog mechanisms:
+an inactivity watchdog (`CODEX_ROUTER_STREAM_IDLE_TIMEOUT_MS`, default 15 minutes / 900,000 ms)
+that monitors data flow on active streams and resets every time chunks or synthetic reasoning
+heartbeats arrive, and an overall wall-clock ceiling (`CODEX_ROUTER_UPSTREAM_TIMEOUT_MS`, default
+2 hours / 7,200,000 ms; set to `0` for unbounded). If an upstream timeout occurs, the router
+retains the downstream connection and cleanly emits a terminal `response.failed` SSE event
+with the failure detail rather than abruptly dropping the socket. In addition, the Antigravity
+CLI bridge sets `--print-timeout 0` by default (`AGY_PRINT_TIMEOUT`, 0 = wait until turn completes)
+and detects background task waiting loops on CLI stderr, maintaining active heartbeat pulses
+so long delegating turns remain live throughout.
 
 ## Versioned integration, source of truth, and setup
 

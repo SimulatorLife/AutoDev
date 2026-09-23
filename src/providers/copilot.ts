@@ -58,7 +58,7 @@ const IS_MAIN =
 const HOST = process.env.COPILOT_PROXY_HOST ?? "127.0.0.1";
 const PORT = Number.parseInt(process.env.COPILOT_PROXY_PORT ?? "4003", 10);
 const TIMEOUT_MS = Number.parseInt(
-  process.env.COPILOT_PROXY_TIMEOUT_MS ?? "900000",
+  process.env.COPILOT_PROXY_TIMEOUT_MS ?? "7200000",
   10
 );
 const PROJECT_ROOT =
@@ -791,17 +791,18 @@ function runCopilot(
     let answer = "";
     let terminalResult: JsonRecord | null = null;
     let settled = false;
-    const timer = setTimeout(() => child.kill("SIGTERM"), TIMEOUT_MS);
+    const timer =
+      TIMEOUT_MS > 0 ? setTimeout(() => child.kill("SIGTERM"), TIMEOUT_MS) : null;
     const finishResolve = (value: RunCopilotResult): void => {
       if (settled) return;
       settled = true;
-      clearTimeout(timer);
+      if (timer) clearTimeout(timer);
       resolvePromise(value);
     };
     const finishReject = (error: unknown): void => {
       if (settled) return;
       settled = true;
-      clearTimeout(timer);
+      if (timer) clearTimeout(timer);
       rejectPromise(error);
     };
     const lines = createInterface({ input: child.stdout! });

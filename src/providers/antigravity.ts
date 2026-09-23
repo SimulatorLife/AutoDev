@@ -66,7 +66,7 @@ const DEFAULT_MODEL = "gemini-3.8-flash-medium";
 const DEFAULT_EFFORT = "medium";
 const AGY_MODE = process.env.AGY_MODE ?? "accept-edits";
 const AGY_SKIP_PERMISSIONS = process.env.AGY_SKIP_PERMISSIONS ?? "true";
-const PRINT_TIMEOUT = process.env.AGY_PRINT_TIMEOUT ?? "15m";
+const PRINT_TIMEOUT = process.env.AGY_PRINT_TIMEOUT ?? "0";
 const AUTH_TOKEN = process.env.LITELLM_API_KEY ?? "";
 const PROJECT_ROOT =
   process.env.CODEX_PROJECT_ROOT ?? process.env.AGY_PROJECT_ROOT ?? null;
@@ -1011,7 +1011,11 @@ function isWaitStep(update: JsonValue): boolean {
   const tool = String(
     update?.tool_name ?? update?.tool_info?.name ?? ""
   ).toLowerCase();
-  return tool === "ask_question" || tool === "schedule";
+  return (
+    tool === "ask_question" ||
+    tool === "schedule" ||
+    tool === "manage_task"
+  );
 }
 
 /**
@@ -1536,7 +1540,11 @@ function runAgy(
       if (event.event === "result") terminalResult = event.result ?? {};
     });
     child.stderr.on("data", (chunk) => {
-      stderr += chunk.toString();
+      const text = chunk.toString();
+      stderr += text;
+      if (/waiting up to .* for \d+ background task/i.test(text)) {
+        onEvent?.({ type: "background_tasks_active", text });
+      }
     });
     child.on("error", (error) => finish(reject, error));
     child.on("close", (code, signal) => {
@@ -2233,6 +2241,15 @@ async function handle(
         }
         if (event.type === "process") {
           child = event.child;
+          return;
+        }
+        if (event.type === "background_tasks_active") {
+          startStream();
+          delegation.activeWaits = Math.max(
+            Number(delegation.activeWaits || 0),
+            1
+          );
+          startDelegationHeartbeat();
           return;
         }
         if (event.type === "text_delta") {

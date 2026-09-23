@@ -92,6 +92,7 @@ import {
   ROUTER_INSTANCE_ID,
   type RouterSession,
   sendJson,
+  STREAM_IDLE_TIMEOUT_MS,
   transportErrorInfo,
   UPSTREAM_TIMEOUT_MS
 } from "./proxy.ts";
@@ -684,6 +685,7 @@ export function limitsStatus(): Record<string, unknown> {
     lastResortMaxAttempts: LAST_RESORT_MAX_ATTEMPTS,
     exhaustionWaitMs: EXHAUSTION_WAIT_MS,
     chainSelectionDeadlineMs: CHAIN_SELECTION_DEADLINE_MS,
+    streamIdleTimeoutMs: STREAM_IDLE_TIMEOUT_MS,
     upstreamTimeoutMs: UPSTREAM_TIMEOUT_MS,
     concreteRetryBaseMs: CONCRETE_RETRY_BASE_MS,
     concreteRetryMaxMs: CONCRETE_RETRY_MAX_MS,

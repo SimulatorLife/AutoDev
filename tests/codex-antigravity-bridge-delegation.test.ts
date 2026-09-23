@@ -571,5 +571,6 @@ test("isCommandStep and isWaitStep classify execution steps accurately", () => {
   assert.equal(isWaitStep({ step_type: "wait" }), true);
   assert.equal(isWaitStep({ tool_name: "ask_question" }), true);
   assert.equal(isWaitStep({ tool_name: "schedule" }), true);
+  assert.equal(isWaitStep({ tool_name: "manage_task" }), true);
   assert.equal(isWaitStep({ tool_name: "run_command" }), false);
 });

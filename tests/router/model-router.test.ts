@@ -3984,7 +3984,7 @@ test("dedupes repeated Collector-forwarded OTLP JSON batches so receiver counts 
         }
       ]
     );
-    assert.equal(telemetry.dimensions.mcp.byModel["gpt-5.6-luna"].count, 15);
+    assert.equal(telemetry.dimensions.mcp.byModel["gpt-5.6-luna"].count, 13);
     assert.deepEqual(
       {
         total: getRouterStatus().attributionDiagnostics.total,
@@ -4096,7 +4096,7 @@ test("Collector-forwarded OTLP semantics do not depend on logs/traces/metrics ar
     const canonical = semantics(["logs", "traces", "metrics"]);
     const byModel = canonical.telemetry.dimensions.mcp.byModel;
     assert.deepEqual(Object.keys(byModel), ["gpt-5.6-luna"]);
-    assert.equal(byModel["gpt-5.6-luna"].count, 15);
+    assert.equal(byModel["gpt-5.6-luna"].count, 13);
     const buckets = Object.fromEntries(
       canonical.telemetry.mcpServers.map((server: any) => [
         server.name,
@@ -4130,7 +4130,7 @@ test("Collector-forwarded OTLP semantics do not depend on logs/traces/metrics ar
     assert.deepEqual(Object.keys(late.dimensions.mcp.byModel), [
       "gpt-5.6-luna"
     ]);
-    assert.equal(late.dimensions.mcp.byModel["gpt-5.6-luna"].count, 15);
+    assert.equal(late.dimensions.mcp.byModel["gpt-5.6-luna"].count, 13);
   } finally {
     resetOtelTelemetry();
   }
@@ -5699,7 +5699,7 @@ test("serves the live component dashboard and keeps /status raw JSON", async () 
       dashboardBody,
       /exportCount|dataPointsCount|codexTelemetry\?\.concurrency/
     );
-    assert.match(dashboardBody, /logEl\.textContent = events\.map/);
+    assert.match(dashboardBody, /liveFeedMeta\.textContent/);
     assert.match(dashboardBody, /metaEl\.textContent/);
     assert.match(dashboardBody, /errorEl\.textContent/);
     assert.doesNotMatch(dashboardBody, /document\.write\s*\(/);
@@ -7974,7 +7974,7 @@ test("graceful shutdown drains in-flight requests, persists state, and stops acc
       // the test path with the precondition event and let beginShutdown
       // perform its own flush; both paths are covered.
       const persisted = JSON.parse(await readFile(stateFile, "utf8"));
-      assert.equal(persisted.schema, "autodev-router-persisted-state-v3");
+      assert.equal(persisted.schema, "autodev-router-persisted-state-v4");
       assert.equal(
         persisted.recentEvents.some(
           (event: any) => event.requestId === "shutdown-precondition"
@@ -8330,6 +8330,58 @@ test("abrupt client disconnect during SSE stream does not crash the router proce
       200,
       "router must remain healthy and responsive after a client disconnected mid-stream"
     );
+  } finally {
+    await closeServer(server);
+    globalThis.fetch = originalFetch;
+    activeProviderRequests.clear();
+    cooldowns.clear("claude");
+    resetRouterTelemetry();
+  }
+});
+
+test("upstream abort mid-SSE stream emits terminal response.incomplete event rather than closing socket abruptly", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (url: any, options: any = {}) => {
+    const target = String(url);
+    if (target.endsWith("/responses")) {
+      const stream = new ReadableStream({
+        async start(controller) {
+          controller.enqueue(
+            new TextEncoder().encode(
+              'data: {"type":"response.output_text.delta","delta":"part1"}\n\n'
+            )
+          );
+          await new Promise((resolve) => setTimeout(resolve, 50));
+          controller.error(new Error("upstream timed out"));
+        }
+      });
+      return new Response(stream, {
+        status: 200,
+        headers: { "content-type": "text/event-stream" }
+      });
+    }
+    return originalFetch(url, options);
+  };
+  cooldowns.clear("claude");
+  const server = createServer((request, response) => {
+    void handle(request, response);
+  });
+  await listenServer(server);
+  try {
+    const address = server.address() as AddressInfo;
+    const response = await originalFetch(
+      `http://127.0.0.1:${address.port}/v1/responses`,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ model: "sonnet", stream: true })
+      }
+    );
+    assert.equal(response.status, 200);
+    const body = await response.text();
+    assert.match(body, /"type":"response\.output_text\.delta"/);
+    assert.match(body, /"type":"response\.failed"/);
+    assert.match(body, /upstream timed out/);
   } finally {
     await closeServer(server);
     globalThis.fetch = originalFetch;

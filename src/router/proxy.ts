@@ -190,6 +190,14 @@ export function positiveDuration(
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 }
 
+export function nonNegativeDuration(
+  value: string | undefined,
+  fallback: number
+): number {
+  const parsed = Number.parseInt(value ?? "");
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
+}
+
 export const PROBE_TIMEOUT_MS = positiveDuration(
   process.env.CODEX_ROUTER_PROBE_TIMEOUT_MS,
   700
@@ -206,9 +214,13 @@ export const CHAIN_SELECTION_DEADLINE_MS = positiveDuration(
   process.env.CODEX_ROUTER_CHAIN_SELECTION_DEADLINE_MS,
   120_000
 );
-export const UPSTREAM_TIMEOUT_MS = positiveDuration(
-  process.env.CODEX_ROUTER_UPSTREAM_TIMEOUT_MS,
+export const STREAM_IDLE_TIMEOUT_MS = positiveDuration(
+  process.env.CODEX_ROUTER_STREAM_IDLE_TIMEOUT_MS,
   900_000
+);
+export const UPSTREAM_TIMEOUT_MS = nonNegativeDuration(
+  process.env.CODEX_ROUTER_UPSTREAM_TIMEOUT_MS,
+  7_200_000
 );
 export const CONCRETE_RETRY_BASE_MS = positiveDuration(
   process.env.CODEX_ROUTER_CONCRETE_RETRY_MS,
@@ -923,9 +935,10 @@ function upstreamErrorMessage(
   signal: AbortSignal | null
 ): string {
   if (isTimeoutAbort(signal)) {
-    return `Upstream provider exceeded the ${Math.ceil(
-      UPSTREAM_TIMEOUT_MS / 1000
-    )}s response timeout.`;
+    if (signal?.reason instanceof Error && signal.reason.message) {
+      return signal.reason.message;
+    }
+    return `Upstream provider exceeded response timeout.`;
   }
   return error instanceof Error ? error.message : String(error);
 }
@@ -936,11 +949,21 @@ async function drainSseBody(args: {
   isWritable: () => boolean;
   append: (chunk: string) => void;
   flushEvents: (flush: boolean) => void;
+  onActivity?: () => void;
+  signal?: AbortSignal | null;
 }): Promise<void> {
   for await (const chunk of args.body) {
-    if (!args.isWritable()) break;
+    if (!args.isWritable() || args.signal?.aborted) break;
+    args.onActivity?.();
     args.append(args.decoder.decode(chunk, { stream: true }));
     args.flushEvents(false);
+  }
+  if (args.signal?.aborted) {
+    const error =
+      args.signal.reason instanceof Error
+        ? args.signal.reason
+        : new Error(String(args.signal.reason));
+    throw error;
   }
   if (args.isWritable()) {
     args.append(args.decoder.decode());
@@ -953,7 +976,8 @@ export async function writeResponseStream(
   upstream: Response,
   publicModel: string,
   signal: AbortSignal | null = null,
-  onHeartbeat: (() => void) | null = null
+  onHeartbeat: (() => void) | null = null,
+  clientSignal: AbortSignal | null = null
 ): Promise<StreamWriteResult> {
   const decoder = new TextDecoder();
   const seenToolCalls = new Set<string>();
@@ -979,7 +1003,7 @@ export async function writeResponseStream(
     !response.writableEnded &&
     !response.destroyed &&
     !response.closed &&
-    !signal?.aborted;
+    !clientSignal?.aborted;
   const safeWrite = (chunk: string | Uint8Array): boolean => {
     if (!isWritable()) return false;
     try {
@@ -1059,6 +1083,28 @@ export async function writeResponseStream(
     return streamResult();
   }
 
+  const idleController = new AbortController();
+  let idleTimer: NodeJS.Timeout | null = null;
+  const resetIdleTimer = (): void => {
+    if (STREAM_IDLE_TIMEOUT_MS <= 0) return;
+    if (idleTimer) clearTimeout(idleTimer);
+    idleTimer = setTimeout(() => {
+      idleController.abort(
+        new DOMException(
+          `Upstream provider went idle for ${Math.ceil(
+            STREAM_IDLE_TIMEOUT_MS / 1000
+          )}s without sending any data.`,
+          "TimeoutError"
+        )
+      );
+    }, STREAM_IDLE_TIMEOUT_MS);
+  };
+  resetIdleTimer();
+
+  const combinedSignal = signal
+    ? AbortSignal.any([signal, idleController.signal])
+    : idleController.signal;
+
   try {
     await drainSseBody({
       body: upstream.body as AsyncIterable<Uint8Array>,
@@ -1067,17 +1113,20 @@ export async function writeResponseStream(
       append(chunk) {
         buffer += chunk;
       },
-      flushEvents
+      flushEvents,
+      onActivity: resetIdleTimer,
+      signal: combinedSignal
     });
   } catch (error) {
     closeIncomplete(
-      isTimeoutAbort(signal)
+      isTimeoutAbort(combinedSignal)
         ? INCOMPLETE_REASON_TIMEOUT
         : INCOMPLETE_REASON_INTERRUPTED,
-      upstreamErrorMessage(error, signal)
+      upstreamErrorMessage(error, combinedSignal)
     );
     return streamResult();
   } finally {
+    if (idleTimer) clearTimeout(idleTimer);
     clearInterval(keepAlive);
     response.removeListener("error", NOOP);
   }
@@ -1130,10 +1179,15 @@ export async function fetchUpstream(
     undefined,
     { normalizeItemIds: providerCapabilities(route.provider).normalizeItemIds }
   );
-  const timeoutSignal = AbortSignal.timeout(UPSTREAM_TIMEOUT_MS);
-  const signal = clientSignal
-    ? AbortSignal.any([clientSignal, timeoutSignal])
-    : timeoutSignal;
+  const timeoutSignals: AbortSignal[] = [];
+  if (clientSignal) timeoutSignals.push(clientSignal);
+  if (UPSTREAM_TIMEOUT_MS > 0) {
+    timeoutSignals.push(AbortSignal.timeout(UPSTREAM_TIMEOUT_MS));
+  }
+  const signal =
+    timeoutSignals.length > 1
+      ? AbortSignal.any(timeoutSignals)
+      : timeoutSignals[0] ?? new AbortController().signal;
   const upstream = await fetch(`${route.baseUrl}/responses`, {
     method: "POST",
     headers: downstreamHeadersWithSkillContext(
@@ -1225,7 +1279,8 @@ export async function writeSuccessfulResponse(
   publicModel: string,
   requestId: string,
   resolvedModel: string,
-  onHeartbeat: (() => void) | null = null
+  onHeartbeat: (() => void) | null = null,
+  clientSignal: AbortSignal | null = null
 ): Promise<StreamWriteResult> {
   const written = await writeProviderResponse(
     response,
@@ -1235,7 +1290,8 @@ export async function writeSuccessfulResponse(
     publicModel,
     requestId,
     resolvedModel,
-    onHeartbeat
+    onHeartbeat,
+    clientSignal
   );
   // Whoever asked for these calls gets their results: see tool-call-ownership.ts.
   TOOL_CALL_OWNERSHIP.record(written.toolCallIds, route.provider);
@@ -1250,7 +1306,8 @@ async function writeProviderResponse(
   publicModel: string,
   requestId: string,
   resolvedModel: string,
-  onHeartbeat: (() => void) | null
+  onHeartbeat: (() => void) | null,
+  clientSignal: AbortSignal | null = null
 ): Promise<StreamWriteResult> {
   const responseHeaders = {
     "x-autodev-provider": route.provider,
@@ -1272,7 +1329,8 @@ async function writeProviderResponse(
       upstream,
       publicModel,
       result.signal,
-      onHeartbeat
+      onHeartbeat,
+      clientSignal
     );
     if (!response.writableEnded && !response.destroyed && !response.closed) {
       try {
@@ -1865,7 +1923,8 @@ async function handleConcreteSuccess(
     ctx.modelName,
     ctx.requestId,
     ctx.modelName,
-    () => getDefaultUsageTracker().activityTracker.touch(ctx.activitySubject)
+    () => getDefaultUsageTracker().activityTracker.touch(ctx.activitySubject),
+    ctx.clientSignal
   );
   recordConcreteResult(
     ctx,
@@ -2693,7 +2752,8 @@ async function handleCandidateSuccess(
           getDefaultUsageTracker().activityTracker.touch(ctx.sessionKey);
           touchManagerOpenSubagentSlots(ctx.sessionKey);
         }
-      }
+      },
+      ctx.clientSignal
     );
     if (responseResult.failed) {
       const failureClass =

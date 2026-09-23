@@ -2570,12 +2570,12 @@ export class OtelTracker {
       };
     }
 
-    if (record) this.usageTracker.attributionDiagnostics.total += 1;
     const workspaceKey = this.usageTracker.workspaceIdConflicts.has(workspaceId)
       ? null
       : this.usageTracker.workspaceIdRegistry.get(workspaceId);
     if (workspaceKey) {
       if (record) {
+        this.usageTracker.attributionDiagnostics.total += 1;
         this.usageTracker.attributionDiagnostics.attributed += 1;
         if (source)
           this.usageTracker.attributionDiagnostics.bySource[source] += 1;
@@ -2708,7 +2708,10 @@ export class OtelTracker {
         : null;
     const agentKind = context.agentKind;
     const model = context.model;
-    const plugin = safeMetricLabel(attributes.plugin_id, "none");
+    const plugin = safeMetricLabel(
+      attributes.plugin_id ?? resourceAttributes.plugin_id,
+      "none"
+    );
     const injected = this.telemetry.skills.injected;
     injected.total += delta;
     injected.byStatus[status] = (injected.byStatus[status] ?? 0) + delta;
@@ -3664,6 +3667,24 @@ export class OtelTracker {
     }
   }
 
+  private dispatchSkillInjected(
+    metric: OtelMetric,
+    resourceAttributes: OtelAttributeMap
+  ): void {
+    const temporality = metric.sum?.aggregationTemporality;
+    for (const dataPoint of metric.sum?.dataPoints ?? []) {
+      const dpAttributes = otelAttributes(dataPoint.attributes);
+      this.noteSkillInjected(
+        metric.name ?? "",
+        { ...resourceAttributes, ...dpAttributes },
+        dataPoint,
+        temporality,
+        dpAttributes,
+        resourceAttributes
+      );
+    }
+  }
+
   private dispatchMultiAgentSpawn(metric: OtelMetric): void {
     const name = metric.name ?? "";
     const temporality = metric.sum?.aggregationTemporality;
@@ -3697,6 +3718,10 @@ export class OtelTracker {
     }
     if (name && THREAD_SKILLS_HISTOGRAMS[name]) {
       this.dispatchThreadSkillsHistogram(metric);
+      return;
+    }
+    if (name === "codex.skill.injected") {
+      this.dispatchSkillInjected(metric, resourceAttributes);
       return;
     }
     if (name === "codex.sqlite.init.count" || name === "codex.sqlite.fallback.count") {
