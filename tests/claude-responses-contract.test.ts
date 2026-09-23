@@ -515,6 +515,58 @@ async function runOauthMissingCase(
   }
 }
 
+/** A model the CLI refuses must reach the router as a non-retryable 400, not an outage. */
+async function runRejectedModelCase(
+  name: string,
+  rawCase: ContractCase
+): Promise<void> {
+  const item = replaceTokens(rawCase);
+  const temp = await mkdtemp(join(tmpdir(), "autodev-claude-contract-"));
+  const fakeCli = join(temp, "fake-claude.py");
+  const proxyPort = await freePort();
+  await writeFile(fakeCli, buildFakeCliSource(), "utf8");
+  await chmod(fakeCli, 0o755);
+  const child = await startBridge({
+    proxyPort,
+    bearerToken: "",
+    fakeCli,
+    contractCase: item.cli
+  });
+  try {
+    await waitForHealth(proxyPort);
+    const response = await fetch(`http://127.0.0.1:${proxyPort}/v1/responses`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-autodev-agent-role": BRIDGE_ROLE,
+        "x-autodev-request-id": `claude-contract-${name}`
+      },
+      body: JSON.stringify({
+        input: [{ role: "user", content: PRIVACY_TOKEN }],
+        cwd: REPO_ROOT,
+        ...item.request
+      })
+    });
+    assert.equal(response.status, item.expected.status, `${name}: HTTP status`);
+    const payload = JSON.parse(await response.text());
+    assert.equal(payload.error?.type, item.expected.errorType, `${name}: type`);
+    assert.equal(payload.error?.code, item.expected.errorCode, `${name}: code`);
+    assert.match(
+      payload.error?.message ?? "",
+      new RegExp(item.expected.errorMessageContains),
+      `${name}: the CLI's own explanation reaches the router`
+    );
+    assert.doesNotMatch(
+      JSON.stringify(payload),
+      new RegExp(PRIVACY_TOKEN),
+      `${name}: prompt content must not be in error body`
+    );
+  } finally {
+    await stop(child);
+    await rm(temp, { recursive: true, force: true });
+  }
+}
+
 test("Claude Responses contract fixture is exercised through the offline proxy boundary", async () => {
   assert.equal(contract.schema, "autodev-claude-responses-contract-v1");
   const before = await readFile(CONTRACT_PATH);
@@ -540,6 +592,11 @@ test("Claude Responses contract fixture is exercised through the offline proxy b
       "authentication contract cases must exist"
     );
     await runAuthFailureCase("auth_token_failure", authFailureCase);
+    for (const name of ["model_not_found_by_cli", "model_needs_newer_cli"]) {
+      const entry = contract.cases[name];
+      assert.ok(entry, `${name}: contract case must exist`);
+      await runRejectedModelCase(name, entry);
+    }
     await runOauthMissingCase("oauth_token_missing", oauthMissingCase);
   } finally {
     await new Promise((resolve) => telemetry.server.close(resolve));

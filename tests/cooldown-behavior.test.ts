@@ -116,10 +116,10 @@ function runScenario(name: string, scenario: JsonRecord): void {
   }
 
   // Summary scenarios pin the structured providerCooldownSummary shape.
-  if ("providers" in scenario && Array.isArray(scenario.expected)) {
+  if ("candidates" in scenario && Array.isArray(scenario.expected)) {
     const at = NOW + (scenario.atDeltaMs ?? 0);
     assert.deepEqual(
-      cooldowns.summary(scenario.providers, at),
+      cooldowns.summary(scenario.candidates, at),
       scenario.expected,
       `${name}: providerCooldownSummary shape`
     );
@@ -142,7 +142,10 @@ function runScenario(name: string, scenario: JsonRecord): void {
   // single-provider snapshot (state, failureClass, resetsAt, retryAfterMs).
   if ("state" in scenario.expected) {
     assert.deepEqual(
-      cooldowns.summary(["claude"], NOW + 1)[0],
+      cooldowns.summary(
+        [{ provider: "claude", model: "claude-opus-5" }],
+        NOW + 1
+      )[0],
       scenario.expected,
       `${name}: single-provider providerCooldownSummary shape`
     );
@@ -274,15 +277,23 @@ describe("cooldown behavior", () => {
       });
       cooldowns.cooldownProvider("claude", { now: NOW });
       cooldowns.clear("claude");
-      assert.deepEqual(cooldowns.summary(["claude"], NOW + 1), [
-        {
-          provider: "claude",
-          state: "available",
-          failureClass: null,
-          resetsAt: null,
-          retryAfterMs: 0
-        }
-      ]);
+      assert.deepEqual(
+        cooldowns.summary(
+          [{ provider: "claude", model: "claude-opus-5" }],
+          NOW + 1
+        ),
+        [
+          {
+            provider: "claude",
+            model: "claude-opus-5",
+            state: "available",
+            failureClass: null,
+            resetsAt: null,
+            retryAfterMs: 0,
+            detail: null
+          }
+        ]
+      );
       const fresh = cooldowns.cooldownProvider("claude", { now: NOW });
       assert.equal(fresh.kind, "transient");
       assert.equal(fresh.streak, 1);
@@ -300,9 +311,9 @@ describe("cooldown behavior", () => {
         cleanState();
         applySetup(scenario.setup);
         if (scenario.expectedStreaks) continue;
-        if ("providers" in scenario && Array.isArray(scenario.expected)) {
+        if ("candidates" in scenario && Array.isArray(scenario.expected)) {
           const rows = cooldowns.summary(
-            scenario.providers,
+            scenario.candidates,
             NOW + (scenario.atDeltaMs ?? 0)
           );
           for (const row of rows) {

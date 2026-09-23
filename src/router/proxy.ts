@@ -20,11 +20,16 @@ import {
   touchOpenSubagentSlots as touchManagerOpenSubagentSlots
 } from "./concurrency.ts";
 import {
+  type CooldownOptions,
   COOLDOWNS,
   type CooldownSummary,
   PROBE_FAILURE_CLASS
 } from "./cooldown.ts";
-import { classifyProviderFailure, recordRouterEvent } from "./events.ts";
+import {
+  classifyProviderFailure,
+  INVALID_MODEL_PATTERN,
+  recordRouterEvent
+} from "./events.ts";
 import { recordMcpExposure } from "./otel.ts";
 import {
   collectToolCallIds,
@@ -148,8 +153,6 @@ try {
 }
 
 const NOOP = () => {};
-const INVALID_MODEL_REGEX =
-  /invalid model|model name.*(invalid|not found)|unknown model/i;
 const FALLBACKABLE_BODY_REGEX =
   /quota|rate.?limit|weekly.?limit|usage.?limit|usage exhausted|session|high.?demand|credit|timeout|timed.?out|overloaded|temporarily unavailable|unavailable/i;
 const SSE_LINE_BREAK = /\r?\n/;
@@ -563,22 +566,37 @@ export function declaredLimit(
 
 export function cooldownFor(
   failureClass: string,
-  limit: ProviderLimit | null = null
-): {
-  failureClass: string;
-  resetsAt: string | null;
-  structured: boolean;
-} {
+  limit: ProviderLimit | null = null,
+  model: string | null = null,
+  body: string | null = null
+): CooldownOptions {
   return {
     failureClass: limit?.limitClass ?? failureClass,
     resetsAt: limit?.resetsAt ?? null,
-    structured: limit?.source === LIMIT_SOURCE_REPORTED
+    structured: limit?.source === LIMIT_SOURCE_REPORTED,
+    model,
+    detail: body === null ? null : providerErrorDetail(body)
   };
+}
+
+const MAX_UPSTREAM_DETAIL_CHARS = 300;
+
+/** The provider's own `error.message`, kept for failures only the user can fix. */
+function providerErrorDetail(body: string): string | null {
+  try {
+    const message = (JSON.parse(body) as { error?: { message?: unknown } })
+      ?.error?.message;
+    return typeof message === "string" && message.trim()
+      ? message.trim().slice(0, MAX_UPSTREAM_DETAIL_CHARS)
+      : null;
+  } catch {
+    return null;
+  }
 }
 
 export function fallbackable(status: number, body: unknown): boolean {
   if ([401, 408, 429, 500, 502, 503, 504].includes(status)) return true;
-  if (status === 400 && INVALID_MODEL_REGEX.test(String(body ?? "")))
+  if (status === 400 && INVALID_MODEL_PATTERN.test(String(body ?? "")))
     return true;
   return FALLBACKABLE_BODY_REGEX.test(String(body ?? ""));
 }
@@ -1373,20 +1391,28 @@ export function exhaustionBody({
   const hard = summary.filter((entry) => entry.state === "hard");
   const everyCandidateHardLimited =
     hard.length > 0 && hard.length === summary.length;
+  const firstMisconfigured = summary.find((entry) => entry.state === "config");
+  const everyCandidateMisconfigured = exhaustedByConfiguration(summary);
   const reset = soonestReset(summary);
   const described = summary.map((entry) => {
     if (entry.state === "available")
       return `${entry.provider}: available but did not complete the turn`;
+    if (entry.state === "config")
+      return `${entry.provider}: ${entry.failureClass ?? "configuration error"} for ${entry.model ?? "its model"}${entry.detail ? ` (${entry.detail})` : ""}`;
     if (entry.resetsAt)
       return `${entry.provider}: ${entry.failureClass ?? entry.state}, resets at ${entry.resetsAt}`;
     return `${entry.provider}: ${entry.failureClass ?? entry.state}, retry in ${Math.ceil(entry.retryAfterMs / 1000)}s`;
   });
-  const action = everyCandidateHardLimited
-    ? "summarize_and_yield"
-    : "retry_after";
-  const guidance = everyCandidateHardLimited
-    ? `Every provider is out of usage${reset ? ` until at least ${reset.resetsAt}` : ""}. Return a summary of the work completed so far rather than retrying.`
-    : `Retry after approximately ${Math.max(1, Math.ceil(retryAfterMs / 1000))}s.`;
+  const action = everyCandidateMisconfigured
+    ? "fix_configuration"
+    : everyCandidateHardLimited
+      ? "summarize_and_yield"
+      : "retry_after";
+  const guidance = everyCandidateMisconfigured
+    ? "Retrying will not help: correct the provider configuration, then start a new turn."
+    : everyCandidateHardLimited
+      ? `Every provider is out of usage${reset ? ` until at least ${reset.resetsAt}` : ""}. Return a summary of the work completed so far rather than retrying.`
+      : `Retry after approximately ${Math.max(1, Math.ceil(retryAfterMs / 1000))}s.`;
   const reason = deadlineReached
     ? `No available provider completed ${subject} within the ${Math.ceil(CHAIN_SELECTION_DEADLINE_MS / 1000)}s provider-selection budget.`
     : `No available provider completed ${subject}.`;
@@ -1395,10 +1421,12 @@ export function exhaustionBody({
     "router_provider_exhausted",
     {
       code: "router_provider_exhausted",
-      retryable: true,
-      failureClass: everyCandidateHardLimited
-        ? (hard[0]?.failureClass ?? "quota_exhausted")
-        : "unavailable",
+      retryable: !everyCandidateMisconfigured,
+      failureClass: everyCandidateMisconfigured
+        ? (firstMisconfigured?.failureClass ?? "invalid_model")
+        : everyCandidateHardLimited
+          ? (hard[0]?.failureClass ?? "quota_exhausted")
+          : "unavailable",
       model,
       requestId,
       details: {
@@ -1412,6 +1440,16 @@ export function exhaustionBody({
         now: new Date(now).toISOString()
       }
     }
+  );
+}
+
+/**
+ * Every candidate failed for a reason only the user can fix (a model the
+ * provider rejects, bad credentials): a retry would fail the same way.
+ */
+export function exhaustedByConfiguration(summary: CooldownSummary[]): boolean {
+  return (
+    summary.length > 0 && summary.every((entry) => entry.state === "config")
   );
 }
 
@@ -1430,9 +1468,10 @@ export function exhaustionHeaders({
     0
   );
   const headers: Record<string, string> = {
-    "x-autodev-request-id": requestId,
-    "retry-after": String(Math.max(1, Math.ceil(retryAfterMs / 1000)))
+    "x-autodev-request-id": requestId
   };
+  if (!exhaustedByConfiguration(summary))
+    headers["retry-after"] = String(Math.max(1, Math.ceil(retryAfterMs / 1000)));
   const reset = soonestReset(summary);
   if (reset) {
     headers[LIMIT_HEADER_RESETS_AT] = reset.resetsAt!;
@@ -1802,7 +1841,7 @@ async function handleConcreteStatusFailure(
   if (result.retryable)
     COOLDOWNS.cooldownProvider(
       route.provider,
-      cooldownFor(failureClass, result.limit)
+      cooldownFor(failureClass, result.limit, modelName, result.body ?? null)
     );
   sendConcreteFailureResponse({
     response,
@@ -1909,7 +1948,10 @@ async function handleConcreteTransportError(
   );
   recordConcreteResult(ctx, "failure", 502, failureClass);
   endConcreteRequest(activitySubject, requestId, "failure");
-  COOLDOWNS.cooldownProvider(route.provider, cooldownFor(failureClass));
+  COOLDOWNS.cooldownProvider(
+    route.provider,
+    cooldownFor(failureClass, null, modelName)
+  );
   sendConcreteFailureResponse({
     response,
     route,
@@ -2143,7 +2185,8 @@ export async function proxyFallbackChain(
       origin,
       modelName,
       subject,
-      workspace
+      workspace,
+      isOrchestratorTurn
     );
     return;
   }
@@ -2263,14 +2306,17 @@ function rejectFallbackChain(
   origin: string | null,
   modelName: string,
   subject: string,
-  workspace: { key: string; cwd?: string | null } | null
+  workspace: { key: string; cwd?: string | null } | null,
+  isOrchestratorTurn: boolean
 ): void {
-  recordSpawnFailure({
-    requestId,
-    role,
-    requestedModel: modelName,
-    reason: "provider_exhausted"
-  });
+  // A root orchestrator turn spawns nothing; only a child request is a spawn.
+  if (!isOrchestratorTurn)
+    recordSpawnFailure({
+      requestId,
+      role,
+      requestedModel: modelName,
+      reason: "provider_exhausted"
+    });
   closeBridgeSubagentsForRequest(requestId, "failure");
   recordRouterEvent({
     phase: "result",
@@ -2342,12 +2388,13 @@ async function tryPrimaryRoute(
       served
     );
   }
-  if (COOLDOWNS.isCooling(route.provider)) {
+  const cooldown = COOLDOWNS.get(route.provider, Date.now(), route.model);
+  if (cooldown) {
     recordFallbackSkip(
       ctx,
       route,
       "cooldown active",
-      COOLDOWNS.get(route.provider)?.failureClass ?? "cooldown",
+      cooldown.failureClass ?? "cooldown",
       []
     );
     skipped.push(route);
@@ -2444,13 +2491,15 @@ function runLastResortPass(
           ctx.providerRole
         ) &&
         !isTried(route.provider) &&
-        COOLDOWNS.allowsLastResort(COOLDOWNS.get(route.provider)) &&
+        COOLDOWNS.allowsLastResort(
+          COOLDOWNS.get(route.provider, Date.now(), route.model)
+        ) &&
         countLiveAgentActivity({ provider: route.provider }) === 0
     )
     .sort(
       (a, b) =>
-        (COOLDOWNS.get(a.provider)?.until ?? 0) -
-        (COOLDOWNS.get(b.provider)?.until ?? 0)
+        (COOLDOWNS.get(a.provider, Date.now(), a.model)?.until ?? 0) -
+        (COOLDOWNS.get(b.provider, Date.now(), b.model)?.until ?? 0)
     )
     .slice(0, LAST_RESORT_MAX_ATTEMPTS);
   return tryLastResortRoute(ctx, eligible, 0, state, tryCandidate, served);
@@ -2514,7 +2563,7 @@ async function tryExhaustionRoute(
 ): Promise<boolean> {
   if (index >= waitCandidates.length) return false;
   const route = waitCandidates[index]!;
-  if (COOLDOWNS.isCooling(route.provider)) {
+  if (COOLDOWNS.isCooling(route.provider, Date.now(), route.model)) {
     return tryExhaustionRoute(waitCandidates, index + 1, tryCandidate, served);
   }
   const outcome = await tryCandidate(route, "exhaustion_wait");
@@ -2531,12 +2580,13 @@ function finalizeFallbackFailure(
   deadlineReached: boolean,
   _attempted: Set<string>
 ): void {
-  recordSpawnFailure({
-    requestId: ctx.requestId,
-    role: ctx.role,
-    requestedModel: ctx.modelName,
-    reason: deadlineReached ? "selection_deadline" : "provider_exhausted"
-  });
+  if (!ctx.isOrchestratorTurn)
+    recordSpawnFailure({
+      requestId: ctx.requestId,
+      role: ctx.role,
+      requestedModel: ctx.modelName,
+      reason: deadlineReached ? "selection_deadline" : "provider_exhausted"
+    });
   closeBridgeSubagentsForRequest(ctx.requestId, "failure");
   getDefaultUsageTracker().activityTracker.endRequest(ctx.activitySubject, {
     requestId: ctx.requestId,
@@ -2544,13 +2594,14 @@ function finalizeFallbackFailure(
     hasToolCalls: false
   });
   const summary = COOLDOWNS.summary(
-    ctx.candidates.map(({ provider }) => provider),
+    ctx.candidates,
     Date.now(),
     ctx.providerRole
   );
+  // Codex retries a 5xx; a failure no retry can fix must not be one.
   sendJson(
     response,
-    503,
+    exhaustedByConfiguration(summary) ? 400 : 503,
     exhaustionBody({
       subject: ctx.subject,
       summary,
@@ -2650,7 +2701,7 @@ async function handleCandidateSuccess(
         (responseResult.incompleteReason ? "unavailable" : "upstream_error");
       COOLDOWNS.cooldownProvider(
         route.provider,
-        cooldownFor(failureClass, responseResult.limit)
+        cooldownFor(failureClass, responseResult.limit, route.model)
       );
       recordRouterEvent({
         phase: "result",
@@ -2704,7 +2755,10 @@ async function handleCandidateSuccess(
           : false
     });
   } catch (streamError) {
-    COOLDOWNS.cooldownProvider(route.provider, cooldownFor("upstream_error"));
+    COOLDOWNS.cooldownProvider(
+      route.provider,
+      cooldownFor("upstream_error", null, route.model)
+    );
     throw streamError;
   }
   return "served";
@@ -2755,7 +2809,7 @@ function handleCandidateUpstreamFailure(
   }
   COOLDOWNS.cooldownProvider(
     route.provider,
-    cooldownFor(failureClass, result.limit)
+    cooldownFor(failureClass, result.limit, route.model, result.body ?? null)
   );
   return "fallback";
 }
@@ -2803,7 +2857,10 @@ function handleCandidateTransportError(
     elapsedMs: Date.now() - attemptStartedAt,
     selection
   });
-  COOLDOWNS.cooldownProvider(route.provider, cooldownFor(failureClass));
+  COOLDOWNS.cooldownProvider(
+    route.provider,
+    cooldownFor(failureClass, null, route.model)
+  );
   if (ctx.response.headersSent) {
     if (!ctx.response.writableEnded) {
       try {

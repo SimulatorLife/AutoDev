@@ -236,7 +236,11 @@ test("a crash-looping bridge is reported at once with its log, without holding u
     })
   );
   assert.equal(status, 0, "an optional bridge does not fail the install");
-  assert.deepEqual(copilotProbes, [], "no readiness polling for a crashed job");
+  assert.equal(
+    copilotProbes.length,
+    1,
+    "a crashed job is caught on the first check, not after the readiness budget"
+  );
   assert.match(
     stderr,
     /com\.codex\.copilot-proxy is not running: exited with code 1 \(router will route around it\)/u
@@ -249,6 +253,28 @@ test("a crash-looping bridge is reported at once with its log, without holding u
     stderr,
     /\| tail of \/home\/\.codex\/run\/com\.codex\.copilot-proxy\.err\.log/u
   );
+});
+
+test("an unready service reads its launchd job only every few attempts", async () => {
+  const base = deps();
+  let jobReads = 0;
+  const [status] = await captureStderr(() =>
+    restartServices(options({ readyAttempts: 24 }), {
+      ...base,
+      launchd: {
+        ...base.launchd,
+        print: (label) => {
+          if (label === LABEL_COPILOT_PROXY) jobReads += 1;
+          return base.launchd.print(label);
+        }
+      },
+      probe: async (url) => !url.includes(":4003/")
+    })
+  );
+  assert.equal(status, 0);
+  // Each read spawns launchctl; during an install a steady stream of spawns
+  // stalled the services' own launches. Attempts 0, 8 and 16, plus the last.
+  assert.equal(jobReads, 4);
 });
 
 test("a router that never becomes ready fails the install", async () => {

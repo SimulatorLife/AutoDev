@@ -35,14 +35,18 @@
   <key>ExitTimeOut</key>
   <integer>45</integer>
 
-  <!-- PATH is intentionally not pinned here: the launcher (run-codex-model-router.sh)
-       resolves node from nvm/homebrew itself, so this plist survives nvm
-       upgrades without re-syncing. CODEX_HOME is set so the router reads the
-       user-level config; HOME so launcher credential files are found. -->
+  <!-- The launcher (run-codex-model-router.sh) runs AUTODEV_NODE_BIN, the
+       native Node the installer resolved, and falls back to PATH if that
+       binary is gone. CODEX_HOME is set so the router reads the user-level
+       config; HOME so launcher credential files are found. -->
   <key>EnvironmentVariables</key>
   <dict>
     <key>PATH</key>
     <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    <!-- The installer's native Node: PATH alone finds /usr/local/bin/node
+         first, an Intel build on many Apple Silicon Macs (run under Rosetta). -->
+    <key>AUTODEV_NODE_BIN</key>
+    <string>__AUTODEV_NODE_BIN__</string>
     <key>CODEX_HOME</key>
     <string>__CODEX_HOME__</string>
     <key>HOME</key>

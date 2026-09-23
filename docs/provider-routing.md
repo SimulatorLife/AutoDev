@@ -25,8 +25,15 @@ The editable provider/model choices live in
 `config/model-routing.json`: `providerGroups` defines ordered fallback groups per capability tier,
 `providers.<name>.models` contains named tiers such as `default` and `smart` (specific tiers like `smart` are optional and fall back to that provider's `default` model if omitted), and
 `roles.<role>.tier` selects the tier for each capability role. For example, set
-Claude's smart model to `claude-opus-5.5` or Codex's to `gpt-5.6-sol` there; providers like MiniMax or Copilot that use the same model across tiers only need to define `default`. The installer materializes this file as
+Claude's smart model to `claude-opus-5-5` or Codex's to `gpt-5.6-sol` there; providers like MiniMax or Copilot that use the same model across tiers only need to define `default`. The installer materializes this file as
 `$CODEX_HOME/codex-model-routing.json`.
+Every model listed under a provider must match that provider's route
+`pattern`, or the router refuses to load the file. The Claude route accepts
+the family aliases (`sonnet`, `opus`, `haiku`) and Anthropic's lowercase,
+hyphen-separated ids, so a mistyped `claude-opus-5.5` fails at startup (and in
+the test suite) instead of turning every Claude turn into a CLI error. A valid
+id still has to be supported by the installed Claude CLI: a newer model can
+need `claude update` first, which the bridge reports as `invalid_model`.
 For the `default` capability tier, the router randomizes Claude, Gemini/Antigravity, and MiniMax, then falls back to Copilot and OpenAI/Codex. For `smart`, it randomizes Claude and Gemini/Antigravity, then falls back directly to OpenAI/Codex Sol. Providers that are unavailable or return fallbackable limit errors are skipped and the next provider in the current group is tried before progressing to the next group. A skipped provider is not forgotten: if no candidate serves the turn, the router reconsiders the ones it skipped as a bounded last resort before giving up (see "Cooldowns and provider selection"):
 
 1. `default`: Claude, Gemini/Antigravity, MiniMax (randomized), then Copilot, then OpenAI/Codex Luna
@@ -356,6 +363,8 @@ Therefore, reasoning items are excluded from id rewriting. Instead:
 When the orchestrator tier is genuinely exhausted, the router returns
 `503 router_provider_exhausted` exactly as it does for an exhausted role tier --
 but only after the last-resort pass and the bounded wait below have both failed.
+(It is a non-retryable `400` instead when every candidate failed for a
+configuration reason, such as a model the provider rejects; see below.)
 That distinction matters for the orchestrator specifically: its 503 ends the root
 turn and every child with it, so exhausting the tier is the most expensive
 failure in the system and worth the extra attempts to avoid.
@@ -388,9 +397,19 @@ the kind as `cooldownKind`, with `cooldownFailureClass`, `cooldownResetsAt` and
 | `transient` | any fallbackable failure, and any limit the router only inferred from prose | 30s doubling to 10min | yes | no |
 | `hard` | `quota_exhausted` / `session_limit` that the **provider itself declared** | until the declared reset, else a 15min floor, capped at 6h | only while no reset time is known | yes |
 | `probe` | a local bridge that did not answer its health check | 5s doubling to 30s | yes | no |
-| `config` | `authentication`, `invalid_model` | fixed 30s, never escalates | no | no |
+| `config` | `authentication`, and `invalid_model` for the rejected **model only** | fixed 30s, never escalates | no | no |
 
-Three rules are load-bearing:
+Four rules are load-bearing:
+
+- **A rejected model is not a provider outage.** A provider answering
+  `invalid_model` (the Claude bridge returns `400` with `code: "invalid_model"`
+  when the CLI does not know the model or is too old for it) cools down that one
+  model; the provider's other models keep serving, so a bad Opus id does not
+  take Sonnet subagents down with it. If every candidate fails for such a
+  configuration reason, the router answers `400 router_provider_exhausted` with
+  `retryable: false`, `recommendedAction: "fix_configuration"`, no
+  `retry-after`, and the provider's own explanation in the message. A `5xx`
+  would only make Codex retry a request that cannot succeed.
 
 - **A hard cooldown needs corroboration.** `classifyProviderFailure` matches
   keywords, and bridges put CLI stderr tails into error messages, so one stray
@@ -1161,7 +1180,9 @@ handles before retrying; no global cleanup is safe.
 
 Its reasons are `provider_exhausted`, `selection_deadline` (the router spent its
 provider-selection budget without finding one),
-`max_concurrent_threads_per_session`, and `spawn_tool_unavailable`.
+`max_concurrent_threads_per_session`, and `spawn_tool_unavailable`. Only child
+requests count: a root orchestrator turn that exhausts its tier spawned nothing,
+so it is reported through its `router_provider_exhausted` result, not here.
 
 ### Streaming resilience and keep-alives
 

@@ -510,10 +510,42 @@ type ServiceCheck =
       readonly stderrPath: string | null;
     };
 
+// Probing is an in-process HTTP request, but reading a job's state spawns
+// `launchctl`: during an install, a steady stream of spawns measurably stalled
+// the services' own launches (17s with a read every attempt against 7s with
+// none), so the crash-loop check only runs every few attempts.
+const JOB_STATE_EVERY_ATTEMPTS = 8;
+
+function crashLoop(job: JobState): ServiceCheck | null {
+  return job.lastExitCode !== null && job.lastExitCode !== 0
+    ? {
+        ready: false,
+        reason: `exited with code ${job.lastExitCode}`,
+        stderrPath: job.stderrPath
+      }
+    : null;
+}
+
+function confirmOwner(
+  deps: ServiceRestartDeps,
+  spec: ServiceSpec
+): ServiceCheck {
+  if (spec.ownedPort === null) return { ready: true };
+  const job = parseJobState(readLaunchdJobDump(deps, spec.label));
+  const listeners = deps.listeningPids(spec.ownedPort) ?? [];
+  if (job.pid !== null && listeners.includes(job.pid)) return { ready: true };
+  return {
+    ready: false,
+    reason: `port ${spec.ownedPort} is served by pid ${listeners.join(", ") || "unknown"}, not the launchd job (pid ${job.pid ?? "none"})`,
+    stderrPath: job.stderrPath
+  };
+}
+
 /**
  * A freshly bootstrapped job has never exited, so any recorded exit code means
- * it is crash-looping under KeepAlive: report that at once instead of waiting
- * out the readiness budget on a process that will never answer.
+ * it is crash-looping under KeepAlive: report that as soon as it is seen
+ * instead of waiting out the readiness budget on a process that will never
+ * answer.
  */
 async function checkService(
   deps: ServiceRestartDeps,
@@ -521,29 +553,20 @@ async function checkService(
   spec: ServiceSpec,
   attempt = 0
 ): Promise<ServiceCheck> {
-  const job = parseJobState(readLaunchdJobDump(deps, spec.label));
-  if (job.lastExitCode !== null && job.lastExitCode !== 0)
-    return {
-      ready: false,
-      reason: `exited with code ${job.lastExitCode}`,
-      stderrPath: job.stderrPath
-    };
-  if (await deps.probe(spec.probe, spec.jsonBody)) {
-    if (spec.ownedPort === null) return { ready: true };
-    const listeners = deps.listeningPids(spec.ownedPort) ?? [];
-    if (job.pid !== null && listeners.includes(job.pid)) return { ready: true };
-    return {
-      ready: false,
-      reason: `port ${spec.ownedPort} is served by pid ${listeners.join(", ") || "unknown"}, not the launchd job (pid ${job.pid ?? "none"})`,
-      stderrPath: job.stderrPath
-    };
+  if (await deps.probe(spec.probe, spec.jsonBody))
+    return confirmOwner(deps, spec);
+  const lastAttempt = attempt + 1 >= options.readyAttempts;
+  if (attempt % JOB_STATE_EVERY_ATTEMPTS === 0 || lastAttempt) {
+    const job = parseJobState(readLaunchdJobDump(deps, spec.label));
+    const crashed = crashLoop(job);
+    if (crashed) return crashed;
+    if (lastAttempt)
+      return {
+        ready: false,
+        reason: `did not become ready within ${options.readyAttempts * options.readyDelayMs}ms`,
+        stderrPath: job.stderrPath
+      };
   }
-  if (attempt + 1 >= options.readyAttempts)
-    return {
-      ready: false,
-      reason: `did not become ready within ${options.readyAttempts * options.readyDelayMs}ms`,
-      stderrPath: job.stderrPath
-    };
   await deps.sleep(options.readyDelayMs);
   return checkService(deps, options, spec, attempt + 1);
 }

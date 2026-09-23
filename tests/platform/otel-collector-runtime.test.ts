@@ -81,13 +81,17 @@ function withPath<T>(directory: string, callback: () => T): T {
   }
 }
 
-test("Collector run uses an explicit binary and exact version/config", () =>
+test("Collector run uses an explicit binary and the pinned version without a separate validate launch", () =>
   withTempDir((directory) => {
     baseFiles(directory);
     const binary = fakeBinary(directory);
     const result = runCollector(options(directory, binary));
     assert.equal(result, 0);
-    assert.equal(readFileSync(join(directory, "validated"), "utf8"), "");
+    assert.equal(
+      existsSync(join(directory, "validated")),
+      false,
+      "otelcol --config validates on start; a separate validate launch is redundant"
+    );
     assert.equal(
       readFileSync(join(directory, "args"), "utf8").trim(),
       `--config\n${join(directory, "collector.yaml")}`

@@ -29,6 +29,7 @@ import {
   updateAntigravityPermissions,
   updateAntigravitySkills
 } from "./antigravity-settings.ts";
+import { resolveServiceNode } from "./host-arch.ts";
 import { renderLaunchAgent } from "./macos/launchagent.ts";
 import { LaunchdClient } from "./macos/launchd.ts";
 import {
@@ -96,6 +97,7 @@ export const RUNTIME_MODULES = [
   "src/hooks/session-start.ts",
   "src/hooks/subagent-start.ts",
   "src/platform/macos/launchd.ts",
+  "src/platform/host-arch.ts",
   "src/platform/macos/launchagent.ts",
   "src/platform/router-ensure.ts",
   "src/platform/copilot-ensure.ts",
@@ -779,7 +781,7 @@ function renderLaunchAgentsFor(
     renderLaunchAgent(
       path.join(repositoryRoot, `config/launchagents/${label}.plist`),
       path.join(home, "Library", "LaunchAgents", `${label}.plist`),
-      { codexHome, home, repositoryRoot }
+      { codexHome, home, repositoryRoot, nodeBin: resolveServiceNode(home) }
     );
 }
 

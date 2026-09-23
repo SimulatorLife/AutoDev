@@ -170,6 +170,20 @@ export class ClaudeOverloadedError extends Error {
   }
 }
 
+/**
+ * The CLI refused the requested model: it does not exist, or this CLI version
+ * is too old for it. Only a configuration change or CLI update fixes that.
+ */
+export class ClaudeModelUnavailableError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "ClaudeModelUnavailableError";
+  }
+}
+
+const CLAUDE_MODEL_UNAVAILABLE_PATTERN =
+  /issue with the selected model|does not support this model/i;
+
 export function resolvedModel(requested: unknown): string {
   if (typeof requested !== "string") return DEFAULT_CLAUDE_MODEL;
   const candidate = requested.trim();
@@ -303,8 +317,14 @@ export function rateLimitEventError(
 export function classifyClaudeError(
   message: unknown,
   errorCode: unknown
-): typeof ClaudeRateLimitError | typeof ClaudeOverloadedError | null {
+):
+  | typeof ClaudeRateLimitError
+  | typeof ClaudeOverloadedError
+  | typeof ClaudeModelUnavailableError
+  | null {
   const text = String(message ?? "");
+  if (CLAUDE_MODEL_UNAVAILABLE_PATTERN.test(text))
+    return ClaudeModelUnavailableError;
   if (
     errorCode === "rate_limit" ||
     /rate.?limit|weekly.?limit|quota|credit|session.?limit|too many requests/i.test(
@@ -328,6 +348,8 @@ export function raiseClassifiedClaudeError(
 ): void {
   const errorType = classifyClaudeError(message, errorCode);
   if (!errorType) return;
+  if (errorType === ClaudeModelUnavailableError)
+    throw new ClaudeModelUnavailableError(String(message));
   if (errorType === ClaudeRateLimitError) {
     // An error message is free text, so whatever it yields stays `inferred`
     // and cannot trigger a long hard cooldown downstream.
@@ -1076,6 +1098,12 @@ function handleNonStreamingError(
       },
       extra
     );
+    return;
+  }
+  if (error instanceof ClaudeModelUnavailableError) {
+    sendJson(response, 400, {
+      error: { message, type: "invalid_request_error", code: "invalid_model" }
+    });
     return;
   }
   if (message && /timed out/i.test(message)) {

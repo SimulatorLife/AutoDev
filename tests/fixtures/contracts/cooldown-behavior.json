@@ -1,6 +1,6 @@
 {
   "schema": "autodev-cooldown-behavior-v1",
-  "description": "Deterministic boundary for the router cooldown model exercised by `cooldownProvider`, `clearProviderCooldown`, `cooldownAllowsLastResort`, `providerCooldownSummary`, and `nextProviderRetryMs`. The scenarios below pin every observable shape that the router produces today: config/probe/transient/hard cooldown classes, stated reset handling (future, past, far, missing), ladder escalation, the non-shortening rule that prevents a shorter failure from pulling a longer one back, last-resort eligibility, retry-after derivation, and the structured provider summary. Updating the fixture is itself the documented, intentional signal that cooldown behavior, ladder ceilings, or summary shape is meant to change.",
+  "description": "Deterministic boundary for the router cooldown model exercised by `cooldownProvider`, `clearProviderCooldown`, `cooldownAllowsLastResort`, `providerCooldownSummary`, and `nextProviderRetryMs`. The scenarios below pin every observable shape that the router produces today: config/probe/transient/hard cooldown classes, stated reset handling (future, past, far, missing), ladder escalation, the non-shortening rule that prevents a shorter failure from pulling a longer one back, last-resort eligibility, retry-after derivation, an `invalid_model` failure that cools down only the rejected model rather than its provider, and the structured candidate summary (provider, model, and the provider's own detail for configuration failures). Updating the fixture is itself the documented, intentional signal that cooldown behavior, ladder ceilings, or summary shape is meant to change.",
   "now": 1700000000000,
   "constants": {
     "providerCooldownMs": 30000,
@@ -164,10 +164,12 @@
       ],
       "expected": {
         "provider": "claude",
+        "model": "claude-opus-5",
         "state": "hard",
         "failureClass": "quota_exhausted",
         "resetsAt": "2023-11-14T23:13:20.000Z",
-        "retryAfterMs": 3599999
+        "retryAfterMs": 3599999,
+        "detail": null
       }
     },
     "non_shortening_transient_does_not_pull_back_hard": {
@@ -177,10 +179,12 @@
       ],
       "expected": {
         "provider": "claude",
+        "model": "claude-opus-5",
         "state": "hard",
         "failureClass": "quota_exhausted",
         "resetsAt": "2023-11-14T23:13:20.000Z",
-        "retryAfterMs": 3599999
+        "retryAfterMs": 3599999,
+        "detail": null
       }
     },
     "non_shortening_config_does_not_pull_back_hard": {
@@ -190,10 +194,12 @@
       ],
       "expected": {
         "provider": "claude",
+        "model": "claude-opus-5",
         "state": "hard",
         "failureClass": "quota_exhausted",
         "resetsAt": "2023-11-14T23:13:20.000Z",
-        "retryAfterMs": 3599999
+        "retryAfterMs": 3599999,
+        "detail": null
       }
     },
     "non_shortening_hard_keeps_its_own_reset_after_subsequent_step": {
@@ -203,10 +209,12 @@
       ],
       "expected": {
         "provider": "claude",
+        "model": "claude-opus-5",
         "state": "hard",
         "failureClass": "quota_exhausted",
         "resetsAt": "2023-11-14T23:13:20.000Z",
-        "retryAfterMs": 3599999
+        "retryAfterMs": 3599999,
+        "detail": null
       }
     },
     "last_resort_eligible_when_no_entry": {
@@ -297,14 +305,16 @@
     },
     "summary_disabled_provider_reports_disabled_state": {
       "setup": [{ "disable": "antigravity" }],
-      "providers": ["antigravity"],
+      "candidates": [{ "provider": "antigravity", "model": "gemini-3.8-flash-medium" }],
       "expected": [
         {
           "provider": "antigravity",
+          "model": "gemini-3.8-flash-medium",
           "state": "disabled",
           "failureClass": "provider_disabled",
           "resetsAt": null,
-          "retryAfterMs": 0
+          "retryAfterMs": 0,
+          "detail": null
         }
       ]
     },
@@ -312,43 +322,49 @@
       "setup": [
         { "provider": "claude", "args": { "failureClass": "quota_exhausted", "structured": true, "resetsAt": "2023-11-14T23:13:20.000Z" } }
       ],
-      "providers": ["claude"],
+      "candidates": [{ "provider": "claude", "model": "sonnet" }],
       "atDeltaMs": 1,
       "expected": [
         {
           "provider": "claude",
+          "model": "sonnet",
           "state": "hard",
           "failureClass": "quota_exhausted",
           "resetsAt": "2023-11-14T23:13:20.000Z",
-          "retryAfterMs": 3599999
+          "retryAfterMs": 3599999,
+          "detail": null
         }
       ]
     },
     "summary_provider_with_no_entry_reports_available": {
       "setup": [],
-      "providers": ["claude"],
+      "candidates": [{ "provider": "claude", "model": "sonnet" }],
       "atDeltaMs": 1,
       "expected": [
         {
           "provider": "claude",
+          "model": "sonnet",
           "state": "available",
           "failureClass": null,
           "resetsAt": null,
-          "retryAfterMs": 0
+          "retryAfterMs": 0,
+          "detail": null
         }
       ]
     },
     "summary_dedupes_repeated_providers": {
       "setup": [],
-      "providers": ["claude", "claude", "claude"],
+      "candidates": [{ "provider": "claude", "model": "sonnet" }, { "provider": "claude", "model": "sonnet" }, { "provider": "claude", "model": "sonnet" }],
       "atDeltaMs": 1,
       "expected": [
         {
           "provider": "claude",
+          "model": "sonnet",
           "state": "available",
           "failureClass": null,
           "resetsAt": null,
-          "retryAfterMs": 0
+          "retryAfterMs": 0,
+          "detail": null
         }
       ]
     },
@@ -356,29 +372,71 @@
       "setup": [
         { "provider": "claude", "args": { "failureClass": "quota_exhausted", "structured": true, "resetsAt": "2023-11-14T23:13:20.000Z" } }
       ],
-      "providers": ["claude", "antigravity", "minimax"],
+      "candidates": [{ "provider": "claude", "model": "sonnet" }, { "provider": "antigravity", "model": "gemini-3.8-flash-medium" }, { "provider": "minimax", "model": "MiniMax-M3" }],
       "atDeltaMs": 1,
       "expected": [
         {
           "provider": "claude",
+          "model": "sonnet",
           "state": "hard",
           "failureClass": "quota_exhausted",
           "resetsAt": "2023-11-14T23:13:20.000Z",
-          "retryAfterMs": 3599999
+          "retryAfterMs": 3599999,
+          "detail": null
         },
         {
           "provider": "antigravity",
+          "model": "gemini-3.8-flash-medium",
           "state": "available",
           "failureClass": null,
           "resetsAt": null,
-          "retryAfterMs": 0
+          "retryAfterMs": 0,
+          "detail": null
         },
         {
           "provider": "minimax",
+          "model": "MiniMax-M3",
           "state": "available",
           "failureClass": null,
           "resetsAt": null,
-          "retryAfterMs": 0
+          "retryAfterMs": 0,
+          "detail": null
+        }
+      ]
+    },
+    "summary_invalid_model_is_a_config_cooldown_on_that_model": {
+      "setup": [
+        { "provider": "claude", "args": { "failureClass": "invalid_model", "model": "claude-opus-5-5", "detail": "Claude Code 2.1.240 does not support this model" } }
+      ],
+      "candidates": [{ "provider": "claude", "model": "claude-opus-5-5" }],
+      "atDeltaMs": 1,
+      "expected": [
+        {
+          "provider": "claude",
+          "model": "claude-opus-5-5",
+          "state": "config",
+          "failureClass": "invalid_model",
+          "resetsAt": null,
+          "retryAfterMs": 29999,
+          "detail": "Claude Code 2.1.240 does not support this model"
+        }
+      ]
+    },
+    "summary_invalid_model_leaves_the_providers_other_models_available": {
+      "setup": [
+        { "provider": "claude", "args": { "failureClass": "invalid_model", "model": "claude-opus-5-5" } }
+      ],
+      "candidates": [{ "provider": "claude", "model": "sonnet" }],
+      "atDeltaMs": 1,
+      "expected": [
+        {
+          "provider": "claude",
+          "model": "sonnet",
+          "state": "available",
+          "failureClass": null,
+          "resetsAt": null,
+          "retryAfterMs": 0,
+          "detail": null
         }
       ]
     }

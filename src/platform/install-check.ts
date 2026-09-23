@@ -24,6 +24,7 @@ import {
   checkPythonLanguageServer,
   resolveDependencyOptions
 } from "./dependencies.ts";
+import { resolveServiceNode } from "./host-arch.ts";
 import { createCodexMcpSource } from "./install-command.ts";
 import {
   CATALOGS,
@@ -816,7 +817,8 @@ function checkLaunchAgents(
         {
           codexHome: paths.codexHome,
           home: paths.home,
-          repositoryRoot: paths.repositoryRoot
+          repositoryRoot: paths.repositoryRoot,
+          nodeBin: resolveServiceNode(paths.home)
         }
       ),
       failures

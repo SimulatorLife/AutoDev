@@ -82,7 +82,8 @@ const AUTODEV_ROLE_PATTERN = /^autodev\/([a-z0-9-]+)$/iu;
 const DEFAULT_ROUTES: readonly ProviderRoute[] = [
   {
     provider: "claude",
-    pattern: /^(sonnet|opus|haiku|claude-[A-Za-z0-9][A-Za-z0-9.-]*)$/,
+    // Anthropic model ids are lowercase, hyphen-separated: never `claude-opus-5.5`.
+    pattern: /^(sonnet|opus|haiku|claude-[a-z0-9-]*[a-z0-9])$/,
     baseUrl: "http://127.0.0.1:4000/v1",
     healthUrl: "http://127.0.0.1:4000/health/liveliness",
     envKey: "LITELLM_API_KEY"
@@ -192,6 +193,42 @@ function validateRoutesBlock(config: Record<string, unknown>): void {
   }
 }
 
+/**
+ * Every configured model must route to the provider it is listed under. A
+ * mistyped id otherwise loads fine and only fails at the provider, turn by
+ * turn, looking like an outage.
+ */
+function validateProviderModelRoutes(config: Record<string, unknown>): void {
+  const routes: [string, RegExp][] = isRecord(config.routes)
+    ? Object.entries(config.routes).map(([provider, route]) => [
+        provider,
+        new RegExp(String((route as Record<string, unknown>).pattern))
+      ])
+    : DEFAULT_ROUTES.map((route) => [route.provider, route.pattern]);
+  // validateProvidersBlock has already checked every provider has a models object.
+  const providers = config.providers as Record<
+    string,
+    { models: Record<string, unknown> }
+  >;
+  for (const [provider, { models }] of Object.entries(providers)) {
+    // A provider without any route is never selected; route checks own that.
+    if (!routes.some(([routeProvider]) => routeProvider === provider)) continue;
+    for (const [tier, model] of Object.entries(models)) {
+      if (!nonEmptyString(model))
+        throw new Error(
+          `Routing config provider ${provider} ${tier} model must be a non-empty string.`
+        );
+      const owner = routes.find(([, pattern]) =>
+        pattern.test(model.trim())
+      )?.[0];
+      if (owner !== provider)
+        throw new Error(
+          `Routing config provider ${provider} ${tier} model "${model}" ${owner ? `routes to ${owner}` : "matches no provider route"}; use a ${provider} model id.`
+        );
+    }
+  }
+}
+
 function validateProvidersBlock(config: Record<string, unknown>): void {
   for (const [provider, info] of Object.entries(config.providers)) {
     if (!isRecord(info) || !isRecord(info.models))
@@ -258,6 +295,7 @@ export function validateRoutingConfig(value: unknown): RoutingConfig {
   if (!isRecord(config.orchestrator))
     throw new Error("Routing config requires an orchestrator block.");
   validateProvidersBlock(config);
+  validateProviderModelRoutes(config);
   validateRolesBlock(config);
   validateOrchestratorBlock(config);
   return config as unknown as RoutingConfig;

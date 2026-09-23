@@ -60,22 +60,35 @@ test("typed cooldowns keep monotonic deadlines, last-resort policy, and retry su
   assert.equal(entry?.kind, "hard");
   assert.equal(cooldowns.allowsLastResort(entry, NOW + 1), false);
   assert.equal(cooldowns.nextRetryMs(["claude"], NOW + 1), 3_599_999);
-  assert.deepEqual(cooldowns.summary(["claude", "disabled"], NOW + 1), [
-    {
-      provider: "claude",
-      state: "hard",
-      failureClass: "quota_exhausted",
-      resetsAt: reset,
-      retryAfterMs: 3_599_999
-    },
-    {
-      provider: "disabled",
-      state: "disabled",
-      failureClass: "provider_disabled",
-      resetsAt: null,
-      retryAfterMs: 0
-    }
-  ]);
+  assert.deepEqual(
+    cooldowns.summary(
+      [
+        { provider: "claude", model: "claude-opus-5" },
+        { provider: "disabled", model: "disabled-model" }
+      ],
+      NOW + 1
+    ),
+    [
+      {
+        provider: "claude",
+        model: "claude-opus-5",
+        state: "hard",
+        failureClass: "quota_exhausted",
+        resetsAt: reset,
+        retryAfterMs: 3_599_999,
+        detail: null
+      },
+      {
+        provider: "disabled",
+        model: "disabled-model",
+        state: "disabled",
+        failureClass: "provider_disabled",
+        resetsAt: null,
+        retryAfterMs: 0,
+        detail: null
+      }
+    ]
+  );
 });
 
 test("typed cooldown persistence restores only future hard entries and clamps them", () => {

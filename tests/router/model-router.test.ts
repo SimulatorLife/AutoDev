@@ -257,7 +257,7 @@ test("loads editable provider and role models from JSON routing config", async (
       "utf8"
     )
   );
-  assert.equal(config.providers.claude.models.smart, "claude-opus-5.5");
+  assert.equal(config.providers.claude.models.smart, "claude-opus-5-5");
   assert.equal(config.providers.codex.models.smart, "gpt-5.6-sol");
   assert.equal(config.providers.minimax.models.smart, undefined);
   assert.equal(config.providers.copilot.models.smart, undefined);
@@ -279,7 +279,7 @@ test("loads editable provider and role models from JSON routing config", async (
   assert.equal(config.orchestrator.alias, "autodev/orchestrator");
   assert.equal(config.orchestrator.tier, "orchestrator");
   assert.equal(config.providers.codex.models.orchestrator, "gpt-5.6-luna");
-  assert.equal(config.providers.claude.models.orchestrator, "claude-opus-5.5");
+  assert.equal(config.providers.claude.models.orchestrator, "claude-opus-5-5");
   assert.equal(
     config.providers.antigravity.models.orchestrator,
     "gemini-3.8-flash-high"
@@ -361,7 +361,7 @@ test("orchestrator alias degrades from the pinned primary provider to a load-bal
   const byProvider: Record<string, any> = Object.fromEntries(
     candidates.map((candidate: any) => [candidate.provider, candidate])
   );
-  assert.equal(byProvider.claude.model, "claude-opus-5.5");
+  assert.equal(byProvider.claude.model, "claude-opus-5-5");
   assert.equal(byProvider.claude.reasoningEffort, "medium");
   assert.equal(byProvider.copilot.model, "copilot");
   assert.equal(byProvider.copilot.reasoningEffort, null);
@@ -387,7 +387,7 @@ test("orchestrator alias degrades from the pinned primary provider to a load-bal
     },
     byProvider.claude
   );
-  assert.equal(swapped.model, "claude-opus-5.5");
+  assert.equal(swapped.model, "claude-opus-5-5");
   assert.deepEqual(swapped.reasoning, { summary: "auto", effort: "medium" });
 
   const primary = payloadForCandidate(
@@ -429,6 +429,45 @@ test("validates routing config and requires default model for providers", () => 
     }
   };
   assert.doesNotThrow(() => validateRoutingConfig(validConfig));
+
+  // A model listed under a routed provider must route back to it: a mistyped
+  // Claude id would otherwise load and fail at the CLI turn after turn.
+  const routed = {
+    ...validConfig,
+    providerGroups: {
+      default: [["claude"]],
+      smart: [["claude"]],
+      orchestrator: [["claude"]]
+    },
+    providers: {
+      claude: { models: { default: "sonnet", orchestrator: "claude-opus-5.5" } }
+    },
+    orchestrator: { alias: "autodev/orchestrator", tier: "orchestrator" }
+  };
+  assert.throws(
+    () => validateRoutingConfig(routed),
+    /provider claude orchestrator model "claude-opus-5\.5" matches no provider route/
+  );
+  assert.doesNotThrow(() =>
+    validateRoutingConfig({
+      ...routed,
+      providers: {
+        claude: {
+          models: { default: "sonnet", orchestrator: "claude-opus-5-5" }
+        }
+      }
+    })
+  );
+  assert.throws(
+    () =>
+      validateRoutingConfig({
+        ...routed,
+        providers: {
+          claude: { models: { default: "sonnet", orchestrator: "gpt-5.6-sol" } }
+        }
+      }),
+    /provider claude orchestrator model "gpt-5\.6-sol" routes to codex/
+  );
 
   assert.throws(
     () =>
@@ -514,7 +553,7 @@ test("resolves role aliases through tier-specific randomized provider groups wit
     smartCandidates.map((c) => [c.provider, c.model])
   );
   assert.equal(smartModelMap.antigravity, "gemini-3.8-flash-high");
-  assert.equal(smartModelMap.claude, "claude-opus-5.5");
+  assert.equal(smartModelMap.claude, "claude-opus-5-5");
   assert.equal(smartModelMap.codex, "gpt-5.6-sol");
   assert.notDeepEqual(
     routing
@@ -1188,7 +1227,7 @@ test("subagent telemetry counts both spawn mechanisms and attributes each to a p
     noteBridgeRequest("request-1", {
       activitySubject: `req:${"request-1"}`,
       provider: "claude",
-      model: "claude-opus-5.5",
+      model: "claude-opus-5-5",
       role: null,
       workspace: "AutoDev"
     });
@@ -1791,7 +1830,7 @@ test("an orchestrator handed no delegation tool is reported, not read as a refus
     noteBridgeRequest("request-denied", {
       activitySubject: `req:${"request-denied"}`,
       provider: "claude",
-      model: "claude-opus-5.5",
+      model: "claude-opus-5-5",
       role: null,
       workspace: "SimulatorLife/RacingGame"
     });
@@ -1821,7 +1860,7 @@ test("an orchestrator handed no delegation tool is reported, not read as a refus
     assert.equal(after.recent[0].reason, "spawn_tool_unavailable");
     assert.equal(
       after.recent[0].requestedModel,
-      "claude-opus-5.5",
+      "claude-opus-5-5",
       "the failure names the model that was left unable to delegate"
     );
   } finally {
@@ -6176,13 +6215,13 @@ test("byModel live activity count is separate from transport in-flight requests"
   recordRouterEvent({
     phase: "selected",
     requestId: "req-active-2",
-    requestedModel: "claude-opus-5.5",
+    requestedModel: "claude-opus-5-5",
     provider: "claude",
-    model: "claude-opus-5.5"
+    model: "claude-opus-5-5"
   });
   let usage = getRouterStatus().usage;
   assert.equal(usage.byModel["claude/sonnet"].active, 0);
-  assert.equal(usage.byModel["claude/claude-opus-5.5"].active, 0);
+  assert.equal(usage.byModel["claude/claude-opus-5-5"].active, 0);
   assert.equal(getRouterStatus().inFlightRequests.claude ?? 0, 0);
 
   recordRouterEvent({
@@ -6197,20 +6236,20 @@ test("byModel live activity count is separate from transport in-flight requests"
   });
   usage = getRouterStatus().usage;
   assert.equal(usage.byModel["claude/sonnet"].active, 0);
-  assert.equal(usage.byModel["claude/claude-opus-5.5"].active, 0);
+  assert.equal(usage.byModel["claude/claude-opus-5-5"].active, 0);
 
   recordRouterEvent({
     phase: "result",
     requestId: "req-active-2",
-    requestedModel: "claude-opus-5.5",
+    requestedModel: "claude-opus-5-5",
     provider: "claude",
-    model: "claude-opus-5.5",
+    model: "claude-opus-5-5",
     outcome: "success",
     status: 200,
     elapsedMs: 5
   });
   assert.equal(
-    getRouterStatus().usage.byModel["claude/claude-opus-5.5"].active,
+    getRouterStatus().usage.byModel["claude/claude-opus-5-5"].active,
     0
   );
   resetRouterTelemetry();
@@ -8839,7 +8878,10 @@ test("releases the subagent slot when every provider is exhausted", async () => 
           body: JSON.stringify({ model: "autodev/default", stream: false })
         }
       );
-      assert.equal(response.status, 503);
+      // Every candidate is out for a reason only the user can fix, so the
+      // router answers a non-retryable 400 rather than a 5xx Codex retries.
+      assert.equal(response.status, 400);
+      assert.equal((await response.json()).error.retryable, false);
       // A wedged or exhausted child must not hold a slot: with a per-session
       // limit of two, two of those end delegation for the session.
       assert.equal(concurrencyStatus().activeSubagentThreads, 0);
@@ -8856,6 +8898,83 @@ test("releases the subagent slot when every provider is exhausted", async () => 
   );
   for (const provider of DEFAULT_TIER) cooldowns.clear(provider);
   resetConcurrencyTelemetry();
+});
+
+test("a model the provider rejects fails the turn once, non-retryably, and leaves the provider's other models usable", async () => {
+  const others = DEFAULT_TIER.filter((provider) => provider !== "claude");
+  const requested: string[] = [];
+  try {
+    await withStubbedProviders(
+      (target: string, options: any) => {
+        const probe = healthyProbe(target);
+        if (probe) return probe;
+        if (!target.startsWith("http://127.0.0.1:4000/")) return null;
+        const model = JSON.parse(String(options.body)).model;
+        requested.push(model);
+        return model === "sonnet"
+          ? jsonResponse({
+              id: "resp_sonnet",
+              status: "completed",
+              model,
+              output: []
+            })
+          : jsonResponse(
+              {
+                error: {
+                  type: "invalid_request_error",
+                  code: "invalid_model",
+                  message:
+                    "Claude Code 2.1.240 does not support this model; version 2.1.280 or newer is required."
+                }
+              },
+              { status: 400 }
+            );
+      },
+      async ({ port, fetch: realFetch }: any) => {
+        const post = (model: string) =>
+          realFetch(`http://127.0.0.1:${port}/v1/responses`, {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ model, stream: false })
+          });
+
+        const turn = await post("autodev/orchestrator");
+        // A 5xx is retried by Codex; nothing a retry does can fix this.
+        assert.equal(turn.status, 400);
+        assert.equal(turn.headers.get("retry-after"), null);
+        const body = await turn.json();
+        assert.equal(body.error.code, "router_provider_exhausted");
+        assert.equal(body.error.retryable, false);
+        assert.equal(body.error.failureClass, "invalid_model");
+        assert.equal(body.error.details.recommendedAction, "fix_configuration");
+        assert.match(
+          body.error.message,
+          /claude: invalid_model for claude-opus-5-5 \(Claude Code 2\.1\.240 does not support this model; version 2\.1\.280 or newer is required\.\)/
+        );
+        assert.doesNotMatch(body.error.message, /unavailable|Retry after/);
+        assert.equal(
+          spawnFailureStatus().total,
+          0,
+          "a root orchestrator turn spawns nothing, so it is no spawn failure"
+        );
+
+        // The rejected model is cooled down, not Claude: Sonnet still serves.
+        const child = await post("autodev/default");
+        assert.equal(child.status, 200);
+        assert.deepEqual(requested, ["claude-opus-5-5", "sonnet"]);
+      },
+      () => {
+        for (const provider of others) {
+          routing.setProviderEnabledForRole(provider, "orchestrator", false);
+          routing.setProviderEnabledForRole(provider, "subagent", false);
+        }
+      }
+    );
+  } finally {
+    routing.resetDisabledProvidersForRole("subagent");
+    routing.resetDisabledProvidersForRole("orchestrator");
+    cooldowns.clear("claude");
+  }
 });
 
 test("only a provider-declared cooldown survives a router restart", async () => {
@@ -8996,7 +9115,14 @@ test("summarizes every candidate's cooldown for the exhaustion body", () => {
       structured: true
     });
     cooldowns.cooldownProvider("minimax", { now });
-    const summary = cooldowns.summary(["claude", "minimax", "codex"], now + 1);
+    const summary = cooldowns.summary(
+      [
+        { provider: "claude", model: "sonnet" },
+        { provider: "minimax", model: "MiniMax-M3" },
+        { provider: "codex", model: "gpt-5.6-luna" }
+      ],
+      now + 1
+    );
     assert.deepEqual(
       summary.map(({ provider, state }) => [provider, state]),
       [

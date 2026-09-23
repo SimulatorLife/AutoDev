@@ -82,14 +82,18 @@ const THROTTLED_PATTERN =
 const CAPACITY_PATTERN = /high.?demand|overloaded|capacity/i;
 const TIMEOUT_PATTERN = /timeout|timed.?out/i;
 const UNAVAILABLE_PATTERN = /temporarily unavailable|unavailable/i;
-const INVALID_MODEL_PATTERN =
-  /invalid model|model name.*(?:invalid|not found)|unknown model/i;
+// Also matches the bridges' structured `"code":"invalid_model"`.
+export const INVALID_MODEL_PATTERN =
+  /invalid[ _]model|model name.*(?:invalid|not found)|unknown model/i;
 
 export function classifyProviderFailure(
   status: number,
   body: unknown = ""
 ): ProviderFailureClass {
   const text = String(body ?? "");
+  // A model the provider rejects is the most specific diagnosis: its message
+  // may still mention quotas or availability in passing.
+  if (INVALID_MODEL_PATTERN.test(text)) return "invalid_model";
   if (SESSION_LIMIT_PATTERN.test(text)) return "session_limit";
   if (QUOTA_EXHAUSTED_PATTERN.test(text)) return "quota_exhausted";
   if (status === 429 || THROTTLED_PATTERN.test(text)) return "throttled";
@@ -97,7 +101,6 @@ export function classifyProviderFailure(
   if (status === 408 || TIMEOUT_PATTERN.test(text)) return "timeout";
   if ([502, 503, 504].includes(status) || UNAVAILABLE_PATTERN.test(text))
     return "unavailable";
-  if (INVALID_MODEL_PATTERN.test(text)) return "invalid_model";
   if ([401, 403].includes(status)) return "authentication";
   if (typeof status === "number" && status >= 500) return "upstream_error";
   return "request_error";

@@ -170,10 +170,12 @@ test("declared limits, fallback classification, and exhaustion diagnostics remai
   const summary: CooldownSummary[] = [
     {
       provider: "claude",
+      model: "sonnet",
       state: "transient",
       failureClass: "capacity",
       resetsAt: null,
-      retryAfterMs: 2000
+      retryAfterMs: 2000,
+      detail: null
     }
   ];
   const body = exhaustionBody({

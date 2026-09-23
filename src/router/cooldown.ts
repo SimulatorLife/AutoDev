@@ -12,6 +12,10 @@ export interface CooldownEntry {
   failureClass: string | null;
   resetsAt: string | null;
   since: number;
+  /** Set when the cooldown covers one model rather than the whole provider. */
+  model?: string;
+  /** The provider's own explanation, for failures only the user can fix. */
+  detail?: string | null;
 }
 
 export interface CooldownResult {
@@ -28,14 +32,19 @@ export interface CooldownOptions {
   failureClass?: string | null;
   resetsAt?: string | null;
   structured?: boolean;
+  /** The model that failed; an `invalid_model` failure cools down only it. */
+  model?: string | null;
+  detail?: string | null;
 }
 
 export interface CooldownSummary {
   provider: string;
+  model: string | null;
   state: "disabled" | "available" | CooldownKind;
   failureClass: string | null;
   resetsAt: string | null;
   retryAfterMs: number;
+  detail: string | null;
 }
 
 export interface PersistedCooldownEntry {
@@ -105,6 +114,7 @@ export const COOLDOWN_CONFIG: Readonly<CooldownConfig> = Object.freeze({
 
 export class ProviderCooldowns {
   private readonly cooldowns = new Map<string, CooldownEntry>();
+  private readonly modelCooldowns = new Map<string, CooldownEntry>();
   private readonly failureStreaks = new Map<string, number>();
   private readonly probeStreaks = new Map<string, number>();
   private runtime: CooldownRuntime;
@@ -123,16 +133,29 @@ export class ProviderCooldowns {
     this.runtime = runtime;
   }
 
-  get(provider: string, now = Date.now()): CooldownEntry | null {
-    const entry = this.cooldowns.get(provider);
-    if (!entry) return null;
-    if (entry.until > now) return entry;
-    this.cooldowns.delete(provider);
-    return null;
+  /**
+   * The cooldown blocking a provider, or one of its models when `model` is
+   * given: a model the provider rejected leaves its other models usable.
+   */
+  get(
+    provider: string,
+    now = Date.now(),
+    model: string | null = null
+  ): CooldownEntry | null {
+    return (
+      liveEntry(this.cooldowns, provider, now) ??
+      (model === null
+        ? null
+        : liveEntry(this.modelCooldowns, modelKey(provider, model), now))
+    );
   }
 
-  isCooling(provider: string, now = Date.now()): boolean {
-    return this.get(provider, now) !== null;
+  isCooling(
+    provider: string,
+    now = Date.now(),
+    model: string | null = null
+  ): boolean {
+    return this.get(provider, now, model) !== null;
   }
 
   failureStreak(provider: string): number {
@@ -145,12 +168,16 @@ export class ProviderCooldowns {
 
   clear(provider: string): void {
     this.cooldowns.delete(provider);
+    for (const key of this.modelCooldowns.keys())
+      if (key.startsWith(modelKey(provider, "")))
+        this.modelCooldowns.delete(key);
     this.failureStreaks.delete(provider);
     this.probeStreaks.delete(provider);
   }
 
   clearAll(): void {
     this.cooldowns.clear();
+    this.modelCooldowns.clear();
     this.failureStreaks.clear();
     this.probeStreaks.clear();
   }
@@ -161,9 +188,31 @@ export class ProviderCooldowns {
       now = Date.now(),
       failureClass = null,
       resetsAt = null,
-      structured = false
+      structured = false,
+      model = null,
+      detail = null
     }: CooldownOptions = {}
   ): CooldownResult {
+    if (failureClass === "invalid_model" && model !== null) {
+      const until = now + this.config.providerCooldownMs;
+      this.modelCooldowns.set(modelKey(provider, model), {
+        until,
+        kind: "config",
+        failureClass,
+        resetsAt: null,
+        since: now,
+        model,
+        detail
+      });
+      return {
+        provider,
+        kind: "config",
+        streak: 0,
+        durationMs: until - now,
+        cooldownUntil: until,
+        resetsAt: null
+      };
+    }
     const record = (
       kind: CooldownKind,
       durationMs: number,
@@ -253,35 +302,41 @@ export class ProviderCooldowns {
   }
 
   summary(
-    providers: readonly string[],
+    candidates: readonly { provider: string; model: string }[],
     now = Date.now(),
     role: ProviderRole = "subagent"
   ): CooldownSummary[] {
-    return Array.from(new Set(providers), (provider) => {
-      if (
-        this.runtime.isProviderEnabled &&
-        !this.runtime.isProviderEnabled(provider, role)
-      ) {
+    const seen = new Set<string>();
+    return candidates
+      .filter(({ provider }) => !seen.has(provider) && seen.add(provider))
+      .map(({ provider, model }) => {
+        if (
+          this.runtime.isProviderEnabled &&
+          !this.runtime.isProviderEnabled(provider, role)
+        ) {
+          return {
+            provider,
+            model,
+            state: "disabled",
+            failureClass: "provider_disabled",
+            resetsAt: null,
+            retryAfterMs: 0,
+            detail: null
+          };
+        }
+        const entry = this.get(provider, now, model);
         return {
           provider,
-          state: "disabled",
-          failureClass: "provider_disabled",
-          resetsAt: null,
-          retryAfterMs: 0
+          model,
+          state: entry ? entry.kind : "available",
+          failureClass: entry
+            ? entry.failureClass
+            : (this.runtime.lastFailureClass?.(provider) ?? null),
+          resetsAt: entry ? entry.resetsAt : null,
+          retryAfterMs: entry ? entry.until - now : 0,
+          detail: entry?.detail ?? null
         };
-      }
-      const entry = this.cooldowns.get(provider);
-      const cooling = entry !== undefined && entry.until > now;
-      return {
-        provider,
-        state: cooling ? entry.kind : "available",
-        failureClass: cooling
-          ? entry.failureClass
-          : (this.runtime.lastFailureClass?.(provider) ?? null),
-        resetsAt: cooling ? entry.resetsAt : null,
-        retryAfterMs: cooling ? entry.until - now : 0
-      };
-    });
+      });
   }
 
   persistedHardEntries(): PersistedCooldownEntry[] {
@@ -315,6 +370,22 @@ export class ProviderCooldowns {
       });
     }
   }
+}
+
+function modelKey(provider: string, model: string): string {
+  return `${provider}\u0000${model}`;
+}
+
+function liveEntry(
+  entries: Map<string, CooldownEntry>,
+  key: string,
+  now: number
+): CooldownEntry | null {
+  const entry = entries.get(key);
+  if (!entry) return null;
+  if (entry.until > now) return entry;
+  entries.delete(key);
+  return null;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

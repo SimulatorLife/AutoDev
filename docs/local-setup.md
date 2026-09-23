@@ -411,6 +411,13 @@ superuser/raw-disk commands, and catastrophic root/home recursive deletion.
   `ExitTimeOut` large enough for the router's drain timeout before launchd
   SIGKILLs it. Inspect the other provider plists independently; they may have
   different lifecycle and log-path contracts.
+- Every service LaunchAgent sets `AUTODEV_NODE_BIN` to the Node the installer
+  resolved: its own Node when that is native to the machine, otherwise the
+  newest native nvm or Homebrew Node. launchd's `PATH` alone finds
+  `/usr/local/bin/node` first, which on many Apple Silicon Macs is an Intel
+  build that Rosetta translates on every cold start. The launchers fall back to
+  `PATH` only when that binary no longer exists; reinstall after changing Node
+  installations. `bash scripts/install.sh --check` reports the drift.
 - Keep OAuth/PAT/API credentials outside the repository. Background services
   load provider credentials from `~/.codex/.env`; for MiniMax this means a
   private `MINIMAX_API_KEY=...` entry with restrictive file permissions.

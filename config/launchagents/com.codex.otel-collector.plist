@@ -37,6 +37,10 @@
   <dict>
     <key>PATH</key>
     <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    <!-- The installer's native Node: PATH alone finds /usr/local/bin/node
+         first, an Intel build on many Apple Silicon Macs (run under Rosetta). -->
+    <key>AUTODEV_NODE_BIN</key>
+    <string>__AUTODEV_NODE_BIN__</string>
     <key>CODEX_HOME</key>
     <string>__CODEX_HOME__</string>
     <key>AUTODEV_OTEL_CONFIG</key>

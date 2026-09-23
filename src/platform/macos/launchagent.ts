@@ -16,13 +16,16 @@ export interface LaunchAgentValues {
   readonly codexHome: string;
   readonly home: string;
   readonly repositoryRoot: string;
+  /** The Node binary services run on; see resolveServiceNode. */
+  readonly nodeBin: string;
 }
 
 function renderedTemplate(template: string, values: LaunchAgentValues): string {
   return template
     .replaceAll("__CODEX_HOME__", () => values.codexHome)
     .replaceAll("__HOME__", () => values.home)
-    .replaceAll("__AUTODEV_REPO_ROOT__", () => values.repositoryRoot);
+    .replaceAll("__AUTODEV_REPO_ROOT__", () => values.repositoryRoot)
+    .replaceAll("__AUTODEV_NODE_BIN__", () => values.nodeBin);
 }
 
 export function renderLaunchAgent(
@@ -67,21 +70,20 @@ export function launchAgentMatches(
   }
 }
 
+const USAGE =
+  "usage: launchagent render|check <template> <target> <codex-home> <home> <repository-root> <node-bin>";
+
 function parseLaunchAgentValues(argv: string[]): LaunchAgentValues {
-  const [codexHome, home, repositoryRoot] = argv;
-  if (!codexHome || !home || !repositoryRoot)
-    throw new Error(
-      "usage: launchagent render|check <template> <target> <codex-home> <home> <repository-root>"
-    );
-  return { codexHome, home, repositoryRoot };
+  const [codexHome, home, repositoryRoot, nodeBin] = argv;
+  if (!codexHome || !home || !repositoryRoot || !nodeBin)
+    throw new Error(USAGE);
+  return { codexHome, home, repositoryRoot, nodeBin };
 }
 
 function cli(argv: string[]): number {
   const [command, template, target, ...rest] = argv;
   if ((command !== "render" && command !== "check") || !template || !target)
-    throw new Error(
-      "usage: launchagent render|check <template> <target> <codex-home> <home> <repository-root>"
-    );
+    throw new Error(USAGE);
   const replacement = parseLaunchAgentValues(rest);
   if (command === "render") renderLaunchAgent(template, target, replacement);
   else if (!launchAgentMatches(template, target, replacement)) return 1;

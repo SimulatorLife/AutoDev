@@ -2386,7 +2386,12 @@ bootstrap starts the service; there is no `kickstart -k`, which killed the
 fresh instance mid-startup and stalled each label for launchd's
 `ThrottleInterval`. It then checks all services in parallel: ready, and served
 by the launchd job's own process, with a crash-looping job reported at once
-alongside the tail of its log. A router or Collector that is not running fails
+alongside the tail of its log. Readiness is an in-process HTTP probe; reading a
+job's launchd state spawns `launchctl`, so an unready service's job is read
+only every eighth attempt. Measured during a real install, a read on every
+attempt stretched the services' own launches of Node and `otelcol` to 17s and
+pushed the Collector past the readiness window; throttled, the worst launch
+was under 7s and every service was ready in about 13s. A router or Collector that is not running fails
 the install; a provider bridge only warns. The direct ensure hooks run only
 when launchd is unavailable or refused a label, and the owner forwards the
 Collector configuration to them. The installer now invokes the
@@ -2395,11 +2400,17 @@ owned by the typed install coordinator.
 The Collector foreground and ensure slice is now typed in
 `src/platform/otel-collector.ts`. Exact pinned-version/config validation,
 listener duplicate protection, readiness, private state, and direct fallback
-are owned there; the `ensure-*` and `run-*` Collector scripts are dispatch
+are owned there (a foreground start checks the pinned version and leaves config
+validation to `otelcol --config` itself; `--check` runs `otelcol validate`); the `ensure-*` and `run-*` Collector scripts are dispatch
 shims. The pinned artifact downloader/provisioning slice is now typed in
 `src/platform/otel-provision.ts`: it validates the pinned manifest, selects the
 host asset, downloads and verifies its SHA-256, extracts the binary, and installs
-it with private permissions. `provision-autodev-otel-collector.sh` is now only a
+it with private permissions. The host asset follows the machine's architecture
+(`src/platform/host-arch.ts`), not the provisioning Node's: a Node running under
+Rosetta reports `x64` on Apple Silicon and once provisioned an Intel Collector
+whose translated cold start outlasted the installer's readiness window. An
+installed Collector built for another architecture is replaced, through a
+staged file and a rename so a running Collector keeps its own inode. `provision-autodev-otel-collector.sh` is now only a
 process-dispatch shim; installer-wide orchestration is owned by the typed
 install coordinator.
 

@@ -33,7 +33,7 @@ test("orchestrator-active-subagents: orchestrator remains in subagent_wait while
   try {
     const sessionKey = "orch-session-claude";
     const orchestratorProvider = "claude";
-    const orchestratorModel = "claude-opus-5.5.5";
+    const orchestratorModel = "claude-opus-5-5.5";
 
     // 1. Orchestrator turn 1 begins and registers orchestrator session
     noteOrchestratorSession(sessionKey, orchestratorProvider, {

@@ -1,4 +1,9 @@
-import { type ChildProcess,execFileSync, spawn, spawnSync } from "node:child_process";
+import {
+  type ChildProcess,
+  execFileSync,
+  spawn,
+  spawnSync
+} from "node:child_process";
 import {
   accessSync,
   chmodSync,
@@ -33,7 +38,6 @@ export interface CollectorOptions {
 
 const HTTP_STATUS_PATTERN = /^[1-5][0-9][0-9]$/u;
 const COLLECTOR_VERSION_OUTPUT_PATTERN = /v?\d+\.\d+\.\d+(?:-[A-Za-z0-9.-]+|)/u;
-
 
 const DIGIT_ONLY_PATTERN = /^\d+$/u;
 const PRERELEASE_PATTERN = /^[A-Za-z0-9.-]+$/u;
@@ -187,23 +191,25 @@ function resolveBinary(options: CollectorOptions): string {
   }
 }
 
-function validateBinary(
-  options: CollectorOptions,
-  binary: string,
-  version: string
-): void {
+function checkVersion(binary: string, version: string): void {
   const versionOutput = spawnSync(binary, ["--version"], {
     encoding: "utf8",
     stdio: ["ignore", "pipe", "pipe"]
   });
   if (versionOutput.status !== 0) fail("collector --version failed");
-  const raw = `${versionOutput.stdout ?? ""}${versionOutput.stderr ?? ""}`
-    .replaceAll("\r", "");
+  const raw =
+    `${versionOutput.stdout ?? ""}${versionOutput.stderr ?? ""}`.replaceAll(
+      "\r",
+      ""
+    );
   const versionMatch = COLLECTOR_VERSION_OUTPUT_PATTERN.exec(raw);
   const match = versionMatch?.[0] ?? "";
   const actual = match.startsWith("v") ? match : `v${match}`;
   if (actual !== version)
     fail(`collector version mismatch: expected ${version}`);
+}
+
+function validateConfig(options: CollectorOptions, binary: string): void {
   if (
     spawnSync(binary, ["validate", "--config", options.configFile], {
       stdio: "ignore"
@@ -228,13 +234,16 @@ export function runCollector(
     fail(
       `port ${options.host}:${options.port} is already in use by another process`
     );
-  validateBinary(options, binary, version);
+  checkVersion(binary, version);
   if (checkOnly) {
+    validateConfig(options, binary);
     writeLine(
       `ok Collector ${version} (${binary}) validates ${options.configFile}`
     );
     return 0;
   }
+  // `otelcol --config` rejects an invalid config itself, so a separate
+  // `validate` launch here only adds another start of this large binary.
   const result = spawnSync(binary, ["--config", options.configFile], {
     stdio: "inherit"
   });
@@ -300,7 +309,11 @@ export async function ensureCollector(
   writeFileSync(options.pidFile, `${child.pid ?? ""}\n`, { mode: 0o600 });
   try {
     const deadline = Date.now() + options.startTimeoutSeconds * 1000;
-    const readyBeforeDeadline = await pollCollectorReady(options, child, deadline);
+    const readyBeforeDeadline = await pollCollectorReady(
+      options,
+      child,
+      deadline
+    );
     if (!readyBeforeDeadline) {
       try {
         child.kill();

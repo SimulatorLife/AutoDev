@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import {
   chmodSync,
+  existsSync,
   mkdtempSync,
   readFileSync,
   rmSync,
@@ -76,7 +77,7 @@ test("Collector option resolution keeps repository and CODEX_HOME boundaries exp
   assert.equal(result.configFile, "/repo/config/otel/collector.yaml");
 });
 
-test("Collector run validates exact version/config before foreground execution", () =>
+test("Collector run checks the pinned version and leaves config validation to the Collector's own start", () =>
   withTempDir((directory) => {
     baseFiles(directory);
     const binary = fakeBinary(directory);
@@ -86,7 +87,20 @@ test("Collector run validates exact version/config before foreground execution",
       readFileSync(join(directory, "args"), "utf8").trim(),
       `--config\n${join(directory, "collector.yaml")}`
     );
-    assert.equal(readFileSync(join(directory, "validated"), "utf8"), "");
+    assert.equal(
+      existsSync(join(directory, "validated")),
+      false,
+      "otelcol --config validates on start; a separate validate launch is redundant"
+    );
+  }));
+
+test("Collector check still validates the config with the pinned binary", () =>
+  withTempDir((directory) => {
+    baseFiles(directory);
+    const binary = fakeBinary(directory);
+    assert.equal(runCollector(options(directory, binary), true), 0);
+    assert.equal(existsSync(join(directory, "validated")), true);
+    assert.equal(existsSync(join(directory, "args")), false);
   }));
 
 test("Collector run accepts v-prefixed version output", () =>

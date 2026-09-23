@@ -10,6 +10,7 @@ import {
   mkdtempSync,
   readdirSync,
   readFileSync,
+  renameSync,
   rmSync,
   statSync,
   writeFileSync
@@ -18,6 +19,7 @@ import { homedir, tmpdir } from "node:os";
 import path from "node:path";
 
 import { writeErrorLine, writeLine } from "../shared/output.ts";
+import { executableArch, hostArch, runsNatively } from "./host-arch.ts";
 
 const COLLECTOR_PINNED_VERSION_PATTERN = /^v[0-9]+\.[0-9]+\.[0-9]+$/u;
 const TAR_GZ_ARCHIVE_PATTERN = /^[^/]+\.tar\.gz$/u;
@@ -100,11 +102,8 @@ function platformKey(): string {
       : process.platform === "linux"
         ? "linux"
         : "";
-  const arch =
-    process.arch === "arm64" ? "arm64" : process.arch === "x64" ? "amd64" : "";
-  if (!os || !arch)
-    fail(`unsupported host platform: ${process.platform}/${process.arch}`);
-  return `${os}/${arch}`;
+  if (!os) fail(`unsupported host platform: ${process.platform}`);
+  return `${os}/${hostArch()}`;
 }
 
 function walkFiles(directory: string): string[] {
@@ -125,7 +124,14 @@ export async function provisionCollector(
       fail(`AUTODEV_OTELCOL_BIN is not executable: ${options.explicitBinary}`);
     return 0;
   }
-  if (executable(options.target)) return 0;
+  if (executable(options.target)) {
+    // An Intel build on Apple Silicon runs under Rosetta, whose cold-start
+    // translation of this binary takes tens of seconds: replace it.
+    if (runsNatively(options.target)) return 0;
+    writeLine(
+      `replacing ${executableArch(options.target) ?? "unknown-architecture"} Collector at ${options.target} with the native ${hostArch()} build`
+    );
+  }
   if (!existsSync(options.versionFile))
     fail(`collector version file is missing: ${options.versionFile}`);
   const version = readFileSync(options.versionFile, "utf8").trim();
@@ -167,8 +173,16 @@ export async function provisionCollector(
     if (!binary)
       fail("Collector archive did not contain an executable otelcol");
     mkdirSync(path.dirname(options.target), { recursive: true, mode: 0o700 });
-    copyFileSync(binary, options.target);
-    chmodSync(options.target, 0o700);
+    // A running Collector may still be executing the old file: give the new
+    // binary its own inode rather than rewriting the one in use.
+    const staged = `${options.target}.provisioning-${process.pid}`;
+    try {
+      copyFileSync(binary, staged);
+      chmodSync(staged, 0o700);
+      renameSync(staged, options.target);
+    } finally {
+      rmSync(staged, { force: true });
+    }
     writeLine(`provisioned ${version} Collector at ${options.target}`);
     return 0;
   } finally {

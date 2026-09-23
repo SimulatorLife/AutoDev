@@ -38,7 +38,7 @@
   },
   "routes": {
     "claude": {
-      "pattern": "^(sonnet|opus|haiku|claude-[A-Za-z0-9][A-Za-z0-9.-]*)$",
+      "pattern": "^(sonnet|opus|haiku|claude-[a-z0-9-]*[a-z0-9])$",
       "baseUrl": "http://127.0.0.1:4000/v1",
       "healthUrl": "http://127.0.0.1:4000/health/liveliness",
       "envKey": "LITELLM_API_KEY"
@@ -77,8 +77,8 @@
     },
     "claude": {
       "models": {
-        "smart": "claude-opus-5.5",
-        "orchestrator": "claude-opus-5.5",
+        "smart": "claude-opus-5-5",
+        "orchestrator": "claude-opus-5-5",
         "default": "sonnet"
       }
     },
