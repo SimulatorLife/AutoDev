@@ -1,8 +1,13 @@
 ## Shared codebase navigation
 
-Use CocoIndex (`ccc`, `cocoindex-code`) for broad semantic discovery: find relevant code, similar implementations, related patterns, and conceptually connected areas
+Use CodeGraphContext (CGC) as the default structural map before exploratory file reads, broad search, or repeated LSP navigation. Ask CGC for the relevant modules, symbols, callers/callees, imports, inheritance, dependency paths, and likely change impact instead of reconstructing those relationships manually.
 
-Use LSP (`lsp-mcp-server`, `lsp`) for precise symbol-aware navigation: definitions, references, types, symbols, diagnostics, and call relationships
+For the active workspace, use `list_indexed_repositories` to check whether its graph is indexed. If the current repository is missing, call `add_code_to_graph` once and poll `check_job_status` until the indexing job completes. Reuse the persistent graph on later tasks and refresh only when it is demonstrably stale. Use `analyze_code_relationships` for callers, callees, importers, hierarchy, and dependency paths; use `find_code` to locate candidate nodes. Query only to answer the task's concrete structural questions.
 
-When the role contract declares these MCP capabilities, use the typed MCP tools
-directly. If the required MCP tool is unavailable, report a capability failure.
+Use CocoIndex (ccc, cocoindex-code) only for semantic or conceptual discovery when the relevant implementation, identifier, or location is still unknown. Use LSP (lsp-mcp-server, lsp) only when exact language/compiler semantics are needed, such as precise definitions, references, inferred types, diagnostics, or compiler-aware navigation. Read source files directly only after the relevant implementation has been identified.
+
+Repomix is optional high-level briefing only when an existing briefing is supplied or an explicit generation workflow is available; AutoDev does not expose a Repomix tool and it is not part of default code search. A briefing should include repository instructions, skills, architecture/docs, TODOs, manifests/configuration, and directory structure, omitting source code already represented by CGC. Do not use it as another source-code graph or search system.
+
+Do not query multiple systems for the same fact merely to increase confidence. If CGC is unavailable or the graph cannot be queried, state that limitation and use CocoIndex or LSP only for their focused fallback purpose; do not silently rebuild the structural map through broad manual exploration.
+
+When the role contract declares these MCP capabilities, use their typed tools directly. If a required tool is unavailable, report the capability failure.

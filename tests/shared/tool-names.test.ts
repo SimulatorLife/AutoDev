@@ -27,6 +27,7 @@ import {
   isCanonicalToolName,
   MCP_SERVER_LSP,
   MCP_SERVER_COCOINDEX,
+  MCP_SERVER_CODEGRAPHCONTEXT,
   MCP_SERVER_PLAYWRIGHT,
   MCP_SERVER_OPENAI_DEVELOPER_DOCS,
   MCP_SERVER_CONTEXT7,
@@ -51,6 +52,7 @@ test("MCP server names and the bridge-injected spawn shim are pinned", () => {
   assert.equal(MCP_NAMESPACE, "mcp");
   assert.equal(MCP_SERVER_LSP, "lsp");
   assert.equal(MCP_SERVER_COCOINDEX, "cocoindex-code");
+  assert.equal(MCP_SERVER_CODEGRAPHCONTEXT, "codegraphcontext");
   assert.equal(MCP_SERVER_PLAYWRIGHT, "playwright");
   assert.equal(MCP_SERVER_OPENAI_DEVELOPER_DOCS, "openaiDeveloperDocs");
   assert.equal(MCP_SERVER_CONTEXT7, "context7");

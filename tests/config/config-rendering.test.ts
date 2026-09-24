@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { readFileSync } from "node:fs";
+import { mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -115,7 +115,9 @@ test("orchestrator codex_app MCP is scoped to a single tool", () => {
   // Read the live contract that install.sh materialises. The install flow
   // re-renders this from `agents/roles/*.toml` against the rulesync
   // projection, so a render failure in install --check would surface here.
-  const contract = JSON.parse(readFileSync("config/execution-contract.json", "utf8")) as {
+  const contract = JSON.parse(
+    readFileSync("config/execution-contract.json", "utf8")
+  ) as {
     roles: Record<
       string,
       { mcp?: string[]; mcpTools?: Record<string, string[]> }
@@ -125,12 +127,22 @@ test("orchestrator codex_app MCP is scoped to a single tool", () => {
   assert.ok(orchestrator, "orchestrator role must be declared");
   assert.deepEqual(
     orchestrator.mcp,
-    ["lsp", "cocoindex-code", "autodev_spawn", "codex_app"],
+    ["lsp", "cocoindex-code", "codegraphcontext", "autodev_spawn", "codex_app"],
     "orchestrator MCPs must include codex_app in deterministic order"
   );
   assert.deepEqual(
     orchestrator.mcpTools,
-    { codex_app: ["request_user_input"] },
+    {
+      codegraphcontext: [
+        "add_code_to_graph",
+        "check_job_status",
+        "list_indexed_repositories",
+        "find_code",
+        "analyze_code_relationships",
+        "get_repository_stats"
+      ],
+      codex_app: ["request_user_input"]
+    },
     "codex_app must expose only request_user_input; thread tools belong to autodev_spawn"
   );
 
@@ -147,8 +159,6 @@ test("orchestrator codex_app MCP is scoped to a single tool", () => {
     );
   }
 });
-
-
 
 test("context7 is enabled on docs-researcher and explorer only", () => {
   // Freeze the per-role context7 boundary. docs-researcher and explorer are
@@ -188,18 +198,19 @@ test("context7 is enabled on docs-researcher and explorer only", () => {
   }
 
   // Per-role MCP ordering must respect MCP_ORDER (lsp=0, cocoindex-code=1,
-  // playwright=2, openaiDeveloperDocs=3, context7=4, autodev_spawn=5,
-  // codex_app=6): within each role's mcp list, known servers appear in
-  // ascending MCP_ORDER index; unknown keys sort lexicographically after
+  // codegraphcontext=2, playwright=3, openaiDeveloperDocs=4, context7=5,
+  // autodev_spawn=6, codex_app=7): within each role's mcp list, known servers
+  // appear in ascending MCP_ORDER index; unknown keys sort lexicographically after
   // them. This protects against accidental reorderings.
   const ORDER: Record<string, number> = {
     lsp: 0,
     "cocoindex-code": 1,
-    playwright: 2,
-    openaiDeveloperDocs: 3,
-    context7: 4,
-    autodev_spawn: 5,
-    codex_app: 6
+    codegraphcontext: 2,
+    playwright: 3,
+    openaiDeveloperDocs: 4,
+    context7: 5,
+    autodev_spawn: 6,
+    codex_app: 7
   };
   for (const [roleName, roleCfg] of Object.entries(contract.roles)) {
     const mcp = roleCfg.mcp ?? [];
@@ -212,5 +223,59 @@ test("context7 is enabled on docs-researcher and explorer only", () => {
       );
       last = index;
     }
+  }
+});
+
+test("codegraphcontext is enabled on code-capable roles with scoped six-tool allowlist and disabled on non-code roles", () => {
+  const contract = JSON.parse(
+    readFileSync("config/execution-contract.json", "utf8")
+  ) as {
+    roles: Record<
+      string,
+      { mcp?: string[]; mcpTools?: Record<string, string[]> }
+    >;
+  };
+  const expectedTools = [
+    "add_code_to_graph",
+    "check_job_status",
+    "list_indexed_repositories",
+    "find_code",
+    "analyze_code_relationships",
+    "get_repository_stats"
+  ];
+  const codeRoles = [
+    "default",
+    "explorer",
+    "smart",
+    "validator",
+    "worker",
+    "orchestrator"
+  ];
+  for (const roleName of codeRoles) {
+    const roleCfg = contract.roles[roleName];
+    assert.ok(roleCfg, `${roleName} role must be declared`);
+    assert.ok(
+      (roleCfg.mcp ?? []).includes("codegraphcontext"),
+      `${roleName} must enable codegraphcontext`
+    );
+    assert.deepEqual(
+      roleCfg.mcpTools?.codegraphcontext,
+      expectedTools,
+      `${roleName} must have exactly the scoped six tools for codegraphcontext`
+    );
+  }
+
+  const nonCodeRoles = ["docs-researcher", "browser-tester"];
+  for (const roleName of nonCodeRoles) {
+    const roleCfg = contract.roles[roleName];
+    assert.ok(roleCfg, `${roleName} role must be declared`);
+    assert.ok(
+      !(roleCfg.mcp ?? []).includes("codegraphcontext"),
+      `${roleName} must not enable codegraphcontext`
+    );
+    assert.ok(
+      !(roleCfg.mcpTools ?? {}).codegraphcontext,
+      `${roleName} must not list codegraphcontext in mcpTools`
+    );
   }
 });

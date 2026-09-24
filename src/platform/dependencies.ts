@@ -11,9 +11,12 @@ import { writeErrorLine, writeLine } from "../shared/output.ts";
 
 export interface DependencyOptions {
   readonly cocoindexPackage: string;
+  readonly codegraphcontextPackage: string;
   readonly pythonLanguageServerPackage: string;
   readonly skipCocoIndex: boolean;
+  readonly skipCodeGraphContext: boolean;
   readonly skipLanguageServer: boolean;
+  readonly codegraphcontextBin?: string | undefined;
   readonly skipPipx: boolean;
 }
 
@@ -30,6 +33,7 @@ export interface DependencyDeps {
 }
 
 const DEFAULT_COCOINDEX_PACKAGE = "cocoindex-code[full]==0.2.41";
+const DEFAULT_CODEGRAPHCONTEXT_PACKAGE = "codegraphcontext==0.6.13";
 const DEFAULT_PYTHON_LANGUAGE_SERVER_PACKAGE = "python-lsp-server==1.15.0";
 
 function defaultDeps(): DependencyDeps {
@@ -78,9 +82,12 @@ export function resolveDependencyOptions(
 ): DependencyOptions {
   return {
     cocoindexPackage: DEFAULT_COCOINDEX_PACKAGE,
+    codegraphcontextPackage: DEFAULT_CODEGRAPHCONTEXT_PACKAGE,
     pythonLanguageServerPackage: DEFAULT_PYTHON_LANGUAGE_SERVER_PACKAGE,
     skipCocoIndex: env.AUTODEV_SKIP_COCOINDEX_INSTALL === "1",
+    skipCodeGraphContext: env.AUTODEV_SKIP_CODEGRAPHCONTEXT_INSTALL === "1",
     skipLanguageServer: env.AUTODEV_SKIP_LSP_INSTALL === "1",
+    codegraphcontextBin: env.AUTODEV_CODEGRAPHCONTEXT_BIN,
     skipPipx: env.AUTODEV_SKIP_PIPX_INSTALL === "1"
   };
 }
@@ -155,8 +162,11 @@ function nativeBuildEnvironment(deps: DependencyDeps): NodeJS.ProcessEnv {
     deps.platform === "darwin" &&
     deps.fileExists("/usr/bin/clang")
   ) {
-    const version = deps.capture("/usr/bin/clang", ["--version"]) ?? "";
-    if (!version.includes("Apple clang")) {
+    const clangOnPath = deps.commandPath("clang");
+    const clangOnPathVersion = clangOnPath
+      ? (deps.capture(clangOnPath, ["--version"]) ?? "")
+      : "";
+    if (!clangOnPathVersion.includes("Apple clang")) {
       writeErrorLine(
         "using /usr/bin/clang for native builds (the clang on PATH is not Apple clang)"
       );
@@ -189,6 +199,42 @@ export function installCocoIndex(
   return deps.run(
     pipx,
     ["install", options.cocoindexPackage],
+    nativeBuildEnvironment(deps)
+  );
+}
+
+export function installCodeGraphContext(
+  options = resolveDependencyOptions(),
+  deps = defaultDeps()
+): number {
+  if (options.skipCodeGraphContext) {
+    writeErrorLine(
+      "skipping CodeGraphContext installation (AUTODEV_SKIP_CODEGRAPHCONTEXT_INSTALL=1)"
+    );
+    return 0;
+  }
+  const configured = options.codegraphcontextBin;
+  if (configured) {
+    if (deps.fileExists(configured)) {
+      writeErrorLine(`ok CodeGraphContext executable (${configured})`);
+      return 0;
+    }
+    fail(
+      `CodeGraphContext executable is missing or not executable at AUTODEV_CODEGRAPHCONTEXT_BIN (${configured})`
+    );
+  }
+  const existing = deps.commandPath("codegraphcontext");
+  if (existing) {
+    writeErrorLine(`ok CodeGraphContext executable (${existing})`);
+    return 0;
+  }
+  const pipx = ensurePipx(options, deps);
+  writeErrorLine(
+    `installing CodeGraphContext with pipx (${options.codegraphcontextPackage})`
+  );
+  return deps.run(
+    pipx,
+    ["install", options.codegraphcontextPackage],
     nativeBuildEnvironment(deps)
   );
 }
@@ -236,6 +282,38 @@ export function checkCocoIndex(
   return 1;
 }
 
+export function checkCodeGraphContext(
+  options = resolveDependencyOptions(),
+  deps = defaultDeps()
+): number {
+  if (options.skipCodeGraphContext) {
+    writeLine(
+      "skipping CodeGraphContext executable check (AUTODEV_SKIP_CODEGRAPHCONTEXT_INSTALL=1)"
+    );
+    return 0;
+  }
+  const configured = options.codegraphcontextBin;
+  if (configured) {
+    if (deps.fileExists(configured)) {
+      writeLine(`ok CodeGraphContext executable (${configured})`);
+      return 0;
+    }
+    writeLine(
+      `missing CodeGraphContext executable at AUTODEV_CODEGRAPHCONTEXT_BIN (${configured})`
+    );
+    return 1;
+  }
+  const existing = deps.commandPath("codegraphcontext");
+  if (existing) {
+    writeLine(`ok CodeGraphContext executable (${existing})`);
+    return 0;
+  }
+  writeLine(
+    "missing CodeGraphContext executable codegraphcontext (run the installer without AUTODEV_SKIP_CODEGRAPHCONTEXT_INSTALL)"
+  );
+  return 1;
+}
+
 export function checkPythonLanguageServer(
   options = resolveDependencyOptions(),
   deps = defaultDeps()
@@ -261,14 +339,18 @@ function cli(argv: string[]): number {
   const options = resolveDependencyOptions();
   if (argv[0] === "install-cocoindex" && argv.length === 1)
     return installCocoIndex(options);
+  if (argv[0] === "install-codegraphcontext" && argv.length === 1)
+    return installCodeGraphContext(options);
   if (argv[0] === "install-pylsp" && argv.length === 1)
     return installPythonLanguageServer(options);
   if (argv[0] === "check-cocoindex" && argv.length === 1)
     return checkCocoIndex(options);
+  if (argv[0] === "check-codegraphcontext" && argv.length === 1)
+    return checkCodeGraphContext(options);
   if (argv[0] === "check-pylsp" && argv.length === 1)
     return checkPythonLanguageServer(options);
   throw new Error(
-    "usage: dependencies install-cocoindex|install-pylsp|check-cocoindex|check-pylsp"
+    "usage: dependencies install-cocoindex|install-codegraphcontext|install-pylsp|check-cocoindex|check-codegraphcontext|check-pylsp"
   );
 }
 

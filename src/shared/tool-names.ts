@@ -82,6 +82,7 @@ export function mcpToolName(server: string, tool: string): string {
 
 export const MCP_SERVER_LSP = "lsp" as const;
 export const MCP_SERVER_COCOINDEX = "cocoindex-code" as const;
+export const MCP_SERVER_CODEGRAPHCONTEXT = "codegraphcontext" as const;
 export const MCP_SERVER_PLAYWRIGHT = "playwright" as const;
 export const MCP_SERVER_OPENAI_DEVELOPER_DOCS = "openaiDeveloperDocs" as const;
 export const MCP_SERVER_CONTEXT7 = "context7" as const;

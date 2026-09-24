@@ -144,12 +144,13 @@ test("source declares each launch definition consistently", () => {
   );
   assert.deepEqual(Object.keys(shared).sort(), [
     "cocoindex-code",
+    "codegraphcontext",
     "context7",
     "lsp",
     "openaiDeveloperDocs"
   ]);
-  assert.equal(shared.context7.url, "https://mcp.context7.com/mcp");
-  assert.equal(shared.context7.bearer_token_env_var, "CONTEXT7_API_KEY");
+  assert.equal(shared.context7?.url, "https://mcp.context7.com/mcp");
+  assert.equal(shared.context7?.bearer_token_env_var, "CONTEXT7_API_KEY");
   for (const target of [
     "codexcli",
     "claudecode",
@@ -175,6 +176,9 @@ test("source declares each launch definition consistently", () => {
           String(server.args[1]).endsWith('/src/mcp/spawn-shim.ts"'),
           true
         );
+      } else if (name === "codex_app") {
+        assert.ok(typeof server.command === "string");
+        assert.ok(Array.isArray(server.args));
       } else if (Object.hasOwn(server, "command")) {
         assert.equal(server.command, "bash");
         assert.deepEqual(server.args, ["-lc", `${launchCommand}${name}`]);
@@ -214,7 +218,9 @@ test("Codex projection matches the Codex declaration without mutating the portab
       "args",
       "url",
       "bearer_token_env_var",
-      "default_tools_approval_mode"
+      "default_tools_approval_mode",
+      "cwd",
+      "enabled_tools"
     ])
       if (Object.hasOwn(server, key)) projected[key] = server[key];
     if (server.disabled) projected.enabled = false;

@@ -1,6 +1,6 @@
 ---
 name: lsp-mcp-server
-description: Use whenever code navigation, analysis, refactoring, or diagnostics are needed on a project that has a Language Server Protocol implementation. Covers all 29 lsp_* MCP tools exposed by lsp-mcp-server (named mcp__lsp__lsp_* in agent runtimes) (TypeScript, Python, Rust, Go, C/C++, Ruby, PHP, Elixir, Kotlin, Java, and any user-configured language). Use it instead of grep/find/Read for ANY task that touches definitions, references, types, hover docs, completions, diagnostics, rename, code actions, call/type hierarchy, document/workspace symbols, document highlights, inlay hints, selection ranges, folding ranges, or batch file indexing.
+description: Use LSP when exact language/compiler semantics are needed after structural discovery: definitions, references, inferred types, diagnostics, rename, refactoring, and precise navigation. Do not use LSP to rebuild broad code relationships that CodeGraphContext already maps.
 targets: ["copilot"]
 ---
 
@@ -10,7 +10,7 @@ This MCP server exposes a Language Server (LSP) to you as ~30 tools. LSP servers
 
 ## Hard rules
 
-1. **Prefer LSP tools over text search for anything code-shaped.** Function/class/variable definitions, usages, types, imports, errors — always LSP, never `grep`/`Glob`/`Read`-and-scan.
+1. **Use LSP for exact language/compiler semantics after structural discovery.** Consult the shared codebase-navigation workflow first; use LSP for precise definitions, references, inferred types, diagnostics, and compiler-aware navigation. Do not use LSP to reconstruct broad call/import/dependency relationships already represented by CodeGraphContext.
 2. **Plain text search is still right** for strings, comments, config files, docs, log lines, and matching across non-code files.
 3. **All file paths must be absolute.** Relative paths are rejected by Zod validation.
 4. **All line / column numbers are 1-indexed** (what an editor shows). Internal conversion to LSP 0-indexed happens for you.
@@ -21,7 +21,7 @@ This MCP server exposes a Language Server (LSP) to you as ~30 tools. LSP servers
 ## Decision tree: pick the right tool
 
 ```
-I know a name but not where it lives           → lsp_find_symbol          (preferred)
+I have an identified symbol and need exact language facts → lsp_find_symbol (preferred)
                                                → lsp_workspace_symbols    (when you want many matches)
 
 I have a symbol at a position and want…
@@ -255,4 +255,4 @@ If a tool returns nothing, **before falling back to grep**, check:
 - Is the language server actually installed? (`lsp_server_status` will tell you.)
 - For workspace-wide queries: are you assuming files are opened that aren't?
 
-Only fall back to text search when the LSP genuinely cannot answer (e.g., searching docstrings, config files, or doing a regex over comments).
+Use text search for literal strings, comments, logs, and documentation. For unknown code concepts or implementation locations use CocoIndex; for structural code relationships use CodeGraphContext rather than repeating broad LSP calls.

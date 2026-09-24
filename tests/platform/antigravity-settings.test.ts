@@ -10,6 +10,7 @@ import {
   expectedPermissionGrants,
   missingAntigravityPermissions,
   normalizedReadRoots,
+  REQUIRED_MCP_PERMISSIONS,
   updateAntigravityPermissions,
   updateAntigravitySkills
 } from "../../src/platform/antigravity-settings.ts";
@@ -51,7 +52,13 @@ test("permission update preserves user grants, removes disabled Playwright grant
       path,
       JSON.stringify({
         permissions: {
-          allow: ["user-grant", "mcp(playwright)", "mcp(playwright/*)"]
+          allow: [
+            "user-grant",
+            "mcp(playwright)",
+            "mcp(playwright/*)",
+            "mcp(codegraphcontext/*)",
+            "mcp(codegraphcontext/delete_repository)"
+          ]
         },
         other: true
       })
@@ -75,6 +82,14 @@ test("permission update preserves user grants, removes disabled Playwright grant
         entry.startsWith("mcp(playwright")
       ),
       []
+    );
+    assert.deepEqual(
+      config.permissions.allow.filter((entry) =>
+        entry.startsWith("mcp(codegraphcontext/")
+      ),
+      REQUIRED_MCP_PERMISSIONS.filter((entry) =>
+        entry.startsWith("mcp(codegraphcontext/")
+      )
     );
     assert.equal(
       config.permissions.allow.filter(

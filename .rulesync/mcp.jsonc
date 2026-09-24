@@ -9,6 +9,10 @@
       "command": "bash",
       "args": ["-lc", "exec \"${CODEX_HOME:-$HOME/.codex}/hooks/run-autodev-mcp.sh\" cocoindex-code"]
     },
+    "codegraphcontext": {
+      "command": "bash",
+      "args": ["-lc", "exec \"${CODEX_HOME:-$HOME/.codex}/hooks/run-autodev-mcp.sh\" codegraphcontext"]
+    },
     "openaiDeveloperDocs": {
       "url": "https://developers.openai.com/mcp"
     },
@@ -27,6 +31,11 @@
       "cocoindex-code": {
         "command": "bash",
         "args": ["-lc", "exec \"${CODEX_HOME:-$HOME/.codex}/hooks/run-autodev-mcp.sh\" cocoindex-code"],
+        "default_tools_approval_mode": "approve"
+      },
+      "codegraphcontext": {
+        "command": "bash",
+        "args": ["-lc", "exec \"${CODEX_HOME:-$HOME/.codex}/hooks/run-autodev-mcp.sh\" codegraphcontext"],
         "default_tools_approval_mode": "approve"
       },
       "openaiDeveloperDocs": {
@@ -56,7 +65,8 @@
   },
   "copilotcli": {
     "mcpServers": {
-      "openaiDeveloperDocs": null
+      "openaiDeveloperDocs": null,
+      "codegraphcontext": null
     }
   },
   "antigravity-cli": {

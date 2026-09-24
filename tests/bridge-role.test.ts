@@ -67,6 +67,7 @@ test("the execution contract preserves role-specific capabilities across bridge 
   assert.equal(EXECUTION_CONTRACT.version, 1);
   assert.equal(roleContract("explorer").readOnly, true);
   assert.ok(roleContract("explorer").mcp.includes("lsp"));
+  assert.ok(roleContract("explorer").mcp.includes("codegraphcontext"));
   assert.ok(roleContract("browser-tester").mcp.includes("playwright"));
   assert.equal(roleContract("orchestrator").kind, "orchestrator");
   assert.deepEqual(roleContract("orchestrator").webResearch, {
@@ -89,6 +90,11 @@ test("the execution contract preserves role-specific capabilities across bridge 
   }
   assert.match(roleInstructions("explorer"), /Effective role contract/);
   assert.match(roleInstructions("explorer"), /read-only codebase explorer/i);
+  assert.doesNotMatch(
+    roleInstructions("docs-researcher"),
+    /CodeGraphContext \(CGC\)/
+  );
+  assert.match(roleInstructions("docs-researcher"), /do not call those tools/i);
 });
 
 test("provider adapters put the complete shared prompt in the actual CLI prompt", () => {
@@ -103,14 +109,21 @@ test("provider adapters put the complete shared prompt in the actual CLI prompt"
   assert.match(leaf, /You are a bounded leaf agent executing/);
   assert.match(
     leaf,
-    /Use CocoIndex \(`ccc`, `cocoindex-code`\)[\s\S]*Use LSP \(`lsp-mcp-server`, `lsp`\)/
+    /Use CodeGraphContext \(CGC\)[\s\S]*Use CocoIndex[\s\S]*Use LSP/
   );
+  assert.match(
+    leaf,
+    /list_indexed_repositories[\s\S]*add_code_to_graph[\s\S]*check_job_status/
+  );
+  assert.match(leaf, /Repomix is optional high-level briefing only/);
+  assert.match(leaf, /analyze_code_relationships.*find_code/);
+  assert.doesNotMatch(leaf, /Use CocoIndex for broad semantic discovery/);
   assert.doesNotMatch(leaf, /# Root orchestrator bootstrap/);
   assert.ok(orchestrator.startsWith(base));
   assert.match(orchestrator, /## Canonical orchestration skill/);
   assert.match(
     orchestrator,
-    /Use CocoIndex \(`ccc`, `cocoindex-code`\)[\s\S]*Use LSP \(`lsp-mcp-server`, `lsp`\)/
+    /Use CodeGraphContext \(CGC\)[\s\S]*Use CocoIndex[\s\S]*Use LSP/
   );
   assert.doesNotMatch(orchestrator, /You are a bounded leaf agent executing/);
   assert.equal(promptFromInput("leaf task", leaf), `${leaf}\n\nleaf task`);
@@ -385,9 +398,8 @@ test("web research policy and Playwright boundaries are enforced in role prompts
 });
 
 test("resolveSandboxModeFromHeaders reads the sandbox header case-insensitively", async () => {
-  const { resolveSandboxModeFromHeaders } = await import(
-    "../src/agents/bridge-role.ts"
-  );
+  const { resolveSandboxModeFromHeaders } =
+    await import("../src/agents/bridge-role.ts");
   assert.equal(
     resolveSandboxModeFromHeaders({
       "x-autodev-sandbox-mode": "read-only"
@@ -412,9 +424,8 @@ test("resolveSandboxModeFromHeaders reads the sandbox header case-insensitively"
 });
 
 test("resolveSkillContextFromHeaders returns the propagated skill body", async () => {
-  const { resolveSkillContextFromHeaders } = await import(
-    "../src/agents/bridge-role.ts"
-  );
+  const { resolveSkillContextFromHeaders } =
+    await import("../src/agents/bridge-role.ts");
   const body = "<skill>...</skill>";
   assert.equal(
     resolveSkillContextFromHeaders({ "x-autodev-skill-context": body }),

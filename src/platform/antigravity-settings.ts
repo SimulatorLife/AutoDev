@@ -22,6 +22,13 @@ export type JsonObject = { [key: string]: JsonValue };
 export const REQUIRED_MCP_PERMISSIONS = [
   "mcp(cocoindex-code)",
   "mcp(cocoindex-code/search)",
+  "mcp(codegraphcontext)",
+  "mcp(codegraphcontext/add_code_to_graph)",
+  "mcp(codegraphcontext/check_job_status)",
+  "mcp(codegraphcontext/list_indexed_repositories)",
+  "mcp(codegraphcontext/find_code)",
+  "mcp(codegraphcontext/analyze_code_relationships)",
+  "mcp(codegraphcontext/get_repository_stats)",
   "mcp(lsp)",
   "mcp(lsp/*)",
   "read_url(*)",
@@ -139,13 +146,19 @@ export function updateAntigravityPermissions(
 ): void {
   const config = readObject(filePath);
   const permissions = asObject(config.permissions);
-  const allow = permissionList(config).filter(
-    (entry) =>
-      typeof entry !== "string" ||
-      !DISABLED_MCP_PERMISSIONS.includes(
+  const requiredMcpPermissions = new Set<string>(REQUIRED_MCP_PERMISSIONS);
+  const allow = permissionList(config).filter((entry) => {
+    if (typeof entry !== "string") return true;
+    if (
+      DISABLED_MCP_PERMISSIONS.includes(
         entry as (typeof DISABLED_MCP_PERMISSIONS)[number]
       )
-  );
+    )
+      return false;
+    if (entry.startsWith("mcp(codegraphcontext/"))
+      return requiredMcpPermissions.has(entry);
+    return true;
+  });
   for (const grant of expectedPermissionGrants(readRoots, home))
     if (!allow.includes(grant)) allow.push(grant);
   permissions.allow = allow;
@@ -235,7 +248,9 @@ function runPermissions(
 ): number {
   if (!check) {
     updateAntigravityPermissions(filePath, rest);
-    writeErrorLine("ok Antigravity CLI permissions granted (MCP and read_file)");
+    writeErrorLine(
+      "ok Antigravity CLI permissions granted (MCP and read_file)"
+    );
     return 0;
   }
   const missing = missingAntigravityPermissions(filePath, rest);
@@ -247,11 +262,7 @@ function runPermissions(
   return 1;
 }
 
-function runSkills(
-  filePath: string,
-  check: boolean,
-  rest: string[]
-): number {
+function runSkills(filePath: string, check: boolean, rest: string[]): number {
   const expected = rest.shift();
   if (!expected)
     throw new Error(

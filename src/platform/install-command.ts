@@ -8,6 +8,7 @@ import { ConfigError } from "../config/toml.ts";
 import { writeErrorLine } from "../shared/output.ts";
 import {
   installCocoIndex,
+  installCodeGraphContext,
   installPythonLanguageServer,
   resolveDependencyOptions
 } from "./dependencies.ts";
@@ -170,6 +171,8 @@ export function runInstallCommand(
       );
     if (!flags.materializeOnly) {
       if (installCocoIndex(resolveDependencyOptions(process.env)) !== 0)
+        return 1;
+      if (installCodeGraphContext(resolveDependencyOptions(process.env)) !== 0)
         return 1;
       if (
         installPythonLanguageServer(resolveDependencyOptions(process.env)) !== 0

@@ -7342,7 +7342,11 @@ test("native Codex requests record MCP exposure from the role contract without l
     "request-native"
   );
   assert.deepEqual(codexHeaders, {});
-  assert.deepEqual(mcpContractForRole("default"), ["lsp", "cocoindex-code"]);
+  assert.deepEqual(mcpContractForRole("default"), [
+    "lsp",
+    "cocoindex-code",
+    "codegraphcontext"
+  ]);
   resetOtelTelemetry();
   resetRouterTelemetry();
   recordNativeMcpExposure({
@@ -7355,6 +7359,7 @@ test("native Codex requests record MCP exposure from the role contract without l
   const ws = getRouterStatus().usage.byWorkspace["SimulatorLife/NativeCodex"];
   assert.deepEqual(ws.mcpExposed, [
     { server: "cocoindex-code", count: 1 },
+    { server: "codegraphcontext", count: 1 },
     { server: "lsp", count: 1 }
   ]);
   assert.deepEqual(ws.mcpUses, []);

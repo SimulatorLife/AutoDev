@@ -44,6 +44,9 @@ enabled_tools = [
 [mcp_servers."cocoindex-code"]
 enabled = false
 
+[mcp_servers.codegraphcontext]
+enabled = false
+
 [skills]
 include_instructions = false
 

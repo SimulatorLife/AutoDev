@@ -44,7 +44,7 @@ The TypeScript target state migration is fully completed across all twelve phase
 - Pinned Collector artifact manifest validation, platform/architecture selection, download, SHA-256 verification, archive extraction, and private installation live in `src/platform/otel-provision.ts`.
 - LaunchAgent placeholder rendering and drift validation live in `src/platform/macos/launchagent.ts`.
 - Collector mode persistence and router-auth token creation/publication live in `src/platform/install-state.ts`.
-- External dependency availability, pipx provisioning, pinned CocoIndex/Python-LSP installation, macOS SDK/compiler environment preparation, and executable checks live in `src/platform/dependencies.ts`.
+- External dependency availability, pipx provisioning, pinned CodeGraphContext/CocoIndex/Python-LSP installation, macOS SDK/compiler environment preparation, and executable checks live in `src/platform/dependencies.ts`.
 - The AutoDev request-capture recorder and its contract suite run as native TypeScript (`.rulesync/skills/autodev-codex-request-capture/scripts/responses-recorder.ts` and `tests/codex-request-capture-skill.test.ts`).
 - The AutoDev session-diagnostics trace script and its suite run as native TypeScript (`.rulesync/skills/autodev-session-diagnostics/scripts/session-trace.ts` and `tests/session-diagnostics-skill.test.ts`).
 - The install materialization sequence lives in `src/platform/install-materializer.ts`. Its `RUNTIME_MODULES` manifest is verified to be closed under relative imports by `tests/platform/runtime-manifest.test.ts`, so `$CODEX_HOME` never receives a module whose own imports were left behind.
@@ -218,6 +218,7 @@ autodev render agents
 autodev render contract
 autodev render skills
 
+autodev mcp codegraphcontext
 autodev mcp lsp
 autodev mcp cocoindex-code
 autodev mcp playwright

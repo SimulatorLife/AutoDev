@@ -48,9 +48,9 @@ rendered entry is therefore a complete server even when disabled, and a role
 naming a server `.rulesync/mcp.jsonc` does not declare fails to render. Codex App connectors are native app tools rather than role MCP
 servers and must not be represented as enabled-only role tables.
 
-`.rulesync/mcp.jsonc` declares the `lsp`, `cocoindex-code`, and `playwright` MCP
-servers through the installed `run-autodev-mcp.sh` launcher, `openaiDeveloperDocs`
-by URL, and `context7` by URL. `context7` is the hosted
+`.rulesync/mcp.jsonc` declares the `codegraphcontext`, `lsp`, `cocoindex-code`,
+and `playwright` MCP servers through the installed `run-autodev-mcp.sh` launcher,
+`openaiDeveloperDocs` by URL, and `context7` by URL. `context7` is the hosted
 `https://mcp.context7.com/mcp` server that resolves third-party library IDs and
 returns version-pinned docs and source snippets; the operator supplies the
 `CONTEXT7_API_KEY` env var and Codex's `bearer_token_env_var` plumbing forwards
@@ -102,26 +102,34 @@ roles including the orchestrator; rather than falsely claiming per-role isolatio
 registration and `browser-tester` routing are removed for Antigravity. For documentation
 and web research, Antigravity uses its native `search_web` and `read_url_content` tools.
 
-The installer installs CocoIndex Code once at the user level with
-`pipx install 'cocoindex-code[full]==0.2.41'` when `ccc` is not already available.
-`.rulesync/mcp.jsonc` declares its stdio MCP once, launching `ccc mcp` without a
-`cwd`, so each tool starts it from the active session workspace. CocoIndex Code
-keeps each repository's incremental index in that repository's `.cocoindex_code/`
-directory. The installer runs none of `codex mcp add`, `copilot mcp add`, or
-`agy mcp add`: Rulesync writes every user-level MCP file from that one
-declaration. Install `pipx` before running
-the installer if it is not already present. For a new repository, the installed
-`ccc` skill directs the agent to run `ccc index` from that repository root; later
-searches refresh changed files incrementally.
+The installer installs CodeGraphContext `0.6.13` and CocoIndex Code
+`0.2.41` with pipx at pinned versions. The `codegraphcontext` MCP starts
+through `run-autodev-mcp.sh` in the active workspace; its graph database
+persists between turns. For code work, agents check `list_indexed_repositories`;
+if the current repository is missing, they call `add_code_to_graph` once and
+poll `check_job_status` until indexing completes. CocoIndex Code stores its
+incremental semantic index in the workspace's `.cocoindex_code/` directory and
+is used only when the relevant concept or implementation location remains
+unknown after graph discovery. Its MCP search refreshes changed files; `ccc init`
+is needed only if the MCP reports that the repository is not initialized.
 
-CocoIndex Code is enabled for the root orchestrator and in the `default`,
-`explorer`, `worker`, `validator`, and `smart` agent profiles. It is explicitly disabled in `docs-researcher` and
-`browser-tester`, whose jobs are documentation/web research and UI testing
-rather than codebase semantic search. The user-level registration remains in
-place so the selected coding profiles can use the same MCP without duplicate
-installations. The shared codebase-navigation prompt piece tells every role
-with both capabilities to use CocoIndex before deeper inspection and LSP for
-semantic navigation; provider bridges wire the same MCP servers explicitly.
+The CodeGraphContext role allowlist exposes only `add_code_to_graph`,
+`check_job_status`, `list_indexed_repositories`, `find_code`,
+`analyze_code_relationships`, and `get_repository_stats`; raw Cypher, deletion,
+remote indexing, and directory-watching tools are excluded. The installer runs
+none of `codex mcp add`, `copilot mcp add`, or `agy mcp add`: Rulesync writes
+user-level MCP files from the canonical declaration. Install pipx before running
+the installer if it is not already present.
+
+Native role contracts enable CodeGraphContext, CocoIndex, and LSP for the
+root orchestrator and code-capable profiles, and omit them from
+`docs-researcher` and `browser-tester`. Codex-native and bridged providers
+enforce these role contracts. Antigravity is the exception: its MCP registry is
+global and has no per-role server filtering, so its six explicitly permitted
+CodeGraphContext tools are also visible to `docs-researcher` sessions despite
+that role's contract. The docs-researcher prompt forbids using local-code tools;
+this is prompt policy, not a capability boundary. Antigravity rejects
+`browser-tester` requests because Playwright cannot be isolated there.
 
 The installer exposes these AutoDev-owned shared skill directories in
 `$HOME/.agents/skills/` through symlinks. A Claude-served turn reads them through
@@ -133,19 +141,23 @@ turns by the delegation hook and provider bridges; leaf role TOMLs keep it
 disabled so child agents do not inherit parent orchestration policy.
 
 Antigravity has a separate global MCP registry and workspace customization
-discovery. The installer registers the pinned `cocoindex-code` and `lsp` MCP
-servers with `agy`; `.agents/skills.json` exposes the corresponding `ccc` and
-`lsp-mcp-server` skills from the canonical `.rulesync/skills/` source to
-Antigravity sessions in this repository. Without
-both registrations, Antigravity can receive the code-search wording but cannot
-actually call either semantic tool surface.
+discovery. The installer registers the pinned `codegraphcontext`,
+`cocoindex-code`, and `lsp` MCP servers with `agy`; `.agents/skills.json`
+continues to expose the `ccc` and `lsp-mcp-server` skills from the canonical
+`.rulesync/skills/` source. The shared code-search prompt directs code roles to
+CGC first. Antigravity permissions grant six approved CodeGraphContext tools
+individually and remove any wildcard or other CGC tool grants; the global
+registry makes those tools visible to every session.
 
 Headless subagents run noninteractively and cannot answer interactive permission
 prompts; if a required tool lacks pre-approval, the CLI auto-denies the call and
 halts the turn. The installer pre-approves required capabilities in
 `~/.gemini/antigravity-cli/settings.json` under `permissions.allow`:
-- Required MCP servers and subpaths: `cocoindex-code`, `lsp`,
-  `openaiDeveloperDocs`, `autodev_spawn`, and their tool wildcards (`mcp(<name>/*)`).
+- Required MCP servers: `codegraphcontext`, `cocoindex-code`, `lsp`,
+  `openaiDeveloperDocs`, and `autodev_spawn`. CodeGraphContext receives explicit
+  grants only for `add_code_to_graph`, `check_job_status`,
+  `list_indexed_repositories`, `find_code`, `analyze_code_relationships`, and
+  `get_repository_stats`; it is not covered by a tool wildcard.
 - Web research permissions: `read_url(*)` for headless document and URL inspection.
 - Exact and recursive read grants for shared configuration: `read_file(~/.agents)`
   plus `read_file(~/.agents/**)`, and the equivalent pair for `~/.codex`.

@@ -100,6 +100,13 @@ test("Antigravity permissions are dynamic and machine-local", () => {
     'join(home, ".codex")',
     "mcp(cocoindex-code)",
     "mcp(lsp)",
+    "mcp(codegraphcontext)",
+    "mcp(codegraphcontext/add_code_to_graph)",
+    "mcp(codegraphcontext/check_job_status)",
+    "mcp(codegraphcontext/list_indexed_repositories)",
+    "mcp(codegraphcontext/find_code)",
+    "mcp(codegraphcontext/analyze_code_relationships)",
+    "mcp(codegraphcontext/get_repository_stats)",
     "read_url(*)",
     "unsandboxed(pwd)",
     "unsandboxed(pnpm test)",
@@ -109,8 +116,9 @@ test("Antigravity permissions are dynamic and machine-local", () => {
     "permissions.deny = deny"
   ])
     assert.ok(source.includes(marker), marker);
+  assert.ok(!source.includes("mcp(codegraphcontext/*)"));
   assert.ok(source.includes('openSync(temporary, "wx"'));
-  assert.ok(source.includes("renameSync(temporary, path)"));
+  assert.ok(source.includes("renameSync(temporary, filePath)"));
 });
 
 test("Rulesync permissions and subagent generation remain deferred", () => {

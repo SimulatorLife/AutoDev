@@ -15,11 +15,12 @@ import {
 const MCP_ORDER: Record<string, number> = {
   lsp: 0,
   "cocoindex-code": 1,
-  playwright: 2,
-  openaiDeveloperDocs: 3,
-  context7: 4,
-  autodev_spawn: 5,
-  codex_app: 6
+  codegraphcontext: 2,
+  playwright: 3,
+  openaiDeveloperDocs: 4,
+  context7: 5,
+  autodev_spawn: 6,
+  codex_app: 7
 };
 // MCPs whose existence is owned by Codex Desktop plugins rather than the
 // rulesync-generated Codex CLI catalog. They appear in the projection so

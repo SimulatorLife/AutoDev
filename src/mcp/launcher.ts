@@ -4,8 +4,10 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { writeErrorLine } from "../shared/output.ts";
+import { MCP_SERVER_CODEGRAPHCONTEXT } from "../shared/tool-names.ts";
 
-export type McpName = "lsp" | "playwright" | "cocoindex-code";
+export type McpName =
+  "lsp" | "playwright" | "cocoindex-code" | typeof MCP_SERVER_CODEGRAPHCONTEXT;
 /**
  * `pathPrepend` holds directories the server needs ahead of the caller's PATH.
  * lsp-mcp-server spawns its language servers (`typescript-language-server`)
@@ -69,6 +71,23 @@ export function resolveMcpCommand(
         "AutoDev CocoIndex MCP binary is missing; install ccc or set AUTODEV_COCOINDEX_BIN"
       );
     return { binary, args: ["mcp"], pathPrepend: [] };
+  }
+  if (tool === MCP_SERVER_CODEGRAPHCONTEXT) {
+    const configured = env.AUTODEV_CODEGRAPHCONTEXT_BIN;
+    const candidate =
+      configured ??
+      findExecutable("codegraphcontext", env.PATH) ??
+      (env.HOME ? path.join(env.HOME, ".local/bin/codegraphcontext") : null);
+    const binary =
+      configured ||
+      (candidate && existsSync(candidate) && executable(candidate))
+        ? candidate
+        : null;
+    if (!binary)
+      throw new Error(
+        "AutoDev CodeGraphContext MCP binary is missing; install codegraphcontext or set AUTODEV_CODEGRAPHCONTEXT_BIN"
+      );
+    return { binary, args: ["mcp", "start"], pathPrepend: [] };
   }
   throw new Error(`unsupported AutoDev MCP: ${name || "<missing>"}`);
 }

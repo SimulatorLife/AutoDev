@@ -84,7 +84,7 @@ Source: [`src/config/render-execution-contract.ts`](https://github.com/Simulator
 
 ## MCP runtime ownership
 
-`run-autodev-mcp.sh` deliberately resolves LSP and Playwright from AutoDev's pinned dependency tree while preserving the active workspace as process CWD, and resolves CocoIndex outside the model-shell permission boundary
+`run-autodev-mcp.sh` deliberately resolves LSP and Playwright from AutoDev's pinned dependency tree while preserving the active workspace as process CWD, and resolves CodeGraphContext and CocoIndex outside the model-shell permission boundary
 
 Source: [`scripts/run-autodev-mcp.sh`](https://github.com/SimulatorLife/AutoDev/blob/main/scripts/run-autodev-mcp.sh)
 
@@ -1350,8 +1350,8 @@ that. Meanwhile each server's launch definition was repeated in four places:
 `.rulesync/mcp.jsonc` is now the only MCP source.
 
 *Source.*
-- The shared servers are `lsp` and `cocoindex-code` (both through
-  `run-autodev-mcp.sh`) and `openaiDeveloperDocs` (by URL).
+- The shared code servers are `codegraphcontext`, `lsp`, and `cocoindex-code` (through
+  `run-autodev-mcp.sh`), plus `openaiDeveloperDocs` (by URL).
 - The `codexcli` section adds `default_tools_approval_mode`, a disabled
   `playwright`, and a disabled `openaiDeveloperDocs` that roles can enable.
 - `copilotcli` drops `openaiDeveloperDocs`.
@@ -2434,7 +2434,7 @@ mode read/write and router-auth token creation preserve the private-file and
 idempotence invariants without shell parsing or `openssl`; the installer only
 parses options and dispatches the owner. External dependency setup is now
 also typed in `src/platform/dependencies.ts`, including pipx provisioning,
-pinned CocoIndex/Python-LSP installation, and macOS native-build environment
+pinned CodeGraphContext/CocoIndex/Python-LSP installation, and macOS native-build environment
 preparation. The shell installer retains no application logic; option/check
 orchestration and the temporary Codex MCP projection are typed.
 

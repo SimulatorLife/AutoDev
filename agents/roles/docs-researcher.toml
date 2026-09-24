@@ -30,6 +30,9 @@ enabled = false
 enabled = false
 default_tools_approval_mode = "approve"
 
+[mcp_servers.codegraphcontext]
+enabled = false
+
 [tools]
 web_search = true
 

@@ -1303,13 +1303,15 @@ Codex must load the selected role TOML before the first child turn and expose th
 TOML's enabled MCP servers and skills; bridges must not attach skill paths or MCP
 lists per invocation.
 
-`agents/prompts/code-search.md` is the single shared prompt piece for
-CocoIndex and LSP usage. It is included only when the role contract exposes
-both `cocoindex-code` and `lsp`, including the root orchestrator. Native role
-TOMLs use `{{AUTODEV_CODE_SEARCH_PROMPT}}`; bridges and the root hook load the
-same file directly. The orchestrator's root config enables the `ccc` skill and
-the `cocoindex-code` MCP server, while provider bridges explicitly pass the
-same code MCP servers when they serve a code-capable role.
+`agents/prompts/code-search.md` is the single shared CGC-first
+code-navigation prompt. The bridge injects it only when the role contract
+exposes `codegraphcontext`, `cocoindex-code`, and `lsp`; native role TOMLs use
+`{{AUTODEV_CODE_SEARCH_PROMPT}}`, and the root hook loads the same file for the
+orchestrator. Native Codex, Claude, Copilot, and MiniMax enforce role-specific
+MCP surfaces. Antigravity is different: its global registry makes the six
+explicitly allowed CGC tools visible to all sessions, including
+`docs-researcher` despite that role's contract. Its role prompt prohibits local
+code-tool use; this is not server-level isolation.
 
 The tracked role TOMLs contain only role-specific policy plus composition markers;
 they do not copy the universal base/leaf text. The installer renders them before
@@ -1876,9 +1878,12 @@ installer is the only supported materialization path into
   the shared `base.md` + `leaf.md` prompt layers and materialized as managed
   regular-file copies under `$CODEX_HOME/agents/`. The role loader must receive
   regular files rather than symlinks; the installer replaces symlinks and
-  verifies exact rendered content matches. Code-oriented roles (`default`, `explorer`,
-  `worker`, `validator`, and `smart`) enable the user-level `lsp` MCP server and
-  the matching `lsp-mcp-server` skill. `browser-tester` and `smart` explicitly
+  verifies exact rendered content matches. Code-oriented roles (`default`,
+  `explorer`, `worker`, `validator`, and `smart`) enable the `codegraphcontext`,
+  `cocoindex-code`, and `lsp` servers with the `ccc` and `lsp-mcp-server`
+  skills. The shared prompt makes CGC primary, CocoIndex the unknown-location
+  fallback, and LSP the exact-semantics fallback. `browser-tester` and `smart`
+  explicitly
   enable the user-level `playwright` MCP server with the approved browser tool
   allowlist; the role-local `enabled = true` is intentional because a role block
   otherwise overrides the user-level server entry. `browser-tester` and

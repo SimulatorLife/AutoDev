@@ -13,6 +13,7 @@ import { join } from "node:path";
 import test from "node:test";
 
 import { resolveMcpCommand, runMcp } from "../../src/mcp/launcher.ts";
+import { MCP_SERVER_CODEGRAPHCONTEXT } from "../../src/shared/tool-names.ts";
 
 test("MCP launcher resolves pinned AutoDev binaries without shell commands", () => {
   assert.deepEqual(resolveMcpCommand("lsp", "/repo"), {
@@ -30,6 +31,27 @@ test("MCP launcher resolves pinned AutoDev binaries without shell commands", () 
       AUTODEV_COCOINDEX_BIN: "/custom/ccc"
     }),
     { binary: "/custom/ccc", args: ["mcp"], pathPrepend: [] }
+  );
+  assert.deepEqual(
+    resolveMcpCommand(MCP_SERVER_CODEGRAPHCONTEXT, "/repo", {
+      AUTODEV_CODEGRAPHCONTEXT_BIN: "/custom/codegraphcontext"
+    }),
+    {
+      binary: "/custom/codegraphcontext",
+      args: ["mcp", "start"],
+      pathPrepend: []
+    }
+  );
+});
+
+test("MCP launcher fails clearly when codegraphcontext is missing", () => {
+  assert.throws(
+    () =>
+      resolveMcpCommand(MCP_SERVER_CODEGRAPHCONTEXT, "/repo", {
+        PATH: "",
+        HOME: "/nonexistent"
+      }),
+    /AutoDev CodeGraphContext MCP binary is missing; install codegraphcontext or set AUTODEV_CODEGRAPHCONTEXT_BIN/
   );
 });
 

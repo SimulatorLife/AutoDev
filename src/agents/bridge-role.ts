@@ -1,11 +1,16 @@
 import { existsSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
-import { roleContract } from "../shared/execution-contract.ts";
 import {
   SANDBOX_MODE_HEADER,
   SKILL_CONTEXT_HEADER
 } from "../router/subagents.ts";
+import { roleContract } from "../shared/execution-contract.ts";
+import {
+  MCP_SERVER_COCOINDEX,
+  MCP_SERVER_CODEGRAPHCONTEXT,
+  MCP_SERVER_LSP
+} from "../shared/tool-names.ts";
 
 // Router-generated request header naming the agent role a provider bridge is
 // serving. The router builds its outbound header set from scratch, so this can
@@ -129,7 +134,9 @@ export function roleInstructions(role: string | null | undefined): string {
         ? `\n\n## Canonical orchestration skill\n\n${readFileSync(ORCHESTRATION_SKILL, "utf8").trim()}`
         : "";
     const codeSearch =
-      contract.mcp.includes("lsp") && contract.mcp.includes("cocoindex-code")
+      contract.mcp.includes(MCP_SERVER_CODEGRAPHCONTEXT) &&
+      contract.mcp.includes(MCP_SERVER_LSP) &&
+      contract.mcp.includes(MCP_SERVER_COCOINDEX)
         ? `\n\n${CODE_SEARCH_PROMPT}`
         : "";
     const rolePrompt = readFileSync(

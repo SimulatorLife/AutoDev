@@ -22,6 +22,7 @@ import {
 } from "./antigravity-settings.ts";
 import {
   checkCocoIndex,
+  checkCodeGraphContext,
   checkPythonLanguageServer,
   resolveDependencyOptions
 } from "./dependencies.ts";
@@ -810,6 +811,8 @@ function checkDependencies(
   failures: { value: number }
 ): void {
   if (checkCocoIndex(resolveDependencyOptions(process.env)) !== 0)
+    failures.value = 1;
+  if (checkCodeGraphContext(resolveDependencyOptions(process.env)) !== 0)
     failures.value = 1;
   if (checkPythonLanguageServer(resolveDependencyOptions(process.env)) !== 0)
     failures.value = 1;
