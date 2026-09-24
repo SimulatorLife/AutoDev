@@ -1130,13 +1130,24 @@ export class UsageTracker {
   countLiveAgentActivity(
     filter: Record<string, unknown> = {},
     at: number = Date.now(),
-    tracker?: Record<string, unknown>
+    tracker?: Record<string, unknown>,
+    exceptSubject: string | null = null
   ): number {
     const activityTracker = tracker ?? this.activityTracker;
     if (!activityTracker) return 0;
     return (AGENT_ACTIVITY_KINDS as readonly string[]).reduce(
       (total, kind) =>
-        total + activityTracker.countLive({ ...filter, kind }, at),
+        total +
+        (exceptSubject === null
+          ? activityTracker.countLive({ ...filter, kind }, at)
+          : (
+              activityTracker.listLive as (
+                liveFilter: Record<string, unknown>,
+                liveAt: number
+              ) => { subject: string }[]
+            )({ ...filter, kind }, at).filter(
+              ({ subject }) => subject !== exceptSubject
+            ).length),
       0
     );
   }
@@ -1635,9 +1646,15 @@ export function canonicalLiveAgentCount(at?: number, tracker?: Record<string, un
 export function countLiveAgentActivity(
   filter?: Record<string, unknown>,
   at?: number,
-  tracker?: Record<string, unknown>
+  tracker?: Record<string, unknown>,
+  exceptSubject: string | null = null
 ): number {
-  return defaultUsageTracker.countLiveAgentActivity(filter, at, tracker);
+  return defaultUsageTracker.countLiveAgentActivity(
+    filter,
+    at,
+    tracker,
+    exceptSubject
+  );
 }
 
 export function usageStatus(

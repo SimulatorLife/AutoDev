@@ -399,7 +399,13 @@ the kind as `cooldownKind`, with `cooldownFailureClass`, `cooldownResetsAt` and
 | `probe` | a local bridge that did not answer its health check | 5s doubling to 30s | yes | no |
 | `config` | `authentication`, and `invalid_model` for the rejected **model only** | fixed 30s, never escalates | no | no |
 
-Four rules are load-bearing:
+Five rules are load-bearing:
+
+- **A client leaving is not a provider failing.** A stream that stops because
+  the client disconnected (Codex Desktop archiving a thread mid-turn, a
+  cancelled turn) is recorded as `499 client_aborted` and cools nothing down.
+  Recording it as `upstream_error` once put Codex, the only orchestrator
+  provider, into a 30s cooldown and failed every other session's root turn.
 
 - **A rejected model is not a provider outage.** A provider answering
   `invalid_model` (the Claude bridge returns `400` with `code: "invalid_model"`
@@ -431,7 +437,9 @@ come up empty:
 2. **Last resort.** The candidates pass 1 skipped, soonest-to-lapse first, capped
    at `CODEX_ROUTER_LAST_RESORT_MAX_ATTEMPTS` (default 2). Excluded: anything
    already attempted, a `config` cooldown, a provider already serving another
-   request (so concurrent exhausted requests do not pile onto the same one), and
+   request (so concurrent exhausted requests do not pile onto the same one; the
+   caller's own agent, often still live on the provider while it waits on its
+   children, does not count), and
    a `hard` cooldown with a declared reset still in the future -- that provider
    has stated it will not serve yet, and attempting it anyway is exactly the
    hammering cooldowns exist to prevent. A success clears the cooldown, so the
@@ -442,7 +450,11 @@ come up empty:
    response headers, so the client sees a slow request rather than a stalled
    stream, and it is cut short if the client disconnects. Keep it small: a role
    request holds its subagent slot throughout, and the per-session limit is
-   typically 2. Set it to `0` to disable waiting entirely.
+   typically 2. An orchestrator turn holds no slot and its failure ends every
+   child's work, so its window is at least one first-strike transient cooldown
+   (`CODEX_ROUTER_PROVIDER_COOLDOWN_MS`, 30s): otherwise a single-provider
+   orchestrator tier could never be rescued by waiting. Set it to `0` to disable
+   waiting entirely.
 
 `CODEX_ROUTER_CHAIN_SELECTION_DEADLINE_MS` (default 120s) bounds how long the
 router may spend *looking* for a provider. It is checked only before starting a
@@ -1189,7 +1201,7 @@ so it is reported through its `router_provider_exhausted` result, not here.
 Streaming responses (`stream: true`) to clients such as Codex Desktop are protected against idle disconnects and client disconnect cascades:
 
 - **Downstream SSE Keep-Alives**: The router automatically transmits periodic `: codex-router keep-alive\n\n` SSE comments every 2 seconds while streaming. This prevents the downstream HTTP client (e.g. Codex Desktop's reqwest transport) from triggering an `idle timeout waiting for SSE` during quiet intervals when an upstream model or bridge is busy running tools, spawning subagents, or reasoning.
-- **Client Disconnect Resilience**: When a downstream client disconnects or cancels mid-stream, write calls are guarded (`safeWrite`) against closed/destroyed response sockets, and the response stream absorbs socket errors (`EPIPE`, `ECONNRESET`, `ERR_STREAM_DESTROYED`, `ERR_STREAM_WRITE_AFTER_END`). Normal client socket drops are recorded as ignored transport events rather than escalating to fatal uncaught exceptions that would crash the router process.
+- **Client Disconnect Resilience**: When a downstream client disconnects or cancels mid-stream, write calls are guarded (`safeWrite`) against closed/destroyed response sockets, and the response stream absorbs socket errors (`EPIPE`, `ECONNRESET`, `ERR_STREAM_DESTROYED`, `ERR_STREAM_WRITE_AFTER_END`). Normal client socket drops are recorded as ignored transport events rather than escalating to fatal uncaught exceptions that would crash the router process. A disconnect also cancels the upstream request, whether or not the provider has answered yet, so a provider is never left working for a client that is gone; the request is recorded as `499 client_aborted` and never counts against the provider (see "A client leaving is not a provider failing").
 
 
 ## External-provider execution

@@ -3,13 +3,19 @@ import "../../src/router/http.ts";
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { COOLDOWNS, type CooldownSummary } from "../../src/router/cooldown.ts";
+import {
+  COOLDOWN_CONFIG,
+  COOLDOWNS,
+  type CooldownSummary
+} from "../../src/router/cooldown.ts";
 import {
   CONCRETE_STATUS_MAX_ATTEMPTS,
   declaredLimit,
   downstreamHeaders,
+  EXHAUSTION_WAIT_MS,
   exhaustionBody,
   exhaustionHeaders,
+  exhaustionWaitWindowMs,
   fallbackable,
   payloadForCandidate,
   proxyConcreteResponse,
@@ -684,3 +690,73 @@ test("downstreamHeadersWithSkillContext forwards skill context and codex session
   assert.equal(headers["x-autodev-skill-context"], "<skill>...</skill>");
   assert.equal(headers["x-autodev-codex-session"], "codex-session-9");
 });
+
+test("an orchestrator turn may wait out a first-strike transient cooldown; a role request keeps its short window", () => {
+  assert.equal(exhaustionWaitWindowMs(false), EXHAUSTION_WAIT_MS);
+  assert.ok(
+    exhaustionWaitWindowMs(true) >= COOLDOWN_CONFIG.providerCooldownMs,
+    "with a shorter window a single-provider orchestrator tier can never be rescued by waiting"
+  );
+});
+
+test(
+  "the last-resort busy check does not count the caller's own agent",
+  { concurrency: false },
+  async () => {
+    COOLDOWNS.clearAll();
+    agentActivity.reset();
+    const originalFetch = globalThis.fetch;
+    const saved = {
+      LITELLM_API_KEY: process.env.LITELLM_API_KEY,
+      MINIMAX_API_KEY: process.env.MINIMAX_API_KEY
+    };
+    process.env.LITELLM_API_KEY = "claude-key";
+    process.env.MINIMAX_API_KEY = "minimax-key";
+    globalThis.fetch = (async () =>
+      jsonResponse({
+        id: "resp_wait",
+        status: "completed",
+        output: [
+          {
+            type: "function_call",
+            id: "fc_1",
+            call_id: "call_1",
+            name: "wait",
+            arguments: "{}",
+            status: "completed"
+          }
+        ]
+      })) as typeof fetch;
+    try {
+      await proxyRoleResponse(
+        responseRecorder(),
+        "explorer",
+        { model: "autodev/explorer", input: [], stream: false },
+        false,
+        "req-self",
+        null,
+        null,
+        null,
+        { key: "root-3", scope: "identified", thread: "self" }
+      );
+      // Waiting on a tool, the agent stays live on its provider.
+      assert.equal(countLiveAgentActivity({ role: "explorer" }), 1);
+      assert.equal(
+        countLiveAgentActivity(
+          { role: "explorer" },
+          Date.now(),
+          undefined,
+          "thread:self"
+        ),
+        0
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+      for (const [key, value] of Object.entries(saved)) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
+      agentActivity.reset();
+    }
+  }
+);

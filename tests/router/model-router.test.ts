@@ -291,6 +291,57 @@ test("loads editable provider and role models from JSON routing config", async (
   });
 });
 
+test("Claude smart/orchestrator routing selects the canonical Opus 5.5 id and rejects the retired Opus 5 id", async () => {
+  const raw = await readFile(
+    new URL("../../config/model-routing.json", import.meta.url),
+    "utf8"
+  );
+  const config = JSON.parse(raw);
+
+  // Target model: the canonical, hyphen-separated Opus 5.5 id is what ships.
+  assert.equal(config.providers.claude.models.smart, "claude-opus-5-5");
+  assert.equal(config.providers.claude.models.orchestrator, "claude-opus-5-5");
+
+  // Retired id: the old Opus 5 id must not be configured anywhere, and the
+  // fixture text itself must not contain a lingering reference to it.
+  assert.notEqual(config.providers.claude.models.smart, "claude-opus-5");
+  assert.notEqual(config.providers.claude.models.orchestrator, "claude-opus-5");
+  assert.doesNotMatch(
+    raw,
+    /"claude-opus-5"/,
+    "the retired Claude Opus 5 id must not remain configured"
+  );
+
+  // Malformed variants (a dot instead of the second hyphen) must never be
+  // configured either.
+  assert.doesNotMatch(
+    raw,
+    /claude-opus-5\.5/,
+    "a dot-separated Opus 5.5 id must never be configured"
+  );
+
+  // The claude route itself must accept the canonical id, family aliases,
+  // and other generic hyphen-separated Claude ids, while rejecting both a
+  // malformed dotted Opus 5.5 id and a malformed double-suffixed variant.
+  const claudeRoute = routing.routes.find(
+    (route) => route.provider === "claude"
+  );
+  assert.ok(claudeRoute, "the claude route must be registered");
+  for (const id of ["claude-opus-5-5", "sonnet", "opus", "haiku", "claude-sonnet-5"]) {
+    assert.ok(
+      claudeRoute!.pattern.test(id),
+      `${id}: valid Claude ids and family aliases must still match the route`
+    );
+  }
+  for (const id of ["claude-opus-5.5", "claude-opus-5-5.5"]) {
+    assert.equal(
+      claudeRoute!.pattern.test(id),
+      false,
+      `${id}: a malformed dotted Opus 5.5 id must never match the route`
+    );
+  }
+});
+
 test("provider capabilities expose only providers with a real delegation path", async () => {
   const config = JSON.parse(
     await readFile(
@@ -9036,6 +9087,133 @@ test("a model the provider rejects fails the turn once, non-retryably, and leave
     routing.resetDisabledProvidersForRole("orchestrator");
     cooldowns.clear("claude");
   }
+});
+
+test("a client that disconnects mid-stream is recorded as client_aborted and cools no provider down", async () => {
+  // Observed 2026-09-24: Codex Desktop archived a side thread mid-turn. The
+  // router read the truncated stream as upstream_error and cooled Codex down
+  // for 30s, failing every other session's orchestrator turn. A real socket
+  // close reaches the response before the request's close handler aborts the
+  // client signal, so this must go through a real server and client.
+  const encoder = new TextEncoder();
+  await withStubbedProviders(
+    (target: string, options: any) => {
+      const probe = healthyProbe(target);
+      if (probe) return probe;
+      const signal: AbortSignal | undefined = options?.signal;
+      let timer: NodeJS.Timeout | null = null;
+      const body = new ReadableStream<Uint8Array>({
+        start(controller) {
+          let sequence = 0;
+          const push = () => {
+            sequence += 1;
+            controller.enqueue(
+              encoder.encode(
+                `event: response.output_text.delta\ndata: ${JSON.stringify({ type: "response.output_text.delta", delta: `line ${sequence}\n` })}\n\n`
+              )
+            );
+            timer = setTimeout(push, 10);
+          };
+          push();
+          signal?.addEventListener("abort", () => {
+            if (timer) clearTimeout(timer);
+            controller.error(signal.reason);
+          });
+        },
+        cancel() {
+          if (timer) clearTimeout(timer);
+        }
+      });
+      return new Response(body, {
+        status: 200,
+        headers: { "content-type": "text/event-stream" }
+      });
+    },
+    async ({ port, fetch: realFetch }: any) => {
+      const client = new AbortController();
+      const response = await realFetch(`http://127.0.0.1:${port}/v1/responses`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ model: "autodev/default", stream: true }),
+        signal: client.signal
+      });
+      assert.equal(response.status, 200);
+      const reader = response.body.getReader();
+      let received = 0;
+      while (received < 300) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        received += value.length;
+      }
+      client.abort();
+      await reader.cancel().catch(() => {});
+
+      const deadline = Date.now() + 5000;
+      let result: any = null;
+      while (!result && Date.now() < deadline) {
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        result = getRouterStatus().recentEvents?.find(
+          (event: any) => event.phase === "result"
+        );
+      }
+      assert.ok(result, "the router records the aborted request");
+      assert.equal(result.status, 499);
+      assert.equal(result.failureClass, "client_aborted");
+      for (const provider of DEFAULT_TIER)
+        assert.equal(
+          cooldowns.isCooling(provider),
+          false,
+          `${provider} must not be cooled down by a client leaving`
+        );
+    }
+  );
+});
+
+test("a client that gives up before the provider answers cools no provider down", async () => {
+  let upstreamStarted = 0;
+  let markStarted = () => {};
+  const started = new Promise<void>((resolve) => {
+    markStarted = resolve;
+  });
+  await withStubbedProviders(
+    (target: string, options: any) => {
+      const probe = healthyProbe(target);
+      if (probe) return probe;
+      upstreamStarted += 1;
+      markStarted();
+      const signal: AbortSignal | undefined = options?.signal;
+      // A provider still thinking: it answers only when the request is aborted.
+      return new Promise((_resolve, reject) => {
+        signal?.addEventListener("abort", () => reject(signal.reason));
+      });
+    },
+    async ({ port, fetch: realFetch }: any) => {
+      const client = new AbortController();
+      const pending = realFetch(`http://127.0.0.1:${port}/v1/responses`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ model: "autodev/default", stream: true }),
+        signal: client.signal
+      }).catch(() => null);
+      await started;
+      client.abort();
+      await pending;
+
+      const deadline = Date.now() + 5000;
+      let result: any = null;
+      while (!result && Date.now() < deadline) {
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        result = getRouterStatus().recentEvents?.find(
+          (event: any) => event.phase === "result"
+        );
+      }
+      assert.ok(result, "the router records the aborted request");
+      assert.equal(result.failureClass, "client_aborted");
+      assert.equal(upstreamStarted, 1, "no fallback to another provider");
+      for (const provider of DEFAULT_TIER)
+        assert.equal(cooldowns.isCooling(provider), false, provider);
+    }
+  );
 });
 
 test("only a provider-declared cooldown survives a router restart", async () => {

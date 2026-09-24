@@ -20,6 +20,7 @@ import {
   touchOpenSubagentSlots as touchManagerOpenSubagentSlots
 } from "./concurrency.ts";
 import {
+  COOLDOWN_CONFIG,
   type CooldownOptions,
   COOLDOWNS,
   type CooldownSummary,
@@ -702,6 +703,11 @@ export interface StreamWriteResult {
   /** Call ids of the tool calls the provider emitted, for result affinity. */
   toolCallIds: Set<string>;
   failed: boolean;
+  /**
+   * The client went away before the response finished. The provider did
+   * nothing wrong, so this must never count against it.
+   */
+  clientDisconnected: boolean;
   incompleteReason: string | null;
   limit: ProviderLimit | null;
   inputRequired: boolean;
@@ -1004,6 +1010,11 @@ export async function writeResponseStream(
     !response.destroyed &&
     !response.closed &&
     !clientSignal?.aborted;
+  // A real disconnect closes the socket before the request's close handler
+  // aborts clientSignal, so the signal alone can still read "connected" here.
+  const clientGone = (): boolean =>
+    Boolean(clientSignal?.aborted) ||
+    (!response.writableEnded && (response.destroyed || response.closed));
   const safeWrite = (chunk: string | Uint8Array): boolean => {
     if (!isWritable()) return false;
     try {
@@ -1062,6 +1073,9 @@ export async function writeResponseStream(
     toolCalls,
     toolCallIds,
     failed: terminal !== "completed",
+    // The drain stops reading once the client is gone, so the stream ends with
+    // no terminal event: that is the client leaving, not the provider failing.
+    clientDisconnected: terminal !== "completed" && clientGone(),
     incompleteReason,
     limit: reportedLimit,
     inputRequired:
@@ -1356,6 +1370,7 @@ async function writeProviderResponse(
       toolCalls,
       toolCallIds,
       failed: responseWasNotCompleted(parsed),
+      clientDisconnected: false,
       ...incomplete,
       inputRequired: hasInputRequired(parsed, incomplete)
     };
@@ -1375,6 +1390,7 @@ async function writeProviderResponse(
       toolCalls,
       toolCallIds,
       failed: responseWasNotCompleted(rewritten),
+      clientDisconnected: false,
       ...incomplete,
       inputRequired: hasInputRequired(rewritten, incomplete)
     };
@@ -1388,6 +1404,7 @@ async function writeProviderResponse(
       toolCalls: 0,
       toolCallIds: new Set(),
       failed: false,
+      clientDisconnected: false,
       incompleteReason: null,
       limit: null,
       inputRequired: false
@@ -1926,6 +1943,11 @@ async function handleConcreteSuccess(
     () => getDefaultUsageTracker().activityTracker.touch(ctx.activitySubject),
     ctx.clientSignal
   );
+  if (responseResult.clientDisconnected) {
+    recordConcreteAbort(ctx);
+    endConcreteRequest(ctx.activitySubject, ctx.requestId, "failure");
+    return;
+  }
   recordConcreteResult(
     ctx,
     responseResult.failed ? "failure" : "success",
@@ -2553,7 +2575,14 @@ function runLastResortPass(
         COOLDOWNS.allowsLastResort(
           COOLDOWNS.get(route.provider, Date.now(), route.model)
         ) &&
-        countLiveAgentActivity({ provider: route.provider }) === 0
+        // The caller's own agent is often still live on this provider (an
+        // orchestrator waiting on its children): it is not "another request".
+        countLiveAgentActivity(
+          { provider: route.provider },
+          Date.now(),
+          undefined,
+          ctx.activitySubject
+        ) === 0
     )
     .sort(
       (a, b) =>
@@ -2562,6 +2591,19 @@ function runLastResortPass(
     )
     .slice(0, LAST_RESORT_MAX_ATTEMPTS);
   return tryLastResortRoute(ctx, eligible, 0, state, tryCandidate, served);
+}
+
+/**
+ * How long a request may wait for a cooldown to lapse. An orchestrator turn
+ * holds no subagent slot, and ending it ends every child's work with it, so it
+ * may outlast one first-strike transient cooldown; with a shorter window a
+ * single-provider orchestrator tier could never be rescued by waiting.
+ */
+export function exhaustionWaitWindowMs(isOrchestratorTurn: boolean): number {
+  if (EXHAUSTION_WAIT_MS <= 0) return 0;
+  return isOrchestratorTurn
+    ? Math.max(EXHAUSTION_WAIT_MS, COOLDOWN_CONFIG.providerCooldownMs)
+    : EXHAUSTION_WAIT_MS;
 }
 
 async function runExhaustionWait(
@@ -2585,11 +2627,12 @@ async function runExhaustionWait(
   const waitMs = COOLDOWNS.nextRetryMs(
     waitCandidates.map(({ provider }) => provider)
   );
+  const windowMs = exhaustionWaitWindowMs(ctx.isOrchestratorTurn);
   if (
     !state.deadlineReached &&
-    EXHAUSTION_WAIT_MS > 0 &&
+    windowMs > 0 &&
     waitMs > 0 &&
-    waitMs <= EXHAUSTION_WAIT_MS &&
+    waitMs <= windowMs &&
     !ctx.clientSignal?.aborted &&
     !ctx.response.headersSent
   ) {
@@ -2730,6 +2773,36 @@ async function attemptCandidate(
   }
 }
 
+/**
+ * The client left mid-request (Codex Desktop archiving a thread with a turn in
+ * flight, a cancelled turn): record it as `client_aborted` and leave the
+ * provider's standing alone. A provider-wide cooldown here once took Codex
+ * away from every other session for 30s because one thread was archived.
+ */
+function recordCandidateClientAbort(
+  ctx: FallbackContext,
+  route: Candidate,
+  selection: string,
+  attemptStartedAt: number
+): void {
+  recordRouterEvent({
+    phase: "result",
+    requestId: ctx.requestId,
+    role: ctx.role,
+    origin: ctx.origin,
+    requestedModel: ctx.modelName,
+    provider: route.provider,
+    model: route.model,
+    workspace: ctx.workspace,
+    outcome: "failure",
+    status: 499,
+    failureClass: "client_aborted",
+    elapsedMs: Date.now() - attemptStartedAt,
+    selection
+  });
+  endConcreteRequest(ctx.activitySubject, ctx.requestId, "failure");
+}
+
 async function handleCandidateSuccess(
   ctx: FallbackContext,
   route: Candidate,
@@ -2755,6 +2828,10 @@ async function handleCandidateSuccess(
       },
       ctx.clientSignal
     );
+    if (responseResult.clientDisconnected) {
+      recordCandidateClientAbort(ctx, route, selection, attemptStartedAt);
+      return "served";
+    }
     if (responseResult.failed) {
       const failureClass =
         responseResult.limit?.limitClass ??
@@ -2882,6 +2959,10 @@ function handleCandidateTransportError(
   attemptStartedAt: number,
   error: unknown
 ): "served" | "terminal" | "fallback" {
+  if (ctx.clientSignal?.aborted) {
+    recordCandidateClientAbort(ctx, route, selection, attemptStartedAt);
+    return "terminal";
+  }
   const isAuthFailure =
     (error as { code?: string } | undefined)?.code ===
     "router_auth_unavailable";

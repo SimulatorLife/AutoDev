@@ -26,6 +26,10 @@ mode as the only reachable surface. Select `<role>` from the configured
 autodev/<role> aliases (default, docs-researcher, browser-tester, explorer,
 worker, validator, smart); do not hard-code a provider or model. Pass each
 child the full context it needs: a child cannot see this conversation.
+Write `message` as a double-quoted JavaScript string with `"`, `\` and line
+breaks escaped (`\"`, `\\`, `\n`), never as a template literal: task text
+routinely contains Markdown backticks and `${`, which end or interpolate a
+template literal and fail the whole `exec` cell before any child spawns.
 
 Code-mode availability: in code mode the spawn and lifecycle tools
 (`multi_agent_v1__spawn_agent`, `multi_agent_v1__wait_agent`,

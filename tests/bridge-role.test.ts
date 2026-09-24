@@ -219,6 +219,15 @@ test("the orchestrator prompt teaches the spawn call a code-mode runtime actuall
   assert.match(orchestrator, /fire-and-forget/);
 });
 
+test("the orchestrator prompt tells the model to quote a spawn message so Markdown cannot break it", () => {
+  // Observed 2026-09-24: a spawn message written as a template literal
+  // contained `claude-opus-5-5` in backticks; the first backtick ended the
+  // literal and the exec cell failed with "Unexpected identifier 'claude'".
+  const prompt = read("agents/prompts/orchestrator.md");
+  assert.match(prompt, /double-quoted JavaScript string/);
+  assert.match(prompt, /never as a template literal/);
+});
+
 test("a leaf is told to ignore a spawn tool its runtime leaks to it", () => {
   // agy's MCP config is global, so a spawn tool can be visible to a leaf turn
   // that has no business calling it. The leaf prompt is the only lever there.

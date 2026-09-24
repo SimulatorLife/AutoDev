@@ -63,7 +63,7 @@ test("typed cooldowns keep monotonic deadlines, last-resort policy, and retry su
   assert.deepEqual(
     cooldowns.summary(
       [
-        { provider: "claude", model: "claude-opus-5" },
+        { provider: "claude", model: "claude-opus-5-5" },
         { provider: "disabled", model: "disabled-model" }
       ],
       NOW + 1
@@ -71,7 +71,7 @@ test("typed cooldowns keep monotonic deadlines, last-resort policy, and retry su
     [
       {
         provider: "claude",
-        model: "claude-opus-5",
+        model: "claude-opus-5-5",
         state: "hard",
         failureClass: "quota_exhausted",
         resetsAt: reset,

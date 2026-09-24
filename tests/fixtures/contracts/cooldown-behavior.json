@@ -164,7 +164,7 @@
       ],
       "expected": {
         "provider": "claude",
-        "model": "claude-opus-5",
+        "model": "claude-opus-5-5",
         "state": "hard",
         "failureClass": "quota_exhausted",
         "resetsAt": "2023-11-14T23:13:20.000Z",
@@ -179,7 +179,7 @@
       ],
       "expected": {
         "provider": "claude",
-        "model": "claude-opus-5",
+        "model": "claude-opus-5-5",
         "state": "hard",
         "failureClass": "quota_exhausted",
         "resetsAt": "2023-11-14T23:13:20.000Z",
@@ -194,7 +194,7 @@
       ],
       "expected": {
         "provider": "claude",
-        "model": "claude-opus-5",
+        "model": "claude-opus-5-5",
         "state": "hard",
         "failureClass": "quota_exhausted",
         "resetsAt": "2023-11-14T23:13:20.000Z",
@@ -209,7 +209,7 @@
       ],
       "expected": {
         "provider": "claude",
-        "model": "claude-opus-5",
+        "model": "claude-opus-5-5",
         "state": "hard",
         "failureClass": "quota_exhausted",
         "resetsAt": "2023-11-14T23:13:20.000Z",

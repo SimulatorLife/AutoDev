@@ -143,7 +143,7 @@ function runScenario(name: string, scenario: JsonRecord): void {
   if ("state" in scenario.expected) {
     assert.deepEqual(
       cooldowns.summary(
-        [{ provider: "claude", model: "claude-opus-5" }],
+        [{ provider: "claude", model: "claude-opus-5-5" }],
         NOW + 1
       )[0],
       scenario.expected,
@@ -279,13 +279,13 @@ describe("cooldown behavior", () => {
       cooldowns.clear("claude");
       assert.deepEqual(
         cooldowns.summary(
-          [{ provider: "claude", model: "claude-opus-5" }],
+          [{ provider: "claude", model: "claude-opus-5-5" }],
           NOW + 1
         ),
         [
           {
             provider: "claude",
-            model: "claude-opus-5",
+            model: "claude-opus-5-5",
             state: "available",
             failureClass: null,
             resetsAt: null,

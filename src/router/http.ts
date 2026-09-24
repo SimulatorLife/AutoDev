@@ -1894,8 +1894,12 @@ async function handleResponseRequest(
   const abortForRequestClose = () => {
     if (!request.complete) clientAbort.abort();
   };
+  // A client disconnect destroys the response before "close" fires, so a
+  // `destroyed` check here skipped exactly the case this exists for and left
+  // the provider working for a client that was gone. Anything not ended by
+  // the router can no longer be delivered: cancel the upstream work.
   const abortForResponseClose = () => {
-    if (!response.writableEnded && !response.destroyed) clientAbort.abort();
+    if (!response.writableEnded) clientAbort.abort();
   };
 
   getDefaultRouterLifecycle().registerActiveRequest(clientAbort);
