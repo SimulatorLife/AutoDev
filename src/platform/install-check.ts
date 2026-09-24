@@ -14,6 +14,7 @@ import { runCompose } from "../config/compose-user-config.ts";
 import { renderAgentDirectory } from "../config/render-agent-configs.ts";
 import { runBridgeMcpCatalogue } from "../config/render-bridge-mcp-catalogue.ts";
 import { renderExecutionContract } from "../config/render-execution-contract.ts";
+import { runModelCatalog } from "../config/render-model-catalog.ts";
 import { writeErrorLine, writeLine } from "../shared/output.ts";
 import {
   antigravitySkillsStatus,
@@ -592,6 +593,16 @@ function checkUserConfigAndAgents(
     runBridgeMcpCatalogue(
       projection.source,
       path.join(paths.codexHome, "provider-runtime", "mcp-servers.json"),
+      true
+    ) === 0,
+    failures
+  );
+  check(
+    "codex model catalog",
+    runModelCatalog(
+      path.join(paths.repositoryRoot, "config/model-routing.json"),
+      path.join(paths.repositoryRoot, "config/catalogs"),
+      path.join(paths.repositoryRoot, "config/catalogs/codex-model-catalog.json"),
       true
     ) === 0,
     failures

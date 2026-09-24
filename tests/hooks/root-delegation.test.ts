@@ -12,6 +12,8 @@ import { join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
+import { CONFIGURED_ORCHESTRATOR_MODEL } from "../../src/router/routing.ts";
+
 type HookOutput = {
   hookSpecificOutput?: { additionalContext?: string };
 };
@@ -65,7 +67,7 @@ function runHook(model: string, sessionId?: string): string {
 
 test("root delegation injects the typed policy and canonical sources for a parent model", () => {
   const output = JSON.parse(
-    runHook("gpt-5.6-luna", "parent-test-1")
+    runHook(CONFIGURED_ORCHESTRATOR_MODEL, "parent-test-1")
   ) as HookOutput;
   const context = output.hookSpecificOutput?.additionalContext ?? "";
   assert.match(context, /# Root orchestrator bootstrap/);
@@ -122,7 +124,7 @@ test("root delegation logs hook input without putting it in the injected policy"
         AUTODEV_REPO_ROOT: repositoryRoot
       },
       input: JSON.stringify({
-        model: "gpt-5.6-luna",
+        model: CONFIGURED_ORCHESTRATOR_MODEL,
         session_id: "session-for-log",
         hook_event_name: "UserPromptSubmit",
         turn_id: "turn-1"

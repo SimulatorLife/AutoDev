@@ -6,6 +6,7 @@ import {
   type RouterEvent,
   RouterEventRecorder
 } from "../../src/router/events.ts";
+import { CONFIGURED_SMART_MODEL } from "../../src/router/routing.ts";
 
 test("classifyProviderFailure accurately classifies status codes and error bodies", () => {
   assert.equal(classifyProviderFailure(429, "too many requests"), "throttled");
@@ -152,9 +153,9 @@ test("RouterEventRecorder uses resolveOrigin to derive orchestrator role for cod
   const event = recorder.record({
     phase: "selected",
     requestId: "req-orchestrator",
-    requestedModel: "gpt-5.6-sol",
+    requestedModel: CONFIGURED_SMART_MODEL,
     provider: "codex",
-    model: "gpt-5.6-sol"
+    model: CONFIGURED_SMART_MODEL
   });
 
   assert.equal(event.role, "orchestrator");

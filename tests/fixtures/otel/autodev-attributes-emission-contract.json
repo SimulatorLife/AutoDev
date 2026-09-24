@@ -245,7 +245,7 @@
                     {
                       "key": "model",
                       "value": {
-                        "stringValue": "gpt-5.6-luna"
+                        "stringValue": "gpt-6-luna"
                       }
                     }
                   ]
@@ -803,7 +803,7 @@
               {
                 "key": "autodev.model",
                 "value": {
-                  "stringValue": "gpt-5.6-luna"
+                  "stringValue": "gpt-6-luna"
                 }
               }
             ]
@@ -833,7 +833,7 @@
                     {
                       "key": "model",
                       "value": {
-                        "stringValue": "gpt-5.6-luna"
+                        "stringValue": "gpt-6-luna"
                       }
                     }
                   ]
@@ -1115,7 +1115,7 @@
               {
                 "key": "autodev.model",
                 "value": {
-                  "stringValue": "gpt-5.6-luna"
+                  "stringValue": "gpt-6-luna"
                 }
               }
             ]
@@ -1278,7 +1278,7 @@
               {
                 "key": "autodev.model",
                 "value": {
-                  "stringValue": "gpt-5.6-luna"
+                  "stringValue": "gpt-6-luna"
                 }
               }
             ]

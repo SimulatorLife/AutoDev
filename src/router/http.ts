@@ -1698,7 +1698,52 @@ export async function loadCatalog(
 ): Promise<{ models: unknown[]; data: unknown[] }> {
   try {
     const parsed = JSON.parse(await readFile(catalogFile, "utf8"));
-    const models = Array.isArray(parsed.models) ? parsed.models : [];
+    const models: Array<{ slug: string; [key: string]: unknown }> =
+      Array.isArray(parsed.models) ? parsed.models : [];
+    if (catalogFile === CATALOG_FILE) {
+      const modelSlugs = new Set(models.map((m) => m.slug));
+      const codexModels = ROUTING_POLICY.config.providers?.codex?.models ?? {};
+      for (const [key, slug] of Object.entries(codexModels)) {
+        if (typeof slug === "string" && slug && !modelSlugs.has(slug)) {
+          models.unshift({
+            slug,
+            display_name: slug,
+            description: `OpenAI Codex model for ${key}.`,
+            default_reasoning_level:
+              key === "orchestrator"
+                ? (ROUTING_POLICY.config.orchestrator?.reasoningEffort?.codex ??
+                  "xhigh")
+                : key === "smart"
+                  ? "high"
+                  : "medium",
+            supported_reasoning_levels: [
+              { effort: "low", description: "Low reasoning" },
+              { effort: "medium", description: "Balanced reasoning" },
+              { effort: "high", description: "High reasoning" },
+              { effort: "xhigh", description: "Extra-high reasoning" },
+              { effort: "max", description: "Maximum reasoning" }
+            ],
+            shell_type: "shell_command",
+            visibility: "list",
+            supported_in_api: true,
+            priority: 0,
+            context_window: 1000000,
+            max_context_window: 1000000,
+            supports_parallel_tool_calls: true,
+            supports_reasoning_summaries: true,
+            support_verbosity: true,
+            supports_search_tool: true,
+            tool_mode: "code_mode_only",
+            truncation_policy: { mode: "tokens", limit: 10000 },
+            experimental_supported_tools: [],
+            use_responses_lite: true,
+            multi_agent_version: "v1",
+            input_modalities: ["text", "image"]
+          });
+          modelSlugs.add(slug);
+        }
+      }
+    }
     return {
       models,
       data: models.map((model: { slug: string }) =>

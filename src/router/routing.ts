@@ -588,6 +588,19 @@ export class RoutingPolicy {
       (!route.envKey || Boolean(String(environment[route.envKey] ?? "").trim()))
     );
   }
+
+  configuredModel(provider: string, tier: string = "default"): string | undefined {
+    const providerModels = this.config.providers[provider]?.models;
+    return providerModels?.[tier] || providerModels?.default;
+  }
+
+  get orchestratorModel(): string {
+    return this.configuredModel("codex", "orchestrator") ?? "gpt-6-luna";
+  }
+
+  get smartModel(): string {
+    return this.configuredModel("codex", "smart") ?? "gpt-6-sol";
+  }
 }
 
 const loadedRouting = loadRoutingConfig();
@@ -603,3 +616,6 @@ export const ORCHESTRATOR_TIER = ROUTING_CONFIG.orchestrator.tier;
 export const ORCHESTRATOR_REASONING_EFFORT = Object.freeze({
   ...ROUTING_CONFIG.orchestrator.reasoningEffort
 });
+export const CONFIGURED_ORCHESTRATOR_MODEL = ROUTING_POLICY.orchestratorModel;
+export const CONFIGURED_SMART_MODEL = ROUTING_POLICY.smartModel;
+

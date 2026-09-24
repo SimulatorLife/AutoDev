@@ -121,7 +121,7 @@
           "kind": "session",
           "requestId": "req-parent",
           "provider": "codex",
-          "model": "gpt-5.6-luna",
+          "model": "gpt-6-luna",
           "role": "orchestrator",
           "origin": "orchestrator",
           "workspace": "AutoDev"
@@ -217,7 +217,7 @@
           "op": "status_deep_equal",
           "field": "liveByModel",
           "expected": {
-            "codex/gpt-5.6-luna": 1,
+            "codex/gpt-6-luna": 1,
             "minimax/MiniMax-M3": 1,
             "claude/sonnet": 1
           }
@@ -282,7 +282,7 @@
           "kind": "session",
           "requestId": "req-wait",
           "provider": "codex",
-          "model": "gpt-5.6-luna",
+          "model": "gpt-6-luna",
           "role": "worker",
           "origin": "subagent",
           "workspace": "AutoDev"

@@ -3,6 +3,7 @@ import { describe, test } from "node:test";
 
 import { ingestAgentEvents, resetRouterTelemetry } from "../src/router/http.ts";
 import { ingestOtelSignal, resetOtelTelemetry } from "../src/router/otel.ts";
+import { CONFIGURED_ORCHESTRATOR_MODEL } from "../src/router/routing.ts";
 import {
   closeBridgeSubagentsForRequest,
   noteBridgeRequest,
@@ -147,7 +148,7 @@ function ingestOtelMultiAgentSpawn(total: number): void {
                     {
                       attributes: attrs([
                         ["agent_role", "explorer"],
-                        ["requested_model", "gpt-5.6-luna"],
+                        ["requested_model", CONFIGURED_ORCHESTRATOR_MODEL],
                         ["status", "success"]
                       ]),
                       startTimeUnixNano: String(1_000_000_000 + total),

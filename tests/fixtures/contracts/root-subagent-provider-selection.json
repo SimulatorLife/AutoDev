@@ -20,7 +20,7 @@
       "concreteModels": [
         "sonnet",
         "MiniMax-M3",
-        "gpt-5.6-luna"
+        "gpt-6-luna"
       ],
       "unknownModels": [
         "autodev/not-a-role",
@@ -68,7 +68,7 @@
       },
       {
         "provider": "codex",
-        "model": "gpt-5.6-luna"
+        "model": "gpt-6-luna"
       }
     ],
     "smart": [
@@ -82,7 +82,7 @@
       },
       {
         "provider": "codex",
-        "model": "gpt-5.6-sol"
+        "model": "gpt-6-sol"
       }
     ]
   },
@@ -90,7 +90,7 @@
     "unpreferred": [
       {
         "provider": "codex",
-        "model": "gpt-5.6-luna",
+        "model": "gpt-6-luna",
         "reasoningEffort": null
       },
       {
@@ -113,7 +113,7 @@
       "codex": [
         {
           "provider": "codex",
-          "model": "gpt-5.6-luna",
+          "model": "gpt-6-luna",
           "reasoningEffort": null
         },
         {
@@ -140,7 +140,7 @@
         },
         {
           "provider": "codex",
-          "model": "gpt-5.6-luna",
+          "model": "gpt-6-luna",
           "reasoningEffort": null
         },
         {
@@ -162,7 +162,7 @@
         },
         {
           "provider": "codex",
-          "model": "gpt-5.6-luna",
+          "model": "gpt-6-luna",
           "reasoningEffort": null
         },
         {
@@ -184,7 +184,7 @@
         },
         {
           "provider": "codex",
-          "model": "gpt-5.6-luna",
+          "model": "gpt-6-luna",
           "reasoningEffort": null
         },
         {
@@ -202,7 +202,7 @@
   },
   "payloads": {
     "orchestratorPrimary": {
-      "model": "gpt-5.6-luna",
+      "model": "gpt-6-luna",
       "reasoning": {
         "effort": "xhigh"
       }

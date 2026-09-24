@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  CONFIGURED_ORCHESTRATOR_MODEL,
   ROUTING_POLICY,
   RoutingPolicy,
   type RoutingRuntime,
@@ -21,7 +22,10 @@ function seeded(seed: number): () => number {
 
 test("typed routing policy resolves aliases, concrete models, credentials, and catalog ids", () => {
   assert.equal(ROUTING_POLICY.roleForModel("autodev/explorer"), "explorer");
-  assert.equal(ROUTING_POLICY.roleForModel("gpt-5.6-luna"), null);
+  assert.equal(
+    ROUTING_POLICY.roleForModel(CONFIGURED_ORCHESTRATOR_MODEL),
+    null
+  );
   assert.equal(ROUTING_POLICY.routeForModel("MiniMax-M3")?.provider, "minimax");
   assert.equal(ROUTING_POLICY.routeForModel("unknown-model"), null);
   assert.equal(
@@ -40,10 +44,13 @@ test("typed routing policy resolves aliases, concrete models, credentials, and c
   );
   assert.deepEqual(
     ROUTING_POLICY.catalogModelIds(
-      [{ slug: "gpt-5.6-luna" }, { slug: "gpt-5.6-luna" }],
+      [
+        { slug: CONFIGURED_ORCHESTRATOR_MODEL },
+        { slug: CONFIGURED_ORCHESTRATOR_MODEL }
+      ],
       ["autodev/explorer"]
     ),
-    ["gpt-5.6-luna", "autodev/explorer"]
+    [CONFIGURED_ORCHESTRATOR_MODEL, "autodev/explorer"]
   );
 });
 

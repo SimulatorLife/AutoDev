@@ -24,6 +24,7 @@ import {
   toolStatusAttribute
 } from "../../src/router/otel.ts";
 import { UsageTracker } from "../../src/router/usage.ts";
+import { CONFIGURED_ORCHESTRATOR_MODEL } from "../../src/router/routing.ts";
 
 function createMockUsageTracker(): UsageTracker {
   return new UsageTracker();
@@ -176,7 +177,10 @@ test("log ingestion: turns, prompts, TTFT, tokens, and tool results", () => {
         resource: {
           attributes: [
             { key: "conversation.id", value: { stringValue: "conv-101" } },
-            { key: "model", value: { stringValue: "gpt-5.6-luna" } }
+            {
+              key: "model",
+              value: { stringValue: CONFIGURED_ORCHESTRATOR_MODEL }
+            }
           ]
         },
         scopeLogs: [
@@ -420,14 +424,17 @@ test("deferred MCP model attribution retroactively attributes when conversation 
   assert.ok(mcpServerPre);
   assert.equal(mcpServerPre.byModel.unattributed.observed, 1);
 
-  // Now conversation start log arrives specifying model 'gpt-5.6-luna'
+  // Now conversation start log arrives specifying model 'gpt-6-luna'
   const logPayload = {
     resourceLogs: [
       {
         resource: {
           attributes: [
             { key: "conversation.id", value: { stringValue: "conv-defer" } },
-            { key: "model", value: { stringValue: "gpt-5.6-luna" } }
+            {
+              key: "model",
+              value: { stringValue: CONFIGURED_ORCHESTRATOR_MODEL }
+            }
           ]
         },
         scopeLogs: [
@@ -450,13 +457,16 @@ test("deferred MCP model attribution retroactively attributes when conversation 
   };
   tracker.ingestOtelSignal("logs", logPayload);
 
-  // Post-log status: model has been committed to gpt-5.6-luna
+  // Post-log status: model has been committed to CONFIGURED_ORCHESTRATOR_MODEL
   status = tracker.codexTelemetryStatus();
   const mcpServerPost = status.mcpServers.find(
     (s: any) => s.name === "custom-mcp"
   );
   assert.ok(mcpServerPost);
-  assert.equal(mcpServerPost.byModel["gpt-5.6-luna"]?.observed, 1);
+  assert.equal(
+    mcpServerPost.byModel[CONFIGURED_ORCHESTRATOR_MODEL]?.observed,
+    1
+  );
 });
 
 test("additive AutoDev attribute enrichment contract", () => {
@@ -470,7 +480,10 @@ test("additive AutoDev attribute enrichment contract", () => {
             { key: "role", value: { stringValue: "orchestrator" } },
             { key: "workspace", value: { stringValue: "AutoDev" } },
             { key: "provider", value: { stringValue: "codex" } },
-            { key: "model", value: { stringValue: "gpt-5.6-luna" } }
+            {
+              key: "model",
+              value: { stringValue: CONFIGURED_ORCHESTRATOR_MODEL }
+            }
           ]
         },
         scopeLogs: [
@@ -525,7 +538,8 @@ test("additive AutoDev attribute enrichment contract", () => {
   assert.ok(
     resAttrs.some(
       (a: any) =>
-        a.key === "autodev.model" && a.value.stringValue === "gpt-5.6-luna"
+        a.key === "autodev.model" &&
+        a.value.stringValue === CONFIGURED_ORCHESTRATOR_MODEL
     )
   );
 

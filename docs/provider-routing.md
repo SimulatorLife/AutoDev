@@ -21,11 +21,22 @@ Callers select a capability role, never a provider or model:
 | `smart` | Full-capability browser/docs/implementation agent | workspace-write |
 
 All roles except `smart` use the configured `default` model tier. Only `smart` uses the configured `smart` tier. Every role uses the `local_model_router` with an `autodev/<role>` model alias.
+
+### Single source of truth for model versions (DRY model architecture)
+
+Model version management is strictly DRY (Don't Repeat Yourself). The repository enforces that changing or adding a model version is performed in **ONE config file, ONE single value**: [`config/model-routing.json`](file:///Users/henrykirk/AutoDev/config/model-routing.json).
+
+- **Sole Source of Truth**: [`config/model-routing.json`](file:///Users/henrykirk/AutoDev/config/model-routing.json) defines all provider models under `providers.<provider>.models`. To change the Codex orchestrator model, edit `providers.codex.models.orchestrator` (and `default`). To change the smart model, edit `providers.codex.models.smart`.
+- **Derived Model Catalog**: The Codex model catalog ([`config/catalogs/codex-model-catalog.json`](file:///Users/henrykirk/AutoDev/config/catalogs/codex-model-catalog.json)) is an automatically generated artifact rendered directly from [`config/model-routing.json`](file:///Users/henrykirk/AutoDev/config/model-routing.json) via [`renderModelCatalog`](file:///Users/henrykirk/AutoDev/src/config/render-model-catalog.ts) (CLI: `autodev render catalog`). The platform installer materializes and validates this catalog during `bash scripts/install.sh` and `node src/cli/install.ts --check`.
+- **Dynamic Catalog Fallback**: The router's HTTP catalog endpoint (`GET /v1/models`) dynamically includes configured Codex models from the active [`RoutingPolicy`](file:///Users/henrykirk/AutoDev/src/router/routing.ts) even before the catalog file is re-rendered.
+- **Zero-Code-Change Model Upgrades**: Tests, contract fixtures, telemetry trackers, and hooks dynamically resolve model identifiers via [`RoutingPolicy.configuredModel`](file:///Users/henrykirk/AutoDev/src/router/routing.ts), [`CONFIGURED_ORCHESTRATOR_MODEL`](file:///Users/henrykirk/AutoDev/src/router/routing.ts), and [`CONFIGURED_SMART_MODEL`](file:///Users/henrykirk/AutoDev/src/router/routing.ts) rather than hardcoding concrete model names.
+- **Enforcement & Regressions**: The test suite [`tests/model-routing-dry.test.ts`](file:///Users/henrykirk/AutoDev/tests/model-routing-dry.test.ts) locks in this single-source-of-truth invariant, ensuring that updating model strings in configuration automatically propagates through routing, candidate generation, metadata synthesis, and catalog materialization without breaking tests or requiring compatibility wrappers.
+
 The editable provider/model choices live in
 `config/model-routing.json`: `providerGroups` defines ordered fallback groups per capability tier,
 `providers.<name>.models` contains named tiers such as `default` and `smart` (specific tiers like `smart` are optional and fall back to that provider's `default` model if omitted), and
 `roles.<role>.tier` selects the tier for each capability role. For example, set
-Claude's smart model to `claude-opus-5-5` or Codex's to `gpt-5.6-sol` there; providers like MiniMax or Copilot that use the same model across tiers only need to define `default`. The installer materializes this file as
+Claude's smart model to `claude-opus-5-5` or Codex's to `gpt-6-sol` there; providers like MiniMax or Copilot that use the same model across tiers only need to define `default`. The installer materializes this file as
 `$CODEX_HOME/codex-model-routing.json`.
 Every model listed under a provider must match that provider's route
 `pattern`, or the router refuses to load the file. The Claude route accepts
@@ -66,7 +77,7 @@ Differences from a role request:
 - Usage telemetry keeps orchestrator fallback traffic under the `orchestrator`
   origin even when it lands on a non-Codex provider, rather than
   reclassifying it as `direct`.
-- A direct concrete `gpt-5.6-luna` request is still never rerouted. Only the
+- A direct concrete `gpt-*` request is still never rerouted. Only the
   `autodev/orchestrator` alias degrades across providers.
 - The root-delegation `UserPromptSubmit` hook matches `autodev/orchestrator`
   before its leaf-alias glob, so the parent still receives the delegation

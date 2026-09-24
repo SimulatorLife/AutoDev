@@ -9,6 +9,7 @@ import {
   renderExecutionContract,
   runExecutionContract
 } from "../config/render-execution-contract.ts";
+import { runModelCatalog } from "../config/render-model-catalog.ts";
 import { ConfigError, parseArgs, requiredArg } from "../config/toml.ts";
 import { writeErrorLine, writeLine } from "../shared/output.ts";
 import { dispatchHookCommand, type HookCommandBackend } from "./hook.ts";
@@ -139,12 +140,18 @@ function renderCommand(kind: string, argv: string[]): number {
     const output = requiredArg(values, "output");
     return runBridgeMcpCatalogue(source, output, flags.has("check"));
   }
+  if (kind === "catalog") {
+    const routing = requiredArg(values, "routing-config");
+    const catalogsDir = requiredArg(values, "catalogs-dir");
+    const output = requiredArg(values, "output");
+    return runModelCatalog(routing, catalogsDir, output, flags.has("check"));
+  }
   throw new ConfigError(`unsupported render target: ${kind}`);
 }
 
 function usage(): void {
   writeLine(
-    `Usage: node src/cli/autodev.ts <command> [subcommand] [options]\n\nCommands:\n  check\n  render agents|contract|mcp\n  router run|ensure|status\n  provider <name>\n  hook <name>\n  install\n`
+    `Usage: node src/cli/autodev.ts <command> [subcommand] [options]\n\nCommands:\n  check\n  render agents|contract|mcp|catalog\n  router run|ensure|status\n  provider <name>\n  hook <name>\n  install\n`
   );
 }
 

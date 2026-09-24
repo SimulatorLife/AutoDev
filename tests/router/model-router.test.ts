@@ -19,6 +19,8 @@ import { spawnedChildren } from "../../src/providers/antigravity.ts";
 import { COOLDOWNS as cooldowns } from "../../src/router/cooldown.ts";
 import * as responses from "../../src/router/responses.ts";
 import {
+  CONFIGURED_ORCHESTRATOR_MODEL,
+  CONFIGURED_SMART_MODEL,
   ROUTING_POLICY as routing,
   validateRoutingConfig
 } from "../../src/router/routing.ts";
@@ -258,7 +260,7 @@ test("loads editable provider and role models from JSON routing config", async (
     )
   );
   assert.equal(config.providers.claude.models.smart, "claude-opus-5-5");
-  assert.equal(config.providers.codex.models.smart, "gpt-5.6-sol");
+  assert.equal(config.providers.codex.models.smart, CONFIGURED_SMART_MODEL);
   assert.equal(config.providers.minimax.models.smart, undefined);
   assert.equal(config.providers.copilot.models.smart, undefined);
   assert.deepEqual(config.providerGroups.default, [
@@ -278,7 +280,10 @@ test("loads editable provider and role models from JSON routing config", async (
   assert.equal(config.roles.smart.tier, "smart");
   assert.equal(config.orchestrator.alias, "autodev/orchestrator");
   assert.equal(config.orchestrator.tier, "orchestrator");
-  assert.equal(config.providers.codex.models.orchestrator, "gpt-5.6-luna");
+  assert.equal(
+    config.providers.codex.models.orchestrator,
+    CONFIGURED_ORCHESTRATOR_MODEL
+  );
   assert.equal(config.providers.claude.models.orchestrator, "claude-opus-5-5");
   assert.equal(
     config.providers.antigravity.models.orchestrator,
@@ -395,7 +400,7 @@ test("orchestrator alias degrades from the pinned primary provider to a load-bal
     "codex",
     "the primary provider is always attempted first"
   );
-  assert.equal(candidates[0].model, "gpt-5.6-luna");
+  assert.equal(candidates[0].model, CONFIGURED_ORCHESTRATOR_MODEL);
   assert.equal(
     candidates[0].reasoningEffort,
     null,
@@ -445,7 +450,7 @@ test("orchestrator alias degrades from the pinned primary provider to a load-bal
     { model: "autodev/orchestrator", reasoning: { effort: "xhigh" } },
     candidates[0]
   );
-  assert.equal(primary.model, "gpt-5.6-luna");
+  assert.equal(primary.model, CONFIGURED_ORCHESTRATOR_MODEL);
   assert.deepEqual(
     primary.reasoning,
     { effort: "xhigh" },
@@ -514,10 +519,10 @@ test("validates routing config and requires default model for providers", () => 
       validateRoutingConfig({
         ...routed,
         providers: {
-          claude: { models: { default: "sonnet", orchestrator: "gpt-5.6-sol" } }
+          claude: { models: { default: "sonnet", orchestrator: CONFIGURED_SMART_MODEL } }
         }
       }),
-    /provider claude orchestrator model "gpt-5\.6-sol" routes to codex/
+    new RegExp(`provider claude orchestrator model "${CONFIGURED_SMART_MODEL}" routes to codex`)
   );
 
   assert.throws(
@@ -570,7 +575,7 @@ test("validates routing config and requires default model for providers", () => 
 });
 
 test("routes supported model families without provider aliases", () => {
-  assert.equal(routing.routeForModel("gpt-5.6-luna")?.provider, "codex");
+  assert.equal(routing.routeForModel(CONFIGURED_ORCHESTRATOR_MODEL)?.provider, "codex");
   assert.equal(routing.routeForModel("sonnet")?.provider, "claude");
   assert.equal(routing.routeForModel("MiniMax-M3")?.provider, "minimax");
   assert.equal(
@@ -605,7 +610,7 @@ test("resolves role aliases through tier-specific randomized provider groups wit
   );
   assert.equal(smartModelMap.antigravity, "gemini-3.8-flash-high");
   assert.equal(smartModelMap.claude, "claude-opus-5-5");
-  assert.equal(smartModelMap.codex, "gpt-5.6-sol");
+  assert.equal(smartModelMap.codex, CONFIGURED_SMART_MODEL);
   assert.notDeepEqual(
     routing
       .roleCandidates("smart", () => 0)
@@ -1061,7 +1066,10 @@ test("requires configured credentials before treating keyed providers as availab
     true
   );
   assert.equal(
-    routing.routeCredentialAvailable(routing.routeForModel("gpt-5.6-luna"), {}),
+    routing.routeCredentialAvailable(
+      routing.routeForModel(CONFIGURED_ORCHESTRATOR_MODEL),
+      {}
+    ),
     true
   );
 });
@@ -2178,14 +2186,14 @@ test("attributes named tools, skills, and skillUses across two distinct workspac
     phase: "selected",
     requestId: "req-a",
     provider: "codex",
-    model: "gpt-5.6-luna",
+    model: CONFIGURED_ORCHESTRATOR_MODEL,
     workspace: wsContextA
   });
   recordRouterEvent({
     phase: "result",
     requestId: "req-a",
     provider: "codex",
-    model: "gpt-5.6-luna",
+    model: CONFIGURED_ORCHESTRATOR_MODEL,
     workspace: wsContextA,
     outcome: "success",
     status: 200,
@@ -3640,7 +3648,7 @@ test("ingests Codex OTEL turn and MCP lifecycle telemetry without prompt content
                 attributes: attributes([
                   ["event.name", "codex.conversation_starts"],
                   ["conversation.id", "conversation-otel"],
-                  ["model", "gpt-5.6-luna"]
+                  ["model", CONFIGURED_ORCHESTRATOR_MODEL]
                 ])
               },
               {
@@ -3729,7 +3737,7 @@ test("ingests Codex OTEL turn and MCP lifecycle telemetry without prompt content
     },
     { observed: 3, ready: 1, error: 0, stale: 1 }
   );
-  assert.equal(telemetry.mcpSummary.byModel["gpt-5.6-luna"].observed, 3);
+  assert.equal(telemetry.mcpSummary.byModel[CONFIGURED_ORCHESTRATOR_MODEL].observed, 3);
   assert.equal(telemetry.mcpSummary.byRole.unattributed.observed, 3);
   assert.equal(telemetry.mcpSummary.byWorkspace.unattributed.observed, 3);
   assert.equal(telemetry.mcpSummary.byAgent["conversation-otel"].observed, 3);
@@ -4035,7 +4043,10 @@ test("dedupes repeated Collector-forwarded OTLP JSON batches so receiver counts 
         }
       ]
     );
-    assert.equal(telemetry.dimensions.mcp.byModel["gpt-5.6-luna"].count, 13);
+    assert.equal(
+      telemetry.dimensions.mcp.byModel[CONFIGURED_ORCHESTRATOR_MODEL].count,
+      13
+    );
     assert.deepEqual(
       {
         total: getRouterStatus().attributionDiagnostics.total,
@@ -4145,13 +4156,17 @@ test("Collector-forwarded OTLP semantics do not depend on logs/traces/metrics ar
   };
   try {
     const canonical = semantics(["logs", "traces", "metrics"]);
+    const fixtureModel =
+      fixture.logs.resourceLogs?.[0]?.scopeLogs?.[0]?.logRecords?.[0]?.attributes?.find(
+        (a: any) => a.key === "model"
+      )?.value?.stringValue ?? CONFIGURED_ORCHESTRATOR_MODEL;
     const byModel = canonical.telemetry.dimensions.mcp.byModel;
-    assert.deepEqual(Object.keys(byModel), ["gpt-5.6-luna"]);
-    assert.equal(byModel["gpt-5.6-luna"].count, 13);
+    assert.deepEqual(Object.keys(byModel), [fixtureModel]);
+    assert.equal(byModel[fixtureModel].count, 13);
     const buckets = Object.fromEntries(
       canonical.telemetry.mcpServers.map((server: any) => [
         server.name,
-        server.byModel["gpt-5.6-luna"].lastStatus
+        server.byModel[fixtureModel].lastStatus
       ])
     );
     assert.deepEqual(buckets, { codex_apps: "error", playwright: "ready" });
@@ -4179,9 +4194,9 @@ test("Collector-forwarded OTLP semantics do not depend on logs/traces/metrics ar
     ingestOtelSignal("logs", structuredClone(fixture.logs));
     const late = codexTelemetryStatus(now);
     assert.deepEqual(Object.keys(late.dimensions.mcp.byModel), [
-      "gpt-5.6-luna"
+      fixtureModel
     ]);
-    assert.equal(late.dimensions.mcp.byModel["gpt-5.6-luna"].count, 13);
+    assert.equal(late.dimensions.mcp.byModel[fixtureModel].count, 13);
   } finally {
     resetOtelTelemetry();
   }
@@ -4319,7 +4334,7 @@ test("attributes session-keyed skill reads to the parent workspace", () => {
     activitySubject: "session-skill-read",
     requestId: "parent-request",
     provider: "codex",
-    model: "gpt-5.6-luna",
+    model: CONFIGURED_ORCHESTRATOR_MODEL,
     role: null,
     workspace: "AutoDev"
   });
@@ -6106,16 +6121,16 @@ test("aggregates usage by role, resolved model, origin, duration, and tool calls
   recordRouterEvent({
     phase: "selected",
     requestId: "req-usage-parent",
-    requestedModel: "gpt-5.6-luna",
+    requestedModel: CONFIGURED_ORCHESTRATOR_MODEL,
     provider: "codex",
-    model: "gpt-5.6-luna"
+    model: CONFIGURED_ORCHESTRATOR_MODEL
   });
   recordRouterEvent({
     phase: "result",
     requestId: "req-usage-parent",
-    requestedModel: "gpt-5.6-luna",
+    requestedModel: CONFIGURED_ORCHESTRATOR_MODEL,
     provider: "codex",
-    model: "gpt-5.6-luna",
+    model: CONFIGURED_ORCHESTRATOR_MODEL,
     outcome: "success",
     status: 200,
     elapsedMs: 80,
@@ -6140,16 +6155,16 @@ test("keeps orchestrator role attribution separate from direct and subagent traf
   recordRouterEvent({
     phase: "selected",
     requestId: "req-orchestrator",
-    requestedModel: "gpt-5.6-sol",
+    requestedModel: CONFIGURED_SMART_MODEL,
     provider: "codex",
-    model: "gpt-5.6-sol"
+    model: CONFIGURED_SMART_MODEL
   });
   recordRouterEvent({
     phase: "result",
     requestId: "req-orchestrator",
-    requestedModel: "gpt-5.6-sol",
+    requestedModel: CONFIGURED_SMART_MODEL,
     provider: "codex",
-    model: "gpt-5.6-sol",
+    model: CONFIGURED_SMART_MODEL,
     outcome: "success",
     status: 200,
     elapsedMs: 50
@@ -6842,10 +6857,10 @@ test("extracts text from a Responses SSE completion", () => {
 
 test("deduplicates catalog models and keeps role aliases visible", () => {
   const ids = routing.catalogModelIds(
-    [{ slug: "gpt-5.6-luna" }, { slug: "gpt-5.6-luna" }],
+    [{ slug: CONFIGURED_ORCHESTRATOR_MODEL }, { slug: CONFIGURED_ORCHESTRATOR_MODEL }],
     ["autodev/explorer"]
   );
-  assert.deepEqual(ids, ["gpt-5.6-luna", "autodev/explorer"]);
+  assert.deepEqual(ids, [CONFIGURED_ORCHESTRATOR_MODEL, "autodev/explorer"]);
 });
 
 test("rewrites the routed provider model back to the public role alias", () => {
@@ -7331,7 +7346,7 @@ test("native Codex requests record MCP exposure from the role contract without l
   resetOtelTelemetry();
   resetRouterTelemetry();
   recordNativeMcpExposure({
-    route: { provider: "codex", model: "gpt-5.6-luna" } as any,
+    route: { provider: "codex", model: CONFIGURED_ORCHESTRATOR_MODEL } as any,
     agentRole: "default",
     workspace: { key: "SimulatorLife/NativeCodex" },
     requestId: "request-native",
@@ -9358,7 +9373,7 @@ test("summarizes every candidate's cooldown for the exhaustion body", () => {
       [
         { provider: "claude", model: "sonnet" },
         { provider: "minimax", model: "MiniMax-M3" },
-        { provider: "codex", model: "gpt-5.6-luna" }
+        { provider: "codex", model: CONFIGURED_ORCHESTRATOR_MODEL }
       ],
       now + 1
     );
@@ -9551,10 +9566,10 @@ test("outbound item ids are corrected to match their item type", () => {
 
   // On Codex routes, reasoning items without encrypted_content are unresolvable references
   // under store: false and are dropped outright, while tool calls are normalized.
-  const codexRoute = routing.routeForModel("gpt-5.6-luna");
+  const codexRoute = routing.routeForModel(CONFIGURED_ORCHESTRATOR_MODEL);
   const codexSent: any = responses.upstreamPayload(
     codexRoute as any,
-    { model: "gpt-5.6-luna", input: poisoned },
+    { model: CONFIGURED_ORCHESTRATOR_MODEL, input: poisoned },
     true
   );
   assert.equal(
@@ -9585,7 +9600,7 @@ test("outbound item ids are corrected to match their item type", () => {
   ];
   const codexSurvives: any = responses.upstreamPayload(
     codexRoute as any,
-    { model: "gpt-5.6-luna", input: withEncrypted },
+    { model: CONFIGURED_ORCHESTRATOR_MODEL, input: withEncrypted },
     true
   );
   assert.equal(codexSurvives.input.length, 2);
@@ -9605,8 +9620,8 @@ test("a payload whose ids already conform is forwarded unchanged", () => {
     { type: "custom_tool_call", id: "ctc_abc", call_id: "call_1", name: "exec" }
   ];
   const sent: any = responses.upstreamPayload(
-    routing.routeForModel("gpt-5.6-luna") as any,
-    { model: "gpt-5.6-luna", input },
+    routing.routeForModel(CONFIGURED_ORCHESTRATOR_MODEL) as any,
+    { model: CONFIGURED_ORCHESTRATOR_MODEL, input },
     true
   );
   assert.equal(sent.input, input);
@@ -9746,7 +9761,7 @@ test("end-to-end: unresolvable reasoning items dropped and tool call ids normali
           "x-codex-session-id": "e2e-reasoning-drop-test"
         },
         body: JSON.stringify({
-          model: "gpt-5.6-luna",
+          model: CONFIGURED_ORCHESTRATOR_MODEL,
           input: inputWithForeign,
           stream: false
         })
@@ -10476,7 +10491,7 @@ test("all-disabled behavior rejects aliases, orchestrator, and concrete requests
     const concreteRes = await fetch(`${baseUrl}/v1/responses`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ model: "gpt-5.6-luna", stream: false })
+      body: JSON.stringify({ model: CONFIGURED_ORCHESTRATOR_MODEL, stream: false })
     });
     assert.equal(concreteRes.status, 503);
     const concreteJson = await concreteRes.json();
@@ -11309,7 +11324,7 @@ test("active-agent reconciliation: only explicitly tracked parent and children a
     role: "orchestrator",
     origin: "orchestrator",
     provider: "codex",
-    model: "gpt-5.6-luna",
+    model: CONFIGURED_ORCHESTRATOR_MODEL,
     workspace: "AutoDev"
   });
   agentActivity.endRequest("parent-sess", {
@@ -11418,7 +11433,7 @@ test("active-agent reconciliation: multi-provider and multi-workspace reconcilia
   agentActivity.beginRequest("orch-b", {
     requestId: "req-b-orch",
     provider: "codex",
-    model: "gpt-5.6-luna",
+    model: CONFIGURED_ORCHESTRATOR_MODEL,
     role: "orchestrator",
     origin: "orchestrator",
     workspace: "RepoBeta"
@@ -11864,7 +11879,7 @@ test("active-agent reconciliation: /status exposes status.agents (autodev-agent-
   agentActivity.beginRequest("session:parent", {
     requestId: "req-agent-parent",
     provider: "codex",
-    model: "gpt-5.6-luna",
+    model: CONFIGURED_ORCHESTRATOR_MODEL,
     role: "orchestrator",
     origin: "orchestrator",
     workspace: "AutoDev"
@@ -11934,7 +11949,7 @@ test("active-agent reconciliation: /status exposes status.agents (autodev-agent-
     claude: 1
   });
   assert.deepEqual(status.agents.liveByModel, {
-    "codex/gpt-5.6-luna": 1,
+    [`codex/${CONFIGURED_ORCHESTRATOR_MODEL}`]: 1,
     "minimax/MiniMax-M3": 1,
     "claude/sonnet": 1
   });
@@ -12033,7 +12048,7 @@ function autodevBuildPayload() {
               ["role", "orchestrator"],
               ["workspace_id", "ws-autodev-test"],
               ["provider", "openai"],
-              ["model", "gpt-5.6-luna"]
+              ["model", CONFIGURED_ORCHESTRATOR_MODEL]
             ])
           },
           scopeLogs: [
@@ -12097,7 +12112,7 @@ function autodevBuildPayload() {
               ["role", "orchestrator"],
               ["workspace_id", "ws-autodev-test"],
               ["provider", "openai"],
-              ["model", "gpt-5.6-luna"]
+              ["model", CONFIGURED_ORCHESTRATOR_MODEL]
             ])
           },
           scopeSpans: [
@@ -12138,7 +12153,7 @@ function autodevBuildPayload() {
               ["role", "orchestrator"],
               ["workspace_id", "ws-autodev-test"],
               ["provider", "openai"],
-              ["model", "gpt-5.6-luna"]
+              ["model", CONFIGURED_ORCHESTRATOR_MODEL]
             ])
           },
           scopeMetrics: [
@@ -12244,7 +12259,7 @@ test("autodevEnrichOtlpPayload places resource keys only on resource.attributes"
   assert.equal(resourceMap["autodev.role"], "orchestrator");
   assert.equal(resourceMap["autodev.workspace"], "ws-autodev-test");
   assert.equal(resourceMap["autodev.provider"], "openai");
-  assert.equal(resourceMap["autodev.model"], "gpt-5.6-luna");
+  assert.equal(resourceMap["autodev.model"], CONFIGURED_ORCHESTRATOR_MODEL);
   // Originals are still there.
   assert.equal(resourceMap["service.name"], "codex-cli");
   assert.equal(resourceMap.role, "orchestrator");
@@ -12436,7 +12451,7 @@ test("autodevEnrichOtlpPayload omits unknown values and avoids duplicate keys", 
             ["role", ""],
             ["workspace_id", "   "],
             ["provider", "openai"],
-            ["model", "gpt-5.6-luna"]
+            ["model", CONFIGURED_ORCHESTRATOR_MODEL]
           ])
         },
         scopeLogs: [
@@ -12469,7 +12484,7 @@ test("autodevEnrichOtlpPayload omits unknown values and avoids duplicate keys", 
     "whitespace workspace_id alias produces no key"
   );
   assert.equal(onceResource["autodev.provider"], "openai");
-  assert.equal(onceResource["autodev.model"], "gpt-5.6-luna");
+  assert.equal(onceResource["autodev.model"], CONFIGURED_ORCHESTRATOR_MODEL);
   // Heartbeat has no skill / spawn_mechanism / server_name alias: nothing added.
   const heartBeat = once.resourceLogs[0].scopeLogs[0].logRecords[0];
   assert.equal(
@@ -12507,7 +12522,7 @@ test("autodevEnrichOtlpPayload omits unknown values and avoids duplicate keys", 
     "autodev.model must appear exactly once after a second enrichment pass"
   );
   assert.equal(providerOccurrences[0].value.stringValue, "openai");
-  assert.equal(modelOccurrences[0].value.stringValue, "gpt-5.6-luna");
+  assert.equal(modelOccurrences[0].value.stringValue, CONFIGURED_ORCHESTRATOR_MODEL);
   // Pre-existing autodev.* entries with a non-empty value must survive a
   // second enrichment untouched (the helper does not overwrite).
   once.resourceLogs[0].resource.attributes.unshift({

@@ -34,6 +34,18 @@ const shape = (candidate: JsonRecord): JsonRecord => ({
     : {})
 });
 
+function hydrateCandidates(
+  candidates: JsonRecord[],
+  tierOrRole: string
+): JsonRecord[] {
+  const tier = routing.config.roles[tierOrRole]?.tier ?? tierOrRole;
+  return candidates.map((candidate) => ({
+    ...candidate,
+    model:
+      routing.configuredModel(candidate.provider, tier) ?? candidate.model
+  }));
+}
+
 describe("root versus subagent provider selection", () => {
   test("keeps the root alias distinct from every leaf alias", () => {
     assert.equal(
@@ -42,7 +54,10 @@ describe("root versus subagent provider selection", () => {
     );
     for (const [role, alias] of Object.entries(contract.aliases.subagents))
       assert.equal(routing.roleForModel(alias), role);
-    for (const model of contract.aliases.nonAliases.concreteModels)
+    for (const model of [
+      ...contract.aliases.nonAliases.concreteModels,
+      routing.orchestratorModel
+    ])
       assert.equal(routing.roleForModel(model), null);
     for (const model of contract.aliases.nonAliases.unknownModels)
       assert.equal(routing.roleForModel(model), null);
@@ -52,7 +67,7 @@ describe("root versus subagent provider selection", () => {
     for (const role of ["default", "smart"]) {
       assert.deepEqual(
         routing.roleCandidates(role, seeded()).map(shape),
-        contract.subagentCandidates[role]
+        hydrateCandidates(contract.subagentCandidates[role], role)
       );
       assert.deepEqual(
         new Set(
@@ -70,7 +85,7 @@ describe("root versus subagent provider selection", () => {
     ]) {
       assert.deepEqual(
         routing.roleCandidates(role, seeded()).map(shape),
-        contract.subagentCandidates.default
+        hydrateCandidates(contract.subagentCandidates.default, "default")
       );
     }
   });
@@ -78,14 +93,14 @@ describe("root versus subagent provider selection", () => {
   test("freezes root fallback reasoning and preferred continuation ordering", () => {
     assert.deepEqual(
       routing.orchestratorCandidates(seeded()).map(shape),
-      contract.orchestratorCandidates.unpreferred
+      hydrateCandidates(contract.orchestratorCandidates.unpreferred, "orchestrator")
     );
     for (const [provider, expected] of Object.entries(
       contract.orchestratorCandidates.preferred
     )) {
       assert.deepEqual(
         routing.orchestratorCandidates(seeded(), provider).map(shape),
-        expected
+        hydrateCandidates(expected as JsonRecord[], "orchestrator")
       );
     }
     assert.deepEqual(
@@ -98,18 +113,22 @@ describe("root versus subagent provider selection", () => {
     );
     assert.deepEqual(
       routing.orchestratorCandidates(seeded(), "unknown").map(shape),
-      contract.orchestratorCandidates.unpreferred
+      hydrateCandidates(contract.orchestratorCandidates.unpreferred, "orchestrator")
     );
   });
 
   test("freezes root-only fallback reasoning overrides and leaf effort preservation", () => {
     const root = routing.orchestratorCandidates(seeded());
+    const expectedPrimary = {
+      ...contract.payloads.orchestratorPrimary,
+      model: routing.orchestratorModel
+    };
     assert.deepEqual(
       payloadForCandidate(
         { model: "autodev/orchestrator", reasoning: { effort: "xhigh" } },
         root[0]!
       ),
-      contract.payloads.orchestratorPrimary
+      expectedPrimary
     );
     assert.deepEqual(
       payloadForCandidate(

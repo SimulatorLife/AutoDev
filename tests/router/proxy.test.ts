@@ -23,7 +23,11 @@ import {
   proxyOrchestratorResponse,
   proxyRoleResponse
 } from "../../src/router/proxy.ts";
-import { type ProviderRoute, ROUTES } from "../../src/router/routing.ts";
+import {
+  CONFIGURED_ORCHESTRATOR_MODEL,
+  type ProviderRoute,
+  ROUTES
+} from "../../src/router/routing.ts";
 import { agentActivity, ingestAgentEvents } from "../../src/router/server.ts";
 import {
   noteOrchestratorSession,
@@ -462,7 +466,7 @@ test(
     }) as typeof fetch;
     try {
       noteOrchestratorSession("root-1", "codex", {
-        model: "gpt-5.6-luna",
+        model: CONFIGURED_ORCHESTRATOR_MODEL,
         workspace: null,
         requestId: "req-root"
       });

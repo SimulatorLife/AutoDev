@@ -18,6 +18,7 @@ import { runCompose } from "../config/compose-user-config.ts";
 import { renderAgentDirectory } from "../config/render-agent-configs.ts";
 import { runBridgeMcpCatalogue } from "../config/render-bridge-mcp-catalogue.ts";
 import { runExecutionContract } from "../config/render-execution-contract.ts";
+import { runModelCatalog } from "../config/render-model-catalog.ts";
 import {
   atomicWrite,
   parseTomlFile,
@@ -1041,6 +1042,11 @@ export function materializeInstallation(options: MaterializeOptions): void {
     runtimeTarget(filePath, options.codexHome, hooks);
   materializeRuntimeSources(source, target);
   materializeScripts(hooks, source);
+  runModelCatalog(
+    source("config/model-routing.json"),
+    source("config/catalogs"),
+    source("config/catalogs/codex-model-catalog.json")
+  );
   linkRuntimeConfigs(options.codexHome, source, rules);
   replaceSkillSymlinks(options.codexHome, skillsRoot, userSkills);
   materializeRenderedAgents(

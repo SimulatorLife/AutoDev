@@ -11,6 +11,7 @@ import {
   type SqliteDatabase,
   type SqliteRow
 } from "../src/router/state-collector.ts";
+import { CONFIGURED_ORCHESTRATOR_MODEL } from "../src/router/routing.ts";
 import { parseLimitedTableSelect } from "./sqlite-select-stub.ts";
 
 // A minimal in-memory stub of the `node:sqlite` binding. The collector only
@@ -293,7 +294,7 @@ test("collector introspects an in-memory state_5.sqlite and produces a normalize
     has_user_event: 1,
     archived: 0,
     cli_version: "0.1.0",
-    model: "gpt-5.6-luna",
+    model: CONFIGURED_ORCHESTRATOR_MODEL,
     agent_role: "default",
     is_pinned: 0,
     updated_at_ms: now,
@@ -314,7 +315,7 @@ test("collector introspects an in-memory state_5.sqlite and produces a normalize
     has_user_event: 1,
     archived: 0,
     cli_version: "0.1.0",
-    model: "gpt-5.6-luna",
+    model: CONFIGURED_ORCHESTRATOR_MODEL,
     agent_role: "smart",
     is_pinned: 1,
     updated_at_ms: now - 100,
@@ -436,7 +437,7 @@ test("live poll delivers subsequent snapshots to subscribers without blocking", 
     has_user_event: 1,
     archived: 0,
     cli_version: "0",
-    model: "gpt-5.6-luna",
+    model: CONFIGURED_ORCHESTRATOR_MODEL,
     agent_role: "default",
     is_pinned: 0,
     updated_at_ms: now,
