@@ -13,6 +13,18 @@
         "codex"
       ]
     ],
+    "browser-tester": [
+      [
+        "claude",
+        "minimax"
+      ],
+      [
+        "copilot"
+      ],
+      [
+        "codex"
+      ]
+    ],
     "smart": [
       [
         "claude",
@@ -106,7 +118,7 @@
       "tier": "default"
     },
     "browser-tester": {
-      "tier": "default"
+      "tier": "browser-tester"
     },
     "explorer": {
       "tier": "default"

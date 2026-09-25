@@ -46,6 +46,12 @@
       "antigravity",
       "copilot",
       "claude"
+    ],
+    "browser-tester": [
+      "minimax",
+      "claude",
+      "copilot",
+      "codex"
     ]
   },
   "subagentCandidates": {
@@ -83,6 +89,24 @@
       {
         "provider": "codex",
         "model": "gpt-6-sol"
+      }
+    ],
+    "browser-tester": [
+      {
+        "provider": "minimax",
+        "model": "MiniMax-M3"
+      },
+      {
+        "provider": "claude",
+        "model": "sonnet"
+      },
+      {
+        "provider": "copilot",
+        "model": "copilot"
+      },
+      {
+        "provider": "codex",
+        "model": "gpt-6-luna"
       }
     ]
   },

@@ -187,7 +187,7 @@ test("the orchestrator is never handed the leaf prompt, and the leaf is never ha
   );
   assert.match(orchestrator, /# Root orchestrator bootstrap/);
   assert.match(orchestrator, /## Canonical orchestration skill/);
-  assert.match(orchestrator, /## Root orchestrator contract/);
+  assert.match(orchestrator, /## Delegation/);
   assert.doesNotMatch(orchestrator, /You are a bounded leaf agent executing/);
   assert.doesNotMatch(orchestrator, /Do \*not\* spawn child agents/);
 
@@ -207,7 +207,7 @@ test("the orchestrator is never handed the leaf prompt, and the leaf is never ha
   }
 });
 
-test("the orchestrator prompt teaches the spawn call a code-mode runtime actually accepts", () => {
+test("the orchestrator prompt teaches the canonical code-mode spawn path", () => {
   const orchestrator = roleInstructions(ORCHESTRATOR_AGENT_ROLE);
   // Verified against a live Codex 0.153.1 and against recorded rollouts of
   // GPT-served turns that spawned successfully. Codex runs these models in code
@@ -220,17 +220,14 @@ test("the orchestrator prompt teaches the spawn call a code-mode runtime actuall
   // producing a generic agent instead of the requested role.
   assert.match(orchestrator, /agent_type/);
   assert.match(orchestrator, /Promise\.all/);
-  // A batch must stay one call: fan-out inside a single call is what runs the
-  // children in parallel and what keeps a wide fan-out from being counted as
-  // one delegation.
-  assert.match(orchestrator, /one\s+whole batch call/);
-  // Both runtimes reach the same spawner, so the contract is stated once and
-  // only the spelling differs. A model must never be left choosing between
-  // this path and its own runtime's private task tool.
-  assert.match(orchestrator, /exactly one delegation path/);
+  // A batch uses one spawn call and settles each result independently.
+  assert.match(orchestrator, /single spawn call may dispatch a batch/);
+  assert.match(orchestrator, /Promise\.allSettled/);
+  // Direct Codex must use its native spawner, not the bridge-only shim.
+  assert.match(orchestrator, /Do not switch to `autodev_spawn` instead of/);
   assert.match(orchestrator, /spawn_subagent/);
-  // And it must not invent a blocking wait: spawning is fire-and-forget.
-  assert.match(orchestrator, /fire-and-forget/);
+  // Lifecycle handling follows spawning, rather than blocking the spawn call.
+  assert.match(orchestrator, /After spawning, poll child results/);
 });
 
 test("the orchestrator prompt tells the model to quote a spawn message so Markdown cannot break it", () => {
@@ -240,6 +237,23 @@ test("the orchestrator prompt tells the model to quote a spawn message so Markdo
   const prompt = read("agents/prompts/orchestrator.md");
   assert.match(prompt, /double-quoted JavaScript string/);
   assert.match(prompt, /never as a template literal/);
+});
+
+test("the orchestrator preserves agent IDs verbatim across lifecycle calls", () => {
+  const prompt = read("agents/prompts/orchestrator.md");
+  const runtimeContract = read(
+    ".rulesync/skills/orchestration/references/runtime-contract.md"
+  );
+  for (const guidance of [prompt, runtimeContract]) {
+    const normalized = guidance.replaceAll(/\s+/g, " ");
+    assert.match(normalized, /agent_id.*opaque handle/);
+    assert.match(normalized, /complete value .* verbatim/);
+    assert.match(normalized, /never abbreviate .* retype it from memory/);
+    assert.match(
+      normalized,
+      /recover the exact handle .* verified spawn history/
+    );
+  }
 });
 
 test("a leaf is told to ignore a spawn tool its runtime leaks to it", () => {

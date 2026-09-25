@@ -41,8 +41,7 @@ function hydrateCandidates(
   const tier = routing.config.roles[tierOrRole]?.tier ?? tierOrRole;
   return candidates.map((candidate) => ({
     ...candidate,
-    model:
-      routing.configuredModel(candidate.provider, tier) ?? candidate.model
+    model: routing.configuredModel(candidate.provider, tier) ?? candidate.model
   }));
 }
 
@@ -76,24 +75,43 @@ describe("root versus subagent provider selection", () => {
         new Set(contract.tiers[role])
       );
     }
-    for (const role of [
-      "docs-researcher",
-      "browser-tester",
-      "explorer",
-      "worker",
-      "validator"
-    ]) {
+    for (const role of ["docs-researcher", "explorer", "worker", "validator"]) {
       assert.deepEqual(
         routing.roleCandidates(role, seeded()).map(shape),
         hydrateCandidates(contract.subagentCandidates.default, "default")
       );
     }
+    const browserTesterCandidates = routing.roleCandidates(
+      "browser-tester",
+      seeded()
+    );
+    const browserTesterProviders = new Set(
+      browserTesterCandidates.map(({ provider }) => provider)
+    );
+    assert.deepEqual(
+      browserTesterCandidates.map(shape),
+      hydrateCandidates(
+        contract.subagentCandidates["browser-tester"],
+        "browser-tester"
+      )
+    );
+    assert.deepEqual(
+      browserTesterProviders,
+      new Set(contract.tiers["browser-tester"])
+    );
+    assert.ok(
+      !browserTesterProviders.has("antigravity"),
+      "browser-tester requires per-role Playwright MCP isolation"
+    );
   });
 
   test("freezes root fallback reasoning and preferred continuation ordering", () => {
     assert.deepEqual(
       routing.orchestratorCandidates(seeded()).map(shape),
-      hydrateCandidates(contract.orchestratorCandidates.unpreferred, "orchestrator")
+      hydrateCandidates(
+        contract.orchestratorCandidates.unpreferred,
+        "orchestrator"
+      )
     );
     for (const [provider, expected] of Object.entries(
       contract.orchestratorCandidates.preferred
@@ -113,7 +131,10 @@ describe("root versus subagent provider selection", () => {
     );
     assert.deepEqual(
       routing.orchestratorCandidates(seeded(), "unknown").map(shape),
-      hydrateCandidates(contract.orchestratorCandidates.unpreferred, "orchestrator")
+      hydrateCandidates(
+        contract.orchestratorCandidates.unpreferred,
+        "orchestrator"
+      )
     );
   });
 

@@ -76,8 +76,12 @@ in `src/` outside `src/shared/tool-names.ts`.
 
 After spawning, poll child results with `multi_agent_v1__wait_agent({ targets:
 [childId] })` and close terminal children with
-`multi_agent_v1__close_agent({ target: childId })`. Always close handles you
-own before creating replacement work or ending the turn.
+`multi_agent_v1__close_agent({ target: childId })`. Treat `agent_id` as an
+opaque handle: use the complete value returned by `spawn_agent` verbatim; never
+abbreviate it or retype it from memory. If the spawn output is unavailable or
+a lifecycle call rejects an ID, recover the exact handle from this parent's
+verified spawn history instead of guessing. Always close handles you own before
+creating replacement work or ending the turn.
 
 A single spawn call may dispatch a batch by awaiting `Promise.allSettled`
 across multiple `multi_agent_v1__spawn_agent` calls. Child ids that are

@@ -36,8 +36,11 @@ Terminal states are `completed`, `errored`, `interrupted`, `shutdown`, and
 explicit provider-incomplete terminal states. A terminal child still owns a
 handle until explicitly closed where the runtime requires it. After consuming a
 terminal result, call `close_agent` before creating replacement work or ending
-the task. Router active-child telemetry is not proof that the parent has no open
-child handles.
+the task. Treat `agent_id` as an opaque handle and pass the complete value from
+the spawn result verbatim; never abbreviate or retype it from memory. If a
+lifecycle call rejects an ID, recover the exact handle from this parent's
+verified spawn history instead of guessing. Router active-child telemetry is
+not proof that the parent has no open child handles.
 
 A rejected spawn with no child ID created no handle.
 

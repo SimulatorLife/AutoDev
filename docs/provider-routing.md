@@ -20,7 +20,11 @@ Callers select a capability role, never a provider or model:
 | `validator` | Independent validation | workspace-write |
 | `smart` | Full-capability browser/docs/implementation agent | workspace-write |
 
-All roles except `smart` use the configured `default` model tier. Only `smart` uses the configured `smart` tier. Every role uses the `local_model_router` with an `autodev/<role>` model alias.
+Roles other than `browser-tester` and `smart` use the configured `default` model
+tier. `browser-tester` has a dedicated tier that excludes providers unable to
+isolate its required Playwright MCP; `smart` uses the configured `smart` tier.
+Providers without a model override for a tier use their `default` model. Every
+role uses the `local_model_router` with an `autodev/<role>` model alias.
 
 ### Single source of truth for model versions (DRY model architecture)
 
@@ -263,8 +267,11 @@ delegation paths:
     to the orchestrator. Because Antigravity's MCP configuration is global, registering
     Playwright for `agy` would expose it across all roles (including the orchestrator);
     rather than falsely claiming per-role isolation, Playwright registration and
-    `browser-tester` routing are removed for Antigravity. Antigravity uses its native
-    `search_web` and `read_url_content` tools backed by pre-approved `read_url(*)` permissions.
+    `browser-tester` routing are removed for Antigravity. The dedicated
+    `browser-tester` tier in `config/model-routing.json` excludes Antigravity so
+    this role never reaches a provider that cannot isolate its required Playwright
+    MCP. Antigravity uses its native `search_web` and `read_url_content` tools
+    backed by pre-approved `read_url(*)` permissions.
     Copilot explicitly allows `web_search` and `web_fetch` for research-capable roles
     without granting blanket `allow-all` permissions. MiniMax's adapter forwards `web_search`
      tool payloads unchanged; MiniMax's Responses API supports `web_search` natively.
