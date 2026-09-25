@@ -49,6 +49,24 @@
         "resolve-merge-conflicts"
       ],
       "mcpTools": {
+        "lsp": [
+          "lsp_find_symbol",
+          "lsp_smart_search",
+          "lsp_goto_definition",
+          "lsp_goto_type_definition",
+          "lsp_find_references",
+          "lsp_find_implementations",
+          "lsp_type_hierarchy",
+          "lsp_hover",
+          "lsp_signature_help",
+          "lsp_document_symbols",
+          "lsp_diagnostics",
+          "lsp_index_files",
+          "lsp_workspace_diagnostics",
+          "lsp_rename",
+          "lsp_code_actions",
+          "lsp_format_document"
+        ],
         "codegraphcontext": [
           "add_code_to_graph",
           "check_job_status",
@@ -232,6 +250,24 @@
         "doubt-driven-development"
       ],
       "mcpTools": {
+        "lsp": [
+          "lsp_find_symbol",
+          "lsp_smart_search",
+          "lsp_goto_definition",
+          "lsp_goto_type_definition",
+          "lsp_find_references",
+          "lsp_find_implementations",
+          "lsp_type_hierarchy",
+          "lsp_hover",
+          "lsp_signature_help",
+          "lsp_document_symbols",
+          "lsp_diagnostics",
+          "lsp_index_files",
+          "lsp_workspace_diagnostics",
+          "lsp_rename",
+          "lsp_code_actions",
+          "lsp_format_document"
+        ],
         "codegraphcontext": [
           "add_code_to_graph",
           "check_job_status",

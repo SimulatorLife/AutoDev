@@ -279,3 +279,73 @@ test("codegraphcontext is enabled on code-capable roles with scoped six-tool all
     );
   }
 });
+
+test("lsp is scoped to precision tools on normal implementation roles and unrestricted on specialist roles", () => {
+  const contract = JSON.parse(
+    readFileSync("config/execution-contract.json", "utf8")
+  ) as {
+    roles: Record<
+      string,
+      { mcp?: string[]; mcpTools?: Record<string, string[]> }
+    >;
+  };
+  const expectedTools = [
+    "lsp_find_symbol",
+    "lsp_smart_search",
+    "lsp_goto_definition",
+    "lsp_goto_type_definition",
+    "lsp_find_references",
+    "lsp_find_implementations",
+    "lsp_type_hierarchy",
+    "lsp_hover",
+    "lsp_signature_help",
+    "lsp_document_symbols",
+    "lsp_diagnostics",
+    "lsp_index_files",
+    "lsp_workspace_diagnostics",
+    "lsp_rename",
+    "lsp_code_actions",
+    "lsp_format_document"
+  ];
+  // CCC owns discovery and CGC owns call/import relationships; normal
+  // implementation roles must not see the LSP tools that compete with them.
+  const demotedTools = [
+    "lsp_workspace_symbols",
+    "lsp_call_hierarchy",
+    "lsp_file_imports",
+    "lsp_related_files"
+  ];
+  for (const roleName of ["default", "worker"]) {
+    const roleCfg = contract.roles[roleName];
+    assert.ok(roleCfg, `${roleName} role must be declared`);
+    assert.ok(
+      (roleCfg.mcp ?? []).includes("lsp"),
+      `${roleName} must enable lsp`
+    );
+    assert.deepEqual(
+      roleCfg.mcpTools?.lsp,
+      expectedTools,
+      `${roleName} must have exactly the scoped lsp precision tools`
+    );
+    for (const tool of demotedTools)
+      assert.ok(
+        !roleCfg.mcpTools?.lsp?.includes(tool),
+        `${roleName} must not expose ${tool}`
+      );
+  }
+
+  // Discovery, validation, and deep-debug roles keep the full LSP surface as
+  // the escape hatch for questions the preferred owners cannot answer.
+  for (const roleName of ["explorer", "validator", "smart", "orchestrator"]) {
+    const roleCfg = contract.roles[roleName];
+    assert.ok(roleCfg, `${roleName} role must be declared`);
+    assert.ok(
+      (roleCfg.mcp ?? []).includes("lsp"),
+      `${roleName} must enable lsp`
+    );
+    assert.ok(
+      !(roleCfg.mcpTools ?? {}).lsp,
+      `${roleName} must keep the unrestricted lsp surface`
+    );
+  }
+});

@@ -159,8 +159,7 @@ test("browser roles get the pinned Playwright launcher with the role's tool allo
   }
   assert.deepEqual(parse(copilotMcpArgs("browser-tester")).disabled.sort(), [
     "cocoindex-code",
-    "context7",
-    "lsp"
+    "context7"
   ]);
   const docsAdditional = parse(copilotMcpArgs("docs-researcher")).additional
     .openaiDeveloperDocs;
@@ -168,6 +167,29 @@ test("browser roles get the pinned Playwright launcher with the role's tool allo
   assert.ok(docsAdditional);
   assert.ok(docsCatalogue);
   assert.deepEqual(docsAdditional.url, docsCatalogue.url);
+});
+
+test("LSP is added per session so normal implementation roles get their scoped allowlist", () => {
+  assert.equal(
+    userServers.includes("lsp"),
+    false,
+    "a user-level lsp server could not be narrowed per role"
+  );
+  for (const role of ["default", "worker"]) {
+    const scoped = (roleContract(role) as RoleContractWithTools).mcpTools?.lsp;
+    assert.ok(scoped && scoped.length > 0, `${role} declares an lsp allowlist`);
+    assert.deepEqual(
+      parse(copilotMcpArgs(role)).additional.lsp?.tools,
+      scoped,
+      role
+    );
+  }
+  for (const role of ["explorer", "validator", "smart", "orchestrator"])
+    assert.deepEqual(
+      parse(copilotMcpArgs(role)).additional.lsp?.tools,
+      ["*"],
+      role
+    );
 });
 
 test("a missing bridge MCP catalogue fails the turn instead of guessing servers", () => {

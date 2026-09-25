@@ -124,7 +124,20 @@ than `pnpm dlx @playwright/mcp@latest`; `dlx @latest` re-resolves the package on
 every cold start (network + startup latency), grows the pnpm `dlx` cache, and
 drifts the version across hosts and agents, so it is not used. Code-oriented
 roles (`default`, `explorer`, `worker`, `validator`, and `smart`) enable the
-`lsp` server and the `lsp-mcp-server` skill. The `browser-tester` and `smart`
+`lsp` server and the `lsp-mcp-server` skill. The normal implementation roles
+(`default` and `worker`) scope `lsp` with `enabled_tools` to its precision
+tools: symbol lookup (`lsp_find_symbol`, `lsp_smart_search`), definitions,
+references, implementations, type hierarchy, hover, signatures, document
+symbols, diagnostics, and rename/code-action/format refactoring. They do not
+see `lsp_workspace_symbols` (CocoIndex owns discovery and `lsp_find_symbol`
+bundles it), `lsp_call_hierarchy`, `lsp_file_imports`, or `lsp_related_files`
+(CodeGraphContext owns call and dependency relationships), or the editor and
+server-lifecycle tools. `explorer`, `validator`, `smart`, and `orchestrator`
+keep the full LSP surface as the fallback for questions the preferred owner
+cannot answer. `tests/config/config-rendering.test.ts` freezes that split.
+Copilot registers `lsp` per session, as it does `codegraphcontext`, so the
+bridge can apply each role's allowlist: `.rulesync/mcp.jsonc` removes both from
+Copilot's user-level file. The `browser-tester` and `smart`
 roles use the pinned TypeScript language server from AutoDev's devDependencies;
 the installer also installs `python-lsp-server==1.15.0` with pipx so Python
 files have a working `pylsp` backend. The launcher adds both AutoDev's

@@ -17,12 +17,13 @@ This MCP server exposes a Language Server (LSP) to you as ~30 tools. LSP servers
 5. **First-touch wakes the server.** Auto-start is on by default — you do not need `lsp_start_server`. The first tool call that takes a `file_path` will spawn the right language server and open the file. There is no need to ping `lsp_server_status` before each call.
 6. **Position points at the symbol, not whitespace.** When you pass `line`/`column`, point at any character of the identifier itself. Pointing at a space, the `(` after a function name, or a comma will give empty or surprising results.
 7. **The names below are the server's own; your runtime prefixes them.** In Codex code mode they are `tools.mcp__lsp__<name>` inside `exec` (e.g. `await tools.mcp__lsp__lsp_find_symbol({...})`); in Claude Code they are `mcp__lsp__<name>`. To check availability, search for `mcp__lsp__` (e.g. `ALL_TOOLS.filter((t) => t.name.startsWith("mcp__lsp__"))`), never for a bare `lsp_` prefix: that finds nothing and wrongly reads as "LSP is unavailable".
+8. **Normal implementation roles see only the precision tools.** `default` and `worker` get symbol lookup, definitions, references, implementations, type hierarchy, hover, signatures, document symbols, diagnostics, and rename/code-action/format. Tools marked `†` below are only on `explorer`, `validator`, `smart`, and `orchestrator`. Without them, use `lsp_find_symbol` for name lookup, CodeGraphContext (`analyze_code_relationships`) for callers, callees, and imports, and `lsp_find_symbol`/`lsp_smart_search` with `include: ["incoming_calls","outgoing_calls"]` when one exact hop is enough.
 
 ## Decision tree: pick the right tool
 
 ```
 I have an identified symbol and need exact language facts → lsp_find_symbol (preferred)
-                                               → lsp_workspace_symbols    (when you want many matches)
+                                               → lsp_workspace_symbols †  (when you want many matches)
 
 I have a symbol at a position and want…
    …its definition                             → lsp_goto_definition
@@ -31,27 +32,27 @@ I have a symbol at a position and want…
    …concrete implementations of interface      → lsp_find_implementations
    …type / docs                                → lsp_hover
    …function parameter hints inside a call     → lsp_signature_help
-   …who calls it / what it calls               → lsp_call_hierarchy
+   …who calls it / what it calls               → lsp_call_hierarchy †     (CGC owns transitive call relationships)
    …parents/children of a class                → lsp_type_hierarchy
    …EVERYTHING in one call                     → lsp_smart_search
 
 I want to understand a file
    …structure / outline                        → lsp_document_symbols
-   …public API only                            → lsp_file_exports
-   …its imports                                → lsp_file_imports
-   …who depends on it                          → lsp_related_files (with caveat — see below)
-   …foldable structure (functions/blocks)      → lsp_folding_ranges
+   …public API only                            → lsp_file_exports †
+   …its imports                                → lsp_file_imports †       (CGC owns imports/dependencies)
+   …who depends on it                          → lsp_related_files †      (with caveat — see below)
+   …foldable structure (functions/blocks)      → lsp_folding_ranges †
 
 I have a position and want…
-   …every occurrence in THIS file              → lsp_document_highlights   (cheaper than find_references for local edits)
-   …inferred types / parameter names           → lsp_inlay_hints           (use on a small range)
-   …semantic enclosing ranges (stmt/block/fn)  → lsp_selection_range       (great input to lsp_code_actions)
+   …every occurrence in THIS file              → lsp_document_highlights † (cheaper than find_references for local edits)
+   …inferred types / parameter names           → lsp_inlay_hints †         (use on a small range)
+   …semantic enclosing ranges (stmt/block/fn)  → lsp_selection_range †     (great input to lsp_code_actions)
 
 I want to act on the code
    …rename a symbol everywhere                 → lsp_rename             (dry_run first!)
    …apply quick-fixes / refactors              → lsp_code_actions
    …format the file                            → lsp_format_document
-   …see completion at cursor                   → lsp_completions
+   …see completion at cursor                   → lsp_completions †
 
 I want errors / warnings
    …for one file                               → lsp_diagnostics

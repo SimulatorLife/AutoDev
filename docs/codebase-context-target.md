@@ -148,6 +148,20 @@ After cross-validation, likely candidates to hide or demote from normal agents i
 
 Do not permanently remove useful recovery/precision capabilities. Keep them available to expanded/debug/validator roles when justified.
 
+### Current state: LSP on normal implementation roles
+
+Checked against `lsp-mcp-server` 1.1.20's exposed schemas, the normal implementation roles (`default`, `worker`) scope `lsp` with `enabled_tools` in their role TOMLs:
+
+| Status | Tools | Reason |
+|---|---|---|
+| Kept | `lsp_find_symbol`, `lsp_smart_search`, `lsp_goto_definition`, `lsp_goto_type_definition`, `lsp_find_references`, `lsp_find_implementations`, `lsp_type_hierarchy`, `lsp_hover`, `lsp_signature_help`, `lsp_document_symbols`, `lsp_diagnostics`, `lsp_index_files`, `lsp_workspace_diagnostics`, `lsp_rename`, `lsp_code_actions`, `lsp_format_document` | Exact symbol/type/reference/diagnostic/refactor semantics |
+| Hidden: covered by a bundled tool | `lsp_workspace_symbols` | `lsp_find_symbol` does the same fuzzy name search and adds definition, hover, and references; its schema also advertises it as a codebase-exploration entry point, which competes with CCC |
+| Hidden: owned by CGC | `lsp_call_hierarchy`, `lsp_file_imports`, `lsp_related_files` | Callers/callees and import/dependency neighbourhoods |
+| Hidden: redundant | `lsp_file_exports`, `lsp_document_highlights` | Covered by `lsp_document_symbols` and `lsp_find_references` |
+| Hidden: no agent value | `lsp_completions`, `lsp_inlay_hints`, `lsp_folding_ranges`, `lsp_selection_range`, `lsp_server_status`, `lsp_start_server`, `lsp_stop_server` | Editor affordances; servers auto-start |
+
+`lsp_find_symbol` and `lsp_smart_search` can still return `incoming_calls`/`outgoing_calls`, which keeps a precise one-hop fallback. `explorer`, `validator`, `smart`, and `orchestrator` keep the full LSP surface. `tests/config/config-rendering.test.ts` freezes the split, and `tests/copilot-mcp-scope.test.ts` checks that Copilot turns receive the same allowlist.
+
 ## Suggested Agent Profiles
 
 ### Normal implementation agent
