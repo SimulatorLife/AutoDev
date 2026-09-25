@@ -53,18 +53,21 @@ LSP is a **precision tool**, not the default mechanism for manually exploring th
 
 ### Repomix — optional repository briefing
 
-Use **Repomix as a complementary high-level briefing layer**, not as a second source-code graph duplicating CGC.
+Use **Repomix only as a complementary high-level briefing layer**, not as AutoDev's code graph, default code-search tool, or a duplicate of CGC.
 
-A Repomix briefing may contain:
+A Repomix briefing is useful when a task needs high-level project context that is not already obvious from repository instructions or existing docs. Keep it focused on:
 
-- `AGENTS.md` and agent instructions
-- skills/rules
-- architecture/design docs
-- TODO/project-state docs
-- manifests/configuration
+- `AGENTS.md` and other repository instructions
+- skills/rules and development guidance
+- architecture/design docs, TODOs, and project state
+- manifests and important configuration
 - high-level directory structure
 
-Prefer full content for important docs/config and directory-only or excluded source-code content where CGC already provides structural understanding.
+Prefer full content for important docs/config, but omit source-code bodies or include only source directory structure where CGC already represents implementation relationships. Do **not** use Repomix for symbol, caller, dependency, or implementation-location questions, and do not query Repomix and CGC for the same fact.
+
+Repomix is currently **not installed, registered as an AutoDev MCP server, or run automatically for tasks**. If a repository owner supplies a briefing, treat it as orientation rather than authoritative evidence about current source; confirm task-relevant implementation details with CGC and targeted source inspection.
+
+A bounded Repomix integration may be evaluated later if measurements show repeated rediscovery of high-level repository rules/docs. Any integration should remain optional, have explicit generation/freshness ownership, exclude implementation source already covered by CGC, and avoid assuming unverified performance/compression benefits.
 
 Conceptually:
 
