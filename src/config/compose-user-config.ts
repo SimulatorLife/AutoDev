@@ -24,7 +24,40 @@ function array(value: TomlValue | undefined): TomlValue[] {
   return Array.isArray(value) ? value : [];
 }
 
-export function loadPortable(portablePath: string, mcpPath: string): TomlTable {
+/**
+ * Per-server settings a role owns; launch keys stay with the MCP source. The
+ * root turn is the orchestrator, so its role declaration sets these for the
+ * root config exactly as a child role's TOML sets them for that child.
+ */
+const ROLE_SERVER_KEYS = [
+  "enabled",
+  "enabled_tools",
+  "default_tools_approval_mode"
+] as const;
+
+/**
+ * Overlay the root role's per-server settings onto the servers the MCP source
+ * declares. Role entries the source does not declare (the bridge-injected
+ * `autodev_spawn`, the plugin-owned `codex_app`) are not Codex MCP servers.
+ */
+function applyRootRole(mcp: TomlTable, rootRole: TomlTable): TomlTable {
+  const roleServers = table(rootRole.mcp_servers);
+  const result: TomlTable = {};
+  for (const [name, server] of Object.entries(mcp)) {
+    const role = table(roleServers[name]);
+    const merged: TomlTable = { ...table(server) };
+    for (const key of ROLE_SERVER_KEYS)
+      if (key in role) merged[key] = role[key] as TomlValue;
+    result[name] = merged;
+  }
+  return result;
+}
+
+export function loadPortable(
+  portablePath: string,
+  mcpPath: string,
+  rootRolePath: string
+): TomlTable {
   const portable = parseTomlFile(portablePath, "portable source");
   if ("mcp_servers" in portable)
     throw new ConfigError(
@@ -38,7 +71,11 @@ export function loadPortable(portablePath: string, mcpPath: string): TomlTable {
     Object.keys(mcp).length === 0
   )
     throw new ConfigError(`MCP source declares no mcp_servers: ${mcpPath}`);
-  return { ...portable, mcp_servers: mcp };
+  const rootRole = parseTomlFile(rootRolePath, "root role");
+  return {
+    ...portable,
+    mcp_servers: applyRootRole(mcp as TomlTable, rootRole)
+  };
 }
 
 export function loadExisting(path: string): TomlTable {
@@ -157,6 +194,7 @@ export function applyOtelIngress(
 export function runCompose(
   portable: string,
   mcp: string,
+  rootRole: string,
   existing: string,
   output: string,
   check: boolean,
@@ -164,7 +202,7 @@ export function runCompose(
 ): number {
   const rendered = serializeToml(
     applyOtelIngress(
-      compose(loadPortable(portable, mcp), loadExisting(existing)),
+      compose(loadPortable(portable, mcp, rootRole), loadExisting(existing)),
       ingress
     )
   );
@@ -215,6 +253,7 @@ if (process.argv[1] === new URL(import.meta.url).pathname) {
     process.exitCode = runCompose(
       requiredArg(values, "portable-source"),
       requiredArg(values, "mcp-source"),
+      requiredArg(values, "root-role"),
       requiredArg(values, "existing-config"),
       requiredArg(values, "output"),
       flags.has("check"),

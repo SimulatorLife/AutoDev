@@ -1019,6 +1019,7 @@ function composeAndLinkConfigs(
   runCompose(
     source("config/config.autodev.toml"),
     options.codexMcpSource,
+    source("agents/roles/orchestrator.toml"),
     path.join(options.codexHome, CONFIG_TOML_FILE),
     path.join(options.codexHome, CONFIG_TOML_FILE),
     false,

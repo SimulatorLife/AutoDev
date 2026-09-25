@@ -7,7 +7,7 @@ import test from "node:test";
 
 import { parse } from "smol-toml";
 
-import { compose } from "../../src/config/compose-user-config.ts";
+import { compose, loadPortable } from "../../src/config/compose-user-config.ts";
 import { renderBridgeMcpCatalogue } from "../../src/config/render-bridge-mcp-catalogue.ts";
 import { validateProviderContracts } from "../../src/config/render-execution-contract.ts";
 import {
@@ -54,6 +54,72 @@ test("composition preserves local state while AutoDev-owned keys win", () => {
     "github@openai-curated": { enabled: true }
   });
   assert.equal(result.notify, "desktop");
+});
+
+test("the root config takes the orchestrator role's per-server MCP settings", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "autodev-root-role-"));
+  try {
+    const portable = join(directory, "portable.toml");
+    const mcp = join(directory, "mcp.toml");
+    const role = join(directory, "orchestrator.toml");
+    await writeFile(portable, 'owner = "autodev"\n');
+    await writeFile(
+      mcp,
+      [
+        "[mcp_servers.lsp]",
+        'command = "bash"',
+        'args = ["-lc", "lsp"]',
+        "[mcp_servers.codegraphcontext]",
+        'command = "bash"',
+        'args = ["-lc", "cgc"]',
+        'default_tools_approval_mode = "prompt"',
+        "[mcp_servers.playwright]",
+        'command = "bash"',
+        'args = ["-lc", "pw"]',
+        ""
+      ].join("\n")
+    );
+    await writeFile(
+      role,
+      [
+        "[mcp_servers.lsp]",
+        "enabled = true",
+        "[mcp_servers.codegraphcontext]",
+        "enabled = true",
+        'default_tools_approval_mode = "approve"',
+        'enabled_tools = ["list_indexed_repositories", "find_code"]',
+        'command = "role-must-not-own-launch-keys"',
+        "[mcp_servers.playwright]",
+        "enabled = false",
+        "[mcp_servers.autodev_spawn]",
+        "enabled = true",
+        "[mcp_servers.codex_app]",
+        "enabled = true",
+        'enabled_tools = ["request_user_input"]',
+        ""
+      ].join("\n")
+    );
+    const result = compose(loadPortable(portable, mcp, role), {
+      mcp_servers: {
+        codegraphcontext: { command: "stale" },
+        custom: { command: "custom" }
+      }
+    });
+    assert.deepEqual(result.mcp_servers, {
+      lsp: { command: "bash", args: ["-lc", "lsp"], enabled: true },
+      codegraphcontext: {
+        command: "bash",
+        args: ["-lc", "cgc"],
+        default_tools_approval_mode: "approve",
+        enabled: true,
+        enabled_tools: ["list_indexed_repositories", "find_code"]
+      },
+      playwright: { command: "bash", args: ["-lc", "pw"], enabled: false },
+      custom: { command: "custom" }
+    });
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
 });
 
 test("atomic writes replace the target without leaving temporary files", async () => {

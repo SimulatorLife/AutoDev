@@ -557,6 +557,7 @@ function checkUserConfigAndAgents(
     runCompose(
       path.join(paths.repositoryRoot, "config/config.autodev.toml"),
       projection.source,
+      path.join(paths.repositoryRoot, "agents/roles/orchestrator.toml"),
       path.join(paths.codexHome, "config.toml"),
       path.join(paths.codexHome, "config.toml"),
       true,
