@@ -101,8 +101,6 @@ test("Antigravity permissions are dynamic and machine-local", () => {
     "mcp(cocoindex-code)",
     "mcp(lsp)",
     "mcp(codegraphcontext)",
-    "mcp(codegraphcontext/add_code_to_graph)",
-    "mcp(codegraphcontext/check_job_status)",
     "mcp(codegraphcontext/list_indexed_repositories)",
     "mcp(codegraphcontext/find_code)",
     "mcp(codegraphcontext/analyze_code_relationships)",
@@ -117,6 +115,8 @@ test("Antigravity permissions are dynamic and machine-local", () => {
   ])
     assert.ok(source.includes(marker), marker);
   assert.ok(!source.includes("mcp(codegraphcontext/*)"));
+  assert.ok(!source.includes("mcp(codegraphcontext/add_code_to_graph)"));
+  assert.ok(!source.includes("mcp(codegraphcontext/check_job_status)"));
   assert.ok(source.includes('openSync(temporary, "wx"'));
   assert.ok(source.includes("renameSync(temporary, filePath)"));
 });

@@ -113,8 +113,9 @@ test("provider adapters put the complete shared prompt in the actual CLI prompt"
   );
   assert.match(
     leaf,
-    /list_indexed_repositories[\s\S]*add_code_to_graph[\s\S]*check_job_status/
+    /indexes the active repository's graph in the background at session start[\s\S]*list_indexed_repositories/
   );
+  assert.doesNotMatch(leaf, /add_code_to_graph|check_job_status/);
   assert.match(leaf, /Repomix is optional high-level briefing only/);
   assert.match(leaf, /analyze_code_relationships.*find_code/);
   assert.doesNotMatch(leaf, /Use CocoIndex for broad semantic discovery/);

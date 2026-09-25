@@ -68,8 +68,6 @@
           "lsp_format_document"
         ],
         "codegraphcontext": [
-          "add_code_to_graph",
-          "check_job_status",
           "list_indexed_repositories",
           "find_code",
           "analyze_code_relationships",
@@ -106,8 +104,6 @@
       ],
       "mcpTools": {
         "codegraphcontext": [
-          "add_code_to_graph",
-          "check_job_status",
           "list_indexed_repositories",
           "find_code",
           "analyze_code_relationships",
@@ -132,8 +128,6 @@
       ],
       "mcpTools": {
         "codegraphcontext": [
-          "add_code_to_graph",
-          "check_job_status",
           "list_indexed_repositories",
           "find_code",
           "analyze_code_relationships",
@@ -190,8 +184,6 @@
           "browser_close"
         ],
         "codegraphcontext": [
-          "add_code_to_graph",
-          "check_job_status",
           "list_indexed_repositories",
           "find_code",
           "analyze_code_relationships",
@@ -222,8 +214,6 @@
       ],
       "mcpTools": {
         "codegraphcontext": [
-          "add_code_to_graph",
-          "check_job_status",
           "list_indexed_repositories",
           "find_code",
           "analyze_code_relationships",
@@ -269,8 +259,6 @@
           "lsp_format_document"
         ],
         "codegraphcontext": [
-          "add_code_to_graph",
-          "check_job_status",
           "list_indexed_repositories",
           "find_code",
           "analyze_code_relationships",

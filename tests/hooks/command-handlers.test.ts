@@ -60,6 +60,46 @@ test("session-start runs repository bootstrap on successful startup", async () =
   assert.equal(bootstrappedCwd, process.cwd());
 });
 
+test("session-start ensures the code graph after a successful startup", async () => {
+  let ensuredCwd = "";
+  const runner = {
+    async runRouterEnsure(): Promise<RouterEnsureResult> {
+      return { status: "healthy-launchd", exitCode: 0 };
+    },
+    async ensureCodeGraph(cwd: string): Promise<void> {
+      ensuredCwd = cwd;
+    }
+  };
+  assert.equal(await createSessionStart(runner)(Buffer.from("{}")), 0);
+  assert.equal(ensuredCwd, process.cwd());
+});
+
+test("session-start skips the code graph when the router is not healthy", async () => {
+  let ensured = false;
+  const runner = {
+    async runRouterEnsure(): Promise<RouterEnsureResult> {
+      return { status: "launchd-failed", exitCode: 1 };
+    },
+    async ensureCodeGraph(): Promise<void> {
+      ensured = true;
+    }
+  };
+  assert.equal(await createSessionStart(runner)(Buffer.from("{}")), 1);
+  assert.equal(ensured, false);
+});
+
+test("a code graph failure does not fail the session", async () => {
+  const runner = {
+    async runRouterEnsure(): Promise<RouterEnsureResult> {
+      return { status: "healthy-launchd", exitCode: 0 };
+    },
+    async ensureCodeGraph(): Promise<void> {
+      throw new Error("spawn failed");
+    }
+  };
+  assert.equal(await createSessionStart(runner)(Buffer.from("{}")), 0);
+});
+
 test("session-start surfaces the typed exit code from the ensure runner", async () => {
   const runner = {
     async runRouterEnsure(): Promise<RouterEnsureResult> {

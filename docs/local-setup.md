@@ -76,6 +76,31 @@ It inspects the active repository and toolchain configuration:
 temporary git repositories to prove idempotence, CGC/Repomix mode adaptations,
 safe merging, no-duplication guarantees, and non-zero exit outside a git repository.
 
+### CodeGraphContext graph bootstrap
+
+The session-start hook also keeps the active checkout's CodeGraphContext graph
+present and current, so agents never index repositories themselves. After the
+router is healthy, `src/hooks/session-start.ts` calls `ensureCodeGraph` from
+`src/platform/code-graph-ensure.ts`. Outside a git checkout it does nothing.
+Inside one it starts a detached worker for the repository's top level and
+returns immediately, so it adds no session-start latency. The worker:
+
+- takes a per-repository lock, so a burst of sessions runs one refresh; a lock
+  left by a process that has exited is replaced;
+- hashes `HEAD` plus `git status --porcelain`, and exits without touching CGC
+  when the graph already holds the repository and that stamp matches the last
+  successful run;
+- otherwise runs `codegraphcontext index --no-progress <root>` for a repository
+  the graph does not list, or `codegraphcontext update --quiet <root>` for one
+  it does, recording the new stamp only on success so a failure retries at the
+  next session start.
+
+Its state lives in `$CODEX_HOME/provider-runtime/code-graph/<hash>/` (`lock`,
+`state.json`, and `worker.log`); nothing is written to the repository. The
+worker uses the same binary resolution as the MCP launcher, including
+`AUTODEV_CODEGRAPHCONTEXT_BIN`, and shares CGC's FalkorDB server with the
+running MCP servers. `tests/platform/code-graph-ensure.test.ts` covers it.
+
 ### User configuration composition
 
 Codex user-level configuration is managed via a composed model rather than a direct symlink:
@@ -173,18 +198,20 @@ and web research, Antigravity uses its native `search_web` and `read_url_content
 The installer installs CodeGraphContext `0.6.13` and CocoIndex Code
 `0.2.41` with pipx at pinned versions. The `codegraphcontext` MCP starts
 through `run-autodev-mcp.sh` in the active workspace; its graph database
-persists between turns. For code work, agents check `list_indexed_repositories`;
-if the current repository is missing, they call `add_code_to_graph` once and
-poll `check_job_status` until indexing completes. CocoIndex Code stores its
+persists between turns. Session start indexes and refreshes the active
+checkout's graph (see "CodeGraphContext graph bootstrap"). For code work, agents
+check `list_indexed_repositories` once and treat CGC as unavailable when the
+repository is not listed yet, because CGC answers queries about an unindexed
+repository with empty results. CocoIndex Code stores its
 incremental semantic index in the workspace's `.cocoindex_code/` directory and
 is used only when the relevant concept or implementation location remains
 unknown after graph discovery. Its MCP search refreshes changed files; `ccc init`
 is needed only if the MCP reports that the repository is not initialized.
 
-The CodeGraphContext role allowlist exposes only `add_code_to_graph`,
-`check_job_status`, `list_indexed_repositories`, `find_code`,
-`analyze_code_relationships`, and `get_repository_stats`; raw Cypher, deletion,
-remote indexing, and directory-watching tools are excluded. The installer runs
+The CodeGraphContext role allowlist exposes only `list_indexed_repositories`,
+`find_code`, `analyze_code_relationships`, and `get_repository_stats`; indexing
+belongs to session start, and raw Cypher, deletion, remote indexing, and
+directory-watching tools are excluded. The installer runs
 none of `codex mcp add`, `copilot mcp add`, or `agy mcp add`: Rulesync writes
 user-level MCP files from the canonical declaration. Install pipx before running
 the installer if it is not already present.
@@ -193,7 +220,7 @@ Native role contracts enable CodeGraphContext, CocoIndex, and LSP for the
 root orchestrator and code-capable profiles, and omit them from
 `docs-researcher` and `browser-tester`. Codex-native and bridged providers
 enforce these role contracts. Antigravity is the exception: its MCP registry is
-global and has no per-role server filtering, so its six explicitly permitted
+global and has no per-role server filtering, so its four explicitly permitted
 CodeGraphContext tools are also visible to `docs-researcher` sessions despite
 that role's contract. The docs-researcher prompt forbids using local-code tools;
 this is prompt policy, not a capability boundary. Antigravity rejects

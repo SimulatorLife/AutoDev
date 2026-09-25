@@ -27,6 +27,8 @@ Use **CGC as the default structural map** for:
 
 Prefer CGC graph traversal over repeated step-by-step LSP/file traversal when the question is architectural or relational.
 
+**Graph lifecycle (current state):** session start owns creating and refreshing the active checkout's graph (`src/platform/code-graph-ensure.ts`). A detached worker indexes a repository the graph does not list, and refreshes one whose `HEAD` or working tree changed since its last successful run. A lock and a freshness stamp keep this idempotent, and its state lives outside the repository. Agents do not index: role allowlists omit `add_code_to_graph` and `check_job_status`. CGC answers queries about an unindexed repository with successful, empty results, so agents confirm the workspace with `list_indexed_repositories` before trusting an empty answer.
+
 ### CocoIndex Code (CCC) — semantic discovery
 
 Use **CCC when the relevant code is not yet known by name/location**.

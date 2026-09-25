@@ -6,6 +6,7 @@ import { homedir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { ensureCodeGraph } from "../platform/code-graph-ensure.ts";
 import {
   createDefaultRouterEnsureDeps,
   resolveRouterEnsureOptions,
@@ -48,11 +49,16 @@ export interface SessionStartRunner {
     options: RouterEnsureOptions
   ): Promise<RouterEnsureResult>;
   runRepoBootstrap?(cwd: string): Promise<number>;
+  ensureCodeGraph?(cwd: string): Promise<void>;
 }
 
 export const defaultSessionStartRunner: SessionStartRunner = {
   runRouterEnsure,
-  runRepoBootstrap: (cwd: string) => Promise.resolve(runRepoBootstrapSync(cwd))
+  runRepoBootstrap: (cwd: string) => Promise.resolve(runRepoBootstrapSync(cwd)),
+  ensureCodeGraph: (cwd: string) => {
+    ensureCodeGraph(cwd);
+    return Promise.resolve();
+  }
 };
 
 export function createSessionStart(
@@ -71,6 +77,17 @@ export function createSessionStart(
     }
     if (result.exitCode === 0 && runner.runRepoBootstrap) {
       await runner.runRepoBootstrap(process.cwd());
+    }
+    // The graph refresh runs detached; failing to start it must not fail the
+    // session, which then sees the repository as not yet indexed.
+    if (result.exitCode === 0 && runner.ensureCodeGraph) {
+      try {
+        await runner.ensureCodeGraph(process.cwd());
+      } catch (error) {
+        process.stderr.write(
+          `code-graph-ensure: ${error instanceof Error ? error.message : error}\n`
+        );
+      }
     }
     return result.exitCode;
   };

@@ -1,8 +1,13 @@
 import { spawnSync } from "node:child_process";
-import { accessSync, constants, existsSync } from "node:fs";
+import { existsSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+import {
+  findExecutable,
+  isExecutable,
+  resolveCodeGraphContextBinary
+} from "../shared/executables.ts";
 import { writeErrorLine } from "../shared/output.ts";
 import { MCP_SERVER_CODEGRAPHCONTEXT } from "../shared/tool-names.ts";
 
@@ -19,27 +24,6 @@ export interface McpCommand {
   binary: string;
   args: string[];
   pathPrepend: string[];
-}
-
-function executable(file: string): boolean {
-  try {
-    accessSync(file, constants.X_OK);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-function findExecutable(
-  name: string,
-  pathValue = process.env.PATH ?? ""
-): string | null {
-  for (const directory of pathValue.split(path.delimiter)) {
-    if (!directory) continue;
-    const candidate = path.join(directory, name);
-    if (executable(candidate)) return candidate;
-  }
-  return null;
 }
 
 export function resolveMcpCommand(
@@ -73,16 +57,7 @@ export function resolveMcpCommand(
     return { binary, args: ["mcp"], pathPrepend: [] };
   }
   if (tool === MCP_SERVER_CODEGRAPHCONTEXT) {
-    const configured = env.AUTODEV_CODEGRAPHCONTEXT_BIN;
-    const candidate =
-      configured ??
-      findExecutable("codegraphcontext", env.PATH) ??
-      (env.HOME ? path.join(env.HOME, ".local/bin/codegraphcontext") : null);
-    const binary =
-      configured ||
-      (candidate && existsSync(candidate) && executable(candidate))
-        ? candidate
-        : null;
+    const binary = resolveCodeGraphContextBinary(env);
     if (!binary)
       throw new Error(
         "AutoDev CodeGraphContext MCP binary is missing; install codegraphcontext or set AUTODEV_CODEGRAPHCONTEXT_BIN"
@@ -98,7 +73,7 @@ export function runMcp(
   env: NodeJS.ProcessEnv = process.env
 ): number {
   const command = resolveMcpCommand(name, repoRoot, env);
-  if (!existsSync(command.binary) || !executable(command.binary))
+  if (!isExecutable(command.binary))
     throw new Error(
       `AutoDev MCP binary is missing or not executable: ${command.binary}`
     );

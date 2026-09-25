@@ -134,8 +134,6 @@ test("orchestrator codex_app MCP is scoped to a single tool", () => {
     orchestrator.mcpTools,
     {
       codegraphcontext: [
-        "add_code_to_graph",
-        "check_job_status",
         "list_indexed_repositories",
         "find_code",
         "analyze_code_relationships",
@@ -226,7 +224,7 @@ test("context7 is enabled on docs-researcher and explorer only", () => {
   }
 });
 
-test("codegraphcontext is enabled on code-capable roles with scoped six-tool allowlist and disabled on non-code roles", () => {
+test("codegraphcontext is enabled on code-capable roles with scoped four-tool allowlist and disabled on non-code roles", () => {
   const contract = JSON.parse(
     readFileSync("config/execution-contract.json", "utf8")
   ) as {
@@ -236,8 +234,6 @@ test("codegraphcontext is enabled on code-capable roles with scoped six-tool all
     >;
   };
   const expectedTools = [
-    "add_code_to_graph",
-    "check_job_status",
     "list_indexed_repositories",
     "find_code",
     "analyze_code_relationships",
@@ -261,7 +257,7 @@ test("codegraphcontext is enabled on code-capable roles with scoped six-tool all
     assert.deepEqual(
       roleCfg.mcpTools?.codegraphcontext,
       expectedTools,
-      `${roleName} must have exactly the scoped six tools for codegraphcontext`
+      `${roleName} must have exactly the scoped four tools for codegraphcontext`
     );
   }
 

@@ -23,8 +23,6 @@ export const REQUIRED_MCP_PERMISSIONS = [
   "mcp(cocoindex-code)",
   "mcp(cocoindex-code/search)",
   "mcp(codegraphcontext)",
-  "mcp(codegraphcontext/add_code_to_graph)",
-  "mcp(codegraphcontext/check_job_status)",
   "mcp(codegraphcontext/list_indexed_repositories)",
   "mcp(codegraphcontext/find_code)",
   "mcp(codegraphcontext/analyze_code_relationships)",
