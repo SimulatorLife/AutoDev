@@ -163,7 +163,7 @@ function checkAuth(
   }
   const token =
     readFileSync(envFile, "utf8")
-        .match(CODEX_ROUTER_AUTH_TOKEN_PATTERN)?.[1]
+      .match(CODEX_ROUTER_AUTH_TOKEN_PATTERN)?.[1]
       ?.trim() ?? "";
   if (!token) {
     writeLine(
@@ -272,9 +272,7 @@ function resolveRunInstallPaths(
   const repositoryRoot = sourceRoot(overrides);
   const home = overrides.home ?? process.env.HOME ?? homedir();
   const codexHome =
-    overrides.codexHome ??
-    process.env.CODEX_HOME ??
-    path.join(home, ".codex");
+    overrides.codexHome ?? process.env.CODEX_HOME ?? path.join(home, ".codex");
   return {
     repositoryRoot,
     home,
@@ -344,7 +342,11 @@ function checkRuntimeAndOt(
       `prompt role ${role}`,
       runtimeFileMatches(
         path.join(paths.repositoryRoot, `agents/prompts/roles/${role}.md`),
-        runtimeTarget(`agents/prompts/roles/${role}.md`, paths.codexHome, paths.hooks)
+        runtimeTarget(
+          `agents/prompts/roles/${role}.md`,
+          paths.codexHome,
+          paths.hooks
+        )
       ),
       failures
     );
@@ -483,7 +485,10 @@ function checkProfilesAndCatalogs(
     check(
       `catalog ${name}`,
       runtimeLinkMatches(
-        path.join(paths.repositoryRoot, `config/catalogs/${name}-model-catalog.json`),
+        path.join(
+          paths.repositoryRoot,
+          `config/catalogs/${name}-model-catalog.json`
+        ),
         path.join(paths.codexHome, `${name}-model-catalog.json`)
       ),
       failures
@@ -582,7 +587,9 @@ function checkUserConfigAndAgents(
   const expectedContract = `${JSON.stringify(renderExecutionContract(path.join(paths.repositoryRoot, "agents/roles"), projection.source, path.join(paths.repositoryRoot, "config/execution-contract.json")), null, 2)}\n`;
   check(
     "execution contract",
-    existsSync(path.join(paths.repositoryRoot, "config/execution-contract.json")) &&
+    existsSync(
+      path.join(paths.repositoryRoot, "config/execution-contract.json")
+    ) &&
       readFileSync(
         path.join(paths.repositoryRoot, "config/execution-contract.json"),
         "utf8"
@@ -603,7 +610,10 @@ function checkUserConfigAndAgents(
     runModelCatalog(
       path.join(paths.repositoryRoot, "config/model-routing.json"),
       path.join(paths.repositoryRoot, "config/catalogs"),
-      path.join(paths.repositoryRoot, "config/catalogs/codex-model-catalog.json"),
+      path.join(
+        paths.repositoryRoot,
+        "config/catalogs/codex-model-catalog.json"
+      ),
       true
     ) === 0,
     failures
@@ -709,11 +719,7 @@ function checkObsoleteSkillPaths(
   for (const skill of SKILLS) {
     for (const legacy of ["skills", "agents/skills"]) {
       const filePath = path.join(paths.codexHome, legacy, skill);
-      check(
-        `obsolete skill path ${filePath}`,
-        !lstatSafe(filePath),
-        failures
-      );
+      check(`obsolete skill path ${filePath}`, !lstatSafe(filePath), failures);
     }
   }
 }
@@ -748,9 +754,7 @@ function checkAntigravityCli(
     } else
       writeLine("ok Antigravity CLI permission grants (MCP and read_file)");
   } else {
-    writeLine(
-      `missing Antigravity CLI permission settings ${settingsPath}`
-    );
+    writeLine(`missing Antigravity CLI permission settings ${settingsPath}`);
     failures.value = 1;
   }
   const skillsPath = path.join(home, ".gemini", "config", "skills.json");
@@ -806,6 +810,97 @@ function checkGitExcludes(
   }
 }
 
+function checkGlobalExcludes(
+  paths: RunInstallPaths,
+  failures: { value: number }
+): void {
+  try {
+    let globalExcludes = "";
+    try {
+      globalExcludes = execFileSync(
+        "git",
+        ["config", "--global", "--get", "core.excludesFile"],
+        { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }
+      ).trim();
+    } catch {
+      globalExcludes = "";
+    }
+    if (!globalExcludes) {
+      globalExcludes = path.join(paths.home, ".gitignore_global");
+    } else if (globalExcludes.startsWith("~")) {
+      globalExcludes = path.join(paths.home, globalExcludes.slice(1));
+    }
+    if (lstatSafe(globalExcludes)) {
+      const content = readFileSync(globalExcludes, "utf8");
+      const lines = new Set(content.split(LINE_SPLIT_PATTERN));
+      const required = [
+        ".codegraphcontext/",
+        ".repomix/",
+        "repomix-output.*",
+        ".cocoindex_code/",
+        ".agent-cache/"
+      ];
+      check(
+        "global git excludes file",
+        required.every((p) => lines.has(p)),
+        failures
+      );
+    } else {
+      check("global git excludes file", false, failures);
+    }
+  } catch {
+    check("global git excludes file", false, failures);
+  }
+
+  try {
+    const xdgConfig =
+      process.env.XDG_CONFIG_HOME || path.join(paths.home, ".config");
+    const repomixConfig = path.join(
+      xdgConfig,
+      "repomix",
+      "repomix.config.json"
+    );
+    if (lstatSafe(repomixConfig)) {
+      const parsed = JSON.parse(readFileSync(repomixConfig, "utf8"));
+      const ok =
+        parsed?.ignore?.useGitignore === true &&
+        Array.isArray(parsed?.ignore?.customPatterns) &&
+        parsed.ignore.customPatterns.includes("**/.codegraphcontext/**");
+      check("global Repomix configuration", ok, failures);
+    } else {
+      check("global Repomix configuration", false, failures);
+    }
+  } catch {
+    check("global Repomix configuration", false, failures);
+  }
+
+  try {
+    const cgcDir = path.join(paths.home, ".codegraphcontext");
+    const cgcEnv = path.join(cgcDir, ".env");
+    const cgcIgnore = path.join(cgcDir, ".cgcignore");
+    const envOk =
+      lstatSafe(cgcEnv) && readFileSync(cgcEnv, "utf8").includes("repomix");
+    const ignoreOk =
+      lstatSafe(cgcIgnore) &&
+      readFileSync(cgcIgnore, "utf8").includes("repomix-output.*");
+    check("global CodeGraphContext configuration", envOk && ignoreOk, failures);
+  } catch {
+    check("global CodeGraphContext configuration", false, failures);
+  }
+
+  try {
+    const bootstrapBin = path.join(
+      paths.home,
+      ".local",
+      "bin",
+      "autodev-bootstrap"
+    );
+    check("autodev-bootstrap executable", lstatSafe(bootstrapBin), failures);
+  } catch {
+    check("autodev-bootstrap executable", false, failures);
+  }
+}
+
 function checkDependencies(
   paths: RunInstallPaths,
   failures: { value: number }
@@ -842,7 +937,9 @@ function checkLaunchAgents(
 export function runInstallCheck(overrides: InstallCheckOptions = {}): number {
   const paths = resolveRunInstallPaths(overrides);
   const failures = { value: 0 };
-  const mode = readCollectorMode(path.join(paths.codexHome, "otel-collector.mode"));
+  const mode = readCollectorMode(
+    path.join(paths.codexHome, "otel-collector.mode")
+  );
   const projection = createCodexMcpSource(paths.repositoryRoot);
   try {
     checkRulesAndSkills(paths, failures);
@@ -857,6 +954,7 @@ export function runInstallCheck(overrides: InstallCheckOptions = {}): number {
     checkObsoleteSkillPaths(paths, failures);
     checkAntigravityCli(paths, failures);
     checkGitExcludes(paths, failures);
+    checkGlobalExcludes(paths, failures);
     checkDependencies(paths, failures);
     checkAuth({ codexHome: paths.codexHome }, failures);
     staleCheck(

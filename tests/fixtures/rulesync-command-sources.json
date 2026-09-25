@@ -4,7 +4,6 @@
   "architectural-audit": "# Correct one structural inefficiency",
   "bad-test-remediation": "# Repair one low-signal automated test",
   "bloat-trimming": "# Trim one local bloat hotspot",
-  "bug-fix": "# Fix one real defect",
   "cohesion-refactor": "# Improve cohesion in one helper cluster",
   "composition-over-inheritance": "# Prefer composition for one inheritance hotspot",
   "configuration-improvement": "# Improve one configuration surface",

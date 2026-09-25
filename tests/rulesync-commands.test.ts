@@ -19,7 +19,10 @@ import { join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
-import { COMMANDS } from "../src/platform/install-materializer.ts";
+import {
+  COMMANDS,
+  materializeCommands
+} from "../src/platform/install-materializer.ts";
 
 const repositoryRoot = fileURLToPath(new URL("../", import.meta.url));
 const catalogRoot = join(repositoryRoot, ".rulesync", "commands");
@@ -230,13 +233,14 @@ test("materializeCommands writes one prompt per catalog entry and is idempotent"
       ).replace(/^---\n[\s\S]*?\n---\n/u, "");
       const targetText = readFileSync(join(promptsDir, `${name}.md`), "utf8");
       const targetBody = targetText.replace(/^---\n[\s\S]*?\n---\n/u, "");
-      // Rulesync appends a trailing newline to the projected body regardless
-      // of whether the source body had one. Normalize so the verbatim-body
+      // Rulesync drops the blank line separating the frontmatter from the
+      // body and appends a trailing newline regardless of whether the source
+      // body had one. Normalize so the verbatim-body
       // assertion is meaningful for catalog entries that follow the AutoDev
       // single-paragraph convention (e.g. advance-autodev.md).
       assert.equal(
-        targetBody.replace(/\n?$/u, ""),
-        sourceBody.replace(/\n?$/u, ""),
+        targetBody.replace(/^\n/u, "").replace(/\n?$/u, ""),
+        sourceBody.replace(/^\n/u, "").replace(/\n?$/u, ""),
         `${name} body must be preserved verbatim through projection`
       );
     }
@@ -341,7 +345,7 @@ const commandSourcesPath = join(
  * very top of the body, so the "within first 200 chars" assertion only
  * applies to the directly-migrated entries.
  */
-const MERGED_SLUGS = new Set(["bug-fix", "lint-fix", "dedupe-helper"]);
+const MERGED_SLUGS = new Set(["lint-fix", "dedupe-helper"]);
 /**
  * Slugs whose original `.agents/prompts/<slug>.md` body had no `# <Title>`
  * H1 heading (the body opens with prose). The sidecar map records this with an
@@ -356,10 +360,12 @@ test("every migrated catalog entry preserves the original .agents/prompts source
     string
   >;
   const catalogSlugs = new Set<string>(COMMANDS);
-  // The sidecar map lists every migrated entry (54 total: 51 directly moved
-  // plus the 3 in-place merges). Catalog entries that pre-date the migration
-  // (build-fix, css-cleanup, file-organize, merge-prs, new-feature, optimize,
-  // resolve-merges, test-fix) have no sidecar mapping and are skipped here.
+  // The sidecar map lists every migrated entry (53 total: 51 directly moved
+  // plus the 2 remaining in-place merges). Catalog entries that pre-date the
+  // migration (build-fix, css-cleanup, file-organize, merge-prs, new-feature,
+  // optimize, resolve-merges, test-fix) have no sidecar mapping and are
+  // skipped here, as is bug-fix, whose merged `.agents/prompts` section was
+  // folded into its own procedure rather than appended.
   for (const [slug, expectedHeading] of Object.entries(sources)) {
     assert.ok(
       catalogSlugs.has(slug),
@@ -401,5 +407,40 @@ test("every migrated catalog entry preserves the original .agents/prompts source
         )}; got first 200 chars: ${JSON.stringify(head)}`
       );
     }
+  }
+});
+
+test("materializeCommands reports exactly the prompts whose installed content changed", () => {
+  // The Codex desktop app reads $CODEX_HOME/prompts only when its window
+  // opens (observed 2026-09-24: a fresh install left `/prompts:bug-fix`
+  // expanding the old text in the running app). The installer can only say
+  // which prompts changed, so that report has to be exact.
+  const codexHome = mkdtempSync(join(tmpdir(), "autodev-commands-report-"));
+  const promptsDir = join(codexHome, "prompts");
+  try {
+    assert.deepEqual(
+      materializeCommands({ repositoryRoot }, promptsDir),
+      [...COMMANDS].sort(),
+      "a first install reports every prompt"
+    );
+    assert.deepEqual(
+      materializeCommands({ repositoryRoot }, promptsDir),
+      [],
+      "an unchanged re-install reports nothing"
+    );
+    writeFileSync(join(promptsDir, "bug-fix.md"), "old wording\n");
+    writeFileSync(join(promptsDir, "retired.md"), "# retired\n");
+    assert.deepEqual(
+      materializeCommands({ repositoryRoot }, promptsDir),
+      ["bug-fix", "retired"],
+      "a rewritten and a removed prompt are both reported"
+    );
+    assert.notEqual(
+      readFileSync(join(promptsDir, "bug-fix.md"), "utf8"),
+      "old wording\n"
+    );
+    assert.equal(existsSync(join(promptsDir, "retired.md")), false);
+  } finally {
+    rmSync(codexHome, { recursive: true, force: true });
   }
 });

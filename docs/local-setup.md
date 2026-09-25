@@ -420,6 +420,15 @@ The `$CODEX_HOME/prompts/` directory is AutoDev-owned and reconciled — any
 `*.md` not in `COMMANDS` is removed during install via
 `removeStalePaths` — so unmanaged prompts cannot drift in.
 
+The Codex desktop app reads `$CODEX_HOME/prompts/` only when its window
+opens (the Electron main process sends `custom-prompts-updated` from its
+renderer-ready handler and never watches the directory). A running app keeps
+expanding `/prompts:<name>` to the text it loaded at launch, however many
+installs have happened since. The installer therefore prints
+`updated Codex prompts: <names> -- restart the Codex app ...` whenever an
+install added, rewrote, or removed a prompt; restart (quit and reopen) the
+Codex app to pick them up.
+
 Rulesync's `codexcli` commands feature is intentionally **not** added to the
 project-mode `rulesync.jsonc` `features` array: it would throw for the project
 mode of codexcli alongside the other targets, and the other targets do not

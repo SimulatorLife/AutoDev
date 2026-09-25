@@ -25,7 +25,7 @@ import {
   serializeToml,
   type TomlTable
 } from "../config/toml.ts";
-import { writeErrorLine } from "../shared/output.ts";
+import { writeErrorLine, writeLine } from "../shared/output.ts";
 import {
   updateAntigravityPermissions,
   updateAntigravitySkills
@@ -414,7 +414,7 @@ function run(
   void result;
 }
 function rulesync(
-  options: MaterializeOptions,
+  options: Pick<MaterializeOptions, "repositoryRoot">,
   args: readonly string[],
   env: NodeJS.ProcessEnv = process.env
 ): void {
@@ -427,6 +427,20 @@ function rulesync(
 }
 const LINE_SPLIT_PATTERN = /\r?\n/u;
 const MD_EXTENSION_PATTERN = /\.md$/u;
+const IGNORE_DIRS_LINE_PATTERN = /^\s*IGNORE_DIRS\s*=/iu;
+
+function extractIgnoreDirs(line: string): string[] {
+  const eqIdx = line.indexOf("=");
+  if (eqIdx === -1) return [];
+  let val = line.slice(eqIdx + 1).trim();
+  if (
+    (val.startsWith('"') && val.endsWith('"')) ||
+    (val.startsWith("'") && val.endsWith("'"))
+  ) {
+    val = val.slice(1, -1);
+  }
+  return val ? val.split(",") : [];
+}
 
 function ensureExclude(options: MaterializeOptions): void {
   const exclude = execFileSync(
@@ -464,6 +478,260 @@ function ensureBootstrapScript(options: MaterializeOptions): void {
   );
   chmodSync(scriptPath, 0o755);
   linkRuntimeSource(scriptPath, target);
+  try {
+    execFileSync(target, [options.repositoryRoot], { stdio: "ignore" });
+  } catch {
+    // Non-fatal if bootstrap execution fails during install
+  }
+}
+
+export const UNIVERSAL_GIT_EXCLUDES = [
+  ".codegraphcontext/",
+  ".cgc/",
+  ".cgc_cache/",
+  ".cgc-cache/",
+  ".cgc-state/",
+  ".cgc-state-*/",
+  ".cgcignore",
+  ".repograph/",
+  ".repomix/",
+  "repomix-output.*",
+  "repomix-output-*/",
+  ".repomix-output.*",
+  ".repomixignore",
+  ".cocoindex_code/",
+  ".lsp/",
+  ".lsp-cache/",
+  ".ccls-cache/",
+  ".clangd/",
+  ".agent-cache/",
+  ".agents/cache/",
+  ".claude/cache/",
+  ".playwright-mcp/",
+  ".playwright/",
+  "mcp_debug.log",
+  "*.launchd.*.log",
+  "*.tsbuildinfo",
+  ".nyc_output/"
+] as const;
+
+export const CGC_IGNORE_DIRS =
+  "node_modules,dist,build,target,out,coverage,.venv,venv,env,.git,.idea,.vscode,.codegraphcontext,.cgc,.cgc_cache,.cgc-cache,.cgc-state,.repograph,.repomix,.cocoindex_code,.lsp,.lsp-cache,.ccls-cache,.clangd,.agent-cache,.playwright-mcp,.playwright,.ruff_cache,.tox,.nox,.turbo,.svelte-kit,.cache,.tmp,.nyc_output";
+
+export const CGC_GLOBAL_PATTERNS = [
+  ".codegraphcontext/",
+  ".cgc/",
+  ".cgc_cache/",
+  ".cgc-cache/",
+  ".cgc-state/",
+  ".cgc-state-*/",
+  ".cgcignore",
+  ".repograph/",
+  "repomix-output.*",
+  ".repomix-output.*",
+  "repomix-output-*/",
+  ".repomix/",
+  ".repomixignore",
+  ".cocoindex_code/",
+  ".lsp/",
+  ".lsp-cache/",
+  ".ccls-cache/",
+  ".clangd/",
+  ".agent-cache/",
+  ".agents/cache/",
+  ".claude/cache/",
+  ".playwright-mcp/",
+  ".playwright/",
+  "mcp_debug.log",
+  "*.launchd.*.log",
+  "*.tsbuildinfo",
+  ".nyc_output/",
+  ".ruff_cache/",
+  ".tox/",
+  ".nox/",
+  ".turbo/",
+  ".svelte-kit/",
+  ".cache/",
+  ".tmp/",
+  ".coverage"
+] as const;
+
+export const REPOMIX_CUSTOM_PATTERNS = [
+  "**/.codegraphcontext/**",
+  "**/.cgc/**",
+  "**/.cgc_cache/**",
+  "**/.cgc-cache/**",
+  "**/.cgc-state/**",
+  "**/.cgc-state-*/**",
+  "**/.cgcignore",
+  "**/.repomix/**",
+  "**/repomix-output.*",
+  "**/.repomix-output.*",
+  "**/repomix-output-*/**",
+  "**/.repomixignore",
+  "**/.cocoindex_code/**",
+  "**/.lsp/**",
+  "**/.lsp-cache/**",
+  "**/.ccls-cache/**",
+  "**/.clangd/**",
+  "**/.agent-cache/**",
+  "**/.agents/cache/**",
+  "**/.claude/cache/**",
+  "**/.playwright-mcp/**",
+  "**/.playwright/**",
+  "**/.ruff_cache/**",
+  "**/.tox/**",
+  "**/.nox/**",
+  "**/.turbo/**",
+  "**/.svelte-kit/**",
+  "**/.cache/**",
+  "**/.tmp/**",
+  "**/*.tsbuildinfo",
+  "**/.coverage",
+  "**/.repograph/**",
+  "**/.nyc_output/**"
+] as const;
+
+function getGlobalGitExcludesFile(): string {
+  try {
+    return execFileSync(
+      "git",
+      ["config", "--global", "--get", "core.excludesFile"],
+      { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }
+    ).trim();
+  } catch {
+    return "";
+  }
+}
+
+function ensureGlobalGitExcludes(options: MaterializeOptions): void {
+  let excludesFile = getGlobalGitExcludesFile();
+  if (!excludesFile) {
+    excludesFile = path.join(options.home, ".gitignore_global");
+    try {
+      execFileSync(
+        "git",
+        ["config", "--global", "core.excludesFile", excludesFile],
+        { stdio: "ignore" }
+      );
+    } catch {
+      // Ignored if git config cannot be set
+    }
+  } else if (excludesFile.startsWith("~")) {
+    excludesFile = path.join(options.home, excludesFile.slice(1));
+  }
+
+  mkdirSync(path.dirname(excludesFile), { recursive: true });
+  const existing = exists(excludesFile)
+    ? readFileSync(excludesFile, "utf8")
+    : "";
+  const existingLines = new Set(existing.split(LINE_SPLIT_PATTERN));
+  const missing = UNIVERSAL_GIT_EXCLUDES.filter((p) => !existingLines.has(p));
+  if (missing.length > 0) {
+    const prefix = existing.length > 0 && !existing.endsWith("\n") ? "\n" : "";
+    const header =
+      "# AutoDev universal exclusions (CodeGraphContext, Repomix, and caches)\n";
+    writeFileSync(
+      excludesFile,
+      `${existing}${prefix}${header}${missing.join("\n")}\n`
+    );
+  }
+}
+
+function ensureGlobalRepomixConfig(options: MaterializeOptions): void {
+  const xdgConfig =
+    process.env.XDG_CONFIG_HOME || path.join(options.home, ".config");
+  const configDir = path.join(xdgConfig, "repomix");
+  mkdirSync(configDir, { recursive: true });
+  const configFile = path.join(configDir, "repomix.config.json");
+
+  let parsed: Record<string, unknown> = {};
+  if (exists(configFile)) {
+    try {
+      parsed = JSON.parse(readFileSync(configFile, "utf8"));
+    } catch {
+      parsed = {};
+    }
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed))
+    parsed = {};
+  const ignore = (
+    parsed.ignore &&
+    typeof parsed.ignore === "object" &&
+    !Array.isArray(parsed.ignore)
+      ? parsed.ignore
+      : {}
+  ) as Record<string, unknown>;
+  ignore.useGitignore = true;
+  ignore.useDefaultPatterns = true;
+  ignore.useDotIgnore = true;
+
+  const existingPatterns = new Set(
+    Array.isArray(ignore.customPatterns)
+      ? (ignore.customPatterns as string[])
+      : []
+  );
+  for (const pattern of REPOMIX_CUSTOM_PATTERNS) {
+    existingPatterns.add(pattern);
+  }
+  ignore.customPatterns = Array.from(existingPatterns);
+  parsed.ignore = ignore;
+  writeFileSync(configFile, `${JSON.stringify(parsed, null, 2)}\n`);
+}
+
+function ensureGlobalCodeGraphContext(options: MaterializeOptions): void {
+  const cgcDir = path.join(options.home, ".codegraphcontext");
+  mkdirSync(cgcDir, { recursive: true });
+  const envFile = path.join(cgcDir, ".env");
+  const existingEnv = exists(envFile) ? readFileSync(envFile, "utf8") : "";
+  const envLines = existingEnv.split(LINE_SPLIT_PATTERN);
+  let found = false;
+  const requiredDirs = CGC_IGNORE_DIRS.split(",");
+  const updatedLines = envLines.map((line) => {
+    if (IGNORE_DIRS_LINE_PATTERN.test(line)) {
+      found = true;
+      const existingDirs = extractIgnoreDirs(line);
+      const set = new Set(existingDirs.map((d) => d.trim()).filter(Boolean));
+      for (const d of requiredDirs) set.add(d.trim());
+      return `IGNORE_DIRS="${Array.from(set).join(",")}"`;
+    }
+    return line;
+  });
+  if (!found) {
+    if (updatedLines.length > 0 && updatedLines.at(-1) !== "") {
+      updatedLines.push("");
+    }
+    updatedLines.push(`IGNORE_DIRS="${CGC_IGNORE_DIRS}"`);
+  }
+  const lastLine = updatedLines.at(-1);
+  writeFileSync(
+    envFile,
+    `${updatedLines.join("\n")}${lastLine === "" ? "" : "\n"}`
+  );
+
+  try {
+    execFileSync("cgc", ["config", "set", "IGNORE_DIRS", CGC_IGNORE_DIRS], {
+      stdio: "ignore"
+    });
+  } catch {
+    // Ignored if cgc CLI is not installed or returns error
+  }
+
+  const cgcIgnore = path.join(cgcDir, ".cgcignore");
+  const existingIgnore = exists(cgcIgnore)
+    ? readFileSync(cgcIgnore, "utf8")
+    : "";
+  const ignoreLines = new Set(existingIgnore.split(LINE_SPLIT_PATTERN));
+  const missing = CGC_GLOBAL_PATTERNS.filter((p) => !ignoreLines.has(p));
+  if (missing.length > 0) {
+    const prefix =
+      existingIgnore.length > 0 && !existingIgnore.endsWith("\n") ? "\n" : "";
+    const header = "# CodeGraphContext universal ignore rules (AutoDev)\n";
+    writeFileSync(
+      cgcIgnore,
+      `${existingIgnore}${prefix}${header}${missing.join("\n")}\n`
+    );
+  }
 }
 
 function roots(options: MaterializeOptions): string[] {
@@ -624,6 +892,15 @@ function materializeRenderedAgents(
   }
 }
 
+function sameContent(source: string, target: string): boolean {
+  try {
+    return readFileSync(source).equals(readFileSync(target));
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
+    throw error;
+  }
+}
+
 /**
  * Project Codex custom prompts (`COMMANDS`) into $CODEX_HOME/prompts/.
  *
@@ -635,11 +912,15 @@ function materializeRenderedAgents(
  * prompts directory is then reconciled against the `COMMANDS` catalog via
  * `removeStalePaths` so the catalog is the single source of truth: any
  * `*.md` in the directory that is not in the catalog is removed.
+ *
+ * Returns the names of the prompts whose installed content changed (added,
+ * rewritten, or removed), sorted, so the caller can tell the user a running
+ * Codex app must be restarted to see them.
  */
-function materializeCommands(
-  options: MaterializeOptions,
+export function materializeCommands(
+  options: Pick<MaterializeOptions, "repositoryRoot">,
   promptsDir: string
-): void {
+): string[] {
   mkdirSync(promptsDir, { recursive: true, mode: 0o700 });
   const projectedHome = mkdtempSync(
     path.join(options.repositoryRoot, ".autodev-commands-home-")
@@ -678,6 +959,7 @@ function materializeCommands(
       projectedFiles.map((entry) => entry.replace(MD_EXTENSION_PATTERN, ""))
     );
     const catalog = new Set<string>(COMMANDS);
+    const updated: string[] = [];
     for (const entry of projectedFiles) {
       const name = entry.replace(MD_EXTENSION_PATTERN, "");
       if (!catalog.has(name))
@@ -690,21 +972,27 @@ function materializeCommands(
         throw new Error(
           `COMMANDS catalog entry "${name}" produced no rulesync projection`
         );
-      materializeRuntimeFile(
-        path.join(projectedDir, `${name}.md`),
-        path.join(promptsDir, `${name}.md`),
-        0o644
-      );
+      const projected = path.join(projectedDir, `${name}.md`);
+      const target = path.join(promptsDir, `${name}.md`);
+      if (!sameContent(projected, target)) updated.push(name);
+      materializeRuntimeFile(projected, target, 0o644);
     }
     const catalogSet = new Set<string>(COMMANDS);
-    const stale = readdirSync(promptsDir)
-      .filter(
-        (entry) =>
-          entry.endsWith(".md") &&
-          !catalogSet.has(entry.replace(MD_EXTENSION_PATTERN, ""))
-      )
-      .map((entry) => path.join(promptsDir, entry));
-    if (stale.length > 0) removeStalePaths(stale, "obsolete-runtime-path");
+    const staleEntries = readdirSync(promptsDir).filter(
+      (entry) =>
+        entry.endsWith(".md") &&
+        !catalogSet.has(entry.replace(MD_EXTENSION_PATTERN, ""))
+    );
+    if (staleEntries.length > 0) {
+      removeStalePaths(
+        staleEntries.map((entry) => path.join(promptsDir, entry)),
+        "obsolete-runtime-path"
+      );
+      updated.push(
+        ...staleEntries.map((entry) => entry.replace(MD_EXTENSION_PATTERN, ""))
+      );
+    }
+    return updated.sort();
   } finally {
     rmSync(projectedHome, { recursive: true, force: true });
   }
@@ -1082,9 +1370,19 @@ export function materializeInstallation(options: MaterializeOptions): void {
     path.join(options.repositoryRoot, "rulesync.jsonc"),
     "--silent"
   ]);
-  materializeCommands(options, prompts);
+  const updatedPrompts = materializeCommands(options, prompts);
+  // The Codex desktop app reads $CODEX_HOME/prompts once, when its window
+  // loads, and never re-reads it: an install that changed a prompt while the
+  // app was open left `/prompts:<name>` expanding the old text.
+  if (updatedPrompts.length > 0)
+    writeLine(
+      `updated Codex prompts: ${updatedPrompts.join(", ")} -- restart the Codex app to load them (it reads prompts only when its window opens)`
+    );
   ensureExclude(options);
   ensureBootstrapScript(options);
+  ensureGlobalGitExcludes(options);
+  ensureGlobalRepomixConfig(options);
+  ensureGlobalCodeGraphContext(options);
   composeAndLinkConfigs(options, source);
   ensureCodexAppMcpServerEnabled(options.codexHome);
   renderAndMaterializeContract(
