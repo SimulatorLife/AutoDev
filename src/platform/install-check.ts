@@ -837,6 +837,7 @@ function checkGlobalExcludes(
         ".codegraphcontext/",
         ".repomix/",
         "repomix-output.*",
+        "CGC_REPORT.md",
         ".cocoindex_code/",
         ".agent-cache/"
       ];
@@ -865,7 +866,8 @@ function checkGlobalExcludes(
       const ok =
         parsed?.ignore?.useGitignore === true &&
         Array.isArray(parsed?.ignore?.customPatterns) &&
-        parsed.ignore.customPatterns.includes("**/.codegraphcontext/**");
+        parsed.ignore.customPatterns.includes("**/.codegraphcontext/**") &&
+        parsed.ignore.customPatterns.includes("**/CGC_REPORT.md");
       check("global Repomix configuration", ok, failures);
     } else {
       check("global Repomix configuration", false, failures);
@@ -882,7 +884,8 @@ function checkGlobalExcludes(
       lstatSafe(cgcEnv) && readFileSync(cgcEnv, "utf8").includes("repomix");
     const ignoreOk =
       lstatSafe(cgcIgnore) &&
-      readFileSync(cgcIgnore, "utf8").includes("repomix-output.*");
+      readFileSync(cgcIgnore, "utf8").includes("repomix-output.*") &&
+      readFileSync(cgcIgnore, "utf8").includes("CGC_REPORT.md");
     check("global CodeGraphContext configuration", envOk && ignoreOk, failures);
   } catch {
     check("global CodeGraphContext configuration", false, failures);

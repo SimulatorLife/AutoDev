@@ -58,7 +58,7 @@ It inspects the active repository and toolchain configuration:
 - **Active Repomix mode:** Repomix respects `.gitignore` and global excludes
   by default (`useGitignore: true`). If a repository's local `repomix.config.json`
   explicitly disables gitignore (`"useGitignore": false`), the bootstrap safely
-  creates/merges `.repomixignore` with required CGC, CocoIndex, LSP, and tool
+  creates/merges `.repomixignore` with required CGC, CGC report artifacts (`CGC_REPORT.md`), CocoIndex, LSP, and tool
   cache patterns and ensures it is kept untracked in `.git/info/exclude`.
 - **Repository-specific needs:** Adds `/.agents/skills/` to `.git/info/exclude`
   only when the repo generates Rulesync output there (`.rulesync/skills/` plus an
@@ -66,7 +66,7 @@ It inspects the active repository and toolchain configuration:
   Antigravity does not load skills from a gitignored `.agents/skills/`.
 - **Machine-local fallbacks:** Adds universal tool fallbacks (`.claude/settings.local.json`,
   `.cgc/`, `.codegraphcontext/`, `.cgcignore`, `repomix-output.*`, `.repomix/`,
-  `.repomixignore`, `.cocoindex_code/`, `.lsp/`, `.agent-cache/`, `.playwright-mcp/`,
+  `.repomixignore`, `CGC_REPORT.md`, `.cocoindex_code/`, `.lsp/`, `.agent-cache/`, `.playwright-mcp/`,
   `mcp_debug.log`) only when no global excludes file is effective yet.
 - **Idempotence & preservation:** It never modifies tracked `.gitignore` or
   tracked repository files, preserves pre-existing user configuration, and reruns
@@ -208,6 +208,7 @@ Headless subagents run noninteractively and cannot answer interactive permission
 prompts; if a required tool lacks pre-approval, the CLI auto-denies the call and
 halts the turn. The installer pre-approves required capabilities in
 `~/.gemini/antigravity-cli/settings.json` under `permissions.allow`:
+
 - Required MCP servers: `codegraphcontext`, `cocoindex-code`, `lsp`,
   `openaiDeveloperDocs`, and `autodev_spawn`. CodeGraphContext receives explicit
   grants only for `add_code_to_graph`, `check_job_status`,
@@ -571,11 +572,13 @@ specific agents, MCPs, and skills to coexist under distinct names.
 Repository agent instructions do not go through Rulesync. `AGENTS.md` is their only source. Codex, Antigravity, and Copilot (cloud agent, code review, CLI, VS Code chat) read it natively, and `CLAUDE.md` is a symlink to it for Claude Code. Copilot Chat on github.com reads only `.github/copilot-instructions.md`, which is intentionally absent. `tests/agent-instructions.test.ts` keeps it that way.
 
 `.rulesync/mcp.jsonc` is the only static MCP source, and the installer generates every live MCP file from it with the pinned Rulesync `16.30.2`. The `autodev_spawn` entry used by orchestrator bridges is the exception at runtime: Claude and Copilot receive it as a per-session MCP definition with a request-scoped session key, loopback URL, and token; Antigravity uses the static global entry but inherits the same session-scoped environment from its identified bridge process. The shim is therefore not a globally active delegation path for unrelated turns:
+
 - **Claude Code, Copilot CLI, Antigravity:** for each of `claude`, `copilot`, and `agy` found on `PATH`, `rulesync generate --global --features mcp` writes `~/.claude.json`, `~/.copilot/mcp-config.json`, or `~/.gemini/config/mcp_config.json`. Rulesync keeps every non-MCP key in those files but owns their server lists: a server you add by hand is removed on the next install and reported as drift by `--check`. Add personal servers to `.rulesync/mcp.jsonc` instead.
 - **Codex:** Rulesync's global output ignores `CODEX_HOME`. The installer therefore generates the Codex projection into a temporary root, and the composer merges its servers into `$CODEX_HOME/config.toml`, keeping any server you added there. The role renderer and execution-contract builder read the same projection.
 - MCP generation passes its settings as flags, because a Rulesync config file with `global: true` generates nothing.
 
 The suites generate from `.rulesync/` into temporary roots:
+
 - `tests/rulesync-mcp.test.ts` checks that the Codex projection and each user-level file list exactly the servers `.rulesync/mcp.jsonc` declares for that tool, that non-MCP keys survive, and that `--check` catches edited or extra servers.
 - `tests/rulesync-hooks-shadow.test.ts` checks the six command hooks across SessionStart, SubagentStart, UserPromptSubmit, and PreToolUse. Rulesync emits only the supported PreToolUse hook for Antigravity and omits Codex-only fields such as `prevent_idle_sleep`; Copilot and Antigravity projections are intentionally lossy and the tests freeze those limits.
 - `tests/rulesync-commands.test.ts` checks the `.rulesync/commands/*.md` catalog: every file carries valid frontmatter with `targets` and a non-empty `description`, the `COMMANDS` constant exactly matches the on-disk files, the rulesync `codexcli` commands projection produces one prompt per catalog entry with description-only frontmatter (no `targets` leak), the body is preserved verbatim through projection, a pre-existing non-catalog prompt is removed by reconciliation, and re-running is idempotent.

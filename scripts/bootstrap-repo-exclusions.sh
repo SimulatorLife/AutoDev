@@ -161,6 +161,10 @@ cgc_required_patterns=(
   "repomix-output-*/"
   ".repomix/"
   ".repomixignore"
+  "CGC_REPORT.md"
+  "CGC_REPORT*.md"
+  "cgc_report.md"
+  "cgc_report*.md"
   ".codegraphcontext/"
   ".cgc/"
   ".cgc_cache/"
@@ -233,6 +237,10 @@ repomix_required_patterns=(
   "**/.repomix-output.*"
   "**/repomix-output-*/**"
   "**/.repomixignore"
+  "**/CGC_REPORT.md"
+  "**/CGC_REPORT*.md"
+  "**/cgc_report.md"
+  "**/cgc_report*.md"
   "**/.cocoindex_code/**"
   "**/.lsp/**"
   "**/.lsp-cache/**"
@@ -358,6 +366,10 @@ if [[ "$global_excludes_effective" -eq 0 ]]; then
     "repomix-output.*"
     ".repomix/"
     ".repomixignore"
+    "CGC_REPORT.md"
+    "CGC_REPORT*.md"
+    "cgc_report.md"
+    "cgc_report*.md"
   )
 fi
 

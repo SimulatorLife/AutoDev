@@ -129,6 +129,7 @@ test("falls back to a machine-local tool-config entry only when global excludes 
     assert.equal(result.status, 0, result.stderr);
     assert.match(result.stderr, /no effective global excludes file/);
     assert.match(readExclude(repo), /^\.claude\/settings\.local\.json$/m);
+    assert.match(readExclude(repo), /^CGC_REPORT\.md$/m);
   } finally {
     rmSync(repo, { recursive: true, force: true });
   }
@@ -242,6 +243,7 @@ test("CGC per-repo mode creates .cgcignore and keeps it untracked in info/exclud
     const content = readFileSync(cgcignorePath, "utf8");
     assert.match(content, /repomix-output\.\*/);
     assert.match(content, /\.codegraphcontext\//);
+    assert.match(content, /CGC_REPORT\.md/);
 
     // .cgcignore must be kept untracked in info/exclude
     assert.match(readExclude(repo), /\.cgcignore/);
@@ -271,6 +273,7 @@ test("CGC per-repo mode safely merges existing .cgcignore without overwriting us
     assert.match(content, /# Custom user rule/);
     assert.match(content, /my-custom-build\//);
     assert.match(content, /repomix-output\.\*/);
+    assert.match(content, /CGC_REPORT\.md/);
   } finally {
     rmSync(repo, { recursive: true, force: true });
   }
@@ -320,6 +323,7 @@ test("Repomix with useGitignore:false creates .repomixignore and keeps it untrac
     assert.match(content, /\*\*\/\.codegraphcontext\/\*\*/);
     assert.match(content, /\*\*\/\.cgc\/\*\*/);
     assert.match(content, /\*\*\/\.cocoindex_code\/\*\*/);
+    assert.match(content, /\*\*\/CGC_REPORT\.md/);
 
     // .repomixignore must be kept untracked in info/exclude
     assert.match(readExclude(repo), /\.repomixignore/);

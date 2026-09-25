@@ -33,6 +33,10 @@ GIT_GLOBAL_EXCLUDES=(
   "repomix-output-*/"
   ".repomix-output.*"
   ".repomixignore"
+  "CGC_REPORT.md"
+  "CGC_REPORT*.md"
+  "cgc_report.md"
+  "cgc_report*.md"
   ".cocoindex_code/"
   ".lsp/"
   ".lsp-cache/"
@@ -67,6 +71,10 @@ CGC_GLOBAL_PATTERNS=(
   "repomix-output-*/"
   ".repomix/"
   ".repomixignore"
+  "CGC_REPORT.md"
+  "CGC_REPORT*.md"
+  "cgc_report.md"
+  "cgc_report*.md"
   ".cocoindex_code/"
   ".lsp/"
   ".lsp-cache/"
@@ -105,6 +113,10 @@ REPOMIX_CUSTOM_PATTERNS=(
   "**/.repomix-output.*"
   "**/repomix-output-*/**"
   "**/.repomixignore"
+  "**/CGC_REPORT.md"
+  "**/CGC_REPORT*.md"
+  "**/cgc_report.md"
+  "**/cgc_report*.md"
   "**/.cocoindex_code/**"
   "**/.lsp/**"
   "**/.lsp-cache/**"
@@ -301,6 +313,14 @@ try:
             if idx != -1:
                 insert_pos = content.find("\n", idx) + 1
                 new_content = content[:insert_pos] + repomix_addition + content[insert_pos:]
+                constants_file.write_text(new_content, encoding="utf-8")
+                content = new_content
+        if "CGC_REPORT.md" not in content:
+            report_addition = '\n    # CGC Report artifacts\n    "CGC_REPORT.md",\n    "CGC_REPORT*.md",\n    "cgc_report.md",\n    "cgc_report*.md",\n'
+            idx = content.find("DEFAULT_IGNORE_PATTERNS = [")
+            if idx != -1:
+                insert_pos = content.find("\n", idx) + 1
+                new_content = content[:insert_pos] + report_addition + content[insert_pos:]
                 constants_file.write_text(new_content, encoding="utf-8")
 
     cgcignore_file = cgc_dir / "core" / "cgcignore.py"
