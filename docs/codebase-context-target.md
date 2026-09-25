@@ -2,80 +2,224 @@
 
 ## Goal
 
-Reduce repeated repository exploration and time-to-first-edit by giving agents a persistent, queryable understanding of the codebase instead of rebuilding that understanding on every task.
+Reduce repeated repository exploration and **time-to-first-edit** by giving agents persistent, queryable codebase context instead of rebuilding the same understanding on every task.
 
-## CodeGraphContext — Primary Code Understanding
+The target state is:
 
-Use **CodeGraphContext (CGC)** as the default structural codebase map.
+> **Persistent repository understanding + targeted investigation, not exhaustive rediscovery on every task.**
 
-CGC should provide agents with pre-indexed relationships such as:
+Prefer indexed/deterministic tooling for mechanical discovery and graph traversal. The agent should reason over that context rather than reconstructing repository structure through dozens of searches, file reads, and navigation calls.
 
-- files, modules, symbols, classes, and functions
-- callers/callees and call chains
-- imports and module dependencies
-- inheritance and overrides
-- transitive relationships and likely change impact
+## Tool Responsibilities
 
-Agents should consult CGC **before exploratory file reads, broad grep/search, or repeated LSP navigation**. Prefer graph traversal performed by CGC over having the agent manually reconstruct dependency chains.
+Use each tool for a distinct information class.
 
-Use existing tools as focused fallbacks:
+### CodeGraphContext (CGC) — structural repository understanding
 
-- **CocoIndex:** semantic/conceptual discovery when the relevant code or identifier is unknown.
-- **LSP:** exact compiler/language semantics such as definitions, inferred types, references, diagnostics, and precise navigation.
-- **Direct file reads:** inspect only the implementations relevant to the identified change.
+Use **CGC as the default structural map** for:
 
-Target flow:
+- callers/callees and transitive call relationships
+- call chains
+- imports/module dependencies
+- dependency neighborhoods and likely blast radius
+- inheritance/override architecture
+- repository-wide structural relationships
 
-```text
-Task
-  ↓
-CodeGraphContext
-  ↓
-Relevant subsystem / symbols / dependency surface
-  ↓
-CocoIndex only if location is unclear
-LSP only if exact language semantics are needed
-  ↓
-Targeted source reads
-  ↓
-Implement
-```
+Prefer CGC graph traversal over repeated step-by-step LSP/file traversal when the question is architectural or relational.
 
-## Repomix — Optional Repository Briefing
+### CocoIndex Code (CCC) — semantic discovery
 
-Use **Repomix only as a complementary high-level briefing layer**, not as a second source-code graph duplicating CGC.
+Use **CCC when the relevant code is not yet known by name/location**.
 
-A Repomix-generated briefing may contain:
+Examples:
 
-- `AGENTS.md` / repository instructions
-- agent skills and development rules
-- architecture/design documentation
-- TODOs and project state
-- manifests and important configuration
+- “Where is neutralization/overtaking behavior implemented?”
+- “What controls cars bunching under braking?”
+- “Where does intervention-phase dimming happen?”
+
+Use semantic search to identify likely anchors, then switch to CGC/LSP rather than repeatedly searching.
+
+### LSP MCP — precise language semantics
+
+Use **LSP as the authority for compiler/language-server semantics**, including:
+
+- exact definitions and references
+- inferred types, hover information, and signatures
+- implementations and precise type hierarchy
+- diagnostics
+- code actions, rename, and refactoring
+
+LSP is a **precision tool**, not the default mechanism for manually exploring the whole repository.
+
+### Repomix — optional repository briefing
+
+Use **Repomix as a complementary high-level briefing layer**, not as a second source-code graph duplicating CGC.
+
+A Repomix briefing may contain:
+
+- `AGENTS.md` and agent instructions
+- skills/rules
+- architecture/design docs
+- TODO/project-state docs
+- manifests/configuration
 - high-level directory structure
 
-Prefer full content for important documentation/configuration and directory-only or excluded source-code content where CGC already provides structural understanding.
+Prefer full content for important docs/config and directory-only or excluded source-code content where CGC already provides structural understanding.
 
 Conceptually:
 
 ```text
-Repomix → "What is this project, and what rules should I follow?"
-CGC     → "How is the implementation actually connected?"
-CocoIndex → "Where is this concept implemented?"
-LSP     → "What exactly does the language/compiler know here?"
+Repomix  → "What is this project, and what rules should I follow?"
+CCC      → "Where is this concept implemented?"
+CGC      → "How is the implementation connected?"
+LSP      → "What exactly does the language/compiler know here?"
 ```
+
+## Expected Task Flow
+
+```text
+Task
+  ↓
+Relevant code already known?
+  ├─ No → CCC semantic search → establish likely anchor(s)
+  └─ Yes
+       ↓
+CGC structural context
+  dependency/call relationships
+  ownership/blast radius
+       ↓
+Targeted source inspection
+       ↓
+Need exact compiler/language semantics?
+  ├─ Yes → LSP
+  └─ No
+       ↓
+Implement
+       ↓
+LSP diagnostics / focused validation
+```
+
+Do **not** query CCC, CGC, LSP, grep, and file search for the same fact merely to increase confidence.
+
+## Suspected Tool Overlap — Cross-Validate Before Restricting
+
+Inspect the **actual installed/current versions and exposed MCP schemas** before disabling or hiding anything. The ownership below is the target hypothesis and must be verified against the real tools.
+
+| Capability | Preferred owner | Suspected overlap |
+|---|---|---|
+| Natural-language/concept discovery | **CCC** | CGC `find_code`, LSP workspace/symbol search |
+| Known-symbol lookup | **LSP** | CGC `find_code` |
+| Exact definitions | **LSP** | CGC/source search |
+| Exact references | **LSP** | CGC callers/importers are related but not equivalent |
+| Callers/callees | **CGC** | LSP call hierarchy |
+| Transitive callers/callees | **CGC** | repeated LSP call-hierarchy traversal |
+| A→B call chains | **CGC** | manual/repeated LSP traversal |
+| Module/dependency graph | **CGC** | LSP imports/related-files |
+| Importers | **CGC** | LSP reference/import tooling |
+| Exact type/signature/hover | **LSP** | limited CGC metadata |
+| Implementations/type semantics | **LSP** | CGC inheritance graph |
+| Broad inheritance architecture | **CGC** | LSP type hierarchy |
+| Diagnostics/refactoring | **LSP** | no meaningful equivalent |
+| Semantic similarity search | **CCC** | no true equivalent |
+
+Important distinctions:
+
+- **References are not callers.** Keep LSP references authoritative.
+- **Semantic similarity is not structural dependency.** CCC and CGC are complementary.
+- **Graph relationships are not compiler semantics.** CGC should not replace LSP where exact language resolution matters.
+
+## Reduce Agent Choice
+
+Do not expose multiple interchangeable tools just because they exist.
+
+Prefer:
+
+> **One authoritative default per information class; alternatives are fallbacks, not competing defaults.**
+
+After cross-validation, likely candidates to hide or demote from normal agents include:
+
+- CGC generic code search when CCC/LSP already cover discovery better
+- LSP call-hierarchy traversal when CGC can answer the architectural question transitively
+- LSP file-import/dependency exploration when CGC already owns repository dependency analysis
+- low-level LSP workspace-symbol tools when a higher-level bundled symbol tool provides the needed information
+
+Do not permanently remove useful recovery/precision capabilities. Keep them available to expanded/debug/validator roles when justified.
+
+## Suggested Agent Profiles
+
+### Normal implementation agent
+
+Expose the smallest useful surface:
+
+- CCC semantic search
+- CGC core relationship/dependency queries
+- LSP exact symbol/type/reference/diagnostic/refactor tools
+
+### Discovery / architecture agent
+
+Bias toward:
+
+- CCC search
+- fuller CGC graph traversal
+- limited LSP precision/navigation
+
+### Validator / deep-debug agent
+
+May receive broader access, including overlapping tools, when independent verification or ambiguity resolution justifies cross-checking.
+
+## Longer-Term Interface
+
+Prefer eventually hiding backend-specific MCP complexity behind a small user-level interface such as:
+
+```text
+code.search      → CCC
+code.graph       → CGC
+code.precise     → LSP
+code.validate    → LSP
+repo.brief       → Repomix/docs/config
+```
+
+Or a higher-level `get_task_context(task)` that mechanically combines the appropriate indexed information before implementation begins.
+
+The agent should choose among a few **information intents**, not dozens of overlapping MCP operations.
 
 ## Repository and Tool Exclusions
 
-To ensure agents can be pointed at arbitrary repositories without manual per-repo configuration, exclusions are managed globally once wherever possible:
+Agents should work against arbitrary repositories with **zero manual setup in normal use**. Manage universal exclusions globally once wherever possible.
 
-- **CodeGraphContext (CGC):** Ignores Repomix outputs (`repomix-output.*`, `.repomix/`, `.repomixignore`), CGC report artifacts (`CGC_REPORT.md`), and vendor/build/cache/tool-state artifacts (`node_modules`, `dist`, `build`, `target`, `out`, `.codegraphcontext/`, `.cgc/`, `.cocoindex_code/`, `.lsp/`, `.agent-cache/`, etc.) globally via `IGNORE_DIRS` in `~/.codegraphcontext/.env` and `~/.codegraphcontext/.cgcignore`.
-- **Repomix:** Ignores CGC state and cache, Repomix outputs, CGC report artifacts (`CGC_REPORT.md`), repo-local CocoIndex/LSP/agent caches, and build/test artifacts not covered by its defaults via global configuration at `~/.config/repomix/repomix.config.json` and gitignore integration.
-- **Global Git Excludes:** `~/.gitignore_global` (configured via `git config --global core.excludesfile`) excludes universal local and tool-generated artifacts (`*~`, `.DS_Store`, `.claude/settings.local.json`, `CGC_REPORT.md`, `.cgc/`, `.codegraphcontext/`, `.cgcignore`, `repomix-output.*`, `.repomix/`, `.repomixignore`, `.cocoindex_code/`, `.lsp/`, `.agent-cache/`, etc.) so they never appear as untracked changes.
-- **Idempotent Repo-Bootstrap:** `autodev repo bootstrap` (or `~/.local/bin/autodev-bootstrap`) runs automatically on session start. It inspects the working repo, verifies global exclusions are effective, avoids modifying tracked files, and uses `.git/info/exclude` (or safe non-destructive merging for active tool modes) only for genuinely repository-specific exclusions.
+- **CGC:** ignore Repomix outputs, CGC-generated reports/state, and generated/vendor/build/cache/tool artifacts such as `node_modules`, `dist`, `build`, `target`, `out`, `.codegraphcontext/`, `.cgc/`, repo-local CCC/LSP/agent caches, etc., where not already covered by tool defaults.
+- **Repomix:** ignore CGC state/cache, Repomix outputs, CGC-generated reports, repo-local CCC/LSP/agent caches, and generated/vendor/build/test artifacts not already covered by defaults.
+- **Global Git excludes:** keep universal local/tool-generated artifacts from appearing as untracked repository changes.
+- **Idempotent repo bootstrap:** run automatically on session start to verify global configuration, detect genuinely repo-specific generated/cache paths, and apply only missing non-versioned local exclusions when required.
 
-## Operating Principle
+Prefer global/tool-owned configuration or non-versioned mechanisms such as `.git/info/exclude`. Avoid modifying tracked project files by default; preserve and merge existing configuration instead of overwriting it.
 
-Do not query multiple systems for the same fact merely to increase confidence. Each tool should have a distinct responsibility, and agents should continue exploration only when a concrete unanswered question blocks implementation.
+## Investigation Behavior and Metrics
 
-The target is **persistent repository understanding + targeted investigation**, rather than exhaustive rediscovery on every task.
+Investigate **proportionally to uncertainty and risk**. Once the responsible subsystem, relevant dependency surface, and regression surface are sufficiently established, begin implementation. Continue exploring only when a concrete unanswered question blocks the change.
+
+Track at minimum:
+
+- tool calls before first meaningful edit
+- tokens before first edit
+- unique files read before first edit
+- repeated reads/searches
+- CCC / CGC / LSP call counts
+- total tool calls
+- rework caused by insufficient investigation
+
+Use these measurements to validate whether reduced tool exposure and clearer ownership actually improve performance.
+
+## Required Validation Before Tool-Surface Changes
+
+Before changing agent tool exposure:
+
+1. inspect the installed/current versions of **CGC, CCC, and `lsp-mcp-server`**;
+2. enumerate their actual exposed tools and schemas;
+3. cross-validate the overlap assumptions above;
+4. distinguish exact duplicates from superficially similar tools with materially different semantics;
+5. propose the smallest normal-agent tool surface;
+6. identify tools to hide, demote to fallback, or restrict to specialist roles;
+7. preserve escape hatches where the preferred tool cannot answer correctly.
+
+The objective is **not fewer tools for its own sake**. The objective is fewer redundant decisions, fewer duplicate queries, less repeated repository discovery, and faster movement from task → understanding → implementation.
