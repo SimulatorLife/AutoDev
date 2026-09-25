@@ -7370,10 +7370,10 @@ test("native Codex requests record MCP exposure from the role contract without l
 test("direct concrete request retries once on HTTP 503 then succeeds without rerouting", async () => {
   const originalFetch = globalThis.fetch;
   let responseCalls = 0;
-  const originalCooldown = process.env.CODEX_ROUTER_CONCRETE_RETRY_MS;
-  const originalMax = process.env.CODEX_ROUTER_CONCRETE_RETRY_MAX_MS;
-  process.env.CODEX_ROUTER_CONCRETE_RETRY_MS = "10";
-  process.env.CODEX_ROUTER_CONCRETE_RETRY_MAX_MS = "20";
+  const originalCooldown = process.env.CODEX_ROUTER_UPSTREAM_RETRY_MS;
+  const originalMax = process.env.CODEX_ROUTER_UPSTREAM_RETRY_MAX_MS;
+  process.env.CODEX_ROUTER_UPSTREAM_RETRY_MS = "10";
+  process.env.CODEX_ROUTER_UPSTREAM_RETRY_MAX_MS = "20";
   globalThis.fetch = async (url: any, options: any = {}) => {
     if (String(url) === "http://127.0.0.1:4000/v1/responses") {
       responseCalls += 1;
@@ -7422,11 +7422,11 @@ test("direct concrete request retries once on HTTP 503 then succeeds without rer
     await closeServer(server);
     globalThis.fetch = originalFetch;
     if (originalCooldown === undefined)
-      delete process.env.CODEX_ROUTER_CONCRETE_RETRY_MS;
-    else process.env.CODEX_ROUTER_CONCRETE_RETRY_MS = originalCooldown;
+      delete process.env.CODEX_ROUTER_UPSTREAM_RETRY_MS;
+    else process.env.CODEX_ROUTER_UPSTREAM_RETRY_MS = originalCooldown;
     if (originalMax === undefined)
-      delete process.env.CODEX_ROUTER_CONCRETE_RETRY_MAX_MS;
-    else process.env.CODEX_ROUTER_CONCRETE_RETRY_MAX_MS = originalMax;
+      delete process.env.CODEX_ROUTER_UPSTREAM_RETRY_MAX_MS;
+    else process.env.CODEX_ROUTER_UPSTREAM_RETRY_MAX_MS = originalMax;
     activeProviderRequests.clear();
     cooldowns.clear("claude");
     resetRouterTelemetry();
@@ -7436,10 +7436,10 @@ test("direct concrete request retries once on HTTP 503 then succeeds without rer
 test("direct concrete request stops after the single bounded retry and surfaces a Retry-After with structured diagnostics", async () => {
   const originalFetch = globalThis.fetch;
   let responseCalls = 0;
-  const originalCooldown = process.env.CODEX_ROUTER_CONCRETE_RETRY_MS;
-  const originalMax = process.env.CODEX_ROUTER_CONCRETE_RETRY_MAX_MS;
-  process.env.CODEX_ROUTER_CONCRETE_RETRY_MS = "10";
-  process.env.CODEX_ROUTER_CONCRETE_RETRY_MAX_MS = "20";
+  const originalCooldown = process.env.CODEX_ROUTER_UPSTREAM_RETRY_MS;
+  const originalMax = process.env.CODEX_ROUTER_UPSTREAM_RETRY_MAX_MS;
+  process.env.CODEX_ROUTER_UPSTREAM_RETRY_MS = "10";
+  process.env.CODEX_ROUTER_UPSTREAM_RETRY_MAX_MS = "20";
   globalThis.fetch = async (url: any, options: any = {}) => {
     if (String(url) === "http://127.0.0.1:4000/v1/responses") {
       responseCalls += 1;
@@ -7502,11 +7502,11 @@ test("direct concrete request stops after the single bounded retry and surfaces 
     await closeServer(server);
     globalThis.fetch = originalFetch;
     if (originalCooldown === undefined)
-      delete process.env.CODEX_ROUTER_CONCRETE_RETRY_MS;
-    else process.env.CODEX_ROUTER_CONCRETE_RETRY_MS = originalCooldown;
+      delete process.env.CODEX_ROUTER_UPSTREAM_RETRY_MS;
+    else process.env.CODEX_ROUTER_UPSTREAM_RETRY_MS = originalCooldown;
     if (originalMax === undefined)
-      delete process.env.CODEX_ROUTER_CONCRETE_RETRY_MAX_MS;
-    else process.env.CODEX_ROUTER_CONCRETE_RETRY_MAX_MS = originalMax;
+      delete process.env.CODEX_ROUTER_UPSTREAM_RETRY_MAX_MS;
+    else process.env.CODEX_ROUTER_UPSTREAM_RETRY_MAX_MS = originalMax;
     activeProviderRequests.clear();
     cooldowns.clear("claude");
     resetRouterTelemetry();
@@ -7576,10 +7576,10 @@ test("direct concrete request does not retry on auth (401) or payload (400) erro
 
 test("direct concrete request does not retry once the client signal is aborted", async () => {
   const originalFetch = globalThis.fetch;
-  const originalCooldown = process.env.CODEX_ROUTER_CONCRETE_RETRY_MS;
-  const originalMax = process.env.CODEX_ROUTER_CONCRETE_RETRY_MAX_MS;
-  process.env.CODEX_ROUTER_CONCRETE_RETRY_MS = "10";
-  process.env.CODEX_ROUTER_CONCRETE_RETRY_MAX_MS = "20";
+  const originalCooldown = process.env.CODEX_ROUTER_UPSTREAM_RETRY_MS;
+  const originalMax = process.env.CODEX_ROUTER_UPSTREAM_RETRY_MAX_MS;
+  process.env.CODEX_ROUTER_UPSTREAM_RETRY_MS = "10";
+  process.env.CODEX_ROUTER_UPSTREAM_RETRY_MAX_MS = "20";
   let responseCalls = 0;
   globalThis.fetch = async (url: any, options: any = {}) => {
     if (String(url) === "http://127.0.0.1:4000/v1/responses") {
@@ -7669,11 +7669,11 @@ test("direct concrete request does not retry once the client signal is aborted",
   } finally {
     globalThis.fetch = originalFetch;
     if (originalCooldown === undefined)
-      delete process.env.CODEX_ROUTER_CONCRETE_RETRY_MS;
-    else process.env.CODEX_ROUTER_CONCRETE_RETRY_MS = originalCooldown;
+      delete process.env.CODEX_ROUTER_UPSTREAM_RETRY_MS;
+    else process.env.CODEX_ROUTER_UPSTREAM_RETRY_MS = originalCooldown;
     if (originalMax === undefined)
-      delete process.env.CODEX_ROUTER_CONCRETE_RETRY_MAX_MS;
-    else process.env.CODEX_ROUTER_CONCRETE_RETRY_MAX_MS = originalMax;
+      delete process.env.CODEX_ROUTER_UPSTREAM_RETRY_MAX_MS;
+    else process.env.CODEX_ROUTER_UPSTREAM_RETRY_MAX_MS = originalMax;
     activeProviderRequests.clear();
     cooldowns.clear("claude");
     resetRouterTelemetry();
@@ -8992,6 +8992,49 @@ test("closes an abandoned stream as incomplete, carrying what it already forward
   for (const provider of DEFAULT_TIER) cooldowns.clear(provider);
 });
 
+test("fails a dropped Codex stream retryably so Codex replays it instead of ending the turn", async () => {
+  // Observed 2026-09-24: chatgpt.com streams dropped mid-response and the
+  // router closed them as finished-but-incomplete turns, so the orchestrator
+  // stopped with "[Incomplete: The provider stopped unexpectedly ...]" where
+  // native Codex would have retried the request.
+  cooldowns.clear("codex");
+  const truncated =
+    [
+      'data: {"type":"response.created","response":{"id":"resp_3"}}',
+      'data: {"type":"response.output_item.added","output_index":0,"item":{"id":"msg_3","type":"message"}}',
+      'data: {"type":"response.output_text.delta","item_id":"msg_3","delta":"work in progress"}'
+    ].join("\n\n") + "\n\n";
+  await withStubbedProviders(
+    (target: any) =>
+      healthyProbe(target) ??
+      (target.startsWith("https://chatgpt.com/")
+        ? new Response(truncated, {
+          status: 200,
+          headers: { "content-type": "text/event-stream" }
+        })
+        : null),
+    async ({ port, fetch: realFetch }: any) => {
+      const response = await realFetch(
+        `http://127.0.0.1:${port}/v1/responses`,
+        {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            "x-codex-session-id": "codex-dropped-stream-test"
+          },
+          body: JSON.stringify({ model: "autodev/orchestrator", stream: true })
+        }
+      );
+      assert.equal(response.headers.get("x-autodev-provider"), "codex");
+      const body = await response.text();
+      assert.match(body, /event: response\.failed/);
+      assert.doesNotMatch(body, /"status":"incomplete"/);
+      assert.doesNotMatch(body, /\[Incomplete:/);
+    }
+  );
+  cooldowns.clear("codex");
+});
+
 test("releases the subagent slot when every provider is exhausted", async () => {
   resetConcurrencyTelemetry();
   await withStubbedProviders(
@@ -10039,10 +10082,10 @@ test("router status includes sanitized routing and limits metadata", () => {
   assert.equal(typeof status.limits.exhaustionWaitMs, "number");
   assert.equal(typeof status.limits.chainSelectionDeadlineMs, "number");
   assert.equal(typeof status.limits.upstreamTimeoutMs, "number");
-  assert.equal(typeof status.limits.concreteRetryBaseMs, "number");
-  assert.equal(typeof status.limits.concreteRetryMaxMs, "number");
+  assert.equal(typeof status.limits.upstreamRetryBaseMs, "number");
+  assert.equal(typeof status.limits.upstreamRetryMaxMs, "number");
   assert.equal(typeof status.limits.concreteStatusMaxAttempts, "number");
-  assert.equal(typeof status.limits.concreteTransportMaxAttempts, "number");
+  assert.equal(typeof status.limits.upstreamTransportMaxAttempts, "number");
   assert.equal(typeof status.limits.shutdownDrainTimeoutMs, "number");
   assert.equal(typeof status.limits.maxConcurrentThreadsPerSession, "number");
 

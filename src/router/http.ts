@@ -76,10 +76,7 @@ import {
 import {
   activeProviderRequests,
   CHAIN_SELECTION_DEADLINE_MS,
-  CONCRETE_RETRY_BASE_MS,
-  CONCRETE_RETRY_MAX_MS,
   CONCRETE_STATUS_MAX_ATTEMPTS,
-  CONCRETE_TRANSPORT_MAX_ATTEMPTS,
   errorBody,
   EXHAUSTION_WAIT_MS,
   getActiveRequests,
@@ -94,7 +91,10 @@ import {
   sendJson,
   STREAM_IDLE_TIMEOUT_MS,
   transportErrorInfo,
-  UPSTREAM_TIMEOUT_MS
+  UPSTREAM_RETRY_BASE_MS,
+  UPSTREAM_RETRY_MAX_MS,
+  UPSTREAM_TIMEOUT_MS,
+  UPSTREAM_TRANSPORT_MAX_ATTEMPTS
 } from "./proxy.ts";
 import { setUpstreamShapeHooks } from "./responses.ts";
 import {
@@ -687,10 +687,10 @@ export function limitsStatus(): Record<string, unknown> {
     chainSelectionDeadlineMs: CHAIN_SELECTION_DEADLINE_MS,
     streamIdleTimeoutMs: STREAM_IDLE_TIMEOUT_MS,
     upstreamTimeoutMs: UPSTREAM_TIMEOUT_MS,
-    concreteRetryBaseMs: CONCRETE_RETRY_BASE_MS,
-    concreteRetryMaxMs: CONCRETE_RETRY_MAX_MS,
+    upstreamRetryBaseMs: UPSTREAM_RETRY_BASE_MS,
+    upstreamRetryMaxMs: UPSTREAM_RETRY_MAX_MS,
     concreteStatusMaxAttempts: CONCRETE_STATUS_MAX_ATTEMPTS,
-    concreteTransportMaxAttempts: CONCRETE_TRANSPORT_MAX_ATTEMPTS,
+    upstreamTransportMaxAttempts: UPSTREAM_TRANSPORT_MAX_ATTEMPTS,
     shutdownDrainTimeoutMs: SHUTDOWN_DRAIN_TIMEOUT_MS,
     maxConcurrentThreadsPerSession:
       getDefaultConcurrencyManager().effectivePerSessionLimit()

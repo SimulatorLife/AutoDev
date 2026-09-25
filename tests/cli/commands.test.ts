@@ -67,12 +67,24 @@ test("CLI dispatches router, provider, hook, and install through typed backends"
     }),
     16
   );
+  assert.equal(
+    runMain(["repo", "bootstrap", "--check"], {
+      repo: {
+        bootstrap: (args = []) => {
+          calls.push(`repo bootstrap ${args.join(" ")}`);
+          return 17;
+        }
+      }
+    }),
+    17
+  );
   assert.deepEqual(installArgs, ["--materialize-only"]);
   assert.deepEqual(calls, [
     "router run",
     "provider claude",
     "hook skill-read",
-    "install"
+    "install",
+    "repo bootstrap --check"
   ]);
 });
 

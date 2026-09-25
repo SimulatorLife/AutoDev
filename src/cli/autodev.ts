@@ -21,6 +21,7 @@ import {
   dispatchProviderCommand,
   type ProviderCommandBackend
 } from "./provider.ts";
+import { dispatchRepoCommand, type RepoCommandBackend } from "./repo.ts";
 import { dispatchRouterCommand, type RouterCommandBackend } from "./router.ts";
 
 const repoRoot = path.resolve(
@@ -151,7 +152,7 @@ function renderCommand(kind: string, argv: string[]): number {
 
 function usage(): void {
   writeLine(
-    `Usage: node src/cli/autodev.ts <command> [subcommand] [options]\n\nCommands:\n  check\n  render agents|contract|mcp|catalog\n  router run|ensure|status\n  provider <name>\n  hook <name>\n  install\n`
+    `Usage: node src/cli/autodev.ts <command> [subcommand] [options]\n\nCommands:\n  check\n  render agents|contract|mcp|catalog\n  router run|ensure|status\n  provider <name>\n  hook <name>\n  repo bootstrap\n  install\n`
   );
 }
 
@@ -159,6 +160,7 @@ export interface CliBackends {
   router?: RouterCommandBackend;
   provider?: ProviderCommandBackend;
   hook?: HookCommandBackend;
+  repo?: RepoCommandBackend;
   install?: InstallCommandBackend;
 }
 
@@ -196,6 +198,9 @@ export function runMain(argv: string[], backends: CliBackends = {}): number {
     if (rest.length > 0)
       throw new ConfigError("hook commands do not accept positional arguments");
     return dispatchHookCommand(subcommand ?? "", backends.hook);
+  }
+  if (command === "repo") {
+    return dispatchRepoCommand(subcommand ?? "", rest, backends.repo);
   }
   if (command === "install") {
     const args = [subcommand, ...rest].filter(

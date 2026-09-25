@@ -223,18 +223,24 @@ export const UPSTREAM_TIMEOUT_MS = nonNegativeDuration(
   process.env.CODEX_ROUTER_UPSTREAM_TIMEOUT_MS,
   7_200_000
 );
-export const CONCRETE_RETRY_BASE_MS = positiveDuration(
-  process.env.CODEX_ROUTER_CONCRETE_RETRY_MS,
+export const UPSTREAM_RETRY_BASE_MS = positiveDuration(
+  process.env.CODEX_ROUTER_UPSTREAM_RETRY_MS,
   200
 );
-export const CONCRETE_RETRY_MAX_MS = Math.max(
-  CONCRETE_RETRY_BASE_MS,
-  positiveDuration(process.env.CODEX_ROUTER_CONCRETE_RETRY_MAX_MS, 2000)
+export const UPSTREAM_RETRY_MAX_MS = Math.max(
+  UPSTREAM_RETRY_BASE_MS,
+  positiveDuration(process.env.CODEX_ROUTER_UPSTREAM_RETRY_MAX_MS, 2000)
 );
 export const CONCRETE_STATUS_MAX_ATTEMPTS = 2;
-export const CONCRETE_TRANSPORT_MAX_ATTEMPTS = Math.max(
-  CONCRETE_STATUS_MAX_ATTEMPTS,
-  positiveDuration(process.env.CODEX_ROUTER_CONCRETE_TRANSPORT_RETRY_LIMIT, 3)
+/**
+ * Attempts per candidate when the connection fails before any response
+ * (reset, broken pipe, connect timeout). Shared by concrete requests and every
+ * candidate of a fallback chain: a severed connection says nothing about the
+ * provider, so it is retried in place before the provider is cooled down.
+ */
+export const UPSTREAM_TRANSPORT_MAX_ATTEMPTS = positiveDuration(
+  process.env.CODEX_ROUTER_UPSTREAM_TRANSPORT_RETRY_LIMIT,
+  3
 );
 
 export const activeProviderRequests = new Map<string, number>();
@@ -332,10 +338,10 @@ export function logTransportError({
 }
 
 export async function jitteredBackoff(): Promise<number> {
-  const floor = Math.min(CONCRETE_RETRY_BASE_MS, CONCRETE_RETRY_MAX_MS);
+  const floor = Math.min(UPSTREAM_RETRY_BASE_MS, UPSTREAM_RETRY_MAX_MS);
   const ceiling = Math.max(
     floor,
-    Math.min(CONCRETE_RETRY_MAX_MS, CONCRETE_RETRY_BASE_MS * 2)
+    Math.min(UPSTREAM_RETRY_MAX_MS, UPSTREAM_RETRY_BASE_MS * 2)
   );
   const delayMs = floor + Math.floor(Math.random() * (ceiling - floor + 1));
   await new Promise((resolve) => {
@@ -983,7 +989,8 @@ export async function writeResponseStream(
   publicModel: string,
   signal: AbortSignal | null = null,
   onHeartbeat: (() => void) | null = null,
-  clientSignal: AbortSignal | null = null
+  clientSignal: AbortSignal | null = null,
+  replayable = false
 ): Promise<StreamWriteResult> {
   const decoder = new TextDecoder();
   const seenToolCalls = new Set<string>();
@@ -1056,6 +1063,14 @@ export async function writeResponseStream(
     });
   };
   const closeIncomplete = (reason: string, message: string): void => {
+    // A stateless upstream can be replayed by the client, which is what
+    // native Codex does when its stream drops: close with a retryable
+    // response.failed rather than a finished turn that stops the agent.
+    if (replayable) {
+      captureIncompleteReason(reason);
+      safeWrite(responseFailureEvent(message));
+      return;
+    }
     closeSseStream({
       streamState,
       reportedLimit,
@@ -1344,7 +1359,8 @@ async function writeProviderResponse(
       publicModel,
       result.signal,
       onHeartbeat,
-      clientSignal
+      clientSignal,
+      route.provider === "codex"
     );
     if (!response.writableEnded && !response.destroyed && !response.closed) {
       try {
@@ -1843,7 +1859,7 @@ async function runConcreteAttempts(
 ): Promise<void> {
   const maxAttempts = Math.max(
     CONCRETE_STATUS_MAX_ATTEMPTS,
-    CONCRETE_TRANSPORT_MAX_ATTEMPTS
+    UPSTREAM_TRANSPORT_MAX_ATTEMPTS
   );
   if (attempts >= maxAttempts) return;
 
@@ -2008,7 +2024,7 @@ async function handleConcreteTransportError(
     endConcreteRequest(activitySubject, requestId, "failure");
     return;
   }
-  if (attempts < CONCRETE_TRANSPORT_MAX_ATTEMPTS - 1 && !response.headersSent) {
+  if (attempts < UPSTREAM_TRANSPORT_MAX_ATTEMPTS - 1 && !response.headersSent) {
     const failureClass = classifyProviderFailure(
       502,
       error instanceof Error ? error.message : String(error)
@@ -2564,6 +2580,21 @@ function runLastResortPass(
   served: (outcome: string) => boolean
 ): Promise<boolean> {
   if (state.deadlineReached) return false;
+  // A provider already serving other agents goes last, so concurrent exhausted
+  // requests spread over the skipped providers. It is never excluded: with
+  // Codex the orchestrator tier's only provider and always live in some other
+  // session, excluding it turned one transient failure into an instant 503
+  // for every root turn until the cooldown lapsed (observed 2026-09-24, for up
+  // to ten minutes), since nothing could attempt the success that clears it.
+  const busy = (route: Candidate): number =>
+    countLiveAgentActivity(
+      { provider: route.provider },
+      Date.now(),
+      undefined,
+      ctx.activitySubject
+    ) > 0
+      ? 1
+      : 0;
   const eligible = skipped
     .filter(
       (route) =>
@@ -2574,20 +2605,13 @@ function runLastResortPass(
         !isTried(route.provider) &&
         COOLDOWNS.allowsLastResort(
           COOLDOWNS.get(route.provider, Date.now(), route.model)
-        ) &&
-        // The caller's own agent is often still live on this provider (an
-        // orchestrator waiting on its children): it is not "another request".
-        countLiveAgentActivity(
-          { provider: route.provider },
-          Date.now(),
-          undefined,
-          ctx.activitySubject
-        ) === 0
+        )
     )
     .sort(
       (a, b) =>
+        busy(a) - busy(b) ||
         (COOLDOWNS.get(a.provider, Date.now(), a.model)?.until ?? 0) -
-        (COOLDOWNS.get(b.provider, Date.now(), b.model)?.until ?? 0)
+          (COOLDOWNS.get(b.provider, Date.now(), b.model)?.until ?? 0)
     )
     .slice(0, LAST_RESORT_MAX_ATTEMPTS);
   return tryLastResortRoute(ctx, eligible, 0, state, tryCandidate, served);
@@ -2732,16 +2756,7 @@ async function attemptCandidate(
   incrementActiveRequests(route.provider);
 
   try {
-    const result = await fetchUpstream(
-      route,
-      payloadForCandidate(ctx.payload, route),
-      ctx.wantsStream,
-      ctx.turnMetadataHeader,
-      ctx.clientSignal,
-      ctx.agentRole,
-      ctx.requestId,
-      ctx.session
-    );
+    const result = await fetchCandidate(ctx, route);
     if (result.ok) {
       return await handleCandidateSuccess(
         ctx,
@@ -2770,6 +2785,70 @@ async function attemptCandidate(
     );
   } finally {
     decrementActiveRequests(route.provider);
+  }
+}
+
+/**
+ * One candidate's upstream call, retried in place while the connection fails
+ * before any response. Observed 2026-09-24: chatgpt.com connections broke
+ * mid-upload (EPIPE/ECONNRESET) or never opened (connect timeout); each one
+ * cooled Codex -- the orchestrator tier's only provider -- and failed the
+ * root turn outright, where native Codex would simply have reconnected. The
+ * last error propagates to the caller, which records it and cools the
+ * provider.
+ */
+async function fetchCandidate(
+  ctx: FallbackContext,
+  route: Candidate,
+  attempt = 1
+): Promise<FetchUpstreamResult> {
+  try {
+    return await fetchUpstream(
+      route,
+      payloadForCandidate(ctx.payload, route),
+      ctx.wantsStream,
+      ctx.turnMetadataHeader,
+      ctx.clientSignal,
+      ctx.agentRole,
+      ctx.requestId,
+      ctx.session
+    );
+  } catch (error) {
+    if (
+      attempt >= UPSTREAM_TRANSPORT_MAX_ATTEMPTS ||
+      ctx.clientSignal?.aborted ||
+      (error as { code?: string } | undefined)?.code ===
+        "router_auth_unavailable"
+    )
+      throw error;
+    logTransportError({
+      requestId: ctx.requestId,
+      role: ctx.role,
+      requestedModel: ctx.modelName,
+      provider: route.provider,
+      model: route.model,
+      error,
+      workspace: ctx.workspace
+    });
+    recordRouterEvent({
+      phase: "retry",
+      requestId: ctx.requestId,
+      role: ctx.role,
+      origin: ctx.origin,
+      requestedModel: ctx.modelName,
+      provider: route.provider,
+      model: route.model,
+      workspace: ctx.workspace,
+      status: 502,
+      failureClass: classifyProviderFailure(
+        502,
+        error instanceof Error ? error.message : String(error)
+      ),
+      elapsedMs: Date.now() - ctx.startedAt
+    });
+    await jitteredBackoff();
+    if (ctx.clientSignal?.aborted) throw error;
+    return fetchCandidate(ctx, route, attempt + 1);
   }
 }
 

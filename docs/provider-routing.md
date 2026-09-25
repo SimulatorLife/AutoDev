@@ -445,12 +445,17 @@ Selection then runs in up to three passes, and only reaches a 503 if all three
 come up empty:
 
 1. **Primary.** Every candidate that is not cooling, in tier order.
-2. **Last resort.** The candidates pass 1 skipped, soonest-to-lapse first, capped
-   at `CODEX_ROUTER_LAST_RESORT_MAX_ATTEMPTS` (default 2). Excluded: anything
-   already attempted, a `config` cooldown, a provider already serving another
-   request (so concurrent exhausted requests do not pile onto the same one; the
-   caller's own agent, often still live on the provider while it waits on its
-   children, does not count), and
+2. **Last resort.** The candidates pass 1 skipped, capped at
+   `CODEX_ROUTER_LAST_RESORT_MAX_ATTEMPTS` (default 2). Providers with no live
+   agent go first, so concurrent exhausted requests spread over the skipped
+   providers rather than piling onto one (the caller's own agent, often still
+   live on the provider while it waits on its children, does not count); ties
+   go to the soonest-to-lapse cooldown. A busy provider is ordered last, never
+   excluded: Codex is the orchestrator tier's only provider and is nearly always
+   live in some other session, and excluding it once turned a single transient
+   failure into an instant 503 for every root turn for up to ten minutes, since
+   nothing could make the attempt whose success clears the cooldown. Excluded:
+   anything already attempted, a `config` cooldown, and
    a `hard` cooldown with a declared reset still in the future -- that provider
    has stated it will not serve yet, and attempting it anyway is exactly the
    hammering cooldowns exist to prevent. A success clears the cooldown, so the
@@ -542,6 +547,15 @@ stream that ends without a terminal event is closed by the router itself,
 carrying the text it had already forwarded. The invariant: **the router never
 ends a started stream without a terminal event.**
 
+The `codex` route is the exception to the *incomplete* shape, not to the
+invariant. Its upstream is the stateless Responses API: nothing ran outside
+Codex, so the request can simply be sent again, which is exactly what native
+Codex does when a chatgpt.com stream drops. A dropped or stalled Codex stream is
+therefore closed with a retryable `response.failed` and Codex replays it under
+its own `stream_max_retries`. Closing it as a finished incomplete turn instead
+stopped the orchestrator with "[Incomplete: The provider stopped unexpectedly
+...]" after every network blip (observed 2026-09-24).
+
 ## Observability
 
 The router makes its effective choice visible in two ways:
@@ -576,8 +590,8 @@ The router makes its effective choice visible in two ways:
   `providerCooldownMaxMs`), hard limits (`hardCooldownMs`, `hardCooldownMaxMs`),
   probe checks (`probeCooldownMs`, `probeCooldownMaxMs`, `probeTimeoutMs`),
   `lastResortMaxAttempts`, `exhaustionWaitMs`, `chainSelectionDeadlineMs`,
-  `upstreamTimeoutMs`, concrete retry parameters (`concreteRetryBaseMs`,
-  `concreteRetryMaxMs`, `concreteStatusMaxAttempts`, `concreteTransportMaxAttempts`),
+  `upstreamTimeoutMs`, retry parameters (`upstreamRetryBaseMs`,
+  `upstreamRetryMaxMs`, `concreteStatusMaxAttempts`, `upstreamTransportMaxAttempts`),
   `shutdownDrainTimeoutMs`, and `maxConcurrentThreadsPerSession`.
 - The status payload and dashboard report the effective Codex per-session
   concurrency limit, the number of active session buckets, active role-based
@@ -1142,18 +1156,21 @@ connections -- removing the race at its source instead of catching it
 downstream. Other routes run on the local loopback, are unaffected by this
 failure mode, and keep reusing pooled connections.
 
-Transient direct concrete provider failures also receive a bounded
-pre-response retry before the router returns a structured HTTP 502/503/504
-error, as defense in depth for transport failures unrelated to connection
-reuse. A completed HTTP 502/503/504 response from the provider is real
-signal, so it gets exactly one retry. A connection reset, broken pipe, or
-other pre-response transport failure carries no usable response signal; the
-provider may still have received the request before the connection failed, so
-the router uses only one extra bounded attempt (3 total, tunable with
-`CODEX_ROUTER_CONCRETE_TRANSPORT_RETRY_LIMIT`). Retries use a jittered
-200–400ms delay by default and can be tuned with
-`CODEX_ROUTER_CONCRETE_RETRY_MS` and `CODEX_ROUTER_CONCRETE_RETRY_MAX_MS`; the
-router never retries after response headers or client cancellation. The
+A connection reset, broken pipe, connect timeout, or other pre-response
+transport failure is retried in place on the same provider -- for a direct
+concrete request and for every candidate of a role or orchestrator fallback
+chain alike -- up to 3 attempts in total (tunable with
+`CODEX_ROUTER_UPSTREAM_TRANSPORT_RETRY_LIMIT`). A severed connection says
+nothing about the provider, and native Codex simply reconnects; only once the
+attempts are spent is the provider cooled down and the chain moved on. Before
+this, each EPIPE on an upload to chatgpt.com cooled Codex, the orchestrator
+tier's only provider, and failed the root turn outright. Transient direct
+concrete provider failures additionally get one retry of a completed HTTP
+502/503/504 response, which is real signal, before the router returns a
+structured error. Retries use a jittered 200–400ms delay by default and can be
+tuned with `CODEX_ROUTER_UPSTREAM_RETRY_MS` and
+`CODEX_ROUTER_UPSTREAM_RETRY_MAX_MS`; the router never retries after response
+headers or client cancellation. The
 response includes
 `router_provider_unavailable`, the provider/model/request and router-instance
 correlation fields, and a `retry-after` header after the provider is cooled

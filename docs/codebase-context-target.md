@@ -65,6 +65,15 @@ CocoIndex → "Where is this concept implemented?"
 LSP     → "What exactly does the language/compiler know here?"
 ```
 
+## Repository and Tool Exclusions
+
+To ensure agents can be pointed at arbitrary repositories without manual per-repo configuration, exclusions are managed globally once wherever possible:
+
+* **CodeGraphContext (CGC):** Ignores Repomix outputs (`repomix-output.*`, `.repomix/`, `.repomixignore`) and vendor/build/cache/tool-state artifacts (`node_modules`, `dist`, `build`, `target`, `out`, `.codegraphcontext/`, `.cgc/`, `.cocoindex_code/`, `.lsp/`, `.agent-cache/`, etc.) globally via `IGNORE_DIRS` in `~/.codegraphcontext/.env` and `~/.codegraphcontext/.cgcignore`.
+* **Repomix:** Ignores CGC state and cache, Repomix outputs, repo-local CocoIndex/LSP/agent caches, and build/test artifacts not covered by its defaults via global configuration at `~/.config/repomix/repomix.config.json` and gitignore integration.
+* **Global Git Excludes:** `~/.gitignore_global` (configured via `git config --global core.excludesfile`) excludes universal local and tool-generated artifacts (`*~`, `.DS_Store`, `.claude/settings.local.json`, `.cgc/`, `.codegraphcontext/`, `.cgcignore`, `repomix-output.*`, `.repomix/`, `.repomixignore`, `.cocoindex_code/`, `.lsp/`, `.agent-cache/`, etc.) so they never appear as untracked changes.
+* **Idempotent Repo-Bootstrap:** `autodev repo bootstrap` (or `~/.local/bin/autodev-bootstrap`) runs automatically on session start. It inspects the working repo, verifies global exclusions are effective, avoids modifying tracked files, and uses `.git/info/exclude` (or safe non-destructive merging for active tool modes) only for genuinely repository-specific exclusions.
+
 ## Operating Principle
 
 Do not query multiple systems for the same fact merely to increase confidence. Each tool should have a distinct responsibility, and agents should continue exploration only when a concrete unanswered question blocks implementation.

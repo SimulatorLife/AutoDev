@@ -18,20 +18,9 @@ If no explicit open bugs exist, identify and select the highest-value issue in t
 
 1. **Confirm and reproduce** the issue before changing code; investigate deeply enough to understand the behavior and evidence
 2. **Root-cause it** by tracing the failure to its authoritative owner/origin rather than stopping at downstream symptoms
-3. **Plan the fix** based on the confirmed cause, affected paths, and regression risk
-4. **Fix it at the source** — do not guess, apply speculative band-aids, or hide symptoms downstream. Preserve related behavior and avoid introducing regressions elsewhere. Use TDD where practical
-5. **Validate thoroughly** that the root issue is fixed and remains fixed using the appropriate combination of unit, integration, browser/runtime, end-to-end, regression, and other applicable tests
-
-Prefer one correct, root-cause fix over multiple compensating patches.
-
-## Additional guidance
-
-The following guidance augments the AutoDev-specific rulesync command above with the AutoDev generic scheduler equivalent formerly published at `.agents/prompts/bug-fix.md`. It applies the same principle through the AutoDev catalog boundary: discover the target repository's documented conventions and validation commands before editing, do not assume a particular language, package manager, framework, fixture format, or directory layout, and keep the work to one bounded change without compatibility shims.
-
-# Fix one real defect
-
-Reproduce one concrete defect in the target repository, identify its authoritative
-owner, and fix the cause rather than masking downstream symptoms. Keep the
-change bounded, preserve unrelated behavior, add a focused regression test, and
-update the relevant documentation or issue-facing explanation. Do not invent a
-feature, weaken a test, or add compatibility code.
+3. **Reproduce the defect** concretely in the target repository
+4. **Plan the fix** based on the confirmed cause, affected paths, and regression risk. Ensure that the plan does not invent a feature, weaken tests, or add compatibility code
+5. **Fix it at the source** — do not guess, apply speculative band-aids, or hide symptoms downstream. Preserve related behavior and avoid introducing regressions elsewhere. Use TDD where practical. Fix the *cause* rather than masking downstream symptoms
+6. **Validate thoroughly** that the root issue is fixed and remains fixed using the appropriate combination of unit, integration, browser/runtime, end-to-end, regression, and other applicable tests to both validate the fix and to prevent regressions in the future
+7. **Perform a retrospective** to ensure that the fix implemented actually addresses the underlying issue(s)/root-cause and not just the symptoms, and that the fix is a single proper fix rather than series of patches. If not, go back to step 1 and repeat the process
+8. **Document the fix** in the code, commit message, and any relevant project  documentation or issue-facing explanation to ensure that future maintainers understand the change and its rationale

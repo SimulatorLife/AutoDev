@@ -60,10 +60,10 @@
       "exhaustionWaitMs",
       "chainSelectionDeadlineMs",
       "upstreamTimeoutMs",
-      "concreteRetryBaseMs",
-      "concreteRetryMaxMs",
+      "upstreamRetryBaseMs",
+      "upstreamRetryMaxMs",
       "concreteStatusMaxAttempts",
-      "concreteTransportMaxAttempts",
+      "upstreamTransportMaxAttempts",
       "shutdownDrainTimeoutMs",
       "maxConcurrentThreadsPerSession"
     ],

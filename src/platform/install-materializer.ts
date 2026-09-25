@@ -89,6 +89,7 @@ export const RUNTIME_MODULES = [
   "src/config/render-agent-configs.ts",
   "src/config/render-bridge-mcp-catalogue.ts",
   "src/config/render-execution-contract.ts",
+  "src/config/render-model-catalog.ts",
   "agents/prompts/base.md",
   "agents/prompts/leaf.md",
   "agents/prompts/code-search.md",
@@ -251,7 +252,7 @@ export const COMMANDS = [
   "todo-implementation",
   "typed-flags",
   "usability",
-  "validation-failure-recovery",
+  "validation-failure-recovery"
 ] as const;
 export const LEGACY_SKILL_DIRS = ["skills", "agents/skills"] as const;
 export const RULES = ["default.rules"] as const;
@@ -451,6 +452,20 @@ function ensureExclude(options: MaterializeOptions): void {
       `${existing}${existing.endsWith("\n") || existing.length === 0 ? "" : "\n"}${missing.join("\n")}\n`
     );
 }
+
+function ensureBootstrapScript(options: MaterializeOptions): void {
+  const binDir = path.join(options.home, ".local", "bin");
+  mkdirSync(binDir, { recursive: true });
+  const target = path.join(binDir, "autodev-bootstrap");
+  const scriptPath = path.join(
+    options.repositoryRoot,
+    "scripts",
+    "bootstrap-repo-exclusions.sh"
+  );
+  chmodSync(scriptPath, 0o755);
+  linkRuntimeSource(scriptPath, target);
+}
+
 function roots(options: MaterializeOptions): string[] {
   const raw = process.env.AUTODEV_AGY_READ_ROOTS?.split(":").filter(
     Boolean
@@ -683,10 +698,13 @@ function materializeCommands(
     }
     const catalogSet = new Set<string>(COMMANDS);
     const stale = readdirSync(promptsDir)
-      .filter((entry) => entry.endsWith(".md") && !catalogSet.has(entry.replace(MD_EXTENSION_PATTERN, "")))
+      .filter(
+        (entry) =>
+          entry.endsWith(".md") &&
+          !catalogSet.has(entry.replace(MD_EXTENSION_PATTERN, ""))
+      )
       .map((entry) => path.join(promptsDir, entry));
-    if (stale.length > 0)
-      removeStalePaths(stale, "obsolete-runtime-path");
+    if (stale.length > 0) removeStalePaths(stale, "obsolete-runtime-path");
   } finally {
     rmSync(projectedHome, { recursive: true, force: true });
   }
@@ -1066,6 +1084,7 @@ export function materializeInstallation(options: MaterializeOptions): void {
   ]);
   materializeCommands(options, prompts);
   ensureExclude(options);
+  ensureBootstrapScript(options);
   composeAndLinkConfigs(options, source);
   ensureCodexAppMcpServerEnabled(options.codexHome);
   renderAndMaterializeContract(

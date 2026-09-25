@@ -764,3 +764,160 @@ test(
     }
   }
 );
+
+test(
+  "a fallback candidate whose connection breaks is retried in place, not cooled and abandoned",
+  { concurrency: false },
+  async () => {
+    // Observed 2026-09-24: chatgpt.com connections failed with EPIPE mid-upload;
+    // each one cooled Codex, the orchestrator tier's only provider, and failed
+    // the root turn where a reconnect would have served it.
+    COOLDOWNS.clearAll();
+    const previousKey = process.env.LITELLM_API_KEY;
+    process.env.LITELLM_API_KEY = "claude-key";
+    const originalFetch = globalThis.fetch;
+    const calls: string[] = [];
+    globalThis.fetch = (async (input: string | URL | Request) => {
+      calls.push(String(input));
+      if (calls.length === 1)
+        throw new TypeError("fetch failed", {
+          cause: Object.assign(new Error("write EPIPE"), { code: "EPIPE" })
+        });
+      return jsonResponse({
+        id: "resp_reconnected",
+        status: "completed",
+        model: "sonnet",
+        output: []
+      });
+    }) as typeof fetch;
+    try {
+      const response = responseRecorder();
+      await proxyFallbackChain(
+        response,
+        {
+          candidates: [
+            { ...route("claude", "LITELLM_API_KEY"), model: "sonnet" }
+          ],
+          role: "worker",
+          subject: "worker turn"
+        },
+        { model: "autodev/worker", input: [], stream: false },
+        false,
+        "req-reconnect",
+        null,
+        null
+      );
+      assert.deepEqual(calls, [
+        "http://claude.test/v1/responses",
+        "http://claude.test/v1/responses"
+      ]);
+      assert.equal(response.statusCode, 200);
+      assert.match(response.body, /resp_reconnected/);
+      assert.equal(COOLDOWNS.isCooling("claude"), false);
+    } finally {
+      globalThis.fetch = originalFetch;
+      if (previousKey === undefined) delete process.env.LITELLM_API_KEY;
+      else process.env.LITELLM_API_KEY = previousKey;
+      COOLDOWNS.clearAll();
+    }
+  }
+);
+
+test(
+  "last resort still attempts a transiently cooled provider that other agents are live on",
+  { concurrency: false },
+  async () => {
+    // Observed 2026-09-24: Codex, the only orchestrator provider, was live in
+    // other sessions, so the last-resort pass excluded it and every root turn
+    // got an instant 503 for as long as the cooldown lasted (up to 596s):
+    // nothing could make the attempt whose success clears it.
+    COOLDOWNS.clearAll();
+    agentActivity.reset();
+    const previousKey = process.env.LITELLM_API_KEY;
+    process.env.LITELLM_API_KEY = "claude-key";
+    const originalFetch = globalThis.fetch;
+    let calls = 0;
+    globalThis.fetch = (async () => {
+      calls += 1;
+      return jsonResponse({
+        id: `resp_${calls}`,
+        status: "completed",
+        model: "sonnet",
+        output: [
+          {
+            type: "function_call",
+            id: `fc_${calls}`,
+            call_id: `call_${calls}`,
+            name: "wait",
+            arguments: "{}",
+            status: "completed"
+          }
+        ]
+      });
+    }) as typeof fetch;
+    const candidates = [
+      { ...route("claude", "LITELLM_API_KEY"), model: "sonnet" }
+    ];
+    try {
+      // Another session's agent is parked in a tool call on the provider.
+      await proxyFallbackChain(
+        responseRecorder(),
+        {
+          candidates,
+          role: "worker",
+          subject: "worker turn",
+          sessionKey: "other-root",
+          session: { key: "other-root", scope: "identified", thread: "other" }
+        },
+        { model: "autodev/worker", input: [], stream: false },
+        false,
+        "req-other",
+        null,
+        null
+      );
+      assert.equal(countLiveAgentActivity({ provider: "claude" }), 1);
+      COOLDOWNS.cooldownProvider("claude", {
+        failureClass: "unavailable",
+        now: Date.now()
+      });
+      COOLDOWNS.cooldownProvider("claude", {
+        failureClass: "unavailable",
+        now: Date.now()
+      });
+      assert.ok(
+        (COOLDOWNS.get("claude")?.until ?? 0) - Date.now() > EXHAUSTION_WAIT_MS,
+        "the cooldown outlasts the bounded wait, so only last resort can serve"
+      );
+
+      const response = responseRecorder();
+      await proxyFallbackChain(
+        response,
+        {
+          candidates,
+          role: "worker",
+          subject: "worker turn",
+          sessionKey: "this-root",
+          session: { key: "this-root", scope: "identified", thread: "this" }
+        },
+        { model: "autodev/worker", input: [], stream: false },
+        false,
+        "req-this",
+        null,
+        null
+      );
+      assert.equal(calls, 2);
+      assert.equal(response.statusCode, 200);
+      assert.equal(
+        COOLDOWNS.isCooling("claude"),
+        false,
+        "the success clears the cooldown for every session"
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+      if (previousKey === undefined) delete process.env.LITELLM_API_KEY;
+      else process.env.LITELLM_API_KEY = previousKey;
+      agentActivity.reset();
+      COOLDOWNS.clearAll();
+    }
+  }
+);

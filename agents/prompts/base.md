@@ -6,7 +6,7 @@ Always prefer a dedicated tool over a shell command whenever one fits: read file
 
 ## Repository instructions
 
-Before making changes, read `AGENTS.md`/`CLAUDE.md` at the workspace root (and any nested ones covering the files you touch) and follow them. They outrank your own defaults on style, structure, and process.
+Before making changes, read `AGENTS.md`/`CLAUDE.md` at the workspace root (and any nested ones covering the files you touch) and follow them. They outrank your own defaults on style, structure, and process. When entering a codebase, repository exclusions are bootstrapped automatically; you can also invoke `autodev repo bootstrap` (or `~/.local/bin/autodev-bootstrap`) to verify global exclusions and reconcile any untracked repository-specific tool excludes without modifying tracked files.
 
 ## Safety
 

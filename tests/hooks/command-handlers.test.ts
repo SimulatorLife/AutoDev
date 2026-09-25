@@ -44,6 +44,22 @@ test("session-start delegates the typed ensure runner and preserves a healthy st
     assert.equal(seen[0]?.options.paths.codexHome, home);
   }));
 
+test("session-start runs repository bootstrap on successful startup", async () => {
+  let bootstrappedCwd = "";
+  const runner = {
+    async runRouterEnsure(): Promise<RouterEnsureResult> {
+      return { status: "healthy-launchd", exitCode: 0 };
+    },
+    async runRepoBootstrap(cwd: string): Promise<number> {
+      bootstrappedCwd = cwd;
+      return 0;
+    }
+  };
+  const run = createSessionStart(runner);
+  assert.equal(await run(Buffer.from("{}")), 0);
+  assert.equal(bootstrappedCwd, process.cwd());
+});
+
 test("session-start surfaces the typed exit code from the ensure runner", async () => {
   const runner = {
     async runRouterEnsure(): Promise<RouterEnsureResult> {

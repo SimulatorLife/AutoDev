@@ -21,6 +21,61 @@ bash scripts/install.sh
 
 Provider-specific `ensure-*` and `run-*` scripts are intentionally separate so a machine can enable only the providers it has credentials for. Use environment variables documented in each script to override local binary paths and project roots; do not add machine secrets or generated logs to this repository.
 
+### Repo-specific git and tool exclusions bootstrap
+
+`scripts/bootstrap-repo-exclusions.sh` (also available via `autodev repo bootstrap`
+and `~/.local/bin/autodev-bootstrap`) idempotently reconciles a checkout's
+`.git/info/exclude` and tool-specific exclusions without manually configuring each
+repository. It adheres to the configure-once-globally principle: universal local
+and tool-generated artifacts are ignored at the user/global level
+(`~/.gitignore_global`, `~/.config/repomix/repomix.config.json`,
+`~/.codegraphcontext/.env`, and `~/.codegraphcontext/.cgcignore`), so arbitrary
+repositories work out-of-the-box without modifying tracked repository files.
+
+When entering a codebase, the bootstrap runs automatically on session start
+(via the `SessionStart` hook) or can be executed directly:
+
+```bash
+autodev repo bootstrap                               # reconcile active repository
+autodev repo bootstrap --check                       # report only, exit 1 if changes are pending
+autodev repo bootstrap --cgc-mode per_repo [<path>]  # specify active tool mode explicitly
+# or: bash scripts/bootstrap-repo-exclusions.sh [--check] [<repo-root>]
+```
+
+It inspects the active repository and toolchain configuration:
+
+- **Global Git excludes verification:** Detects whether the operator's global
+  excludes file (`git config core.excludesFile`, falling back to
+  `$XDG_CONFIG_HOME/git/ignore` or `~/.gitignore_global`) is effective and
+  covers universal tool artifacts.
+- **Active CodeGraphContext (CGC) mode:** CGC runs in `global` mode by default,
+  where global settings (`~/.codegraphcontext/.env`'s `IGNORE_DIRS` and
+  `~/.codegraphcontext/.cgcignore`) ignore Repomix outputs and build/cache
+  artifacts without repo-local files. If CGC is in `per_repo` mode (e.g. a
+  `.codegraphcontext` directory exists or is mapped), the bootstrap safely
+  creates/merges a repo-local `.cgcignore` preserving existing user patterns,
+  and ensures it is kept untracked in `.git/info/exclude`.
+- **Active Repomix mode:** Repomix respects `.gitignore` and global excludes
+  by default (`useGitignore: true`). If a repository's local `repomix.config.json`
+  explicitly disables gitignore (`"useGitignore": false`), the bootstrap safely
+  creates/merges `.repomixignore` with required CGC, CocoIndex, LSP, and tool
+  cache patterns and ensures it is kept untracked in `.git/info/exclude`.
+- **Repository-specific needs:** Adds `/.agents/skills/` to `.git/info/exclude`
+  only when the repo generates Rulesync output there (`.rulesync/skills/` plus an
+  `.agents/` directory present), matching the reason the installer excludes it:
+  Antigravity does not load skills from a gitignored `.agents/skills/`.
+- **Machine-local fallbacks:** Adds universal tool fallbacks (`.claude/settings.local.json`,
+  `.cgc/`, `.codegraphcontext/`, `.cgcignore`, `repomix-output.*`, `.repomix/`,
+  `.repomixignore`, `.cocoindex_code/`, `.lsp/`, `.agent-cache/`, `.playwright-mcp/`,
+  `mcp_debug.log`) only when no global excludes file is effective yet.
+- **Idempotence & preservation:** It never modifies tracked `.gitignore` or
+  tracked repository files, preserves pre-existing user configuration, and reruns
+  are byte-identical when nothing has changed.
+
+`tests/bootstrap-repo-exclusions.test.ts` exercises the script against real
+temporary git repositories to prove idempotence, CGC/Repomix mode adaptations,
+safe merging, no-duplication guarantees, and non-zero exit outside a git repository.
+
 ### User configuration composition
 
 Codex user-level configuration is managed via a composed model rather than a direct symlink:
