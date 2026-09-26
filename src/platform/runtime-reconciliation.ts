@@ -24,8 +24,13 @@ export function removeStalePaths(
   kind: ReconciliationKind
 ): string[] {
   const removed: string[] = [];
-  for (const path of stalePaths(paths)) {
-    const stat = lstatSync(path);
+  for (const path of paths) {
+    let stat;
+    try {
+      stat = lstatSync(path);
+    } catch {
+      continue;
+    }
     if (
       kind === "obsolete-runtime-directory" &&
       stat.isDirectory() &&

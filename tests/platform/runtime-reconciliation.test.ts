@@ -67,3 +67,39 @@ test("directory reconciliation recursively removes only real directories", () =>
     );
     assert.equal(lstatSync(obsolete, { throwIfNoEntry: false }), undefined);
   }));
+
+test("removeStalePaths skips missing paths and preserves input order", () =>
+  withTempDir((directory) => {
+    const first = join(directory, "first");
+    const second = join(directory, "second");
+    const third = join(directory, "third");
+    const fourth = join(directory, "fourth");
+    const missingStart = join(directory, "missing-start");
+    const missingMiddle = join(directory, "missing-middle");
+    const missingEnd = join(directory, "missing-end");
+    writeFileSync(first, "1");
+    writeFileSync(second, "2");
+    writeFileSync(third, "3");
+    writeFileSync(fourth, "4");
+
+    assert.deepEqual(
+      removeStalePaths(
+        [
+          missingStart,
+          first,
+          missingMiddle,
+          second,
+          third,
+          missingEnd,
+          fourth
+        ],
+        "obsolete-runtime-path"
+      ),
+      [first, second, third, fourth]
+    );
+
+    assert.equal(lstatSync(first, { throwIfNoEntry: false }), undefined);
+    assert.equal(lstatSync(second, { throwIfNoEntry: false }), undefined);
+    assert.equal(lstatSync(third, { throwIfNoEntry: false }), undefined);
+    assert.equal(lstatSync(fourth, { throwIfNoEntry: false }), undefined);
+  }));
