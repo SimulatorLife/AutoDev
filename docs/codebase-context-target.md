@@ -229,6 +229,8 @@ Track at minimum:
 
 Use these measurements to validate whether reduced tool exposure and clearer ownership actually improve performance.
 
+**Current state:** the session-diagnostics skill's `session-trace.ts` reports these per thread as an `investigation` line and a JSON field, up to the thread's first file change. It covers tool calls, tokens, unique files read, repeated reads and searches, and CCC/CGC/LSP call counts, and its `tools` line gives total tool calls. It reads them from Codex's structured `item_completed` records. Rework caused by insufficient investigation cannot be measured mechanically from rollouts and stays a review judgement. Comparing these metrics across sessions, before and after a tool-surface change, is not built yet.
+
 ## Required Validation Before Tool-Surface Changes
 
 Before changing agent tool exposure:

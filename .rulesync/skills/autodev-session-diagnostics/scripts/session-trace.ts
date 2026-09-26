@@ -187,7 +187,29 @@ export interface ThreadTrace {
   /** Calls by tool; MCP tools are keyed `mcp__<server>__<tool>`, wherever they were called from. */
   tools: Record<string, number>;
   toolFailures: ToolFailure[];
+  investigation: Investigation;
   items?: Array<{ at: string; kind: string; detail: string }>;
+}
+
+/**
+ * How much the thread investigated before it first changed a file, from
+ * Codex's structured `item_completed` records. Every count stops at the first
+ * FileChange item; a thread that never edited counts the whole thread.
+ */
+export interface Investigation {
+  /** False when the rollout has no item_completed records: the counts are unknown, not zero. */
+  observed: boolean;
+  firstEditAt: string | null;
+  /** Completed tool items: shell commands, MCP calls, agent calls, image views. */
+  toolCalls: number;
+  /** Total tokens used by the last token_count before the first edit; null when none reported usage. */
+  tokens: number | null;
+  filesRead: number;
+  repeatedReads: number;
+  searches: number;
+  repeatedSearches: number;
+  /** MCP calls to the codebase-context servers. */
+  context: { ccc: number; cgc: number; lsp: number };
 }
 
 export interface RouterEventRow {
@@ -253,6 +275,19 @@ export interface TraceReport {
 }
 
 const EXCERPT = 160;
+/** Codebase-context MCP servers, as the target state names them. */
+const CONTEXT_SERVERS: Record<string, keyof Investigation["context"]> = {
+  "cocoindex-code": "ccc",
+  codegraphcontext: "cgc",
+  lsp: "lsp"
+};
+/** item_completed kinds that are not tool calls. */
+const NON_TOOL_ITEMS = new Set([
+  "UserMessage",
+  "AgentMessage",
+  "Reasoning",
+  "FileChange"
+]);
 const GAP_SECONDS = 60;
 const WRITING_WINDOW_MS = 10 * 60 * 1000;
 // Outputs that mean the call did not do its job. `Transport closed` is an MCP
@@ -453,6 +488,10 @@ interface ThreadTraceAccumulator {
   toolFailures: ToolFailure[];
   callTools: Map<string, string>;
   previous: { at: string; label: string } | null;
+  investigation: Investigation;
+  cwd: string;
+  reads: Set<string>;
+  searchKeys: Set<string>;
 }
 
 function recordGapAndItems(
@@ -524,6 +563,62 @@ function recordToolUsage(
   }
 }
 
+function recordCommandInvestigation(
+  item: JsonRecord,
+  acc: ThreadTraceAccumulator
+): void {
+  const cwd = typeof item.cwd === "string" ? item.cwd : acc.cwd;
+  const parsed = Array.isArray(item.parsed_cmd) ? item.parsed_cmd : [];
+  for (const entry of parsed as JsonRecord[]) {
+    if (entry.type === "read" && typeof entry.path === "string") {
+      const file = path.resolve(cwd, entry.path);
+      if (acc.reads.has(file)) acc.investigation.repeatedReads += 1;
+      acc.reads.add(file);
+      acc.investigation.filesRead = acc.reads.size;
+    } else if (entry.type === "search") {
+      const key = `${entry.query ?? ""}\0${path.resolve(cwd, typeof entry.path === "string" ? entry.path : ".")}`;
+      acc.investigation.searches += 1;
+      if (acc.searchKeys.has(key)) acc.investigation.repeatedSearches += 1;
+      acc.searchKeys.add(key);
+    }
+  }
+}
+
+function recordInvestigation(
+  record: { type?: unknown },
+  at: string | null,
+  payload: JsonRecord,
+  acc: ThreadTraceAccumulator
+): void {
+  if (record.type !== "event_msg") return;
+  const investigation = acc.investigation;
+  if (investigation.firstEditAt !== null) return;
+  if (payload.type === "token_count") {
+    const usage = (payload.info as JsonRecord | undefined)?.total_token_usage as
+      | JsonRecord
+      | undefined;
+    // A provider that reports no usage leaves every total at 0: unknown, not zero.
+    if (typeof usage?.total_tokens === "number" && usage.total_tokens > 0)
+      investigation.tokens = usage.total_tokens;
+    return;
+  }
+  if (payload.type !== "item_completed") return;
+  const item = (payload.item ?? {}) as JsonRecord;
+  const kind = typeof item.type === "string" ? item.type : "";
+  investigation.observed = true;
+  if (kind === "FileChange") {
+    investigation.firstEditAt = at ?? "";
+    return;
+  }
+  if (NON_TOOL_ITEMS.has(kind)) return;
+  investigation.toolCalls += 1;
+  if (kind === "CommandExecution") recordCommandInvestigation(item, acc);
+  else if (kind === "McpToolCall" && typeof item.server === "string") {
+    const server = CONTEXT_SERVERS[item.server];
+    if (server) investigation.context[server] += 1;
+  }
+}
+
 function recordTurnEvent(
   record: { type?: unknown },
   at: string | null,
@@ -587,7 +682,21 @@ export function traceThread(file: string, withItems: boolean): ThreadTrace {
     tools: {},
     toolFailures: [],
     callTools: new Map(),
-    previous: null
+    previous: null,
+    investigation: {
+      observed: false,
+      firstEditAt: null,
+      toolCalls: 0,
+      tokens: null,
+      filesRead: 0,
+      repeatedReads: 0,
+      searches: 0,
+      repeatedSearches: 0,
+      context: { ccc: 0, cgc: 0, lsp: 0 }
+    },
+    cwd: typeof meta.cwd === "string" ? meta.cwd : "/",
+    reads: new Set(),
+    searchKeys: new Set()
   };
   for (const record of records) {
     const at = typeof record.timestamp === "string" ? record.timestamp : null;
@@ -600,12 +709,14 @@ export function traceThread(file: string, withItems: boolean): ThreadTrace {
     recordGapAndItems(record, at, payload, withItems, acc);
     recordToolUsage(record, at, payload, acc);
     recordTurnEvent(record, at, payload, acc);
+    recordInvestigation(record, at, payload, acc);
   }
   const stamps = records
     .map((record) => record.timestamp)
     .filter((value): value is string => typeof value === "string")
     .sort();
-  const { counts, turns, gaps, tools, toolFailures, items } = acc;
+  const { counts, turns, gaps, tools, toolFailures, items, investigation } =
+    acc;
   return {
     id: String(meta.id ?? file),
     sessionId: meta.session_id ?? null,
@@ -625,6 +736,7 @@ export function traceThread(file: string, withItems: boolean): ThreadTrace {
     gaps: gaps.sort((a, b) => b.seconds - a.seconds).slice(0, 5),
     tools,
     toolFailures,
+    investigation,
     ...(withItems ? { items } : {})
   };
 }
@@ -959,6 +1071,25 @@ function renderRouterDetails(router: RouterSummary): string[] {
   return lines;
 }
 
+function renderInvestigation(investigation: Investigation): string {
+  if (!investigation.observed)
+    return "   investigation unavailable (no item events)";
+  const { context } = investigation;
+  return [
+    "   investigation",
+    `first-edit=${investigation.firstEditAt === null ? "none" : investigation.firstEditAt.slice(11, 19) || "?"}`,
+    `calls=${investigation.toolCalls}`,
+    `tokens=${investigation.tokens ?? "?"}`,
+    `files-read=${investigation.filesRead}`,
+    `repeated-reads=${investigation.repeatedReads}`,
+    `searches=${investigation.searches}`,
+    `repeated-searches=${investigation.repeatedSearches}`,
+    `ccc=${context.ccc}`,
+    `cgc=${context.cgc}`,
+    `lsp=${context.lsp}`
+  ].join(" ");
+}
+
 function renderThreadSection(
   thread: ThreadTrace,
   router?: RouterSummary
@@ -981,6 +1112,7 @@ function renderThreadSection(
     lines.push(
       `   tools ${tools.map(([tool, count]) => `${tool}=${count}`).join(" ")}`
     );
+  lines.push(renderInvestigation(thread.investigation));
   for (const failure of thread.toolFailures)
     lines.push(
       `   TOOL FAILED ${failure.at.slice(11, 19)} ${failure.tool} call=${failure.callId} :: ${failure.detail}`

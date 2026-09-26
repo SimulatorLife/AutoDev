@@ -18,7 +18,8 @@ import {
   findSessionRollouts,
   hasOpenTurn,
   recentSessions,
-  renderReport
+  renderReport,
+  traceThread
 } from "../.rulesync/skills/autodev-session-diagnostics/scripts/session-trace.ts";
 
 const SCRIPT = fileURLToPath(
@@ -437,6 +438,8 @@ test("the CLI documents its usage and emits JSON on request", () => {
     const report = JSON.parse(run.stdout);
     assert.equal(report.threads.length, 2);
     assert.equal(report.live, null);
+    // The incident fixture predates item_completed records.
+    assert.equal(report.threads[0].investigation.observed, false);
   } finally {
     cleanup();
   }
@@ -464,6 +467,152 @@ test("an open turn is one that started and has not completed or aborted", () => 
       );
     writeFileSync(child!, filler, { flag: "a" });
     assert.equal(hasOpenTurn(child!), true, "still open after 300 KB of items");
+  } finally {
+    cleanup();
+  }
+});
+
+// Codex's structured item_completed records, as a thread writes them.
+function investigationRollout(records: Array<[string, string, unknown]>): {
+  file: string;
+  cleanup: () => void;
+} {
+  const directory = mkdtempSync(join(tmpdir(), "autodev-investigation-"));
+  const file = join(directory, "rollout.jsonl");
+  writeFileSync(
+    file,
+    `${[
+      JSON.stringify({
+        timestamp: "2026-09-25T10:00:00.000Z",
+        type: "session_meta",
+        payload: { id: "thread-1", cwd: "/tmp/repo" }
+      }),
+      ...records.map(([timestamp, type, payload]) =>
+        JSON.stringify({ timestamp, type, payload })
+      )
+    ].join("\n")}\n`
+  );
+  return {
+    file,
+    cleanup: () => rmSync(directory, { recursive: true, force: true })
+  };
+}
+
+const item = (timestamp: string, value: Record<string, unknown>) =>
+  [timestamp, "event_msg", { type: "item_completed", item: value }] as [
+    string,
+    string,
+    unknown
+  ];
+const tokens = (timestamp: string, total: number) =>
+  [
+    timestamp,
+    "event_msg",
+    {
+      type: "token_count",
+      info: { total_token_usage: { total_tokens: total } }
+    }
+  ] as [string, string, unknown];
+const command = (timestamp: string, parsed: Record<string, unknown>[]) =>
+  item(timestamp, {
+    type: "CommandExecution",
+    cwd: "/tmp/repo",
+    parsed_cmd: parsed
+  });
+const mcp = (timestamp: string, server: string) =>
+  item(timestamp, { type: "McpToolCall", server, tool: "t" });
+
+test("investigation counts stop at the first file change", () => {
+  const { file, cleanup } = investigationRollout([
+    tokens("2026-09-25T10:00:01.000Z", 1000),
+    command("2026-09-25T10:00:02.000Z", [
+      { type: "read", path: "src/a.ts" },
+      { type: "search", query: "foo", path: "src" }
+    ]),
+    command("2026-09-25T10:00:03.000Z", [
+      { type: "read", path: "/tmp/repo/src/a.ts" },
+      { type: "read", path: "src/b.ts" },
+      { type: "search", query: "foo", path: "/tmp/repo/src" },
+      { type: "search", query: "bar", path: "src" }
+    ]),
+    mcp("2026-09-25T10:00:04.000Z", "cocoindex-code"),
+    mcp("2026-09-25T10:00:05.000Z", "codegraphcontext"),
+    mcp("2026-09-25T10:00:06.000Z", "codegraphcontext"),
+    mcp("2026-09-25T10:00:07.000Z", "lsp"),
+    mcp("2026-09-25T10:00:08.000Z", "codex_apps"),
+    item("2026-09-25T10:00:09.000Z", { type: "Reasoning" }),
+    tokens("2026-09-25T10:00:10.000Z", 2500),
+    item("2026-09-25T10:00:11.000Z", { type: "FileChange", changes: {} }),
+    command("2026-09-25T10:00:12.000Z", [{ type: "read", path: "src/c.ts" }]),
+    mcp("2026-09-25T10:00:13.000Z", "lsp"),
+    tokens("2026-09-25T10:00:14.000Z", 9000)
+  ]);
+  try {
+    const trace = traceThread(file, false);
+    assert.deepEqual(trace.investigation, {
+      observed: true,
+      firstEditAt: "2026-09-25T10:00:11.000Z",
+      toolCalls: 7,
+      tokens: 2500,
+      filesRead: 2,
+      repeatedReads: 1,
+      searches: 3,
+      repeatedSearches: 1,
+      context: { ccc: 1, cgc: 2, lsp: 1 }
+    });
+    const report = renderReport({
+      threads: [trace],
+      router: [],
+      logs: [],
+      live: null
+    });
+    assert.match(
+      report,
+      /investigation first-edit=10:00:11 calls=7 tokens=2500 files-read=2 repeated-reads=1 searches=3 repeated-searches=1 ccc=1 cgc=2 lsp=1/
+    );
+  } finally {
+    cleanup();
+  }
+});
+
+test("a thread that never edits counts its whole investigation", () => {
+  const { file, cleanup } = investigationRollout([
+    // A provider that reports no usage writes zero totals.
+    tokens("2026-09-25T10:00:00.500Z", 0),
+    mcp("2026-09-25T10:00:01.000Z", "codegraphcontext"),
+    command("2026-09-25T10:00:02.000Z", [{ type: "read", path: "a.ts" }])
+  ]);
+  try {
+    const { investigation } = traceThread(file, false);
+    assert.equal(investigation.firstEditAt, null);
+    assert.equal(investigation.toolCalls, 2);
+    assert.equal(investigation.tokens, null);
+    assert.equal(investigation.context.cgc, 1);
+    assert.match(
+      renderReport({
+        threads: [traceThread(file, false)],
+        router: [],
+        logs: [],
+        live: null
+      }),
+      /investigation first-edit=none calls=2 tokens=\?/
+    );
+  } finally {
+    cleanup();
+  }
+});
+
+test("a rollout without item events reports investigation as unavailable, not zero", () => {
+  const { file, cleanup } = investigationRollout([
+    tokens("2026-09-25T10:00:01.000Z", 500)
+  ]);
+  try {
+    const trace = traceThread(file, false);
+    assert.equal(trace.investigation.observed, false);
+    assert.match(
+      renderReport({ threads: [trace], router: [], logs: [], live: null }),
+      /investigation unavailable \(no item events\)/
+    );
   } finally {
     cleanup();
   }

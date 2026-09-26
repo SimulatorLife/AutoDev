@@ -36,6 +36,14 @@ Either finds the whole session. Per thread the report gives turn outcomes,
 `GAP`s of 60s+ inside a turn, tool calls by name (MCP tools called inside
 `exec` counted as `mcp__<server>__<tool>`), `TOOL FAILED` lines, and the
 router's requests: per-provider counts, `ROUTER FAILURE`s, and `PROVIDER HOPS`.
+Each thread also gets an `investigation` line: what it did before its first
+file change (the whole thread if it never edited). It reports tool calls,
+tokens, unique files read, repeated reads, searches and repeated searches, and
+CocoIndex/CodeGraphContext/LSP calls (`ccc`/`cgc`/`lsp`). These come from
+Codex's own `item_completed` records (`FileChange`, `McpToolCall`,
+`CommandExecution.parsed_cmd`), not from matching `exec` scripts. `tokens=?`
+means no provider reported usage, and `investigation unavailable` means the
+rollout has no item records; neither is a zero.
 Router matching says `thread` (exact) or `model-window` (older events without a
 thread id: same-model threads interleave).
 
