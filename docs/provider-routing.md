@@ -746,6 +746,24 @@ CLI view is:
   # Add --json for machine-readable output.
   ```
 
+### Grouped usage sections in the human CLI report
+
+The human report from `src/cli/router-status.ts` renders the three usage
+breakdowns together as one ordered group rather than spacing them across the
+telemetry output. After a blank-line separator following the `Concurrency:`
+summary, the report prints
+`Usage by origin:`, `Usage by role:`, and `Usage by resolved model:` in that
+order before any Codex OTEL or skill telemetry section. Each heading is
+emitted even when its bucket is empty so the section order stays stable.
+
+All three sections share one formatter for their per-row layout:
+`<label>: <attempts> attempts, <successes> successes, <failures> failures, avg <avg-s>s, <toolCalls> tool calls`,
+where `<avg-s>` is `Math.round(averageDurationMs / 1000)`. The origin row is
+the only one that prepends an active-count prefix, yielding
+`<label>: <active ?? 0> active, <attempts> attempts, ...`; the role and model
+rows omit that prefix. The `--json` flag continues to print the unchanged wire
+JSON and does not render these headings.
+
 ### Live agent activity vs. in-flight requests transport diagnostics
 
 The `/status` provider projection is limited to configured router routes. A

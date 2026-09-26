@@ -21,6 +21,21 @@ const counts = (record: unknown): string =>
   Object.entries(asRecord(record))
     .map(([key, value]) => `${key}: ${value}`)
     .join(", ") || "-";
+
+const writeUsageSection = (
+  title: string,
+  buckets: unknown,
+  includeActive: boolean
+): void => {
+  writeLine(`${title}:`);
+  for (const [label, entry] of Object.entries(asRecord(buckets))) {
+    const state = asRecord(entry);
+    const activePrefix = includeActive ? `${state.active ?? 0} active, ` : "";
+    writeLine(
+      `  ${label}: ${activePrefix}${state.attempts} attempts, ${state.successes} successes, ${state.failures} failures, avg ${Math.round(Number(state.averageDurationMs ?? 0) / 1000)}s, ${state.toolCalls} tool calls`
+    );
+  }
+};
 const host = process.env.CODEX_MODEL_ROUTER_HOST ?? "127.0.0.1";
 const port = process.env.CODEX_MODEL_ROUTER_PORT ?? "4100";
 const endpoint = `http://${host}:${port}/status`;
@@ -309,20 +324,10 @@ writeLine(
   `Concurrency: per-session ${limit(concurrency.effectivePerSessionLimit)}, active sessions ${concurrency.activeSessions ?? 0}, active subagents ${concurrency.activeSubagentThreads ?? 0}, in-flight requests ${totalInFlight}, denials ${concurrency.denials ?? 0} (${denialsByReason}), last denial ${lastDenial}${fallbackWarning}`
 );
 
-writeLine("Usage by origin:");
-for (const [origin, entry] of Object.entries(asRecord(usage.byOrigin))) {
-  const state = asRecord(entry);
-  writeLine(
-    `  ${origin}: ${state.active ?? 0} active, ${state.attempts} attempts, ${state.successes} successes, ${state.failures} failures, avg ${Math.round(Number(state.averageDurationMs ?? 0) / 1000)}s, ${state.toolCalls} tool calls`
-  );
-}
-writeLine("Usage by role:");
-for (const [role, entry] of Object.entries(asRecord(usage.byRole))) {
-  const state = asRecord(entry);
-  writeLine(
-    `  ${role}: ${state.attempts} attempts, ${state.successes} successes, ${state.failures} failures, avg ${Math.round(Number(state.averageDurationMs ?? 0) / 1000)}s, ${state.toolCalls} tool calls`
-  );
-}
+writeLine("");
+writeUsageSection("Usage by origin", usage.byOrigin, true);
+writeUsageSection("Usage by role", usage.byRole, false);
+writeUsageSection("Usage by resolved model", usage.byModel, false);
 const codexTelemetry = asRecord(body.codexTelemetry);
 const otelReceiver = asRecord(codexTelemetry.receiver);
 const otelTurns = asRecord(codexTelemetry.turns);
@@ -391,14 +396,6 @@ const sqliteDuration = asRecord(sqlite.initDurationMs);
 writeLine(
   `SQLite telemetry: ${asRecord(sqlite.init).total ?? 0} initializations, ${asRecord(sqlite.fallbacks).total ?? 0} fallbacks, ${sqliteDuration.totalCount ?? 0} duration samples, avg ${sqliteDuration.totalCount ? Math.round(Number(sqliteDuration.totalSum) / Number(sqliteDuration.totalCount)) : 0}ms`
 );
-
-writeLine("Usage by resolved model:");
-for (const [model, entry] of Object.entries(asRecord(usage.byModel))) {
-  const state = asRecord(entry);
-  writeLine(
-    `  ${model}: ${state.attempts} attempts, ${state.successes} successes, ${state.failures} failures, avg ${Math.round(Number(state.averageDurationMs ?? 0) / 1000)}s, ${state.toolCalls} tool calls`
-  );
-}
 
 const events = asRecordList(body.recentEvents);
 if (events.length > 0) {
