@@ -9572,6 +9572,38 @@ test("a turn continuing a tool call is recognised as one", () => {
   assert.equal(carriesPendingToolResult(null), false);
 });
 
+test("a settled tool result does not mark a later user turn as pending", () => {
+  assert.equal(
+    carriesPendingToolResult({
+      input: [
+        {
+          type: "message",
+          role: "user",
+          content: [{ type: "input_text", text: "run a tool" }]
+        },
+        {
+          type: "custom_tool_call",
+          call_id: "c1",
+          name: "exec",
+          input: ""
+        },
+        { type: "custom_tool_call_output", call_id: "c1", output: "done" },
+        {
+          type: "message",
+          role: "assistant",
+          content: [{ type: "output_text", text: "Done." }]
+        },
+        {
+          type: "message",
+          role: "user",
+          content: [{ type: "input_text", text: "new request" }]
+        }
+      ]
+    }),
+    false
+  );
+});
+
 test("a continuation prefers the provider still holding the turn, without pinning to it", () => {
   // The bridge that made the tool call is holding a live CLI for the answer.
   // Sending the continuation elsewhere strands it and loses the turn's work.

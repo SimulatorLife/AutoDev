@@ -15,6 +15,7 @@ import {
   readLimitHeaders,
   terminalIncompleteEvents
 } from "../shared/provider-limits.ts";
+import { awaitedToolResults } from "../shared/responses-continuation.ts";
 import { getDefaultConcurrencyManager } from "./concurrency.ts";
 import {
   COOLDOWN_CONFIG,
@@ -392,20 +393,10 @@ export function activitySubjectFor(
 
 export function carriesPendingToolResult(payload: unknown): boolean {
   const input =
-    payload &&
-    typeof payload === "object" &&
-    "input" in payload &&
-    Array.isArray((payload as { input: unknown[] }).input)
-      ? (payload as { input: Array<Record<string, unknown>> }).input
-      : [];
-  for (const item of input) {
-    if (
-      item?.type === "custom_tool_call_output" ||
-      item?.type === "function_call_output"
-    )
-      return true;
-  }
-  return false;
+    payload && typeof payload === "object" && "input" in payload
+      ? (payload as { input?: unknown }).input
+      : undefined;
+  return awaitedToolResults(input).outputs.size > 0;
 }
 
 export function mcpContractForRole(
