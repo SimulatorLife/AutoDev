@@ -6,13 +6,7 @@ import {
   AGENT_ACTIVITY_KINDS,
   AGENT_ACTIVITY_STATES
 } from "../src/agents/agent-activity.ts";
-import {
-  concurrencyStatus,
-  recordConcurrencyDenial,
-  releaseSubagentSlot,
-  resetConcurrencyTelemetry,
-  tryAcquireSubagentSlot
-} from "../src/router/concurrency.ts";
+import { getDefaultConcurrencyManager } from "../src/router/concurrency.ts";
 import { agentActivity, agentsStatus } from "../src/router/http.ts";
 import { projectLiveAgents } from "../src/router/usage.ts";
 
@@ -131,7 +125,7 @@ function evalOps(
 
 function runScenario(name: string, scenario: ContractScenario): void {
   let slotSequence = 0;
-  resetConcurrencyTelemetry();
+  getDefaultConcurrencyManager().resetConcurrencyTelemetry();
   agentActivity.reset();
   try {
     for (const op of scenario.operations ?? []) {
@@ -164,7 +158,9 @@ function runScenario(name: string, scenario: ContractScenario): void {
           break;
         }
         case "acquire": {
-          const denial = tryAcquireSubagentSlot(op.sessionKey!);
+          const denial = getDefaultConcurrencyManager().tryAcquireSubagentSlot(
+            op.sessionKey!
+          );
           if (
             denial !== null &&
             denial !== "max_concurrent_threads_per_session"
@@ -174,11 +170,11 @@ function runScenario(name: string, scenario: ContractScenario): void {
           break;
         }
         case "release": {
-          releaseSubagentSlot(op.sessionKey!);
+          getDefaultConcurrencyManager().releaseSubagentSlot(op.sessionKey!);
           break;
         }
         case "recordDenial": {
-          recordConcurrencyDenial({
+          getDefaultConcurrencyManager().recordConcurrencyDenial({
             requestId: op.requestId,
             role: op.role,
             requestedModel: op.requestedModel,
@@ -225,7 +221,7 @@ function runScenario(name: string, scenario: ContractScenario): void {
       { status }
     );
   } finally {
-    resetConcurrencyTelemetry();
+    getDefaultConcurrencyManager().resetConcurrencyTelemetry();
     agentActivity.reset();
   }
 }
@@ -260,7 +256,7 @@ describe("agent reconciliation contract: constants and module surface", () => {
   test("agentsStatus(at) and concurrencyStatus(at) share the same `at` for slot reconciliation", () => {
     const at = Date.now();
     const agents = agentsStatus(at);
-    const concurrency = concurrencyStatus(at);
+    const concurrency = getDefaultConcurrencyManager().concurrencyStatus(at);
     const slotVsAgent = agents.slotVsAgent as Record<string, unknown>;
     assert.equal(slotVsAgent.admissionSlots, concurrency.activeSubagentThreads);
     assert.equal(
@@ -295,17 +291,17 @@ describe("agent reconciliation contract: constants and module surface", () => {
 
   test("status.agents.slotVsAgent.admissionSlots is sourced from the same tracker as concurrency.activeSubagentThreads", () => {
     agentActivity.reset();
-    resetConcurrencyTelemetry();
+    getDefaultConcurrencyManager().resetConcurrencyTelemetry();
     try {
-      tryAcquireSubagentSlot("reconcile-slot-x");
-      tryAcquireSubagentSlot("reconcile-slot-y");
+      getDefaultConcurrencyManager().tryAcquireSubagentSlot("reconcile-slot-x");
+      getDefaultConcurrencyManager().tryAcquireSubagentSlot("reconcile-slot-y");
       const status = agentsStatus(Date.now());
       assert.equal(status.canonicalLiveCount, 0);
       const slotVsAgent = status.slotVsAgent as Record<string, unknown>;
       assert.equal(slotVsAgent.admissionSlots, 2);
       assert.equal(slotVsAgent.activeAdmissionSessions, 2);
     } finally {
-      resetConcurrencyTelemetry();
+      getDefaultConcurrencyManager().resetConcurrencyTelemetry();
       agentActivity.reset();
     }
   });

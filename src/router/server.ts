@@ -105,13 +105,8 @@ export {
   setRouterAuthTokenForTests
 } from "./auth.ts";
 export {
-  concurrencyStatus,
   parseConcurrencyConfig,
-  PROCESS_FALLBACK_SESSION_KEY,
-  recordConcurrencyDenial,
-  releaseSubagentSlot,
-  resetConcurrencyTelemetry,
-  tryAcquireSubagentSlot
+  PROCESS_FALLBACK_SESSION_KEY
 } from "./concurrency.ts";
 export { classifyProviderFailure, recordRouterEvent } from "./events.ts";
 export {

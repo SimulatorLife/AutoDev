@@ -1,12 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import {
-  releaseSubagentSlot,
-  resetConcurrencyTelemetry,
-  touchOpenSubagentSlots,
-  tryAcquireSubagentSlot
-} from "../../src/router/concurrency.ts";
+import { getDefaultConcurrencyManager } from "../../src/router/concurrency.ts";
 import { ROUTING_POLICY } from "../../src/router/routing.ts";
 import {
   agentActivity,
@@ -27,7 +22,7 @@ import { countLiveAgentActivity } from "../../src/router/usage.ts";
 test("orchestrator-active-subagents: orchestrator remains in subagent_wait while subagents are active", () => {
   resetRouterTelemetry();
   agentActivity.reset();
-  resetConcurrencyTelemetry();
+  getDefaultConcurrencyManager().resetConcurrencyTelemetry();
   resetSubagentTelemetry();
 
   try {
@@ -66,7 +61,8 @@ test("orchestrator-active-subagents: orchestrator remains in subagent_wait while
     });
 
     // 2. Orchestrator spawns a subagent and acquires a concurrency slot
-    const slotDenial = tryAcquireSubagentSlot(sessionKey);
+    const slotDenial =
+      getDefaultConcurrencyManager().tryAcquireSubagentSlot(sessionKey);
     assert.equal(slotDenial, null);
 
     // 3. Orchestrator HTTP turn 1 finishes (waiting on child)
@@ -114,7 +110,7 @@ test("orchestrator-active-subagents: orchestrator remains in subagent_wait while
 
     // Subagent streaming touch touches both subagent and orchestrator session
     agentActivity.touch(subagentSubject);
-    touchOpenSubagentSlots(sessionKey);
+    getDefaultConcurrencyManager().touchOpenSubagentSlots(sessionKey);
 
     // Orchestrator session must NOT have its provider or role overwritten by the child
     assert.equal(agentActivity.getState(sessionKey), "subagent_wait");
@@ -151,7 +147,7 @@ test("orchestrator-active-subagents: orchestrator remains in subagent_wait while
     );
 
     // 6. Subagent slot is released
-    releaseSubagentSlot(sessionKey);
+    getDefaultConcurrencyManager().releaseSubagentSlot(sessionKey);
 
     // Orchestrator transitions from subagent_wait to resumed
     assert.equal(agentActivity.getState(sessionKey), "resumed");
@@ -181,7 +177,7 @@ test("orchestrator-active-subagents: orchestrator remains in subagent_wait while
   } finally {
     resetRouterTelemetry();
     agentActivity.reset();
-    resetConcurrencyTelemetry();
+    getDefaultConcurrencyManager().resetConcurrencyTelemetry();
     resetSubagentTelemetry();
   }
 });
@@ -189,7 +185,7 @@ test("orchestrator-active-subagents: orchestrator remains in subagent_wait while
 test("orchestrator-active-subagents: bridge subagent usage keeps orchestrator session in subagent_wait", () => {
   resetRouterTelemetry();
   agentActivity.reset();
-  resetConcurrencyTelemetry();
+  getDefaultConcurrencyManager().resetConcurrencyTelemetry();
   resetSubagentTelemetry();
 
   try {
@@ -252,7 +248,7 @@ test("orchestrator-active-subagents: bridge subagent usage keeps orchestrator se
   } finally {
     resetRouterTelemetry();
     agentActivity.reset();
-    resetConcurrencyTelemetry();
+    getDefaultConcurrencyManager().resetConcurrencyTelemetry();
     resetSubagentTelemetry();
   }
 });

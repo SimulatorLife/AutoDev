@@ -27,13 +27,10 @@ import {
 } from "./auth.ts";
 import {
   ConcurrencyManager,
-  concurrencyStatus as getConcurrencyStatus,
   getDefaultConcurrencyManager,
   PROCESS_FALLBACK_SESSION_KEY,
-  resetConcurrencyTelemetry as resetManagerConcurrencyTelemetry,
   setDefaultConcurrencyManager,
-  SUBAGENT_SLOT_KIND,
-  touchOpenSubagentSlots as touchManagerOpenSubagentSlots
+  SUBAGENT_SLOT_KIND
 } from "./concurrency.ts";
 import { COOLDOWN_CONFIG, COOLDOWNS } from "./cooldown.ts";
 import {
@@ -602,7 +599,7 @@ export function resetRouterTelemetry(): void {
     state.lastFailure = null;
   }
   resetUsageTelemetry();
-  resetManagerConcurrencyTelemetry();
+  getDefaultConcurrencyManager().resetConcurrencyTelemetry();
   resetSubagentTelemetry();
   resetSpawnFailureTelemetry();
   COOLDOWNS.clearAll();
@@ -831,7 +828,8 @@ function isValidAgentEvent(event: unknown): event is Record<string, unknown> {
 
 function touchAgentActivity(context: BridgeRequestContext): void {
   getDefaultUsageTracker().activityTracker.touch(context.activitySubject);
-  if (context.sessionKey) touchManagerOpenSubagentSlots(context.sessionKey);
+  if (context.sessionKey)
+    getDefaultConcurrencyManager().touchOpenSubagentSlots(context.sessionKey);
 }
 
 function noteBridgeAgentActivity(
@@ -1260,7 +1258,7 @@ export function getRouterStatus(now = Date.now()): Record<string, unknown> {
     },
     codexTelemetry: codexTelemetryStatus(),
     agents: agentsStatus(now),
-    concurrency: getConcurrencyStatus(now),
+    concurrency: getDefaultConcurrencyManager().concurrencyStatus(now),
     subagents: subagentStatus(),
     spawnFailures: spawnFailureStatus(),
     inFlightRequests: Object.fromEntries(activeProviderRequests),

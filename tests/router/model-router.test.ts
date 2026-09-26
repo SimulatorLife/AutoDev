@@ -16,6 +16,7 @@ import {
   resolveAgentActivityTtlMs
 } from "../../src/agents/agent-activity.ts";
 import { spawnedChildren } from "../../src/providers/antigravity.ts";
+import { getDefaultConcurrencyManager } from "../../src/router/concurrency.ts";
 import { COOLDOWNS as cooldowns } from "../../src/router/cooldown.ts";
 import * as responses from "../../src/router/responses.ts";
 import {
@@ -39,7 +40,6 @@ import {
   classifyProviderFailure,
   closeBridgeSubagentsForRequest,
   codexTelemetryStatus,
-  concurrencyStatus,
   declaredLimit,
   decrementActiveRequests,
   downstreamHeaders,
@@ -72,15 +72,12 @@ import {
   PROCESS_FALLBACK_SESSION_KEY,
   providerCapabilities,
   proxyConcreteResponse,
-  recordConcurrencyDenial,
   recordNativeMcpExposure,
   recordRouterEvent,
   recordSpawnFailure,
   recordSubagentSpawn,
   registerWorkspaceId,
-  releaseSubagentSlot,
   requestSession,
-  resetConcurrencyTelemetry,
   resetLifecycleForTests,
   resetOtelTelemetry,
   resetRouterTelemetry,
@@ -96,7 +93,6 @@ import {
   spawnFailureStatus,
   SUBAGENT_SPAWN_TOOLS_HEADER,
   subagentStatus,
-  tryAcquireSubagentSlot,
   UNATTRIBUTED_SUBAGENT_ROLE,
   usageStatus as rawUsageStatus,
   workspaceContextFromRequest
@@ -6528,8 +6524,9 @@ test("admission enforces the canonical limit, surfaces the same value on /status
   // `$CODEX_HOME/config.toml` see `null` here, which the admission code
   // interprets as "no configured cap" -- that is itself part of the
   // sanitized-status contract the fixture pins separately.
-  resetConcurrencyTelemetry();
-  const configuredLimit = concurrencyStatus().effectivePerSessionLimit;
+  getDefaultConcurrencyManager().resetConcurrencyTelemetry();
+  const configuredLimit =
+    getDefaultConcurrencyManager().concurrencyStatus().effectivePerSessionLimit;
   assert.ok(
     configuredLimit === null ||
     (Number.isInteger(configuredLimit) && configuredLimit > 0),
@@ -6537,19 +6534,26 @@ test("admission enforces the canonical limit, surfaces the same value on /status
   );
   if (configuredLimit !== null) {
     for (let slot = 0; slot < configuredLimit!; slot += 1)
-      assert.equal(tryAcquireSubagentSlot("admission-session"), null);
+      assert.equal(
+        getDefaultConcurrencyManager().tryAcquireSubagentSlot(
+          "admission-session"
+        ),
+        null
+      );
     assert.equal(
-      tryAcquireSubagentSlot("admission-session"),
+      getDefaultConcurrencyManager().tryAcquireSubagentSlot(
+        "admission-session"
+      ),
       "max_concurrent_threads_per_session"
     );
-    recordConcurrencyDenial({
+    getDefaultConcurrencyManager().recordConcurrencyDenial({
       requestId: "req-denied",
       role: "worker",
       requestedModel: "autodev/worker",
       sessionScope: "identified",
       reason: "max_concurrent_threads_per_session"
     });
-    const status = concurrencyStatus();
+    const status = getDefaultConcurrencyManager().concurrencyStatus();
     assert.equal(status.scope, "router-admitted-child-requests");
     assert.equal(status.maxConcurrentThreadsPerSession, configuredLimit);
     assert.equal(status.effectivePerSessionLimit, configuredLimit);
@@ -6566,10 +6570,13 @@ test("admission enforces the canonical limit, surfaces the same value on /status
       "max_concurrent_threads_per_session"
     );
     for (let slot = 0; slot < configuredLimit!; slot += 1)
-      releaseSubagentSlot("admission-session");
-    assert.equal(concurrencyStatus().activeSessions, 0);
+      getDefaultConcurrencyManager().releaseSubagentSlot("admission-session");
+    assert.equal(
+      getDefaultConcurrencyManager().concurrencyStatus().activeSessions,
+      0
+    );
   }
-  resetConcurrencyTelemetry();
+  getDefaultConcurrencyManager().resetConcurrencyTelemetry();
 });
 
 test("requestSession derives identity from caller-supplied headers and payload fields, never invents it", () => {
@@ -6748,25 +6755,42 @@ test("requestSession derives identity from caller-supplied headers and payload f
 });
 
 test("per-session slot limit gives distinct identified sessions independent capacity while capping a shared or missing identity", () => {
-  resetConcurrencyTelemetry();
+  getDefaultConcurrencyManager().resetConcurrencyTelemetry();
   try {
     // Two distinct identified sessions each get their own slot at the same limit.
-    assert.equal(tryAcquireSubagentSlot("session-a"), null);
-    assert.equal(tryAcquireSubagentSlot("session-b"), null);
-    assert.equal(concurrencyStatus().activeSubagentThreads, 2);
-    assert.equal(concurrencyStatus().activeSessions, 2);
+    assert.equal(
+      getDefaultConcurrencyManager().tryAcquireSubagentSlot("session-a"),
+      null
+    );
+    assert.equal(
+      getDefaultConcurrencyManager().tryAcquireSubagentSlot("session-b"),
+      null
+    );
+    assert.equal(
+      getDefaultConcurrencyManager().concurrencyStatus().activeSubagentThreads,
+      2
+    );
+    assert.equal(
+      getDefaultConcurrencyManager().concurrencyStatus().activeSessions,
+      2
+    );
 
     // The same identified session is capped by the configured per-session limit.
-    const configuredLimit = concurrencyStatus().effectivePerSessionLimit;
+    const configuredLimit =
+      getDefaultConcurrencyManager().concurrencyStatus()
+        .effectivePerSessionLimit;
     for (let slot = 1; slot < configuredLimit!; slot += 1)
-      assert.equal(tryAcquireSubagentSlot("session-a"), null);
+      assert.equal(
+        getDefaultConcurrencyManager().tryAcquireSubagentSlot("session-a"),
+        null
+      );
     assert.equal(
-      tryAcquireSubagentSlot("session-a"),
+      getDefaultConcurrencyManager().tryAcquireSubagentSlot("session-a"),
       "max_concurrent_threads_per_session"
     );
     for (let slot = 0; slot < configuredLimit!; slot += 1)
-      releaseSubagentSlot("session-a");
-    releaseSubagentSlot("session-b");
+      getDefaultConcurrencyManager().releaseSubagentSlot("session-a");
+    getDefaultConcurrencyManager().releaseSubagentSlot("session-b");
 
     // Two requests that both fail to supply any session identity share the documented
     // process-wide fallback bucket and are capped together, even though nothing proves
@@ -6776,24 +6800,42 @@ test("per-session slot limit gives distinct identified sessions independent capa
     const second = (requestSession as any)({ headers: {} }, {});
     assert.equal(first.key, PROCESS_FALLBACK_SESSION_KEY);
     assert.equal(second.key, PROCESS_FALLBACK_SESSION_KEY);
-    const fallbackLimit = concurrencyStatus().effectivePerSessionLimit;
+    const fallbackLimit =
+      getDefaultConcurrencyManager().concurrencyStatus()
+        .effectivePerSessionLimit;
     for (let slot = 0; slot < fallbackLimit!; slot += 1)
-      assert.equal(tryAcquireSubagentSlot(first.key), null);
+      assert.equal(
+        getDefaultConcurrencyManager().tryAcquireSubagentSlot(first.key),
+        null
+      );
     assert.equal(
-      concurrencyStatus().processFallbackActiveThreads,
+      getDefaultConcurrencyManager().concurrencyStatus()
+        .processFallbackActiveThreads,
       fallbackLimit
     );
-    assert.equal(concurrencyStatus().processFallbackEnforcement, true);
     assert.equal(
-      tryAcquireSubagentSlot(second.key),
+      getDefaultConcurrencyManager().concurrencyStatus()
+        .processFallbackEnforcement,
+      true
+    );
+    assert.equal(
+      getDefaultConcurrencyManager().tryAcquireSubagentSlot(second.key),
       "max_concurrent_threads_per_session"
     );
     for (let slot = 0; slot < fallbackLimit!; slot += 1)
-      releaseSubagentSlot(first.key);
-    assert.equal(concurrencyStatus().processFallbackActiveThreads, 0);
-    assert.equal(concurrencyStatus().processFallbackEnforcement, false);
+      getDefaultConcurrencyManager().releaseSubagentSlot(first.key);
+    assert.equal(
+      getDefaultConcurrencyManager().concurrencyStatus()
+        .processFallbackActiveThreads,
+      0
+    );
+    assert.equal(
+      getDefaultConcurrencyManager().concurrencyStatus()
+        .processFallbackEnforcement,
+      false
+    );
   } finally {
-    resetConcurrencyTelemetry();
+    getDefaultConcurrencyManager().resetConcurrencyTelemetry();
   }
 });
 
@@ -9036,7 +9078,7 @@ test("fails a dropped Codex stream retryably so Codex replays it instead of endi
 });
 
 test("releases the subagent slot when every provider is exhausted", async () => {
-  resetConcurrencyTelemetry();
+  getDefaultConcurrencyManager().resetConcurrencyTelemetry();
   await withStubbedProviders(
     (target: any) =>
       healthyProbe(target) ??
@@ -9059,8 +9101,15 @@ test("releases the subagent slot when every provider is exhausted", async () => 
       assert.equal((await response.json()).error.retryable, false);
       // A wedged or exhausted child must not hold a slot: with a per-session
       // limit of two, two of those end delegation for the session.
-      assert.equal(concurrencyStatus().activeSubagentThreads, 0);
-      assert.equal(concurrencyStatus().activeSessions, 0);
+      assert.equal(
+        getDefaultConcurrencyManager().concurrencyStatus()
+          .activeSubagentThreads,
+        0
+      );
+      assert.equal(
+        getDefaultConcurrencyManager().concurrencyStatus().activeSessions,
+        0
+      );
     },
     // A broken credential: never retried as a last resort, so this exhausts
     // immediately and the only question is whether the slot came back.
@@ -9072,7 +9121,7 @@ test("releases the subagent slot when every provider is exhausted", async () => 
     }
   );
   for (const provider of DEFAULT_TIER) cooldowns.clear(provider);
-  resetConcurrencyTelemetry();
+  getDefaultConcurrencyManager().resetConcurrencyTelemetry();
 });
 
 test("a model the provider rejects fails the turn once, non-retryably, and leaves the provider's other models usable", async () => {
@@ -10953,13 +11002,23 @@ test("router usage status carries a live-activity snapshot distinct from each bu
 
 test("router concurrency status derives active subagent slots from agent activity, matching the admission counter exactly", async () => {
   resetRouterTelemetry();
-  const configuredLimit = concurrencyStatus().effectivePerSessionLimit ?? 4;
+  const configuredLimit =
+    getDefaultConcurrencyManager().concurrencyStatus()
+      .effectivePerSessionLimit ?? 4;
   assert.equal(agentActivity.countLive({ kind: "subagent_slot" }), 0);
   const slotsToAcquire = Math.max(1, Math.min(2, configuredLimit));
   for (let i = 0; i < slotsToAcquire; i += 1) {
-    assert.equal(tryAcquireSubagentSlot("activity-concurrency-session"), null);
+    assert.equal(
+      getDefaultConcurrencyManager().tryAcquireSubagentSlot(
+        "activity-concurrency-session"
+      ),
+      null
+    );
   }
-  assert.equal(concurrencyStatus().activeSubagentThreads, slotsToAcquire);
+  assert.equal(
+    getDefaultConcurrencyManager().concurrencyStatus().activeSubagentThreads,
+    slotsToAcquire
+  );
   assert.equal(
     agentActivity.countLive({ kind: "subagent_slot" }),
     slotsToAcquire,
@@ -10973,10 +11032,15 @@ test("router concurrency status derives active subagent slots from agent activit
     slotsToAcquire
   );
   for (let i = 0; i < slotsToAcquire; i += 1)
-    releaseSubagentSlot("activity-concurrency-session");
-  assert.equal(concurrencyStatus().activeSubagentThreads, 0);
+    getDefaultConcurrencyManager().releaseSubagentSlot(
+      "activity-concurrency-session"
+    );
+  assert.equal(
+    getDefaultConcurrencyManager().concurrencyStatus().activeSubagentThreads,
+    0
+  );
   assert.equal(agentActivity.countLive({ kind: "subagent_slot" }), 0);
-  resetConcurrencyTelemetry();
+  getDefaultConcurrencyManager().resetConcurrencyTelemetry();
 });
 
 test("router-visible response tool calls and continuations drive session activity through a full round trip", async () => {
@@ -11267,7 +11331,7 @@ test("agent activity: subagent_slot records do not inflate liveActivity or snaps
 test("router: a live subagent is counted only when its activity is explicitly tracked", () => {
   resetRouterTelemetry();
   agentActivity.reset();
-  resetConcurrencyTelemetry();
+  getDefaultConcurrencyManager().resetConcurrencyTelemetry();
 
   // One subagent active in workspace AutoDev
   agentActivity.beginRequest("subagent-session", {
@@ -11281,7 +11345,10 @@ test("router: a live subagent is counted only when its activity is explicitly tr
   });
 
   // Session acquires a subagent slot
-  assert.equal(tryAcquireSubagentSlot("subagent-session"), null);
+  assert.equal(
+    getDefaultConcurrencyManager().tryAcquireSubagentSlot("subagent-session"),
+    null
+  );
 
   const status = getRouterStatus();
   // The admission slot is excluded and no workspace-based parent is invented.
@@ -11296,14 +11363,14 @@ test("router: a live subagent is counted only when its activity is explicitly tr
   assert.equal(usage.activity.byWorkspace.AutoDev.active, 1);
 
   agentActivity.reset();
-  resetConcurrencyTelemetry();
+  getDefaultConcurrencyManager().resetConcurrencyTelemetry();
   resetRouterTelemetry();
 });
 
 test("router: bridge heartbeat and tool observation events touch the request's agent without altering its state", () => {
   resetRouterTelemetry();
   agentActivity.reset();
-  resetConcurrencyTelemetry();
+  getDefaultConcurrencyManager().resetConcurrencyTelemetry();
 
   const requestId = "req-bridge-heartbeat";
   noteBridgeRequest(requestId, {
@@ -11322,7 +11389,10 @@ test("router: bridge heartbeat and tool observation events touch the request's a
     workspace: "AutoDev",
     tag: "session-hb"
   });
-  assert.equal(tryAcquireSubagentSlot("session-hb"), null);
+  assert.equal(
+    getDefaultConcurrencyManager().tryAcquireSubagentSlot("session-hb"),
+    null
+  );
   agentActivity.endRequest("thread:hb-child", {
     requestId,
     outcome: "success",
@@ -11357,14 +11427,14 @@ test("router: bridge heartbeat and tool observation events touch the request's a
   );
 
   agentActivity.reset();
-  resetConcurrencyTelemetry();
+  getDefaultConcurrencyManager().resetConcurrencyTelemetry();
   resetRouterTelemetry();
 });
 
 test("active-agent reconciliation: only explicitly tracked parent and children are counted", () => {
   resetRouterTelemetry();
   agentActivity.reset();
-  resetConcurrencyTelemetry();
+  getDefaultConcurrencyManager().resetConcurrencyTelemetry();
 
   // 1. Simulate prior settled orchestrator turn that created telemetry bucket in byRole.orchestrator
   agentActivity.beginRequest("parent-sess", {
@@ -11450,14 +11520,14 @@ test("active-agent reconciliation: only explicitly tracked parent and children a
   assert.equal(status.usage.activity.byProvider.unattributed, undefined);
 
   agentActivity.reset();
-  resetConcurrencyTelemetry();
+  getDefaultConcurrencyManager().resetConcurrencyTelemetry();
   resetRouterTelemetry();
 });
 
 test("active-agent reconciliation: multi-provider and multi-workspace reconciliation across all dimensions", () => {
   resetRouterTelemetry();
   agentActivity.reset();
-  resetConcurrencyTelemetry();
+  getDefaultConcurrencyManager().resetConcurrencyTelemetry();
 
   // Workspace A: 2 explicitly tracked subagents on different providers.
   agentActivity.beginRequest("sub-a1", {
@@ -11578,14 +11648,14 @@ test("active-agent reconciliation: multi-provider and multi-workspace reconcilia
   assert.equal(betaByProviderSum, 2);
 
   agentActivity.reset();
-  resetConcurrencyTelemetry();
+  getDefaultConcurrencyManager().resetConcurrencyTelemetry();
   resetRouterTelemetry();
 });
 
 test("active-agent reconciliation: roleless activity reconciles to unattributed role while preserving verified provider/model", () => {
   resetRouterTelemetry();
   agentActivity.reset();
-  resetConcurrencyTelemetry();
+  getDefaultConcurrencyManager().resetConcurrencyTelemetry();
 
   agentActivity.beginRequest("roleless-turn", {
     requestId: "req-roleless",
@@ -11614,14 +11684,14 @@ test("active-agent reconciliation: roleless activity reconciles to unattributed 
   assert.equal(status.usage.byWorkspace.AutoDev.active, 1);
 
   agentActivity.reset();
-  resetConcurrencyTelemetry();
+  getDefaultConcurrencyManager().resetConcurrencyTelemetry();
   resetRouterTelemetry();
 });
 
 test("active-agent reconciliation: wait states keep explicitly tracked agents live, while stale/terminal states clear them", () => {
   resetRouterTelemetry();
   agentActivity.reset();
-  resetConcurrencyTelemetry();
+  getDefaultConcurrencyManager().resetConcurrencyTelemetry();
 
   const now = 100_000;
   agentActivity.beginRequest("subagent-wait-sess", {
@@ -11702,19 +11772,28 @@ test("active-agent reconciliation: wait states keep explicitly tracked agents li
   assert.equal(status.usage.totals.active, 0);
 
   agentActivity.reset();
-  resetConcurrencyTelemetry();
+  getDefaultConcurrencyManager().resetConcurrencyTelemetry();
   resetRouterTelemetry();
 });
 
 test("active-agent reconciliation: subagent slots and in-flight requests are tracked separately and do not inflate live agent totals", () => {
   resetRouterTelemetry();
   agentActivity.reset();
-  resetConcurrencyTelemetry();
+  getDefaultConcurrencyManager().resetConcurrencyTelemetry();
 
   // Acquire concurrency admission slots (these use kind: "subagent_slot")
-  assert.equal(tryAcquireSubagentSlot("session-slot-1"), null);
-  assert.equal(tryAcquireSubagentSlot("session-slot-2"), null);
-  assert.equal(concurrencyStatus().activeSubagentThreads, 2);
+  assert.equal(
+    getDefaultConcurrencyManager().tryAcquireSubagentSlot("session-slot-1"),
+    null
+  );
+  assert.equal(
+    getDefaultConcurrencyManager().tryAcquireSubagentSlot("session-slot-2"),
+    null
+  );
+  assert.equal(
+    getDefaultConcurrencyManager().concurrencyStatus().activeSubagentThreads,
+    2
+  );
 
   // Increment transport in-flight requests
   incrementActiveRequests("minimax");
@@ -11774,8 +11853,8 @@ test("active-agent reconciliation: subagent slots and in-flight requests are tra
   );
 
   // Release slots
-  releaseSubagentSlot("session-slot-1");
-  releaseSubagentSlot("session-slot-2");
+  getDefaultConcurrencyManager().releaseSubagentSlot("session-slot-1");
+  getDefaultConcurrencyManager().releaseSubagentSlot("session-slot-2");
   status = getRouterStatus();
   assert.equal(status.concurrency.activeSubagentThreads, 0);
   assert.equal(
@@ -11785,14 +11864,14 @@ test("active-agent reconciliation: subagent slots and in-flight requests are tra
   );
 
   agentActivity.reset();
-  resetConcurrencyTelemetry();
+  getDefaultConcurrencyManager().resetConcurrencyTelemetry();
   resetRouterTelemetry();
 });
 
 test("active-agent reconciliation: residual active provider and workspace buckets are visible and reconcile rendered totals", () => {
   resetRouterTelemetry();
   agentActivity.reset();
-  resetConcurrencyTelemetry();
+  getDefaultConcurrencyManager().resetConcurrencyTelemetry();
 
   // 1. Roleless activity with unproven workspace and unproven provider
   agentActivity.beginRequest("sess-residual-direct", {
@@ -11913,14 +11992,14 @@ test("active-agent reconciliation: residual active provider and workspace bucket
   assert.equal(workspaceSum, 0);
 
   agentActivity.reset();
-  resetConcurrencyTelemetry();
+  getDefaultConcurrencyManager().resetConcurrencyTelemetry();
   resetRouterTelemetry();
 });
 
 test("active-agent reconciliation: /status exposes status.agents (autodev-agent-status-v1) with canonical live count, liveBy partitions, and slot-vs-agent reconciliation", () => {
   resetRouterTelemetry();
   agentActivity.reset();
-  resetConcurrencyTelemetry();
+  getDefaultConcurrencyManager().resetConcurrencyTelemetry();
 
   // A mix of routed agents and roleless activity to exercise every
   // status.agents partition.
@@ -11957,8 +12036,12 @@ test("active-agent reconciliation: /status exposes status.agents (autodev-agent-
   });
 
   // Two admission slots on an identified session to exercise slotVsAgent.
-  tryAcquireSubagentSlot("reconcile-status-identified");
-  tryAcquireSubagentSlot("reconcile-status-identified");
+  getDefaultConcurrencyManager().tryAcquireSubagentSlot(
+    "reconcile-status-identified"
+  );
+  getDefaultConcurrencyManager().tryAcquireSubagentSlot(
+    "reconcile-status-identified"
+  );
 
   const status = getRouterStatus();
 
@@ -12069,7 +12152,7 @@ test("active-agent reconciliation: /status exposes status.agents (autodev-agent-
   );
 
   agentActivity.reset();
-  resetConcurrencyTelemetry();
+  getDefaultConcurrencyManager().resetConcurrencyTelemetry();
   resetRouterTelemetry();
 });
 

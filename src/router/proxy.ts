@@ -15,10 +15,7 @@ import {
   readLimitHeaders,
   terminalIncompleteEvents
 } from "../shared/provider-limits.ts";
-import {
-  getDefaultConcurrencyManager,
-  touchOpenSubagentSlots as touchManagerOpenSubagentSlots
-} from "./concurrency.ts";
+import { getDefaultConcurrencyManager } from "./concurrency.ts";
 import {
   COOLDOWN_CONFIG,
   type CooldownOptions,
@@ -2203,7 +2200,8 @@ function emitFallbackBridgeContext(
   ctx: FallbackContext,
   route: Candidate
 ): void {
-  if (ctx.sessionKey) touchManagerOpenSubagentSlots(ctx.sessionKey);
+  if (ctx.sessionKey)
+    getDefaultConcurrencyManager().touchOpenSubagentSlots(ctx.sessionKey);
   const bridgeContext = {
     activitySubject: ctx.activitySubject,
     provider: route.provider,
@@ -2902,7 +2900,7 @@ async function handleCandidateSuccess(
         getDefaultUsageTracker().activityTracker.touch(ctx.activitySubject);
         if (ctx.sessionKey) {
           getDefaultUsageTracker().activityTracker.touch(ctx.sessionKey);
-          touchManagerOpenSubagentSlots(ctx.sessionKey);
+          getDefaultConcurrencyManager().touchOpenSubagentSlots(ctx.sessionKey);
         }
       },
       ctx.clientSignal

@@ -6,13 +6,9 @@ import { describe, test } from "node:test";
 
 import {
   type ConcurrencyDenialRecord,
-  concurrencyStatus,
+  getDefaultConcurrencyManager,
   parseConcurrencyConfig,
-  PROCESS_FALLBACK_SESSION_KEY,
-  recordConcurrencyDenial,
-  releaseSubagentSlot,
-  resetConcurrencyTelemetry,
-  tryAcquireSubagentSlot
+  PROCESS_FALLBACK_SESSION_KEY
 } from "../src/router/concurrency.ts";
 
 type JsonRecord = Record<string, any>;
@@ -83,7 +79,7 @@ function runParseScenario(name: string, scenario: JsonRecord): Promise<void> {
 }
 
 function runAdmissionScenario(name: string, scenario: JsonRecord): void {
-  resetConcurrencyTelemetry();
+  getDefaultConcurrencyManager().resetConcurrencyTelemetry();
   try {
     const configuredLimit = scenario.configuredLimit;
     if (!Number.isInteger(configuredLimit) || configuredLimit <= 0) {
@@ -92,7 +88,9 @@ function runAdmissionScenario(name: string, scenario: JsonRecord): void {
     for (const op of scenario.operations ?? []) {
       switch (op.op) {
         case "acquire": {
-          const denial = tryAcquireSubagentSlot(op.sessionKey);
+          const denial = getDefaultConcurrencyManager().tryAcquireSubagentSlot(
+            op.sessionKey
+          );
           if (Object.hasOwn(op, "expected"))
             assert.equal(
               denial,
@@ -102,11 +100,11 @@ function runAdmissionScenario(name: string, scenario: JsonRecord): void {
           break;
         }
         case "release": {
-          releaseSubagentSlot(op.sessionKey);
+          getDefaultConcurrencyManager().releaseSubagentSlot(op.sessionKey);
           break;
         }
         case "recordDenial": {
-          recordConcurrencyDenial({
+          getDefaultConcurrencyManager().recordConcurrencyDenial({
             requestId: op.requestId,
             role: op.role,
             requestedModel: op.requestedModel,
@@ -117,12 +115,17 @@ function runAdmissionScenario(name: string, scenario: JsonRecord): void {
           break;
         }
         case "status_field": {
-          const value = getPath(concurrencyStatus(), op.field);
+          const value = getPath(
+            getDefaultConcurrencyManager().concurrencyStatus(),
+            op.field
+          );
           assert.equal(value, op.expected, `${name}: ${op.field}`);
           break;
         }
         case "status_shape": {
-          const keys = Object.keys(concurrencyStatus()).sort();
+          const keys = Object.keys(
+            getDefaultConcurrencyManager().concurrencyStatus()
+          ).sort();
           assert.deepEqual(
             keys,
             [...op.expected].sort(),
@@ -132,7 +135,10 @@ function runAdmissionScenario(name: string, scenario: JsonRecord): void {
         }
         case "status_no_key": {
           assert.equal(
-            Object.hasOwn(concurrencyStatus(), op.key),
+            Object.hasOwn(
+              getDefaultConcurrencyManager().concurrencyStatus(),
+              op.key
+            ),
             false,
             `${name}: ${op.key} must not appear on /status`
           );
@@ -144,7 +150,7 @@ function runAdmissionScenario(name: string, scenario: JsonRecord): void {
       }
     }
   } finally {
-    resetConcurrencyTelemetry();
+    getDefaultConcurrencyManager().resetConcurrencyTelemetry();
   }
 }
 
@@ -160,7 +166,9 @@ describe("concurrency contract parser scenarios", () => {
 describe("concurrency contract admission scenarios", () => {
   for (const [name, scenario] of Object.entries(SCENARIOS)) {
     if (!("configuredLimit" in scenario)) continue;
-    const actualLimit = concurrencyStatus().effectivePerSessionLimit;
+    const actualLimit =
+      getDefaultConcurrencyManager().concurrencyStatus()
+        .effectivePerSessionLimit;
     const limitMatches = actualLimit === scenario.configuredLimit;
     test(
       name,
