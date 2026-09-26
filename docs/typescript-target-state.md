@@ -34,6 +34,7 @@ The TypeScript target state migration is fully completed across all twelve phase
 - The skill-read hook validates its JSON payload and persisted deduplication state through explicit `JsonValue`, `JsonObject`, and `SeenState` boundaries.
 - The workflow-weight validation suite runs as native TypeScript (`tests/weights.test.ts`).
 - Claude and MiniMax launch/ensure decisions live in `src/platform/claude-ensure.ts` and `src/platform/minimax-ensure.ts`.
+- Platform ensure and restart option resolvers share optional integer parsing through `parseNonNegativeInteger` in `src/shared/env.ts`; the installer runtime manifest ships that shared owner.
 - Antigravity permission and global skill-registry reconciliation live in `src/platform/antigravity-settings.ts` with typed JSON validation.
 - Runtime file targeting, atomic materialization, symlink replacement/linking, skill-source validation, mode assignment, and drift comparison live in `src/platform/runtime-files.ts`.
 - Obsolete launch-agent, runtime-file, hook, and directory cleanup lives in `src/platform/runtime-reconciliation.ts`.

@@ -3,6 +3,7 @@ import { existsSync, openSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
 
+import { parseNonNegativeInteger } from "../shared/env.ts";
 import { writeErrorLine } from "../shared/output.ts";
 import { LaunchdClient } from "./macos/launchd.ts";
 
@@ -47,11 +48,6 @@ export function isAntigravityModel(input: string): boolean {
   }
 }
 
-function positiveInteger(value: string | undefined, fallback: number): number {
-  const parsed = Number.parseInt(value ?? "");
-  return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
-}
-
 export function resolveAntigravityEnsureOptions(
   env: NodeJS.ProcessEnv = process.env
 ): AntigravityEnsureOptions {
@@ -60,7 +56,7 @@ export function resolveAntigravityEnsureOptions(
   const label = "com.codex.antigravity-proxy";
   return {
     host: env.AGY_PROXY_HOST?.trim() || "127.0.0.1",
-    port: positiveInteger(env.AGY_PROXY_PORT, DEFAULT_PORT),
+    port: parseNonNegativeInteger(env.AGY_PROXY_PORT, DEFAULT_PORT),
     label,
     plist: path.join(home, "Library", "LaunchAgents", `${label}.plist`),
     launcher: path.join(codexHome, "hooks", "run-codex-antigravity-proxy.sh"),
@@ -69,7 +65,7 @@ export function resolveAntigravityEnsureOptions(
     settingsPath:
       env.AGY_SETTINGS_PATH?.trim() ||
       path.join(home, ".gemini", "config", "config.json"),
-    readyTimeoutMs: positiveInteger(
+    readyTimeoutMs: parseNonNegativeInteger(
       env.AGY_READY_TIMEOUT_MS,
       DEFAULT_TIMEOUT_MS
     ),

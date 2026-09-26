@@ -44,6 +44,7 @@ import { removeStalePaths } from "./runtime-reconciliation.ts";
 export const RUNTIME_MODULES = [
   "src/shared/resolve-workspace.ts",
   "src/shared/executables.ts",
+  "src/shared/env.ts",
   "src/agents/bridge-role.ts",
   "src/agents/bridge-sandbox.ts",
   "src/telemetry/agent-events.ts",

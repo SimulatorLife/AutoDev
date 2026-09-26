@@ -3,6 +3,7 @@ import { chmodSync, existsSync, mkdirSync, openSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
 
+import { parseNonNegativeInteger } from "../shared/env.ts";
 import { writeErrorLine } from "../shared/output.ts";
 import { LaunchdClient } from "./macos/launchd.ts";
 
@@ -28,18 +29,13 @@ export interface CopilotEnsureDeps {
 
 const DEFAULT_TIMEOUT_MS = 5000;
 
-function positiveInteger(value: string | undefined, fallback: number): number {
-  const parsed = Number.parseInt(value ?? "");
-  return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
-}
-
 export function resolveCopilotEnsureOptions(
   env: NodeJS.ProcessEnv = process.env
 ): CopilotEnsureOptions {
   const home = env.HOME?.trim() || homedir();
   const codexHome = env.CODEX_HOME?.trim() || path.join(home, ".codex");
   const host = env.CODEX_COPILOT_PROXY_HOST?.trim() || "127.0.0.1";
-  const port = positiveInteger(env.CODEX_COPILOT_PROXY_PORT, 4003);
+  const port = parseNonNegativeInteger(env.CODEX_COPILOT_PROXY_PORT, 4003);
   const label = "com.codex.copilot-proxy";
   const uid = typeof process.getuid === "function" ? process.getuid() : 0;
   return {
@@ -54,7 +50,7 @@ export function resolveCopilotEnsureOptions(
       "run-codex-copilot-cli-responses-proxy.sh"
     ),
     copilotBin: env.COPILOT_BIN?.trim() || "copilot",
-    readyTimeoutMs: positiveInteger(
+    readyTimeoutMs: parseNonNegativeInteger(
       env.CODEX_COPILOT_READY_TIMEOUT_MS,
       DEFAULT_TIMEOUT_MS
     ),

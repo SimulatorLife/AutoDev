@@ -10,6 +10,7 @@ import {
 import { homedir } from "node:os";
 import path from "node:path";
 
+import { parseNonNegativeInteger } from "../shared/env.ts";
 import { writeErrorLine } from "../shared/output.ts";
 import { LaunchdClient } from "./macos/launchd.ts";
 
@@ -151,20 +152,15 @@ export function resolveServiceRestartOptions(
     home,
     codexHome: env.CODEX_HOME?.trim() || path.join(home, ".codex"),
     otelMode: env.AUTODEV_OTEL_MODE === "collector" ? "collector" : "direct",
-    readyAttempts: positiveInteger(
+    readyAttempts: parseNonNegativeInteger(
       env.AUTODEV_SERVICE_READY_ATTEMPTS,
       DEFAULT_ATTEMPTS
     ),
-    readyDelayMs: positiveInteger(
+    readyDelayMs: parseNonNegativeInteger(
       env.AUTODEV_SERVICE_READY_DELAY_MS,
       DEFAULT_DELAY_MS
     )
   };
-}
-
-function positiveInteger(value: string | undefined, fallback: number): number {
-  const parsed = Number.parseInt(value ?? "");
-  return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
 }
 
 function readLogTail(filePath: string, lines: number): string[] {

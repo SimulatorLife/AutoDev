@@ -9,6 +9,7 @@ import {
 import { homedir } from "node:os";
 import path from "node:path";
 
+import { parseNonNegativeInteger } from "../shared/env.ts";
 import { writeErrorLine } from "../shared/output.ts";
 import { LaunchdClient } from "./macos/launchd.ts";
 
@@ -36,11 +37,6 @@ export interface MiniMaxEnsureDeps {
 }
 
 const DEFAULT_TIMEOUT_MS = 5000;
-
-function positiveInteger(value: string | undefined, fallback: number): number {
-  const parsed = Number.parseInt(value ?? "");
-  return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
-}
 
 function resolveNode(env: NodeJS.ProcessEnv): string {
   if (env.AUTODEV_NODE?.trim()) return env.AUTODEV_NODE.trim();
@@ -77,7 +73,7 @@ export function resolveMiniMaxEnsureOptions(
 ): MiniMaxEnsureOptions {
   const home = env.HOME?.trim() || homedir();
   const codexHome = env.CODEX_HOME?.trim() || path.join(home, ".codex");
-  const port = positiveInteger(env.CODEX_MINIMAX_PROXY_PORT, 18_765);
+  const port = parseNonNegativeInteger(env.CODEX_MINIMAX_PROXY_PORT, 18_765);
   return {
     host: env.CODEX_MINIMAX_PROXY_HOST?.trim() || "127.0.0.1",
     port,
@@ -94,7 +90,7 @@ export function resolveMiniMaxEnsureOptions(
     nodeBin: resolveNode(env),
     upstreamBaseUrl:
       env.CODEX_MINIMAX_UPSTREAM_URL?.trim() || "https://api.minimax.io",
-    readyTimeoutMs: positiveInteger(
+    readyTimeoutMs: parseNonNegativeInteger(
       env.CODEX_MINIMAX_READY_TIMEOUT_MS,
       DEFAULT_TIMEOUT_MS
     ),

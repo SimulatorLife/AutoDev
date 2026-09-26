@@ -13,6 +13,7 @@ import {
 import { homedir } from "node:os";
 import path from "node:path";
 
+import { parseNonNegativeInteger } from "../shared/env.ts";
 import { writeErrorLine } from "../shared/output.ts";
 import { ensureCopilotProxy } from "./copilot-ensure.ts";
 import { LaunchdClient } from "./macos/launchd.ts";
@@ -108,12 +109,6 @@ const LOG_LINE_SPLIT_PATTERN = /\r?\n/u;
 const PROCESS_EXIT_ATTEMPTS = 50;
 const PROCESS_EXIT_DELAY_MS = 100;
 
-function positiveInteger(value: string | undefined, fallback: number): number {
-  if (value === undefined || value === "") return fallback;
-  const parsed = Number.parseInt(value);
-  return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
-}
-
 function resolveRouterEnsureOptionsFromEnv(
   env: NodeJS.ProcessEnv,
   myPid: number
@@ -163,8 +158,8 @@ function resolveRouterEnsureOptionsFromEnv(
     label,
     domain,
     routerHost: env.CODEX_MODEL_ROUTER_HOST?.trim() || "127.0.0.1",
-    routerPort: positiveInteger(env.CODEX_MODEL_ROUTER_PORT, 4100),
-    readyTimeoutMs: positiveInteger(
+    routerPort: parseNonNegativeInteger(env.CODEX_MODEL_ROUTER_PORT, 4100),
+    readyTimeoutMs: parseNonNegativeInteger(
       env.CODEX_MODEL_ROUTER_READY_TIMEOUT_MS,
       READY_TIMEOUT_MS_DEFAULT
     ),

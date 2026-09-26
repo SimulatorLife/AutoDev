@@ -18,6 +18,7 @@ import {
 import { homedir } from "node:os";
 import path from "node:path";
 
+import { parseNonNegativeInteger } from "../shared/env.ts";
 import { writeErrorLine, writeLine } from "../shared/output.ts";
 
 export interface CollectorOptions {
@@ -55,11 +56,6 @@ function isValidPinnedVersion(value: string): boolean {
   return prerelease.length > 0 && PRERELEASE_PATTERN.test(prerelease);
 }
 
-function positiveInteger(value: string | undefined, fallback: number): number {
-  const parsed = Number.parseInt(value ?? "");
-  return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
-}
-
 function repoRoot(env: NodeJS.ProcessEnv): string {
   return (
     env.AUTODEV_OTEL_REPO_ROOT?.trim() ||
@@ -80,7 +76,7 @@ export function resolveCollectorOptions(
     repositoryRoot: root,
     codexHome,
     host: env.AUTODEV_OTEL_HOST?.trim() || "127.0.0.1",
-    port: positiveInteger(env.AUTODEV_OTEL_PORT, 4318),
+    port: parseNonNegativeInteger(env.AUTODEV_OTEL_PORT, 4318),
     configFile:
       env.AUTODEV_OTEL_CONFIG?.trim() ||
       path.join(root, "config", "otel", "collector.yaml"),
@@ -101,7 +97,10 @@ export function resolveCollectorOptions(
         env.AUTODEV_OTEL_RUN_DIR?.trim() || path.join(codexHome, "run"),
         "autodev-otel-collector.ensure.log"
       ),
-    startTimeoutSeconds: positiveInteger(env.AUTODEV_OTEL_START_TIMEOUT, 10)
+    startTimeoutSeconds: parseNonNegativeInteger(
+      env.AUTODEV_OTEL_START_TIMEOUT,
+      10
+    )
   };
 }
 

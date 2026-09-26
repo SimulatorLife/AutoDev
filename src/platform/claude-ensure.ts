@@ -9,6 +9,7 @@ import {
 import { homedir } from "node:os";
 import path from "node:path";
 
+import { parseNonNegativeInteger } from "../shared/env.ts";
 import { writeErrorLine } from "../shared/output.ts";
 import { LaunchdClient } from "./macos/launchd.ts";
 
@@ -35,11 +36,6 @@ export interface ClaudeEnsureDeps {
 
 const CLAUDE_MODEL_PATTERN = /^(sonnet|opus|haiku|claude-[a-z0-9][a-z0-9.-]*)$/iu;
 const DEFAULT_TIMEOUT_MS = 5000;
-
-function positiveInteger(value: string | undefined, fallback: number): number {
-  const parsed = Number.parseInt(value ?? "");
-  return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
-}
 
 function keychainToken(env: NodeJS.ProcessEnv): string {
   if (env.CLAUDE_CODE_OAUTH_TOKEN?.trim())
@@ -89,12 +85,12 @@ export function resolveClaudeEnsureOptions(
   const label = "com.codex.claude-bridge";
   return {
     host: env.CODEX_CLAUDE_BRIDGE_HOST?.trim() || "127.0.0.1",
-    port: positiveInteger(env.CODEX_CLAUDE_BRIDGE_PORT, 4000),
+    port: parseNonNegativeInteger(env.CODEX_CLAUDE_BRIDGE_PORT, 4000),
     label,
     plist: path.join(home, "Library", "LaunchAgents", `${label}.plist`),
     launcher: path.join(codexHome, "hooks", "run-codex-claude-bridge.sh"),
     oauthToken: env.CLAUDE_CODE_OAUTH_TOKEN?.trim() || "",
-    readyTimeoutMs: positiveInteger(
+    readyTimeoutMs: parseNonNegativeInteger(
       env.CODEX_CLAUDE_READY_TIMEOUT_MS,
       DEFAULT_TIMEOUT_MS
     ),
