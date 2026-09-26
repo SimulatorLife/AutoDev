@@ -13,9 +13,9 @@ export interface SubagentStartEnsurers {
 }
 
 const defaultEnsurers: SubagentStartEnsurers = {
-  claude: (input) => ensureClaudeBridge(input),
-  minimax: (input) => ensureMiniMaxProxy(input),
-  antigravity: (input) => ensureAntigravityProxy(input)
+  claude: ensureClaudeBridge,
+  minimax: ensureMiniMaxProxy,
+  antigravity: ensureAntigravityProxy
 };
 
 /**
