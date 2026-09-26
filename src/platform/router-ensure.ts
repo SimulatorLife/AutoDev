@@ -301,7 +301,7 @@ export function createDefaultRouterEnsureDeps(
       }
     },
     setExitHandler: defaultSetExitHandler,
-    ensureCopilot: () => ensureCopilotProxy()
+    ensureCopilot: ensureCopilotProxy
   };
 }
 
