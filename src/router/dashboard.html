@@ -2354,6 +2354,54 @@
           .replace(/'/g, "&#39;");
       }
 
+      // Normalize Claude telemetry labels only; source model keys stay intact.
+      function canonicalDashboardModelName(modelName) {
+        const model = String(modelName ?? "");
+        if (!/^claude-/i.test(model)) return model;
+        return model.toLowerCase().replace(/(?<=\d)\.(?=\d)/g, "-");
+      }
+
+      function groupDashboardModelUsage(entries) {
+        const groups = new Map();
+        const summedFields = ["attempts", "successes", "failures", "active"];
+
+        for (const [key, stats] of entries) {
+          const slashIdx = key.indexOf("/");
+          const provider = slashIdx >= 0 ? key.slice(0, slashIdx) : "default";
+          const sourceModel = slashIdx >= 0 ? key.slice(slashIdx + 1) : key;
+          const model = canonicalDashboardModelName(sourceModel);
+          const groupKey = `${provider}/${model}`;
+          let group = groups.get(groupKey);
+          if (!group) {
+            group = {
+              provider,
+              model,
+              entries: [],
+              stats: { attempts: 0, successes: 0, failures: 0, active: 0 }
+            };
+            groups.set(groupKey, group);
+          }
+
+          group.entries.push({ key, model: sourceModel, stats: stats ?? {} });
+          for (const field of summedFields) {
+            const value = Number(stats?.[field] ?? 0);
+            if (Number.isFinite(value)) group.stats[field] += value;
+          }
+        }
+        return [...groups.values()];
+      }
+
+      function aggregateDashboardModelCounts(counts) {
+        const aggregated = new Map();
+        for (const [modelName, count] of Object.entries(counts ?? {})) {
+          const model = canonicalDashboardModelName(modelName);
+          const value = Number(count);
+          if (Number.isFinite(value))
+            aggregated.set(model, (aggregated.get(model) ?? 0) + value);
+        }
+        return [...aggregated.entries()];
+      }
+
       function formatTimestamp(isoString) {
         if (!isoString) return "";
         const d = new Date(isoString);
@@ -3474,10 +3522,14 @@
               .map(([providerName, p]) => {
                 const configuredModels = Object.values(
                   p.configuredModels ?? {}
-                );
+                ).map(canonicalDashboardModelName);
                 const observedModels = Object.keys(status.usage?.byModel ?? {})
                   .filter((key) => key.startsWith(`${providerName}/`))
-                  .map((key) => key.slice(providerName.length + 1));
+                  .map((key) =>
+                    canonicalDashboardModelName(
+                      key.slice(providerName.length + 1)
+                    )
+                  );
                 const uniqueModels = [
                   ...new Set([...configuredModels, ...observedModels])
                 ];
@@ -3909,22 +3961,18 @@
                   : `<div class="empty-state">No roles observed</div>`;
 
                 // Build Models breakdown grouped by provider
-                const modelEntries = Object.entries(w.byModel ?? {});
+                const modelEntries = groupDashboardModelUsage(
+                  Object.entries(w.byModel ?? {})
+                );
                 const maxModelAttempts = Math.max(
-                  ...modelEntries.map(([, m]) => Number(m.attempts ?? 0)),
+                  ...modelEntries.map((m) => Number(m.stats.attempts ?? 0)),
                   1
                 );
                 const providerModelGroups = new Map();
-                for (const [mKey, m] of modelEntries) {
-                  const slashIdx = mKey.indexOf("/");
-                  const prov =
-                    slashIdx >= 0 ? mKey.slice(0, slashIdx) : "default";
-                  const model = slashIdx >= 0 ? mKey.slice(slashIdx + 1) : mKey;
-                  if (!providerModelGroups.has(prov))
-                    providerModelGroups.set(prov, []);
-                  providerModelGroups
-                    .get(prov)
-                    .push({ model, stats: m, key: mKey });
+                for (const modelGroup of modelEntries) {
+                  if (!providerModelGroups.has(modelGroup.provider))
+                    providerModelGroups.set(modelGroup.provider, []);
+                  providerModelGroups.get(modelGroup.provider).push(modelGroup);
                 }
 
                 const modelsHtml = providerModelGroups.size
@@ -3934,7 +3982,7 @@
               <div class="provider-block">
                 <div class="provider-name">${escapeHtml(prov)}</div>
                 ${models
-                  .map(({ model, stats, key }) => {
+                  .map(({ model, stats, entries }) => {
                     const mAttempts = Number(stats.attempts ?? 0);
                     const mSuccess = Number(stats.successes ?? 0);
                     const mFail = Number(stats.failures ?? 0);
@@ -3942,13 +3990,24 @@
                     const fill = ((mAttempts / maxModelAttempts) * 100).toFixed(
                       1
                     );
-                    const { count: modelMcpCount, servers: modelMcpServers } =
+                    const modelMcpDetails = entries.map((entry) =>
                       getModelMcpDetails(
-                        stats,
-                        key,
-                        model,
+                        entry.stats,
+                        entry.key,
+                        entry.model,
                         status.codexTelemetry
-                      );
+                      )
+                    );
+                    const modelMcpServers = [
+                      ...new Set(
+                        modelMcpDetails.flatMap((details) => details.servers)
+                      )
+                    ];
+                    const modelMcpCount = Math.max(
+                      modelMcpServers.length,
+                      ...modelMcpDetails.map((details) => details.count),
+                      0
+                    );
                     const mcpLabelSuffix =
                       modelMcpCount > 0 ? ` · ${modelMcpCount} MCP` : "";
                     const modelLabel = `${model}${mcpLabelSuffix}`;
@@ -4150,15 +4209,19 @@
                   </section>
                 `;
                   }
+                  const displayedEntries =
+                    title === "Models"
+                      ? aggregateDashboardModelCounts(dataObj)
+                      : entries;
                   const maxVal = Math.max(
-                    ...entries.map(([, v]) => Number(v)),
+                    ...displayedEntries.map(([, v]) => Number(v)),
                     1
                   );
                   return `
                 <section class="skill-breakdown-group">
                   <h3>${escapeHtml(title)}</h3>
                   <div class="skill-breakdown-list">
-                    ${entries
+                    ${displayedEntries
                       .map(([k, v]) => {
                         const num = Number(v);
                         const w = ((num / maxVal) * 100).toFixed(1);
@@ -4756,9 +4819,9 @@
                   : "";
                 const target =
                   e?.provider && e?.model
-                    ? `${escapeHtml(String(e.provider))}/${escapeHtml(String(e.model))}`
+                    ? `${escapeHtml(String(e.provider))}/${escapeHtml(canonicalDashboardModelName(e.model))}`
                     : e?.requestedModel
-                      ? `requested ${escapeHtml(String(e.requestedModel))}`
+                      ? `requested ${escapeHtml(canonicalDashboardModelName(e.requestedModel))}`
                       : "";
                 const outcome =
                   e?.outcome ??

@@ -29,6 +29,109 @@ test("metrics identify agent PRs and provider invocation comments", () => {
   );
 });
 
+test("dashboard collapses dotted Claude model aliases into canonical usage and count rows", async () => {
+  const dashboard = await readFile(dashboardFile, "utf8");
+  const canonicalMatch = dashboard.match(
+    /function canonicalDashboardModelName\([\s\S]*?\n {6}\}/
+  );
+  const groupMatch = dashboard.match(
+    /function groupDashboardModelUsage\([\s\S]*?\n {6}\}/
+  );
+  const countsMatch = dashboard.match(
+    /function aggregateDashboardModelCounts\([\s\S]*?\n {6}\}/
+  );
+  assert.ok(
+    canonicalMatch && groupMatch && countsMatch,
+    "dashboard model display helpers should be present"
+  );
+  assert.match(dashboard, /\.map\(canonicalDashboardModelName\)/);
+  assert.match(
+    dashboard,
+    /groupDashboardModelUsage\(\s*Object\.entries\(w\.byModel \?\? \{\}\)\s*\)/
+  );
+  assert.match(
+    dashboard,
+    /title === "Models"[\s\S]*?aggregateDashboardModelCounts\(dataObj\)/
+  );
+  const {
+    canonicalDashboardModelName,
+    groupDashboardModelUsage,
+    aggregateDashboardModelCounts
+  } = new Function(
+    `${canonicalMatch[0]}; ${groupMatch[0]}; ${countsMatch[0]}; return { canonicalDashboardModelName, groupDashboardModelUsage, aggregateDashboardModelCounts };`
+  )() as {
+    canonicalDashboardModelName: (model: unknown) => string;
+    groupDashboardModelUsage: (
+      entries: Array<[string, Record<string, unknown>]>
+    ) => Array<{
+      provider: string;
+      model: string;
+      entries: unknown[];
+      stats: Record<string, number>;
+    }>;
+    aggregateDashboardModelCounts: (
+      counts: Record<string, number>
+    ) => Array<[string, number]>;
+  };
+
+  assert.equal(
+    canonicalDashboardModelName("claude-opus-5.5"),
+    "claude-opus-5-5"
+  );
+  assert.equal(
+    canonicalDashboardModelName("gemini-3.8-flash-high"),
+    "gemini-3.8-flash-high",
+    "non-Claude provider model IDs retain their provider-specific punctuation"
+  );
+
+  const groups = groupDashboardModelUsage([
+    [
+      "claude/claude-opus-5.5",
+      {
+        attempts: 2,
+        successes: 1,
+        failures: 1,
+        active: 1
+      }
+    ],
+    [
+      "claude/claude-opus-5-5",
+      {
+        attempts: 3,
+        successes: 2,
+        failures: 1,
+        active: 0
+      }
+    ]
+  ]);
+  assert.equal(groups.length, 1);
+  const groupedModel = groups[0];
+  assert.ok(groupedModel);
+  assert.equal(groupedModel.provider, "claude");
+  assert.equal(groupedModel.model, "claude-opus-5-5");
+  assert.equal(groupedModel.entries.length, 2);
+  assert.equal(
+    (groupedModel.entries[0] as { key: string }).key,
+    "claude/claude-opus-5.5",
+    "normalizing dashboard labels must preserve the source model key"
+  );
+  assert.equal(groupedModel.stats.attempts, 5);
+  assert.equal(groupedModel.stats.successes, 3);
+  assert.equal(groupedModel.stats.failures, 2);
+  assert.equal(groupedModel.stats.active, 1);
+  assert.deepEqual(
+    aggregateDashboardModelCounts({
+      "claude-opus-5.5": 2,
+      "claude-opus-5-5": 3,
+      "gemini-3.8-flash-high": 4
+    }),
+    [
+      ["claude-opus-5-5", 5],
+      ["gemini-3.8-flash-high", 4]
+    ]
+  );
+});
+
 test("router dashboard exposes the component hierarchy and explicit workspace attribution states", async () => {
   const dashboard = (
     await readFile(

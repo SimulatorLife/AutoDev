@@ -44,6 +44,8 @@ standalone MCP panel.
 
 The dashboard header also provides a **Lookback** selector in the top-right corner. It supports **All** (the default), **Active sessions**, **Today**, **1 hour**, **2 hours**, **5 hours**, and **12 hours**. `Today` means the current calendar day in `EST5EDT` / `America/New_York`, including the correct daylight-saving offset. **Active sessions** is not a time window: it scopes activity metrics and event rows to the router's canonical live agent threads, including agents waiting on a tool, user input, or a subagent.
 
+Dashboard model labels use canonical hyphen-separated Claude model IDs. Dotted numeric Claude version spellings found in telemetry are normalized for display and merged with matching usage/count rows; this is presentation-only and does not rewrite routing or telemetry identities.
+
 The top-level **Spawns** and **Tool calls** KPI cards use Chart.js pie charts with the dashboard's existing success/fail/skipped colors. Their legends display the source counts and update with each `/status` refresh. The router serves Chart.js locally at `/assets/chart.umd.min.js` from the package asset materialized into the runtime; the dashboard does not fetch chart code from a CDN. Tool-call **Skipped** is the explicit `byStatus.skipped` count (zero when the source does not report it); the separate tool-unavailable counter is not relabeled as a skipped call.
 
 Selecting anything other than **All** makes the dashboard send `?lookback=<selection>` to `/status`. The router rebuilds activity-derived counters from the bounded, per-occurrence histories it retains:
