@@ -10,6 +10,7 @@ import ts from "typescript";
 import * as metrics from "../src/telemetry/github-metrics.ts";
 
 const root = path.resolve(fileURLToPath(new URL("..", import.meta.url)));
+const dashboardFile = path.join(root, "src", "router", "dashboard.html");
 
 const agentPr = {
   title: "Agent: Reduce duplication",
@@ -31,7 +32,7 @@ test("metrics identify agent PRs and provider invocation comments", () => {
 test("router dashboard exposes the component hierarchy and explicit workspace attribution states", async () => {
   const dashboard = (
     await readFile(
-      path.join(root, "scripts", "codex-model-router-dashboard.html"),
+      dashboardFile,
       "utf8"
     )
   )
@@ -156,7 +157,7 @@ test("router dashboard exposes the component hierarchy and explicit workspace at
 
 test("router dashboard exposes the top-right EST5EDT lookback control and live filtering", async () => {
   const rawDashboard = await readFile(
-    path.join(root, "scripts", "codex-model-router-dashboard.html"),
+    dashboardFile,
     "utf8"
   );
   assert.match(rawDashboard, /class="lookback-control"/);
@@ -189,7 +190,7 @@ test("router dashboard exposes the top-right EST5EDT lookback control and live f
 
 test("router dashboard inline JavaScript has no unresolved identifiers", async () => {
   const rawDashboard = await readFile(
-    path.join(root, "scripts", "codex-model-router-dashboard.html"),
+    dashboardFile,
     "utf8"
   );
   const source = Array.from(
@@ -228,7 +229,7 @@ test("router dashboard inline JavaScript has no unresolved identifiers", async (
 
 test("router dashboard provider health panel renders routing priorities, limits, disabled state, and toggle controls", async () => {
   const rawDashboard = await readFile(
-    path.join(root, "scripts", "codex-model-router-dashboard.html"),
+    dashboardFile,
     "utf8"
   );
   assert.match(
@@ -336,7 +337,7 @@ test("router dashboard provider health panel renders routing priorities, limits,
 
 test("dashboard provider health excludes synthetic and unattributed provider rows", async () => {
   const rawDashboard = await readFile(
-    path.join(root, "scripts", "codex-model-router-dashboard.html"),
+    dashboardFile,
     "utf8"
   );
   assert.match(
@@ -353,7 +354,7 @@ test("dashboard provider health excludes synthetic and unattributed provider row
 
 test("router dashboard and status CLI contract separates live agent activity from in-flight requests and documents lifecycle TTL", async () => {
   const rawDashboard = await readFile(
-    path.join(root, "scripts", "codex-model-router-dashboard.html"),
+    dashboardFile,
     "utf8"
   );
   assert.match(rawDashboard, /function getProviderLiveActivity\(/);
@@ -487,7 +488,7 @@ test("metrics workflow publishes an issue dashboard and artifact", async () => {
 
 test("router dashboard workspace table derives Tool calls from byTool normalization and handles unavailable states", async () => {
   const rawDashboard = await readFile(
-    path.join(root, "scripts", "codex-model-router-dashboard.html"),
+    dashboardFile,
     "utf8"
   );
   assert.doesNotMatch(rawDashboard, /OTLP-named runtime tool rows/);
@@ -549,7 +550,7 @@ test("router dashboard workspace table derives Tool calls from byTool normalizat
 
 test("router dashboard combines skill usage and exposure into one Skills section showing uses / exposed while keeping semantics distinct", async () => {
   const rawDashboard = await readFile(
-    path.join(root, "scripts", "codex-model-router-dashboard.html"),
+    dashboardFile,
     "utf8"
   );
   assert.match(rawDashboard, /<th>Skill uses \/ exposed<\/th>/);
@@ -718,7 +719,7 @@ test("router dashboard combines skill usage and exposure into one Skills section
 
 test("router dashboard documents shell cat-style SKILL.md reads as ordinary skill uses", async () => {
   const dashboard = await readFile(
-    path.join(root, "scripts", "codex-model-router-dashboard.html"),
+    dashboardFile,
     "utf8"
   );
   assert.match(
@@ -747,7 +748,7 @@ test("router dashboard documents shell cat-style SKILL.md reads as ordinary skil
 
 test("router dashboard falls back to bridgeTools when OTLP named-tool rows are unavailable or empty, without double-counting", async () => {
   const rawDashboard = await readFile(
-    path.join(root, "scripts", "codex-model-router-dashboard.html"),
+    dashboardFile,
     "utf8"
   );
   assert.match(
@@ -836,7 +837,7 @@ test("router dashboard falls back to bridgeTools when OTLP named-tool rows are u
 
 test("dashboard hides totals rows for sections with 0 or 1 populated row and shows the five supported footers for 2+ via the shared shouldRenderTotals helper", async () => {
   const rawDashboard = await readFile(
-    path.join(root, "scripts", "codex-model-router-dashboard.html"),
+    dashboardFile,
     "utf8"
   );
   const match = rawDashboard.match(
@@ -923,7 +924,7 @@ test("dashboard hides totals rows for sections with 0 or 1 populated row and sho
 
 test("dashboard counts active workspaces from live activity states and excludes unattributed slots", async () => {
   const dashboard = await readFile(
-    path.join(root, "scripts", "codex-model-router-dashboard.html"),
+    dashboardFile,
     "utf8"
   );
   const match = dashboard.match(
@@ -970,7 +971,7 @@ test("dashboard counts active workspaces from live activity states and excludes 
 
 test("dashboard KPI agent total uses the canonical live-agent count and never maxes it against unrelated counters", async () => {
   const dashboard = await readFile(
-    path.join(root, "scripts", "codex-model-router-dashboard.html"),
+    dashboardFile,
     "utf8"
   );
   const kpiSection = dashboard.match(
@@ -1046,7 +1047,7 @@ test("dashboard KPI agent total uses the canonical live-agent count and never ma
 
 test('dashboard keeps role-less ("unattributed") activity explicit instead of guessing a role', async () => {
   const dashboard = await readFile(
-    path.join(root, "scripts", "codex-model-router-dashboard.html"),
+    dashboardFile,
     "utf8"
   );
   const kpiSection = dashboard.match(
@@ -1112,7 +1113,7 @@ test('dashboard keeps role-less ("unattributed") activity explicit instead of gu
 
 test("dashboard provider active totals derive directly from the canonical per-provider active field, with no Math.max floor", async () => {
   const dashboard = await readFile(
-    path.join(root, "scripts", "codex-model-router-dashboard.html"),
+    dashboardFile,
     "utf8"
   );
   const activeReqSumMatch = dashboard.match(
@@ -1148,7 +1149,7 @@ test("dashboard provider active totals derive directly from the canonical per-pr
 
 test("dashboard workspace usage rows read the canonical per-workspace active field without a Math.max floor", async () => {
   const dashboard = await readFile(
-    path.join(root, "scripts", "codex-model-router-dashboard.html"),
+    dashboardFile,
     "utf8"
   );
   const activeDeclMatch = dashboard.match(
@@ -1181,7 +1182,7 @@ test("dashboard workspace usage rows read the canonical per-workspace active fie
 
 test("router dashboard renders workspace MCP servers with confirmed uses and exposure rows", async () => {
   const rawDashboard = await readFile(
-    path.join(root, "scripts", "codex-model-router-dashboard.html"),
+    dashboardFile,
     "utf8"
   );
   const escapeMatch = rawDashboard.match(
@@ -1266,7 +1267,7 @@ test("router dashboard renders workspace MCP servers with confirmed uses and exp
 
 test("model MCP dashboard details use defined theme tokens", async () => {
   const dashboard = await readFile(
-    path.join(root, "scripts", "codex-model-router-dashboard.html"),
+    dashboardFile,
     "utf8"
   );
   const rootStyles = dashboard.match(/:root\s*\{([^}]+)\}/)?.[1];

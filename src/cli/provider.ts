@@ -1,4 +1,4 @@
-import { ConfigError } from "../config/toml.ts";
+import { ConfigError } from "../config/config-files.ts";
 import { UnmigratedRuntimeError } from "./runtime.ts";
 
 export type ProviderName = "claude" | "minimax" | "copilot" | "antigravity";

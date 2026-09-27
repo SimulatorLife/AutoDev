@@ -1,11 +1,12 @@
 #!/usr/bin/env node
 
 import {
-  parseRouterStatus,
   type RouterProviderStatus,
+  type RouterStatus,
   serializeRouterStatus
 } from "../router/status.ts";
 import { writeErrorLine, writeLine } from "../shared/output.ts";
+import { fetchRouterStatus } from "./router-status-client.ts";
 
 type JsonRecord = Record<string, unknown>;
 
@@ -36,18 +37,11 @@ const writeUsageSection = (
     );
   }
 };
-const host = process.env.CODEX_MODEL_ROUTER_HOST ?? "127.0.0.1";
-const port = process.env.CODEX_MODEL_ROUTER_PORT ?? "4100";
-const endpoint = `http://${host}:${port}/status`;
-const response = await fetch(endpoint);
-const body = parseRouterStatus(await response.json());
-if (!response.ok) {
-  const errorMessage = asRecord(body.error).message;
-  writeErrorLine(
-    errorMessage == null
-      ? `Router status request failed with HTTP ${response.status}`
-      : String(errorMessage)
-  );
+let body: RouterStatus;
+try {
+  body = await fetchRouterStatus();
+} catch (error) {
+  writeErrorLine(error instanceof Error ? error.message : String(error));
   process.exit(1);
 }
 

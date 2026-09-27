@@ -567,8 +567,10 @@ superuser/raw-disk commands, and catastrophic root/home recursive deletion.
   The dashboard shows only the router's own state; it does not query the Codex
   app-server. A `thread/list` snapshot was surfaced here once and was removed
   because nothing in routing, concurrency, or fallback read it and it cold-spawned
-  an app-server process on every refresh. Inspect the same state with
-  `node src/cli/router-status.ts` (use `--json` for automation).
+  an app-server process on every refresh. Inspect the raw status through the
+  typed entrypoint with `pnpm autodev -- router status`; use
+  `node src/cli/router-status.ts` for the detailed report (or add `--json` for
+  machine-readable output).
   It reports observed session-limit, throttling, quota, capacity, timeout, and
   availability failures; it cannot query an upstream provider's private quota
   dashboard. Antigravity CLI turns allow up to 15 minutes by default (override

@@ -8,13 +8,13 @@ import test from "node:test";
 import { parse } from "smol-toml";
 
 import { compose, loadPortable } from "../../src/config/compose-user-config.ts";
-import { renderBridgeMcpCatalogue } from "../../src/config/render-bridge-mcp-catalogue.ts";
-import { validateProviderContracts } from "../../src/config/render-execution-contract.ts";
 import {
   atomicWrite,
   serializeToml,
   type TomlTable
-} from "../../src/config/toml.ts";
+} from "../../src/config/config-files.ts";
+import { renderBridgeMcpCatalogue } from "../../src/config/render-bridge-mcp-catalogue.ts";
+import { validateProviderContracts } from "../../src/config/render-execution-contract.ts";
 
 test("TOML serialization is parseable and ends with one newline", () => {
   const input: TomlTable = { z: "last", a: true, nested: { value: 2 } };

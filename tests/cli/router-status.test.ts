@@ -58,7 +58,8 @@ const statusPayload: RouterStatus = {
 
 async function runStatusCli(
   payload: RouterStatus,
-  args: string[] = []
+  args: string[] = [],
+  entrypoint = "src/cli/router-status.ts"
 ): Promise<{ stdout: string; stderr: string }> {
   const server = createServer((_request, response) => {
     response.writeHead(200, { "content-type": "application/json" });
@@ -77,19 +78,15 @@ async function runStatusCli(
   try {
     return await new Promise<{ stdout: string; stderr: string }>(
       (resolve, reject) => {
-        const child = spawn(
-          process.execPath,
-          ["src/cli/router-status.ts", ...args],
-          {
-            cwd: REPO_ROOT,
-            env: {
-              ...process.env,
-              CODEX_MODEL_ROUTER_HOST: "127.0.0.1",
-              CODEX_MODEL_ROUTER_PORT: String(address.port)
-            },
-            stdio: ["ignore", "pipe", "pipe"]
-          }
-        );
+        const child = spawn(process.execPath, [entrypoint, ...args], {
+          cwd: REPO_ROOT,
+          env: {
+            ...process.env,
+            CODEX_MODEL_ROUTER_HOST: "127.0.0.1",
+            CODEX_MODEL_ROUTER_PORT: String(address.port)
+          },
+          stdio: ["ignore", "pipe", "pipe"]
+        });
         let stdout = "";
         let stderr = "";
         child.stdout.on("data", (chunk: Buffer) => {
@@ -157,4 +154,13 @@ test("router status retains headings for empty usage buckets", async () => {
     "Usage by role:",
     "Usage by resolved model:"
   ]);
+});
+
+test("autodev router status uses the default backend against the configured router", async () => {
+  const { stdout } = await runStatusCli(
+    statusPayload,
+    ["router", "status"],
+    "src/cli/autodev.ts"
+  );
+  assert.deepEqual(JSON.parse(stdout), statusPayload);
 });

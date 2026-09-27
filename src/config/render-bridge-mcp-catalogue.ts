@@ -1,14 +1,13 @@
 import { existsSync, lstatSync, readFileSync } from "node:fs";
 
 import { writeErrorLine, writeLine } from "../shared/output.ts";
+import { parseArgs, requiredArg } from "./cli-args.ts";
 import {
   atomicWrite,
   ConfigError,
-  parseArgs,
   parseTomlFile,
-  requiredArg,
   type TomlTable
-} from "./toml.ts";
+} from "./config-files.ts";
 
 const LAUNCH_KEYS = ["command", "args", "url"] as const;
 

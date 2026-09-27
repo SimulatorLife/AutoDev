@@ -4,13 +4,12 @@ import path from "node:path";
 import { parse as parseToml } from "smol-toml";
 
 import { writeErrorLine, writeLine } from "../shared/output.ts";
+import { parseArgs, requiredArg } from "./cli-args.ts";
 import {
   atomicWriteJson,
   ConfigError,
-  parseArgs,
-  readJsonFile,
-  requiredArg
-} from "./toml.ts";
+  readJsonFile
+} from "./config-files.ts";
 
 const MCP_ORDER: Record<string, number> = {
   lsp: 0,

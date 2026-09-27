@@ -1,4 +1,4 @@
-import { ConfigError } from "../config/toml.ts";
+import { ConfigError } from "../config/config-files.ts";
 
 /** Raised when a CLI boundary exists but its runtime implementation is not migrated yet. */
 export class UnmigratedRuntimeError extends ConfigError {

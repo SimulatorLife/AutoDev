@@ -180,10 +180,11 @@ events and exposes them in `/status` and the local dashboard, including turn
 timing, token counts, MCP server lifecycle observations,
 initialization/tool-discovery latency, and recent failures.
 
-The installed router and dashboard hooks under `$CODEX_HOME/hooks/` are runtime
-copies, not symlinks. After changing the tracked implementation, run the
-installer before checking live telemetry: it synchronizes those copies and
-restarts every service, so nothing is left running the code it replaced.
+The installed router and dashboard source under `$CODEX_HOME/src/router/` and
+hook scripts under `$CODEX_HOME/hooks/` are runtime copies, not symlinks. After
+changing the tracked implementation, run the installer before checking live
+telemetry: it synchronizes those copies and restarts every service, so nothing
+is left running the code it replaced.
 
 ```bash
 bash scripts/install.sh

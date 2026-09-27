@@ -35,8 +35,9 @@ import {
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const DASHBOARD_PATH = join(
   REPO_ROOT,
-  "scripts",
-  "codex-model-router-dashboard.html"
+  "src",
+  "router",
+  "dashboard.html"
 );
 
 interface DashboardSkillHelpers {

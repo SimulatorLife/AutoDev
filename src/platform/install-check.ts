@@ -32,13 +32,14 @@ import {
   CATALOGS,
   checkHookTrust,
   COMMANDS,
-  DASHBOARD,
   HOOKS,
   LAUNCH_LABELS,
   MCP_LAUNCHERS,
   OBSOLETE_CLAUDE_SKILL_VIEWS,
+  OBSOLETE_DASHBOARD,
   OBSOLETE_DIRS,
   OBSOLETE_HOOKS,
+  OBSOLETE_PATHS,
   OTEL_RUNTIME,
   PROFILES,
   PROMPT_ROLES,
@@ -131,15 +132,11 @@ function staleCheck(
       "LaunchAgents",
       "com.codex.antigravity-litellm.plist"
     ),
-    path.join(options.home, ".config", "litellm", "antigravity.yaml"),
-    path.join(
-      options.home,
-      ".codex",
-      "codex-antigravity-litellm-config.sha256"
-    ),
+    ...OBSOLETE_PATHS.map((filePath) => path.join(options.home, filePath)),
     path.join(hooks, "codex", "lib", "codex-spawn-tools.mjs"),
     path.join(hooks, "codex", "lib", "codex-state-collector.mjs"),
     path.join(hooks, "codex", "lib", "spawn-shim-mcp.mjs"),
+    path.join(hooks, OBSOLETE_DASHBOARD),
     ...OBSOLETE_HOOKS.map((name) => path.join(hooks, name)),
     ...OBSOLETE_DIRS.map((name) => path.join(hooks, name)),
     path.join(options.codexHome, OBSOLETE_CLAUDE_SKILL_VIEWS)
@@ -451,15 +448,6 @@ function checkScripts(
   for (const name of HOOKS)
     check(
       `hook ${name}`,
-      runtimeFileMatches(
-        path.join(paths.repositoryRoot, `scripts/${name}`),
-        path.join(paths.hooks, name)
-      ),
-      failures
-    );
-  for (const name of DASHBOARD)
-    check(
-      `dashboard ${name}`,
       runtimeFileMatches(
         path.join(paths.repositoryRoot, `scripts/${name}`),
         path.join(paths.hooks, name)

@@ -45,6 +45,10 @@ test("runtime targets preserve relative depth for scripts and source files", () 
     runtimeTarget("src/platform/runtime-files.ts", "/runtime"),
     "/runtime/src/platform/runtime-files.ts"
   );
+  assert.equal(
+    runtimeTarget("src/router/dashboard.html", "/runtime"),
+    "/runtime/src/router/dashboard.html"
+  );
 });
 
 test("materialization atomically replaces symlinks and applies the requested mode", () =>

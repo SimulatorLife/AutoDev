@@ -1,16 +1,15 @@
 import { existsSync, lstatSync, readFileSync } from "node:fs";
 
 import { writeErrorLine, writeLine } from "../shared/output.ts";
+import { parseArgs, requiredArg } from "./cli-args.ts";
 import {
   atomicWrite,
   ConfigError,
-  parseArgs,
   parseTomlFile,
-  requiredArg,
   serializeToml,
   type TomlTable,
   type TomlValue
-} from "./toml.ts";
+} from "./config-files.ts";
 
 function table(value: TomlValue | undefined): TomlTable {
   return value &&

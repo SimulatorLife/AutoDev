@@ -3,25 +3,16 @@
 import { createServer, type Server } from "node:http";
 import { pathToFileURL } from "node:url";
 
+import { getDefaultMcpProcessRegistry } from "../mcp/process-registry.ts";
 import { writeErrorLine } from "../shared/output.ts";
 import { codexState, handle, HOST, PORT, refreshCodexState } from "./http.ts";
 import { beginShutdown } from "./lifecycle.ts";
 import { loadRouterState, persistRouterStateNow } from "./persistence.ts";
 import {
-  getDefaultMcpProcessRegistry
-} from "../mcp/process-registry.ts";
-import {
   isClientDisconnectError,
   ROUTER_INSTANCE_ID,
   transportErrorInfo
 } from "./proxy.ts";
-
-// Start the MCP server registry sweeper as soon as the router loads. The
-// 5-minute interval and 30-minute idle threshold match the registry defaults
-// and are intended to retire Codex Desktop MCP servers whose owning session
-// has been silent for too long, closing the orphan-leak gap reported in the
-// audit.
-getDefaultMcpProcessRegistry().startIdleSweeper();
 
 const IS_MAIN = Boolean(
   process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href
@@ -66,32 +57,83 @@ export function handleFatalProcessError(phase: string, reason: unknown): void {
 
 export function startRouterServer(port = PORT, host = HOST): Server {
   loadRouterState();
-  process.on("uncaughtException", (error) =>
-    handleFatalProcessError("uncaught_exception", error)
-  );
-  process.on("unhandledRejection", (reason) =>
-    handleFatalProcessError("unhandled_rejection", reason)
-  );
-  void refreshCodexState();
-  if (!codexState.livePollStarted) {
-    codexState.collector.startLivePoll();
-    codexState.livePollStarted = true;
-  }
+  const registry = getDefaultMcpProcessRegistry();
   const server = createServer((request, response) => {
     void handle(request, response);
   });
-  // Exit once the shutdown finishes; the SIGTERM handler replaces Node's
-  // default exit, so without this the process outlives its launchd job.
+  let sweeperStarted = false;
+  let livePollStarted = false;
+  let cleanedUp = false;
+
   const sigtermHandler = (signal: string) => {
-    void beginShutdown(signal, server, persistRouterStateNow).then(() =>
-      process.exit(0)
-    );
+    void beginShutdown(signal, server, persistRouterStateNow).then(() => {
+      cleanup();
+      process.exit(0);
+    });
   };
-  process.on("SIGINT", () => sigtermHandler("SIGINT"));
-  process.on("SIGTERM", () => sigtermHandler("SIGTERM"));
-  server.listen(port, host, () => {
-    writeErrorLine(`Codex model router listening at http://${host}:${port}`);
-  });
+  const onSigint = () => sigtermHandler("SIGINT");
+  const onSigterm = () => sigtermHandler("SIGTERM");
+  const onUncaughtException = (error: Error) => {
+    // Client disconnects are intentionally ignored; keep the live server resources.
+    if (isClientDisconnectError(error)) {
+      handleFatalProcessError("uncaught_exception", error);
+      return;
+    }
+    cleanup();
+    handleFatalProcessError("uncaught_exception", error);
+  };
+  const onUnhandledRejection = (reason: unknown) => {
+    cleanup();
+    handleFatalProcessError("unhandled_rejection", reason);
+  };
+  const cleanup = () => {
+    if (cleanedUp) return;
+    cleanedUp = true;
+    if (sweeperStarted) registry.stopIdleSweeper();
+    if (livePollStarted) {
+      codexState.collector.stopLivePoll();
+      codexState.livePollStarted = false;
+    }
+    process.off("uncaughtException", onUncaughtException);
+    process.off("unhandledRejection", onUnhandledRejection);
+    process.off("SIGINT", onSigint);
+    process.off("SIGTERM", onSigterm);
+    server.off("close", cleanup);
+  };
+
+  server.once("close", cleanup);
+  process.on("uncaughtException", onUncaughtException);
+  process.on("unhandledRejection", onUnhandledRejection);
+  process.on("SIGINT", onSigint);
+  process.on("SIGTERM", onSigterm);
+  try {
+    server.listen(port, host, () => {
+      if (cleanedUp) return;
+      try {
+        // Background work belongs to the active listener, not to module import.
+        // Starting it only after listen succeeds avoids orphan timers on bind
+        // failure; close and startup-failure teardown release it with the server.
+        sweeperStarted = true;
+        registry.startIdleSweeper();
+        if (!codexState.livePollStarted) {
+          livePollStarted = true;
+          codexState.livePollStarted = true;
+          codexState.collector.startLivePoll();
+        }
+        void refreshCodexState();
+        writeErrorLine(
+          `Codex model router listening at http://${host}:${port}`
+        );
+      } catch (error) {
+        cleanup();
+        server.close();
+        handleFatalProcessError("router_startup_error", error);
+      }
+    });
+  } catch (error) {
+    cleanup();
+    throw error;
+  }
   return server;
 }
 

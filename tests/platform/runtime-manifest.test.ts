@@ -5,6 +5,7 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 
 import {
+  OBSOLETE_DASHBOARD,
   OTEL_RUNTIME,
   RUNTIME_MODULES
 } from "../../src/platform/install-materializer.ts";
@@ -59,4 +60,21 @@ test("runtime manifest is closed under relative imports", () => {
     [],
     `RUNTIME_MODULES is not self-contained; add these entries to src/platform/install-materializer.ts:\n${gaps.join("\n")}`
   );
+});
+
+test("config CLI parsing and config-file I/O have distinct runtime owners", () => {
+  assert.ok(RUNTIME_MODULES.includes("src/config/cli-args.ts"));
+  assert.ok(RUNTIME_MODULES.includes("src/config/config-files.ts"));
+  assert.equal(existsSync(join(repositoryRoot, "src/config/toml.ts")), false);
+});
+
+test("router dashboard ships beside the router and removes its former hooks copy", () => {
+  assert.ok(RUNTIME_MODULES.includes("src/router/dashboard.html"));
+  assert.equal(
+    existsSync(
+      join(repositoryRoot, "scripts/codex-model-router-dashboard.html")
+    ),
+    false
+  );
+  assert.equal(OBSOLETE_DASHBOARD, "codex-model-router-dashboard.html");
 });

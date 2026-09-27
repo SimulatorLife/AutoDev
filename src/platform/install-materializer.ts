@@ -15,16 +15,16 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { runCompose } from "../config/compose-user-config.ts";
-import { renderAgentDirectory } from "../config/render-agent-configs.ts";
-import { runBridgeMcpCatalogue } from "../config/render-bridge-mcp-catalogue.ts";
-import { runExecutionContract } from "../config/render-execution-contract.ts";
-import { runModelCatalog } from "../config/render-model-catalog.ts";
 import {
   atomicWrite,
   parseTomlFile,
   serializeToml,
   type TomlTable
-} from "../config/toml.ts";
+} from "../config/config-files.ts";
+import { renderAgentDirectory } from "../config/render-agent-configs.ts";
+import { runBridgeMcpCatalogue } from "../config/render-bridge-mcp-catalogue.ts";
+import { runExecutionContract } from "../config/render-execution-contract.ts";
+import { runModelCatalog } from "../config/render-model-catalog.ts";
 import { writeErrorLine, writeLine } from "../shared/output.ts";
 import {
   updateAntigravityPermissions,
@@ -70,6 +70,7 @@ export const RUNTIME_MODULES = [
   "src/router/proxy.ts",
   "src/router/live-feed.ts",
   "src/router/http.ts",
+  "src/router/dashboard.html",
   "src/router/server.ts",
   "src/agents/bridge-spawn-session.ts",
   "src/providers/minimax.ts",
@@ -86,7 +87,9 @@ export const RUNTIME_MODULES = [
   "src/shared/execution-contract.ts",
   "src/router/status.ts",
   "src/cli/router-status.ts",
-  "src/config/toml.ts",
+  "src/cli/router-status-client.ts",
+  "src/config/cli-args.ts",
+  "src/config/config-files.ts",
   "src/config/compose-user-config.ts",
   "src/config/render-agent-configs.ts",
   "src/config/render-bridge-mcp-catalogue.ts",
@@ -145,7 +148,6 @@ export const HOOKS = [
   "run-codex-copilot-cli-responses-proxy.sh",
   "run-codex-model-router.sh"
 ] as const;
-export const DASHBOARD = ["codex-model-router-dashboard.html"] as const;
 export const MCP_LAUNCHERS = ["run-autodev-mcp.sh"] as const;
 export const PROFILES = ["claude", "minimax", "antigravity"] as const;
 export const CATALOGS = ["claude", "minimax", "antigravity", "codex"] as const;
@@ -272,6 +274,7 @@ export const OBSOLETE_PATHS = [
   ".config/litellm/antigravity.yaml",
   ".codex/codex-antigravity-litellm-config.sha256"
 ] as const;
+export const OBSOLETE_DASHBOARD = "codex-model-router-dashboard.html";
 export const OBSOLETE_HOOKS = [
   "codex-model-router.mjs",
   "log-subagent-model.sh",
@@ -785,6 +788,7 @@ function removeObsoleteRuntimeArtifacts(
 ): void {
   const obsoletePaths = [
     ...OBSOLETE_PATHS.map((filePath) => path.join(home, filePath)),
+    path.join(hooks, OBSOLETE_DASHBOARD),
     path.join(hooks, "codex/lib/codex-spawn-tools.mjs"),
     path.join(hooks, "codex/lib/codex-state-collector.mjs"),
     path.join(hooks, "codex/lib/spawn-shim-mcp.mjs")
@@ -833,12 +837,6 @@ function materializeScripts(hooks: string, source: FileTarget): void {
       0o755
     );
   }
-  for (const name of DASHBOARD)
-    materializeRuntimeFile(
-      source(`scripts/${name}`),
-      path.join(hooks, name),
-      0o644
-    );
   for (const name of MCP_LAUNCHERS)
     linkRuntimeSource(source(`scripts/${name}`), path.join(hooks, name));
 }

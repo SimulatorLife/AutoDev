@@ -71,7 +71,7 @@ const contract: ContractFixture = JSON.parse(
 const ROOT = new URL("..", import.meta.url);
 const FIXED_NOW = Date.parse(contract.fixedNow);
 const dashboardPath = new URL(
-  "../scripts/codex-model-router-dashboard.html",
+  "../src/router/dashboard.html",
   import.meta.url
 );
 

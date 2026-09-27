@@ -10,7 +10,7 @@ import { homedir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { parseTomlFile, type TomlValue } from "../config/toml.ts";
+import { parseTomlFile, type TomlValue } from "../config/config-files.ts";
 import {
   createDefaultRouterEnsureDeps,
   resolveRouterEnsureOptions,

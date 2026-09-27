@@ -1,7 +1,8 @@
-import { ConfigError } from "../config/toml.ts";
+import { ConfigError } from "../config/config-files.ts";
 import { startRouterServer } from "../router/server.ts";
 import type { RouterStatus } from "../router/status.ts";
 import { writeLine } from "../shared/output.ts";
+import { fetchRouterStatus } from "./router-status-client.ts";
 import { UnmigratedRuntimeError } from "./runtime.ts";
 
 export type RouterCommand = "run" | "ensure" | "status";
@@ -9,7 +10,7 @@ export type RouterCommand = "run" | "ensure" | "status";
 export interface RouterCommandBackend {
   run(): number;
   ensure(): number;
-  status(): RouterStatus;
+  status(): RouterStatus | Promise<RouterStatus>;
 }
 
 const defaultRouterBackend: RouterCommandBackend = {
@@ -20,15 +21,13 @@ const defaultRouterBackend: RouterCommandBackend = {
   ensure: () => {
     throw new UnmigratedRuntimeError("router ensure");
   },
-  status: () => {
-    throw new UnmigratedRuntimeError("router status");
-  }
+  status: fetchRouterStatus
 };
 
 export function dispatchRouterCommand(
   command: string,
   backend: RouterCommandBackend = defaultRouterBackend
-): number {
+): number | Promise<number> {
   if (command !== "run" && command !== "ensure" && command !== "status") {
     throw new ConfigError(
       `unsupported router command: ${command || "(missing)"}`
@@ -36,7 +35,8 @@ export function dispatchRouterCommand(
   }
   if (command === "run") return backend.run();
   if (command === "ensure") return backend.ensure();
-  const status = backend.status();
-  writeLine(JSON.stringify(status, null, 2));
-  return 0;
+  return Promise.resolve(backend.status()).then((status) => {
+    writeLine(JSON.stringify(status, null, 2));
+    return 0;
+  });
 }

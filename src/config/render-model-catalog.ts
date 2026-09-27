@@ -2,13 +2,12 @@ import { existsSync, lstatSync, readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 
 import { writeErrorLine, writeLine } from "../shared/output.ts";
+import { parseArgs, requiredArg } from "./cli-args.ts";
 import {
   atomicWrite,
   ConfigError,
-  parseArgs,
-  readJsonFile,
-  requiredArg
-} from "./toml.ts";
+  readJsonFile
+} from "./config-files.ts";
 
 export interface CatalogModelEntry {
   slug: string;

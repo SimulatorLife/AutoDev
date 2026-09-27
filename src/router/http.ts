@@ -174,17 +174,7 @@ const CODEX_HOME =
 const CATALOG_FILE =
   process.env.CODEX_ROUTER_CATALOG_FILE ??
   `${CODEX_HOME}/codex-model-catalog.json`;
-const dashboardSource = new URL(
-  "../../scripts/codex-model-router-dashboard.html",
-  import.meta.url
-);
-const dashboardInstalled = new URL(
-  "../../hooks/codex-model-router-dashboard.html",
-  import.meta.url
-);
-const DASHBOARD_FILE = existsSync(dashboardSource)
-  ? dashboardSource
-  : dashboardInstalled;
+const DASHBOARD_FILE = new URL("dashboard.html", import.meta.url);
 const ROUTER_STARTED_AT = new Date().toISOString();
 const SHUTDOWN_DRAIN_TIMEOUT_MS = Number.parseInt(
   process.env.CODEX_ROUTER_SHUTDOWN_DRAIN_MS ?? "30000"

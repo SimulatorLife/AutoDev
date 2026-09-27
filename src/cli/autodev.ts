@@ -3,6 +3,8 @@ import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { parseArgs, requiredArg } from "../config/cli-args.ts";
+import { ConfigError } from "../config/config-files.ts";
 import { renderAgentDirectory } from "../config/render-agent-configs.ts";
 import { runBridgeMcpCatalogue } from "../config/render-bridge-mcp-catalogue.ts";
 import {
@@ -10,7 +12,6 @@ import {
   runExecutionContract
 } from "../config/render-execution-contract.ts";
 import { runModelCatalog } from "../config/render-model-catalog.ts";
-import { ConfigError, parseArgs, requiredArg } from "../config/toml.ts";
 import { writeErrorLine, writeLine } from "../shared/output.ts";
 import { dispatchHookCommand, type HookCommandBackend } from "./hook.ts";
 import {
@@ -152,7 +153,7 @@ function renderCommand(kind: string, argv: string[]): number {
 
 function usage(): void {
   writeLine(
-    `Usage: node src/cli/autodev.ts <command> [subcommand] [options]\n\nCommands:\n  check\n  render agents|contract|mcp|catalog\n  router run|ensure|status\n  provider <name>\n  hook <name>\n  repo bootstrap\n  install\n`
+    `Usage: pnpm autodev -- <command> [subcommand] [options]\n\nCommands:\n  check\n  render agents|contract|mcp|catalog\n  router run|ensure|status\n  provider <name>\n  hook <name>\n  repo bootstrap\n  install\n`
   );
 }
 
@@ -167,7 +168,7 @@ export interface CliBackends {
 export function runMain(
   argv: string[] = process.argv.slice(2),
   backends: CliBackends = {}
-): number {
+): number | Promise<number> {
   // pnpm forwards its argument separator to the script; it is not a command.
   const [command, subcommand, ...rest] =
     argv[0] === "--" ? argv.slice(1) : argv;
@@ -213,7 +214,7 @@ export function runMain(
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   try {
-    process.exitCode = runMain();
+    process.exitCode = await runMain();
   } catch (error) {
     writeErrorLine(
       `autodev: ${error instanceof Error ? error.message : error}`

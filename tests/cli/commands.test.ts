@@ -4,9 +4,9 @@ import test from "node:test";
 import { runMain } from "../../src/cli/autodev.ts";
 import { UnmigratedRuntimeError } from "../../src/cli/runtime.ts";
 
-test("CLI dispatches router, provider, hook, and install through typed backends", () => {
+test("CLI dispatches router, provider, hook, and install through typed backends", async () => {
   const calls: string[] = [];
-  const result = runMain(["router", "run"], {
+  const result = await runMain(["router", "run"], {
     router: {
       run: () => {
         calls.push("router run");
@@ -23,7 +23,7 @@ test("CLI dispatches router, provider, hook, and install through typed backends"
   assert.deepEqual(calls, ["router run"]);
 
   assert.equal(
-    runMain(["provider", "claude"], {
+    await runMain(["provider", "claude"], {
       provider: {
         start: (name) => {
           calls.push(`provider ${name}`);
@@ -34,7 +34,7 @@ test("CLI dispatches router, provider, hook, and install through typed backends"
     13
   );
   assert.equal(
-    runMain(["hook", "skill-read"], {
+    await runMain(["hook", "skill-read"], {
       hook: {
         run: (name) => {
           calls.push(`hook ${name}`);
@@ -45,7 +45,7 @@ test("CLI dispatches router, provider, hook, and install through typed backends"
     14
   );
   assert.equal(
-    runMain(["install"], {
+    await runMain(["install"], {
       install: {
         install: () => {
           calls.push("install");
@@ -57,7 +57,7 @@ test("CLI dispatches router, provider, hook, and install through typed backends"
   );
   const installArgs: string[] = [];
   assert.equal(
-    runMain(["install", "--materialize-only"], {
+    await runMain(["install", "--materialize-only"], {
       install: {
         install: (args = []) => {
           installArgs.push(...args);
@@ -68,7 +68,7 @@ test("CLI dispatches router, provider, hook, and install through typed backends"
     16
   );
   assert.equal(
-    runMain(["repo", "bootstrap", "--check"], {
+    await runMain(["repo", "bootstrap", "--check"], {
       repo: {
         bootstrap: (args = []) => {
           calls.push(`repo bootstrap ${args.join(" ")}`);
@@ -88,7 +88,7 @@ test("CLI dispatches router, provider, hook, and install through typed backends"
   ]);
 });
 
-test("documented pnpm argument separator reaches the check command", () => {
+test("CLI help uses the documented pnpm entrypoint", async () => {
   const output: string[] = [];
   const originalWrite = process.stdout.write;
   process.stdout.write = ((chunk: string | Uint8Array) => {
@@ -96,7 +96,25 @@ test("documented pnpm argument separator reaches the check command", () => {
     return true;
   }) as typeof process.stdout.write;
   try {
-    assert.equal(runMain(["--", "check"]), 0);
+    assert.equal(await runMain(["--", "--help"]), 0);
+  } finally {
+    process.stdout.write = originalWrite;
+  }
+  assert.match(
+    output.join("\n"),
+    /^Usage: pnpm autodev -- <command> \[subcommand\] \[options\]/u
+  );
+});
+
+test("documented pnpm argument separator reaches the check command", async () => {
+  const output: string[] = [];
+  const originalWrite = process.stdout.write;
+  process.stdout.write = ((chunk: string | Uint8Array) => {
+    output.push(String(chunk).trimEnd());
+    return true;
+  }) as typeof process.stdout.write;
+  try {
+    assert.equal(await runMain(["--", "check"]), 0);
   } finally {
     process.stdout.write = originalWrite;
   }
@@ -105,13 +123,13 @@ test("documented pnpm argument separator reaches the check command", () => {
   ]);
 });
 
-test("runMain reads process arguments when argv is omitted", () => {
+test("runMain reads process arguments when argv is omitted", async () => {
   const originalArgv = process.argv;
   const calls: string[] = [];
   process.argv = [...originalArgv.slice(0, 2), "--", "provider", "claude"];
   try {
     assert.equal(
-      runMain(undefined, {
+      await runMain(undefined, {
         provider: {
           start: (name) => {
             calls.push(name);
@@ -127,7 +145,7 @@ test("runMain reads process arguments when argv is omitted", () => {
   assert.deepEqual(calls, ["claude"]);
 });
 
-test("router status uses its typed status result", () => {
+test("router status uses its typed status result", async () => {
   const output: string[] = [];
   const originalWrite = process.stdout.write;
   // Command output goes to stdout through src/shared/output.ts.
@@ -137,7 +155,7 @@ test("router status uses its typed status result", () => {
   }) as typeof process.stdout.write;
   try {
     assert.equal(
-      runMain(["router", "status"], {
+      await runMain(["router", "status"], {
         router: {
           run: () => 0,
           ensure: () => 0,
@@ -160,9 +178,8 @@ test("router status uses its typed status result", () => {
   });
 });
 
-test("unmigrated runtime backends fail clearly instead of invoking wrappers", () => {
+test("unmigrated provider and hook backends fail clearly instead of invoking wrappers", async () => {
   for (const args of [
-    ["router", "status"],
     ["provider", "claude"],
     ["hook", "skill-read"]
   ] as string[][]) {
@@ -177,7 +194,7 @@ test("unmigrated runtime backends fail clearly instead of invoking wrappers", ()
   }
 });
 
-test("typed command boundaries reject unknown names and extra arguments", () => {
+test("typed command boundaries reject unknown names and extra arguments", async () => {
   assert.throws(() => runMain(["provider", "unknown"]), /unsupported provider/);
   assert.throws(() => runMain(["hook", "unknown"]), /unsupported hook/);
   assert.throws(
@@ -185,7 +202,7 @@ test("typed command boundaries reject unknown names and extra arguments", () => 
     /unsupported router command/
   );
   assert.equal(
-    runMain(["install", "--check"], { install: { install: () => 17 } }),
+    await runMain(["install", "--check"], { install: { install: () => 17 } }),
     17
   );
 });

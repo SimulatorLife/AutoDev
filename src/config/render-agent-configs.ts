@@ -4,14 +4,13 @@ import path from "node:path";
 import { parse } from "smol-toml";
 
 import { writeErrorLine, writeLine } from "../shared/output.ts";
+import { parseArgs, requiredArg } from "./cli-args.ts";
 import {
   atomicWrite,
   ConfigError,
-  parseArgs,
   parseTomlFile,
-  requiredArg,
   type TomlTable
-} from "./toml.ts";
+} from "./config-files.ts";
 
 export const BASE_MARKER = "{{AUTODEV_BASE_PROMPT}}";
 export const LEAF_MARKER = "{{AUTODEV_LEAF_PROMPT}}";

@@ -2,7 +2,7 @@ import { execFileSync } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { ConfigError } from "../config/toml.ts";
+import { ConfigError } from "../config/config-files.ts";
 
 export interface RepoCommandBackend {
   bootstrap(args?: readonly string[]): number;

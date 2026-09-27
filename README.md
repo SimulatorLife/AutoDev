@@ -40,9 +40,10 @@ boundary is available as `pnpm autodev -- <command>` (or
 Node and checked with `pnpm run typecheck`. The target-aware runner
 intentionally retains an npm compatibility branch for organization repositories
 that have not migrated their own package manager; that branch is not used to
-validate AutoDev. Native Codex role MCP entries must use a complete stdio or
-streamable-HTTP transport shape; see [`docs/local-setup.md`](docs/local-setup.md)
-for the role and installer contract.
+validate AutoDev. Run `pnpm autodev -- --help` to list the typed CLI commands;
+the help output uses this canonical pnpm invocation. Native Codex role MCP
+entries must use a complete stdio or streamable-HTTP transport shape; see
+[`docs/local-setup.md`](docs/local-setup.md) for the role and installer contract.
 
 ## Configure target repositories
 
