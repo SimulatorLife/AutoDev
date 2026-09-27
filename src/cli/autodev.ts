@@ -172,7 +172,9 @@ export function main(
 }
 
 export function runMain(argv: string[], backends: CliBackends = {}): number {
-  const [command, subcommand, ...rest] = argv;
+  // pnpm forwards its argument separator to the script; it is not a command.
+  const [command, subcommand, ...rest] =
+    argv[0] === "--" ? argv.slice(1) : argv;
   if (!command || command === "--help" || command === "-h") {
     usage();
     return 0;

@@ -88,6 +88,23 @@ test("CLI dispatches router, provider, hook, and install through typed backends"
   ]);
 });
 
+test("documented pnpm argument separator reaches the check command", () => {
+  const output: string[] = [];
+  const originalWrite = process.stdout.write;
+  process.stdout.write = ((chunk: string | Uint8Array) => {
+    output.push(String(chunk).trimEnd());
+    return true;
+  }) as typeof process.stdout.write;
+  try {
+    assert.equal(runMain(["--", "check"]), 0);
+  } finally {
+    process.stdout.write = originalWrite;
+  }
+  assert.deepEqual(output, [
+    `AutoDev check passed on Node ${process.versions.node}`
+  ]);
+});
+
 test("router status uses its typed status result", () => {
   const output: string[] = [];
   const originalWrite = process.stdout.write;
