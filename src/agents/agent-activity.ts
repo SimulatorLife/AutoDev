@@ -814,9 +814,6 @@ export function createAgentActivityTracker({
     countByState,
     distinctTags,
     snapshot,
-    reset,
-    get size() {
-      return subjects.size;
-    }
+    reset
   };
 }
