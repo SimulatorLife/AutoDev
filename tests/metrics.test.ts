@@ -1263,3 +1263,39 @@ test("router dashboard renders workspace MCP servers with confirmed uses and exp
   assert.match(legacyHtml, /label="playwright"/);
   assert.match(legacyHtml, /value="1"/);
 });
+
+test("model MCP dashboard details use defined theme tokens", async () => {
+  const dashboard = await readFile(
+    path.join(root, "scripts", "codex-model-router-dashboard.html"),
+    "utf8"
+  );
+  const rootStyles = dashboard.match(/:root\s*\{([^}]+)\}/)?.[1];
+  const detailStyles = dashboard.match(
+    /\.model-mcp-details\s*\{([^}]+)\}/
+  )?.[1];
+  const codeStyles = dashboard.match(
+    /\.model-mcp-details code\s*\{([^}]+)\}/
+  )?.[1];
+  assert.ok(rootStyles, "dashboard root theme should be present");
+  assert.ok(detailStyles, "model MCP detail styles should be present");
+  assert.ok(codeStyles, "model MCP code chip styles should be present");
+
+  const rootTokens = new Set(
+    Array.from(rootStyles.matchAll(/(--[\w-]+)\s*:/g), ([, token]) => token)
+  );
+  const undefinedTokens = new Set<string>();
+  const styleRules: [string, string][] = [
+    [".model-mcp-details", detailStyles],
+    [".model-mcp-details code", codeStyles]
+  ];
+  for (const [selector, styles] of styleRules) {
+    for (const [, token] of styles.matchAll(/var\(\s*(--[\w-]+)\s*\)/g)) {
+      if (!rootTokens.has(token)) undefinedTokens.add(`${selector}: ${token}`);
+    }
+  }
+  assert.deepEqual(
+    [...undefinedTokens],
+    [],
+    "model detail styles must use root theme tokens"
+  );
+});
