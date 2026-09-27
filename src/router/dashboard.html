@@ -1354,10 +1354,48 @@
           font-variant-numeric: tabular-nums;
         }
 
+        .value:empty {
+          display: none;
+        }
+
         .detail {
           margin-top: var(--gap-xs);
           color: var(--subtle);
           font-size: var(--font-sm);
+        }
+
+        .detail .outcome-chart {
+          position: relative;
+          height: 150px;
+          width: 100%;
+        }
+
+        .detail .outcome-chart:empty {
+          display: none;
+        }
+
+        .detail .outcome-chart canvas {
+          display: block;
+          width: 100% !important;
+          height: 100% !important;
+        }
+
+        .detail .outcome-summary {
+          color: var(--muted);
+          font-size: var(--font-sm);
+          line-height: 1.4;
+        }
+
+        .detail .sr-only {
+          position: absolute;
+          width: 1px;
+          height: 1px;
+          padding: 0;
+          margin: -1px;
+          overflow: hidden;
+          clip: rect(0, 0, 0, 0);
+          white-space: nowrap;
+          border: 0;
         }
 
         ::slotted(.good) {
@@ -1376,6 +1414,7 @@
       <div class="value"></div>
       <div class="detail">
         <slot></slot>
+        <div class="outcome-chart"></div>
       </div>
     </template>
 
@@ -1820,6 +1859,7 @@
       </details>
     </template>
 
+    <script src="/assets/chart.umd.min.js"></script>
     <script>
       class TemplateElement extends HTMLElement {
         mount(templateId) {
@@ -3120,6 +3160,151 @@
         ).length;
       }
 
+      // The two outcome KPIs use Chart.js for their pies. Counts stay in the
+      // existing telemetry categories; the chart legend and hidden summary
+      // expose the same counts without duplicating a headline total.
+      function outcomeCount(value) {
+        const count = Number(value ?? 0);
+        return Number.isFinite(count) && count > 0 ? count : 0;
+      }
+
+      function computeKpiSpawnOutcomes(status) {
+        const totals = status?.usage?.totals ?? {};
+        return {
+          success: outcomeCount(totals.successes),
+          fail: outcomeCount(totals.failures),
+          skip: outcomeCount(totals.skipped)
+        };
+      }
+
+      function computeKpiToolOutcomes(status) {
+        // A skipped slice is included only when the existing tool byStatus
+        // telemetry reports it. The separate toolUnavailable counter is not
+        // folded into this pie because it has a different accounting source.
+        let success = 0;
+        let fail = 0;
+        let skip = 0;
+        const rows = Array.isArray(status?.codexTelemetry?.tools?.byTool)
+          ? status.codexTelemetry.tools.byTool
+          : [];
+        for (const row of rows) {
+          if (!row || typeof row !== "object") continue;
+          const byStatus = row.byStatus ?? {};
+          const errorCount = outcomeCount(
+            byStatus.error ?? byStatus.failure
+          );
+          const skipCount = outcomeCount(byStatus.skipped);
+          const explicitSuccess = byStatus.ok ?? byStatus.success;
+          success +=
+            explicitSuccess === undefined || explicitSuccess === null
+              ? row.count != null && errorCount === 0 && skipCount === 0
+                ? outcomeCount(row.count)
+                : 0
+              : outcomeCount(explicitSuccess);
+          fail += errorCount;
+          skip += skipCount;
+        }
+        return { success, fail, skip };
+      }
+
+      function formatOutcomeSummary(label, slices) {
+        const fmt = (value) => outcomeCount(value).toLocaleString();
+        return `${label} outcomes: Success ${fmt(slices.success)}, Fail ${fmt(slices.fail)}, Skipped ${fmt(slices.skip)}.`;
+      }
+
+      function readOutcomePalette() {
+        const styles = getComputedStyle(document.documentElement);
+        const pick = (token, fallback) => {
+          const value = styles.getPropertyValue(token).trim();
+          return value.length > 0 ? value : fallback;
+        };
+        return {
+          success: pick("--good", "#3fb950"),
+          fail: pick("--bad", "#f85149"),
+          skip: pick("--skip", "#d29922"),
+          legend: pick("--muted", "#8b949e")
+        };
+      }
+
+      function renderOutcomePie(host, slices, palette) {
+        const root = host?.shadowRoot;
+        const chartArea = root?.querySelector(".outcome-chart");
+        if (!host || !chartArea) return;
+
+        let canvas = chartArea.querySelector("canvas");
+        let summary = chartArea.querySelector(".sr-only");
+        if (!canvas || !summary) {
+          // Remove the initial placeholder text from the light-DOM slot once;
+          // the Chart.js canvas and hidden summary live in the card template.
+          host.replaceChildren();
+          canvas = document.createElement("canvas");
+          canvas.setAttribute("aria-hidden", "true");
+          summary = document.createElement("span");
+          summary.className = "sr-only";
+          chartArea.append(canvas, summary);
+        }
+        const label = host.getAttribute("label") ?? "Outcomes";
+        summary.textContent = formatOutcomeSummary(label, slices);
+
+        const ChartCtor = window.Chart;
+        if (typeof ChartCtor !== "function") {
+          summary.className = "outcome-summary";
+          return;
+        }
+        summary.className = "sr-only";
+        const data = [slices.success, slices.fail, slices.skip];
+        const colors = [palette.success, palette.fail, palette.skip];
+        const existing = host.__outcomeChart;
+        if (existing?.canvas === canvas) {
+          existing.data.datasets[0].data = data;
+          existing.data.datasets[0].backgroundColor = colors;
+          existing.options.plugins.legend.labels.color = palette.legend;
+          existing.update("none");
+          return;
+        }
+        existing?.destroy();
+
+        const generateLabels =
+          ChartCtor.defaults.plugins.legend.labels.generateLabels;
+        host.__outcomeChart = new ChartCtor(canvas.getContext("2d"), {
+          type: "pie",
+          data: {
+            labels: ["Success", "Fail", "Skipped"],
+            datasets: [
+              {
+                data,
+                backgroundColor: colors,
+                borderColor: "#0d1117",
+                borderWidth: 1
+              }
+            ]
+          },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            animation: false,
+            plugins: {
+              legend: {
+                display: true,
+                position: "bottom",
+                labels: {
+                  color: palette.legend,
+                  boxWidth: 8,
+                  padding: 8,
+                  font: { size: 10 },
+                  generateLabels(chart) {
+                    return generateLabels(chart).map((item) => ({
+                      ...item,
+                      text: `${item.text}: ${outcomeCount(chart.data.datasets[0]?.data[item.index]).toLocaleString()}`
+                    }));
+                  }
+                }
+              }
+            }
+          }
+        });
+      }
+
       function render(status) {
         if (!status || typeof status !== "object") return;
 
@@ -3177,27 +3362,10 @@
         } = computeKpiAgentTotals(status);
         const workspacesList = Object.entries(status.usage?.byWorkspace ?? {});
 
+        // Spawns / Tool calls outcome slices are computed by the helpers
+        // `computeKpiSpawnOutcomes` / `computeKpiToolOutcomes` below, which
+        // are the single source of truth for those two KPI cards.
         const attemptsTotal = Number(status.usage?.totals?.attempts ?? 0);
-        const attemptsSuccess = Number(status.usage?.totals?.successes ?? 0);
-        const attemptsFail = Number(status.usage?.totals?.failures ?? 0);
-        const attemptsSkip = Number(status.usage?.totals?.skipped ?? 0);
-
-        let toolOk = 0;
-        let toolErr = 0;
-        let toolCount = 0;
-        for (const t of status.codexTelemetry?.tools?.byTool ?? []) {
-          const ok = Number(
-            t.byStatus?.ok ??
-              t.byStatus?.success ??
-              (t.count != null && !t.byStatus?.error && !t.byStatus?.failure
-                ? t.count
-                : 0)
-          );
-          const err = Number(t.byStatus?.error ?? t.byStatus?.failure ?? 0);
-          toolOk += ok;
-          toolErr += err;
-          toolCount += t.count != null ? Number(t.count) : ok + err;
-        }
 
         const skillUsesTotal = Number(
           status.codexTelemetry?.skills?.used?.total ?? 0
@@ -3223,25 +3391,19 @@
               : "";
           kpiAgents.innerHTML = `<strong>${orchActive}</strong> orchestrators · <strong>${subActive}</strong> subagents${unattributedSuffix} · <strong>${activeWorkspaces}</strong> workspaces with active agents · live`;
         }
+        const spawnSlices = computeKpiSpawnOutcomes(status);
+        const toolSlices = computeKpiToolOutcomes(status);
+        const palette = readOutcomePalette();
+
         const kpiAttempts = document.getElementById("kpi-attempts");
         if (kpiAttempts) {
-          const windowSuffix = isInterval
-            ? " <span class=\"dim\">(window)</span>"
-            : isActiveSessions
-              ? " <span class=\"dim\">(active sessions)</span>"
-              : "";
-          kpiAttempts.setAttribute("value", attemptsTotal.toLocaleString());
-          kpiAttempts.innerHTML = `<span class="good">${attemptsSuccess.toLocaleString()} success</span> · <span class="bad">${attemptsFail.toLocaleString()} fail</span>${attemptsSkip > 0 ? ` · <span class="warning">${attemptsSkip.toLocaleString()} skipped</span>` : ""}${windowSuffix}`;
+          kpiAttempts.setAttribute("value", "");
+          renderOutcomePie(kpiAttempts, spawnSlices, palette);
         }
         const kpiTools = document.getElementById("kpi-tools");
         if (kpiTools) {
-          const windowSuffix = isInterval
-            ? " <span class=\"dim\">(window)</span>"
-            : isActiveSessions
-              ? " <span class=\"dim\">(active sessions)</span>"
-              : "";
-          kpiTools.setAttribute("value", toolCount.toLocaleString());
-          kpiTools.innerHTML = `<span class="good">${toolOk.toLocaleString()} success</span> · <span class="bad">${toolErr.toLocaleString()} fail</span>${windowSuffix}`;
+          kpiTools.setAttribute("value", "");
+          renderOutcomePie(kpiTools, toolSlices, palette);
         }
         const kpiSkills = document.getElementById("kpi-skills");
         if (kpiSkills) {

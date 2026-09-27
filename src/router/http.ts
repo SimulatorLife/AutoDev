@@ -180,6 +180,90 @@ const CATALOG_FILE =
   process.env.CODEX_ROUTER_CATALOG_FILE ??
   `${CODEX_HOME}/codex-model-catalog.json`;
 const DASHBOARD_FILE = new URL("dashboard.html", import.meta.url);
+
+/**
+ * Exact, local-only route serving the Chart.js browser asset. The dashboard
+ * KPI cards (Spawns, Tool calls) render their outcome pies from this file
+ * via `<script src="/assets/chart.umd.min.js">`. The router resolves
+ * the file from the invoked script path (`process.argv[1]`, under $CODEX_HOME
+ * in production) and walks two directories up to
+ * `<root>/node_modules/chart.js/dist/chart.umd.min.js`. That same path is
+ * added to the runtime manifest so `autodev install` materializes the asset
+ * into `$CODEX_HOME`; in development the repository's own `node_modules`
+ * satisfies the same relative lookup. No CDN, no network fetch.
+ */
+const CHARTJS_ASSET_ROUTE = "/assets/chart.umd.min.js";
+const CHARTJS_DIST_RELATIVE_PARTS = [
+  "node_modules",
+  "chart.js",
+  "dist",
+  "chart.umd.min.js"
+];
+const CHARTJS_CONTENT_TYPE = "application/javascript; charset=utf-8";
+
+function resolveChartJsAssetPath(): string | null {
+  const argvOne = process.argv[1];
+  if (!argvOne) return null;
+  // process.argv[1] is under $CODEX_HOME in production (http.ts lives at
+  // <root>/src/router/http.ts). Two `..` climbs reach
+  // <root>; the manifest entry sits under node_modules/chart.js/dist.
+  const runtimeRoot = path.resolve(path.dirname(argvOne), "..", "..");
+  return path.join(runtimeRoot, ...CHARTJS_DIST_RELATIVE_PARTS);
+}
+
+let chartJsAssetCache: Promise<{ buffer: Buffer; etag: string } | null> | null =
+  null;
+
+function loadChartJsAsset(): Promise<{ buffer: Buffer; etag: string } | null> {
+  if (chartJsAssetCache) return chartJsAssetCache;
+  const assetPath = resolveChartJsAssetPath();
+  if (!assetPath) {
+    chartJsAssetCache = Promise.resolve(null);
+    return chartJsAssetCache;
+  }
+  chartJsAssetCache = readFile(assetPath)
+    .then((buffer) => ({
+      buffer,
+      etag: createHash("sha256").update(buffer).digest("hex").slice(0, 16)
+    }))
+    .catch(() => null);
+  return chartJsAssetCache;
+}
+
+async function sendChartJsAsset(
+  request: IncomingMessage,
+  response: ServerResponse
+): Promise<void> {
+  const asset = await loadChartJsAsset();
+  if (!asset) {
+    sendJson(
+      response,
+      404,
+      errorBody("Chart.js asset is not materialized", "router_chart_asset_missing", {
+        code: "router_chart_asset_missing"
+      })
+    );
+    return;
+  }
+  const ifNoneMatch = request.headers["if-none-match"];
+  if (typeof ifNoneMatch === "string" && ifNoneMatch === `"${asset.etag}"`) {
+    response.writeHead(304, {
+      "cache-control": "public, max-age=300",
+      etag: `"${asset.etag}"`,
+      "x-autodev-router-instance-id": ROUTER_INSTANCE_ID
+    });
+    response.end();
+    return;
+  }
+  response.writeHead(200, {
+    "content-type": CHARTJS_CONTENT_TYPE,
+    "content-length": asset.buffer.length,
+    "cache-control": "public, max-age=300",
+    etag: `"${asset.etag}"`,
+    "x-autodev-router-instance-id": ROUTER_INSTANCE_ID
+  });
+  response.end(asset.buffer);
+}
 const ROUTER_STARTED_AT = new Date().toISOString();
 const SHUTDOWN_DRAIN_TIMEOUT_MS = Number.parseInt(
   process.env.CODEX_ROUTER_SHUTDOWN_DRAIN_MS ?? "30000"
@@ -2359,6 +2443,10 @@ async function handlePreflightRoutes(
   }
   if (pathname === "/dashboard" && request.method === "GET") {
     await sendDashboard(response);
+    return true;
+  }
+  if (pathname === CHARTJS_ASSET_ROUTE && request.method === "GET") {
+    await sendChartJsAsset(request, response);
     return true;
   }
   if (pathname === "/status" && request.method === "GET") {

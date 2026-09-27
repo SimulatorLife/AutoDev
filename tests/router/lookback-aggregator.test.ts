@@ -1317,6 +1317,16 @@ test("Active Sessions rebuilds all activity from exact live-agent identities, no
     }),
     otelLookbackEvent({
       timestamp: "2020-01-01T00:00:00.000Z",
+      family: "tool",
+      type: "counter",
+      name: "exec",
+      source: "codex",
+      status: "skipped",
+      agent: "root-thread",
+      countDelta: 2
+    }),
+    otelLookbackEvent({
+      timestamp: "2020-01-01T00:00:00.000Z",
       family: "turn",
       type: "thread_started",
       name: "codex.thread.started",
@@ -1436,6 +1446,11 @@ test("Active Sessions rebuilds all activity from exact live-agent identities, no
     sum: 8,
     average: 4
   });
+  assert.equal(
+    view.codexTelemetry.tools.byTool.find((tool) => tool.tool === "exec")
+      ?.byStatus.skipped,
+    2
+  );
   assert.equal(view.codexTelemetry.threads.started.total, 4);
   assert.deepEqual(view.codexTelemetry.threads.started.bySource, { codex: 4 });
   assert.equal(view.codexTelemetry.threads.spawns.total, 2);

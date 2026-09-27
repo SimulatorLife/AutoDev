@@ -44,6 +44,8 @@ standalone MCP panel.
 
 The dashboard header also provides a **Lookback** selector in the top-right corner. It supports **All** (the default), **Active sessions**, **Today**, **1 hour**, **2 hours**, **5 hours**, and **12 hours**. `Today` means the current calendar day in `EST5EDT` / `America/New_York`, including the correct daylight-saving offset. **Active sessions** is not a time window: it scopes activity metrics and event rows to the router's canonical live agent threads, including agents waiting on a tool, user input, or a subagent.
 
+The top-level **Spawns** and **Tool calls** KPI cards use Chart.js pie charts with the dashboard's existing success/fail/skipped colors. Their legends display the source counts and update with each `/status` refresh. The router serves Chart.js locally at `/assets/chart.umd.min.js` from the package asset materialized into the runtime; the dashboard does not fetch chart code from a CDN. Tool-call **Skipped** is the explicit `byStatus.skipped` count (zero when the source does not report it); the separate tool-unavailable counter is not relabeled as a skipped call.
+
 Selecting anything other than **All** makes the dashboard send `?lookback=<selection>` to `/status`. The router rebuilds activity-derived counters from the bounded, per-occurrence histories it retains:
 
 - `status.recentEvents` (timestamped `RouterEvent[]`, default ring size 100, configurable via `CODEX_ROUTER_MAX_RECENT_EVENTS`) is the source for `status.usage.totals`, `usage.byRole`, `usage.byModel`, `usage.byWorkspace`, `usage.byOrigin`, per-provider `attempts/successes/failures/skipped/durationMs`, and `status.spawnFailures.{total,byReason,recent}`.

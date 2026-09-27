@@ -70,6 +70,9 @@ test("config CLI parsing and config-file I/O have distinct runtime owners", () =
 
 test("router dashboard ships beside the router and removes its former hooks copy", () => {
   assert.ok(RUNTIME_MODULES.includes("src/router/dashboard.html"));
+  assert.ok(
+    RUNTIME_MODULES.includes("node_modules/chart.js/dist/chart.umd.min.js")
+  );
   assert.equal(
     existsSync(
       join(repositoryRoot, "scripts/codex-model-router-dashboard.html")

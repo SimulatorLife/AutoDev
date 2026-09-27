@@ -643,6 +643,7 @@ interface WorkspaceNamedRow extends Record<string, unknown> {
     error?: number;
     success?: number;
     failure?: number;
+    skipped?: number;
   };
 }
 
@@ -659,7 +660,13 @@ export interface IntervalToolRow {
   source: string | null;
   server: string | null;
   count: number;
-  byStatus: { ok?: number; error?: number; success?: number; failure?: number };
+  byStatus: {
+    ok?: number;
+    error?: number;
+    success?: number;
+    failure?: number;
+    skipped?: number;
+  };
   durationCount: number;
   durationMs: number;
   averageDurationMs: number;
@@ -670,7 +677,13 @@ export interface IntervalHookRow {
   source: string | null;
   handlerType: string | null;
   count: number;
-  byStatus: { ok?: number; error?: number; success?: number; failure?: number };
+  byStatus: {
+    ok?: number;
+    error?: number;
+    success?: number;
+    failure?: number;
+    skipped?: number;
+  };
   durationCount: number;
   durationMs: number;
   averageDurationMs: number;
@@ -680,7 +693,13 @@ export interface IntervalSkillRow {
   skill: string;
   total: number;
   uses: number;
-  byStatus: { ok?: number; error?: number; success?: number; failure?: number };
+  byStatus: {
+    ok?: number;
+    error?: number;
+    success?: number;
+    failure?: number;
+    skipped?: number;
+  };
 }
 
 export interface IntervalHistogram {
@@ -1505,6 +1524,7 @@ function addStatusDelta(
       error?: number;
       success?: number;
       failure?: number;
+      skipped?: number;
     };
   },
   status: string | null,
@@ -1524,7 +1544,13 @@ function addWorkspaceStatusDelta(
 }
 
 function addStatusCount(
-  byStatus: { ok?: number; error?: number; success?: number; failure?: number },
+  byStatus: {
+    ok?: number;
+    error?: number;
+    success?: number;
+    failure?: number;
+    skipped?: number;
+  },
   status: string | number | null,
   outcome: string | null,
   count: number
@@ -1549,6 +1575,8 @@ function addStatusCount(
     byStatus.error = (byStatus.error ?? 0) + count;
     if (statusText !== "stale")
       byStatus.failure = (byStatus.failure ?? 0) + count;
+  } else if (statusText === "skipped" || outcomeText === "skipped") {
+    byStatus.skipped = (byStatus.skipped ?? 0) + count;
   }
 }
 
@@ -1943,6 +1971,7 @@ function bumpToolStatus(
       error?: number;
       success?: number;
       failure?: number;
+      skipped?: number;
     };
   },
   status: string | number | null,

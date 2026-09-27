@@ -161,6 +161,23 @@ test("router dashboard exposes the top-right EST5EDT lookback control and live f
   assert.match(rawDashboard, /class="lookback-control"/);
   assert.match(
     rawDashboard,
+    /<script src="\/assets\/chart\.umd\.min\.js"><\/script>/
+  );
+  assert.match(rawDashboard, /type: "pie"/);
+  assert.match(
+    rawDashboard,
+    /labels: \["Success", "Fail", "Skipped"\]/
+  );
+  assert.doesNotMatch(rawDashboard, /type: "doughnut"/);
+  assert.match(rawDashboard, /existing\.update\("none"\)/);
+  assert.match(rawDashboard, /generateLabels\(chart\)/);
+  assert.match(rawDashboard, /summary\.textContent = formatOutcomeSummary/);
+  assert.match(rawDashboard, /kpiAttempts\.setAttribute\("value", ""\)/);
+  assert.match(rawDashboard, /kpiTools\.setAttribute\("value", ""\)/);
+  assert.doesNotMatch(rawDashboard, /kpiAttempts\.innerHTML/);
+  assert.doesNotMatch(rawDashboard, /kpiTools\.innerHTML/);
+  assert.match(
+    rawDashboard,
     /id="lookback-select"[^>]*aria-label="Dashboard lookback filter"/
   );
   assert.deepEqual(

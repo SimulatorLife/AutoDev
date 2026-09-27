@@ -73,6 +73,12 @@ export const RUNTIME_MODULES = [
   "src/router/http.ts",
   "src/router/dashboard.html",
   "src/router/server.ts",
+  // Local Chart.js UMD asset served from /assets/chart.umd.min.js so the
+  // dashboard KPI pies (Spawns, Tool calls) have a fully offline, exact,
+  // local asset route with no CDN dependency. The router manifest entry
+  // mirrors the source-of-truth location under node_modules; no duplicate
+  // bundle is tracked in the repository.
+  "node_modules/chart.js/dist/chart.umd.min.js",
   "src/agents/bridge-spawn-session.ts",
   "src/providers/minimax.ts",
   "src/providers/copilot.ts",

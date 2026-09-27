@@ -5739,6 +5739,20 @@ test("serves the live component dashboard and keeps /status raw JSON", async () 
     const dashboard = await fetch(`http://127.0.0.1:${address.port}/dashboard`);
     assert.equal(dashboard.status, 200);
     assert.match(dashboard.headers.get("content-type")!, /text\/html/);
+    const chartAsset = await fetch(
+      `http://127.0.0.1:${address.port}/assets/chart.umd.min.js`
+    );
+    assert.equal(chartAsset.status, 200);
+    assert.match(chartAsset.headers.get("content-type")!, /javascript/);
+    const chartAssetBody = await chartAsset.text();
+    assert.match(chartAssetBody, /Chart\.js v4\.5/);
+    const chartAssetEtag = chartAsset.headers.get("etag");
+    assert.ok(chartAssetEtag);
+    const cachedChartAsset = await fetch(
+      `http://127.0.0.1:${address.port}/assets/chart.umd.min.js`,
+      { headers: { "If-None-Match": chartAssetEtag } }
+    );
+    assert.equal(cachedChartAsset.status, 304);
     const dashboardBody = (await dashboard.text())
       .replaceAll(/\s+/g, " ")
       .replaceAll(/>\s+</g, "><");
