@@ -13,7 +13,7 @@ void test("register / touch / unregister manage the lifecycle", () => {
     kill: (pid, signal) => {
       calls.push([pid, signal]);
     },
-    now: () => 1_000
+    now: () => 1000
   });
   registry.register(101, "session-A", "lsp");
   registry.register(102, "session-A", "cocoindex-code");
@@ -32,7 +32,7 @@ void test("register / touch / unregister manage the lifecycle", () => {
 
 void test("reapStale kills processes idle longer than maxIdleMs", () => {
   const killed: number[] = [];
-  let nowMs = 1_000;
+  let nowMs = 1000;
   const registry = new McpProcessRegistry({
     kill: (pid) => {
       killed.push(pid);
@@ -115,7 +115,7 @@ void test("eviction keeps the registry at most maxEntries entries", () => {
       killed.push(pid);
     },
     maxEntries: 2,
-    now: () => 1_000
+    now: () => 1000
   });
   registry.register(501, "s", "lsp");
   registry.register(502, "s", "lsp");
