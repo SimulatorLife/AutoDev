@@ -432,7 +432,7 @@ test("dashboard source evaluates deterministic labels and renders its contract b
     assert.equal(shouldRenderTotals(null), false);
 
     const panels = Array.from(
-      dashboard.matchAll(/<dashboard-panel id="([^"]+)"/g),
+      dashboard.matchAll(/<dashboard-panel\s+id="([^"]+)"/g),
       (match) => match[1]
     );
     assert.deepEqual(panels, contract.dashboard.panels);
@@ -460,10 +460,16 @@ test("dashboard source evaluates deterministic labels and renders its contract b
     );
     assert.match(spawnSection, /\$\{spawnCoverageLabel\}/);
 
+    assert.match(dashboard, /params\.set\("lookback", requestedLookback\)/);
     assert.match(
       dashboard,
-      /fetch\("\/status", \{ cache: "no-store", headers: \{ Accept: "application\/json" \} \}\)/
+      /const url = params\.toString\(\) \? `\/status\?\$\{params\}` : "\/status"/
     );
+    assert.match(
+      dashboard,
+      /const response = await fetch\(url,\s*\{\s*cache:\s*"no-store",\s*headers:\s*\{\s*Accept:\s*"application\/json"/
+    );
+    assert.match(dashboard, /void refresh\(\)/);
     assert.match(dashboard, /setInterval\(refresh, 3000\)/);
     assert.match(
       dashboard,

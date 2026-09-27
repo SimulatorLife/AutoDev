@@ -8,6 +8,7 @@ import {
   isAutodevAttributesEnabled,
   isDeltaTemporality,
   numberAttribute,
+  OTEL_LOOKBACK_EVENT_LIMIT,
   OTEL_PERSISTENCE_SCHEMA_VERSION,
   otelAttributes,
   otelAttributeValue,
@@ -23,8 +24,8 @@ import {
   sqliteKey,
   toolStatusAttribute
 } from "../../src/router/otel.ts";
-import { UsageTracker } from "../../src/router/usage.ts";
 import { CONFIGURED_ORCHESTRATOR_MODEL } from "../../src/router/routing.ts";
+import { UsageTracker } from "../../src/router/usage.ts";
 
 function createMockUsageTracker(): UsageTracker {
   return new UsageTracker();
@@ -261,6 +262,35 @@ test("log ingestion: turns, prompts, TTFT, tokens, and tool results", () => {
   assert.equal(status.tokens.reasoning, 10);
   assert.equal(status.tokens.tool, 5);
   assert.equal(status.tokens.total, 295);
+  assert.equal(
+    status.lookbackEvents.filter(
+      (event) => event.family === "turn" && event.type !== "delta"
+    ).length,
+    3
+  );
+  assert.deepEqual(
+    status.lookbackEvents
+      .filter((event) => event.family === "token")
+      .map((event) => [event.name, event.countDelta]),
+    [
+      ["input", 200],
+      ["output", 50],
+      ["cached", 30],
+      ["reasoning", 10],
+      ["tool", 5]
+    ]
+  );
+  assert.ok(
+    status.lookbackEvents.some(
+      (event) => event.family === "receiver" && event.name === "logs"
+    )
+  );
+  const toolResultEvent = status.lookbackEvents.find(
+    (event) => event.family === "tool_result"
+  );
+  assert.ok(toolResultEvent);
+  assert.equal(toolResultEvent.name, "read_file");
+  assert.equal(toolResultEvent.resolvedCall, true);
 
   assert.equal(status.toolResults.total, 1);
   assert.equal(status.toolResults.executed, 1);
@@ -380,6 +410,143 @@ test("cumulative metrics series delta calculation and counter reset", () => {
     1
   );
   assert.equal(deltaFromDeltaTemp, 8);
+});
+
+test("lookback history records only accepted semantic deltas and persists bounded events", () => {
+  const tracker = new OtelTracker({ usageTracker: createMockUsageTracker() });
+  const context = {
+    workspace: "AutoDev/Core",
+    role: "orchestrator",
+    model: "gpt-6-luna",
+    agent: "agent-1",
+    agentKind: "orchestrator",
+    timestamp: "2026-09-27T17:00:00.000Z",
+    timestampSource: "source" as const
+  };
+  const toolAttributes = {
+    tool_name: "read_file",
+    source: "codex",
+    server: "filesystem",
+    status: "success",
+    workspace: context.workspace,
+    role: context.role,
+    model: context.model
+  };
+  const toolPoint = {
+    startTimeUnixNano: "1000000000",
+    timeUnixNano: "2000000000",
+    asInt: 3
+  };
+
+  tracker.noteToolCounter(
+    "codex.tool.call",
+    toolAttributes,
+    toolPoint,
+    "CUMULATIVE"
+  );
+  tracker.noteToolCounter(
+    "codex.tool.call",
+    toolAttributes,
+    toolPoint,
+    "CUMULATIVE"
+  );
+  tracker.noteToolDuration(
+    "codex.tool.duration_ms",
+    toolAttributes,
+    {
+      startTimeUnixNano: "1000000000",
+      timeUnixNano: "3000000000",
+      count: 2,
+      sum: 18
+    },
+    "DELTA"
+  );
+  tracker.noteHookHistogramCount(
+    "codex.hooks.run.duration_ms",
+    {
+      hook_name: "PreToolUse",
+      source: "codex",
+      status: "ok",
+      workspace: context.workspace,
+      role: context.role,
+      model: context.model
+    },
+    {
+      startTimeUnixNano: "1000000000",
+      timeUnixNano: "4000000000",
+      count: 4
+    },
+    "DELTA"
+  );
+  tracker.recordSkillUse("lsp-mcp-server", context, 2, context.timestamp);
+  tracker.noteSkillInjected(
+    "codex.skill.injected",
+    {
+      skillName: "lsp-mcp-server",
+      status: "success",
+      invoke_type: "automatic",
+      workspace: context.workspace,
+      role: context.role,
+      model: context.model
+    },
+    {
+      startTimeUnixNano: "1000000000",
+      timeUnixNano: "5000000000",
+      asInt: 5
+    },
+    "DELTA"
+  );
+  tracker.noteMcpServer(
+    "filesystem",
+    {
+      name: "initialize",
+      startTimeUnixNano: "1000000000",
+      endTimeUnixNano: "6000000000",
+      status: { code: 1 }
+    },
+    {
+      server_name: "filesystem",
+      workspace: context.workspace,
+      role: context.role,
+      model: context.model
+    }
+  );
+
+  const events = tracker.codexTelemetryStatus().lookbackEvents;
+  assert.equal(events.length, 6, "duplicate cumulative point has no second event");
+  assert.deepEqual(
+    events.map(({ family, type }) => [family, type]),
+    [
+      ["tool", "counter"],
+      ["tool", "duration"],
+      ["hook", "counter"],
+      ["skill", "used"],
+      ["skill", "injected"],
+      ["mcp", "observation"]
+    ]
+  );
+  assert.equal(events[0]?.timestamp, "1970-01-01T00:00:02.000Z");
+  assert.equal(events[0]?.countDelta, 3);
+  assert.equal(events[0]?.workspace, context.workspace);
+  assert.equal(events[0]?.role, context.role);
+  assert.equal(events[1]?.durationCount, 2);
+  assert.equal(events[1]?.durationSumMs, 18);
+  assert.equal(events[4]?.countDelta, 5);
+  assert.equal(events[5]?.name, "filesystem");
+
+  const snapshot = tracker.otelPersistenceSnapshot();
+  const restored = new OtelTracker({ usageTracker: createMockUsageTracker() });
+  restored.restoreOtelTelemetry(snapshot);
+  assert.deepEqual(restored.codexTelemetryStatus().lookbackEvents, events);
+
+  const bounded = new OtelTracker({ usageTracker: createMockUsageTracker() });
+  for (let index = 0; index <= OTEL_LOOKBACK_EVENT_LIMIT; index += 1) {
+    bounded.recordSkillUse(`skill-${index}`, context, 1, context.timestamp);
+  }
+  const boundedEvents = bounded.codexTelemetryStatus().lookbackEvents;
+  assert.equal(boundedEvents.length, OTEL_LOOKBACK_EVENT_LIMIT);
+  assert.equal(boundedEvents[0]?.name, "skill-1");
+  assert.equal(boundedEvents.at(-1)?.name, `skill-${OTEL_LOOKBACK_EVENT_LIMIT}`);
 });
 
 test("deferred MCP model attribution retroactively attributes when conversation model arrives", () => {
@@ -676,6 +843,20 @@ test("persistence snapshot and restoration (schema v6)", () => {
 test("resetOtelTelemetry clears all telemetry and triggers usageTracker reset", () => {
   const usageTracker = createMockUsageTracker();
   const tracker = new OtelTracker({ usageTracker });
+  tracker.recordSkillUse(
+    "orchestration",
+    {
+      workspace: "AutoDev/Core",
+      role: "orchestrator",
+      model: "gpt-6-luna",
+      agent: "agent-1",
+      agentKind: "orchestrator",
+      timestamp: "2026-09-27T17:00:00.000Z",
+      timestampSource: "source"
+    },
+    1,
+    "2026-09-27T17:00:00.000Z"
+  );
 
   tracker.telemetry.receiver.logs = 5;
   tracker.telemetry.turns.prompts = 2;
@@ -688,6 +869,7 @@ test("resetOtelTelemetry clears all telemetry and triggers usageTracker reset", 
   assert.equal(tracker.telemetry.turns.prompts, 0);
   assert.equal(tracker.telemetry.recordIdentities.logs.size, 0);
   assert.equal(tracker.metricSeries.size, 0);
+  assert.equal(tracker.codexTelemetryStatus().lookbackEvents.length, 0);
   assert.equal(usageTracker.attributionDiagnostics.total, 0);
 });
 

@@ -65,6 +65,7 @@
       "concreteStatusMaxAttempts",
       "upstreamTransportMaxAttempts",
       "shutdownDrainTimeoutMs",
+      "streamIdleTimeoutMs",
       "maxConcurrentThreadsPerSession"
     ],
     "usage": [
@@ -124,7 +125,8 @@
       "sqlite",
       "skills",
       "toolResults",
-      "bridgeEvents"
+      "bridgeEvents",
+      "lookbackEvents"
     ],
     "codexReceiver": ["logs", "traces", "metrics", "invalid", "lastReceivedAt"],
     "codexTurns": [

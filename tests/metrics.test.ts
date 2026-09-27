@@ -39,7 +39,7 @@ test("router dashboard exposes the component hierarchy and explicit workspace at
     .replaceAll(/\s+/g, " ")
     .replaceAll(/>\s+</g, "><");
   const panels = Array.from(
-    dashboard.matchAll(/<dashboard-panel id="([^"]+)"/g),
+    dashboard.matchAll(/<dashboard-panel\s+id="([^"]+)"/g),
     (match) => match[1]
   );
   assert.deepEqual(panels, [
@@ -70,15 +70,15 @@ test("router dashboard exposes the component hierarchy and explicit workspace at
   assert.match(dashboard, /no first-class events/);
   assert.match(
     dashboard,
-    /<dashboard-panel id="panel-orchestrator"[\s\S]*?<sub-panel id="panel-spawn-breakdown"/
+    /<dashboard-panel\s+id="panel-orchestrator"[\s\S]*?<sub-panel id="panel-spawn-breakdown"/
   );
   assert.match(
     dashboard,
-    /<dashboard-panel id="panel-skills"[\s\S]*?<sub-panel id="panel-skill-context"/
+    /<dashboard-panel\s+id="panel-skills"[\s\S]*?<sub-panel id="panel-skill-context"/
   );
   assert.match(
     dashboard,
-    /<dashboard-panel id="panel-ops"[\s\S]*?<sub-panel id="panel-native-metrics"/
+    /<dashboard-panel\s+id="panel-ops"[\s\S]*?<sub-panel id="panel-native-metrics"/
   );
   assert.match(
     dashboard,
@@ -86,7 +86,7 @@ test("router dashboard exposes the component hierarchy and explicit workspace at
   );
   assert.match(
     dashboard,
-    /function renderWorkspaceNamedUsage\(rows, \{ unavailableLabel, emptyLabel \}\)/
+    /function renderWorkspaceNamedUsage\(\s*rows,\s*\{\s*unavailableLabel,\s*emptyLabel\s*\}\s*\)/
   );
   assert.match(
     dashboard,
@@ -96,10 +96,7 @@ test("router dashboard exposes the component hierarchy and explicit workspace at
     dashboard,
     /normalizeWorkspaceNamedUsage\(w\.bySkill, \[\s*"skill",\s*"name"\s*\]\)/
   );
-  assert.match(
-    dashboard,
-    /normalizeWorkspaceNamedUsage\((?:w\.mcpUses \?\? )?w\.byMcp \?\? w\.mcpServers, \[\s*"server",\s*"name",\s*"mcp"\s*\]\)/
-  );
+  assert.match(dashboard, /w\.mcpUses \?\? w\.byMcp \?\? w\.mcpServers/);
   assert.match(
     dashboard,
     /if \(rows === null\) return `<div class="empty-state">\$\{escapeHtml\(unavailableLabel\)\}<\/div>`;/
@@ -149,7 +146,8 @@ test("router dashboard exposes the component hierarchy and explicit workspace at
   assert.match(dashboard, /Errors &amp; cooldowns/);
   assert.match(dashboard, /formatRoutingPriority/);
   assert.match(dashboard, /formatEffectiveLimitsAndCooldowns/);
-  assert.match(dashboard, /isDisabled/);
+  assert.match(dashboard, /Boolean\(p\.orchestratorEnabled\)/);
+  assert.match(dashboard, /Boolean\(p\.subagentEnabled\)/);
   assert.match(dashboard, /btn-provider-toggle/);
   assert.match(dashboard, /\/v1\/providers\//);
   assert.match(dashboard, /toggleProvider/);
@@ -179,13 +177,21 @@ test("router dashboard exposes the top-right EST5EDT lookback control and live f
       ["12h", "12 hours"]
     ]
   );
-  assert.match(rawDashboard, /const LOOKBACK_TIME_ZONE = "America\/New_York"/);
-  assert.match(rawDashboard, /function lookbackStartMs\(/);
-  assert.match(rawDashboard, /function timestampInLookback\(/);
   assert.match(rawDashboard, /selectedLookback = "all"/);
   assert.match(rawDashboard, /lookbackSelect\.addEventListener\("change"/);
-  assert.match(rawDashboard, /status = applyLookback\(status\)/);
-  assert.match(rawDashboard, /liveFeed: filterTimestampedEntries/);
+  assert.match(rawDashboard, /void refresh\(\)/);
+  assert.doesNotMatch(rawDashboard, /function hasRecentTimestamp\(/);
+  assert.doesNotMatch(rawDashboard, /function applyLookback\(/);
+  // The dashboard no longer filters cumulative buckets by `lastSeenAt`:
+  // the router rebuilds every activity-derived counter from the bounded
+  // recentEvents + liveFeed histories on the server. The dashboard just
+  // surfaces the rebuilt payload and labels window-derived sections.
+  assert.match(
+    rawDashboard,
+    /params\.set\("lookback", requestedLookback\)/
+  );
+  assert.match(rawDashboard, /ring-buffered events/);
+  assert.match(rawDashboard, /window-derived/);
 });
 
 test("router dashboard inline JavaScript has no unresolved identifiers", async () => {
@@ -234,7 +240,7 @@ test("router dashboard provider health panel renders routing priorities, limits,
   );
   assert.match(
     rawDashboard,
-    /<dashboard-panel id="panel-providers"[^>]*title="Provider health"/
+    /<dashboard-panel\s+id="panel-providers"[^>]*title="Provider health"/
   );
   assert.match(rawDashboard, /<th>Routing priority<\/th>/);
   assert.match(rawDashboard, /<th>Errors &amp; cooldowns<\/th>/);
@@ -245,7 +251,7 @@ test("router dashboard provider health panel renders routing priorities, limits,
 
   const providerPanel =
     rawDashboard.match(
-      /<dashboard-panel id="panel-providers"[\s\S]*?<\/dashboard-panel>/
+      /<dashboard-panel\s+id="panel-providers"[\s\S]*?<\/dashboard-panel>/
     )?.[0] ?? "";
   const providerHeaders = (providerPanel.match(/<th>.*?<\/th>/g) ?? []).map(
     (h) => h.replaceAll(/<[^>]+>/g, "").trim()
@@ -263,14 +269,14 @@ test("router dashboard provider health panel renders routing priorities, limits,
   ]);
   assert.match(
     rawDashboard,
-    /<td colspan="9" class="dim" style="text-align:center">Loading providers\.\.\.<\/td>/
+    /<td colspan="9" class="dim" style="text-align:\s*center">\s*Loading providers\.\.\.\s*<\/td>/
   );
   assert.match(
     rawDashboard,
     /<td colspan="9" class="dim" style="text-align:center">No providers configured<\/td>/
   );
   const rowTemplateMatch = rawDashboard.match(
-    /providersTbody\.innerHTML = providersEntries\.map\([\s\S]*?return `<tr[\s\S]*?<\/tr>`;/
+    /providersTbody\.innerHTML = providersEntries\s*\.map\([\s\S]*?return `<tr[\s\S]*?<\/tr>`;/
   );
   assert.ok(rowTemplateMatch, "provider row template must be present");
   const tdCount = (rowTemplateMatch[0].match(/<td\b/g) ?? []).length;
@@ -298,18 +304,13 @@ test("router dashboard provider health panel renders routing priorities, limits,
   assert.match(rawDashboard, /formatEffectiveLimitsAndCooldowns\(p\)/);
   assert.match(rawDashboard, /cooldownRemainingMs/);
   assert.match(rawDashboard, /cooldownKind/);
-  assert.match(rawDashboard, /const isDisabled = Boolean\(/);
-  assert.match(
-    rawDashboard,
-    /statusLabel = isDisabled \? "disabled" : p\.status/
-  );
-  assert.match(rawDashboard, /provider-disabled/);
+  assert.match(rawDashboard, /const statusLabel = p\.status/);
   assert.match(rawDashboard, /class="btn-provider-toggle"/);
   assert.match(
     rawDashboard,
-    /fetch\(`\/v1\/providers\/\$\{encodeURIComponent\(providerName\)\}`,\s*\{[^}]*method:\s*"POST"/s
+    /fetch\(\s*`\/v1\/providers\/\$\{encodeURIComponent\(providerName\)\}`,\s*\{\s*method:\s*"POST"/s
   );
-  assert.match(rawDashboard, /pendingProviderToggles\.has\(providerName\)/);
+  assert.match(rawDashboard, /pendingProviderToggles\.has\(pendingKey\)/);
   assert.match(rawDashboard, /buttonEl\.disabled = true/);
   assert.match(rawDashboard, /await refresh\(\)/);
   assert.match(rawDashboard, /errorEl\.textContent = err\.message/);
@@ -320,15 +321,15 @@ test("router dashboard provider health panel renders routing priorities, limits,
   assert.match(rawDashboard, /\.btn-provider-toggle::after\s*\{/);
   assert.match(
     rawDashboard,
-    /\.btn-provider-toggle\[data-action="disable"\][^}]*background:\s*#34c759;/s
+    /\.btn-provider-toggle\[aria-checked="true"\][^}]*background:\s*#34c759;/s
   );
   assert.match(
     rawDashboard,
-    /\.btn-provider-toggle\[data-action="enable"\][^}]*background:\s*#48484a;/s
+    /\.btn-provider-toggle\[aria-checked="false"\][^}]*background:\s*#48484a;/s
   );
   assert.match(
     rawDashboard,
-    /<button type="button" class="btn-provider-toggle"[^>]*role="switch"[^>]*aria-checked="\$\{!(?:isDisabled)\}"[^>]*><\/button>/
+    /<button type="button" class="btn-provider-toggle"[^>]*data-role="\$\{role\}"[^>]*role="switch"[^>]*aria-checked="\$\{enabled\}"[^>]*><\/button>/
   );
   assert.doesNotMatch(rawDashboard, /buttonEl\.textContent/);
   assert.doesNotMatch(rawDashboard, /Enabling…/);
@@ -371,7 +372,7 @@ test("router dashboard and status CLI contract separates live agent activity fro
   assert.match(rawDashboard, /provider-active/);
   assert.match(
     rawDashboard,
-    /<status-badge \$\{isActive \? 'active=""' : ''\}>\$\{displayActive\}<\/status-badge>/
+    /<status-badge \$\{isActive \? 'active=""' : ""\}>\$\{displayActive\}<\/status-badge>/
   );
   assert.match(
     rawDashboard,
@@ -497,7 +498,7 @@ test("router dashboard workspace table derives Tool calls from byTool normalizat
   assert.match(rawDashboard, /<th>Tool calls<\/th>/);
 
   const match = rawDashboard.match(
-    /function normalizeWorkspaceNamedUsage\([\s\S]*?\n {4}\}/
+    /function normalizeWorkspaceNamedUsage\([\s\S]*?\n {6}\}/
   );
   assert.ok(
     match,
@@ -560,7 +561,7 @@ test("router dashboard combines skill usage and exposure into one Skills section
   );
   assert.match(
     rawDashboard,
-    /normalizeWorkspaceNamedUsage\(w\.bridgeSkills, \[\s*"skill",\s*"name"\s*\]\)/
+    /normalizeWorkspaceNamedUsage\(\s*w\.bridgeSkills,\s*\[\s*"skill",\s*"name"\s*\]\s*\)/
   );
   assert.match(rawDashboard, /<h2>Skills<\/h2>/);
   assert.doesNotMatch(rawDashboard, /<h2>Skill usage<\/h2>/);
@@ -575,25 +576,25 @@ test("router dashboard combines skill usage and exposure into one Skills section
   );
 
   const escapeMatch = rawDashboard.match(
-    /function escapeHtml\([\s\S]*?\n {4}\}/
+    /function escapeHtml\([\s\S]*?\n {6}\}/
   );
   assert.ok(escapeMatch, "escapeHtml should be present in dashboard script");
   const renderSkillsMatch = rawDashboard.match(
-    /function renderWorkspaceSkills\([\s\S]*?\n {4}\}/
+    /function renderWorkspaceSkills\([\s\S]*?\n {6}\}/
   );
   assert.ok(
     renderSkillsMatch,
     "renderWorkspaceSkills should be present in dashboard script"
   );
   const summarizeSkillsMatch = rawDashboard.match(
-    /function summarizeWorkspaceSkills\([\s\S]*?\n {4}\}/
+    /function summarizeWorkspaceSkills\([\s\S]*?\n {6}\}/
   );
   assert.ok(
     summarizeSkillsMatch,
     "summarizeWorkspaceSkills should be present in dashboard script"
   );
   const normalizeMatch = rawDashboard.match(
-    /function normalizeWorkspaceNamedUsage\([\s\S]*?\n {4}\}/
+    /function normalizeWorkspaceNamedUsage\([\s\S]*?\n {6}\}/
   );
   assert.ok(
     normalizeMatch,
@@ -654,7 +655,7 @@ test("router dashboard combines skill usage and exposure into one Skills section
 
   assert.match(
     rawDashboard,
-    /const wsSkillSummary = summarizeWorkspaceSkills\(wsSkillRows, wsExposedSkillRows\)/
+    /const wsSkillSummary = summarizeWorkspaceSkills\(\s*wsSkillRows,\s*wsExposedSkillRows\s*\)/
   );
   assert.match(
     rawDashboard,
@@ -757,15 +758,15 @@ test("router dashboard falls back to bridgeTools when OTLP named-tool rows are u
   );
   assert.match(
     rawDashboard,
-    /normalizeWorkspaceNamedUsage\(w\.bridgeTools, \[\s*"tool",\s*"name"\s*\]\)/
+    /normalizeWorkspaceNamedUsage\(\s*w\.bridgeTools,\s*\[\s*"tool",\s*"name"\s*\]\s*\)/
   );
   assert.match(
     rawDashboard,
-    /resolveWorkspaceToolRows\(otlpToolRows, bridgeToolRows\)/
+    /resolveWorkspaceToolRows\(\s*otlpToolRows,\s*bridgeToolRows\s*\)/
   );
 
   const resolverMatch = rawDashboard.match(
-    /function resolveWorkspaceToolRows\([\s\S]*?\n {4}\}/
+    /function resolveWorkspaceToolRows\([\s\S]*?\n {6}\}/
   );
   assert.ok(
     resolverMatch,
@@ -782,7 +783,7 @@ test("router dashboard falls back to bridgeTools when OTLP named-tool rows are u
   };
 
   const normalizeMatch = rawDashboard.match(
-    /function normalizeWorkspaceNamedUsage\([\s\S]*?\n {4}\}/
+    /function normalizeWorkspaceNamedUsage\([\s\S]*?\n {6}\}/
   );
   assert.ok(normalizeMatch);
   const normalizeWorkspaceNamedUsage = new Function(
@@ -841,7 +842,7 @@ test("dashboard hides totals rows for sections with 0 or 1 populated row and sho
     "utf8"
   );
   const match = rawDashboard.match(
-    /function shouldRenderTotals\([\s\S]*?\n {4}\}/
+    /function shouldRenderTotals\([\s\S]*?\n {6}\}/
   );
   assert.ok(match, "shouldRenderTotals should be present in dashboard script");
   const shouldRenderTotals = new Function(
@@ -928,7 +929,7 @@ test("dashboard counts active workspaces from live activity states and excludes 
     "utf8"
   );
   const match = dashboard.match(
-    /function countActiveWorkspaces\([\s\S]*?\n {4}\}/
+    /function countActiveWorkspaces\([\s\S]*?\n {6}\}/
   );
   assert.ok(
     match,
@@ -975,7 +976,7 @@ test("dashboard KPI agent total uses the canonical live-agent count and never ma
     "utf8"
   );
   const kpiSection = dashboard.match(
-    /function computeKpiAgentTotals\([\s\S]*?\n {4}\}/
+    /function computeKpiAgentTotals\([\s\S]*?\n {6}\}/
   );
   assert.ok(
     kpiSection,
@@ -989,7 +990,7 @@ test("dashboard KPI agent total uses the canonical live-agent count and never ma
   assert.match(kpiSection[0], /canonicalLiveCount/);
 
   const countMatch = dashboard.match(
-    /function countActiveWorkspaces\([\s\S]*?\n {4}\}/
+    /function countActiveWorkspaces\([\s\S]*?\n {6}\}/
   );
   assert.ok(
     countMatch,
@@ -1051,14 +1052,14 @@ test('dashboard keeps role-less ("unattributed") activity explicit instead of gu
     "utf8"
   );
   const kpiSection = dashboard.match(
-    /function computeKpiAgentTotals\([\s\S]*?\n {4}\}/
+    /function computeKpiAgentTotals\([\s\S]*?\n {6}\}/
   );
   assert.ok(
     kpiSection,
     "computeKpiAgentTotals should be present in dashboard script"
   );
   const countMatch = dashboard.match(
-    /function countActiveWorkspaces\([\s\S]*?\n {4}\}/
+    /function countActiveWorkspaces\([\s\S]*?\n {6}\}/
   );
   assert.ok(
     countMatch,
@@ -1186,18 +1187,18 @@ test("router dashboard renders workspace MCP servers with confirmed uses and exp
     "utf8"
   );
   const escapeMatch = rawDashboard.match(
-    /function escapeHtml\([\s\S]*?\n {4}\}/
+    /function escapeHtml\([\s\S]*?\n {6}\}/
   );
   assert.ok(escapeMatch, "escapeHtml should be present in dashboard script");
   const renderMcpMatch = rawDashboard.match(
-    /function renderWorkspaceMcp\([\s\S]*?\n {4}\}/
+    /function renderWorkspaceMcp\([\s\S]*?\n {6}\}/
   );
   assert.ok(
     renderMcpMatch,
     "renderWorkspaceMcp should be present in dashboard script"
   );
   const normalizeMatch = rawDashboard.match(
-    /function normalizeWorkspaceNamedUsage\([\s\S]*?\n {4}\}/
+    /function normalizeWorkspaceNamedUsage\([\s\S]*?\n {6}\}/
   );
   assert.ok(
     normalizeMatch,

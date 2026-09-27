@@ -68,6 +68,7 @@ export const RUNTIME_MODULES = [
   "src/router/usage.ts",
   "src/router/otel.ts",
   "src/router/proxy.ts",
+  "src/router/lookback-aggregator.ts",
   "src/router/live-feed.ts",
   "src/router/http.ts",
   "src/router/dashboard.html",

@@ -24,10 +24,21 @@ export const OTEL_RECORD_IDENTITY_LIMIT = 10_000;
 export const PENDING_MCP_MODEL_CONVERSATION_LIMIT = 1000;
 export const PENDING_MCP_MODEL_OBSERVATION_LIMIT = 200;
 export const OTEL_PERSISTENCE_SCHEMA_VERSION = 6;
+export const OTEL_LOOKBACK_EVENT_LIMIT = 500;
 
 export const MCP_DISCOVERY_SPAN_NAMES = new Set([
   "list_tools_for_client_uncached",
   "list_tools_with_connector_ids"
+]);
+const MCP_INITIALIZATION_SPAN_NAMES = new Set([
+  "make_rmcp_client",
+  "start_server_task",
+  "new"
+]);
+const MCP_READY_SPAN_NAMES = new Set([
+  "list_tools_for_client_uncached",
+  "list_tools_with_connector_ids",
+  "initialize"
 ]);
 
 export const REMOVED_SHADOW_SELECTION_METRICS = new Set([
@@ -627,7 +638,122 @@ export interface OtelRestoreSnapshot {
   toolResults?: Record<string, unknown>;
   bridgeEvents?: Record<string, unknown>;
   series?: Array<Record<string, unknown>>;
+  lookbackEvents?: OtelLookbackEvent[];
 }
+
+/**
+ * Family of a canonical per-occurrence OTel semantic event recorded in
+ * `OtelTracker.lookbackEvents`. Each event is appended only after the
+ * existing dedupe / series-delta logic has accepted the semantic delta,
+ * so the bounded ring buffer mirrors the lifetime cumulative buckets
+ * without double-counting or redelivery.
+ *
+ * Values intentionally mirror the existing dashboard-friendly low-cardinality
+ * vocabulary already produced by the lifetime maps; nothing new is added
+ * to metric counters or attribute sets.
+ */
+export type OtelLookbackEventFamily =
+  | "tool"
+  | "hook"
+  | "skill"
+  | "mcp"
+  | "tool_result"
+  | "turn"
+  | "token"
+  | "receiver";
+
+/** Sub-type of an OtelLookbackEvent within its family. */
+export type OtelLookbackEventType =
+  | "counter"
+  | "duration"
+  | "injected"
+  | "used"
+  | "observation"
+  | "use"
+  | "exposure"
+  | "prompt"
+  | "completed"
+  | "ttft"
+  | "signal"
+  | "invalid"
+  | "delta"
+  | "result";
+
+const OTEL_LOOKBACK_EVENT_FAMILIES: ReadonlySet<string> = new Set([
+  "tool",
+  "hook",
+  "skill",
+  "mcp",
+  "tool_result",
+  "turn",
+  "token",
+  "receiver"
+]);
+
+const OTEL_LOOKBACK_EVENT_TYPES: ReadonlySet<string> = new Set([
+  "counter",
+  "duration",
+  "injected",
+  "used",
+  "observation",
+  "use",
+  "exposure",
+  "prompt",
+  "completed",
+  "ttft",
+  "signal",
+  "invalid",
+  "delta",
+  "result"
+]);
+
+/**
+ * Canonical per-occurrence OTel semantic event. Owned by `OtelTracker`
+ * and exposed as a typed readonly copy on `codexTelemetryStatus().lookbackEvents`
+ * plus the standard persistence/restore snapshot contract.
+ *
+ * The ring is bounded to `OTEL_LOOKBACK_EVENT_LIMIT` (500) entries and
+ * retains the original metric/event timestamp (no ingestion-clock
+ * substitution). Dimensions are limited to stable, low-cardinality
+ * labels already normalized by the lifetime trackers; raw payload,
+ * prompts, request IDs, and other sensitive content are excluded.
+ */
+export interface OtelLookbackEvent {
+  /** Source metric/event timestamp preserved from the data point (ISO). */
+  timestamp: string;
+  /** Family this event belongs to. */
+  family: OtelLookbackEventFamily;
+  /** Sub-type within the family. */
+  type: OtelLookbackEventType;
+  /** Tool name, hook name, skill name, or MCP server name (sanitized). */
+  name: string;
+  /** Origin/source label when the family exposes one (tool/hook/skill). */
+  source: string | null;
+  /** MCP server name when a non-MCP family names one (e.g. hook). */
+  server: string | null;
+  /** Status bucket label (ok/error/observed/...). */
+  status: string | null;
+  /** Accepted semantic count delta for this occurrence. */
+  countDelta: number;
+  /** Duration count delta for histogram events; null otherwise. */
+  durationCount: number | null;
+  /** Duration sum delta (ms) for histogram events; null otherwise. */
+  durationSumMs: number | null;
+  /** Resolved workspace dimension (or null when unattributed). */
+  workspace: string | null;
+  /** Resolved role dimension (or null when unattributed). */
+  role: string | null;
+  /** Resolved model dimension (or null when unattributed). */
+  model: string | null;
+  /** Resolved agent dimension (or null when unattributed). */
+  agent: string | null;
+  /** Tool result had a call id used to resolve its causal join. */
+  resolvedCall: boolean;
+}
+
+export type CodexTelemetryStatus = Record<string, unknown> & {
+  lookbackEvents: readonly OtelLookbackEvent[];
+};
 
 export function otelAttributeValue(value: OtelAttributeValueRaw | undefined): unknown {
   if (!value || typeof value !== "object") {
@@ -1494,6 +1620,17 @@ export class OtelTracker {
     string,
     Array<{ serverName: string; context: TelemetryContext; status: string }>
   >;
+  /**
+   * Bounded ring buffer of accepted canonical OTel semantic events.
+   * One entry is recorded only after the existing dedupe/series-delta
+   * logic has accepted the semantic delta, so the ring stays in lock
+   * step with the lifetime cumulative buckets. Never re-derived from
+   * `lastSeenAt`; the original metric/event timestamp is preserved.
+   *
+   * Not exposed directly; callers read it through the typed readonly
+   * copy on `codexTelemetryStatus().lookbackEvents`.
+   */
+  private readonly lookbackEvents: OtelLookbackEvent[];
 
   constructor(options: OtelTrackerOptions = {}) {
     this.healthTtlMs = options.healthTtlMs ?? OTEL_HEALTH_TTL_MS;
@@ -1505,6 +1642,7 @@ export class OtelTracker {
     this.telemetry = createEmptyOtelTelemetry();
     this.metricSeries = new Map();
     this.pendingMcpModelAttribution = new Map();
+    this.lookbackEvents = [];
   }
 
   configure(options: Partial<OtelTrackerOptions>): this {
@@ -1888,6 +2026,104 @@ export class OtelTracker {
     return true;
   }
 
+  /**
+   * Append a single canonical OTel semantic event to the bounded ring
+   * buffer. Callers must invoke this only after the existing
+   * dedupe/series-delta logic has accepted the underlying delta so
+   * zero/replayed datapoints never produce events. The original
+   * metric/event timestamp is preserved verbatim; the function does
+   * not consult the clock or the ingestion-time default path.
+   */
+  private appendLookbackEvent(input: {
+    timestamp: string;
+    family: OtelLookbackEventFamily;
+    type: OtelLookbackEventType;
+    name: string;
+    source?: string | null;
+    server?: string | null;
+    status?: string | null;
+    countDelta: number;
+    durationCount?: number | null;
+    durationSumMs?: number | null;
+    resolvedCall?: boolean;
+    context: TelemetryContext | null;
+  }): void {
+    const event: OtelLookbackEvent = {
+      timestamp: input.timestamp,
+      family: input.family,
+      type: input.type,
+      name: input.name,
+      source: input.source ?? null,
+      server: input.server ?? null,
+      status: input.status ?? null,
+      countDelta: input.countDelta,
+      durationCount: input.durationCount ?? null,
+      durationSumMs: input.durationSumMs ?? null,
+      workspace: input.context?.workspace ?? null,
+      role: input.context?.role ?? null,
+      model: input.context?.model ?? null,
+      agent: input.context?.agent ?? null,
+      resolvedCall: input.resolvedCall ?? false
+    };
+    this.lookbackEvents.push(event);
+    while (this.lookbackEvents.length > OTEL_LOOKBACK_EVENT_LIMIT) {
+      this.lookbackEvents.shift();
+    }
+  }
+
+  /**
+   * Defensive coercion used by `restoreOtelLookbackEvents`. Drops any
+   * entry that is missing a usable timestamp, family/type literal,
+   * non-empty name, or non-positive count delta. The bounded ring is
+   * never grown beyond `OTEL_LOOKBACK_EVENT_LIMIT`.
+   */
+  private coerceLookbackEvent(raw: unknown): OtelLookbackEvent | null {
+    if (!raw || typeof raw !== "object") return null;
+    const entry = raw as Record<string, unknown>;
+    if (typeof entry.timestamp !== "string" || !entry.timestamp) return null;
+    const family = entry.family;
+    if (typeof family !== "string" || !OTEL_LOOKBACK_EVENT_FAMILIES.has(family))
+      return null;
+    const type = entry.type;
+    if (typeof type !== "string" || !OTEL_LOOKBACK_EVENT_TYPES.has(type))
+      return null;
+    if (typeof entry.name !== "string" || !entry.name) return null;
+    const countDelta = Number(entry.countDelta);
+    const durationCount =
+      typeof entry.durationCount === "number" && Number.isFinite(entry.durationCount)
+        ? entry.durationCount
+        : null;
+    const durationSumMs =
+      typeof entry.durationSumMs === "number" && Number.isFinite(entry.durationSumMs)
+        ? entry.durationSumMs
+        : null;
+    if (
+      !Number.isFinite(countDelta) ||
+      countDelta < 0 ||
+      (countDelta === 0 &&
+        (durationCount === null || durationCount <= 0) &&
+        (durationSumMs === null || durationSumMs <= 0))
+    )
+      return null;
+    return {
+      timestamp: entry.timestamp,
+      family: family as OtelLookbackEventFamily,
+      type: type as OtelLookbackEventType,
+      name: entry.name,
+      source: typeof entry.source === "string" ? entry.source : null,
+      server: typeof entry.server === "string" ? entry.server : null,
+      status: typeof entry.status === "string" ? entry.status : null,
+      countDelta,
+      durationCount,
+      durationSumMs,
+      workspace: typeof entry.workspace === "string" ? entry.workspace : null,
+      role: typeof entry.role === "string" ? entry.role : null,
+      model: typeof entry.model === "string" ? entry.model : null,
+      agent: typeof entry.agent === "string" ? entry.agent : null,
+      resolvedCall: entry.resolvedCall === true
+    };
+  }
+
   otelSeriesDelta(
     seriesKey: string,
     timeUnixNano: unknown,
@@ -2046,7 +2282,11 @@ export class OtelTracker {
     server: McpServerEntry,
     context: TelemetryContext,
     conversationId: string | null,
-    status: string
+    status: string,
+    durationCount: number | null = null,
+    durationSumMs: number | null = null,
+    source: string | null = null,
+    lookbackType: "observation" | "use" = "observation"
   ): void {
     this.noteMcpDimension(server, "byRole", context.role, context, status);
     this.noteMcpDimension(
@@ -2065,9 +2305,21 @@ export class OtelTracker {
         context,
         status
       );
-      return;
+    } else {
+      this.applyMcpModelObservation(server, context.model, context, status);
     }
-    this.applyMcpModelObservation(server, context.model, context, status);
+    this.appendLookbackEvent({
+      timestamp: context.timestamp,
+      family: "mcp",
+      type: lookbackType,
+      name: server.name,
+      source,
+      status,
+      countDelta: 1,
+      durationCount,
+      durationSumMs,
+      context
+    });
   }
 
   applyMcpModelObservation(
@@ -2231,41 +2483,19 @@ export class OtelTracker {
       timestampNotOlder(context.timestamp, server.lastSeenAt)
     )
       server.lastSeenAt = context.timestamp;
-    if (span) {
-      server.durationMs += durationMs;
-      server.durationCount += 1;
-      if (
-        span.name === "make_rmcp_client" ||
-        span.name === "start_server_task" ||
-        span.name === "new"
-      )
-        server.initAttempts += 1;
-      if (
-        span.name === "list_tools_for_client_uncached" ||
-        span.name === "list_tools_with_connector_ids"
-      )
-        server.toolDiscoveryAttempts += 1;
-      if (statusCode === 2 || statusCode === "ERROR") {
-        server.failures += 1;
-        server.lastStatus = "error";
-      } else if (
-        span.name === "list_tools_for_client_uncached" ||
-        span.name === "list_tools_with_connector_ids" ||
-        span.name === "initialize"
-      ) {
-        server.lastStatus = "ready";
-      } else if (server.lastStatus === "unknown") {
-        server.lastStatus = "observed";
-      }
-      if (attributes["error.type"] || attributes["error.message"])
-        server.lastStatus = "error";
-    }
+    if (span) this.updateMcpServerSpan(server, span, durationMs, statusCode, attributes);
 
     this.noteMcpObservation(
       server,
       context,
       this.telemetryConversationId(attributes, resourceAttributes),
-      server.lastStatus
+      server.lastStatus,
+      span ? 1 : null,
+      span ? durationMs : null,
+      typeof attributes.source === "string"
+        ? safeMetricLabel(attributes.source)
+        : null,
+      span && MCP_DISCOVERY_SPAN_NAMES.has(span.name) ? "use" : "observation"
     );
 
     if (context.workspace !== UNATTRIBUTED_DIMENSION) {
@@ -2279,9 +2509,34 @@ export class OtelTracker {
     }
   }
 
+  private updateMcpServerSpan(
+    server: McpServerEntry,
+    span: OtelSpan,
+    durationMs: number,
+    statusCode: string | number | undefined,
+    attributes: OtelAttributeMap
+  ): void {
+    server.durationMs += durationMs;
+    server.durationCount += 1;
+    if (MCP_INITIALIZATION_SPAN_NAMES.has(span.name)) server.initAttempts += 1;
+    if (MCP_DISCOVERY_SPAN_NAMES.has(span.name))
+      server.toolDiscoveryAttempts += 1;
+    if (statusCode === 2 || statusCode === "ERROR") {
+      server.failures += 1;
+      server.lastStatus = "error";
+    } else if (MCP_READY_SPAN_NAMES.has(span.name)) {
+      server.lastStatus = "ready";
+    } else if (server.lastStatus === "unknown") {
+      server.lastStatus = "observed";
+    }
+    if (attributes["error.type"] || attributes["error.message"])
+      server.lastStatus = "error";
+  }
+
   noteCodexToolResultLog(
     attributes: OtelAttributeMap,
-    resourceAttributes: OtelAttributeMap = {}
+    resourceAttributes: OtelAttributeMap = {},
+    timestamp: string | null = null
   ): void {
     const tool = toolNameAttribute(attributes, UNKNOWN_TOOL_LABEL);
     const source = safeMetricLabel(
@@ -2326,8 +2581,23 @@ export class OtelTracker {
     const context = this.resolveTelemetryContext(
       attributes,
       resourceAttributes,
-      { timestamp: attributes["event.timestamp"] }
+      { timestamp: timestamp ?? attributes["event.timestamp"] }
     );
+    const durationIsValid = Number.isFinite(duration) && duration >= 0;
+    this.appendLookbackEvent({
+      timestamp: context.timestamp,
+      family: "tool_result",
+      type: "result",
+      name: tool,
+      source,
+      server,
+      status,
+      countDelta: count,
+      durationCount: durationIsValid ? 1 : null,
+      durationSumMs: durationIsValid ? duration : null,
+      resolvedCall: Boolean(callId),
+      context
+    });
     this.noteContextDimension("tools", context, count);
     if (server) {
       const mcp = this.mcpServer(server);
@@ -2384,7 +2654,9 @@ export class OtelTracker {
 
   private recordTurnLogEvent(
     eventName: unknown,
-    attributes: OtelAttributeMap
+    attributes: OtelAttributeMap,
+    resourceAttributes: OtelAttributeMap,
+    timestamp: string
   ): void {
     if (eventName === "codex.conversation_starts") {
       // Conversation start is already noted by noteConversation at the call site.
@@ -2392,16 +2664,55 @@ export class OtelTracker {
     }
     if (eventName === "codex.user_prompt") {
       this.telemetry.turns.prompts += 1;
-      this.telemetry.turns.promptLength += numberAttribute(
+      const promptLength = numberAttribute(
         attributes,
         "prompt_length"
       );
+      this.telemetry.turns.promptLength += promptLength;
+      const context = this.resolveTelemetryContext(
+        attributes,
+        resourceAttributes,
+        { timestamp }
+      );
+      this.appendLookbackEvent({
+        timestamp: context.timestamp,
+        family: "turn",
+        type: "prompt",
+        name: "prompt",
+        countDelta: 1,
+        context
+      });
+      if (promptLength > 0) {
+        this.appendLookbackEvent({
+          timestamp: context.timestamp,
+          family: "turn",
+          type: "delta",
+          name: "prompt_length",
+          countDelta: promptLength,
+          context
+        });
+      }
       return;
     }
     if (eventName === "codex.turn_ttft") {
       const duration = numberAttribute(attributes, "duration_ms");
       this.telemetry.turns.ttftMs += duration;
       this.telemetry.turns.ttftCount += duration > 0 ? 1 : 0;
+      const context = this.resolveTelemetryContext(
+        attributes,
+        resourceAttributes,
+        { timestamp }
+      );
+      this.appendLookbackEvent({
+        timestamp: context.timestamp,
+        family: "turn",
+        type: "ttft",
+        name: "ttft",
+        countDelta: 1,
+        durationCount: duration > 0 ? 1 : 0,
+        durationSumMs: duration,
+        context
+      });
       return;
     }
     if (eventName === "codex.tool_result") {
@@ -2413,26 +2724,41 @@ export class OtelTracker {
       attributes["event.kind"] === "response.completed"
     ) {
       this.telemetry.turns.completed += 1;
-      this.telemetry.tokens.input += numberAttribute(
+      const context = this.resolveTelemetryContext(
         attributes,
-        "input_token_count"
+        resourceAttributes,
+        { timestamp }
       );
-      this.telemetry.tokens.output += numberAttribute(
-        attributes,
-        "output_token_count"
-      );
-      this.telemetry.tokens.cached += numberAttribute(
-        attributes,
-        "cached_token_count"
-      );
-      this.telemetry.tokens.reasoning += numberAttribute(
-        attributes,
-        "reasoning_token_count"
-      );
-      this.telemetry.tokens.tool += numberAttribute(
-        attributes,
-        "tool_token_count"
-      );
+      this.appendLookbackEvent({
+        timestamp: context.timestamp,
+        family: "turn",
+        type: "completed",
+        name: "completed",
+        countDelta: 1,
+        context
+      });
+      const tokens = {
+        input: numberAttribute(attributes, "input_token_count"),
+        output: numberAttribute(attributes, "output_token_count"),
+        cached: numberAttribute(attributes, "cached_token_count"),
+        reasoning: numberAttribute(attributes, "reasoning_token_count"),
+        tool: numberAttribute(attributes, "tool_token_count")
+      };
+      for (const [name, countDelta] of Object.entries(tokens) as Array<
+        [keyof typeof tokens, number]
+      >) {
+        this.telemetry.tokens[name] += countDelta;
+        if (countDelta > 0) {
+          this.appendLookbackEvent({
+            timestamp: context.timestamp,
+            family: "token",
+            type: "delta",
+            name,
+            countDelta,
+            context
+          });
+        }
+      }
     }
   }
 
@@ -2456,9 +2782,18 @@ export class OtelTracker {
           }
           const attributes = otelAttributes(record.attributes);
           this.noteConversation(attributes, resource);
-          this.recordTurnLogEvent(attributes["event.name"], attributes);
+          this.recordTurnLogEvent(
+            attributes["event.name"],
+            attributes,
+            resource,
+            otelTimestamp(record.timeUnixNano) ?? new Date().toISOString()
+          );
           if (attributes["event.name"] === "codex.tool_result") {
-            this.noteCodexToolResultLog(attributes, resource);
+            this.noteCodexToolResultLog(
+              attributes,
+              resource,
+              otelTimestamp(record.timeUnixNano)
+            );
           }
         }
       }
@@ -2632,6 +2967,7 @@ export class OtelTracker {
     timestamp: string | null = null
   ): void {
     if (!skill || !Number.isFinite(count) || count <= 0) return;
+    const cleanSkill = safeMetricLabel(skill, "unknown");
     const used = this.telemetry.skills.used;
     const at = timestamp ?? context.timestamp ?? new Date().toISOString();
     used.total += count;
@@ -2657,6 +2993,14 @@ export class OtelTracker {
       const wsSkill = this.usageTracker.workspaceSkillBucket(workspace, skill);
       wsSkill.uses = (wsSkill.uses ?? 0) + count;
     }
+    this.appendLookbackEvent({
+      timestamp: at,
+      family: "skill",
+      type: "used",
+      name: cleanSkill,
+      countDelta: count,
+      context
+    });
   }
 
   noteSkillInjected(
@@ -2773,6 +3117,19 @@ export class OtelTracker {
       );
       wsBucket.skillsUnattributed = (wsBucket.skillsUnattributed ?? 0) + delta;
     }
+    this.appendLookbackEvent({
+      timestamp: context.timestamp,
+      family: "skill",
+      type: "injected",
+      name: skill,
+      source:
+        typeof attributes.source === "string"
+          ? safeMetricLabel(attributes.source)
+          : null,
+      status,
+      countDelta: delta,
+      context
+    });
   }
 
   noteThreadSkillsHistogram(
@@ -2945,6 +3302,19 @@ export class OtelTracker {
       wsTool.count += delta;
       wsTool.byStatus[status] = (wsTool.byStatus[status] ?? 0) + delta;
     }
+    const toolEventTimestamp =
+      otelTimestamp(dataPoint.timeUnixNano) ?? context.timestamp;
+    this.appendLookbackEvent({
+      timestamp: toolEventTimestamp,
+      family: "tool",
+      type: "counter",
+      name: toolNameAttribute(attributes),
+      source: safeMetricLabel(attributes.source),
+      server: toolServerAttribute(attributes) || null,
+      status,
+      countDelta: delta,
+      context
+    });
   }
 
   noteToolDuration(
@@ -3006,6 +3376,21 @@ export class OtelTracker {
       );
       wsTool.durationCount += count;
       wsTool.durationMs += sum;
+    }
+    if (count !== 0 || sum !== 0) {
+      this.appendLookbackEvent({
+        timestamp: otelTimestamp(dataPoint.timeUnixNano) ?? context.timestamp,
+        family: "tool",
+        type: "duration",
+        name: toolNameAttribute(attributes),
+        source: safeMetricLabel(attributes.source),
+        server: toolServerAttribute(attributes) || null,
+        status: toolStatusAttribute(attributes),
+        countDelta: count,
+        durationCount: count,
+        durationSumMs: sum,
+        context
+      });
     }
   }
 
@@ -3322,6 +3707,17 @@ export class OtelTracker {
         ).mcpCapable = true;
       }
     }
+    this.appendLookbackEvent({
+      timestamp: otelTimestamp(dataPoint.timeUnixNano) ?? context.timestamp,
+      family: "hook",
+      type: "counter",
+      name: safeMetricLabel(attributes.hook_name, UNKNOWN_HOOK_LABEL),
+      source: safeMetricLabel(attributes.source),
+      server: server || null,
+      status,
+      countDelta: delta,
+      context
+    });
   }
 
   noteHookDuration(
@@ -3361,6 +3757,20 @@ export class OtelTracker {
     this.noteContextDimension("hooks", context, count);
     bucket.durationCount += count;
     bucket.durationMs += sum;
+    if (count !== 0 || sum !== 0) {
+      this.appendLookbackEvent({
+        timestamp: otelTimestamp(dataPoint.timeUnixNano) ?? context.timestamp,
+        family: "hook",
+        type: "duration",
+        name: safeMetricLabel(attributes.hook_name, UNKNOWN_HOOK_LABEL),
+        source: safeMetricLabel(attributes.source),
+        status: safeMetricLabel(attributes.status),
+        countDelta: count,
+        durationCount: count,
+        durationSumMs: sum,
+        context
+      });
+    }
   }
 
   noteHookHistogramCount(
@@ -3396,6 +3806,16 @@ export class OtelTracker {
     const status = safeMetricLabel(attributes.status);
     bucket.count += delta;
     bucket.byStatus[status] = (bucket.byStatus[status] ?? 0) + delta;
+    this.appendLookbackEvent({
+      timestamp: otelTimestamp(dataPoint.timeUnixNano) ?? context.timestamp,
+      family: "hook",
+      type: "counter",
+      name: safeMetricLabel(attributes.hook_name, UNKNOWN_HOOK_LABEL),
+      source: safeMetricLabel(attributes.source),
+      status,
+      countDelta: delta,
+      context
+    });
   }
 
   noteThreadStarted(
@@ -3780,7 +4200,16 @@ export class OtelTracker {
     if (this.telemetry.receiver[signal] !== undefined) {
       this.telemetry.receiver[signal] += 1;
     }
-    this.telemetry.receiver.lastReceivedAt = new Date().toISOString();
+    const timestamp = new Date().toISOString();
+    this.telemetry.receiver.lastReceivedAt = timestamp;
+    this.appendLookbackEvent({
+      timestamp,
+      family: "receiver",
+      type: "signal",
+      name: signal,
+      countDelta: 1,
+      context: null
+    });
     let ingestPayload = payload;
     if (isAutodevAttributesEnabled()) {
       const enriched = autodevEnrichOtlpPayload(signal, payload);
@@ -3789,6 +4218,20 @@ export class OtelTracker {
     if (signal === "logs") this.ingestOtelLogs(ingestPayload);
     if (signal === "traces") this.ingestOtelTraces(ingestPayload);
     if (signal === "metrics") this.ingestOtelMetrics(ingestPayload);
+    this.onSchedulePersist?.();
+  }
+
+  recordInvalidOtelSignal(timestamp: string = new Date().toISOString()): void {
+    this.telemetry.receiver.invalid += 1;
+    this.telemetry.receiver.lastReceivedAt = timestamp;
+    this.appendLookbackEvent({
+      timestamp,
+      family: "receiver",
+      type: "invalid",
+      name: "invalid",
+      countDelta: 1,
+      context: null
+    });
     this.onSchedulePersist?.();
   }
 
@@ -4328,11 +4771,12 @@ export class OtelTracker {
       }
     };
     this.metricSeries.clear();
+    this.lookbackEvents.length = 0;
     this.usageTracker.resetAttributionDiagnostics();
     this.usageTracker.clearWorkspaceCapabilities();
   }
 
-  codexTelemetryStatus(now: number = Date.now()): Record<string, unknown> {
+  codexTelemetryStatus(now: number = Date.now()): CodexTelemetryStatus {
     const mcpModelView = this.mcpModelDimensionsView();
     const mcpServers = Array.from(
       this.telemetry.mcpServers.values(),
@@ -4558,7 +5002,8 @@ export class OtelTracker {
         }
       },
       toolResults: formatToolResults(this.telemetry.toolResults),
-      bridgeEvents: formatBridgeEvents(this.telemetry.bridgeEvents)
+      bridgeEvents: formatBridgeEvents(this.telemetry.bridgeEvents),
+      lookbackEvents: this.lookbackEvents.map((event) => ({ ...event }))
     };
   }
 
@@ -4592,6 +5037,7 @@ export class OtelTracker {
       sqlite: telemetry.sqlite,
       toolResults: telemetry.toolResults,
       bridgeEvents: telemetry.bridgeEvents,
+      lookbackEvents: telemetry.lookbackEvents,
       series: Array.from(this.metricSeries.entries(), ([key, value]) => ({
         key,
         timestamp: value.timestamp.toString(),
@@ -5291,6 +5737,17 @@ export class OtelTracker {
     }
   }
 
+  private restoreOtelLookbackEvents(snapshot: OtelRestoreSnapshot): void {
+    this.lookbackEvents.length = 0;
+    const events = Array.isArray(snapshot.lookbackEvents)
+      ? snapshot.lookbackEvents
+      : [];
+    for (const raw of events.slice(-OTEL_LOOKBACK_EVENT_LIMIT)) {
+      const event = this.coerceLookbackEvent(raw);
+      if (event) this.lookbackEvents.push(event);
+    }
+  }
+
   restoreOtelTelemetry(snapshot: OtelRestoreSnapshot): void {
     if (
       !snapshot ||
@@ -5312,6 +5769,7 @@ export class OtelTracker {
     this.restoreOtelThreads(snapshot);
     this.restoreOtelSqlite(snapshot);
     this.restoreOtelSeries(snapshot);
+    this.restoreOtelLookbackEvents(snapshot);
   }
 
 }
@@ -5506,7 +5964,7 @@ export function resetOtelTelemetry(): void {
   defaultOtelTracker.resetOtelTelemetry();
 }
 
-export function codexTelemetryStatus(now: number = Date.now()): Record<string, unknown> {
+export function codexTelemetryStatus(now: number = Date.now()): CodexTelemetryStatus {
   return defaultOtelTracker.codexTelemetryStatus(now);
 }
 

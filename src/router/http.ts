@@ -48,6 +48,11 @@ import {
 } from "./lifecycle.ts";
 import { type LiveFeedCategory, LiveFeedRecorder } from "./live-feed.ts";
 import {
+  applyIntervalLookback,
+  LOOKBACK_SELECTIONS,
+  type LookbackSelection
+} from "./lookback-aggregator.ts";
+import {
   codexTelemetryStatus,
   getDefaultOtelTracker,
   ingestOtelSignal,
@@ -211,7 +216,8 @@ setDefaultRouterLifecycle(routerLifecycle);
 const MAX_RECENT_EVENTS = Number.parseInt(
   process.env.CODEX_ROUTER_MAX_RECENT_EVENTS ?? "100"
 );
-const liveFeedEvents = new LiveFeedRecorder(MAX_RECENT_EVENTS);
+const liveFeedEvents = new LiveFeedRecorder();
+const OTEL_UNIX_NANOS_PATTERN = /^\d+$/;
 
 const routerEvents = new RouterEventRecorder({
   maxRecentEvents: MAX_RECENT_EVENTS,
@@ -230,7 +236,15 @@ const routerEvents = new RouterEventRecorder({
       workspace:
         typeof input.workspace === "string"
           ? input.workspace
-          : (input.workspace?.key ?? null)
+          : (input.workspace?.key ?? null),
+      phase: event.phase,
+      outcome: event.outcome,
+      status: event.status,
+      failureClass: event.failureClass,
+      denialReason: event.denialReason,
+      spawnFailureReason: event.spawnFailureReason,
+      durationMs: event.elapsedMs,
+      name: event.model ? `${event.provider ?? ""}/${event.model}` : null
     });
     const workspaceContext =
       typeof input.workspace === "string"
@@ -989,19 +1003,55 @@ function recordAgentLiveFeedEvent(
   requestId: string
 ): void {
   const type = typeof event.type === "string" ? event.type : "agent_event";
-  const detail = [event.tool, event.skill, event.server].find(
-    (value) => typeof value === "string" && Boolean(value.trim())
-  );
+  const tool = agentEventText(event, "tool");
+  const skill = agentEventText(event, "skill");
+  const server = agentEventText(event, "server");
+  const hook = agentEventText(event, "hook_name");
+  const name = tool ?? skill ?? server ?? hook;
   liveFeedEvents.record({
     category: liveFeedCategoryForAgentEvent(type),
     type,
-    summary: detail ? `${type}: ${detail}` : type,
+    summary: name ? `${type}: ${name}` : type,
+    timestamp: agentEventText(event, "timestamp"),
     requestId,
     provider: context.provider,
     model: context.model,
     role: context.role,
-    workspace: context.workspace
+    workspace: context.workspace,
+    phase: agentEventText(event, "phase"),
+    outcome: agentEventText(event, "outcome"),
+    status: agentEventStatus(event),
+    failureClass: agentEventText(event, "failureClass"),
+    durationMs: agentEventDuration(event),
+    name,
+    server,
+    source: agentEventText(event, "source"),
+    tool,
+    skill,
+    hook,
+    handlerType: agentEventText(event, "handler_type")
   });
+}
+
+function agentEventText(
+  event: Record<string, unknown>,
+  key: string
+): string | null {
+  const value = event[key];
+  return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function agentEventStatus(
+  event: Record<string, unknown>
+): string | number | null {
+  const status = event.status;
+  if (typeof status === "string" && status.trim()) return status.trim();
+  return typeof status === "number" && Number.isFinite(status) ? status : null;
+}
+
+function agentEventDuration(event: Record<string, unknown>): number | null {
+  const duration = Number(event.durationMs);
+  return Number.isFinite(duration) && duration >= 0 ? duration : null;
 }
 
 function applyAgentEvent(
@@ -1702,14 +1752,14 @@ export async function loadCatalog(
             visibility: "list",
             supported_in_api: true,
             priority: 0,
-            context_window: 1000000,
-            max_context_window: 1000000,
+            context_window: 1_000_000,
+            max_context_window: 1_000_000,
             supports_parallel_tool_calls: true,
             supports_reasoning_summaries: true,
             support_verbosity: true,
             supports_search_tool: true,
             tool_mode: "code_mode_only",
-            truncation_policy: { mode: "tokens", limit: 10000 },
+            truncation_policy: { mode: "tokens", limit: 10_000 },
             experimental_supported_tools: [],
             use_responses_lite: true,
             multi_agent_version: "v1",
@@ -2072,18 +2122,16 @@ function otelLiveFeedCategory(
   signal: "logs" | "traces" | "metrics",
   item: Record<string, unknown>
 ): LiveFeedCategory {
-  const attributes =
-    item.attributes && typeof item.attributes === "object"
-      ? Object.values(item.attributes as Record<string, unknown>)
-      : [];
+  const attributes = otelRecordAttributes(item.attributes);
   const text = [
     item.name,
     item.type,
     item.event_name,
+    attributes["event.name"],
     item.hook_name,
     item.skill_name,
     item.mcp_server,
-    ...attributes
+    ...Object.values(attributes)
   ]
     .filter((value): value is string => typeof value === "string")
     .join(" ")
@@ -2099,28 +2147,7 @@ function recordOtelLiveFeed(
   signal: "logs" | "traces" | "metrics",
   payload: Record<string, unknown>
 ): void {
-  const records: Record<string, unknown>[] = [];
-  for (const resource of (payload.resourceLogs as
-    Record<string, unknown>[] | undefined) ?? [])
-    for (const scope of (resource.scopeLogs as
-      Record<string, unknown>[] | undefined) ?? [])
-      records.push(
-        ...((scope.logRecords as Record<string, unknown>[] | undefined) ?? [])
-      );
-  for (const resource of (payload.resourceSpans as
-    Record<string, unknown>[] | undefined) ?? [])
-    for (const scope of (resource.scopeSpans as
-      Record<string, unknown>[] | undefined) ?? [])
-      records.push(
-        ...((scope.spans as Record<string, unknown>[] | undefined) ?? [])
-      );
-  for (const resource of (payload.resourceMetrics as
-    Record<string, unknown>[] | undefined) ?? [])
-    for (const scope of (resource.scopeMetrics as
-      Record<string, unknown>[] | undefined) ?? [])
-      records.push(
-        ...((scope.metrics as Record<string, unknown>[] | undefined) ?? [])
-      );
+  const records = collectOtelRecords(signal, payload);
   if (records.length === 0) {
     liveFeedEvents.record({
       category: signal === "logs" ? "runtime" : "telemetry",
@@ -2129,17 +2156,146 @@ function recordOtelLiveFeed(
     });
     return;
   }
-  for (const item of records) {
-    const name =
-      [item.name, item.type, item.event_name].find(
-        (value): value is string =>
-          typeof value === "string" && Boolean(value.trim())
-      ) ?? `OTLP ${signal} record`;
-    liveFeedEvents.record({
-      category: otelLiveFeedCategory(signal, item),
-      type: `otel.${signal}`,
-      summary: name
-    });
+  for (const item of records) recordOtelLiveFeedItem(signal, item);
+}
+
+function collectOtelRecords(
+  signal: "logs" | "traces" | "metrics",
+  payload: Record<string, unknown>
+): Record<string, unknown>[] {
+  const records: Record<string, unknown>[] = [];
+  const signalCollections = {
+    logs: ["resourceLogs", "scopeLogs", "logRecords"],
+    traces: ["resourceSpans", "scopeSpans", "spans"],
+    metrics: ["resourceMetrics", "scopeMetrics", "metrics"]
+  } as const;
+  const [resourcesKey, scopesKey, recordsKey] = signalCollections[signal];
+  for (const resource of otelRecords(payload[resourcesKey])) {
+    for (const scope of otelRecords(resource[scopesKey])) {
+      records.push(...otelRecords(scope[recordsKey]));
+    }
+  }
+  return records;
+}
+
+function otelRecords(value: unknown): Record<string, unknown>[] {
+  return Array.isArray(value)
+    ? value.filter(
+        (item): item is Record<string, unknown> =>
+          Boolean(item) && typeof item === "object" && !Array.isArray(item)
+      )
+    : [];
+}
+
+function otelRecordAttributes(value: unknown): Record<string, unknown> {
+  if (Array.isArray(value)) {
+    const attributes: Record<string, unknown> = {};
+    for (const entry of otelRecords(value)) {
+      if (typeof entry.key !== "string") continue;
+      attributes[entry.key] = otelAttributeValue(entry.value);
+    }
+    return attributes;
+  }
+  return value && typeof value === "object"
+    ? (value as Record<string, unknown>)
+    : {};
+}
+
+function otelAttributeValue(value: unknown): unknown {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return value;
+  const item = value as Record<string, unknown>;
+  for (const key of ["stringValue", "intValue", "doubleValue", "boolValue"]) {
+    if (item[key] !== undefined) return item[key];
+  }
+  return value;
+}
+
+function recordOtelLiveFeedItem(
+  signal: "logs" | "traces" | "metrics",
+  item: Record<string, unknown>
+): void {
+  const attributes = otelRecordAttributes(item.attributes);
+  const text = (...keys: string[]): string | null => {
+    for (const key of keys) {
+      const value = item[key] ?? attributes[key];
+      if (typeof value === "string" && value.trim()) return value.trim();
+    }
+    return null;
+  };
+  const name =
+    [item.name, item.type, item.event_name, attributes["event.name"]].find(
+      (value): value is string =>
+        typeof value === "string" && Boolean(value.trim())
+    ) ?? `OTLP ${signal} record`;
+  const rawDuration = Number(item.durationMs ?? item.duration_ms ?? attributes.duration_ms);
+  const duration =
+    Number.isFinite(rawDuration) && rawDuration >= 0 ? rawDuration : null;
+  const timestamp = otelRecordTimestamp(item, attributes);
+  const rawStatus = item.status ?? attributes.status;
+  const status =
+    typeof rawStatus === "string" || typeof rawStatus === "number"
+      ? rawStatus
+      : null;
+  liveFeedEvents.record({
+    category: otelLiveFeedCategory(signal, item),
+    type: `otel.${signal}`,
+    summary: name,
+    timestamp,
+    phase: text("phase"),
+    outcome: text("outcome"),
+    status,
+    failureClass: text("failureClass", "failure_class"),
+    durationMs: duration,
+    name,
+    server: text("server", "mcp_server", "serverName", "server_name"),
+    source: text("source"),
+    tool: text("tool", "toolName", "tool_name"),
+    skill: text("skill", "skillName", "skill_name"),
+    hook: text("hook", "hook_name", "hookName"),
+    handlerType: text("handler_type", "handlerType"),
+    workspace: text("workspace", "autodev.workspace.key"),
+    role: text("role", "autodev.agent.role"),
+    model: text("model", "gen_ai.request.model")
+  });
+}
+
+function otelRecordTimestamp(
+  item: Record<string, unknown>,
+  attributes: Record<string, unknown>
+): string | null {
+  const timestamp = item.timestamp ?? attributes.timestamp;
+  if (typeof timestamp === "string" && Number.isFinite(Date.parse(timestamp)))
+    return timestamp;
+  const rawNanos =
+    item.timeUnixNano ??
+    item.observedTimeUnixNano ??
+    attributes.timeUnixNano ??
+    attributes.observed_time_unix_nano;
+  if (
+    typeof rawNanos !== "string" ||
+    !OTEL_UNIX_NANOS_PATTERN.test(rawNanos)
+  ) {
+    return null;
+  }
+  const millis = Number(BigInt(rawNanos) / 1_000_000n);
+  if (!Number.isFinite(millis)) return null;
+  const date = new Date(millis);
+  return Number.isFinite(date.getTime()) ? date.toISOString() : null;
+}
+
+function parseLookbackSelection(
+  request: IncomingMessage
+): LookbackSelection {
+  try {
+    const url = new URL(request.url ?? "/", `http://${HOST}:${PORT}`);
+    const raw = url.searchParams.get("lookback");
+    if (!raw) return "all";
+    const lowered = raw.toLowerCase();
+    if ((LOOKBACK_SELECTIONS as readonly string[]).includes(lowered))
+      return lowered as LookbackSelection;
+    return "all";
+  } catch {
+    return "all";
   }
 }
 
@@ -2176,7 +2332,13 @@ async function handlePreflightRoutes(
     return true;
   }
   if (pathname === "/status" && request.method === "GET") {
-    sendJson(response, 200, getRouterStatus(), { "cache-control": "no-store" });
+    const lookbackSelection = parseLookbackSelection(request);
+    const status = getRouterStatus();
+    const payload = applyIntervalLookback(
+      status as Parameters<typeof applyIntervalLookback>[0],
+      lookbackSelection
+    );
+    sendJson(response, 200, payload, { "cache-control": "no-store" });
     return true;
   }
   if (pathname === "/v1/models" && request.method === "GET") {
@@ -2196,7 +2358,7 @@ async function handlePreflightRoutes(
       ingestOtelSignal(otelSignals[pathname]!, payload);
       sendJson(response, 200, {});
     } catch {
-      getDefaultOtelTracker().otelTelemetry.receiver.invalid += 1;
+      getDefaultOtelTracker().recordInvalidOtelSignal();
       sendJson(response, 400, errorBody("OTLP request must be valid JSON"));
     }
     return true;

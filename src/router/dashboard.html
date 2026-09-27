@@ -816,7 +816,7 @@
 
       <!-- 1. KPI Grid -->
       <section class="kpi-grid" id="kpi-grid">
-        <stat-card id="kpi-agents" label="Active agents" value="—">—</stat-card>
+        <stat-card id="kpi-agents" label="Active now" value="—">—</stat-card>
         <stat-card id="kpi-attempts" label="Spawns" value="—">—</stat-card>
         <stat-card id="kpi-tools" label="Tool calls" value="—">—</stat-card>
         <stat-card id="kpi-skills" label="Skill uses" value="—">—</stat-card>
@@ -2218,7 +2218,6 @@
       const expandedRows = new Set();
       const panelOpenStates = new Map();
 
-      const LOOKBACK_TIME_ZONE = "America/New_York";
       const LOOKBACK_LABELS = {
         all: "All",
         today: "Today",
@@ -2229,128 +2228,14 @@
       };
       let selectedLookback = "all";
 
-      function zonedDateParts(date) {
-        return Object.fromEntries(
-          new Intl.DateTimeFormat("en-US", {
-            timeZone: LOOKBACK_TIME_ZONE,
-            year: "numeric",
-            month: "2-digit",
-            day: "2-digit",
-            hour: "2-digit",
-            minute: "2-digit",
-            second: "2-digit",
-            hour12: false
-          })
-            .formatToParts(date)
-            .map(({ type, value }) => [type, value])
-        );
-      }
-
-      function lookbackStartMs(now = Date.now(), selection = selectedLookback) {
-        if (selection === "all") return null;
-        if (selection !== "today")
-          return now - Number(selection.replace("h", "")) * 60 * 60 * 1000;
-        const parts = zonedDateParts(new Date(now));
-        const utcMidnight = Date.UTC(
-          Number(parts.year),
-          Number(parts.month) - 1,
-          Number(parts.day)
-        );
-        const utcParts = zonedDateParts(new Date(utcMidnight));
-        const displayedUtc = Date.UTC(
-          Number(utcParts.year),
-          Number(utcParts.month) - 1,
-          Number(utcParts.day),
-          Number(utcParts.hour === "24" ? 0 : utcParts.hour),
-          Number(utcParts.minute),
-          Number(utcParts.second)
-        );
-        return utcMidnight + (utcMidnight - displayedUtc);
-      }
-
-      function timestampInLookback(value, now = Date.now()) {
-        if (selectedLookback === "all" || !value) return true;
-        const timestamp = Date.parse(value);
-        return Number.isFinite(timestamp) && timestamp >= lookbackStartMs(now);
-      }
-
-      function hasRecentTimestamp(entry) {
-        if (!entry || typeof entry !== "object") return true;
-        const timestamps = [
-          entry.timestamp,
-          entry.lastSeenAt,
-          entry.lastUsedAt,
-          entry.lastAttemptAt,
-          entry.lastSuccessAt,
-          entry.lastFailureAt,
-          entry.collectedAt
-        ].filter(Boolean);
-        return (
-          timestamps.length === 0 ||
-          timestamps.some((value) => timestampInLookback(value))
-        );
-      }
-
-      function filterTimestampedEntries(collection) {
-        if (Array.isArray(collection))
-          return collection.filter(hasRecentTimestamp);
-        if (!collection || typeof collection !== "object") return collection;
-        return Object.fromEntries(
-          Object.entries(collection).filter(([, entry]) =>
-            hasRecentTimestamp(entry)
-          )
-        );
-      }
-
-      function applyLookback(status) {
-        if (selectedLookback === "all") return status;
-        const view = {
-          ...status,
-          liveFeed: filterTimestampedEntries(status.liveFeed),
-          recentEvents: filterTimestampedEntries(status.recentEvents)
-        };
-        if (status.providers)
-          view.providers = filterTimestampedEntries(status.providers);
-        if (status.subagents)
-          view.subagents = {
-            ...status.subagents,
-            recent: filterTimestampedEntries(status.subagents.recent)
-          };
-        if (status.usage) {
-          view.usage = { ...status.usage };
-          for (const key of ["byModel", "byRole", "byWorkspace"])
-            if (status.usage[key])
-              view.usage[key] = filterTimestampedEntries(status.usage[key]);
-        }
-        if (status.codexTelemetry) {
-          view.codexTelemetry = { ...status.codexTelemetry };
-          for (const key of ["mcpServers", "tools", "hooks"])
-            if (Array.isArray(status.codexTelemetry[key]))
-              view.codexTelemetry[key] = filterTimestampedEntries(
-                status.codexTelemetry[key]
-              );
-          if (status.codexTelemetry.skills)
-            view.codexTelemetry.skills = {
-              ...status.codexTelemetry.skills,
-              used: {
-                ...status.codexTelemetry.skills.used,
-                bySkill: filterTimestampedEntries(
-                  status.codexTelemetry.skills.used?.bySkill
-                )
-              }
-            };
-        }
-        return view;
-      }
-
       const lookbackSelect = document.getElementById("lookback-select");
       if (lookbackSelect) {
         lookbackSelect.addEventListener("change", () => {
           selectedLookback = LOOKBACK_LABELS[lookbackSelect.value]
             ? lookbackSelect.value
             : "all";
-          if (typeof lastStatus !== "undefined" && lastStatus)
-            render(lastStatus);
+          lastStatus = null;
+          void refresh();
         });
       }
 
@@ -3235,12 +3120,24 @@
 
       function render(status) {
         if (!status || typeof status !== "object") return;
-        status = applyLookback(status);
+
+        // True only when the router rebuilt activity-derived counters for
+        // the selected window. Lifetime cumulative maps stay untouched in
+        // the `All` view, and any panel that should still label its
+        // values as window-derived checks this flag first.
+        const isInterval =
+          selectedLookback !== "all" &&
+          status.lookback?.selection === selectedLookback &&
+          status.lookback.windowStartMs != null;
 
         document.title = `${status.router ?? "Codex model router"} · integrated dashboard`;
         const metaEl = document.getElementById("page-meta");
         if (metaEl) {
-          metaEl.textContent = `Instance ${status.routerInstanceId ?? "-"} · PID ${status.pid ?? "-"} · started ${formatTimestamp(status.startedAt) || "—"} · refresh cadence 3s · lookback ${LOOKBACK_LABELS[selectedLookback]}`;
+          const lookbackLabel = LOOKBACK_LABELS[selectedLookback];
+          const windowNote = isInterval
+            ? ` · window covers retained history only (ring-buffered events)`
+            : "";
+          metaEl.textContent = `Instance ${status.routerInstanceId ?? "-"} · PID ${status.pid ?? "-"} · started ${formatTimestamp(status.startedAt) || "—"} · refresh cadence 3s · lookback ${lookbackLabel}${windowNote}`;
         }
         const errorEl = document.getElementById("error");
         if (errorEl && !lastControlError) errorEl.textContent = "";
@@ -3299,27 +3196,32 @@
             unattributedActive > 0
               ? ` · <strong>${unattributedActive}</strong> unattributed`
               : "";
-          kpiAgents.innerHTML = `<strong>${orchActive}</strong> orchestrators · <strong>${subActive}</strong> subagents${unattributedSuffix} · <strong>${activeWorkspaces}</strong> workspaces with active agents`;
+          kpiAgents.innerHTML = `<strong>${orchActive}</strong> orchestrators · <strong>${subActive}</strong> subagents${unattributedSuffix} · <strong>${activeWorkspaces}</strong> workspaces with active agents · live`;
         }
         const kpiAttempts = document.getElementById("kpi-attempts");
         if (kpiAttempts) {
+          const windowSuffix = isInterval ? " <span class=\"dim\">(window)</span>" : "";
           kpiAttempts.setAttribute("value", attemptsTotal.toLocaleString());
-          kpiAttempts.innerHTML = `<span class="good">${attemptsSuccess.toLocaleString()} success</span> · <span class="bad">${attemptsFail.toLocaleString()} fail</span>${attemptsSkip > 0 ? ` · <span class="warning">${attemptsSkip.toLocaleString()} skipped</span>` : ""}`;
+          kpiAttempts.innerHTML = `<span class="good">${attemptsSuccess.toLocaleString()} success</span> · <span class="bad">${attemptsFail.toLocaleString()} fail</span>${attemptsSkip > 0 ? ` · <span class="warning">${attemptsSkip.toLocaleString()} skipped</span>` : ""}${windowSuffix}`;
         }
         const kpiTools = document.getElementById("kpi-tools");
         if (kpiTools) {
+          const windowSuffix = isInterval ? " <span class=\"dim\">(window)</span>" : "";
           kpiTools.setAttribute("value", toolCount.toLocaleString());
-          kpiTools.innerHTML = `<span class="good">${toolOk.toLocaleString()} success</span> · <span class="bad">${toolErr.toLocaleString()} fail</span>`;
+          kpiTools.innerHTML = `<span class="good">${toolOk.toLocaleString()} success</span> · <span class="bad">${toolErr.toLocaleString()} fail</span>${windowSuffix}`;
         }
         const kpiSkills = document.getElementById("kpi-skills");
         if (kpiSkills) {
           kpiSkills.setAttribute("value", skillUsesTotal.toLocaleString());
-          kpiSkills.textContent = `${observedSkillsCount} skills · ${skillContextsInjectedTotal.toLocaleString()} contexts injected`;
+          const rangeLabel = isInterval ? " (window)" : " (lifetime)";
+          kpiSkills.textContent = `${observedSkillsCount} skills · ${skillUsesTotal.toLocaleString()} uses${rangeLabel} · ${skillContextsInjectedTotal.toLocaleString()} contexts injected${rangeLabel}`;
         }
         const kpiTurn = document.getElementById("kpi-turn");
         if (kpiTurn) {
           kpiTurn.setAttribute("value", `${avgTurnSec}s`);
-          kpiTurn.textContent = "Across routed + bridge-reported turns";
+          kpiTurn.textContent = isInterval
+            ? "Across routed turns (window)"
+            : "Across routed turns (lifetime)";
         }
 
         // 2. Provider health
@@ -3344,8 +3246,8 @@
         );
         syncPanel(
           document.getElementById("panel-providers"),
-          "Provider health",
-          `${readyProvidersCount} / ${configuredProvidersEntries.length} ready · ${activeReqSum} active`
+          "Provider health · current; usage window",
+          `${readyProvidersCount} / ${configuredProvidersEntries.length} ready · ${activeReqSum} active now`
         );
 
         const providersTbody = document.getElementById("providers-tbody");
@@ -3461,7 +3363,7 @@
         // 3. Orchestrator & subagent usage
         syncPanel(
           document.getElementById("panel-orchestrator"),
-          "Agent usage",
+          isInterval ? "Agent usage · window" : "Agent usage · lifetime",
           `${attemptsTotal.toLocaleString()} attempts`
         );
 
@@ -3669,7 +3571,7 @@
         );
         syncPanel(
           document.getElementById("panel-spawn-breakdown"),
-          "Spawn breakdown",
+          isInterval ? "Spawn breakdown · window" : "Spawn breakdown · lifetime",
           spawnCoverageLabel
         );
 
@@ -3711,7 +3613,7 @@
         const failuresTotal = Number(status.spawnFailures?.total ?? 0);
         syncPanel(
           document.getElementById("panel-spawn-failures"),
-          "Spawn failures",
+          isInterval ? "Spawn failures · window" : "Spawn failures · lifetime",
           `${failuresTotal} observed`
         );
 
@@ -3993,8 +3895,8 @@
         // 5. Skill Telemetry
         syncPanel(
           document.getElementById("panel-skills"),
-          "Skill telemetry",
-          `${skillUsesTotal.toLocaleString()} uses · ${skillContextsInjectedTotal.toLocaleString()} contexts injected`
+          isInterval ? "Skill telemetry · window" : "Skill telemetry · lifetime",
+          `${skillUsesTotal.toLocaleString()} uses${isInterval ? " (window)" : ""} · ${skillContextsInjectedTotal.toLocaleString()} contexts injected${isInterval ? " (window)" : ""}`
         );
 
         const skillsTbody = document.getElementById("skills-usage-tbody");
@@ -4106,7 +4008,7 @@
         // Skill context sub-panel
         syncPanel(
           document.getElementById("panel-skill-context"),
-          "Skill context telemetry",
+          "Skill context telemetry · current snapshot",
           "5 aggregate metrics"
         );
         const skillCtxTbody = document.getElementById("skill-context-tbody");
@@ -4194,7 +4096,7 @@
 
         syncPanel(
           document.getElementById("panel-hooks"),
-          "Hooks & runtime telemetry",
+          isInterval ? "Hooks window · runtime snapshot" : "Hooks & runtime · lifetime",
           `${runtimeTotalEvents.toLocaleString()} events`
         );
 
@@ -4332,8 +4234,8 @@
         // 7. Operational summary
         syncPanel(
           document.getElementById("panel-ops"),
-          "Operational summary",
-          "Telemetry · metrics · state DB · concurrency"
+          "Operational summary · mixed current/window",
+          "OTLP activity uses the selected window; inventory, state DB, and concurrency are current snapshots"
         );
 
         const opsGrid = document.getElementById("ops-grid");
@@ -4361,22 +4263,22 @@
 
           opsGrid.innerHTML = `
           <section class="ops-group">
-            <h3>Codex telemetry</h3>
+            <h3>Codex telemetry activity (window) + current state</h3>
             <div class="kv-list">
-              <div class="kv"><span>OTLP logs</span><span>${Number(receiver?.logs ?? 0).toLocaleString()}</span></div>
-              <div class="kv"><span>OTLP traces</span><span>${Number(receiver?.traces ?? 0).toLocaleString()}</span></div>
-              <div class="kv"><span>OTLP metrics</span><span>${Number(receiver?.metrics ?? 0).toLocaleString()}</span></div>
-              <div class="kv"><span>Invalid signals</span><span class="${invalidSignals > 0 ? "bad" : "good"}">${invalidSignals}</span></div>
-              <div class="kv"><span>Recent sessions</span><span>${Number(status.codexTelemetry?.sessionsRecent ?? 0)} / ${Number(status.codexTelemetry?.sessionsObserved ?? 0)}</span></div>
-              <div class="kv"><span>Completed turns / prompts</span><span>${Number(status.codexTelemetry?.turns?.completed ?? 0).toLocaleString()} / ${Number(status.codexTelemetry?.turns?.prompts ?? 0).toLocaleString()}</span></div>
-              <div class="kv"><span>Average TTFT</span><span>${(Number(status.codexTelemetry?.turns?.averageTtftMs ?? 0) / 1000).toFixed(1)}s</span></div>
-              <div class="kv"><span>Tokens</span><span>${escapeHtml(formatTokens(status.codexTelemetry?.tokens?.total ?? 0))}</span></div>
-              <div class="kv"><span>MCP ready / observed</span><span>${Number(status.codexTelemetry?.mcpSummary?.ready ?? 0)} / ${Number(status.codexTelemetry?.mcpSummary?.observed ?? 0)}</span></div>
-              <div class="kv"><span>Last received</span><span>${escapeHtml(formatTimestamp(receiver?.lastReceivedAt)) || "—"}</span></div>
+              <div class="kv"><span>OTLP logs (window)</span><span>${Number(receiver?.logs ?? 0).toLocaleString()}</span></div>
+              <div class="kv"><span>OTLP traces (window)</span><span>${Number(receiver?.traces ?? 0).toLocaleString()}</span></div>
+              <div class="kv"><span>OTLP metrics (window)</span><span>${Number(receiver?.metrics ?? 0).toLocaleString()}</span></div>
+              <div class="kv"><span>Invalid signals (window)</span><span class="${invalidSignals > 0 ? "bad" : "good"}">${invalidSignals}</span></div>
+              <div class="kv"><span>Recent / observed sessions (current)</span><span>${Number(status.codexTelemetry?.sessionsRecent ?? 0)} / ${Number(status.codexTelemetry?.sessionsObserved ?? 0)}</span></div>
+              <div class="kv"><span>Completed turns / prompts (window)</span><span>${Number(status.codexTelemetry?.turns?.completed ?? 0).toLocaleString()} / ${Number(status.codexTelemetry?.turns?.prompts ?? 0).toLocaleString()}</span></div>
+              <div class="kv"><span>Average TTFT (window)</span><span>${(Number(status.codexTelemetry?.turns?.averageTtftMs ?? 0) / 1000).toFixed(1)}s</span></div>
+              <div class="kv"><span>Tokens (window)</span><span>${escapeHtml(formatTokens(status.codexTelemetry?.tokens?.total ?? 0))}</span></div>
+              <div class="kv"><span>MCP ready / observed (window)</span><span>${Number(status.codexTelemetry?.mcpSummary?.ready ?? 0)} / ${Number(status.codexTelemetry?.mcpSummary?.observed ?? 0)}</span></div>
+              <div class="kv"><span>Last received (current)</span><span>${escapeHtml(formatTimestamp(receiver?.lastReceivedAt)) || "—"}</span></div>
             </div>
           </section>
           <section class="ops-group">
-            <h3>State database</h3>
+            <h3>State database · current snapshot</h3>
             <div class="kv-list">
               <div class="kv"><span>Initializations</span><span>${Number(sqlite?.init?.total ?? 0).toLocaleString()}</span></div>
               <div class="kv"><span>Fallbacks</span><span>${Number(sqlite?.fallbacks?.total ?? 0).toLocaleString()}</span></div>
@@ -4385,7 +4287,7 @@
             </div>
           </section>
           <section class="ops-group">
-            <h3>Concurrency</h3>
+            <h3>Concurrency · current</h3>
             <div class="kv-list">
               <div class="kv"><span>Admission scope</span><span>${escapeHtml(concurrency.scope ?? "router-admitted-child-requests")}</span></div>
               <div class="kv"><span>Per-session limit</span><span>${escapeHtml(String(concurrency.effectivePerSessionLimit ?? concurrency.maxConcurrentThreadsPerSession ?? "none"))}</span></div>
@@ -4410,7 +4312,7 @@
         }
         syncPanel(
           document.getElementById("panel-native-metrics"),
-          "Native metrics observed",
+          "Native metrics observed · current inventory",
           `${metricsList.length} metrics · ${totalExports.toLocaleString()} exports`
         );
 
@@ -4533,7 +4435,7 @@
             "value",
             Number(toolResults.executed ?? 0).toLocaleString()
           );
-          toolResultsExecutedCard.textContent = `${Number(toolResults.total ?? 0).toLocaleString()} result events`;
+          toolResultsExecutedCard.textContent = `${Number(toolResults.total ?? 0).toLocaleString()} result events${isInterval ? " (window)" : " (lifetime)"}`;
         }
         const toolResultsUnattributedCard = document.getElementById(
           "codex-state-tool-unattributed-card"
@@ -4546,12 +4448,12 @@
           const unattributedColor =
             Number(toolResults.unattributed ?? 0) > 0 ? "warning" : "good";
           toolResultsUnattributedCard.setAttribute("tone", unattributedColor);
-          toolResultsUnattributedCard.textContent = `${Number(toolResults.causeResolved ?? 0).toLocaleString()} causally resolved`;
+          toolResultsUnattributedCard.textContent = `${Number(toolResults.causeResolved ?? 0).toLocaleString()} causally resolved${isInterval ? " (window)" : " (lifetime)"}`;
         }
 
         syncPanel(
           document.getElementById("panel-codex-state"),
-          "Codex state & workspace telemetry",
+          "Codex state · current snapshot; workspace counters window",
           `${codexStateStatus} · ${codexStateConversationCount.toLocaleString()} conversation joins · ${bridgeExecuted.toLocaleString()} executed / ${bridgeRequested.toLocaleString()} requested / ${bridgeUnavailable.toLocaleString()} unavailable`
         );
 
@@ -4675,17 +4577,36 @@
       // feed category chips to re-render immediately when the operator toggles a
       // chip without waiting for the next 3 s polling refresh.
       let lastStatus = null;
+      let refreshSequence = 0;
       async function refresh() {
+        const refreshId = ++refreshSequence;
+        const requestedLookback = selectedLookback;
         try {
-          const response = await fetch("/status", {
+          const params = new URLSearchParams();
+          if (requestedLookback && requestedLookback !== "all")
+            params.set("lookback", requestedLookback);
+          const url = params.toString() ? `/status?${params}` : "/status";
+          const response = await fetch(url, {
             cache: "no-store",
             headers: { Accept: "application/json" }
           });
           if (!response.ok) throw new Error(`HTTP ${response.status}`);
           const next = await response.json();
+          if (
+            refreshId !== refreshSequence ||
+            requestedLookback !== selectedLookback
+          ) {
+            return;
+          }
           lastStatus = next;
           render(next);
         } catch (error) {
+          if (
+            refreshId !== refreshSequence ||
+            requestedLookback !== selectedLookback
+          ) {
+            return;
+          }
           const errorEl = document.getElementById("error");
           if (errorEl) {
             errorEl.textContent = `Unable to read router status: ${error.message}`;

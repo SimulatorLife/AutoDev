@@ -3764,7 +3764,7 @@ test("accepts Collector-forwarded OTLP JSON batches over HTTP at /v1/logs, /v1/t
   // this test runs. The tokens are substituted with real, currently-fresh
   // nanosecond offsets here, exactly as a live Collector export would carry
   // its own current timestamps.
-  const base = BigInt(Date.now()) * 1_000_000n;
+  const base = BigInt(Date.now() - 10_000) * 1_000_000n;
   const fixtureTokens = {
     __OTEL_T0__: base,
     __OTEL_T500MS__: base + 500_000_000n,
@@ -3806,6 +3806,25 @@ test("accepts Collector-forwarded OTLP JSON batches over HTTP at /v1/logs, /v1/t
     const metricsResponse = await post("/v1/metrics", fixture.metrics);
     assert.equal(metricsResponse.status, 200);
     assert.deepEqual(await metricsResponse.json(), {});
+
+    const intervalResponse = await fetch(
+      `http://127.0.0.1:${address.port}/status?lookback=12h`,
+      { headers: { Accept: "application/json" } }
+    );
+    assert.equal(intervalResponse.status, 200);
+    const intervalStatus = await intervalResponse.json();
+    assert.equal(intervalStatus.lookback.selection, "12h");
+    assert.equal(intervalStatus.lookback.boundedByRingBuffer, true);
+    assert.ok(intervalStatus.codexTelemetry.lookbackEvents.length > 0);
+    assert.equal(intervalStatus.codexTelemetry.receiver.logs, 1);
+    assert.equal(intervalStatus.codexTelemetry.receiver.traces, 1);
+    assert.equal(intervalStatus.codexTelemetry.receiver.metrics, 1);
+    assert.equal(intervalStatus.codexTelemetry.turns.prompts, 1);
+    assert.equal(intervalStatus.codexTelemetry.turns.completed, 1);
+    assert.equal(intervalStatus.codexTelemetry.tokens.total, 270);
+    assert.equal(intervalStatus.codexTelemetry.toolResults.total, 1);
+    assert.equal(intervalStatus.codexTelemetry.toolResults.executed, 1);
+    assert.equal(intervalStatus.codexTelemetry.toolResults.causeResolved, 1);
 
     // The receiver counted exactly one export per signal, with no malformed
     // requests, no matter that the batches arrived via an HTTP round trip
@@ -4135,6 +4154,7 @@ test("Collector-forwarded OTLP semantics do not depend on logs/traces/metrics ar
     const {
       receiver: _receiver,
       metrics: _metrics,
+      lookbackEvents: _lookbackEvents,
       ...telemetry
     } = codexTelemetryStatus(now);
     const status = getRouterStatus();
@@ -4221,6 +4241,19 @@ test("rejects malformed OTLP HTTP bodies at /v1/logs, /v1/traces, and /v1/metric
         invalid: telemetry.receiver.invalid
       },
       { logs: 0, traces: 0, metrics: 0, invalid: 3 }
+    );
+    const intervalResponse = await fetch(
+      `http://127.0.0.1:${address.port}/status?lookback=1h`,
+      { headers: { Accept: "application/json" } }
+    );
+    const intervalStatus = await intervalResponse.json();
+    assert.equal(intervalStatus.codexTelemetry.receiver.invalid, 3);
+    assert.equal(
+      intervalStatus.codexTelemetry.lookbackEvents.filter(
+        (event: { family: string; type: string }) =>
+          event.family === "receiver" && event.type === "invalid"
+      ).length,
+      3
     );
   } finally {
     await closeServer(server);
@@ -5680,12 +5713,17 @@ test("serves the live component dashboard and keeps /status raw JSON", async () 
       .replaceAll(/\s+/g, " ")
       .replaceAll(/>\s+</g, "><");
 
-    // The dashboard is a live view: it fetches the raw status endpoint on load
-    // and polls it without putting a second data contract in the HTML.
+    // The dashboard is a live view: it requests raw status by default, adds a
+    // lookback parameter only for bounded windows, and polls that same route.
     assert.match(
       dashboardBody,
-      /fetch\("\/status", \{ cache: "no-store", headers: \{ Accept: "application\/json" \} \}\)/
+      /const url = params\.toString\(\) \? `\/status\?\$\{params\}` : "\/status"/
     );
+    assert.match(
+      dashboardBody,
+      /const response = await fetch\(url, \{ cache: "no-store", headers: \{ Accept: "application\/json" \} \}\)/
+    );
+    assert.match(dashboardBody, /params\.set\("lookback", requestedLookback\)/);
     assert.match(dashboardBody, /refresh\(\); setInterval\(refresh, 3000\)/);
 
     // Top-level panels define the reference hierarchy. Nested panels are part

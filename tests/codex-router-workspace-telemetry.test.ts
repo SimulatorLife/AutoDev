@@ -61,16 +61,16 @@ interface DashboardSkillHelpers {
 async function loadDashboardSkillHelpers(): Promise<DashboardSkillHelpers> {
   const rawDashboard = await readFile(DASHBOARD_PATH, "utf8");
   const escapeMatch = rawDashboard.match(
-    /function escapeHtml\([\s\S]*?\n {4}\}/
+    /function escapeHtml\([\s\S]*?\n {6}\}/
   );
   const normalizeMatch = rawDashboard.match(
-    /function normalizeWorkspaceNamedUsage\([\s\S]*?\n {4}\}/
+    /function normalizeWorkspaceNamedUsage\([\s\S]*?\n {6}\}/
   );
   const summarizeSkillsMatch = rawDashboard.match(
-    /function summarizeWorkspaceSkills\([\s\S]*?\n {4}\}/
+    /function summarizeWorkspaceSkills\([\s\S]*?\n {6}\}/
   );
   const renderSkillsMatch = rawDashboard.match(
-    /function renderWorkspaceSkills\([\s\S]*?\n {4}\}/
+    /function renderWorkspaceSkills\([\s\S]*?\n {6}\}/
   );
   assert.ok(
     escapeMatch && normalizeMatch && summarizeSkillsMatch && renderSkillsMatch,
