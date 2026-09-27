@@ -677,7 +677,9 @@ export type OtelLookbackEventType =
   | "signal"
   | "invalid"
   | "delta"
-  | "result";
+  | "result"
+  | "thread_started"
+  | "thread_spawn";
 
 const OTEL_LOOKBACK_EVENT_FAMILIES: ReadonlySet<string> = new Set([
   "tool",
@@ -704,7 +706,9 @@ const OTEL_LOOKBACK_EVENT_TYPES: ReadonlySet<string> = new Set([
   "signal",
   "invalid",
   "delta",
-  "result"
+  "result",
+  "thread_started",
+  "thread_spawn"
 ]);
 
 /**
@@ -739,6 +743,8 @@ export interface OtelLookbackEvent {
   durationCount: number | null;
   /** Duration sum delta (ms) for histogram events; null otherwise. */
   durationSumMs: number | null;
+  /** Generic histogram sum delta in the source metric's native unit. */
+  sumDelta?: number | null;
   /** Resolved workspace dimension (or null when unattributed). */
   workspace: string | null;
   /** Resolved role dimension (or null when unattributed). */
@@ -749,6 +755,19 @@ export interface OtelLookbackEvent {
   agent: string | null;
   /** Tool result had a call id used to resolve its causal join. */
   resolvedCall: boolean;
+}
+
+function hasLookbackEventDelta(input: {
+  countDelta: number;
+  durationCount: number | null;
+  durationSumMs: number | null;
+  sumDelta: number | null;
+}): boolean {
+  if (!Number.isFinite(input.countDelta) || input.countDelta < 0) return false;
+  if (input.countDelta > 0) return true;
+  return [input.durationCount, input.durationSumMs, input.sumDelta].some(
+    (delta) => delta !== null && delta > 0
+  );
 }
 
 export type CodexTelemetryStatus = Record<string, unknown> & {
@@ -2045,6 +2064,7 @@ export class OtelTracker {
     countDelta: number;
     durationCount?: number | null;
     durationSumMs?: number | null;
+    sumDelta?: number | null;
     resolvedCall?: boolean;
     context: TelemetryContext | null;
   }): void {
@@ -2059,6 +2079,7 @@ export class OtelTracker {
       countDelta: input.countDelta,
       durationCount: input.durationCount ?? null,
       durationSumMs: input.durationSumMs ?? null,
+      ...(input.sumDelta === undefined ? {} : { sumDelta: input.sumDelta }),
       workspace: input.context?.workspace ?? null,
       role: input.context?.role ?? null,
       model: input.context?.model ?? null,
@@ -2097,12 +2118,17 @@ export class OtelTracker {
       typeof entry.durationSumMs === "number" && Number.isFinite(entry.durationSumMs)
         ? entry.durationSumMs
         : null;
+    const sumDelta =
+      typeof entry.sumDelta === "number" && Number.isFinite(entry.sumDelta)
+        ? entry.sumDelta
+        : null;
     if (
-      !Number.isFinite(countDelta) ||
-      countDelta < 0 ||
-      (countDelta === 0 &&
-        (durationCount === null || durationCount <= 0) &&
-        (durationSumMs === null || durationSumMs <= 0))
+      !hasLookbackEventDelta({
+        countDelta,
+        durationCount,
+        durationSumMs,
+        sumDelta
+      })
     )
       return null;
     return {
@@ -2116,6 +2142,7 @@ export class OtelTracker {
       countDelta,
       durationCount,
       durationSumMs,
+      ...(sumDelta === null ? {} : { sumDelta }),
       workspace: typeof entry.workspace === "string" ? entry.workspace : null,
       role: typeof entry.role === "string" ? entry.role : null,
       model: typeof entry.model === "string" ? entry.model : null,
@@ -3137,7 +3164,8 @@ export class OtelTracker {
     metricName: string,
     attributes: OtelAttributeMap,
     dataPoint: OtelDataPoint,
-    temporality: unknown
+    temporality: unknown,
+    resourceAttributes: OtelAttributeMap = {}
   ): void {
     const countDelta = this.otelSeriesDelta(
       otelSeriesKey(
@@ -3163,10 +3191,21 @@ export class OtelTracker {
     bucket.sum += sumDelta;
     const context = this.resolveTelemetryContext(
       attributes,
-      {},
+      resourceAttributes,
       { timeUnixNano: dataPoint.timeUnixNano }
     );
     this.noteContextDimension("skills", context, countDelta);
+    if (countDelta !== 0 || sumDelta !== 0) {
+      this.appendLookbackEvent({
+        timestamp: otelTimestamp(dataPoint.timeUnixNano) ?? context.timestamp,
+        family: "skill",
+        type: "duration",
+        name: metricName,
+        countDelta,
+        sumDelta,
+        context
+      });
+    }
   }
 
   noteMetricInventory(metric: OtelMetric): void {
@@ -3822,7 +3861,8 @@ export class OtelTracker {
     metricName: string,
     attributes: OtelAttributeMap,
     dataPoint: OtelDataPoint,
-    temporality: unknown
+    temporality: unknown,
+    resourceAttributes: OtelAttributeMap = {}
   ): void {
     const source = safeMetricLabel(
       attributes.source ?? attributes.thread_source ?? attributes.origin
@@ -3836,14 +3876,31 @@ export class OtelTracker {
     this.telemetry.threads.started.total += delta;
     this.telemetry.threads.started.bySource[source] =
       (this.telemetry.threads.started.bySource[source] ?? 0) + delta;
+    if (delta > 0) {
+      const context = this.resolveTelemetryContext(
+        attributes,
+        resourceAttributes,
+        { timeUnixNano: dataPoint.timeUnixNano }
+      );
+      this.appendLookbackEvent({
+        timestamp: otelTimestamp(dataPoint.timeUnixNano) ?? context.timestamp,
+        family: "turn",
+        type: "thread_started",
+        name: metricName,
+        source,
+        countDelta: delta,
+        context
+      });
+    }
   }
 
-  noteHistogramCount(
+  noteThreadStartedHistogramCount(
     target: { total: number; bySource: Record<string, number> },
     metricName: string,
     attributes: OtelAttributeMap,
     dataPoint: OtelDataPoint,
-    temporality: unknown
+    temporality: unknown,
+    resourceAttributes: OtelAttributeMap = {}
   ): void {
     const source = safeMetricLabel(
       attributes.source ?? attributes.thread_source ?? attributes.origin
@@ -3860,13 +3917,30 @@ export class OtelTracker {
     );
     target.total += delta;
     target.bySource[source] = (target.bySource[source] ?? 0) + delta;
+    if (delta > 0) {
+      const context = this.resolveTelemetryContext(
+        attributes,
+        resourceAttributes,
+        { timeUnixNano: dataPoint.timeUnixNano }
+      );
+      this.appendLookbackEvent({
+        timestamp: otelTimestamp(dataPoint.timeUnixNano) ?? context.timestamp,
+        family: "turn",
+        type: "thread_started",
+        name: metricName,
+        source,
+        countDelta: delta,
+        context
+      });
+    }
   }
 
   noteThreadSpawn(
     metricName: string,
     attributes: OtelAttributeMap,
     dataPoint: OtelDataPoint,
-    temporality: unknown
+    temporality: unknown,
+    resourceAttributes: OtelAttributeMap = {}
   ): void {
     const role = safeMetricLabel(attributes.agent_role ?? attributes.role);
     const model = safeMetricLabel(
@@ -3886,8 +3960,25 @@ export class OtelTracker {
     spawns.byStatus[status] = (spawns.byStatus[status] ?? 0) + delta;
     spawns.byRole[role] = (spawns.byRole[role] ?? 0) + delta;
     spawns.byModel[model] = (spawns.byModel[model] ?? 0) + delta;
+    const context = this.resolveTelemetryContext(
+      attributes,
+      resourceAttributes,
+      { timeUnixNano: dataPoint.timeUnixNano }
+    );
+    this.appendLookbackEvent({
+      timestamp: otelTimestamp(dataPoint.timeUnixNano) ?? context.timestamp,
+      family: "turn",
+      type: "thread_spawn",
+      name: metricName,
+      status,
+      countDelta: delta,
+      context
+    });
   }
-  private dispatchSkillTurnHistogram(metric: OtelMetric): void {
+  private dispatchSkillTurnHistogram(
+    metric: OtelMetric,
+    resourceAttributes: OtelAttributeMap
+  ): void {
     const name = metric.name ?? "";
     const histKey = SKILL_TURN_HISTOGRAMS[name]!;
     const bucket = this.telemetry.skills.turnDuration[histKey];
@@ -3898,12 +3989,16 @@ export class OtelTracker {
         name,
         otelAttributes(dataPoint.attributes),
         dataPoint,
-        temporality
+        temporality,
+        resourceAttributes
       );
     }
   }
 
-  private dispatchThreadSkillsHistogram(metric: OtelMetric): void {
+  private dispatchThreadSkillsHistogram(
+    metric: OtelMetric,
+    resourceAttributes: OtelAttributeMap
+  ): void {
     const name = metric.name ?? "";
     const histKey = THREAD_SKILLS_HISTOGRAMS[name]!;
     const bucket = this.telemetry.skills.threads[histKey];
@@ -3914,7 +4009,8 @@ export class OtelTracker {
         name,
         otelAttributes(dataPoint.attributes),
         dataPoint,
-        temporality
+        temporality,
+        resourceAttributes
       );
     }
   }
@@ -4064,7 +4160,10 @@ export class OtelTracker {
     }
   }
 
-  private dispatchThreadStarted(metric: OtelMetric): void {
+  private dispatchThreadStarted(
+    metric: OtelMetric,
+    resourceAttributes: OtelAttributeMap
+  ): void {
     const name = metric.name ?? "";
     const temporality = metric.sum?.aggregationTemporality;
     for (const dataPoint of metric.sum?.dataPoints ?? []) {
@@ -4072,17 +4171,19 @@ export class OtelTracker {
         name,
         otelAttributes(dataPoint.attributes),
         dataPoint,
-        temporality
+        temporality,
+        resourceAttributes
       );
     }
     const histogramTemporality = metric.histogram?.aggregationTemporality;
     for (const dataPoint of metric.histogram?.dataPoints ?? []) {
-      this.noteHistogramCount(
+      this.noteThreadStartedHistogramCount(
         this.telemetry.threads.started,
         name,
         otelAttributes(dataPoint.attributes),
         dataPoint,
-        histogramTemporality
+        histogramTemporality,
+        resourceAttributes
       );
     }
   }
@@ -4105,7 +4206,10 @@ export class OtelTracker {
     }
   }
 
-  private dispatchMultiAgentSpawn(metric: OtelMetric): void {
+  private dispatchMultiAgentSpawn(
+    metric: OtelMetric,
+    resourceAttributes: OtelAttributeMap
+  ): void {
     const name = metric.name ?? "";
     const temporality = metric.sum?.aggregationTemporality;
     for (const dataPoint of metric.sum?.dataPoints ?? []) {
@@ -4113,7 +4217,8 @@ export class OtelTracker {
         name,
         otelAttributes(dataPoint.attributes),
         dataPoint,
-        temporality
+        temporality,
+        resourceAttributes
       );
     }
     const histogramTemporality = metric.histogram?.aggregationTemporality;
@@ -4122,7 +4227,8 @@ export class OtelTracker {
         name,
         otelAttributes(dataPoint.attributes),
         { ...dataPoint, asInt: dataPoint.count } as OtelDataPoint,
-        histogramTemporality
+        histogramTemporality,
+        resourceAttributes
       );
     }
   }
@@ -4133,11 +4239,11 @@ export class OtelTracker {
   ): void {
     const name = metric.name;
     if (name && SKILL_TURN_HISTOGRAMS[name]) {
-      this.dispatchSkillTurnHistogram(metric);
+      this.dispatchSkillTurnHistogram(metric, resourceAttributes);
       return;
     }
     if (name && THREAD_SKILLS_HISTOGRAMS[name]) {
-      this.dispatchThreadSkillsHistogram(metric);
+      this.dispatchThreadSkillsHistogram(metric, resourceAttributes);
       return;
     }
     if (name === "codex.skill.injected") {
@@ -4173,11 +4279,11 @@ export class OtelTracker {
       return;
     }
     if (name === "codex.thread.started") {
-      this.dispatchThreadStarted(metric);
+      this.dispatchThreadStarted(metric, resourceAttributes);
       return;
     }
     if (name === "codex.multi_agent.spawn") {
-      this.dispatchMultiAgentSpawn(metric);
+      this.dispatchMultiAgentSpawn(metric, resourceAttributes);
     }
   }
 

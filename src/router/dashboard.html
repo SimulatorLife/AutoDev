@@ -802,8 +802,9 @@
         </div>
         <label class="lookback-control" for="lookback-select">
           <span>Lookback</span>
-          <select id="lookback-select" aria-label="Dashboard lookback window">
+          <select id="lookback-select" aria-label="Dashboard lookback filter">
             <option value="all" selected>All</option>
+            <option value="active">Active sessions</option>
             <option value="today">Today</option>
             <option value="1h">1 hour</option>
             <option value="2h">2 hours</option>
@@ -2220,6 +2221,7 @@
 
       const LOOKBACK_LABELS = {
         all: "All",
+        active: "Active sessions",
         today: "Today",
         "1h": "1 hour",
         "2h": "2 hours",
@@ -3127,16 +3129,39 @@
         // values as window-derived checks this flag first.
         const isInterval =
           selectedLookback !== "all" &&
+          selectedLookback !== "active" &&
           status.lookback?.selection === selectedLookback &&
           status.lookback.windowStartMs != null;
+
+        // True when the operator scoped the dashboard to currently active
+        // sessions rather than a wall-clock window or lifetime totals.
+        const isActiveSessions = selectedLookback === "active";
+
+        // Shared scope word for activity-derived aggregations that the
+        // router rebuilds per `status.lookback` -- usage/attempts, tool
+        // calls, hooks, skills, MCP, subagent spawns/failures, and
+        // tool-result events. Selecting Active Sessions rescopes these to
+        // the exact currently live agent-thread identities rather than a
+        // wall-clock window, so it gets its own word instead of borrowing
+        // "window" or "lifetime". Current-state/config captions (provider
+        // health status, state DB, concurrency) are not derived from this
+        // selection and must not use this word.
+        const activityScope = isInterval
+          ? "window"
+          : isActiveSessions
+            ? "active sessions"
+            : "lifetime";
+        const receiverScope = isActiveSessions ? "unscoped" : activityScope;
 
         document.title = `${status.router ?? "Codex model router"} · integrated dashboard`;
         const metaEl = document.getElementById("page-meta");
         if (metaEl) {
           const lookbackLabel = LOOKBACK_LABELS[selectedLookback];
           const windowNote = isInterval
-            ? ` · window covers retained history only (ring-buffered events)`
-            : "";
+            ? " · window covers retained history only (ring-buffered events)"
+            : isActiveSessions
+              ? " · active sessions · retained history only (not a time window)"
+              : "";
           metaEl.textContent = `Instance ${status.routerInstanceId ?? "-"} · PID ${status.pid ?? "-"} · started ${formatTimestamp(status.startedAt) || "—"} · refresh cadence 3s · lookback ${lookbackLabel}${windowNote}`;
         }
         const errorEl = document.getElementById("error");
@@ -3200,20 +3225,32 @@
         }
         const kpiAttempts = document.getElementById("kpi-attempts");
         if (kpiAttempts) {
-          const windowSuffix = isInterval ? " <span class=\"dim\">(window)</span>" : "";
+          const windowSuffix = isInterval
+            ? " <span class=\"dim\">(window)</span>"
+            : isActiveSessions
+              ? " <span class=\"dim\">(active sessions)</span>"
+              : "";
           kpiAttempts.setAttribute("value", attemptsTotal.toLocaleString());
           kpiAttempts.innerHTML = `<span class="good">${attemptsSuccess.toLocaleString()} success</span> · <span class="bad">${attemptsFail.toLocaleString()} fail</span>${attemptsSkip > 0 ? ` · <span class="warning">${attemptsSkip.toLocaleString()} skipped</span>` : ""}${windowSuffix}`;
         }
         const kpiTools = document.getElementById("kpi-tools");
         if (kpiTools) {
-          const windowSuffix = isInterval ? " <span class=\"dim\">(window)</span>" : "";
+          const windowSuffix = isInterval
+            ? " <span class=\"dim\">(window)</span>"
+            : isActiveSessions
+              ? " <span class=\"dim\">(active sessions)</span>"
+              : "";
           kpiTools.setAttribute("value", toolCount.toLocaleString());
           kpiTools.innerHTML = `<span class="good">${toolOk.toLocaleString()} success</span> · <span class="bad">${toolErr.toLocaleString()} fail</span>${windowSuffix}`;
         }
         const kpiSkills = document.getElementById("kpi-skills");
         if (kpiSkills) {
           kpiSkills.setAttribute("value", skillUsesTotal.toLocaleString());
-          const rangeLabel = isInterval ? " (window)" : " (lifetime)";
+          const rangeLabel = isInterval
+            ? " (window)"
+            : isActiveSessions
+              ? " (active sessions)"
+              : " (lifetime)";
           kpiSkills.textContent = `${observedSkillsCount} skills · ${skillUsesTotal.toLocaleString()} uses${rangeLabel} · ${skillContextsInjectedTotal.toLocaleString()} contexts injected${rangeLabel}`;
         }
         const kpiTurn = document.getElementById("kpi-turn");
@@ -3221,7 +3258,9 @@
           kpiTurn.setAttribute("value", `${avgTurnSec}s`);
           kpiTurn.textContent = isInterval
             ? "Across routed turns (window)"
-            : "Across routed turns (lifetime)";
+            : isActiveSessions
+              ? "Across routed turns (active sessions)"
+              : "Across routed turns (lifetime)";
         }
 
         // 2. Provider health
@@ -3246,7 +3285,7 @@
         );
         syncPanel(
           document.getElementById("panel-providers"),
-          "Provider health · current; usage window",
+          `Provider health · current; usage ${activityScope}`,
           `${readyProvidersCount} / ${configuredProvidersEntries.length} ready · ${activeReqSum} active now`
         );
 
@@ -3363,7 +3402,7 @@
         // 3. Orchestrator & subagent usage
         syncPanel(
           document.getElementById("panel-orchestrator"),
-          isInterval ? "Agent usage · window" : "Agent usage · lifetime",
+          `Agent usage · ${activityScope}`,
           `${attemptsTotal.toLocaleString()} attempts`
         );
 
@@ -3571,7 +3610,7 @@
         );
         syncPanel(
           document.getElementById("panel-spawn-breakdown"),
-          isInterval ? "Spawn breakdown · window" : "Spawn breakdown · lifetime",
+          `Spawn breakdown · ${activityScope}`,
           spawnCoverageLabel
         );
 
@@ -3613,7 +3652,7 @@
         const failuresTotal = Number(status.spawnFailures?.total ?? 0);
         syncPanel(
           document.getElementById("panel-spawn-failures"),
-          isInterval ? "Spawn failures · window" : "Spawn failures · lifetime",
+          `Spawn failures · ${activityScope}`,
           `${failuresTotal} observed`
         );
 
@@ -3895,8 +3934,15 @@
         // 5. Skill Telemetry
         syncPanel(
           document.getElementById("panel-skills"),
-          isInterval ? "Skill telemetry · window" : "Skill telemetry · lifetime",
-          `${skillUsesTotal.toLocaleString()} uses${isInterval ? " (window)" : ""} · ${skillContextsInjectedTotal.toLocaleString()} contexts injected${isInterval ? " (window)" : ""}`
+          `Skill telemetry · ${activityScope}`,
+          (() => {
+            const skillScopeSuffix = isInterval
+              ? " (window)"
+              : isActiveSessions
+                ? " (active sessions)"
+                : "";
+            return `${skillUsesTotal.toLocaleString()} uses${skillScopeSuffix} · ${skillContextsInjectedTotal.toLocaleString()} contexts injected${skillScopeSuffix}`;
+          })()
         );
 
         const skillsTbody = document.getElementById("skills-usage-tbody");
@@ -4008,8 +4054,8 @@
         // Skill context sub-panel
         syncPanel(
           document.getElementById("panel-skill-context"),
-          "Skill context telemetry · current snapshot",
-          "5 aggregate metrics"
+          `Skill context telemetry · ${activityScope}`,
+          `5 aggregate metrics · ${activityScope}`
         );
         const skillCtxTbody = document.getElementById("skill-context-tbody");
         if (skillCtxTbody) {
@@ -4096,7 +4142,7 @@
 
         syncPanel(
           document.getElementById("panel-hooks"),
-          isInterval ? "Hooks window · runtime snapshot" : "Hooks & runtime · lifetime",
+          `Hooks & runtime · ${activityScope}`,
           `${runtimeTotalEvents.toLocaleString()} events`
         );
 
@@ -4234,8 +4280,8 @@
         // 7. Operational summary
         syncPanel(
           document.getElementById("panel-ops"),
-          "Operational summary · mixed current/window",
-          "OTLP activity uses the selected window; inventory, state DB, and concurrency are current snapshots"
+          `Operational summary · mixed current/${activityScope}`,
+          `OTLP activity is scoped to ${activityScope}; inventory, state DB, and concurrency are current snapshots`
         );
 
         const opsGrid = document.getElementById("ops-grid");
@@ -4263,17 +4309,17 @@
 
           opsGrid.innerHTML = `
           <section class="ops-group">
-            <h3>Codex telemetry activity (window) + current state</h3>
+            <h3>Codex telemetry activity (${activityScope}) + current state</h3>
             <div class="kv-list">
-              <div class="kv"><span>OTLP logs (window)</span><span>${Number(receiver?.logs ?? 0).toLocaleString()}</span></div>
-              <div class="kv"><span>OTLP traces (window)</span><span>${Number(receiver?.traces ?? 0).toLocaleString()}</span></div>
-              <div class="kv"><span>OTLP metrics (window)</span><span>${Number(receiver?.metrics ?? 0).toLocaleString()}</span></div>
-              <div class="kv"><span>Invalid signals (window)</span><span class="${invalidSignals > 0 ? "bad" : "good"}">${invalidSignals}</span></div>
+              <div class="kv"><span>OTLP logs (${receiverScope})</span><span>${Number(receiver?.logs ?? 0).toLocaleString()}</span></div>
+              <div class="kv"><span>OTLP traces (${receiverScope})</span><span>${Number(receiver?.traces ?? 0).toLocaleString()}</span></div>
+              <div class="kv"><span>OTLP metrics (${receiverScope})</span><span>${Number(receiver?.metrics ?? 0).toLocaleString()}</span></div>
+              <div class="kv"><span>Invalid signals (${receiverScope})</span><span class="${invalidSignals > 0 ? "bad" : "good"}">${invalidSignals}</span></div>
               <div class="kv"><span>Recent / observed sessions (current)</span><span>${Number(status.codexTelemetry?.sessionsRecent ?? 0)} / ${Number(status.codexTelemetry?.sessionsObserved ?? 0)}</span></div>
-              <div class="kv"><span>Completed turns / prompts (window)</span><span>${Number(status.codexTelemetry?.turns?.completed ?? 0).toLocaleString()} / ${Number(status.codexTelemetry?.turns?.prompts ?? 0).toLocaleString()}</span></div>
-              <div class="kv"><span>Average TTFT (window)</span><span>${(Number(status.codexTelemetry?.turns?.averageTtftMs ?? 0) / 1000).toFixed(1)}s</span></div>
-              <div class="kv"><span>Tokens (window)</span><span>${escapeHtml(formatTokens(status.codexTelemetry?.tokens?.total ?? 0))}</span></div>
-              <div class="kv"><span>MCP ready / observed (window)</span><span>${Number(status.codexTelemetry?.mcpSummary?.ready ?? 0)} / ${Number(status.codexTelemetry?.mcpSummary?.observed ?? 0)}</span></div>
+              <div class="kv"><span>Completed turns / prompts (${activityScope})</span><span>${Number(status.codexTelemetry?.turns?.completed ?? 0).toLocaleString()} / ${Number(status.codexTelemetry?.turns?.prompts ?? 0).toLocaleString()}</span></div>
+              <div class="kv"><span>Average TTFT (${activityScope})</span><span>${(Number(status.codexTelemetry?.turns?.averageTtftMs ?? 0) / 1000).toFixed(1)}s</span></div>
+              <div class="kv"><span>Tokens (${activityScope})</span><span>${escapeHtml(formatTokens(status.codexTelemetry?.tokens?.total ?? 0))}</span></div>
+              <div class="kv"><span>MCP ready / observed (${activityScope})</span><span>${Number(status.codexTelemetry?.mcpSummary?.ready ?? 0)} / ${Number(status.codexTelemetry?.mcpSummary?.observed ?? 0)}</span></div>
               <div class="kv"><span>Last received (current)</span><span>${escapeHtml(formatTimestamp(receiver?.lastReceivedAt)) || "—"}</span></div>
             </div>
           </section>
@@ -4435,7 +4481,7 @@
             "value",
             Number(toolResults.executed ?? 0).toLocaleString()
           );
-          toolResultsExecutedCard.textContent = `${Number(toolResults.total ?? 0).toLocaleString()} result events${isInterval ? " (window)" : " (lifetime)"}`;
+          toolResultsExecutedCard.textContent = `${Number(toolResults.total ?? 0).toLocaleString()} result events (${activityScope})`;
         }
         const toolResultsUnattributedCard = document.getElementById(
           "codex-state-tool-unattributed-card"
@@ -4448,12 +4494,12 @@
           const unattributedColor =
             Number(toolResults.unattributed ?? 0) > 0 ? "warning" : "good";
           toolResultsUnattributedCard.setAttribute("tone", unattributedColor);
-          toolResultsUnattributedCard.textContent = `${Number(toolResults.causeResolved ?? 0).toLocaleString()} causally resolved${isInterval ? " (window)" : " (lifetime)"}`;
+          toolResultsUnattributedCard.textContent = `${Number(toolResults.causeResolved ?? 0).toLocaleString()} causally resolved (${activityScope})`;
         }
 
         syncPanel(
           document.getElementById("panel-codex-state"),
-          "Codex state · current snapshot; workspace counters window",
+          `Codex state · current snapshot; workspace counters ${activityScope}`,
           `${codexStateStatus} · ${codexStateConversationCount.toLocaleString()} conversation joins · ${bridgeExecuted.toLocaleString()} executed / ${bridgeRequested.toLocaleString()} requested / ${bridgeUnavailable.toLocaleString()} unavailable`
         );
 

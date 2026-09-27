@@ -31,6 +31,8 @@ export interface LiveFeedEvent {
   type: string;
   summary: string;
   requestId?: string | null | undefined;
+  /** Internal OTel correlation; local snapshots retain it, status output strips it. */
+  agent?: string | null | undefined;
   provider?: string | null | undefined;
   model?: string | null | undefined;
   role?: string | null | undefined;
@@ -59,6 +61,7 @@ export interface LiveFeedRecordInput {
   summary: string;
   timestamp?: string | null | undefined;
   requestId?: string | null | undefined;
+  agent?: string | null | undefined;
   provider?: string | null | undefined;
   model?: string | null | undefined;
   role?: string | null | undefined;
@@ -91,6 +94,7 @@ const PRESERVED_SCALAR_KEYS = [
 ] as const;
 
 const PRESERVED_TEXT_KEYS = [
+  "agent",
   "name",
   "server",
   "source",
@@ -180,8 +184,13 @@ export class LiveFeedRecorder {
     return event;
   }
 
-  getRecentEvents(reversed = true): LiveFeedEvent[] {
-    return reversed ? [...this.events].reverse() : [...this.events];
+  getRecentEvents(
+    reversed = true,
+    includeAgentCorrelation = false
+  ): LiveFeedEvent[] {
+    const events = reversed ? [...this.events].reverse() : [...this.events];
+    if (includeAgentCorrelation) return events.map((event) => ({ ...event }));
+    return events.map(({ agent: _agent, ...event }) => event);
   }
 
   clear(): void {

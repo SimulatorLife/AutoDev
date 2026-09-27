@@ -1125,7 +1125,7 @@ test("applyIntervalLookback spreads interval overrides into a status payload", (
 test("Selection token enumeration covers the dashboard's option values", () => {
   assert.deepEqual(
     [...LOOKBACK_SELECTIONS],
-    ["all", "today", "1h", "2h", "5h", "12h"]
+    ["all", "active", "today", "1h", "2h", "5h", "12h"]
   );
 });
 
@@ -1165,6 +1165,7 @@ test("Lookback subagent + spawn-failure recent arrays sort newest-first behavior
 test("Selection type is statically constrained to dashboard options", () => {
   const selections: LookbackSelection[] = [
     "all",
+    "active",
     "today",
     "1h",
     "2h",
@@ -1185,4 +1186,457 @@ test("Selection type is statically constrained to dashboard options", () => {
       assert.equal(view.lookback.selection, selection);
     }
   }
+});
+
+test("Active Sessions rebuilds all activity from exact live-agent identities, not timestamps", () => {
+  const activeAgents = [
+    { subject: "root-thread", requestId: "root-current" },
+    {
+      subject: "thread:child-thread",
+      requestId: "child-current"
+    }
+  ];
+  const recentEvents = [
+    routingEvent({
+      timestamp: "2020-01-01T00:00:00.000Z",
+      requestId: "root-old",
+      thread: "root-thread",
+      phase: "selected",
+      provider: "codex",
+      model: "gpt-5",
+      role: "orchestrator",
+      workspace: "/tmp/root"
+    }),
+    routingEvent({
+      timestamp: "2020-01-01T00:00:01.000Z",
+      requestId: "root-old",
+      thread: "root-thread",
+      phase: "result",
+      provider: "codex",
+      model: "gpt-5",
+      role: "orchestrator",
+      workspace: "/tmp/root",
+      outcome: "success",
+      elapsedMs: 240,
+      toolCalls: 2
+    }),
+    routingEvent({
+      timestamp: "2099-01-01T00:00:00.000Z",
+      requestId: "child-old",
+      thread: "child-thread",
+      phase: "selected",
+      provider: "claude",
+      model: "sonnet",
+      role: "subagent",
+      workspace: "/tmp/child"
+    }),
+    routingEvent({
+      timestamp: T_NOW,
+      requestId: "inactive-request",
+      thread: "inactive-thread",
+      phase: "selected",
+      provider: "gemini",
+      model: "gemini-pro",
+      role: "subagent",
+      workspace: "/tmp/inactive"
+    }),
+    routingEvent({
+      timestamp: T_NOW,
+      requestId: "root-current",
+      thread: null,
+      phase: "denied",
+      failureClass: "concurrency_limit"
+    })
+  ];
+  const liveFeed = [
+    liveFeedEvent({
+      timestamp: "2020-01-01T00:00:02.000Z",
+      category: "tools",
+      type: "tool_executed",
+      requestId: "root-old",
+      workspace: "/tmp/root",
+      tool: "exec",
+      outcome: "success"
+    }),
+    liveFeedEvent({
+      timestamp: T_NOW,
+      category: "tools",
+      type: "tool_executed",
+      requestId: "inactive-request",
+      workspace: "/tmp/inactive",
+      tool: "exec",
+      outcome: "success"
+    }),
+    liveFeedEvent({
+      timestamp: T_NOW,
+      category: "skills",
+      type: "skill_used",
+      requestId: "root-current",
+      workspace: "/tmp/root",
+      skill: "active-skill",
+      outcome: "success"
+    }),
+    liveFeedEvent({
+      timestamp: T_NOW,
+      category: "telemetry",
+      type: "otel.metrics",
+      summary: "unattributed OTel event"
+    }),
+    liveFeedEvent({
+      timestamp: "2020-01-01T00:00:03.000Z",
+      category: "telemetry",
+      type: "otel.logs",
+      summary: "active OTel event",
+      agent: "root-thread"
+    }),
+    liveFeedEvent({
+      timestamp: T_NOW,
+      category: "telemetry",
+      type: "otel.logs",
+      summary: "inactive OTel event",
+      agent: "inactive-thread"
+    })
+  ];
+  const otelLookbackEvents = [
+    otelLookbackEvent({
+      timestamp: "2020-01-01T00:00:00.000Z",
+      family: "token",
+      type: "delta",
+      name: "input",
+      agent: "root-thread",
+      countDelta: 12
+    }),
+    otelLookbackEvent({
+      timestamp: "2020-01-01T00:00:00.000Z",
+      family: "skill",
+      type: "duration",
+      name: "codex.thread.skills.kept_total",
+      agent: "root-thread",
+      countDelta: 2,
+      sumDelta: 8
+    }),
+    otelLookbackEvent({
+      timestamp: "2020-01-01T00:00:00.000Z",
+      family: "turn",
+      type: "thread_started",
+      name: "codex.thread.started",
+      source: "codex",
+      agent: "root-thread",
+      countDelta: 4
+    }),
+    otelLookbackEvent({
+      timestamp: "2020-01-01T00:00:00.000Z",
+      family: "turn",
+      type: "thread_spawn",
+      name: "codex.multi_agent.spawn",
+      status: "started",
+      role: "orchestrator",
+      model: "gpt-5",
+      agent: "root-thread",
+      countDelta: 2
+    }),
+    otelLookbackEvent({
+      timestamp: "2099-01-01T00:00:00.000Z",
+      family: "token",
+      type: "delta",
+      name: "output",
+      agent: "child-thread",
+      countDelta: 3
+    }),
+    otelLookbackEvent({
+      timestamp: T_NOW,
+      family: "token",
+      type: "delta",
+      name: "input",
+      agent: "inactive-thread",
+      countDelta: 500
+    }),
+    otelLookbackEvent({
+      timestamp: T_NOW,
+      family: "token",
+      type: "delta",
+      name: "input",
+      agent: "unattributed",
+      countDelta: 1000
+    }),
+    otelLookbackEvent({
+      timestamp: T_NOW,
+      family: "turn",
+      type: "thread_started",
+      name: "codex.thread.started",
+      source: "codex",
+      agent: "inactive-thread",
+      countDelta: 500
+    })
+  ];
+  const subagents: LookbackSubagentRecord[] = [
+    {
+      timestamp: "2020-01-01T00:00:00.000Z",
+      mechanism: "bridge_native",
+      provider: "codex",
+      role: "subagent",
+      status: "started",
+      tool: "spawn_agent",
+      requestId: "root-old",
+      workspace: "/tmp/root",
+      count: 1
+    },
+    {
+      timestamp: T_NOW,
+      mechanism: "bridge_native",
+      provider: "gemini",
+      role: "subagent",
+      status: "started",
+      tool: "spawn_agent",
+      requestId: "inactive-request",
+      workspace: "/tmp/inactive",
+      count: 1
+    }
+  ];
+  const spawnFailures: LookbackSpawnFailureRecord[] = [
+    {
+      timestamp: "2020-01-01T00:00:00.000Z",
+      reason: "provider_exhausted",
+      requestId: "root-old"
+    },
+    {
+      timestamp: T_NOW,
+      reason: "provider_exhausted",
+      requestId: "inactive-request"
+    }
+  ];
+
+  const view = aggregateLookbackView({
+    recentEvents,
+    liveFeed,
+    otelLookbackEvents,
+    subagentRecent: subagents,
+    spawnFailureRecent: spawnFailures,
+    activeAgents,
+    now: NOW,
+    selection: "active"
+  });
+
+  assert.ok(view);
+  assert.equal(view.lookback.windowStartMs, null);
+  assert.equal(view.usage.totals.attempts, 2);
+  assert.equal(view.usage.totals.successes, 1);
+  assert.equal(view.usage.totals.skipped, 1);
+  assert.equal(view.usage.totals.toolCalls, 2);
+  assert.deepEqual(Object.keys(view.usage.byWorkspace).sort(), [
+    "/tmp/child",
+    "/tmp/root",
+    "unattributed"
+  ]);
+  assert.equal(view.codexTelemetry.tokens.input, 12);
+  assert.equal(view.codexTelemetry.tokens.output, 3);
+  assert.equal(view.codexTelemetry.tokens.total, 15);
+  assert.deepEqual(view.codexTelemetry.skills.threads.keptTotal, {
+    count: 2,
+    sum: 8,
+    average: 4
+  });
+  assert.equal(view.codexTelemetry.threads.started.total, 4);
+  assert.deepEqual(view.codexTelemetry.threads.started.bySource, { codex: 4 });
+  assert.equal(view.codexTelemetry.threads.spawns.total, 2);
+  assert.deepEqual(view.codexTelemetry.threads.spawns.byStatus, { started: 2 });
+  assert.deepEqual(view.codexTelemetry.threads.spawns.byRole, {
+    orchestrator: 2
+  });
+  assert.deepEqual(view.codexTelemetry.threads.spawns.byModel, { "gpt-5": 2 });
+  assert.deepEqual(
+    [
+      ...new Set(view.codexTelemetry.lookbackEvents.map((event) => event.agent))
+    ].sort(),
+    ["child-thread", "root-thread"]
+  );
+  assert.deepEqual(
+    view.liveFeed.map((event) => event.requestId),
+    ["root-old", "root-current", undefined]
+  );
+  assert.equal(view.subagents.total, 1);
+  assert.equal(view.spawnFailures.total, 1);
+  assert.deepEqual(
+    view.recentEvents.map((event) => event.requestId),
+    ["root-old", "root-old", "child-old", "root-current"]
+  );
+});
+
+test("Active Sessions is empty when no canonical live-agent identities are supplied", () => {
+  const fixture = buildFixture();
+  const view = aggregateLookbackView({
+    recentEvents: fixture.recentEvents,
+    liveFeed: fixture.liveFeed,
+    otelLookbackEvents: fixture.otelLookbackEvents,
+    subagentRecent: fixture.subagents,
+    spawnFailureRecent: fixture.spawnFailures,
+    activeAgents: [],
+    now: NOW,
+    selection: "active"
+  });
+  assert.ok(view);
+  assert.equal(view.usage.totals.attempts, 0);
+  assert.equal(view.codexTelemetry.tokens.total, 0);
+  assert.equal(view.subagents.total, 0);
+  assert.equal(view.spawnFailures.total, 0);
+  assert.equal(view.recentEvents.length, 0);
+  assert.equal(view.liveFeed.length, 0);
+});
+
+test("Active bridge-parent identities join OTel and spawn activity through the exact parent request thread", () => {
+  const view = aggregateLookbackView({
+    recentEvents: [
+      routingEvent({
+        timestamp: T_36H_AGO,
+        requestId: "parent-request",
+        thread: "parent-thread",
+        phase: "selected",
+        provider: "codex",
+        model: "gpt-5",
+        role: "orchestrator"
+      })
+    ],
+    liveFeed: [
+      liveFeedEvent({
+        timestamp: T_36H_AGO,
+        category: "tools",
+        type: "tool_executed",
+        requestId: "parent-request",
+        tool: "exec",
+        outcome: "success"
+      })
+    ],
+    otelLookbackEvents: [
+      otelLookbackEvent({
+        timestamp: T_36H_AGO,
+        family: "token",
+        type: "delta",
+        name: "input",
+        agent: "parent-thread",
+        countDelta: 7
+      })
+    ],
+    subagentRecent: [
+      {
+        timestamp: T_36H_AGO,
+        mechanism: "bridge_native",
+        provider: "codex",
+        role: "subagent",
+        status: "started",
+        tool: "spawn_agent",
+        requestId: "parent-request",
+        workspace: null,
+        count: 1
+      }
+    ],
+    activeAgents: [
+      {
+        subject: "bridge-parent:parent-request",
+        requestId: "bridge-parent:parent-request"
+      }
+    ],
+    now: NOW,
+    selection: "active"
+  });
+
+  assert.ok(view);
+  assert.equal(view.usage.totals.attempts, 1);
+  assert.equal(view.liveFeed.length, 1);
+  assert.equal(view.codexTelemetry.tokens.input, 7);
+  assert.equal(view.subagents.total, 1);
+});
+
+test("applyIntervalLookback limits agent-state counts to the selected live agents", () => {
+  const status = {
+    agents: {
+      byState: { active: 2, user_wait: 1, finished: 4, stale: 3 }
+    },
+    recentEvents: [],
+    codexTelemetry: {
+      receiver: { logs: 11, traces: 12, metrics: 13, invalid: 14 },
+      lookbackEvents: [
+        otelLookbackEvent({
+          timestamp: T_NOW,
+          family: "skill",
+          type: "duration",
+          name: "codex.thread.skills.kept_total",
+          agent: "thread-a",
+          countDelta: 1,
+          sumDelta: 5
+        }),
+        otelLookbackEvent({
+          timestamp: T_NOW,
+          family: "skill",
+          type: "duration",
+          name: "codex.thread.skills.kept_total",
+          agent: "inactive-thread",
+          countDelta: 50,
+          sumDelta: 500
+        }),
+        otelLookbackEvent({
+          timestamp: T_NOW,
+          family: "turn",
+          type: "thread_started",
+          name: "codex.thread.started",
+          source: "codex",
+          agent: "thread-a",
+          countDelta: 2
+        }),
+        otelLookbackEvent({
+          timestamp: T_NOW,
+          family: "turn",
+          type: "thread_started",
+          name: "codex.thread.started",
+          source: "codex",
+          agent: "inactive-thread",
+          countDelta: 100
+        })
+      ],
+      threads: {
+        started: { total: 999, bySource: { stale: 999 } },
+        spawns: { total: 999, byStatus: {}, byRole: {}, byModel: {} }
+      },
+      skills: {
+        threads: {
+          keptTotal: { count: 999, sum: 999, average: 1 }
+        }
+      }
+    },
+    liveFeed: [
+      liveFeedEvent({
+        category: "telemetry",
+        type: "otel.logs",
+        timestamp: T_NOW,
+        agent: "thread-a"
+      })
+    ]
+  };
+  const active = applyIntervalLookback(status, "active", NOW, [
+    { subject: "thread-a", state: "active" },
+    { subject: "thread-b", state: "user_wait" }
+  ]);
+  assert.deepEqual(active.agents.byState, {
+    active: 1,
+    user_wait: 1,
+    finished: 0,
+    stale: 0
+  });
+  assert.deepEqual(active.codexTelemetry.skills.threads.keptTotal, {
+    count: 1,
+    sum: 5,
+    average: 5
+  });
+  assert.equal(active.codexTelemetry.threads.started.total, 2);
+  assert.deepEqual(active.codexTelemetry.threads.started.bySource, {
+    codex: 2
+  });
+  assert.deepEqual(active.codexTelemetry.receiver, {
+    logs: 11,
+    traces: 12,
+    metrics: 13,
+    invalid: 14
+  });
+  assert.equal(active.liveFeed.length, 1);
+  assert.equal(Object.hasOwn(active.liveFeed[0]!, "agent"), false);
+  assert.equal(lookbackWindowStartMs(NOW, "active"), null);
 });

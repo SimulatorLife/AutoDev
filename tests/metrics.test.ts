@@ -161,7 +161,7 @@ test("router dashboard exposes the top-right EST5EDT lookback control and live f
   assert.match(rawDashboard, /class="lookback-control"/);
   assert.match(
     rawDashboard,
-    /id="lookback-select"[^>]*aria-label="Dashboard lookback window"/
+    /id="lookback-select"[^>]*aria-label="Dashboard lookback filter"/
   );
   assert.deepEqual(
     Array.from(
@@ -170,6 +170,7 @@ test("router dashboard exposes the top-right EST5EDT lookback control and live f
     ),
     [
       ["all", "All"],
+      ["active", "Active sessions"],
       ["today", "Today"],
       ["1h", "1 hour"],
       ["2h", "2 hours"],
@@ -178,6 +179,10 @@ test("router dashboard exposes the top-right EST5EDT lookback control and live f
     ]
   );
   assert.match(rawDashboard, /selectedLookback = "all"/);
+  assert.match(
+    rawDashboard,
+    /receiverScope = isActiveSessions \? "unscoped" : activityScope/
+  );
   assert.match(rawDashboard, /lookbackSelect\.addEventListener\("change"/);
   assert.match(rawDashboard, /void refresh\(\)/);
   assert.doesNotMatch(rawDashboard, /function hasRecentTimestamp\(/);
@@ -185,7 +190,7 @@ test("router dashboard exposes the top-right EST5EDT lookback control and live f
   // The dashboard no longer filters cumulative buckets by `lastSeenAt`:
   // the router rebuilds every activity-derived counter from the bounded
   // recentEvents + liveFeed histories on the server. The dashboard just
-  // surfaces the rebuilt payload and labels window-derived sections.
+  // surfaces the rebuilt payload and labels the selected activity scope.
   assert.match(
     rawDashboard,
     /params\.set\("lookback", requestedLookback\)/

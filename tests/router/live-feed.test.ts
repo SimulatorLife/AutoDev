@@ -210,6 +210,26 @@ test("live feed restore round-trips every preserved occurrence field", () => {
   assert.equal(event?.workspace, "/tmp/ws-c");
 });
 
+test("OTel agent correlation survives local snapshots but is omitted from public status views", () => {
+  const original = new LiveFeedRecorder();
+  original.record({
+    category: "telemetry",
+    type: "otel.logs",
+    summary: "codex.tool_result",
+    timestamp: "2026-09-27T13:30:00.000Z",
+    agent: "thread-17"
+  });
+
+  assert.equal(original.getRecentEvents(false)[0]?.agent, undefined);
+  const snapshot = original.getRecentEvents(false, true);
+  assert.equal(snapshot[0]?.agent, "thread-17");
+
+  const restored = new LiveFeedRecorder();
+  restored.restore(snapshot);
+  assert.equal(restored.getRecentEvents(false, true)[0]?.agent, "thread-17");
+  assert.equal(restored.getRecentEvents(false)[0]?.agent, undefined);
+});
+
 test("live feed recorder drops non-positive durations and trims text fields", () => {
   const feed = new LiveFeedRecorder();
   feed.record({

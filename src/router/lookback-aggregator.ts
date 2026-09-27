@@ -1,5 +1,5 @@
 /**
- * Dashboard Lookback interval aggregator.
+ * Dashboard Lookback aggregator.
  *
  * The router's `/status` payload exposes two shapes that the dashboard has to
  * keep distinct:
@@ -20,7 +20,8 @@
  * and `status.liveFeed` (timestamped `LiveFeedEvent[]`) -- rather than
  * re-deriving from those lifetime maps.
  *
- * This module is the single source of truth for the interval rebuild. It
+ * This module is the single source of truth for the interval and active-agent
+ * rebuilds. It
  * is consumed by:
  *
  *   - the server's `/status` endpoint, which calls `aggregateLookbackView`
@@ -35,9 +36,9 @@
  * The aggregator is intentionally a pure function with no module-level
  * state. It never throws on missing data, never invents synthetic rows,
  * and never reaches back into the lifetime cumulative maps to "patch" a
- * missing interval value -- when the bounded histories do not cover the
- * window, the aggregator reports zero for that counter and the dashboard
- * shows it. The bounded histories are documented in `events.ts` and
+ * missing value -- when the bounded histories do not cover a window or do not
+ * carry an exact active-agent identity, the aggregator reports zero for that
+ * counter and the dashboard shows it. The bounded histories are documented in `events.ts` and
  * `live-feed.ts` (see `maxRecentEvents` and the `maxEvents` constructor
  * defaults).
  */
@@ -45,9 +46,11 @@
 import type { RouterEvent } from "./events.ts";
 import { LIVE_FEED_CATEGORIES, type LiveFeedEvent } from "./live-feed.ts";
 import type { OtelLookbackEvent } from "./otel.ts";
+import { safeAgentIdentity } from "./usage.ts";
 
 export const LOOKBACK_SELECTIONS = [
   "all",
+  "active",
   "today",
   "1h",
   "2h",
@@ -58,7 +61,7 @@ export const LOOKBACK_SELECTIONS = [
 export type LookbackSelection = (typeof LOOKBACK_SELECTIONS)[number];
 
 export const LOOKBACK_HOURS: Record<
-  Exclude<LookbackSelection, "all" | "today">,
+  Exclude<LookbackSelection, "all" | "active" | "today">,
   number
 > = {
   "1h": 1,
@@ -574,10 +577,24 @@ export interface LookbackAggregatorInput {
   subagentRecent?: readonly LookbackSubagentRecord[] | null;
   /** Bounded timestamped spawn-failure records (`status.spawnFailures.recent`). */
   spawnFailureRecent?: readonly LookbackSpawnFailureRecord[] | null;
+  /** Canonical live agent records from `AgentActivityTracker.listLive()`. */
+  activeAgents?: readonly LookbackActiveAgent[] | null;
   /** Fixed clock used by the dashboard; tests pass a deterministic value. */
   now: number;
   /** Active dashboard selection. */
   selection: LookbackSelection;
+}
+
+export interface LookbackActiveAgent {
+  subject: string;
+  requestId?: string | null;
+  state?: string | null;
+}
+
+interface ActiveAgentScope {
+  threadIds: Set<string>;
+  agentIds: Set<string>;
+  requestIds: Set<string>;
 }
 
 /**
@@ -666,6 +683,12 @@ export interface IntervalSkillRow {
   byStatus: { ok?: number; error?: number; success?: number; failure?: number };
 }
 
+export interface IntervalHistogram {
+  count: number;
+  sum: number;
+  average: number;
+}
+
 export interface IntervalToolResultRow {
   tool: string;
   source: string | null;
@@ -706,6 +729,15 @@ export interface IntervalCodexTelemetry {
     ttftMs: number;
     averageTtftMs: number;
   };
+  threads: {
+    started: { total: number; bySource: Record<string, number> };
+    spawns: {
+      total: number;
+      byStatus: Record<string, number>;
+      byRole: Record<string, number>;
+      byModel: Record<string, number>;
+    };
+  };
   tokens: {
     input: number;
     output: number;
@@ -743,6 +775,13 @@ export interface IntervalCodexTelemetry {
     used: { total: number; bySkill: IntervalSkillRow[] };
     injected: { total: number; bySkill: IntervalSkillRow[] };
     exposed: { total: number };
+    turnDuration: { durationSeconds: IntervalHistogram };
+    threads: {
+      enabledTotal: IntervalHistogram;
+      keptTotal: IntervalHistogram;
+      truncated: IntervalHistogram;
+      descriptionTruncatedChars: IntervalHistogram;
+    };
   };
   lookbackEvents: OtelLookbackEvent[];
   mcpServers: Array<{
@@ -789,7 +828,7 @@ export interface IntervalProviderCounts {
 }
 
 export interface IntervalRouterStatusOverride {
-  /** Window the aggregator covered. `null` means `All`. */
+  /** Selection coverage. A null start means no wall-clock lower bound. */
   lookback: {
     selection: LookbackSelection;
     windowStartMs: number | null;
@@ -801,12 +840,15 @@ export interface IntervalRouterStatusOverride {
   subagents: IntervalSubagents;
   spawnFailures: IntervalSpawnFailures;
   providers: Record<string, IntervalProviderCounts>;
+  recentEvents: RouterEvent[];
+  liveFeed: LiveFeedEvent[];
+  activeAgentStates?: Record<string, number>;
 }
 
 /**
  * Resolves the wall-clock timestamp the interval starts at, in
- * milliseconds. `null` means the selection covers the lifetime cumulative
- * view (`All`) and the aggregator is a no-op.
+ * milliseconds. `null` means the selection does not impose a wall-clock
+ * lower bound (`All` or `Active Sessions`); `All` remains a no-op.
  *
  * `Today` uses `America/New_York` to match the dashboard, but the
  * dashboard's timezone display is separate from the aggregator's
@@ -821,7 +863,7 @@ export function lookbackWindowStartMs(
   selection: LookbackSelection,
   timeZone = "America/New_York"
 ): number | null {
-  if (selection === "all") return null;
+  if (selection === "all" || selection === "active") return null;
   if (selection !== "today") {
     const hours = LOOKBACK_HOURS[selection];
     if (!Number.isFinite(hours)) return null;
@@ -1144,6 +1186,32 @@ function addTurnLookbackEvent(
     telemetry.turns.ttftCount += event.durationCount ?? 0;
     telemetry.turns.ttftMs += event.durationSumMs ?? 0;
   }
+  if (event.type === "thread_started") {
+    telemetry.threads.started.total += event.countDelta;
+    bumpStringCount(
+      telemetry.threads.started.bySource,
+      event.source ?? "unattributed",
+      event.countDelta
+    );
+  }
+  if (event.type === "thread_spawn") {
+    telemetry.threads.spawns.total += event.countDelta;
+    bumpStringCount(
+      telemetry.threads.spawns.byStatus,
+      event.status ?? "unattributed",
+      event.countDelta
+    );
+    bumpStringCount(
+      telemetry.threads.spawns.byRole,
+      event.role ?? "unattributed",
+      event.countDelta
+    );
+    bumpStringCount(
+      telemetry.threads.spawns.byModel,
+      event.model ?? "unattributed",
+      event.countDelta
+    );
+  }
 }
 
 function addTokenLookbackEvent(
@@ -1358,6 +1426,30 @@ function addSkillLookbackEvent(
     row.total += event.countDelta;
     addStatusDelta(row, event.status, event.countDelta);
   }
+  if (event.type === "duration") {
+    const histogram = skillHistogramForMetric(telemetry.skills, event.name);
+    if (histogram) {
+      histogram.count += event.countDelta;
+      histogram.sum += event.sumDelta ?? 0;
+    }
+  }
+}
+
+function skillHistogramForMetric(
+  skills: IntervalCodexTelemetry["skills"],
+  metric: string
+): IntervalHistogram | null {
+  if (metric === "codex.skill.turn.duration_seconds")
+    return skills.turnDuration.durationSeconds;
+  if (metric === "codex.thread.skills.enabled_total")
+    return skills.threads.enabledTotal;
+  if (metric === "codex.thread.skills.kept_total")
+    return skills.threads.keptTotal;
+  if (metric === "codex.thread.skills.truncated")
+    return skills.threads.truncated;
+  if (metric === "codex.thread.skills.description_truncated_chars")
+    return skills.threads.descriptionTruncatedChars;
+  return null;
 }
 
 function addMcpLookbackEvent(
@@ -1471,6 +1563,16 @@ function finalizeCodexTelemetry(telemetry: IntervalCodexTelemetry): void {
         telemetry.toolResults.executionDurationMs.count
       : 0;
   telemetry.mcpSummary = summarizeIntervalMcp(telemetry.mcpServers);
+  for (const histogram of [
+    telemetry.skills.turnDuration.durationSeconds,
+    telemetry.skills.threads.enabledTotal,
+    telemetry.skills.threads.keptTotal,
+    telemetry.skills.threads.truncated,
+    telemetry.skills.threads.descriptionTruncatedChars
+  ]) {
+    histogram.average =
+      histogram.count > 0 ? histogram.sum / histogram.count : 0;
+  }
   finalizeDurationRows(telemetry.tools.byTool);
   finalizeDurationRows(telemetry.hooks.byHook);
   telemetry.skills.used.bySkill.sort((a, b) =>
@@ -1565,6 +1667,138 @@ function finalizeDurationRows(
   }
 }
 
+function addIdentity(set: Set<string>, value: string | null | undefined): void {
+  if (typeof value === "string" && value.trim()) set.add(value.trim());
+}
+
+function addAgentIdentity(scope: ActiveAgentScope, value: string): void {
+  scope.agentIds.add(safeAgentIdentity(value));
+}
+
+function addBridgeIdentity(scope: ActiveAgentScope, bridgeKey: string): void {
+  const separator = bridgeKey.indexOf("\0");
+  if (separator === -1) return;
+  addIdentity(scope.requestIds, bridgeKey.slice(0, separator));
+  const childId = bridgeKey.slice(separator + 1);
+  if (childId) addAgentIdentity(scope, childId);
+}
+
+function addSubjectIdentity(
+  scope: ActiveAgentScope,
+  subject: string,
+  matchingThread: string | null | undefined
+): void {
+  if (subject.startsWith("thread:")) {
+    const threadId = matchingThread ?? subject.slice("thread:".length);
+    addIdentity(scope.threadIds, threadId);
+    if (threadId) addAgentIdentity(scope, threadId);
+  } else if (subject.startsWith("req:")) {
+    addIdentity(scope.requestIds, subject.slice("req:".length));
+  } else if (subject.startsWith("bridge-parent:")) {
+    addIdentity(scope.requestIds, subject.slice("bridge-parent:".length));
+  } else if (subject.startsWith("bridge:")) {
+    addBridgeIdentity(scope, subject.slice("bridge:".length));
+  } else if (subject !== "process-scope") {
+    const threadId = matchingThread ?? subject;
+    addIdentity(scope.threadIds, threadId);
+    addAgentIdentity(scope, threadId);
+  }
+}
+
+function addRequestIdentity(
+  scope: ActiveAgentScope,
+  requestId: string | null
+): void {
+  if (!requestId) return;
+  const separator = requestId.indexOf("\0");
+  if (separator !== -1) {
+    addIdentity(scope.requestIds, requestId.slice(0, separator));
+    const childId = requestId.slice(separator + 1);
+    if (childId) addAgentIdentity(scope, childId);
+  } else if (requestId.startsWith("bridge-parent:")) {
+    addIdentity(scope.requestIds, requestId.slice("bridge-parent:".length));
+  } else {
+    addIdentity(scope.requestIds, requestId);
+  }
+}
+
+function addActiveAgentIdentity(
+  scope: ActiveAgentScope,
+  agent: LookbackActiveAgent,
+  recentEvents: readonly RouterEvent[]
+): void {
+  const requestId =
+    typeof agent.requestId === "string" ? agent.requestId : null;
+  const matchingThread = requestId
+    ? recentEvents.find((event) => event.requestId === requestId)?.thread
+    : null;
+  addSubjectIdentity(scope, agent.subject, matchingThread);
+  addRequestIdentity(scope, requestId);
+}
+
+function activeAgentScope(
+  agents: readonly LookbackActiveAgent[] | null | undefined,
+  recentEvents: readonly RouterEvent[]
+): ActiveAgentScope {
+  const scope: ActiveAgentScope = {
+    threadIds: new Set(),
+    agentIds: new Set(),
+    requestIds: new Set()
+  };
+  for (const agent of agents ?? [])
+    addActiveAgentIdentity(scope, agent, recentEvents);
+
+  // Resolve synthetic activity subjects that name a request back to the
+  // Codex thread carried by that exact request. This also supplies the
+  // canonical OTel agent identity for bridge-parent records.
+  for (const event of recentEvents) {
+    if (
+      event.thread &&
+      event.requestId &&
+      scope.requestIds.has(event.requestId)
+    ) {
+      addIdentity(scope.threadIds, event.thread);
+      addAgentIdentity(scope, event.thread);
+    }
+  }
+
+  // Router events carry the originating Codex thread. Their request IDs are
+  // the exact join key for bridge feed and spawn records without a thread.
+  for (const event of recentEvents) {
+    if (event.thread && scope.threadIds.has(event.thread))
+      addIdentity(scope.requestIds, event.requestId);
+  }
+  return scope;
+}
+
+function eventBelongsToActiveAgent(
+  event: RouterEvent,
+  scope: ActiveAgentScope
+): boolean {
+  return Boolean(
+    (event.thread && scope.threadIds.has(event.thread)) ||
+    (event.requestId && scope.requestIds.has(event.requestId))
+  );
+}
+
+function liveFeedEventBelongsToActiveAgent(
+  event: LiveFeedEvent,
+  scope: ActiveAgentScope
+): boolean {
+  return Boolean(
+    (event.requestId && scope.requestIds.has(event.requestId)) ||
+    (event.agent && scope.agentIds.has(safeAgentIdentity(event.agent)))
+  );
+}
+
+function otelEventBelongsToActiveAgent(
+  event: OtelLookbackEvent,
+  scope: ActiveAgentScope
+): boolean {
+  if (!event.agent || event.agent === "unattributed") return false;
+  return scope.agentIds.has(safeAgentIdentity(event.agent));
+}
+
 export function aggregateLookbackView(
   input: LookbackAggregatorInput
 ): IntervalRouterStatusOverride | null {
@@ -1574,6 +1808,52 @@ export function aggregateLookbackView(
     input.selection,
     "America/New_York"
   );
+  const activeScope =
+    input.selection === "active"
+      ? activeAgentScope(input.activeAgents, input.recentEvents)
+      : null;
+  const recentEvents = input.recentEvents.filter(
+    (event) =>
+      inWindow(event.timestamp, windowStartMs, input.now) &&
+      (!activeScope || eventBelongsToActiveAgent(event, activeScope))
+  );
+  const liveFeed = input.liveFeed.filter(
+    (event) =>
+      inWindow(event.timestamp, windowStartMs, input.now) &&
+      (!activeScope || liveFeedEventBelongsToActiveAgent(event, activeScope))
+  );
+  const otelLookbackEvents = (input.otelLookbackEvents ?? []).filter(
+    (event) =>
+      inWindow(event.timestamp, windowStartMs, input.now) &&
+      (!activeScope || otelEventBelongsToActiveAgent(event, activeScope))
+  );
+  const subagentRecent = (input.subagentRecent ?? []).filter(
+    (record) =>
+      inWindow(record.timestamp, windowStartMs, input.now) &&
+      (!activeScope ||
+        Boolean(
+          record.requestId && activeScope.requestIds.has(record.requestId)
+        ))
+  );
+  const spawnFailureRecent = (input.spawnFailureRecent ?? []).filter(
+    (record) =>
+      inWindow(record.timestamp, windowStartMs, input.now) &&
+      (!activeScope ||
+        Boolean(
+          record.requestId && activeScope.requestIds.has(record.requestId)
+        ))
+  );
+  const activeAgentStates =
+    input.selection === "active"
+      ? (input.activeAgents ?? []).reduce<Record<string, number>>(
+          (counts, agent) => {
+            if (agent.state)
+              counts[agent.state] = (counts[agent.state] ?? 0) + 1;
+            return counts;
+          },
+          {}
+        )
+      : undefined;
 
   const usage: IntervalUsage = {
     totals: emptyUsageBucket(),
@@ -1603,29 +1883,18 @@ export function aggregateLookbackView(
     usage,
     providerCounts
   };
-  addRoutingEvents(input, windowStartMs, usageContext);
+  addRoutingEvents({ ...input, recentEvents }, windowStartMs, usageContext);
   finalizeUsage(usage);
-  addSubagents(input.subagentRecent, windowStartMs, input.now, subagents);
-  addSpawnFailures(
-    input.spawnFailureRecent,
-    windowStartMs,
-    input.now,
-    spawnFailures
-  );
+  addSubagents(subagentRecent, windowStartMs, input.now, subagents);
+  addSpawnFailures(spawnFailureRecent, windowStartMs, input.now, spawnFailures);
   addOtelLookbackEvents(
-    input.otelLookbackEvents ?? [],
+    otelLookbackEvents,
     windowStartMs,
     input.now,
     codexTelemetry,
     usage
   );
-  addLiveFeedEvents(
-    input.liveFeed,
-    windowStartMs,
-    input.now,
-    codexTelemetry,
-    usage
-  );
+  addLiveFeedEvents(liveFeed, windowStartMs, input.now, codexTelemetry, usage);
   finalizeCodexTelemetry(codexTelemetry);
 
   return {
@@ -1639,7 +1908,10 @@ export function aggregateLookbackView(
     codexTelemetry,
     subagents,
     spawnFailures,
-    providers: Object.fromEntries(providerCounts)
+    providers: Object.fromEntries(providerCounts),
+    recentEvents,
+    liveFeed,
+    ...(activeAgentStates ? { activeAgentStates } : {})
   };
 }
 
@@ -1745,6 +2017,10 @@ function createEmptyCodexTelemetry(): IntervalCodexTelemetry {
       ttftMs: 0,
       averageTtftMs: 0
     },
+    threads: {
+      started: { total: 0, bySource: {} },
+      spawns: { total: 0, byStatus: {}, byRole: {}, byModel: {} }
+    },
     tokens: { input: 0, output: 0, cached: 0, reasoning: 0, tool: 0, total: 0 },
     toolResults: {
       total: 0,
@@ -1771,7 +2047,14 @@ function createEmptyCodexTelemetry(): IntervalCodexTelemetry {
     skills: {
       used: { total: 0, bySkill: [] },
       injected: { total: 0, bySkill: [] },
-      exposed: { total: 0 }
+      exposed: { total: 0 },
+      turnDuration: { durationSeconds: { count: 0, sum: 0, average: 0 } },
+      threads: {
+        enabledTotal: { count: 0, sum: 0, average: 0 },
+        keptTotal: { count: 0, sum: 0, average: 0 },
+        truncated: { count: 0, sum: 0, average: 0 },
+        descriptionTruncatedChars: { count: 0, sum: 0, average: 0 }
+      }
     },
     mcpServers: [],
     bridgeEvents: {
@@ -1850,7 +2133,7 @@ function upsertMcpRow(
 }
 
 /**
- * Spreads the aggregator's interval overrides into a `RouterStatus`
+ * Spreads the aggregator's selection-scoped overrides into a `RouterStatus`
  * payload while preserving every other top-level field. The dashboard's
  * `applyLookback(status)` helper is replaced by `applyIntervalLookback`,
  * which delegates to this function and only ever returns the override
@@ -1866,7 +2149,7 @@ type LookbackStatusInput = {
   [key: string]: unknown;
 };
 
-type WindowedStatusFields = {
+type LookbackStatusFields = {
   recentEvents: RouterEvent[];
   liveFeed: LiveFeedEvent[];
   lookback: IntervalRouterStatusOverride["lookback"];
@@ -1875,28 +2158,33 @@ type WindowedStatusFields = {
   subagents: Record<string, unknown>;
   spawnFailures: Record<string, unknown>;
   providers?: Record<string, unknown>;
+  agents?: Record<string, unknown>;
 };
 
 export function applyIntervalLookback<T extends LookbackStatusInput>(
   status: T,
   selection: "all",
-  now?: number
+  now?: number,
+  activeAgents?: readonly LookbackActiveAgent[]
 ): T;
 export function applyIntervalLookback<T extends LookbackStatusInput>(
   status: T,
   selection: Exclude<LookbackSelection, "all">,
-  now?: number
-): T & WindowedStatusFields;
+  now?: number,
+  activeAgents?: readonly LookbackActiveAgent[]
+): T & LookbackStatusFields;
 export function applyIntervalLookback<T extends LookbackStatusInput>(
   status: T,
   selection: LookbackSelection,
-  now?: number
-): T | (T & WindowedStatusFields);
+  now?: number,
+  activeAgents?: readonly LookbackActiveAgent[]
+): T | (T & LookbackStatusFields);
 export function applyIntervalLookback<T extends LookbackStatusInput>(
   status: T,
   selection: LookbackSelection,
-  now: number = Date.now()
-): T | (T & WindowedStatusFields) {
+  now: number = Date.now(),
+  activeAgents: readonly LookbackActiveAgent[] = []
+): T | (T & LookbackStatusFields) {
   if (selection === "all") return status;
   const codexTelemetry = status.codexTelemetry as
     { lookbackEvents?: readonly OtelLookbackEvent[] | null } | undefined;
@@ -1906,23 +2194,19 @@ export function applyIntervalLookback<T extends LookbackStatusInput>(
     otelLookbackEvents: codexTelemetry?.lookbackEvents ?? [],
     subagentRecent: status.subagents?.recent ?? null,
     spawnFailureRecent: status.spawnFailures?.recent ?? null,
+    activeAgents,
     now,
     selection
   });
   if (!override) return status;
-  const windowStartMs = override.lookback.windowStartMs;
-  const windowEndMs = override.lookback.windowEndMs;
   return Object.assign({}, status, {
-    recentEvents: (status.recentEvents ?? []).filter((event) =>
-      inWindow(event.timestamp, windowStartMs, windowEndMs)
-    ),
-    liveFeed: (status.liveFeed ?? []).filter((event) =>
-      inWindow(event.timestamp, windowStartMs, windowEndMs)
-    ),
+    recentEvents: override.recentEvents,
+    liveFeed: override.liveFeed.map(({ agent: _agent, ...event }) => event),
     usage: override.usage,
     codexTelemetry: mergeCodexTelemetry(
       (status.codexTelemetry as Record<string, unknown> | undefined) ?? {},
-      override.codexTelemetry
+      override.codexTelemetry,
+      selection
     ),
     subagents: mergeSubagents(
       (status.subagents as Record<string, unknown> | undefined) ?? {},
@@ -1940,25 +2224,71 @@ export function applyIntervalLookback<T extends LookbackStatusInput>(
           )
         }
       : {}),
+    ...(override.activeAgentStates
+      ? {
+          agents: mergeActiveAgentStates(
+            (status.agents as Record<string, unknown> | undefined) ?? {},
+            override.activeAgentStates
+          )
+        }
+      : {}),
     lookback: override.lookback
-  }) as T & WindowedStatusFields;
+  }) as T & LookbackStatusFields;
+}
+
+function mergeActiveAgentStates(
+  existing: Record<string, unknown>,
+  activeStates: Record<string, number>
+): Record<string, unknown> {
+  const existingStates =
+    existing.byState && typeof existing.byState === "object"
+      ? (existing.byState as Record<string, unknown>)
+      : {};
+  const states = new Set([
+    ...Object.keys(existingStates),
+    ...Object.keys(activeStates)
+  ]);
+  const byState = Object.fromEntries(
+    Array.from(states, (state) => [state, activeStates[state] ?? 0])
+  );
+  return { ...existing, byState };
 }
 
 function mergeCodexTelemetry(
   existing: Record<string, unknown>,
-  interval: IntervalCodexTelemetry
+  interval: IntervalCodexTelemetry,
+  selection: LookbackSelection
 ): Record<string, unknown> {
+  const existingReceiver =
+    (existing.receiver as Record<string, unknown> | undefined) ?? {};
   const existingSkills = existing.skills as Record<string, unknown> | undefined;
+  const lookbackEvents =
+    selection === "active"
+      ? interval.lookbackEvents.map(({ agent: _agent, ...event }) => event)
+      : interval.lookbackEvents;
   const next: Record<string, unknown> = {
     ...existing,
-    lookbackEvents: interval.lookbackEvents,
-    receiver: {
-      ...(existing.receiver as Record<string, unknown> | undefined),
-      ...interval.receiver
-    },
+    lookbackEvents,
+    receiver:
+      selection === "active"
+        ? { ...existingReceiver }
+        : { ...existingReceiver, ...interval.receiver },
     turns: {
       ...(existing.turns as Record<string, unknown> | undefined),
       ...interval.turns
+    },
+    threads: {
+      ...(existing.threads as Record<string, unknown> | undefined),
+      started: {
+        ...((existing.threads as Record<string, unknown> | undefined)
+          ?.started as Record<string, unknown> | undefined),
+        ...interval.threads.started
+      },
+      spawns: {
+        ...((existing.threads as Record<string, unknown> | undefined)
+          ?.spawns as Record<string, unknown> | undefined),
+        ...interval.threads.spawns
+      }
     },
     tokens: {
       ...(existing.tokens as Record<string, unknown> | undefined),
@@ -1988,7 +2318,9 @@ function mergeCodexTelemetry(
       exposed: {
         ...(existingSkills?.exposed as Record<string, unknown> | undefined),
         total: interval.skills.exposed.total
-      }
+      },
+      turnDuration: interval.skills.turnDuration,
+      threads: interval.skills.threads
     },
     mcpServers: interval.mcpServers,
     mcpSummary: interval.mcpSummary,

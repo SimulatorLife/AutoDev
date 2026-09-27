@@ -3826,6 +3826,35 @@ test("accepts Collector-forwarded OTLP JSON batches over HTTP at /v1/logs, /v1/t
     assert.equal(intervalStatus.codexTelemetry.toolResults.executed, 1);
     assert.equal(intervalStatus.codexTelemetry.toolResults.causeResolved, 1);
 
+    agentActivity.reset();
+    agentActivity.beginRequest("collector-forwarded-conversation-1", {
+      requestId: "active-collector-request",
+      role: "orchestrator",
+      origin: "orchestrator"
+    });
+    const activeResponse = await fetch(
+      `http://127.0.0.1:${address.port}/status?lookback=active`,
+      { headers: { Accept: "application/json" } }
+    );
+    assert.equal(activeResponse.status, 200);
+    const activeStatus = await activeResponse.json();
+    assert.equal(activeStatus.lookback.selection, "active");
+    assert.equal(activeStatus.lookback.windowStartMs, null);
+    assert.equal(activeStatus.codexTelemetry.receiver.logs, 1);
+    assert.equal(activeStatus.codexTelemetry.tokens.total, 270);
+    assert.ok(activeStatus.codexTelemetry.lookbackEvents.length > 0);
+    assert.ok(
+      activeStatus.codexTelemetry.lookbackEvents.every(
+        (event: { agent?: string }) => event.agent === undefined
+      )
+    );
+    assert.ok(activeStatus.liveFeed.length > 0);
+    assert.equal(
+      Object.hasOwn(activeStatus.liveFeed[0], "agent"),
+      false,
+      "session correlation identities must not be exposed in the status payload"
+    );
+
     // The receiver counted exactly one export per signal, with no malformed
     // requests, no matter that the batches arrived via an HTTP round trip
     // rather than a direct in-process call.
@@ -3890,6 +3919,7 @@ test("accepts Collector-forwarded OTLP JSON batches over HTTP at /v1/logs, /v1/t
     );
   } finally {
     await closeServer(server);
+    agentActivity.reset();
     resetOtelTelemetry();
   }
 });
@@ -5714,7 +5744,7 @@ test("serves the live component dashboard and keeps /status raw JSON", async () 
       .replaceAll(/>\s+</g, "><");
 
     // The dashboard is a live view: it requests raw status by default, adds a
-    // lookback parameter only for bounded windows, and polls that same route.
+    // lookback parameter for scoped modes, and polls that same route.
     assert.match(
       dashboardBody,
       /const url = params\.toString\(\) \? `\/status\?\$\{params\}` : "\/status"/
@@ -5723,6 +5753,7 @@ test("serves the live component dashboard and keeps /status raw JSON", async () 
       dashboardBody,
       /const response = await fetch\(url, \{ cache: "no-store", headers: \{ Accept: "application\/json" \} \}\)/
     );
+    assert.match(dashboardBody, /<option value="active">Active sessions<\/option>/);
     assert.match(dashboardBody, /params\.set\("lookback", requestedLookback\)/);
     assert.match(dashboardBody, /refresh\(\); setInterval\(refresh, 3000\)/);
 

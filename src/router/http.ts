@@ -581,7 +581,7 @@ const routerPersistence = new RouterPersistence({
     spawnFailures: subagentRegistry.spawnFailureTelemetry,
     providerCooldowns: COOLDOWNS.persistedHardEntries(),
     recentEvents: routerEvents.getRecentEvents(false),
-    liveFeed: liveFeedEvents.getRecentEvents(false),
+    liveFeed: liveFeedEvents.getRecentEvents(false, true),
     otelTelemetry: otelPersistenceSnapshot()
   }),
   restoreSection: (section, value, parsed) => {
@@ -1262,7 +1262,10 @@ function routerProviderStatus(
   ];
 }
 
-export function getRouterStatus(now = Date.now()): Record<string, unknown> {
+function buildRouterStatus(
+  now = Date.now(),
+  includeLiveFeedAgentCorrelation = false
+): Record<string, unknown> {
   const projection = projectLiveAgents(now);
   const providers = Object.fromEntries(
     ROUTES.map((route) => routerProviderStatus(route, now, projection))
@@ -1306,9 +1309,16 @@ export function getRouterStatus(now = Date.now()): Record<string, unknown> {
     liveActivity: projection.canonicalTotal,
     providers,
     recentEvents: getDefaultRouterEventRecorder().getRecentEvents(true),
-    liveFeed: liveFeedEvents.getRecentEvents(true),
+    liveFeed: liveFeedEvents.getRecentEvents(
+      true,
+      includeLiveFeedAgentCorrelation
+    ),
     codexState: codexStateStatus()
   };
+}
+
+export function getRouterStatus(now = Date.now()): Record<string, unknown> {
+  return buildRouterStatus(now);
 }
 
 export async function sendDashboard(response: ServerResponse): Promise<void> {
@@ -2156,14 +2166,20 @@ function recordOtelLiveFeed(
     });
     return;
   }
-  for (const item of records) recordOtelLiveFeedItem(signal, item);
+  for (const { item, resourceAttributes } of records)
+    recordOtelLiveFeedItem(signal, item, resourceAttributes);
+}
+
+interface OTelLiveFeedRecord {
+  item: Record<string, unknown>;
+  resourceAttributes: Record<string, unknown>;
 }
 
 function collectOtelRecords(
   signal: "logs" | "traces" | "metrics",
   payload: Record<string, unknown>
-): Record<string, unknown>[] {
-  const records: Record<string, unknown>[] = [];
+): OTelLiveFeedRecord[] {
+  const records: OTelLiveFeedRecord[] = [];
   const signalCollections = {
     logs: ["resourceLogs", "scopeLogs", "logRecords"],
     traces: ["resourceSpans", "scopeSpans", "spans"],
@@ -2171,8 +2187,16 @@ function collectOtelRecords(
   } as const;
   const [resourcesKey, scopesKey, recordsKey] = signalCollections[signal];
   for (const resource of otelRecords(payload[resourcesKey])) {
+    const resourceAttributes = otelRecordAttributes(
+      (resource.resource as Record<string, unknown> | undefined)?.attributes
+    );
     for (const scope of otelRecords(resource[scopesKey])) {
-      records.push(...otelRecords(scope[recordsKey]));
+      records.push(
+        ...otelRecords(scope[recordsKey]).map((item) => ({
+          item,
+          resourceAttributes
+        }))
+      );
     }
   }
   return records;
@@ -2212,9 +2236,14 @@ function otelAttributeValue(value: unknown): unknown {
 
 function recordOtelLiveFeedItem(
   signal: "logs" | "traces" | "metrics",
-  item: Record<string, unknown>
+  item: Record<string, unknown>,
+  resourceAttributes: Record<string, unknown>
 ): void {
   const attributes = otelRecordAttributes(item.attributes);
+  const agent = getDefaultOtelTracker().resolveTelemetryContext(
+    attributes,
+    resourceAttributes
+  ).agent;
   const text = (...keys: string[]): string | null => {
     for (const key of keys) {
       const value = item[key] ?? attributes[key];
@@ -2241,6 +2270,7 @@ function recordOtelLiveFeedItem(
     type: `otel.${signal}`,
     summary: name,
     timestamp,
+    agent: agent === "unattributed" ? null : agent,
     phase: text("phase"),
     outcome: text("outcome"),
     status,
@@ -2333,10 +2363,17 @@ async function handlePreflightRoutes(
   }
   if (pathname === "/status" && request.method === "GET") {
     const lookbackSelection = parseLookbackSelection(request);
-    const status = getRouterStatus();
+    const now = Date.now();
+    const status = buildRouterStatus(now, lookbackSelection === "active");
+    const activeAgents =
+      lookbackSelection === "active"
+        ? agentActivity.listLive({}, now)
+        : [];
     const payload = applyIntervalLookback(
       status as Parameters<typeof applyIntervalLookback>[0],
-      lookbackSelection
+      lookbackSelection,
+      now,
+      activeAgents
     );
     sendJson(response, 200, payload, { "cache-control": "no-store" });
     return true;

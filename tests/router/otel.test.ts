@@ -534,10 +534,74 @@ test("lookback history records only accepted semantic deltas and persists bounde
   assert.equal(events[4]?.countDelta, 5);
   assert.equal(events[5]?.name, "filesystem");
 
+  tracker.noteThreadSkillsHistogram(
+    { count: 0, sum: 0 },
+    "codex.thread.skills.kept_total",
+    {},
+    {
+      startTimeUnixNano: "1000000000",
+      timeUnixNano: "7000000000",
+      count: 3,
+      sum: 12
+    },
+    "DELTA",
+    { "conversation.id": "agent-1" }
+  );
+  const skillHistogramEvent = tracker
+    .codexTelemetryStatus()
+    .lookbackEvents.find(
+      (event) => event.name === "codex.thread.skills.kept_total"
+    );
+  assert.equal(skillHistogramEvent?.family, "skill");
+  assert.equal(skillHistogramEvent?.type, "duration");
+  assert.equal(skillHistogramEvent?.countDelta, 3);
+  assert.equal(skillHistogramEvent?.sumDelta, 12);
+  assert.equal(skillHistogramEvent?.agent, "agent-1");
+
+  tracker.noteThreadStarted(
+    "codex.thread.started",
+    { source: "codex", "conversation.id": "agent-1" },
+    {
+      startTimeUnixNano: "1000000000",
+      timeUnixNano: "8000000000",
+      asInt: 4
+    },
+    "DELTA"
+  );
+  tracker.noteThreadSpawn(
+    "codex.multi_agent.spawn",
+    {
+      role: "orchestrator",
+      requested_model: "gpt-5",
+      status: "started",
+      "conversation.id": "agent-1"
+    },
+    {
+      startTimeUnixNano: "1000000000",
+      timeUnixNano: "9000000000",
+      asInt: 2
+    },
+    "DELTA"
+  );
+  const threadStartedEvent = tracker
+    .codexTelemetryStatus()
+    .lookbackEvents.find((event) => event.type === "thread_started");
+  const threadSpawnEvent = tracker
+    .codexTelemetryStatus()
+    .lookbackEvents.find((event) => event.type === "thread_spawn");
+  assert.equal(threadStartedEvent?.countDelta, 4);
+  assert.equal(threadStartedEvent?.agent, "agent-1");
+  assert.equal(threadSpawnEvent?.countDelta, 2);
+  assert.equal(threadSpawnEvent?.status, "started");
+  assert.equal(threadSpawnEvent?.agent, "agent-1");
+
   const snapshot = tracker.otelPersistenceSnapshot();
   const restored = new OtelTracker({ usageTracker: createMockUsageTracker() });
   restored.restoreOtelTelemetry(snapshot);
-  assert.deepEqual(restored.codexTelemetryStatus().lookbackEvents, events);
+  assert.deepEqual(
+    restored.codexTelemetryStatus().lookbackEvents,
+    tracker.codexTelemetryStatus().lookbackEvents
+  );
 
   const bounded = new OtelTracker({ usageTracker: createMockUsageTracker() });
   for (let index = 0; index <= OTEL_LOOKBACK_EVENT_LIMIT; index += 1) {
