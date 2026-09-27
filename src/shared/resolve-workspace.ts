@@ -34,6 +34,7 @@ export function isDirectory(path: unknown): path is string {
   }
 }
 
+/** Parse turn metadata only when it contains a valid JSON object. */
 export function parseTurnMetadataJson(value: unknown): JsonObject | null {
   if (typeof value !== "string" || !value.trim()) return null;
   try {

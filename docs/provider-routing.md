@@ -1748,12 +1748,14 @@ a multi-root turn is legitimate.
 
 The router's telemetry label reads the same map from the other end, and the two
 must agree: a label naming a different repository than the one the agent edited
-is worse than no label. The router therefore imports `WORKSPACE_KEYS` and
-`isDirectory` from the shared resolver rather than reimplementing them -- it
-previously took the first non-empty key while the bridges took the first key
-that is a directory here, so a stale first entry made telemetry and execution
-disagree silently. Where the bridge refuses an ambiguity, the router records no
-workspace instead of inventing one. `tests/workspace-resolution.test.ts` and
+is worse than no label. The router imports `WORKSPACE_KEYS` and `isDirectory`
+from the shared resolver rather than reimplementing the path check. It also
+imports `parseTurnMetadataJson` there, so turn-metadata object validation has
+one owner. The router previously took the first non-empty key while the bridges
+took the first key that is a directory here, so a stale first entry made
+telemetry and execution disagree silently. Where the bridge refuses an
+ambiguity, the router records no workspace instead of inventing one.
+`tests/workspace-resolution.test.ts` and
 `test_all_provider_bridges_resolve_a_workspace_identically` pin both halves,
 the latter by running the shared resolver over the same inputs
 and asserting identical answers.

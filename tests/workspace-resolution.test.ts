@@ -10,6 +10,7 @@ import {
 } from "../src/router/http.ts";
 import {
   AmbiguousWorkspaceError,
+  parseTurnMetadataJson,
   resolveCwd,
   WorkspaceResolutionError
 } from "../src/shared/resolve-workspace.ts";
@@ -185,6 +186,20 @@ test("the router carries a validated workspace across metadata-less continuation
       null
     );
   });
+});
+
+test("parseTurnMetadataJson accepts only well-formed JSON objects", () => {
+  const rawJson = JSON.stringify({ workspaces: { main: "/tmp/ws" } });
+  assert.deepEqual(parseTurnMetadataJson(rawJson), {
+    workspaces: { main: "/tmp/ws" }
+  });
+  assert.equal(parseTurnMetadataJson("not json"), null);
+  assert.equal(parseTurnMetadataJson("[]"), null);
+  assert.equal(parseTurnMetadataJson("42"), null);
+  assert.equal(parseTurnMetadataJson('"a string"'), null);
+  assert.equal(parseTurnMetadataJson(undefined), null);
+  assert.equal(parseTurnMetadataJson(null), null);
+  assert.equal(parseTurnMetadataJson(""), null);
 });
 
 test("workspace continuity does not override an invalid or ambiguous claim", async () => {

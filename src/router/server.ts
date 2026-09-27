@@ -119,7 +119,6 @@ export {
   ingestAgentEvents,
   limitsStatus,
   loadCatalog,
-  parseTurnMetadataJson,
   refreshCodexState,
   requestSession,
   resetRouterTelemetry,

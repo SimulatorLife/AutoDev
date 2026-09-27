@@ -13,6 +13,7 @@ import {
 import { writeErrorLine } from "../shared/output.ts";
 import {
   isDirectory,
+  parseTurnMetadataJson,
   resolveCwd,
   WORKSPACE_KEYS
 } from "../shared/resolve-workspace.ts";
@@ -1297,20 +1298,6 @@ export async function requestBody(request: IncomingMessage): Promise<string> {
   if (encoding === "br") return brotliDecompressSync(body).toString("utf8");
   if (encoding === "deflate") return inflateSync(body).toString("utf8");
   return body.toString("utf8");
-}
-
-export function parseTurnMetadataJson(
-  value: unknown
-): Record<string, unknown> | null {
-  if (typeof value !== "string" || !value.trim()) return null;
-  try {
-    const parsed = JSON.parse(value);
-    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
-      ? (parsed as Record<string, unknown>)
-      : null;
-  } catch {
-    return null;
-  }
 }
 
 export function resolveTurnMetadataHeader(

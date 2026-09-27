@@ -66,7 +66,6 @@ import {
   ORCHESTRATOR_ALIAS,
   orchestratorProviderForSession,
   parseConcurrencyConfig,
-  parseTurnMetadataJson,
   payloadForCandidate,
   persistRouterStateNow,
   PROCESS_FALLBACK_SESSION_KEY,
@@ -2032,11 +2031,6 @@ test("resolveTurnMetadataHeader prefers the canonical header and falls back to e
   assert.equal(
     resolveTurnMetadataHeader({ headers: {} } as any, {} as any),
     null
-  );
-  assert.equal(parseTurnMetadataJson("[]"), null);
-  assert.equal(
-    (parseTurnMetadataJson(rawJson) as any).workspaces.main,
-    "/tmp/ws"
   );
 });
 
