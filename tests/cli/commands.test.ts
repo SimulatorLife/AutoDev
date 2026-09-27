@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { main, runMain } from "../../src/cli/autodev.ts";
+import { runMain } from "../../src/cli/autodev.ts";
 import { UnmigratedRuntimeError } from "../../src/cli/runtime.ts";
 
 test("CLI dispatches router, provider, hook, and install through typed backends", () => {
@@ -105,6 +105,28 @@ test("documented pnpm argument separator reaches the check command", () => {
   ]);
 });
 
+test("runMain reads process arguments when argv is omitted", () => {
+  const originalArgv = process.argv;
+  const calls: string[] = [];
+  process.argv = [...originalArgv.slice(0, 2), "--", "provider", "claude"];
+  try {
+    assert.equal(
+      runMain(undefined, {
+        provider: {
+          start: (name) => {
+            calls.push(name);
+            return 18;
+          }
+        }
+      }),
+      18
+    );
+  } finally {
+    process.argv = originalArgv;
+  }
+  assert.deepEqual(calls, ["claude"]);
+});
+
 test("router status uses its typed status result", () => {
   const output: string[] = [];
   const originalWrite = process.stdout.write;
@@ -145,7 +167,7 @@ test("unmigrated runtime backends fail clearly instead of invoking wrappers", ()
     ["hook", "skill-read"]
   ] as string[][]) {
     assert.throws(
-      () => main(args),
+      () => runMain(args),
       (error: unknown) => {
         assert.equal(error instanceof UnmigratedRuntimeError, true);
         assert.match(String(error), /runtime backend is not migrated/);

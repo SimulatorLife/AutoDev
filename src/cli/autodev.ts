@@ -164,14 +164,10 @@ export interface CliBackends {
   install?: InstallCommandBackend;
 }
 
-export function main(
-  argv = process.argv.slice(2),
+export function runMain(
+  argv: string[] = process.argv.slice(2),
   backends: CliBackends = {}
 ): number {
-  return runMain(argv, backends);
-}
-
-export function runMain(argv: string[], backends: CliBackends = {}): number {
   // pnpm forwards its argument separator to the script; it is not a command.
   const [command, subcommand, ...rest] =
     argv[0] === "--" ? argv.slice(1) : argv;
@@ -217,7 +213,7 @@ export function runMain(argv: string[], backends: CliBackends = {}): number {
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   try {
-    process.exitCode = main();
+    process.exitCode = runMain();
   } catch (error) {
     writeErrorLine(
       `autodev: ${error instanceof Error ? error.message : error}`
