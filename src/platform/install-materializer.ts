@@ -87,6 +87,7 @@ export const RUNTIME_MODULES = [
   "src/providers/claude-codex-tools.ts",
   "src/providers/claude-turn.ts",
   "src/mcp/spawn-shim.ts",
+  "src/mcp/tool-filter.ts",
   "src/mcp/codex-tools-shim.ts",
   "src/mcp/launcher.ts",
   "src/mcp/process-registry.ts",

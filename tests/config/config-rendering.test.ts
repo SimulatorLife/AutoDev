@@ -134,17 +134,17 @@ test("atomic writes replace the target without leaving temporary files", async (
   }
 });
 
-test("bridge MCP catalogues are deterministic and sorted", async () => {
+test("bridge MCP catalogues are deterministic and preserve launch authentication", async () => {
   const directory = await mkdtemp(join(tmpdir(), "autodev-mcp-"));
   try {
     const source = join(directory, "mcp.toml");
     await writeFile(
       source,
-      '[mcp_servers.zed]\ncommand = "z"\n\n[mcp_servers.alpha]\ncommand = "a"\nargs = ["--stdio"]\n'
+      '[mcp_servers.zed]\ncommand = "z"\n\n[mcp_servers.alpha]\ncommand = "a"\nargs = ["--stdio"]\ncwd = "/plugin"\n\n[mcp_servers.context7]\nurl = "https://example.invalid/mcp"\nbearer_token_env_var = "CONTEXT7_API_KEY"\nhttp_headers = { "X-Test" = "placeholder" }\n'
     );
     assert.equal(
       renderBridgeMcpCatalogue(source),
-      '{\n  "alpha": {\n    "command": "a",\n    "args": [\n      "--stdio"\n    ]\n  },\n  "zed": {\n    "command": "z"\n  }\n}\n'
+      '{\n  "alpha": {\n    "command": "a",\n    "args": [\n      "--stdio"\n    ],\n    "cwd": "/plugin"\n  },\n  "context7": {\n    "url": "https://example.invalid/mcp",\n    "bearer_token_env_var": "CONTEXT7_API_KEY",\n    "http_headers": {\n      "X-Test": "placeholder"\n    }\n  },\n  "zed": {\n    "command": "z"\n  }\n}\n'
     );
   } finally {
     await rm(directory, { recursive: true, force: true });

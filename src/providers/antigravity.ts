@@ -4,11 +4,21 @@
 import type { ChildProcess } from "node:child_process";
 import { spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { existsSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync
+} from "node:fs";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { createServer } from "node:http";
-import { homedir } from "node:os";
-import { isAbsolute, join, resolve, sep } from "node:path";
+import { homedir, tmpdir } from "node:os";
+import { isAbsolute, join, resolve as resolvePath, sep } from "node:path";
 import { createInterface } from "node:readline";
 import { pathToFileURL } from "node:url";
 
@@ -156,6 +166,7 @@ type OnAgyEvent = (event: JsonValue) => void;
 type AntigravityRoleContract = RoleContract & {
   readOnly?: boolean;
   skills?: string[];
+  mcpTools?: Record<string, string[]>;
 };
 
 function antigravityRoleContract(role: unknown): AntigravityRoleContract {
@@ -363,7 +374,7 @@ const ANTIGRAVITY_MCP_EXPOSURE_SOURCE = "role_contract";
 // files is observable at all.
 const HOME = homedir();
 const REPO_ROOT =
-  process.env.AUTODEV_REPO_ROOT || resolve(join(import.meta.dirname, ".."));
+  process.env.AUTODEV_REPO_ROOT || resolvePath(join(import.meta.dirname, ".."));
 const SKILL_ROOTS = [
   join(HOME, ".agents", "skills"),
   join(HOME, ".codex", "skills"),
@@ -393,7 +404,7 @@ function normaliseSkillReadPath(raw: unknown): string | null {
   if (!trimmed) return null;
   let path = trimmed;
   if (path.startsWith("~")) path = join(HOME, path.slice(1));
-  if (!isAbsolute(path)) path = resolve(path);
+  if (!isAbsolute(path)) path = resolvePath(path);
   return path;
 }
 
@@ -1012,9 +1023,7 @@ function isWaitStep(update: JsonValue): boolean {
     update?.tool_name ?? update?.tool_info?.name ?? ""
   ).toLowerCase();
   return (
-    tool === "ask_question" ||
-    tool === "schedule" ||
-    tool === "manage_task"
+    tool === "ask_question" || tool === "schedule" || tool === "manage_task"
   );
 }
 
@@ -1395,19 +1404,385 @@ function activityText(event: JsonValue): string {
 // src/agents/bridge-spawn-session.ts for why the session key matters.
 const spawnSessions = new SpawnSessionRegistry();
 
+interface IsolatedHomeOptions {
+  originalHome?: string;
+  codexHome?: string;
+}
+
+const GEMINI_DIRECTORY = ".gemini";
+const GEMINI_CONFIG_DIRECTORY = "config";
+const AGY_CLI_DIRECTORY = "antigravity-cli";
+const MCP_CONFIG_FILENAME = "mcp_config.json";
+const SETTINGS_FILENAME = "settings.json";
+
+interface IsolatedHomeResult {
+  isolatedHome: string;
+  mcpConfig: JsonRecord;
+  settings: JsonRecord;
+  cleanup: () => void;
+}
+
+/** The launch definition of every AutoDev MCP server, rendered by the installer from `.rulesync/mcp.jsonc`. */
+function bridgeMcpCatalogue(codexHome?: string): Record<string, JsonRecord> {
+  const basePath =
+    codexHome ?? process.env.CODEX_HOME ?? join(homedir(), ".codex");
+  const path = join(basePath, "provider-runtime", "mcp-servers.json");
+  try {
+    const raw = readFileSync(path, "utf8");
+    const catalogue = JSON.parse(raw);
+    if (catalogue && typeof catalogue === "object" && !Array.isArray(catalogue))
+      return catalogue;
+  } catch {
+    /* reported below */
+  }
+  throw new Error(
+    `bridge MCP catalogue is missing or invalid: ${path}; rerun scripts/install.sh`
+  );
+}
+
+/**
+ * Builds the invocation-scoped Antigravity MCP config containing only the current
+ * role contract's declared MCP servers (from the bridge catalogue), plus the
+ * autodev_spawn shim only for an authorized orchestrator turn with an active spawn session.
+ * Leaf roles never receive the spawn shim.
+ */
+function bridgeMcpEntry(
+  name: string,
+  server: JsonRecord,
+  tools: unknown
+): JsonRecord {
+  const remoteUrl = server.serverUrl ?? server.url;
+  if (remoteUrl !== undefined) {
+    if (Array.isArray(tools))
+      throw new Error(
+        `MCP server ${name} has a per-tool role allowlist but uses a remote transport that Antigravity cannot filter`
+      );
+    if (typeof remoteUrl !== "string" || !remoteUrl.trim())
+      throw new Error(`MCP server ${name} has an invalid remote URL`);
+    return bridgeHttpMcpEntry(name, server, remoteUrl);
+  }
+  return bridgeStdioMcpEntry(name, server, tools);
+}
+
+function bridgeHttpMcpEntry(
+  name: string,
+  server: JsonRecord,
+  remoteUrl: string
+): JsonRecord {
+  const entry: JsonRecord = { serverUrl: remoteUrl };
+  if (server.bearer_token_env_var !== undefined) {
+    if (
+      typeof server.bearer_token_env_var !== "string" ||
+      !server.bearer_token_env_var.trim()
+    )
+      throw new Error(
+        `MCP server ${name} has an invalid bearer-token variable`
+      );
+    entry.bearer_token_env_var = server.bearer_token_env_var;
+  }
+  const headers = server.http_headers ?? server.headers;
+  if (headers !== undefined) {
+    if (!headers || typeof headers !== "object" || Array.isArray(headers))
+      throw new Error(`MCP server ${name} has invalid HTTP headers`);
+    entry.headers = { ...headers };
+  }
+  return entry;
+}
+
+function bridgeStdioMcpEntry(
+  name: string,
+  server: JsonRecord,
+  tools: unknown
+): JsonRecord {
+  if (typeof server.command !== "string" || !server.command.trim())
+    throw new Error(`MCP server ${name} has no supported launch definition`);
+  if (
+    server.args !== undefined &&
+    (!Array.isArray(server.args) ||
+      !server.args.every((arg: unknown) => typeof arg === "string"))
+  )
+    throw new Error(`MCP server ${name} has invalid arguments`);
+  const serverArgs: string[] = Array.isArray(server.args)
+    ? [...server.args]
+    : [];
+  const entry: JsonRecord = {};
+  if (server.cwd !== undefined) entry.cwd = server.cwd;
+  if (server.env !== undefined) entry.env = { ...server.env };
+  if (tools === undefined) {
+    entry.command = server.command;
+    entry.args = serverArgs;
+    return entry;
+  }
+  if (!Array.isArray(tools) || !tools.every((tool) => typeof tool === "string"))
+    throw new Error(`MCP server ${name} has an invalid role tool allowlist`);
+  const filterScript = resolvePath(
+    join(import.meta.dirname, "..", "mcp", "tool-filter.ts")
+  );
+  if (!existsSync(filterScript))
+    throw new Error(
+      `Antigravity role MCP tool filter is missing: ${filterScript}`
+    );
+  entry.command = process.execPath;
+  entry.args = [
+    filterScript,
+    server.command,
+    JSON.stringify(serverArgs),
+    JSON.stringify(tools)
+  ];
+  return entry;
+}
+
+function bridgeSpawnMcpEntry(options?: IsolatedHomeOptions): JsonRecord {
+  const codexHome =
+    options?.codexHome ??
+    process.env.CODEX_HOME ??
+    join(options?.originalHome ?? process.env.HOME ?? homedir(), ".codex");
+  const repoShim = resolvePath(
+    join(import.meta.dirname, "..", "mcp", "spawn-shim.ts")
+  );
+  const codexShim = join(codexHome, "src", "mcp", "spawn-shim.ts");
+  const targetShim = existsSync(repoShim) ? repoShim : codexShim;
+  return {
+    command: "bash",
+    args: ["-lc", `exec node "${targetShim}"`]
+  };
+}
+
+function buildInvocationMcpConfig(
+  agentRole: string | null,
+  spawnSession: string | null = null,
+  options?: IsolatedHomeOptions
+): JsonRecord {
+  const contract = antigravityRoleContract(agentRole);
+  const catalogue = bridgeMcpCatalogue(options?.codexHome);
+  const mcpServers: Record<string, JsonRecord> = {};
+  for (const name of contract.mcp ?? []) {
+    if (name === "autodev_spawn") continue;
+    const server = catalogue[name];
+    if (!server || typeof server !== "object" || Array.isArray(server))
+      throw new Error(
+        `MCP server ${name} granted to role ${agentRole ?? "default"} is not in the bridge MCP catalogue; rerun scripts/install.sh`
+      );
+    mcpServers[name] = bridgeMcpEntry(name, server, contract.mcpTools?.[name]);
+  }
+  if (isOrchestratorRole(agentRole) && spawnSession)
+    mcpServers.autodev_spawn = bridgeSpawnMcpEntry(options);
+  return { mcpServers };
+}
+
+/**
+ * Builds the invocation-scoped Antigravity settings preserving user non-MCP
+ * permissions and deny rules, while replacing broad MCP permissions with exactly
+ * the role contract's allowed tools/servers.
+ */
+function buildInvocationSettings(
+  agentRole: string | null,
+  mcpConfig: JsonRecord,
+  originalHome: string = process.env.HOME ?? homedir()
+): JsonRecord {
+  const contract = antigravityRoleContract(agentRole);
+  const settingsPath = join(
+    originalHome,
+    GEMINI_DIRECTORY,
+    AGY_CLI_DIRECTORY,
+    SETTINGS_FILENAME
+  );
+  let userSettings: JsonRecord = {};
+  if (existsSync(settingsPath)) {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(readFileSync(settingsPath, "utf8"));
+    } catch (error) {
+      throw new Error(
+        `Antigravity settings are invalid at ${settingsPath}; refusing to drop user permissions`,
+        { cause: error }
+      );
+    }
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed))
+      throw new Error(
+        `Antigravity settings must be a JSON object at ${settingsPath}`
+      );
+    userSettings = parsed as JsonRecord;
+  }
+
+  const permissions = userSettings.permissions;
+  if (
+    permissions !== undefined &&
+    (!permissions ||
+      typeof permissions !== "object" ||
+      Array.isArray(permissions))
+  )
+    throw new Error(
+      `Antigravity permissions must be an object at ${settingsPath}`
+    );
+  const userPermissions = (permissions ?? {}) as JsonRecord;
+  if (
+    userPermissions.allow !== undefined &&
+    !Array.isArray(userPermissions.allow)
+  )
+    throw new Error(
+      `Antigravity permissions.allow must be an array at ${settingsPath}`
+    );
+  if (
+    userPermissions.deny !== undefined &&
+    !Array.isArray(userPermissions.deny)
+  )
+    throw new Error(
+      `Antigravity permissions.deny must be an array at ${settingsPath}`
+    );
+
+  const existingAllow: unknown[] = Array.isArray(userPermissions.allow)
+    ? [...userPermissions.allow]
+    : [];
+  const nonMcpAllow = existingAllow.filter(
+    (entry) => typeof entry !== "string" || !entry.startsWith("mcp(")
+  );
+  const existingDeny: unknown[] = Array.isArray(userPermissions.deny)
+    ? [...userPermissions.deny]
+    : [];
+
+  const mcpGrants: string[] = [];
+  for (const server of Object.keys(mcpConfig.mcpServers ?? {})) {
+    const tools = contract.mcpTools?.[server];
+    if (Array.isArray(tools)) {
+      for (const tool of tools) mcpGrants.push(`mcp(${server}/${tool})`);
+    } else {
+      mcpGrants.push(`mcp(${server})`);
+    }
+  }
+
+  return {
+    ...userSettings,
+    permissions: {
+      ...userPermissions,
+      allow: [...nonMcpAllow, ...mcpGrants],
+      deny: existingDeny
+    }
+  };
+}
+
+const activeIsolatedHomeCleanups = new Set<() => void>();
+const cleanupIsolatedHomesAtExit = () => {
+  for (const cleanup of activeIsolatedHomeCleanups) cleanup();
+};
+
+function symlinkGeminiDirectory(
+  source: string,
+  target: string,
+  excludedFile: string
+): void {
+  mkdirSync(target, { recursive: true, mode: 0o700 });
+  for (const name of readdirSync(source)) {
+    if (name !== excludedFile)
+      symlinkSync(join(source, name), join(target, name));
+  }
+}
+
+function symlinkGeminiState(source: string, target: string): void {
+  for (const name of readdirSync(source)) {
+    const sourcePath = join(source, name);
+    if (name === GEMINI_CONFIG_DIRECTORY) {
+      symlinkGeminiDirectory(
+        sourcePath,
+        join(target, GEMINI_CONFIG_DIRECTORY),
+        MCP_CONFIG_FILENAME
+      );
+    } else if (name === AGY_CLI_DIRECTORY) {
+      symlinkGeminiDirectory(
+        sourcePath,
+        join(target, AGY_CLI_DIRECTORY),
+        SETTINGS_FILENAME
+      );
+    } else {
+      symlinkSync(sourcePath, join(target, name));
+    }
+  }
+}
+
+/** Creates an invocation-scoped home while retaining the user's authenticated state. */
+function createIsolatedAntigravityHome(
+  agentRole: string | null,
+  spawnSession: string | null = null,
+  options?: IsolatedHomeOptions
+): IsolatedHomeResult {
+  const originalHome = options?.originalHome ?? process.env.HOME ?? homedir();
+  const origGemini = join(originalHome, GEMINI_DIRECTORY);
+  if (!existsSync(origGemini))
+    throw new Error(
+      `Antigravity user state is missing at ${origGemini}; sign in with agy before using the bridge`
+    );
+
+  const mcpConfig = buildInvocationMcpConfig(agentRole, spawnSession, options);
+  const settings = buildInvocationSettings(agentRole, mcpConfig, originalHome);
+  let tempHome: string | null = null;
+  let cleaned = false;
+
+  const cleanup = () => {
+    if (cleaned) return;
+    cleaned = true;
+    activeIsolatedHomeCleanups.delete(cleanup);
+    if (activeIsolatedHomeCleanups.size === 0)
+      process.removeListener("exit", cleanupIsolatedHomesAtExit);
+    if (tempHome) {
+      try {
+        rmSync(tempHome, { recursive: true, force: true });
+      } catch {
+        /* best-effort cleanup */
+      }
+    }
+  };
+
+  try {
+    tempHome = mkdtempSync(join(tmpdir(), "autodev-agy-home-"));
+    chmodSync(tempHome, 0o700);
+    const geminiDir = join(tempHome, GEMINI_DIRECTORY);
+    mkdirSync(geminiDir, { mode: 0o700 });
+
+    symlinkGeminiState(origGemini, geminiDir);
+
+    const configDir = join(geminiDir, GEMINI_CONFIG_DIRECTORY);
+    mkdirSync(configDir, { recursive: true, mode: 0o700 });
+    writeFileSync(
+      join(configDir, MCP_CONFIG_FILENAME),
+      `${JSON.stringify(mcpConfig, null, 2)}\n`,
+      { mode: 0o600 }
+    );
+
+    const cliDir = join(geminiDir, AGY_CLI_DIRECTORY);
+    mkdirSync(cliDir, { recursive: true, mode: 0o700 });
+    writeFileSync(
+      join(cliDir, SETTINGS_FILENAME),
+      `${JSON.stringify(settings, null, 2)}\n`,
+      { mode: 0o600 }
+    );
+
+    if (activeIsolatedHomeCleanups.size === 0)
+      process.once("exit", cleanupIsolatedHomesAtExit);
+    activeIsolatedHomeCleanups.add(cleanup);
+
+    return { isolatedHome: tempHome, mcpConfig, settings, cleanup };
+  } catch (error) {
+    cleanup();
+    throw error;
+  }
+}
+
 /**
  * The environment an agy child runs in.
  *
- * agy has no per-invocation MCP flag -- its server list is the single global
- * `~/.gemini/config/mcp_config.json` -- so the shim cannot be told which turn
- * it belongs to through its arguments. It can be told through the environment:
- * agy spawns its MCP servers as its own children, and they inherit this. A leaf
- * turn passes an empty session, so the shim's handshake finds nothing to attach
- * to and simply does not offer the tool.
+ * agy resolves its MCP servers and permissions from $HOME/.gemini.
+ * The bridge constructs an invocation-scoped temporary HOME containing only
+ * the current role's contract MCP servers and permissions.
  */
-function agyEnvironment(spawnSession: string | null) {
+function agyEnvironment(
+  spawnSession: string | null,
+  isolatedHome: string | null = null
+): NodeJS.ProcessEnv {
+  const codexHome = process.env.CODEX_HOME ?? join(homedir(), ".codex");
   return {
     ...process.env,
+    ...(isolatedHome ? { HOME: isolatedHome } : {}),
+    CODEX_HOME: codexHome,
     AUTODEV_BRIDGE_URL: `http://${HOST}:${PORT}`,
     AUTODEV_BRIDGE_TOKEN: AUTH_TOKEN,
     AUTODEV_SPAWN_SESSION: spawnSession ?? ""
@@ -1477,9 +1852,9 @@ function buildAgyPrompt(
   sandboxMode: "read-only" | "workspace-write" | null,
   skillContext: string | null
 ): string {
-  const preamble = readOnlySystemPromptInjection(sandboxMode !== null
-    ? { "x-autodev-sandbox-mode": sandboxMode }
-    : null);
+  const preamble = readOnlySystemPromptInjection(
+    sandboxMode !== null ? { "x-autodev-sandbox-mode": sandboxMode } : null
+  );
   const skillPreamble = skillContext
     ? `
 
@@ -1505,23 +1880,48 @@ function runAgy(
   sandboxMode: "read-only" | "workspace-write" | null = null,
   skillContext: string | null = null
 ): Promise<RunAgyResult> {
+  let isolatedState: IsolatedHomeResult;
+  try {
+    isolatedState = createIsolatedAntigravityHome(agentRole, spawnSession);
+  } catch (error) {
+    return Promise.reject(error);
+  }
   return new Promise<RunAgyResult>((resolve, reject) => {
-    const finalPrompt = buildAgyPrompt(prompt, agentRole, sandboxMode, skillContext);
-    const child = spawn(CLI, agyArgs(finalPrompt, model, effort, agentRole, sandboxMode), {
-      cwd,
-      env: agyEnvironment(spawnSession),
-      stdio: ["ignore", "pipe", "pipe"]
-    });
+    let settled = false;
+    const settle = (callback: () => void) => {
+      if (settled) return;
+      settled = true;
+      isolatedState.cleanup();
+      callback();
+    };
+    const fail = (error: unknown) => settle(() => reject(error));
+    const succeed = (result: RunAgyResult) => settle(() => resolve(result));
+
+    let child: ChildProcess;
+    try {
+      const finalPrompt = buildAgyPrompt(
+        prompt,
+        agentRole,
+        sandboxMode,
+        skillContext
+      );
+      child = spawn(
+        CLI,
+        agyArgs(finalPrompt, model, effort, agentRole, sandboxMode),
+        {
+          cwd,
+          env: agyEnvironment(spawnSession, isolatedState.isolatedHome),
+          stdio: ["ignore", "pipe", "pipe"]
+        }
+      );
+    } catch (error) {
+      fail(error);
+      return;
+    }
     let stderr = "";
     let terminalResult: JsonRecord | null = null;
     let emitted = "";
-    let settled = false;
-    const finish = (callback: (value: any) => void, value: unknown) => {
-      if (settled) return;
-      settled = true;
-      callback(value);
-    };
-    const lines = createInterface({ input: child.stdout });
+    const lines = createInterface({ input: child.stdout! });
     lines.on("line", (line) => {
       let event;
       try {
@@ -1539,14 +1939,14 @@ function runAgy(
       }
       if (event.event === "result") terminalResult = event.result ?? {};
     });
-    child.stderr.on("data", (chunk) => {
+    child.stderr?.on("data", (chunk) => {
       const text = chunk.toString();
       stderr += text;
       if (/waiting up to .* for \d+ background task/i.test(text)) {
         onEvent?.({ type: "background_tasks_active", text });
       }
     });
-    child.on("error", (error) => finish(reject, error));
+    child.on("error", fail);
     child.on("close", (code, signal) => {
       const result = terminalResult ?? {};
       if (!terminalResult) {
@@ -1558,8 +1958,7 @@ function runAgy(
         // being discarded into a bare sentence.
         const how = signal ? `on ${signal}` : `with code ${code}`;
         const tail = stderr.trim().slice(-2000);
-        finish(
-          reject,
+        fail(
           Object.assign(
             new Error(
               `agy exited ${how} without a terminal result event${tail ? `: ${tail}` : " and wrote nothing to stderr"}`
@@ -1570,8 +1969,7 @@ function runAgy(
         return;
       }
       if (result.status && result.status !== "SUCCESS") {
-        finish(
-          reject,
+        fail(
           Object.assign(
             new Error(
               agyFailureMessage({
@@ -1587,8 +1985,7 @@ function runAgy(
         return;
       }
       if (code !== 0) {
-        finish(
-          reject,
+        fail(
           Object.assign(
             new Error(
               stderr.trim().slice(-4000) || `agy exited with code ${code}`
@@ -1606,8 +2003,7 @@ function runAgy(
         if (suffix) onEvent?.({ type: "text_delta", text: suffix });
       }
       if (!finalText.trim()) {
-        finish(
-          reject,
+        fail(
           Object.assign(
             new Error(
               agyFailureMessage({
@@ -1622,7 +2018,7 @@ function runAgy(
         );
         return;
       }
-      finish(resolve, { text: finalText || emitted, result });
+      succeed({ text: finalText || emitted, result });
     });
     onEvent?.({ type: "process", child });
   });
@@ -1777,12 +2173,15 @@ async function handle(
   // The router classifies the turn; only it can tell this bridge that it is
   // serving the root orchestrator rather than a delegated leaf.
   const agentRole = resolveAgentRole(request.headers);
-  const sandboxMode = readOnlySystemPromptInjection(
+  const sandboxMode =
+    readOnlySystemPromptInjection(
+      request.headers as Record<string, unknown>
+    ) !== ""
+      ? "read-only"
+      : resolveSandboxModeLocal(request.headers);
+  const skillContext = bridgeSkillContext(
     request.headers as Record<string, unknown>
-  ) !== ""
-    ? "read-only"
-    : resolveSandboxModeLocal(request.headers);
-  const skillContext = bridgeSkillContext(request.headers as Record<string, unknown>);
+  );
   function resolveSandboxModeLocal(
     headers: Record<string, unknown>
   ): "read-only" | "workspace-write" | null {
@@ -1792,7 +2191,9 @@ async function handle(
     if (!key) return null;
     const value = headers[key];
     const single = Array.isArray(value) ? value[0] : value;
-    return single === "read-only" || single === "workspace-write" ? single : null;
+    return single === "read-only" || single === "workspace-write"
+      ? single
+      : null;
   }
   // agy delegates through its own `invoke_subagent` tool, so those children
   // never reach the router as requests. Report them, or an orchestrator turn
@@ -1827,16 +2228,6 @@ async function handle(
     writeErrorLine(`agy workspace resolution failed: ${error.message}`);
     sendJson(response, 400, {
       error: { type: "invalid_request_error", message: error.message }
-    });
-    return;
-  }
-  if (agentRole === "browser-tester") {
-    sendJson(response, 400, {
-      error: {
-        type: "invalid_request_error",
-        message:
-          "Antigravity global MCP does not support browser-tester isolation; Playwright registration and browser-tester routing are removed for agy"
-      }
     });
     return;
   }
@@ -2579,6 +2970,7 @@ if (IS_MAIN) {
 
 export {
   agyArgs,
+  agyEnvironment,
   agyErrorDetails,
   agyFailureMessage,
   agyPermissionFailure,
@@ -2586,6 +2978,8 @@ export {
   ANTIGRAVITY_SKILL_EXPOSURE_SOURCE,
   ANTIGRAVITY_WEB_RESEARCH_TOOLS,
   antigravityToolServer,
+  buildInvocationMcpConfig,
+  createIsolatedAntigravityHome,
   createSpawnTracker,
   createToolObserver,
   decideCloseOnDelegation,
@@ -2598,6 +2992,7 @@ export {
   promptFromInput,
   resolveEffort,
   resolveModel,
+  runAgy,
   spawnedChildren,
   subagentModel,
   toolStepEvidence,

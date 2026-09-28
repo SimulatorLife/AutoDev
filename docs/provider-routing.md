@@ -21,10 +21,12 @@ Callers select a capability role, never a provider or model:
 | `smart` | Full-capability browser/docs/implementation agent | workspace-write |
 
 Roles other than `browser-tester` and `smart` use the configured `default` model
-tier. `browser-tester` has a dedicated tier that excludes providers unable to
-isolate its required Playwright MCP; `smart` uses the configured `smart` tier.
-Providers without a model override for a tier use their `default` model. Every
-role uses the `local_model_router` with an `autodev/<role>` model alias.
+tier. `browser-tester` has a dedicated tier containing only providers that can
+isolate its required Playwright MCP; Antigravity now qualifies because each `agy`
+process receives a role-scoped temporary MCP home. `smart` uses the configured
+`smart` tier. Providers without a model override for a tier use their `default`
+model. Every role uses the `local_model_router` with an `autodev/<role>` model
+alias.
 
 ### Single source of truth for model versions (DRY model architecture)
 
@@ -159,15 +161,19 @@ logs, then classify the first failing boundary:
   empty terminal response to the unhelpful `completed without a response`
   message. A live `/health/liveliness` only proves the local adapter is alive,
   not that the upstream Antigravity service answered a turn.
-- **Headless permissions:** read-only roles intentionally do not receive
-  `--dangerously-skip-permissions`. If the installed `agy` configuration cannot
-  approve its read tools without prompting, the CLI reports that a tool such as
-  `read_file` was auto-denied and the turn stops. This is a host/provider
-  permission configuration problem; do not weaken the read-only contract to hide
-  it. Configure `AUTODEV_AGY_READ_ROOTS` as a colon-separated list of absolute
+- **Headless permissions and MCP scope:** read-only roles intentionally do not
+  receive `--dangerously-skip-permissions`. The bridge starts each `agy` turn in
+  a temporary home containing only that role's contracted MCP servers and exact
+  permissions. When a role contract declares a per-server tool list, the bridge
+  also filters the MCP `tools/list` response and rejects direct calls outside
+  that list. It preserves user non-MCP permissions and explicit denies, while
+  leaving the global Antigravity settings and MCP registry unchanged.
+  Configure `AUTODEV_AGY_READ_ROOTS` as a colon-separated list of absolute
   workspace roots before installation when more than the AutoDev repository
-  needs to be readable. The installer grants each root recursively, but it does
-  not grant `command(*)`; validation commands remain explicitly scoped.
+  needs to be readable. The installer grants each root recursively; it never
+  adds `command(*)`. If an Antigravity native command is denied, the leaf must
+  stop retrying it and return a final visible summary with the limitation rather
+  than waiting for input or ending without a response.
 - **Workspace resolution:** bridge requests must carry structured workspace
   metadata (or an explicit `CODEX_PROJECT_ROOT`). The bridge fails closed rather
   than taking a repository path from task prose. Invalid requests are rejected
@@ -264,13 +270,22 @@ delegation paths:
     `WebSearch` and `WebFetch` only on turns where Codex offered its hosted
     `web_search` tool, which no tool script can perform.
     Playwright is strictly reserved for UI and browser testing and is never exposed
-    to the orchestrator. Because Antigravity's MCP configuration is global, registering
-    Playwright for `agy` would expose it across all roles (including the orchestrator);
-    rather than falsely claiming per-role isolation, Playwright registration and
-    `browser-tester` routing are removed for Antigravity. The dedicated
-    `browser-tester` tier in `config/model-routing.json` excludes Antigravity so
-    this role never reaches a provider that cannot isolate its required Playwright
-    MCP. Antigravity uses its native `search_web` and `read_url_content` tools
+    to the orchestrator. Antigravity's CLI reads MCP configuration from a global
+    home directory, so the bridge gives each `agy` process an isolated temporary
+    home containing only the current role contract's MCP servers. For servers
+    with a tool allowlist, a stdio MCP policy process advertises and accepts only
+    those tools. It carries the user's existing Antigravity state through without
+    editing the global MCP registry or settings. The `browser-tester` tier now
+    includes Antigravity; `browser-tester` and `smart` can use only their declared
+    Playwright tools, while other roles (including the orchestrator) do not receive
+    that server.
+    A router-managed Antigravity leaf returns its report as visible final text;
+    the bridge turns the CLI's terminal response into the Responses `output_text`
+    received by the parent thread. Leaf instructions prohibit provider-local
+    messaging, interactive waits, nested delegation, and hidden artifacts. An
+    empty or failed CLI response remains incomplete rather than being presented
+    as a successful summary.
+    Antigravity also uses its native `search_web` and `read_url_content` tools
     backed by pre-approved `read_url(*)` permissions.
     Copilot explicitly allows `web_search` and `web_fetch` for research-capable roles
     without granting blanket `allow-all` permissions. MiniMax's adapter forwards `web_search`
@@ -1350,10 +1365,10 @@ code-navigation prompt. The bridge injects it only when the role contract
 exposes `codegraphcontext`, `cocoindex-code`, and `lsp`; native role TOMLs use
 `{{AUTODEV_CODE_SEARCH_PROMPT}}`, and the root hook loads the same file for the
 orchestrator. Native Codex, Claude, Copilot, and MiniMax enforce role-specific
-MCP surfaces. Antigravity is different: its global registry makes the six
-explicitly allowed CGC tools visible to all sessions, including
-`docs-researcher` despite that role's contract. Its role prompt prohibits local
-code-tool use; this is not server-level isolation.
+MCP surfaces directly. Antigravity's bridge builds a per-invocation MCP registry
+and permission profile from that same execution contract, so the global CLI
+registry does not expose code-search tools to `docs-researcher` or Playwright to
+roles that do not declare it.
 
 The tracked role TOMLs contain only role-specific policy plus composition markers;
 they do not copy the universal base/leaf text. The installer renders them before

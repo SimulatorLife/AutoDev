@@ -973,16 +973,22 @@ test("a known transcript path travels with the child, and its absence costs noth
 
 test("the Antigravity bridge delegates through Codex when the turn can reach it", () => {
   const source = read("src/providers/antigravity.ts");
-  // agy has no per-invocation MCP flag -- its server list is the single global
-  // ~/.gemini/config/mcp_config.json -- so the shim cannot be told which turn
-  // it belongs to through its arguments. It is told through the environment:
-  // agy spawns its MCP servers as its own children and they inherit this.
+  // agy reads MCP servers from the invocation's HOME. The bridge isolates that
+  // registry and passes the session identity to its spawned MCP servers through
+  // the process environment rather than persisting the token/session in config.
   assert.match(
     source,
-    /function agyEnvironment\(spawnSession: string \| null\)/
+    /function agyEnvironment\(spawnSession: string \| null, isolatedHome: string \| null = null\)/
   );
   assert.match(source, /AUTODEV_SPAWN_SESSION: spawnSession \?\? ""/);
-  assert.match(source, /env: agyEnvironment\(spawnSession\)/);
+  assert.match(
+    source,
+    /env: agyEnvironment\(spawnSession, isolatedState\.isolatedHome\)/
+  );
+  assert.match(
+    source,
+    /mcpServers\.autodev_spawn = bridgeSpawnMcpEntry\(options\)/
+  );
   // A leaf turn passes no session, so the handshake finds nothing to attach to.
   assert.match(
     source,

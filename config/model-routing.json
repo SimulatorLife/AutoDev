@@ -16,7 +16,8 @@
     "browser-tester": [
       [
         "claude",
-        "minimax"
+        "minimax",
+        "antigravity"
       ],
       [
         "copilot"

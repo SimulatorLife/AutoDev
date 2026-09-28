@@ -48,8 +48,9 @@
       "claude"
     ],
     "browser-tester": [
-      "minimax",
       "claude",
+      "minimax",
+      "antigravity",
       "copilot",
       "codex"
     ]
@@ -92,6 +93,10 @@
       }
     ],
     "browser-tester": [
+      {
+        "provider": "antigravity",
+        "model": "gemini-3.8-flash-medium"
+      },
       {
         "provider": "minimax",
         "model": "MiniMax-M3"

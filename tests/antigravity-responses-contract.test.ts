@@ -1,7 +1,14 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
-import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import {
+  chmod,
+  mkdir,
+  mkdtemp,
+  readFile,
+  rm,
+  writeFile
+} from "node:fs/promises";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join, resolve as resolvePath } from "node:path";
@@ -31,6 +38,24 @@ type ContractCase = JsonRecord & {
 };
 type Contract = { schema: string; cases: Record<string, ContractCase> };
 const contract = JSON.parse(await readFile(CONTRACT_PATH, "utf8")) as Contract;
+const isolatedTestHome = await mkdtemp(
+  join(tmpdir(), "autodev-antigravity-contract-home-")
+);
+const isolatedCodexHome = join(isolatedTestHome, "codex");
+const isolatedUserHome = join(isolatedTestHome, "user");
+await mkdir(join(isolatedCodexHome, "provider-runtime"), { recursive: true });
+await mkdir(join(isolatedUserHome, ".gemini"), { recursive: true });
+await writeFile(
+  join(isolatedCodexHome, "provider-runtime", "mcp-servers.json"),
+  JSON.stringify({
+    lsp: { command: "node", args: [] },
+    "cocoindex-code": { command: "node", args: [] },
+    codegraphcontext: { command: "node", args: [] }
+  })
+);
+test.after(async () => {
+  await rm(isolatedTestHome, { recursive: true, force: true });
+});
 
 function replaceTokens(value: any): any {
   if (typeof value === "string")
@@ -182,6 +207,8 @@ process.exitCode = fixture.exitCode ?? 0;
     cwd: REPO_ROOT,
     env: {
       ...process.env,
+      HOME: isolatedUserHome,
+      CODEX_HOME: isolatedCodexHome,
       AUTODEV_REPO_ROOT: REPO_ROOT,
       CODEX_PROJECT_ROOT: REPO_ROOT,
       AGY_CLI_PATH: fakeAgy,

@@ -107,6 +107,19 @@ test("provider adapters put the complete shared prompt in the actual CLI prompt"
   assert.ok(leaf.startsWith(base));
   assert.match(leaf, /## Workspace[\s\S]*Working directory: \/tmp\/workspace/);
   assert.match(leaf, /You are a bounded leaf agent executing/);
+  assert.match(leaf, /normal completion channel is the visible final text/);
+  assert.match(
+    leaf,
+    /stop using tools and return a concise, evidence-backed final summary directly in visible text/
+  );
+  assert.match(
+    leaf,
+    /If a required tool is denied, unavailable, or fails[\s\S]*end the turn/
+  );
+  assert.match(
+    leaf,
+    /Do not search for a parent conversation ID or call provider-local messaging tools/
+  );
   assert.match(
     leaf,
     /Use CodeGraphContext \(CGC\)[\s\S]*Use CocoIndex[\s\S]*Use LSP/
@@ -343,6 +356,7 @@ test("the installer ships every shared module the bridges import", () => {
   );
   for (const asset of [
     ...imported,
+    "src/mcp/tool-filter.ts",
     "agents/prompts/base.md",
     "agents/prompts/leaf.md",
     "agents/prompts/orchestrator.md",

@@ -9,7 +9,14 @@ import {
   type TomlTable
 } from "./config-files.ts";
 
-const LAUNCH_KEYS = ["command", "args", "url"] as const;
+const LAUNCH_KEYS = [
+  "command",
+  "args",
+  "cwd",
+  "url",
+  "bearer_token_env_var",
+  "http_headers"
+] as const;
 
 export function renderBridgeMcpCatalogue(source: string): string {
   const servers = parseTomlFile(source, "MCP source").mcp_servers;

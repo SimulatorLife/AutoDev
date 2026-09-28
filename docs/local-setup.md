@@ -190,11 +190,12 @@ through Codex's own tools, so it reaches exactly the MCP servers and Playwright 
 Codex role TOML enables; the Claude bridge passes `--strict-mcp-config` with only the
 per-turn Codex tools server, so user-level `~/.claude.json` servers and a workspace's own
 `.mcp.json` never reach a bridged turn. Only `browser-tester` and `smart` receive Playwright.
-Playwright is never exposed to the root orchestrator. Because Antigravity's
-MCP configuration is global, registering Playwright globally would expose it across all
-roles including the orchestrator; rather than falsely claiming per-role isolation, Playwright
-registration and `browser-tester` routing are removed for Antigravity. For documentation
-and web research, Antigravity uses its native `search_web` and `read_url_content` tools.
+Playwright is never exposed to the root orchestrator. Antigravity's registry is
+global, so its bridge creates an invocation-scoped temporary home that exposes
+only the current role's contracted MCP servers and tools. This lets `browser-tester`
+and `smart` use their Playwright allowlists without changing the global registry
+or exposing Playwright to other roles. For documentation and web research,
+Antigravity uses its native `search_web` and `read_url_content` tools.
 
 The installer installs CodeGraphContext `0.6.13` and CocoIndex Code
 `0.2.41` with pipx at pinned versions. The `codegraphcontext` MCP starts
@@ -237,25 +238,24 @@ also enabled in the parent user config and injected deterministically into root
 turns by the delegation hook and provider bridges; leaf role TOMLs keep it
 disabled so child agents do not inherit parent orchestration policy.
 
-Antigravity has a separate global MCP registry and workspace customization
-discovery. The installer registers the pinned `codegraphcontext`,
-`cocoindex-code`, and `lsp` MCP servers with `agy`; `.agents/skills.json`
-continues to expose the `ccc` and `lsp-mcp-server` skills from the canonical
-`.rulesync/skills/` source. The shared code-search prompt directs code roles to
-CGC first. Antigravity permissions grant six approved CodeGraphContext tools
-individually and remove any wildcard or other CGC tool grants; the global
-registry makes those tools visible to every session.
+Antigravity has a global MCP registry and workspace customization discovery.
+The installer registers the pinned `codegraphcontext`, `cocoindex-code`, and
+`lsp` MCP servers with `agy`; `.agents/skills.json` continues to expose the
+`ccc` and `lsp-mcp-server` skills from the canonical `.rulesync/skills/` source.
+The shared code-search prompt directs code roles to CGC first. The bridge filters
+the installed MCP catalogue for each invocation and creates a temporary home
+containing only that role's contracted servers and tool grants. It preserves
+explicit user denies and does not rewrite the global registry or settings.
+CodeGraphContext tool grants remain explicit rather than wildcarded.
 
 Headless subagents run noninteractively and cannot answer interactive permission
-prompts; if a required tool lacks pre-approval, the CLI auto-denies the call and
-halts the turn. The installer pre-approves required capabilities in
-`~/.gemini/antigravity-cli/settings.json` under `permissions.allow`:
-
-- Required MCP servers: `codegraphcontext`, `cocoindex-code`, `lsp`,
-  `openaiDeveloperDocs`, and `autodev_spawn`. CodeGraphContext receives explicit
-  grants only for `add_code_to_graph`, `check_job_status`,
-  `list_indexed_repositories`, `find_code`, `analyze_code_relationships`, and
-  `get_repository_stats`; it is not covered by a tool wildcard.
+prompts. The installer maintains machine-level permissions in
+`~/.gemini/antigravity-cli/settings.json`; for router-managed turns the bridge
+replaces only MCP allow grants in a temporary settings copy with grants from the
+selected role contract. Read-only roles keep the Antigravity sandbox and never
+receive `--dangerously-skip-permissions` or `command(*)`. If a native command is
+not allowed, the leaf prompt directs the model to stop retrying it and return a
+visible summary that records the limitation.
 - Web research permissions: `read_url(*)` for headless document and URL inspection.
 - Exact and recursive read grants for shared configuration: `read_file(~/.agents)`
   plus `read_file(~/.agents/**)`, and the equivalent pair for `~/.codex`.
@@ -615,7 +615,7 @@ specific agents, MCPs, and skills to coexist under distinct names.
 
 Repository agent instructions do not go through Rulesync. `AGENTS.md` is their only source. Codex, Antigravity, and Copilot (cloud agent, code review, CLI, VS Code chat) read it natively, and `CLAUDE.md` is a symlink to it for Claude Code. Copilot Chat on github.com reads only `.github/copilot-instructions.md`, which is intentionally absent. `tests/agent-instructions.test.ts` keeps it that way.
 
-`.rulesync/mcp.jsonc` is the only static MCP source, and the installer generates every live MCP file from it with the pinned Rulesync `16.30.2`. The `autodev_spawn` entry used by orchestrator bridges is the exception at runtime: Claude and Copilot receive it as a per-session MCP definition with a request-scoped session key, loopback URL, and token; Antigravity uses the static global entry but inherits the same session-scoped environment from its identified bridge process. The shim is therefore not a globally active delegation path for unrelated turns:
+`.rulesync/mcp.jsonc` is the only static MCP source, and the installer generates every live MCP file from it with the pinned Rulesync `16.30.2`. The `autodev_spawn` entry used by orchestrator bridges is the exception at runtime: Claude and Copilot receive it as a per-session MCP definition with a request-scoped session key, loopback URL, and token; Antigravity adds the equivalent server only to the isolated temporary home for an authorized root turn. Leaf Antigravity invocations do not receive the spawn server, and no global MCP registration grants unrelated turns a delegation path:
 
 - **Claude Code, Copilot CLI, Antigravity:** for each of `claude`, `copilot`, and `agy` found on `PATH`, `rulesync generate --global --features mcp` writes `~/.claude.json`, `~/.copilot/mcp-config.json`, or `~/.gemini/config/mcp_config.json`. Rulesync keeps every non-MCP key in those files but owns their server lists: a server you add by hand is removed on the next install and reported as drift by `--check`. Add personal servers to `.rulesync/mcp.jsonc` instead.
 - **Codex:** Rulesync's global output ignores `CODEX_HOME`. The installer therefore generates the Codex projection into a temporary root, and the composer merges its servers into `$CODEX_HOME/config.toml`, keeping any server you added there. The role renderer and execution-contract builder read the same projection.

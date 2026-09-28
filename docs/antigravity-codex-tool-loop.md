@@ -108,8 +108,8 @@ Consequences include:
 
 - AutoDev must observe `step_update` events to recover tool telemetry
 - AutoDev must parse successful skill reads because Codex hooks never see native `agy` file access
-- Antigravity's global MCP registry prevents clean per-role MCP isolation
-- `browser-tester` is currently rejected on Antigravity because global Playwright registration would expose it to roles that must not have it
+- Antigravity's global MCP registry requires a private per-invocation home to enforce each role's MCP allowlist
+- The bridge now enables `browser-tester` with its Playwright allowlist in that isolated home; the global registry remains unchanged
 - Read-only and write-capable roles require Antigravity-specific sandbox and permission handling
 - Native subagent lifecycle historically required bridge-side tracking because the child was invisible to Codex
 
@@ -805,7 +805,7 @@ Once all workspace actions pass through Codex:
 - Remove Antigravity-specific read-only sandbox branching where redundant
 - Let Codex role TOMLs determine filesystem/sandbox behavior
 - Let Codex tool/MCP exposure determine role capabilities
-- Re-enable Antigravity for roles previously blocked only by global MCP isolation, including `browser-tester`, after explicit parity tests
+- Keep Antigravity enabled for `browser-tester` through the bridge's per-invocation MCP isolation; future migration to Codex-owned tool execution can remove this provider-specific home isolation
 
 Exit condition: changing providers does not change which role capabilities the agent can exercise
 

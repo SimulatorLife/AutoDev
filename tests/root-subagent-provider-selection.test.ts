@@ -100,8 +100,8 @@ describe("root versus subagent provider selection", () => {
       new Set(contract.tiers["browser-tester"])
     );
     assert.ok(
-      !browserTesterProviders.has("antigravity"),
-      "browser-tester requires per-role Playwright MCP isolation"
+      browserTesterProviders.has("antigravity"),
+      "Antigravity must honor browser-tester's per-role Playwright MCP contract"
     );
   });
 
