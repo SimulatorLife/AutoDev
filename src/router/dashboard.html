@@ -3353,6 +3353,14 @@
         });
       }
 
+      function clearOutcomePie(host) {
+        const chartArea = host?.shadowRoot?.querySelector(".outcome-chart");
+        if (!host) return;
+        host.__outcomeChart?.destroy();
+        host.__outcomeChart = null;
+        chartArea?.replaceChildren();
+      }
+
       function render(status) {
         if (!status || typeof status !== "object") return;
 
@@ -3393,7 +3401,7 @@
           const windowNote = isInterval
             ? " · window covers retained history only (ring-buffered events)"
             : isActiveSessions
-              ? " · active sessions · retained history only (not a time window)"
+              ? " · active sessions · exact live-thread scope; event details use retained history"
               : "";
           metaEl.textContent = `Instance ${status.routerInstanceId ?? "-"} · PID ${status.pid ?? "-"} · started ${formatTimestamp(status.startedAt) || "—"} · refresh cadence 3s · lookback ${lookbackLabel}${windowNote}`;
         }
@@ -3450,8 +3458,17 @@
         }
         const kpiTools = document.getElementById("kpi-tools");
         if (kpiTools) {
-          kpiTools.setAttribute("value", "");
-          renderOutcomePie(kpiTools, toolSlices, palette);
+          if (isActiveSessions) {
+            clearOutcomePie(kpiTools);
+            const routedToolCalls = Number(
+              status.usage?.totals?.toolCalls ?? 0
+            );
+            kpiTools.setAttribute("value", routedToolCalls.toLocaleString());
+            kpiTools.textContent = `${routedToolCalls.toLocaleString()} tool calls requested by active sessions · execution outcomes use retained telemetry`;
+          } else {
+            kpiTools.setAttribute("value", "");
+            renderOutcomePie(kpiTools, toolSlices, palette);
+          }
         }
         const kpiSkills = document.getElementById("kpi-skills");
         if (kpiSkills) {
@@ -4055,11 +4072,15 @@
                 const wsToolsHtml = renderWorkspaceNamedUsage(wsToolRows, {
                   unavailableLabel:
                     "Named tool telemetry is unavailable per-workspace",
-                  emptyLabel:
-                    "No named tool calls observed for this workspace yet"
+                  emptyLabel: isActiveSessions
+                    ? "No named tool details retained for this active session"
+                    : "No named tool calls observed for this workspace yet"
                 });
                 let wsToolCell = `<td class="attempts"><span class="dim">—</span></td>`;
-                if (wsToolRows !== null) {
+                if (isActiveSessions) {
+                  const routedToolCalls = Number(w.toolCalls ?? 0);
+                  wsToolCell = `<td class="attempts" title="Count of tool calls requested by live-thread responses; named execution details use retained telemetry"><outcome-bar fail="0" no-bar="" success="${routedToolCalls}"></outcome-bar></td>`;
+                } else if (wsToolRows !== null) {
                   const toolCalls = wsToolRows.reduce(
                     (sum, r) => sum + Number(r.count ?? 0),
                     0

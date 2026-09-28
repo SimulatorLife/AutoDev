@@ -861,6 +861,71 @@ test("bridge observation events: tool, skill, and mcp exposure", () => {
   assert.equal(wsBucket.skillUses, 1);
 });
 
+test("bridge observation events: activitySubject is local active correlation, not an OTel dimension", () => {
+  const usageTracker = createMockUsageTracker();
+  const tracker = new OtelTracker({ usageTracker });
+
+  tracker.recordBridgeToolObservation({
+    event: {
+      type: "tool_executed",
+      tool: "view_file",
+      server: "file-tools",
+      status: "ok",
+      callId: "c-activity-1"
+    },
+    context: { workspace: "AutoDev/Platform", activitySubject: "child-42" }
+  });
+
+  const skillUsedResult = tracker.recordBridgeSkillUsed({
+    event: { skill: "racecar-movement", eventId: "evt-skill-activity-1" },
+    context: { workspace: "AutoDev/Platform", activitySubject: "child-42" }
+  });
+  assert.equal(skillUsedResult, true);
+
+  const status = tracker.codexTelemetryStatus() as any;
+
+  // The exact activitySubject belongs to local active correlation; it must
+  // not be promoted into the cumulative OTel agent dimension.
+  const skillBucket = status.skills.used.bySkill.find(
+    (entry: any) => entry.skill === "racecar-movement"
+  );
+  assert.ok(skillBucket, "expected racecar-movement skill-used bucket");
+  assert.equal(skillBucket.byAgent["child-42"], undefined);
+  assert.equal(skillBucket.byAgent.unattributed, 1);
+  assert.equal(status.skills.used.byAgent["child-42"], undefined);
+  assert.equal(status.skills.used.byAgent.unattributed, 1);
+
+  // The lookback event for the skill use must carry the same identity.
+  const skillLookback = status.lookbackEvents.find(
+    (event: any) =>
+      event.family === "skill" &&
+      event.type === "used" &&
+      event.name === "racecar-movement"
+  );
+  assert.ok(skillLookback, "expected skill-used lookback event");
+  assert.equal(skillLookback.agent, "child-42");
+
+  // The MCP cumulative agent dimension likewise stays unattributed; the
+  // bridge's separate live-feed event carries the exact activity subject.
+  const mcpServer = status.mcpServers.find(
+    (entry: any) => entry.name === "file-tools"
+  );
+  assert.ok(mcpServer, "expected file-tools mcp server entry");
+  assert.equal(mcpServer.byAgent["child-42"], undefined);
+  assert.equal(mcpServer.byAgent.unattributed.observed, 1);
+
+  const activeUsage = usageTracker.activeUsageSnapshot(["child-42"]);
+  assert.equal(activeUsage.skillUses, 1);
+  assert.deepEqual(activeUsage.bySkill, [
+    { skill: "racecar-movement", count: 1 }
+  ]);
+  const activeWorkspace = activeUsage.byWorkspace["AutoDev/Platform"]!;
+  assert.equal(activeWorkspace.skillUses, 1);
+  assert.deepEqual(activeWorkspace.bySkill, [
+    { skill: "racecar-movement", count: 1 }
+  ]);
+});
+
 test("persistence snapshot and restoration (schema v6)", () => {
   const usageTracker = createMockUsageTracker();
   const tracker = new OtelTracker({ usageTracker });

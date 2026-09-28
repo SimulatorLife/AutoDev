@@ -277,6 +277,15 @@ test("router dashboard exposes the top-right EST5EDT lookback control and live f
   assert.match(rawDashboard, /summary\.textContent = formatOutcomeSummary/);
   assert.match(rawDashboard, /kpiAttempts\.setAttribute\("value", ""\)/);
   assert.match(rawDashboard, /kpiTools\.setAttribute\("value", ""\)/);
+  assert.match(
+    rawDashboard,
+    /if \(isActiveSessions\) \{[\s\S]*?status\.usage\?\.totals\?\.toolCalls/
+  );
+  assert.match(rawDashboard, /clearOutcomePie\(kpiTools\)/);
+  assert.match(
+    rawDashboard,
+    /Count of tool calls requested by live-thread responses/
+  );
   assert.doesNotMatch(rawDashboard, /kpiAttempts\.innerHTML/);
   assert.doesNotMatch(rawDashboard, /kpiTools\.innerHTML/);
   assert.match(
@@ -305,12 +314,17 @@ test("router dashboard exposes the top-right EST5EDT lookback control and live f
   );
   assert.match(rawDashboard, /lookbackSelect\.addEventListener\("change"/);
   assert.match(rawDashboard, /void refresh\(\)/);
+  assert.match(
+    rawDashboard,
+    /active sessions · exact live-thread scope; event details use retained history/
+  );
+  assert.doesNotMatch(rawDashboard, /active sessions · retained history only/);
   assert.doesNotMatch(rawDashboard, /function hasRecentTimestamp\(/);
   assert.doesNotMatch(rawDashboard, /function applyLookback\(/);
   // The dashboard no longer filters cumulative buckets by `lastSeenAt`:
-  // the router rebuilds every activity-derived counter from the bounded
-  // recentEvents + liveFeed histories on the server. The dashboard just
-  // surfaces the rebuilt payload and labels the selected activity scope.
+  // wall-clock windows use bounded histories, while Active sessions uses
+  // exact live-thread usage and skill counters. The dashboard only surfaces
+  // the server's scope and labels which event-detail panels remain retained.
   assert.match(
     rawDashboard,
     /params\.set\("lookback", requestedLookback\)/
@@ -612,15 +626,21 @@ test("metrics workflow publishes an issue dashboard and artifact", async () => {
   assert.match(source, /metrics-snapshot\.json/);
 });
 
-test("router dashboard workspace table derives Tool calls from byTool normalization and handles unavailable states", async () => {
+test("router dashboard workspace table uses active request counts and otherwise derives Tool calls from named rows", async () => {
   const rawDashboard = await readFile(
     dashboardFile,
     "utf8"
   );
-  assert.doesNotMatch(rawDashboard, /OTLP-named runtime tool rows/);
-  assert.doesNotMatch(rawDashboard, /response-output tool-call count/);
-  assert.doesNotMatch(rawDashboard, /Tool calls \(response output\)/);
   assert.match(rawDashboard, /<th>Tool calls<\/th>/);
+  assert.match(
+    rawDashboard,
+    /if \(isActiveSessions\) \{[\s\S]*?const routedToolCalls = Number\(w\.toolCalls \?\? 0\)/
+  );
+  assert.match(
+    rawDashboard,
+    /title="Count of tool calls requested by live-thread responses/
+  );
+  assert.match(rawDashboard, /resolveWorkspaceToolRows\(\s*otlpToolRows,\s*bridgeToolRows/);
 
   const match = rawDashboard.match(
     /function normalizeWorkspaceNamedUsage\([\s\S]*?\n {6}\}/

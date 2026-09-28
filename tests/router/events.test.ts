@@ -6,7 +6,9 @@ import {
   type RouterEvent,
   RouterEventRecorder
 } from "../../src/router/events.ts";
+import { activitySubjectFor } from "../../src/router/proxy.ts";
 import { CONFIGURED_SMART_MODEL } from "../../src/router/routing.ts";
+import { UsageTracker } from "../../src/router/usage.ts";
 
 test("classifyProviderFailure accurately classifies status codes and error bodies", () => {
   assert.equal(classifyProviderFailure(429, "too many requests"), "throttled");
@@ -162,30 +164,96 @@ test("RouterEventRecorder uses resolveOrigin to derive orchestrator role for cod
   assert.equal(passedOrigin, "orchestrator");
 });
 
-test("every event of a request names the Codex thread that sent it", () => {
+test("request events retain the raw thread and canonical activity subject", () => {
   // Without it, per-thread diagnostics could only guess by model and time
   // window, and concurrent threads on the same role interleaved.
   const recorder = new RouterEventRecorder({ logger: null });
-  recorder.noteRequestThread("req-child", "thread-child");
-  assert.equal(
-    recorder.record({ phase: "selected", requestId: "req-child" }).thread,
-    "thread-child"
-  );
-  assert.equal(
-    recorder.record({
-      phase: "result",
-      requestId: "req-child",
-      outcome: "success"
-    }).thread,
-    "thread-child"
-  );
+  const session = {
+    key: "root-session",
+    scope: "identified",
+    thread: "child-thread"
+  };
+  const activitySubject = activitySubjectFor("req-child", session);
+  assert.equal(activitySubject, "thread:child-thread");
+  recorder.noteRequestIdentity("req-child", session.thread, activitySubject);
+
+  const selected = recorder.record({
+    phase: "selected",
+    requestId: "req-child"
+  });
+  assert.equal(selected.thread, "child-thread");
+  assert.equal(selected.activitySubject, activitySubject);
+
+  const result = recorder.record({
+    phase: "result",
+    requestId: "req-child",
+    outcome: "success"
+  });
+  assert.equal(result.thread, "child-thread");
+  assert.equal(result.activitySubject, activitySubject);
   assert.equal(
     recorder.record({ phase: "selected", requestId: "req-anonymous" }).thread,
     null
   );
-  recorder.noteRequestThread("req-none", null);
+  recorder.noteRequestIdentity("req-none", null, "req:req-none");
   assert.equal(
     recorder.record({ phase: "selected", requestId: "req-none" }).thread,
     null
   );
+  assert.equal(
+    recorder.record({ phase: "selected", requestId: "req-none" })
+      .activitySubject,
+    "req:req-none"
+  );
+});
+
+test("active route usage keys subagent events by the same canonical subject as the live-agent tracker", () => {
+  const usageTracker = new UsageTracker();
+  const session = {
+    key: "root-session",
+    scope: "identified",
+    thread: "child-thread"
+  };
+  const subject = activitySubjectFor("req-child", session);
+  const recorder = new RouterEventRecorder({
+    logger: null,
+    onEvent: (event) => {
+      if (!event.requestId || !event.provider || !event.model) return;
+      usageTracker.recordUsageEvent({
+        phase: event.phase,
+        requestId: event.requestId,
+        ...(event.activitySubject ? { subject: event.activitySubject } : {}),
+        provider: event.provider,
+        model: event.model,
+        role: event.role,
+        ...(event.outcome ? { outcome: event.outcome } : {}),
+        elapsedMs: event.elapsedMs,
+        toolCalls: event.toolCalls,
+        timestamp: event.timestamp
+      });
+    }
+  });
+  recorder.noteRequestIdentity("req-child", session.thread, subject);
+  recorder.record({
+    phase: "selected",
+    requestId: "req-child",
+    provider: "claude",
+    model: "sonnet",
+    role: "worker"
+  });
+  recorder.record({
+    phase: "result",
+    requestId: "req-child",
+    provider: "claude",
+    model: "sonnet",
+    role: "worker",
+    outcome: "success",
+    elapsedMs: 10,
+    toolCalls: 3
+  });
+
+  const active = usageTracker.activeUsageSnapshot([subject]);
+  assert.equal(active.totals.attempts, 1);
+  assert.equal(active.totals.successes, 1);
+  assert.equal(active.totals.toolCalls, 3);
 });

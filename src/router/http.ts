@@ -36,7 +36,7 @@ import {
 import { COOLDOWN_CONFIG, COOLDOWNS } from "./cooldown.ts";
 import {
   getDefaultRouterEventRecorder,
-  noteRequestThread,
+  noteRequestIdentity,
   recordRouterEvent,
   RouterEventRecorder,
   setDefaultRouterEventRecorder
@@ -78,6 +78,7 @@ import {
 } from "./persistence.ts";
 import {
   activeProviderRequests,
+  activitySubjectFor,
   CHAIN_SELECTION_DEADLINE_MS,
   CONCRETE_STATUS_MAX_ATTEMPTS,
   errorBody,
@@ -342,6 +343,7 @@ const routerEvents = new RouterEventRecorder({
       recordUsageEvent({
         phase: event.phase,
         requestId: event.requestId,
+        subject: event.activitySubject,
         role: event.role,
         provider: event.provider,
         model: event.model,
@@ -1348,9 +1350,24 @@ function routerProviderStatus(
 
 function buildRouterStatus(
   now = Date.now(),
-  includeLiveFeedAgentCorrelation = false
+  includeActiveAgentCorrelation = false
 ): Record<string, unknown> {
   const projection = projectLiveAgents(now);
+  const codexTelemetry = codexTelemetryStatus();
+  const recentEvents = getDefaultRouterEventRecorder().getRecentEvents(true);
+  const statusTelemetry = includeActiveAgentCorrelation
+    ? codexTelemetry
+    : {
+        ...codexTelemetry,
+        lookbackEvents: codexTelemetry.lookbackEvents.map(
+          ({ agent: _agent, ...event }) => event
+        )
+      };
+  const statusRecentEvents = includeActiveAgentCorrelation
+    ? recentEvents
+    : recentEvents.map(({ activitySubject: _activitySubject, ...event }) =>
+        event
+      );
   const providers = Object.fromEntries(
     ROUTES.map((route) => routerProviderStatus(route, now, projection))
   );
@@ -1384,7 +1401,7 @@ function buildRouterStatus(
       missingProvider: projection.missingProvider,
       missingModel: projection.missingModel
     },
-    codexTelemetry: codexTelemetryStatus(),
+    codexTelemetry: statusTelemetry,
     agents: agentsStatus(now),
     concurrency: getDefaultConcurrencyManager().concurrencyStatus(now),
     subagents: subagentStatus(),
@@ -1392,10 +1409,10 @@ function buildRouterStatus(
     inFlightRequests: Object.fromEntries(activeProviderRequests),
     liveActivity: projection.canonicalTotal,
     providers,
-    recentEvents: getDefaultRouterEventRecorder().getRecentEvents(true),
+    recentEvents: statusRecentEvents,
     liveFeed: liveFeedEvents.getRecentEvents(
       true,
-      includeLiveFeedAgentCorrelation
+      includeActiveAgentCorrelation
     ),
     codexState: codexStateStatus()
   };
@@ -2042,7 +2059,13 @@ async function handleResponseRequest(
   const wantsStream = payload.stream !== false;
   const turnMetadataHeader = resolveTurnMetadataHeader(request, payload);
   const session = requestSession(request, payload, turnMetadataHeader);
-  noteRequestThread(requestId, session.thread);
+  const isOrchestratorRequest = model === ORCHESTRATOR_ALIAS;
+  const activitySubject = activitySubjectFor(requestId, session, {
+    subagentOfKnownSession:
+      !isOrchestratorRequest &&
+      Boolean(role && orchestratorProviderForSession(session.key))
+  });
+  noteRequestIdentity(requestId, session.thread, activitySubject);
   const effectiveTurnMetadataHeader = workspaceMetadataForSession(
     payload,
     turnMetadataHeader,
@@ -2413,6 +2436,16 @@ function parseLookbackSelection(
   }
 }
 
+function lookbackAgentProjection(selection: LookbackSelection, now: number) {
+  const liveAgents = agentActivity.listLive({}, now);
+  const usage = getDefaultUsageTracker().activeUsageSnapshot(
+    liveAgents.map((agent) => agent.subject)
+  );
+  return selection === "active"
+    ? { activeAgents: liveAgents, activeUsage: usage }
+    : { activeAgents: [], activeUsage: undefined };
+}
+
 async function handlePreflightRoutes(
   pathname: string,
   request: IncomingMessage,
@@ -2453,15 +2486,16 @@ async function handlePreflightRoutes(
     const lookbackSelection = parseLookbackSelection(request);
     const now = Date.now();
     const status = buildRouterStatus(now, lookbackSelection === "active");
-    const activeAgents =
-      lookbackSelection === "active"
-        ? agentActivity.listLive({}, now)
-        : [];
+    // Prune ended/stale per-thread accumulators on every dashboard refresh,
+    // even while All is selected, so the ephemeral active projection stays
+    // bounded and ready when the operator switches the control.
+    const activeProjection = lookbackAgentProjection(lookbackSelection, now);
     const payload = applyIntervalLookback(
       status as Parameters<typeof applyIntervalLookback>[0],
       lookbackSelection,
       now,
-      activeAgents
+      activeProjection.activeAgents,
+      activeProjection.activeUsage
     );
     sendJson(response, 200, payload, { "cache-control": "no-store" });
     return true;

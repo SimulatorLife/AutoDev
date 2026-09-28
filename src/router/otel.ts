@@ -427,6 +427,8 @@ export interface TelemetryContext {
   role: string;
   model: string;
   agent: string;
+  /** Exact router identity for bounded active-session correlation only. */
+  activeAgent?: string | null;
   agentKind: string;
   timestamp: string;
   timestampSource: "source" | "ingestion";
@@ -464,6 +466,7 @@ interface RequestContext {
   requestedModel?: unknown;
   childId?: unknown;
   agentId?: unknown;
+  activitySubject?: unknown;
   agent?: unknown;
   agentKind?: unknown;
   agentRole?: unknown;
@@ -751,7 +754,7 @@ export interface OtelLookbackEvent {
   role: string | null;
   /** Resolved model dimension (or null when unattributed). */
   model: string | null;
-  /** Resolved agent dimension (or null when unattributed). */
+  /** Bounded local identity for active filtering; not a metric dimension. */
   agent: string | null;
   /** Tool result had a call id used to resolve its causal join. */
   resolvedCall: boolean;
@@ -1992,6 +1995,11 @@ export class OtelTracker {
         thread,
         conversationId
       ) || UNATTRIBUTED_DIMENSION;
+    const activeAgent = reqContext?.activitySubject
+      ? safeAgentIdentity(reqContext.activitySubject)
+      : agent === UNATTRIBUTED_DIMENSION
+        ? null
+        : agent;
     const agentKind =
       this.resolveAgentKindDimension(
         attributes,
@@ -2008,6 +2016,7 @@ export class OtelTracker {
       role: role as string,
       model: model as string,
       agent: agent as string,
+      activeAgent,
       agentKind: agentKind as string,
       timestamp: timestamp as string,
       timestampSource
@@ -2083,7 +2092,7 @@ export class OtelTracker {
       workspace: input.context?.workspace ?? null,
       role: input.context?.role ?? null,
       model: input.context?.model ?? null,
-      agent: input.context?.agent ?? null,
+      agent: input.context?.activeAgent ?? input.context?.agent ?? null,
       resolvedCall: input.resolvedCall ?? false
     };
     this.lookbackEvents.push(event);
@@ -3011,6 +3020,12 @@ export class OtelTracker {
       used[field][key] = (used[field][key] ?? 0) + count;
       bucket[field][key] = (bucket[field][key] ?? 0) + count;
     }
+    this.usageTracker.recordAgentSkillUse(
+      context.activeAgent,
+      context.workspace,
+      cleanSkill,
+      count
+    );
     if (context.workspace !== UNATTRIBUTED_DIMENSION) {
       const workspace = this.usageTracker.workspaceBucket(
         this.usageTracker.usageTelemetry.byWorkspace,

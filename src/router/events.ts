@@ -25,6 +25,8 @@ export interface RouterEvent {
   requestId: string | null;
   /** The Codex thread the request came from, when the caller named one. */
   thread: string | null;
+  /** Canonical live-agent identity; differs from thread for delegated threads. */
+  activitySubject?: string | null;
   phase: string;
   role: string | null;
   requestedModel: string | null | undefined;
@@ -51,6 +53,8 @@ export interface RecordRouterEventInput {
   phase: string;
   requestId?: string | null | undefined;
   thread?: string | null | undefined;
+  /** Canonical live-agent identity used for active-session joins. */
+  activitySubject?: string | null | undefined;
   role?: string | null | undefined;
   requestedModel?: string | null | undefined;
   provider?: string | null | undefined;
@@ -127,10 +131,13 @@ export interface RouterEventRecorderOptions {
 
 export class RouterEventRecorder {
   private readonly recentEvents: RouterEvent[] = [];
-  // Which thread each in-flight request belongs to. The many call sites that
-  // record a request's events know its id, not its thread, so the thread is
-  // noted once when the request arrives. Bounded, oldest first.
-  private readonly requestThreads = new Map<string, string>();
+  // Router identity for each in-flight request. Event call sites know the
+  // request id, while the entry point knows both the raw Codex thread and its
+  // canonical activity subject. Bounded, oldest first.
+  private readonly requestIdentities = new Map<
+    string,
+    { thread: string | null; activitySubject: string | null }
+  >();
   private readonly maxRecentEvents: number;
   private readonly routerInstanceId: string;
   private readonly logger: ((event: RouterEvent) => void) | null;
@@ -172,6 +179,7 @@ export class RouterEventRecorder {
 
   clear(): void {
     this.recentEvents.length = 0;
+    this.requestIdentities.clear();
   }
 
   restore(events: unknown[]): void {
@@ -183,18 +191,28 @@ export class RouterEventRecorder {
     this.recentEvents.push(...valid.slice(-this.maxRecentEvents));
   }
 
-  noteRequestThread(requestId: string, thread: string | null): void {
-    if (!thread) return;
-    this.requestThreads.set(requestId, thread);
-    while (this.requestThreads.size > 4096) {
-      const oldest = this.requestThreads.keys().next().value;
+  noteRequestIdentity(
+    requestId: string,
+    thread: string | null,
+    activitySubject: string
+  ): void {
+    if (!thread && !activitySubject) return;
+    this.requestIdentities.delete(requestId);
+    this.requestIdentities.set(requestId, { thread, activitySubject });
+    while (this.requestIdentities.size > 4096) {
+      const oldest = this.requestIdentities.keys().next().value;
       if (oldest === undefined) break;
-      this.requestThreads.delete(oldest);
+      this.requestIdentities.delete(oldest);
     }
   }
 
   record(input: RecordRouterEventInput): RouterEvent {
     const timestamp = new Date().toISOString();
+    const requestIdentity = input.requestId
+      ? this.requestIdentities.get(input.requestId)
+      : undefined;
+    const activitySubject =
+      input.activitySubject ?? requestIdentity?.activitySubject ?? null;
     const rawWorkspace = input.workspace;
     let workspaceKey: string | null = null;
     let cwd: string | null = input.cwd ?? null;
@@ -221,11 +239,8 @@ export class RouterEventRecorder {
       timestamp,
       routerInstanceId: this.routerInstanceId,
       requestId: input.requestId ?? null,
-      thread:
-        input.thread ??
-        (input.requestId
-          ? (this.requestThreads.get(input.requestId) ?? null)
-          : null),
+      ...(activitySubject ? { activitySubject } : {}),
+      thread: input.thread ?? requestIdentity?.thread ?? null,
       phase: input.phase,
       role: effectiveRole,
       requestedModel: input.requestedModel,
@@ -292,12 +307,17 @@ export function recordRouterEvent(input: RecordRouterEventInput): RouterEvent {
   return getDefaultRouterEventRecorder().record(input);
 }
 
-/** Attribute every later event of this request to the Codex thread that sent it. */
-export function noteRequestThread(
+/** Attribute later request events to both the raw thread and canonical subject. */
+export function noteRequestIdentity(
   requestId: string,
-  thread: string | null
+  thread: string | null,
+  activitySubject: string
 ): void {
-  getDefaultRouterEventRecorder().noteRequestThread(requestId, thread);
+  getDefaultRouterEventRecorder().noteRequestIdentity(
+    requestId,
+    thread,
+    activitySubject
+  );
 }
 
 export function getRecentRouterEvents(reversed = false): RouterEvent[] {

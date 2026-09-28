@@ -12,13 +12,13 @@
  *       telemetry receiver counters, native metrics observed, tokens, etc.)
  *
  * Lifetime cumulative buckets in `usage.ts` and `otel.ts` cannot be filtered
- * into an interval view from a row timestamp: their `lastSeenAt` /
+ * into a wall-clock window from a row timestamp: their `lastSeenAt` /
  * `lastUsedAt` fields describe the most recent sighting only, not the time
- * each individual observation occurred. The interval view therefore MUST
- * be rebuilt from the bounded, per-occurrence histories the router
- * already retains -- `status.recentEvents` (timestamped `RouterEvent[]`)
- * and `status.liveFeed` (timestamped `LiveFeedEvent[]`) -- rather than
- * re-deriving from those lifetime maps.
+ * each individual observation occurred. Wall-clock windows therefore MUST
+ * be rebuilt from the bounded, per-occurrence histories the router already
+ * retains. Active sessions is different: exact live-thread route and skill
+ * snapshots preserve those counts across global ring eviction; other
+ * event-derived detail still uses the retained histories.
  *
  * This module is the single source of truth for the interval and active-agent
  * rebuilds. It
@@ -34,19 +34,18 @@
  *     covering every public counter the dashboard renders.
  *
  * The aggregator is intentionally a pure function with no module-level
- * state. It never throws on missing data, never invents synthetic rows,
- * and never reaches back into the lifetime cumulative maps to "patch" a
- * missing value -- when the bounded histories do not cover a window or do not
- * carry an exact active-agent identity, the aggregator reports zero for that
- * counter and the dashboard shows it. The bounded histories are documented in `events.ts` and
- * `live-feed.ts` (see `maxRecentEvents` and the `maxEvents` constructor
- * defaults).
+ * state. It never throws on missing data or invents synthetic rows. The
+ * active route and skill snapshots are supplied as explicit inputs; all
+ * other event-derived counters remain fail-closed when bounded history lacks
+ * an exact active-agent identity. The bounded histories are documented in
+ * `events.ts` and `live-feed.ts` (see `maxRecentEvents` and the `maxEvents`
+ * constructor defaults).
  */
 
 import type { RouterEvent } from "./events.ts";
 import { LIVE_FEED_CATEGORIES, type LiveFeedEvent } from "./live-feed.ts";
 import type { OtelLookbackEvent } from "./otel.ts";
-import { safeAgentIdentity } from "./usage.ts";
+import { safeAgentIdentity, type UsageActiveSnapshot } from "./usage.ts";
 
 export const LOOKBACK_SELECTIONS = [
   "all",
@@ -579,6 +578,8 @@ export interface LookbackAggregatorInput {
   spawnFailureRecent?: readonly LookbackSpawnFailureRecord[] | null;
   /** Canonical live agent records from `AgentActivityTracker.listLive()`. */
   activeAgents?: readonly LookbackActiveAgent[] | null;
+  /** Cumulative route and skill usage for live threads, independent of event-ring retention. */
+  activeUsage?: UsageActiveSnapshot | null;
   /** Fixed clock used by the dashboard; tests pass a deterministic value. */
   now: number;
   /** Active dashboard selection. */
@@ -1716,6 +1717,7 @@ function addSubjectIdentity(
   subject: string,
   matchingThread: string | null | undefined
 ): void {
+  if (subject !== "process-scope") addAgentIdentity(scope, subject);
   if (subject.startsWith("thread:")) {
     const threadId = matchingThread ?? subject.slice("thread:".length);
     addIdentity(scope.threadIds, threadId);
@@ -1780,20 +1782,23 @@ function activeAgentScope(
   // Codex thread carried by that exact request. This also supplies the
   // canonical OTel agent identity for bridge-parent records.
   for (const event of recentEvents) {
-    if (
-      event.thread &&
-      event.requestId &&
-      scope.requestIds.has(event.requestId)
-    ) {
-      addIdentity(scope.threadIds, event.thread);
-      addAgentIdentity(scope, event.thread);
+    if (event.requestId && scope.requestIds.has(event.requestId)) {
+      if (event.activitySubject) addAgentIdentity(scope, event.activitySubject);
+      if (event.thread) {
+        addIdentity(scope.threadIds, event.thread);
+        addAgentIdentity(scope, event.thread);
+      }
     }
   }
 
-  // Router events carry the originating Codex thread. Their request IDs are
+  // Router events carry the exact activity subject. Their request IDs are
   // the exact join key for bridge feed and spawn records without a thread.
   for (const event of recentEvents) {
-    if (event.thread && scope.threadIds.has(event.thread))
+    if (
+      (event.activitySubject &&
+        scope.agentIds.has(safeAgentIdentity(event.activitySubject))) ||
+      (event.thread && scope.threadIds.has(event.thread))
+    )
       addIdentity(scope.requestIds, event.requestId);
   }
   return scope;
@@ -1804,7 +1809,8 @@ function eventBelongsToActiveAgent(
   scope: ActiveAgentScope
 ): boolean {
   return Boolean(
-    (event.thread && scope.threadIds.has(event.thread)) ||
+    (event.activitySubject &&
+      scope.agentIds.has(safeAgentIdentity(event.activitySubject))) ||
     (event.requestId && scope.requestIds.has(event.requestId))
   );
 }
@@ -1925,6 +1931,14 @@ export function aggregateLookbackView(
   addLiveFeedEvents(liveFeed, windowStartMs, input.now, codexTelemetry, usage);
   finalizeCodexTelemetry(codexTelemetry);
 
+  if (input.selection === "active" && input.activeUsage) {
+    applyActiveUsageSnapshot(usage, input.activeUsage);
+    codexTelemetry.skills.used.total = input.activeUsage.skillUses;
+    codexTelemetry.skills.used.bySkill = input.activeUsage.bySkill.map(
+      ({ skill, count }) => ({ skill, total: count, uses: count, byStatus: {} })
+    );
+  }
+
   return {
     lookback: {
       selection: input.selection,
@@ -1941,6 +1955,74 @@ export function aggregateLookbackView(
     liveFeed,
     ...(activeAgentStates ? { activeAgentStates } : {})
   };
+}
+
+function asIntervalUsageBucket(
+  bucket: UsageActiveSnapshot["totals"]
+): IntervalUsageBucket {
+  const completed = bucket.successes + bucket.failures;
+  return {
+    attempts: bucket.attempts,
+    successes: bucket.successes,
+    failures: bucket.failures,
+    skipped: bucket.skipped,
+    durationMs: bucket.durationMs,
+    maxDurationMs: bucket.maxDurationMs,
+    toolCalls: bucket.toolCalls,
+    lastUsedAt: bucket.lastUsedAt,
+    lastFailure: bucket.lastFailure,
+    averageDurationMs:
+      completed > 0 ? Math.round(bucket.durationMs / completed) : 0
+  };
+}
+
+function applyActiveUsageSnapshot(
+  usage: IntervalUsage,
+  active: UsageActiveSnapshot
+): void {
+  usage.totals = asIntervalUsageBucket(active.totals);
+  usage.byRole = Object.fromEntries(
+    Object.entries(active.byRole).map(([key, bucket]) => [
+      key,
+      asIntervalUsageBucket(bucket)
+    ])
+  );
+  usage.byModel = Object.fromEntries(
+    Object.entries(active.byModel).map(([key, bucket]) => [
+      key,
+      asIntervalUsageBucket(bucket)
+    ])
+  );
+  usage.byOrigin = Object.fromEntries(
+    Object.entries(active.byOrigin).map(([key, bucket]) => [
+      key,
+      asIntervalUsageBucket(bucket)
+    ])
+  );
+
+  for (const [workspace, bucket] of Object.entries(active.byWorkspace)) {
+    const existing =
+      usage.byWorkspace[workspace] ?? createWorkspaceBucket(null);
+    const row = existing as IntervalWorkspaceUsageBucket &
+      Record<string, unknown>;
+    Object.assign(row, asIntervalUsageBucket(bucket));
+    row.cwd = bucket.cwd;
+    row.byRole = Object.fromEntries(
+      Object.entries(bucket.byRole ?? {}).map(([key, value]) => [
+        key,
+        asIntervalUsageBucket(value)
+      ])
+    );
+    row.byModel = Object.fromEntries(
+      Object.entries(bucket.byModel ?? {}).map(([key, value]) => [
+        key,
+        asIntervalUsageBucket(value)
+      ])
+    );
+    row.skillUses = bucket.skillUses;
+    row.bySkill = bucket.bySkill;
+    usage.byWorkspace[workspace] = row;
+  }
 }
 
 function readDuration(record: LiveFeedEvent): number | null {
@@ -2194,25 +2276,29 @@ export function applyIntervalLookback<T extends LookbackStatusInput>(
   status: T,
   selection: "all",
   now?: number,
-  activeAgents?: readonly LookbackActiveAgent[]
+  activeAgents?: readonly LookbackActiveAgent[],
+  activeUsage?: UsageActiveSnapshot | null
 ): T;
 export function applyIntervalLookback<T extends LookbackStatusInput>(
   status: T,
   selection: Exclude<LookbackSelection, "all">,
   now?: number,
-  activeAgents?: readonly LookbackActiveAgent[]
+  activeAgents?: readonly LookbackActiveAgent[],
+  activeUsage?: UsageActiveSnapshot | null
 ): T & LookbackStatusFields;
 export function applyIntervalLookback<T extends LookbackStatusInput>(
   status: T,
   selection: LookbackSelection,
   now?: number,
-  activeAgents?: readonly LookbackActiveAgent[]
+  activeAgents?: readonly LookbackActiveAgent[],
+  activeUsage?: UsageActiveSnapshot | null
 ): T | (T & LookbackStatusFields);
 export function applyIntervalLookback<T extends LookbackStatusInput>(
   status: T,
   selection: LookbackSelection,
   now: number = Date.now(),
-  activeAgents: readonly LookbackActiveAgent[] = []
+  activeAgents: readonly LookbackActiveAgent[] = [],
+  activeUsage: UsageActiveSnapshot | null = null
 ): T | (T & LookbackStatusFields) {
   if (selection === "all") return status;
   const codexTelemetry = status.codexTelemetry as
@@ -2224,12 +2310,15 @@ export function applyIntervalLookback<T extends LookbackStatusInput>(
     subagentRecent: status.subagents?.recent ?? null,
     spawnFailureRecent: status.spawnFailures?.recent ?? null,
     activeAgents,
+    activeUsage,
     now,
     selection
   });
   if (!override) return status;
   return Object.assign({}, status, {
-    recentEvents: override.recentEvents,
+    recentEvents: override.recentEvents.map(
+      ({ activitySubject: _activitySubject, ...event }) => event
+    ),
     liveFeed: override.liveFeed.map(({ agent: _agent, ...event }) => event),
     usage: override.usage,
     codexTelemetry: mergeCodexTelemetry(
@@ -2291,10 +2380,11 @@ function mergeCodexTelemetry(
   const existingReceiver =
     (existing.receiver as Record<string, unknown> | undefined) ?? {};
   const existingSkills = existing.skills as Record<string, unknown> | undefined;
-  const lookbackEvents =
-    selection === "active"
-      ? interval.lookbackEvents.map(({ agent: _agent, ...event }) => event)
-      : interval.lookbackEvents;
+  const existingSkillUse = existingSkills?.used as
+    Record<string, unknown> | undefined;
+  const lookbackEvents = interval.lookbackEvents.map(
+    ({ agent: _agent, ...event }) => event
+  );
   const next: Record<string, unknown> = {
     ...existing,
     lookbackEvents,
@@ -2335,13 +2425,34 @@ function mergeCodexTelemetry(
     skills: {
       ...existingSkills,
       used: {
-        ...(existingSkills?.used as Record<string, unknown> | undefined),
-        total: interval.skills.used.total,
-        bySkill: interval.skills.used.bySkill
+        ...existingSkillUse,
+        ...(selection === "active"
+          ? {
+              total: interval.skills.used.total,
+              byRole: {},
+              byWorkspace: {},
+              byModel: {},
+              byAgent: {},
+              lastSeenAt: null,
+              bySkill: interval.skills.used.bySkill
+            }
+          : {
+              total: interval.skills.used.total,
+              bySkill: interval.skills.used.bySkill
+            })
       },
       injected: {
         ...(existingSkills?.injected as Record<string, unknown> | undefined),
         total: interval.skills.injected.total,
+        ...(selection === "active"
+          ? {
+              byStatus: {},
+              byInvokeType: {},
+              byAgentKind: {},
+              byModel: {},
+              byPlugin: {}
+            }
+          : {}),
         bySkill: interval.skills.injected.bySkill
       },
       exposed: {

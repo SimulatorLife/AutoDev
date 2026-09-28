@@ -9,6 +9,7 @@ import { safeMetricLabel } from "./subagents.ts";
 
 export const UNATTRIBUTED_DIMENSION = "unattributed";
 export const MAX_UNKNOWN_WORKSPACE_IDS = 100;
+const MAX_ACTIVE_USAGE_SUBJECTS = 4096;
 const STRING_COLLATOR = new Intl.Collator();
 
 export interface UsageFailureInfo {
@@ -168,6 +169,59 @@ export interface UsagePersistenceSnapshot {
   workspaceRegistry: [string, string][];
 }
 
+export interface UsageActiveWorkspaceSnapshot extends UsageBucket {
+  averageDurationMs: number;
+  cwd: string | null;
+  byRole: Record<string, UsageBucket & { averageDurationMs: number }>;
+  byModel: Record<string, UsageBucket & { averageDurationMs: number }>;
+  skillUses: number;
+  bySkill: Array<{ skill: string; count: number }>;
+}
+
+export interface UsageActiveSnapshot {
+  totals: UsageBucket & { averageDurationMs: number };
+  byRole: Record<string, UsageBucket & { averageDurationMs: number }>;
+  byModel: Record<string, UsageBucket & { averageDurationMs: number }>;
+  byOrigin: Record<string, UsageBucket & { averageDurationMs: number }>;
+  byWorkspace: Record<string, UsageActiveWorkspaceSnapshot>;
+  skillUses: number;
+  bySkill: Array<{ skill: string; count: number }>;
+}
+
+// Raw, unserialized accumulators for a single live subject (router thread).
+// Kept separate from UsageActiveSnapshot so accumulation can reuse the same
+// plain UsageBucket buckets everywhere else in this module.
+interface SubjectWorkspaceAccumulator {
+  bucket: UsageBucket;
+  cwd: string | null;
+  byRole: Record<string, UsageBucket>;
+  byModel: Record<string, UsageBucket>;
+  skillUses: number;
+  bySkill: Map<string, number>;
+}
+
+interface SubjectUsageAccumulator {
+  totals: UsageBucket;
+  byRole: Record<string, UsageBucket>;
+  byModel: Record<string, UsageBucket>;
+  byOrigin: Record<string, UsageBucket>;
+  byWorkspace: Record<string, SubjectWorkspaceAccumulator>;
+  skillUses: number;
+  bySkill: Map<string, number>;
+}
+
+function withAverageDuration(
+  bucket: UsageBucket
+): UsageBucket & { averageDurationMs: number } {
+  return {
+    ...bucket,
+    averageDurationMs:
+      bucket.successes + bucket.failures > 0
+        ? Math.round(bucket.durationMs / (bucket.successes + bucket.failures))
+        : 0
+  };
+}
+
 export interface RecordUsageEventParams {
   phase: string;
   requestId: string;
@@ -183,6 +237,10 @@ export interface RecordUsageEventParams {
   toolCalls?: number;
   timestamp: string;
   origin?: "orchestrator" | "subagent" | "direct" | string | null;
+  // Ephemeral live-agent identity (the router thread/subject). Used to keep
+  // a per-agent cumulative usage projection alive while the agent is active,
+  // independent of the global RouterEvent ring buffer. Never persisted.
+  subject?: string | null;
 }
 
 export interface UsageTrackerOptions {
@@ -440,6 +498,67 @@ export function usageBucket(
   return collection[key];
 }
 
+function mergeUsageBucketInto(target: UsageBucket, source: UsageBucket): void {
+  target.attempts += source.attempts;
+  target.successes += source.successes;
+  target.failures += source.failures;
+  target.skipped += source.skipped;
+  target.durationMs += source.durationMs;
+  target.maxDurationMs = Math.max(target.maxDurationMs, source.maxDurationMs);
+  target.toolCalls += source.toolCalls;
+  if (
+    source.lastUsedAt &&
+    (!target.lastUsedAt || source.lastUsedAt > target.lastUsedAt)
+  ) {
+    target.lastUsedAt = source.lastUsedAt;
+  }
+  if (
+    source.lastFailure &&
+    (!target.lastFailure ||
+      source.lastFailure.timestamp > target.lastFailure.timestamp)
+  ) {
+    target.lastFailure = source.lastFailure;
+  }
+}
+
+function mergeUsageBucketMapInto(
+  target: Record<string, UsageBucket>,
+  source: Record<string, UsageBucket>
+): void {
+  for (const [key, bucket] of Object.entries(source)) {
+    mergeUsageBucketInto(usageBucket(target, key), bucket);
+  }
+}
+
+function mergeSubjectWorkspaceInto(
+  target: Record<string, SubjectWorkspaceAccumulator>,
+  source: Record<string, SubjectWorkspaceAccumulator>
+): void {
+  for (const [key, accumulator] of Object.entries(source)) {
+    let entry = target[key];
+    if (!entry) {
+      entry = {
+        bucket: emptyUsageBucket(),
+        cwd: accumulator.cwd,
+        byRole: {},
+        byModel: {},
+        skillUses: 0,
+        bySkill: new Map()
+      };
+      target[key] = entry;
+    } else if (!entry.cwd && accumulator.cwd) {
+      entry.cwd = accumulator.cwd;
+    }
+    mergeUsageBucketInto(entry.bucket, accumulator.bucket);
+    mergeUsageBucketMapInto(entry.byRole, accumulator.byRole);
+    mergeUsageBucketMapInto(entry.byModel, accumulator.byModel);
+    entry.skillUses += accumulator.skillUses;
+    for (const [skill, count] of accumulator.bySkill) {
+      entry.bySkill.set(skill, (entry.bySkill.get(skill) ?? 0) + count);
+    }
+  }
+}
+
 function createWorkspaceBucket(cwd: string | null): WorkspaceUsageBucket {
   return {
     ...emptyUsageBucket(), cwd, skillUses: 0,
@@ -665,6 +784,10 @@ export class UsageTracker {
     string,
     { startedAt: number; buckets: UsageBucket[] }
   >;
+  // Ephemeral per-agent (per-thread) cumulative usage, keyed by subject.
+  // Not part of usageTelemetry, never persisted, and pruned to the live
+  // subject set whenever activeUsageSnapshot() is called.
+  private readonly activeUsageBySubject: Map<string, SubjectUsageAccumulator>;
   readonly workspaceIdRegistry: Map<string, string>;
   readonly workspaceIdConflicts: Set<string>;
   readonly attributionDiagnostics: AttributionDiagnostics;
@@ -682,6 +805,7 @@ export class UsageTracker {
       byWorkspace: {}
     };
     this.inFlightUsage = new Map();
+    this.activeUsageBySubject = new Map();
     this.workspaceIdRegistry = new Map();
     this.workspaceIdConflicts = new Set();
     this.attributionDiagnostics = {
@@ -869,14 +993,16 @@ export class UsageTracker {
     elapsedMs,
     toolCalls = 0,
     timestamp,
-    origin: originOverride = null
+    origin: originOverride = null,
+    subject = null
   }: RecordUsageEventParams): void {
     const buckets = this.collectUsageBuckets({
       role,
       provider,
       model,
       workspace,
-      origin: originOverride
+      origin: originOverride,
+      subject
     });
     const key = usageKey(requestId, provider, model);
     if (phase === "selected") {
@@ -905,13 +1031,15 @@ export class UsageTracker {
     provider,
     model,
     workspace,
-    origin: originOverride
+    origin: originOverride,
+    subject = null
   }: {
     role: RecordUsageEventParams["role"];
     provider: RecordUsageEventParams["provider"];
     model: RecordUsageEventParams["model"];
     workspace: RecordUsageEventParams["workspace"];
     origin: RecordUsageEventParams["origin"];
+    subject?: RecordUsageEventParams["subject"];
   }): UsageBucket[] {
     const workspaceContext =
       typeof workspace === "string" ? { key: workspace, cwd: null } : workspace;
@@ -925,6 +1053,27 @@ export class UsageTracker {
       usageBucket(this.usageTelemetry.byModel, modelKey),
       usageBucket(this.usageTelemetry.byOrigin, origin)
     ];
+    if (subject) {
+      const activeSnapshot = this.subjectUsageSnapshot(subject);
+      buckets.push(
+        activeSnapshot.totals,
+        usageBucket(activeSnapshot.byRole, roleKey),
+        usageBucket(activeSnapshot.byModel, modelKey),
+        usageBucket(activeSnapshot.byOrigin, origin)
+      );
+      if (workspaceContext?.key) {
+        const workspaceAccumulator = this.subjectWorkspaceAccumulator(
+          activeSnapshot,
+          workspaceContext.key,
+          workspaceContext.cwd ?? null
+        );
+        buckets.push(
+          workspaceAccumulator.bucket,
+          usageBucket(workspaceAccumulator.byRole, roleKey),
+          usageBucket(workspaceAccumulator.byModel, modelKey)
+        );
+      }
+    }
     if (!workspaceContext?.key) return buckets;
     if (workspaceContext.workspace_id) {
       this.registerWorkspaceId(
@@ -946,6 +1095,96 @@ export class UsageTracker {
       })
     );
     return buckets;
+  }
+
+  private subjectUsageSnapshot(subject: string): SubjectUsageAccumulator {
+    let snapshot = this.activeUsageBySubject.get(subject);
+    if (snapshot) {
+      // Keep recently active subjects at the end of the bounded map so that
+      // older inactive identities are the first to leave if no status polls
+      // are available to prune them.
+      this.activeUsageBySubject.delete(subject);
+    } else {
+      while (this.activeUsageBySubject.size >= MAX_ACTIVE_USAGE_SUBJECTS) {
+        const oldest = this.activeUsageBySubject.keys().next().value;
+        if (oldest === undefined) break;
+        this.activeUsageBySubject.delete(oldest);
+      }
+      snapshot = {
+        totals: emptyUsageBucket(),
+        byRole: {},
+        byModel: {},
+        byOrigin: {},
+        byWorkspace: {},
+        skillUses: 0,
+        bySkill: new Map()
+      };
+    }
+    this.activeUsageBySubject.set(subject, snapshot);
+    return snapshot;
+  }
+
+  private subjectWorkspaceAccumulator(
+    snapshot: SubjectUsageAccumulator,
+    key: string,
+    cwd: string | null
+  ): SubjectWorkspaceAccumulator {
+    let workspaceAccumulator = snapshot.byWorkspace[key];
+    if (!workspaceAccumulator) {
+      workspaceAccumulator = {
+        bucket: emptyUsageBucket(),
+        cwd,
+        byRole: {},
+        byModel: {},
+        skillUses: 0,
+        bySkill: new Map()
+      };
+      snapshot.byWorkspace[key] = workspaceAccumulator;
+    } else if (!workspaceAccumulator.cwd && cwd) {
+      workspaceAccumulator.cwd = cwd;
+    }
+    return workspaceAccumulator;
+  }
+
+  /** Add a confirmed skill use to the exact live thread/workspace projection. */
+  recordAgentSkillUse(
+    subject: unknown,
+    workspace: unknown,
+    skill: unknown,
+    count: number = 1
+  ): void {
+    if (
+      typeof subject !== "string" ||
+      !subject.trim() ||
+      subject === UNATTRIBUTED_DIMENSION ||
+      typeof skill !== "string" ||
+      !skill.trim() ||
+      !Number.isFinite(count) ||
+      count <= 0
+    ) {
+      return;
+    }
+    const snapshot = this.subjectUsageSnapshot(subject.trim());
+    const skillName = safeMetricLabel(skill, "unknown");
+    snapshot.skillUses += count;
+    snapshot.bySkill.set(
+      skillName,
+      (snapshot.bySkill.get(skillName) ?? 0) + count
+    );
+    if (
+      typeof workspace !== "string" ||
+      !workspace.trim() ||
+      workspace === UNATTRIBUTED_DIMENSION
+    ) {
+      return;
+    }
+    const row = this.subjectWorkspaceAccumulator(
+      snapshot,
+      workspace.trim(),
+      null
+    );
+    row.skillUses += count;
+    row.bySkill.set(skillName, (row.bySkill.get(skillName) ?? 0) + count);
   }
 
   private recordSelectedPhase(
@@ -1048,6 +1287,7 @@ export class UsageTracker {
     this.usageTelemetry.byOrigin = {};
     this.usageTelemetry.byWorkspace = {};
     this.inFlightUsage.clear();
+    this.activeUsageBySubject.clear();
     this.workspaceIdRegistry.clear();
     this.workspaceIdConflicts.clear();
     this.resetAttributionDiagnostics();
@@ -1063,6 +1303,96 @@ export class UsageTracker {
       bucket.skillsCapable = false;
       bucket.mcpCapable = false;
     }
+  }
+
+  /**
+   * Returns a merged route/skill usage projection for the currently live
+   * `subjects` (router thread identities). This ephemeral view survives
+   * eviction from global event rings while an agent remains live; it is never
+   * persisted and does not affect All/lifetime usage or wall-clock lookbacks.
+   * Any tracked subject not present in `subjects` is pruned as part of this
+   * call.
+   */
+  activeUsageSnapshot(subjects: readonly string[]): UsageActiveSnapshot {
+    const live = new Set(
+      subjects.flatMap((subject) => [subject, safeAgentIdentity(subject)])
+    );
+    for (const key of this.activeUsageBySubject.keys()) {
+      if (!live.has(key)) this.activeUsageBySubject.delete(key);
+    }
+    const combined: SubjectUsageAccumulator = {
+      totals: emptyUsageBucket(),
+      byRole: {},
+      byModel: {},
+      byOrigin: {},
+      byWorkspace: {},
+      skillUses: 0,
+      bySkill: new Map()
+    };
+    for (const subject of live) {
+      const snapshot = this.activeUsageBySubject.get(subject);
+      if (!snapshot) continue;
+      mergeUsageBucketInto(combined.totals, snapshot.totals);
+      mergeUsageBucketMapInto(combined.byRole, snapshot.byRole);
+      mergeUsageBucketMapInto(combined.byModel, snapshot.byModel);
+      mergeUsageBucketMapInto(combined.byOrigin, snapshot.byOrigin);
+      mergeSubjectWorkspaceInto(combined.byWorkspace, snapshot.byWorkspace);
+      combined.skillUses += snapshot.skillUses;
+      for (const [skill, count] of snapshot.bySkill) {
+        combined.bySkill.set(skill, (combined.bySkill.get(skill) ?? 0) + count);
+      }
+    }
+    return {
+      totals: withAverageDuration(combined.totals),
+      byRole: Object.fromEntries(
+        Object.entries(combined.byRole).map(([key, bucket]) => [
+          key,
+          withAverageDuration(bucket)
+        ])
+      ),
+      byModel: Object.fromEntries(
+        Object.entries(combined.byModel).map(([key, bucket]) => [
+          key,
+          withAverageDuration(bucket)
+        ])
+      ),
+      byOrigin: Object.fromEntries(
+        Object.entries(combined.byOrigin).map(([key, bucket]) => [
+          key,
+          withAverageDuration(bucket)
+        ])
+      ),
+      byWorkspace: Object.fromEntries(
+        Object.entries(combined.byWorkspace).map(([key, accumulator]) => [
+          key,
+          {
+            ...withAverageDuration(accumulator.bucket),
+            cwd: accumulator.cwd,
+            byRole: Object.fromEntries(
+              Object.entries(accumulator.byRole).map(([roleKey, bucket]) => [
+                roleKey,
+                withAverageDuration(bucket)
+              ])
+            ),
+            byModel: Object.fromEntries(
+              Object.entries(accumulator.byModel).map(
+                ([modelKey, bucket]) => [modelKey, withAverageDuration(bucket)]
+              )
+            ),
+            skillUses: accumulator.skillUses,
+            bySkill: Array.from(accumulator.bySkill, ([skill, count]) => ({
+              skill,
+              count
+            })).sort((a, b) => STRING_COLLATOR.compare(a.skill, b.skill))
+          }
+        ])
+      ),
+      skillUses: combined.skillUses,
+      bySkill: Array.from(combined.bySkill, ([skill, count]) => ({
+        skill,
+        count
+      })).sort((a, b) => STRING_COLLATOR.compare(a.skill, b.skill))
+    };
   }
 
   projectLiveAgents(

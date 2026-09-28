@@ -96,6 +96,7 @@ import {
   usageStatus as rawUsageStatus,
   workspaceContextFromRequest
 } from "../../src/router/server.ts";
+import { UsageTracker } from "../../src/router/usage.ts";
 import { RESPONSES_ITEM_ID_PREFIXES } from "../../src/shared/responses-item-ids.ts";
 import {
   REQUEST_ID_HEADER as AGENT_EVENTS_REQUEST_ID_HEADER,
@@ -6219,6 +6220,311 @@ test("aggregates usage by role, resolved model, origin, duration, and tool calls
   assert.equal(usage.byOrigin.subagent.successes, 1);
   assert.equal(usage.byOrigin.orchestrator.successes, 1);
   assert.equal(usage.totals.toolCalls, 3);
+  resetRouterTelemetry();
+});
+
+// Root-cause coverage for the Active Sessions accuracy bug: the router keeps
+// only a global 100-entry RouterEvent ring, so a live thread's own routed
+// attempts/toolCalls disappear once other sessions fill it (reference
+// rollout: 13 root requests/tool calls in the thread, but the Active
+// Sessions row only retained 1). UsageTracker.activeUsageSnapshot() projects
+// an ephemeral, per-subject (router-thread) cumulative view that survives
+// that eviction while the agent remains live, without touching All/lifetime
+// usage or wall-clock lookbacks.
+test("activeUsageSnapshot keeps two live agents' cumulative usage isolated and preserves role/model/origin/workspace breakdowns", () => {
+  const tracker = new UsageTracker();
+
+  // Agent A: a subagent thread with an explicit role.
+  tracker.recordUsageEvent({
+    phase: "selected",
+    requestId: "req-a-1",
+    role: "explorer",
+    provider: "claude",
+    model: "sonnet-large",
+    workspace: { key: "workspace-a", cwd: "/repo/service-a" },
+    timestamp: "2026-01-01T00:00:00.000Z",
+    subject: "router-thread-a"
+  });
+  tracker.recordUsageEvent({
+    phase: "result",
+    requestId: "req-a-1",
+    role: "explorer",
+    provider: "claude",
+    model: "sonnet-large",
+    workspace: { key: "workspace-a", cwd: "/repo/service-a" },
+    outcome: "success",
+    status: 200,
+    elapsedMs: 100,
+    toolCalls: 3,
+    timestamp: "2026-01-01T00:00:00.100Z",
+    subject: "router-thread-a"
+  });
+  tracker.recordUsageEvent({
+    phase: "selected",
+    requestId: "req-a-2",
+    role: "explorer",
+    provider: "claude",
+    model: "sonnet-large",
+    workspace: { key: "workspace-a", cwd: "/repo/service-a" },
+    timestamp: "2026-01-01T00:00:01.000Z",
+    subject: "router-thread-a"
+  });
+  tracker.recordUsageEvent({
+    phase: "result",
+    requestId: "req-a-2",
+    role: "explorer",
+    provider: "claude",
+    model: "sonnet-large",
+    workspace: { key: "workspace-a", cwd: "/repo/service-a" },
+    outcome: "success",
+    status: 200,
+    elapsedMs: 150,
+    toolCalls: 2,
+    timestamp: "2026-01-01T00:00:01.150Z",
+    subject: "router-thread-a"
+  });
+  tracker.recordAgentSkillUse(
+    "router-thread-a",
+    "workspace-a",
+    "racecar-movement"
+  );
+
+  // Agent B: an orchestrator-origin thread (no role, codex provider), one
+  // success and one failure, in a different workspace.
+  tracker.recordUsageEvent({
+    phase: "selected",
+    requestId: "req-b-1",
+    provider: "codex",
+    model: "gpt-5-codex",
+    workspace: { key: "workspace-b", cwd: "/repo/service-b" },
+    timestamp: "2026-01-01T00:00:02.000Z",
+    subject: "router-thread-b"
+  });
+  tracker.recordUsageEvent({
+    phase: "result",
+    requestId: "req-b-1",
+    provider: "codex",
+    model: "gpt-5-codex",
+    workspace: { key: "workspace-b", cwd: "/repo/service-b" },
+    outcome: "success",
+    status: 200,
+    elapsedMs: 200,
+    toolCalls: 1,
+    timestamp: "2026-01-01T00:00:02.200Z",
+    subject: "router-thread-b"
+  });
+  tracker.recordUsageEvent({
+    phase: "selected",
+    requestId: "req-b-2",
+    provider: "codex",
+    model: "gpt-5-codex",
+    workspace: { key: "workspace-b", cwd: "/repo/service-b" },
+    timestamp: "2026-01-01T00:00:03.000Z",
+    subject: "router-thread-b"
+  });
+  tracker.recordUsageEvent({
+    phase: "result",
+    requestId: "req-b-2",
+    provider: "codex",
+    model: "gpt-5-codex",
+    workspace: { key: "workspace-b", cwd: "/repo/service-b" },
+    outcome: "failure",
+    failureClass: "timeout",
+    status: 504,
+    elapsedMs: 50,
+    timestamp: "2026-01-01T00:00:03.050Z",
+    subject: "router-thread-b"
+  });
+
+  // All/lifetime usage is unaffected by the presence of `subject`: it is
+  // computed exactly as it would be without any active-agent projection.
+  assert.equal(tracker.usageTelemetry.totals.attempts, 4);
+  assert.equal(tracker.usageTelemetry.totals.successes, 3);
+  assert.equal(tracker.usageTelemetry.totals.failures, 1);
+  assert.equal(tracker.usageTelemetry.totals.toolCalls, 6);
+  assert.equal(tracker.usageTelemetry.byWorkspace["workspace-a"]!.attempts, 2);
+  assert.equal(tracker.usageTelemetry.byWorkspace["workspace-b"]!.attempts, 2);
+
+  const combined = tracker.activeUsageSnapshot([
+    "router-thread-a",
+    "router-thread-b"
+  ]);
+
+  // Combined totals cover both live agents.
+  assert.equal(combined.totals.attempts, 4);
+  assert.equal(combined.totals.successes, 3);
+  assert.equal(combined.totals.failures, 1);
+  assert.equal(combined.totals.toolCalls, 6);
+  assert.equal(combined.totals.durationMs, 500);
+  assert.equal(combined.totals.averageDurationMs, 125);
+  assert.equal(combined.skillUses, 1);
+  assert.deepEqual(combined.bySkill, [
+    { skill: "racecar-movement", count: 1 }
+  ]);
+
+  // Role, model, origin, and workspace breakdowns are preserved per agent.
+  assert.equal(combined.byRole.explorer!.attempts, 2);
+  assert.equal(combined.byRole.explorer!.toolCalls, 5);
+  assert.equal(combined.byRole.orchestrator!.attempts, 2);
+  assert.equal(combined.byModel["claude/sonnet-large"]!.attempts, 2);
+  assert.equal(combined.byModel["codex/gpt-5-codex"]!.attempts, 2);
+  assert.equal(combined.byOrigin.subagent!.attempts, 2);
+  assert.equal(combined.byOrigin.orchestrator!.attempts, 2);
+  assert.equal(combined.byWorkspace["workspace-a"]!.attempts, 2);
+  assert.equal(combined.byWorkspace["workspace-a"]!.cwd, "/repo/service-a");
+  assert.equal(combined.byWorkspace["workspace-a"]!.skillUses, 1);
+  assert.deepEqual(combined.byWorkspace["workspace-a"]!.bySkill, [
+    { skill: "racecar-movement", count: 1 }
+  ]);
+  assert.equal(combined.byWorkspace["workspace-a"]!.byRole.explorer!.attempts, 2);
+  assert.equal(
+    combined.byWorkspace["workspace-a"]!.byModel["claude/sonnet-large"]!
+      .attempts,
+    2
+  );
+  assert.equal(combined.byWorkspace["workspace-b"]!.attempts, 2);
+  assert.equal(combined.byWorkspace["workspace-b"]!.cwd, "/repo/service-b");
+  assert.equal(
+    combined.byWorkspace["workspace-b"]!.byRole.orchestrator!.attempts,
+    2
+  );
+  assert.doesNotMatch(JSON.stringify(combined), /router-thread-/u);
+  assert.doesNotMatch(
+    JSON.stringify(tracker.usagePersistenceSnapshot()),
+    /router-thread-/u
+  );
+
+  // Requesting only agent A's snapshot isolates its counters from agent B's
+  // (no leakage of B's role/model/workspace keys into A's view), and as a
+  // side effect prunes agent B's now-unnamed accumulator.
+  const onlyA = tracker.activeUsageSnapshot(["router-thread-a"]);
+  assert.equal(onlyA.totals.attempts, 2);
+  assert.equal(onlyA.totals.toolCalls, 5);
+  assert.equal(onlyA.byRole.explorer!.attempts, 2);
+  assert.equal(onlyA.byRole.orchestrator, undefined);
+  assert.equal(onlyA.byWorkspace["workspace-b"], undefined);
+  assert.equal(onlyA.byWorkspace["workspace-a"]!.skillUses, 1);
+  assert.equal(onlyA.skillUses, 1);
+
+  // Pruning removes ended/stale agent identities: agent B was not named in
+  // the call above, so its ephemeral accumulator is gone even though it was
+  // never explicitly reset -- a fresh request for it now comes back empty.
+  const bAfterPrune = tracker.activeUsageSnapshot(["router-thread-b"]);
+  assert.equal(bAfterPrune.totals.attempts, 0);
+  assert.deepEqual(bAfterPrune.byRole, {});
+  assert.deepEqual(bAfterPrune.byModel, {});
+  assert.deepEqual(bAfterPrune.byOrigin, {});
+  assert.deepEqual(bAfterPrune.byWorkspace, {});
+});
+
+test("activeUsageSnapshot retains a live thread's full cumulative usage regardless of how many other threads have been recorded on the tracker", () => {
+  const tracker = new UsageTracker();
+
+  // The reference rollout that motivated this fix had 13 root
+  // requests/toolCalls for one live thread, but the Active Sessions row for
+  // that thread showed only 1 because the shared 100-entry RouterEvent ring
+  // had been filled by other sessions in between. Reproduce the "other
+  // sessions fill it" pressure by recording usage for 150 distinct other
+  // subjects, interleaved with this thread's 13 routed attempts, on the same
+  // tracker instance.
+  const liveThread = "router-thread-live";
+  const totalAttempts = 13;
+  for (let i = 0; i < totalAttempts; i++) {
+    const requestId = `req-live-${i}`;
+    tracker.recordUsageEvent({
+      phase: "selected",
+      requestId,
+      role: "worker",
+      provider: "claude",
+      model: "haiku",
+      timestamp: `2026-01-01T00:01:${String(i).padStart(2, "0")}.000Z`,
+      subject: liveThread
+    });
+    tracker.recordUsageEvent({
+      phase: "result",
+      requestId,
+      role: "worker",
+      provider: "claude",
+      model: "haiku",
+      outcome: "success",
+      status: 200,
+      elapsedMs: 10,
+      toolCalls: 1,
+      timestamp: `2026-01-01T00:01:${String(i).padStart(2, "0")}.010Z`,
+      subject: liveThread
+    });
+
+    // Noise from other, unrelated live threads -- far more than the
+    // 100-entry global RouterEvent ring capacity that motivated this fix.
+    for (let n = 0; n < 15; n++) {
+      const noiseSubject = `router-thread-noise-${i}-${n}`;
+      const noiseRequestId = `req-noise-${i}-${n}`;
+      tracker.recordUsageEvent({
+        phase: "selected",
+        requestId: noiseRequestId,
+        provider: "codex",
+        model: "gpt-5-codex",
+        timestamp: `2026-01-01T00:02:00.000Z`,
+        subject: noiseSubject
+      });
+      tracker.recordUsageEvent({
+        phase: "result",
+        requestId: noiseRequestId,
+        provider: "codex",
+        model: "gpt-5-codex",
+        outcome: "success",
+        status: 200,
+        elapsedMs: 5,
+        toolCalls: 1,
+        timestamp: `2026-01-01T00:02:00.005Z`,
+        subject: noiseSubject
+      });
+    }
+  }
+
+  // Over 2,250 other-thread events were recorded in between -- more than
+  // 22x the global ring's capacity -- yet the live thread's own cumulative
+  // projection is exact, because it is not backed by that shared ring.
+  const snapshot = tracker.activeUsageSnapshot([liveThread]);
+  assert.equal(snapshot.totals.attempts, totalAttempts);
+  assert.equal(snapshot.totals.successes, totalAttempts);
+  assert.equal(snapshot.totals.toolCalls, totalAttempts);
+  assert.equal(snapshot.byRole.worker!.attempts, totalAttempts);
+  assert.equal(snapshot.byModel["claude/haiku"]!.attempts, totalAttempts);
+
+  // Global All/lifetime totals reflect every recorded event, confirming the
+  // per-subject projection is purely additive and does not gate or replace
+  // the existing lifetime aggregation.
+  assert.equal(
+    tracker.usageTelemetry.totals.attempts,
+    totalAttempts + totalAttempts * 15
+  );
+});
+
+test("All status omits router and OTel active-correlation identities", () => {
+  resetRouterTelemetry();
+  recordRouterEvent({
+    phase: "selected",
+    requestId: "req-private-agent-subject",
+    thread: "child-thread",
+    activitySubject: "thread:child-thread",
+    provider: "claude",
+    model: "sonnet",
+    role: "worker"
+  });
+
+  const status = getRouterStatus();
+  const recentEvent = status.recentEvents.find(
+    (event: any) => event.requestId === "req-private-agent-subject"
+  );
+  assert.ok(recentEvent);
+  assert.equal(recentEvent.thread, "child-thread");
+  assert.equal(Object.hasOwn(recentEvent, "activitySubject"), false);
+  assert.ok(
+    status.codexTelemetry.lookbackEvents.every(
+      (event: any) => !Object.hasOwn(event, "agent")
+    )
+  );
   resetRouterTelemetry();
 });
 

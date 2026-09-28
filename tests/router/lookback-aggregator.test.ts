@@ -1201,6 +1201,7 @@ test("Active Sessions rebuilds all activity from exact live-agent identities, no
       timestamp: "2020-01-01T00:00:00.000Z",
       requestId: "root-old",
       thread: "root-thread",
+      activitySubject: "root-thread",
       phase: "selected",
       provider: "codex",
       model: "gpt-5",
@@ -1211,6 +1212,7 @@ test("Active Sessions rebuilds all activity from exact live-agent identities, no
       timestamp: "2020-01-01T00:00:01.000Z",
       requestId: "root-old",
       thread: "root-thread",
+      activitySubject: "root-thread",
       phase: "result",
       provider: "codex",
       model: "gpt-5",
@@ -1224,6 +1226,7 @@ test("Active Sessions rebuilds all activity from exact live-agent identities, no
       timestamp: "2099-01-01T00:00:00.000Z",
       requestId: "child-old",
       thread: "child-thread",
+      activitySubject: "thread:child-thread",
       phase: "selected",
       provider: "claude",
       model: "sonnet",
@@ -1234,6 +1237,7 @@ test("Active Sessions rebuilds all activity from exact live-agent identities, no
       timestamp: T_NOW,
       requestId: "inactive-request",
       thread: "inactive-thread",
+      activitySubject: "inactive-thread",
       phase: "selected",
       provider: "gemini",
       model: "gemini-pro",
@@ -1243,6 +1247,7 @@ test("Active Sessions rebuilds all activity from exact live-agent identities, no
     routingEvent({
       timestamp: T_NOW,
       requestId: "root-current",
+      activitySubject: "root-thread",
       thread: null,
       phase: "denied",
       failureClass: "concurrency_limit"
@@ -1505,6 +1510,7 @@ test("Active bridge-parent identities join OTel and spawn activity through the e
         timestamp: T_36H_AGO,
         requestId: "parent-request",
         thread: "parent-thread",
+        activitySubject: "parent-thread",
         phase: "selected",
         provider: "codex",
         model: "gpt-5",
@@ -1559,6 +1565,200 @@ test("Active bridge-parent identities join OTel and spawn activity through the e
   assert.equal(view.liveFeed.length, 1);
   assert.equal(view.codexTelemetry.tokens.input, 7);
   assert.equal(view.subagents.total, 1);
+});
+
+test("Active Sessions uses exact live-thread skill counts after lookback events age out", () => {
+  const status = {
+    recentEvents: [],
+    liveFeed: [],
+    usage: {},
+    providers: {},
+    subagents: { recent: [] },
+    spawnFailures: { recent: [] },
+    codexTelemetry: {
+      lookbackEvents: [],
+      skills: {
+        used: {
+          total: 11,
+          lastSeenAt: "2026-01-01T00:00:00.000Z",
+          byRole: { orchestrator: 11 },
+          byWorkspace: { "/tmp/old": 11 },
+          byModel: { "old/model": 11 },
+          byAgent: { "thread-a": 2, "inactive-thread": 9 },
+          bySkill: [
+            {
+              skill: "racecar-movement",
+              total: 11,
+              byRole: { orchestrator: 11 },
+              byWorkspace: { "/tmp/old": 11 },
+              byModel: { "old/model": 11 },
+              byAgent: { "thread-a": 2, "inactive-thread": 9 }
+            }
+          ]
+        }
+      }
+    }
+  } as any;
+
+  const emptyUsageBucket = {
+    attempts: 0,
+    successes: 0,
+    failures: 0,
+    skipped: 0,
+    active: 0,
+    durationMs: 0,
+    maxDurationMs: 0,
+    toolCalls: 0,
+    lastUsedAt: null,
+    lastFailure: null,
+    averageDurationMs: 0
+  };
+  const activeUsage = {
+    totals: emptyUsageBucket,
+    byRole: {},
+    byModel: {},
+    byOrigin: {},
+    byWorkspace: {},
+    skillUses: 2,
+    bySkill: [{ skill: "racecar-movement", count: 2 }]
+  } as any;
+
+  const active = applyIntervalLookback(
+    status,
+    "active",
+    NOW,
+    [{ subject: "thread-a", state: "resumed" }],
+    activeUsage
+  ) as any;
+
+  assert.equal(active.codexTelemetry.skills.used.total, 2);
+  assert.deepEqual(active.codexTelemetry.skills.used.byRole, {});
+  assert.deepEqual(active.codexTelemetry.skills.used.byWorkspace, {});
+  assert.deepEqual(active.codexTelemetry.skills.used.byModel, {});
+  assert.deepEqual(active.codexTelemetry.skills.used.byAgent, {});
+  assert.equal(active.codexTelemetry.skills.used.lastSeenAt, null);
+  assert.deepEqual(active.codexTelemetry.skills.used.bySkill, [
+    { skill: "racecar-movement", total: 2, uses: 2, byStatus: {} }
+  ]);
+  assert.deepEqual(active.codexTelemetry.lookbackEvents, []);
+});
+
+test("Active Sessions route usage survives eviction from the shared router-event ring", () => {
+  const routeBucket = {
+    attempts: 13,
+    successes: 13,
+    failures: 0,
+    skipped: 0,
+    active: 0,
+    durationMs: 130,
+    maxDurationMs: 20,
+    toolCalls: 13,
+    lastUsedAt: T_NOW,
+    lastFailure: null,
+    averageDurationMs: 10
+  };
+  const activeUsage = {
+    totals: { ...routeBucket },
+    byRole: { orchestrator: { ...routeBucket } },
+    byModel: { "codex/gpt-6-luna": { ...routeBucket } },
+    byOrigin: { orchestrator: { ...routeBucket } },
+    byWorkspace: {
+      RacingGame: {
+        ...routeBucket,
+        cwd: "/repo/RacingGame",
+        skillUses: 1,
+        bySkill: [{ skill: "racecar-movement", count: 1 }],
+        byRole: { orchestrator: { ...routeBucket } },
+        byModel: { "codex/gpt-6-luna": { ...routeBucket } }
+      }
+    },
+    skillUses: 1,
+    bySkill: [{ skill: "racecar-movement", count: 1 }]
+  };
+
+  const view = aggregateLookbackView({
+    recentEvents: [],
+    liveFeed: [],
+    otelLookbackEvents: [],
+    activeAgents: [
+      { subject: "root-thread", requestId: "current-request", state: "resumed" }
+    ],
+    activeUsage,
+    now: NOW,
+    selection: "active"
+  });
+
+  assert.ok(view);
+  assert.equal(view.recentEvents.length, 0);
+  assert.equal(view.usage.totals.attempts, 13);
+  assert.equal(view.usage.totals.toolCalls, 13);
+  assert.equal(view.usage.byWorkspace.RacingGame?.attempts, 13);
+  assert.equal(view.usage.byWorkspace.RacingGame?.toolCalls, 13);
+  assert.equal(view.usage.byWorkspace.RacingGame?.cwd, "/repo/RacingGame");
+  assert.equal(view.usage.byWorkspace.RacingGame?.skillUses, 1);
+  assert.deepEqual(view.usage.byWorkspace.RacingGame?.bySkill, [
+    { skill: "racecar-movement", count: 1 }
+  ]);
+  assert.equal(view.codexTelemetry.skills.used.total, 1);
+  assert.deepEqual(view.codexTelemetry.skills.used.bySkill, [
+    { skill: "racecar-movement", total: 1, uses: 1, byStatus: {} }
+  ]);
+  assert.equal(
+    view.usage.byWorkspace.RacingGame?.byRole.orchestrator?.attempts,
+    13
+  );
+});
+
+test("Active Sessions strips exact subject correlation after filtering", () => {
+  const status = {
+    recentEvents: [
+      routingEvent({
+        timestamp: T_36H_AGO,
+        requestId: "child-request",
+        thread: "child-thread",
+        activitySubject: "thread:child-thread",
+        phase: "selected",
+        provider: "claude",
+        model: "sonnet",
+        role: "worker",
+        workspace: "/tmp/child"
+      })
+    ],
+    liveFeed: [],
+    usage: {},
+    providers: {},
+    subagents: { recent: [] },
+    spawnFailures: { recent: [] },
+    codexTelemetry: {
+      lookbackEvents: [
+        otelLookbackEvent({
+          timestamp: T_36H_AGO,
+          family: "skill",
+          type: "used",
+          name: "racecar-movement",
+          agent: "thread:child-thread",
+          countDelta: 1
+        })
+      ]
+    }
+  } as any;
+
+  const active = applyIntervalLookback(status, "active", NOW, [
+    {
+      subject: "thread:child-thread",
+      requestId: "child-request",
+      state: "resumed"
+    }
+  ]) as any;
+
+  assert.equal(active.recentEvents.length, 1);
+  assert.equal(active.recentEvents[0].thread, "child-thread");
+  assert.equal(Object.hasOwn(active.recentEvents[0], "activitySubject"), false);
+  assert.equal(active.codexTelemetry.lookbackEvents.length, 1);
+  assert.equal(
+    Object.hasOwn(active.codexTelemetry.lookbackEvents[0], "agent"),
+    false
+  );
 });
 
 test("applyIntervalLookback limits agent-state counts to the selected live agents", () => {
