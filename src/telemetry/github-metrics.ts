@@ -14,7 +14,7 @@ const AGENT_BRANCH =
 const AGENT_TITLE_PREFIX_PATTERN = /^(?:Agent|Codex):\s/i;
 const INVOCATION_COMMENT_PATTERN =
   /\*\*\[🤖\s*([^\]]+)\]\*\*\s+Hi, I've received[\s\S]*?actions\/runs\/(\d+)/i;
-const LINE_SPLIT_PATTERN = /\r?\n/;
+const LINE_SPLIT_PATTERN = /\r?\n/g;
 const TIMESTAMP_SUFFIX_PATTERN = /\.\d{3}Z\$/;
 const COLLATOR = new Intl.Collator("en");
 export const JANITOR_MARKER = "<!-- autodev-target-pr-janitor -->";
@@ -205,7 +205,10 @@ async function fetchRecentPullPages(
   });
   const next = [...acc, ...data];
   const last = data.at(-1);
-  if (data.length < 100 || (last && new Date(last.created_at) < options.sinceDate))
+  if (
+    data.length < 100 ||
+    (last && new Date(last.created_at) < options.sinceDate)
+  )
     return next;
   return fetchRecentPullPages(options, next, page + 1);
 }

@@ -48,6 +48,7 @@ import {
   INCOMPLETE_REASON_PROVIDER_LIMIT,
   limitPayload,
   limitResponseHeaders,
+  type ProviderFailureDiagnostic,
   retryAfterSecondsFromLimit,
   terminalIncompleteEvents
 } from "../shared/provider-limits.ts";
@@ -90,6 +91,8 @@ const EFFORTS = new Set(["low", "medium", "high"]);
 // fails before the CLI starts. The model id is the more specific choice, so it
 // wins and --effort is omitted for models that already carry one.
 const MODEL_EFFORT_SUFFIX = /-(low|medium|high)$/;
+const SAFE_PROVIDER_TOOL_NAME = /^[A-Za-z][A-Za-z0-9_]{0,63}$/;
+const READ_URL_PERMISSION_PATTERN = /^read_url\(/i;
 
 // The agy CLI's `stream-json` step updates are JSON-shaped but are not a
 // formally specified schema: field names and nesting have moved across CLI
@@ -374,7 +377,8 @@ const ANTIGRAVITY_MCP_EXPOSURE_SOURCE = "role_contract";
 // files is observable at all.
 const HOME = homedir();
 const REPO_ROOT =
-  process.env.AUTODEV_REPO_ROOT || resolvePath(join(import.meta.dirname, ".."));
+  process.env.AUTODEV_REPO_ROOT ||
+  resolvePath(join(import.meta.dirname, "..", ".."));
 const SKILL_ROOTS = [
   join(HOME, ".agents", "skills"),
   join(HOME, ".codex", "skills"),
@@ -1286,6 +1290,21 @@ function agyPermissionFailure(stderr = "") {
   };
 }
 
+function agyProviderFailureDiagnostic(
+  error: unknown
+): ProviderFailureDiagnostic | null {
+  const failure = error as AgyFailure | undefined;
+  if (failure?.failureCode !== "AGY_PERMISSION_DENIED") return null;
+  const tool = failure.failureTool;
+  return {
+    code: "AGY_PERMISSION_DENIED",
+    phase: "tool_permission",
+    ...(typeof tool === "string" && SAFE_PROVIDER_TOOL_NAME.test(tool)
+      ? { tool }
+      : {})
+  };
+}
+
 function agyFailureMessage({
   status = null,
   error = null,
@@ -1407,6 +1426,8 @@ const spawnSessions = new SpawnSessionRegistry();
 interface IsolatedHomeOptions {
   originalHome?: string;
   codexHome?: string;
+  cwd?: string;
+  sandboxMode?: "read-only" | "workspace-write" | null;
 }
 
 const GEMINI_DIRECTORY = ".gemini";
@@ -1570,15 +1591,86 @@ function buildInvocationMcpConfig(
   return { mcpServers };
 }
 
+function invocationMcpPermissionGrants(
+  contract: AntigravityRoleContract,
+  mcpConfig: JsonRecord
+): string[] {
+  const grants: string[] = [];
+  for (const server of Object.keys(mcpConfig.mcpServers ?? {})) {
+    const tools = contract.mcpTools?.[server];
+    if (Array.isArray(tools)) {
+      for (const tool of tools) grants.push(`mcp(${server}/${tool})`);
+    } else {
+      grants.push(`mcp(${server})`);
+    }
+  }
+  return grants;
+}
+
+function isReadOnlyRole(
+  agentRole: string | null = null,
+  sandboxMode: "read-only" | "workspace-write" | null = null
+): boolean {
+  return (
+    sandboxMode === "read-only" ||
+    (sandboxMode !== "workspace-write" &&
+      Boolean(antigravityRoleContract(agentRole).readOnly))
+  );
+}
+
+function buildReadOnlyInvocationSettings({
+  userSettings,
+  userPermissions,
+  existingAllow,
+  existingDeny,
+  mcpGrants,
+  cwd
+}: {
+  userSettings: JsonRecord;
+  userPermissions: JsonRecord;
+  existingAllow: unknown[];
+  existingDeny: unknown[];
+  mcpGrants: string[];
+  cwd: string | undefined;
+}): JsonRecord {
+  if (!cwd || !isAbsolute(cwd))
+    throw new Error(
+      "Antigravity read-only invocation requires a validated absolute workspace"
+    );
+
+  const workspaceRoot = resolvePath(cwd);
+  const workspaceReadGrants = [
+    `read_file(${workspaceRoot})`,
+    `read_file(${workspaceRoot}/**)`
+  ];
+  const urlReadGrants = existingAllow.filter(
+    (entry): entry is string =>
+      typeof entry === "string" &&
+      READ_URL_PERMISSION_PATTERN.test(entry.trim())
+  );
+
+  return {
+    ...userSettings,
+    permissions: {
+      ...userPermissions,
+      allow: Array.from(
+        new Set([...urlReadGrants, ...workspaceReadGrants, ...mcpGrants])
+      ),
+      deny: existingDeny
+    }
+  };
+}
+
 /**
- * Builds the invocation-scoped Antigravity settings preserving user non-MCP
- * permissions and deny rules, while replacing broad MCP permissions with exactly
- * the role contract's allowed tools/servers.
+ * Builds invocation-scoped settings with MCP permissions limited to the role
+ * contract. Write-capable roles retain user non-MCP permissions; read-only
+ * roles receive only workspace-scoped file reads plus user-configured URL reads.
  */
 function buildInvocationSettings(
   agentRole: string | null,
   mcpConfig: JsonRecord,
-  originalHome: string = process.env.HOME ?? homedir()
+  originalHome: string = process.env.HOME ?? homedir(),
+  options?: IsolatedHomeOptions
 ): JsonRecord {
   const contract = antigravityRoleContract(agentRole);
   const settingsPath = join(
@@ -1641,15 +1733,17 @@ function buildInvocationSettings(
     ? [...userPermissions.deny]
     : [];
 
-  const mcpGrants: string[] = [];
-  for (const server of Object.keys(mcpConfig.mcpServers ?? {})) {
-    const tools = contract.mcpTools?.[server];
-    if (Array.isArray(tools)) {
-      for (const tool of tools) mcpGrants.push(`mcp(${server}/${tool})`);
-    } else {
-      mcpGrants.push(`mcp(${server})`);
-    }
-  }
+  const mcpGrants = invocationMcpPermissionGrants(contract, mcpConfig);
+
+  if (isReadOnlyRole(agentRole, options?.sandboxMode))
+    return buildReadOnlyInvocationSettings({
+      userSettings,
+      userPermissions,
+      existingAllow,
+      existingDeny,
+      mcpGrants,
+      cwd: options?.cwd
+    });
 
   return {
     ...userSettings,
@@ -1713,7 +1807,12 @@ function createIsolatedAntigravityHome(
     );
 
   const mcpConfig = buildInvocationMcpConfig(agentRole, spawnSession, options);
-  const settings = buildInvocationSettings(agentRole, mcpConfig, originalHome);
+  const settings = buildInvocationSettings(
+    agentRole,
+    mcpConfig,
+    originalHome,
+    options
+  );
   let tempHome: string | null = null;
   let cleaned = false;
 
@@ -1801,10 +1900,7 @@ function agyArgs(
   // header is the authoritative wire signal for this turn, and falls back
   // to the contract for backwards compatibility with bridges that have not
   // been updated to send it yet.
-  const readOnly =
-    sandboxMode === "read-only" ||
-    (sandboxMode !== "workspace-write" &&
-      antigravityRoleContract(agentRole).readOnly);
+  const readOnly = isReadOnlyRole(agentRole, sandboxMode);
   const permissionArgs =
     AGY_SKIP_PERMISSIONS === "true" && !readOnly
       ? ["--dangerously-skip-permissions"]
@@ -1882,7 +1978,10 @@ function runAgy(
 ): Promise<RunAgyResult> {
   let isolatedState: IsolatedHomeResult;
   try {
-    isolatedState = createIsolatedAntigravityHome(agentRole, spawnSession);
+    isolatedState = createIsolatedAntigravityHome(agentRole, spawnSession, {
+      cwd,
+      sandboxMode
+    });
   } catch (error) {
     return Promise.reject(error);
   }
@@ -2064,15 +2163,23 @@ function agyErrorDetails(
   requestId: string | null = null
 ): JsonRecord {
   const failure = error as AgyFailure | undefined;
+  const permissionFailure = agyProviderFailureDiagnostic(failure);
+  const message = permissionFailure
+    ? "Antigravity denied a required tool permission in headless mode."
+    : (failure?.message ?? String(error));
   const details: JsonRecord = {
-    type: failure?.failureCode ?? "upstream_error",
-    message: failure?.message ?? String(error),
+    type: permissionFailure?.code ?? failure?.failureCode ?? "upstream_error",
+    message,
     provider: "antigravity",
     role: role ?? "default",
     workspace,
     requestId: requestId ?? null
   };
-  if (failure?.failureCode) {
+  if (permissionFailure) {
+    details.code = permissionFailure.code;
+    details.phase = permissionFailure.phase ?? null;
+    details.tool = permissionFailure.tool ?? null;
+  } else if (failure?.failureCode) {
     details.code = failure.failureCode;
     details.phase = failure.failurePhase ?? null;
     details.tool = failure.failureTool ?? null;
@@ -2920,6 +3027,7 @@ async function handle(
     // and it used to be discarded with a bare `response.failed`. Close the turn
     // as incomplete instead, carrying that work and saying why it stopped. The
     // turn is still not completed, so the router still counts it as a failure.
+    const providerFailure = agyProviderFailureDiagnostic(error);
     for (const [eventName, body] of terminalIncompleteEvents({
       responseId,
       itemId,
@@ -2930,6 +3038,7 @@ async function handle(
         ? INCOMPLETE_REASON_PROVIDER_LIMIT
         : INCOMPLETE_REASON_INTERRUPTED,
       limit,
+      providerFailure,
       provider: "antigravity",
       response: responsePayload(
         payload.model ?? model,

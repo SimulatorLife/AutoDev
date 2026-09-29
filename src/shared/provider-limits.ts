@@ -55,6 +55,13 @@ export const HARD_LIMIT_CLASSES = Object.freeze([
   "session_limit"
 ]);
 
+/** A bounded, provider-supplied failure classification safe to return downstream. */
+export interface ProviderFailureDiagnostic {
+  code: string;
+  phase?: string;
+  tool?: string;
+}
+
 export type LimitClass =
   | "quota_exhausted"
   | "session_limit"
@@ -250,11 +257,13 @@ export function limitPayload(
 
 export function incompleteDetails(
   reason: string,
-  limit: ProviderLimit | null = null
+  limit: ProviderLimit | null = null,
+  providerFailure: ProviderFailureDiagnostic | null = null
 ): Record<string, unknown> {
   const details: Record<string, unknown> = { reason };
   const payload = limitPayload(limit);
   if (payload) details.provider_limit = payload;
+  if (providerFailure) details.provider_failure = providerFailure;
   return details;
 }
 
@@ -279,14 +288,19 @@ function truncationCause(limit: ProviderLimit | null, reason: string): string {
 export function truncationNotice({
   provider = null,
   limit = null,
-  reason = INCOMPLETE_REASON_PROVIDER_LIMIT
+  reason = INCOMPLETE_REASON_PROVIDER_LIMIT,
+  providerFailure = null
 }: {
   provider?: string | null;
   limit?: ProviderLimit | null;
   reason?: string;
+  providerFailure?: ProviderFailureDiagnostic | null;
 } = {}): string {
   const who = provider ? `The ${provider} provider` : "The provider";
-  const cause = truncationCause(limit, reason);
+  const cause =
+    providerFailure?.code === "AGY_PERMISSION_DENIED"
+      ? `was blocked because a required ${providerFailure.tool === "read_file" ? "read_file " : "tool "}permission was denied in headless mode`
+      : truncationCause(limit, reason);
   const resets = limit?.resetsAt ? ` Usage resets at ${limit.resetsAt}.` : "";
   return `\n\n[Incomplete: ${who} ${cause} and this turn stopped here. Everything above is work that finished; nothing after it ran.${resets}]`;
 }
@@ -308,6 +322,7 @@ export function terminalIncompleteEvents({
   reasoningText = "",
   reason = INCOMPLETE_REASON_PROVIDER_LIMIT,
   limit = null,
+  providerFailure = null,
   provider = null,
   response = null
 }: {
@@ -318,12 +333,13 @@ export function terminalIncompleteEvents({
   reasoningText?: string;
   reason?: string;
   limit?: ProviderLimit | null;
+  providerFailure?: ProviderFailureDiagnostic | null;
   provider?: string | null;
   response?: Record<string, unknown> | null;
 }): Array<[string, Record<string, unknown>]> {
-  const notice = truncationNotice({ provider, limit, reason });
+  const notice = truncationNotice({ provider, limit, reason, providerFailure });
   const finalText = `${text}${notice}`;
-  const details = incompleteDetails(reason, limit);
+  const details = incompleteDetails(reason, limit, providerFailure);
   const completedReasoning = {
     id: reasoningId,
     type: "reasoning",

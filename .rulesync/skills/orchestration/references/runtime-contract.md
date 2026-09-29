@@ -44,6 +44,14 @@ not proof that the parent has no open child handles.
 
 A rejected spawn with no child ID created no handle.
 
+A lifecycle status of `completed` means the turn ended, not necessarily that the
+child completed its assignment. Inspect the returned result for an explicit
+incomplete marker or provider-failure diagnostic; treat either as a failed or
+partial child result, preserve any useful partial work, and report the cause.
+Close the terminal child before replacement work. Do not automatically retry a
+deterministic permission denial; correct the cause first and leave any retry to
+the parent.
+
 On interruption or admission failure, run any injected current-parent recovery
 preflight first when available, then:
 

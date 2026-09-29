@@ -166,14 +166,19 @@ logs, then classify the first failing boundary:
   a temporary home containing only that role's contracted MCP servers and exact
   permissions. When a role contract declares a per-server tool list, the bridge
   also filters the MCP `tools/list` response and rejects direct calls outside
-  that list. It preserves user non-MCP permissions and explicit denies, while
-  leaving the global Antigravity settings and MCP registry unchanged.
-  Configure `AUTODEV_AGY_READ_ROOTS` as a colon-separated list of absolute
-  workspace roots before installation when more than the AutoDev repository
-  needs to be readable. The installer grants each root recursively; it never
-  adds `command(*)`. If an Antigravity native command is denied, the leaf must
-  stop retrying it and return a final visible summary with the limitation rather
-  than waiting for input or ending without a response.
+  that list. For a read-only turn, the temporary settings grant `read_file`
+  only beneath the request's validated workspace, preserve explicit denies,
+  and do not inherit command, write, or `unsandboxed(...)` grants.
+  User-configured `read_url(...)` rules remain separate from local file access.
+  Write-capable turns keep their existing user non-MCP permissions. The global
+  Antigravity settings and MCP registry are never modified by a request.
+  `AUTODEV_AGY_READ_ROOTS` still
+  configures installer-managed permissions for direct CLI use; router-managed
+  turns use their validated workspace instead. If a native tool is denied in
+  headless mode, the bridge returns an incomplete result with a typed,
+  path-free failure diagnostic. The parent treats it as failed work, reports
+  useful partial output, and does not retry a deterministic permission denial
+  until its cause is corrected.
 - **Workspace resolution:** bridge requests must carry structured workspace
   metadata (or an explicit `CODEX_PROJECT_ROOT`). The bridge fails closed rather
   than taking a repository path from task prose. Invalid requests are rejected

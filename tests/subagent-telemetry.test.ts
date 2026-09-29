@@ -432,7 +432,8 @@ test("Antigravity permission failures become structured diagnostics", () => {
   assert.deepEqual(
     agyErrorDetails(
       {
-        message: "permission denied",
+        message:
+          "stderr: permission denied while reading /private/workspace/secret.txt",
         failureCode: "AGY_PERMISSION_DENIED",
         failurePhase: "tool_permission",
         failureTool: "read_file"
@@ -442,7 +443,8 @@ test("Antigravity permission failures become structured diagnostics", () => {
     ),
     {
       type: "AGY_PERMISSION_DENIED",
-      message: "permission denied",
+      message:
+        "Antigravity denied a required tool permission in headless mode.",
       provider: "antigravity",
       role: "explorer",
       workspace: "/workspace",
@@ -453,13 +455,27 @@ test("Antigravity permission failures become structured diagnostics", () => {
     }
   );
 
+  const safeError = agyErrorDetails(
+    {
+      message:
+        "stderr: permission denied while reading /private/workspace/secret.txt",
+      failureCode: "AGY_PERMISSION_DENIED",
+      failurePhase: "tool_permission",
+      failureTool: "read_file"
+    },
+    "explorer",
+    "/workspace"
+  );
+  assert.doesNotMatch(safeError.message, /stderr:|\/private\/workspace/);
+
   // The router-generated request id is what lets an AGY_PERMISSION_DENIED
   // failure be correlated back to the router request that produced it,
   // without carrying any prompt text.
   assert.deepEqual(
     agyErrorDetails(
       {
-        message: "permission denied",
+        message:
+          "stderr: permission denied while reading /private/workspace/secret.txt",
         failureCode: "AGY_PERMISSION_DENIED",
         failurePhase: "tool_permission",
         failureTool: "read_file"
@@ -470,7 +486,8 @@ test("Antigravity permission failures become structured diagnostics", () => {
     ),
     {
       type: "AGY_PERMISSION_DENIED",
-      message: "permission denied",
+      message:
+        "Antigravity denied a required tool permission in headless mode.",
       provider: "antigravity",
       role: "explorer",
       workspace: "/workspace",

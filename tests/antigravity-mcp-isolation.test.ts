@@ -185,7 +185,8 @@ test("browser-tester receives Playwright only, with exactly its declared browser
       null,
       {
         originalHome: env.userHome,
-        codexHome: env.codexHome
+        codexHome: env.codexHome,
+        cwd: REPO_ROOT
       }
     );
     try {
@@ -231,9 +232,10 @@ test("browser-tester receives Playwright only, with exactly its declared browser
       assert.ok(!allowList.includes("mcp(playwright)"));
       assert.ok(!allowList.includes("mcp(playwright/*)"));
 
-      // Preserved non-MCP permissions
+      // Scoped permissions for read-only role: explicit workspace read_file, no unsandboxed commands
+      assert.ok(allowList.includes("read_file(/Users/henrykirk/AutoDev)"));
       assert.ok(allowList.includes("read_file(/Users/henrykirk/AutoDev/**)"));
-      assert.ok(allowList.includes("unsandboxed(pnpm test)"));
+      assert.ok(!allowList.includes("unsandboxed(pnpm test)"));
       assert.ok(allowList.includes("read_url(*)"));
 
       // Old broad MCP permissions removed
@@ -302,7 +304,8 @@ test("ordinary leaf roles cannot see or use Playwright or autodev_spawn", () => 
         "some-spawn-session",
         {
           originalHome: env.userHome,
-          codexHome: env.codexHome
+          codexHome: env.codexHome,
+          cwd: REPO_ROOT
         }
       );
       try {
@@ -343,7 +346,8 @@ test("orchestrator gets only its declared MCPs and authenticated spawn shim", ()
       "session-123",
       {
         originalHome: env.userHome,
-        codexHome: env.codexHome
+        codexHome: env.codexHome,
+        cwd: REPO_ROOT
       }
     );
     try {
@@ -450,7 +454,8 @@ test("preserves non-MCP data by symlinking and enforces restrictive permissions"
       null,
       {
         originalHome: env.userHome,
-        codexHome: env.codexHome
+        codexHome: env.codexHome,
+        cwd: REPO_ROOT
       }
     );
     try {
@@ -738,6 +743,7 @@ test("browser-tester role is accepted and receives Playwright-only isolated HOME
     String.raw`#!/usr/bin/env node
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import assert from "node:assert/strict";
 
 if (process.env.SENTINEL_FILE) {
   writeFileSync(process.env.SENTINEL_FILE, process.env.HOME || "");
@@ -746,6 +752,11 @@ if (process.env.SENTINEL_FILE) {
 const home = process.env.HOME;
 const mcpConfig = JSON.parse(readFileSync(join(home, ".gemini", "config", "mcp_config.json"), "utf8"));
 const settings = JSON.parse(readFileSync(join(home, ".gemini", "antigravity-cli", "settings.json"), "utf8"));
+const workspace = process.cwd();
+assert.deepEqual(
+  settings.permissions.allow.filter(entry => entry.startsWith("read_file(")),
+  ["read_file(" + workspace + ")", "read_file(" + workspace + "/**)"]
+);
 
 const servers = Object.keys(mcpConfig.mcpServers || {});
 const playwrightAllows = (settings.permissions?.allow || []).filter(e => e.startsWith("mcp(playwright"));
@@ -903,5 +914,290 @@ try {
     assert.equal(exitCode, 0, `proxy runner failed:\n${stderr}\n${stdout}`);
   } finally {
     rmSync(temp, { recursive: true, force: true });
+  }
+});
+
+test("read-only Antigravity permission scope limits read_file to validated workspace and preserves explicit deny rules", () => {
+  const env = createFixtureEnvironment();
+  const targetWorkspace = join(env.root, "target-workspace");
+  mkdirSync(targetWorkspace, { recursive: true, mode: 0o700 });
+
+  // Update user settings to include broad access, commands, writes, unsandboxed, and explicit deny rules
+  const userSettingsPath = join(
+    env.userHome,
+    ".gemini",
+    "antigravity-cli",
+    "settings.json"
+  );
+  const richUserSettings = {
+    permissions: {
+      allow: [
+        "mcp(stale_global_server)",
+        "mcp(stale_global_server/*)",
+        "read_file(**)",
+        "read_file(/Users/other/secret/**)",
+        `read_file(${targetWorkspace}/**)`,
+        "unsandboxed(pnpm test)",
+        "unsandboxed(*)",
+        "command(*)",
+        "run_command(npm run build)",
+        "write_file(/Users/other/secret/write.txt)",
+        "edit_file(/Users/other/secret/edit.txt)",
+        "read_url(*)"
+      ],
+      deny: [
+        "run_command(ccc *)",
+        "mcp(playwright/browser_drag)",
+        `read_file(${join(targetWorkspace, "denied-secret.key")})`
+      ]
+    },
+    theme: "dark"
+  };
+  writeFileSync(userSettingsPath, JSON.stringify(richUserSettings, null, 2), {
+    mode: 0o600
+  });
+  const originalUserSettingsContent = readFileSync(userSettingsPath, "utf8");
+
+  try {
+    const { settings, cleanup } = createIsolatedAntigravityHome(
+      "browser-tester",
+      null,
+      {
+        originalHome: env.userHome,
+        codexHome: env.codexHome,
+        cwd: targetWorkspace
+      }
+    );
+    try {
+      const allowList = settings.permissions?.allow as string[];
+      const denyList = settings.permissions?.deny as string[];
+
+      // 1. Explicit read_file authorization limited to validated request workspace
+      assert.ok(
+        allowList.includes(`read_file(${targetWorkspace})`),
+        "workspace root must be granted"
+      );
+      assert.ok(
+        allowList.includes(`read_file(${targetWorkspace}/**)`),
+        "workspace recursive files must be granted"
+      );
+
+      // 2. Paths outside selected workspace and broad access are NOT granted
+      assert.ok(
+        !allowList.includes("read_file(**)"),
+        "broad read_file(**) must not be granted"
+      );
+      assert.ok(
+        !allowList.includes("read_file(/Users/other/secret/**)"),
+        "paths outside workspace must not be granted"
+      );
+      assert.ok(
+        !allowList.some(
+          (entry) =>
+            typeof entry === "string" &&
+            entry.startsWith("read_file(") &&
+            !entry.includes(targetWorkspace)
+        ),
+        "no read_file grants outside selected workspace"
+      );
+
+      // 3. Command, write, and unsandboxed permissions are NOT granted
+      assert.ok(
+        !allowList.includes("command(*)"),
+        "command(*) must not be granted"
+      );
+      assert.ok(
+        !allowList.includes("run_command(npm run build)"),
+        "run_command must not be granted"
+      );
+      assert.ok(
+        !allowList.includes("unsandboxed(pnpm test)"),
+        "unsandboxed(pnpm test) must not be granted"
+      );
+      assert.ok(
+        !allowList.includes("unsandboxed(*)"),
+        "unsandboxed(*) must not be granted"
+      );
+      assert.ok(
+        !allowList.some(
+          (entry) =>
+            typeof entry === "string" &&
+            (entry.startsWith("write_") || entry.startsWith("edit_"))
+        ),
+        "write/edit permissions must not be granted"
+      );
+
+      // Safe non-command / non-file permission is preserved
+      assert.ok(
+        allowList.includes("read_url(*)"),
+        "read_url(*) should be preserved"
+      );
+
+      // The only read_file rules are the exact and recursive selected-root grants.
+      assert.deepEqual(
+        allowList.filter((entry) => entry.startsWith("read_file(")),
+        [`read_file(${targetWorkspace})`, `read_file(${targetWorkspace}/**)`]
+      );
+
+      // 5. Explicit denies remain intact and take precedence
+      assert.ok(
+        denyList.includes("run_command(ccc *)"),
+        "run_command deny rule must remain"
+      );
+      assert.ok(
+        denyList.includes("mcp(playwright/browser_drag)"),
+        "mcp deny rule must remain"
+      );
+      assert.ok(
+        denyList.includes(
+          `read_file(${join(targetWorkspace, "denied-secret.key")})`
+        ),
+        "explicit read_file deny rule must remain"
+      );
+      assert.deepEqual(
+        denyList.filter((entry) => entry.startsWith("read_file(")),
+        [`read_file(${join(targetWorkspace, "denied-secret.key")})`]
+      );
+
+      // 6. User's global settings are NOT mutated
+      assert.equal(
+        readFileSync(userSettingsPath, "utf8"),
+        originalUserSettingsContent,
+        "user global settings must not be mutated"
+      );
+
+      // 7. Read-only arguments still include --sandbox without permission bypass
+      const args = agyArgs(
+        "test prompt",
+        "gemini-3.8-flash-medium",
+        "medium",
+        "browser-tester"
+      );
+      assert.ok(
+        args.includes("--sandbox"),
+        "browser-tester must receive --sandbox"
+      );
+      assert.ok(
+        !args.includes("--dangerously-skip-permissions"),
+        "browser-tester must not receive --dangerously-skip-permissions"
+      );
+
+      const explicitReadOnlyArgs = agyArgs(
+        "test prompt",
+        "gemini-3.8-flash-medium",
+        "medium",
+        "default",
+        "read-only"
+      );
+      assert.ok(
+        explicitReadOnlyArgs.includes("--sandbox"),
+        "explicit read-only sandbox mode must receive --sandbox"
+      );
+      assert.ok(
+        !explicitReadOnlyArgs.includes("--dangerously-skip-permissions"),
+        "explicit read-only sandbox mode must not receive --dangerously-skip-permissions"
+      );
+    } finally {
+      cleanup();
+    }
+  } finally {
+    env.cleanup();
+  }
+});
+
+test("read-only Antigravity invocation fails closed without a validated workspace", () => {
+  const env = createFixtureEnvironment();
+  try {
+    assert.throws(
+      () =>
+        createIsolatedAntigravityHome("browser-tester", null, {
+          originalHome: env.userHome,
+          codexHome: env.codexHome
+        }),
+      /requires a validated absolute workspace/
+    );
+  } finally {
+    env.cleanup();
+  }
+});
+
+test("write-capable roles preserve user non-MCP permissions and keep --dangerously-skip-permissions", () => {
+  const env = createFixtureEnvironment();
+  const targetWorkspace = join(env.root, "target-workspace");
+  mkdirSync(targetWorkspace, { recursive: true, mode: 0o700 });
+
+  const userSettingsPath = join(
+    env.userHome,
+    ".gemini",
+    "antigravity-cli",
+    "settings.json"
+  );
+  const richUserSettings = {
+    permissions: {
+      allow: [
+        "mcp(stale_global_server)",
+        "read_file(**)",
+        "unsandboxed(pnpm test)",
+        "command(*)",
+        "run_command(npm run build)",
+        "write_file(/Users/other/secret/write.txt)",
+        "read_url(*)"
+      ],
+      deny: ["run_command(ccc *)"]
+    },
+    theme: "dark"
+  };
+  writeFileSync(userSettingsPath, JSON.stringify(richUserSettings, null, 2), {
+    mode: 0o600
+  });
+
+  try {
+    const { settings, cleanup } = createIsolatedAntigravityHome(
+      "default",
+      null,
+      {
+        originalHome: env.userHome,
+        codexHome: env.codexHome,
+        cwd: targetWorkspace
+      }
+    );
+    try {
+      const allowList = settings.permissions?.allow as string[];
+
+      // Write-capable role keeps non-MCP permissions untouched
+      assert.ok(allowList.includes("read_file(**)"));
+      assert.ok(allowList.includes("unsandboxed(pnpm test)"));
+      assert.ok(allowList.includes("command(*)"));
+      assert.ok(allowList.includes("run_command(npm run build)"));
+      assert.ok(
+        allowList.includes("write_file(/Users/other/secret/write.txt)")
+      );
+      assert.ok(allowList.includes("read_url(*)"));
+
+      // Stale global MCP removed and contract MCP added (granular per-tool grants)
+      assert.ok(!allowList.includes("mcp(stale_global_server)"));
+      assert.ok(allowList.includes("mcp(lsp/lsp_find_symbol)"));
+      assert.ok(!allowList.includes("mcp(lsp)"));
+
+      // Write-capable role CLI args: includes --dangerously-skip-permissions, no --sandbox
+      const args = agyArgs(
+        "test prompt",
+        "gemini-3.8-flash-medium",
+        "medium",
+        "default"
+      );
+      assert.ok(
+        !args.includes("--sandbox"),
+        "write-capable default role must not receive --sandbox"
+      );
+      assert.ok(
+        args.includes("--dangerously-skip-permissions"),
+        "write-capable default role must receive --dangerously-skip-permissions"
+      );
+    } finally {
+      cleanup();
+    }
+  } finally {
+    env.cleanup();
   }
 });

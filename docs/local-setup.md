@@ -277,10 +277,13 @@ The installer normalizes each entry, strips empty segments, and deduplicates
 paths. Per-root grants stay narrow (`read_file(<root>)`) instead of graduating to
 `command(*)` or global `--dangerously-skip-permissions`, because the headless
 surface for read-only roles is bounded code-search navigation rather than shell
-execution. The bridge passes agy's `--sandbox` flag to read-only roles so they
-can run headlessly within terminal restrictions; write-capable roles retain
-their existing permission policy. Broad shell execution is never granted to
-read-only validation roles.
+execution. These installer grants support direct CLI use. AutoDev-managed
+read-only turns build an isolated settings copy from the validated request
+workspace, preserve explicit denies, and do not inherit user command, write, or
+`unsandboxed(...)` grants. User-configured `read_url(...)` rules remain separate
+from local file access. The bridge passes agy's `--sandbox` flag to read-only
+roles; write-capable roles retain their existing permission policy. Broad shell
+execution is never granted to read-only validation roles.
 
 Run the installer with `--check` to validate that all configured workspace roots
 and required MCP/read grants are present in the settings file:

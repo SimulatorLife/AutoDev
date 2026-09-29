@@ -195,6 +195,54 @@ test("an incomplete turn carries its work, and says plainly that it is partial",
   });
 });
 
+test("a classified Antigravity permission denial survives the incomplete boundary", () => {
+  const providerFailure = {
+    code: "AGY_PERMISSION_DENIED",
+    phase: "tool_permission",
+    tool: "read_file"
+  };
+  const events = terminalIncompleteEvents({
+    responseId: "resp_permission",
+    itemId: "msg_permission",
+    reasoningId: "rs_permission",
+    text: "partial work",
+    reason: INCOMPLETE_REASON_INTERRUPTED,
+    provider: "antigravity",
+    providerFailure
+  });
+  const completed = events.at(-1)?.[1].response as {
+    status: string;
+    incomplete_details: Record<string, unknown>;
+    output_text: string;
+  };
+
+  assert.equal(completed.status, "incomplete");
+  assert.deepEqual(completed.incomplete_details, {
+    reason: INCOMPLETE_REASON_INTERRUPTED,
+    provider_failure: providerFailure
+  });
+  assert.match(completed.output_text, /^partial work/);
+  assert.match(
+    completed.output_text,
+    /read_file permission was denied in headless mode/
+  );
+  assert.match(completed.output_text, /nothing after it ran/);
+  assert.doesNotMatch(
+    completed.output_text,
+    /stderr:|\/Users\/|settings\.json/
+  );
+
+  // An unclassified interruption keeps its established generic diagnosis.
+  const generic = terminalIncompleteEvents({
+    responseId: "resp_generic",
+    itemId: "msg_generic",
+    reasoningId: "rs_generic",
+    reason: INCOMPLETE_REASON_INTERRUPTED,
+    provider: "antigravity"
+  }).at(-1)?.[1].response as { output_text: string };
+  assert.match(generic.output_text, /stopped unexpectedly/);
+});
+
 test("the typed Claude bridge uses the shared limit boundary", () => {
   const bridge = read("src/providers/claude.ts");
   assert.match(bridge, /from "\.\.\/shared\/provider-limits\.ts"/);
