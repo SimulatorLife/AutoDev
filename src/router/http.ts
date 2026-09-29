@@ -1422,16 +1422,215 @@ export function getRouterStatus(now = Date.now()): Record<string, unknown> {
   return buildRouterStatus(now);
 }
 
+interface DashboardSourceConfig {
+  sourceMode: boolean;
+  configuredPath?: string;
+  error?: string;
+}
+
+function getDashboardSourceConfig(): DashboardSourceConfig {
+  const configured = process.env.AUTODEV_DASHBOARD_SOURCE;
+  if (!configured || configured.trim() === "") {
+    return { sourceMode: false };
+  }
+  const trimmed = configured.trim();
+  if (!path.isAbsolute(trimmed)) {
+    return {
+      sourceMode: true,
+      configuredPath: trimmed,
+      error: "AUTODEV_DASHBOARD_SOURCE must be an absolute path"
+    };
+  }
+  return {
+    sourceMode: true,
+    configuredPath: trimmed
+  };
+}
+
+function dashboardSourceReadErrorCode(error: unknown): string {
+  if (!error || typeof error !== "object" || !("code" in error))
+    return "unreadable";
+  return typeof error.code === "string" ? error.code : "unreadable";
+}
+
+function injectDashboardLiveReload(
+  html: string,
+  initialVersion: string
+): string {
+  const metaTag = `<meta name="autodev-dashboard-version" content="${initialVersion}" />`;
+  const scriptTag = `<script data-autodev-live-reload>
+(() => {
+  const initialVersion = ${JSON.stringify(initialVersion)};
+  let activeVersion = initialVersion;
+  let candidateVersion = null;
+  let candidateCount = 0;
+  let checking = false;
+  let reloaded = false;
+
+  async function check() {
+    if (reloaded || checking) return;
+    checking = true;
+    try {
+      const res = await fetch("/dashboard/version", {
+        cache: "no-store",
+        headers: { Accept: "application/json" }
+      });
+      if (!res.ok) return;
+      const data = await res.json();
+      const current = data?.version;
+      if (!current || typeof current !== "string") return;
+      if (current === activeVersion) {
+        candidateVersion = null;
+        candidateCount = 0;
+        return;
+      }
+      if (current === candidateVersion) {
+        candidateCount++;
+      } else {
+        candidateVersion = current;
+        candidateCount = 1;
+        setTimeout(check, 250);
+        return;
+      }
+      if (candidateCount >= 2) {
+        reloaded = true;
+        window.location.reload();
+      }
+    } catch {
+      /* ignore polling network errors */
+    } finally {
+      checking = false;
+    }
+  }
+
+  setInterval(check, 1000);
+})();
+</script>`;
+
+  let modified = html;
+  if (modified.includes("</head>")) {
+    modified = modified.replace("</head>", `${metaTag}\n</head>`);
+  } else {
+    modified = `${metaTag}\n${modified}`;
+  }
+  if (modified.includes("</body>")) {
+    modified = modified.replace("</body>", `${scriptTag}\n</body>`);
+  } else {
+    modified = `${modified}\n${scriptTag}`;
+  }
+  return modified;
+}
+
 export async function sendDashboard(response: ServerResponse): Promise<void> {
-  const body = await readFile(DASHBOARD_FILE);
+  const config = getDashboardSourceConfig();
+  if (!config.sourceMode) {
+    const body = await readFile(DASHBOARD_FILE);
+    response.writeHead(200, {
+      "content-type": "text/html; charset=utf-8",
+      "content-length": body.length,
+      "cache-control": "no-store",
+      connection: "close",
+      "x-autodev-router-instance-id": ROUTER_INSTANCE_ID
+    });
+    response.end(body);
+    return;
+  }
+
+  if (config.error || !config.configuredPath) {
+    sendJson(
+      response,
+      500,
+      errorBody(
+        config.error ?? "Invalid dashboard source path configuration",
+        "router_dashboard_source_invalid",
+        { code: "router_dashboard_source_invalid" }
+      )
+    );
+    return;
+  }
+
+  let buffer: Buffer;
+  try {
+    buffer = await readFile(config.configuredPath);
+  } catch (error) {
+    sendJson(
+      response,
+      500,
+      errorBody(
+        `Failed to read configured dashboard source file: ${dashboardSourceReadErrorCode(error)}`,
+        "router_dashboard_source_unreadable",
+        { code: "router_dashboard_source_unreadable" }
+      )
+    );
+    return;
+  }
+
+  const version = createHash("sha256").update(buffer).digest("hex");
+  const html = injectDashboardLiveReload(buffer.toString("utf8"), version);
+  const responseBody = Buffer.from(html, "utf8");
+
   response.writeHead(200, {
     "content-type": "text/html; charset=utf-8",
-    "content-length": body.length,
+    "content-length": responseBody.length,
     "cache-control": "no-store",
     connection: "close",
     "x-autodev-router-instance-id": ROUTER_INSTANCE_ID
   });
-  response.end(body);
+  response.end(responseBody);
+}
+
+async function sendDashboardVersion(response: ServerResponse): Promise<void> {
+  const config = getDashboardSourceConfig();
+  if (!config.sourceMode) {
+    sendJson(
+      response,
+      404,
+      errorBody("Route not found: GET /dashboard/version", "route_not_found", {
+        code: "route_not_found"
+      })
+    );
+    return;
+  }
+
+  if (config.error || !config.configuredPath) {
+    sendJson(
+      response,
+      500,
+      errorBody(
+        config.error ?? "Invalid dashboard source path configuration",
+        "router_dashboard_source_invalid",
+        { code: "router_dashboard_source_invalid" }
+      )
+    );
+    return;
+  }
+
+  let buffer: Buffer;
+  try {
+    buffer = await readFile(config.configuredPath);
+  } catch (error) {
+    sendJson(
+      response,
+      500,
+      errorBody(
+        `Failed to read configured dashboard source file: ${dashboardSourceReadErrorCode(error)}`,
+        "router_dashboard_source_unreadable",
+        { code: "router_dashboard_source_unreadable" }
+      )
+    );
+    return;
+  }
+
+  const version = createHash("sha256").update(buffer).digest("hex");
+  sendJson(
+    response,
+    200,
+    { version },
+    {
+      "cache-control": "no-store",
+      "x-autodev-router-instance-id": ROUTER_INSTANCE_ID
+    }
+  );
 }
 
 export async function requestBody(request: IncomingMessage): Promise<string> {
@@ -2476,6 +2675,10 @@ async function handlePreflightRoutes(
   }
   if (pathname === "/dashboard" && request.method === "GET") {
     await sendDashboard(response);
+    return true;
+  }
+  if (pathname === "/dashboard/version" && request.method === "GET") {
+    await sendDashboardVersion(response);
     return true;
   }
   if (pathname === CHARTJS_ASSET_ROUTE && request.method === "GET") {

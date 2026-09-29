@@ -172,6 +172,26 @@ normalized `bySkill` and `bridgeSkills` rows that the expanded section renders;
 it does not use the separate `skillContextsInjected` counter as an exposure
 total.
 
+### Dashboard development and live-reload
+
+By default, the router serves `/dashboard` from the installed runtime copy materialized at `$CODEX_HOME/src/router/dashboard.html` (`DASHBOARD_FILE = new URL("dashboard.html", import.meta.url)`). It returns `cache-control: no-store` on every request. In normal mode, live-reload polling is disabled, no reload scripts are injected, and the `/dashboard/version` endpoint is not found (404).
+
+After the live-reload support has been installed once, dashboard HTML, CSS, and client-side JavaScript can be edited without rerunning the installer or restarting the router for each change. Opt in by configuring the source override in `$HOME/.codex/.env`:
+
+```bash
+AUTODEV_DASHBOARD_SOURCE=/absolute/path/to/AutoDev/src/router/dashboard.html
+```
+
+`scripts/run-codex-model-router.sh` sources `$HOME/.codex/.env` before launching the router, so one router restart is required after adding or changing this setting. This launcher reads `$HOME/.codex/.env` even when `CODEX_HOME` is customized. After that, saving the configured dashboard file reloads open tabs automatically; backend router changes still require normal deployment and restart.
+
+When `AUTODEV_DASHBOARD_SOURCE` is active:
+
+- **Direct file read**: The router reads the specified absolute file on every `GET /dashboard` request.
+- **Version endpoint**: The router exposes `GET /dashboard/version`, returning `{ "version": "<sha256>" }` representing the current SHA-256 hash of the source file. The response never exposes internal filesystem paths.
+- **Client live-reload**: In source mode, the router serves the dashboard page with an embedded initial version tag and a client-side polling script (~1 s interval). When an edit is saved, the client confirms a stable saved version (avoiding reload loops during partial editor writes) and automatically reloads any already-open browser tab.
+- **Scope of auto-reload**: Edits to the frontend dashboard source (`src/router/dashboard.html`) reload immediately in open tabs without re-installing or restarting the router. However, backend router changes (such as modifications to `src/router/http.ts`, `/status` logic, or providers) modify Node processes and still require normal deployment (`autodev install` or script updates) and a router restart.
+- **Fail-safe validation**: `AUTODEV_DASHBOARD_SOURCE` must be set to an absolute file path. If the path is relative, unreadable, or missing, the router fails visibly with an HTTP 500 error response (`router_dashboard_source_invalid` or `router_dashboard_source_unreadable`) rather than silently falling back to the installed runtime file.
+
 ## Reported metrics
 
 - Agent PR-and-ping PRs raised and successfully merged, by target repository.
