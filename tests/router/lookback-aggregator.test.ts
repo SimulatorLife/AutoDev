@@ -1855,3 +1855,151 @@ test("applyIntervalLookback limits agent-state counts to the selected live agent
   assert.equal(Object.hasOwn(active.liveFeed[0]!, "agent"), false);
   assert.equal(lookbackWindowStartMs(NOW, "active"), null);
 });
+
+test("applyIntervalLookback derives active-selection usage.byWorkspace[*].active from the canonical live-agent projection, not the event-backed activeUsage snapshot", () => {
+  const status = {
+    recentEvents: [],
+    liveFeed: [],
+    usage: {},
+    providers: {},
+    subagents: { recent: [] },
+    spawnFailures: { recent: [] },
+    codexTelemetry: {},
+    // The canonical live-agent reconciliation projection: two live agents
+    // attributed to RacingGame. This is the exact map
+    // status.agents.canonicalLiveCount sums and the dashboard's "Active
+    // now" KPI reads.
+    agents: {
+      canonicalLiveCount: 2,
+      liveByWorkspace: { RacingGame: 2 }
+    }
+  } as any;
+
+  const emptyBucket = {
+    attempts: 0,
+    successes: 0,
+    failures: 0,
+    skipped: 0,
+    durationMs: 0,
+    maxDurationMs: 0,
+    toolCalls: 0,
+    lastUsedAt: null,
+    lastFailure: null,
+    averageDurationMs: 0
+  };
+
+  // Neither live agent has produced a qualifying route/skill accumulator
+  // yet -- the event-backed snapshot has no RacingGame entry at all. This
+  // is the exact gap a naive \`usage.byWorkspace[*].active ?? activeUsage\`
+  // derivation would fall into.
+  const activeUsage = {
+    totals: emptyBucket,
+    byRole: {},
+    byModel: {},
+    byOrigin: {},
+    byWorkspace: {},
+    skillUses: 0,
+    bySkill: []
+  } as any;
+
+  const view = applyIntervalLookback(
+    status,
+    "active",
+    NOW,
+    [
+      { subject: "thread-a", requestId: "req-a", state: "active" },
+      { subject: "thread-b", requestId: "req-b", state: "active" }
+    ],
+    activeUsage
+  ) as any;
+
+  assert.equal(view.agents.canonicalLiveCount, 2);
+  assert.equal(
+    view.usage.byWorkspace.RacingGame?.active,
+    2,
+    "two canonical live agents in the same workspace must count as 2 active, matching the Active now total, even when activeUsage.byWorkspace has no entry for that workspace"
+  );
+});
+
+test("applyIntervalLookback's usage.byWorkspace[*].active is the canonical current live-agent count for every non-all selection, not only active", () => {
+  const status = {
+    recentEvents: [
+      routingEvent({
+        timestamp: T_30_MIN_AGO,
+        requestId: "req-old",
+        phase: "selected",
+        provider: "codex",
+        model: "gpt-6-luna",
+        role: "orchestrator",
+        workspace: "StaleWorkspace"
+      })
+    ],
+    liveFeed: [],
+    usage: {},
+    providers: {},
+    subagents: { recent: [] },
+    spawnFailures: { recent: [] },
+    codexTelemetry: {},
+    // RacingGame currently has 2 live agents; StaleWorkspace has 1h-window
+    // routing history below but is no longer live.
+    agents: {
+      liveByWorkspace: { RacingGame: 2 }
+    }
+  } as any;
+
+  const view = applyIntervalLookback(status, "1h", NOW) as any;
+
+  assert.equal(
+    view.usage.byWorkspace.StaleWorkspace?.attempts,
+    1,
+    "windowed usage detail for a no-longer-live workspace must be preserved"
+  );
+  assert.equal(
+    view.usage.byWorkspace.StaleWorkspace?.active,
+    0,
+    "a workspace with historical usage inside the window but zero currently-live agents must show active: 0, not be left unset/stale"
+  );
+  assert.equal(
+    view.usage.byWorkspace.RacingGame?.active,
+    2,
+    "a currently-live workspace must be represented with the canonical count even with no routing history inside this bounded window"
+  );
+  assert.equal(
+    view.usage.byWorkspace.RacingGame?.attempts,
+    0,
+    "the canonical active overlay must not fabricate windowed usage detail for a workspace with no in-window routing events"
+  );
+});
+
+test("applyIntervalLookback does not infer zero workspace activity when the canonical projection is missing", () => {
+  const status = {
+    recentEvents: [
+      routingEvent({
+        timestamp: T_30_MIN_AGO,
+        requestId: "req-unattributed-state",
+        phase: "selected",
+        provider: "codex",
+        model: "gpt-6-luna",
+        role: "orchestrator",
+        workspace: "WorkspaceWithUnknownLiveState"
+      })
+    ],
+    liveFeed: [],
+    usage: {},
+    providers: {},
+    subagents: { recent: [] },
+    spawnFailures: { recent: [] },
+    codexTelemetry: {},
+    agents: {}
+  } as any;
+
+  const view = applyIntervalLookback(status, "1h", NOW) as any;
+  const workspace = view.usage.byWorkspace.WorkspaceWithUnknownLiveState;
+
+  assert.equal(workspace.attempts, 1);
+  assert.equal(
+    Object.hasOwn(workspace, "active"),
+    false,
+    "missing canonical live-agent state must remain unknown, not be represented as zero"
+  );
+});

@@ -40,6 +40,13 @@
  * an exact active-agent identity. The bounded histories are documented in
  * `events.ts` and `live-feed.ts` (see `maxRecentEvents` and the `maxEvents`
  * constructor defaults).
+ *
+ * Workspace `active` counts are current state, not windowed usage. For
+ * non-`all` selections, `applyIntervalLookback` copies the canonical
+ * `status.agents.liveByWorkspace` projection onto usage rows; event-backed
+ * `activeUsage` continues to provide cumulative route/skill details but is
+ * not a source for live counts because it can omit live threads with no
+ * qualifying usage event.
  */
 
 import type { RouterEvent } from "./events.ts";
@@ -621,6 +628,8 @@ export interface IntervalUsageBucket {
 }
 
 export interface IntervalWorkspaceUsageBucket extends IntervalUsageBucket {
+  /** Current live-agent count from the canonical `status.agents` projection. */
+  active?: number;
   cwd: string | null;
   skillUses: number;
   byRole: Record<string, IntervalUsageBucket>;
@@ -2257,6 +2266,11 @@ type LookbackStatusInput = {
   liveFeed?: readonly LiveFeedEvent[];
   subagents?: { recent?: readonly LookbackSubagentRecord[] } | null;
   spawnFailures?: { recent?: readonly LookbackSpawnFailureRecord[] } | null;
+  /** Canonical current live-agent projection used for workspace Active counts. */
+  agents?: {
+    liveByWorkspace?: Record<string, unknown>;
+    [key: string]: unknown;
+  } | null;
   [key: string]: unknown;
 };
 
@@ -2271,6 +2285,31 @@ type LookbackStatusFields = {
   providers?: Record<string, unknown>;
   agents?: Record<string, unknown>;
 };
+
+/**
+ * Sets workspace Active from the canonical current state on every
+ * non-`all` selection, without changing windowed usage details.
+ */
+function applyCanonicalActiveWorkspaceCounts(
+  usage: IntervalUsage,
+  agents: LookbackStatusInput["agents"]
+): IntervalUsage {
+  const liveByWorkspace = agents?.liveByWorkspace;
+  if (!liveByWorkspace || typeof liveByWorkspace !== "object") return usage;
+  const workspaceKeys = new Set([
+    ...Object.keys(usage.byWorkspace),
+    ...Object.keys(liveByWorkspace)
+  ]);
+  const byWorkspace: Record<string, IntervalWorkspaceUsageBucket> = {};
+  for (const key of workspaceKeys) {
+    const existing = usage.byWorkspace[key] ?? createWorkspaceBucket(null);
+    byWorkspace[key] = {
+      ...existing,
+      active: Number(liveByWorkspace[key] ?? 0)
+    };
+  }
+  return { ...usage, byWorkspace };
+}
 
 export function applyIntervalLookback<T extends LookbackStatusInput>(
   status: T,
@@ -2320,7 +2359,7 @@ export function applyIntervalLookback<T extends LookbackStatusInput>(
       ({ activitySubject: _activitySubject, ...event }) => event
     ),
     liveFeed: override.liveFeed.map(({ agent: _agent, ...event }) => event),
-    usage: override.usage,
+    usage: applyCanonicalActiveWorkspaceCounts(override.usage, status.agents),
     codexTelemetry: mergeCodexTelemetry(
       (status.codexTelemetry as Record<string, unknown> | undefined) ?? {},
       override.codexTelemetry,
