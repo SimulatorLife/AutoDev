@@ -125,14 +125,8 @@
         letter-spacing: -0.02em;
       }
 
-      .page-meta,
       .muted {
         color: var(--muted);
-      }
-
-      .page-meta {
-        margin-top: var(--gap-sm);
-        font-size: var(--font-code);
       }
 
       #error {
@@ -266,18 +260,6 @@
       code {
         color: var(--code);
         font: var(--font-code)/1.4 var(--font-mono);
-      }
-
-      .section-note {
-        padding: var(--pad-md);
-        color: var(--muted);
-        background: var(--panel-alt);
-        border-bottom: var(--line-soft);
-        font-size: var(--font-sm);
-      }
-
-      .section-note strong {
-        color: var(--code);
       }
 
       .compact-table {
@@ -493,12 +475,6 @@
       .live-feed-chip:focus-visible {
         outline: 2px solid var(--active);
         outline-offset: 2px;
-      }
-
-      .live-feed-meta {
-        margin-left: auto;
-        color: var(--muted);
-        font-variant-numeric: tabular-nums;
       }
 
       .live-feed-table {
@@ -798,7 +774,6 @@
       <div class="page-header">
         <div>
           <h1 class="page-title">Codex model router</h1>
-          <div class="page-meta" id="page-meta">Loading router status...</div>
         </div>
         <label class="lookback-control" for="lookback-select">
           <span>Lookback</span>
@@ -817,7 +792,7 @@
 
       <!-- 1. KPI Grid -->
       <section class="kpi-grid" id="kpi-grid">
-        <stat-card id="kpi-agents" label="Active now" value="—">—</stat-card>
+        <stat-card id="kpi-agents" label="Active now" value="—"></stat-card>
         <stat-card id="kpi-attempts" label="Spawns" value="—">—</stat-card>
         <stat-card id="kpi-tools" label="Tool calls" value="—">—</stat-card>
         <stat-card id="kpi-skills" label="Skill uses" value="—">—</stat-card>
@@ -825,17 +800,7 @@
       </section>
 
       <!-- 2. Provider Health -->
-      <dashboard-panel
-        id="panel-providers"
-        open=""
-        summary=""
-        title="Provider health"
-      >
-        <div class="section-note">
-          Provider/model <strong>usage</strong> is consolidated into Workspace
-          usage below; this table keeps the configuration and health signals
-          that are not duplicated there.
-        </div>
+      <dashboard-panel id="panel-providers" open="" title="Provider health">
         <div class="table-wrap">
           <table class="compact-table">
             <thead>
@@ -866,26 +831,10 @@
       <dashboard-panel
         id="panel-orchestrator"
         open=""
-        summary=""
         title="Orchestrator &amp; subagent usage"
       >
-        <div class="section-note">
-          CLI-delegated children reported by provider bridges are included here;
-          roleless child traffic is attributed separately from roleless
-          orchestrator traffic.
-        </div>
         <div class="route-grid" id="route-grid"></div>
-        <sub-panel
-          id="panel-spawn-breakdown"
-          summary=""
-          title="Spawn breakdown"
-        >
-          <div class="section-note">
-            This stays separate from the Roles/Models workspace breakdown
-            because it answers a different question:
-            <strong>who spawned what, by which mechanism and spawn tool</strong
-            >.
-          </div>
+        <sub-panel id="panel-spawn-breakdown" title="Spawn breakdown">
           <div class="table-wrap">
             <table class="compact-table">
               <thead>
@@ -902,11 +851,7 @@
             </table>
           </div>
         </sub-panel>
-        <sub-panel id="panel-spawn-failures" summary="" title="Spawn failures">
-          <div class="section-note">
-            Router-admitted child requests only; app-level spawn admission and
-            open child handles remain outside this telemetry.
-          </div>
+        <sub-panel id="panel-spawn-failures" title="Spawn failures">
           <div class="table-wrap">
             <table class="compact-table">
               <thead>
@@ -927,13 +872,8 @@
       <dashboard-panel
         id="workspace-usage-section"
         open=""
-        summary=""
         title="Usage by workspace"
       >
-        <div class="section-note">
-          Click a workspace to expand roles, models, named tool attribution,
-          skills, and MCP servers.
-        </div>
         <div class="table-wrap">
           <table id="workspace-usage-table">
             <thead>
@@ -958,22 +898,7 @@
       </dashboard-panel>
 
       <!-- 5. Skill Telemetry -->
-      <dashboard-panel
-        id="panel-skills"
-        open=""
-        summary=""
-        title="Skill telemetry"
-      >
-        <div class="section-note">
-          Click a skill to expand its usage context. Top-level rows show outcome
-          and overall share; details show where and how that skill was used. A
-          confirmed use includes a canonical <code>SKILL.md</code> read via a
-          shell command (<code>cat</code>, <code>head</code>, <code>tail</code>,
-          <code>sed -n</code>, <code>awk</code>, or <code>grep</code>) just as
-          it does a dedicated file-read tool call -- both report the same
-          <code>skill_used</code>/<code>skill_read</code> event and are counted
-          here together, not as a separate metric.
-        </div>
+      <dashboard-panel id="panel-skills" open="" title="Skill telemetry">
         <div class="table-wrap">
           <table class="compact-table skills-usage-table">
             <thead>
@@ -993,15 +918,7 @@
             <tfoot id="skills-usage-tfoot"></tfoot>
           </table>
         </div>
-        <sub-panel
-          id="panel-skill-context"
-          summary=""
-          title="Skill context telemetry"
-        >
-          <div class="section-note">
-            Turn-duration and per-thread aggregate skill-context histograms.
-            These rows are thread aggregates, not per-skill usage.
-          </div>
+        <sub-panel id="panel-skill-context" title="Skill context telemetry">
           <div class="table-wrap">
             <table class="compact-table">
               <thead>
@@ -1019,16 +936,7 @@
       </dashboard-panel>
 
       <!-- 6. Hooks & Runtime Telemetry -->
-      <dashboard-panel
-        id="panel-hooks"
-        summary=""
-        title="Hooks &amp; runtime telemetry"
-      >
-        <div class="section-note">
-          Native and MCP tool counts are already organized under Workspace
-          usage, so this view focuses on hooks plus thread/spawn runtime events
-          and their timing/status metadata.
-        </div>
+      <dashboard-panel id="panel-hooks" title="Hooks &amp; runtime telemetry">
         <div class="table-wrap">
           <table class="compact-table runtime-table">
             <thead>
@@ -1047,18 +955,10 @@
       </dashboard-panel>
 
       <!-- 7. Operational Summary -->
-      <dashboard-panel
-        id="panel-ops"
-        summary="Telemetry · metrics · state DB · concurrency"
-        title="Operational summary"
-      >
+      <dashboard-panel id="panel-ops" title="Operational summary">
         <div class="section-body section-stack">
           <div class="ops-grid" id="ops-grid"></div>
-          <sub-panel
-            id="panel-native-metrics"
-            summary=""
-            title="Native metrics observed"
-          >
+          <sub-panel id="panel-native-metrics" title="Native metrics observed">
             <div class="table-wrap">
               <table class="compact-table">
                 <thead>
@@ -1079,27 +979,8 @@
       <!-- 7.5 Codex state DB and per-workspace bridge coverage -->
       <dashboard-panel
         id="panel-codex-state"
-        summary=""
         title="Codex state &amp; workspace telemetry"
       >
-        <div class="section-note">
-          Local Codex state database (<code>state_5.sqlite</code>) joined to
-          live router telemetry. <strong>Recent threads</strong> are bounded by
-          the configured recency window
-          (<code>CODEX_STATE_COLLECTOR_WINDOW_MS</code>);
-          <strong>conversation threads</strong> provides the
-          <code>conversation.id</code> to thread id lookup the router cannot
-          derive from the request stream alone.
-          <strong>Bridge coverage</strong> reports the per-workspace first-class
-          events the provider bridges reported via
-          <code>/v1/agent-events</code>; a workspace without an executed,
-          requested, unavailable, or skill-exposed observation keeps its
-          tool/skill attribution at the fail-closed <em>unavailable</em> state.
-          <strong>Tool result coverage</strong> separates the causally-joined
-          executed count from the unattributed count so a workspace that only
-          ever received an unlinked result event does not silently look like an
-          executed workspace.
-        </div>
         <div id="codex-state-cards" class="kpi-grid">
           <stat-card
             id="codex-state-status-card"
@@ -1163,7 +1044,7 @@
       </dashboard-panel>
 
       <!-- 8. Live feed -->
-      <dashboard-panel id="panel-events" summary="" title="Live feed">
+      <dashboard-panel id="panel-events" title="Live feed">
         <div
           class="live-feed-filter"
           role="group"
@@ -1235,7 +1116,6 @@
               Runtime
             </button>
           </span>
-          <span class="live-feed-meta" id="live-feed-meta">0 shown</span>
         </div>
         <div class="table-wrap live-feed-wrap" id="live-feed-wrap">
           <table class="live-feed-table" id="live-feed-table">
@@ -1715,24 +1595,11 @@
           color: var(--code);
           font: var(--font-code)/1.4 var(--font-mono);
         }
-
-        .subtitle {
-          padding-left: 20px;
-          margin-top: 3px;
-          color: var(--subtle);
-          font-size: var(--font-sm);
-          line-height: 1.2;
-        }
-
-        .subtitle:empty {
-          display: none;
-        }
       </style>
       <button aria-expanded="false" type="button">
         <span class="chevron">▶</span>
         <code class="label"></code>
       </button>
-      <div class="subtitle"></div>
     </template>
 
     <template id="dashboard-panel-template">
@@ -1778,13 +1645,6 @@
           font-size: 13px;
         }
 
-        .summary {
-          margin-left: auto;
-          color: var(--muted);
-          font-size: var(--font-sm);
-          font-variant-numeric: tabular-nums;
-        }
-
         .body {
           border-top: var(--line);
         }
@@ -1793,7 +1653,6 @@
         <summary>
           <span class="caret">▶</span>
           <span class="title"></span>
-          <span class="summary"></span>
         </summary>
         <div class="body">
           <slot></slot>
@@ -1838,11 +1697,6 @@
           transform: rotate(90deg);
         }
 
-        .summary {
-          margin-left: auto;
-          color: var(--subtle);
-        }
-
         .body {
           border-top: var(--line-soft);
         }
@@ -1851,7 +1705,6 @@
         <summary>
           <span class="caret">▶</span>
           <span class="title"></span>
-          <span class="summary"></span>
         </summary>
         <div class="body">
           <slot></slot>
@@ -2096,7 +1949,7 @@
 
       class RowToggle extends TemplateElement {
         static get observedAttributes() {
-          return ["label", "subtitle", "expanded"];
+          return ["label", "expanded"];
         }
         connectedCallback() {
           this.mount("row-toggle-template");
@@ -2133,10 +1986,7 @@
           const root = this.shadowRoot;
           const button = root.querySelector("button");
           const labelEl = root.querySelector(".label");
-          const subtitleEl = root.querySelector(".subtitle");
           if (labelEl) labelEl.textContent = this.getAttribute("label") ?? "";
-          if (subtitleEl)
-            subtitleEl.textContent = this.getAttribute("subtitle") ?? "";
           const isExpanded = this.getAttribute("expanded") === "true";
           if (button) button.setAttribute("aria-expanded", String(isExpanded));
           const row = this.closest("tr");
@@ -2157,7 +2007,7 @@
 
       class DashboardPanel extends TemplateElement {
         static get observedAttributes() {
-          return ["title", "summary", "open"];
+          return ["title", "open"];
         }
         connectedCallback() {
           this.mount("dashboard-panel-template");
@@ -2168,17 +2018,6 @@
             details.addEventListener("toggle", () => {
               if (details.open) this.setAttribute("open", "");
               else this.removeAttribute("open");
-              this.dispatchEvent(
-                new CustomEvent("panel-toggle", {
-                  bubbles: true,
-                  composed: true,
-                  detail: {
-                    id: this.id,
-                    title: this.getAttribute("title"),
-                    open: details.open
-                  }
-                })
-              );
             });
           }
         }
@@ -2191,10 +2030,7 @@
           const root = this.shadowRoot;
           const details = root.querySelector("details");
           const titleEl = root.querySelector(".title");
-          const summaryEl = root.querySelector(".summary");
           if (titleEl) titleEl.textContent = this.getAttribute("title") ?? "";
-          if (summaryEl)
-            summaryEl.textContent = this.getAttribute("summary") ?? "";
           if (details) {
             const wantsOpen = this.hasAttribute("open");
             if (details.open !== wantsOpen) {
@@ -2207,7 +2043,7 @@
 
       class SubPanel extends TemplateElement {
         static get observedAttributes() {
-          return ["title", "summary", "open"];
+          return ["title", "open"];
         }
         connectedCallback() {
           this.mount("sub-panel-template");
@@ -2218,17 +2054,6 @@
             details.addEventListener("toggle", () => {
               if (details.open) this.setAttribute("open", "");
               else this.removeAttribute("open");
-              this.dispatchEvent(
-                new CustomEvent("panel-toggle", {
-                  bubbles: true,
-                  composed: true,
-                  detail: {
-                    id: this.id,
-                    title: this.getAttribute("title"),
-                    open: details.open
-                  }
-                })
-              );
             });
           }
         }
@@ -2241,10 +2066,7 @@
           const root = this.shadowRoot;
           const details = root.querySelector("details");
           const titleEl = root.querySelector(".title");
-          const summaryEl = root.querySelector(".summary");
           if (titleEl) titleEl.textContent = this.getAttribute("title") ?? "";
-          if (summaryEl)
-            summaryEl.textContent = this.getAttribute("summary") ?? "";
           if (details) {
             const wantsOpen = this.hasAttribute("open");
             if (details.open !== wantsOpen) {
@@ -2257,7 +2079,6 @@
 
       // Track user expansion state across polling refreshes
       const expandedRows = new Set();
-      const panelOpenStates = new Map();
 
       const LOOKBACK_LABELS = {
         all: "All",
@@ -2328,21 +2149,6 @@
         if (expanded) expandedRows.add(label);
         else expandedRows.delete(label);
       });
-
-      document.addEventListener("panel-toggle", (e) => {
-        const key = e.detail.id || e.detail.title;
-        if (key) panelOpenStates.set(key, e.detail.open);
-      });
-
-      function syncPanel(panel, title, summary) {
-        if (!panel) return;
-        if (title != null) panel.setAttribute("title", title);
-        if (summary != null) panel.setAttribute("summary", summary);
-        const key = panel.id || panel.getAttribute("title");
-        if (key && panelOpenStates.has(key)) {
-          panel.toggleAttribute("open", panelOpenStates.get(key));
-        }
-      }
 
       function escapeHtml(str) {
         if (str == null) return "";
@@ -3152,9 +2958,7 @@
       // `status.agents.liveByRole` partition the router sums to produce
       // `status.agents.canonicalLiveCount`, so it stays consistent with
       // (sums to) the canonical total rather than being independently maxed
-      // against a different counter. Workspace count is non-additive context
-      // (one agent attributed to one workspace), not a component of the agent
-      // total -- it is only ever rendered alongside `totalActive`.
+      // against a different counter.
       //
       // Role-attributed subagents are summed separately from the explicit
       // unattributed residual. The residual is not guessed into a role: it is
@@ -3176,36 +2980,12 @@
             subActive += Number(count ?? 0);
         }
         const unattributedActive = Number(liveByRole.unattributed ?? 0);
-        const activeWorkspaces = countActiveWorkspaces(status);
         return {
           totalActive,
           orchActive,
           subActive,
-          unattributedActive,
-          activeWorkspaces
+          unattributedActive
         };
-      }
-
-      // The active workspace count is derived directly from
-      // `status.agents.liveByWorkspace` -- the same partition the
-      // canonicalLiveCount reads from -- excluding the `unattributed` and
-      // `unknown` residuals. The dashboard never reaches for the legacy
-      // `status.usage.activity.byWorkspace` or `status.usage.byWorkspace`
-      // sources: if `status.agents` is missing, the dashboard surfaces an
-      // error rather than silently substituting a different counter.
-      function countActiveWorkspaces(status) {
-        const liveByWorkspace = status?.agents?.liveByWorkspace;
-        if (!liveByWorkspace || typeof liveByWorkspace !== "object") {
-          throw new Error(
-            "dashboard requires status.agents.liveByWorkspace for active workspace reconciliation"
-          );
-        }
-        return Object.entries(liveByWorkspace).filter(
-          ([workspace, count]) =>
-            workspace !== "unattributed" &&
-            workspace !== "unknown" &&
-            Number(count ?? 0) > 0
-        ).length;
       }
 
       // The two outcome KPIs use Chart.js for their pies. Counts stay in the
@@ -3238,9 +3018,7 @@
         for (const row of rows) {
           if (!row || typeof row !== "object") continue;
           const byStatus = row.byStatus ?? {};
-          const errorCount = outcomeCount(
-            byStatus.error ?? byStatus.failure
-          );
+          const errorCount = outcomeCount(byStatus.error ?? byStatus.failure);
           const skipCount = outcomeCount(byStatus.skipped);
           const explicitSuccess = byStatus.ok ?? byStatus.success;
           success +=
@@ -3395,33 +3173,13 @@
         const receiverScope = isActiveSessions ? "unscoped" : activityScope;
 
         document.title = `${status.router ?? "Codex model router"} · integrated dashboard`;
-        const metaEl = document.getElementById("page-meta");
-        if (metaEl) {
-          const lookbackLabel = LOOKBACK_LABELS[selectedLookback];
-          const windowNote = isInterval
-            ? " · window covers retained history only (ring-buffered events)"
-            : isActiveSessions
-              ? " · active sessions · exact live-thread scope; event details use retained history"
-              : "";
-          metaEl.textContent = `Instance ${status.routerInstanceId ?? "-"} · PID ${status.pid ?? "-"} · started ${formatTimestamp(status.startedAt) || "—"} · refresh cadence 3s · lookback ${lookbackLabel}${windowNote}`;
-        }
         const errorEl = document.getElementById("error");
         if (errorEl && !lastControlError) errorEl.textContent = "";
 
         // 1. KPI Grid
-        const {
-          totalActive,
-          orchActive,
-          subActive,
-          unattributedActive,
-          activeWorkspaces
-        } = computeKpiAgentTotals(status);
+        const { totalActive, orchActive, subActive, unattributedActive } =
+          computeKpiAgentTotals(status);
         const workspacesList = Object.entries(status.usage?.byWorkspace ?? {});
-
-        // Spawns / Tool calls outcome slices are computed by the helpers
-        // `computeKpiSpawnOutcomes` / `computeKpiToolOutcomes` below, which
-        // are the single source of truth for those two KPI cards.
-        const attemptsTotal = Number(status.usage?.totals?.attempts ?? 0);
 
         const skillUsesTotal = Number(
           status.codexTelemetry?.skills?.used?.total ?? 0
@@ -3441,11 +3199,6 @@
         const kpiAgents = document.getElementById("kpi-agents");
         if (kpiAgents) {
           kpiAgents.setAttribute("value", String(totalActive));
-          const unattributedSuffix =
-            unattributedActive > 0
-              ? ` · <strong>${unattributedActive}</strong> unattributed`
-              : "";
-          kpiAgents.innerHTML = `<strong>${orchActive}</strong> orchestrators · <strong>${subActive}</strong> subagents${unattributedSuffix} · <strong>${activeWorkspaces}</strong> workspaces with active agents · live`;
         }
         const spawnSlices = computeKpiSpawnOutcomes(status);
         const toolSlices = computeKpiToolOutcomes(status);
@@ -3496,24 +3249,6 @@
         const providersEntries = Object.entries(status.providers ?? {}).filter(
           ([providerName, p]) =>
             providerName !== "unattributed" && p.synthetic !== true
-        );
-        const configuredProvidersEntries = providersEntries;
-        const readyProvidersCount = configuredProvidersEntries.filter(
-          ([, p]) => p.status === "ready"
-        ).length;
-        // Sum the same canonical `active` field the per-provider rows render
-        // (via getProviderLiveActivity) directly -- no artificial floor. Each
-        // provider's `active` is already >= 1 whenever it is live, so flooring
-        // it against 1 was a no-op that only obscured the real reconciliation
-        // between this sum and the individual rows below.
-        const activeReqSum = providersEntries.reduce(
-          (sum, [, p]) => sum + getProviderLiveActivity(p),
-          0
-        );
-        syncPanel(
-          document.getElementById("panel-providers"),
-          `Provider health · current; usage ${activityScope}`,
-          `${readyProvidersCount} / ${configuredProvidersEntries.length} ready · ${activeReqSum} active now`
         );
 
         const providersTbody = document.getElementById("providers-tbody");
@@ -3631,12 +3366,6 @@
         }
 
         // 3. Orchestrator & subagent usage
-        syncPanel(
-          document.getElementById("panel-orchestrator"),
-          `Agent usage · ${activityScope}`,
-          `${attemptsTotal.toLocaleString()} attempts`
-        );
-
         // "orchestrator" is always the router's own bucket for orchestrator-
         // origin traffic (see recordUsageEvent's roleKey derivation); it is
         // never a stand-in for "unattributed", which is role-less *subagent*
@@ -3839,11 +3568,6 @@
           recentSpawns,
           totalSpawns
         );
-        syncPanel(
-          document.getElementById("panel-spawn-breakdown"),
-          `Spawn breakdown · ${activityScope}`,
-          spawnCoverageLabel
-        );
 
         const spawnTbody = document.getElementById("spawn-breakdown-tbody");
         const spawnTfoot = document.getElementById("spawn-breakdown-tfoot");
@@ -3881,11 +3605,6 @@
 
         // Spawn failures sub-panel
         const failuresTotal = Number(status.spawnFailures?.total ?? 0);
-        syncPanel(
-          document.getElementById("panel-spawn-failures"),
-          `Spawn failures · ${activityScope}`,
-          `${failuresTotal} observed`
-        );
 
         const failuresTbody = document.getElementById("spawn-failures-tbody");
         const failuresTfoot = document.getElementById("spawn-failures-tfoot");
@@ -3929,12 +3648,6 @@
         }
 
         // 4. Usage by Workspace
-        syncPanel(
-          document.getElementById("workspace-usage-section"),
-          "Usage by workspace",
-          `${workspacesList.length} workspaces`
-        );
-
         const wsTbody = document.getElementById("workspace-usage");
         if (wsTbody) {
           if (!workspacesList.length) {
@@ -3953,7 +3666,6 @@
                 const avgDurationMs = Number(w.averageDurationMs ?? 0);
 
                 const isExpanded = expandedRows.has(wsKey);
-                const subtitle = w.cwd ? `CWD · ${w.cwd}` : "";
 
                 // Build Roles breakdown
                 const roleEntries = Object.entries(w.byRole ?? {});
@@ -4132,7 +3844,7 @@
 
                 return `
               <tr class="workspace-row" ${isExpanded ? 'aria-expanded="true"' : ""}>
-                <td><row-toggle label="${escapeHtml(wsKey)}" subtitle="${escapeHtml(subtitle)}" expanded="${isExpanded}"></row-toggle></td>
+                <td><row-toggle label="${escapeHtml(wsKey)}" expanded="${isExpanded}"></row-toggle></td>
                 <td><status-badge ${active > 0 ? 'active=""' : ""}>${active}</status-badge></td>
                 <td class="attempts"><outcome-bar fail="${failures}" no-bar="" rate="" success="${successes}"></outcome-bar></td>
                 <td>${durationText(avgDurationMs)}</td>
@@ -4174,19 +3886,6 @@
         }
 
         // 5. Skill Telemetry
-        syncPanel(
-          document.getElementById("panel-skills"),
-          `Skill telemetry · ${activityScope}`,
-          (() => {
-            const skillScopeSuffix = isInterval
-              ? " (window)"
-              : isActiveSessions
-                ? " (active sessions)"
-                : "";
-            return `${skillUsesTotal.toLocaleString()} uses${skillScopeSuffix} · ${skillContextsInjectedTotal.toLocaleString()} contexts injected${skillScopeSuffix}`;
-          })()
-        );
-
         const skillsTbody = document.getElementById("skills-usage-tbody");
         const skillsTfoot = document.getElementById("skills-usage-tfoot");
         if (skillsTbody && skillsTfoot) {
@@ -4298,11 +3997,6 @@
         }
 
         // Skill context sub-panel
-        syncPanel(
-          document.getElementById("panel-skill-context"),
-          `Skill context telemetry · ${activityScope}`,
-          `5 aggregate metrics · ${activityScope}`
-        );
         const skillCtxTbody = document.getElementById("skill-context-tbody");
         if (skillCtxTbody) {
           const skillsOtel = status.codexTelemetry?.skills;
@@ -4365,32 +4059,6 @@
         const toolsList = status.codexTelemetry?.tools?.byTool ?? [];
         const threadStarted = status.codexTelemetry?.threads?.started;
         const threadSpawns = status.codexTelemetry?.threads?.spawns;
-
-        let runtimeTotalEvents = 0;
-        for (const h of hooksList) {
-          const ok = Number(
-            h.byStatus?.ok ??
-              h.byStatus?.success ??
-              (h.count != null && !h.byStatus?.error && !h.byStatus?.failure
-                ? h.count
-                : 0)
-          );
-          const err = Number(h.byStatus?.error ?? h.byStatus?.failure ?? 0);
-          runtimeTotalEvents +=
-            ok + err || Number(h.count ?? h.durationCount ?? 0);
-        }
-        for (const tool of toolsList)
-          runtimeTotalEvents += Number(tool.count ?? 0);
-        if (threadStarted?.total)
-          runtimeTotalEvents += Number(threadStarted.total);
-        if (threadSpawns?.total)
-          runtimeTotalEvents += Number(threadSpawns.total);
-
-        syncPanel(
-          document.getElementById("panel-hooks"),
-          `Hooks & runtime · ${activityScope}`,
-          `${runtimeTotalEvents.toLocaleString()} events`
-        );
 
         const hooksTbody = document.getElementById("hooks-tbody");
         const hooksTfoot = document.getElementById("hooks-tfoot");
@@ -4524,12 +4192,6 @@
         }
 
         // 7. Operational summary
-        syncPanel(
-          document.getElementById("panel-ops"),
-          `Operational summary · mixed current/${activityScope}`,
-          `OTLP activity is scoped to ${activityScope}; inventory, state DB, and concurrency are current snapshots`
-        );
-
         const opsGrid = document.getElementById("ops-grid");
         if (opsGrid) {
           const receiver = status.codexTelemetry?.receiver;
@@ -4602,11 +4264,6 @@
           totalExports += Number(m.exports ?? 0);
           totalPoints += Number(m.dataPoints ?? 0);
         }
-        syncPanel(
-          document.getElementById("panel-native-metrics"),
-          "Native metrics observed · current inventory",
-          `${metricsList.length} metrics · ${totalExports.toLocaleString()} exports`
-        );
 
         const metricsTbody = document.getElementById("native-metrics-tbody");
         const metricsTfoot = document.getElementById("native-metrics-tfoot");
@@ -4743,12 +4400,6 @@
           toolResultsUnattributedCard.textContent = `${Number(toolResults.causeResolved ?? 0).toLocaleString()} causally resolved (${activityScope})`;
         }
 
-        syncPanel(
-          document.getElementById("panel-codex-state"),
-          `Codex state · current snapshot; workspace counters ${activityScope}`,
-          `${codexStateStatus} · ${codexStateConversationCount.toLocaleString()} conversation joins · ${bridgeExecuted.toLocaleString()} executed / ${bridgeRequested.toLocaleString()} requested / ${bridgeUnavailable.toLocaleString()} unavailable`
-        );
-
         // Per-workspace coverage table: toolsExecuted / toolsRequested / toolsUnavailable
         // / skillsExposed / toolsUnattributed / skillsUnattributed all sourced from the
         // workspace bucket. A workspace with all-zero values still gets a row so an
@@ -4809,18 +4460,10 @@
         // default-selected category so the panel always boots into an
         // operational view rather than an empty state.
         const liveFeed = Array.isArray(status.liveFeed) ? status.liveFeed : [];
-        const panelEl = document.getElementById("panel-events");
-        const liveFeedMeta = document.getElementById("live-feed-meta");
         const liveFeedTbody = document.getElementById("live-feed-tbody");
         const filtered = liveFeed.filter((e) =>
           liveFeedCategories.has(String(e?.category ?? "").toLowerCase())
         );
-        const summary =
-          filtered.length === liveFeed.length
-            ? `${filtered.length.toLocaleString()} shown`
-            : `${filtered.length.toLocaleString()} of ${liveFeed.length.toLocaleString()} shown`;
-        syncPanel(panelEl, "Live feed", summary);
-        if (liveFeedMeta) liveFeedMeta.textContent = summary;
         if (liveFeedTbody) {
           if (!liveFeed.length) {
             liveFeedTbody.innerHTML = `<tr><td colspan="4" class="dim" style="text-align:center">No live feed events yet.</td></tr>`;

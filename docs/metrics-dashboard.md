@@ -16,6 +16,11 @@ than a separately maintained data snapshot. The `/status` endpoint remains
 JSON for every `Accept` header; the dashboard does not change that API
 contract.
 
+Keep visible dashboard copy to only essential labels and messages; extra text
+and subtitles add clutter. Use concise panel titles, control labels, table
+headers, accessibility names, and necessary loading, empty, error, or status
+messages. Put explanations in this documentation instead.
+
 The page has one componentized hierarchy:
 
 1. KPI cards.
@@ -81,9 +86,8 @@ to a generic "No live feed events yet". Every dynamic cell value
 (timestamp, category pill, type, and the per-record detail fragments) is
 escaped through `escapeHtml` before insertion, and the empty/no-match
 branches stay text-only so the table can never be broken out of by a hostile
-payload. The panel summary remains tabular (`<n> shown` when the full set is
-visible, `<filtered> of <total> shown` when at least one category is hidden)
-so an operator can tell at a glance whether a category filter is active.
+payload. Toggling category filters immediately filters the live feed rows
+without extra visual helper copy or subtitles.
 
 Per-workspace usage always has reliable usage, role, and model dimensions.
 Named tool, named skill, and MCP server attribution at that same workspace granularity --
@@ -183,7 +187,6 @@ the `unattributed` bucket when a target cannot be recovered. The dashboard is a
 rolling operational view rather than a permanent audit ledger; use the retained
 artifacts for recent raw snapshots.
 
-
 ## Codex OpenTelemetry
 
 The local Codex configuration exports privacy-safe OTLP logs, traces, and
@@ -230,6 +233,7 @@ It parses the low-cardinality SQLite health metrics into
 log-derived turn/token counters to avoid double-counting.
 
 OTLP ingestion is idempotent for semantic counters. Each item has an identity:
+
 - a log record: its source timestamp and content;
 - a span: its trace and span ids, or its name, timestamps, and content;
 - a metric data point, for attribution diagnostics: its timestamps and
@@ -263,7 +267,7 @@ The **Subagents spawned** table is the one place that counts every subagent
 behind the router, whichever provider spawned it. It is fed by
 `status.subagents`, not by OTEL: Codex's `codex.multi_agent.spawn` metric only
 covers Codex-exported threads. It is also the only table that counts a spawn as
-a spawn -- `usage.byRole` counts the *turns* subagents ran, which is a different
+a spawn -- `usage.byRole` counts the _turns_ subagents ran, which is a different
 measurement, and one a child that spawned but never ran does not contribute to.
 
 Two mechanisms are distinguished. `router_alias` spawns are Codex child threads
@@ -296,15 +300,14 @@ decisions the router made, and a child it never routed must not move them. A
 child whose CLI exported no role is counted under `unattributed-subagent` in
 `usage.byRole.orchestrator` contains root/orchestrator turns, while direct
 requests without a role contract remain under `unattributed`. The dashboard
-renders the former as the Orchestrator row. The line above the usage
-table names how many CLI-delegated turns are included. See
+renders the former as the Orchestrator row. See
 `docs/provider-routing.md` -> "Counting subagents across providers".
 
 The cumulative `total` is the all-time count; `subagents.recent` is a bounded
 newest-first window capped at 50 and is the only source for the table's recent
 rows and provider/mechanism/role/tool details. When that window cannot cover
-all-time history, the panel summary and totals footer explicitly read
-`X recent / Y total`; they do not inflate the recent subtotal to make it match
+all-time history, the totals footer explicitly reads
+`X recent / Y total`; it does not inflate the recent subtotal to make it match
 the cumulative total. If all records fit in the window, the total is shown
 without a misleading recent qualifier. Codex's own OTLP spawn counter remains
 separate because adding it to the router's count would double-count every
@@ -326,7 +329,7 @@ The **Provider health** table renders the operational state, routing priority, e
 
 - **Routing priority:** Formatted by `formatRoutingPriority(providerName, p, status)`, this column maps the provider's configured priority groups across capability tiers (`default`, `smart`, `orchestrator`) from `status.routing.providerGroups`, displaying priority tiers such as `default: P1 · smart: P1 · orchestrator: P2`.
 - **Effective limits & cooldowns:** Formatted by `formatEffectiveLimitsAndCooldowns(p)`, this column displays active cooldown badges with cooldown kind (`transient`, `hard`, `probe`, `config`), failure class, remaining countdown duration, declared reset time (`resets <timestamp>`), and any live provider limit details (`p.effectiveLimits`, `p.liveLimits`, `p.limits`). This replaces the redundant `Last failure` column with comprehensive, real-time cooldown and limit diagnostics.
-- **Active:** Displays live agent workflow activity for the provider (`<status-badge>`), retaining non-zero counts and active styling during tool, user, and subagent waits. The table keeps only the `Active` column (transport-level in-flight requests are omitted from this table and surfaced separately under **Operational summary** and the Status CLI). Both the per-row badge and the panel header's `N active` summary read `status.providers[*].active` directly with no artificial floor: `isProviderLiveActive(p)` is defined as `active > 0`, so a live provider's `active` field is already `>= 1`, and the panel total (`activeReqSum`) is a plain sum of the same field the rows render -- it reconciles exactly with the sum of the visible per-row counts.
+- **Active:** Displays live agent workflow activity for the provider (`<status-badge>`), retaining non-zero counts and active styling during tool, user, and subagent waits. The table keeps only the `Active` column (transport-level in-flight requests are omitted from this table and surfaced separately under **Operational summary** and the Status CLI). Each row reads `status.providers[*].active` directly with no artificial floor: `isProviderLiveActive(p)` is defined as `active > 0`, so a live provider's `active` field is already `>= 1`.
 - **No synthetic provider rows:** Provider health renders only configured router routes. Missing provider identity is reported through live-attribution diagnostics and remains available only in non-provider residual dimensions; it is never rendered as an `unattributed` provider or model row.
 - **Administrative role controls:** The **Control** column features two independent iOS-like toggle switches for each provider: **Orchestrator** and **Subagent**. Each switch uses that role's `orchestratorEnabled` or `subagentEnabled` status boolean; provider health/status remains independent from role administration.
   - Each switch is a labeled `role="switch"` control with accurate `aria-checked`, `aria-label`, and `title` values. Green means that role is enabled and grey means it is disabled.
@@ -334,7 +337,6 @@ The **Provider health** table renders the operational state, routing priority, e
   - The browser issues `POST /v1/providers/:provider` with JSON payload `{ "role": "orchestrator" | "subagent", "enabled": boolean }`.
   - Upon success, the endpoint response identifies the role and enabled state, and the dashboard triggers `refresh()` to re-fetch `/status` and render both role states.
   - If the request fails, the role-specific error is displayed in the dashboard `#error` element and that switch re-enables. No whole-provider disabled styling or status override is inferred from either role switch.
-
 
 ### Provider administration and status contract
 
@@ -350,7 +352,6 @@ The model router exposes provider state and administrative controls via the foll
   - `status.providers[*].status`: Reports operational health (for example, `ready`, `cooldown`, or an active failure class); it is not replaced by a role's enabled state.
   - `status.providers[*].active`: Live agent activity for the provider (migrated from ambiguous `activeRequests`), representing active turn execution.
   - `status.inFlightRequests` / `status.providers[*].inFlightRequests`: Transport-layer diagnostic counters representing open HTTP connections to upstream provider models.
-
 
 ### Live agent activity vs. in-flight requests transport diagnostics
 
@@ -387,14 +388,6 @@ The router and dashboard cleanly separate **live agent activity** from **in-flig
   headline via `Math.max` used to silently inflate the total above the
   number of agents actually live. One subagent active in one workspace
   renders as exactly `1`.
-- **Orchestrator/subagent role breakdown stays consistent with the total:**
-  The `N orchestrators · N subagents` breakdown shown under the KPI is
-  read from `status.agents.liveByRole` (the same partition the router
-  sums to produce `canonicalLiveCount`), so the breakdown's components
-  sum to the canonical total above rather than being independently maxed
-  against a different counter. Explicit parent/child records remain
-  attributable, while child activity without a proven parent does not
-  fabricate an orchestrator or provider.
 - **Parent orchestrators remain live while children work:** Authenticated
   bridge spawn events may keep an explicitly identified parent request live
   with its concrete provider/model. Child activity without that relationship
@@ -409,18 +402,8 @@ The router and dashboard cleanly separate **live agent activity** from **in-flig
   fields describe how many subagent execution slots or session slots are
   currently occupied for concurrency-limiting purposes. They are shown in
   the Operational summary's Concurrency rows for that purpose, but are
-  deliberately excluded from the `Active agents` KPI total and its role
-  breakdown, since a slot and a live agent identity are not always in a
-  1:1 relationship.
-- **`workspaces with active agents` is non-additive context, not a KPI
-  component:** The KPI's workspace count -- labeled `workspaces with active
-  agents` -- is read directly from `status.agents.liveByWorkspace` and
-  excludes `unattributed`/`unknown` activity that cannot be safely
-  assigned to a workspace. This count is rendered alongside the agent
-  total purely for attribution context (how many distinct workspaces the
-  live agents belong to); it is never summed into `Active agents`, since
-  one agent is attributed to exactly one workspace and a workspace can
-  host more than one live agent.
+  deliberately excluded from the `Active agents` total and role cards,
+  since a slot and a live agent identity are not always in a 1:1 relationship.
 - **In-flight requests (`inFlightRequests`):**
   A distinct, transport-level diagnostic metric measuring active HTTP requests currently open between the router daemon and upstream provider model APIs. Incremented upon socket dispatch and decremented upon response completion or cancellation. The dashboard's **Operational summary** labels in-flight requests separately under Concurrency (`In-flight requests`), and `src/cli/router-status.ts` displays both `Active` (live agent activity) and `In-Flight` (transport requests) side-by-side in its provider table.
 
@@ -433,9 +416,8 @@ The router integrates with upstream agent runtimes through explicit agent activi
 - **Live states:** `active`, `resumed`, `tool_wait`, `user_wait`, and `subagent_wait` count as live; `finished` and `failed` are terminal. An open agent request remains live until it settles; non-terminal wait activity older than the TTL becomes `stale` and is removed from live counts without killing or restarting processes.
 - **Heartbeat freshness drives the `Active agents` KPI:** Every lifecycle
   event refreshes that agent's last-seen timestamp, acting as a heartbeat.
-  `status.agents.canonicalLiveCount` (and therefore the `Active agents`
-  KPI total, role breakdown, and `workspaces with active agents` context
-  count) only ever counts entries whose heartbeat is still within the TTL
+  `status.agents.canonicalLiveCount` (and therefore the `Active now` KPI
+  and role cards) only counts entries whose heartbeat is within the TTL
   window above. If an agent goes silent (its client vanished, or a
   bridge crashed mid-request), that agent
   silently ages out of every one of those counts once its heartbeat
@@ -485,13 +467,11 @@ response arrives are not counted as populated rows: those branches clear the
 footer directly and only reach the helper once real data rows have been
 rendered.
 
-
-
 The Hooks table combines native tool calls, hook runs (`codex.hooks.run` and
 its duration histogram), thread starts, and multi-agent spawns. The Type and
 Name columns distinguish these event families, while rows are grouped by
 sanitized hook/source/handler labels where available; thread and spawn totals
-are shown as rows rather than duplicated in a subtitle.
+are shown as rows.
 `codex.turn.token_usage` and native turn counters remain inventory-only because
 the router already derives token and turn totals from lifecycle logs.
 
@@ -606,6 +586,7 @@ TTL (`OTEL_HEALTH_TTL_MS`). In the Operational summary, the ratio of ready to
 observed servers is displayed as operational health context (`MCP ready / observed`).
 
 Both route cards apply role-specific union semantics using `/status` partitions:
+
 - The **Orchestrator** card displays the unique observed-server union for the orchestrator role.
 - The **Subagents** card displays the unique observed-server union across explicit subagent roles.
 - If the native stream has no explicit role attribution, both cards fall back to the global observed count instead of displaying a misleading zero; the unattributed/unknown partition remains visible in `/status`.
@@ -613,6 +594,7 @@ Both route cards apply role-specific union semantics using `/status` partitions:
 MCP server entries (`status.codexTelemetry.mcpServers`) and summaries
 (`status.codexTelemetry.mcpSummary`) are partitioned into independently
 aggregated buckets:
+
 - `byRole`
 - `byWorkspace`
 - `byModel`
@@ -631,6 +613,7 @@ creating a standalone MCP panel.
 
 When resolving context across MCP, tool, hook, skill, and bridge telemetry,
 the router applies canonical precedence in this order:
+
 1. Explicit event or resource attributes
 2. Verified provider bridge / request context
 3. Verified `conversation.id` -> session/thread-state join

@@ -133,12 +133,7 @@ test("dashboard collapses dotted Claude model aliases into canonical usage and c
 });
 
 test("router dashboard exposes the component hierarchy and explicit workspace attribution states", async () => {
-  const dashboard = (
-    await readFile(
-      dashboardFile,
-      "utf8"
-    )
-  )
+  const dashboard = (await readFile(dashboardFile, "utf8"))
     .replaceAll(/\s+/g, " ")
     .replaceAll(/>\s+</g, "><");
   const panels = Array.from(
@@ -257,20 +252,14 @@ test("router dashboard exposes the component hierarchy and explicit workspace at
 });
 
 test("router dashboard exposes the top-right EST5EDT lookback control and live filtering", async () => {
-  const rawDashboard = await readFile(
-    dashboardFile,
-    "utf8"
-  );
+  const rawDashboard = await readFile(dashboardFile, "utf8");
   assert.match(rawDashboard, /class="lookback-control"/);
   assert.match(
     rawDashboard,
     /<script src="\/assets\/chart\.umd\.min\.js"><\/script>/
   );
   assert.match(rawDashboard, /type: "pie"/);
-  assert.match(
-    rawDashboard,
-    /labels: \["Success", "Fail", "Skipped"\]/
-  );
+  assert.match(rawDashboard, /labels: \["Success", "Fail", "Skipped"\]/);
   assert.doesNotMatch(rawDashboard, /type: "doughnut"/);
   assert.match(rawDashboard, /existing\.update\("none"\)/);
   assert.match(rawDashboard, /generateLabels\(chart\)/);
@@ -314,30 +303,18 @@ test("router dashboard exposes the top-right EST5EDT lookback control and live f
   );
   assert.match(rawDashboard, /lookbackSelect\.addEventListener\("change"/);
   assert.match(rawDashboard, /void refresh\(\)/);
-  assert.match(
-    rawDashboard,
-    /active sessions · exact live-thread scope; event details use retained history/
-  );
-  assert.doesNotMatch(rawDashboard, /active sessions · retained history only/);
   assert.doesNotMatch(rawDashboard, /function hasRecentTimestamp\(/);
   assert.doesNotMatch(rawDashboard, /function applyLookback\(/);
   // The dashboard no longer filters cumulative buckets by `lastSeenAt`:
   // wall-clock windows use bounded histories, while Active sessions uses
   // exact live-thread usage and skill counters. The dashboard only surfaces
   // the server's scope and labels which event-detail panels remain retained.
-  assert.match(
-    rawDashboard,
-    /params\.set\("lookback", requestedLookback\)/
-  );
-  assert.match(rawDashboard, /ring-buffered events/);
+  assert.match(rawDashboard, /params\.set\("lookback", requestedLookback\)/);
   assert.match(rawDashboard, /window-derived/);
 });
 
 test("router dashboard inline JavaScript has no unresolved identifiers", async () => {
-  const rawDashboard = await readFile(
-    dashboardFile,
-    "utf8"
-  );
+  const rawDashboard = await readFile(dashboardFile, "utf8");
   const source = Array.from(
     rawDashboard.matchAll(/<script(?=[\s>])[^>]*>(.*?)<\/script>/gis),
     (match) => match[1]
@@ -373,10 +350,7 @@ test("router dashboard inline JavaScript has no unresolved identifiers", async (
 });
 
 test("router dashboard provider health panel renders routing priorities, limits, disabled state, and toggle controls", async () => {
-  const rawDashboard = await readFile(
-    dashboardFile,
-    "utf8"
-  );
+  const rawDashboard = await readFile(dashboardFile, "utf8");
   assert.match(
     rawDashboard,
     /<dashboard-panel\s+id="panel-providers"[^>]*title="Provider health"/
@@ -476,27 +450,17 @@ test("router dashboard provider health panel renders routing priorities, limits,
 });
 
 test("dashboard provider health excludes synthetic and unattributed provider rows", async () => {
-  const rawDashboard = await readFile(
-    dashboardFile,
-    "utf8"
-  );
+  const rawDashboard = await readFile(dashboardFile, "utf8");
   assert.match(
     rawDashboard,
     /const providersEntries = Object\.entries\(status\.providers \?\? \{\}\)/
   );
   assert.match(rawDashboard, /providerName !== "unattributed"/);
   assert.match(rawDashboard, /p\.synthetic !== true/);
-  assert.match(
-    rawDashboard,
-    /const configuredProvidersEntries = providersEntries;/
-  );
 });
 
 test("router dashboard and status CLI contract separates live agent activity from in-flight requests and documents lifecycle TTL", async () => {
-  const rawDashboard = await readFile(
-    dashboardFile,
-    "utf8"
-  );
+  const rawDashboard = await readFile(dashboardFile, "utf8");
   assert.match(rawDashboard, /function getProviderLiveActivity\(/);
   assert.match(rawDashboard, /function isProviderLiveActive\(/);
   assert.match(
@@ -627,10 +591,7 @@ test("metrics workflow publishes an issue dashboard and artifact", async () => {
 });
 
 test("router dashboard workspace table uses active request counts and otherwise derives Tool calls from named rows", async () => {
-  const rawDashboard = await readFile(
-    dashboardFile,
-    "utf8"
-  );
+  const rawDashboard = await readFile(dashboardFile, "utf8");
   assert.match(rawDashboard, /<th>Tool calls<\/th>/);
   assert.match(
     rawDashboard,
@@ -640,7 +601,10 @@ test("router dashboard workspace table uses active request counts and otherwise 
     rawDashboard,
     /title="Count of tool calls requested by live-thread responses/
   );
-  assert.match(rawDashboard, /resolveWorkspaceToolRows\(\s*otlpToolRows,\s*bridgeToolRows/);
+  assert.match(
+    rawDashboard,
+    /resolveWorkspaceToolRows\(\s*otlpToolRows,\s*bridgeToolRows/
+  );
 
   const match = rawDashboard.match(
     /function normalizeWorkspaceNamedUsage\([\s\S]*?\n {6}\}/
@@ -695,10 +659,7 @@ test("router dashboard workspace table uses active request counts and otherwise 
 });
 
 test("router dashboard combines skill usage and exposure into one Skills section showing uses / exposed while keeping semantics distinct", async () => {
-  const rawDashboard = await readFile(
-    dashboardFile,
-    "utf8"
-  );
+  const rawDashboard = await readFile(dashboardFile, "utf8");
   assert.match(rawDashboard, /<th>Skill uses \/ exposed<\/th>/);
   assert.match(
     rawDashboard,
@@ -864,14 +825,7 @@ test("router dashboard combines skill usage and exposure into one Skills section
 });
 
 test("router dashboard documents shell cat-style SKILL.md reads as ordinary skill uses", async () => {
-  const dashboard = await readFile(
-    dashboardFile,
-    "utf8"
-  );
-  assert.match(
-    dashboard,
-    /shell command[\s\S]*?<code>cat<\/code>[\s\S]*?skill_used<\/code>\/\s*<code>skill_read<\/code>/
-  );
+  const dashboard = await readFile(dashboardFile, "utf8");
   assert.doesNotMatch(
     dashboard,
     /shellReadUses|shell_read_total|panel-shell-read/
@@ -893,10 +847,7 @@ test("router dashboard documents shell cat-style SKILL.md reads as ordinary skil
 });
 
 test("router dashboard falls back to bridgeTools when OTLP named-tool rows are unavailable or empty, without double-counting", async () => {
-  const rawDashboard = await readFile(
-    dashboardFile,
-    "utf8"
-  );
+  const rawDashboard = await readFile(dashboardFile, "utf8");
   assert.match(
     rawDashboard,
     /normalizeWorkspaceNamedUsage\(w\.byTool, \[\s*"tool",\s*"name"\s*\]\)/
@@ -982,10 +933,7 @@ test("router dashboard falls back to bridgeTools when OTLP named-tool rows are u
 });
 
 test("dashboard hides totals rows for sections with 0 or 1 populated row and shows the five supported footers for 2+ via the shared shouldRenderTotals helper", async () => {
-  const rawDashboard = await readFile(
-    dashboardFile,
-    "utf8"
-  );
+  const rawDashboard = await readFile(dashboardFile, "utf8");
   const match = rawDashboard.match(
     /function shouldRenderTotals\([\s\S]*?\n {6}\}/
   );
@@ -1068,58 +1016,8 @@ test("dashboard hides totals rows for sections with 0 or 1 populated row and sho
   assert.match(metricsDoc, /loading\/placeholder\/empty colspan rows/);
 });
 
-test("dashboard counts active workspaces from live activity states and excludes unattributed slots", async () => {
-  const dashboard = await readFile(
-    dashboardFile,
-    "utf8"
-  );
-  const match = dashboard.match(
-    /function countActiveWorkspaces\([\s\S]*?\n {6}\}/
-  );
-  assert.ok(
-    match,
-    "countActiveWorkspaces should be present in dashboard script"
-  );
-  const countActiveWorkspaces = new Function(
-    `${match[0]}; return countActiveWorkspaces;`
-  )() as (status: unknown) => number;
-
-  assert.equal(
-    countActiveWorkspaces({
-      agents: {
-        schema: "autodev-agent-status-v1",
-        canonicalLiveCount: 3,
-        liveByWorkspace: {
-          AutoDev: 1,
-          "codex-runtime": 1,
-          unattributed: 1,
-          unknown: 1
-        }
-      }
-    }),
-    2
-  );
-  assert.equal(
-    countActiveWorkspaces({
-      agents: {
-        schema: "autodev-agent-status-v1",
-        canonicalLiveCount: 0,
-        liveByWorkspace: {}
-      }
-    }),
-    0
-  );
-  assert.throws(
-    () => countActiveWorkspaces({}),
-    /status.agents.liveByWorkspace/
-  );
-});
-
 test("dashboard KPI agent total uses the canonical live-agent count and never maxes it against unrelated counters", async () => {
-  const dashboard = await readFile(
-    dashboardFile,
-    "utf8"
-  );
+  const dashboard = await readFile(dashboardFile, "utf8");
   const kpiSection = dashboard.match(
     /function computeKpiAgentTotals\([\s\S]*?\n {6}\}/
   );
@@ -1134,21 +1032,13 @@ test("dashboard KPI agent total uses the canonical live-agent count and never ma
   assert.match(kpiSection[0], /agents\.schema/);
   assert.match(kpiSection[0], /canonicalLiveCount/);
 
-  const countMatch = dashboard.match(
-    /function countActiveWorkspaces\([\s\S]*?\n {6}\}/
-  );
-  assert.ok(
-    countMatch,
-    "countActiveWorkspaces should be present in dashboard script"
-  );
   const computeKpiAgentTotals = new Function(
-    `${countMatch[0]}; ${kpiSection[0]}; return computeKpiAgentTotals;`
+    `${kpiSection[0]}; return computeKpiAgentTotals;`
   )() as (status: unknown) => {
     totalActive: number;
     orchActive: number;
     subActive: number;
     unattributedActive: number;
-    activeWorkspaces: number;
   };
 
   const oneSubagentOneWorkspaceStatus = {
@@ -1175,8 +1065,7 @@ test("dashboard KPI agent total uses the canonical live-agent count and never ma
     totalActive: 2,
     orchActive: 1,
     subActive: 1,
-    unattributedActive: 0,
-    activeWorkspaces: 1
+    unattributedActive: 0
   });
 
   assert.throws(
@@ -1187,15 +1076,10 @@ test("dashboard KPI agent total uses the canonical live-agent count and never ma
       }),
     /status\.agents/
   );
-
-  assert.match(dashboard, /workspaces with active agents/);
 });
 
 test('dashboard keeps role-less ("unattributed") activity explicit instead of guessing a role', async () => {
-  const dashboard = await readFile(
-    dashboardFile,
-    "utf8"
-  );
+  const dashboard = await readFile(dashboardFile, "utf8");
   const kpiSection = dashboard.match(
     /function computeKpiAgentTotals\([\s\S]*?\n {6}\}/
   );
@@ -1203,21 +1087,13 @@ test('dashboard keeps role-less ("unattributed") activity explicit instead of gu
     kpiSection,
     "computeKpiAgentTotals should be present in dashboard script"
   );
-  const countMatch = dashboard.match(
-    /function countActiveWorkspaces\([\s\S]*?\n {6}\}/
-  );
-  assert.ok(
-    countMatch,
-    "countActiveWorkspaces should be present in dashboard script"
-  );
   const computeKpiAgentTotals = new Function(
-    `${countMatch[0]}; ${kpiSection[0]}; return computeKpiAgentTotals;`
+    `${kpiSection[0]}; return computeKpiAgentTotals;`
   )() as (status: unknown) => {
     totalActive: number;
     orchActive: number;
     subActive: number;
     unattributedActive: number;
-    activeWorkspaces: number;
   };
 
   const status = {
@@ -1236,8 +1112,7 @@ test('dashboard keeps role-less ("unattributed") activity explicit instead of gu
     totalActive: 3,
     orchActive: 1,
     subActive: 0,
-    unattributedActive: 2,
-    activeWorkspaces: 0
+    unattributedActive: 2
   });
   assert.equal(
     totals.orchActive + totals.subActive + totals.unattributedActive,
@@ -1257,20 +1132,9 @@ test('dashboard keeps role-less ("unattributed") activity explicit instead of gu
   assert.match(dashboard, /Unattributed/);
 });
 
-test("dashboard provider active totals derive directly from the canonical per-provider active field, with no Math.max floor", async () => {
-  const dashboard = await readFile(
-    dashboardFile,
-    "utf8"
-  );
-  const activeReqSumMatch = dashboard.match(
-    /const activeReqSum = providersEntries\.reduce\([^;]*\);/
-  );
-  assert.ok(
-    activeReqSumMatch,
-    "activeReqSum computation should be present in dashboard script"
-  );
-  assert.doesNotMatch(activeReqSumMatch[0], /Math\.max/);
-
+test("dashboard provider rows render canonical live activity without a floor or duplicated panel summary", async () => {
+  const dashboard = await readFile(dashboardFile, "utf8");
+  assert.doesNotMatch(dashboard, /activeReqSum/);
   const displayActiveMatch = dashboard.match(/const displayActive = [^;]*;/);
   assert.ok(
     displayActiveMatch,
@@ -1278,26 +1142,10 @@ test("dashboard provider active totals derive directly from the canonical per-pr
   );
   assert.doesNotMatch(displayActiveMatch[0], /Math\.max/);
   assert.match(displayActiveMatch[0], /const displayActive = liveActive;/);
-
-  const providersEntries: Array<[string, { active?: number }]> = [
-    ["codex", { active: 2 }],
-    ["anthropic", { active: 0 }],
-    ["openai", { active: 1 }]
-  ];
-  const getProviderLiveActivity = (p?: { active?: number }): number =>
-    Number(p?.active ?? 0);
-  const activeReqSum = providersEntries.reduce(
-    (sum, [, p]) => sum + getProviderLiveActivity(p),
-    0
-  );
-  assert.equal(activeReqSum, 3);
 });
 
 test("dashboard workspace usage rows read the canonical per-workspace active field without a Math.max floor", async () => {
-  const dashboard = await readFile(
-    dashboardFile,
-    "utf8"
-  );
+  const dashboard = await readFile(dashboardFile, "utf8");
   const activeDeclMatch = dashboard.match(
     /const active = Number\(w\.active \?\? 0\);/
   );
@@ -1327,10 +1175,7 @@ test("dashboard workspace usage rows read the canonical per-workspace active fie
 });
 
 test("router dashboard renders workspace MCP servers with confirmed uses and exposure rows", async () => {
-  const rawDashboard = await readFile(
-    dashboardFile,
-    "utf8"
-  );
+  const rawDashboard = await readFile(dashboardFile, "utf8");
   const escapeMatch = rawDashboard.match(
     /function escapeHtml\([\s\S]*?\n {6}\}/
   );
@@ -1412,10 +1257,7 @@ test("router dashboard renders workspace MCP servers with confirmed uses and exp
 });
 
 test("model MCP dashboard details use defined theme tokens", async () => {
-  const dashboard = await readFile(
-    dashboardFile,
-    "utf8"
-  );
+  const dashboard = await readFile(dashboardFile, "utf8");
   const rootStyles = dashboard.match(/:root\s*\{([^}]+)\}/)?.[1];
   const detailStyles = dashboard.match(
     /\.model-mcp-details\s*\{([^}]+)\}/
@@ -1445,4 +1287,43 @@ test("model MCP dashboard details use defined theme tokens", async () => {
     [],
     "model detail styles must use root theme tokens"
   );
+});
+
+test("router dashboard omits explanatory subtitles, section notes, and panel summary UI while preserving accessible summaries", async () => {
+  const dashboard = await readFile(dashboardFile, "utf8");
+
+  // Explanatory subtitles, section notes, and helper prose must not return
+  assert.doesNotMatch(dashboard, /class="section-note"/);
+  assert.doesNotMatch(dashboard, /\.section-note\b/);
+  assert.doesNotMatch(dashboard, /id="page-meta"/);
+  assert.doesNotMatch(dashboard, /class="page-meta"/);
+  assert.doesNotMatch(dashboard, /id="live-feed-meta"/);
+  assert.doesNotMatch(dashboard, /class="live-feed-meta"/);
+  assert.doesNotMatch(dashboard, /<span class="summary">/);
+  assert.doesNotMatch(
+    dashboard,
+    /summary="Telemetry · metrics · state DB · concurrency"/
+  );
+  assert.doesNotMatch(dashboard, /subtitle="CWD ·/);
+  assert.doesNotMatch(dashboard, /workspaces with active agents/);
+  assert.doesNotMatch(
+    dashboard,
+    /Provider\/model <strong>usage<\/strong> is consolidated/
+  );
+  assert.doesNotMatch(
+    dashboard,
+    /CLI-delegated children reported by provider bridges/
+  );
+  assert.doesNotMatch(dashboard, /countActiveWorkspaces/);
+  assert.doesNotMatch(dashboard, /\bsyncPanel\b/);
+  assert.doesNotMatch(dashboard, /\bpanelOpenStates\b/);
+  assert.doesNotMatch(dashboard, /panel-toggle/);
+
+  // Preserve native disclosure <details><summary> elements
+  assert.match(dashboard, /<details>\s*<summary>/);
+
+  // Preserve accessible screen-reader-only chart summaries and formatOutcomeSummary
+  assert.match(dashboard, /\.sr-only\b/);
+  assert.match(dashboard, /\.outcome-summary\b/);
+  assert.match(dashboard, /formatOutcomeSummary/);
 });
