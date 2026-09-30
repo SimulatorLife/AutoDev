@@ -89,7 +89,11 @@ async function run() {
   const org = await prisma.organisation.findFirst();
   if (!org) throw new Error("No organisation found in OpenLIT");
 
-  const defaultDb = await prisma.databaseConfig.findFirst({ where: { projectId: "cmuog7ig20004fipedpz3n1og" } });
+  const user = await prisma.user.findFirst();
+  const orgUser = user ? await prisma.organisationUser.findFirst({ where: { userId: user.id, organisationId: org.id } }) : null;
+  const defaultDb =
+    (await prisma.databaseConfig.findFirst({ where: { projectId: "cmuog7ig20004fipedpz3n1og" } })) ||
+    (await prisma.databaseConfig.findFirst());
   const existing = await prisma.project.findMany({ where: { organisationId: org.id } });
   const existingByName = new Map(existing.map(p => [p.name, p]));
 
@@ -114,10 +118,33 @@ async function run() {
       unchanged.push(repo.name);
     }
 
+    if (user && orgUser) {
+      const pu = await prisma.projectUser.findFirst({ where: { projectId: project.id, userId: user.id } });
+      if (!pu) {
+        await prisma.projectUser.create({
+          data: {
+            projectId: project.id,
+            userId: user.id,
+            organisationUserId: orgUser.id,
+          }
+        });
+      }
+    }
+
+    const pe = await prisma.projectEnvironment.findFirst({ where: { projectId: project.id, name: "production" } });
+    if (!pe) {
+      await prisma.projectEnvironment.create({
+        data: {
+          projectId: project.id,
+          name: "production",
+        }
+      });
+    }
+
     if (defaultDb) {
-      const hasDb = await prisma.databaseConfig.findFirst({ where: { projectId: project.id } });
-      if (!hasDb) {
-        await prisma.databaseConfig.create({
+      let db = await prisma.databaseConfig.findFirst({ where: { projectId: project.id } });
+      if (!db) {
+        db = await prisma.databaseConfig.create({
           data: {
             name: defaultDb.name,
             environment: defaultDb.environment,
@@ -130,6 +157,49 @@ async function run() {
             projectId: project.id
           }
         });
+      }
+
+      if (user) {
+        const dbu = await prisma.databaseConfigUser.findFirst({
+          where: {
+            userId: user.id,
+            databaseConfigId: db.id,
+          }
+        });
+        if (!dbu) {
+          await prisma.databaseConfigUser.create({
+            data: {
+              userId: user.id,
+              databaseConfigId: db.id,
+              isCurrent: true,
+              canEdit: true,
+              canShare: true,
+              canDelete: true,
+            }
+          });
+        }
+      }
+
+      for (const signal of ["traces", "logs", "metrics", "intelligence"]) {
+        const binding = await prisma.telemetrySourceBinding.findUnique({
+          where: {
+            projectId_signal_environment: {
+              projectId: project.id,
+              signal,
+              environment: "production",
+            }
+          }
+        });
+        if (!binding) {
+          await prisma.telemetrySourceBinding.create({
+            data: {
+              projectId: project.id,
+              signal,
+              environment: "production",
+              databaseConfigId: db.id,
+            }
+          });
+        }
       }
     }
   }
