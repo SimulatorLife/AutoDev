@@ -68,10 +68,15 @@ test("config CLI parsing and config-file I/O have distinct runtime owners", () =
   assert.equal(existsSync(join(repositoryRoot, "src/config/toml.ts")), false);
 });
 
-test("router dashboard ships beside the router and removes its former hooks copy", () => {
-  assert.ok(RUNTIME_MODULES.includes("src/router/dashboard.html"));
-  assert.ok(
-    RUNTIME_MODULES.includes("node_modules/chart.js/dist/chart.umd.min.js")
+test("router dashboard and chart.js are decommissioned from runtime modules", () => {
+  assert.equal(RUNTIME_MODULES.includes("src/router/dashboard.html"), false);
+  assert.equal(
+    RUNTIME_MODULES.includes("node_modules/chart.js/dist/chart.umd.min.js"),
+    false
+  );
+  assert.equal(
+    RUNTIME_MODULES.includes("src/router/lookback-aggregator.ts"),
+    false
   );
   assert.equal(
     existsSync(

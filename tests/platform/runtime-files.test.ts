@@ -46,8 +46,8 @@ test("runtime targets preserve relative depth for scripts and source files", () 
     "/runtime/src/platform/runtime-files.ts"
   );
   assert.equal(
-    runtimeTarget("src/router/dashboard.html", "/runtime"),
-    "/runtime/src/router/dashboard.html"
+    runtimeTarget("src/router/control-api.ts", "/runtime"),
+    "/runtime/src/router/control-api.ts"
   );
 });
 

@@ -71,17 +71,9 @@ export const RUNTIME_MODULES = [
   "src/router/usage.ts",
   "src/router/otel.ts",
   "src/router/proxy.ts",
-  "src/router/lookback-aggregator.ts",
   "src/router/live-feed.ts",
   "src/router/http.ts",
-  "src/router/dashboard.html",
   "src/router/server.ts",
-  // Local Chart.js UMD asset served from /assets/chart.umd.min.js so the
-  // dashboard KPI pies (Spawns, Tool calls) have a fully offline, exact,
-  // local asset route with no CDN dependency. The router manifest entry
-  // mirrors the source-of-truth location under node_modules; no duplicate
-  // bundle is tracked in the repository.
-  "node_modules/chart.js/dist/chart.umd.min.js",
   "src/agents/bridge-spawn-session.ts",
   "src/providers/minimax.ts",
   "src/providers/copilot.ts",
@@ -278,10 +270,12 @@ export const LAUNCH_LABELS = [
   "com.codex.claude-bridge",
   "com.codex.minimax-proxy",
   "com.codex.antigravity-proxy",
-  "com.codex.copilot-proxy",
+  "com.codex.copilot-proxy"
+] as const;
+export const OBSOLETE_LAUNCH = [
+  "com.codex.antigravity-litellm",
   "com.codex.otel-collector"
 ] as const;
-export const OBSOLETE_LAUNCH = ["com.codex.antigravity-litellm"] as const;
 export const OBSOLETE_PATHS = [
   ".config/litellm/antigravity.yaml",
   ".codex/codex-antigravity-litellm-config.sha256"
@@ -801,6 +795,8 @@ function removeObsoleteRuntimeArtifacts(
   const obsoletePaths = [
     ...OBSOLETE_PATHS.map((filePath) => path.join(home, filePath)),
     path.join(hooks, OBSOLETE_DASHBOARD),
+    path.join(codexHome, "src", "router", "dashboard.html"),
+    path.join(codexHome, "src", "router", "lookback-aggregator.ts"),
     path.join(hooks, "codex/lib/codex-spawn-tools.mjs"),
     path.join(hooks, "codex/lib/codex-state-collector.mjs"),
     path.join(hooks, "codex/lib/spawn-shim-mcp.mjs")

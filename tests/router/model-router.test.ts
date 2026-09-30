@@ -3823,14 +3823,12 @@ test("accepts Collector-forwarded OTLP JSON batches over HTTP at /v1/logs, /v1/t
     assert.equal(metricsResponse.status, 200);
     assert.deepEqual(await metricsResponse.json(), {});
 
-    const intervalResponse = await fetch(
-      `http://127.0.0.1:${address.port}/status?lookback=12h`,
+    const statusResponse = await fetch(
+      `http://127.0.0.1:${address.port}/status`,
       { headers: { Accept: "application/json" } }
     );
-    assert.equal(intervalResponse.status, 200);
-    const intervalStatus = await intervalResponse.json();
-    assert.equal(intervalStatus.lookback.selection, "12h");
-    assert.equal(intervalStatus.lookback.boundedByRingBuffer, true);
+    assert.equal(statusResponse.status, 200);
+    const intervalStatus = await statusResponse.json();
     assert.ok(intervalStatus.codexTelemetry.lookbackEvents.length > 0);
     assert.equal(intervalStatus.codexTelemetry.receiver.logs, 1);
     assert.equal(intervalStatus.codexTelemetry.receiver.traces, 1);
@@ -3849,13 +3847,11 @@ test("accepts Collector-forwarded OTLP JSON batches over HTTP at /v1/logs, /v1/t
       origin: "orchestrator"
     });
     const activeResponse = await fetch(
-      `http://127.0.0.1:${address.port}/status?lookback=active`,
+      `http://127.0.0.1:${address.port}/status`,
       { headers: { Accept: "application/json" } }
     );
     assert.equal(activeResponse.status, 200);
     const activeStatus = await activeResponse.json();
-    assert.equal(activeStatus.lookback.selection, "active");
-    assert.equal(activeStatus.lookback.windowStartMs, null);
     assert.equal(activeStatus.codexTelemetry.receiver.logs, 1);
     assert.equal(activeStatus.codexTelemetry.tokens.total, 270);
     assert.ok(activeStatus.codexTelemetry.lookbackEvents.length > 0);
@@ -5743,7 +5739,7 @@ test("tracks router-visible subagent spawn failure reasons", () => {
   resetRouterTelemetry();
 });
 
-test("serves the live component dashboard and keeps /status raw JSON", async () => {
+test("retires /dashboard and keeps /status raw JSON", async () => {
   const server = createServer((request, response) => {
     void handle(request, response);
   });
@@ -5751,131 +5747,11 @@ test("serves the live component dashboard and keeps /status raw JSON", async () 
   try {
     const address = server.address() as AddressInfo;
     const dashboard = await fetch(`http://127.0.0.1:${address.port}/dashboard`);
-    assert.equal(dashboard.status, 200);
-    assert.match(dashboard.headers.get("content-type")!, /text\/html/);
+    assert.equal(dashboard.status, 404);
     const chartAsset = await fetch(
       `http://127.0.0.1:${address.port}/assets/chart.umd.min.js`
     );
-    assert.equal(chartAsset.status, 200);
-    assert.match(chartAsset.headers.get("content-type")!, /javascript/);
-    const chartAssetBody = await chartAsset.text();
-    assert.match(chartAssetBody, /Chart\.js v4\.5/);
-    const chartAssetEtag = chartAsset.headers.get("etag");
-    assert.ok(chartAssetEtag);
-    const cachedChartAsset = await fetch(
-      `http://127.0.0.1:${address.port}/assets/chart.umd.min.js`,
-      { headers: { "If-None-Match": chartAssetEtag } }
-    );
-    assert.equal(cachedChartAsset.status, 304);
-    const dashboardBody = (await dashboard.text())
-      .replaceAll(/\s+/g, " ")
-      .replaceAll(/>\s+</g, "><");
-
-    // The dashboard is a live view: it requests raw status by default, adds a
-    // lookback parameter for scoped modes, and polls that same route.
-    assert.match(
-      dashboardBody,
-      /const url = params\.toString\(\) \? `\/status\?\$\{params\}` : "\/status"/
-    );
-    assert.match(
-      dashboardBody,
-      /const response = await fetch\(url, \{ cache: "no-store", headers: \{ Accept: "application\/json" \} \}\)/
-    );
-    assert.match(
-      dashboardBody,
-      /<option value="active">Active sessions<\/option>/
-    );
-    assert.match(dashboardBody, /params\.set\("lookback", requestedLookback\)/);
-    assert.match(dashboardBody, /refresh\(\); setInterval\(refresh, 3000\)/);
-    // Top-level panels define the reference hierarchy. Nested panels are part
-    // of their owning domain rather than independent dashboard sections.
-    const panels = Array.from(
-      dashboardBody.matchAll(/<dashboard-panel id="([^"]+)"/g),
-      (match) => match[1]
-    );
-    assert.deepEqual(panels, [
-      "panel-providers",
-      "panel-orchestrator",
-      "workspace-usage-section",
-      "panel-skills",
-      "panel-hooks",
-      "panel-ops",
-      "panel-codex-state",
-      "panel-events"
-    ]);
-    assert.match(
-      dashboardBody,
-      /<dashboard-panel id="panel-orchestrator"[\s\S]*?<sub-panel id="panel-spawn-breakdown"/
-    );
-    assert.match(
-      dashboardBody,
-      /<sub-panel id="panel-spawn-breakdown"[\s\S]*?<sub-panel id="panel-spawn-failures"/
-    );
-    assert.match(
-      dashboardBody,
-      /<dashboard-panel id="panel-skills"[\s\S]*?<sub-panel id="panel-skill-context"/
-    );
-    assert.match(
-      dashboardBody,
-      /<dashboard-panel id="panel-ops"[\s\S]*?<sub-panel id="panel-native-metrics"/
-    );
-
-    // Rendering is componentized, and untrusted live labels have an explicit
-    // escaping path. Event text and status metadata use textContent directly.
-    for (const component of [
-      "status-badge",
-      "health-badge",
-      "stat-card",
-      "mini-stat",
-      "outcome-bar",
-      "metric-bar",
-      "share-bar",
-      "row-toggle",
-      "dashboard-panel",
-      "sub-panel"
-    ]) {
-      assert.match(
-        dashboardBody,
-        new RegExp(String.raw`customElements\.define\("${component}"`)
-      );
-    }
-    assert.match(dashboardBody, /function escapeHtml\(str\)/);
-    assert.match(dashboardBody, /escapeHtml\(providerName\)/);
-    assert.match(dashboardBody, /escapeHtml\(wsKey\)/);
-    assert.match(dashboardBody, /escapeHtml\(m\.name\)/);
-    assert.match(dashboardBody, /m\.exports \?\? 0/);
-    assert.match(dashboardBody, /m\.dataPoints \?\? 0/);
-    assert.match(dashboardBody, /status\.concurrency \?\? \{\}/);
-    assert.match(
-      dashboardBody,
-      /const toolsList = status\.codexTelemetry\?\.tools\?\.byTool \?\? \[\]/
-    );
-    assert.doesNotMatch(
-      dashboardBody,
-      /exportCount|dataPointsCount|codexTelemetry\?\.concurrency/
-    );
-    assert.match(dashboardBody, /errorEl\.textContent/);
-    assert.doesNotMatch(dashboardBody, /document\.write\s*\(/);
-
-    // MCP observations are embedded in the relevant usage/operational views;
-    // there is deliberately no standalone MCP panel.
-    assert.match(dashboardBody, /MCP servers/);
-    assert.match(dashboardBody, /MCP ready \/ observed/);
-    assert.doesNotMatch(
-      dashboardBody,
-      /<(?:dashboard-panel|sub-panel)[^>]*(?:id="[^"]*mcp|title="[^"]*MCP)/i
-    );
-
-    // Workspace-level named attribution is not available from the status
-    // contract. The renderer must show explicit empty states, not fabricate it.
-    assert.match(
-      dashboardBody,
-      /Named tool telemetry is unavailable per-workspace/
-    );
-    assert.match(
-      dashboardBody,
-      /Named skill attribution is unavailable per-workspace/
-    );
+    assert.equal(chartAsset.status, 404);
 
     const browserStatus = await fetch(
       `http://127.0.0.1:${address.port}/status`,
@@ -5891,8 +5767,6 @@ test("serves the live component dashboard and keeps /status raw JSON", async () 
     assert.doesNotMatch(JSON.stringify(browserPayload), /<html/i);
     assertNoLeakedPaths(browserPayload);
 
-    // Accept negotiation remains intentionally inert: both callers receive
-    // the same JSON shape even though the dashboard asks for HTML first.
     const api = await fetch(`http://127.0.0.1:${address.port}/status`, {
       headers: { Accept: "application/json" }
     });
@@ -5904,7 +5778,6 @@ test("serves the live component dashboard and keeps /status raw JSON", async () 
       Object.keys(apiPayload).sort(),
       Object.keys(browserPayload).sort()
     );
-
   } finally {
     await closeServer(server);
   }
@@ -7729,11 +7602,6 @@ test("x-autodev-router-instance-id correlates every JSON response with the route
       ROUTER_INSTANCE_ID
     );
     assert.equal((await status.json()).routerInstanceId, ROUTER_INSTANCE_ID);
-    const dashboard = await fetch(`http://127.0.0.1:${address.port}/dashboard`);
-    assert.equal(
-      dashboard.headers.get("x-autodev-router-instance-id"),
-      ROUTER_INSTANCE_ID
-    );
   } finally {
     await closeServer(server);
     globalThis.fetch = originalFetch;
@@ -10613,8 +10481,14 @@ test("authenticated Control API provider role mutation validates, persists, and 
   const previousControlToken = process.env.AUTODEV_CONTROL_API_TOKEN;
   const previousControlViewers = process.env.AUTODEV_CONTROL_VIEWERS;
   const previousControlOperators = process.env.AUTODEV_CONTROL_OPERATORS;
-  const previousSubagent = routing.isProviderEnabledForRole("claude", "subagent");
-  const previousOrchestrator = routing.isProviderEnabledForRole("claude", "orchestrator");
+  const previousSubagent = routing.isProviderEnabledForRole(
+    "claude",
+    "subagent"
+  );
+  const previousOrchestrator = routing.isProviderEnabledForRole(
+    "claude",
+    "orchestrator"
+  );
   process.env.CODEX_ROUTER_STATE_FILE = stateFile;
   process.env.AUTODEV_CONTROL_API_TOKEN = "model-router-control-test-token";
   process.env.AUTODEV_CONTROL_VIEWERS = "viewer-a";
@@ -10627,8 +10501,7 @@ test("authenticated Control API provider role mutation validates, persists, and 
   await listenServer(server);
   const port = (server.address() as AddressInfo).port;
   const baseUrl = "http://127.0.0.1:" + port;
-  const endpoint =
-    baseUrl + "/control/providers/claude/roles/subagent";
+  const endpoint = baseUrl + "/control/providers/claude/roles/subagent";
   const headers = (actor: string) => ({
     authorization: "Bearer model-router-control-test-token",
     "x-autodev-actor": actor,
@@ -10659,12 +10532,14 @@ test("authenticated Control API provider role mutation validates, persists, and 
     });
     assert.equal(unknownActor.status, 403);
 
-    const viewerRead = await originalFetch(
-      baseUrl + "/control/providers",
-      { headers: headers("viewer-a") }
-    );
+    const viewerRead = await originalFetch(baseUrl + "/control/providers", {
+      headers: headers("viewer-a")
+    });
     assert.equal(viewerRead.status, 200);
-    assert.equal((await viewerRead.json()).schema, "autodev-control-providers-v1");
+    assert.equal(
+      (await viewerRead.json()).schema,
+      "autodev-control-providers-v1"
+    );
 
     const wrongMethod = await originalFetch(endpoint, {
       method: "GET",
@@ -10730,7 +10605,10 @@ test("authenticated Control API provider role mutation validates, persists, and 
     assert.equal(disabled.role, "subagent");
     assert.equal(disabled.enabled, false);
     assert.equal(routing.isProviderEnabledForRole("claude", "subagent"), false);
-    assert.equal(routing.isProviderEnabledForRole("claude", "orchestrator"), previousOrchestrator);
+    assert.equal(
+      routing.isProviderEnabledForRole("claude", "orchestrator"),
+      previousOrchestrator
+    );
 
     const statusAfterDisable = getRouterStatus();
     assert.equal(statusAfterDisable.providers.claude.subagentEnabled, false);
@@ -10760,7 +10638,10 @@ test("authenticated Control API provider role mutation validates, persists, and 
     routing.resetDisabledProvidersForRole("orchestrator");
     assert.equal(loadRouterState(stateFile), true);
     assert.equal(routing.isProviderEnabledForRole("claude", "subagent"), false);
-    assert.equal(routing.isProviderEnabledForRole("claude", "orchestrator"), false);
+    assert.equal(
+      routing.isProviderEnabledForRole("claude", "orchestrator"),
+      false
+    );
 
     const enable = await originalFetch(endpoint, {
       method: "PATCH",
@@ -10792,7 +10673,11 @@ test("authenticated Control API provider role mutation validates, persists, and 
       delete process.env.AUTODEV_CONTROL_OPERATORS;
     else process.env.AUTODEV_CONTROL_OPERATORS = previousControlOperators;
     routing.setProviderEnabledForRole("claude", "subagent", previousSubagent);
-    routing.setProviderEnabledForRole("claude", "orchestrator", previousOrchestrator);
+    routing.setProviderEnabledForRole(
+      "claude",
+      "orchestrator",
+      previousOrchestrator
+    );
     await rm(directory, { recursive: true, force: true });
     resetRouterTelemetry();
   }

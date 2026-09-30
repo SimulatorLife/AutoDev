@@ -2,9 +2,8 @@ import assert from "node:assert/strict";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import type { ServerResponse } from "node:http";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import test from "node:test";
-import { fileURLToPath } from "node:url";
 
 import { recordRouterEvent } from "../src/router/events.ts";
 import {
@@ -31,54 +30,6 @@ import {
   registerWorkspaceId,
   resetAttributionDiagnostics
 } from "../src/router/usage.ts";
-
-const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
-const DASHBOARD_PATH = join(
-  REPO_ROOT,
-  "src",
-  "router",
-  "dashboard.html"
-);
-
-interface DashboardSkillHelpers {
-  normalizeWorkspaceNamedUsage: (
-    namedUsage: unknown,
-    nameKeys: string[]
-  ) => unknown[];
-  summarizeWorkspaceSkills: (
-    skillRows: unknown[],
-    exposedSkillRows: unknown[]
-  ) => { uses: number; exposed: number };
-  renderWorkspaceSkills: (
-    skillRows: unknown[],
-    exposedSkillRows: unknown[]
-  ) => string;
-}
-
-// Extracts the dashboard's pure workspace-skills rendering helpers straight
-// out of the shipped HTML/script, so this test exercises the exact functions
-// the dashboard runs in the browser rather than a reimplementation of them.
-async function loadDashboardSkillHelpers(): Promise<DashboardSkillHelpers> {
-  const rawDashboard = await readFile(DASHBOARD_PATH, "utf8");
-  const escapeMatch = rawDashboard.match(
-    /function escapeHtml\([\s\S]*?\n {6}\}/
-  );
-  const normalizeMatch = rawDashboard.match(
-    /function normalizeWorkspaceNamedUsage\([\s\S]*?\n {6}\}/
-  );
-  const summarizeSkillsMatch = rawDashboard.match(
-    /function summarizeWorkspaceSkills\([\s\S]*?\n {6}\}/
-  );
-  const renderSkillsMatch = rawDashboard.match(
-    /function renderWorkspaceSkills\([\s\S]*?\n {6}\}/
-  );
-  assert.ok(
-    escapeMatch && normalizeMatch && summarizeSkillsMatch && renderSkillsMatch,
-    "dashboard workspace-skills helpers must be present"
-  );
-  const fnScope = `${escapeMatch[0]}; ${normalizeMatch[0]}; ${summarizeSkillsMatch[0]}; ${renderSkillsMatch[0]}; return { normalizeWorkspaceNamedUsage, summarizeWorkspaceSkills, renderWorkspaceSkills };`;
-  return new Function(fnScope)() as DashboardSkillHelpers;
-}
 
 const attrs = (
   entries: Array<[string, unknown]>
@@ -637,25 +588,6 @@ test("a skill_used/skill_read event from a shell cat-style read updates global s
     workspace.bridgeSkills.map((row: { skill: string }) => row.skill),
     ["ccc"]
   );
-
-  const {
-    normalizeWorkspaceNamedUsage,
-    summarizeWorkspaceSkills,
-    renderWorkspaceSkills
-  } = await loadDashboardSkillHelpers();
-  const wsSkillRows = normalizeWorkspaceNamedUsage(workspace.bySkill, [
-    "skill",
-    "name"
-  ]);
-  const wsExposedSkillRows = normalizeWorkspaceNamedUsage(
-    workspace.bridgeSkills,
-    ["skill", "name"]
-  );
-  const summary = summarizeWorkspaceSkills(wsSkillRows, wsExposedSkillRows);
-  assert.deepEqual(summary, { uses: 1, exposed: 1 });
-  const html = renderWorkspaceSkills(wsSkillRows, wsExposedSkillRows);
-  assert.match(html, /label="ccc"/);
-  assert.match(html, /value="1 \/ 1"/);
 
   resetOtelTelemetry();
   resetRouterTelemetry();
