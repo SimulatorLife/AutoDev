@@ -1000,7 +1000,7 @@ test("the Antigravity bridge delegates through Codex when the turn can reach it"
   assert.match(source, /AUTODEV_SPAWN_SESSION: spawnSession \?\? ""/);
   assert.match(
     source,
-    /env: agyEnvironment\(spawnSession, isolatedState\.isolatedHome\)/
+    /env: withAutoDevOtelResourceContext\(\s*agyEnvironment\(spawnSession, isolatedState\.isolatedHome\),\s*workspaceKey,\s*agentRole\s*\)/
   );
   assert.match(
     source,

@@ -29,10 +29,14 @@ import { pathToFileURL } from "node:url";
 
 import { resolveAgentRole } from "../agents/bridge-role.ts";
 import {
-  readOnlySystemPromptInjection,
-  bridgeSkillContext
+  bridgeSkillContext,
+  readOnlySystemPromptInjection
 } from "../agents/bridge-sandbox.ts";
 import { roleContract } from "../shared/execution-contract.ts";
+import {
+  AUTODEV_WORKSPACE_KEY_HEADER,
+  withAutoDevOtelResourceContext
+} from "../shared/otel-resource-context.ts";
 import { writeErrorLine } from "../shared/output.ts";
 import type { LimitSource, ProviderLimit } from "../shared/provider-limits.ts";
 import {
@@ -298,9 +302,7 @@ export function rateLimitEventError(
   const resetsAt = normalizeResetsAt(info.resetsAt);
   // A rejected weekly or billing window is exhaustion until it resets; a
   // rejected session window is a session limit.
-  const limitClass = /week|month|quota|billing|credit/i.test(
-    String(limitType)
-  )
+  const limitClass = /week|month|quota|billing|credit/i.test(String(limitType))
     ? "quota_exhausted"
     : "session_limit";
   let message = `Claude rate limit (${limitType}): status is ${status}`;
@@ -953,6 +955,7 @@ async function handle(
   const agentRole = resolveAgentRole(
     request.headers as Record<string, unknown>
   );
+  const workspaceKey = request.headers[AUTODEV_WORKSPACE_KEY_HEADER];
   const agentEvents = resolveAgentEventReporter(
     request.headers as Record<string, unknown>
   );
@@ -1029,22 +1032,22 @@ async function handle(
       cwd,
       // A parked call must not time out inside the CLI before the turn does.
       env: {
-        ...environment,
+        ...withAutoDevOtelResourceContext(environment, workspaceKey, agentRole),
         MCP_TOOL_TIMEOUT: String(Math.ceil(CLAUDE_PARK_SECONDS * 1000))
       },
       signal: turn.signal,
       waitingOnCodex: () => turn.waitingOnCodex,
       systemPrompt:
-      systemPrompt(cwd, surface) +
-      sandboxInjection +
-      (orchestratorSkillContext
-        ? `
+        systemPrompt(cwd, surface) +
+        sandboxInjection +
+        (orchestratorSkillContext
+          ? `
 
 ## Selected skill context (propagated from orchestrator)
 
 ${orchestratorSkillContext}
 `
-        : ""),
+          : ""),
       selectedSkillContext: orchestratorSkillContext,
       turnId: surface.tools.length > 0 ? turn.id : null,
       webSearch: surface.webSearch

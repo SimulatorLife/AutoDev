@@ -55,7 +55,6 @@ import {
   isAutodevAttributesEnabled,
   isClientDisconnectError,
   isDraining,
-  isLoopbackAddress,
   loadRouterState,
   lookupBridgeSessionContext,
   mcpContractForRole,
@@ -10607,229 +10606,194 @@ test("router status includes sanitized routing and limits metadata", () => {
   assertNoLeakedPaths(status.limits);
 });
 
-test("loopback-only POST /v1/providers/:provider endpoint validation and state persistence", async () => {
+test("authenticated Control API provider role mutation validates, persists, and removes the old route", async () => {
   const directory = await mkdtemp(join(tmpdir(), "autodev-provider-routing-"));
   const stateFile = join(directory, "codex-router-state.json");
   const previousStateFile = process.env.CODEX_ROUTER_STATE_FILE;
+  const previousControlToken = process.env.AUTODEV_CONTROL_API_TOKEN;
+  const previousControlViewers = process.env.AUTODEV_CONTROL_VIEWERS;
+  const previousControlOperators = process.env.AUTODEV_CONTROL_OPERATORS;
+  const previousSubagent = routing.isProviderEnabledForRole("claude", "subagent");
+  const previousOrchestrator = routing.isProviderEnabledForRole("claude", "orchestrator");
   process.env.CODEX_ROUTER_STATE_FILE = stateFile;
+  process.env.AUTODEV_CONTROL_API_TOKEN = "model-router-control-test-token";
+  process.env.AUTODEV_CONTROL_VIEWERS = "viewer-a";
+  process.env.AUTODEV_CONTROL_OPERATORS = "operator-a";
 
   const originalFetch = globalThis.fetch;
   const server = createServer((request, response) => {
-    if (request.headers["x-test-remote-ip"]) {
-      Object.defineProperty(request.socket, "remoteAddress", {
-        value: request.headers["x-test-remote-ip"],
-        configurable: true
-      });
-    }
     void handle(request, response);
   });
   await listenServer(server);
   const port = (server.address() as AddressInfo).port;
-  const baseUrl = `http://127.0.0.1:${port}`;
+  const baseUrl = "http://127.0.0.1:" + port;
+  const endpoint =
+    baseUrl + "/control/providers/claude/roles/subagent";
+  const headers = (actor: string) => ({
+    authorization: "Bearer model-router-control-test-token",
+    "x-autodev-actor": actor,
+    "content-type": "application/json"
+  });
 
   try {
     resetRouterTelemetry();
-    routing.resetDisabledProvidersForRole("subagent");
-    routing.resetDisabledProvidersForRole("orchestrator");
 
-    // 1. Non-loopback request is rejected with 403
-    const nonLoopbackRes = await originalFetch(
-      `${baseUrl}/v1/providers/claude`,
-      {
-        method: "POST",
-        headers: {
-          "content-type": "application/json",
-          "x-test-remote-ip": "192.168.1.55"
-        },
-        body: JSON.stringify({ role: "subagent", enabled: false })
-      }
-    );
-    assert.equal(nonLoopbackRes.status, 403);
-    const nonLoopbackJson = await nonLoopbackRes.json();
-    assert.equal(nonLoopbackJson.error?.code, "router_access_denied");
-
-    // Helper check
-    assert.equal(isLoopbackAddress("127.0.0.1"), true);
-    assert.equal(isLoopbackAddress("::1"), true);
-    assert.equal(isLoopbackAddress("::ffff:127.0.0.1"), true);
-    assert.equal(isLoopbackAddress("192.168.1.1"), false);
-    assert.equal(isLoopbackAddress("10.0.0.1"), false);
-    assert.equal(isLoopbackAddress(null), false);
-
-    // 2. Invalid method (e.g. GET) is rejected with 405
-    const getRes = await originalFetch(`${baseUrl}/v1/providers/claude`, {
-      method: "GET"
-    });
-    assert.equal(getRes.status, 405);
-    assert.equal(getRes.headers.get("allow"), "POST");
-
-    // 3. Unknown provider is rejected with 404
-    const unknownRes = await originalFetch(
-      `${baseUrl}/v1/providers/unknown_provider_xyz`,
-      {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ role: "subagent", enabled: false })
-      }
-    );
-    assert.equal(unknownRes.status, 404);
-    const unknownJson = await unknownRes.json();
-    assert.equal(unknownJson.error?.code, "router_unknown_provider");
-
-    // 4. Invalid body (not valid JSON) is rejected with 400
-    const malformedRes = await originalFetch(`${baseUrl}/v1/providers/claude`, {
-      method: "POST",
+    const missingCredential = await originalFetch(endpoint, {
+      method: "PATCH",
       headers: { "content-type": "application/json" },
+      body: JSON.stringify({ enabled: false })
+    });
+    assert.equal(missingCredential.status, 401);
+
+    const viewerMutation = await originalFetch(endpoint, {
+      method: "PATCH",
+      headers: headers("viewer-a"),
+      body: JSON.stringify({ enabled: false })
+    });
+    assert.equal(viewerMutation.status, 403);
+
+    const unknownActor = await originalFetch(endpoint, {
+      method: "PATCH",
+      headers: headers("intruder"),
+      body: JSON.stringify({ enabled: false })
+    });
+    assert.equal(unknownActor.status, 403);
+
+    const viewerRead = await originalFetch(
+      baseUrl + "/control/providers",
+      { headers: headers("viewer-a") }
+    );
+    assert.equal(viewerRead.status, 200);
+    assert.equal((await viewerRead.json()).schema, "autodev-control-providers-v1");
+
+    const wrongMethod = await originalFetch(endpoint, {
+      method: "GET",
+      headers: headers("operator-a")
+    });
+    assert.equal(wrongMethod.status, 405);
+    assert.equal(wrongMethod.headers.get("allow"), "PATCH");
+
+    const unknownProvider = await originalFetch(
+      baseUrl + "/control/providers/unknown_provider_xyz/roles/subagent",
+      {
+        method: "PATCH",
+        headers: headers("operator-a"),
+        body: JSON.stringify({ enabled: false })
+      }
+    );
+    assert.equal(unknownProvider.status, 404);
+    assert.equal(
+      (await unknownProvider.json()).error.code,
+      "autodev_control_api_unknown_provider"
+    );
+
+    const invalidRole = await originalFetch(
+      baseUrl + "/control/providers/claude/roles/validator",
+      {
+        method: "PATCH",
+        headers: headers("operator-a"),
+        body: JSON.stringify({ enabled: false })
+      }
+    );
+    assert.equal(invalidRole.status, 404);
+
+    const malformed = await originalFetch(endpoint, {
+      method: "PATCH",
+      headers: headers("operator-a"),
       body: "not-json{"
     });
-    assert.equal(malformedRes.status, 400);
+    assert.equal(malformed.status, 400);
 
-    // 5. Missing / non-boolean enabled is rejected with 400
-    const invalidPayloadRes1 = await originalFetch(
-      `${baseUrl}/v1/providers/claude`,
-      {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ role: "subagent", enabled: "false" })
-      }
-    );
-    assert.equal(invalidPayloadRes1.status, 400);
-
-    const invalidPayloadRes2 = await originalFetch(
-      `${baseUrl}/v1/providers/claude`,
-      {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ role: "invalid", enabled: false })
-      }
-    );
-    assert.equal(invalidPayloadRes2.status, 400);
-    assert.equal(
-      (await invalidPayloadRes2.clone().json()).error?.code,
-      "router_invalid_role"
-    );
-
-    // 6. Disable provider for subagents successfully
-    const disableRes = await originalFetch(`${baseUrl}/v1/providers/claude`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ role: "subagent", enabled: false })
+    const badBody = await originalFetch(endpoint, {
+      method: "PATCH",
+      headers: headers("operator-a"),
+      body: JSON.stringify({ enabled: "false" })
     });
-    assert.equal(disableRes.status, 200);
-    const disableJson = await disableRes.json();
-    assert.equal(disableJson.ok, true);
-    assert.equal(disableJson.provider, "claude");
-    assert.equal(disableJson.enabled, false);
-    assert.equal(disableJson.status, "disabled");
+    assert.equal(badBody.status, 400);
 
-    // In-memory status is updated
+    const extraFields = await originalFetch(endpoint, {
+      method: "PATCH",
+      headers: headers("operator-a"),
+      body: JSON.stringify({ enabled: false, role: "subagent" })
+    });
+    assert.equal(extraFields.status, 400);
+
+    const disable = await originalFetch(endpoint, {
+      method: "PATCH",
+      headers: headers("operator-a"),
+      body: JSON.stringify({ enabled: false })
+    });
+    assert.equal(disable.status, 200);
+    const disabled = await disable.json();
+    assert.equal(disabled.schema, "autodev-control-provider-role-v1");
+    assert.equal(disabled.provider, "claude");
+    assert.equal(disabled.role, "subagent");
+    assert.equal(disabled.enabled, false);
     assert.equal(routing.isProviderEnabledForRole("claude", "subagent"), false);
+    assert.equal(routing.isProviderEnabledForRole("claude", "orchestrator"), previousOrchestrator);
+
     const statusAfterDisable = getRouterStatus();
     assert.equal(statusAfterDisable.providers.claude.subagentEnabled, false);
-    assert.equal(
-      statusAfterDisable.providers.claude.subagentStatus,
-      "disabled"
-    );
     assert.ok(
       statusAfterDisable.routing.disabledSubagentProviders.includes("claude")
     );
+
+    const orchestratorEndpoint =
+      baseUrl + "/control/providers/claude/roles/orchestrator";
+    const disableOrchestrator = await originalFetch(orchestratorEndpoint, {
+      method: "PATCH",
+      headers: headers("operator-a"),
+      body: JSON.stringify({ enabled: false })
+    });
+    assert.equal(disableOrchestrator.status, 200);
     assert.equal(
-      statusAfterDisable.routing.enabledSubagentProviders.includes("claude"),
+      routing.isProviderEnabledForRole("claude", "orchestrator"),
       false
     );
 
-    const orchestratorDisableRes = await originalFetch(
-      `${baseUrl}/v1/providers/claude`,
-      {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ role: "orchestrator", enabled: false })
-      }
-    );
-    assert.equal(orchestratorDisableRes.status, 200);
-    const orchestratorDisableJson = await orchestratorDisableRes.json();
-    assert.equal(orchestratorDisableJson.role, "orchestrator");
-    assert.equal(orchestratorDisableJson.enabled, false);
-    const statusAfterBothDisabled = getRouterStatus();
-    assert.equal(
-      statusAfterBothDisabled.providers.claude.orchestratorEnabled,
-      false
-    );
-    assert.equal(
-      statusAfterBothDisabled.providers.claude.subagentEnabled,
-      false
-    );
-    assert.ok(
-      statusAfterBothDisabled.routing.disabledOrchestratorProviders.includes(
-        "claude"
-      )
-    );
-    assert.ok(
-      statusAfterBothDisabled.routing.disabledSubagentProviders.includes(
-        "claude"
-      )
-    );
-
-    // Persistence: verify both role states are written and loadable
     assert.equal(existsSync(stateFile), true);
     const savedState = JSON.parse(await readFile(stateFile, "utf8"));
     assert.deepEqual(savedState.disabledOrchestratorProviders, ["claude"]);
     assert.deepEqual(savedState.disabledSubagentProviders, ["claude"]);
 
-    // Reset memory and restore from file
     routing.resetDisabledProvidersForRole("subagent");
     routing.resetDisabledProvidersForRole("orchestrator");
-    assert.equal(routing.isProviderEnabledForRole("claude", "subagent"), true);
-    assert.equal(
-      routing.isProviderEnabledForRole("claude", "orchestrator"),
-      true
-    );
     assert.equal(loadRouterState(stateFile), true);
     assert.equal(routing.isProviderEnabledForRole("claude", "subagent"), false);
-    assert.equal(
-      routing.isProviderEnabledForRole("claude", "orchestrator"),
-      false
-    );
+    assert.equal(routing.isProviderEnabledForRole("claude", "orchestrator"), false);
 
-    // 7. Re-enable provider successfully
-    const enableRes = await originalFetch(`${baseUrl}/v1/providers/claude`, {
+    const enable = await originalFetch(endpoint, {
+      method: "PATCH",
+      headers: headers("operator-a"),
+      body: JSON.stringify({ enabled: true })
+    });
+    assert.equal(enable.status, 200);
+    assert.equal((await enable.json()).enabled, true);
+    assert.equal(routing.isProviderEnabledForRole("claude", "subagent"), true);
+
+    const legacyRoute = await originalFetch(baseUrl + "/v1/providers/claude", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ role: "subagent", enabled: true })
+      body: JSON.stringify({ role: "subagent", enabled: false })
     });
-    assert.equal(enableRes.status, 200);
-    const enableJson = await enableRes.json();
-    assert.equal(enableJson.ok, true);
-    assert.equal(enableJson.provider, "claude");
-    assert.equal(enableJson.role, "subagent");
-    assert.equal(enableJson.enabled, true);
-    assert.equal(enableJson.status, "ready");
-
-    assert.equal(routing.isProviderEnabledForRole("claude", "subagent"), true);
-    const orchestratorEnableRes = await originalFetch(
-      `${baseUrl}/v1/providers/claude`,
-      {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ role: "orchestrator", enabled: true })
-      }
-    );
-    assert.equal(orchestratorEnableRes.status, 200);
-    const statusAfterEnable = getRouterStatus();
-    assert.equal(statusAfterEnable.providers.claude.subagentEnabled, true);
-    assert.equal(statusAfterEnable.providers.claude.subagentStatus, "ready");
-    assert.equal(
-      statusAfterEnable.routing.disabledSubagentProviders.includes("claude"),
-      false
-    );
+    assert.equal(legacyRoute.status, 404);
   } finally {
     await closeServer(server);
     if (previousStateFile === undefined)
       delete process.env.CODEX_ROUTER_STATE_FILE;
     else process.env.CODEX_ROUTER_STATE_FILE = previousStateFile;
+    if (previousControlToken === undefined)
+      delete process.env.AUTODEV_CONTROL_API_TOKEN;
+    else process.env.AUTODEV_CONTROL_API_TOKEN = previousControlToken;
+    if (previousControlViewers === undefined)
+      delete process.env.AUTODEV_CONTROL_VIEWERS;
+    else process.env.AUTODEV_CONTROL_VIEWERS = previousControlViewers;
+    if (previousControlOperators === undefined)
+      delete process.env.AUTODEV_CONTROL_OPERATORS;
+    else process.env.AUTODEV_CONTROL_OPERATORS = previousControlOperators;
+    routing.setProviderEnabledForRole("claude", "subagent", previousSubagent);
+    routing.setProviderEnabledForRole("claude", "orchestrator", previousOrchestrator);
     await rm(directory, { recursive: true, force: true });
-    routing.resetDisabledProvidersForRole("subagent");
-    routing.resetDisabledProvidersForRole("orchestrator");
     resetRouterTelemetry();
   }
 });

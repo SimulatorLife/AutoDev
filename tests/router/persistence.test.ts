@@ -66,7 +66,7 @@ test("RouterPersistence persistNow writes atomically with mode 0o600", async () 
     });
 
     assert.equal(persistence.getUpdatedAt(), null);
-    await persistence.persistNow();
+    assert.equal(await persistence.persistNow(), true);
 
     assert.ok(persistence.getUpdatedAt() !== null);
 
@@ -88,6 +88,19 @@ test("RouterPersistence persistNow writes atomically with mode 0o600", async () 
       /* ignore */
     }
   }
+});
+
+test("RouterPersistence reports failed writes to state-changing callers", async () => {
+  const missingDirectory = join(
+    tmpdir(),
+    `autodev-persistence-failure-${Date.now()}-${Math.random().toString(36).slice(2)}`
+  );
+  const persistence = new RouterPersistence({
+    stateFile: join(missingDirectory, "state.json"),
+    getSnapshot: () => ({ control: true })
+  });
+  assert.equal(await persistence.persistNow(), false);
+  assert.equal(persistence.getUpdatedAt(), null);
 });
 
 test("RouterPersistence load validates schema and dispatches sections", async () => {

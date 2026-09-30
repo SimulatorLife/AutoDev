@@ -17,7 +17,7 @@ The corrected target is:
 | Role/capability semantics, read-only policy, spawn semantics | Keep | AutoDev |
 | Provider-selection policy | Keep initially | AutoDev |
 | Cross-provider rules/skills/MCP/hooks/permissions translation | Adopt | Rulesync |
-| Standard OTLP receive/process/export | Use OpenLIT's bundled OTLP Collector/receiver by default; add a separate Collector only for a documented policy need | OpenLIT |
+| Standard OTLP receive/process/export | Use OpenLIT's first-party OTLP receiver by default; add a separate Collector only for a documented policy need | OpenLIT |
 | Provider transport/Responses normalization | Pilot per provider | LiteLLM |
 | Workspace/role/skill/subagent context | Emit at the operation-owning producer using standard OTel or minimal AutoDev-specific semantics; no generic historical aggregator | AutoDev producers / OpenLIT |
 | Codex/OpenAI subscription access | Keep OAuth-native | Codex native model provider |
@@ -913,12 +913,12 @@ dashboard grouping and empty states, totals-footer visibility, the status CLI
 response, credential, or absolute-path leakage. The dashboard now distinguishes
 its bounded recent-window subtotal from the cumulative all-time total as
 `X recent / Y total` when the 50-row window cannot cover history; the totals
-footer and status CLI use the same distinction without fallback inflation.
+footer uses the same distinction without fallback inflation.
 These two contracts mark `Native versus bridge-native child counts` and
 `Dashboard/status snapshots` frozen. **Validation.** The focused contracts
 pass exactly: `node --test tests/native-vs-bridge-child-counts.test.ts` ->
 24 pass, 0 fail; `node --test tests/dashboard-status-snapshot.test.ts` ->
-5 pass, 0 fail. The requested regression commands also pass: agent
+4 pass, 0 fail. The requested regression commands also pass: agent
 reconciliation 16, workspace attribution 8, concurrency 25, router 182,
 metrics 19, workspace telemetry 18, and router state snapshot 3, all with
 0 failures. The full `pnpm test` run reports 575 pass, 0 fail; both
@@ -1609,7 +1609,7 @@ validation, and active port state.
 Codex remains on the model router at `127.0.0.1:4100` in both modes. Only the
 three OTLP exporter endpoints change to `127.0.0.1:4318` when Collector mode is
 enabled. The mode is stored as machine-local state in
-`$CODEX_HOME/otel-collector.mode`, and the existing composer continues to
+`$CODEX_HOME/otel-ingress.mode`, and the existing composer continues to
 preserve unrelated user configuration. Direct mode is the default and is the
 rollback path.
 
@@ -1669,7 +1669,7 @@ Validation of this tree (HEAD plus the Phase 3 changes) had these results:
   - `test_claude_cli_exposes_role_specific_skill_view_not_canonical_agents_root`.
 - ShellCheck, actionlint, `git diff --check`, and LSP diagnostics are clean.
 
-The installer now persists `$CODEX_HOME/otel-collector.mode` only after the
+The installer now persists `$CODEX_HOME/otel-ingress.mode` only after the
 install succeeds. Previously an `--enable-otel-collector` or
 `--disable-otel-collector` run that aborted part-way still recorded the
 requested mode. `--check` then reported a mode that did not match the active

@@ -1,0 +1,33 @@
+diff --git a/assets/otel-collector-config.yaml b/assets/otel-collector-config.yaml
+index 67c8168f..9ba9b53a 100644
+--- a/assets/otel-collector-config.yaml
++++ b/assets/otel-collector-config.yaml
+@@ -1,10 +1,20 @@
++extensions:
++  # AutoDev locally maintains this receiver auth binding because the pinned
++  # OpenLIT release otherwise exposes unauthenticated OTLP ingestion.
++  bearertokenauth:
++    token: ${env:OPENLIT_OTLP_API_KEY}
++
+ receivers:
+   otlp:
+     protocols:
+       grpc:
+         endpoint: 0.0.0.0:4317
++        auth:
++          authenticator: bearertokenauth
+       http:
+         endpoint: 0.0.0.0:4318
++        auth:
++          authenticator: bearertokenauth
+ 
+ processors:
+   batch:
+@@ -34,6 +44,7 @@ exporters:
+       max_elapsed_time: 300s
+ 
+ service:
++  extensions: [bearertokenauth]
+   pipelines:
+     logs:
+       receivers: [otlp]

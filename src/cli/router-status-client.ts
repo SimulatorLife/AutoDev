@@ -1,6 +1,9 @@
-import { parseRouterStatus, type RouterStatus } from "../router/status.ts";
+import {
+  parseRouterRuntimeStatus,
+  type RouterRuntimeStatus
+} from "../router/status.ts";
 
-export async function fetchRouterStatus(): Promise<RouterStatus> {
+export async function fetchRouterStatus(): Promise<RouterRuntimeStatus> {
   const host = process.env.CODEX_MODEL_ROUTER_HOST ?? "127.0.0.1";
   const port = process.env.CODEX_MODEL_ROUTER_PORT ?? "4100";
   const endpoint = `http://${host}:${port}/status`;
@@ -15,9 +18,9 @@ export async function fetchRouterStatus(): Promise<RouterStatus> {
     );
   }
 
-  let body: RouterStatus;
+  let body: RouterRuntimeStatus;
   try {
-    body = parseRouterStatus(await response.json());
+    body = parseRouterRuntimeStatus(await response.json());
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
     throw new Error(

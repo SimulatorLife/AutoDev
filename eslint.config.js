@@ -40,6 +40,7 @@ const baseIgnorePatterns = [
   "**/*.d.ts",
   "**/node_modules/**",
   "**/coverage/**",
+  ".tmp/**",
   "**/*.md",
   ".DS_Store",
   "docs/**",

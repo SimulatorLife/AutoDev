@@ -1,10 +1,15 @@
 #!/usr/bin/env node
 
-import { createServer, type Server } from "node:http";
+import {
+  createServer,
+  type IncomingMessage,
+  type Server,
+  type ServerResponse
+} from "node:http";
 import { pathToFileURL } from "node:url";
 
-import { getDefaultMcpProcessRegistry } from "../mcp/process-registry.ts";
 import { writeErrorLine } from "../shared/output.ts";
+import { handleControlApiRequest } from "./control-api.ts";
 import { codexState, handle, HOST, PORT, refreshCodexState } from "./http.ts";
 import { beginShutdown } from "./lifecycle.ts";
 import { loadRouterState, persistRouterStateNow } from "./persistence.ts";
@@ -55,14 +60,63 @@ export function handleFatalProcessError(phase: string, reason: unknown): void {
     .finally(() => process.exit(1));
 }
 
+export function createControlApiServer(): Server {
+  return createServer((request: IncomingMessage, response: ServerResponse) => {
+    let pathname: string;
+    try {
+      pathname = new URL(request.url ?? "/", "http://127.0.0.1").pathname;
+    } catch {
+      response.writeHead(400, { "cache-control": "no-store" });
+      response.end();
+      return;
+    }
+    if (!pathname.startsWith("/control/")) {
+      response.writeHead(404, { "cache-control": "no-store" });
+      response.end();
+      return;
+    }
+    void (async () => {
+      try {
+        const handled = await handleControlApiRequest(
+          request,
+          response,
+          pathname
+        );
+        if (handled) return;
+        response.writeHead(404, { "cache-control": "no-store" });
+        response.end();
+      } catch {
+        if (response.headersSent) {
+          response.destroy();
+          return;
+        }
+        response.writeHead(500, { "cache-control": "no-store" });
+        response.end();
+      }
+    })();
+  });
+}
+
+function configuredControlApiListener(): { host: string; port: number } | null {
+  const host = process.env.AUTODEV_CONTROL_API_LISTEN_HOST?.trim();
+  if (!host) return null;
+  const rawPort = process.env.AUTODEV_CONTROL_API_LISTEN_PORT?.trim();
+  const port = rawPort ? Number(rawPort) : 4101;
+  if (!Number.isInteger(port) || port < 1 || port > 65_535) {
+    throw new Error(
+      "AUTODEV_CONTROL_API_LISTEN_PORT must be between 1 and 65535."
+    );
+  }
+  return { host, port };
+}
+
 export function startRouterServer(port = PORT, host = HOST): Server {
   loadRouterState();
-  const registry = getDefaultMcpProcessRegistry();
   const server = createServer((request, response) => {
     void handle(request, response);
   });
-  let sweeperStarted = false;
   let livePollStarted = false;
+  let controlServer: Server | null = null;
   let cleanedUp = false;
 
   const sigtermHandler = (signal: string) => {
@@ -89,11 +143,11 @@ export function startRouterServer(port = PORT, host = HOST): Server {
   const cleanup = () => {
     if (cleanedUp) return;
     cleanedUp = true;
-    if (sweeperStarted) registry.stopIdleSweeper();
     if (livePollStarted) {
       codexState.collector.stopLivePoll();
       codexState.livePollStarted = false;
     }
+    if (controlServer?.listening) controlServer.close();
     process.off("uncaughtException", onUncaughtException);
     process.off("unhandledRejection", onUnhandledRejection);
     process.off("SIGINT", onSigint);
@@ -110,17 +164,30 @@ export function startRouterServer(port = PORT, host = HOST): Server {
     server.listen(port, host, () => {
       if (cleanedUp) return;
       try {
-        // Background work belongs to the active listener, not to module import.
-        // Starting it only after listen succeeds avoids orphan timers on bind
-        // failure; close and startup-failure teardown release it with the server.
-        sweeperStarted = true;
-        registry.startIdleSweeper();
         if (!codexState.livePollStarted) {
           livePollStarted = true;
           codexState.livePollStarted = true;
           codexState.collector.startLivePoll();
         }
         void refreshCodexState();
+        const controlListener = configuredControlApiListener();
+        if (controlListener) {
+          controlServer = createControlApiServer();
+          controlServer.once("error", (error) => {
+            cleanup();
+            server.close();
+            handleFatalProcessError("control_api_listener_error", error);
+          });
+          controlServer.listen(
+            controlListener.port,
+            controlListener.host,
+            () => {
+              writeErrorLine(
+                `AutoDev Control API listening at http://${controlListener.host}:${controlListener.port}`
+              );
+            }
+          );
+        }
         writeErrorLine(
           `Codex model router listening at http://${host}:${port}`
         );

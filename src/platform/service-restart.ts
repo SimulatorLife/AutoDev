@@ -12,6 +12,7 @@ import path from "node:path";
 
 import { parseNonNegativeInteger } from "../shared/env.ts";
 import { writeErrorLine } from "../shared/output.ts";
+import { type OtelIngressMode } from "./install-state.ts";
 import { LaunchdClient } from "./macos/launchd.ts";
 
 const WHITESPACE_SPLIT_PATTERN = /\s+/u;
@@ -38,14 +39,13 @@ export const MANAGED_SERVICE_LABELS = [
   LABEL_OTEL_COLLECTOR
 ] as const;
 export type ManagedServiceLabel = (typeof MANAGED_SERVICE_LABELS)[number];
-export type OtelMode = "direct" | "collector";
 export type KillSignal = "SIGTERM" | "SIGKILL";
 
 export interface ServiceRestartOptions {
   readonly repositoryRoot: string;
   readonly home: string;
   readonly codexHome: string;
-  readonly otelMode: OtelMode;
+  readonly otelMode: OtelIngressMode;
   readonly readyAttempts: number;
   readonly readyDelayMs: number;
 }
@@ -151,7 +151,11 @@ export function resolveServiceRestartOptions(
     repositoryRoot: env.AUTODEV_REPO_ROOT?.trim() || process.cwd(),
     home,
     codexHome: env.CODEX_HOME?.trim() || path.join(home, ".codex"),
-    otelMode: env.AUTODEV_OTEL_MODE === "collector" ? "collector" : "direct",
+    otelMode:
+      env.AUTODEV_OTEL_MODE === "collector" ||
+      env.AUTODEV_OTEL_MODE === "openlit"
+        ? env.AUTODEV_OTEL_MODE
+        : "direct",
     readyAttempts: parseNonNegativeInteger(
       env.AUTODEV_SERVICE_READY_ATTEMPTS,
       DEFAULT_ATTEMPTS
@@ -648,7 +652,7 @@ async function reloadOneLabel(
   label: ManagedServiceLabel
 ): Promise<ReloadResult> {
   const disableCollector =
-    label === LABEL_OTEL_COLLECTOR && options.otelMode === "direct";
+    label === LABEL_OTEL_COLLECTOR && options.otelMode !== "collector";
   const plist = plistPath(options, label);
   if (!disableCollector && !deps.fileExists(plist)) return "no-plist";
   try {

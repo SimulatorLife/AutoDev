@@ -4,60 +4,79 @@ import { createServer } from "node:http";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
-import type { RouterStatus } from "../../src/router/status.ts";
-
 const REPO_ROOT = fileURLToPath(new URL("../../", import.meta.url));
-const statusPayload: RouterStatus = {
+const statusPayload = {
+  schema: "autodev-router-status-v2",
   router: "test-router",
-  providers: {},
-  usage: {
-    byOrigin: {
-      orchestrator: {
-        active: 2,
-        attempts: 5,
-        successes: 4,
-        failures: 1,
-        averageDurationMs: 12_345,
-        toolCalls: 3
-      },
-      direct: {
-        attempts: 3,
-        successes: 2,
-        failures: 1,
-        averageDurationMs: 1500,
-        toolCalls: 1
-      }
-    },
-    byRole: {
-      worker: {
-        attempts: 7,
-        successes: 6,
-        failures: 1,
-        averageDurationMs: 5432,
-        toolCalls: 2
-      },
-      validator: {
-        attempts: 2,
-        successes: 2,
-        failures: 0,
-        averageDurationMs: 1000,
-        toolCalls: 0
-      }
-    },
-    byModel: {
-      "gpt-6": {
-        attempts: 10,
-        successes: 9,
-        failures: 1,
-        averageDurationMs: 8765,
-        toolCalls: 4
-      }
+  pid: 17,
+  routerInstanceId: "test-instance",
+  startedAt: "2026-09-30T00:00:00.000Z",
+  authentication: { responseRequests: true, credential: "do-not-expose" },
+  routing: {
+    enabledOrchestratorProviders: ["openai"],
+    disabledOrchestratorProviders: [],
+    enabledSubagentProviders: ["openai"],
+    disabledSubagentProviders: [],
+    providerGroups: { normal: [["openai"]] },
+    priorities: {}
+  },
+  limits: {
+    providerCooldownMs: 1000,
+    providerCooldownMaxMs: 2000,
+    hardCooldownMs: 1000,
+    hardCooldownMaxMs: 2000,
+    probeCooldownMs: 500,
+    probeCooldownMaxMs: 1000,
+    probeTimeoutMs: 700,
+    exhaustionWaitMs: 0,
+    lastResortMaxAttempts: 2,
+    chainSelectionDeadlineMs: 5000,
+    maxConcurrentThreadsPerSession: 4
+  },
+  providers: {
+    openai: {
+      orchestratorEnabled: true,
+      subagentEnabled: true,
+      status: "ready",
+      orchestratorStatus: "ready",
+      subagentStatus: "ready",
+      routingPriority: "normal: P1",
+      active: 1,
+      inFlightRequests: 1,
+      attempts: 20,
+      successes: 18,
+      failures: 2,
+      failureStreak: 0,
+      probeFailureStreak: 0,
+      lastFailure: { class: "rate_limit", status: 429 },
+      configuredModels: { "gpt-6": {} },
+      capabilities: { streaming: true }
     }
-  }
+  },
+  concurrency: {
+    effectivePerSessionLimit: 4,
+    activeSessions: 2,
+    activeSubagentThreads: 1,
+    denials: 1,
+    denialsByReason: { session_limit: 1 },
+    lastDenial: { reason: "session_limit", sessionScope: "session" },
+    processFallbackEnforcement: false
+  },
+  inFlightRequests: { openai: 1 },
+  liveActivity: 1,
+  agents: { canonicalLiveCount: 1, liveByRole: { root: 1 } },
+  usage: { byOrigin: { orchestrator: { attempts: 5 } } },
+  codexTelemetry: { tokens: { total: 100 } },
+  recentEvents: [{ requestId: "private-request" }],
+  liveFeed: [{ prompt: "private-prompt" }],
+  telemetryPersistence: { source: "/private/path" },
+  subagents: { recent: [{ thread: "private-thread" }] },
+  spawnFailures: { total: 4 },
+  codexState: { recentThreads: ["private-thread"] }
 };
 
 async function runStatusCli(
-  payload: RouterStatus,
+  payload: unknown,
   args: string[] = [],
   entrypoint = "src/cli/router-status.ts"
 ): Promise<{ stdout: string; stderr: string }> {
@@ -110,57 +129,86 @@ async function runStatusCli(
   }
 }
 
-test("router status groups usage sections and preserves each row's fields", async () => {
+test("router status text reports operational state but not history", async () => {
   const { stdout } = await runStatusCli(statusPayload);
-  const lines = stdout.split("\n");
-  const originHeading = lines.indexOf("Usage by origin:");
-  const roleHeading = lines.indexOf("Usage by role:");
-  const modelHeading = lines.indexOf("Usage by resolved model:");
 
-  assert.ok(originHeading > 0, "Usage by origin heading must appear");
-  assert.equal(lines[originHeading - 1], "");
-  assert.match(lines[originHeading - 2] ?? "", /^Concurrency:/);
-  assert.equal(roleHeading - originHeading, 3);
-  assert.equal(modelHeading - roleHeading, 3);
-  assert.deepEqual(lines.slice(originHeading, modelHeading + 2), [
-    "Usage by origin:",
-    "  orchestrator: 2 active, 5 attempts, 4 successes, 1 failures, avg 12s, 3 tool calls",
-    "  direct: 0 active, 3 attempts, 2 successes, 1 failures, avg 2s, 1 tool calls",
-    "Usage by role:",
-    "  worker: 7 attempts, 6 successes, 1 failures, avg 5s, 2 tool calls",
-    "  validator: 2 attempts, 2 successes, 0 failures, avg 1s, 0 tool calls",
-    "Usage by resolved model:",
-    "  gpt-6: 10 attempts, 9 successes, 1 failures, avg 9s, 4 tool calls"
-  ]);
+  assert.match(stdout, /Router test-router \(pid 17, instance test-instance\)/);
+  assert.match(stdout, /Configured priority groups:/);
+  assert.match(stdout, /Provider\s+State\s+Priority/);
+  assert.match(stdout, /openai\s+enabled\/enabled/);
+  assert.match(stdout, /Concurrency: per-session 4, active sessions 2/);
+  assert.doesNotMatch(
+    stdout,
+    /Usage by origin|Codex OTEL|Recent routing events/
+  );
+  assert.doesNotMatch(stdout, /private-request|private-prompt|private-thread/);
+  assert.doesNotMatch(stdout, /20 attempts|18 successes/);
 });
 
-test("router status leaves --json output unchanged", async () => {
+test("router status JSON exposes only the operational runtime contract", async () => {
   const { stdout } = await runStatusCli(statusPayload, ["--json"]);
-  assert.deepEqual(JSON.parse(stdout), statusPayload);
-});
+  const result = JSON.parse(stdout);
 
-test("router status retains headings for empty usage buckets", async () => {
-  const { stdout } = await runStatusCli({ ...statusPayload, usage: {} });
-  const lines = stdout.split("\n");
-  const originHeading = lines.indexOf("Usage by origin:");
-  const roleHeading = lines.indexOf("Usage by role:");
-  const modelHeading = lines.indexOf("Usage by resolved model:");
-
-  assert.ok(originHeading !== -1, "Usage by origin heading must appear");
-  assert.equal(roleHeading, originHeading + 1);
-  assert.equal(modelHeading, roleHeading + 1);
-  assert.deepEqual(lines.slice(originHeading, modelHeading + 1), [
-    "Usage by origin:",
-    "Usage by role:",
-    "Usage by resolved model:"
+  assert.deepEqual(Object.keys(result).sort(), [
+    "agents",
+    "authentication",
+    "concurrency",
+    "inFlightRequests",
+    "limits",
+    "liveActivity",
+    "pid",
+    "providers",
+    "router",
+    "routerInstanceId",
+    "routing",
+    "schema",
+    "startedAt"
   ]);
+  assert.deepEqual(result.authentication, { responseRequests: true });
+  assert.equal(result.providers.openai.active, 1);
+  assert.equal("attempts" in result.providers.openai, false);
+  assert.equal("usage" in result, false);
+  assert.equal("codexTelemetry" in result, false);
+  assert.equal("recentEvents" in result, false);
+  assert.equal("telemetryPersistence" in result, false);
+  assert.equal("codexState" in result, false);
 });
 
-test("autodev router status uses the default backend against the configured router", async () => {
+test("autodev router status uses the same operational JSON contract", async () => {
   const { stdout } = await runStatusCli(
     statusPayload,
     ["router", "status"],
     "src/cli/autodev.ts"
   );
-  assert.deepEqual(JSON.parse(stdout), statusPayload);
+  assert.deepEqual(JSON.parse(stdout), {
+    schema: statusPayload.schema,
+    router: statusPayload.router,
+    pid: statusPayload.pid,
+    routerInstanceId: statusPayload.routerInstanceId,
+    startedAt: statusPayload.startedAt,
+    authentication: { responseRequests: true },
+    routing: statusPayload.routing,
+    limits: statusPayload.limits,
+    providers: {
+      openai: {
+        orchestratorEnabled: true,
+        subagentEnabled: true,
+        status: "ready",
+        orchestratorStatus: "ready",
+        subagentStatus: "ready",
+        routingPriority: "normal: P1",
+        active: 1,
+        inFlightRequests: 1,
+        failureStreak: 0,
+        probeFailureStreak: 0,
+        lastFailure: { class: "rate_limit", status: 429 },
+        configuredModels: { "gpt-6": {} },
+        capabilities: { streaming: true }
+      }
+    },
+    concurrency: statusPayload.concurrency,
+    inFlightRequests: statusPayload.inFlightRequests,
+    liveActivity: 1,
+    agents: statusPayload.agents
+  });
 });

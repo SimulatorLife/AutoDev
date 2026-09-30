@@ -15,9 +15,9 @@ import {
 import { materializeInstallation } from "./install-materializer.ts";
 import {
   ensureRouterAuth,
-  type OtelCollectorMode,
-  readCollectorMode,
-  writeCollectorMode
+  type OtelIngressMode,
+  readOtelIngressMode,
+  writeOtelIngressMode
 } from "./install-state.ts";
 
 export interface InstallCommandOptions {
@@ -29,7 +29,7 @@ export interface InstallCommandOptions {
 interface InstallFlags {
   materializeOnly: boolean;
   routerAuth: boolean;
-  otelMode: OtelCollectorMode | null;
+  otelMode: OtelIngressMode | null;
 }
 
 function parseFlags(args: readonly string[]): InstallFlags {
@@ -41,18 +41,23 @@ function parseFlags(args: readonly string[]): InstallFlags {
   for (const arg of args) {
     if (arg === "--materialize-only") flags.materializeOnly = true;
     else if (arg === "--enable-router-auth") flags.routerAuth = true;
-    else if (arg === "--enable-otel-collector") {
-      if (flags.otelMode === "direct")
+    else if (
+      arg === "--enable-otel-collector" ||
+      arg === "--disable-otel-collector" ||
+      arg === "--enable-openlit-ingress" ||
+      arg === "--disable-openlit-ingress"
+    ) {
+      if (flags.otelMode !== null) {
         throw new ConfigError(
-          "Collector enable/disable options are mutually exclusive."
+          "OTLP ingress mode options are mutually exclusive."
         );
-      flags.otelMode = "collector";
-    } else if (arg === "--disable-otel-collector") {
-      if (flags.otelMode === "collector")
-        throw new ConfigError(
-          "Collector enable/disable options are mutually exclusive."
-        );
-      flags.otelMode = "direct";
+      }
+      flags.otelMode =
+        arg === "--enable-otel-collector"
+          ? "collector"
+          : arg === "--enable-openlit-ingress"
+            ? "openlit"
+            : "direct";
     } else if (arg === "--check") {
       throw new ConfigError(
         "autodev install --check is still owned by the installer check boundary; run scripts/install.sh --check"
@@ -148,8 +153,8 @@ export function runInstallCommand(
   const home = overrides.home ?? process.env.HOME ?? homedir();
   const codexHome =
     overrides.codexHome ?? process.env.CODEX_HOME ?? path.join(home, ".codex");
-  const modePath = path.join(codexHome, "otel-collector.mode");
-  const otelMode = flags.otelMode ?? readCollectorMode(modePath);
+  const modePath = path.join(codexHome, "otel-ingress.mode");
+  const otelMode = flags.otelMode ?? readOtelIngressMode(modePath);
   const projection = createCodexMcpSource(repositoryRoot);
   const env = {
     AUTODEV_REPO_ROOT: repositoryRoot,
@@ -187,6 +192,10 @@ export function runInstallCommand(
       materializeOnly: flags.materializeOnly,
       codexMcpSource: projection.source
     });
+    // Persist the selected desired ingress after config materialization but
+    // before restart. The router launcher reads this state to load OpenLIT's
+    // external token and publish its exporter variables to launchd.
+    if (flags.otelMode !== null) writeOtelIngressMode(modePath, otelMode);
     if (flags.materializeOnly) {
       writeErrorLine(
         "Materialized AutoDev integration without restarting services."
@@ -198,7 +207,6 @@ export function runInstallCommand(
         env
       );
     }
-    if (flags.otelMode !== null) writeCollectorMode(modePath, otelMode);
     return 0;
   } finally {
     rmSync(projection.root, { recursive: true, force: true });

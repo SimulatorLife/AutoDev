@@ -1,13 +1,10 @@
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
-import { createServer } from "node:http";
 import test from "node:test";
 
 import {
   getRouterStatus,
-  handle,
   ingestAgentEvents,
   resetRouterTelemetry,
   setCodexStateSnapshotForTests
@@ -45,7 +42,6 @@ interface ContractFixture {
     byRole: unknown;
     total: number;
     groupedRows: unknown[];
-    cliSummary: string;
   };
   dashboard: {
     recentTotalLabels: Array<{
@@ -68,12 +64,8 @@ const contract: ContractFixture = JSON.parse(
   )
 );
 
-const ROOT = new URL("..", import.meta.url);
 const FIXED_NOW = Date.parse(contract.fixedNow);
-const dashboardPath = new URL(
-  "../src/router/dashboard.html",
-  import.meta.url
-);
+const dashboardPath = new URL("../src/router/dashboard.html", import.meta.url);
 
 function assertKeys(value: unknown, expected: string[], label: string): void {
   assert.deepEqual(
@@ -332,77 +324,6 @@ test("provider rows and grouped spawn rows follow the frozen status dimensions",
       );
     }
   } finally {
-    reset();
-  }
-});
-
-test("status CLI keeps the byMechanism summary deterministic", async () => {
-  reset();
-  const server = createServer((request, response) => {
-    void handle(request, response);
-  });
-  await new Promise<void>((resolve) => {
-    server.listen(0, "127.0.0.1", () => resolve());
-  });
-  try {
-    noteBridgeRequest("req-cli-001", {
-      activitySubject: `req:${"req-cli-001"}`,
-      provider: "claude",
-      model: "sonnet",
-      role: "orchestrator",
-      workspace: "AutoDev"
-    });
-    ingestAgentEvents({
-      requestId: "req-cli-001",
-      events: [
-        { type: "subagent_spawn", tool: "Agent", role: "worker", count: 3 }
-      ]
-    });
-    noteOrchestratorSession("session-cli-001", "minimax");
-    recordSubagentSpawn({
-      mechanism: "router_alias",
-      provider: orchestratorProviderForSession("session-cli-001"),
-      role: "validator",
-      tool: "multi_agent_v1.spawn"
-    });
-
-    const address = server.address() as { port: number };
-    const output = await new Promise<{ stdout: string; stderr: string }>(
-      (resolve, reject) => {
-        const child = spawn(process.execPath, ["src/cli/router-status.ts"], {
-          cwd: new URL(".", ROOT),
-          env: {
-            ...process.env,
-            CODEX_MODEL_ROUTER_HOST: "127.0.0.1",
-            CODEX_MODEL_ROUTER_PORT: String(address.port),
-            CODEX_ROUTER_AUTH_TOKEN: ""
-          },
-          stdio: ["ignore", "pipe", "pipe"]
-        });
-        let stdout = "";
-        let stderr = "";
-        child.stdout.on("data", (chunk: Buffer) => {
-          stdout += chunk;
-        });
-        child.stderr.on("data", (chunk: Buffer) => {
-          stderr += chunk;
-        });
-        child.once("error", reject);
-        child.once("exit", (code) =>
-          code === 0
-            ? resolve({ stdout, stderr })
-            : reject(new Error(`status CLI exited ${code}: ${stderr}`))
-        );
-      }
-    );
-    assert.match(
-      output.stdout,
-      new RegExp(escapeRegex(contract.spawnGrouping.cliSummary))
-    );
-  } finally {
-    await new Promise<void>((resolve, reject) =>
-      server.close((error) => (error ? reject(error) : resolve()))
-    );
     reset();
   }
 });

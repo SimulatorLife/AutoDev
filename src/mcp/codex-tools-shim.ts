@@ -18,6 +18,11 @@ import { request as httpRequest } from "node:http";
 import { createInterface } from "node:readline";
 import { pathToFileURL } from "node:url";
 
+import {
+  recordToolCallSpan,
+  type ToolCallOutcome
+} from "./codex-tools-shim-telemetry.ts";
+
 const BRIDGE_URL = process.env.AUTODEV_BRIDGE_URL ?? "";
 const BRIDGE_TOKEN = process.env.AUTODEV_BRIDGE_TOKEN ?? "";
 const TURN = process.env.AUTODEV_CLAUDE_TURN ?? "";
@@ -130,28 +135,55 @@ async function callTool(
 ): Promise<void> {
   const name = typeof params?.name === "string" ? params.name : "";
   const args = isRecord(params?.arguments) ? params.arguments : {};
-  try {
-    const reply = await bridge("/v1/bridge-tools/call", {
-      turn: TURN,
-      name,
-      arguments: args
-    });
-    if (reply.status !== 200 || !reply.body) {
-      const error =
-        typeof reply.body?.error === "string"
-          ? reply.body.error
-          : `Codex could not run ${name} (HTTP ${reply.status}).`;
-      toolError(id, error, emit);
-      return;
+  await recordToolCallSpan(name, async (): Promise<ToolCallOutcome> => {
+    try {
+      const reply = await bridge("/v1/bridge-tools/call", {
+        turn: TURN,
+        name,
+        arguments: args
+      });
+      if (reply.status !== 200 || !reply.body) {
+        const error =
+          typeof reply.body?.error === "string"
+            ? reply.body.error
+            : `Codex could not run ${name} (HTTP ${reply.status}).`;
+        toolError(id, error, emit);
+        return {
+          status: "error",
+          httpStatus: reply.status,
+          errorType: "bridge_http_failure",
+          errorMessage: error
+        };
+      }
+      emit({ jsonrpc: "2.0", id, result: reply.body });
+      // The Development MCP convention (open-telemetry/semantic-conventions-genai
+      // main, docs/gen-ai/mcp.md) records `error.type=tool_error` when the
+      // tool itself signals failure via CallToolResult.isError=true. The
+      // transport was successful here, but the tool-level outcome is a
+      // failure; telemetry reflects that without changing the response.
+      if (reply.body.isError === true) {
+        return {
+          status: "error",
+          httpStatus: reply.status,
+          errorType: "tool_error",
+          errorMessage: "tool returned isError=true"
+        };
+      }
+      return {
+        status: "ok",
+        httpStatus: reply.status
+      };
+    } catch (error: unknown) {
+      const message = `Codex could not run ${name}: ${error instanceof Error ? error.message : String(error)}`;
+      toolError(id, message, emit);
+      return {
+        status: "error",
+        httpStatus: 0,
+        errorType: "bridge_threw",
+        errorMessage: message
+      };
     }
-    emit({ jsonrpc: "2.0", id, result: reply.body });
-  } catch (error: unknown) {
-    toolError(
-      id,
-      `Codex could not run ${name}: ${error instanceof Error ? error.message : String(error)}`,
-      emit
-    );
-  }
+  });
 }
 
 export async function handleMessage(

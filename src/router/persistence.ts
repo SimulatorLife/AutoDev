@@ -160,7 +160,7 @@ export class RouterPersistence {
 
   persistedStateUpdatedAt: string | null = null;
   private persistTimeout: NodeJS.Timeout | null = null;
-  private persistChain: Promise<void> = Promise.resolve();
+  private persistChain: Promise<boolean> = Promise.resolve(true);
 
   constructor(options: RouterPersistenceOptions = {}) {
     this.stateFileOption = options.stateFile;
@@ -231,16 +231,17 @@ export class RouterPersistence {
     }
   }
 
-  persistNow(file?: string): Promise<void> {
+  persistNow(file?: string): Promise<boolean> {
     if (this.persistTimeout) {
       clearTimeout(this.persistTimeout);
       this.persistTimeout = null;
     }
     const targetFile = this.getStateFile(file);
-    const temporaryFile = `${targetFile}.${process.pid}.${Date.now()}.tmp`;
+    const temporaryFile =
+      targetFile + "." + process.pid + "." + Date.now() + ".tmp";
 
     this.persistChain = this.persistChain
-      .catch(() => {})
+      .catch(() => false)
       .then(async () => {
         await writeFile(temporaryFile, this.serialize(), {
           encoding: "utf8",
@@ -248,13 +249,16 @@ export class RouterPersistence {
         });
         await rename(temporaryFile, targetFile);
         this.persistedStateUpdatedAt = new Date().toISOString();
-        return undefined;
+        return true;
       })
       .catch((error) => {
         writeErrorLine(
-          `Warning: could not persist router state to ${targetFile}: ${error instanceof Error ? error.message : String(error)}`
+          "Warning: could not persist router state to " +
+            targetFile +
+            ": " +
+            (error instanceof Error ? error.message : String(error))
         );
-        return undefined;
+        return false;
       });
 
     return this.persistChain;
@@ -309,8 +313,8 @@ export function loadRouterState(file?: string): boolean {
   return getDefaultPersistenceManager().load(file);
 }
 
-export function persistRouterStateNow(file?: string): Promise<void> {
-  return getDefaultPersistenceManager().persistNow(file);
+export async function persistRouterStateNow(file?: string): Promise<void> {
+  await getDefaultPersistenceManager().persistNow(file);
 }
 
 export function scheduleRouterStatePersist(file?: string): void {

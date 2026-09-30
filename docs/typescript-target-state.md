@@ -21,7 +21,7 @@ The TypeScript target state migration is fully completed across all twelve phase
 - Typed Responses/SSE transformation, tool flattening, namespace rewriting, model replacement, tool-call counting, and upstream payload normalization live in `src/router/responses.ts` and are deployed by the installer runtime manifest.
 - Typed concurrency tracking and slot admission live in `src/router/concurrency.ts`, owned solely by the `ConcurrencyManager` class and its shared `getDefaultConcurrencyManager()` default instance (no duplicate module-level forwarding API), with TOML config parsing (`max_concurrent_threads_per_session`), process-fallback scoping, denial recording, and telemetry restoration; router lifecycle state management and graceful shutdown coordination live in `src/router/lifecycle.ts`.
 - Typed router authentication boundary (`src/router/auth.ts`), failure classification and ring-buffer event recording (`src/router/events.ts`), subagent/bridge orchestration registry (`src/router/subagents.ts`), and state persistence subsystem (`src/router/persistence.ts`) are decomposed from the legacy router into dedicated TypeScript modules deployed by the installer runtime manifest.
-- Standalone router server execution is decomposed into `src/router/server.ts`, wiring directly to `src/cli/router.ts`, `scripts/run-codex-model-router.sh`, `src/platform/service-restart.ts`, and `src/platform/install-materializer.ts`. Router-owned MCP registry sweeping and Codex-state polling now follow the listener lifecycle and stop on close or failed bind. Legacy `scripts/codex-model-router.mjs` is deleted, and its comprehensive 183-test suite is migrated to `tests/router/model-router.test.ts` with 0 type errors.
+- Standalone router server execution is decomposed into `src/router/server.ts`, wiring directly to `src/cli/router.ts`, `scripts/run-codex-model-router.sh`, `src/platform/service-restart.ts`, and `src/platform/install-materializer.ts`. The router-owned MCP process registry lives in `src/router/mcp-process-registry.ts`; its sweeper and Codex-state polling follow the listener lifecycle and stop on close or failed bind. Legacy `scripts/codex-model-router.mjs` is deleted, and its comprehensive 183-test suite is migrated to `tests/router/model-router.test.ts` with 0 type errors.
 - Orchestrator capability is explicit in the execution contract: Codex, Claude, Antigravity, and Copilot have native or Codex-shim delegation paths; MiniMax is excluded from the orchestrator fallback tier. Copilot's bridge receives a session-scoped `autodev_spawn` MCP shim and emits the same Codex `exec` delegation item used by the other CLI bridges.
 - Delegation capability resolution fails closed to the execution contract.
 - Dedicated native TypeScript test suites cover concurrency (`tests/router/concurrency.test.ts`), router lifecycle (`tests/router/lifecycle.test.ts`), authentication (`tests/router/auth.test.ts`), event recording (`tests/router/events.test.ts`), subagent registry (`tests/router/subagents.test.ts`), and state persistence (`tests/router/persistence.test.ts`).
@@ -44,7 +44,7 @@ The TypeScript target state migration is fully completed across all twelve phase
 - Host architecture detection (correct under Rosetta) and native Node selection for launchd services live in `src/platform/host-arch.ts`.
 - Pinned Collector artifact manifest validation, platform/architecture selection, download, SHA-256 verification, archive extraction, and private installation live in `src/platform/otel-provision.ts`.
 - LaunchAgent placeholder rendering and drift validation live in `src/platform/macos/launchagent.ts`.
-- Collector mode persistence and router-auth token creation/publication live in `src/platform/install-state.ts`.
+- OTLP ingress mode persistence and router-auth token creation/publication live in `src/platform/install-state.ts`.
 - External dependency availability, pipx provisioning, pinned CodeGraphContext/CocoIndex/Python-LSP installation, macOS SDK/compiler environment preparation, and executable checks live in `src/platform/dependencies.ts`.
 - The AutoDev request-capture recorder and its contract suite run as native TypeScript (`.rulesync/skills/autodev-codex-request-capture/scripts/responses-recorder.ts` and `tests/codex-request-capture-skill.test.ts`).
 - The AutoDev session-diagnostics trace script and its suite run as native TypeScript (`.rulesync/skills/autodev-session-diagnostics/scripts/session-trace.ts` and `tests/session-diagnostics-skill.test.ts`).
@@ -76,17 +76,17 @@ Keep declarative formats in their native form (`YAML`, `TOML`, `JSON`, `JSONC`, 
 
 Target ownership:
 
-| Concern | Target |
-|---|---|
-| Router, provider bridges, orchestration | TypeScript |
-| Config composition and rendering | TypeScript |
-| Hooks and telemetry | TypeScript |
-| Installer, reconciliation, lifecycle logic | TypeScript |
-| Tests | TypeScript with `node:test` |
-| Thin `exec`/platform launch shims | Shell only when justified |
-| Agent/provider configuration | Existing declarative formats |
-| Prompts and skills | Markdown |
-| Vendored third-party helpers | Preserve upstream language unless replaced upstream |
+| Concern                                    | Target                                              |
+| ------------------------------------------ | --------------------------------------------------- |
+| Router, provider bridges, orchestration    | TypeScript                                          |
+| Config composition and rendering           | TypeScript                                          |
+| Hooks and telemetry                        | TypeScript                                          |
+| Installer, reconciliation, lifecycle logic | TypeScript                                          |
+| Tests                                      | TypeScript with `node:test`                         |
+| Thin `exec`/platform launch shims          | Shell only when justified                           |
+| Agent/provider configuration               | Existing declarative formats                        |
+| Prompts and skills                         | Markdown                                            |
+| Vendored third-party helpers               | Preserve upstream language unless replaced upstream |
 
 The objective is not language purity by file extension. It is to eliminate duplicated runtime contracts, multiple test stacks, and cross-language maintenance for AutoDev-owned behavior
 

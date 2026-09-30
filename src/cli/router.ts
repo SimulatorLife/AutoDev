@@ -1,6 +1,6 @@
 import { ConfigError } from "../config/config-files.ts";
 import { startRouterServer } from "../router/server.ts";
-import type { RouterStatus } from "../router/status.ts";
+import type { RouterRuntimeStatus } from "../router/status.ts";
 import { writeLine } from "../shared/output.ts";
 import { fetchRouterStatus } from "./router-status-client.ts";
 import { UnmigratedRuntimeError } from "./runtime.ts";
@@ -10,7 +10,7 @@ export type RouterCommand = "run" | "ensure" | "status";
 export interface RouterCommandBackend {
   run(): number;
   ensure(): number;
-  status(): RouterStatus | Promise<RouterStatus>;
+  status(): RouterRuntimeStatus | Promise<RouterRuntimeStatus>;
 }
 
 const defaultRouterBackend: RouterCommandBackend = {

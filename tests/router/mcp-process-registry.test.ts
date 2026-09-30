@@ -1,11 +1,11 @@
-import test from "node:test";
 import assert from "node:assert/strict";
+import test from "node:test";
 
 import {
+  getDefaultMcpProcessRegistry,
   McpProcessRegistry,
-  setDefaultMcpProcessRegistry,
-  getDefaultMcpProcessRegistry
-} from "../../src/mcp/process-registry.ts";
+  setDefaultMcpProcessRegistry
+} from "../../src/router/mcp-process-registry.ts";
 
 void test("register / touch / unregister manage the lifecycle", () => {
   const calls: Array<[number, string]> = [];
@@ -126,13 +126,35 @@ void test("eviction keeps the registry at most maxEntries entries", () => {
   assert.deepEqual(killed, []);
 });
 
-void test("startIdleSweeper and stopIdleSweeper are idempotent", () => {
-  const registry = new McpProcessRegistry({});
-  const handle1 = registry.startIdleSweeper(10_000, 60_000);
-  const handle2 = registry.startIdleSweeper(10_000, 60_000);
-  // Second call replaces the first.
-  assert.notEqual(handle1, handle2);
-  registry.stopIdleSweeper();
-  // Stopping twice is safe.
-  registry.stopIdleSweeper();
+void test("registry owns the idle sweeper for exactly the lifetime of registered processes", () => {
+  const originalSetInterval = globalThis.setInterval;
+  const originalClearInterval = globalThis.clearInterval;
+  let starts = 0;
+  let stops = 0;
+  const fakeTimer = { unref() {} } as unknown as NodeJS.Timeout;
+  globalThis.setInterval = (() => {
+    starts += 1;
+    return fakeTimer;
+  }) as unknown as typeof setInterval;
+  globalThis.clearInterval = (() => {
+    stops += 1;
+  }) as typeof clearInterval;
+  try {
+    const registry = new McpProcessRegistry({
+      sweepIntervalMs: 10_000,
+      kill: () => undefined
+    });
+    assert.equal(starts, 0);
+    registry.register(101, "session-a", "lsp");
+    assert.equal(starts, 1);
+    registry.register(102, "session-a", "context7");
+    assert.equal(starts, 1, "one active registry owns one sweeper");
+    registry.unregister(101);
+    assert.equal(stops, 0, "sweeper remains while entries remain");
+    registry.unregister(102);
+    assert.equal(stops, 1, "empty registry stops its owned sweeper");
+  } finally {
+    globalThis.setInterval = originalSetInterval;
+    globalThis.clearInterval = originalClearInterval;
+  }
 });

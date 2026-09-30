@@ -27,11 +27,11 @@ import {
   isOrchestratorRole,
   resolveAgentRole
 } from "../agents/bridge-role.ts";
-import { SpawnSessionRegistry } from "../agents/bridge-spawn-session.ts";
 import {
   bridgeSkillContext,
   readOnlySystemPromptInjection
 } from "../agents/bridge-sandbox.ts";
+import { SpawnSessionRegistry } from "../agents/bridge-spawn-session.ts";
 import {
   buildSpawnScript,
   execToolCallSseEvents,
@@ -40,6 +40,10 @@ import {
 } from "../agents/spawn-tools.ts";
 import type { RoleContract } from "../shared/execution-contract.ts";
 import { roleContract } from "../shared/execution-contract.ts";
+import {
+  AUTODEV_WORKSPACE_KEY_HEADER,
+  withAutoDevOtelResourceContext
+} from "../shared/otel-resource-context.ts";
 import { writeErrorLine } from "../shared/output.ts";
 import {
   classifyCliLimit,
@@ -1949,7 +1953,7 @@ function buildAgyPrompt(
   skillContext: string | null
 ): string {
   const preamble = readOnlySystemPromptInjection(
-    sandboxMode !== null ? { "x-autodev-sandbox-mode": sandboxMode } : null
+    sandboxMode === null ? null : { "x-autodev-sandbox-mode": sandboxMode }
   );
   const skillPreamble = skillContext
     ? `
@@ -1974,7 +1978,8 @@ function runAgy(
   spawnSession: string | null = null,
   agentRole: string | null = null,
   sandboxMode: "read-only" | "workspace-write" | null = null,
-  skillContext: string | null = null
+  skillContext: string | null = null,
+  workspaceKey: unknown = null
 ): Promise<RunAgyResult> {
   let isolatedState: IsolatedHomeResult;
   try {
@@ -2009,7 +2014,11 @@ function runAgy(
         agyArgs(finalPrompt, model, effort, agentRole, sandboxMode),
         {
           cwd,
-          env: agyEnvironment(spawnSession, isolatedState.isolatedHome),
+          env: withAutoDevOtelResourceContext(
+            agyEnvironment(spawnSession, isolatedState.isolatedHome),
+            workspaceKey,
+            agentRole
+          ),
           stdio: ["ignore", "pipe", "pipe"]
         }
       );
@@ -2280,12 +2289,13 @@ async function handle(
   // The router classifies the turn; only it can tell this bridge that it is
   // serving the root orchestrator rather than a delegated leaf.
   const agentRole = resolveAgentRole(request.headers);
+  const workspaceKey = request.headers[AUTODEV_WORKSPACE_KEY_HEADER];
   const sandboxMode =
     readOnlySystemPromptInjection(
       request.headers as Record<string, unknown>
-    ) !== ""
-      ? "read-only"
-      : resolveSandboxModeLocal(request.headers);
+    ) === ""
+      ? resolveSandboxModeLocal(request.headers)
+      : "read-only";
   const skillContext = bridgeSkillContext(
     request.headers as Record<string, unknown>
   );
@@ -2428,7 +2438,8 @@ async function handle(
           spawnSession,
           agentRole,
           sandboxMode,
-          skillContext
+          skillContext,
+          workspaceKey
         );
       } finally {
         clearInterval(nonStreamHeartbeat);
@@ -2835,7 +2846,8 @@ async function handle(
       spawnSession,
       agentRole,
       sandboxMode,
-      skillContext
+      skillContext,
+      workspaceKey
     );
     clearInterval(keepAlive);
     stopDelegationHeartbeat();

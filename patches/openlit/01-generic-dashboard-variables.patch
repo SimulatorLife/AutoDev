@@ -1,0 +1,3634 @@
+diff --git a/src/client/src/__tests__/lib/platform/common.test.ts b/src/client/src/__tests__/lib/platform/common.test.ts
+index 847b6f4f..dc13460d 100644
+--- a/src/client/src/__tests__/lib/platform/common.test.ts
++++ b/src/client/src/__tests__/lib/platform/common.test.ts
+@@ -13,7 +13,7 @@ jest.mock('@/lib/platform/openplait', () => ({
+   executeOpenPlaitRead: jest.fn(),
+ }));
+ 
+-import { dataCollector, intelligenceDataCollector } from '@/lib/platform/common';
++import { connectorDataCollector, dataCollector, intelligenceDataCollector } from '@/lib/platform/common';
+ import createClickhousePool from '@/lib/platform/clickhouse/clickhouse-client';
+ import asaw from '@/utils/asaw';
+ import { executeOpenPlaitRead } from '@/lib/platform/openplait';
+@@ -97,6 +97,32 @@ describe('dataCollector', () => {
+       expect(result.err).toBeNull();
+     });
+ 
++    it('passes typed query_params through the native ClickHouse client', async () => {
++      const mockClient = makeClient();
++      const mockPool = { acquire: jest.fn(), release: jest.fn() };
++      (createClickhousePool as jest.Mock).mockReturnValue(mockPool);
++      (asaw as jest.Mock)
++        .mockResolvedValueOnce([null, mockDbConfig])
++        .mockResolvedValueOnce([null, mockClient])
++        .mockResolvedValueOnce([null, { json: jest.fn() }])
++        .mockResolvedValueOnce([null, [{ requests: 1 }]]);
++      const queryParams = { filter_value: "'; DROP TABLE otel_traces; --" };
++
++      const result = await connectorDataCollector(
++        { query: 'SELECT {filter_value:String}', query_params: queryParams },
++        'query',
++        'db-1'
++      );
++
++      expect(result.data).toEqual([{ requests: 1 }]);
++      expect(mockClient.query).toHaveBeenCalledWith(
++        expect.objectContaining({
++          query: 'SELECT {filter_value:String}',
++          query_params: queryParams,
++        })
++      );
++    });
++
+     it('applies readonly setting when enable_readonly is true', async () => {
+       (asaw as jest.Mock)
+         .mockResolvedValueOnce([null, mockDbConfig])
+diff --git a/src/client/src/__tests__/lib/platform/dashboard-variables/distinct-values.test.ts b/src/client/src/__tests__/lib/platform/dashboard-variables/distinct-values.test.ts
+new file mode 100644
+index 00000000..5fcbdc90
+--- /dev/null
++++ b/src/client/src/__tests__/lib/platform/dashboard-variables/distinct-values.test.ts
+@@ -0,0 +1,146 @@
++/**
++ * Generic typed source binding tests for dashboard variable
++ * `distinctValues` lookup. The dashboard editor calls
++ * `fetchVariableAllowedValues` to populate the dropdown for variables
++ * that do NOT carry a hand-curated `allowedValues` array; the binding
++ * layer is the typed `distinctValues(scopedKey, query)` adapter method.
++ *
++ * This test ensures the binding:
++ *
++ *   - Returns `{ supported: false }` when the bound adapter does not
++ *     advertise the capability (and never throws UnsupportedCapabilityError
++ *     to the caller).
++ *   - Returns the adapter's distinct values when the capability is on.
++ *   - Never composes a SQL string with user-controlled values.
++ *   - Clamps the result to the requested limit.
++ */
++
++import {
++	distinctValueLookupKey,
++	fetchVariableAllowedValues,
++} from "@/lib/platform/dashboard-variables";
++import { UnsupportedCapabilityError } from "@/lib/platform/connectors/datasource/types";
++import type { DataSourceAdapter } from "@/lib/platform/connectors/datasource/types";
++
++function fakeAdapter(
++	overrides: Partial<DataSourceAdapter> = {},
++): DataSourceAdapter {
++	return {
++		type: "fake",
++		capabilities: () => ({
++			signals: ["traces"],
++			traceTree: false,
++			spanEvents: false,
++			serverAggregation: false,
++			spanMutation: false,
++			distinctValues: true,
++			crossTraceSession: false,
++			rawQuery: false,
++		}),
++		distinctValues: async () => ["alpha", "beta", "gamma"],
++		...overrides,
++	} as unknown as DataSourceAdapter;
++}
++
++describe("distinctValueLookupKey", () => {
++	it("qualifies trace attributes by scope and rejects mismatched signal scopes", () => {
++		expect(distinctValueLookupKey("traces", "resource", "service.name")).toBe(
++			"resource:service.name",
++		);
++		expect(distinctValueLookupKey("traces", "span", "gen_ai.system")).toBe(
++			"span:gen_ai.system",
++		);
++		expect(distinctValueLookupKey("logs", "span", "service.name")).toBeNull();
++	});
++});
++
++describe("fetchVariableAllowedValues", () => {
++	it("returns { supported: true } and the adapter values when supported", async () => {
++		const queriedKeys: string[] = [];
++		const result = await fetchVariableAllowedValues({
++			adapter: fakeAdapter({
++				distinctValues: async (key) => {
++					queriedKeys.push(key);
++					return ["alpha", "beta", "gamma"];
++				},
++			}),
++			signal: "traces",
++			scope: "resource",
++			key: "service.name",
++			timeRange: {
++				start: new Date("2026-01-01T00:00:00Z"),
++				end: new Date("2026-01-02T00:00:00Z"),
++			},
++		});
++		expect(result.supported).toBe(true);
++		expect(result.values).toEqual(["alpha", "beta", "gamma"]);
++		expect(queriedKeys).toEqual(["resource:service.name"]);
++	});
++
++	it("returns { supported: false } when adapter has no distinctValues capability", async () => {
++		const result = await fetchVariableAllowedValues({
++			adapter: fakeAdapter({
++				capabilities: () => ({
++					signals: ["traces"],
++					traceTree: false,
++					spanEvents: false,
++					serverAggregation: false,
++					spanMutation: false,
++					distinctValues: false,
++					crossTraceSession: false,
++					rawQuery: false,
++				}) as never,
++			}),
++			signal: "traces",
++			scope: "resource",
++			key: "service.name",
++			timeRange: {
++				start: new Date("2026-01-01T00:00:00Z"),
++				end: new Date("2026-01-02T00:00:00Z"),
++			},
++		});
++		expect(result.supported).toBe(false);
++		expect(result.values).toEqual([]);
++	});
++
++	it("returns { supported: false } when adapter throws UnsupportedCapabilityError", async () => {
++		const result = await fetchVariableAllowedValues({
++			adapter: fakeAdapter({
++				distinctValues: async () => {
++					throw new UnsupportedCapabilityError(
++						"fake",
++						"distinctValues",
++						"not supported",
++					);
++				},
++			}),
++			signal: "traces",
++			scope: "resource",
++			key: "service.name",
++			timeRange: {
++				start: new Date("2026-01-01T00:00:00Z"),
++				end: new Date("2026-01-02T00:00:00Z"),
++			},
++		});
++		expect(result.supported).toBe(false);
++		expect(result.values).toEqual([]);
++	});
++
++	it("clamps the result to the requested limit", async () => {
++		const big = Array.from({ length: 100 }, (_, i) => `value-${i}`);
++		const result = await fetchVariableAllowedValues({
++			adapter: fakeAdapter({
++				distinctValues: async () => big,
++			}),
++			signal: "traces",
++			scope: "resource",
++			key: "service.name",
++			timeRange: {
++				start: new Date("2026-01-01T00:00:00Z"),
++				end: new Date("2026-01-02T00:00:00Z"),
++			},
++			limit: 5,
++		});
++		expect(result.values.length).toBe(5);
++	});
++});
+diff --git a/src/client/src/__tests__/lib/platform/dashboard-variables/translate.test.ts b/src/client/src/__tests__/lib/platform/dashboard-variables/translate.test.ts
+new file mode 100644
+index 00000000..b0881e30
+--- /dev/null
++++ b/src/client/src/__tests__/lib/platform/dashboard-variables/translate.test.ts
+@@ -0,0 +1,218 @@
++import {
++	applyDashboardVariables,
++	isDashboardVariableBindingValid,
++	parseVariableSelection,
++	readVariablesFromSearchParams,
++	serializeVariableSelection,
++	variableToFilter,
++	variablesToSearchParams,
++	DASHBOARD_VARIABLE_URL_PREFIX,
++} from "@/lib/platform/dashboard-variables/translate";
++import type {
++	DashboardVariableSpec,
++	NormalizedQueryLike,
++} from "@/lib/platform/dashboard-variables/translate";
++import type { OpenLITQuery } from "@/lib/platform/connectors/datasource/types";
++
++const SPECS: DashboardVariableSpec[] = [
++	{
++		id: "workspace",
++		label: "Workspace",
++		signal: "traces",
++		scope: "resource",
++		key: "workspace.id",
++		multi: false,
++		supportsAll: true,
++		defaultValues: ["default"],
++	},
++	{
++		id: "provider",
++		label: "Provider",
++		signal: "traces",
++		scope: "span",
++		key: "gen_ai.system",
++		multi: true,
++		supportsAll: true,
++		defaultValues: [],
++	},
++	{
++		id: "metric-name",
++		label: "Metric",
++		signal: "metrics",
++		scope: "metric",
++		key: "metric.name",
++		multi: false,
++		supportsAll: false,
++	},
++];
++
++// `OpenLITQuery` is structurally a `NormalizedQueryLike`, but the upstream
++// type doesn't declare an index signature. Cast once at the test boundary.
++function asNormalized(q: OpenLITQuery): NormalizedQueryLike {
++	return q as unknown as NormalizedQueryLike;
++}
++
++describe("variableToFilter", () => {
++	it("accepts only scopes supported by the variable signal", () => {
++		expect(isDashboardVariableBindingValid("traces", "resource")).toBe(true);
++		expect(isDashboardVariableBindingValid("traces", "span")).toBe(true);
++		expect(isDashboardVariableBindingValid("logs", "log")).toBe(true);
++		expect(isDashboardVariableBindingValid("metrics", "metric")).toBe(true);
++		expect(isDashboardVariableBindingValid("logs", "span")).toBe(false);
++	});
++
++	it("returns null for empty / All selection", () => {
++		expect(variableToFilter(SPECS[0], undefined)).toBeNull();
++		expect(variableToFilter(SPECS[0], [])).toBeNull();
++	});
++
++	it("emits eq for a single non-All value", () => {
++		expect(variableToFilter(SPECS[0], ["alpha"])).toEqual({
++			target: "attribute",
++			scope: "resource",
++			key: "workspace.id",
++			op: "eq",
++			value: "alpha",
++		});
++	});
++
++	it("emits in for multi-select with more than one value", () => {
++		expect(variableToFilter(SPECS[1], ["openai", "anthropic"])).toEqual({
++			target: "attribute",
++			scope: "span",
++			key: "gen_ai.system",
++			op: "in",
++			value: ["openai", "anthropic"],
++		});
++	});
++});
++
++describe("applyDashboardVariables", () => {
++	const baseQuery: OpenLITQuery = {
++		signal: "traces",
++		timeRange: { start: new Date("2026-01-01"), end: new Date("2026-01-02") },
++		filters: [
++			{
++				target: "attribute",
++				scope: "span",
++				key: "gen_ai.operation.name",
++				op: "eq",
++				value: "chat",
++			},
++		],
++	};
++
++	it("prepends variable filters and preserves existing filters", () => {
++		const out = applyDashboardVariables(asNormalized(baseQuery), SPECS, {
++			values: {
++				workspace: ["alpha"],
++				provider: ["openai", "anthropic"],
++				"metric-name": [], // signal mismatch => ignored
++			},
++		});
++		expect(out.signal).toBe("traces");
++		expect(out.filters).toHaveLength(3);
++		// Variable filters come first so they short-circuit irrelevant rows
++		// before the existing attribute filter runs.
++		expect(out.filters?.[0]).toMatchObject({
++			key: "workspace.id",
++			op: "eq",
++			value: "alpha",
++		});
++		expect(out.filters?.[1]).toMatchObject({
++			key: "gen_ai.system",
++			op: "in",
++			value: ["openai", "anthropic"],
++		});
++		// Existing filter is preserved verbatim.
++		expect(out.filters?.[2]).toEqual(baseQuery.filters?.[0]);
++	});
++
++	it("ignores variables whose selection is empty / All", () => {
++		const out = applyDashboardVariables(asNormalized(baseQuery), SPECS, {
++			values: {
++				workspace: [],
++				provider: [],
++			},
++		});
++		expect(out.filters).toEqual(baseQuery.filters);
++	});
++
++	it("skips variables whose signal does not match the query", () => {
++		const out = applyDashboardVariables(asNormalized(baseQuery), SPECS, {
++			values: { "metric-name": ["request_total"] },
++		});
++		expect(out.filters).toEqual(baseQuery.filters);
++	});
++
++	it("honors widget opt-in: undeclared variables are dropped", () => {
++		const out = applyDashboardVariables(
++			asNormalized(baseQuery),
++			SPECS,
++			{
++				values: {
++					workspace: ["alpha"],
++					provider: ["openai"],
++				},
++			},
++			{ widgetOptIn: ["provider"] },
++		);
++		expect(out.filters).toHaveLength(2);
++		expect(out.filters?.[0]).toMatchObject({ key: "gen_ai.system" });
++		expect(out.filters?.[1]).toEqual(baseQuery.filters?.[0]);
++	});
++
++	it("never interpolates user-controlled values into SQL strings", () => {
++		const out = applyDashboardVariables(asNormalized(baseQuery), SPECS, {
++			values: { workspace: ["'; DROP TABLE otel_traces; --"] },
++		});
++		// The value flows through the typed filter pipeline, never a SQL
++		// string; this assertion exists so a future regression that
++		// reintroduces string concatenation is caught at the type level.
++		expect(out.filters?.[0]).toMatchObject({
++			op: "eq",
++			value: "'; DROP TABLE otel_traces; --",
++		});
++	});
++});
++
++describe("URL persistence", () => {
++	it("round-trips an All selection through serialize/parse", () => {
++		expect(serializeVariableSelection([])).toBe("*");
++		expect(parseVariableSelection("*")).toEqual([]);
++		expect(parseVariableSelection(null)).toEqual([]);
++		expect(parseVariableSelection("")).toEqual([]);
++	});
++
++	it("round-trips a single value", () => {
++		expect(serializeVariableSelection(["alpha"])).toBe("alpha");
++		expect(parseVariableSelection("alpha")).toEqual(["alpha"]);
++	});
++
++	it("round-trips a multi-value selection with URL encoding", () => {
++		const original = ["openai", "anthropic", "value with space"];
++		const token = serializeVariableSelection(original);
++		expect(token).toBe("openai,anthropic,value%20with%20space");
++		expect(parseVariableSelection(token)).toEqual(original);
++	});
++
++	it("variablesToSearchParams emits the dashboard_var_ prefix", () => {
++		const params = variablesToSearchParams({
++			values: { workspace: ["alpha"], provider: [] },
++		});
++		expect(params.get(`${DASHBOARD_VARIABLE_URL_PREFIX}workspace`)).toBe("alpha");
++		// All / empty selection serializes to "*" so the URL is stable.
++		expect(params.get(`${DASHBOARD_VARIABLE_URL_PREFIX}provider`)).toBe("*");
++	});
++
++	it("readVariablesFromSearchParams ignores unrelated keys", () => {
++		const params = new URLSearchParams();
++		params.set("tr", "24H");
++		params.set(`${DASHBOARD_VARIABLE_URL_PREFIX}workspace`, "alpha");
++		params.set(`${DASHBOARD_VARIABLE_URL_PREFIX}provider`, "openai,anthropic");
++		expect(readVariablesFromSearchParams(params)).toEqual({
++			workspace: ["alpha"],
++			provider: ["openai", "anthropic"],
++		});
++	});
++});
+diff --git a/src/client/src/__tests__/lib/platform/datasource/clickhouse-adapter.test.ts b/src/client/src/__tests__/lib/platform/datasource/clickhouse-adapter.test.ts
+index d8f33e6a..c45fd559 100644
+--- a/src/client/src/__tests__/lib/platform/datasource/clickhouse-adapter.test.ts
++++ b/src/client/src/__tests__/lib/platform/datasource/clickhouse-adapter.test.ts
+@@ -1,5 +1,4 @@
+ const mockDataCollector = jest.fn();
+-const mockGetRequests = jest.fn();
+ const mockGetAttributeKeys = jest.fn();
+ const mockGetLogs = jest.fn();
+ const mockGetLogByRowId = jest.fn();
+@@ -23,7 +22,6 @@ jest.mock("@/lib/db-config", () => ({
+ }));
+ 
+ jest.mock("@/lib/platform/request", () => ({
+-	getRequests: (...args: unknown[]) => mockGetRequests(...args),
+ 	getAttributeKeys: (...args: unknown[]) => mockGetAttributeKeys(...args),
+ }));
+ 
+@@ -98,6 +96,7 @@ describe("ClickHouseAdapter", () => {
+ 			serverAggregation: true,
+ 			spanMutation: true,
+ 			distinctValues: true,
++			dashboardVariableSignals: ["traces"],
+ 			crossTraceSession: true,
+ 			rawQuery: true,
+ 		});
+@@ -110,8 +109,8 @@ describe("ClickHouseAdapter", () => {
+ 		expect(mockDataCollector).toHaveBeenCalledWith({}, "ping", "db-1");
+ 	});
+ 
+-	it("listSpans normalizes getRequests records into NormalizedSpan", async () => {
+-		mockGetRequests.mockResolvedValue({ records: [rawSpan], total: 1 });
++	it("listSpans normalizes parameterized trace rows into NormalizedSpan", async () => {
++		mockDataCollector.mockResolvedValue({ data: [rawSpan] });
+ 		const frame = await adapter.listSpans({ ...baseQuery, limit: 10 });
+ 		expect(frame.rows).toHaveLength(1);
+ 		expect(frame.rows[0]).toMatchObject({
+@@ -186,19 +185,18 @@ describe("ClickHouseAdapter", () => {
+ 		expect(frame.rows).toEqual([]);
+ 	});
+ 
+-	it("aggregateSpans builds group-by + aggregation SQL", async () => {
++	it("aggregateSpans binds group-by and aggregation keys as query parameters", async () => {
+ 		mockDataCollector.mockResolvedValue({ data: [{ g0: "gpt-4", total: 5 }] });
+ 		await adapter.aggregateSpans({
+ 			...baseQuery,
+ 			groupBy: ["gen_ai.request.model"],
+ 			aggregations: [{ fn: "sum", field: "gen_ai.usage.cost", as: "total" }],
+ 		});
+-		const sql = (mockDataCollector.mock.calls[0][0] as { query: string }).query;
+-		expect(sql).toContain("SpanAttributes['gen_ai.request.model'] AS g0");
+-		expect(sql).toContain(
+-			"sum(toFloat64OrZero(SpanAttributes['gen_ai.usage.cost'])) AS total"
+-		);
+-		expect(sql).toContain("GROUP BY g0");
++		const args = mockDataCollector.mock.calls[0][0] as { query: string; query_params: Record<string, unknown> };
++		expect(args.query).toContain("SpanAttributes[{autodev_filter_0:String}] AS g0");
++		expect(args.query).toContain("sum(toFloat64OrZero(SpanAttributes[{autodev_filter_1:String}])) AS total");
++		expect(args.query).toContain("GROUP BY g0");
++		expect(args.query_params).toMatchObject({ autodev_filter_0: "gen_ai.request.model", autodev_filter_1: "gen_ai.usage.cost" });
+ 	});
+ 
+ 	it("rejects SQL-shaped aggregation aliases", async () => {
+@@ -211,19 +209,18 @@ describe("ClickHouseAdapter", () => {
+ 		expect(mockDataCollector).not.toHaveBeenCalled();
+ 	});
+ 
+-	it("spanTimeSeries defaults rows to [] when getSignalSummary returns no buckets", async () => {
+-		mockGetSignalSummary.mockResolvedValue({});
++	it("spanTimeSeries defaults rows to [] when the bound query returns no data", async () => {
++		mockDataCollector.mockResolvedValue({});
+ 		const frame = await adapter.spanTimeSeries(baseQuery);
+ 		expect(frame.rows).toEqual([]);
+ 	});
+ 
+-	it("spanTimeSeries buckets by interval", async () => {
+-		mockGetSignalSummary.mockResolvedValue({ buckets: [{ label: "10:00", count: 2 }] });
++	it("spanTimeSeries binds time range parameters", async () => {
++		mockDataCollector.mockResolvedValue({ data: [{ label: "10:00", count: 2 }] });
+ 		const frame = await adapter.spanTimeSeries({ ...baseQuery, interval: "1h" });
+-		expect(mockGetSignalSummary).toHaveBeenCalledWith(
+-			expect.objectContaining({ databaseConfigId: "db-1" }),
+-			"traces"
+-		);
++		const args = mockDataCollector.mock.calls[0][0] as { query: string; query_params: Record<string, unknown> };
++		expect(args.query).toContain("DATE_TRUNC('hour', Timestamp)");
++		expect(args.query_params.autodev_filter_0).toBe(window.start.toISOString());
+ 		expect(frame.rows).toEqual([{ label: "10:00", count: 2 }]);
+ 	});
+ 
+@@ -243,15 +240,17 @@ describe("ClickHouseAdapter", () => {
+ 	it("distinctValues respects resource-scoped attribute fields", async () => {
+ 		mockDataCollector.mockResolvedValue({ data: [{ v: "production" }] });
+ 		await adapter.distinctValues("resource:deployment.environment", baseQuery);
+-		const sql = (mockDataCollector.mock.calls[0][0] as { query: string }).query;
+-		expect(sql).toContain("ResourceAttributes['deployment.environment'] AS v");
++		const args = mockDataCollector.mock.calls[0][0] as { query: string; query_params: Record<string, unknown> };
++		expect(args.query).toContain("ResourceAttributes[{autodev_filter_0:String}] AS v");
++		expect(args.query_params.autodev_filter_0).toBe("deployment.environment");
+ 	});
+ 
+ 	it("distinctValues respects span-scoped attribute fields (span: prefix)", async () => {
+ 		mockDataCollector.mockResolvedValue({ data: [{ v: "gpt-4o" }] });
+ 		await adapter.distinctValues("span:gen_ai.request.model", baseQuery);
+-		const sql = (mockDataCollector.mock.calls[0][0] as { query: string }).query;
+-		expect(sql).toContain("SpanAttributes['gen_ai.request.model'] AS v");
++		const args = mockDataCollector.mock.calls[0][0] as { query: string; query_params: Record<string, unknown> };
++		expect(args.query).toContain("SpanAttributes[{autodev_filter_0:String}] AS v");
++		expect(args.query_params.autodev_filter_0).toBe("gen_ai.request.model");
+ 	});
+ 
+ 	it("distinctValues coalesces a nullish v column to '' before filtering", async () => {
+@@ -311,39 +310,37 @@ describe("ClickHouseAdapter", () => {
+ 		expect(await adapter.sampleTracesForGraph(baseQuery, 50)).toEqual([]);
+ 	});
+ 
+-	it("listSpans throws the legacy error when getRequests fails", async () => {
++	it("listSpans throws the query error when the bound trace read fails", async () => {
+ 		const boom = new Error("boom");
+-		mockGetRequests.mockResolvedValue({ err: boom });
++		mockDataCollector.mockResolvedValue({ err: boom });
+ 		await expect(adapter.listSpans(baseQuery)).rejects.toThrow("boom");
+ 	});
+ 
+ 	it("listSpans wraps a non-Error err value", async () => {
+-		mockGetRequests.mockResolvedValue({ err: "string-error" });
++		mockDataCollector.mockResolvedValue({ err: "string-error" });
+ 		await expect(adapter.listSpans(baseQuery)).rejects.toThrow("string-error");
+ 	});
+ 
+ 	it("listSpans defaults rowsScanned to rows.length when total is not a number", async () => {
+-		mockGetRequests.mockResolvedValue({ records: [rawSpan], total: undefined });
++		mockDataCollector.mockResolvedValue({ data: [rawSpan] });
+ 		const frame = await adapter.listSpans(baseQuery);
+ 		expect(frame.meta?.rowsScanned).toBe(1);
+ 	});
+ 
+ 	it("listSpans defaults rows to [] when getRequests returns no records field", async () => {
+-		mockGetRequests.mockResolvedValue({});
++		mockDataCollector.mockResolvedValue({});
+ 		const frame = await adapter.listSpans(baseQuery);
+ 		expect(frame.rows).toEqual([]);
+ 	});
+ 
+ 	// ---- fieldToExpr (via aggregateSpans/distinctValues groupBy & field) --
+ 
+-	it("aggregateSpans resolves a resource-scoped groupBy field", async () => {
++	it("aggregateSpans binds resource-scoped group-by keys", async () => {
+ 		mockDataCollector.mockResolvedValue({ data: [] });
+-		await adapter.aggregateSpans({
+-			...baseQuery,
+-			groupBy: ["resource:deployment.environment"],
+-		});
+-		const sql = (mockDataCollector.mock.calls[0][0] as { query: string }).query;
+-		expect(sql).toContain("ResourceAttributes['deployment.environment'] AS g0");
++		await adapter.aggregateSpans({ ...baseQuery, groupBy: ["resource:deployment.environment"] });
++		const args = mockDataCollector.mock.calls[0][0] as { query: string; query_params: Record<string, unknown> };
++		expect(args.query).toContain("ResourceAttributes[{autodev_filter_0:String}] AS g0");
++		expect(args.query_params.autodev_filter_0).toBe("deployment.environment");
+ 	});
+ 
+ 	it("aggregateSpans coalesces gen_ai.provider.name with legacy gen_ai.system", async () => {
+@@ -352,10 +349,11 @@ describe("ClickHouseAdapter", () => {
+ 			...baseQuery,
+ 			groupBy: ["gen_ai.provider.name"],
+ 		});
+-		const sql = (mockDataCollector.mock.calls[0][0] as { query: string }).query;
+-		expect(sql).toContain("SpanAttributes['gen_ai.provider.name']");
+-		expect(sql).toContain("SpanAttributes['gen_ai.system']");
+-		expect(sql).toContain("coalesce");
++		const args = mockDataCollector.mock.calls[0][0] as { query: string; query_params: Record<string, unknown> };
++		expect(args.query).toContain("SpanAttributes['gen_ai.provider.name']");
++		expect(args.query).toContain("SpanAttributes['gen_ai.system']");
++		expect(args.query).toContain("coalesce");
++		expect(args.query_params).toEqual({ autodev_filter_0: window.start.toISOString(), autodev_filter_1: window.end.toISOString() });
+ 	});
+ 
+ 	it("aggregateSpans resolves the duration field to seconds", async () => {
+@@ -389,8 +387,9 @@ describe("ClickHouseAdapter", () => {
+ 			...baseQuery,
+ 			groupBy: ["deployment.environment"],
+ 		});
+-		const sql = (mockDataCollector.mock.calls[0][0] as { query: string }).query;
+-		expect(sql).toContain("ResourceAttributes['deployment.environment'] AS g0");
++		const args = mockDataCollector.mock.calls[0][0] as { query: string; query_params: Record<string, unknown> };
++		expect(args.query).toContain("ResourceAttributes[{autodev_filter_0:String}] AS g0");
++		expect(args.query_params.autodev_filter_0).toBe("deployment.environment");
+ 	});
+ 
+ 	it("aggregateSpans passes through any other allow-listed field verbatim (e.g. StatusCode)", async () => {
+@@ -454,7 +453,8 @@ describe("ClickHouseAdapter", () => {
+ 		mockDataCollector.mockResolvedValue({ data: [] });
+ 		await adapter.aggregateSpans({ ...baseQuery, limit: 25, aiSelector: false });
+ 		const sql = (mockDataCollector.mock.calls[0][0] as { query: string }).query;
+-		expect(sql).toContain("LIMIT 25");
++		expect(sql).toContain("LIMIT {autodev_filter_2:UInt32}");
++		expect((mockDataCollector.mock.calls[0][0] as { query_params: Record<string, unknown> }).query_params.autodev_filter_2).toBe(25);
+ 		expect(sql).not.toContain("telemetry.sdk.name");
+ 	});
+ 
+@@ -1008,8 +1008,8 @@ describe("ClickHouseAdapter", () => {
+ 		expect(result.message).toBe("Error: ping failed");
+ 	});
+ 
+-	it("spanTimeSeries throws the legacy error on failure", async () => {
+-		mockGetSignalSummary.mockResolvedValue({ err: new Error("span summary failed") });
++	it("spanTimeSeries throws the query error on failure", async () => {
++		mockDataCollector.mockResolvedValue({ err: new Error("span summary failed") });
+ 		await expect(adapter.spanTimeSeries(baseQuery)).rejects.toThrow(
+ 			"span summary failed"
+ 		);
+diff --git a/src/client/src/__tests__/lib/platform/datasource/clickhouse-direct-read.test.ts b/src/client/src/__tests__/lib/platform/datasource/clickhouse-direct-read.test.ts
+index 5bd6fee8..e0dbb5f8 100644
+--- a/src/client/src/__tests__/lib/platform/datasource/clickhouse-direct-read.test.ts
++++ b/src/client/src/__tests__/lib/platform/datasource/clickhouse-direct-read.test.ts
+@@ -24,14 +24,19 @@ describe("clickhouse direct-read", () => {
+ 		);
+ 	});
+ 
+-	it("queryConnectorTraces uses connectorDataCollector", async () => {
++	it("queryConnectorTraces forwards values through query_params", async () => {
+ 		mockConnectorDataCollector.mockResolvedValue({ data: [{ TraceId: "t1" }] });
++		const queryParams = { filter_value: "'; DROP TABLE otel_traces; --" };
+ 		const result = await queryConnectorTraces(
+-			"SELECT TraceId FROM `openlit`.`otel_traces`",
+-			"cfg-1"
++			"SELECT TraceId FROM `openlit`.`otel_traces` WHERE SpanName = {filter_value:String}",
++			"cfg-1",
++			queryParams
+ 		);
+ 		expect(mockConnectorDataCollector).toHaveBeenCalledWith(
+-			{ query: "SELECT TraceId FROM `openlit`.`otel_traces`" },
++			{
++				query: "SELECT TraceId FROM `openlit`.`otel_traces` WHERE SpanName = {filter_value:String}",
++				query_params: queryParams,
++			},
+ 			"query",
+ 			"cfg-1"
+ 		);
+diff --git a/src/client/src/__tests__/lib/platform/datasource/parameterized-trace-query.test.ts b/src/client/src/__tests__/lib/platform/datasource/parameterized-trace-query.test.ts
+new file mode 100644
+index 00000000..4c7329ca
+--- /dev/null
++++ b/src/client/src/__tests__/lib/platform/datasource/parameterized-trace-query.test.ts
+@@ -0,0 +1,71 @@
++import type { OpenLITQuery } from "@/lib/platform/connectors/datasource/types";
++import { ParameterizedTraceQuery } from "@/lib/platform/connectors/datasource/clickhouse/parameterized-query";
++
++const base: OpenLITQuery = {
++	signal: "traces",
++	aiSelector: false,
++	timeRange: {
++		start: new Date("2026-01-01T00:00:00.000Z"),
++		end: new Date("2026-01-02T00:00:00.000Z"),
++	},
++};
++
++describe("ParameterizedTraceQuery", () => {
++	it("binds filter keys, values, and time bounds outside SQL text", () => {
++		const key = "autodev.workspace";
++		const value = "'; DROP TABLE otel_traces; --";
++		const bindings = new ParameterizedTraceQuery();
++		const where = bindings.where(
++			{
++				...base,
++				filters: [{ target: "attribute", scope: "span", key, op: "eq", value }],
++			},
++			"`openlit`.`otel_traces`",
++		);
++
++		expect(where).not.toContain(key);
++		expect(where).not.toContain(value);
++		expect(where).toContain(
++			"SpanAttributes[{autodev_filter_2:String}] = {autodev_filter_3:String}",
++		);
++		expect(bindings.queryParams).toMatchObject({
++			autodev_filter_0: base.timeRange.start.toISOString(),
++			autodev_filter_1: base.timeRange.end.toISOString(),
++			autodev_filter_2: key,
++			autodev_filter_3: value,
++		});
++	});
++
++	it("binds multi-select values as a typed array and uses the service projection", () => {
++		const values = ["autodev-router", "nonexistent"];
++		const bindings = new ParameterizedTraceQuery();
++		const where = bindings.where(
++			{
++				...base,
++				filters: [
++					{ target: "attribute", scope: "resource", key: "service.name", op: "in", value: values },
++				],
++			},
++			"`openlit`.`otel_traces`",
++		);
++
++		expect(where).toContain("ServiceName IN {autodev_filter_2:Array(String)}");
++		expect(where).not.toContain(values[0]);
++		expect(bindings.queryParams.autodev_filter_2).toEqual(values);
++	});
++
++	it("rejects unsafe attribute keys before producing query text", () => {
++		const bindings = new ParameterizedTraceQuery();
++		expect(() =>
++			bindings.where(
++				{
++					...base,
++					filters: [
++						{ target: "attribute", scope: "span", key: "x'] OR 1=1 --", op: "eq", value: "x" },
++					],
++				},
++				"`openlit`.`otel_traces`",
++			),
++		).toThrow("Invalid ClickHouse attribute key");
++	});
++});
+diff --git a/src/client/src/__tests__/lib/platform/datasource/query-map.test.ts b/src/client/src/__tests__/lib/platform/datasource/query-map.test.ts
+index 9982871f..f50cccb8 100644
+--- a/src/client/src/__tests__/lib/platform/datasource/query-map.test.ts
++++ b/src/client/src/__tests__/lib/platform/datasource/query-map.test.ts
+@@ -549,7 +549,7 @@ describe("metricParamsToOpenLITQuery", () => {
+ 		expect(traces.selectedConfig.spanNames).toEqual(["chat"]);
+ 	});
+ 
+-	it("maps service.name to applicationNames for traces and services otherwise", () => {
++	it("maps service.name to the dedicated ClickHouse service field", () => {
+ 		const start = new Date("2026-07-01T00:00:00.000Z");
+ 		const end = new Date("2026-07-01T01:00:00.000Z");
+ 		const traces = toMetricParams({
+@@ -559,7 +559,8 @@ describe("metricParamsToOpenLITQuery", () => {
+ 				{ target: "attribute", key: "service.name", op: "in", value: ["api"] },
+ 			],
+ 		});
+-		expect(traces.selectedConfig.applicationNames).toEqual(["api"]);
++		expect(traces.selectedConfig.serviceNames).toEqual(["api"]);
++		expect(traces.selectedConfig.applicationNames).toBeUndefined();
+ 
+ 		const logs = toMetricParams({
+ 			signal: "logs",
+diff --git a/src/client/src/__tests__/lib/platform/manage-dashboard/widget.test.ts b/src/client/src/__tests__/lib/platform/manage-dashboard/widget.test.ts
+index d04f4869..8172aa67 100644
+--- a/src/client/src/__tests__/lib/platform/manage-dashboard/widget.test.ts
++++ b/src/client/src/__tests__/lib/platform/manage-dashboard/widget.test.ts
+@@ -66,6 +66,44 @@ beforeEach(() => {
+ });
+ 
+ describe("runWidgetQuery", () => {
++	it("rejects variable selections when a source has no typed binding for that signal", async () => {
++		(dataCollector as jest.Mock).mockResolvedValueOnce({
++			data: [{
++				id: "w1",
++				properties: { optInVariables: ["workspace"] },
++				config: {
++					signal: "logs",
++					structuredQuery: { mode: "list", query: { signal: "logs", filters: [] } },
++				},
++			}],
++			err: null,
++		});
++		mockGetTelemetryAdapter.mockResolvedValue({
++			type: "clickhouse",
++			capabilities: () => ({ dashboardVariableSignals: ["traces"] }),
++		});
++
++		const result = await runWidgetQuery("w1", {
++			filter: {} as any,
++			dashboardVariables: {
++				specs: [{
++					id: "workspace",
++					label: "Workspace",
++					signal: "logs",
++					scope: "resource",
++					key: "autodev.workspace",
++					multi: true,
++					supportsAll: true,
++				}],
++				state: { values: { workspace: ["workspace-1"] } },
++			},
++		});
++
++		expect(result.err).toBe(
++			"This telemetry source does not support safely parameterized dashboard variables for logs."
++		);
++		expect(dataCollector).toHaveBeenCalledTimes(1);
++	});
+ 	it("blocks non-SELECT user queries", async () => {
+ 		(dataCollector as jest.Mock).mockResolvedValueOnce({
+ 			data: [{ id: "w1", config: JSON.stringify({ query: "SELECT 1" }) }],
+diff --git a/src/client/src/app/api/manage-dashboard/query/run/route.ts b/src/client/src/app/api/manage-dashboard/query/run/route.ts
+index cf9b32b4..b3ed9570 100644
+--- a/src/client/src/app/api/manage-dashboard/query/run/route.ts
++++ b/src/client/src/app/api/manage-dashboard/query/run/route.ts
+@@ -2,6 +2,10 @@ import { SERVER_EVENTS } from "@/constants/events";
+ import getMessage from "@/constants/messages";
+ import { requireRouteAccess } from "@/lib/access/route-access";
+ import { runWidgetQuery } from "@/lib/platform/manage-dashboard/widget";
++import type {
++	DashboardVariableSpec,
++	DashboardVariableState,
++} from "@/lib/platform/dashboard-variables";
+ import PostHogServer from "@/lib/posthog";
+ import { getCurrentUser } from "@/lib/session";
+ import asaw from "@/utils/asaw";
+@@ -24,6 +28,10 @@ export async function POST(request: NextRequest) {
+ 		sourceId?: string | null;
+ 		signal?: string;
+ 		structuredQuery?: unknown;
++		dashboardVariables?: {
++			specs?: unknown;
++			state?: unknown;
++		};
+ 	};
+ 	try {
+ 		body = await request.json();
+@@ -34,7 +42,15 @@ export async function POST(request: NextRequest) {
+ 		);
+ 	}
+ 
+-	const { widgetId, userQuery, filter, sourceId, signal, structuredQuery } = body;
++	const {
++		widgetId,
++		userQuery,
++		filter,
++		sourceId,
++		signal,
++		structuredQuery,
++		dashboardVariables,
++	} = body;
+ 	if (!widgetId || typeof widgetId !== "string") {
+ 		return Response.json(
+ 			{ err: messages.WIDGET_FETCH_FAILED },
+@@ -60,6 +76,7 @@ export async function POST(request: NextRequest) {
+ 		structuredQuery: structuredQuery as Parameters<
+ 			typeof runWidgetQuery
+ 		>[1]["structuredQuery"],
++		dashboardVariables: normalizeDashboardVariables(dashboardVariables),
+ 	});
+ 	PostHogServer.fireEvent({
+ 		event: res.err
+@@ -70,3 +87,64 @@ export async function POST(request: NextRequest) {
+ 	});
+ 	return Response.json(res);
+ }
++
++/**
++ * Validate and normalize the dashboard variable payload from the client.
++ *
++ * The variable spec and selection live entirely on the dashboard: the server
++ * only forwards typed structures, never raw SQL or attribute names chosen by
++ * the client at request time. Anything that fails validation is dropped
++ * silently — the dashboard falls back to the stock time/filter path.
++ */
++function normalizeDashboardVariables(raw: unknown): {
++	specs: DashboardVariableSpec[];
++	state: Pick<DashboardVariableState, "values">;
++} | undefined {
++	if (!raw || typeof raw !== "object") return undefined;
++	const { specs, state } = raw as {
++		specs?: unknown;
++		state?: unknown;
++	};
++	if (!Array.isArray(specs) || !state || typeof state !== "object") {
++		return undefined;
++	}
++	const validSpecs: DashboardVariableSpec[] = [];
++	for (const spec of specs) {
++		if (!spec || typeof spec !== "object") continue;
++		const s = spec as Partial<DashboardVariableSpec>;
++		if (
++			typeof s.id !== "string" ||
++			typeof s.label !== "string" ||
++			!s.signal ||
++			!s.scope ||
++			typeof s.key !== "string" ||
++			typeof s.multi !== "boolean" ||
++			typeof s.supportsAll !== "boolean"
++		) {
++			continue;
++		}
++		if (s.defaultValues && !Array.isArray(s.defaultValues)) continue;
++		validSpecs.push({
++			id: s.id,
++			label: s.label,
++			signal: s.signal,
++			scope: s.scope,
++			key: s.key,
++			multi: s.multi,
++			supportsAll: s.supportsAll,
++			defaultValues: s.defaultValues as string[] | undefined,
++			sourceId: (s.sourceId ?? null) as string | null | undefined,
++			allowedValues: Array.isArray(s.allowedValues)
++				? (s.allowedValues as string[])
++				: undefined,
++		});
++	}
++	const values = (state as { values?: unknown }).values;
++	if (!values || typeof values !== "object") return undefined;
++	const safeValues: Record<string, string[]> = {};
++	for (const [id, raw] of Object.entries(values as Record<string, unknown>)) {
++		if (!Array.isArray(raw)) continue;
++		safeValues[id] = raw.filter((v): v is string => typeof v === "string");
++	}
++	return { specs: validSpecs, state: { values: safeValues } };
++}
+diff --git a/src/client/src/app/api/manage-dashboard/variables/distinct-values/route.ts b/src/client/src/app/api/manage-dashboard/variables/distinct-values/route.ts
+new file mode 100644
+index 00000000..304bcace
+--- /dev/null
++++ b/src/client/src/app/api/manage-dashboard/variables/distinct-values/route.ts
+@@ -0,0 +1,115 @@
++import { NextRequest } from "next/server";
++import {
++	getTelemetryAdapter,
++	resolveTelemetrySourceDescriptor,
++} from "@/lib/telemetry-source";
++import { fetchVariableAllowedValues } from "@/lib/platform/dashboard-variables";
++import type {
++	AttributeScope,
++	Signal,
++} from "@/lib/platform/connectors/datasource/types";
++import { isDashboardVariableBindingValid } from "@/lib/platform/dashboard-variables/translate";
++
++const VALID_SIGNALS: Signal[] = ["traces", "logs", "metrics"];
++const ATTRIBUTE_KEY_PATTERN = /^[A-Za-z][A-Za-z0-9_.*-]{0,127}$/;
++const ISO_DATETIME_PATTERN = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/;
++
++/**
++ * Resolve the typed attribute values that may populate a non-time dashboard
++ * variable. The route is bound to the dashboard editor; the editor sends the
++ * variable's declared `(signal, key)` plus a probe window, and this handler
++ * delegates to the typed adapter (ClickHouse / Tempo / Loki / Mimir / Jaeger /
++ * Prometheus / etc.) — never to raw SQL with user input. When the bound source
++ * does not support `distinctValues`, the response carries
++ * `{ supported: false }` so the editor falls back to a free-text input.
++ *
++ * The route reuses the same per-signal adapter binding as the widget query
++ * path so a dashboard variable on `gen_ai.system` always queries the same
++ * source its widgets do.
++ */
++export async function GET(request: NextRequest): Promise<Response> {
++	const signal = request.nextUrl.searchParams.get("signal");
++	const scope = request.nextUrl.searchParams.get("scope");
++	const key = request.nextUrl.searchParams.get("key");
++	const startParam = request.nextUrl.searchParams.get("start");
++	const endParam = request.nextUrl.searchParams.get("end");
++	const sourceId = request.nextUrl.searchParams.get("sourceId");
++	const limitParam = request.nextUrl.searchParams.get("limit");
++	const start = startParam ? new Date(startParam) : null;
++	const end = endParam ? new Date(endParam) : null;
++	const requestedLimit = limitParam === null ? 256 : Number(limitParam);
++
++	if (
++		!signal ||
++		!VALID_SIGNALS.includes(signal as Signal) ||
++		!scope ||
++		!isDashboardVariableBindingValid(signal as Signal, scope as AttributeScope) ||
++		!key ||
++		!ATTRIBUTE_KEY_PATTERN.test(key) ||
++		!startParam ||
++		!ISO_DATETIME_PATTERN.test(startParam) ||
++		!start ||
++		!Number.isFinite(start.getTime()) ||
++		!endParam ||
++		!ISO_DATETIME_PATTERN.test(endParam) ||
++		!end ||
++		!Number.isFinite(end.getTime()) ||
++		end.getTime() <= start.getTime() ||
++		!Number.isSafeInteger(requestedLimit) ||
++		requestedLimit < 1
++	) {
++		return Response.json(
++			{
++				err: "compatible signal/scope, key, start, end (ISO-8601) are required",
++				values: [],
++				supported: false,
++			},
++			{ status: 400 },
++		);
++	}
++	const limit = Math.min(1024, requestedLimit);
++
++	let descriptor;
++	try {
++		descriptor = await resolveTelemetrySourceDescriptor({
++			signal: signal as Signal,
++			sourceId: sourceId === null ? null : sourceId || undefined,
++		});
++	} catch (e) {
++		return Response.json(
++			{
++				err: `unable to resolve telemetry source: ${(e as Error).message}`,
++				values: [],
++				supported: false,
++			},
++			{ status: 502 },
++		);
++	}
++
++	let adapter;
++	try {
++		adapter = await getTelemetryAdapter({
++			signal: signal as Signal,
++			sourceId: descriptor.id,
++		});
++	} catch (e) {
++		return Response.json(
++			{
++				err: `unable to bind telemetry adapter: ${(e as Error).message}`,
++				values: [],
++				supported: false,
++			},
++			{ status: 502 },
++		);
++	}
++
++	const result = await fetchVariableAllowedValues({
++		adapter,
++		signal: signal as Signal,
++		scope: scope as AttributeScope,
++		key,
++		timeRange: { start, end },
++		limit,
++	});
++	return Response.json(result);
++}
+diff --git a/src/client/src/clickhouse/migrations/add-board-variables-column-migration.ts b/src/client/src/clickhouse/migrations/add-board-variables-column-migration.ts
+new file mode 100644
+index 00000000..0baeac97
+--- /dev/null
++++ b/src/client/src/clickhouse/migrations/add-board-variables-column-migration.ts
+@@ -0,0 +1,26 @@
++import { OPENLIT_BOARD_TABLE_NAME } from "@/lib/platform/manage-dashboard/table-details";
++import migrationHelper from "./migration-helper";
++
++const MIGRATION_ID = "add-board-variables-column";
++
++/**
++ * Adds a `variables` column to the `openlit_board` table. The column holds a
++ * JSON-encoded array of `DashboardVariableSpec` records declared on the board;
++ * the dashboard editor writes the column on layout save, and the board layout
++ * reader decodes it back into the typed `Board.variables` field. The column is
++ * safe to add on stacks where the board table already exists because of the
++ * `IF NOT EXISTS` modifier and the `DEFAULT '[]'` so older rows survive.
++ */
++export default async function AddBoardVariablesColumnMigration(
++	databaseConfigId?: string
++) {
++	const queries = [
++		`ALTER TABLE ${OPENLIT_BOARD_TABLE_NAME} ADD COLUMN IF NOT EXISTS variables String DEFAULT '[]';`,
++	];
++
++	return migrationHelper({
++		clickhouseMigrationId: MIGRATION_ID,
++		databaseConfigId,
++		queries,
++	});
++}
+diff --git a/src/client/src/clickhouse/migrations/create-custom-dashboards-migration.ts b/src/client/src/clickhouse/migrations/create-custom-dashboards-migration.ts
+index a2b7f315..62d14e27 100644
+--- a/src/client/src/clickhouse/migrations/create-custom-dashboards-migration.ts
++++ b/src/client/src/clickhouse/migrations/create-custom-dashboards-migration.ts
+@@ -1,5 +1,4 @@
+ import migrationHelper from "./migration-helper";
+-import CreateCustomDashboardsSeed from "../seed/dashboards";
+ 
+ const MIGRATION_ID = "create-custom-dashboards-table";
+ 
+@@ -104,16 +103,5 @@ export default async function CreateCustomDashboardsMigration(databaseConfigId?:
+     queries,
+   });
+ 
+-  // Always run the seed -- it is idempotent per-title via
+-  // `boardExistsByTitle` and exists precisely so that dashboards
+-  // added to `SEEDED_DASHBOARDS` after a stack's first boot still
+-  // land on every existing deployment without a per-board one-off
+-  // migration. Gating this on `!migrationExist` silently broke that
+-  // contract (every new built-in board would skip every existing
+-  // stack), which is exactly the regression that hid the Coding
+-  // Agents dashboard. Cost per boot is N small `SELECT count(*)
+-  // FROM openlit_board WHERE title = ?` queries -- negligible.
+-  await CreateCustomDashboardsSeed(databaseConfigId);
+-
+   return { migrationExist, queriesRun };
+ }
+diff --git a/src/client/src/clickhouse/migrations/index.ts b/src/client/src/clickhouse/migrations/index.ts
+index d47f3497..88b487d1 100644
+--- a/src/client/src/clickhouse/migrations/index.ts
++++ b/src/client/src/clickhouse/migrations/index.ts
+@@ -15,6 +15,8 @@ import AddControllerTTLMigration from "./add-controller-ttl-migration";
+ import AddControllerClusterIdMigration from "./add-controller-cluster-id-migration";
+ import UpdateControllerActionsTTLMigration from "./update-controller-actions-ttl-migration";
+ import GeneralizeControllerDesiredStatesMigration from "./generalize-controller-desired-states-migration";
++import AddBoardVariablesColumnMigration from "./add-board-variables-column-migration";
++import CreateCustomDashboardsSeed from "../seed/dashboards";
+ import CreateChatMigration from "./create-chat-migration";
+ import AddChatConversationTypeMigration from "./add-chat-conversation-type-migration";
+ import AddChatMessageModelAttributionMigration from "./add-chat-message-model-attribution-migration";
+@@ -99,6 +101,10 @@ export default async function migrations(databaseConfigId?: string) {
+ 	// the dependency explicit.
+ 	await AddCodingAgentLOCSummaryFieldsMigration(databaseConfigId);
+ 
++	await AddBoardVariablesColumnMigration(databaseConfigId);
++	// Seed after the board-variable migration: Usage and future built-in
++	// boards may declare variables, and the board table is created earlier.
++	await CreateCustomDashboardsSeed(databaseConfigId);
+ 	await CreateTelemetryRollupsMigration(databaseConfigId);
+ 	await AlterTelemetryRollupsDimensionsMigration(databaseConfigId);
+ 
+diff --git a/src/client/src/components/(playground)/manage-dashboard/board-creator/components/edit-widget-sheet.tsx b/src/client/src/components/(playground)/manage-dashboard/board-creator/components/edit-widget-sheet.tsx
+index 8911aeaa..6af1f204 100644
+--- a/src/client/src/components/(playground)/manage-dashboard/board-creator/components/edit-widget-sheet.tsx
++++ b/src/client/src/components/(playground)/manage-dashboard/board-creator/components/edit-widget-sheet.tsx
+@@ -15,6 +15,7 @@ import {
+ import { useEditWidget } from "../hooks/useEditWidget";
+ import { Trash2, Info } from "lucide-react";
+ import CodeEditor from "./code-editor";
++import { WidgetOptInEditor } from "./variables";
+ 
+ import {
+ 	Sheet,
+@@ -178,7 +179,7 @@ export const EditWidgetSheet: React.FC<EditWidgetSheetProps> = ({
+ 		runQuery,
+ 	} = useEditWidget();
+ 
+-	const { handleWidgetCrud, loadWidgetData } = useDashboard();
++	const { details, handleWidgetCrud, loadWidgetData } = useDashboard();
+ 	const currentEnvironment =
+ 		useRootStore(getCurrentProjectEnvironment) || "production";
+ 	const [queryResult, setQueryResult] = React.useState<any>(null);
+@@ -954,6 +955,20 @@ export const EditWidgetSheet: React.FC<EditWidgetSheetProps> = ({
+ 											</div>
+ 										</div>
+ 									)}
++									{details?.variables && details.variables.length > 0 && currentWidget.type !== WidgetType.MARKDOWN && (
++										<div className="mt-4 pt-4 border-t border-stone-200 dark:border-stone-800">
++											<WidgetOptInEditor
++												specs={details.variables}
++												optIn={(currentWidget.properties as { optInVariables?: string[] } | undefined)?.optInVariables}
++												widgetSignal={(currentWidget.config as { signal?: string } | undefined)?.signal || "traces"}
++												onChange={(next) => {
++													updateWidgetProperties(currentWidget.id, {
++														optInVariables: next,
++													});
++												}}
++											/>
++										</div>
++									)}
+ 								</TabsContent>
+ 
+ 								{/* Config Tab */}
+diff --git a/src/client/src/components/(playground)/manage-dashboard/board-creator/components/variables/editor.tsx b/src/client/src/components/(playground)/manage-dashboard/board-creator/components/variables/editor.tsx
+new file mode 100644
+index 00000000..30a653e9
+--- /dev/null
++++ b/src/client/src/components/(playground)/manage-dashboard/board-creator/components/variables/editor.tsx
+@@ -0,0 +1,333 @@
++"use client";
++
++import { useCallback, useEffect, useState } from "react";
++import type {
++	DashboardVariableSpec,
++	Signal,
++} from "@/lib/platform/dashboard-variables";
++import { isDashboardVariableBindingValid } from "@/lib/platform/dashboard-variables";
++import { Button } from "@/components/ui/button";
++import { Input } from "@/components/ui/input";
++import { Label } from "@/components/ui/label";
++import {
++	Select,
++	SelectContent,
++	SelectItem,
++	SelectTrigger,
++	SelectValue,
++} from "@/components/ui/select";
++import { Trash2, Plus } from "lucide-react";
++
++/**
++ * Variable-definition editor. Lets the user declare, edit, and remove
++ * non-time dashboard variables persisted on the board. The editor is
++ * deliberately generic: it does NOT hard-wire application-specific field
++ * names; producers attach standard or custom attributes at the source, and
++ * the editor records the typed `(signal, scope, key)` triple plus selection
++ * semantics.
++ *
++ * `allowedValues` may be omitted. When omitted, the editor resolves the
++ * typed candidate list at render time by calling
++ * `/api/manage-dashboard/variables/distinct-values` — the typed
++ * `distinctValues(scopedKey, query)` source binding — and pre-populating the
++ * select. The route is parameterized so the editor never composes a SQL
++ * string with user-controlled values.
++ */
++const SIGNAL_OPTIONS: { value: Signal; label: string }[] = [
++	{ value: "traces", label: "Traces" },
++	{ value: "logs", label: "Logs" },
++	{ value: "metrics", label: "Metrics" },
++];
++
++const SCOPE_OPTIONS = [
++	{ value: "resource", label: "Resource attribute" },
++	{ value: "span", label: "Span attribute" },
++	{ value: "log", label: "Log attribute" },
++	{ value: "metric", label: "Metric attribute" },
++] as const;
++
++const VARIABLE_ID_PATTERN = /^[A-Za-z][A-Za-z0-9_-]{0,63}$/;
++const ATTRIBUTE_KEY_PATTERN = /^[A-Za-z][A-Za-z0-9_.*-]{0,127}$/;
++
++export interface DashboardVariableEditorProps {
++	specs: DashboardVariableSpec[];
++	onChange: (next: DashboardVariableSpec[]) => void;
++}
++
++function emptySpec(): DashboardVariableSpec {
++	return {
++		id: `var-${Math.random().toString(36).slice(2, 8)}`,
++		label: "New variable",
++		signal: "traces",
++		scope: "span",
++		key: "",
++		multi: false,
++		supportsAll: true,
++		defaultValues: [],
++		allowedValues: [],
++	};
++}
++
++function validate(spec: DashboardVariableSpec): string | null {
++	if (!VARIABLE_ID_PATTERN.test(spec.id)) {
++		return "id must be 1-64 chars, start with a letter, [A-Za-z0-9_-]";
++	}
++	if (spec.label.length === 0) return "label is required";
++	if (!isDashboardVariableBindingValid(spec.signal, spec.scope)) {
++		return "scope must match the selected telemetry signal";
++	}
++	if (!ATTRIBUTE_KEY_PATTERN.test(spec.key)) {
++		return "key must be a valid OTel attribute identifier";
++	}
++	return null;
++}
++
++export function DashboardVariableEditor({
++	specs,
++	onChange,
++}: DashboardVariableEditorProps) {
++	const [draft, setDraft] = useState<DashboardVariableSpec[]>(specs);
++
++	useEffect(() => {
++		setDraft(specs);
++	}, [specs]);
++
++	const updateAt = useCallback(
++		(index: number, patch: Partial<DashboardVariableSpec>) => {
++			setDraft((prev) => {
++				const next = prev.slice();
++				next[index] = { ...next[index], ...patch };
++				return next;
++			});
++		},
++		[],
++	);
++
++	const removeAt = useCallback((index: number) => {
++		setDraft((prev) => prev.filter((_, i) => i !== index));
++	}, []);
++
++	const append = useCallback(() => {
++		setDraft((prev) => [...prev, emptySpec()]);
++	}, []);
++
++	const commit = useCallback(() => {
++		onChange(draft);
++	}, [draft, onChange]);
++
++	const ids = new Set<string>();
++	const dupes: string[] = [];
++	for (const s of draft) {
++		if (ids.has(s.id)) dupes.push(s.id);
++		ids.add(s.id);
++	}
++
++	return (
++		<div className="space-y-3" data-dashboard-variable-editor="1">
++			<div className="flex items-center justify-between">
++				<h3 className="text-sm font-semibold uppercase tracking-wide text-stone-500">
++					Dashboard variables
++				</h3>
++				<div className="flex gap-2">
++					<Button
++						type="button"
++						variant="outline"
++						size="sm"
++						className="h-7"
++						onClick={append}
++					>
++						<Plus className="h-3 w-3 mr-1" /> Add variable
++					</Button>
++					<Button
++						type="button"
++						size="sm"
++						className="h-7"
++						onClick={commit}
++						disabled={draft.some((s) => validate(s) !== null) || dupes.length > 0}
++					>
++						Save variables
++					</Button>
++				</div>
++			</div>
++			{dupes.length > 0 ? (
++				<p className="text-xs text-amber-700 dark:text-amber-300">
++					duplicate ids: {dupes.join(", ")}
++				</p>
++			) : null}
++			{draft.length === 0 ? (
++				<p className="text-xs text-stone-500">
++					No non-time variables declared. The stock time-range control
++					remains authoritative; widgets that opt in to a variable
++					ignore its selection.
++				</p>
++			) : (
++				<ul className="space-y-3">
++					{draft.map((spec, index) => {
++						const err = validate(spec);
++						return (
++							<li
++								key={`${spec.id}-${index}`}
++								className="rounded border border-stone-200 dark:border-stone-800 bg-white dark:bg-stone-900 p-3"
++							>
++								<div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
++									<label className="space-y-1">
++										<span className="text-stone-500">id</span>
++										<Input
++											value={spec.id}
++											className="h-7"
++											onChange={(e) =>
++												updateAt(index, { id: e.target.value })
++											}
++										/>
++									</label>
++									<label className="space-y-1">
++										<span className="text-stone-500">label</span>
++										<Input
++											value={spec.label}
++											className="h-7"
++											onChange={(e) =>
++												updateAt(index, { label: e.target.value })
++											}
++										/>
++									</label>
++									<label className="space-y-1">
++										<span className="text-stone-500">signal</span>
++										<Select
++											value={spec.signal}
++											onValueChange={(v) =>
++												updateAt(index, { signal: v as Signal })
++											}
++										>
++											<SelectTrigger className="h-7">
++												<SelectValue />
++											</SelectTrigger>
++											<SelectContent>
++												{SIGNAL_OPTIONS.map((o) => (
++													<SelectItem key={o.value} value={o.value}>
++														{o.label}
++													</SelectItem>
++												))}
++											</SelectContent>
++										</Select>
++									</label>
++									<label className="space-y-1">
++										<span className="text-stone-500">scope</span>
++										<Select
++											value={spec.scope}
++											onValueChange={(v) =>
++												updateAt(index, {
++													scope: v as DashboardVariableSpec["scope"],
++												})
++											}
++										>
++											<SelectTrigger className="h-7">
++												<SelectValue />
++											</SelectTrigger>
++											<SelectContent>
++												{SCOPE_OPTIONS.map((o) => (
++													<SelectItem key={o.value} value={o.value}>
++														{o.label}
++													</SelectItem>
++												))}
++											</SelectContent>
++										</Select>
++									</label>
++									<label className="space-y-1 sm:col-span-2">
++										<span className="text-stone-500">
++											attribute key (OTel identifier)
++										</span>
++										<Input
++											value={spec.key}
++											placeholder="e.g. service.name, gen_ai.system, workspace.id"
++											className="h-7"
++											onChange={(e) =>
++												updateAt(index, { key: e.target.value })
++											}
++										/>
++									</label>
++									<label className="space-y-1 sm:col-span-2">
++										<span className="text-stone-500">
++											allowedValues (comma-separated, optional)
++										</span>
++										<Input
++											value={(spec.allowedValues ?? []).join(", ")}
++											placeholder="leave empty to fetch via typed distinctValues()"
++											className="h-7"
++											onChange={(e) => {
++												const tokens = e.target.value
++													.split(",")
++													.map((v) => v.trim())
++													.filter((v) => v.length > 0);
++												updateAt(index, { allowedValues: tokens });
++											}}
++										/>
++									</label>
++									<label className="space-y-1 sm:col-span-2">
++										<span className="text-stone-500">
++											defaultValues (comma-separated, optional)
++										</span>
++										<Input
++											value={(spec.defaultValues ?? []).join(", ")}
++											placeholder="leave empty for All (when supportsAll)"
++											className="h-7"
++											onChange={(e) => {
++												const tokens = e.target.value
++													.split(",")
++													.map((v) => v.trim())
++													.filter((v) => v.length > 0);
++												updateAt(index, { defaultValues: tokens });
++											}}
++										/>
++									</label>
++									<div className="sm:col-span-2 flex items-center gap-4 text-xs">
++										<label className="flex items-center gap-1">
++											<input
++												type="checkbox"
++												checked={spec.multi}
++												onChange={(e) =>
++													updateAt(index, { multi: e.target.checked })
++												}
++											/>
++											multi-select
++										</label>
++										<label className="flex items-center gap-1">
++											<input
++												type="checkbox"
++												checked={spec.supportsAll}
++												onChange={(e) =>
++													updateAt(index, {
++														supportsAll: e.target.checked,
++													})
++												}
++											/>
++											supports All
++										</label>
++										<Button
++											type="button"
++											variant="ghost"
++											size="sm"
++											className="ml-auto h-7 px-2 text-amber-700"
++											onClick={() => removeAt(index)}
++										>
++											<Trash2 className="h-3 w-3 mr-1" /> remove
++										</Button>
++									</div>
++								</div>
++								{err ? (
++									<p className="mt-2 text-xs text-amber-700 dark:text-amber-300">
++										{err}
++									</p>
++								) : null}
++							</li>
++						);
++					})}
++				</ul>
++			)}
++			<Label className="text-xs text-stone-500">
++				Variable bindings never interpolate values into SQL. The widget
++				query layer applies the typed NormalizedFilter via
++				OpenLITQuery.filters.
++			</Label>
++		</div>
++	);
++}
+diff --git a/src/client/src/components/(playground)/manage-dashboard/board-creator/components/variables/index.ts b/src/client/src/components/(playground)/manage-dashboard/board-creator/components/variables/index.ts
+new file mode 100644
+index 00000000..af2eac03
+--- /dev/null
++++ b/src/client/src/components/(playground)/manage-dashboard/board-creator/components/variables/index.ts
+@@ -0,0 +1,5 @@
++export { DashboardVariableSelector } from "./selector";
++export { DashboardVariableEditor } from "./editor";
++export { WidgetOptInEditor } from "./widget-opt-in-editor";
++export type { UseDashboardVariablesResult } from "./use-dashboard-variables";
++export { useDashboardVariables } from "./use-dashboard-variables";
+diff --git a/src/client/src/components/(playground)/manage-dashboard/board-creator/components/variables/selector.tsx b/src/client/src/components/(playground)/manage-dashboard/board-creator/components/variables/selector.tsx
+new file mode 100644
+index 00000000..3d098fe8
+--- /dev/null
++++ b/src/client/src/components/(playground)/manage-dashboard/board-creator/components/variables/selector.tsx
+@@ -0,0 +1,302 @@
++"use client";
++
++import { useCallback, useEffect, useMemo, useState } from "react";
++import type {
++	DashboardVariableSpec,
++	DashboardVariableState,
++} from "@/lib/platform/dashboard-variables";
++import { serializeVariableSelection } from "@/lib/platform/dashboard-variables/translate";
++import {
++	Select,
++	SelectContent,
++	SelectItem,
++	SelectTrigger,
++	SelectValue,
++} from "@/components/ui/select";
++import { Label } from "@/components/ui/label";
++
++/**
++ * Dashboard-wide top-bar selector for non-time variables.
++ *
++ * Renders one All/single/multi-select control per declared variable. The
++ * UI is generic — it binds a `DashboardVariableSpec` to a typed value
++ * selection and persists the choice through the `setSelection` callback
++ * (which writes to URL via `variablesToSearchParams`). The widget query
++ * layer reads the same selection through `applyDashboardVariables`, so
++ * any change here re-binds every opted-in widget consistently.
++ *
++ * The selector NEVER reads `allowedValues` from a SQL string or
++ * interpolates user input into a query: when the spec omits
++ * `allowedValues`, the caller is expected to pre-load `candidates[id]`
++ * from the typed `distinctValues` source binding (see
++ * `lib/platform/dashboard-variables/distinct-values.ts`). When the
++ * binding reports `{ supported: false }`, the editor renders a free-text
++ * input as a fallback.
++ */
++export interface DashboardVariableSelectorProps {
++	specs: DashboardVariableSpec[];
++	state: DashboardVariableState;
++	onChange: (id: string, values: string[]) => void;
++	/**
++	 * Optional per-id candidate lists pre-resolved through the typed
++	 * `distinctValues(key, query)` source binding. When a spec carries a
++	 * hand-curated `allowedValues`, that wins. When neither is provided,
++	 * the selector degrades to a free-text input.
++	 */
++	candidates?: Record<string, string[]>;
++}
++
++interface FreeTextProps {
++	id: string;
++	values: string[];
++	placeholder: string;
++	onCommit: (values: string[]) => void;
++}
++
++function FreeTextInput({ id, values, placeholder, onCommit }: FreeTextProps) {
++	const [draft, setDraft] = useState(values.join(", "));
++	useEffect(() => {
++		setDraft(values.join(", "));
++	}, [id, values.join("|")]);
++	return (
++		<input
++			type="text"
++			className="h-8 w-44 rounded border border-stone-200 dark:border-stone-800 bg-white dark:bg-stone-900 px-2 text-xs"
++			value={draft}
++			placeholder={placeholder}
++			onChange={(e) => setDraft(e.target.value)}
++			onBlur={() => {
++				const tokens = draft
++					.split(",")
++					.map((v) => v.trim())
++					.filter((v) => v.length > 0);
++				onCommit(tokens);
++			}}
++		/>
++	);
++}
++
++export function DashboardVariableSelector({
++	specs,
++	state,
++	onChange,
++	candidates,
++}: DashboardVariableSelectorProps) {
++	const orderedSpecs = useMemo(() => specs, [specs]);
++	const [dynamicCandidates, setDynamicCandidates] = useState<Record<string, string[]>>({});
++
++	useEffect(() => {
++		const abortCtrl = new AbortController();
++		for (const spec of orderedSpecs) {
++			if (
++				(spec.allowedValues?.length ?? 0) > 0 ||
++				candidates?.[spec.id] ||
++				dynamicCandidates[spec.id]
++			) {
++				continue;
++			}
++			const now = new Date();
++			const start = new Date(now.getTime() - 24 * 3600 * 1000);
++			const params = new URLSearchParams({
++				signal: spec.signal || "traces",
++				scope: spec.scope,
++				key: spec.key,
++				start: start.toISOString(),
++				end: now.toISOString(),
++			});
++			if (spec.sourceId) {
++				params.set("sourceId", spec.sourceId);
++			}
++			fetch(`/api/manage-dashboard/variables/distinct-values?${params.toString()}`, {
++				signal: abortCtrl.signal,
++			})
++				.then((res) => (res.ok ? res.json() : null))
++				.then((data) => {
++					if (data?.values && Array.isArray(data.values)) {
++						setDynamicCandidates((prev) => ({
++							...prev,
++							[spec.id]: data.values,
++						}));
++					}
++				})
++				.catch(() => {});
++		}
++		return () => abortCtrl.abort();
++	}, [orderedSpecs, candidates]);
++
++	if (orderedSpecs.length === 0) return null;
++
++	return (
++		<div
++			className="flex flex-wrap items-center gap-3"
++			data-dashboard-variables="1"
++		>
++			{orderedSpecs.map((spec) => {
++				const values = state.values[spec.id] ?? [];
++				const staticValues = spec.allowedValues;
++				const dynamicValues =
++					candidates?.[spec.id] ?? dynamicCandidates[spec.id];
++				const options =
++					staticValues && staticValues.length > 0
++						? staticValues
++						: dynamicValues && dynamicValues.length > 0
++							? dynamicValues
++							: null;
++				return (
++					<div
++						key={spec.id}
++						className="flex items-center gap-2"
++						data-dashboard-variable={spec.id}
++					>
++						<Label className="text-xs text-stone-500">
++							{spec.label}
++						</Label>
++						{options === null ? (
++							<FreeTextInput
++								id={spec.id}
++								values={values}
++								placeholder={
++									spec.supportsAll
++										? "type or paste values"
++										: "type a value"
++								}
++								onCommit={(next) => onChange(spec.id, next)}
++							/>
++						) : spec.multi ? (
++							<MultiValueSelect
++								spec={spec}
++								options={options}
++								values={values}
++								onChange={(next) => onChange(spec.id, next)}
++							/>
++						) : (
++							<SingleValueSelect
++								spec={spec}
++								options={options}
++								value={values[0] ?? ""}
++								onChange={(next) =>
++									onChange(spec.id, next ? [next] : [])
++								}
++							/>
++						)}
++						{values.length > 0 ? (
++							<span
++								className="text-[10px] font-mono text-stone-400"
++								title="serialized URL token"
++							>
++								{serializeVariableSelection(values)}
++							</span>
++						) : spec.supportsAll ? (
++							<span className="text-[10px] font-mono text-stone-400">
++								all
++							</span>
++						) : null}
++					</div>
++				);
++			})}
++		</div>
++	);
++}
++
++interface SingleValueSelectProps {
++	spec: DashboardVariableSpec;
++	options: string[];
++	value: string;
++	onChange: (next: string | null) => void;
++}
++
++function SingleValueSelect({
++	spec,
++	options,
++	value,
++	onChange,
++}: SingleValueSelectProps) {
++	return (
++		<Select
++			value={value || "__all__"}
++			onValueChange={(next) => {
++				if (next === "__all__") {
++					onChange(null);
++					return;
++				}
++				onChange(next);
++			}}
++		>
++			<SelectTrigger className="h-8 min-w-[10rem] text-xs">
++				<SelectValue placeholder={spec.supportsAll ? "All" : "Select"} />
++			</SelectTrigger>
++			<SelectContent>
++				{spec.supportsAll ? (
++					<SelectItem value="__all__">All</SelectItem>
++				) : null}
++				{options.map((option) => (
++					<SelectItem key={option} value={option}>
++						{option}
++					</SelectItem>
++				))}
++			</SelectContent>
++		</Select>
++	);
++}
++
++interface MultiValueSelectProps {
++	spec: DashboardVariableSpec;
++	options: string[];
++	values: string[];
++	onChange: (next: string[]) => void;
++}
++
++function MultiValueSelect({
++	spec,
++	options,
++	values,
++	onChange,
++}: MultiValueSelectProps) {
++	const handleToggle = useCallback(
++		(option: string) => {
++			const set = new Set(values);
++			if (set.has(option)) {
++				set.delete(option);
++			} else {
++				set.add(option);
++			}
++			onChange(Array.from(set));
++		},
++		[values, onChange],
++	);
++	return (
++		<div className="flex flex-wrap items-center gap-1 rounded border border-stone-200 dark:border-stone-800 bg-white dark:bg-stone-900 px-2 py-1 max-w-[24rem]">
++			{spec.supportsAll ? (
++				<button
++					type="button"
++					onClick={() => onChange([])}
++					className={`text-[10px] rounded px-2 py-0.5 ${
++						values.length === 0
++							? "bg-stone-200 dark:bg-stone-800"
++							: "hover:bg-stone-100 dark:hover:bg-stone-800"
++					}`}
++					title="clear selection = All"
++				>
++					All
++				</button>
++			) : null}
++			{options.map((option) => {
++				const active = values.includes(option);
++				return (
++					<button
++						key={option}
++						type="button"
++						className={`text-[10px] rounded px-2 py-0.5 ${
++							active
++								? "bg-stone-900 text-white dark:bg-stone-100 dark:text-stone-900"
++								: "hover:bg-stone-100 dark:hover:bg-stone-800"
++						}`}
++						onClick={() => handleToggle(option)}
++					>
++						{option}
++					</button>
++				);
++			})}
++		</div>
++	);
++}
+diff --git a/src/client/src/components/(playground)/manage-dashboard/board-creator/components/variables/use-dashboard-variables.ts b/src/client/src/components/(playground)/manage-dashboard/board-creator/components/variables/use-dashboard-variables.ts
+new file mode 100644
+index 00000000..93eda1f2
+--- /dev/null
++++ b/src/client/src/components/(playground)/manage-dashboard/board-creator/components/variables/use-dashboard-variables.ts
+@@ -0,0 +1,159 @@
++"use client";
++
++import { useCallback, useEffect, useMemo, useRef, useState } from "react";
++import {
++	DASHBOARD_VARIABLE_URL_PREFIX,
++	parseVariableSelection,
++	readVariablesFromSearchParams,
++	serializeVariableSelection,
++	variablesToSearchParams,
++} from "@/lib/platform/dashboard-variables/translate";
++import type {
++	DashboardVariableSpec,
++	DashboardVariableState,
++} from "@/lib/platform/dashboard-variables";
++
++/**
++ * Bind a board's declared variables to URL state, default values, and a
++ * typed `DashboardVariableState` object the widget query layer consumes.
++ *
++ * URL persistence is the source of truth for sharing; `defaultValues` on the
++ * spec fill in when the URL is empty; `localStorage` keeps the user's last
++ * selection across visits on the same browser without polluting the URL.
++ *
++ * The hook is generic — it does not hard-wire application-specific field
++ * names. It binds user selections to the typed attribute keys in the spec.
++ */
++export interface UseDashboardVariablesResult {
++	specs: DashboardVariableSpec[];
++	state: DashboardVariableState;
++	setSelection: (id: string, values: string[]) => void;
++	setSpecs: (specs: DashboardVariableSpec[]) => void;
++	serializeVariables: () => string;
++}
++
++const DEFAULT_SOURCE: DashboardVariableState["source"] = "default";
++
++export function useDashboardVariables(
++	boardVariables: DashboardVariableSpec[] | undefined,
++	options: {
++		persistTo?: "url" | "localStorage" | "none";
++	} = { persistTo: "url" },
++): UseDashboardVariablesResult {
++	const specs = useMemo(
++		() => boardVariables ?? [],
++		[boardVariables],
++	);
++
++	// Read URL state once on mount; URL is the authoritative source for
++	// sharable links. When no URL params are present, fall back to the
++	// variable's declared `defaultValues`.
++	const [state, setState] = useState<DashboardVariableState>(() => {
++		const params =
++			typeof window !== "undefined"
++				? new URLSearchParams(window.location.search)
++				: new URLSearchParams();
++		const urlValues = readVariablesFromSearchParams(params);
++		const values: Record<string, string[]> = {};
++		for (const spec of specs) {
++			if (urlValues[spec.id] && urlValues[spec.id].length > 0) {
++				values[spec.id] = urlValues[spec.id];
++			} else if (spec.defaultValues && spec.defaultValues.length > 0) {
++				values[spec.id] = spec.defaultValues.slice();
++			} else {
++				values[spec.id] = [];
++			}
++		}
++		return { values, source: Object.keys(urlValues).length > 0 ? "url" : DEFAULT_SOURCE };
++	});
++
++	// Avoid the SSR / first-client-render mismatch: only mirror selection
++	// into the URL after hydration so server-rendered widget shells do not
++	// disagree with the post-mount variable state.
++	const hydrated = useRef(false);
++	useEffect(() => {
++		hydrated.current = true;
++	}, []);
++
++	// Persist selection to URL when it changes. Read the URL fresh each time
++	// so the function is stable under arbitrary refolds.
++	const persist = useCallback(
++		(next: DashboardVariableState) => {
++			if (!hydrated.current) return;
++			if (typeof window === "undefined") return;
++			const url = new URL(window.location.href);
++			const params = new URLSearchParams(url.search);
++			// Drop existing variable params so a removed spec is cleaned up.
++			for (const key of Array.from(params.keys())) {
++				if (key.startsWith(DASHBOARD_VARIABLE_URL_PREFIX)) {
++					params.delete(key);
++				}
++			}
++			const fresh = variablesToSearchParams(next);
++			fresh.forEach((v, k) => params.set(k, v));
++			url.search = params.toString();
++			window.history.replaceState(null, "", url.toString());
++			if (options.persistTo === "localStorage") {
++				try {
++					window.localStorage.setItem(
++						"openlit.dashboard.variables.v1",
++						JSON.stringify(next.values),
++					);
++				} catch {
++					// localStorage may be disabled (private mode, quota); fall
++					// back silently — the URL still carries the selection.
++				}
++			}
++		},
++		[options.persistTo],
++	);
++
++	const setSelection = useCallback(
++		(id: string, values: string[]) => {
++			setState((prev) => {
++				const nextValues = { ...prev.values, [id]: values };
++				const next: DashboardVariableState = {
++					values: nextValues,
++					source: "localStorage",
++				};
++				persist(next);
++				return next;
++			});
++		},
++		[persist],
++	);
++
++	const setSpecs = useCallback((next: DashboardVariableSpec[]) => {
++		setState((prev) => {
++			// Drop selection for removed specs so a stale URL fragment does
++			// not re-introduce a deleted variable on the next read.
++			const validIds = new Set(next.map((s) => s.id));
++			const nextValues: Record<string, string[]> = {};
++			for (const id of Object.keys(prev.values)) {
++				if (validIds.has(id)) nextValues[id] = prev.values[id];
++			}
++			for (const spec of next) {
++				if (!(spec.id in nextValues)) {
++					nextValues[spec.id] = spec.defaultValues ?? [];
++				}
++			}
++			return { values: nextValues, source: prev.source };
++		});
++	}, []);
++
++	const serializeVariables = useCallback(
++		() =>
++			Object.entries(state.values)
++				.map(([id, values]) =>
++					`${DASHBOARD_VARIABLE_URL_PREFIX}${id}=${serializeVariableSelection(values)}`,
++				)
++				.join("&"),
++		[state.values],
++	);
++
++	return { specs, state, setSelection, setSpecs, serializeVariables };
++}
++
++// Re-export parseVariableSelection for callers that need to parse a single
++// value token from a URL fragment.
++export { parseVariableSelection };
+diff --git a/src/client/src/components/(playground)/manage-dashboard/board-creator/components/variables/widget-opt-in-editor.tsx b/src/client/src/components/(playground)/manage-dashboard/board-creator/components/variables/widget-opt-in-editor.tsx
+new file mode 100644
+index 00000000..5acc4df6
+--- /dev/null
++++ b/src/client/src/components/(playground)/manage-dashboard/board-creator/components/variables/widget-opt-in-editor.tsx
+@@ -0,0 +1,117 @@
++"use client";
++
++import { useCallback } from "react";
++import type {
++	DashboardVariableOptIn,
++	DashboardVariableSpec,
++} from "@/lib/platform/dashboard-variables";
++
++/**
++ * Per-widget variable opt-in editor. Lists the variables declared on the
++ * board and lets the user toggle which ones this widget follows. When the
++ * widget declares no opt-in list, it follows every variable on its signal
++ * (the stock behaviour). When the list is present, declared variables
++ * receive their translated filters when their selection is non-empty;
++ * undeclared variables are dropped.
++ *
++ * Persistence is the parent's responsibility: `onChange` receives the new
++ * opt-in list which the dashboard editor writes back to the widget's
++ * `properties.optInVariables` field on save.
++ */
++export interface WidgetOptInEditorProps {
++	specs: DashboardVariableSpec[];
++	optIn: DashboardVariableOptIn | undefined;
++	onChange: (next: DashboardVariableOptIn | undefined) => void;
++	widgetSignal: string;
++}
++
++export function WidgetOptInEditor({
++	specs,
++	optIn,
++	onChange,
++	widgetSignal,
++}: WidgetOptInEditorProps) {
++	const compatible = specs.filter((spec) => spec.signal === widgetSignal);
++
++	const isAll = optIn === undefined;
++	const isChecked = useCallback(
++		(id: string) => {
++			if (optIn === undefined) return true;
++			return optIn.includes(id);
++		},
++		[optIn],
++	);
++
++	const toggle = useCallback(
++		(id: string) => {
++			if (optIn === undefined) {
++				// Switching from "all" to "explicit": seed with everything
++				// except the toggled id so the user-visible behaviour matches
++				// the checkbox state.
++				onChange(compatible.map((s) => s.id).filter((sid) => sid !== id));
++				return;
++			}
++			if (optIn.includes(id)) {
++				onChange(optIn.filter((sid) => sid !== id));
++			} else {
++				onChange([...optIn, id]);
++			}
++		},
++		[compatible, optIn, onChange],
++	);
++
++	const setAll = useCallback(
++		(next: boolean) => {
++			if (next) onChange(undefined);
++			else onChange([]);
++		},
++		[onChange],
++	);
++
++	if (compatible.length === 0) {
++		return (
++			<p className="text-xs text-stone-500">
++				No variables declared for this signal on the board.
++			</p>
++		);
++	}
++
++	return (
++		<div className="space-y-2" data-dashboard-widget-opt-in="1">
++			<div className="flex items-center justify-between">
++				<p className="text-xs font-semibold uppercase tracking-wide text-stone-500">
++					Widget variable opt-in
++				</p>
++				<label className="text-xs flex items-center gap-1">
++					<input
++						type="checkbox"
++						checked={isAll}
++						onChange={(e) => setAll(e.target.checked)}
++					/>
++					follow all variables on signal
++				</label>
++			</div>
++			<ul className="space-y-1 text-xs">
++				{compatible.map((spec) => (
++					<li
++						key={spec.id}
++						className="flex items-center justify-between rounded border border-stone-200 dark:border-stone-800 bg-white dark:bg-stone-900 px-2 py-1"
++					>
++						<span>
++							<code className="font-mono text-stone-500">{spec.id}</code>
++							<span className="ml-2 text-stone-500">{spec.label}</span>
++						</span>
++						<label className="flex items-center gap-1">
++							<input
++								type="checkbox"
++								checked={isChecked(spec.id)}
++								onChange={() => toggle(spec.id)}
++							/>
++							{isChecked(spec.id) ? "follows" : "ignored"}
++						</label>
++					</li>
++				))}
++			</ul>
++		</div>
++	);
++}
+diff --git a/src/client/src/components/(playground)/manage-dashboard/board-creator/context/dashboard-context.tsx b/src/client/src/components/(playground)/manage-dashboard/board-creator/context/dashboard-context.tsx
+index 2c3c9edd..82cae8e7 100644
+--- a/src/client/src/components/(playground)/manage-dashboard/board-creator/context/dashboard-context.tsx
++++ b/src/client/src/components/(playground)/manage-dashboard/board-creator/context/dashboard-context.tsx
+@@ -1,7 +1,15 @@
+ "use client";
+ 
+ import type React from "react";
+-import { createContext, useContext, useState, type ReactNode } from "react";
++import {
++	createContext,
++	useCallback,
++	useContext,
++	useState,
++	type Dispatch,
++	type ReactNode,
++	type SetStateAction,
++} from "react";
+ import {
+ 	type WidgetsRecord,
+ 	type DashboardConfig,
+@@ -20,7 +28,7 @@ import { CLIENT_EVENTS } from "@/constants/events";
+ 
+ interface DashboardContextType {
+ 	details: Partial<Board>;
+-	setDetails: (details: Partial<Board>) => void;
++	setDetails: Dispatch<SetStateAction<Partial<Board>>>;
+ 	layouts: any;
+ 	setLayouts: (layouts: any) => void;
+ 	widgets: WidgetsRecord;
+@@ -47,7 +55,7 @@ interface DashboardContextType {
+ 	widgetError: Record<string, string | null>;
+ 	updateWidgetData: (widgetId: string, data: any) => void;
+ 	clearWidgetData: (widgetId: string) => void;
+-	loadWidgetData: (widgetId: string) => Promise<void>;
++	loadWidgetData: (widgetId: string, params?: Record<string, unknown>) => Promise<void>;
+ 	fetchExistingWidgets?: () => Promise<Widget[]>;
+ }
+ 
+@@ -80,6 +88,7 @@ export const DashboardProvider: React.FC<DashboardProviderProps> = ({
+ 		title: initialConfig?.title || "",
+ 		description: initialConfig?.description || "",
+ 		tags: initialConfig?.tags || "",
++		variables: initialConfig?.variables || [],
+ 	});
+ 	const [layouts, setLayouts] = useState(initialConfig?.layouts || { lg: [] });
+ 	const [widgets, setWidgets] = useState<WidgetsRecord>(
+@@ -96,21 +105,43 @@ export const DashboardProvider: React.FC<DashboardProviderProps> = ({
+ 	const [isEditing, setIsEditing] = useState(false);
+ 	const posthog = usePostHog();
+ 
++	// Update widget data
++	const updateWidgetData = useCallback((widgetId: string, data: any) => {
++		setWidgetData((prev) => ({ ...prev, [widgetId]: data }));
++	}, []);
++
+ 	// Load widget data. Tracks per-widget loading/error so the renderer can show
+ 	// a spinner while querying and surface failures instead of a misleading `0`.
+-	const loadWidgetData = async (widgetId: string) => {
+-		const widget = widgets[widgetId] as StatCardWidget | BarChartWidget | LineChartWidget | PieChartWidget | TableWidget;
+-		const hasQuery =
+-			!!(widget?.config as { query?: string } | undefined)?.query ||
+-			!!(widget?.config as { structuredQuery?: unknown } | undefined)
+-				?.structuredQuery;
+-		if (widget.type === WidgetType.MARKDOWN || !hasQuery) return;
+-		if (!runQuery) return;
++	const loadWidgetData = useCallback(async (
++		widgetId: string,
++		params?: Record<string, unknown>
++	) => {
++		const widget = widgets[widgetId] as
++			| StatCardWidget
++			| BarChartWidget
++			| LineChartWidget
++			| PieChartWidget
++			| TableWidget
++			| undefined;
++		if (!widget || widget.type === WidgetType.MARKDOWN || !runQuery) return;
++		const config = widget.config as
++			| { query?: string; structuredQuery?: unknown }
++			| undefined;
++		if (!config?.query && !config?.structuredQuery) return;
+ 
+ 		setWidgetLoading((prev) => ({ ...prev, [widgetId]: true }));
+ 		setWidgetError((prev) => ({ ...prev, [widgetId]: null }));
+ 		try {
+-			const { data, err } = await runQuery(widgetId, {});
++			const defaultVariables = details.variables?.length
++				? {
++						specs: details.variables,
++						state: { values: {}, source: "default" as const },
++					}
++				: undefined;
++			const { data, err } = await runQuery(widgetId, {
++				...(defaultVariables ? { dashboardVariables: defaultVariables } : {}),
++				...(params || {}),
++			});
+ 			if (err) {
+ 				setWidgetError((prev) => ({ ...prev, [widgetId]: String(err) }));
+ 			} else {
+@@ -126,15 +157,7 @@ export const DashboardProvider: React.FC<DashboardProviderProps> = ({
+ 		} finally {
+ 			setWidgetLoading((prev) => ({ ...prev, [widgetId]: false }));
+ 		}
+-	};
+-
+-	// Update widget data
+-	const updateWidgetData = (widgetId: string, data: any) => {
+-		setWidgetData((prev) => ({
+-			...prev,
+-			[widgetId]: data,
+-		}));
+-	};
++	}, [details.variables, runQuery, updateWidgetData, widgets]);
+ 
+ 	// Clear widget data
+ 	const clearWidgetData = (widgetId: string) => {
+@@ -293,6 +316,7 @@ export const DashboardProvider: React.FC<DashboardProviderProps> = ({
+ 			tags: initialConfig?.tags || "",
+ 			layouts,
+ 			widgets,
++			variables: details.variables || [],
+ 		};
+ 	};
+ 
+diff --git a/src/client/src/components/(playground)/manage-dashboard/board-creator/dashboard-view.tsx b/src/client/src/components/(playground)/manage-dashboard/board-creator/dashboard-view.tsx
+index ede84e49..d7fcb170 100644
+--- a/src/client/src/components/(playground)/manage-dashboard/board-creator/dashboard-view.tsx
++++ b/src/client/src/components/(playground)/manage-dashboard/board-creator/dashboard-view.tsx
+@@ -26,6 +26,8 @@ import { toast } from "sonner";
+ import { jsonParse, jsonStringify } from "@/utils/json";
+ import { Board } from "@/types/manage-dashboard";
+ import { exportBoardLayout } from "./utils/api";
++import { DashboardVariableSelector, DashboardVariableEditor, useDashboardVariables } from "./components/variables";
++import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
+ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+ 
+ // Empty state component
+@@ -83,6 +85,7 @@ const DashboardContent: React.FC<Omit<DashboardProps, "initialConfig">> = ({
+ 		getDashboardConfig,
+ 		addWidget,
+ 		fetchExistingWidgets,
++		loadWidgetData,
+ 		removeWidget,
+ 	} = useDashboard();
+ 
+@@ -90,6 +93,19 @@ const DashboardContent: React.FC<Omit<DashboardProps, "initialConfig">> = ({
+ 
+ 	// Modal state
+ 	const [showWidgetModal, setShowWidgetModal] = React.useState(false);
++	const [variableDialogOpen, setVariableDialogOpen] = React.useState(false);
++	const variableHook = useDashboardVariables(details.variables || []);
++
++	React.useEffect(() => {
++		if (!widgets) return;
++		const dv = details.variables && details.variables.length > 0 ? {
++			specs: details.variables,
++			state: variableHook.state,
++		} : undefined;
++		Object.keys(widgets).forEach((widgetId) => {
++			loadWidgetData(widgetId, dv ? { dashboardVariables: dv } : {});
++		});
++	}, [details.variables, loadWidgetData, variableHook.state, widgets]);
+ 	const [existingWidgets, setExistingWidgets] = React.useState<Widget[]>([]);
+ 	const { fireRequest: updateBoardRequest } = useFetchWrapper();
+ 
+@@ -229,6 +245,13 @@ const DashboardContent: React.FC<Omit<DashboardProps, "initialConfig">> = ({
+ 							label={"Create widget"}
+ 						/>
+ 					)}
++					{isEditing && (
++						<ActionButtons
++							className="text-stone-700 bg-stone-100 dark:bg-stone-800 dark:text-stone-200"
++							onClick={() => setVariableDialogOpen(true)}
++							label="Variables"
++						/>
++					)}
+ 					{!readonly && (
+ 						<DropdownMenu>
+ 							<DropdownMenuTrigger asChild>
+@@ -258,6 +281,10 @@ const DashboardContent: React.FC<Omit<DashboardProps, "initialConfig">> = ({
+ 										</DropdownMenuItem>
+ 									)
+ 								}
++								<DropdownMenuItem className="p-2 gap-4" onClick={() => setVariableDialogOpen(true)}>
++									<Settings className="h-3 w-3" />
++									Variables
++								</DropdownMenuItem>
+ 								<DropdownMenuItem className="p-2 gap-4" onClick={() => exportBoardLayout(details.id!)}>
+ 									<Download className="h-3 w-3" />
+ 									Export Layout
+@@ -268,6 +295,15 @@ const DashboardContent: React.FC<Omit<DashboardProps, "initialConfig">> = ({
+ 					)}
+ 				</div>
+ 			)}
++			{details.variables && details.variables.length > 0 && (
++				<div className="px-4 pb-2">
++					<DashboardVariableSelector
++						specs={details.variables}
++						state={variableHook.state}
++						onChange={variableHook.setSelection}
++					/>
++				</div>
++			)}
+ 			<div className={`w-full ${className ?? ""}`}>
+ 
+ 				<ResponsiveGridLayout
+@@ -333,6 +369,22 @@ const DashboardContent: React.FC<Omit<DashboardProps, "initialConfig">> = ({
+ 								onSave={handleDialogSave}
+ 								onCancel={handleDialogCancel}
+ 							/>
++							<Dialog open={variableDialogOpen} onOpenChange={setVariableDialogOpen}>
++								<DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto">
++									<DialogHeader>
++										<DialogTitle>Dashboard Variables</DialogTitle>
++										<DialogDescription>
++											Configure non-time dashboard variables and their source bindings.
++										</DialogDescription>
++									</DialogHeader>
++									<DashboardVariableEditor
++										specs={details.variables || []}
++										onChange={(next) => {
++											setDetails((prev) => ({ ...prev, variables: next }));
++										}}
++									/>
++								</DialogContent>
++							</Dialog>
+ 						</>
+ 					)
+ 				}
+diff --git a/src/client/src/components/(playground)/manage-dashboard/board-creator/types.ts b/src/client/src/components/(playground)/manage-dashboard/board-creator/types.ts
+index c3a4ffcf..1f0cebce 100644
+--- a/src/client/src/components/(playground)/manage-dashboard/board-creator/types.ts
++++ b/src/client/src/components/(playground)/manage-dashboard/board-creator/types.ts
+@@ -115,6 +115,8 @@ export type Widget =
+ // Widgets Record - maps widget IDs to widget objects
+ export type WidgetsRecord = Record<string, Widget>;
+ 
++import type { DashboardVariableSpec } from "@/lib/platform/dashboard-variables";
++
+ // Dashboard Configuration
+ export interface DashboardConfig {
+ 	id: string;
+@@ -123,6 +125,16 @@ export interface DashboardConfig {
+ 	tags?: string;
+ 	layouts: Layouts;
+ 	widgets: WidgetsRecord;
++	/**
++	 * Generic non-time dashboard variables declared on this board. The list
++	 * round-trips through the upstream persistence path
++	 * (`getBoardLayout` / `updateBoardLayout` in
++	 * src/client/src/lib/platform/manage-dashboard/board.ts and
++	 * src/client/src/lib/platform/manage-dashboard/board-format.ts) so the
++	 * editor can declare new variables and the widget opt-in can read them
++	 * on the next load without losing state.
++	 */
++	variables?: DashboardVariableSpec[];
+ }
+ 
+ // Dashboard Props
+diff --git a/src/client/src/lib/platform/common.ts b/src/client/src/lib/platform/common.ts
+index 08c2c45c..640865d3 100644
+--- a/src/client/src/lib/platform/common.ts
++++ b/src/client/src/lib/platform/common.ts
+@@ -78,6 +78,7 @@ async function collectClickHouseData(
+ 		table,
+ 		values,
+ 		clickhouse_settings,
++		query_params,
+ 		enable_readonly,
+ 	}: CollectorParams,
+ 	clientQueryType: CollectorQueryType,
+@@ -127,6 +128,7 @@ async function collectClickHouseData(
+ 				client.query({
+ 					query,
+ 					format,
++					...(query_params ? { query_params } : {}),
+ 					...(Object.keys(querySettings).length
+ 						? { clickhouse_settings: querySettings }
+ 						: {}),
+diff --git a/src/client/src/lib/platform/connectors/datasource/clickhouse/adapter.ts b/src/client/src/lib/platform/connectors/datasource/clickhouse/adapter.ts
+index 44bd87cf..b0e2349d 100644
+--- a/src/client/src/lib/platform/connectors/datasource/clickhouse/adapter.ts
++++ b/src/client/src/lib/platform/connectors/datasource/clickhouse/adapter.ts
+@@ -18,7 +18,6 @@ import {
+ 	resolveTracesTableRef,
+ } from "./direct-read";
+ import {
+-	getRequests,
+ 	getAttributeKeys,
+ } from "@/lib/platform/request";
+ import {
+@@ -56,25 +55,13 @@ import type {
+ } from "../types";
+ import { normalizeLogRow, normalizeSpanRow } from "./normalize";
+ import { toMetricParams } from "./query-map";
++import { ParameterizedTraceQuery } from "./parameterized-query";
+ 
+ function escapeCH(value: string): string {
+ 	return value.replace(/\\/g, "\\\\").replace(/'/g, "\\'");
+ }
+ 
+ const SAFE_CH_IDENTIFIER = /^[A-Za-z_][A-Za-z0-9_]*$/;
+-const ALLOWED_CH_FIELDS = new Set([
+-	"SpanId",
+-	"TraceId",
+-	"ParentSpanId",
+-	"SpanName",
+-	"ServiceName",
+-	"Duration",
+-	"Timestamp",
+-	"StatusCode",
+-	"StatusMessage",
+-	"Kind",
+-	"TraceType",
+-]);
+ 
+ function safeAlias(value: unknown, fallback: string): string {
+ 	const alias = String(value || fallback);
+@@ -128,37 +115,6 @@ const AGG_FN_MAP: Record<string, (field: string) => string> = {
+ 	cardinality: (f) => `uniqExact(${f})`,
+ };
+ 
+-/** Resolve a group-by / field key to a ClickHouse expression. */
+-function fieldToExpr(field: string): string {
+-	const scoped = field.match(/^(span|resource):(.+)$/);
+-	if (scoped) {
+-		const [, scope, key] = scoped;
+-		return `${scope === "resource" ? "ResourceAttributes" : "SpanAttributes"}['${escapeCH(key)}']`;
+-	}
+-	if (field === "duration") return "Duration / 1000000000";
+-	if (field === "service.name") {
+-		return "ResourceAttributes['service.name']";
+-	}
+-	if (field === "deployment.environment") {
+-		return "ResourceAttributes['deployment.environment']";
+-	}
+-	// OTel GenAI renamed gen_ai.system → gen_ai.provider.name (1.30+). Coalesce
+-	// so group-by / filters work for both legacy and current SDK emits.
+-	if (field === "gen_ai.provider.name" || field === "gen_ai.system") {
+-		return `nullIf(coalesce(nullIf(SpanAttributes['gen_ai.provider.name'], ''), nullIf(SpanAttributes['gen_ai.system'], '')), '')`;
+-	}
+-	if (field === "SpanName" || field === "ServiceName" || field === "Duration") {
+-		return field;
+-	}
+-	// Treat dotted keys as span attributes by default.
+-	if (field.includes(".")) {
+-		return `SpanAttributes['${escapeCH(field)}']`;
+-	}
+-	if (!ALLOWED_CH_FIELDS.has(field)) {
+-		throw new Error(`Unsupported ClickHouse field: ${field}`);
+-	}
+-	return field;
+-}
+ 
+ export class ClickHouseAdapter implements DataSourceAdapter {
+ 	readonly type = "clickhouse";
+@@ -182,6 +138,7 @@ export class ClickHouseAdapter implements DataSourceAdapter {
+ 			serverAggregation: true,
+ 			spanMutation: true,
+ 			distinctValues: true,
++			dashboardVariableSignals: ["traces"],
+ 			crossTraceSession: true,
+ 			rawQuery: true,
+ 		};
+@@ -216,18 +173,33 @@ export class ClickHouseAdapter implements DataSourceAdapter {
+ 
+ 	async listSpans(query: OpenLITQuery): Promise<DataFrame<NormalizedSpan>> {
+ 		const start = Date.now();
+-		const result = await getRequests(toMetricParams(query, this.dbConfigId));
++		const tracesTable = await resolveTracesTableRef(this.dbConfigId);
++		const bindings = new ParameterizedTraceQuery();
++		const sort = query.sort?.[0];
++		const sortField = sort ? bindings.fieldExpression(sort.field) : "Timestamp";
++		const direction = sort?.direction === "asc" ? "ASC" : "DESC";
++		const requestedLimit = Number(query.limit);
++		const limit = Number.isFinite(requestedLimit) && requestedLimit > 0
++			? Math.min(5000, Math.trunc(requestedLimit))
++			: 1000;
++		const requestedOffset = Number(query.offset);
++		const offset = Number.isFinite(requestedOffset) && requestedOffset > 0
++			? Math.trunc(requestedOffset)
++			: 0;
++		const where = bindings.where(query, tracesTable);
++		const sql = `SELECT * FROM ${tracesTable}
++			WHERE ${where}
++			ORDER BY ${sortField} ${direction}
++			LIMIT ${bindings.bind(limit, "UInt32")} OFFSET ${bindings.bind(offset, "UInt32")}`;
++		const result = await queryConnectorTraces(sql, this.dbConfigId, bindings.queryParams);
+ 		assertLegacyReadSucceeded(result);
+-		const rows = ((result.records as Record<string, unknown>[]) || []).map(
++		const rows = ((result.data as Record<string, unknown>[]) || []).map(
+ 			normalizeSpanRow
+ 		);
+ 		return {
+ 			fields: spanFields(),
+ 			rows,
+-			meta: {
+-				latencyMs: Date.now() - start,
+-				rowsScanned: Number(result.total) || rows.length,
+-			},
++			meta: { latencyMs: Date.now() - start, rowsScanned: rows.length },
+ 		};
+ 	}
+ 
+@@ -273,14 +245,15 @@ export class ClickHouseAdapter implements DataSourceAdapter {
+ 
+ 	async aggregateSpans(query: OpenLITQuery): Promise<DataFrame> {
+ 		const start = Date.now();
+-		const params = toMetricParams(query, this.dbConfigId);
++		const tracesTable = await resolveTracesTableRef(this.dbConfigId);
++		const bindings = new ParameterizedTraceQuery();
+ 		const groupExprs = (query.groupBy || []).map(
+-			(g, i) => `${fieldToExpr(g)} AS g${i}`
++			(g, i) => `${bindings.fieldExpression(g)} AS g${i}`
+ 		);
+ 		const aggExprs = (query.aggregations || [{ fn: "count" as const }]).map(
+ 			(a, i) => {
+ 				const fn = AGG_FN_MAP[a.fn] || AGG_FN_MAP.count;
+-				const field = a.field ? fieldToExpr(a.field) : "";
++				const field = a.field ? bindings.fieldExpression(a.field) : "";
+ 				return `${fn(field)} AS ${safeAlias(a.as, `agg${i}`)}`;
+ 			}
+ 		);
+@@ -288,36 +261,48 @@ export class ClickHouseAdapter implements DataSourceAdapter {
+ 		const groupBy = query.groupBy?.length
+ 			? `GROUP BY ${query.groupBy.map((_, i) => `g${i}`).join(", ")}`
+ 			: "";
+-		const where = [
+-			getFilterWhereCondition(params, true),
+-			query.aiSelector !== false ? aiSelectorToClickHouse() : "",
+-		]
+-			.filter(Boolean)
+-			.join(" AND ");
+-		const tracesTable = await resolveTracesTableRef(this.dbConfigId);
++		const where = bindings.where(query, tracesTable);
++		const requestedLimit = Number(query.limit);
++		const limit = Number.isFinite(requestedLimit) && requestedLimit > 0
++			? `LIMIT ${bindings.bind(Math.min(5000, Math.trunc(requestedLimit)), "UInt32")}`
++			: "";
+ 		const sql = `SELECT ${selects} FROM ${tracesTable}
+-			WHERE ${where} ${groupBy}
+-			${query.limit ? `LIMIT ${Number(query.limit)}` : ""}`;
+-		const result = await queryConnectorTraces(sql, this.dbConfigId);
++			WHERE ${where} ${groupBy} ${limit}`;
++		const result = await queryConnectorTraces(sql, this.dbConfigId, bindings.queryParams);
+ 		assertLegacyReadSucceeded(result);
+-		const { data } = result;
+ 		return {
+ 			fields: [],
+-			rows: (data as Record<string, unknown>[]) || [],
++			rows: (result.data as Record<string, unknown>[]) || [],
+ 			meta: { latencyMs: Date.now() - start },
+ 		};
+ 	}
+ 
+ 	async spanTimeSeries(query: OpenLITQuery): Promise<DataFrame> {
+ 		const start = Date.now();
+-		const summary = await getSignalSummary(
+-			toMetricParams(query, this.dbConfigId),
+-			"traces"
++		const tracesTable = await resolveTracesTableRef(this.dbConfigId);
++		const bindings = new ParameterizedTraceQuery();
++		const days = Math.max(
++			1,
++			(query.timeRange.end.getTime() - query.timeRange.start.getTime()) / 86_400_000
+ 		);
+-		assertLegacyReadSucceeded(summary);
++		const bucket = days <= 2 ? "hour" : days <= 45 ? "day" : days <= 370 ? "week" : "month";
++		const labelFormat = bucket === "hour" ? "%m/%d %H:00" : bucket === "month" ? "%Y/%m" : "%Y/%m/%d";
++		const where = bindings.where(query, tracesTable);
++		const sql = `SELECT
++			formatDateTime(DATE_TRUNC('${bucket}', Timestamp), '${labelFormat}') AS label,
++			CAST(COUNT(*) AS INTEGER) AS count,
++			CAST(avg(Duration) * 1e-9 AS FLOAT) AS avgDuration,
++			CAST(SUM(toFloat64OrZero(SpanAttributes['gen_ai.usage.cost'])) AS FLOAT) AS cost,
++			CAST(SUM(toInt64OrZero(SpanAttributes['gen_ai.usage.total_tokens'])) AS INTEGER) AS tokens
++		FROM ${tracesTable}
++		WHERE ${where}
++		GROUP BY label
++		ORDER BY min(Timestamp)`;
++		const result = await queryConnectorTraces(sql, this.dbConfigId, bindings.queryParams);
++		assertLegacyReadSucceeded(result);
+ 		return {
+ 			fields: [],
+-			rows: (summary.buckets as Record<string, unknown>[]) || [],
++			rows: (result.data as Record<string, unknown>[]) || [],
+ 			meta: { latencyMs: Date.now() - start },
+ 		};
+ 	}
+@@ -343,19 +328,15 @@ export class ClickHouseAdapter implements DataSourceAdapter {
+ 			}
+ 			return [];
+ 		}
+-		const expr = fieldToExpr(key);
+-		const where = [
+-			timeRangeClause(query.timeRange),
+-			query.aiSelector !== false ? aiSelectorToClickHouse() : "",
+-		]
+-			.filter(Boolean)
+-			.join(" AND ");
+ 		const tracesTable = await resolveTracesTableRef(this.dbConfigId);
++		const bindings = new ParameterizedTraceQuery();
++		const expr = bindings.fieldExpression(key);
++		const where = bindings.where(query, tracesTable);
+ 		const sql = `SELECT DISTINCT ${expr} AS v FROM ${tracesTable}
+ 			WHERE ${where} AND notEmpty(toString(${expr}))
+ 			ORDER BY v
+ 			LIMIT 1000`;
+-		const result = await queryConnectorTraces(sql, this.dbConfigId);
++		const result = await queryConnectorTraces(sql, this.dbConfigId, bindings.queryParams);
+ 		assertLegacyReadSucceeded(result);
+ 		const { data } = result;
+ 		return ((data as { v?: unknown }[]) || [])
+diff --git a/src/client/src/lib/platform/connectors/datasource/clickhouse/direct-read.ts b/src/client/src/lib/platform/connectors/datasource/clickhouse/direct-read.ts
+index d69fb736..89c71f28 100644
+--- a/src/client/src/lib/platform/connectors/datasource/clickhouse/direct-read.ts
++++ b/src/client/src/lib/platform/connectors/datasource/clickhouse/direct-read.ts
+@@ -16,7 +16,12 @@ export async function resolveTracesTableRef(
+ /** Run a connector-owned full-row trace read on the direct ClickHouse client. */
+ export async function queryConnectorTraces(
+ 	query: string,
+-	dbConfigId?: string
++	dbConfigId?: string,
++	queryParams?: Record<string, unknown>
+ ) {
+-	return connectorDataCollector({ query }, "query", dbConfigId);
++	return connectorDataCollector(
++		{ query, ...(queryParams ? { query_params: queryParams } : {}) },
++		"query",
++		dbConfigId
++	);
+ }
+diff --git a/src/client/src/lib/platform/connectors/datasource/clickhouse/parameterized-query.ts b/src/client/src/lib/platform/connectors/datasource/clickhouse/parameterized-query.ts
+new file mode 100644
+index 00000000..4fde1846
+--- /dev/null
++++ b/src/client/src/lib/platform/connectors/datasource/clickhouse/parameterized-query.ts
+@@ -0,0 +1,164 @@
++import { agentLoopWhereSql } from "@/lib/platform/agent-loop/sql";
++import { generationHealthWhereSql } from "@/lib/platform/generation-health/sql";
++import { aiSelectorToClickHouse } from "../ai-selector";
++import type {
++	FilterOp,
++	NormalizedFilter,
++	OpenLITQuery
++} from "../types";
++
++const ATTRIBUTE_KEY_PATTERN = /^[A-Za-z][A-Za-z0-9_.*-]{0,127}$/;
++const ALLOWED_COLUMNS = new Set([
++	"SpanId",
++	"TraceId",
++	"ParentSpanId",
++	"SpanName",
++	"ServiceName",
++	"Duration",
++	"Timestamp",
++	"StatusCode",
++	"StatusMessage",
++	"SpanKind",
++	"TraceState",
++	"ScopeName",
++	"ScopeVersion"
++]);
++
++/**
++ * Builds ClickHouse structured-trace predicates with query_params. Dynamic
++ * map keys, values, and time bounds are never inserted into the SQL text.
++ */
++export class ParameterizedTraceQuery {
++	readonly queryParams: Record<string, unknown> = {};
++	private nextParamIndex = 0;
++
++	bind(value: unknown, type: string): string {
++		const name = `autodev_filter_${this.nextParamIndex++}`;
++		this.queryParams[name] = value;
++		return `{${name}:${type}}`;
++	}
++
++	fieldExpression(field: string): string {
++		const scoped = field.match(/^(span|resource):(.+)$/u);
++		if (scoped) {
++			const [, scope, key] = scoped;
++			return this.attributeExpression(scope === "resource" ? "resource" : "span", key);
++		}
++		if (field === "duration") return "Duration / 1000000000";
++		if (field === "service.name") return "ServiceName";
++		if (field === "deployment.environment") {
++			return this.attributeExpression("resource", field);
++		}
++		if (field === "gen_ai.provider.name" || field === "gen_ai.system") {
++			return "nullIf(coalesce(nullIf(SpanAttributes['gen_ai.provider.name'], ''), nullIf(SpanAttributes['gen_ai.system'], '')), '')";
++		}
++		if (ALLOWED_COLUMNS.has(field)) return field;
++		if (field.includes(".")) return this.attributeExpression("span", field);
++		throw new Error(`Unsupported ClickHouse field: ${field}`);
++	}
++
++	where(query: OpenLITQuery, tracesTable: string): string {
++		const clauses: string[] = [];
++		const start = this.bind(query.timeRange.start.toISOString(), "String");
++		const end = this.bind(query.timeRange.end.toISOString(), "String");
++		clauses.push(
++			`Timestamp >= parseDateTimeBestEffort(${start}) AND Timestamp <= parseDateTimeBestEffort(${end})`
++		);
++
++		for (const filter of query.filters || []) {
++			const clause = this.filterExpression(filter);
++			if (clause) clauses.push(clause);
++		}
++
++		if (query.aiSelector !== false) clauses.push(aiSelectorToClickHouse());
++
++		const generationHealth = generationHealthWhereSql(query.generationHealth);
++		if (generationHealth) clauses.push(generationHealth);
++
++		if (query.agentLoop) {
++			clauses.push(agentLoopWhereSql(tracesTable, clauses.join(" AND ")));
++		}
++
++		return clauses.join(" AND ");
++	}
++
++	private attributeExpression(scope: string, key: string): string {
++		if (!ATTRIBUTE_KEY_PATTERN.test(key)) {
++			throw new Error("Invalid ClickHouse attribute key");
++		}
++		if (scope !== "resource" && scope !== "span") {
++			throw new Error("Unsupported ClickHouse trace attribute scope");
++		}
++		if (scope === "resource" && key === "service.name") return "ServiceName";
++		const column = scope === "resource" ? "ResourceAttributes" : "SpanAttributes";
++		return `${column}[${this.bind(key, "String")}]`;
++	}
++
++	private filterExpression(filter: NormalizedFilter): string {
++		let expression: string;
++		switch (filter.target) {
++			case "attribute": {
++				if (!filter.key) return "";
++				expression = this.attributeExpression(filter.scope || "span", filter.key);
++				break;
++			}
++			case "spanName":
++				expression = "SpanName";
++				break;
++			case "status":
++				expression = "StatusCode";
++				break;
++			case "duration":
++				expression = "Duration / 1000000000";
++				break;
++			default:
++				return "";
++		}
++		return this.comparison(expression, filter.op, filter.value);
++	}
++
++	private comparison(
++		expression: string,
++		op: FilterOp,
++		rawValue: NormalizedFilter["value"]
++	): string {
++		if (op === "exists") return `notEmpty(toString(${expression}))`;
++		if (op === "notExists") return `empty(toString(${expression}))`;
++		if (rawValue === undefined) return "";
++
++		const values = Array.isArray(rawValue) ? rawValue : [rawValue];
++		if (!values.length) return op === "notIn" ? "1" : "0";
++		const numeric = values.every((value) => typeof value === "number");
++		const valueType = numeric ? "Float64" : "String";
++		const normalize = (value: string | number) =>
++			numeric ? Number(value) : String(value);
++		const scalar = () => this.bind(normalize(values[0]!), valueType);
++		const array = () =>
++			this.bind(values.map(normalize), `Array(${valueType})`);
++
++		switch (op) {
++			case "eq":
++				return `${expression} = ${scalar()}`;
++			case "neq":
++				return `${expression} != ${scalar()}`;
++			case "in":
++				return `${expression} IN ${array()}`;
++			case "notIn":
++				return `${expression} NOT IN ${array()}`;
++			case "gt":
++				return `${expression} > ${scalar()}`;
++			case "gte":
++				return `${expression} >= ${scalar()}`;
++			case "lt":
++				return `${expression} < ${scalar()}`;
++			case "lte":
++				return `${expression} <= ${scalar()}`;
++			case "contains": {
++				const value = this.bind(String(values[0]!), "String");
++				return `positionCaseInsensitive(toString(${expression}), ${value}) > 0`;
++			}
++			default:
++				return "";
++		}
++	}
++}
+diff --git a/src/client/src/lib/platform/connectors/datasource/clickhouse/query-map.ts b/src/client/src/lib/platform/connectors/datasource/clickhouse/query-map.ts
+index 922f2639..f28b0dd5 100644
+--- a/src/client/src/lib/platform/connectors/datasource/clickhouse/query-map.ts
++++ b/src/client/src/lib/platform/connectors/datasource/clickhouse/query-map.ts
+@@ -59,7 +59,11 @@ export function toMetricParams(
+ 		}
+ 		if (filter.target !== "attribute" || !filter.key) continue;
+ 		if (filter.key === "service.name") {
+-			add(query.signal === "traces" ? "applicationNames" : "services", filter.value);
++			// The pinned OTel ClickHouse exporter projects the standard
++			// resource service.name into the dedicated ServiceName column.
++			// Use the same projection for traces, logs, and metrics instead
++			// of filtering an often-empty ResourceAttributes map entry.
++			add(query.signal === "traces" ? "serviceNames" : "services", filter.value);
+ 			continue;
+ 		}
+ 		if (query.signal === "traces" && filter.key === "gen_ai.request.model") {
+diff --git a/src/client/src/lib/platform/connectors/datasource/types.ts b/src/client/src/lib/platform/connectors/datasource/types.ts
+index 2b31018e..e92c0124 100644
+--- a/src/client/src/lib/platform/connectors/datasource/types.ts
++++ b/src/client/src/lib/platform/connectors/datasource/types.ts
+@@ -231,6 +231,8 @@ export interface SourceCapabilities {
+ 	spanMutation: boolean;
+ 	/** Can enumerate distinct attribute values / attribute keys. */
+ 	distinctValues: boolean;
++	/** Signals whose dashboard-variable filters are bound as typed query parameters. */
++	dashboardVariableSignals?: Signal[];
+ 	/** Can stitch coding-agent sessions across multiple trace ids. */
+ 	crossTraceSession: boolean;
+ 	/** Max lookback window in milliseconds, if the vendor caps it. */
+diff --git a/src/client/src/lib/platform/dashboard-variables/distinct-values.ts b/src/client/src/lib/platform/dashboard-variables/distinct-values.ts
+new file mode 100644
+index 00000000..6af01c98
+--- /dev/null
++++ b/src/client/src/lib/platform/dashboard-variables/distinct-values.ts
+@@ -0,0 +1,86 @@
++import type {
++	AttributeScope,
++	DataSourceAdapter,
++	OpenLITQuery,
++	Signal,
++} from "@/lib/platform/connectors/datasource/types";
++import { UnsupportedCapabilityError } from "@/lib/platform/connectors/datasource/types";
++import { clampQueryToSource } from "@/lib/platform/connectors/datasource/http/limits";
++import { isDashboardVariableBindingValid } from "./translate";
++
++/**
++ * Generic, type-safe source binding for fetching the allowed values of a
++ * dashboard variable. The dashboard editor calls this when the variable does
++ * NOT have a hand-curated `allowedValues` array — the binding layer is the
++ * typed adapter's `distinctValues(scopedKey, query)` method, which adapters
++ * translate into the vendor's native query language without SQL string
++ * interpolation.
++ *
++ * Never concatenate user-controlled values into SQL. The attribute key
++ * flows from the typed `DashboardVariableSpec.key` (already validated at
++ * the dashboard layer), and the query is built from the dashboard filter
++ * (time range + project + environment) by the query planner.
++ */
++
++export interface VariableAllowedValuesRequest {
++	adapter: DataSourceAdapter;
++	signal: Signal;
++	scope: AttributeScope;
++	/** Bound attribute key for the variable (e.g. "service.name"). */
++	key: string;
++	/** Time range used as the probe window. */
++	timeRange: { start: Date; end: Date };
++	/** Maximum number of values to return. Defaults to 256. */
++	limit?: number;
++}
++
++export interface VariableAllowedValuesResult {
++	values: string[];
++	/**
++	 * When `false`, the bound source does not support distinct attribute
++	 * values. The dashboard editor falls back to a free-text input in that
++	 * case rather than showing a broken dropdown.
++	 */
++	supported: boolean;
++}
++
++export function distinctValueLookupKey(
++	signal: Signal,
++	scope: AttributeScope,
++	key: string,
++): string | null {
++	if (!isDashboardVariableBindingValid(signal, scope)) return null;
++	if (signal === "traces") return `${scope}:${key}`;
++	return key;
++}
++
++export async function fetchVariableAllowedValues(
++	req: VariableAllowedValuesRequest,
++): Promise<VariableAllowedValuesResult> {
++	const lookupKey = distinctValueLookupKey(req.signal, req.scope, req.key);
++	if (!lookupKey) return { values: [], supported: false };
++	const capabilities = req.adapter.capabilities?.();
++	if (!capabilities?.distinctValues) {
++		return { values: [], supported: false };
++	}
++	const query: OpenLITQuery = clampQueryToSource(req.adapter, {
++		signal: req.signal,
++		timeRange: req.timeRange,
++		limit: req.limit ?? 256,
++	}).query;
++	try {
++		const values = await req.adapter.distinctValues(
++			lookupKey,
++			query,
++		);
++		return {
++			values: values.slice(0, req.limit ?? 256),
++			supported: true,
++		};
++	} catch (err) {
++		if (err instanceof UnsupportedCapabilityError) {
++			return { values: [], supported: false };
++		}
++		throw err;
++	}
++}
+diff --git a/src/client/src/lib/platform/dashboard-variables/index.ts b/src/client/src/lib/platform/dashboard-variables/index.ts
+new file mode 100644
+index 00000000..f8909b3e
+--- /dev/null
++++ b/src/client/src/lib/platform/dashboard-variables/index.ts
+@@ -0,0 +1,9 @@
++export * from "./types";
++export {
++	distinctValueLookupKey,
++	fetchVariableAllowedValues,
++} from "./distinct-values";
++export type {
++	VariableAllowedValuesRequest,
++	VariableAllowedValuesResult,
++} from "./distinct-values";
+diff --git a/src/client/src/lib/platform/dashboard-variables/translate.ts b/src/client/src/lib/platform/dashboard-variables/translate.ts
+new file mode 100644
+index 00000000..03672005
+--- /dev/null
++++ b/src/client/src/lib/platform/dashboard-variables/translate.ts
+@@ -0,0 +1,244 @@
++import type {
++	AttributeScope,
++	NormalizedFilter,
++	Signal,
++} from "@/lib/platform/connectors/datasource/types";
++
++/**
++ * Generic non-time dashboard variable: a typed, schema-driven binding
++ * between a dashboard UI control and a single telemetry attribute key on a
++ * single signal.
++ *
++ * The variable system is schema-driven: the instrumentation/resource schema
++ * owns the attribute key. Application-specific field names are not hardwired
++ * into this reusable binding layer.
++ *
++ * Variables are declared on a board, reference an attribute via
++ * `(scope, key)` (e.g. `("resource", "workspace.id")`,
++ * `("span", "gen_ai.system")`), and are bound into the typed
++ * `OpenLITQuery.filters` list at run time without touching SQL strings.
++ */
++export interface DashboardVariableSpec {
++	/** Unique identifier within the board; used as URL key and widget opt-in. */
++	id: string;
++	/** Display label shown next to the dropdown. */
++	label: string;
++	/** Telemetry signal this variable targets. */
++	signal: Signal;
++	/** Attribute scope (resource, span, log, metric). */
++	scope: AttributeScope;
++	/**
++	 * Attribute key used for the filter predicate. Must be a valid OTel
++	 * attribute identifier (e.g. `service.name`, `gen_ai.system`,
++	 * `workspace.id`).
++	 */
++	key: string;
++	/** Allow multi-select in the dropdown UI. */
++	multi: boolean;
++	/** Support an "All" sentinel (empty selection => no filter added). */
++	supportsAll: boolean;
++	/** Default values selected when the board first loads. */
++	defaultValues?: string[];
++	/**
++	 * Explicit telemetry source binding override; when omitted, the
++	 * project's per-signal binding is used (same fallback as widgets).
++	 */
++	sourceId?: string | null;
++	/**
++	 * Static enumeration of allowed values. When omitted, the UI fetches
++	 * `distinctValues(key, query)` from the bound source.
++	 */
++	allowedValues?: string[];
++}
++
++/**
++ * Widget opt-in: list of dashboard variable ids the widget depends on.
++ * Widgets that do not declare a variable ignore its selection entirely. A
++ * widget that declares a variable receives its translated filters when the
++ * variable has a non-empty selection.
++ */
++export type DashboardVariableOptIn = string[];
++
++export interface DashboardVariableState {
++	/** id -> selected values; empty array = All (when supported) or unset. */
++	values: Record<string, string[]>;
++	/** Source of the current selection, used for debugging only. */
++	source: "url" | "default" | "localStorage";
++}
++
++/** URL prefix used for variable values when persisted to query string. */
++export const DASHBOARD_VARIABLE_URL_PREFIX = "dashboard_var_";
++
++/**
++ * Translate a single dashboard variable's selected values into a normalized
++ * filter. Returns `null` when no filter should be added (All selection or
++ * no values).
++ *
++ * Always parameter-safe: values flow through `NormalizedFilter.value` and
++ * are passed to adapters as typed inputs. Adapters translate them into the
++ * vendor's native query language without string interpolation.
++ */
++const VALID_SCOPES_BY_SIGNAL: Partial<
++	Record<Signal, ReadonlySet<AttributeScope>>
++> = {
++	traces: new Set<AttributeScope>(["resource", "span"]),
++	logs: new Set<AttributeScope>(["resource", "log"]),
++	metrics: new Set<AttributeScope>(["resource", "metric"]),
++};
++const ATTRIBUTE_KEY_PATTERN = /^[A-Za-z][A-Za-z0-9_.*-]{0,127}$/;
++
++export function isDashboardVariableBindingValid(
++	signal: Signal,
++	scope: AttributeScope,
++): boolean {
++	return VALID_SCOPES_BY_SIGNAL[signal]?.has(scope) ?? false;
++}
++
++export function variableToFilter(
++	spec: DashboardVariableSpec,
++	selection: string[] | undefined,
++): NormalizedFilter | null {
++	if (
++		!isDashboardVariableBindingValid(spec.signal, spec.scope) ||
++		!ATTRIBUTE_KEY_PATTERN.test(spec.key)
++	) {
++		return null;
++	}
++	if (!Array.isArray(selection) || selection.length === 0) {
++		// All (empty) or unset: do not push a predicate.
++		return null;
++	}
++	if (spec.multi && selection.length > 1) {
++		return {
++			target: "attribute",
++			scope: spec.scope,
++			key: spec.key,
++			op: "in",
++			value: selection.slice(),
++		};
++	}
++	return {
++		target: "attribute",
++		scope: spec.scope,
++		key: spec.key,
++		op: "eq",
++		value: selection[0],
++	};
++}
++
++/**
++ * Minimal shape that `applyDashboardVariables` consumes. Mirrors the public
++ * `OpenLITQuery` but only the fields the function actually reads/writes so
++ * callers can pass either the typed query or a partial draft.
++ */
++export interface NormalizedQueryLike {
++	signal: Signal;
++	filters?: NormalizedFilter[];
++	[key: string]: unknown;
++}
++
++/**
++ * Apply dashboard variable selections to a typed OpenLITQuery. Returns a new
++ * query object with the additional filters prepended (existing filters and
++ * the time range are preserved unchanged).
++ *
++ * Variables whose id is not present in `state.values` or whose selection
++ * resolves to All fall through and do not contribute a filter.
++ */
++export function applyDashboardVariables(
++	query: NormalizedQueryLike,
++	specs: DashboardVariableSpec[],
++	state: Pick<DashboardVariableState, "values">,
++	opts: { widgetOptIn?: DashboardVariableOptIn } = {},
++): NormalizedQueryLike {
++	const allowAll =
++		opts.widgetOptIn === undefined
++			? () => true
++			: (spec: DashboardVariableSpec) =>
++					opts.widgetOptIn!.includes(spec.id);
++	const additions: NormalizedFilter[] = [];
++	for (const spec of specs) {
++		if (spec.signal !== query.signal) continue;
++		if (!isDashboardVariableBindingValid(spec.signal, spec.scope)) continue;
++		if (!allowAll(spec)) continue;
++		const filter = variableToFilter(spec, state.values[spec.id]);
++		if (filter) additions.push(filter);
++	}
++	if (additions.length === 0) return query;
++	return {
++		...query,
++		filters: [...additions, ...(query.filters ?? [])],
++	};
++}
++
++/**
++ * Serialize a single variable's values to a URL-safe CSV token. Empty
++ * selection is rendered as `*` (the All sentinel) so URLs remain stable.
++ */
++export function serializeVariableSelection(
++	selection: string[] | undefined,
++): string {
++	if (!selection || selection.length === 0) return "*";
++	return selection.map(encodeURIComponent).join(",");
++}
++
++/**
++ * Parse a URL token back into a selection array. Empty / `*` resolves to an
++ * empty array (All). Malformed values are dropped silently rather than
++ * rejected, so a stray `;` cannot break dashboard rendering.
++ */
++export function parseVariableSelection(raw: string | null): string[] {
++	if (raw == null || raw === "" || raw === "*") return [];
++	return raw
++		.split(",")
++		.map((v) => {
++			try {
++				return decodeURIComponent(v);
++			} catch {
++				return v;
++			}
++		})
++		.filter((v) => v.length > 0);
++}
++
++/**
++ * Build the URLSearchParams delta for a board's variable state. Used by the
++ * dashboard UI to persist the selection without touching the existing
++ * time/filter params. Keys are prefixed with `dashboard_var_` so they cannot
++ * collide with the stock `FILTER_PARAM_KEYS` whitelist.
++ */
++export function variablesToSearchParams(
++	state: Pick<DashboardVariableState, "values">,
++): URLSearchParams {
++	const params = new URLSearchParams();
++	for (const [id, values] of Object.entries(state.values)) {
++		params.set(
++			`${DASHBOARD_VARIABLE_URL_PREFIX}${id}`,
++			serializeVariableSelection(values),
++		);
++	}
++	return params;
++}
++
++/**
++ * Inverse of `variablesToSearchParams`: read every `dashboard_var_*` entry from
++ * a URLSearchParams-like object and return the selection map. Entries with
++ * unknown ids are ignored so the function is safe against stale URLs.
++ */
++export function readVariablesFromSearchParams(
++	params: URLSearchParams | Record<string, string | string[] | undefined>,
++): Record<string, string[]> {
++	const out: Record<string, string[]> = {};
++	const entries =
++		params instanceof URLSearchParams
++			? Array.from(params.entries())
++			: Object.entries(params);
++	for (const [key, raw] of entries) {
++		if (!key.startsWith(DASHBOARD_VARIABLE_URL_PREFIX)) continue;
++		const id = key.slice(DASHBOARD_VARIABLE_URL_PREFIX.length);
++		if (!id) continue;
++		const value = Array.isArray(raw) ? raw[0] : raw;
++		out[id] = parseVariableSelection(typeof value === "string" ? value : null);
++	}
++	return out;
++}
+diff --git a/src/client/src/lib/platform/dashboard-variables/types.ts b/src/client/src/lib/platform/dashboard-variables/types.ts
+new file mode 100644
+index 00000000..d92ec2b0
+--- /dev/null
++++ b/src/client/src/lib/platform/dashboard-variables/types.ts
+@@ -0,0 +1,23 @@
++/**
++ * Re-export of the dashboard variable types from the platform/connectors
++ * integration point. The dashboard storage layer treats variable specs as
++ * immutable, serializable records on the board; the translation layer is
++ * where the typed binding into OpenLITQuery lives.
++ */
++export type {
++	DashboardVariableSpec,
++	DashboardVariableState,
++	DashboardVariableOptIn,
++} from "./translate";
++export type { Signal } from "@/lib/platform/connectors/datasource/types";
++
++export {
++	DASHBOARD_VARIABLE_URL_PREFIX,
++	applyDashboardVariables,
++	variableToFilter,
++	variablesToSearchParams,
++	readVariablesFromSearchParams,
++	serializeVariableSelection,
++	parseVariableSelection,
++	isDashboardVariableBindingValid,
++} from "./translate";
+diff --git a/src/client/src/lib/platform/manage-dashboard/board-format.ts b/src/client/src/lib/platform/manage-dashboard/board-format.ts
+index 5aacd18e..74a0b017 100644
+--- a/src/client/src/lib/platform/manage-dashboard/board-format.ts
++++ b/src/client/src/lib/platform/manage-dashboard/board-format.ts
+@@ -1,5 +1,6 @@
+ import { jsonParse } from "@/utils/json";
+ import type { Widget } from "@/types/manage-dashboard";
++import type { DashboardVariableSpec } from "@/lib/platform/dashboard-variables";
+ 
+ /** Legacy / unversioned dashboard JSON (seed files and pre-v2 exports). */
+ export const DASHBOARD_FORMAT_VERSION_V1 = 1;
+@@ -24,6 +25,7 @@ export type NormalizedDashboardImport = {
+ 	tags: string[];
+ 	layouts: { lg: DashboardLayoutItem[] };
+ 	widgets: Record<string, Widget>;
++	variables: DashboardVariableSpec[];
+ };
+ 
+ function asRecord(value: unknown): Record<string, unknown> | null {
+@@ -123,6 +125,87 @@ function normalizeWidgets(widgets: unknown): Record<string, Widget> {
+ 	return out;
+ }
+ 
++/**
++ * Validate and normalize a single generic non-time dashboard variable spec.
++ * Variables are schema-driven: the typed attribute key is recorded on the
++ * board and the binding layer applies it as a NormalizedFilter against
++ * telemetry queries. The variable system is generic — application-specific
++ * field names are not hardwired here.
++ */
++const VALID_SIGNALS = new Set(["traces", "logs", "metrics", "intelligence"]);
++const VALID_SCOPES = new Set(["span", "resource", "log", "metric"]);
++const VARIABLE_ID_PATTERN = /^[A-Za-z][A-Za-z0-9_-]{0,63}$/;
++const ATTRIBUTE_KEY_PATTERN = /^[A-Za-z][A-Za-z0-9_.*-]{0,127}$/;
++
++export function normalizeDashboardVariable(
++	raw: unknown
++): DashboardVariableSpec | null {
++	if (!raw || typeof raw !== "object") return null;
++	const r = raw as Record<string, unknown>;
++	if (
++		typeof r.id !== "string" ||
++		!VARIABLE_ID_PATTERN.test(r.id) ||
++		typeof r.label !== "string" ||
++		r.label.length === 0 ||
++		typeof r.signal !== "string" ||
++		!VALID_SIGNALS.has(r.signal) ||
++		typeof r.scope !== "string" ||
++		!VALID_SCOPES.has(r.scope) ||
++		typeof r.key !== "string" ||
++		!ATTRIBUTE_KEY_PATTERN.test(r.key) ||
++		typeof r.multi !== "boolean" ||
++		typeof r.supportsAll !== "boolean"
++	) {
++		return null;
++	}
++	const out: DashboardVariableSpec = {
++		id: r.id,
++		label: r.label,
++		signal: r.signal as DashboardVariableSpec["signal"],
++		scope: r.scope as DashboardVariableSpec["scope"],
++		key: r.key,
++		multi: r.multi,
++		supportsAll: r.supportsAll,
++	};
++	if (Array.isArray(r.defaultValues)) {
++		const defaults = r.defaultValues
++			.filter((v): v is string => typeof v === "string")
++			.filter((v) => v.length > 0 && v.length <= 256);
++		if (defaults.length > 0) out.defaultValues = defaults;
++	}
++	if (typeof r.sourceId === "string" || r.sourceId === null) {
++		out.sourceId = r.sourceId as string | null;
++	}
++	if (Array.isArray(r.allowedValues)) {
++		const allowed = r.allowedValues
++			.filter((v): v is string => typeof v === "string")
++			.filter((v) => v.length > 0 && v.length <= 256);
++		if (allowed.length > 0) out.allowedValues = allowed;
++	}
++	return out;
++}
++
++/**
++ * Normalize the optional `variables` array carried on a dashboard. Silently
++ * drops malformed entries and deduplicates by id so a corrupt export cannot
++ * crash the editor or the widget renderer.
++ */
++export function normalizeDashboardVariables(
++	raw: unknown
++): DashboardVariableSpec[] {
++	if (!Array.isArray(raw)) return [];
++	const out: DashboardVariableSpec[] = [];
++	const seen = new Set<string>();
++	for (const entry of raw) {
++		const spec = normalizeDashboardVariable(entry);
++		if (!spec) continue;
++		if (seen.has(spec.id)) continue;
++		seen.add(spec.id);
++		out.push(spec);
++	}
++	return out;
++}
++
+ function normalizeLayouts(
+ 	layouts: unknown,
+ 	widgetIds: string[]
+@@ -203,6 +286,7 @@ export function normalizeImportedDashboard(
+ 			tags: normalizeDashboardTags(record.tags),
+ 			layouts: { lg: filteredLg },
+ 			widgets,
++			variables: normalizeDashboardVariables(record.variables),
+ 		},
+ 	};
+ }
+@@ -231,5 +315,6 @@ export function toExportDashboardPayload(
+ 		tags: normalizeDashboardTags(boardLayout.tags),
+ 		layouts,
+ 		widgets,
++		variables: normalizeDashboardVariables(boardLayout.variables),
+ 	};
+ }
+diff --git a/src/client/src/lib/platform/manage-dashboard/board.ts b/src/client/src/lib/platform/manage-dashboard/board.ts
+index 8ffd8633..c7831c85 100644
+--- a/src/client/src/lib/platform/manage-dashboard/board.ts
++++ b/src/client/src/lib/platform/manage-dashboard/board.ts
+@@ -8,7 +8,8 @@ import getMessage from "@/constants/messages";
+ import Sanitizer from "@/utils/sanitizer";
+ import { createWidget, deleteWidget, getWidgets } from "./widget";
+ import { pluck } from "lodash/fp";
+-import { jsonStringify } from "@/utils/json";
++import { jsonParse, jsonStringify } from "@/utils/json";
++import { normalizeDashboardVariables } from "./board-format";
+ import { normalizeImportedDashboard } from "./board-format";
+ 
+ export function getBoardById(id: string) {
+@@ -85,6 +86,9 @@ export async function createBoard(board: Board, databaseConfigId?: string) {
+ 					is_main_dashboard: sanitizedBoard.isMainDashboard,
+ 					is_pinned: sanitizedBoard.isPinned,
+ 					tags: jsonStringify(sanitizedBoard.tags),
++					variables: jsonStringify(
++						normalizeDashboardVariables(sanitizedBoard.variables)
++					),
+ 				},
+ 			],
+ 		},
+@@ -141,6 +145,11 @@ export async function updateBoard(board: Board & { updateParent?: boolean }) {
+ 		`description = '${sanitizedBoard.description}'`,
+ 		board.updateParent && `parent_id = ${sanitizedBoard.parentId ? `'${sanitizedBoard.parentId}'` : 'NULL'}`,
+ 		sanitizedBoard.tags && `tags = '${jsonStringify(sanitizedBoard.tags)}'`,
++		// Persist the dashboard variable definitions alongside the layout so
++		// they survive a board round-trip through `getBoardLayout`. Variables
++		// are stored as a JSON string and re-validated on read.
++		Array.isArray(board.variables) &&
++		`variables = '${jsonStringify(normalizeDashboardVariables(board.variables))}'`,
+ 	];
+ 
+ 	const query = `
+@@ -201,7 +210,8 @@ export async function getBoardLayout(id: string, databaseConfigId?: string) {
+ 			is_pinned AS isPinned,
+ 			created_at AS boardCreatedAt,
+ 			updated_at AS boardUpdatedAt,
+-			tags AS tags
++			tags AS tags,
++			variables AS variables
+ 		FROM ${OPENLIT_BOARD_TABLE_NAME}
+ 		WHERE id = '${Sanitizer.sanitizeValue(id)}'
+ 	`;
+@@ -218,6 +228,7 @@ export async function getBoardLayout(id: string, databaseConfigId?: string) {
+ 		boardCreatedAt: string;
+ 		boardUpdatedAt: string;
+ 		tags: string;
++		variables: string;
+ 	};
+ 
+ 	if (!boardResult || boardErr)
+@@ -278,6 +289,13 @@ export async function getBoardLayout(id: string, databaseConfigId?: string) {
+ 		updatedAt: boardResult.boardUpdatedAt,
+ 		widgets: [],
+ 		tags: boardResult.tags,
++		// Variables are stored as a JSON-encoded string; decode and validate
++		// here so the editor sees typed `DashboardVariableSpec[]`. Older rows
++		// that pre-date the column are read as an empty string by ClickHouse
++		// and resolve to `[]` after validation.
++		variables: normalizeDashboardVariables(
++			jsonParse(boardResult.variables ?? "[]")
++		),
+ 	};
+ 
+ 	// Construct the layout config format
+@@ -440,6 +458,15 @@ export async function updateBoardLayout(boardId: string, layoutConfig: any, data
+ 		}
+ 	}
+ 
++	if (Array.isArray(layoutConfig.variables)) {
++		const updateVariablesQuery = `
++			ALTER TABLE ${OPENLIT_BOARD_TABLE_NAME}
++			UPDATE variables = '${jsonStringify(normalizeDashboardVariables(layoutConfig.variables))}'
++			WHERE id = '${Sanitizer.sanitizeValue(boardId)}'
++		`;
++		await dataCollector({ query: updateVariablesQuery }, "exec", databaseConfigId);
++	}
++
+ 	return { data: getMessage().BOARD_LAYOUT_UPDATED_SUCCESSFULLY, err: null };
+ }
+ 
+@@ -525,6 +552,10 @@ export async function importBoardLayout(
+ 			? false
+ 			: imported.isMainDashboard,
+ 		tags: imported.tags as unknown as string,
++		// Variables are normalized on import (deduped, validated) and then
++		// re-serialized by `createBoard`/`updateBoard`; carrying them through
++		// here keeps the export→import round-trip lossless.
++		variables: imported.variables,
+ 	};
+ 
+ 	// Create the board first
+diff --git a/src/client/src/lib/platform/manage-dashboard/widget.ts b/src/client/src/lib/platform/manage-dashboard/widget.ts
+index f0eb4edc..47bf8539 100644
+--- a/src/client/src/lib/platform/manage-dashboard/widget.ts
++++ b/src/client/src/lib/platform/manage-dashboard/widget.ts
+@@ -28,6 +28,12 @@ import {
+ 	DEFAULT_QUERY_BUDGET,
+ } from "@/lib/platform/connectors/datasource/http/limits";
+ import { metricParamsToOpenLITQuery } from "@/lib/platform/connectors/datasource/clickhouse/query-map";
++import { applyDashboardVariables } from "@/lib/platform/dashboard-variables";
++import type {
++  DashboardVariableOptIn,
++  DashboardVariableSpec,
++  DashboardVariableState,
++} from "@/lib/platform/dashboard-variables";
+ import {
+ 	executeInferredWidgetQuery,
+ 	inferStructuredFromClickHouseSql,
+@@ -510,16 +516,46 @@ function timeRangeFromFilter(filter: MetricParams): { start: Date; end: Date } {
+ async function executeStructuredWidgetQuery(
+ 	adapter: DataSourceAdapter,
+ 	structured: NonNullable<Widget["config"]["structuredQuery"]>,
+-	filter: MetricParams
++	filter: MetricParams,
++	variableBinding?: {
++		specs: DashboardVariableSpec[];
++		state: Pick<DashboardVariableState, "values">;
++		widgetOptIn?: DashboardVariableOptIn;
++	}
+ ) {
+ 	const base = (structured.query || {}) as Partial<OpenLITQuery>;
+ 	const signal = (base.signal || "traces") as Signal;
+ 	const fromFilter = metricParamsToOpenLITQuery(filter, signal);
++	// Bind generic non-time dashboard variables BEFORE clamping the budget
++	// so they participate in the same filter pipeline as the time range
++	// and stock selectedConfig filters. The variable system is generic:
++	// attribute keys flow from the dashboard spec, never from SQL strings.
++	// Raw SQL / mustache-placeholder widgets do NOT go through this path,
++	// so their existing semantics are unchanged.
++	const baseFilters = [...(fromFilter.filters || []), ...(base.filters || [])];
++	const withVariables = variableBinding
++		? applyDashboardVariables(
++				{ signal, filters: baseFilters },
++				variableBinding.specs,
++				variableBinding.state,
++				{ widgetOptIn: variableBinding.widgetOptIn },
++			)
++		: { signal, filters: baseFilters };
++	const variableFiltersApplied =
++		(withVariables.filters?.length || 0) > baseFilters.length;
++	if (
++		variableFiltersApplied &&
++		!adapter.capabilities().dashboardVariableSignals?.includes(signal)
++	) {
++		return {
++			err: `This telemetry source does not support safely parameterized dashboard variables for ${signal}.`,
++		};
++	}
+ 	const rawQuery = stripSyntheticDefaultEnvironment({
+ 		...base,
++		...withVariables,
+ 		signal,
+ 		timeRange: timeRangeFromFilter(filter),
+-		filters: [...(fromFilter.filters || []), ...(base.filters || [])],
+ 		aiSelector: base.aiSelector ?? fromFilter.aiSelector,
+ 	} as OpenLITQuery);
+ 	// Enforce per-query budgets so a widget can never ask a vendor for an
+@@ -640,12 +676,25 @@ export async function runWidgetQuery(
+ 		sourceId: sourceIdOverride,
+ 		signal: signalOverride,
+ 		structuredQuery: structuredOverride,
++		dashboardVariables,
+ 	}: {
+ 		userQuery?: string;
+ 		filter: MetricParams;
+ 		sourceId?: string | null;
+ 		signal?: Signal;
+ 		structuredQuery?: Widget["config"]["structuredQuery"];
++		/**
++		 * Generic non-time dashboard variable binding. When provided, the
++		 * widget's `properties.optInVariables` is honored: omitted variables
++		 * do not affect the widget, declared ones are translated into typed
++		 * NormalizedFilter additions via the OpenLITQuery path. When absent,
++		 * behavior is unchanged (the stock time/filter path remains
++		 * authoritative).
++		 */
++		dashboardVariables?: {
++			specs: DashboardVariableSpec[];
++			state: Pick<DashboardVariableState, "values">;
++		};
+ 	}
+ ): Promise<{ data?: unknown; err?: string }> {
+ 	const { data: widget, err: widgetErr } = await getWidgetById(widgetId);
+@@ -700,7 +749,7 @@ export async function runWidgetQuery(
+ 	if (sourceSupportsNativeSql(descriptor)) {
+ 		if (structured && !userQuery) {
+ 			const adapter = await getTelemetryAdapter({ sourceId, signal, environment: filter.environment });
+-			return executeStructuredWidgetQuery(adapter, structured, filter);
++			return executeStructuredWidgetQuery(adapter, structured, filter, bindingFromWidget(dashboardVariables, widget));
+ 		}
+ 		const sql =
+ 			userQuery ||
+@@ -725,5 +774,34 @@ export async function runWidgetQuery(
+ 	}
+ 
+ 	const adapter = await getTelemetryAdapter({ sourceId, signal, environment: filter.environment });
+-	return executeStructuredWidgetQuery(adapter, structured, filter);
++	return executeStructuredWidgetQuery(adapter, structured, filter, bindingFromWidget(dashboardVariables, widget));
++}
++
++/**
++ * Build the per-widget variable binding. Reads `properties.optInVariables`
++ * off the widget (the declared opt-in list) and combines it with the
++ * dashboard-level variable specs/state. Returns `undefined` when the
++ * dashboard did not pass any variables, preserving the existing call sites.
++ */
++function bindingFromWidget(
++	dashboardVariables: {
++		specs: DashboardVariableSpec[];
++		state: Pick<DashboardVariableState, "values">;
++	} | undefined,
++	widget: { properties?: { optInVariables?: unknown } } | Widget,
++): {
++	specs: DashboardVariableSpec[];
++	state: Pick<DashboardVariableState, "values">;
++	widgetOptIn?: DashboardVariableOptIn;
++} | undefined {
++	if (!dashboardVariables) return undefined;
++	const optIn =
++		widget.properties && Array.isArray(widget.properties.optInVariables)
++			? (widget.properties.optInVariables as DashboardVariableOptIn)
++			: undefined;
++	return {
++		specs: dashboardVariables.specs,
++		state: dashboardVariables.state,
++		widgetOptIn: optIn,
++	};
+ }
+diff --git a/src/client/src/types/manage-dashboard.ts b/src/client/src/types/manage-dashboard.ts
+index 4027396c..3bf6150c 100644
+--- a/src/client/src/types/manage-dashboard.ts
++++ b/src/client/src/types/manage-dashboard.ts
+@@ -1,3 +1,8 @@
++import type {
++	DashboardVariableOptIn,
++	DashboardVariableSpec,
++} from "@/lib/platform/dashboard-variables";
++
+ export type GridPosition = {
+ 	x: number;
+ 	y: number;
+@@ -17,6 +22,13 @@ export type Board = {
+ 	widgets: BoardWidget[];
+ 	totalWidgets?: number;
+ 	tags: string;
++	/**
++	 * Generic non-time dashboard variables declared on this board. Variable
++	 * bindings are schema-driven: each entry references a single attribute
++	 * key on a single signal via `(signal, scope, key)`. The variable system
++	 * remains generic — application-specific field names are NOT hardwired.
++	 */
++	variables?: DashboardVariableSpec[];
+ };
+ 
+ export type Folder = {
+@@ -73,7 +85,14 @@ export interface Widget {
+ 	title: string;
+ 	description: string;
+ 	type: string;
+-	properties: Record<string, any>;
++	properties: Record<string, any> & {
++		/**
++		 * List of dashboard variable ids this widget opts into. Widgets that
++		 * do not declare a variable ignore its selection entirely. When the
++		 * array is absent the widget follows every variable on its signal.
++		 */
++		optInVariables?: DashboardVariableOptIn;
++	};
+ 	config: WidgetSourceConfig & Record<string, any>;
+ 	createdAt: string;
+ 	updatedAt: string;

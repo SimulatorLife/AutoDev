@@ -68,7 +68,7 @@ test("opentelemetry skill is a repository-only canonical skill", () => {
   assert.match(targetState, /upstreaming is optional and never a prerequisite/);
 
   // Project-specific architecture must not regress to the old local aggregator target.
-  assert.match(body, /OpenLIT bundled Collector\/receiver/);
+  assert.match(body, /OpenLIT first-party OTLP receiver/);
   assert.match(body, /authenticated AutoDev Control API/);
   assert.doesNotMatch(
     body,

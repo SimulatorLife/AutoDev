@@ -21,11 +21,7 @@ import {
   dropUnresolvableReasoning,
   normalizeInputItemIds
 } from "../shared/responses-item-ids.ts";
-import {
-  authStatus,
-  isLoopbackAddress,
-  routerAuthorizationValid
-} from "./auth.ts";
+import { authStatus, routerAuthorizationValid } from "./auth.ts";
 import {
   ConcurrencyManager,
   getDefaultConcurrencyManager,
@@ -33,6 +29,7 @@ import {
   setDefaultConcurrencyManager,
   SUBAGENT_SLOT_KIND
 } from "./concurrency.ts";
+import { handleControlApiRequest } from "./control-api.ts";
 import { COOLDOWN_CONFIG, COOLDOWNS } from "./cooldown.ts";
 import {
   getDefaultRouterEventRecorder,
@@ -53,6 +50,10 @@ import {
   type LookbackSelection
 } from "./lookback-aggregator.ts";
 import {
+  getDefaultMcpProcessRegistry,
+  registerLogical
+} from "./mcp-process-registry.ts";
+import {
   codexTelemetryStatus,
   getDefaultOtelTracker,
   ingestOtelSignal,
@@ -70,7 +71,6 @@ import {
 import {
   effectiveStateFile,
   getDefaultPersistenceManager,
-  persistRouterStateNow,
   restoreProviderTelemetrySection,
   RouterPersistence,
   scheduleRouterStatePersist,
@@ -162,7 +162,6 @@ const GIT_REMOTE_PATTERN = /^git@([^:]+):/;
 const GIT_EXTENSION_PATTERN = /\.git$/i;
 const REPO_ID_SANITIZE_PATTERN = /[^A-Za-z0-9._-]/g;
 const URL_QUERY_FRAGMENT_SPLIT_PATTERN = /[?#]/;
-const PROVIDER_ROUTE_PATH_PATTERN = /^\/v1\/providers\/([a-zA-Z0-9._-]+)$/;
 
 export { errorBody, sendJson } from "./proxy.ts";
 
@@ -240,9 +239,13 @@ async function sendChartJsAsset(
     sendJson(
       response,
       404,
-      errorBody("Chart.js asset is not materialized", "router_chart_asset_missing", {
-        code: "router_chart_asset_missing"
-      })
+      errorBody(
+        "Chart.js asset is not materialized",
+        "router_chart_asset_missing",
+        {
+          code: "router_chart_asset_missing"
+        }
+      )
     );
     return;
   }
@@ -586,7 +589,7 @@ function restoreRecentEvents(
   inFlightUsage.clear();
 }
 
-function assignCodexSnapshot(snapshot: Record<string, unknown>): void {
+function assignCodexSnapshot(snapshot: Record<string, unknown> | null): void {
   codexState.lastSnapshot = snapshot;
 }
 
@@ -594,7 +597,7 @@ export function setCodexStateSnapshotForTests(
   snapshot: Record<string, unknown> | null
 ): void {
   assignCodexSnapshot(
-    snapshot && typeof snapshot === "object" ? snapshot : { empty: true }
+    snapshot && typeof snapshot === "object" ? snapshot : null
   );
 }
 
@@ -1365,8 +1368,8 @@ function buildRouterStatus(
       };
   const statusRecentEvents = includeActiveAgentCorrelation
     ? recentEvents
-    : recentEvents.map(({ activitySubject: _activitySubject, ...event }) =>
-        event
+    : recentEvents.map(
+        ({ activitySubject: _activitySubject, ...event }) => event
       );
   const providers = Object.fromEntries(
     ROUTES.map((route) => routerProviderStatus(route, now, projection))
@@ -1732,8 +1735,7 @@ export function requestSession(
   const explicitSession =
     typeof value === "string" && Boolean(value.trim()) ? value.trim() : null;
   const sessionKey = explicitSession ?? thread;
-  if (sessionKey)
-    return { key: sessionKey, scope: "identified", thread };
+  if (sessionKey) return { key: sessionKey, scope: "identified", thread };
   return {
     key: PROCESS_FALLBACK_SESSION_KEY,
     scope: "process-fallback",
@@ -1776,7 +1778,11 @@ export function hasWorkspaceClaim(
         : null);
   const turnMetadata = parseTurnMetadataJson(effectiveMeta);
   const workspaces = turnMetadata?.workspaces;
-  if (!workspaces || typeof workspaces !== "object" || Array.isArray(workspaces))
+  if (
+    !workspaces ||
+    typeof workspaces !== "object" ||
+    Array.isArray(workspaces)
+  )
     return false;
   return Object.keys(workspaces).some(
     (key) => typeof key === "string" && Boolean(key.trim())
@@ -2088,126 +2094,6 @@ export async function loadCatalog(
   } catch {
     return { models: [], data: [] };
   }
-}
-
-async function readAdminPayload(
-  request: IncomingMessage,
-  response: ServerResponse
-): Promise<Record<string, unknown> | null> {
-  let payload: Record<string, unknown>;
-  try {
-    payload = JSON.parse(await requestBody(request));
-  } catch {
-    sendJson(response, 400, errorBody("request body must be valid JSON"));
-    return null;
-  }
-  if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
-    sendJson(response, 400, errorBody("request body must be a JSON object"));
-    return null;
-  }
-  return payload;
-}
-
-function validateAdminPayloadFields(
-  payload: Record<string, unknown>,
-  response: ServerResponse
-): { role: "orchestrator" | "subagent"; enabled: boolean } | null {
-  const role = payload.role;
-  if (role !== "orchestrator" && role !== "subagent") {
-    sendJson(
-      response,
-      400,
-      errorBody(
-        "request body requires role 'orchestrator' or 'subagent'",
-        "router_invalid_role",
-        { code: "router_invalid_role" }
-      )
-    );
-    return null;
-  }
-  if (typeof payload.enabled !== "boolean") {
-    sendJson(
-      response,
-      400,
-      errorBody("request body requires boolean 'enabled'")
-    );
-    return null;
-  }
-  return { role, enabled: payload.enabled };
-}
-
-function providerAdminStatus(provider: string, enabled: boolean): string {
-  if (!enabled) return "disabled";
-  if (!COOLDOWNS.isCooling(provider)) return "ready";
-  return COOLDOWNS.get(provider)?.failureClass ?? "cooldown";
-}
-
-async function handleProviderAdminRoute(
-  pathname: string,
-  request: IncomingMessage,
-  response: ServerResponse
-): Promise<boolean> {
-  const providerMatch = pathname.match(PROVIDER_ROUTE_PATH_PATTERN);
-  if (!providerMatch) return false;
-  if (request.method !== "POST") {
-    sendJson(
-      response,
-      405,
-      errorBody("Method not allowed", "router_method_not_allowed", {
-        code: "router_method_not_allowed"
-      }),
-      { allow: "POST" }
-    );
-    return true;
-  }
-  const remoteAddress = request.socket?.remoteAddress;
-  if (!isLoopbackAddress(remoteAddress)) {
-    sendJson(
-      response,
-      403,
-      errorBody(
-        "Provider administration is restricted to loopback connections.",
-        "router_access_denied",
-        { code: "router_access_denied" }
-      )
-    );
-    return true;
-  }
-  const providerParam = providerMatch[1]!;
-  const provider = providerParam.toLowerCase().trim();
-  if (
-    !ROUTING.providers[provider] &&
-    !ROUTES.some((r) => r.provider === provider)
-  ) {
-    sendJson(
-      response,
-      404,
-      errorBody(
-        `Unknown provider: ${providerParam}`,
-        "router_unknown_provider",
-        { code: "router_unknown_provider" }
-      )
-    );
-    return true;
-  }
-  const payload = await readAdminPayload(request, response);
-  if (!payload) return true;
-  const fields = validateAdminPayloadFields(payload, response);
-  if (!fields) return true;
-  ROUTING_POLICY.setProviderEnabledForRole(
-    provider,
-    fields.role,
-    fields.enabled
-  );
-  await persistRouterStateNow();
-  sendJson(response, 200, {
-    ok: true,
-    provider,
-    role: fields.role,
-    enabled: fields.enabled,
-    status: providerAdminStatus(provider, fields.enabled)
-  });
-  return true;
 }
 
 async function handleResponseRequest(
@@ -2562,7 +2448,9 @@ function recordOtelLiveFeedItem(
       (value): value is string =>
         typeof value === "string" && Boolean(value.trim())
     ) ?? `OTLP ${signal} record`;
-  const rawDuration = Number(item.durationMs ?? item.duration_ms ?? attributes.duration_ms);
+  const rawDuration = Number(
+    item.durationMs ?? item.duration_ms ?? attributes.duration_ms
+  );
   const duration =
     Number.isFinite(rawDuration) && rawDuration >= 0 ? rawDuration : null;
   const timestamp = otelRecordTimestamp(item, attributes);
@@ -2607,10 +2495,7 @@ function otelRecordTimestamp(
     item.observedTimeUnixNano ??
     attributes.timeUnixNano ??
     attributes.observed_time_unix_nano;
-  if (
-    typeof rawNanos !== "string" ||
-    !OTEL_UNIX_NANOS_PATTERN.test(rawNanos)
-  ) {
+  if (typeof rawNanos !== "string" || !OTEL_UNIX_NANOS_PATTERN.test(rawNanos)) {
     return null;
   }
   const millis = Number(BigInt(rawNanos) / 1_000_000n);
@@ -2619,9 +2504,7 @@ function otelRecordTimestamp(
   return Number.isFinite(date.getTime()) ? date.toISOString() : null;
 }
 
-function parseLookbackSelection(
-  request: IncomingMessage
-): LookbackSelection {
+function parseLookbackSelection(request: IncomingMessage): LookbackSelection {
   try {
     const url = new URL(request.url ?? "/", `http://${HOST}:${PORT}`);
     const raw = url.searchParams.get("lookback");
@@ -2707,7 +2590,7 @@ async function handlePreflightRoutes(
     sendJson(response, 200, await loadCatalog());
     return true;
   }
-  if (await handleProviderAdminRoute(pathname, request, response)) return true;
+  if (await handleControlApiRequest(request, response, pathname)) return true;
   const otelSignals: Record<string, "logs" | "traces" | "metrics"> = {
     "/v1/logs": "logs",
     "/v1/traces": "traces",

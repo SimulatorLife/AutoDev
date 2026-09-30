@@ -17,21 +17,22 @@ import path from "node:path";
 
 import { writeErrorLine, writeLine } from "../shared/output.ts";
 
-export type OtelCollectorMode = "direct" | "collector";
+export type OtelIngressMode = "direct" | "collector" | "openlit";
 export const ROUTER_AUTH_VARIABLE = "CODEX_ROUTER_AUTH_TOKEN";
 
 function fail(message: string): never {
   throw new Error(message);
 }
-function mode(value: string): OtelCollectorMode {
-  if (value === "direct" || value === "collector") return value;
-  return fail(`invalid Collector mode: ${value}`);
+function mode(value: string): OtelIngressMode {
+  if (value === "direct" || value === "collector" || value === "openlit")
+    return value;
+  return fail(`invalid OTLP ingress mode: ${value}`);
 }
 
-export function readCollectorMode(filePath: string): OtelCollectorMode {
+export function readOtelIngressMode(filePath: string): OtelIngressMode {
   try {
     if (lstatSync(filePath).isSymbolicLink())
-      fail(`refusing symlinked Collector mode file: ${filePath}`);
+      fail(`refusing symlinked OTLP ingress mode file: ${filePath}`);
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
   }
@@ -39,9 +40,9 @@ export function readCollectorMode(filePath: string): OtelCollectorMode {
   return mode(readFileSync(filePath, "utf8").replaceAll(/\s+/gu, ""));
 }
 
-export function writeCollectorMode(
+export function writeOtelIngressMode(
   filePath: string,
-  value: OtelCollectorMode
+  value: OtelIngressMode
 ): void {
   const directory = path.dirname(filePath);
   mkdirSync(directory, { recursive: true, mode: 0o700 });
@@ -120,11 +121,11 @@ export function ensureRouterAuth(
 function cli(argv: string[]): number {
   const [command, filePath, value] = argv;
   if (command === "mode-read" && filePath && value === undefined) {
-    writeLine(readCollectorMode(filePath));
+    writeLine(readOtelIngressMode(filePath));
     return 0;
   }
   if (command === "mode-write" && filePath && value) {
-    writeCollectorMode(filePath, mode(value));
+    writeOtelIngressMode(filePath, mode(value));
     return 0;
   }
   if (command === "auth" && filePath && value === undefined) {
@@ -132,7 +133,7 @@ function cli(argv: string[]): number {
     return 0;
   }
   throw new Error(
-    "usage: install-state mode-read <path> | mode-write <path> <direct|collector> | auth <env-file>"
+    "usage: install-state mode-read <path> | mode-write <path> <direct|collector|openlit> | auth <env-file>"
   );
 }
 

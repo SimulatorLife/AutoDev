@@ -167,7 +167,7 @@ export function applyOtelIngress(
   ingress: string
 ): TomlTable {
   if (ingress === "direct") return config;
-  if (ingress !== "collector")
+  if (ingress !== "collector" && ingress !== "openlit")
     throw new ConfigError(`unsupported OTLP ingress: ${ingress}`);
   const otel = table(config.otel);
   const endpoints: Record<string, string> = {

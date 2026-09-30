@@ -10,12 +10,20 @@ test("typed install command rejects check mode until diagnostic ownership migrat
   );
 });
 
-test("typed install command rejects contradictory Collector mode flags before side effects", () => {
+test("typed install command rejects contradictory OTLP ingress flags before side effects", () => {
   assert.throws(
     () =>
       runInstallCommand([
         "--enable-otel-collector",
         "--disable-otel-collector"
+      ]),
+    /mutually exclusive/
+  );
+  assert.throws(
+    () =>
+      runInstallCommand([
+        "--enable-openlit-ingress",
+        "--disable-openlit-ingress"
       ]),
     /mutually exclusive/
   );

@@ -16,7 +16,7 @@ test("CLI dispatches router, provider, hook, and install through typed backends"
         calls.push("router ensure");
         return 12;
       },
-      status: () => ({ state: "running" })
+      status: () => ({ router: "running" })
     }
   });
   assert.equal(result, 11);

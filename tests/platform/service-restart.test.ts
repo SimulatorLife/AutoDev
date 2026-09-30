@@ -214,6 +214,23 @@ test("collector mode verifies the collector alongside the bridges", async () => 
   );
 });
 
+test("OpenLIT ingress keeps the separate Collector unloaded", async () => {
+  const fake = deps();
+  assert.equal(
+    await restartServices(options({ otelMode: "openlit" }), fake),
+    0
+  );
+  assert.ok(fake.calls.includes(`bootout:${LABEL_OTEL_COLLECTOR}`));
+  assert.equal(
+    fake.calls.includes(
+      `bootstrap:/home/Library/LaunchAgents/${LABEL_OTEL_COLLECTOR}.plist`
+    ),
+    false,
+    "OpenLIT's first-party receiver replaces the pass-through Collector"
+  );
+  assert.deepEqual(fake.runs, []);
+});
+
 test("a crash-looping bridge is reported at once with its log, without holding up the install", async () => {
   const fake = deps(
     {},

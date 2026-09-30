@@ -14,8 +14,8 @@ import test from "node:test";
 
 import {
   ensureRouterAuth,
-  readCollectorMode,
-  writeCollectorMode
+  readOtelIngressMode,
+  writeOtelIngressMode
 } from "../../src/platform/install-state.ts";
 
 function withTempDir<T>(callback: (directory: string) => T): T {
@@ -27,16 +27,18 @@ function withTempDir<T>(callback: (directory: string) => T): T {
   }
 }
 
-test("Collector mode state defaults safely and rejects symlinks", () =>
+test("OTLP ingress state persists direct, collector, or OpenLIT mode privately", () =>
   withTempDir((directory) => {
-    const path = join(directory, "otel-collector.mode");
-    assert.equal(readCollectorMode(path), "direct");
-    writeCollectorMode(path, "collector");
-    assert.equal(readCollectorMode(path), "collector");
+    const path = join(directory, "otel-ingress.mode");
+    assert.equal(readOtelIngressMode(path), "direct");
+    writeOtelIngressMode(path, "collector");
+    assert.equal(readOtelIngressMode(path), "collector");
+    writeOtelIngressMode(path, "openlit");
+    assert.equal(readOtelIngressMode(path), "openlit");
     assert.equal(statSync(path).mode & 0o777, 0o600);
     const link = join(directory, "link");
     symlinkSync(path, link);
-    assert.throws(() => readCollectorMode(link), /symlinked/);
+    assert.throws(() => readOtelIngressMode(link), /symlinked/);
   }));
 
 test("router auth creates a private token, preserves existing env content, and is idempotent", () =>

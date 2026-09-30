@@ -374,6 +374,61 @@ test("Copilot orchestrator receives only its identified AutoDev spawn shim", () 
   );
 });
 
+test("Copilot CLI receives validated per-request OTel workspace and role resources", async () => {
+  const temp = await mkdtemp(join(tmpdir(), "autodev-copilot-otel-context-"));
+  const fakeCli = join(temp, "fake-copilot.mjs");
+  const capture = join(temp, "resource-attributes.txt");
+  const previous = {
+    bin: process.env.COPILOT_BIN,
+    capture: process.env.COPILOT_OTEL_CAPTURE_FILE,
+    resources: process.env.OTEL_RESOURCE_ATTRIBUTES
+  };
+
+  try {
+    await writeFile(
+      fakeCli,
+      `#!/usr/bin/env node
+import { writeFileSync } from "node:fs";
+writeFileSync(process.env.COPILOT_OTEL_CAPTURE_FILE, process.env.OTEL_RESOURCE_ATTRIBUTES ?? "");
+console.log(JSON.stringify({ type: "assistant.message_start", data: { messageId: "m1", phase: "final_answer" } }));
+console.log(JSON.stringify({ type: "assistant.message_delta", data: { messageId: "m1", deltaContent: "done" } }));
+console.log(JSON.stringify({ type: "result", exitCode: 0 }));
+`,
+      "utf8"
+    );
+    await chmod(fakeCli, 0o755);
+    process.env.COPILOT_BIN = fakeCli;
+    process.env.COPILOT_OTEL_CAPTURE_FILE = capture;
+    process.env.OTEL_RESOURCE_ATTRIBUTES = "service.name=copilot-test";
+
+    const result = await runCopilot(
+      "contract task",
+      "copilot",
+      temp,
+      null,
+      "worker",
+      null,
+      null,
+      "SimulatorLife/AutoDev"
+    );
+    assert.equal(result.text, "done");
+    assert.equal(
+      await readFile(capture, "utf8"),
+      "service.name=copilot-test,autodev.workspace=SimulatorLife%2FAutoDev,autodev.agent.role=worker"
+    );
+  } finally {
+    if (previous.bin === undefined) delete process.env.COPILOT_BIN;
+    else process.env.COPILOT_BIN = previous.bin;
+    if (previous.capture === undefined)
+      delete process.env.COPILOT_OTEL_CAPTURE_FILE;
+    else process.env.COPILOT_OTEL_CAPTURE_FILE = previous.capture;
+    if (previous.resources === undefined)
+      delete process.env.OTEL_RESOURCE_ATTRIBUTES;
+    else process.env.OTEL_RESOURCE_ATTRIBUTES = previous.resources;
+    await rm(temp, { recursive: true, force: true });
+  }
+});
+
 test("Copilot Responses contract fixture is exercised through the offline proxy boundary", async () => {
   const before = await readFile(CONTRACT_PATH);
   const telemetry = await startTelemetryServer();

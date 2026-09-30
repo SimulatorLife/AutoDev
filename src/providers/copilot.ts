@@ -17,11 +17,11 @@ import {
   isOrchestratorRole,
   resolveAgentRole
 } from "../agents/bridge-role.ts";
-import { SpawnSessionRegistry } from "../agents/bridge-spawn-session.ts";
 import {
   bridgeSkillContext,
   readOnlySystemPromptInjection
 } from "../agents/bridge-sandbox.ts";
+import { SpawnSessionRegistry } from "../agents/bridge-spawn-session.ts";
 import {
   buildSpawnScript,
   execToolCallSseEvents,
@@ -30,6 +30,10 @@ import {
 } from "../agents/spawn-tools.ts";
 import type { RoleContract } from "../shared/execution-contract.ts";
 import { roleContract } from "../shared/execution-contract.ts";
+import {
+  AUTODEV_WORKSPACE_KEY_HEADER,
+  withAutoDevOtelResourceContext
+} from "../shared/otel-resource-context.ts";
 import { writeErrorLine } from "../shared/output.ts";
 import {
   classifyCliLimit,
@@ -93,10 +97,9 @@ function copilotRoleContract(role: unknown): CopilotRoleContract {
 const SKILL_EXPOSURE_SOURCE = "role_contract";
 const MCP_EXPOSURE_SOURCE = "role_contract";
 
-function readOnlyHeaderValue(headers: Record<string, unknown>):
-  | "read-only"
-  | "workspace-write"
-  | null {
+function readOnlyHeaderValue(
+  headers: Record<string, unknown>
+): "read-only" | "workspace-write" | null {
   const key = Object.keys(headers).find(
     (c) => c.toLowerCase() === "x-autodev-sandbox-mode"
   );
@@ -105,7 +108,6 @@ function readOnlyHeaderValue(headers: Record<string, unknown>):
   const single = Array.isArray(value) ? value[0] : value;
   return single === "read-only" || single === "workspace-write" ? single : null;
 }
-
 
 const spawnSessions = new SpawnSessionRegistry();
 
@@ -742,7 +744,7 @@ function runCopilot(
   agentRole: string | null = null,
   spawnSession: string | null = null,
   sandboxMode: "read-only" | "workspace-write" | null = null,
-  skillContext: string | null = null
+  workspaceKey: unknown = null
 ): Promise<RunCopilotResult> {
   return new Promise<RunCopilotResult>((resolvePromise, rejectPromise) => {
     const args = [
@@ -776,6 +778,7 @@ function runCopilot(
       args.push("--model", String(model));
     const child = spawn(process.env.COPILOT_BIN ?? "copilot", args, {
       cwd,
+      env: withAutoDevOtelResourceContext(process.env, workspaceKey, agentRole),
       stdio: ["ignore", "pipe", "pipe"]
     });
     const phases = new Map<string, string>();
@@ -792,7 +795,9 @@ function runCopilot(
     let terminalResult: JsonRecord | null = null;
     let settled = false;
     const timer =
-      TIMEOUT_MS > 0 ? setTimeout(() => child.kill("SIGTERM"), TIMEOUT_MS) : null;
+      TIMEOUT_MS > 0
+        ? setTimeout(() => child.kill("SIGTERM"), TIMEOUT_MS)
+        : null;
     const finishResolve = (value: RunCopilotResult): void => {
       if (settled) return;
       settled = true;
@@ -1066,6 +1071,7 @@ async function handle(
   // The router classifies the turn; only it can tell this bridge that it is
   // serving the root orchestrator rather than a delegated leaf.
   const agentRole = resolveAgentRole(request.headers);
+  const workspaceKey = request.headers[AUTODEV_WORKSPACE_KEY_HEADER];
   // The CLI runs every tool inside its own runtime, so what this turn asked
   // for, ran, or was refused only reaches the router if this bridge says so.
   const agentEvents = resolveAgentEventReporter(request.headers);
@@ -1089,7 +1095,8 @@ async function handle(
   const sandboxInjection = readOnlySystemPromptInjection(
     request.headers as Record<string, unknown>
   );
-  const composedPrompt = composeProviderPrompt(agentRole, cwd) + sandboxInjection;
+  const composedPrompt =
+    composeProviderPrompt(agentRole, cwd) + sandboxInjection;
   const finalPrompt =
     composedPrompt +
     (skillContextHeader
@@ -1168,7 +1175,7 @@ ${skillContextHeader}
           agentRole,
           spawnSession,
           sandboxModeHeader,
-          skillContextHeader
+          workspaceKey
         );
       } finally {
         clearInterval(nonStreamHeartbeat);
@@ -1395,7 +1402,7 @@ ${skillContextHeader}
       agentRole,
       spawnSession,
       sandboxModeHeader,
-      skillContextHeader
+      workspaceKey
     );
     startStream();
     const reasoningText = activityParts.join("");

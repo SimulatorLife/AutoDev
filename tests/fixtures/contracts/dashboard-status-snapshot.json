@@ -449,8 +449,7 @@
         "tool": "Agent",
         "count": 1
       }
-    ],
-    "cliSummary": "Subagents spawned: 2 recent / 4 total (router_alias: 1, bridge_native: 3)"
+    ]
   },
   "dashboard": {
     "panels": [

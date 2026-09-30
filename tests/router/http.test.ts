@@ -128,8 +128,14 @@ test("catalog loading returns the public models/data envelope", async () => {
   assert.equal((catalog.data[0] as any).id, "sonnet");
 });
 
-test("HTTP endpoint routing keeps health, status, models, provider, and response contracts", async () => {
+test("HTTP endpoint routing keeps health, status, models, control, and response contracts", async () => {
   const previousAuthToken = process.env.CODEX_ROUTER_AUTH_TOKEN;
+  const previousControlToken = process.env.AUTODEV_CONTROL_API_TOKEN;
+  const previousControlViewers = process.env.AUTODEV_CONTROL_VIEWERS;
+  const previousControlOperators = process.env.AUTODEV_CONTROL_OPERATORS;
+  process.env.AUTODEV_CONTROL_API_TOKEN = "http-control-test-token-0123456789abcdef";
+  process.env.AUTODEV_CONTROL_VIEWERS = "http-viewer";
+  process.env.AUTODEV_CONTROL_OPERATORS = "http-operator";
   setRouterAuthTokenForTests("");
   try {
     const healthResponse = responseRecorder();
@@ -154,15 +160,16 @@ test("HTTP endpoint routing keeps health, status, models, provider, and response
       "autodev-router-status-v2"
     );
 
+    const providerRequest = new FakeRequest("GET", "/control/providers");
+    providerRequest.headers.authorization =
+      "Bearer http-control-test-token-0123456789abcdef";
+    providerRequest.headers["x-autodev-actor"] = "http-viewer";
     const providerResponse = responseRecorder();
-    await handleRequest(
-      new FakeRequest("POST", "/v1/providers/not-a-provider", {}) as any,
-      providerResponse
-    );
-    assert.equal(providerResponse.statusCode, 404);
+    await handleRequest(providerRequest as any, providerResponse);
+    assert.equal(providerResponse.statusCode, 200);
     assert.equal(
-      JSON.parse(providerResponse.body).error.code,
-      "router_unknown_provider"
+      JSON.parse(providerResponse.body).schema,
+      "autodev-control-providers-v1"
     );
 
     const responseResponse = responseRecorder();
@@ -177,6 +184,15 @@ test("HTTP endpoint routing keeps health, status, models, provider, and response
     );
   } finally {
     setRouterAuthTokenForTests(previousAuthToken ?? "");
+    if (previousControlToken === undefined)
+      delete process.env.AUTODEV_CONTROL_API_TOKEN;
+    else process.env.AUTODEV_CONTROL_API_TOKEN = previousControlToken;
+    if (previousControlViewers === undefined)
+      delete process.env.AUTODEV_CONTROL_VIEWERS;
+    else process.env.AUTODEV_CONTROL_VIEWERS = previousControlViewers;
+    if (previousControlOperators === undefined)
+      delete process.env.AUTODEV_CONTROL_OPERATORS;
+    else process.env.AUTODEV_CONTROL_OPERATORS = previousControlOperators;
   }
 });
 

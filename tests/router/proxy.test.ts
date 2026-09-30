@@ -35,6 +35,7 @@ import {
 } from "../../src/router/subagents.ts";
 import { TOOL_CALL_OWNERSHIP } from "../../src/router/tool-call-ownership.ts";
 import { countLiveAgentActivity } from "../../src/router/usage.ts";
+import { AUTODEV_WORKSPACE_KEY_HEADER } from "../../src/shared/otel-resource-context.ts";
 
 function responseRecorder(): any {
   const chunks: Buffer[] = [];
@@ -113,9 +114,9 @@ test("downstream headers propagate the role sandbox mode for non-orchestrator ro
   process.env.TEST_PROVIDER_KEY = "sk-test-provider";
   try {
     const claude = ROUTES.find((candidate) => candidate.provider === "claude")!;
-    const route = { ...claude, envKey: "TEST_PROVIDER_KEY" };
+    const claudeRoute = { ...claude, envKey: "TEST_PROVIDER_KEY" };
     const explorerHeaders = downstreamHeaders(
-      route,
+      claudeRoute,
       null,
       null,
       "explorer",
@@ -125,7 +126,7 @@ test("downstream headers propagate the role sandbox mode for non-orchestrator ro
     assert.equal(explorerHeaders["x-autodev-sandbox-mode"], "read-only");
 
     const workerHeaders = downstreamHeaders(
-      route,
+      claudeRoute,
       null,
       null,
       "worker",
@@ -135,7 +136,7 @@ test("downstream headers propagate the role sandbox mode for non-orchestrator ro
     assert.equal(workerHeaders["x-autodev-sandbox-mode"], "workspace-write");
 
     const orchestratorHeaders = downstreamHeaders(
-      route,
+      claudeRoute,
       null,
       null,
       "orchestrator",
@@ -627,9 +628,8 @@ test(
 );
 
 test("extractSelectedSkillContext returns the body of the selected-skill input item", async () => {
-  const { extractSelectedSkillContext } = await import(
-    "../../src/router/proxy.ts"
-  );
+  const { extractSelectedSkillContext } =
+    await import("../../src/router/proxy.ts");
   const body = "<skill>...</skill>";
   assert.equal(
     extractSelectedSkillContext({
@@ -675,9 +675,8 @@ test("extractSelectedSkillContext returns the body of the selected-skill input i
 });
 
 test("downstreamHeadersWithSkillContext forwards skill context and codex session id", async () => {
-  const { downstreamHeadersWithSkillContext } = await import(
-    "../../src/router/proxy.ts"
-  );
+  const { downstreamHeadersWithSkillContext } =
+    await import("../../src/router/proxy.ts");
   const claude = ROUTES.find((candidate) => candidate.provider === "claude")!;
   const headers = downstreamHeadersWithSkillContext(
     { ...claude, envKey: "TEST_PROVIDER_KEY" },
@@ -688,11 +687,29 @@ test("downstreamHeadersWithSkillContext forwards skill context and codex session
     { key: "session-9", scope: "identified" },
     {
       skillContext: "<skill>...</skill>",
-      codexSessionId: "codex-session-9"
+      codexSessionId: "codex-session-9",
+      workspace: { key: "SimulatorLife/AutoDev" }
     }
   );
   assert.equal(headers["x-autodev-skill-context"], "<skill>...</skill>");
   assert.equal(headers["x-autodev-codex-session"], "codex-session-9");
+  assert.equal(headers["x-autodev-workspace-key"], "SimulatorLife/AutoDev");
+
+  const codex = ROUTES.find((candidate) => candidate.provider === "codex")!;
+  const externalHeaders = downstreamHeadersWithSkillContext(
+    codex,
+    null,
+    null,
+    "worker",
+    "req-external",
+    null,
+    { workspace: { key: "SimulatorLife/AutoDev" } }
+  );
+  assert.equal(
+    externalHeaders[AUTODEV_WORKSPACE_KEY_HEADER],
+    undefined,
+    "AutoDev's internal workspace identity must not be sent to the external Codex API"
+  );
 });
 
 test("an orchestrator turn may wait out a first-strike transient cooldown; a role request keeps its short window", () => {

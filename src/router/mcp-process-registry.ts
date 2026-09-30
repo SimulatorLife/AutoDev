@@ -37,7 +37,7 @@ export const DEFAULT_SWEEP_INTERVAL_MS = 5 * 60 * 1000;
 export const DEFAULT_MAX_ENTRIES = 512;
 
 /** Per-process kill budget: SIGKILL after 5s if SIGTERM did not reap it. */
-export const DEFAULT_KILL_TIMEOUT_MS = 5_000;
+export const DEFAULT_KILL_TIMEOUT_MS = 5000;
 
 export interface McpProcessEntry {
   pid: number;
@@ -56,6 +56,7 @@ export interface McpRegistryOptions {
   maxEntries?: number;
   maxIdleMs?: number;
   killTimeoutMs?: number;
+  sweepIntervalMs?: number;
   now?: () => number;
   kill?: (pid: number, signal: NodeJS.Signals) => void;
   log?: (message: string) => void;
@@ -65,6 +66,9 @@ interface InternalKillResult {
   stopped: boolean;
   escalated: boolean;
 }
+
+const INT32_MODULUS = 2 ** 32;
+const INT32_SIGN_BIT = 2 ** 31;
 
 const FAIL_SAFE_DEFAULTS = Object.freeze({
   maxEntries: DEFAULT_MAX_ENTRIES,
@@ -76,6 +80,7 @@ export class McpProcessRegistry {
   private readonly maxEntries: number;
   private readonly maxIdleMs: number;
   private readonly killTimeoutMs: number;
+  private readonly sweepIntervalMs: number;
   private readonly now: () => number;
   private readonly kill: (pid: number, signal: NodeJS.Signals) => void;
   private readonly log: (message: string) => void;
@@ -88,12 +93,16 @@ export class McpProcessRegistry {
       options.maxEntries ?? FAIL_SAFE_DEFAULTS.maxEntries
     );
     this.maxIdleMs = Math.max(
-      1_000,
+      1000,
       options.maxIdleMs ?? FAIL_SAFE_DEFAULTS.maxIdleMs
     );
     this.killTimeoutMs = Math.max(
       100,
       options.killTimeoutMs ?? FAIL_SAFE_DEFAULTS.killTimeoutMs
+    );
+    this.sweepIntervalMs = Math.max(
+      0,
+      options.sweepIntervalMs ?? DEFAULT_SWEEP_INTERVAL_MS
     );
     this.now = options.now ?? (() => Date.now());
     this.kill = options.kill ?? ((pid, signal) => process.kill(pid, signal));
@@ -117,6 +126,7 @@ export class McpProcessRegistry {
       registeredAt: now,
       lastActivity: now
     });
+    this.startSweeperWhenNeeded();
   }
 
   /** Update the last-activity timestamp. No-op when the PID is unknown. */
@@ -129,6 +139,7 @@ export class McpProcessRegistry {
   /** Remove a PID from the registry without signalling it. */
   unregister(pid: number): void {
     this.entries.delete(pid);
+    this.stopSweeperWhenIdle();
   }
 
   /** Drop entries whose owner has been silent for longer than `maxIdleMs`. */
@@ -136,13 +147,14 @@ export class McpProcessRegistry {
     killed: number;
     remaining: number;
   } {
-    const deadline = this.now() - Math.max(1_000, maxIdleMs);
+    const deadline = this.now() - Math.max(1000, maxIdleMs);
     let killed = 0;
-    for (const [pid, entry] of [...this.entries.entries()]) {
+    for (const [pid, entry] of this.entries.entries()) {
       if (entry.lastActivity >= deadline) continue;
       if (this.killProcess(pid, entry, "stale")) killed += 1;
       this.entries.delete(pid);
     }
+    this.stopSweeperWhenIdle();
     return { killed, remaining: this.entries.size };
   }
 
@@ -163,39 +175,23 @@ export class McpProcessRegistry {
       owned.push(entry);
       this.entries.delete(pid);
     }
+    this.stopSweeperWhenIdle();
     if (owned.length === 0) return;
     await Promise.all(
       owned.map((entry) => this.killAndAwait(entry, signal, timeoutMs))
     );
   }
 
-  /**
-   * Start a periodic sweeper that reaps stale entries. Calling this twice is
-   * a no-op for the second caller; pass `intervalMs <= 0` to stop the
-   * existing sweeper without starting a new one.
-   */
-  startIdleSweeper(
-    intervalMs: number = DEFAULT_SWEEP_INTERVAL_MS,
-    maxIdleMs: number = this.maxIdleMs
-  ): NodeJS.Timeout | null {
-    if (this.sweeper !== null) {
-      clearInterval(this.sweeper);
-      this.sweeper = null;
-    }
-    if (intervalMs <= 0) return null;
+  private startSweeperWhenNeeded(): void {
+    if (this.sweeper !== null || this.sweepIntervalMs === 0) return;
     this.sweeper = setInterval(() => {
-      this.reapStale(maxIdleMs);
-    }, intervalMs);
-    // The sweeper keeps the event loop alive on its own; nothing else should
-    // be doing that, and a router that does not want it can stop it with
-    // intervalMs <= 0.
-    if (typeof this.sweeper.unref === "function") this.sweeper.unref();
-    return this.sweeper;
+      this.reapStale();
+    }, this.sweepIntervalMs);
+    this.sweeper.unref();
   }
 
-  /** Stop the sweeper. Safe to call when no sweeper is running. */
-  stopIdleSweeper(): void {
-    if (this.sweeper !== null) {
+  private stopSweeperWhenIdle(): void {
+    if (this.entries.size === 0 && this.sweeper !== null) {
       clearInterval(this.sweeper);
       this.sweeper = null;
     }
@@ -334,7 +330,6 @@ export function setDefaultMcpProcessRegistry(
  * that receives SIGTERM will also kill every MCP child it tracked.
  */
 
-
 /**
  * Track that `sessionKey` owns an MCP server named `serverName` without
  * claiming a process id. Used by callers that own the lifecycle but do
@@ -352,16 +347,24 @@ export function registerLogical(
 ): number {
   // Negative ids never collide with real OS pids and are easy to filter out.
   const id = -Math.abs(
-    hashStringToInt(`${sessionKey}\u0000${serverName}\u0000${registry.status().total}`)
+    hashStringToInt(
+      `${sessionKey}\u0000${serverName}\u0000${registry.status().total}`
+    )
   );
   registry.register(id, sessionKey, serverName);
   return id;
 }
 
+function signedInt32(value: number): number {
+  const unsigned =
+    ((Math.trunc(value) % INT32_MODULUS) + INT32_MODULUS) % INT32_MODULUS;
+  return unsigned >= INT32_SIGN_BIT ? unsigned - INT32_MODULUS : unsigned;
+}
+
 function hashStringToInt(value: string): number {
   let hash = 5381;
   for (let i = 0; i < value.length; i += 1) {
-    hash = ((hash << 5) + hash + value.charCodeAt(i)) | 0;
+    hash = signedInt32(Math.imul(hash, 33) + value.charCodeAt(i));
   }
   return hash || 1;
 }
@@ -373,7 +376,6 @@ export function bindProcessRegistryShutdownHooks(
   const handlers = new Map<NodeJS.Signals, () => void>();
   for (const signal of targets) {
     const handler = () => {
-      registry.stopIdleSweeper();
       // Best-effort: we do not block shutdown on the cleanup itself; the
       // call's promise resolves quickly because every PID it owns has already
       // been deleted from the map and the kill is fire-and-forget.
@@ -386,6 +388,5 @@ export function bindProcessRegistryShutdownHooks(
     for (const [signal, handler] of handlers.entries()) {
       process.off(signal, handler);
     }
-    registry.stopIdleSweeper();
   };
 }

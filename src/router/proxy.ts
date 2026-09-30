@@ -4,6 +4,13 @@ import { readFile } from "node:fs/promises";
 import type { ServerResponse } from "node:http";
 import { fileURLToPath } from "node:url";
 
+import type { Span } from "@opentelemetry/api";
+
+import { resolveSandboxMode } from "../shared/execution-contract.ts";
+import {
+  AUTODEV_WORKSPACE_KEY_HEADER,
+  safeAutoDevWorkspaceKey
+} from "../shared/otel-resource-context.ts";
 import {
   INCOMPLETE_REASON_INTERRUPTED,
   INCOMPLETE_REASON_TIMEOUT,
@@ -16,6 +23,7 @@ import {
   terminalIncompleteEvents
 } from "../shared/provider-limits.ts";
 import { awaitedToolResults } from "../shared/responses-continuation.ts";
+import { isLoopbackAddress } from "./auth.ts";
 import { getDefaultConcurrencyManager } from "./concurrency.ts";
 import {
   COOLDOWN_CONFIG,
@@ -52,8 +60,6 @@ import {
   closeBridgeSubagentsForRequest,
   CODEX_SESSION_HEADER,
   FORWARDED_REQUEST_HEADERS,
-  SANDBOX_MODE_HEADER,
-  SKILL_CONTEXT_HEADER,
   hasActiveBridgeSubagentsForSession,
   mcpContractForRole as subagentMcpContractForRole,
   noteBridgeRequest,
@@ -63,11 +69,19 @@ import {
   orchestratorProviderForSession,
   providerCapabilities,
   recordSpawnFailure,
+  SANDBOX_MODE_HEADER,
   SESSION_ID_HEADER,
-  SESSION_SCOPE_HEADER
+  SESSION_SCOPE_HEADER,
+  SKILL_CONTEXT_HEADER
 } from "./subagents.ts";
+import {
+  endAttemptSpan,
+  endLogicalRequestSpan,
+  startAttemptSpan,
+  startLogicalRequestSpan,
+  withLogicalSpan
+} from "./telemetry.ts";
 import { TOOL_CALL_OWNERSHIP } from "./tool-call-ownership.ts";
-import { resolveSandboxMode } from "../shared/execution-contract.ts";
 import {
   countLiveAgentActivity,
   getDefaultUsageTracker,
@@ -86,30 +100,33 @@ const CODEX_HOME =
  * SKILL.md from cwd and risking a wrong file. Returns null when nothing
  * is selected or the selection cannot be parsed.
  */
+const SELECTED_SKILL_INSTRUCTIONS_KIND = "skills.selected_skill_instructions";
+
+function selectedSkillContent(entry: Record<string, unknown>): string | null {
+  const kinds = Array.isArray(entry.content_item_kinds)
+    ? entry.content_item_kinds
+    : [];
+  if (!kinds.includes(SELECTED_SKILL_INSTRUCTIONS_KIND)) return null;
+  const content = entry.content;
+  if (typeof content === "string") return content.trim() ? content : null;
+  if (!Array.isArray(content)) return null;
+  for (const part of content) {
+    if (!part || typeof part !== "object") continue;
+    const text = (part as Record<string, unknown>).text;
+    if (typeof text === "string" && text.trim()) return text;
+  }
+  return null;
+}
+
 export function extractSelectedSkillContext(payload: unknown): string | null {
   if (!payload || typeof payload !== "object") return null;
   const root = payload as Record<string, unknown>;
-  const candidates: unknown[] = [];
-  if (Array.isArray(root.input)) candidates.push(...(root.input as unknown[]));
-  if (Array.isArray(root.messages)) candidates.push(...(root.messages as unknown[]));
-  for (const item of candidates) {
-    if (!item || typeof item !== "object") continue;
-    const entry = item as Record<string, unknown>;
-    const kinds = Array.isArray(entry.content_item_kinds)
-      ? (entry.content_item_kinds as unknown[])
-      : [];
-    const selected = kinds.some(
-      (kind) => typeof kind === "string" && kind === "skills.selected_skill_instructions"
-    );
-    if (!selected) continue;
-    const content = entry.content;
-    if (typeof content === "string" && content.trim()) return content;
-    if (Array.isArray(content)) {
-      for (const part of content) {
-        if (!part || typeof part !== "object") continue;
-        const piece = part as Record<string, unknown>;
-        if (typeof piece.text === "string" && piece.text.trim()) return piece.text;
-      }
+  for (const collection of [root.input, root.messages]) {
+    if (!Array.isArray(collection)) continue;
+    for (const item of collection) {
+      if (!item || typeof item !== "object") continue;
+      const selected = selectedSkillContent(item as Record<string, unknown>);
+      if (selected) return selected;
     }
   }
   return null;
@@ -498,7 +515,11 @@ export function downstreamHeadersWithSkillContext(
   agentRole: string | null,
   requestId: string | null,
   session: RouterSession | null,
-  options: { skillContext?: string | null; codexSessionId?: string | null } = {}
+  options: {
+    skillContext?: string | null;
+    codexSessionId?: string | null;
+    workspace?: { key?: string | null } | null;
+  } = {}
 ): Record<string, string> {
   const headers = downstreamHeaders(
     route,
@@ -508,11 +529,32 @@ export function downstreamHeadersWithSkillContext(
     requestId,
     session
   );
-  if (options.skillContext && options.skillContext.trim() && route.provider !== "codex") {
+  if (
+    options.skillContext &&
+    options.skillContext.trim() &&
+    route.provider !== "codex"
+  ) {
     headers[SKILL_CONTEXT_HEADER] = options.skillContext;
   }
   if (options.codexSessionId && options.codexSessionId.trim()) {
     headers[CODEX_SESSION_HEADER] = options.codexSessionId;
+  }
+  const workspaceKey = safeAutoDevWorkspaceKey(options.workspace?.key);
+  // This identity is for local provider bridges, not a header to disclose to
+  // external provider endpoints.
+  let loopbackTarget: boolean;
+  try {
+    const rawHostname = new URL(route.baseUrl).hostname;
+    const hostname =
+      rawHostname.startsWith("[") && rawHostname.endsWith("]")
+        ? rawHostname.slice(1, -1)
+        : rawHostname;
+    loopbackTarget = isLoopbackAddress(hostname);
+  } catch {
+    loopbackTarget = false;
+  }
+  if (loopbackTarget && workspaceKey) {
+    headers[AUTODEV_WORKSPACE_KEY_HEADER] = workspaceKey;
   }
   return headers;
 }
@@ -692,6 +734,88 @@ export function responseFailureEvent(message: string): string {
   })}\n\n`;
 }
 
+interface ProviderUsage {
+  input: number | null;
+  output: number | null;
+  cacheRead: number | null;
+}
+
+function providerTokenCount(value: unknown): number | null {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0
+    ? value
+    : null;
+}
+
+function usageFromResponse(value: unknown): ProviderUsage | null {
+  if (!value || typeof value !== "object") return null;
+  const response = value as Record<string, unknown>;
+  const rawUsage = response.usage;
+  if (!rawUsage || typeof rawUsage !== "object") return null;
+  const usage = rawUsage as Record<string, unknown>;
+  const detail = usage.prompt_tokens_details;
+  const detailCache =
+    detail && typeof detail === "object"
+      ? (detail as Record<string, unknown>).cached_tokens
+      : undefined;
+  const result = {
+    input: providerTokenCount(usage.input_tokens),
+    output: providerTokenCount(usage.output_tokens),
+    cacheRead:
+      providerTokenCount(usage.cache_read_input_tokens) ??
+      providerTokenCount(detailCache)
+  };
+  return result.input === null &&
+    result.output === null &&
+    result.cacheRead === null
+    ? null
+    : result;
+}
+
+function completedResponseFromSse(
+  body: string
+): Record<string, unknown> | null {
+  for (const event of body.split(SSE_EVENT_BOUNDARY)) {
+    for (const line of event.split(SSE_LINE_BREAK)) {
+      if (!line.startsWith("data: ") || line.slice(6) === "[DONE]") continue;
+      try {
+        const parsed = JSON.parse(line.slice(6)) as Record<string, unknown>;
+        if (parsed.type !== "response.completed") continue;
+        const response = parsed.response;
+        if (response && typeof response === "object") {
+          return response as Record<string, unknown>;
+        }
+      } catch {
+        /* ignore malformed events while extracting telemetry only */
+      }
+    }
+  }
+  return null;
+}
+
+function endStreamAttempt(
+  span: Span | undefined,
+  statusCode: number | undefined,
+  result: StreamWriteResult,
+  usage: ProviderUsage | null,
+  responseModel: string | null
+): void {
+  if (!span) return;
+  endAttemptSpan(span, {
+    status: result.failed && !result.clientDisconnected ? "error" : "ok",
+    ...(statusCode === undefined ? {} : { statusCode }),
+    errorType:
+      result.failed && !result.clientDisconnected
+        ? (result.incompleteReason ?? "incomplete_response")
+        : null,
+    errorMessage:
+      result.failed && !result.clientDisconnected
+        ? "provider stream did not complete successfully"
+        : null,
+    usage,
+    responseModel
+  });
+}
+
 export interface StreamWriteResult {
   toolCalls: number;
   /** Call ids of the tool calls the provider emitted, for result affinity. */
@@ -720,7 +844,8 @@ function applyParsedSseEvent(
   toolCallIds: Set<string>,
   setTerminal: (value: "completed" | "failed") => void,
   setIncompleteReason: (value: string) => void,
-  setReportedLimit: (value: ProviderLimit) => void
+  setReportedLimit: (value: ProviderLimit) => void,
+  onResponseCompleted?: (response: Record<string, unknown>) => void
 ): void {
   switch (parsed.type) {
     case "response.created": {
@@ -762,6 +887,7 @@ function applyParsedSseEvent(
     case "response.completed": {
       const response = parsed.response as Record<string, unknown> | undefined;
       collectToolCallIds(response, toolCallIds);
+      if (response) onResponseCompleted?.(response);
       setTerminal(responseWasNotCompleted(response) ? "failed" : "completed");
       const details = response?.incomplete_details as
         Record<string, unknown> | undefined;
@@ -800,7 +926,8 @@ function inspectSseEvent(
   toolCallIds: Set<string>,
   setTerminal: (value: "completed" | "failed") => void,
   setIncompleteReason: (value: string) => void,
-  setReportedLimit: (value: ProviderLimit) => void
+  setReportedLimit: (value: ProviderLimit) => void,
+  onResponseCompleted?: (response: Record<string, unknown>) => void
 ): void {
   for (const line of event.split(SSE_LINE_BREAK)) {
     if (!line.startsWith("data: ") || line.slice(6) === "[DONE]") continue;
@@ -816,7 +943,8 @@ function inspectSseEvent(
       toolCallIds,
       setTerminal,
       setIncompleteReason,
-      setReportedLimit
+      setReportedLimit,
+      onResponseCompleted
     );
   }
 }
@@ -840,6 +968,7 @@ function flushSseBuffer(args: {
   setTerminal: (value: "completed" | "failed") => void;
   setIncompleteReason: (value: string) => void;
   setReportedLimit: (value: ProviderLimit) => void;
+  onResponseCompleted?: (response: Record<string, unknown>) => void;
   onConsumed: (toolCallDelta: number) => void;
   onBufferUpdated: (next: string) => void;
 }): void {
@@ -855,7 +984,8 @@ function flushSseBuffer(args: {
       args.toolCallIds,
       args.setTerminal,
       args.setIncompleteReason,
-      args.setReportedLimit
+      args.setReportedLimit,
+      args.onResponseCompleted
     );
     args.onConsumed(countToolCallsFromSse(event, args.seenToolCalls));
     args.safeWrite(transformSseEvent(event, args.publicModel));
@@ -868,7 +998,8 @@ function flushSseBuffer(args: {
       args.toolCallIds,
       args.setTerminal,
       args.setIncompleteReason,
-      args.setReportedLimit
+      args.setReportedLimit,
+      args.onResponseCompleted
     );
     args.onConsumed(countToolCallsFromSse(working, args.seenToolCalls));
     args.safeWrite(transformSseEvent(working, args.publicModel));
@@ -959,11 +1090,9 @@ async function drainSseBody(args: {
     args.flushEvents(false);
   }
   if (args.signal?.aborted) {
-    const error =
-      args.signal.reason instanceof Error
-        ? args.signal.reason
-        : new Error(String(args.signal.reason));
-    throw error;
+    throw args.signal.reason instanceof Error
+      ? args.signal.reason
+      : new Error(String(args.signal.reason));
   }
   if (args.isWritable()) {
     args.append(args.decoder.decode());
@@ -978,7 +1107,8 @@ export async function writeResponseStream(
   signal: AbortSignal | null = null,
   onHeartbeat: (() => void) | null = null,
   clientSignal: AbortSignal | null = null,
-  replayable = false
+  replayable = false,
+  attemptTelemetry?: { span?: Span; statusCode?: number }
 ): Promise<StreamWriteResult> {
   const decoder = new TextDecoder();
   const seenToolCalls = new Set<string>();
@@ -997,6 +1127,25 @@ export async function writeResponseStream(
   };
   let incompleteReason: string | null = null;
   let reportedLimit: ProviderLimit | null = null;
+  let attemptUsage: ProviderUsage | null = null;
+  let attemptResponseModel: string | null = null;
+  const captureCompletedResponse = (
+    completed: Record<string, unknown>
+  ): void => {
+    attemptUsage = usageFromResponse(completed);
+    attemptResponseModel =
+      typeof completed.model === "string" ? completed.model : null;
+  };
+  const finalizeAttempt = (result: StreamWriteResult): StreamWriteResult => {
+    endStreamAttempt(
+      attemptTelemetry?.span,
+      attemptTelemetry?.statusCode,
+      result,
+      attemptUsage,
+      attemptResponseModel
+    );
+    return result;
+  };
 
   response.on("error", NOOP);
 
@@ -1046,6 +1195,7 @@ export async function writeResponseStream(
       setTerminal: captureTerminal,
       setIncompleteReason: captureIncompleteReason,
       setReportedLimit: captureReportedLimit,
+      onResponseCompleted: captureCompletedResponse,
       onConsumed: captureToolCalls,
       onBufferUpdated: captureBuffer
     });
@@ -1097,7 +1247,7 @@ export async function writeResponseStream(
       responseFailureEvent("Upstream provider returned no response body.")
     );
     response.removeListener("error", NOOP);
-    return streamResult();
+    return finalizeAttempt(streamResult());
   }
 
   const idleController = new AbortController();
@@ -1141,7 +1291,7 @@ export async function writeResponseStream(
         : INCOMPLETE_REASON_INTERRUPTED,
       upstreamErrorMessage(error, combinedSignal)
     );
-    return streamResult();
+    return finalizeAttempt(streamResult());
   } finally {
     if (idleTimer) clearTimeout(idleTimer);
     clearInterval(keepAlive);
@@ -1155,16 +1305,150 @@ export async function writeResponseStream(
     );
   }
 
-  return streamResult();
+  return finalizeAttempt(streamResult());
 }
-export interface FetchUpstreamResult {
-  ok: boolean;
-  upstream?: Response;
-  signal?: AbortSignal;
-  status?: number;
-  body?: string;
-  limit?: ProviderLimit | null;
-  retryable?: boolean;
+export type FetchUpstreamResult =
+  | {
+      ok: true;
+      upstream: Response;
+      signal: AbortSignal;
+      attemptSpan?: Span;
+      attemptStatusCode?: number;
+    }
+  | {
+      ok: false;
+      status: number;
+      body: string;
+      limit: ProviderLimit | null;
+      retryable: boolean;
+    };
+
+export interface AttemptTelemetryOptions {
+  /** Routing selection that triggered this physical attempt. */
+  selection: string;
+  /** 1-based attempt counter for the same provider/model target. */
+  attemptNumber: number;
+  /** Concrete model id used for this attempt (candidate model or payload model). */
+  model: string | null;
+  /** Original logical model requested from AutoDev before routing/fallback. */
+  requestedModel?: string | null;
+  role?: string | null;
+  workspace?: { key: string; cwd?: string | null } | null;
+}
+
+async function authForRoute(
+  route: ProviderRoute
+): Promise<Awaited<ReturnType<typeof loadCodexAuth>> | null> {
+  if (route.provider !== "codex") return null;
+  try {
+    return await loadCodexAuth();
+  } catch (error) {
+    const authError = new Error("Codex authentication is unavailable.");
+    (authError as { code?: string }).code = "router_auth_unavailable";
+    (authError as { cause?: unknown }).cause = error;
+    throw authError;
+  }
+}
+
+function upstreamSignals(clientSignal: AbortSignal | null): AbortSignal {
+  const signals: AbortSignal[] = [];
+  if (clientSignal) signals.push(clientSignal);
+  if (UPSTREAM_TIMEOUT_MS > 0)
+    signals.push(AbortSignal.timeout(UPSTREAM_TIMEOUT_MS));
+  if (signals.length > 1) return AbortSignal.any(signals);
+  return signals[0] ?? new AbortController().signal;
+}
+
+async function failedUpstreamResponse(
+  upstream: Response,
+  span: Span | null
+): Promise<Extract<FetchUpstreamResult, { ok: false }>> {
+  let body: string;
+  try {
+    body = await upstream.text();
+  } catch (error) {
+    if (span) {
+      const info = transportErrorInfo(error);
+      endAttemptSpan(span, {
+        status: "error",
+        statusCode: upstream.status,
+        errorType: info.code ?? info.name,
+        errorMessage: "provider error response body could not be read"
+      });
+    }
+    throw error;
+  }
+  if (span) {
+    endAttemptSpan(span, {
+      status: "error",
+      statusCode: upstream.status,
+      errorType: classifyProviderFailure(upstream.status, body),
+      errorMessage: `provider returned HTTP ${upstream.status}`
+    });
+  }
+  return {
+    ok: false,
+    status: upstream.status,
+    body,
+    limit: declaredLimit(upstream.headers, body),
+    retryable: [502, 503, 504].includes(upstream.status)
+  };
+}
+
+function providerResponseModel(value: unknown): string | null {
+  if (!value || typeof value !== "object") return null;
+  const model = (value as Record<string, unknown>).model;
+  return typeof model === "string" && model.trim() ? model : null;
+}
+
+async function bufferNonStreamingJsonResponse(
+  upstream: Response,
+  signal: AbortSignal,
+  attemptSpan: Span | null
+): Promise<Extract<FetchUpstreamResult, { ok: true }> | null> {
+  const contentType = upstream.headers.get("content-type") ?? "";
+  if (!contentType.toLowerCase().includes("json")) return null;
+  let text: string;
+  try {
+    text = await upstream.text();
+  } catch (error) {
+    if (attemptSpan) {
+      const info = transportErrorInfo(error);
+      endAttemptSpan(attemptSpan, {
+        status: "error",
+        statusCode: upstream.status,
+        errorType: info.code ?? info.name,
+        errorMessage: "provider response body could not be read"
+      });
+    }
+    throw error;
+  }
+  let usage: ProviderUsage | null = null;
+  let model: string | null = null;
+  try {
+    const parsed = JSON.parse(text) as Record<string, unknown>;
+    usage = usageFromResponse(parsed);
+    model = providerResponseModel(parsed);
+  } catch {
+    /* Preserve malformed JSON as pass-through without trusting its usage. */
+  }
+  if (attemptSpan) {
+    endAttemptSpan(attemptSpan, {
+      status: "ok",
+      statusCode: upstream.status,
+      responseModel: model,
+      usage
+    });
+  }
+  return {
+    ok: true,
+    upstream: new Response(text, {
+      status: upstream.status,
+      statusText: upstream.statusText,
+      headers: upstream.headers
+    }),
+    signal
+  };
 }
 
 export async function fetchUpstream(
@@ -1175,19 +1459,10 @@ export async function fetchUpstream(
   clientSignal: AbortSignal | null = null,
   agentRole: string | null = null,
   requestId: string | null = null,
-  session: RouterSession | null = null
+  session: RouterSession | null = null,
+  attemptTelemetry: AttemptTelemetryOptions | null = null
 ): Promise<FetchUpstreamResult> {
-  let auth = null;
-  if (route.provider === "codex") {
-    try {
-      auth = await loadCodexAuth();
-    } catch (error) {
-      const authError = new Error("Codex authentication is unavailable.");
-      (authError as { code?: string }).code = "router_auth_unavailable";
-      (authError as { cause?: unknown }).cause = error;
-      throw authError;
-    }
-  }
+  const auth = await authForRoute(route);
   const requestPayload = upstreamPayload(
     route as unknown as RouterProviderRouteLike,
     payload,
@@ -1196,43 +1471,66 @@ export async function fetchUpstream(
     undefined,
     { normalizeItemIds: providerCapabilities(route.provider).normalizeItemIds }
   );
-  const timeoutSignals: AbortSignal[] = [];
-  if (clientSignal) timeoutSignals.push(clientSignal);
-  if (UPSTREAM_TIMEOUT_MS > 0) {
-    timeoutSignals.push(AbortSignal.timeout(UPSTREAM_TIMEOUT_MS));
+  const signal = upstreamSignals(clientSignal);
+  const attemptSpan = attemptTelemetry
+    ? startAttemptSpan({
+        provider: route.provider,
+        model: attemptTelemetry.model,
+        ...(attemptTelemetry.requestedModel === undefined
+          ? {}
+          : { requestedModel: attemptTelemetry.requestedModel }),
+        selection: attemptTelemetry.selection,
+        attemptNumber: attemptTelemetry.attemptNumber,
+        role: attemptTelemetry.role ?? null,
+        workspace: attemptTelemetry.workspace ?? null
+      })
+    : null;
+  let upstream: Response;
+  try {
+    upstream = await fetch(`${route.baseUrl}/responses`, {
+      method: "POST",
+      headers: downstreamHeadersWithSkillContext(
+        route,
+        auth,
+        turnMetadataHeader,
+        agentRole,
+        requestId,
+        session,
+        {
+          skillContext: extractSelectedSkillContext(payload),
+          codexSessionId: codexSessionIdFromPayload(payload),
+          workspace: attemptTelemetry?.workspace ?? null
+        }
+      ),
+      signal,
+      body: JSON.stringify(requestPayload)
+    });
+  } catch (error) {
+    if (attemptSpan) {
+      const info = transportErrorInfo(error);
+      endAttemptSpan(attemptSpan, {
+        status: "error",
+        errorType: info.code ?? info.name,
+        errorMessage: "provider transport failure"
+      });
+    }
+    throw error;
   }
-  const signal =
-    timeoutSignals.length > 1
-      ? AbortSignal.any(timeoutSignals)
-      : timeoutSignals[0] ?? new AbortController().signal;
-  const upstream = await fetch(`${route.baseUrl}/responses`, {
-    method: "POST",
-    headers: downstreamHeadersWithSkillContext(
-      route,
-      auth,
-      turnMetadataHeader,
-      agentRole,
-      requestId,
-      session,
-      {
-        skillContext: extractSelectedSkillContext(payload),
-        codexSessionId: codexSessionIdFromPayload(payload)
-      }
-    ),
+  if (!upstream.ok) return failedUpstreamResponse(upstream, attemptSpan);
+  if (!wantsStream) {
+    const buffered = await bufferNonStreamingJsonResponse(
+      upstream,
+      signal,
+      attemptSpan
+    );
+    if (buffered) return buffered;
+  }
+  return {
+    ok: true,
+    upstream,
     signal,
-    body: JSON.stringify(requestPayload)
-  });
-  if (!upstream.ok) {
-    const body = await upstream.text();
-    return {
-      ok: false,
-      status: upstream.status,
-      body,
-      limit: declaredLimit(upstream.headers, body),
-      retryable: [502, 503, 504].includes(upstream.status)
-    };
-  }
-  return { ok: true, upstream, signal };
+    ...(attemptSpan ? { attemptSpan, attemptStatusCode: upstream.status } : {})
+  };
 }
 
 export function sendJson(
@@ -1291,7 +1589,7 @@ export function errorBody(
 export async function writeSuccessfulResponse(
   response: ServerResponse,
   route: ProviderRoute,
-  result: { upstream: Response; signal: AbortSignal },
+  result: SuccessfulFetch,
   wantsStream: boolean,
   publicModel: string,
   requestId: string,
@@ -1315,78 +1613,149 @@ export async function writeSuccessfulResponse(
   return written;
 }
 
-async function writeProviderResponse(
-  response: ServerResponse,
-  route: ProviderRoute,
-  result: { upstream: Response; signal: AbortSignal },
-  wantsStream: boolean,
-  publicModel: string,
-  requestId: string,
-  resolvedModel: string,
-  onHeartbeat: (() => void) | null,
-  clientSignal: AbortSignal | null = null
-): Promise<StreamWriteResult> {
-  const responseHeaders = {
-    "x-autodev-provider": route.provider,
-    "x-autodev-model": resolvedModel,
-    "x-autodev-request-id": requestId,
-    "x-autodev-router-instance-id": ROUTER_INSTANCE_ID
+type SuccessfulFetch = Extract<FetchUpstreamResult, { ok: true }>;
+
+interface ProviderResponseContext {
+  response: ServerResponse;
+  route: ProviderRoute;
+  result: SuccessfulFetch;
+  publicModel: string;
+  requestId: string;
+  resolvedModel: string;
+  responseHeaders: Record<string, string>;
+}
+
+function emptyBufferedResult(failed = false): StreamWriteResult {
+  return {
+    toolCalls: 0,
+    toolCallIds: new Set(),
+    failed,
+    clientDisconnected: false,
+    incompleteReason: null,
+    limit: null,
+    inputRequired: false
   };
+}
+
+function finishBufferedAttempt(
+  result: SuccessfulFetch,
+  completed: Record<string, unknown> | null,
+  failed: boolean
+): void {
+  endStreamAttempt(
+    result.attemptSpan,
+    result.attemptStatusCode,
+    emptyBufferedResult(failed),
+    completed ? usageFromResponse(completed) : null,
+    providerResponseModel(completed)
+  );
+}
+
+async function writeStreamedProviderResponse(
+  context: ProviderResponseContext,
+  onHeartbeat: (() => void) | null,
+  clientSignal: AbortSignal | null
+): Promise<StreamWriteResult> {
+  const { response, route, result, publicModel, responseHeaders } = context;
   const upstream = result.upstream;
-  if (wantsStream) {
-    response.writeHead(upstream.status, {
-      ...responseHeaders,
-      "content-type":
-        upstream.headers.get("content-type") ?? "text/event-stream",
-      "cache-control": "no-cache",
-      connection: "close"
-    });
-    const streamResult = await writeResponseStream(
-      response,
-      upstream,
-      publicModel,
-      result.signal,
-      onHeartbeat,
-      clientSignal,
-      route.provider === "codex"
-    );
-    if (!response.writableEnded && !response.destroyed && !response.closed) {
-      try {
-        response.end();
-      } catch {
-        NOOP();
-      }
+  response.writeHead(upstream.status, {
+    ...responseHeaders,
+    "content-type": upstream.headers.get("content-type") ?? "text/event-stream",
+    "cache-control": "no-cache",
+    connection: "close"
+  });
+  const streamResult = await writeResponseStream(
+    response,
+    upstream,
+    publicModel,
+    result.signal,
+    onHeartbeat,
+    clientSignal,
+    route.provider === "codex",
+    {
+      ...(result.attemptSpan ? { span: result.attemptSpan } : {}),
+      ...(result.attemptStatusCode === undefined
+        ? {}
+        : { statusCode: result.attemptStatusCode })
     }
-    return streamResult;
+  );
+  if (!response.writableEnded && !response.destroyed && !response.closed) {
+    try {
+      response.end();
+    } catch {
+      NOOP();
+    }
   }
-  const body = await upstream.text();
-  if (route.provider === "codex") {
-    const toolCalls = countToolCallsFromSse(body);
-    const parsed = rewriteResponseValue(
-      responseTextFromSse(body),
-      publicModel
-    ) as Record<string, unknown>;
-    sendJson(response, upstream.status, parsed, responseHeaders);
-    const incomplete = incompleteFromResponse(parsed);
-    const toolCallIds = new Set<string>();
-    collectToolCallIds(parsed, toolCallIds);
-    return {
-      toolCalls,
-      toolCallIds,
-      failed: responseWasNotCompleted(parsed),
-      clientDisconnected: false,
-      ...incomplete,
-      inputRequired: hasInputRequired(parsed, incomplete)
-    };
-  }
+  return streamResult;
+}
+
+function writeCodexBufferedResponse(
+  context: ProviderResponseContext,
+  body: string
+): StreamWriteResult {
+  const { response, result, publicModel, responseHeaders } = context;
+  const completed = completedResponseFromSse(body);
+  finishBufferedAttempt(
+    result,
+    completed,
+    completed ? responseWasNotCompleted(completed) : false
+  );
+  const toolCalls = countToolCallsFromSse(body);
+  const parsed = rewriteResponseValue(
+    responseTextFromSse(body),
+    publicModel
+  ) as Record<string, unknown>;
+  sendJson(response, result.upstream.status, parsed, responseHeaders);
+  const incomplete = incompleteFromResponse(parsed);
+  const toolCallIds = new Set<string>();
+  collectToolCallIds(parsed, toolCallIds);
+  return {
+    toolCalls,
+    toolCallIds,
+    failed: responseWasNotCompleted(parsed),
+    clientDisconnected: false,
+    ...incomplete,
+    inputRequired: hasInputRequired(parsed, incomplete)
+  };
+}
+
+function writeRawBufferedResponse(
+  context: ProviderResponseContext,
+  body: string
+): StreamWriteResult {
+  const { response, result, responseHeaders } = context;
+  finishBufferedAttempt(result, null, false);
+  response.writeHead(result.upstream.status, {
+    ...responseHeaders,
+    "content-type":
+      result.upstream.headers.get("content-type") ?? "application/json"
+  });
+  response.end(body);
+  return emptyBufferedResult();
+}
+
+function writeJsonBufferedResponse(
+  context: ProviderResponseContext,
+  body: string
+): StreamWriteResult {
+  const { response, result, publicModel, responseHeaders } = context;
   try {
-    const parsed = JSON.parse(body);
+    const parsed: unknown = JSON.parse(body);
+    const responseObject =
+      parsed && typeof parsed === "object"
+        ? (parsed as Record<string, unknown>)
+        : null;
+    finishBufferedAttempt(
+      result,
+      responseObject,
+      responseWasNotCompleted(responseObject)
+    );
     const toolCalls = countToolCallsInResponse(parsed);
     const rewritten = rewriteResponseValue(parsed, publicModel) as Record<
       string,
       unknown
     >;
-    sendJson(response, upstream.status, rewritten, responseHeaders);
+    sendJson(response, result.upstream.status, rewritten, responseHeaders);
     const incomplete = incompleteFromResponse(rewritten);
     const toolCallIds = new Set<string>();
     collectToolCallIds(rewritten, toolCallIds);
@@ -1399,21 +1768,56 @@ async function writeProviderResponse(
       inputRequired: hasInputRequired(rewritten, incomplete)
     };
   } catch {
-    response.writeHead(upstream.status, {
-      ...responseHeaders,
-      "content-type": upstream.headers.get("content-type") ?? "application/json"
-    });
-    response.end(body);
-    return {
-      toolCalls: 0,
-      toolCallIds: new Set(),
-      failed: false,
-      clientDisconnected: false,
-      incompleteReason: null,
-      limit: null,
-      inputRequired: false
-    };
+    return writeRawBufferedResponse(context, body);
   }
+}
+
+async function writeProviderResponse(
+  response: ServerResponse,
+  route: ProviderRoute,
+  result: SuccessfulFetch,
+  wantsStream: boolean,
+  publicModel: string,
+  requestId: string,
+  resolvedModel: string,
+  onHeartbeat: (() => void) | null,
+  clientSignal: AbortSignal | null = null
+): Promise<StreamWriteResult> {
+  const context: ProviderResponseContext = {
+    response,
+    route,
+    result,
+    publicModel,
+    requestId,
+    resolvedModel,
+    responseHeaders: {
+      "x-autodev-provider": route.provider,
+      "x-autodev-model": resolvedModel,
+      "x-autodev-request-id": requestId,
+      "x-autodev-router-instance-id": ROUTER_INSTANCE_ID
+    }
+  };
+  if (wantsStream) {
+    return writeStreamedProviderResponse(context, onHeartbeat, clientSignal);
+  }
+  let body: string;
+  try {
+    body = await result.upstream.text();
+  } catch (error) {
+    if (result.attemptSpan) {
+      const info = transportErrorInfo(error);
+      endAttemptSpan(result.attemptSpan, {
+        status: "error",
+        statusCode: result.upstream.status,
+        errorType: info.code ?? info.name,
+        errorMessage: "provider response body could not be read"
+      });
+    }
+    throw error;
+  }
+  return route.provider === "codex"
+    ? writeCodexBufferedResponse(context, body)
+    : writeJsonBufferedResponse(context, body);
 }
 
 export function soonestReset(
@@ -1550,7 +1954,9 @@ export function exhaustionHeaders({
     "x-autodev-request-id": requestId
   };
   if (!exhaustedByConfiguration(summary))
-    headers["retry-after"] = String(Math.max(1, Math.ceil(retryAfterMs / 1000)));
+    headers["retry-after"] = String(
+      Math.max(1, Math.ceil(retryAfterMs / 1000))
+    );
   const reset = soonestReset(summary);
   if (reset) {
     headers[LIMIT_HEADER_RESETS_AT] = reset.resetsAt!;
@@ -1573,6 +1979,7 @@ type ConcreteRequestContext = {
   modelName: string;
   sessionKey: string | null;
   startedAt: number;
+  setLogicalOutcome: (outcome: "ok" | "error") => void;
 };
 
 function recordConcreteResult(
@@ -1720,14 +2127,27 @@ export async function proxyConcreteResponse(
   const activitySubject = activitySubjectFor(requestId, session);
   const modelName =
     typeof payload.model === "string" ? payload.model : "default";
+  const logicalSpan = startLogicalRequestSpan({
+    requestId,
+    role: null,
+    providerRole: "subagent",
+    workspace,
+    subject: "concrete request",
+    requestedModel: modelName
+  });
 
   if (!ROUTING_POLICY.isProviderEnabledForRole(route.provider, "subagent")) {
     rejectConcreteRequest(response, route, requestId, modelName, workspace);
+    endLogicalRequestSpan(logicalSpan, {
+      status: "error",
+      errorMessage: "provider is disabled for this request"
+    });
     return;
   }
 
   const startedAt = Date.now();
   const sessionKey = session?.key ?? null;
+  let logicalOutcome: "ok" | "error" = "error";
   const ctx: ConcreteRequestContext = {
     response,
     route,
@@ -1741,7 +2161,10 @@ export async function proxyConcreteResponse(
     activitySubject,
     modelName,
     sessionKey,
-    startedAt
+    startedAt,
+    setLogicalOutcome(outcome) {
+      logicalOutcome = outcome;
+    }
   };
 
   recordRouterEvent({
@@ -1783,10 +2206,17 @@ export async function proxyConcreteResponse(
   incrementActiveRequests(route.provider);
 
   try {
-    await runConcreteAttempts(ctx, 0);
+    await withLogicalSpan(logicalSpan, async () => {
+      await runConcreteAttempts(ctx, 0);
+    });
   } catch (error) {
     handleConcreteOuterFailure(ctx, error);
   } finally {
+    endLogicalRequestSpan(logicalSpan, {
+      status: logicalOutcome,
+      errorMessage:
+        logicalOutcome === "error" ? "provider request failed" : null
+    });
     decrementActiveRequests(route.provider);
   }
 }
@@ -1870,7 +2300,15 @@ async function runConcreteAttempts(
       clientSignal,
       null,
       requestId,
-      session
+      session,
+      {
+        selection: "concrete",
+        attemptNumber: attempts + 1,
+        model: typeof payload.model === "string" ? payload.model : null,
+        requestedModel: ctx.modelName,
+        role: null,
+        workspace: ctx.workspace
+      }
     );
     if (!result.ok) {
       await handleConcreteStatusFailure(ctx, result, attempts);
@@ -1884,7 +2322,7 @@ async function runConcreteAttempts(
 
 async function handleConcreteStatusFailure(
   ctx: ConcreteRequestContext,
-  result: FetchUpstreamResult,
+  result: Extract<FetchUpstreamResult, { ok: false }>,
   attempts: number
 ): Promise<void> {
   const {
@@ -1934,12 +2372,12 @@ async function handleConcreteStatusFailure(
 
 async function handleConcreteSuccess(
   ctx: ConcreteRequestContext,
-  result: { upstream: Response; signal: AbortSignal }
+  result: Extract<FetchUpstreamResult, { ok: true }>
 ): Promise<void> {
   const responseResult = await writeSuccessfulResponse(
     ctx.response,
     ctx.route,
-    { upstream: result.upstream, signal: result.signal },
+    result,
     ctx.wantsStream,
     ctx.modelName,
     ctx.requestId,
@@ -1968,6 +2406,7 @@ async function handleConcreteSuccess(
       inputRequired: Boolean(responseResult.inputRequired)
     }
   );
+  ctx.setLogicalOutcome(responseResult.failed ? "error" : "ok");
 }
 
 async function handleConcreteTransportError(
@@ -2160,7 +2599,7 @@ function recordFallbackSelected(
 function beginCandidateRequest(
   ctx: FallbackContext,
   route: Candidate
-): "orchestrator" | null {
+): string | null {
   const activityRole =
     ctx.role ??
     ((ctx.origin ?? usageOrigin(ctx.role, route.provider)) === "orchestrator"
@@ -2263,6 +2702,14 @@ export async function proxyFallbackChain(
     }
   );
   const modelName = String(payload.model ?? "");
+  const logicalSpan = startLogicalRequestSpan({
+    requestId,
+    role: role ?? agentRole,
+    providerRole,
+    workspace,
+    subject,
+    requestedModel: modelName || null
+  });
   if (!candidates || candidates.length === 0) {
     rejectFallbackChain(
       response,
@@ -2274,6 +2721,10 @@ export async function proxyFallbackChain(
       workspace,
       isOrchestratorTurn
     );
+    endLogicalRequestSpan(logicalSpan, {
+      status: "error",
+      errorMessage: "no provider candidates configured"
+    });
     return;
   }
   const failures: string[] = [];
@@ -2309,6 +2760,9 @@ export async function proxyFallbackChain(
     lastResortAttempts: 0
   };
 
+  let logicalOutcome: "ok" | "error" = "error";
+  let logicalErrorMessage: string | null = null;
+
   const tryCandidate = async (
     route: Candidate,
     selection: string
@@ -2343,46 +2797,69 @@ export async function proxyFallbackChain(
       skipped.push(route);
       return "unavailable";
     }
-    return attemptCandidate(fbCtx, route, selection, failures, attempted);
+    const outcome = await attemptCandidate(
+      fbCtx,
+      route,
+      selection,
+      failures,
+      attempted
+    );
+    if (outcome === "served") {
+      logicalOutcome = "ok";
+      logicalErrorMessage = null;
+    } else if (outcome === "terminal") {
+      logicalErrorMessage = "provider attempt returned a terminal failure";
+    }
+    return outcome;
   };
 
   const served = servedOutcome;
 
-  if (
-    await runPrimaryPass(
-      fbCtx,
-      candidates,
-      state,
-      skipped,
-      tryCandidate,
-      served
-    )
-  )
-    return;
-
-  if (
-    !state.deadlineReached &&
-    (await runLastResortPass(
-      fbCtx,
-      skipped,
-      state,
-      triedCandidates(attempted),
-      tryCandidate,
-      served
-    ))
-  )
-    return;
-
-  await runExhaustionWait(fbCtx, candidates, state, tryCandidate, served);
-
-  finalizeFallbackFailure(
-    response,
-    fbCtx,
-    failures,
-    state.lastResortAttempts,
-    state.deadlineReached,
-    attempted
-  );
+  try {
+    await withLogicalSpan(logicalSpan, async () => {
+      if (
+        await runPrimaryPass(
+          fbCtx,
+          candidates,
+          state,
+          skipped,
+          tryCandidate,
+          served
+        )
+      )
+        return;
+      if (
+        !state.deadlineReached &&
+        (await runLastResortPass(
+          fbCtx,
+          skipped,
+          state,
+          triedCandidates(attempted),
+          tryCandidate,
+          served
+        ))
+      )
+        return;
+      if (
+        await runExhaustionWait(fbCtx, candidates, state, tryCandidate, served)
+      )
+        return;
+      finalizeFallbackFailure(
+        response,
+        fbCtx,
+        failures,
+        state.lastResortAttempts,
+        state.deadlineReached,
+        attempted
+      );
+      logicalErrorMessage = "no candidate served the request";
+    });
+  } finally {
+    endLogicalRequestSpan(logicalSpan, {
+      status: logicalOutcome,
+      errorMessage: logicalErrorMessage
+    });
+  }
 }
 
 function rejectFallbackChain(
@@ -2568,7 +3045,7 @@ function runLastResortPass(
   ) => Promise<"served" | "terminal" | "fallback" | "unavailable">,
   served: (outcome: string) => boolean
 ): Promise<boolean> {
-  if (state.deadlineReached) return false;
+  if (state.deadlineReached) return Promise.resolve(false);
   // A provider already serving other agents goes last, so concurrent exhausted
   // requests spread over the skipped providers. It is never excluded: with
   // Codex the orchestrator tier's only provider and always live in some other
@@ -2628,7 +3105,7 @@ async function runExhaustionWait(
     selection: string
   ) => Promise<"served" | "terminal" | "fallback" | "unavailable">,
   served: (outcome: string) => boolean
-): Promise<void> {
+): Promise<boolean> {
   const attempted = new Set<string>(); // placeholder; actual set tracked elsewhere
   const waitCandidates = candidates.filter(
     (route) =>
@@ -2662,9 +3139,10 @@ async function runExhaustionWait(
     });
     await delay(waitMs, ctx.clientSignal);
     if (!ctx.clientSignal?.aborted) {
-      await tryExhaustionRoute(waitCandidates, 0, tryCandidate, served);
+      return tryExhaustionRoute(waitCandidates, 0, tryCandidate, served);
     }
   }
+  return false;
 }
 
 async function tryExhaustionRoute(
@@ -2745,7 +3223,7 @@ async function attemptCandidate(
   incrementActiveRequests(route.provider);
 
   try {
-    const result = await fetchCandidate(ctx, route);
+    const result = await fetchCandidate(ctx, route, selection);
     if (result.ok) {
       return await handleCandidateSuccess(
         ctx,
@@ -2789,6 +3267,7 @@ async function attemptCandidate(
 async function fetchCandidate(
   ctx: FallbackContext,
   route: Candidate,
+  selection: string,
   attempt = 1
 ): Promise<FetchUpstreamResult> {
   try {
@@ -2800,7 +3279,15 @@ async function fetchCandidate(
       ctx.clientSignal,
       ctx.agentRole,
       ctx.requestId,
-      ctx.session
+      ctx.session,
+      {
+        selection,
+        attemptNumber: attempt,
+        model: route.model,
+        requestedModel: ctx.modelName,
+        role: ctx.role,
+        workspace: ctx.workspace
+      }
     );
   } catch (error) {
     if (
@@ -2837,7 +3324,7 @@ async function fetchCandidate(
     });
     await jitteredBackoff();
     if (ctx.clientSignal?.aborted) throw error;
-    return fetchCandidate(ctx, route, attempt + 1);
+    return fetchCandidate(ctx, route, selection, attempt + 1);
   }
 }
 
@@ -2874,7 +3361,7 @@ function recordCandidateClientAbort(
 async function handleCandidateSuccess(
   ctx: FallbackContext,
   route: Candidate,
-  result: { upstream: Response; signal: AbortSignal },
+  result: SuccessfulFetch,
   selection: string,
   attemptStartedAt: number
 ): Promise<"served" | "terminal" | "fallback"> {
@@ -2882,7 +3369,7 @@ async function handleCandidateSuccess(
     const responseResult = await writeSuccessfulResponse(
       ctx.response,
       route,
-      { upstream: result.upstream, signal: result.signal },
+      result,
       ctx.wantsStream,
       ctx.modelName,
       ctx.requestId,
@@ -2898,7 +3385,7 @@ async function handleCandidateSuccess(
     );
     if (responseResult.clientDisconnected) {
       recordCandidateClientAbort(ctx, route, selection, attemptStartedAt);
-      return "served";
+      return "terminal";
     }
     if (responseResult.failed) {
       const failureClass =
@@ -2930,7 +3417,7 @@ async function handleCandidateSuccess(
         hasToolCalls: responseResult.toolCalls > 0,
         inputRequired: Boolean(responseResult.inputRequired)
       });
-      return "served";
+      return "terminal";
     }
     COOLDOWNS.clear(route.provider);
     recordRouterEvent({
@@ -2972,7 +3459,7 @@ async function handleCandidateSuccess(
 function handleCandidateUpstreamFailure(
   ctx: FallbackContext,
   route: Candidate,
-  result: FetchUpstreamResult,
+  result: Extract<FetchUpstreamResult, { ok: false }>,
   selection: string,
   failures: string[],
   attemptStartedAt: number
@@ -3088,7 +3575,7 @@ function handleCandidateTransportError(
       outcome: "failure",
       hasToolCalls: false
     });
-    return "served";
+    return "terminal";
   }
   return "fallback";
 }

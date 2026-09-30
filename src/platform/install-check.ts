@@ -5,7 +5,8 @@ import {
   mkdtempSync,
   readdirSync,
   readFileSync,
-  rmSync
+  rmSync,
+  statSync
 } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import path from "node:path";
@@ -48,7 +49,7 @@ import {
   RUNTIME_MODULES,
   SKILLS
 } from "./install-materializer.ts";
-import { readCollectorMode } from "./install-state.ts";
+import { readOtelIngressMode } from "./install-state.ts";
 import { launchAgentMatches } from "./macos/launchagent.ts";
 import { resolveCollectorOptions, runCollector } from "./otel-collector.ts";
 import {
@@ -70,6 +71,38 @@ const LINE_SPLIT_PATTERN = /\r?\n/u;
 const MD_EXTENSION_PATTERN = /\.md$/u;
 const WHITESPACE_SPLIT_PATTERN = /\s+/u;
 const CODEX_ROUTER_AUTH_TOKEN_PATTERN = /^CODEX_ROUTER_AUTH_TOKEN=([^\n]*)$/mu;
+const USER_CONFIG_FILE = "config.toml";
+const ENV_ASSIGNMENT_PATTERN = /^([A-Z0-9_]+)=([^\n]*)$/u;
+const GENERATED_SECRET_PATTERN = /^[0-9a-f]{64}$/u;
+
+function privateOpenlitSecretsReady(codexHome: string): boolean {
+  const secretPath = path.join(codexHome, "openlit-secrets.env");
+  const producerKeyPath = path.join(codexHome, "openlit-otlp-api-key");
+  try {
+    if (lstatSync(secretPath).isSymbolicLink()) return false;
+    if (lstatSync(producerKeyPath).isSymbolicLink()) return false;
+    if ((statSync(secretPath).mode & 0o077) !== 0) return false;
+    if ((statSync(producerKeyPath).mode & 0o077) !== 0) return false;
+    const values = new Map<string, string>();
+    for (const line of readFileSync(secretPath, "utf8").split(
+      LINE_SPLIT_PATTERN
+    )) {
+      const match = ENV_ASSIGNMENT_PATTERN.exec(line);
+      if (match) values.set(match[1]!, match[2]!);
+    }
+    const database = values.get("OPENLIT_DB_PASSWORD") ?? "";
+    const control = values.get("AUTODEV_CONTROL_API_TOKEN") ?? "";
+    const otlp = values.get("OPENLIT_OTLP_API_KEY") ?? "";
+    return (
+      GENERATED_SECRET_PATTERN.test(database) &&
+      GENERATED_SECRET_PATTERN.test(control) &&
+      GENERATED_SECRET_PATTERN.test(otlp) &&
+      readFileSync(producerKeyPath, "utf8").trim() === otlp
+    );
+  } catch {
+    return false;
+  }
+}
 
 function commandAvailable(command: string): boolean {
   try {
@@ -506,7 +539,7 @@ function checkPortableConfig(
   check(
     "hook trust state",
     checkHookTrust(
-      path.join(paths.codexHome, "config.toml"),
+      path.join(paths.codexHome, USER_CONFIG_FILE),
       paths.codexHome,
       paths.repositoryRoot
     ),
@@ -546,8 +579,8 @@ function checkUserConfigAndAgents(
       path.join(paths.repositoryRoot, "config/config.autodev.toml"),
       projection.source,
       path.join(paths.repositoryRoot, "agents/roles/orchestrator.toml"),
-      path.join(paths.codexHome, "config.toml"),
-      path.join(paths.codexHome, "config.toml"),
+      path.join(paths.codexHome, USER_CONFIG_FILE),
+      path.join(paths.codexHome, USER_CONFIG_FILE),
       true,
       mode
     ) === 0,
@@ -675,8 +708,8 @@ function checkCollector(
   failures: { value: number }
 ): void {
   check(
-    `Collector mode ${mode}`,
-    mode === "direct" || mode === "collector",
+    `OTLP ingress mode ${mode}`,
+    mode === "direct" || mode === "collector" || mode === "openlit",
     failures
   );
   const collector = resolveCollectorOptions({
@@ -695,10 +728,28 @@ function checkCollector(
       writeLine("missing-or-drifted Collector binary/config");
       failures.value = 1;
     }
-  } else
-    writeLine(
-      "ok OpenTelemetry Collector is disabled (direct OTLP ingress on 127.0.0.1:4100)"
+  } else if (mode === "openlit") {
+    check(
+      "private OpenLIT secret and receiver key files",
+      privateOpenlitSecretsReady(paths.codexHome),
+      failures
     );
+    const configPath = path.join(paths.codexHome, USER_CONFIG_FILE);
+    const config = existsSync(configPath)
+      ? readFileSync(configPath, "utf8")
+      : "";
+    check(
+      "OpenLIT receiver URL configuration",
+      ["/v1/logs", "/v1/traces", "/v1/metrics"].every((signal) =>
+        config.includes(`127.0.0.1:4318${signal}`)
+      ) && !config.includes("Authorization"),
+      failures
+    );
+  } else {
+    writeLine(
+      "ok separate Collector is disabled (direct OTLP ingress on 127.0.0.1:4100)"
+    );
+  }
 }
 
 function checkObsoleteSkillPaths(
@@ -929,8 +980,8 @@ function checkLaunchAgents(
 export function runInstallCheck(overrides: InstallCheckOptions = {}): number {
   const paths = resolveRunInstallPaths(overrides);
   const failures = { value: 0 };
-  const mode = readCollectorMode(
-    path.join(paths.codexHome, "otel-collector.mode")
+  const mode = readOtelIngressMode(
+    path.join(paths.codexHome, "otel-ingress.mode")
   );
   const projection = createCodexMcpSource(paths.repositoryRoot);
   try {

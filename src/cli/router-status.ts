@@ -1,43 +1,13 @@
 #!/usr/bin/env node
 
 import {
-  type RouterProviderStatus,
-  type RouterStatus,
-  serializeRouterStatus
+  type RouterProviderRuntimeStatus,
+  type RouterRuntimeStatus
 } from "../router/status.ts";
 import { writeErrorLine, writeLine } from "../shared/output.ts";
 import { fetchRouterStatus } from "./router-status-client.ts";
 
-type JsonRecord = Record<string, unknown>;
-
-const asRecord = (value: unknown): JsonRecord =>
-  value !== null && typeof value === "object" && !Array.isArray(value)
-    ? (value as JsonRecord)
-    : {};
-
-const asRecordList = (value: unknown): JsonRecord[] =>
-  Array.isArray(value) ? value.map((entry) => asRecord(entry)) : [];
-
-const counts = (record: unknown): string =>
-  Object.entries(asRecord(record))
-    .map(([key, value]) => `${key}: ${value}`)
-    .join(", ") || "-";
-
-const writeUsageSection = (
-  title: string,
-  buckets: unknown,
-  includeActive: boolean
-): void => {
-  writeLine(`${title}:`);
-  for (const [label, entry] of Object.entries(asRecord(buckets))) {
-    const state = asRecord(entry);
-    const activePrefix = includeActive ? `${state.active ?? 0} active, ` : "";
-    writeLine(
-      `  ${label}: ${activePrefix}${state.attempts} attempts, ${state.successes} successes, ${state.failures} failures, avg ${Math.round(Number(state.averageDurationMs ?? 0) / 1000)}s, ${state.toolCalls} tool calls`
-    );
-  }
-};
-let body: RouterStatus;
+let body: RouterRuntimeStatus;
 try {
   body = await fetchRouterStatus();
 } catch (error) {
@@ -46,7 +16,7 @@ try {
 }
 
 if (process.argv.includes("--json")) {
-  writeLine(serializeRouterStatus(body));
+  writeLine(JSON.stringify(body, null, 2));
   process.exit(0);
 }
 
@@ -56,7 +26,16 @@ writeLine(
 writeLine(`Started: ${body.startedAt}`);
 
 const routing = body.routing ?? {};
-const providers: Record<string, RouterProviderStatus> = body.providers ?? {};
+const asRecord = (value: unknown): Record<string, unknown> =>
+  value !== null && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
+const counts = (record: unknown): string =>
+  Object.entries(asRecord(record))
+    .map(([key, value]) => `${key}: ${value}`)
+    .join(", ") || "-";
+const providers: Record<string, RouterProviderRuntimeStatus> =
+  body.providers ?? {};
 const enabledOrchestratorProviders =
   routing.enabledOrchestratorProviders ??
   Object.keys(providers).filter(
@@ -137,7 +116,7 @@ const configuredGroupPriorities = (providerName: string): string[] => {
 
 const formatProviderPriority = (
   providerName: string,
-  state: RouterProviderStatus
+  state: RouterProviderRuntimeStatus
 ): string => {
   if (
     state.routingPriority &&
@@ -158,18 +137,18 @@ const formatProviderPriority = (
   return "-";
 };
 
-const getProviderLiveActivity = (state: RouterProviderStatus): number =>
+const getProviderLiveActivity = (state: RouterProviderRuntimeStatus): number =>
   Number(state.active ?? 0);
 
-const getProviderInFlight = (state: RouterProviderStatus): number =>
+const getProviderInFlight = (state: RouterProviderRuntimeStatus): number =>
   Number(state.inFlightRequests ?? 0);
 
 writeLine("");
 writeLine(
-  "Provider     State     Priority                                Status                                   Active  In-Flight  Attempts  Successes  Failures  Last failure"
+  "Provider     State     Priority                                Status                                   Active  In-Flight  Last failure"
 );
 writeLine(
-  "-----------  --------  --------------------------------------  ---------------------------------------  ------  ---------  --------  ---------  --------  ------------"
+  "-----------  --------  --------------------------------------  ---------------------------------------  ------  ---------  ------------"
 );
 for (const [provider, state] of Object.entries(providers)) {
   const isSubagentEnabled = state.subagentEnabled !== false;
@@ -207,7 +186,7 @@ for (const [provider, state] of Object.entries(providers)) {
   const activeCount = getProviderLiveActivity(state);
   const inFlightCount = getProviderInFlight(state);
   writeLine(
-    `${provider.padEnd(11)}  ${`${stateLabel}/${isOrchestratorEnabled ? "enabled" : "disabled"}`.padEnd(18)}  ${priority.padEnd(38)}  ${(displayStatus + cooldown).padEnd(39)}  ${String(activeCount).padStart(6)}  ${String(inFlightCount).padStart(9)}  ${String(state.attempts).padStart(8)}  ${String(state.successes).padStart(9)}  ${String(state.failures).padStart(8)}  ${lastFailure}`
+    `${provider.padEnd(11)}  ${`${stateLabel}/${isOrchestratorEnabled ? "enabled" : "disabled"}`.padEnd(18)}  ${priority.padEnd(38)}  ${(displayStatus + cooldown).padEnd(39)}  ${String(activeCount).padStart(6)}  ${String(inFlightCount).padStart(9)}  ${lastFailure}`
   );
 
   const details: string[] = [];
@@ -266,34 +245,6 @@ for (const [provider, state] of Object.entries(providers)) {
   }
 }
 
-const subagents = body.subagents ?? {};
-writeLine("");
-const recentSubagentCount = Array.isArray(subagents.recent)
-  ? subagents.recent.length
-  : 0;
-writeLine(
-  `Subagents spawned: ${recentSubagentCount} recent / ${subagents.total ?? 0} total (${counts(subagents.byMechanism)})`
-);
-writeLine(`  by provider: ${counts(subagents.byProvider)}`);
-writeLine(`  by role: ${counts(subagents.byRole)}`);
-writeLine(`  by outcome: ${counts(subagents.byStatus)}`);
-writeLine(
-  `  spawn-capable providers: ${(subagents.spawnCapableProviders ?? []).join(", ") || "-"}; Codex-native OTEL spawns: ${subagents.codexNativeSpawns ?? 0}`
-);
-for (const spawn of (subagents.recent ?? []).slice(0, 10)) {
-  writeLine(
-    `  ${spawn.timestamp} ${spawn.mechanism} ${spawn.provider}/${spawn.role} ${spawn.tool ?? "-"}`
-  );
-}
-
-const spawnFailures = asRecord(body.spawnFailures);
-writeLine("");
-writeLine(
-  `Subagent spawn failures: ${spawnFailures.total ?? 0} (${counts(spawnFailures.byReason)})`
-);
-
-const usage = asRecord(body.usage);
-writeLine("");
 const concurrency = asRecord(body.concurrency);
 const limit = (value: unknown): string | number =>
   value == null
@@ -317,89 +268,3 @@ writeLine("");
 writeLine(
   `Concurrency: per-session ${limit(concurrency.effectivePerSessionLimit)}, active sessions ${concurrency.activeSessions ?? 0}, active subagents ${concurrency.activeSubagentThreads ?? 0}, in-flight requests ${totalInFlight}, denials ${concurrency.denials ?? 0} (${denialsByReason}), last denial ${lastDenial}${fallbackWarning}`
 );
-
-writeLine("");
-writeUsageSection("Usage by origin", usage.byOrigin, true);
-writeUsageSection("Usage by role", usage.byRole, false);
-writeUsageSection("Usage by resolved model", usage.byModel, false);
-const codexTelemetry = asRecord(body.codexTelemetry);
-const otelReceiver = asRecord(codexTelemetry.receiver);
-const otelTurns = asRecord(codexTelemetry.turns);
-const otelTokens = asRecord(codexTelemetry.tokens);
-const mcpSummary = asRecord(codexTelemetry.mcpSummary);
-writeLine("");
-writeLine(
-  `Codex OTEL: logs ${otelReceiver.logs ?? 0}, traces ${otelReceiver.traces ?? 0}, metrics ${otelReceiver.metrics ?? 0}, recent sessions ${codexTelemetry.sessionsRecent ?? 0}/${codexTelemetry.sessionsObserved ?? 0}, completed turns ${otelTurns.completed ?? 0}, avg TTFT ${Math.round(Number(otelTurns.averageTtftMs ?? 0))}ms, tokens ${otelTokens.total ?? 0}, MCP ready ${mcpSummary.ready ?? 0}/${mcpSummary.observed ?? 0}`
-);
-writeLine("MCP runtime observations:");
-for (const server of asRecordList(codexTelemetry.mcpServers)) {
-  writeLine(
-    `  ${server.name}: ${server.health}, last ${server.lastSeenAt ?? "-"}, init ${server.initAttempts ?? 0}, discovery ${server.toolDiscoveryAttempts ?? 0}, failures ${server.failures ?? 0}, avg ${Math.round(Number(server.averageDurationMs ?? 0))}ms`
-  );
-}
-
-const skills = asRecord(codexTelemetry.skills);
-const skillsInjected = asRecord(skills.injected);
-const skillsTurnDuration = asRecord(skills.turnDuration);
-const skillsThreads = asRecord(skills.threads);
-const histogramText = (value: unknown): string => {
-  const histogram = asRecord(value);
-  return `avg ${Number(histogram.average ?? 0).toFixed(1)} (n=${histogram.count ?? 0}, sum=${histogram.sum ?? 0})`;
-};
-writeLine("");
-writeLine(
-  `Skills injected: ${skillsInjected.total ?? 0} (${counts(skillsInjected.byStatus)}), invoke_type: ${counts(skillsInjected.byInvokeType)}, agent kind: ${counts(skillsInjected.byAgentKind)}`
-);
-writeLine(
-  `Skill turn duration: ${histogramText(skillsTurnDuration.durationSeconds)}`
-);
-writeLine(
-  `Thread skills: enabled ${histogramText(skillsThreads.enabledTotal)}, kept ${histogramText(skillsThreads.keptTotal)}, truncated ${histogramText(skillsThreads.truncated)}, description chars ${histogramText(skillsThreads.descriptionTruncatedChars)}`
-);
-for (const skill of asRecordList(skillsInjected.bySkill)) {
-  writeLine(
-    `  ${skill.skill}: injected ${skill.total} (${counts(skill.byStatus)}), invoke_type: ${counts(skill.byInvokeType)}, agent kind: ${counts(skill.byAgentKind)}, models: ${counts(skill.byModel)}, plugins: ${counts(skill.byPlugin)}`
-  );
-}
-
-const nativeMetrics = asRecordList(asRecord(codexTelemetry.metrics).observed);
-writeLine("");
-writeLine(`Native metric names observed: ${nativeMetrics.length}`);
-for (const metric of nativeMetrics)
-  writeLine(
-    `  ${metric.name}: ${metric.exports ?? 0} export(s), ${metric.dataPoints ?? 0} data point(s)`
-  );
-
-const nativeTools = asRecordList(asRecord(codexTelemetry.tools).byTool);
-const nativeHooks = asRecordList(asRecord(codexTelemetry.hooks).byHook);
-const nativeThreads = asRecord(codexTelemetry.threads);
-writeLine(
-  `Native runtime telemetry: ${nativeTools.length} tool groups, ${nativeHooks.length} hook groups, ${asRecord(nativeThreads.started).total ?? 0} threads started, ${asRecord(nativeThreads.spawns).total ?? 0} agent spawns`
-);
-for (const tool of nativeTools)
-  writeLine(
-    `  [tool] ${tool.tool} (${tool.source}${tool.server ? `/${tool.server}` : ""}): ${tool.count ?? 0} calls (${counts(tool.byStatus)}), avg ${Math.round(Number(tool.averageDurationMs ?? 0))}ms`
-  );
-for (const hook of nativeHooks)
-  writeLine(
-    `  hook ${hook.hook} (${hook.source}${hook.handlerType ? `/${hook.handlerType}` : ""}): ${hook.count ?? 0} runs (${counts(hook.byStatus)}), avg ${Math.round(Number(hook.averageDurationMs ?? 0))}ms`
-  );
-
-const sqlite = asRecord(codexTelemetry.sqlite);
-const sqliteDuration = asRecord(sqlite.initDurationMs);
-writeLine(
-  `SQLite telemetry: ${asRecord(sqlite.init).total ?? 0} initializations, ${asRecord(sqlite.fallbacks).total ?? 0} fallbacks, ${sqliteDuration.totalCount ?? 0} duration samples, avg ${sqliteDuration.totalCount ? Math.round(Number(sqliteDuration.totalSum) / Number(sqliteDuration.totalCount)) : 0}ms`
-);
-
-const events = asRecordList(body.recentEvents);
-if (events.length > 0) {
-  writeLine("");
-  writeLine("Recent routing events (newest first):");
-  for (const event of events.slice(0, 20)) {
-    const target = `${event.provider}/${event.model}`;
-    const outcome = event.outcome ?? event.failureClass ?? "-";
-    writeLine(
-      `${event.timestamp} ${event.requestId} ${String(event.phase).padEnd(8)} ${target.padEnd(36)} ${outcome}`
-    );
-  }
-}

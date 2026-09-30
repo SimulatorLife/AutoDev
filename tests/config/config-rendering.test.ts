@@ -7,7 +7,11 @@ import test from "node:test";
 
 import { parse } from "smol-toml";
 
-import { compose, loadPortable } from "../../src/config/compose-user-config.ts";
+import {
+  applyOtelIngress,
+  compose,
+  loadPortable
+} from "../../src/config/compose-user-config.ts";
 import {
   atomicWrite,
   serializeToml,
@@ -120,6 +124,46 @@ test("the root config takes the orchestrator role's per-server MCP settings", as
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
+});
+
+test("OpenLIT ingress targets its authenticated first-party OTLP receiver without storing secrets", () => {
+  const config: TomlTable = {
+    otel: {
+      exporter: {
+        "otlp-http": {
+          endpoint: "http://127.0.0.1:4100/v1/logs",
+          protocol: "json"
+        }
+      },
+      trace_exporter: {
+        "otlp-http": {
+          endpoint: "http://127.0.0.1:4100/v1/traces",
+          protocol: "json"
+        }
+      },
+      metrics_exporter: {
+        "otlp-http": {
+          endpoint: "http://127.0.0.1:4100/v1/metrics",
+          protocol: "json"
+        }
+      }
+    }
+  };
+  const composed = applyOtelIngress(config, "openlit");
+  const otel = composed.otel as TomlTable;
+  assert.equal(
+    ((otel.exporter as TomlTable)["otlp-http"] as TomlTable).endpoint,
+    "http://127.0.0.1:4318/v1/logs"
+  );
+  assert.equal(
+    ((otel.trace_exporter as TomlTable)["otlp-http"] as TomlTable).endpoint,
+    "http://127.0.0.1:4318/v1/traces"
+  );
+  assert.equal(
+    ((otel.metrics_exporter as TomlTable)["otlp-http"] as TomlTable).endpoint,
+    "http://127.0.0.1:4318/v1/metrics"
+  );
+  assert.doesNotMatch(serializeToml(composed), /Bearer|API_KEY/u);
 });
 
 test("atomic writes replace the target without leaving temporary files", async () => {
