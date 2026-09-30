@@ -1,5 +1,7 @@
 # Antigravity as a Codex-driven model backend
 
+> This is a focused provider-design document. It is subordinate to [`docs/autodev-console-target-state.md`](autodev-console-target-state.md) for configuration ownership and product architecture. RuleSync is the canonical target for every agent-facing configuration surface it supports; provider-specific Antigravity configuration must be generated from that source rather than becoming a parallel authority.
+
 > Target-state recommendation and migration plan for simplifying the AutoDev Antigravity integration while preserving subscription authentication through `agy`
 
 ## Executive decision
@@ -210,34 +212,23 @@ plugins
 
 Rulesync also supports Antigravity CLI permissions and hooks
 
-AutoDev currently enables only:
-
-```json
-"features": [
-  "skills",
-  "hooks"
-]
-```
-
-and `tests/rulesync-permissions-inventory.test.ts` intentionally asserts that Rulesync `permissions` and `subagents` generation remain disabled
-
-The target should evaluate enabling the relevant Rulesync features rather than adding another hand-maintained Antigravity configuration path
+AutoDev's current generated surface still has parity gaps for RuleSync `permissions` and `subagents`; existing tests record that current state. Those gaps are transitional, not the target. The target requires enabling the relevant RuleSync features once the current effective role/permission semantics are represented losslessly, and then deleting the duplicate native authority rather than adding another hand-maintained Antigravity configuration path.
 
 Desired ownership:
 
 ```text
-AutoDev role/capability intent
-        |
-        v
-Rulesync canonical configuration
+RuleSync canonical agent-facing configuration
         |
         +--> Antigravity custom main agent
         +--> Antigravity hooks
         +--> Antigravity permissions
-        +--> shared skills/MCP declarations where applicable
+        +--> shared skills/MCP declarations
+        |
+        v
+AutoDev runtime validation / application / provider transport
 ```
 
-AutoDev should continue owning role semantics. Rulesync should translate those semantics into provider-native configuration where it can do so faithfully
+AutoDev owns runtime behavior and provider-specific execution semantics that RuleSync does not model; it should not maintain a competing declarative role/capability schema for concepts RuleSync can represent.
 
 ---
 
@@ -803,8 +794,8 @@ Exit condition: Antigravity can complete normal coding turns without native file
 Once all workspace actions pass through Codex:
 
 - Remove Antigravity-specific read-only sandbox branching where redundant
-- Let Codex role TOMLs determine filesystem/sandbox behavior
-- Let Codex tool/MCP exposure determine role capabilities
+- Let the RuleSync-generated Codex role/config projection determine filesystem/sandbox behavior
+- Let the RuleSync-generated tool/MCP/skill/permission projection determine role capabilities
 - Keep Antigravity enabled for `browser-tester` through the bridge's per-invocation MCP isolation; future migration to Codex-owned tool execution can remove this provider-specific home isolation
 
 Exit condition: changing providers does not change which role capabilities the agent can exercise
@@ -863,7 +854,7 @@ Do not retire a current behavior until the replacement proves all applicable pro
 | Reimplementing Antigravity's entire agent runtime in AutoDev | Use only the minimal bridge needed to expose the model through Codex |
 | Treating prompt rules as a security boundary | Remove tools from the inventory and use hard hooks/permissions as backstops |
 | Inventing unsupported Antigravity permission resources | Use documented permission actions only |
-| Moving AutoDev role semantics into Rulesync | Keep semantics in AutoDev and use Rulesync for portable translation |
+| Duplicating RuleSync-owned agent semantics in Antigravity-specific files | Keep one canonical RuleSync source and retain only AutoDev runtime/provider semantics that RuleSync does not model |
 | Adding provider-specific telemetry for data Codex already observes canonically | Prefer Codex/OTel evidence and retain bridge telemetry only for provider-internal facts |
 | Replacing native web research without an equivalent Codex execution path | Keep narrow provider-native exceptions when necessary |
 
@@ -923,7 +914,7 @@ The final switch should be an explicit execution-mode change, not an accidental 
 - Is a parked synchronous MCP call needed for any fidelity case that explicit conversation resumption cannot satisfy
 - Which current Antigravity action telemetry paths become redundant once Codex executes every action, and which provider-native usage/session fields must remain
 - What minimum supported `agy` version lets AutoDev delete historical compatibility branches safely
-- Can Rulesync become the canonical generator for the custom main agent and Antigravity permissions without weakening AutoDev's existing role contract
+- Which remaining parity gaps must be closed before RuleSync can generate the custom main agent and Antigravity permissions without weakening the effective runtime contract
 - Which provider-native web capabilities must remain after the Codex tool loop is available
 
 ---
@@ -972,7 +963,7 @@ AutoDev:
 - `.rulesync/mcp.jsonc`
 - `rulesync.jsonc`
 - `docs/provider-routing.md`
-- `docs/AUTODEV_PLATFORM_MIGRATION.md`
+- `docs/autodev-console-target-state.md`
 
 Upstream:
 
