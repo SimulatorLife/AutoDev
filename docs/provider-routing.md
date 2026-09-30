@@ -620,7 +620,7 @@ The router makes its effective choice visible in two ways:
   `upstreamTimeoutMs`, retry parameters (`upstreamRetryBaseMs`,
   `upstreamRetryMaxMs`, `concreteStatusMaxAttempts`, `upstreamTransportMaxAttempts`),
   `shutdownDrainTimeoutMs`, and `maxConcurrentThreadsPerSession`.
-- The status payload and dashboard report the effective Codex per-session
+- The live `/status` payload reports the effective Codex per-session
   concurrency limit, the number of active session buckets, active role-based
   subagent slots, and denials caused by that limit. An active session is a
   session currently holding at least one role-based subagent slot; it is not a
@@ -628,8 +628,7 @@ The router makes its effective choice visible in two ways:
   local configuration permits one active subagent per session; callers must
   serialize additional work or deliberately raise the
   configured limit after checking provider capacity. The deprecated `max_threads`
-  alias is no longer parsed, surfaced, or used as a fallback (see
-  Phase 0 concurrency slice in `docs/AUTODEV_PLATFORM_MIGRATION.md`); only
+  alias is no longer parsed, surfaced, or used as a fallback; only
   the canonical Codex key `max_concurrent_threads_per_session` -- multiline
   `[agents]` block or composer-generated inline `agents = { ... }` table --
   feeds admission. Role requests are gated before provider selection;
@@ -658,14 +657,12 @@ The router makes its effective choice visible in two ways:
   bucket contains a privacy-safe repository label (remote `owner/repository`
   when available, otherwise the cwd basename), the cwd basename, totals, and
   nested `byRole`, `byModel`, and `byProvider` dimensions. Full absolute paths,
-  prompts, credentials, and remote URLs are not stored. The dashboard renders
-  this as **Usage by workspace**; missing workspace metadata is attributed to
+  prompts, credentials, and remote URLs are not stored. Missing workspace metadata is attributed to
   `unknown` rather than guessed from the router daemon's cwd. The workspace
   bucket's scalar `toolCalls` is a response-output count inferred from
   Responses API tool-call items on that workspace's turns, the same inference
   the top-level `usage.totals.toolCalls` uses -- it is not a count of
-  OTLP-named tool invocations, and the dashboard labels the column
-  accordingly rather than implying the two are the same measurement.
+  OTLP-named tool invocations. Historical/cross-workspace visualization belongs in the AutoDev Console **Usage** surface, not a router-local HTML dashboard.
 - A workspace bucket may additionally carry `byTool`, `bySkill`, `byMcp`, and
   coverage counters. These rows come from local causally-linked evidence:
   AutoDev request context, verified hooks, semantic OTLP `codex.tool_result`
@@ -678,93 +675,14 @@ The router makes its effective choice visible in two ways:
   global metrics by guesswork, never infers ownership from static configurations or
   ambient concurrency, and attributes events lacking verified metadata to explicit
   `unattributed` dimensions. Requested and executed provider events remain separate.
-- The dashboard's Orchestrator & subagent usage panel shows Orchestrator and
-  Subagents cards from their explicit role buckets. Any role-less activity is
-  shown in a separate `Unattributed` card rather than guessed into either
-  role. The three visible role categories always reconcile to
-  `usage.totals.active`.
+- Role accounting keeps explicit Orchestrator, Subagent, and Unattributed buckets. Role-less activity stays `Unattributed` rather than being guessed into either role, and the buckets reconcile to `usage.totals.active`.
 - `status.subagents` counts every subagent spawned behind the router,
   regardless of which provider spawned it and by which mechanism. This is
   distinct from `usage.byRole`, which counts *router requests* made by
   subagents: a bridge-native child makes no router request at all, so it
-  appears in `status.subagents` and nowhere else. The dashboard renders it as
-  **Subagents spawned** and `src/cli/router-status.ts` prints it under
+  appears in `status.subagents` and nowhere else. `src/cli/router-status.ts` prints it under
   `Subagents spawned:`. See "Counting subagents across providers".
-- Open `http://127.0.0.1:4100/dashboard` in a browser for the live HTML
-  dashboard; it fetches `/status` on load and polls the same JSON endpoint every
-  three seconds. The dashboard is componentized: KPI cards lead Provider
-  health, Orchestrator & subagent usage (with Spawn breakdown and Spawn
-  failures), Usage by workspace, Skill telemetry (with Skill context
-  telemetry), Hooks & runtime telemetry, Operational summary (with Native
-  metrics observed), and Live feed. The renderer escapes live
-  labels and uses text-only updates for logs and status metadata.
-  Both route cards display **observed** MCP server counts with role-specific union
-  semantics using `/status` partitions: the Orchestrator card shows the unique
-  observed-server union for the orchestrator role, while the Subagents card shows
-  the unique observed-server union across explicit subagent roles. An observed count
-  reflects unique server names observed in lifecycle spans (deduplicated across repeated
-  spans), distinct from `ready` (servers with a recent successful observation within TTL).
-  When no explicit role partition exists, both cards use the global observed count while
-  retaining unattributed/unknown buckets in `/status`.
-  MCP telemetry is partitioned across `byRole`, `byWorkspace`, `byModel`, and `byAgent`.
-  An MCP span ingested before its conversation's model is known is reported under
-  `byModel.unattributed` until that log arrives, and is then attributed to the model.
-  A `configured` entry never overrides an observed server status.
-  The same canonical dimensions are available under
-  `status.codexTelemetry.dimensions` for MCP, tool, hook, skill, and bridge event families.
-  Skill usage is split explicitly: `skillContextsInjected` records loaded context,
-  while `skillUses` and `codexTelemetry.skills.used` count successful explicit
-  activations (`invoke_type=explicit`), verified `skill_used` bridge events, or
-  privacy-safe `skill_used` events from the Codex `PreToolUse` skill-read hook.
-  The hook only recognizes canonical `SKILL.md` reads under approved roots,
-  deduplicates by skill and turn, and fails closed when the parent session cannot
-  be attributed to a workspace. Shell commands such as `cat /.../SKILL.md`
-  supplied to Bash/`exec_command` are matched through the same check and report
-  the identical `source: skill_read` event, folded into the same `skillUses`,
-  `bySkill`, and `codexTelemetry.skills.used` counters. Exposure events remain
-  availability telemetry and are never treated as usage.
-  Per-workspace `byMcp`, `mcpUses`, and `mcpExposed` attribution and model-level MCP counts and breakdowns are
-  embedded directly in existing workspace and model views (following fail-closed
-  unavailable vs empty semantics); no standalone MCP panel exists. Per-workspace
-  named tool, skill, and MCP attribution is sourced from local request context, verified hooks,
-  semantic OTLP joins, and authenticated bridge events. Attribution capability is strictly
-  workspace-scoped rather than a process-wide flag: a workspace without its own verified
-  evidence stays unavailable. Direct concrete-model requests register their session context,
-  enabling session-scoped telemetry (such as `PreToolUse` skill-read hooks) to correlate back
-  to the turn's provider, model, and workspace. Agent-event reporting is decoupled from
-  spawn-tool availability: providers without spawn tools (such as MiniMax and Copilot) still
-  report tool executions, skill exposures, and normalized `mcp_exposed` events authorized by
-  the router-issued request ID. Per-workspace MCP uses count discovery spans and executed MCP
-  tools only, never bare init/health spans or requested/unavailable calls, preserving server
-  health states (`observed`, `ready`, `error`, `stale`). Native Codex requests record the
-  same role-contract MCP exposure through the router because they do not use a bridge event
-  channel. In expanded workspace details,
-  confirmed uses and exposure are displayed together for both Skills and MCP servers as
-  `uses / exposed` per name, keeping uses and exposure semantically distinct. The workspace table
-  header reads `Skill uses / exposed`, and each workspace row uses sums of those same
-  normalized `bySkill` and `bridgeSkills` rows; `skillContextsInjected` remains a separate context-loading metric.
-`GET /status` always
-  returns raw JSON regardless of the `Accept` header, including the current
-  router instance, live agent activity, in-flight requests (`inFlightRequests`), configured models, cooldown countdowns,
-  per-provider attempt and success/failure counters, the last classified
-  failure, `liveFeed` telemetry records (routing, tools, hooks, skills, MCP, OTLP, and runtime), and the legacy bounded routing-event history. The status payload includes `spawnFailures` for failures visible at the router
-boundary: concurrency denials and role requests exhausted by provider failures.
-These records include counts by reason, recent request IDs, and the last reason.
-The dashboard renders the spawn-failure counts by reason/type in a table with
-last-observed timestamps rather than only a combined text summary.
-Failures raised by the Codex app-server before a role request reaches the router
-are not inferable from router traffic alone.
-
-The status payload carries no view of the Codex app-server's own threads. A
-`codexTasks` snapshot from `thread/list` was surfaced here for a while and has
-been removed (see "What the router deliberately does not do" below);
-`tests/router/model-router.test.ts` asserts the field stays absent. The local
-CLI view is:
-
-  ```sh
-  node src/cli/router-status.ts
-  # Add --json for machine-readable output.
-  ```
+- The router-local HTML dashboard has been retired. Use `GET /status` or `pnpm autodev -- router status` for live diagnostics and the AutoDev Console **Usage** surface for historical/aggregate observability. Do not add new UI behavior to the router status endpoint.
 
 ### Grouped usage sections in the human CLI report
 
@@ -882,11 +800,9 @@ headers and body metadata, and also from `session_id` or `conversation_id` in
 the structured `x-codex-turn-metadata` JSON. It never derives a session key
 from a workspace path or task text.
 
-The same status payload's `codexTelemetry` includes Codex OTEL lifecycle and
-skill-injection telemetry (`codex.skill.injected` and
-`codex.thread.skills.*`); see
-[docs/metrics-dashboard.md](metrics-dashboard.md) for the receiver and
-aggregation details.
+The same status payload's `codexTelemetry` includes current Codex OTEL lifecycle and
+skill-injection observations (`codex.skill.injected` and
+`codex.thread.skills.*`). The canonical telemetry ownership, OpenLIT ingestion, and Usage semantics are defined in [`docs/autodev-console-target-state.md`](autodev-console-target-state.md).
 
 Read-only roles (`explorer`, `docs-researcher`, `validator`, and
 `browser-tester`) run with filesystem access broad enough to inspect approved
@@ -1002,22 +918,15 @@ Each skipped candidate records skip reason `"disabled"` and failure class
 `"provider_disabled"`; disabled providers are never probed, attempted, or counted against
 attempt budgets for that role.
 
-#### Live dashboard controls
+#### Provider role controls
 
-The local HTML dashboard at `http://127.0.0.1:4100/dashboard` provides operational controls in the
-**Provider health** panel:
+The retired router HTML dashboard is not a control surface. Provider-role mutations belong to the dedicated AutoDev Control API:
 
-- **Role switches:** Each provider row contains independent labeled iOS-like switches for
-  **Orchestrator** and **Subagent**, using `.btn-provider-toggle` with green enabled and
-  grey disabled states.
-- **In-flight protection:** Each switch is disabled while its own mutation is in flight;
-  `pendingProviderToggles` keys requests by provider and role so the two controls do not
-  block one another.
-- **Immediate refresh:** On successful `POST /v1/providers/:provider` with a role payload,
-  the dashboard calls `refresh()` immediately.
-- **Error feedback:** Failed role mutations render in the top-level `#error` container
-  and re-enable only the affected switch. Provider health rows are not globally dimmed
-  when one role is disabled.
+- `GET /control/providers` returns provider configuration/current role enablement.
+- `PATCH /control/providers/:provider/roles/:role` accepts only `{"enabled": boolean}`.
+- Mutations require the Control API's operator authorization, persist the role setting, audit success/failure, and roll back the in-memory value when persistence fails.
+- The AutoDev Console may render these controls under **Agents**/provider detail views, but browser UI code must call the authenticated Control API path rather than a router-local dashboard endpoint.
+
 
 ### Local, provider-controlled workspace telemetry
 
