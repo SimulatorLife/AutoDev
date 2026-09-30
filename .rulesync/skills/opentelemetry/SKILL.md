@@ -9,12 +9,12 @@ Use OpenTelemetry as AutoDev's standard telemetry transport and interoperability
 
 ## AutoDev target-state pointer
 
-`docs/observability-target-state.md` is the sole source of truth for AutoDev's observability architecture, OpenLIT integration and local patch policy, dashboard variables, Control API, migration status, open gaps, acceptance evidence, and handoff. Read it before project-specific telemetry work and update it in the same change. This skill supplies reusable OTel engineering rules; it must not maintain a competing AutoDev migration plan.
+`docs/autodev-console-target-state.md` is the sole source of truth for AutoDev's observability architecture, OpenLIT integration and local patch policy, dashboard variables, Control API, migration status, open gaps, acceptance evidence, and handoff. Read it before project-specific telemetry work and update it in the same change. This skill supplies reusable OTel engineering rules; it must not maintain a competing AutoDev migration plan.
 
 ## Ownership boundaries
 
 - Prefer standard OpenTelemetry protocols, APIs, SDKs, semantic conventions, and Collector components over custom equivalents.
-- OpenLIT owns observability ingestion, storage, query execution, traces, and dashboards. Keep any AutoDev-maintained OpenLIT patch confined to the generic UI/query bindings and isolated `/autodev` control pages defined in the target-state document.
+- The AutoDev OpenLIT distribution owns observability ingestion, storage, query execution, traces, and dashboards. Keep the observability substrate close to OpenLIT upstream while allowing the AutoDev-centric product shell, resource modules, and control surfaces defined in the target-state document.
 - AutoDev owns correct instrumentation and context at the operation-owning producer, plus domain-specific runtime/control semantics. Do not build a parallel generic historical aggregator or dashboard.
 - Use OpenLIT's first-party OTLP receiver by default. A separate AutoDev-owned Collector requires a concrete, documented policy need; a pass-through hop is not a target.
 - Keep configuration mutations on the authenticated AutoDev Control API. Telemetry and dashboard/query paths are observation-only; mirror a completed control action into OTel only as an observation.
@@ -59,7 +59,7 @@ Do not promote request-, session-, trace-, conversation-, path-, or other high-c
 ## Collector rules
 
 - Keep Collector configuration minimal and purpose-driven.
-- Use OpenLIT's first-party OTLP receiver as the AutoDev target. Add a separate Collector only for a demonstrated need such as pre-export redaction, routing, or fan-out, and record that decision in `docs/observability-target-state.md`.
+- Use OpenLIT's first-party OTLP receiver as the AutoDev target. Add a separate Collector only for a demonstrated need such as pre-export redaction, routing, or fan-out, and record that decision in `docs/autodev-console-target-state.md`.
 - Do not put AutoDev-specific semantic translation in a Collector merely to accommodate a backend or UI.
 - Validate component stability and exact pinned versions separately from configuration syntax.
 - Avoid processing the same signal independently at multiple tiers when doing so can double-count or change meaning.
@@ -85,4 +85,4 @@ When changing telemetry, verify:
 
 `OpenLIT /autodev UI → authenticated server-side proxy → AutoDev Control API → runtime/configuration`
 
-The first path observes; the second authorizes and changes state. For AutoDev-specific decisions, migration, and progress, follow `docs/observability-target-state.md`.
+The first path observes; the second authorizes and changes state. For AutoDev-specific decisions, migration, and progress, follow `docs/autodev-console-target-state.md`.
