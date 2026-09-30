@@ -69,13 +69,14 @@ test("config CLI parsing and config-file I/O have distinct runtime owners", () =
 });
 
 test("router dashboard and chart.js are decommissioned from runtime modules", () => {
-  assert.equal(RUNTIME_MODULES.includes("src/router/dashboard.html"), false);
+  const runtimeModules = RUNTIME_MODULES as readonly string[];
+  assert.equal(runtimeModules.includes("src/router/dashboard.html"), false);
   assert.equal(
-    RUNTIME_MODULES.includes("node_modules/chart.js/dist/chart.umd.min.js"),
+    runtimeModules.includes("node_modules/chart.js/dist/chart.umd.min.js"),
     false
   );
   assert.equal(
-    RUNTIME_MODULES.includes("src/router/lookback-aggregator.ts"),
+    runtimeModules.includes("src/router/lookback-aggregator.ts"),
     false
   );
   assert.equal(

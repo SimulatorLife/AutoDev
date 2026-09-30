@@ -203,7 +203,8 @@ function computeNextVersion(currentVersion: string | undefined): string {
   if (!currentVersion) return "1.0.0";
   const parts = currentVersion.split(".").map((p) => Number.parseInt(p));
   if (parts.length === 3 && !parts.some((n) => Number.isNaN(n))) {
-    parts[2] += 1;
+    const patch = parts[2] ?? 0;
+    parts[2] = patch + 1;
     return parts.join(".");
   }
   return `${currentVersion}.1`;
