@@ -383,3 +383,82 @@ Security requirements:
 - redacted audit record for each mutation;
 - no bearer token, raw actor identifier, secret, or mutation body in telemetry.
 
+A completed control action may emit a bounded `autodev.control.mutation` observation; OTel is not the command path.
+
+## 11. OpenLIT distribution and maintenance strategy
+
+Maintain a dedicated AutoDev OpenLIT fork/distribution. Upstream contributions are optional and must never block AutoDev.
+
+Current verified baseline:
+
+- OpenLIT `openlit-2.1.0` at commit `9938c66638666ca5d3bcb850350faa82e510924b`;
+- published image `ghcr.io/openlit/openlit@sha256:94552ccd09379b5e2fec3c51c4fec1b41d88d6b56b0a5ccc895c116673884fa8`;
+- verified local arm64 image `autodev-openlit:openlit-9938c6663866-p85c36c5cf93c4ac2`;
+- local image digest `sha256:09fc25e5e141e723744b758857105af6a5e9747eab942d10133df7e7dd2374ab`;
+- lock file `$CODEX_HOME/openlit-patched.lock`;
+- telemetry retention currently 730 hours (~30 days) with durable local volumes and no automated backup.
+
+The current patch set established receiver bearer auth, generic dashboard variable/query bindings, Usage widgets, and isolated AutoDev control UI. The target fork may diverge further in **product shell, navigation, AutoDev domain modules, and control pages**, while keeping ingestion, OTel semantics, storage schemas, and generic query execution as close to upstream as practical.
+
+Do not rewrite foundational OpenLIT storage/query abstractions merely to remove hidden singleton organisation/project/environment concepts.
+
+Receiver authentication remains mandatory. The pinned upstream receiver does not natively enforce the AutoDev bearer requirement; retain the local `bearertokenauth` patch for OTLP/HTTP and OTLP/gRPC until the pinned upstream behavior genuinely replaces it.
+
+## 12. Current verified implementation state
+
+The original M0-M6 observability migration is complete.
+
+- The legacy `/dashboard`, `src/router/dashboard.html`, Chart.js dashboard asset, lookback aggregator/history-only dashboard pipeline, and pass-through AutoDev Collector are decommissioned.
+- AutoDev producers emit logical-request/physical-attempt telemetry and owned MCP/skill observations.
+- The Control API has a dedicated control-only listener (default `4101` in the current local integration); the model/OTLP router remains separate.
+- OpenLIT receiver authentication, ClickHouse persistence/TTL, generic dashboard variables, Usage queries, and the current `/autodev` control surfaces have been verified.
+- All 11 Usage widgets (7 router + 4 MCP) have live-query evidence with the expected variable/scope behavior.
+- RuleSync prompt, agent, model, and workspace projections are currently synchronized into OpenLIT for visibility. The **target** is to finish making RuleSync itself authoritative for all supported agent-facing configuration surfaces rather than preserving parallel native authorities.
+- AutoDev uses one canonical OpenLIT project/workspace boundary internally; AutoDev workspaces remain OTel analytical attributes.
+- The latest recorded repository validation for the completed migration was 1163 passed, 0 failed, 2 skipped, with focused patch/variable checks green.
+
+### Remaining product-fork work
+
+The migration below is the next phase, not a reason to restore old observability paths:
+
+1. Replace OpenLIT's generic product navigation with the AutoDev information architecture.
+2. Hide/collapse organisation/project/environment management to implicit singleton/default context.
+3. Make Agents, Providers, Models, MCP Servers, Skills, Workspaces, Routing, Runtime and Telemetry first-class modules.
+4. Complete RuleSync canonical ownership for agent/subagent definitions, commands/prompts, permissions and other supported agent-facing config still held in duplicate native sources.
+5. Route RuleSync-owned console mutations through typed Control API operations that edit/validate/generate/apply canonical RuleSync state.
+6. Compose observability and control on the same resource pages without merging their backend responsibilities.
+7. Add desired/actual/pending/error state consistently across mutable resources.
+
+## 13. Operational entry points
+
+Current local stack lifecycle:
+
+```bash
+bash scripts/openlit/up.sh
+bash scripts/openlit/down.sh
+```
+
+Current out-of-band OpenLIT projections:
+
+```bash
+pnpm openlit:sync-prompts
+pnpm openlit:sync-agents
+pnpm openlit:sync-models
+pnpm openlit:sync-workspaces
+```
+
+These sync commands populate OpenLIT read models; they do not supersede canonical RuleSync/AutoDev configuration ownership.
+
+The asynchronous GitHub issue metrics workflow remains a separate GitHub-development reporting surface (`.github/workflows/metrics-dashboard.yml`, issue #2). It is not a replacement observability backend for AutoDev runtime telemetry.
+
+## 14. Reference projects and patterns
+
+Use existing projects as architecture/interaction references rather than inventing each control surface from scratch.
+
+| Project | Primary use | Borrow |
+| --- | --- | --- |
+| **OpenLIT** | observability foundation | OTel ingestion, ClickHouse/querying, traces/metrics/logs, dashboards, cost/usage, Controller desired-state patterns |
+| **LiteLLM** | Providers, Models, MCP Servers | provider/model catalogs, deployments, enablement, routing/fallbacks, MCP management, limits |
+| **LangWatch** | overall product UX | unified AI observability + operational/provider/gateway controls |
+| **MCPJam Inspector** | MCP detail/debugging | tools/resources/prompts, connection state, requests, logs, auth/activity inspection |
+| **Unleash** | Skills/scoped capabilities | enabled state plus targeting/constraints/role/workspace scope |
