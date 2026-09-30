@@ -1,10 +1,12 @@
 # AutoDev Observability Target State
 
-## Goal
+## Problem statement
 
-Use a standard, OpenTelemetry-native observability architecture with minimal custom infrastructure.
+AutoDev currently risks owning too much custom observability and control UI instead of relying on standard telemetry and an established AI-first platform. The goal is to avoid bespoke metrics schemas, backends, adapters, and duplicate dashboards while still supporting AutoDev-specific runtime controls.
 
-AutoDev should emit normal OpenTelemetry telemetry using established semantic conventions wherever possible. OpenLIT should consume that telemetry directly and provide storage, aggregation, tracing, analytics, and dashboards without AutoDev-specific adapters, transformations, or duplicate observability systems.
+## Goal / Target State
+
+Use a standard, OpenTelemetry-native observability architecture with minimal custom infrastructure. AutoDev should emit standard traces, metrics, and logs over OTLP using official OpenTelemetry GenAI/MCP semantic conventions wherever possible, while OpenLIT serves as the primary observability backend and UI for storage, aggregation, tracing, analytics, and dashboards without AutoDev-specific adapters, transformations, duplicate telemetry models, or parallel observability systems. AutoDev-specific runtime controls should be limited to a small TypeScript control API and a thin OpenLIT UI extension.
 
 ## Target Architecture
 
