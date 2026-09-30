@@ -572,9 +572,11 @@ Do not remove an incumbent path until the replacement has end-to-end evidence. D
 
 ## 16. Secondary-document policy
 
-- `docs/AUTODEV_PLATFORM_MIGRATION.md` remains historical/broader platform context. Any older observability or RuleSync ownership guidance that conflicts with this document is superseded.
+- This document is the only broad AutoDev Console/observability/configuration target-state document. Completed migration ledgers and superseded target-state docs should be deleted rather than retained as competing active guidance.
+- `docs/README.md` indexes the remaining focused operational/design docs and their scope.
 - `.rulesync/skills/opentelemetry/SKILL.md` contains reusable OTel engineering rules and must point here for AutoDev-specific decisions.
-- This document replaces the former `docs/observability-target-state.md` and `docs/metrics-dashboard.md`; do not recreate separate competing target/runbook documents.
+- Focused docs such as provider routing, local setup, prompt ownership, or codebase context may document current operation or subsystem-specific design, but must explicitly defer to this document on shared ownership/target-state questions.
+- This document replaces the former observability target/runbook and broader platform/UI migration ledgers; do not recreate parallel broad plans.
 - OpenLIT and OTel upstream behavior is evidence and a dependency to pin/test, not a prerequisite for AutoDev to ship local extensions.
 
 ## Final target

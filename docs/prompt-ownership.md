@@ -1,23 +1,24 @@
 # Prompt ownership
 
-AutoDev has one prompt-agnostic execution path: `.github/workflows/run-prompt.yml`.
-It accepts a target repository and reads one Markdown prompt from either:
+The canonical AutoDev Console/configuration target is [`docs/autodev-console-target-state.md`](autodev-console-target-state.md).
 
-- `prompt_repository: SimulatorLife/AutoDev`: the AutoDev-owned generic
-  catalog under `.rulesync/commands/*.md` in AutoDev.
-- `prompt_repository: <target repository>`: the selected repository's
-  `.agents/prompts/*.md` directory.
+## AutoDev-owned prompts
 
-Target repositories own their domain context. For example, GMLoop keeps its
-GameMaker/tooling prompts and RacingGame keeps its gameplay/UI/browser prompts.
-AutoDev must not embed those assumptions in a generic prompt or create a
-workflow file for each prompt.
+AutoDev's generic prompt/command catalog under `.rulesync/commands/*.md` is the canonical tracked source for AutoDev-owned prompts. Provider-specific prompt files and OpenLIT Prompt views are projections/read models, not independent editable sources.
 
-Prompt paths are restricted to `.rulesync/commands/*.md` (AutoDev-owned) and
-`.agents/prompts/*.md` (target repository); arbitrary file reads are
-rejected. `run-prompt.yml` accepts either prefix and `_agent-open-pr-and-ping.yml`
-routes by `prompt_repository`: `SimulatorLife/AutoDev` resolves to the
-AutoDev-owned catalog, the target repository resolves to a path under that
-repository, and any other repository is fetched as an external prompt. The
-runner validates that the selected prompt exists and is non-empty before
-creating a target PR.
+The future **Prompts** console surface may browse, edit, preview, diff, and link usage/evaluation history, but a mutation of an AutoDev-owned prompt must update the canonical RuleSync source through the typed Control API and then validate/regenerate the relevant projections.
+
+## Repository-owned prompts
+
+AutoDev has one prompt-agnostic execution path: `.github/workflows/run-prompt.yml`. It accepts a target repository and reads one Markdown prompt from either:
+
+- `prompt_repository: SimulatorLife/AutoDev`: the AutoDev-owned generic catalog under `.rulesync/commands/*.md`.
+- `prompt_repository: <target repository>`: that repository's domain-specific `.agents/prompts/*.md` catalog.
+
+Target repositories own their domain context. For example, RacingGame may keep gameplay/UI/browser prompts that do not belong in AutoDev's generic catalog. Those repository-owned prompts are not silently copied into AutoDev or OpenLIT as a second source of truth; the console may surface them as repository-owned/read-only context unless that repository itself adopts RuleSync as its canonical source.
+
+Prompt paths are restricted to the supported catalog prefixes; arbitrary file reads are rejected. The runner validates that the selected prompt exists and is non-empty before creating a target PR.
+
+## Ownership rule
+
+> **One editable owner per prompt.** AutoDev-owned prompts live in RuleSync; target-specific prompts live with the target repository. Generated provider files and observability/read-model records are never authoritative.

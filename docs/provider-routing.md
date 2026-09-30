@@ -30,13 +30,13 @@ alias.
 
 ### Single source of truth for model versions (DRY model architecture)
 
-Model version management is strictly DRY (Don't Repeat Yourself). The repository enforces that changing or adding a model version is performed in **ONE config file, ONE single value**: [`config/model-routing.json`](file:///Users/henrykirk/AutoDev/config/model-routing.json).
+Model version management is strictly DRY (Don't Repeat Yourself). The repository enforces that changing or adding a model version is performed in **ONE config file, ONE single value**: [`config/model-routing.json`](file://config/model-routing.json).
 
-- **Sole Source of Truth**: [`config/model-routing.json`](file:///Users/henrykirk/AutoDev/config/model-routing.json) defines all provider models under `providers.<provider>.models`. To change the Codex orchestrator model, edit `providers.codex.models.orchestrator` (and `default`). To change the smart model, edit `providers.codex.models.smart`.
-- **Derived Model Catalog**: The Codex model catalog ([`config/catalogs/codex-model-catalog.json`](file:///Users/henrykirk/AutoDev/config/catalogs/codex-model-catalog.json)) is an automatically generated artifact rendered directly from [`config/model-routing.json`](file:///Users/henrykirk/AutoDev/config/model-routing.json) via [`renderModelCatalog`](file:///Users/henrykirk/AutoDev/src/config/render-model-catalog.ts) (CLI: `autodev render catalog`). The platform installer materializes and validates this catalog during `bash scripts/install.sh` and `node src/cli/install.ts --check`.
-- **Dynamic Catalog Fallback**: The router's HTTP catalog endpoint (`GET /v1/models`) dynamically includes configured Codex models from the active [`RoutingPolicy`](file:///Users/henrykirk/AutoDev/src/router/routing.ts) even before the catalog file is re-rendered.
-- **Zero-Code-Change Model Upgrades**: Tests, contract fixtures, telemetry trackers, and hooks dynamically resolve model identifiers via [`RoutingPolicy.configuredModel`](file:///Users/henrykirk/AutoDev/src/router/routing.ts), [`CONFIGURED_ORCHESTRATOR_MODEL`](file:///Users/henrykirk/AutoDev/src/router/routing.ts), and [`CONFIGURED_SMART_MODEL`](file:///Users/henrykirk/AutoDev/src/router/routing.ts) rather than hardcoding concrete model names.
-- **Enforcement & Regressions**: The test suite [`tests/model-routing-dry.test.ts`](file:///Users/henrykirk/AutoDev/tests/model-routing-dry.test.ts) locks in this single-source-of-truth invariant, ensuring that updating model strings in configuration automatically propagates through routing, candidate generation, metadata synthesis, and catalog materialization without breaking tests or requiring compatibility wrappers.
+- **Sole Source of Truth**: [`config/model-routing.json`](file://config/model-routing.json) defines all provider models under `providers.<provider>.models`. To change the Codex orchestrator model, edit `providers.codex.models.orchestrator` (and `default`). To change the smart model, edit `providers.codex.models.smart`.
+- **Derived Model Catalog**: The Codex model catalog ([`config/catalogs/codex-model-catalog.json`](file://config/catalogs/codex-model-catalog.json)) is an automatically generated artifact rendered directly from [`config/model-routing.json`](file://config/model-routing.json) via [`renderModelCatalog`](file://src/config/render-model-catalog.ts) (CLI: `autodev render catalog`). The platform installer materializes and validates this catalog during `bash scripts/install.sh` and `node src/cli/install.ts --check`.
+- **Dynamic Catalog Fallback**: The router's HTTP catalog endpoint (`GET /v1/models`) dynamically includes configured Codex models from the active [`RoutingPolicy`](file://src/router/routing.ts) even before the catalog file is re-rendered.
+- **Zero-Code-Change Model Upgrades**: Tests, contract fixtures, telemetry trackers, and hooks dynamically resolve model identifiers via [`RoutingPolicy.configuredModel`](file://src/router/routing.ts), [`CONFIGURED_ORCHESTRATOR_MODEL`](file://src/router/routing.ts), and [`CONFIGURED_SMART_MODEL`](file://src/router/routing.ts) rather than hardcoding concrete model names.
+- **Enforcement & Regressions**: The test suite [`tests/model-routing-dry.test.ts`](file://tests/model-routing-dry.test.ts) locks in this single-source-of-truth invariant, ensuring that updating model strings in configuration automatically propagates through routing, candidate generation, metadata synthesis, and catalog materialization without breaking tests or requiring compatibility wrappers.
 
 The editable provider/model choices live in
 `config/model-routing.json`: `providerGroups` defines ordered fallback groups per capability tier,
@@ -620,7 +620,7 @@ The router makes its effective choice visible in two ways:
   `upstreamTimeoutMs`, retry parameters (`upstreamRetryBaseMs`,
   `upstreamRetryMaxMs`, `concreteStatusMaxAttempts`, `upstreamTransportMaxAttempts`),
   `shutdownDrainTimeoutMs`, and `maxConcurrentThreadsPerSession`.
-- The status payload and dashboard report the effective Codex per-session
+- The live `/status` payload reports the effective Codex per-session
   concurrency limit, the number of active session buckets, active role-based
   subagent slots, and denials caused by that limit. An active session is a
   session currently holding at least one role-based subagent slot; it is not a
@@ -628,8 +628,7 @@ The router makes its effective choice visible in two ways:
   local configuration permits one active subagent per session; callers must
   serialize additional work or deliberately raise the
   configured limit after checking provider capacity. The deprecated `max_threads`
-  alias is no longer parsed, surfaced, or used as a fallback (see
-  Phase 0 concurrency slice in `docs/AUTODEV_PLATFORM_MIGRATION.md`); only
+  alias is no longer parsed, surfaced, or used as a fallback; only
   the canonical Codex key `max_concurrent_threads_per_session` -- multiline
   `[agents]` block or composer-generated inline `agents = { ... }` table --
   feeds admission. Role requests are gated before provider selection;
@@ -658,14 +657,12 @@ The router makes its effective choice visible in two ways:
   bucket contains a privacy-safe repository label (remote `owner/repository`
   when available, otherwise the cwd basename), the cwd basename, totals, and
   nested `byRole`, `byModel`, and `byProvider` dimensions. Full absolute paths,
-  prompts, credentials, and remote URLs are not stored. The dashboard renders
-  this as **Usage by workspace**; missing workspace metadata is attributed to
+  prompts, credentials, and remote URLs are not stored. Missing workspace metadata is attributed to
   `unknown` rather than guessed from the router daemon's cwd. The workspace
   bucket's scalar `toolCalls` is a response-output count inferred from
   Responses API tool-call items on that workspace's turns, the same inference
   the top-level `usage.totals.toolCalls` uses -- it is not a count of
-  OTLP-named tool invocations, and the dashboard labels the column
-  accordingly rather than implying the two are the same measurement.
+  OTLP-named tool invocations. Historical/cross-workspace visualization belongs in the AutoDev Console **Usage** surface, not a router-local HTML dashboard.
 - A workspace bucket may additionally carry `byTool`, `bySkill`, `byMcp`, and
   coverage counters. These rows come from local causally-linked evidence:
   AutoDev request context, verified hooks, semantic OTLP `codex.tool_result`
@@ -678,93 +675,14 @@ The router makes its effective choice visible in two ways:
   global metrics by guesswork, never infers ownership from static configurations or
   ambient concurrency, and attributes events lacking verified metadata to explicit
   `unattributed` dimensions. Requested and executed provider events remain separate.
-- The dashboard's Orchestrator & subagent usage panel shows Orchestrator and
-  Subagents cards from their explicit role buckets. Any role-less activity is
-  shown in a separate `Unattributed` card rather than guessed into either
-  role. The three visible role categories always reconcile to
-  `usage.totals.active`.
+- Role accounting keeps explicit Orchestrator, Subagent, and Unattributed buckets. Role-less activity stays `Unattributed` rather than being guessed into either role, and the buckets reconcile to `usage.totals.active`.
 - `status.subagents` counts every subagent spawned behind the router,
   regardless of which provider spawned it and by which mechanism. This is
   distinct from `usage.byRole`, which counts *router requests* made by
   subagents: a bridge-native child makes no router request at all, so it
-  appears in `status.subagents` and nowhere else. The dashboard renders it as
-  **Subagents spawned** and `src/cli/router-status.ts` prints it under
+  appears in `status.subagents` and nowhere else. `src/cli/router-status.ts` prints it under
   `Subagents spawned:`. See "Counting subagents across providers".
-- Open `http://127.0.0.1:4100/dashboard` in a browser for the live HTML
-  dashboard; it fetches `/status` on load and polls the same JSON endpoint every
-  three seconds. The dashboard is componentized: KPI cards lead Provider
-  health, Orchestrator & subagent usage (with Spawn breakdown and Spawn
-  failures), Usage by workspace, Skill telemetry (with Skill context
-  telemetry), Hooks & runtime telemetry, Operational summary (with Native
-  metrics observed), and Live feed. The renderer escapes live
-  labels and uses text-only updates for logs and status metadata.
-  Both route cards display **observed** MCP server counts with role-specific union
-  semantics using `/status` partitions: the Orchestrator card shows the unique
-  observed-server union for the orchestrator role, while the Subagents card shows
-  the unique observed-server union across explicit subagent roles. An observed count
-  reflects unique server names observed in lifecycle spans (deduplicated across repeated
-  spans), distinct from `ready` (servers with a recent successful observation within TTL).
-  When no explicit role partition exists, both cards use the global observed count while
-  retaining unattributed/unknown buckets in `/status`.
-  MCP telemetry is partitioned across `byRole`, `byWorkspace`, `byModel`, and `byAgent`.
-  An MCP span ingested before its conversation's model is known is reported under
-  `byModel.unattributed` until that log arrives, and is then attributed to the model.
-  A `configured` entry never overrides an observed server status.
-  The same canonical dimensions are available under
-  `status.codexTelemetry.dimensions` for MCP, tool, hook, skill, and bridge event families.
-  Skill usage is split explicitly: `skillContextsInjected` records loaded context,
-  while `skillUses` and `codexTelemetry.skills.used` count successful explicit
-  activations (`invoke_type=explicit`), verified `skill_used` bridge events, or
-  privacy-safe `skill_used` events from the Codex `PreToolUse` skill-read hook.
-  The hook only recognizes canonical `SKILL.md` reads under approved roots,
-  deduplicates by skill and turn, and fails closed when the parent session cannot
-  be attributed to a workspace. Shell commands such as `cat /.../SKILL.md`
-  supplied to Bash/`exec_command` are matched through the same check and report
-  the identical `source: skill_read` event, folded into the same `skillUses`,
-  `bySkill`, and `codexTelemetry.skills.used` counters. Exposure events remain
-  availability telemetry and are never treated as usage.
-  Per-workspace `byMcp`, `mcpUses`, and `mcpExposed` attribution and model-level MCP counts and breakdowns are
-  embedded directly in existing workspace and model views (following fail-closed
-  unavailable vs empty semantics); no standalone MCP panel exists. Per-workspace
-  named tool, skill, and MCP attribution is sourced from local request context, verified hooks,
-  semantic OTLP joins, and authenticated bridge events. Attribution capability is strictly
-  workspace-scoped rather than a process-wide flag: a workspace without its own verified
-  evidence stays unavailable. Direct concrete-model requests register their session context,
-  enabling session-scoped telemetry (such as `PreToolUse` skill-read hooks) to correlate back
-  to the turn's provider, model, and workspace. Agent-event reporting is decoupled from
-  spawn-tool availability: providers without spawn tools (such as MiniMax and Copilot) still
-  report tool executions, skill exposures, and normalized `mcp_exposed` events authorized by
-  the router-issued request ID. Per-workspace MCP uses count discovery spans and executed MCP
-  tools only, never bare init/health spans or requested/unavailable calls, preserving server
-  health states (`observed`, `ready`, `error`, `stale`). Native Codex requests record the
-  same role-contract MCP exposure through the router because they do not use a bridge event
-  channel. In expanded workspace details,
-  confirmed uses and exposure are displayed together for both Skills and MCP servers as
-  `uses / exposed` per name, keeping uses and exposure semantically distinct. The workspace table
-  header reads `Skill uses / exposed`, and each workspace row uses sums of those same
-  normalized `bySkill` and `bridgeSkills` rows; `skillContextsInjected` remains a separate context-loading metric.
-`GET /status` always
-  returns raw JSON regardless of the `Accept` header, including the current
-  router instance, live agent activity, in-flight requests (`inFlightRequests`), configured models, cooldown countdowns,
-  per-provider attempt and success/failure counters, the last classified
-  failure, `liveFeed` telemetry records (routing, tools, hooks, skills, MCP, OTLP, and runtime), and the legacy bounded routing-event history. The status payload includes `spawnFailures` for failures visible at the router
-boundary: concurrency denials and role requests exhausted by provider failures.
-These records include counts by reason, recent request IDs, and the last reason.
-The dashboard renders the spawn-failure counts by reason/type in a table with
-last-observed timestamps rather than only a combined text summary.
-Failures raised by the Codex app-server before a role request reaches the router
-are not inferable from router traffic alone.
-
-The status payload carries no view of the Codex app-server's own threads. A
-`codexTasks` snapshot from `thread/list` was surfaced here for a while and has
-been removed (see "What the router deliberately does not do" below);
-`tests/router/model-router.test.ts` asserts the field stays absent. The local
-CLI view is:
-
-  ```sh
-  node /Users/henrykirk/AutoDev/src/cli/router-status.ts
-  # Add --json for machine-readable output.
-  ```
+- The router-local HTML dashboard has been retired. Use `GET /status` or `pnpm autodev -- router status` for live diagnostics and the AutoDev Console **Usage** surface for historical/aggregate observability. Do not add new UI behavior to the router status endpoint.
 
 ### Grouped usage sections in the human CLI report
 
@@ -799,9 +717,7 @@ The router cleanly separates user-facing agent workflow activity from transport-
   The router emits `status.agents` with schema `autodev-agent-status-v1`.
   `canonicalLiveCount` is the single canonical live-agent count, evaluated
   from `projectLiveAgents(at)` at the same `now` `getRouterStatus(now)`
-  passes through. The dashboard's `Active agents` KPI reads this field
-  exclusively; it no longer falls back to `status.liveActivity` or
-  `status.usage.totals.active` when the projection is absent. `byState`
+  passes through. Live-status consumers must read this field exclusively rather than falling back to `status.liveActivity` or `status.usage.totals.active`. `byState`
   is the complete tracker histogram (live states, terminal `finished`/
   `failed`, and derived `stale`). `liveByKind` counts only actual agent
   kinds (`session` and `bridge_subagent`), never `subagent_slot`
@@ -816,7 +732,7 @@ The router cleanly separates user-facing agent workflow activity from transport-
   at the same timestamp. The fixture and contract test in
   `tests/fixtures/contracts/agent-reconciliation-contract.json` and
   `tests/agent-reconciliation-contract.test.ts` freeze this shape.
-- **`Active agents` KPI and role breakdown:** The dashboard reads
+- **Canonical live-agent count and role breakdown:** Consumers read
   `status.agents.canonicalLiveCount`, `status.agents.liveByRole`, and
   `status.agents.liveByWorkspace` directly. It never takes a `Math.max()`
   of that canonical count against provider active-request counts
@@ -840,7 +756,7 @@ The router cleanly separates user-facing agent workflow activity from transport-
   admission counters. `status.agents.slotVsAgent` makes their relationship
   with live agents explicit without folding slots into the KPI.
 - **In-flight requests transport diagnostics (`inFlightRequests`):**
-  Represents currently open HTTP connections between the router daemon and upstream model provider endpoints. Surfaced separately in the dashboard's Operational summary (`In-flight requests`) and the Status CLI's dedicated `In-Flight` column.
+  Represents currently open HTTP connections between the router daemon and upstream model provider endpoints. It is surfaced separately in the Status CLI's dedicated `In-Flight` column and must not be conflated with live-agent identity.
 
 ### Lifecycle event contract and configurable TTL
 
@@ -882,11 +798,9 @@ headers and body metadata, and also from `session_id` or `conversation_id` in
 the structured `x-codex-turn-metadata` JSON. It never derives a session key
 from a workspace path or task text.
 
-The same status payload's `codexTelemetry` includes Codex OTEL lifecycle and
-skill-injection telemetry (`codex.skill.injected` and
-`codex.thread.skills.*`); see
-[docs/metrics-dashboard.md](metrics-dashboard.md) for the receiver and
-aggregation details.
+The same status payload's `codexTelemetry` includes current Codex OTEL lifecycle and
+skill-injection observations (`codex.skill.injected` and
+`codex.thread.skills.*`). The canonical telemetry ownership, OpenLIT ingestion, and Usage semantics are defined in [`docs/autodev-console-target-state.md`](autodev-console-target-state.md).
 
 Read-only roles (`explorer`, `docs-researcher`, `validator`, and
 `browser-tester`) run with filesystem access broad enough to inspect approved
@@ -947,43 +861,21 @@ history. Rotate logs by restarting the router: launchd closes and reopens the
 log file handles, and the ensure hook reuses the same fallback PID file
 without leaking a stale tracker.
 
-### Provider administration, disable semantics, and loopback controls
+### Provider administration and disable semantics
 
-The router exposes a loopback-restricted administrative endpoint for enabling and disabling
-individual providers dynamically at runtime without restarting the daemon:
+Provider role enablement is mutable runtime/configuration state. The supported control boundary is the dedicated AutoDev Control API, not the model-router HTTP surface:
 
-```http
-POST /v1/providers/:provider
-Content-Type: application/json
+- `GET /control/providers` returns provider configuration and current role enablement.
+- `PATCH /control/providers/:provider/roles/:role` accepts only `{"enabled": boolean}`.
+- Mutations require operator authorization, are audited, persist atomically, and roll back the in-memory change when persistence fails.
 
-{ "enabled": false }
-```
-
-#### Loopback mutation endpoint specification
-
-- **Loopback-only access:** Enforced via `isLoopbackAddress` on the incoming socket
-  `remoteAddress` (`127.0.0.1`, `::1`, `::ffff:127.0.0.1`, and `localhost`). Calls from
-  non-loopback IP addresses are rejected immediately with HTTP 403 `router_access_denied`.
-- **HTTP method restriction:** Only `POST` is permitted; other methods return HTTP 405
-  `router_method_not_allowed` with `Allow: POST`.
-- **Provider validation:** `:provider` is trimmed case-insensitively and validated against
-  configured providers and registered routes; unknown providers return HTTP 404
-  `router_unknown_provider`.
-- **Payload validation:** The body must contain `role` (`"orchestrator"` or `"subagent"`)
-  and boolean `enabled`, for example `{ "role": "orchestrator", "enabled": false }`.
-  Invalid JSON, role, or enabled values return HTTP 400.
-- **Response shape:** Success returns HTTP 200 JSON containing `ok`, `provider`, `role`,
-  `enabled`, and the role's resulting status.
+The router may retain a loopback-only direct mutation endpoint temporarily as a compatibility implementation detail while callers migrate, but it is not an AutoDev Console/API contract and must not be used by new UI or automation. The canonical target is to remove duplicate mutation paths.
 
 #### Persistence and default behavior
 
 - **Default state:** Every configured provider starts enabled for both roles.
-- **Immediate atomic persistence:** Each role mutation immediately calls
-  `persistRouterStateNow()` and writes `disabledOrchestratorProviders` and
-  `disabledSubagentProviders` atomically to `$CODEX_HOME/codex-router-state.json`.
-- **Survives restarts:** `loadRouterState()` restores both role-specific arrays.
-  The persistence envelope is version `v4`; old single-toggle state is not migrated.
-
+- **Immediate atomic persistence:** A successful role mutation persists `disabledOrchestratorProviders` and `disabledSubagentProviders` atomically to `$CODEX_HOME/codex-router-state.json`.
+- **Survives restarts:** router-state loading restores both role-specific arrays.
 
 #### Disable semantics across routing tiers
 
@@ -1002,28 +894,19 @@ Each skipped candidate records skip reason `"disabled"` and failure class
 `"provider_disabled"`; disabled providers are never probed, attempted, or counted against
 attempt budgets for that role.
 
-#### Live dashboard controls
+#### Provider role controls
 
-The local HTML dashboard at `http://127.0.0.1:4100/dashboard` provides operational controls in the
-**Provider health** panel:
+The retired router HTML dashboard is not a control surface. Provider-role mutations belong to the dedicated AutoDev Control API:
 
-- **Role switches:** Each provider row contains independent labeled iOS-like switches for
-  **Orchestrator** and **Subagent**, using `.btn-provider-toggle` with green enabled and
-  grey disabled states.
-- **In-flight protection:** Each switch is disabled while its own mutation is in flight;
-  `pendingProviderToggles` keys requests by provider and role so the two controls do not
-  block one another.
-- **Immediate refresh:** On successful `POST /v1/providers/:provider` with a role payload,
-  the dashboard calls `refresh()` immediately.
-- **Error feedback:** Failed role mutations render in the top-level `#error` container
-  and re-enable only the affected switch. Provider health rows are not globally dimmed
-  when one role is disabled.
+- `GET /control/providers` returns provider configuration/current role enablement.
+- `PATCH /control/providers/:provider/roles/:role` accepts only `{"enabled": boolean}`.
+- Mutations require the Control API's operator authorization, persist the role setting, audit success/failure, and roll back the in-memory value when persistence fails.
+- The AutoDev Console may render these controls under **Agents**/provider detail views, but browser UI code must call the authenticated Control API path rather than a router-local dashboard endpoint.
 
-### Local, provider-controlled workspace telemetry
 
-The router extends the `usage.byWorkspace` contract with first-class event
-counters so the dashboard can fail closed on per-workspace tool and skill
-attribution. A workspace must receive a first-class event from a provider
+### Local provider/workspace diagnostics
+
+The router extends the live `usage.byWorkspace` diagnostic contract with first-class event counters so attribution can fail closed on per-workspace tool and skill evidence. A workspace must receive a first-class event from a provider
 bridge before its `byTool` and `bySkill` rows move off the `unavailable`
 state; OTLP datapoints alone are not sufficient because the OTLP exporter
 only describes what Codex's own runtime emitted.
@@ -1034,7 +917,7 @@ The new fields on every `usage.byWorkspace[*]` bucket are:
   this workspace. Reaching a positive value is what unlocks per-workspace
   tool attribution.
 - `toolsRequested`: count of `tool_requested` events. A model that asked
-  for a tool but never ran it still moves this counter so the dashboard can
+  for a tool but never ran it still moves this counter so diagnostics can
   distinguish "the provider never offered the tool" from "the provider
   offered it but something stopped it from running".
 - `toolsUnavailable`: count of `tool_unavailable` events with the workspace
@@ -1047,19 +930,12 @@ The new fields on every `usage.byWorkspace[*]` bucket are:
   `toolsExecuted`/`skillsExposed` because it counts unjoined coverage rather
   than first-class evidence.
 - `bridgeTools`: the raw `tool_executed` rows the bridge reported for this
-  workspace (`{ tool, server, count, byStatus }`). The dashboard's per-workspace
-  "Tools" section prefers the OTLP-sourced `byTool` join and falls back to
-  `bridgeTools` only when `byTool` is unavailable or empty, so the two are
-  never summed into the same total.
+  workspace (`{ tool, server, count, byStatus }`). It is bridge evidence and must not be summed with OTLP-sourced `byTool` into the same total.
 - `bridgeSkills`: the raw `skill_exposed` rows the bridge reported for this
   workspace (`{ skill, count }`) -- evidence a skill was made available to the
   workspace, not that it was used. This is a distinct claim from `bySkill`
   (confirmed uses, the same source as `skillUses`): a workspace can have
-  `bridgeSkills` entries with zero `bySkill` entries. The dashboard displays
-  them together in the "Skills" section as `uses / exposed` (e.g.
-  `orchestration 0 / 1` or `lsp-mcp-server 5 / 10`) rather than folding
-  exposure into confirmed uses or treating an exposed workspace as if nothing
-  were observed there.
+  `bridgeSkills` entries with zero `bySkill` entries. Consumers must keep exposure and confirmed use distinct rather than folding them into one count.
 
 The companion OTLP metric `codex.tool_result` is the runtime-causal "the
 tool call landed" signal. Each datapoint carries a `call_id` (the same id
@@ -1070,9 +946,7 @@ result against the call id and reports:
   tool call (unique `call_id`).
 - `unattributed`: number of result events whose `call_id` was either missing
   or had already been counted under another datapoint. This is the raw
-  coverage the dashboard reports as "executed / unattributed" so the
-  difference between "we observed N result events" and "we observed N
-  executed tools" is visible without reading the OTLP JSON.
+  coverage needed to distinguish observed result events from causally resolved executed tools.
 
 The router also persists a derived snapshot of the local Codex state
 database under `status.codexState`. The collector is read-only, opens
@@ -1247,9 +1121,7 @@ time, because that is what a model actually reads. Concurrency denials return HT
 A started stream never ends without a terminal event on any of these paths: an
 exhausted chain, a concrete-request failure, or an internal router error will
 close the stream rather than leaving the caller with a truncated body that is
-indistinguishable from a hung provider. The dashboard's
-`Spawn failures` table renders the recent request IDs by reason so the
-same header can be traced from the API call through the router's event log.
+indistinguishable from a hung provider. Recent spawn failures retain request IDs and reasons in live status/event diagnostics so the same header can be traced from the API call through the router's event log.
 The router's `concurrency.scope` is `router-admitted-child-requests`:
 `activeSubagentThreads` reports only child requests currently admitted by the
 router, not open Codex app child handles or provider CLI processes. Cumulative
@@ -1283,7 +1155,7 @@ The normal CLI path for an external role remains the repository launcher. It
 starts the selected provider hook and local CLI profile:
 
 ```sh
-/Users/henrykirk/AutoDev/scripts/run-provider-agent.sh \
+scripts/run-provider-agent.sh \
   --role explorer --prompt 'Bounded task; report evidence.'
 ```
 
@@ -1646,20 +1518,14 @@ Two details follow from that:
   children that had all completed.
 - A child whose spawn step exported no role is counted under
   `unattributed-subagent`, never the bare `unattributed` role. That key is
-  roleless *orchestrator* traffic, which the dashboard renders as the
-  Orchestrator row, so folding children into it would credit a delegation to
-  its parent. `status.subagents.byRole` still says `unattributed` for the same
+  roleless *orchestrator* traffic, so folding children into it would credit a delegation to its parent. `status.subagents.byRole` still says `unattributed` for the same
   children; each key is unambiguous within its own table.
 - A child's model is its own only when the batch entry names a concrete one.
   agy writes `inherit` when the child runs on whatever the parent was routed
   to, which is not a model id, so the router resolves it to the parent's model.
-  A concrete child model that no tier configures still reaches the provider's
-  row: the dashboard sums every model observed for a provider, not only the
-  configured ones. The cumulative `status.subagents.total` is distinct from
+  A concrete child model that no tier configures still remains attributed to that provider in status/telemetry; accounting must not silently drop models merely because they are absent from the configured catalog. The cumulative `status.subagents.total` is distinct from
   the bounded newest-first `status.subagents.recent` window (capped at 50).
-  When recent history cannot cover the cumulative count, the dashboard and
-  status CLI label the summary and totals as `X recent / Y total`; they never
-  inflate the recent subtotal to match all-time history.
+  When recent history cannot cover the cumulative count, the status CLI labels the summary and totals as `X recent / Y total`; it never inflates the recent subtotal to match all-time history.
 
 The shared reporter is `src/telemetry/agent-events.ts`; the bridges import it
 directly, and the installer ships the module beside them. The native spawn
@@ -1910,14 +1776,14 @@ so long delegating turns remain live throughout.
 
 `agents/` and `config/` own the versioned machine-local Codex integration materialized
 into `$CODEX_HOME` through managed symlinks and runtime copies. Keep provider credentials in
-`/Users/henrykirk/.codex/.env` or Keychain; no secret belongs in this
+`$CODEX_HOME/.env` or Keychain; no secret belongs in this
 repository.
 
 All non-secret user-level provider configuration, profiles, model catalogs,
 provider adapters, startup hooks, shared skill content, and installer logic
 are versioned in this repository under `agents/`, `config/`, and `scripts/`. The
 installer is the only supported materialization path into
-`/Users/henrykirk/.codex`; materialized runtime copies and symlinks, logs, and
+`$CODEX_HOME`; materialized runtime copies and symlinks, logs, and
 `.env` credentials remain machine-local and are not versioned.
 
 - User-level skills: `.rulesync/skills/{lsp-mcp-server,orchestration,remove-legacy-shims}`
@@ -1938,9 +1804,9 @@ installer is the only supported materialization path into
   Destructive `git clean`, `git rebase`, whole-tree `git restore`, force branch
   deletion, force push, superuser/raw-disk formatting, and root/home wildcard
   deletion commands are forbidden.
-- User-level role definitions: `agents/roles/*.toml`, rendered from
+- Current user-level role projection: `agents/roles/*.toml`, rendered from
   the shared `base.md` + `leaf.md` prompt layers and materialized as managed
-  regular-file copies under `$CODEX_HOME/agents/`. The role loader must receive
+  regular-file copies under `$CODEX_HOME/agents/`. These files remain a transitional input while RuleSync subagent/agent-role parity is completed; the target is canonical RuleSync ownership with Codex TOML as a generated projection, not a second editable authority. The role loader must receive
   regular files rather than symlinks; the installer replaces symlinks and
   verifies exact rendered content matches. Code-oriented roles (`default`,
   `explorer`, `worker`, `validator`, and `smart`) enable the `codegraphcontext`,
@@ -1964,8 +1830,8 @@ installer is the only supported materialization path into
   - Role TOMLs, and the Antigravity and Copilot bridges, take their launch
     definitions from that generated output. A Claude turn reaches MCP servers
     through Codex's tools, so it needs none.
-- User-level provider/role configuration: `config/config.autodev.toml` is
-  the authoritative portable configuration, composed into `$CODEX_HOME/config.toml`
+- User-level provider/runtime configuration: `config/config.autodev.toml` is
+  the authoritative portable source for AutoDev-owned provider/runtime settings that RuleSync does not model, composed into `$CODEX_HOME/config.toml`
   as an atomic regular file by `src/config/compose-user-config.ts`. The former
   `config/config.toml` seed is retired; valid legacy symlink
   targets are migrated once and broken targets fail closed.
@@ -1988,7 +1854,7 @@ installer is the only supported materialization path into
 - Hooks, adapters, and direct-start scripts: `scripts/ensure-*`,
   `scripts/run-*`, and the runtime files; the
   provider shell wrappers and Responses adapters from `scripts/` are
-  checksum-checked runtime copies in `/Users/henrykirk/.codex/hooks/`. A
+  checksum-checked runtime copies in `$CODEX_HOME/hooks/`. A
   direct symlink would be denied by macOS Desktop privacy controls when the
   ChatGPT app launches it; the installer rematerializes the copy whenever the
   versioned source changes.
@@ -2155,27 +2021,22 @@ configured and validated.
 
 ### Cross-provider execution contract
 
-`/Users/henrykirk/AutoDev/config/execution-contract.json` is the generated
-shared contract for role kind, read-only intent, expected MCP/skill capabilities,
-and adapter spawn-tool metadata. It is projected from the native role TOMLs by
-`src/config/render-execution-contract.ts`; the installer rejects drift. The Antigravity and Copilot bridge prompt paths append the canonical
+`config/execution-contract.json` is the current generated runtime contract for role kind, read-only intent, expected MCP/skill capabilities, and adapter spawn-tool metadata. Today it is projected from native role TOMLs by `src/config/render-execution-contract.ts`; the installer rejects drift. This is a transitional projection path, not a long-term competing source of truth: once RuleSync owns the corresponding agent/subagent semantics losslessly, generate/validate the runtime contract from that canonical RuleSync state and remove duplicate editable role authority. The Antigravity and Copilot bridge prompt paths append the canonical
 role fragment from `agents/prompts/roles/` and use this JSON only for
 capability metadata; the Claude bridge receives the rendered role TOML's
 instructions in Codex's own context. The installer deploys both beside the bridge runtime
-modules. Native TOML role files remain the Codex configuration surface; the
-installer renders their shared prompt markers before deployment. Prompt or
+modules. Native TOML role files remain the current Codex runtime configuration surface; the target is for them to become generated RuleSync projections once parity is proven. Prompt or
 capability changes must be validated with the bridge-role matrix and native
 prompt-rendering tests.
 
 ### Route manifest ownership
 
-`/Users/henrykirk/AutoDev/config/model-routing.json` now owns provider
+`config/model-routing.json` now owns provider
 route metadata: model-family patterns, local bridge URLs, health probes, and
 credential environment keys. The router derives its route table from that
 manifest and validates every provider entry. Native model capability metadata
 (such as supported reasoning levels) remains in `config/catalogs/`, while
-role MCP and skill exposure remains in the native role TOMLs and their generated
-execution contract. Older installed routing files that lack the new `routes`
+role MCP and skill exposure is currently projected through the native role TOMLs/execution contract, but the canonical target moves these RuleSync-supported agent-facing definitions into RuleSync and removes duplicate editable authority. Older installed routing files that lack the new `routes`
 block temporarily use the built-in migration defaults until the installer is
 rerun; the versioned source is the authoritative routing configuration.
 
