@@ -198,3 +198,32 @@ Ex.
   - Session lifecycle (start, end, duration, errors)
   - Diff (lines added, lines removed, files changed, etc.)
   - Commits & pushes (count, duration, errors)
+
+
+# OpenLIT extensions, maintained locally by AutoDev
+
+## Summary
+Make OpenLIT the observability UI and backend, while AutoDev retains a separate control plane. Maintain the small OpenLIT extensions AutoDev needs locally from the start; upstreaming them is optional and must never block adoption. Keep the rest of OpenLIT as close to stock as possible.
+
+## UI and extension boundaries
+- Keep OpenLIT’s stock observability and dashboards. Add an **AutoDev Usage** dashboard for tokens, model requests, cache-read rate, and cost where available; do not add a separate Analytics page. Add Provider, MCP, and Skills *observability* through stock dashboards and trace views.
+- Implement dashboard-wide variables as a **generic OpenLIT UI extension**: time, workspace, provider, model, and agent/role; value sources, All and multi-select, URL/dashboard state, and safe parameterized bindings. Variables apply only to widgets that declare them and use the shared telemetry schema—not AutoDev-specific field assumptions.
+- Isolate AutoDev-specific pages under `/autodev`: **Providers**, **MCPs**, **Skills**, and **Runtime Controls**. These expose current configuration, availability, and actions; historical usage and operation analysis stay in OpenLIT’s stock observability surfaces.
+- Keep the OpenLIT query engine, storage, and telemetry semantics unchanged. Maintain a pinned, AutoDev-owned OpenLIT fork/patch set with changes confined to the generic variable extension and `/autodev` modules/routes. An upstream contribution may be made independently.
+
+## Data and control flow
+- Emit standard GenAI/MCP OpenTelemetry from the components that own each operation; route OTLP through the Collector to OpenLIT. Define workspace and role attribution in the shared instrumentation schema, not in UI-specific adapters.
+- Count model operations separately from provider attempts/retries. Define cache-read rate as cached input tokens divided by input tokens; show it as unavailable when cache counts are not reported. Keep session identity in traces/logs rather than metric dimensions.
+- Keep provider mutations on the AutoDev TypeScript Control API. The `/autodev` extension calls that API explicitly; telemetry and OpenLIT queries remain read-only. Keep AutoDev’s status API for live control state, but remove historical observability aggregation from it.
+- After verifying cutover, retire the local dashboard and its renderer/telemetry aggregation in `/Users/henrykirk/AutoDev/src/router/dashboard.html`; update the Collector pipeline in `/Users/henrykirk/AutoDev/config/otel/collector.yaml` to export to OpenLIT. Update the observability target and dashboard/platform documentation to reflect the new ownership split.
+
+## Tests and acceptance
+- Test generic dashboard variables for value sources, All/multi-select, saved state, shared bindings, widget opt-in, and safe parameterization.
+- Test telemetry dimensions, request-versus-attempt semantics, cache-rate and unavailable cases, privacy, and deduplication.
+- Test that `/autodev` actions use the Control API, are authorized, and cannot be triggered through OTLP or dashboard queries.
+- Verify an end-to-end Collector → OpenLIT flow and filtered views before removing the local dashboard. Do not create a permanent parallel observability path.
+
+## Assumptions
+- OpenLIT remains locally deployable; use the existing pinned Collector.
+- OpenLIT history begins at cutover. Do not fabricate historical trends from AutoDev’s cumulative counters or bounded event rings.
+- OpenTelemetry/UI extensions remain AutoDev-owned and usable regardless of whether upstream accepts them.
