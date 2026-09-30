@@ -8,7 +8,7 @@ const skillPath = new URL(
   repositoryRoot
 );
 const targetStatePath = new URL(
-  "docs/observability-target-state.md",
+  "docs/autodev-console-target-state.md",
   repositoryRoot
 );
 const materializerPath = new URL(
@@ -62,7 +62,7 @@ test("opentelemetry skill is a repository-only canonical skill", () => {
   const targetState = readFileSync(targetStatePath, "utf8");
   assert.match(
     targetState,
-    /single living source of truth for AutoDev observability architecture/
+    /single living source of truth for AutoDev's OpenLIT fork, observability architecture/
   );
   assert.match(targetState, /update it in the same change\/PR/);
   assert.match(targetState, /upstreaming is optional and never a prerequisite/);
