@@ -3,20 +3,20 @@
 > Correctness pass against the current `SimulatorLife/AutoDev` repository and the audited upstream repositories as of 2026-09-14
 
 > Corrected observability ownership and the only active observability roadmap live in
-> [docs/observability-target-state.md](observability-target-state.md). This document retains the broader platform-migration history. Earlier Collector, semantic-enricher, and dashboard proposals below are historical where they conflict with that canonical target; do not use them as current observability instructions.
+> [docs/autodev-console-target-state.md](observability-target-state.md). This document retains the broader platform-migration history. Earlier Collector, semantic-enricher, and dashboard proposals below are historical where they conflict with that canonical target; do not use them as current observability instructions.
 
 ## Executive decision
 
-The previous direction was broadly correct but too aggressive in three places: it treated AutoDev as if it still needed to become a monorepo, treated Rulesync as if it could replace AutoDev's role/execution contract, and treated LiteLLM/router retirement as an expected destination rather than a compatibility-gated option.
+The previous direction was broadly correct but too aggressive in three places: it treated AutoDev as if it still needed to become a monorepo, treated RuleSync ownership as narrower than the current target, and treated LiteLLM/router retirement as an expected destination rather than a compatibility-gated option. The current target now makes RuleSync the canonical source for every agent-facing configuration surface it natively supports; this document is historical where it says otherwise.
 
 The corrected target is:
 
 | Concern | Decision | Target owner |
 |---|---|---|
 | GitHub scheduling, PR workflows, repository selection | Keep | AutoDev |
-| Role/capability semantics, read-only policy, spawn semantics | Keep | AutoDev |
+| Agent-facing rules, prompts/commands, subagents/roles, skills, MCP, hooks, and permissions | Canonicalize in RuleSync where supported; provider-specific files are generated projections | RuleSync |
 | Provider-selection policy | Keep initially | AutoDev |
-| Cross-provider rules/skills/MCP/hooks/permissions translation | Adopt | Rulesync |
+| Runtime/control semantics not represented by RuleSync (provider health, routing state, credentials, live limits) | Keep | AutoDev |
 | Standard OTLP receive/process/export | Use OpenLIT's first-party OTLP receiver by default; add a separate Collector only for a documented policy need | OpenLIT |
 | Provider transport/Responses normalization | Pilot per provider | LiteLLM |
 | Workspace/role/skill/subagent context | Emit at the operation-owning producer using standard OTel or minimal AutoDev-specific semantics; no generic historical aggregator | AutoDev producers / OpenLIT |
@@ -30,7 +30,7 @@ The corrected target is:
 | Alternative gateway | Contingency only | Bifrost |
 | Agent-config package distribution | Defer | Grimoire if later needed |
 
-**Architectural rule:** Codex is the agent runtime. AutoDev retains SimulatorLife-specific GitHub orchestration, capability/policy semantics, Codex invariants, and provider-selection behavior. Provider CLI removal remains gated on full contract parity. The observability-specific ownership, OpenLIT extension, target, and migration status are maintained only in [docs/observability-target-state.md](observability-target-state.md).
+**Architectural rule:** Codex is the agent runtime. AutoDev retains SimulatorLife-specific GitHub orchestration, capability/policy semantics, Codex invariants, and provider-selection behavior. Provider CLI removal remains gated on full contract parity. The observability-specific ownership, OpenLIT extension, target, and migration status are maintained only in [docs/autodev-console-target-state.md](observability-target-state.md).
 
 ---
 
@@ -83,7 +83,7 @@ Source: [`src/config/render-agent-configs.ts`](https://github.com/SimulatorLife/
 
 Source: [`src/config/render-execution-contract.ts`](https://github.com/SimulatorLife/AutoDev/blob/main/src/config/render-execution-contract.ts)
 
-**Conclusion:** this is AutoDev domain logic, not merely provider-format translation. Keep it unless a later parity test proves an upstream representation can replace it without losing semantics
+**Current-state note:** this logic still carries AutoDev-specific semantics today, but it is not the long-term declarative authority. Migrate the agent-facing definitions into canonical RuleSync sources and remove duplicate editable role/prompt authority once the pinned RuleSync projections preserve the required semantics; AutoDev may retain runtime validation/apply logic that RuleSync does not own.
 
 ## MCP runtime ownership
 
@@ -131,7 +131,7 @@ Source: [`docs/provider-routing.md`](https://github.com/SimulatorLife/AutoDev/bl
 
 ## Telemetry semantics
 
-The preceding receiver and attribution description is an incumbent-state audit, not the target architecture. The active ownership contract, producer semantics, OpenLIT integration, gaps, migration gates, and handoff are maintained only in [`docs/observability-target-state.md`](observability-target-state.md). The target places verified context at its owning producer and sends standard OTLP to OpenLIT; it does not retain a generic AutoDev historical semantic aggregator.
+The preceding receiver and attribution description is an incumbent-state audit, not the target architecture. The active ownership contract, producer semantics, OpenLIT integration, gaps, migration gates, and handoff are maintained only in [`docs/autodev-console-target-state.md`](observability-target-state.md). The target places verified context at its owning producer and sends standard OTLP to OpenLIT; it does not retain a generic AutoDev historical semantic aggregator.
 
 ---
 
@@ -163,29 +163,19 @@ It also supports:
 - Tool-specific MCP overrides
 - Codex-specific subagent fields such as model, reasoning effort, sandbox mode, and extra tool-specific fields
 
-### Correct scope
+### Current target scope
 
-Use Rulesync for **portable configuration translation**:
+Use RuleSync as the **canonical declarative source** for every agent-facing configuration surface it natively represents:
 
-- Shared/root instructions
-- Canonical Agent Skills
-- Shared MCP declarations (live: `.rulesync/mcp.jsonc` is the only MCP source for Codex, Claude Code, Copilot CLI, and Antigravity)
-- Cross-provider hook declarations
-- Cross-provider permissions declarations
-- Provider filesystem/config-format translation
+- shared/root instructions and rules;
+- commands and prompt assets;
+- subagent/agent-role definitions;
+- Agent Skills;
+- MCP declarations and target-specific overrides;
+- hooks;
+- permissions.
 
-Do **not** initially use Rulesync as the source of truth for AutoDev's role-capability contract
-
-Keep initially:
-
-- Native AutoDev role TOMLs
-- `src/config/render-execution-contract.ts`
-- Prompt composition required by native Codex
-- `run-autodev-mcp.sh`
-- Role-specific provider skill filtering/views
-- Provider-specific exceptions that Rulesync cannot express losslessly
-
-Migrate common configuration first and evaluate role migration only after the shared configuration surfaces are stable.
+Provider-specific Codex, Claude, Copilot, and Antigravity files are generated projections, not independent sources of truth. AutoDev continues to own runtime launch/apply behavior, provider/model routing, credentials, live health/limits, and other operational state that RuleSync does not model. Do not introduce an AutoDev-specific replacement schema for RuleSync-owned concepts. The migration details and acceptance rules are canonical in [docs/autodev-console-target-state.md](autodev-console-target-state.md).
 
 ---
 
@@ -604,7 +594,7 @@ This is an option, not a required end state. Native/provider-direct setup and re
 
 ## Telemetry path
 
-> Historical topology from the broader platform audit. The active topology and Collector decision are in [`docs/observability-target-state.md`](observability-target-state.md).
+> Historical topology from the broader platform audit. The active topology and Collector decision are in [`docs/autodev-console-target-state.md`](observability-target-state.md).
 
 ```text
 Codex native OTLP -----\
@@ -2499,7 +2489,7 @@ After successful provider transport migrations, separate router responsibilities
 - Provider-limit semantics that are not delegated
 - Workspace/session continuity
 - Required Responses compatibility repairs
-- Producer-owned context and domain-specific OTel observations needed by the Control API; no generic historical aggregator (see `docs/observability-target-state.md`)
+- Producer-owned context and domain-specific OTel observations needed by the Control API; no generic historical aggregator (see `docs/autodev-console-target-state.md`)
 - Any provider-specific behavior for which no validated dependency replacement exists
 
 ### Delete only where upstream demonstrably owns it
@@ -2548,7 +2538,7 @@ Keep AutoDev selection policy. This is acceptable if it remains small and domain
 
 ## Phase 8 — OpenLIT observability migration
 
-The previous Phase 8 plan to keep an AutoDev semantic enricher and AutoDev-specific observability UI is superseded. The only active observability target, progress, open gaps, and cutover gates are in [`docs/observability-target-state.md`](observability-target-state.md).
+The previous Phase 8 plan to keep an AutoDev semantic enricher and AutoDev-specific observability UI is superseded. The only active observability target, progress, open gaps, and cutover gates are in [`docs/autodev-console-target-state.md`](observability-target-state.md).
 
 AutoDev retains producer-owned telemetry context and the typed runtime Control API. OpenLIT owns observability persistence, querying, tracing, and dashboards. AutoDev-specific Providers, MCPs, Skills, and Runtime controls are isolated in the OpenLIT `/autodev` extension; they do not duplicate historical observability charts. Upstream acceptance of AutoDev's small OpenLIT patch is optional.
 
@@ -2578,7 +2568,7 @@ Only now test whether Rulesync can replace more AutoDev role rendering
 ## Phase 10 — Final cleanup
 
 - Remove launch agents and ensure scripts only for provider CLI/proxy services that have actually been retired
-- Keep bootstrap/service lifecycle for OpenLIT, LiteLLM, retained bridges/adapters, MCP runtime, and AutoDev edge as needed; do not retain an AutoDev-owned pass-through Collector absent the policy need recorded in `docs/observability-target-state.md`
+- Keep bootstrap/service lifecycle for OpenLIT, LiteLLM, retained bridges/adapters, MCP runtime, and AutoDev edge as needed; do not retain an AutoDev-owned pass-through Collector absent the policy need recorded in `docs/autodev-console-target-state.md`
 - Remove unreachable compatibility shims
 - Update docs and diagrams
 - Keep rollback fixtures as regression tests
@@ -2628,7 +2618,7 @@ Only now test whether Rulesync can replace more AutoDev role rendering
 
 ## Telemetry
 
-The backend/UI choice and active observability gaps are resolved or tracked in [`docs/observability-target-state.md`](observability-target-state.md). That document is the only observability plan and progress ledger. Any remaining provider event-semantic gap must be recorded there with source evidence and an exit test.
+The backend/UI choice and active observability gaps are resolved or tracked in [`docs/autodev-console-target-state.md`](observability-target-state.md). That document is the only observability plan and progress ledger. Any remaining provider event-semantic gap must be recorded there with source evidence and an exit test.
 
 ---
 
