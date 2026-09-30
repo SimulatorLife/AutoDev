@@ -27,10 +27,13 @@ test("AutoDev Console target stays reduced, unified, and TypeScript-first", () =
 
   let previousIndex = -1;
   for (const item of nav) {
-    const index = target.indexOf(`├── ${item}`) >= 0
-      ? target.indexOf(`├── ${item}`)
-      : target.indexOf(`└── ${item}`);
-    assert.ok(index > previousIndex, `${item} must appear in canonical nav order`);
+    const branchIndex = target.indexOf(`├── ${item}`);
+    const index =
+      branchIndex >= 0 ? branchIndex : target.indexOf(`└── ${item}`);
+    assert.ok(
+      index > previousIndex,
+      `${item} must appear in canonical nav order`
+    );
     previousIndex = index;
   }
 
@@ -47,9 +50,15 @@ test("AutoDev Console target stays reduced, unified, and TypeScript-first", () =
     assert.match(target, new RegExp(removed.replaceAll(/[*/]/g, "\\$&")));
   }
 
-  assert.match(target, /single-user, AutoDev-centric control and observability console/);
+  assert.match(
+    target,
+    /single-user, AutoDev-centric control and observability console/
+  );
   assert.match(target, /Use \*\*Workspaces\*\*, not OpenLIT Projects/);
-  assert.match(target, /All AutoDev-owned Console application code[\s\S]*TypeScript\/TSX/);
+  assert.match(
+    target,
+    /All AutoDev-owned Console application code[\s\S]*TypeScript\/TSX/
+  );
   assert.match(target, /Do not iframe or visually stitch together/);
   assert.match(target, /OpenLIT Go Controller is not shipped/);
   assert.match(target, /RuleSync tool \*\*as the single source of truth/);
