@@ -81,3 +81,44 @@ test("router dashboard ships beside the router and removes its former hooks copy
   );
   assert.equal(OBSOLETE_DASHBOARD, "codex-model-router-dashboard.html");
 });
+
+test("runtime package dependencies imported by RUNTIME_MODULES exist in package dependencies and node_modules", () => {
+  const packageJson = JSON.parse(
+    readFileSync(join(repositoryRoot, "package.json"), "utf8")
+  );
+  const declaredDependencies = new Set(
+    Object.keys(packageJson.dependencies ?? {})
+  );
+
+  const BARE_IMPORT_PATTERN =
+    /(?:^|\n)\s*(?:import|export)\b[\s\S]*?\bfrom\s+["']([^."'\n\r][^"'\n\r]*)["']/gu;
+
+  const importedPackages = new Set<string>();
+  for (const modulePath of RUNTIME_MODULES) {
+    if (!modulePath.endsWith(".ts")) continue;
+    const content = readFileSync(
+      join(repositoryRoot, modulePath),
+      "utf8"
+    ).replaceAll(/\/\*[\s\S]*?\*\/|\/\/.*/gu, "");
+    for (const match of content.matchAll(BARE_IMPORT_PATTERN)) {
+      const specifier = match[1]!;
+      if (specifier.startsWith("node:")) continue;
+      const parts = specifier.split("/");
+      const packageName = specifier.startsWith("@")
+        ? parts.slice(0, 2).join("/")
+        : parts[0]!;
+      importedPackages.add(packageName);
+    }
+  }
+
+  for (const pkg of importedPackages) {
+    assert.ok(
+      declaredDependencies.has(pkg),
+      `RUNTIME_MODULES imports "${pkg}" but it is not listed in package.json dependencies`
+    );
+    assert.ok(
+      existsSync(join(repositoryRoot, "node_modules", pkg)),
+      `runtime package "${pkg}" is missing from repository node_modules`
+    );
+  }
+});

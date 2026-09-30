@@ -352,12 +352,25 @@ function checkRuntimeAndOt(
       ),
       failures
     );
-    check(
-      `tracked source ${filePath}`,
-      tracked(paths.repositoryRoot, path.join(paths.repositoryRoot, filePath)),
-      failures
-    );
+    if (!filePath.startsWith("node_modules/")) {
+      check(
+        `tracked source ${filePath}`,
+        tracked(
+          paths.repositoryRoot,
+          path.join(paths.repositoryRoot, filePath)
+        ),
+        failures
+      );
+    }
   }
+  check(
+    "runtime node_modules",
+    runtimeLinkMatches(
+      path.join(paths.repositoryRoot, "node_modules"),
+      path.join(paths.codexHome, "node_modules")
+    ),
+    failures
+  );
   for (const filePath of OTEL_RUNTIME)
     check(
       `Collector runtime ${filePath}`,

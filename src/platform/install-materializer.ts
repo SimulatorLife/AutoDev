@@ -872,6 +872,15 @@ function linkRuntimeConfigs(
     linkRuntimeSource(source(`agents/rules/${name}`), path.join(rules, name));
 }
 
+function linkNodeModules(options: MaterializeOptions): void {
+  const target = path.join(options.codexHome, "node_modules");
+  const source = path.join(options.repositoryRoot, "node_modules");
+  if (exists(target) && !isSymlink(target)) {
+    rmSync(target, { recursive: true, force: true });
+  }
+  linkRuntimeSource(source, target);
+}
+
 function replaceSkillSymlinks(
   codexHome: string,
   skillsRoot: string,
@@ -1368,6 +1377,7 @@ export function materializeInstallation(options: MaterializeOptions): void {
   const launchd = new LaunchdClient();
   bootoutObsoleteLaunchLabels(launchd);
   removeObsoleteRuntimeArtifacts(options.codexHome, options.home, hooks);
+  linkNodeModules(options);
   const source: FileTarget = (filePath) =>
     path.join(options.repositoryRoot, filePath);
   const target: FileTarget = (filePath) =>
