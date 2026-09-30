@@ -93,6 +93,20 @@ echo "==> Starting the patched OpenLIT stack with authenticated OTLP"
 	-f "$COMPOSE_FILE" \
 	up -d
 
+echo "==> Waiting for ClickHouse to accept connections"
+for _ in {1..30}; do
+	if "${DOCKER_COMPOSE[@]}" -f "$COMPOSE_FILE" exec -T clickhouse clickhouse-client --user="${OPENLIT_DB_USER:-default}" --password="$OPENLIT_DB_PASSWORD" --query="SELECT 1" >/dev/null 2>&1; then
+		break
+	fi
+	sleep 1
+done
+
+echo "==> Synchronizing rulesync prompts to OpenLIT Prompt Hub"
+OPENLIT_DB_PASSWORD="$OPENLIT_DB_PASSWORD" node "$REPO_ROOT/src/platform/sync-rulesync-prompts.ts" || echo "Warning: prompt synchronization failed" >&2
+
+echo "==> Synchronizing rulesync agent roles to OpenLIT Agents Hub"
+OPENLIT_DB_PASSWORD="$OPENLIT_DB_PASSWORD" node "$REPO_ROOT/src/platform/sync-rulesync-agents.ts" || echo "Warning: agent synchronization failed" >&2
+
 echo "==> OpenLIT stack started (container build/runtime still requires acceptance probes)."
 echo "    Image tag:       $IMAGE_TAG"
 echo "    Image lock:      $LOCK_FILE"
