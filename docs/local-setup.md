@@ -512,7 +512,7 @@ running the command:
 
 ```bash
 codex execpolicy check --pretty \
-  --rules /Users/henrykirk/AutoDev/agents/rules/default.rules \
+  --rules agents/rules/default.rules \
   -- git reset --hard HEAD
 ```
 
