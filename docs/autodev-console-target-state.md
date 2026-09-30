@@ -54,7 +54,7 @@ This is a **product and UX fork with aggressive feature subtraction**, while pre
 The console is one product, not a collection of embedded dashboards.
 
 - Use one shared React/Next.js UI shell and one shared design system/component library.
-- All AutoDev Console UI, page, component, state, query-client, and control-plane application code must be **TypeScript/TSX**.
+- All AutoDev-owned Console application code—including UI, pages/components, state/query clients, server routes, Control API integration, configuration/reconciliation code, and new adapters—must be **TypeScript/TSX**. Do not add Python, Go, Rust, or another runtime for AutoDev-owned application/control functionality.
 - Reuse/adapt TypeScript pieces from OpenLIT or other projects only when they fit the shared component system; otherwise reproduce the interaction pattern in AutoDev's TypeScript UI rather than embedding a foreign application.
 - Do not iframe or visually stitch together LiteLLM, MCPJam, LangWatch, Unleash, or other dashboards.
 - Shared primitives must cover navigation, page headers, filters, data tables, detail tabs, stat cards, charts, status/health badges, forms, dialogs/drawers, empty/loading/error states, permission matrices, activity/history, and code/config editors where needed.
@@ -168,7 +168,7 @@ Preserve or adapt the parts that directly serve AutoDev:
 - **Evaluations** and useful evaluation result/history UI;
 - **Prompt Hub** interaction patterns such as prompt browsing, editing, versions, preview/diff where useful, while RuleSync remains canonical;
 - generic TypeScript/TSX UI primitives that fit the shared AutoDev design system;
-- desired-state/action/convergence patterns from the OpenLIT Controller where useful.
+- desired-state/action/convergence interaction patterns from the OpenLIT Controller where useful, reimplemented through AutoDev's TypeScript control/runtime architecture rather than by shipping the Controller.
 
 ### Remove from the AutoDev product and distribution
 
@@ -181,7 +181,7 @@ These are **out of scope**, not hidden optional navigation:
 - **Rule Engine**: remove its UI, API/runtime evaluation flow, SDK-facing product integration, rule conditions/linked-entity workflow, and fork-owned persistence/migrations once no retained feature depends on them. Rule/role/capability behavior belongs to canonical RuleSync/AutoDev configuration instead.
 - **OpenGround**: remove the playground/evaluation-comparison product, routes, stores, APIs, and fork-owned persistence/migrations. AutoDev does not need a general LLM playground.
 - **GPU monitoring/dashboard**: remove the GPU dashboard and GPU-specific AutoDev UI/query surfaces; do not package the separate GPU monitoring experience as part of the AutoDev Console.
-- **OpenLIT agent discovery/instrumentation**: remove the `discovered`/`instrumented` agent statuses, controller-discovered service/application lists, instrumentation toggles, and eBPF/SDK-injection workflow from the AutoDev Agents product. AutoDev agents are known from canonical configuration, not inferred from observed processes.
+- **OpenLIT agent discovery/instrumentation and Controller daemon**: remove the `discovered`/`instrumented` agent statuses, controller-discovered service/application lists, instrumentation toggles, eBPF/SDK-injection workflow, and Go Controller daemon from the AutoDev distribution. AutoDev agents are known from canonical configuration, and desired-state reconciliation belongs in the TypeScript AutoDev Control API/runtime.
 - generic OpenLIT onboarding and navigation for any removed feature;
 - redundant OpenLIT configuration pages superseded by AutoDev resource pages.
 
@@ -408,6 +408,9 @@ The Control API is the only AutoDev state/action boundary. Target resource famil
 /control/models
 /control/mcps
 /control/skills
+/control/hooks
+/control/permissions
+/control/prompts
 /control/workspaces
 /control/routing
 /control/runtime
@@ -415,9 +418,9 @@ The Control API is the only AutoDev state/action boundary. Target resource famil
 
 Use named typed operations only; no arbitrary command endpoint.
 
-For RuleSync-owned resources, mutations change the canonical RuleSync source and run validation/generation/apply. For runtime-only resources, mutate the authoritative typed AutoDev owner.
+For RuleSync-owned resources, mutations change the canonical RuleSync source and run validation/generation/apply. For runtime-only resources, mutate the authoritative typed AutoDev owner. **Tools** is primarily a composite read model over effective capabilities and usage rather than a second configuration authority. **Memory** and **Evaluations** may retain/adapt their OpenLIT TypeScript APIs where they remain useful and independent of removed tenancy/Rule Engine/OpenGround concepts.
 
-The OpenLIT browser should use a same-origin server-side path/proxy. The private AutoDev control listener remains separate from the model/OTLP router listener.
+The AutoDev Console browser should use same-origin TypeScript server routes/proxies. The private AutoDev control listener remains separate from the model/OTLP router listener.
 
 Security requirements:
 
@@ -471,15 +474,16 @@ The next phase is deliberate product subtraction and reassembly, not restoration
 1. Replace OpenLIT navigation with the exact AutoDev left-nav defined in §2.
 2. Remove account/user, organization, environment and project product concepts and their UI/API paths; keep only temporary hidden compatibility data where unavoidable during migration.
 3. Remove Rule Engine, OpenGround and GPU dashboard/product code from the AutoDev distribution.
-4. Replace OpenLIT's discovered/instrumented Agents model with RuleSync-configured AutoDev agents/roles.
-5. Make MCPs, Skills, Hooks, Permissions, Tools, Prompts and Workspaces first-class TypeScript modules using canonical RuleSync/AutoDev sources.
-6. Keep/adapt OpenLIT Memory, Evaluations, Agents UI patterns, Usage/telemetry foundations, and Prompt Hub interaction patterns where they fit the target.
-7. Move provider/model/routing/runtime controls into Agents and relevant detail surfaces rather than top-level navigation.
-8. Complete RuleSync canonical ownership for all supported agent-facing configuration still held in duplicate native sources.
-9. Route RuleSync-owned console mutations through typed Control API operations that edit/validate/generate/apply canonical RuleSync state.
-10. Consolidate every retained/borrowed surface onto one shared TypeScript/TSX design system and component library.
-11. Add desired/actual/pending/error state consistently across mutable resources.
-12. Delete superseded OpenLIT routes/components/stores/APIs/migrations after each replacement reaches parity; do not retain hidden permanent feature forks.
+4. Remove the OpenLIT Go Controller/eBPF discovery/instrumentation runtime; preserve only useful desired-state/convergence concepts in AutoDev's TypeScript control layer.
+5. Replace OpenLIT's discovered/instrumented Agents model with RuleSync-configured AutoDev agents/roles.
+6. Make MCPs, Skills, Hooks, Permissions, Tools, Prompts and Workspaces first-class TypeScript modules using canonical RuleSync/AutoDev sources.
+7. Keep/adapt OpenLIT Memory, Evaluations, Agents UI patterns, Usage/telemetry foundations, and Prompt Hub interaction patterns where they fit the target.
+8. Move provider/model/routing/runtime controls into Agents and relevant detail surfaces rather than top-level navigation.
+9. Complete RuleSync canonical ownership for all supported agent-facing configuration still held in duplicate native sources.
+10. Route RuleSync-owned console mutations through typed Control API operations that edit/validate/generate/apply canonical RuleSync state.
+11. Consolidate every retained/borrowed surface onto one shared TypeScript/TSX design system and component library.
+12. Add desired/actual/pending/error state consistently across mutable resources.
+13. Delete superseded OpenLIT routes/components/stores/APIs/migrations after each replacement reaches parity; do not retain hidden permanent feature forks.
 
 ## 13. Operational entry points
 
@@ -560,7 +564,7 @@ Use interaction models and architecture; copy source only after reviewing the ex
 - no user/account/organization/environment/project UX remains;
 - Rule Engine, OpenGround, GPU dashboard, and discovered/instrumented agent concepts are absent from the AutoDev product;
 - canonical left navigation matches §2;
-- all AutoDev-facing UI/control application modules are TypeScript/TSX and use the shared component/design system;
+- all AutoDev-owned application/control modules are TypeScript/TSX and use the shared component/design system; the OpenLIT Go Controller is not shipped;
 - Memory/Evaluations/Agents/Prompt patterns retained only where they no longer depend on removed OpenLIT product concepts;
 - storage/query/receiver behavior remains intact unless explicitly approved.
 
