@@ -8,7 +8,7 @@ const skillPath = new URL(
   repositoryRoot
 );
 const targetStatePath = new URL(
-  "docs/observability-target-state.md",
+  "docs/autodev-console-target-state.md",
   repositoryRoot
 );
 const materializerPath = new URL(
@@ -56,16 +56,16 @@ test("opentelemetry skill is a repository-only canonical skill", () => {
   assert.match(body, /^## Collector rules$/mu);
   assert.match(body, /^## Review checklist$/mu);
   assert.match(body, /^## Architectural preference$/mu);
-  assert.match(body, /docs\/observability-target-state\.md/);
+  assert.match(body, /docs\/autodev-console-target-state\.md/);
 
   // The canonical target document carries the maintenance rule future agents need.
   const targetState = readFileSync(targetStatePath, "utf8");
   assert.match(
     targetState,
-    /single living source of truth for AutoDev observability architecture/
+    /single living source of truth for AutoDev's OpenLIT fork, observability architecture/
   );
-  assert.match(targetState, /update it in the same change\/PR/);
-  assert.match(targetState, /upstreaming is optional and never a prerequisite/);
+  assert.match(targetState, /update it in the same PR/);
+  assert.match(targetState, /Upstream contributions are optional and must never block AutoDev/);
 
   // Project-specific architecture must not regress to the old local aggregator target.
   assert.match(body, /OpenLIT first-party OTLP receiver/);
