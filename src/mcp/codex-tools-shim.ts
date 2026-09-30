@@ -20,6 +20,7 @@ import { pathToFileURL } from "node:url";
 
 import {
   recordToolCallSpan,
+  shutdownTelemetry,
   type ToolCallOutcome
 } from "./codex-tools-shim-telemetry.ts";
 
@@ -135,55 +136,40 @@ async function callTool(
 ): Promise<void> {
   const name = typeof params?.name === "string" ? params.name : "";
   const args = isRecord(params?.arguments) ? params.arguments : {};
-  await recordToolCallSpan(name, async (): Promise<ToolCallOutcome> => {
-    try {
-      const reply = await bridge("/v1/bridge-tools/call", {
-        turn: TURN,
-        name,
-        arguments: args
-      });
-      if (reply.status !== 200 || !reply.body) {
-        const error =
-          typeof reply.body?.error === "string"
-            ? reply.body.error
-            : `Codex could not run ${name} (HTTP ${reply.status}).`;
-        toolError(id, error, emit);
-        return {
-          status: "error",
-          httpStatus: reply.status,
-          errorType: "bridge_http_failure",
-          errorMessage: error
-        };
+  await recordToolCallSpan(
+    name,
+    async (): Promise<ToolCallOutcome> => {
+      try {
+        const reply = await bridge("/v1/bridge-tools/call", {
+          turn: TURN,
+          name,
+          arguments: args
+        });
+        if (reply.status !== 200 || !reply.body) {
+          const error =
+            typeof reply.body?.error === "string"
+              ? reply.body.error
+              : `Codex could not run ${name} (HTTP ${reply.status}).`;
+          toolError(id, error, emit);
+          return { status: "error", errorType: "tool_error" };
+        }
+        emit({ jsonrpc: "2.0", id, result: reply.body });
+        // The pinned Development MCP convention records
+        // `error.type=tool_error` when CallToolResult.isError is true. The
+        // tool-level outcome is a failure even though the bridge transport
+        // succeeded; telemetry reflects that without changing the response.
+        if (reply.body.isError === true) {
+          return { status: "error", errorType: "tool_error" };
+        }
+        return { status: "ok" };
+      } catch (error: unknown) {
+        const message = `Codex could not run ${name}: ${error instanceof Error ? error.message : String(error)}`;
+        toolError(id, message, emit);
+        return { status: "error", errorType: "tool_error" };
       }
-      emit({ jsonrpc: "2.0", id, result: reply.body });
-      // The Development MCP convention (open-telemetry/semantic-conventions-genai
-      // main, docs/gen-ai/mcp.md) records `error.type=tool_error` when the
-      // tool itself signals failure via CallToolResult.isError=true. The
-      // transport was successful here, but the tool-level outcome is a
-      // failure; telemetry reflects that without changing the response.
-      if (reply.body.isError === true) {
-        return {
-          status: "error",
-          httpStatus: reply.status,
-          errorType: "tool_error",
-          errorMessage: "tool returned isError=true"
-        };
-      }
-      return {
-        status: "ok",
-        httpStatus: reply.status
-      };
-    } catch (error: unknown) {
-      const message = `Codex could not run ${name}: ${error instanceof Error ? error.message : String(error)}`;
-      toolError(id, message, emit);
-      return {
-        status: "error",
-        httpStatus: 0,
-        errorType: "bridge_threw",
-        errorMessage: message
-      };
-    }
-  });
+    },
+    params?._meta
+  );
 }
 
 export async function handleMessage(
@@ -214,8 +200,20 @@ export function runStdio(): void {
       "autodev-codex-tools: bridge URL or turn is unset; no tools will be offered.\n"
     );
   const lines = createInterface({ input: process.stdin });
+  const inFlight = new Set<Promise<void>>();
+  let closing = false;
+  let shutdownPromise: Promise<void> | null = null;
+  const flushOnClose = (): void => {
+    if (shutdownPromise) return;
+    closing = true;
+    shutdownPromise = Promise.allSettled(inFlight).then(shutdownTelemetry);
+  };
+  lines.once("close", flushOnClose);
+  process.once("SIGTERM", () => lines.close());
+  process.once("SIGINT", () => lines.close());
+
   lines.on("line", (line: string) => {
-    if (!line.trim()) return;
+    if (closing || !line.trim()) return;
     let parsed: unknown;
     try {
       parsed = JSON.parse(line);
@@ -228,17 +226,24 @@ export function runStdio(): void {
       ...(typeof parsed.method === "string" ? { method: parsed.method } : {}),
       ...(isRecord(parsed.params) ? { params: parsed.params } : {})
     };
-    void handleMessage(message).catch((error: unknown) => {
-      if (message.id !== undefined)
-        send({
-          jsonrpc: "2.0",
-          id: message.id,
-          error: {
-            code: -32_603,
-            message: error instanceof Error ? error.message : String(error)
-          }
-        });
-    });
+    const task = handleMessage(message)
+      .catch((error: unknown) => {
+        if (message.id === undefined) return;
+        try {
+          send({
+            jsonrpc: "2.0",
+            id: message.id,
+            error: {
+              code: -32_603,
+              message: error instanceof Error ? error.message : String(error)
+            }
+          });
+        } catch {
+          // The peer may have closed stdout while this operation was in flight.
+        }
+      })
+      .finally(() => inFlight.delete(task));
+    inFlight.add(task);
   });
 }
 

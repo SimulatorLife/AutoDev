@@ -8,19 +8,13 @@ targets: ["copilot"]
 
 Coordinate work; do not become the default worker.
 
-This file is the source of truth for orchestration policy. Provider prompts,
-hooks, and bridges may bootstrap it but must not maintain competing procedures.
+This file is the source of truth for orchestration policy. Provider prompts, hooks, and bridges may bootstrap it but must not maintain competing procedures.
 
-The root owns planning, task decomposition, delegation, synthesis, integration,
-lifecycle progression, and final gate decisions. For non-trivial work, delegate
-substantive discovery, implementation, testing, and validation to configured
-roles.
+The root owns planning, decomposition, delegation, synthesis, integration, lifecycle progression, and final gate decisions. Except for trivial work, delegate substantive discovery, implementation, testing, and validation to configured roles.
 
-For repository changes, follow `references/development-lifecycle.md`.
-For spawning, waiting, recovery, or child cleanup, follow
-`references/runtime-contract.md`.
+For repository changes, follow `references/development-lifecycle.md`. For spawning, waiting, recovery, and cleanup, follow `references/runtime-contract.md`.
 
-## Capability roles
+## Capability/subagent roles
 
 | Role | Use for | Sandbox |
 | --- | --- | --- |
@@ -32,28 +26,25 @@ For spawning, waiting, recovery, or child cleanup, follow
 | `validator` | Independent review and validation | workspace-write |
 | `smart` | Work requiring broader capability than normal roles | workspace-write |
 
-Choose by capability first, then required sandbox. Use the smallest capable
-role and configured autodev/<role> aliases rather than hard-coding a provider or
-model.
+Choose by capability first, then required sandbox. Prefer the smallest capable role and configured `autodev/<role>` aliases over hard-coded providers or models.
 
-## Complexity
+## Complexity and orchestration
 
-Classify the change once using semantic impact, not line count:
+Classify work by semantic impact, uncertainty, and regression risk—not line count.
 
-- **Trivial/atomic**: obvious, localized, low-risk work with direct verification
-- **Standard**: non-trivial but bounded work with meaningful behavioral, structural, interface, configuration, data, or regression risk
-- **High-risk/cross-cutting**: broad ownership or migration impact, runtime-critical behavior, substantial uncertainty, or high cost of a missed defect
+| Complexity | Execution | Validation |
+| --- | --- | --- |
+| **Trivial/atomic** | Root may execute directly when delegation adds little value | Direct verification may suffice |
+| **Standard** | Delegate substantive implementation and useful discovery | At least one independent validator or tester |
+| **High-risk/cross-cutting** | Decompose into bounded scopes; parallelize independent work and use multiple waves when useful | At least two complementary independent validation perspectives; use additional waves when useful |
 
-## Delegate
+Do not add agents merely to satisfy a count. Each delegation must contribute useful execution, expertise, or independent evidence.
 
-- **Trivial/atomic**: the root may execute directly when delegation adds little value
-- **Standard**: delegate substantive implementation and useful discovery
-- **High-risk/cross-cutting**: decompose into bounded scopes and parallelize independent work where useful
+## Delegation rules
 
-Give each mutable scope one primary implementer. Avoid concurrent edits to the
-same files unless the root is deliberately reconciling alternatives.
+Give each subagent mutable scope, each task one primary implementer. Avoid concurrent edits to the same files unless deliberately reconciling alternatives.
 
-Each delegated task must state:
+Each delegated task must define:
 
 - concrete outcome and acceptance criteria
 - allowed read/write scope
@@ -61,37 +52,23 @@ Each delegated task must state:
 - expected tests, checks, or evidence
 - repository or worktree context
 
-Delegated roles are leaves unless nested delegation is explicitly designed for
-the task. Read-only roles may inspect explicitly authorized external state but
-must not edit, stage, commit, or push.
+Delegated roles are leaves unless nested delegation is explicitly designed. Read-only roles may inspect authorized external state but must not edit, stage, commit, or push.
 
-## Validate
+## Validation rules
 
-- **Trivial/atomic**: direct verification may be sufficient
-- **Standard**: normally use one independent validator or tester
-- **High-risk/cross-cutting**: normally use two complementary independent validation perspectives when capacity allows
+Validators must be independent of the scope they validate. Provide acceptance criteria, constraints, and current repository/diff state without priming them with the implementer's conclusions unless investigating a specific finding.
 
-Prefer complementary evidence over duplicate reviewers, for example:
+Prefer complementary evidence, such as:
 
 - architecture/code review + runtime validation
 - tests/static analysis + browser behavior
 - migration/call-path review + regression testing
 
-A validator must not validate a scope it implemented. Give it the acceptance
-criteria, constraints, and current repository/diff state, but do not prime it
-with the implementer's conclusions or reasoning unless needed to investigate a
-specific finding.
+Treat agent reports as evidence, not authority. The root resolves disagreements and determines whether lifecycle gates pass.
 
-Do not spawn agents merely to satisfy a count. Each additional agent must add
-useful execution, expertise, or independent evidence.
+Never weaken requirements, tests, or performance thresholds to obtain a passing result.
 
-Treat agent reports as evidence, not authority. The root resolves disagreements
-and decides whether lifecycle gates pass.
-
-Never weaken requirements, tests, or performance thresholds to obtain a passing
-result.
-
-## Integrate
+## Integration
 
 The root:
 
@@ -99,5 +76,5 @@ The root:
 2. checks them against acceptance criteria
 3. resolves conflicting findings
 4. integrates only relevant work
-5. advances lifecycle gates when their evidence is satisfied
+5. advances lifecycle gates when evidence is sufficient
 6. reports unavailable evidence and unresolved risk

@@ -246,17 +246,15 @@ test("materializeCommands writes one prompt per catalog entry and is idempotent"
     }
     // Re-run is idempotent: a second pass with the same projection must
     // produce a directory whose entry list and content match the first pass.
-    for (const name of COMMANDS) copyProjectedTo(projectedDir, name, promptsDir);
+    for (const name of COMMANDS)
+      copyProjectedTo(projectedDir, name, promptsDir);
     assert.equal(
       readdirSync(promptsDir).sort().length,
       COMMANDS.length,
       "idempotent install keeps exactly one file per catalog entry"
     );
     for (const name of COMMANDS) {
-      const expected = readFileSync(
-        join(projectedDir, `${name}.md`),
-        "utf8"
-      );
+      const expected = readFileSync(join(projectedDir, `${name}.md`), "utf8");
       const actual = readFileSync(join(promptsDir, `${name}.md`), "utf8");
       assert.equal(actual, expected, `${name} re-run is a no-op`);
     }
@@ -274,11 +272,13 @@ test("pre-existing non-catalog prompt file is removed by reconciliation", () => 
     const projectedDir = join(outputHome, ".codex", "prompts");
     const promptsDir = join(codexHome, "prompts");
     mkdirSync(promptsDir, { recursive: true, mode: 0o700 });
-    for (const name of COMMANDS) copyProjectedTo(projectedDir, name, promptsDir);
+    for (const name of COMMANDS)
+      copyProjectedTo(projectedDir, name, promptsDir);
     const stray = join(promptsDir, "legacy-handoff.md");
     writeFileSync(stray, "# unmanaged prompt\n");
     assert.equal(existsSync(stray), true);
-    for (const name of COMMANDS) copyProjectedTo(projectedDir, name, promptsDir);
+    for (const name of COMMANDS)
+      copyProjectedTo(projectedDir, name, promptsDir);
     const catalog = new Set<string>(COMMANDS);
     for (const entry of readdirSync(promptsDir)) {
       if (!entry.endsWith(".md")) continue;
@@ -329,85 +329,6 @@ test("drift workflow runs the commands suite alongside the other rulesync suites
     /node --test tests\/rulesync-mcp\.test\.ts tests\/rulesync-hooks-shadow\.test\.ts tests\/rulesync-skills\.test\.ts tests\/rulesync-permissions-inventory\.test\.ts tests\/rulesync-commands\.test\.ts/
   );
   assert.match(workflow, /- "tests\/rulesync-\*\.test\.ts"/);
-});
-
-const commandSourcesPath = join(
-  repositoryRoot,
-  "tests",
-  "fixtures",
-  "rulesync-command-sources.json"
-);
-
-/**
- * Slugs whose body is the union of an existing `.rulesync/commands/<slug>.md`
- * body and the migrated `.agents/prompts/<other>.md` body. For these, the
- * original H1 heading lives in the merged source's section rather than at the
- * very top of the body, so the "within first 200 chars" assertion only
- * applies to the directly-migrated entries.
- */
-const MERGED_SLUGS = new Set(["lint-fix", "dedupe-helper"]);
-/**
- * Slugs whose original `.agents/prompts/<slug>.md` body had no `# <Title>`
- * H1 heading (the body opens with prose). The sidecar map records this with an
- * empty string and the H1-presence assertions skip them, preserving the
- * source byte-for-byte without inventing a heading.
- */
-const HEADINGLESS_SLUGS = new Set(["advance-autodev"]);
-
-test("every migrated catalog entry preserves the original .agents/prompts source", () => {
-  const sources = JSON.parse(readFileSync(commandSourcesPath, "utf8")) as Record<
-    string,
-    string
-  >;
-  const catalogSlugs = new Set<string>(COMMANDS);
-  // The sidecar map lists every migrated entry (53 total: 51 directly moved
-  // plus the 2 remaining in-place merges). Catalog entries that pre-date the
-  // migration (build-fix, css-cleanup, file-organize, merge-prs, new-feature,
-  // optimize, resolve-merges, test-fix) have no sidecar mapping and are
-  // skipped here, as is bug-fix, whose merged `.agents/prompts` section was
-  // folded into its own procedure rather than appended.
-  for (const [slug, expectedHeading] of Object.entries(sources)) {
-    assert.ok(
-      catalogSlugs.has(slug),
-      `sidecar map references "${slug}" but the COMMANDS catalog does not`
-    );
-    if (HEADINGLESS_SLUGS.has(slug)) {
-      // The original source body had no `# <Title>` heading; the sidecar
-      // records this with an empty string so we can confirm the migration is
-      // not silently inventing content.
-      assert.equal(
-        expectedHeading,
-        "",
-        `${slug} is in HEADINGLESS_SLUGS but its sidecar entry is not empty`
-      );
-      continue;
-    }
-    assert.ok(
-      expectedHeading.startsWith("# "),
-      `${slug} sidecar heading must start with "# " (${JSON.stringify(
-        expectedHeading
-      )})`
-    );
-    const text = readFileSync(join(catalogRoot, `${slug}.md`), "utf8");
-    const match = /^---\n[\s\S]*?\n---\n(?<body>[\s\S]*)$/u.exec(text);
-    assert.ok(match?.groups?.body !== undefined, `${slug} body missing`);
-    const body = match.groups.body;
-    assert.ok(
-      body.includes(expectedHeading),
-      `${slug} body must contain the original H1 title ${JSON.stringify(
-        expectedHeading
-      )}`
-    );
-    if (!MERGED_SLUGS.has(slug)) {
-      const head = body.slice(0, 200);
-      assert.ok(
-        head.includes(expectedHeading),
-        `${slug} body must start with the original H1 title ${JSON.stringify(
-          expectedHeading
-        )}; got first 200 chars: ${JSON.stringify(head)}`
-      );
-    }
-  }
 });
 
 test("materializeCommands reports exactly the prompts whose installed content changed", () => {

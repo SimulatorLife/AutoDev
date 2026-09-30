@@ -35,6 +35,7 @@ import {
 import { roleContract } from "../shared/execution-contract.ts";
 import {
   AUTODEV_WORKSPACE_KEY_HEADER,
+  validatedAutoDevOtelResourceAttributes,
   withAutoDevOtelResourceContext
 } from "../shared/otel-resource-context.ts";
 import { writeErrorLine } from "../shared/output.ts";
@@ -522,16 +523,24 @@ export function systemPrompt(cwd: string, surface: CodexToolSurface): string {
 }
 
 /** The MCP server that offers this turn Codex's tools. */
-export function codexToolsMcpConfig(turnId: string): string {
+export function codexToolsMcpConfig(
+  turnId: string,
+  environment: NodeJS.ProcessEnv = process.env
+): string {
   const shim = resolve(
     join(import.meta.dirname, "..", "mcp", "codex-tools-shim.ts")
   );
+  const resourceAttributes =
+    validatedAutoDevOtelResourceAttributes(environment);
   return JSON.stringify({
     mcpServers: {
       [CODEX_TOOLS_SERVER]: {
         command: process.env.AUTODEV_NODE_BIN ?? "node",
         args: [shim],
         env: {
+          ...(resourceAttributes
+            ? { OTEL_RESOURCE_ATTRIBUTES: resourceAttributes }
+            : {}),
           AUTODEV_BRIDGE_URL: `http://${HOST}:${PORT}`,
           AUTODEV_BRIDGE_TOKEN: AUTH_TOKEN,
           AUTODEV_CLAUDE_TURN: turnId
@@ -552,7 +561,8 @@ export interface ClaudeCliOptions {
 export function claudeCliArgs(
   model: string,
   effort: string,
-  options: ClaudeCliOptions
+  options: ClaudeCliOptions,
+  environment: NodeJS.ProcessEnv = process.env
 ): string[] {
   const builtIns = options.webSearch ? CLAUDE_WEB_TOOLS : [];
   const allowed = [
@@ -574,7 +584,7 @@ export function claudeCliArgs(
     // workspace's .mcp.json never add tools that bypass Codex.
     "--strict-mcp-config",
     ...(options.turnId
-      ? ["--mcp-config", codexToolsMcpConfig(options.turnId)]
+      ? ["--mcp-config", codexToolsMcpConfig(options.turnId, environment)]
       : []),
     ...(allowed.length > 0 ? ["--allowed-tools", allowed.join(",")] : []),
     "--permission-mode",
@@ -622,7 +632,7 @@ export async function* runClaudeStream(
   effort: string,
   options: ClaudeStreamOptions
 ): AsyncGenerator<ClaudeCliEvent, void, void> {
-  const argv = claudeCliArgs(model, effort, options);
+  const argv = claudeCliArgs(model, effort, options, options.env);
   const child = spawn(CLI, argv.slice(1), {
     cwd: options.cwd,
     env: options.env,

@@ -8,7 +8,7 @@ import { fileURLToPath } from "node:url";
 
 const root = path.resolve(fileURLToPath(new URL("..", import.meta.url)));
 const workflows = path.join(root, ".github", "workflows");
-const prompts = path.join(root, ".agents", "prompts");
+const prompts = path.join(root, ".rulesync", "commands");
 const readWorkflow = (name: string): Promise<string> =>
   readFile(path.join(workflows, name), "utf8");
 const readPrompt = (name: string): Promise<string> =>
@@ -102,14 +102,18 @@ test("generic prompt catalog contains only repository-agnostic Markdown prompts"
       "SimulatorLife/AutoDev",
       prompt.name
     );
-    assert.match(prompt.path, /^\.agents\/prompts\/[^/]+\.md$/u, prompt.name);
+    assert.match(
+      prompt.path,
+      /^\.rulesync\/commands\/[^/]+\.md$/u,
+      prompt.name
+    );
     const source = await readPrompt(path.basename(prompt.path));
     assert.ok(source.trim().length > 0, prompt.name);
   }
 });
 
 test("generic prompt catalog includes the migrated organization-wide inventory", async () => {
-  assert.equal(config.prompts.length, 53);
+  assert.equal(config.prompts.length, 52);
   for (const prompt of config.prompts) {
     assert.equal(Object.hasOwn(prompt, "promptRepository"), false, prompt.name);
     assert.equal(Object.hasOwn(prompt, "sourceWorkflow"), false, prompt.name);
@@ -732,10 +736,7 @@ test("the CI git credential helper answers from the environment without persisti
     assert.equal(fill.status, 0, fill.stderr);
     assert.match(fill.stdout, /^username=x-access-token$/m);
     assert.match(fill.stdout, new RegExp(`^password=${token}$`, "m"));
-    const gitConfig = await readFile(
-      path.join(repo, ".git", "config"),
-      "utf8"
-    );
+    const gitConfig = await readFile(path.join(repo, ".git", "config"), "utf8");
     assert.equal(gitConfig.includes(token), false);
     assert.equal(
       git(["remote", "get-url", "origin"]).stdout.trim(),

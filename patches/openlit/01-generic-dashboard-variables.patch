@@ -198,15 +198,17 @@ index 00000000..5fcbdc90
 +});
 diff --git a/src/client/src/__tests__/lib/platform/dashboard-variables/translate.test.ts b/src/client/src/__tests__/lib/platform/dashboard-variables/translate.test.ts
 new file mode 100644
-index 00000000..b0881e30
+index 0000000..9c7b390
 --- /dev/null
 +++ b/src/client/src/__tests__/lib/platform/dashboard-variables/translate.test.ts
-@@ -0,0 +1,218 @@
+@@ -0,0 +1,408 @@
 +import {
 +	applyDashboardVariables,
 +	isDashboardVariableBindingValid,
 +	parseVariableSelection,
 +	readVariablesFromSearchParams,
++	resolveVariableScope,
++	scopesForSignal,
 +	serializeVariableSelection,
 +	variableToFilter,
 +	variablesToSearchParams,
@@ -247,6 +249,18 @@ index 00000000..b0881e30
 +		key: "metric.name",
 +		multi: false,
 +		supportsAll: false,
++	},
++	{
++		// Span-scoped workspace variable. The override path lets one widget
++		// re-bind it to `resource` while another keeps the declared scope.
++		id: "workspace-span",
++		label: "Workspace (span)",
++		signal: "traces",
++		scope: "span",
++		key: "workspace.id",
++		multi: false,
++		supportsAll: true,
++		defaultValues: [],
 +	},
 +];
 +
@@ -376,6 +390,182 @@ index 00000000..b0881e30
 +		expect(out.filters?.[0]).toMatchObject({
 +			op: "eq",
 +			value: "'; DROP TABLE otel_traces; --",
++		});
++	});
++});
++
++describe("widget-level scope overrides", () => {
++	const SPAN_WORKSPACE: DashboardVariableSpec = {
++		id: "workspace-span",
++		label: "Workspace (span)",
++		signal: "traces",
++		scope: "span",
++		key: "workspace.id",
++		multi: false,
++		supportsAll: true,
++	};
++
++	it("lists the scopes a signal accepts", () => {
++		expect(scopesForSignal("traces").sort()).toEqual(["resource", "span"]);
++		expect(scopesForSignal("logs").sort()).toEqual(["log", "resource"]);
++		expect(scopesForSignal("metrics").sort()).toEqual(["metric", "resource"]);
++	});
++
++	it("resolveVariableScope honors a valid override", () => {
++		expect(resolveVariableScope(SPAN_WORKSPACE, "resource")).toBe("resource");
++		expect(resolveVariableScope(SPAN_WORKSPACE, "span")).toBe("span");
++	});
++
++	it("resolveVariableScope returns the spec scope when no override is given", () => {
++		expect(resolveVariableScope(SPAN_WORKSPACE, undefined)).toBe("span");
++	});
++
++	it("resolveVariableScope fails closed on an invalid override", () => {
++		// `log` is not valid for `traces`; the override must be rejected.
++		expect(
++			resolveVariableScope(SPAN_WORKSPACE, "log" as unknown as "resource"),
++		).toBeNull();
++		// `metric` is also not valid for `traces`.
++		expect(
++			resolveVariableScope(SPAN_WORKSPACE, "metric" as unknown as "resource"),
++		).toBeNull();
++	});
++
++	it("variableToFilter reuses the spec scope when no override is supplied", () => {
++		expect(variableToFilter(SPAN_WORKSPACE, ["alpha"])).toEqual({
++			target: "attribute",
++			scope: "span",
++			key: "workspace.id",
++			op: "eq",
++			value: "alpha",
++		});
++	});
++
++	it("variableToFilter honors a valid override", () => {
++		expect(
++			variableToFilter(SPAN_WORKSPACE, ["alpha"], { scopeOverride: "resource" }),
++		).toEqual({
++			target: "attribute",
++			scope: "resource",
++			key: "workspace.id",
++			op: "eq",
++			value: "alpha",
++		});
++	});
++
++	it("variableToFilter returns null on an invalid override (fail closed)", () => {
++		expect(
++			variableToFilter(SPAN_WORKSPACE, ["alpha"], {
++				scopeOverride: "metric" as unknown as "resource",
++			}),
++		).toBeNull();
++	});
++
++	it("variableToFilter keeps the All sentinel: an empty selection never adds a filter", () => {
++		expect(
++			variableToFilter(SPAN_WORKSPACE, [], { scopeOverride: "resource" }),
++		).toBeNull();
++		expect(
++			variableToFilter(SPAN_WORKSPACE, undefined, { scopeOverride: "resource" }),
++		).toBeNull();
++	});
++
++	it("applyDashboardVariables uses the spec scope when no override is given", () => {
++		const out = applyDashboardVariables(
++			asNormalized({
++				signal: "traces",
++				timeRange: { start: new Date("2026-01-01"), end: new Date("2026-01-02") },
++			}),
++			SPECS,
++			{ values: { "workspace-span": ["alpha"] } },
++		);
++		expect(out.filters?.[0]).toMatchObject({
++			key: "workspace.id",
++			scope: "span",
++			value: "alpha",
++		});
++	});
++
++	it("applyDashboardVariables binds one widget to resource while another stays span", () => {
++		const base = asNormalized({
++			signal: "traces",
++			timeRange: { start: new Date("2026-01-01"), end: new Date("2026-01-02") },
++		});
++
++		// Widget A re-binds the span-scoped workspace variable to `resource`.
++		const outA = applyDashboardVariables(
++			base,
++			SPECS,
++			{ values: { "workspace-span": ["alpha"] } },
++			{ scopeOverrides: { "workspace-span": "resource" } },
++		);
++		expect(outA.filters).toHaveLength(1);
++		expect(outA.filters?.[0]).toMatchObject({
++			key: "workspace.id",
++			scope: "resource",
++			value: "alpha",
++		});
++
++		// Widget B keeps the spec's declared scope (`span`). The base query
++		// must be returned unchanged for the no-override caller, mirroring
++		// the existing behavior when overrides are absent.
++		const outB = applyDashboardVariables(
++			base,
++			SPECS,
++			{ values: { "workspace-span": ["alpha"] } },
++		);
++		expect(outB.filters).toHaveLength(1);
++		expect(outB.filters?.[0]).toMatchObject({
++			key: "workspace.id",
++			scope: "span",
++			value: "alpha",
++		});
++	});
++
++	it("applyDashboardVariables drops the filter on an invalid override", () => {
++		const base = asNormalized({
++			signal: "traces",
++			timeRange: { start: new Date("2026-01-01"), end: new Date("2026-01-02") },
++		});
++		const out = applyDashboardVariables(
++			base,
++			SPECS,
++			{ values: { "workspace-span": ["alpha"] } },
++			{ scopeOverrides: { "workspace-span": "log" as unknown as "resource" } },
++		);
++		expect(out.filters).toBeUndefined();
++	});
++
++	it("applyDashboardVariables drops the filter on an All selection regardless of override", () => {
++		const base = asNormalized({
++			signal: "traces",
++			timeRange: { start: new Date("2026-01-01"), end: new Date("2026-01-02") },
++		});
++		const out = applyDashboardVariables(
++			base,
++			SPECS,
++			{ values: { "workspace-span": [] } },
++			{ scopeOverrides: { "workspace-span": "resource" } },
++		);
++		expect(out.filters).toBeUndefined();
++	});
++
++	it("applyDashboardVariables ignores overrides for variables the widget does not opt into", () => {
++		const base = asNormalized({
++			signal: "traces",
++			timeRange: { start: new Date("2026-01-01"), end: new Date("2026-01-02") },
++		});
++		const out = applyDashboardVariables(
++			base,
++			SPECS,
++			{ values: { "workspace-span": ["alpha"], provider: ["openai"] } },
++			{ widgetOptIn: ["workspace-span"], scopeOverrides: { provider: "resource" } },
++		);
++		expect(out.filters).toHaveLength(1);
++		expect(out.filters?.[0]).toMatchObject({
++			key: "workspace.id",
++			scope: "span",
++			value: "alpha",
 +		});
 +	});
 +});
@@ -760,10 +950,10 @@ index 9982871f..f50cccb8 100644
  		const logs = toMetricParams({
  			signal: "logs",
 diff --git a/src/client/src/__tests__/lib/platform/manage-dashboard/widget.test.ts b/src/client/src/__tests__/lib/platform/manage-dashboard/widget.test.ts
-index d04f4869..8172aa67 100644
+index d04f486..668f17f 100644
 --- a/src/client/src/__tests__/lib/platform/manage-dashboard/widget.test.ts
 +++ b/src/client/src/__tests__/lib/platform/manage-dashboard/widget.test.ts
-@@ -66,6 +66,44 @@ beforeEach(() => {
+@@ -66,6 +66,208 @@ beforeEach(() => {
  });
  
  describe("runWidgetQuery", () => {
@@ -782,6 +972,7 @@ index d04f4869..8172aa67 100644
 +		mockGetTelemetryAdapter.mockResolvedValue({
 +			type: "clickhouse",
 +			capabilities: () => ({ dashboardVariableSignals: ["traces"] }),
++			listSpans: async () => ({ fields: [], rows: [], meta: { latencyMs: 0 } }),
 +		});
 +
 +		const result = await runWidgetQuery("w1", {
@@ -805,6 +996,169 @@ index d04f4869..8172aa67 100644
 +		);
 +		expect(dataCollector).toHaveBeenCalledTimes(1);
 +	});
++	it("re-binds a span-scoped workspace variable to resource for one widget and leaves another widget span-scoped", async () => {
++		// Both widgets share the same span-scoped workspace spec and the same
++		// selection. Widget A carries a `variableScopeOverrides` entry that
++		// re-binds the variable to `resource`; widget B has no override and
++		// must keep the declared scope.
++		const widgetA = {
++			id: "wA",
++			properties: {
++				optInVariables: ["workspace-span"],
++				variableScopeOverrides: { "workspace-span": "resource" },
++			},
++			config: {
++				signal: "traces",
++				structuredQuery: {
++					mode: "list",
++					query: { signal: "traces", filters: [] },
++				},
++			},
++		};
++		const widgetB = {
++			id: "wB",
++			properties: { optInVariables: ["workspace-span"] },
++			config: {
++				signal: "traces",
++				structuredQuery: {
++					mode: "list",
++					query: { signal: "traces", filters: [] },
++				},
++			},
++		};
++		const spec = {
++			id: "workspace-span",
++			label: "Workspace (span)",
++			signal: "traces" as const,
++			scope: "span" as const,
++			key: "workspace.id",
++			multi: false,
++			supportsAll: true,
++		};
++
++		// Widget A: bound to resource via the override.
++		(dataCollector as jest.Mock).mockResolvedValueOnce({ data: [widgetA], err: null });
++		mockGetTelemetryAdapter.mockResolvedValue({
++			type: "clickhouse",
++			capabilities: () => ({ dashboardVariableSignals: ["traces"] }),
++			listSpans: async () => ({ fields: [], rows: [], meta: { latencyMs: 0 } }),
++		});
++		const resultA = await runWidgetQuery("wA", {
++			filter: {} as any,
++			dashboardVariables: {
++				specs: [spec],
++				state: { values: { "workspace-span": ["alpha"] } },
++			},
++		});
++		expect(resultA.err).toBeUndefined();
++		expect(resultA.data).toEqual([]);
++
++		// Widget B: no override, scope stays as the spec declared (`span`).
++		(dataCollector as jest.Mock).mockResolvedValueOnce({ data: [widgetB], err: null });
++		const resultB = await runWidgetQuery("wB", {
++			filter: {} as any,
++			dashboardVariables: {
++				specs: [spec],
++				state: { values: { "workspace-span": ["alpha"] } },
++			},
++		});
++		expect(resultB.err).toBeUndefined();
++
++		// Both widgets should have queried the adapter twice with the same
++		// `dashboardVariables`; the only difference is the override map.
++		const callsA = mockGetTelemetryAdapter.mock.calls[0][0] as { sourceId: unknown; signal: unknown };
++		const callsB = mockGetTelemetryAdapter.mock.calls[1][0] as { sourceId: unknown; signal: unknown };
++		expect(callsA.signal).toBe("traces");
++		expect(callsB.signal).toBe("traces");
++	});
++
++	it("drops the filter when a widget supplies an invalid scope override (fail closed)", async () => {
++		// `log` is not a valid scope for `traces`; the override must be
++		// rejected and the variable's filter must be dropped, leaving the
++		// widget to run with no variable filters.
++		(dataCollector as jest.Mock).mockResolvedValueOnce({
++			data: [{
++				id: "w1",
++				properties: {
++					optInVariables: ["workspace-span"],
++					variableScopeOverrides: { "workspace-span": "log" },
++				},
++				config: {
++					signal: "traces",
++					structuredQuery: { mode: "list", query: { signal: "traces", filters: [] } },
++				},
++			}],
++			err: null,
++		});
++		mockGetTelemetryAdapter.mockResolvedValue({
++			type: "clickhouse",
++			capabilities: () => ({ dashboardVariableSignals: ["traces"] }),
++			listSpans: async () => ({ fields: [], rows: [], meta: { latencyMs: 0 } }),
++		});
++
++		const result = await runWidgetQuery("w1", {
++			filter: {} as any,
++			dashboardVariables: {
++				specs: [{
++					id: "workspace-span",
++					label: "Workspace (span)",
++					signal: "traces",
++					scope: "span",
++					key: "workspace.id",
++					multi: false,
++					supportsAll: true,
++				}],
++				state: { values: { "workspace-span": ["alpha"] } },
++			},
++		});
++
++		expect(result.err).toBeUndefined();
++		expect(mockGetTelemetryAdapter).toHaveBeenCalledTimes(1);
++	});
++
++	it("returns no variable filters when the selection is empty / All, even with a scope override", async () => {
++		// All-selection (`[]`) must short-circuit the binding regardless of
++		// any scope override; the widget runs with no variable filters.
++		(dataCollector as jest.Mock).mockResolvedValueOnce({
++			data: [{
++				id: "w1",
++				properties: {
++					optInVariables: ["workspace-span"],
++					variableScopeOverrides: { "workspace-span": "resource" },
++				},
++				config: {
++					signal: "traces",
++					structuredQuery: { mode: "list", query: { signal: "traces", filters: [] } },
++				},
++			}],
++			err: null,
++		});
++		mockGetTelemetryAdapter.mockResolvedValue({
++			type: "clickhouse",
++			capabilities: () => ({ dashboardVariableSignals: ["traces"] }),
++			listSpans: async () => ({ fields: [], rows: [], meta: { latencyMs: 0 } }),
++		});
++
++		const result = await runWidgetQuery("w1", {
++			filter: {} as any,
++			dashboardVariables: {
++				specs: [{
++					id: "workspace-span",
++					label: "Workspace (span)",
++					signal: "traces",
++					scope: "span",
++					key: "workspace.id",
++					multi: false,
++					supportsAll: true,
++				}],
++				state: { values: { "workspace-span": [] } },
++			},
++		});
++
++		expect(result.err).toBeUndefined();
++		expect(mockGetTelemetryAdapter).toHaveBeenCalledTimes(1);
++	});
++
  	it("blocks non-SELECT user queries", async () => {
  		(dataCollector as jest.Mock).mockResolvedValueOnce({
  			data: [{ id: "w1", config: JSON.stringify({ query: "SELECT 1" }) }],
@@ -1149,7 +1503,7 @@ index 8911aeaa..6af1f204 100644
  	const currentEnvironment =
  		useRootStore(getCurrentProjectEnvironment) || "production";
  	const [queryResult, setQueryResult] = React.useState<any>(null);
-@@ -954,6 +955,20 @@ export const EditWidgetSheet: React.FC<EditWidgetSheetProps> = ({
+@@ -954,6 +955,26 @@ export const EditWidgetSheet: React.FC<EditWidgetSheetProps> = ({
  											</div>
  										</div>
  									)}
@@ -1158,10 +1512,16 @@ index 8911aeaa..6af1f204 100644
 +											<WidgetOptInEditor
 +												specs={details.variables}
 +												optIn={(currentWidget.properties as { optInVariables?: string[] } | undefined)?.optInVariables}
++												scopeOverrides={(currentWidget.properties as { variableScopeOverrides?: Record<string, import("@/lib/platform/dashboard-variables").AttributeScope> } | undefined)?.variableScopeOverrides}
 +												widgetSignal={(currentWidget.config as { signal?: string } | undefined)?.signal || "traces"}
-+												onChange={(next) => {
++												onChangeOptIn={(next) => {
 +													updateWidgetProperties(currentWidget.id, {
 +														optInVariables: next,
++													});
++												}}
++												onChangeScopeOverrides={(next) => {
++													updateWidgetProperties(currentWidget.id, {
++														variableScopeOverrides: next,
 +													});
 +												}}
 +											/>
@@ -1995,16 +2355,21 @@ index 00000000..93eda1f2
 +export { parseVariableSelection };
 diff --git a/src/client/src/components/(playground)/manage-dashboard/board-creator/components/variables/widget-opt-in-editor.tsx b/src/client/src/components/(playground)/manage-dashboard/board-creator/components/variables/widget-opt-in-editor.tsx
 new file mode 100644
-index 00000000..5acc4df6
+index 0000000..c104a25
 --- /dev/null
 +++ b/src/client/src/components/(playground)/manage-dashboard/board-creator/components/variables/widget-opt-in-editor.tsx
-@@ -0,0 +1,117 @@
+@@ -0,0 +1,214 @@
 +"use client";
 +
 +import { useCallback } from "react";
 +import type {
++	AttributeScope,
 +	DashboardVariableOptIn,
 +	DashboardVariableSpec,
++} from "@/lib/platform/dashboard-variables";
++import {
++	isDashboardVariableBindingValid,
++	scopesForSignal,
 +} from "@/lib/platform/dashboard-variables";
 +
 +/**
@@ -2015,24 +2380,55 @@ index 00000000..5acc4df6
 + * receive their translated filters when their selection is non-empty;
 + * undeclared variables are dropped.
 + *
-+ * Persistence is the parent's responsibility: `onChange` receives the new
-+ * opt-in list which the dashboard editor writes back to the widget's
-+ * `properties.optInVariables` field on save.
++ * When the variable's signal allows more than one AttributeScope (e.g.
++ * traces: { resource, span }) the editor exposes a per-variable scope
++ * override selector for opted-in variables. The override is a pure read at
++ * query time — the board spec is never mutated — and the binding layer
++ * validates the override against the signal's allowed scopes, failing
++ * closed on invalid input.
++ *
++ * Persistence is the parent's responsibility: `onChangeOptIn` receives the
++ * new opt-in list and `onChangeScopeOverrides` receives the new override
++ * map; the dashboard editor writes them back to the widget's
++ * `properties.optInVariables` and `properties.variableScopeOverrides`
++ * fields on save.
 + */
 +export interface WidgetOptInEditorProps {
 +	specs: DashboardVariableSpec[];
 +	optIn: DashboardVariableOptIn | undefined;
-+	onChange: (next: DashboardVariableOptIn | undefined) => void;
++	/**
++	 * Per-widget scope override map. When a variable is opted in and the
++	 * signal allows multiple scopes, the editor exposes a small selector to
++	 * set the override. The map is the typed `Record<variableId,
++	 * AttributeScope>` shape stored on the widget; omitted variables use the
++	 * spec's declared scope unchanged.
++	 */
++	scopeOverrides: Record<string, AttributeScope> | undefined;
++	onChangeOptIn: (next: DashboardVariableOptIn | undefined) => void;
++	onChangeScopeOverrides: (
++		next: Record<string, AttributeScope> | undefined,
++	) => void;
 +	widgetSignal: string;
 +}
++
++const SCOPE_LABEL: Record<AttributeScope, string> = {
++	resource: "resource",
++	span: "span",
++	log: "log",
++	metric: "metric",
++};
 +
 +export function WidgetOptInEditor({
 +	specs,
 +	optIn,
-+	onChange,
++	scopeOverrides,
++	onChangeOptIn,
++	onChangeScopeOverrides,
 +	widgetSignal,
 +}: WidgetOptInEditorProps) {
 +	const compatible = specs.filter((spec) => spec.signal === widgetSignal);
++	const allowedScopes = scopesForSignal(widgetSignal as DashboardVariableSpec["signal"]);
++	const showScopeOverride = allowedScopes.length > 1;
 +
 +	const isAll = optIn === undefined;
 +	const isChecked = useCallback(
@@ -2049,24 +2445,48 @@ index 00000000..5acc4df6
 +				// Switching from "all" to "explicit": seed with everything
 +				// except the toggled id so the user-visible behaviour matches
 +				// the checkbox state.
-+				onChange(compatible.map((s) => s.id).filter((sid) => sid !== id));
++				onChangeOptIn(compatible.map((s) => s.id).filter((sid) => sid !== id));
 +				return;
 +			}
 +			if (optIn.includes(id)) {
-+				onChange(optIn.filter((sid) => sid !== id));
++				onChangeOptIn(optIn.filter((sid) => sid !== id));
 +			} else {
-+				onChange([...optIn, id]);
++				onChangeOptIn([...optIn, id]);
 +			}
 +		},
-+		[compatible, optIn, onChange],
++		[compatible, optIn, onChangeOptIn],
 +	);
 +
 +	const setAll = useCallback(
 +		(next: boolean) => {
-+			if (next) onChange(undefined);
-+			else onChange([]);
++			if (next) onChangeOptIn(undefined);
++			else onChangeOptIn([]);
 +		},
-+		[onChange],
++		[onChangeOptIn],
++	);
++
++	const setScopeOverride = useCallback(
++		(id: string, scope: AttributeScope | "") => {
++			const next = { ...(scopeOverrides ?? {}) };
++			if (scope === "") {
++				delete next[id];
++			} else {
++				next[id] = scope;
++			}
++			const cleaned: Record<string, AttributeScope> = {};
++			for (const [k, v] of Object.entries(next)) {
++				if (typeof v === "string" && isDashboardVariableBindingValid(
++					compatible.find((s) => s.id === k)?.signal ?? (widgetSignal as DashboardVariableSpec["signal"]),
++					v as AttributeScope,
++				)) {
++					cleaned[k] = v as AttributeScope;
++				}
++			}
++			onChangeScopeOverrides(
++				Object.keys(cleaned).length === 0 ? undefined : cleaned,
++			);
++		},
++		[compatible, onChangeScopeOverrides, scopeOverrides, widgetSignal],
 +	);
 +
 +	if (compatible.length === 0) {
@@ -2093,26 +2513,63 @@ index 00000000..5acc4df6
 +				</label>
 +			</div>
 +			<ul className="space-y-1 text-xs">
-+				{compatible.map((spec) => (
-+					<li
-+						key={spec.id}
-+						className="flex items-center justify-between rounded border border-stone-200 dark:border-stone-800 bg-white dark:bg-stone-900 px-2 py-1"
-+					>
-+						<span>
-+							<code className="font-mono text-stone-500">{spec.id}</code>
-+							<span className="ml-2 text-stone-500">{spec.label}</span>
-+						</span>
-+						<label className="flex items-center gap-1">
-+							<input
-+								type="checkbox"
-+								checked={isChecked(spec.id)}
-+								onChange={() => toggle(spec.id)}
-+							/>
-+							{isChecked(spec.id) ? "follows" : "ignored"}
-+						</label>
-+					</li>
-+				))}
++				{compatible.map((spec) => {
++					const isOptedIn = isChecked(spec.id);
++					const currentOverride = scopeOverrides?.[spec.id];
++					return (
++						<li
++							key={spec.id}
++							className="flex items-center justify-between rounded border border-stone-200 dark:border-stone-800 bg-white dark:bg-stone-900 px-2 py-1"
++						>
++							<span>
++								<code className="font-mono text-stone-500">{spec.id}</code>
++								<span className="ml-2 text-stone-500">{spec.label}</span>
++								<span className="ml-2 text-[10px] text-stone-400">
++									(default scope: {SCOPE_LABEL[spec.scope]})
++								</span>
++							</span>
++							<div className="flex items-center gap-2">
++								{showScopeOverride && isOptedIn ? (
++									<select
++										data-dashboard-widget-scope-override={spec.id}
++										className="h-6 rounded border border-stone-200 dark:border-stone-800 bg-white dark:bg-stone-900 px-1 text-[10px]"
++										value={currentOverride ?? ""}
++										onChange={(e) =>
++											setScopeOverride(
++												spec.id,
++												e.target.value as AttributeScope | "",
++											)
++										}
++										title={`Bind ${spec.id} to a different attribute scope for this widget`}
++									>
++										<option value="">default ({SCOPE_LABEL[spec.scope]})</option>
++										{allowedScopes.map((scope) => (
++											<option key={scope} value={scope}>
++												override: {scope}
++											</option>
++										))}
++									</select>
++								) : null}
++								<label className="flex items-center gap-1">
++									<input
++										type="checkbox"
++										checked={isOptedIn}
++										onChange={() => toggle(spec.id)}
++									/>
++									{isOptedIn ? "follows" : "ignored"}
++								</label>
++							</div>
++						</li>
++					);
++				})}
 +			</ul>
++			{showScopeOverride ? (
++				<p className="text-[10px] text-stone-500">
++					Scope overrides re-bind an opted-in variable to a different
++					attribute scope for this widget only; the board spec is not
++					mutated. Invalid overrides fail closed.
++				</p>
++			) : null}
 +		</div>
 +	);
 +}
@@ -2958,10 +3415,10 @@ index 00000000..f8909b3e
 +} from "./distinct-values";
 diff --git a/src/client/src/lib/platform/dashboard-variables/translate.ts b/src/client/src/lib/platform/dashboard-variables/translate.ts
 new file mode 100644
-index 00000000..03672005
+index 0000000..0ae3738
 --- /dev/null
 +++ b/src/client/src/lib/platform/dashboard-variables/translate.ts
-@@ -0,0 +1,244 @@
+@@ -0,0 +1,310 @@
 +import type {
 +	AttributeScope,
 +	NormalizedFilter,
@@ -3041,6 +3498,15 @@ index 00000000..03672005
 + * Always parameter-safe: values flow through `NormalizedFilter.value` and
 + * are passed to adapters as typed inputs. Adapters translate them into the
 + * vendor's native query language without string interpolation.
++ *
++ * The optional `opts.scopeOverride` lets a widget re-bind the variable to a
++ * different attribute scope (e.g. span -> resource) at query time without
++ * mutating the board spec. The override is only honored after it is validated
++ * against the variable's signal via `isDashboardVariableBindingValid`; an
++ * invalid override fails closed by dropping the filter. When the override is
++ * valid but no selection is present, the function still returns `null`
++ * (the All sentinel). When the override is absent, the spec's declared
++ * scope is used unchanged.
 + */
 +const VALID_SCOPES_BY_SIGNAL: Partial<
 +	Record<Signal, ReadonlySet<AttributeScope>>
@@ -3058,9 +3524,45 @@ index 00000000..03672005
 +	return VALID_SCOPES_BY_SIGNAL[signal]?.has(scope) ?? false;
 +}
 +
++/**
++ * List every AttributeScope a signal accepts. Used by the widget opt-in
++ * editor to expose a per-widget scope override only when more than one
++ * scope is valid for the variable's signal.
++ */
++export function scopesForSignal(signal: Signal): AttributeScope[] {
++	return Array.from(VALID_SCOPES_BY_SIGNAL[signal] ?? new Set<AttributeScope>());
++}
++
++/**
++ * Resolve the effective AttributeScope for a variable, honoring an optional
++ * per-widget override. The override must be a scope the signal accepts;
++ * anything else returns `null` so the caller fails closed.
++ *
++ * The spec is never mutated: this is a pure read.
++ */
++export function resolveVariableScope(
++	spec: DashboardVariableSpec,
++	scopeOverride: AttributeScope | undefined,
++): AttributeScope | null {
++	if (!isDashboardVariableBindingValid(spec.signal, spec.scope)) {
++		return null;
++	}
++	if (scopeOverride === undefined) {
++		return spec.scope;
++	}
++	if (!isDashboardVariableBindingValid(spec.signal, scopeOverride)) {
++		// Invalid override: fail closed. The caller drops the filter so a
++		// hand-edited board cannot widen a resource-only variable to a span
++		// key by injecting a bogus scope.
++		return null;
++	}
++	return scopeOverride;
++}
++
 +export function variableToFilter(
 +	spec: DashboardVariableSpec,
 +	selection: string[] | undefined,
++	opts: { scopeOverride?: AttributeScope } = {},
 +): NormalizedFilter | null {
 +	if (
 +		!isDashboardVariableBindingValid(spec.signal, spec.scope) ||
@@ -3072,10 +3574,16 @@ index 00000000..03672005
 +		// All (empty) or unset: do not push a predicate.
 +		return null;
 +	}
++	const effectiveScope = resolveVariableScope(spec, opts.scopeOverride);
++	if (effectiveScope === null) {
++		// Invalid override or invalid spec scope: drop the filter rather
++		// than silently binding it to the wrong attribute map.
++		return null;
++	}
 +	if (spec.multi && selection.length > 1) {
 +		return {
 +			target: "attribute",
-+			scope: spec.scope,
++			scope: effectiveScope,
 +			key: spec.key,
 +			op: "in",
 +			value: selection.slice(),
@@ -3083,7 +3591,7 @@ index 00000000..03672005
 +	}
 +	return {
 +		target: "attribute",
-+		scope: spec.scope,
++		scope: effectiveScope,
 +		key: spec.key,
 +		op: "eq",
 +		value: selection[0],
@@ -3108,12 +3616,22 @@ index 00000000..03672005
 + *
 + * Variables whose id is not present in `state.values` or whose selection
 + * resolves to All fall through and do not contribute a filter.
++ *
++ * `opts.scopeOverrides` is a per-widget map of `{ variableId: AttributeScope }`
++ * that re-binds an opted-in variable to a different scope at query time.
++ * Each override is validated against the signal's allowed scopes before it
++ * is used; an invalid override fails closed by dropping that variable's
++ * filter (the spec is never mutated). Variables whose scope override is
++ * absent or valid-and-undefined fall back to the spec's declared scope.
 + */
 +export function applyDashboardVariables(
 +	query: NormalizedQueryLike,
 +	specs: DashboardVariableSpec[],
 +	state: Pick<DashboardVariableState, "values">,
-+	opts: { widgetOptIn?: DashboardVariableOptIn } = {},
++	opts: {
++		widgetOptIn?: DashboardVariableOptIn;
++		scopeOverrides?: Record<string, AttributeScope>;
++	} = {},
 +): NormalizedQueryLike {
 +	const allowAll =
 +		opts.widgetOptIn === undefined
@@ -3125,7 +3643,12 @@ index 00000000..03672005
 +		if (spec.signal !== query.signal) continue;
 +		if (!isDashboardVariableBindingValid(spec.signal, spec.scope)) continue;
 +		if (!allowAll(spec)) continue;
-+		const filter = variableToFilter(spec, state.values[spec.id]);
++		const override = opts.scopeOverrides?.[spec.id];
++		const filter = variableToFilter(
++			spec,
++			state.values[spec.id],
++			override === undefined ? {} : { scopeOverride: override },
++		);
 +		if (filter) additions.push(filter);
 +	}
 +	if (additions.length === 0) return query;
@@ -3208,10 +3731,10 @@ index 00000000..03672005
 +}
 diff --git a/src/client/src/lib/platform/dashboard-variables/types.ts b/src/client/src/lib/platform/dashboard-variables/types.ts
 new file mode 100644
-index 00000000..d92ec2b0
+index 0000000..66795c9
 --- /dev/null
 +++ b/src/client/src/lib/platform/dashboard-variables/types.ts
-@@ -0,0 +1,23 @@
+@@ -0,0 +1,28 @@
 +/**
 + * Re-export of the dashboard variable types from the platform/connectors
 + * integration point. The dashboard storage layer treats variable specs as
@@ -3223,7 +3746,10 @@ index 00000000..d92ec2b0
 +	DashboardVariableState,
 +	DashboardVariableOptIn,
 +} from "./translate";
-+export type { Signal } from "@/lib/platform/connectors/datasource/types";
++export type {
++	AttributeScope,
++	Signal,
++} from "@/lib/platform/connectors/datasource/types";
 +
 +export {
 +	DASHBOARD_VARIABLE_URL_PREFIX,
@@ -3234,6 +3760,8 @@ index 00000000..d92ec2b0
 +	serializeVariableSelection,
 +	parseVariableSelection,
 +	isDashboardVariableBindingValid,
++	resolveVariableScope,
++	scopesForSignal,
 +} from "./translate";
 diff --git a/src/client/src/lib/platform/manage-dashboard/board-format.ts b/src/client/src/lib/platform/manage-dashboard/board-format.ts
 index 5aacd18e..74a0b017 100644
@@ -3453,15 +3981,16 @@ index 8ffd8633..c7831c85 100644
  
  	// Create the board first
 diff --git a/src/client/src/lib/platform/manage-dashboard/widget.ts b/src/client/src/lib/platform/manage-dashboard/widget.ts
-index f0eb4edc..47bf8539 100644
+index f0eb4ed..4328235 100644
 --- a/src/client/src/lib/platform/manage-dashboard/widget.ts
 +++ b/src/client/src/lib/platform/manage-dashboard/widget.ts
-@@ -28,6 +28,12 @@ import {
+@@ -28,6 +28,13 @@ import {
  	DEFAULT_QUERY_BUDGET,
  } from "@/lib/platform/connectors/datasource/http/limits";
  import { metricParamsToOpenLITQuery } from "@/lib/platform/connectors/datasource/clickhouse/query-map";
 +import { applyDashboardVariables } from "@/lib/platform/dashboard-variables";
 +import type {
++  AttributeScope,
 +  DashboardVariableOptIn,
 +  DashboardVariableSpec,
 +  DashboardVariableState,
@@ -3469,7 +3998,7 @@ index f0eb4edc..47bf8539 100644
  import {
  	executeInferredWidgetQuery,
  	inferStructuredFromClickHouseSql,
-@@ -510,16 +516,46 @@ function timeRangeFromFilter(filter: MetricParams): { start: Date; end: Date } {
+@@ -510,16 +517,59 @@ function timeRangeFromFilter(filter: MetricParams): { start: Date; end: Date } {
  async function executeStructuredWidgetQuery(
  	adapter: DataSourceAdapter,
  	structured: NonNullable<Widget["config"]["structuredQuery"]>,
@@ -3479,6 +4008,16 @@ index f0eb4edc..47bf8539 100644
 +		specs: DashboardVariableSpec[];
 +		state: Pick<DashboardVariableState, "values">;
 +		widgetOptIn?: DashboardVariableOptIn;
++		/**
++		 * Per-widget scope override map. Lets a widget re-bind an opted-in
++		 * variable to a different AttributeScope (e.g. span -> resource)
++		 * at query time without mutating the board spec. Each override is
++		 * validated against the signal's allowed scopes before it is used;
++		 * an invalid override fails closed by dropping that variable's
++		 * filter. When absent or empty, every variable falls back to its
++		 * declared scope.
++		 */
++		scopeOverrides?: Record<string, AttributeScope>;
 +	}
  ) {
  	const base = (structured.query || {}) as Partial<OpenLITQuery>;
@@ -3496,7 +4035,10 @@ index f0eb4edc..47bf8539 100644
 +				{ signal, filters: baseFilters },
 +				variableBinding.specs,
 +				variableBinding.state,
-+				{ widgetOptIn: variableBinding.widgetOptIn },
++				{
++					widgetOptIn: variableBinding.widgetOptIn,
++					scopeOverrides: variableBinding.scopeOverrides,
++				},
 +			)
 +		: { signal, filters: baseFilters };
 +	const variableFiltersApplied =
@@ -3518,7 +4060,7 @@ index f0eb4edc..47bf8539 100644
  		aiSelector: base.aiSelector ?? fromFilter.aiSelector,
  	} as OpenLITQuery);
  	// Enforce per-query budgets so a widget can never ask a vendor for an
-@@ -640,12 +676,25 @@ export async function runWidgetQuery(
+@@ -640,12 +690,25 @@ export async function runWidgetQuery(
  		sourceId: sourceIdOverride,
  		signal: signalOverride,
  		structuredQuery: structuredOverride,
@@ -3544,7 +4086,7 @@ index f0eb4edc..47bf8539 100644
  	}
  ): Promise<{ data?: unknown; err?: string }> {
  	const { data: widget, err: widgetErr } = await getWidgetById(widgetId);
-@@ -700,7 +749,7 @@ export async function runWidgetQuery(
+@@ -700,7 +763,7 @@ export async function runWidgetQuery(
  	if (sourceSupportsNativeSql(descriptor)) {
  		if (structured && !userQuery) {
  			const adapter = await getTelemetryAdapter({ sourceId, signal, environment: filter.environment });
@@ -3553,7 +4095,7 @@ index f0eb4edc..47bf8539 100644
  		}
  		const sql =
  			userQuery ||
-@@ -725,5 +774,34 @@ export async function runWidgetQuery(
+@@ -725,5 +788,57 @@ export async function runWidgetQuery(
  	}
  
  	const adapter = await getTelemetryAdapter({ sourceId, signal, environment: filter.environment });
@@ -3563,38 +4105,62 @@ index f0eb4edc..47bf8539 100644
 +
 +/**
 + * Build the per-widget variable binding. Reads `properties.optInVariables`
-+ * off the widget (the declared opt-in list) and combines it with the
-+ * dashboard-level variable specs/state. Returns `undefined` when the
-+ * dashboard did not pass any variables, preserving the existing call sites.
++ * (the declared opt-in list) and `properties.variableScopeOverrides`
++ * (per-widget AttributeScope overrides) off the widget, then combines
++ * them with the dashboard-level variable specs/state. Returns `undefined`
++ * when the dashboard did not pass any variables, preserving the existing
++ * call sites.
++ *
++ * `variableScopeOverrides` is intentionally read here at the binding
++ * boundary rather than the translation layer: the board spec is never
++ * mutated, the override is a pure read off `widget.properties`, and any
++ * value not matching the variable's signal scope is dropped by
++ * `applyDashboardVariables` via `resolveVariableScope` (fail closed).
 + */
 +function bindingFromWidget(
 +	dashboardVariables: {
 +		specs: DashboardVariableSpec[];
 +		state: Pick<DashboardVariableState, "values">;
 +	} | undefined,
-+	widget: { properties?: { optInVariables?: unknown } } | Widget,
++	widget: {
++		properties?: {
++			optInVariables?: unknown;
++			variableScopeOverrides?: unknown;
++		};
++	} | Widget,
 +): {
 +	specs: DashboardVariableSpec[];
 +	state: Pick<DashboardVariableState, "values">;
 +	widgetOptIn?: DashboardVariableOptIn;
++	scopeOverrides?: Record<string, AttributeScope>;
 +} | undefined {
 +	if (!dashboardVariables) return undefined;
++	const props = widget.properties;
 +	const optIn =
-+		widget.properties && Array.isArray(widget.properties.optInVariables)
-+			? (widget.properties.optInVariables as DashboardVariableOptIn)
++		props && Array.isArray(props.optInVariables)
++			? (props.optInVariables as DashboardVariableOptIn)
++			: undefined;
++	const scopeOverrides =
++		props &&
++		props.variableScopeOverrides &&
++		typeof props.variableScopeOverrides === "object" &&
++		!Array.isArray(props.variableScopeOverrides)
++			? (props.variableScopeOverrides as Record<string, AttributeScope>)
 +			: undefined;
 +	return {
 +		specs: dashboardVariables.specs,
 +		state: dashboardVariables.state,
 +		widgetOptIn: optIn,
++		scopeOverrides,
 +	};
  }
 diff --git a/src/client/src/types/manage-dashboard.ts b/src/client/src/types/manage-dashboard.ts
-index 4027396c..3bf6150c 100644
+index 4027396..9ea657b 100644
 --- a/src/client/src/types/manage-dashboard.ts
 +++ b/src/client/src/types/manage-dashboard.ts
-@@ -1,3 +1,8 @@
+@@ -1,3 +1,9 @@
 +import type {
++	AttributeScope,
 +	DashboardVariableOptIn,
 +	DashboardVariableSpec,
 +} from "@/lib/platform/dashboard-variables";
@@ -3602,7 +4168,7 @@ index 4027396c..3bf6150c 100644
  export type GridPosition = {
  	x: number;
  	y: number;
-@@ -17,6 +22,13 @@ export type Board = {
+@@ -17,6 +23,13 @@ export type Board = {
  	widgets: BoardWidget[];
  	totalWidgets?: number;
  	tags: string;
@@ -3616,7 +4182,7 @@ index 4027396c..3bf6150c 100644
  };
  
  export type Folder = {
-@@ -73,7 +85,14 @@ export interface Widget {
+@@ -73,7 +86,24 @@ export interface Widget {
  	title: string;
  	description: string;
  	type: string;
@@ -3628,6 +4194,16 @@ index 4027396c..3bf6150c 100644
 +		 * array is absent the widget follows every variable on its signal.
 +		 */
 +		optInVariables?: DashboardVariableOptIn;
++		/**
++		 * Per-widget AttributeScope override map. Lets the widget re-bind an
++		 * opted-in variable to a different attribute scope (e.g. span ->
++		 * resource) without mutating the board spec. Keys are variable ids;
++		 * values are AttributeScopes the variable's signal accepts. The
++		 * binding layer validates each override against the signal's allowed
++		 * scopes and fails closed on an invalid value. When the map is
++		 * absent, every variable falls back to its declared scope.
++		 */
++		variableScopeOverrides?: Record<string, AttributeScope>;
 +	};
  	config: WidgetSourceConfig & Record<string, any>;
  	createdAt: string;

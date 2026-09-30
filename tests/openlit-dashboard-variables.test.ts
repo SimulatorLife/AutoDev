@@ -8,6 +8,10 @@
  *      - All / empty selection returns null (no filter predicate added)
  *      - Single-value selection produces typed OpenLITQuery { op: "eq", value: ... }
  *      - Multi-value selection produces typed OpenLITQuery { op: "in", value: [...] }
+ *      - Per-widget scope override: re-binds an opted-in variable to a
+ *        different AttributeScope (e.g. span -> resource) at query time,
+ *        validates the override against the signal's allowed scopes, fails
+ *        closed on invalid scope, and never mutates the board spec.
  *      - applyDashboardVariables binds to structured query filters and honors widget opt-in
  *      - URL parameter serialization/deserialization (dashboard_var_*)
  *   2. Static patch verification:
@@ -87,12 +91,26 @@ const VALID_SIGNALS = new Set<string>(["traces", "logs", "metrics"]);
 function bindingIsValid(signal: Signal, scope: AttributeScope): boolean {
   return VALID_SCOPES_BY_SIGNAL[signal].has(scope);
 }
+function scopesForSignal(signal: Signal): AttributeScope[] {
+  return Array.from(VALID_SCOPES_BY_SIGNAL[signal]);
+}
 const ATTRIBUTE_KEY_PATTERN = /^[A-Za-z][A-Za-z0-9_.*-]{0,127}$/;
 const DASHBOARD_VARIABLE_URL_PREFIX = "dashboard_var_";
 
+function resolveVariableScope(
+  spec: DashboardVariableSpec,
+  scopeOverride: AttributeScope | undefined
+): AttributeScope | null {
+  if (!bindingIsValid(spec.signal, spec.scope)) return null;
+  if (scopeOverride === undefined) return spec.scope;
+  if (!bindingIsValid(spec.signal, scopeOverride)) return null;
+  return scopeOverride;
+}
+
 function variableToFilter(
   spec: DashboardVariableSpec,
-  selection: string[] | undefined
+  selection: string[] | undefined,
+  opts: { scopeOverride?: AttributeScope } = {}
 ): NormalizedFilter | null {
   if (
     !VALID_SIGNALS.has(spec.signal) ||
@@ -104,10 +122,12 @@ function variableToFilter(
   if (!Array.isArray(selection) || selection.length === 0) {
     return null;
   }
+  const effectiveScope = resolveVariableScope(spec, opts.scopeOverride);
+  if (effectiveScope === null) return null;
   if (spec.multi && selection.length > 1) {
     return {
       target: "attribute",
-      scope: spec.scope,
+      scope: effectiveScope,
       key: spec.key,
       op: "in",
       value: selection.slice()
@@ -117,7 +137,7 @@ function variableToFilter(
   if (singleValue === undefined) return null;
   return {
     target: "attribute",
-    scope: spec.scope,
+    scope: effectiveScope,
     key: spec.key,
     op: "eq",
     value: singleValue
@@ -140,14 +160,22 @@ function applyDashboardVariables(
   query: NormalizedQueryLike,
   specs: DashboardVariableSpec[],
   state: Pick<DashboardVariableState, "values">,
-  opts: { widgetOptIn?: DashboardVariableOptIn } = {}
+  opts: {
+    widgetOptIn?: DashboardVariableOptIn;
+    scopeOverrides?: Record<string, AttributeScope>;
+  } = {}
 ): NormalizedQueryLike {
   const applicableSpecs = specs.filter((spec) =>
     matchesDashboardVariable(spec, query.signal, opts.widgetOptIn)
   );
   const additions = applicableSpecs.reduce<NormalizedFilter[]>(
     (filters, spec) => {
-      const filter = variableToFilter(spec, state.values[spec.id]);
+      const scopeOverride = opts.scopeOverrides?.[spec.id];
+      const filter = variableToFilter(
+        spec,
+        state.values[spec.id],
+        scopeOverride === undefined ? {} : { scopeOverride }
+      );
       if (filter) filters.push(filter);
       return filters;
     },
@@ -367,6 +395,170 @@ test("applyDashboardVariables prepends filters and respects widget opt-in", () =
   assert.equal(resOptIn.filters?.length, 2);
   assert.equal(resOptIn.filters?.[0]?.key, "gen_ai.system");
   assert.equal(resOptIn.filters?.[1]?.key, "existing.filter");
+});
+
+// ---------------------------------------------------------------------------
+// Per-widget scope override: re-bind an opted-in variable to a different
+// AttributeScope (e.g. span -> resource) without mutating the board spec.
+// ---------------------------------------------------------------------------
+
+const SPAN_WORKSPACE_SPEC: DashboardVariableSpec = {
+  id: "workspace-span",
+  label: "Workspace (span)",
+  signal: "traces",
+  scope: "span",
+  key: "workspace.id",
+  multi: false,
+  supportsAll: true
+};
+
+test("resolveVariableScope: valid override replaces the spec scope; invalid drops closed", () => {
+  // Default (no override) returns the spec scope.
+  assert.equal(resolveVariableScope(SPAN_WORKSPACE_SPEC, undefined), "span");
+  // Valid override honored.
+  assert.equal(
+    resolveVariableScope(SPAN_WORKSPACE_SPEC, "resource"),
+    "resource"
+  );
+  // Out-of-signal scope fails closed (returns null).
+  assert.equal(resolveVariableScope(SPAN_WORKSPACE_SPEC, "log"), null);
+  assert.equal(resolveVariableScope(SPAN_WORKSPACE_SPEC, "metric"), null);
+});
+
+test("scopesForSignal lists every AttributeScope a signal accepts", () => {
+  assert.deepEqual(scopesForSignal("traces").sort(), ["resource", "span"]);
+  assert.deepEqual(scopesForSignal("logs").sort(), ["log", "resource"]);
+  assert.deepEqual(scopesForSignal("metrics").sort(), ["metric", "resource"]);
+});
+
+test("variableToFilter honors a valid scope override", () => {
+  const filter = variableToFilter(SPAN_WORKSPACE_SPEC, ["alpha"], {
+    scopeOverride: "resource"
+  });
+  assert.deepEqual(filter, {
+    target: "attribute",
+    scope: "resource",
+    key: "workspace.id",
+    op: "eq",
+    value: "alpha"
+  });
+});
+
+test("variableToFilter returns null on an invalid scope override (fail closed)", () => {
+  const filter = variableToFilter(SPAN_WORKSPACE_SPEC, ["alpha"], {
+    scopeOverride: "log"
+  });
+  assert.equal(filter, null);
+});
+
+test("variableToFilter keeps the All sentinel: empty selection -> no filter even with override", () => {
+  assert.equal(
+    variableToFilter(SPAN_WORKSPACE_SPEC, [], { scopeOverride: "resource" }),
+    null
+  );
+  assert.equal(
+    variableToFilter(SPAN_WORKSPACE_SPEC, undefined, {
+      scopeOverride: "resource"
+    }),
+    null
+  );
+});
+
+test("applyDashboardVariables: span-scoped workspace re-bound to resource for one widget, span for another", () => {
+  const baseQuery: NormalizedQueryLike = {
+    signal: "traces",
+    filters: [
+      {
+        target: "attribute",
+        scope: "span",
+        key: "existing.filter",
+        op: "eq",
+        value: "1"
+      }
+    ]
+  };
+
+  // Widget A re-binds the span-scoped workspace to `resource`.
+  const widgetA = applyDashboardVariables(
+    baseQuery,
+    [SPAN_WORKSPACE_SPEC],
+    { values: { "workspace-span": ["alpha"] } },
+    { scopeOverrides: { "workspace-span": "resource" } }
+  );
+  assert.equal(widgetA.filters?.length, 2);
+  assert.deepEqual(widgetA.filters?.[0], {
+    target: "attribute",
+    scope: "resource",
+    key: "workspace.id",
+    op: "eq",
+    value: "alpha"
+  });
+  assert.deepEqual(widgetA.filters?.[1], {
+    target: "attribute",
+    scope: "span",
+    key: "existing.filter",
+    op: "eq",
+    value: "1"
+  });
+
+  // Widget B has no override; the spec's declared scope (`span`) is used.
+  const widgetB = applyDashboardVariables(baseQuery, [SPAN_WORKSPACE_SPEC], {
+    values: { "workspace-span": ["alpha"] }
+  });
+  assert.equal(widgetB.filters?.length, 2);
+  assert.deepEqual(widgetB.filters?.[0], {
+    target: "attribute",
+    scope: "span",
+    key: "workspace.id",
+    op: "eq",
+    value: "alpha"
+  });
+  assert.deepEqual(widgetB.filters?.[1], {
+    target: "attribute",
+    scope: "span",
+    key: "existing.filter",
+    op: "eq",
+    value: "1"
+  });
+});
+
+test("applyDashboardVariables: invalid scope override drops the variable's filter (fail closed)", () => {
+  const baseQuery: NormalizedQueryLike = { signal: "traces" };
+  const out = applyDashboardVariables(
+    baseQuery,
+    [SPAN_WORKSPACE_SPEC],
+    { values: { "workspace-span": ["alpha"] } },
+    { scopeOverrides: { "workspace-span": "log" } }
+  );
+  // No filter added, and the query object is returned without modification
+  // (no mutation of the input).
+  assert.equal(out.filters, undefined);
+  assert.equal(out.signal, "traces");
+});
+
+test("applyDashboardVariables: All selection drops the filter even with a scope override", () => {
+  const baseQuery: NormalizedQueryLike = { signal: "traces" };
+  const out = applyDashboardVariables(
+    baseQuery,
+    [SPAN_WORKSPACE_SPEC],
+    { values: { "workspace-span": [] } },
+    { scopeOverrides: { "workspace-span": "resource" } }
+  );
+  assert.equal(out.filters, undefined);
+});
+
+test("applyDashboardVariables: scope overrides are ignored for variables the widget does not opt into", () => {
+  const baseQuery: NormalizedQueryLike = { signal: "traces" };
+  const out = applyDashboardVariables(
+    baseQuery,
+    [SPAN_WORKSPACE_SPEC],
+    { values: { "workspace-span": ["alpha"] } },
+    {
+      widgetOptIn: ["other-variable"],
+      scopeOverrides: { "workspace-span": "resource" }
+    }
+  );
+  assert.equal(out.filters, undefined);
 });
 
 test("variable URL state serialization and parsing", () => {

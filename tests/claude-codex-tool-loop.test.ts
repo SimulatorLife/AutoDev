@@ -8,6 +8,8 @@ import { join, resolve as resolvePath } from "node:path";
 import test from "node:test";
 import { setTimeout as delay } from "node:timers/promises";
 
+import { AUTODEV_WORKSPACE_KEY_HEADER } from "../src/shared/otel-resource-context.ts";
+
 // The Claude bridge serves Claude as the model behind a Codex turn: every
 // action is a Codex tool call Codex executes and the app renders. These tests
 // drive the real bridge and the real MCP shim with a fake Claude CLI that
@@ -56,6 +58,7 @@ if (config) {
   await rpc("initialize", { protocolVersion: "2025-06-18" });
   const listed = await rpc("tools/list", {});
   record.tools = listed.tools.map((tool) => tool.name);
+  record.mcpOtelResourceAttributes = definition.env?.OTEL_RESOURCE_ATTRIBUTES ?? null;
   writeFileSync(process.env.CLAUDE_FAKE_RECORD, JSON.stringify(record));
 }
 for (const step of JSON.parse(process.env.CLAUDE_FAKE_SCRIPT)) {
@@ -267,7 +270,8 @@ function codexRequest(
     method: "POST",
     headers: {
       "content-type": "application/json",
-      "x-autodev-agent-role": "worker"
+      "x-autodev-agent-role": "worker",
+      [AUTODEV_WORKSPACE_KEY_HEADER]: "claude-mcp-workspace"
     },
     body: JSON.stringify({
       model: "claude-subscription",
@@ -330,6 +334,11 @@ test("a Claude turn acts only through Codex tools that Codex executes", async ()
     // No built-in tool may act inside the CLI; Codex's tools are its only tools.
     assert.equal(cli.argv[cli.argv.indexOf("--tools") + 1], "");
     assert.deepEqual(cli.tools, ["exec", "wait"]);
+    assert.equal(
+      cli.mcpOtelResourceAttributes,
+      "autodev.workspace=claude-mcp-workspace,autodev.agent.role=worker",
+      "the MCP subprocess config receives validated per-request context explicitly"
+    );
     // The CLI sees Codex's own context, developer instructions included.
     assert.match(
       cli.prompt,

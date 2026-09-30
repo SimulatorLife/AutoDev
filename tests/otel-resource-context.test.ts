@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   safeAutoDevAgentRole,
   safeAutoDevWorkspaceKey,
+  validatedAutoDevOtelResourceAttributes,
   withAutoDevOtelResourceContext
 } from "../src/shared/otel-resource-context.ts";
 
@@ -44,4 +45,29 @@ test("missing or unsafe context cannot inherit stale AutoDev resource identity",
   assert.equal(safeAutoDevWorkspaceKey("unknown"), null);
   assert.equal(safeAutoDevAgentRole("unattributed"), null);
   assert.equal(safeAutoDevAgentRole("worker"), "worker");
+});
+
+test("child MCP resource context forwards only validated AutoDev identity", () => {
+  assert.equal(
+    validatedAutoDevOtelResourceAttributes({
+      OTEL_RESOURCE_ATTRIBUTES:
+        "service.name=claude,autodev.workspace=SimulatorLife%2FAutoDev,autodev.agent.role=worker,custom.value=secret"
+    }),
+    "autodev.workspace=SimulatorLife%2FAutoDev,autodev.agent.role=worker"
+  );
+  assert.equal(
+    validatedAutoDevOtelResourceAttributes({
+      OTEL_RESOURCE_ATTRIBUTES:
+        "autodev.workspace=%2FUsers%2Fprivate,autodev.agent.role=unknown"
+    }),
+    null
+  );
+  assert.equal(
+    validatedAutoDevOtelResourceAttributes({
+      OTEL_RESOURCE_ATTRIBUTES:
+        "autodev.workspace=valid,autodev.workspace=%2FUsers%2Fprivate,autodev.agent.role=worker"
+    }),
+    "autodev.agent.role=worker",
+    "a later invalid duplicate fails closed instead of falling back to an earlier value"
+  );
 });

@@ -1,9 +1,9 @@
 diff --git a/src/client/src/__tests__/clickhouse/seed/autodev-usage-dashboard.test.ts b/src/client/src/__tests__/clickhouse/seed/autodev-usage-dashboard.test.ts
 new file mode 100644
-index 00000000..b4c6969d
+index 00000000..2efcb21e
 --- /dev/null
 +++ b/src/client/src/__tests__/clickhouse/seed/autodev-usage-dashboard.test.ts
-@@ -0,0 +1,132 @@
+@@ -0,0 +1,289 @@
 +import dashboard from "@/clickhouse/seed-data/openlit-dashboard-AutoDev-Usage-layout.json";
 +
 +type SeedWidget = {
@@ -17,12 +17,23 @@ index 00000000..b4c6969d
 +				filters?: unknown[];
 +				aggregations?: unknown[];
 +				groupBy?: string[];
++				limit?: number;
 +			};
 +		};
 +	};
 +};
 +
 +const widgets = Object.values(dashboard.widgets) as SeedWidget[];
++
++// Each Usage widget must use a structured query scoped to a single
++// AutoDev-owned service.name. The router widgets (logical/attempt
++// activity) scope to autodev-router; the G10 source-owned MCP server
++// widget scopes to autodev-codex-tools-mcp. No widget may use a
++// different owner and no widget may use raw SQL.
++const ALLOWED_SERVICE_NAMES = new Set([
++	"autodev-router",
++	"autodev-codex-tools-mcp"
++]);
 +
 +describe("AutoDev Usage dashboard seed", () => {
 +	it("declares the shared non-time trace filters and structured widgets", () => {
@@ -42,13 +53,19 @@ index 00000000..b4c6969d
 +		for (const widget of widgets) {
 +			expect(widget.config.structuredQuery).toBeDefined();
 +			expect(widget.config.query).toBeUndefined();
-+			expect(widget.config.structuredQuery?.query?.filters).toContainEqual({
-+				target: "attribute",
-+				scope: "resource",
-+				key: "service.name",
-+				op: "eq",
-+				value: "autodev-router",
-+			});
++			const serviceNameFilter = (
++				widget.config.structuredQuery?.query?.filters ?? []
++			).find(
++				(filter) =>
++					filter !== null &&
++					typeof filter === "object" &&
++					"key" in filter &&
++					(filter as { key: unknown }).key === "service.name",
++			) as { value?: unknown } | undefined;
++			expect(serviceNameFilter).toBeDefined();
++			expect(ALLOWED_SERVICE_NAMES.has(serviceNameFilter?.value as string)).toBe(
++				true,
++			);
 +		}
 +	});
 +
@@ -135,6 +152,146 @@ index 00000000..b4c6969d
 +			"autodev.agent.role",
 +		]);
 +	});
++
++	it("scopes the G10 source-owned MCP tool-call widgets to autodev-codex-tools-mcp", () => {
++		// Every G10 widget MUST filter on the shim's resource
++		// service.name AND on the MCP method name span attribute,
++		// because the source-owned observation is uniquely identified
++		// by the combination. Provider and requested-model are
++		// intentionally NOT in optInVariables because the shim does
++		// not emit those fields.
++		const g10Titles = [
++			"MCP tool calls",
++			"P95 tool-call duration",
++			"MCP tool-call errors",
++			"MCP tool calls by tool name",
++		];
++		for (const title of g10Titles) {
++			const widget = widgets.find((candidate) => candidate.title === title);
++			expect(widget).toBeDefined();
++			expect(widget?.config.structuredQuery?.query?.filters).toEqual(
++				expect.arrayContaining([
++					{
++						target: "attribute",
++						scope: "resource",
++						key: "service.name",
++						op: "eq",
++						value: "autodev-codex-tools-mcp",
++					},
++					{
++						target: "attribute",
++						scope: "span",
++						key: "mcp.method.name",
++						op: "eq",
++						value: "tools/call",
++					},
++				]),
++			);
++			expect(widget?.description).toMatch(/Resource scope override/u);
++		}
++	});
++
++	it("opts every G10 widget into workspace + agent at Resource scope only", () => {
++		// The G10 widgets honor the dashboard's workspace and
++		// agent/role variables by overriding their scope to
++		// "resource" at the widget level so the shim's validated
++		// Resource attributes are matched without duplicating
++		// Resource values onto spans. The provider and model
++		// variables remain unselected because the shim does not
++		// emit those attributes; declaring an override for them
++		// would silently filter against empty data.
++		const g10Titles = [
++			"MCP tool calls",
++			"P95 tool-call duration",
++			"MCP tool-call errors",
++			"MCP tool calls by tool name",
++		];
++		for (const title of g10Titles) {
++			const widget = widgets.find((candidate) => candidate.title === title);
++			expect(widget).toBeDefined();
++			expect(widget?.properties.optInVariables).toEqual([
++				"workspace",
++				"agent",
++			]);
++			expect(widget?.properties.variableScopeOverrides).toEqual({
++				workspace: "resource",
++				agent: "resource",
++			});
++			// The override must not invent scopes for variables the
++			// widget does not opt into; that would silently empty
++			// out non-Resource attributes when no value matches.
++			const overrides = (widget?.properties.variableScopeOverrides ??
++				{}) as Record<string, unknown>;
++			expect(Object.keys(overrides).sort()).toEqual([
++				"agent",
++				"workspace",
++			]);
++		}
++	});
++
++	it("counts MCP tool calls and emits the duration/error/status contract", () => {
++		// The G10 widgets must cover the four axes documented in the
++		// task: service.name, mcp.method.name, gen_ai.tool.name, and
++		// span duration/status. Each axis is asserted below so a
++		// future change that drops one is caught by the seed tests.
++		const callCount = widgets.find(
++			(candidate) => candidate.title === "MCP tool calls",
++		);
++		expect(callCount?.config.structuredQuery?.query?.aggregations).toEqual([
++			{
++				fn: "count",
++				as: "calls",
++			},
++		]);
++
++		const latency = widgets.find(
++			(candidate) => candidate.title === "P95 tool-call duration",
++		);
++		expect(latency?.config.structuredQuery?.query?.aggregations).toEqual([
++			{
++				fn: "p95",
++				field: "duration",
++				as: "p95_seconds",
++			},
++		]);
++
++		const errors = widgets.find(
++			(candidate) => candidate.title === "MCP tool-call errors",
++		);
++		expect(errors?.config.structuredQuery?.query?.filters).toEqual(
++			expect.arrayContaining([
++				{
++					target: "status",
++					op: "eq",
++					value: "ERROR",
++				},
++			]),
++		);
++		expect(errors?.config.structuredQuery?.query?.aggregations).toEqual([
++			{
++				fn: "count",
++				as: "errors",
++			},
++		]);
++	});
++
++	it("groups MCP tool calls by gen_ai.tool.name without filtering raw tool content", () => {
++		const grouped = widgets.find(
++			(candidate) => candidate.title === "MCP tool calls by tool name",
++		);
++		expect(grouped?.properties.xAxis).toBe("g0");
++		expect(grouped?.properties.yAxis).toBe("calls");
++		expect(grouped?.config.structuredQuery?.query?.groupBy).toEqual([
++			"gen_ai.tool.name",
++		]);
++		expect(grouped?.config.structuredQuery?.query?.limit).toBe(20);
++		expect(grouped?.config.structuredQuery?.query?.aggregations).toEqual([
++			{
++				fn: "count",
++				as: "calls",
++			},
++		]);
++	});
 +});
 diff --git a/src/client/src/__tests__/lib/platform/manage-dashboard/derived-value.test.ts b/src/client/src/__tests__/lib/platform/manage-dashboard/derived-value.test.ts
 new file mode 100644
@@ -181,10 +338,10 @@ index 00000000..fed110ec
 +});
 diff --git a/src/client/src/clickhouse/seed-data/openlit-dashboard-AutoDev-Usage-layout.json b/src/client/src/clickhouse/seed-data/openlit-dashboard-AutoDev-Usage-layout.json
 new file mode 100644
-index 00000000..4f78f0ff
+index 00000000..4f18924d
 --- /dev/null
 +++ b/src/client/src/clickhouse/seed-data/openlit-dashboard-AutoDev-Usage-layout.json
-@@ -0,0 +1,477 @@
+@@ -0,0 +1,717 @@
 +{
 +  "id": "47c52af8-0c4a-4e85-8a9e-a8f85745b001",
 +  "title": "Usage",
@@ -605,6 +762,218 @@ index 00000000..4f78f0ff
 +          }
 +        }
 +      }
++    },
++    "47c52af8-0c4a-4e85-8a9e-a8f85745b201": {
++      "id": "47c52af8-0c4a-4e85-8a9e-a8f85745b201",
++      "title": "MCP tool calls",
++      "description": "Count of source-owned MCP server `tools/call` spans emitted by the AutoDev codex-tools shim (service.name=autodev-codex-tools-mcp, mcp.method.name=tools/call). One count per shim-side observation; tool arguments, results, prompts, and JSON-RPC ids are never exported. The widget opts into the workspace and agent/role variables at Resource scope override so the shim's validated resource attributes are honored without duplicating resource fields onto spans; provider and requested-model variables are intentionally excluded because the shim does not emit those fields.",
++      "type": "STAT_CARD",
++      "properties": {
++        "value": "0.calls",
++        "color": "#F36C06",
++        "optInVariables": [
++          "workspace",
++          "agent"
++        ],
++        "variableScopeOverrides": {
++          "workspace": "resource",
++          "agent": "resource"
++        }
++      },
++      "config": {
++        "signal": "traces",
++        "structuredQuery": {
++          "mode": "aggregate",
++          "query": {
++            "signal": "traces",
++            "aiSelector": false,
++            "filters": [
++              {
++                "target": "attribute",
++                "scope": "resource",
++                "key": "service.name",
++                "op": "eq",
++                "value": "autodev-codex-tools-mcp"
++              },
++              {
++                "target": "attribute",
++                "scope": "span",
++                "key": "mcp.method.name",
++                "op": "eq",
++                "value": "tools/call"
++              }
++            ],
++            "aggregations": [
++              {
++                "fn": "count",
++                "as": "calls"
++              }
++            ]
++          }
++        }
++      }
++    },
++    "47c52af8-0c4a-4e85-8a9e-a8f85745b202": {
++      "id": "47c52af8-0c4a-4e85-8a9e-a8f85745b202",
++      "title": "P95 tool-call duration",
++      "description": "95th percentile span duration of source-owned MCP `tools/call` spans (service.name=autodev-codex-tools-mcp, mcp.method.name=tools/call). This is the bridge round-trip plus shim overhead, not the Codex-side tool execution latency. The widget opts into the workspace and agent/role variables at Resource scope override; provider and requested-model variables are intentionally excluded because the shim does not emit them.",
++      "type": "STAT_CARD",
++      "properties": {
++        "value": "0.p95_seconds",
++        "suffix": "s",
++        "color": "#0ea5e9",
++        "optInVariables": [
++          "workspace",
++          "agent"
++        ],
++        "variableScopeOverrides": {
++          "workspace": "resource",
++          "agent": "resource"
++        }
++      },
++      "config": {
++        "signal": "traces",
++        "structuredQuery": {
++          "mode": "aggregate",
++          "query": {
++            "signal": "traces",
++            "aiSelector": false,
++            "filters": [
++              {
++                "target": "attribute",
++                "scope": "resource",
++                "key": "service.name",
++                "op": "eq",
++                "value": "autodev-codex-tools-mcp"
++              },
++              {
++                "target": "attribute",
++                "scope": "span",
++                "key": "mcp.method.name",
++                "op": "eq",
++                "value": "tools/call"
++              }
++            ],
++            "aggregations": [
++              {
++                "fn": "p95",
++                "field": "duration",
++                "as": "p95_seconds"
++              }
++            ]
++          }
++        }
++      }
++    },
++    "47c52af8-0c4a-4e85-8a9e-a8f85745b203": {
++      "id": "47c52af8-0c4a-4e85-8a9e-a8f85745b203",
++      "title": "MCP tool-call errors",
++      "description": "Count of source-owned MCP `tools/call` spans whose span status is ERROR (service.name=autodev-codex-tools-mcp, mcp.method.name=tools/call). ERROR includes HTTP/transport failures and tool-level failures reported as `error.type=tool_error`; raw error messages and tool content are never exported. The widget opts into the workspace and agent/role variables at Resource scope override; provider and requested-model variables are intentionally excluded because the shim does not emit them.",
++      "type": "STAT_CARD",
++      "properties": {
++        "value": "0.errors",
++        "color": "#dc2626",
++        "optInVariables": [
++          "workspace",
++          "agent"
++        ],
++        "variableScopeOverrides": {
++          "workspace": "resource",
++          "agent": "resource"
++        }
++      },
++      "config": {
++        "signal": "traces",
++        "structuredQuery": {
++          "mode": "aggregate",
++          "query": {
++            "signal": "traces",
++            "aiSelector": false,
++            "filters": [
++              {
++                "target": "attribute",
++                "scope": "resource",
++                "key": "service.name",
++                "op": "eq",
++                "value": "autodev-codex-tools-mcp"
++              },
++              {
++                "target": "attribute",
++                "scope": "span",
++                "key": "mcp.method.name",
++                "op": "eq",
++                "value": "tools/call"
++              },
++              {
++                "target": "status",
++                "op": "eq",
++                "value": "ERROR"
++              }
++            ],
++            "aggregations": [
++              {
++                "fn": "count",
++                "as": "errors"
++              }
++            ]
++          }
++        }
++      }
++    },
++    "47c52af8-0c4a-4e85-8a9e-a8f85745b204": {
++      "id": "47c52af8-0c4a-4e85-8a9e-a8f85745b204",
++      "title": "MCP tool calls by tool name",
++      "description": "Source-owned MCP `tools/call` spans grouped by `gen_ai.tool.name` (service.name=autodev-codex-tools-mcp, mcp.method.name=tools/call). Each tool name comes from the bounded MCP tool list exposed by the bridge; arguments and results are never exported. The widget opts into the workspace and agent/role variables at Resource scope override; provider and requested-model variables are intentionally excluded because the shim does not emit them.",
++      "type": "BAR_CHART",
++      "properties": {
++        "xAxis": "g0",
++        "yAxis": "calls",
++        "color": "#0ea5e9",
++        "optInVariables": [
++          "workspace",
++          "agent"
++        ],
++        "variableScopeOverrides": {
++          "workspace": "resource",
++          "agent": "resource"
++        }
++      },
++      "config": {
++        "signal": "traces",
++        "structuredQuery": {
++          "mode": "aggregate",
++          "query": {
++            "signal": "traces",
++            "aiSelector": false,
++            "filters": [
++              {
++                "target": "attribute",
++                "scope": "resource",
++                "key": "service.name",
++                "op": "eq",
++                "value": "autodev-codex-tools-mcp"
++              },
++              {
++                "target": "attribute",
++                "scope": "span",
++                "key": "mcp.method.name",
++                "op": "eq",
++                "value": "tools/call"
++              }
++            ],
++            "groupBy": [
++              "gen_ai.tool.name"
++            ],
++            "aggregations": [
++              {
++                "fn": "count",
++                "as": "calls"
++              }
++            ],
++            "limit": 20
++          }
++        }
++      }
 +    }
 +  },
 +  "tags": "[\"autodev\",\"usage\"]",
@@ -658,6 +1027,34 @@ index 00000000..4f78f0ff
 +        "y": 3,
 +        "w": 4,
 +        "h": 2
++      },
++      {
++        "i": "47c52af8-0c4a-4e85-8a9e-a8f85745b201",
++        "x": 0,
++        "y": 5,
++        "w": 1,
++        "h": 1
++      },
++      {
++        "i": "47c52af8-0c4a-4e85-8a9e-a8f85745b202",
++        "x": 1,
++        "y": 5,
++        "w": 1,
++        "h": 1
++      },
++      {
++        "i": "47c52af8-0c4a-4e85-8a9e-a8f85745b203",
++        "x": 2,
++        "y": 5,
++        "w": 1,
++        "h": 1
++      },
++      {
++        "i": "47c52af8-0c4a-4e85-8a9e-a8f85745b204",
++        "x": 0,
++        "y": 6,
++        "w": 4,
++        "h": 2
 +      }
 +    ]
 +  }
@@ -683,7 +1080,7 @@ index 2a570c28..da5458b6 100644
  
  export default async function CreateCustomDashboardsSeed(
 diff --git a/src/client/src/components/(playground)/manage-dashboard/board-creator/types.ts b/src/client/src/components/(playground)/manage-dashboard/board-creator/types.ts
-index 1f0cebce..9c302f0c 100644
+index c3a4ffcf..08d5a878 100644
 --- a/src/client/src/components/(playground)/manage-dashboard/board-creator/types.ts
 +++ b/src/client/src/components/(playground)/manage-dashboard/board-creator/types.ts
 @@ -42,6 +42,8 @@ export interface StatCardWidget extends BaseWidgetProps {

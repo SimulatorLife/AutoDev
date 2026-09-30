@@ -15,17 +15,10 @@
  *    `OTEL_EXPORTER_OTLP_ENDPOINT` (or `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`)
  *    is configured.
  *
- * Note: the canonical MCP conventions tracked in
- * `open-telemetry/semantic-conventions-genai` `main`
- * (`docs/gen-ai/mcp.md`) are Development (unreleased, no published tag)
- * and are not in the pinned `@opentelemetry/semantic-conventions`
- * (1.43.0). The span name format `tools/call <tool_name>` and the
- * `error.type=tool_error` for `CallToolResult.isError=true` are the only
- * Development conventions adopted here; the proposed `gen_ai.tool.name`,
- * `gen_ai.operation.name=execute_tool`, `mcp.protocol.version`, and
- * `mcp.server.operation.duration` are intentionally NOT adopted because
- * they are not part of the pinned semconv. A future G10 follow-up can
- * promote them once they ship in a tagged release.
+ * The MCP conventions are pinned to
+ * open-telemetry/semantic-conventions-genai@bcc7f9c2856fa7f4feb753f54d4ebba9455cc3dc.
+ * They are Development and untagged. The tests pin that revision and the
+ * incubating package attributes this producer emits.
  */
 
 import assert from "node:assert/strict";
@@ -38,6 +31,7 @@ import {
   ensureOtelInitialized,
   getFinishedSpans,
   isOtlpExporterInstalled,
+  MCP_SEMCONV_GENAI_REVISION,
   resetTelemetryForTest,
   setTestExporter,
   shutdownTelemetryForTest
@@ -97,8 +91,12 @@ function throwingBridge(): (
 }
 
 const exporter = new InMemorySpanExporter();
+const originalTraceEndpoint = process.env.OTEL_EXPORTER_OTLP_TRACES_ENDPOINT;
+const originalOtlpEndpoint = process.env.OTEL_EXPORTER_OTLP_ENDPOINT;
 
 test.before(async () => {
+  delete process.env.OTEL_EXPORTER_OTLP_TRACES_ENDPOINT;
+  delete process.env.OTEL_EXPORTER_OTLP_ENDPOINT;
   setTestExporter(exporter);
   // Force the SDK to install its processors once so each test exercises
   // the real recording path rather than a no-op tracer.
@@ -113,6 +111,19 @@ test.after(async () => {
   resetTelemetryForTest();
   await shutdownTelemetryForTest();
   setTestExporter(null);
+  if (originalTraceEndpoint !== undefined) {
+    process.env.OTEL_EXPORTER_OTLP_TRACES_ENDPOINT = originalTraceEndpoint;
+  }
+  if (originalOtlpEndpoint !== undefined) {
+    process.env.OTEL_EXPORTER_OTLP_ENDPOINT = originalOtlpEndpoint;
+  }
+});
+
+test("pins the Development MCP semantic-convention source revision", () => {
+  assert.equal(
+    MCP_SEMCONV_GENAI_REVISION,
+    "bcc7f9c2856fa7f4feb753f54d4ebba9455cc3dc"
+  );
 });
 
 test("successful tools/call emits exactly one tools/call <name> span with OK status", async () => {
@@ -158,8 +169,9 @@ test("successful tools/call emits exactly one tools/call <name> span with OK sta
     "successful call is recorded with OK status"
   );
   assert.equal(span.attributes["mcp.method.name"], "tools/call");
-  assert.equal(span.attributes["mcp.tool.name"], "read_file");
-  assert.equal(span.attributes["http.response.status_code"], 200);
+  assert.equal(span.attributes["gen_ai.tool.name"], "read_file");
+  assert.equal(span.attributes["gen_ai.operation.name"], "execute_tool");
+  assert.equal(span.attributes["network.transport"], "pipe");
 
   // Privacy: no arguments, results, prompts, ids, paths, or content.
   for (const forbidden of [
@@ -224,9 +236,14 @@ test("tools/call HTTP failure emits exactly one tools/call <name> span with ERRO
     "HTTP failure is recorded with ERROR status"
   );
   assert.equal(span.attributes["mcp.method.name"], "tools/call");
-  assert.equal(span.attributes["mcp.tool.name"], "fetch_url");
-  assert.equal(span.attributes["http.response.status_code"], 503);
-  assert.equal(span.attributes["error.type"], "bridge_http_failure");
+  assert.equal(span.attributes["gen_ai.tool.name"], "fetch_url");
+  assert.equal(span.attributes["error.type"], "tool_error");
+  assert.equal(span.status.message, undefined);
+  assert.equal(
+    Object.hasOwn(span.attributes, "http.response.status_code"),
+    false,
+    "the internal bridge HTTP response is not presented as MCP transport status"
+  );
   assert.equal(
     Object.hasOwn(span.attributes, "arguments"),
     false,
@@ -273,7 +290,12 @@ test("tools/call bridge throw emits exactly one tools/call <name> span with ERRO
   assert.ok(span);
   assert.equal(span.status.code, 2, "thrown bridge call is recorded as ERROR");
   assert.equal(span.attributes["mcp.method.name"], "tools/call");
-  assert.equal(span.attributes["error.type"], "bridge_threw");
+  assert.equal(span.attributes["error.type"], "tool_error");
+  assert.equal(
+    span.status.message,
+    undefined,
+    "free-form errors are not exported"
+  );
   assert.equal(
     Object.hasOwn(span.attributes, "http.response.status_code"),
     false,
@@ -367,12 +389,8 @@ test("tools/call with isError=true response emits a tools/call span with error.t
     "tool-level isError=true is recorded as ERROR status"
   );
   assert.equal(span.attributes["mcp.method.name"], "tools/call");
-  assert.equal(span.attributes["mcp.tool.name"], "run_command");
-  assert.equal(
-    span.attributes["http.response.status_code"],
-    200,
-    "transport was successful"
-  );
+  assert.equal(span.attributes["gen_ai.tool.name"], "run_command");
+  assert.equal(span.attributes["gen_ai.operation.name"], "execute_tool");
   assert.equal(
     span.attributes["error.type"],
     "tool_error",
@@ -394,6 +412,39 @@ test("tools/call with isError=true response emits a tools/call span with error.t
   assert.equal(emitter.messages.length, 1);
   const result = emitter.messages[0]?.result as JsonObject | undefined;
   assert.equal(result?.isError, true);
+});
+
+test("extracts W3C context only from MCP params._meta", async () => {
+  const emitter = makeEmitter();
+  await handleMessage(
+    {
+      id: "trace-context-call",
+      method: "tools/call",
+      params: {
+        name: "inspect",
+        arguments: { path: "/private/path" },
+        _meta: {
+          traceparent:
+            "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01",
+          tracestate: "vendor=value",
+          baggage: "operation=tool-call",
+          unrelated: "must-not-be-exported"
+        }
+      }
+    },
+    emitter.emit,
+    okBridge({ content: [{ type: "text", text: "ok" }] })
+  );
+
+  const span = getFinishedSpans().find(
+    (finished) => finished.name === "tools/call inspect"
+  );
+  assert.ok(span);
+  assert.equal(span.spanContext().traceId, "4bf92f3577b34da6a3ce929d0e0e4736");
+  assert.equal(span.parentSpanContext?.spanId, "00f067aa0ba902b7");
+  assert.equal(Object.hasOwn(span.attributes, "baggage"), false);
+  assert.equal(Object.hasOwn(span.attributes, "unrelated"), false);
+  assert.equal(Object.hasOwn(span.attributes, "path"), false);
 });
 
 test("resource identity always carries autodev-codex-tools-mcp and never inherits router service.name", async () => {
@@ -538,7 +589,7 @@ test("the exporter actually receives the merged resource on emitted tools/call s
   }
 });
 
-test("a failed exporter install must not break the tools/call response", async () => {
+test("tools/call still responds when telemetry has no configured exporter", async () => {
   // Drop the endpoint that may already be set in the developer shell so
   // the SDK does not attempt to reach an OTLP endpoint during this test.
   const previousEndpoint = process.env.OTEL_EXPORTER_OTLP_ENDPOINT;

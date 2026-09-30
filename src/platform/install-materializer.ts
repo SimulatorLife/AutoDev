@@ -92,6 +92,7 @@ export const RUNTIME_MODULES = [
   "src/mcp/spawn-shim.ts",
   "src/mcp/tool-filter.ts",
   "src/mcp/codex-tools-shim.ts",
+  "src/mcp/codex-tools-shim-telemetry.ts",
   "src/mcp/launcher.ts",
   "src/router/mcp-process-registry.ts",
   "src/router/tool-call-ownership.ts",

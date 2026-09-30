@@ -50,6 +50,66 @@ function run(
   return { status: res.status ?? -1, stdout: res.stdout, stderr: res.stderr };
 }
 
+function patchRangeCount(range: string): number | null {
+  const parts = range.split(",");
+  if (parts.length > 2 || !parts[0]) return null;
+  const start = Number(parts[0]);
+  const count = parts.length === 2 ? Number(parts[1]) : 1;
+  return Number.isSafeInteger(start) &&
+    Number.isSafeInteger(count) &&
+    count >= 0
+    ? count
+    : null;
+}
+
+function patchHunkCounts(
+  header: string
+): { oldCount: number; newCount: number } | null {
+  if (!header.startsWith("@@ -")) return null;
+  const separator = header.indexOf(" +", 4);
+  const end = header.indexOf(" @@", separator + 2);
+  if (separator === -1 || end === -1) return null;
+  const oldCount = patchRangeCount(header.slice(4, separator));
+  const newCount = patchRangeCount(header.slice(separator + 2, end));
+  return oldCount === null || newCount === null ? null : { oldCount, newCount };
+}
+
+function assertPatchHunkCounts(patchPath: string): void {
+  const lines = readFileSync(patchPath, "utf8").split("\n");
+  for (let index = 0; index < lines.length; index += 1) {
+    const counts = patchHunkCounts(lines[index] ?? "");
+    if (!counts) continue;
+
+    let actualOld = 0;
+    let actualNew = 0;
+    for (let bodyIndex = index + 1; bodyIndex < lines.length; bodyIndex += 1) {
+      const line = lines[bodyIndex] ?? "";
+      if (line.startsWith("@@ ") || line.startsWith("diff --git ")) break;
+      if (line.startsWith(String.raw`\ No newline`)) continue;
+      if (line.startsWith(" ")) {
+        actualOld += 1;
+        actualNew += 1;
+      } else if (line.startsWith("-")) {
+        actualOld += 1;
+      } else if (line.startsWith("+")) {
+        actualNew += 1;
+      } else {
+        break;
+      }
+    }
+    assert.equal(
+      actualOld,
+      counts.oldCount,
+      `${patchPath}:${index + 1} old-line hunk count`
+    );
+    assert.equal(
+      actualNew,
+      counts.newCount,
+      `${patchPath}:${index + 1} new-line hunk count`
+    );
+  }
+}
+
 function freshClone(): string {
   const dir = mkdtempSync(join(tmpdir(), "autodev-openlit-patch-check-"));
   const clone = run(
@@ -95,6 +155,7 @@ test(
     assert.ok(patches.length >= 2, "expected at least two patch files");
 
     for (const patch of patches) {
+      assertPatchHunkCounts(join(PATCHES_DIR, patch));
       const check = run(
         "git",
         ["apply", "--check", join(PATCHES_DIR, patch)],
@@ -117,7 +178,16 @@ test(
       );
     }
 
-    // Verify the expected files exist after patching.
+    // Verify the expected files exist after patching and public types are
+    // exported from the dashboard-variable module's supported entrypoint.
+    const variableTypes = readFileSync(
+      join(dir, "src/client/src/lib/platform/dashboard-variables/types.ts"),
+      "utf8"
+    );
+    assert.match(
+      variableTypes,
+      /export type \{[\s\S]*?AttributeScope,[\s\S]*?Signal[\s\S]*?\} from "@\/lib\/platform\/connectors\/datasource\/types"/
+    );
     const expected = [
       // 01-generic-dashboard-variables
       "src/client/src/lib/platform/dashboard-variables/translate.ts",
@@ -203,6 +273,15 @@ test(
       supportsAll: true,
       defaultValues: []
     });
+    // Every widget must use a structured query scoped to a single
+    // AutoDev-owned service.name. The router widgets scope to
+    // autodev-router; the G10 source-owned MCP server widget scopes to
+    // autodev-codex-tools-mcp. No widget may use a different owner
+    // and no widget may use raw SQL.
+    const ALLOWED_USAGE_SERVICE_NAMES = new Set([
+      "autodev-router",
+      "autodev-codex-tools-mcp"
+    ]);
     assert.ok(
       Object.values(usageDashboard.widgets).every(
         ({ config }) =>
@@ -215,11 +294,93 @@ test(
               "key" in filter &&
               filter.key === "service.name" &&
               "value" in filter &&
-              filter.value === "autodev-router"
+              ALLOWED_USAGE_SERVICE_NAMES.has(String(filter.value))
           )
       ),
-      "the Usage seed must use typed queries scoped to router-owned spans, never raw SQL"
+      "the Usage seed must use typed queries scoped to a single AutoDev-owned service.name (router or codex-tools-mcp), never raw SQL"
     );
+    // The G10 widgets must opt into the existing workspace and
+    // agent/role variables at Resource scope via a widget-level
+    // override, and must NOT duplicate Resource values onto spans.
+    const g10Titles = [
+      "MCP tool calls",
+      "P95 tool-call duration",
+      "MCP tool-call errors",
+      "MCP tool calls by tool name"
+    ];
+    const g10Widgets = g10Titles
+      .map((title) =>
+        Object.values(usageDashboard.widgets).find(
+          (candidate) => candidate.title === title
+        )
+      )
+      .filter(
+        (widget): widget is NonNullable<typeof widget> => widget !== undefined
+      );
+    assert.equal(
+      g10Widgets.length,
+      g10Titles.length,
+      "Usage seed must include the four G10 source-owned MCP tool-call widgets"
+    );
+    for (const widget of g10Widgets) {
+      assert.deepEqual(widget.properties.optInVariables, [
+        "workspace",
+        "agent"
+      ]);
+      assert.deepEqual(widget.properties.variableScopeOverrides, {
+        workspace: "resource",
+        agent: "resource"
+      });
+      // Every G10 widget must filter on the shim's resource
+      // service.name AND on the MCP method name span attribute so the
+      // source-owned observation is uniquely identified by the
+      // combination.
+      const filters = widget.config.structuredQuery?.query?.filters ?? [];
+      const serviceNameFilter = filters.find(
+        (filter) =>
+          filter !== null &&
+          typeof filter === "object" &&
+          "key" in filter &&
+          (filter as { key: unknown }).key === "service.name" &&
+          "scope" in filter &&
+          (filter as { scope: unknown }).scope === "resource"
+      );
+      assert.deepEqual(serviceNameFilter, {
+        target: "attribute",
+        scope: "resource",
+        key: "service.name",
+        op: "eq",
+        value: "autodev-codex-tools-mcp"
+      });
+      const mcpMethodFilter = filters.find(
+        (filter) =>
+          filter !== null &&
+          typeof filter === "object" &&
+          "key" in filter &&
+          (filter as { key: unknown }).key === "mcp.method.name"
+      );
+      assert.deepEqual(mcpMethodFilter, {
+        target: "attribute",
+        scope: "span",
+        key: "mcp.method.name",
+        op: "eq",
+        value: "tools/call"
+      });
+    }
+    // The G10 scope overrides must not silently widen the generic
+    // variable engine: only the workspace and agent variables are
+    // remapped to resource scope, and only on the G10 widgets.
+    const routerWidgets = Object.values(usageDashboard.widgets).filter(
+      (widget) => !g10Titles.includes(widget.title)
+    );
+    for (const widget of routerWidgets) {
+      assert.equal(
+        (widget.properties as { variableScopeOverrides?: unknown })
+          .variableScopeOverrides,
+        undefined,
+        `router-scoped Usage widget ${widget.title} must not declare variableScopeOverrides`
+      );
+    }
     const cacheRate = Object.values(usageDashboard.widgets).find(
       ({ title }) => title === "Cache-read rate"
     );

@@ -88,7 +88,7 @@ test("existing scheduled policy remains structurally valid", () => {
       prompt.promptRepository ?? "SimulatorLife/AutoDev",
       "SimulatorLife/AutoDev"
     );
-    assert.match(prompt.path, /^\.agents\/prompts\/[^/]+\.md$/u);
+    assert.match(prompt.path, /^\.rulesync\/commands\/[^/]+\.md$/u);
     assert.ok(
       Number.isInteger(prompt.complexity) &&
         prompt.complexity >= 1 &&

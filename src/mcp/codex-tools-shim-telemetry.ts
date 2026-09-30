@@ -29,40 +29,29 @@
  * value, so the same privacy contract holds for inherited attributes.
  *
  * Privacy contract (mirrors docs/observability-target-state.md):
- * - Tool names are kept as a low-cardinality attribute only after a
- *   `safeTrim` validation; arguments, results, prompts, session IDs,
- *   request IDs, conversation IDs, and JSON-RPC ids are never attached.
- * - HTTP status is attached as `http.response.status_code` only when the
- *   bridge returned a structured, integer status; it is used as a
- *   transport-outcome marker, never as a metric dimension.
- * - Failure status uses `error.type` (categorical) rather than a free-form
- *   message; `error.message` is bounded and never contains content.
- * - All telemetry work happens inside a try/catch so a telemetry failure
- *   cannot break or materially delay the tool call it observes.
+ * - Tool names are bounded and appear only on this MCP operation span;
+ *   arguments, results, prompts, session IDs, request IDs, conversation
+ *   IDs, and JSON-RPC ids are never attached.
+ * - Errors use categorical `error.type` values only; raw messages,
+ *   bridge URLs, HTTP status, and tool content are not exported.
+ * - If tracer setup or export fails, the MCP callback still runs exactly
+ *   once and its result remains authoritative.
  *
- * Semantic conventions: this shim is the MCP server that handles the
- * operation, so the span kind is SERVER. The standard `mcp.method.name`
- * attribute is the only MCP semantic attribute defined for the operation
- * in the pinned `@opentelemetry/semantic-conventions` package (1.43.0)
- * and is verified there.
- *
- * The canonical MCP conventions tracked in
- * `open-telemetry/semantic-conventions-genai` `main`
- * (`docs/gen-ai/mcp.md`) are Development: unreleased, no published tag,
- * and not present in the 1.43.0 package. They propose a span name of
- * `tools/call <gen_ai.tool.name>`, a conditional `gen_ai.tool.name`
- * attribute, a recommended `gen_ai.operation.name=execute_tool` and
- * `mcp.protocol.version`, and a `mcp.server.operation.duration` histogram.
- * Those attributes are NOT adopted here because they are not part of the
- * pinned semconv; adopting them would require a vendor extension and a
- * direct cite to a pinned upstream revision, both of which are out of
- * scope for this G10 slice. The span name follows the Development
- * format anyway because it does not invent a new key. A future G10
- * follow-up can promote the remaining attributes once they ship in a
- * tagged semconv release.
+ * Semantic conventions: this shim handles the MCP server-side operation,
+ * so the span kind is SERVER. MCP/GenAI attribute strings are pinned to
+ * open-telemetry/semantic-conventions-genai at
+ * MCP_SEMCONV_GENAI_REVISION. That mapping is Development-only and has no
+ * tagged release; tests lock the revision and attributes so a convention
+ * update is explicit. The older npm package's MCP/GenAI names are deprecated
+ * redirects, so this producer does not treat them as its source of truth.
+ * Span names follow `tools/call <gen_ai.tool.name>`; the tool name is never a
+ * metric dimension. `params._meta` W3C trace context is extracted when present;
+ * no session or request identifiers are recorded.
  */
 
 import {
+  context,
+  propagation,
   type Span,
   SpanKind,
   SpanStatusCode,
@@ -84,13 +73,12 @@ import {
   type SpanProcessor
 } from "@opentelemetry/sdk-trace-base";
 import { NodeTracerProvider } from "@opentelemetry/sdk-trace-node";
-// Stable `service.*` attributes are imported from the package index. The
-// `mcp.method.name` attribute is an incubating attribute in the pinned
-// `@opentelemetry/semantic-conventions` (1.43.0); the index re-exports
-// it under `./incubating`, but NodeNext resolution does not always
-// resolve that subpath declaration, so the verified attribute key is
-// also declared inline as a single source of truth.
+// Stable attributes come from the versioned package. MCP/GenAI names below
+// are sourced from the pinned Development model, not the package's deprecated
+// redirect entries, and are guarded by the semantic-convention pin test.
 import {
+  ATTR_ERROR_TYPE,
+  ATTR_NETWORK_TRANSPORT,
   ATTR_SERVICE_NAME,
   ATTR_SERVICE_VERSION
 } from "@opentelemetry/semantic-conventions";
@@ -100,13 +88,17 @@ import {
   safeAutoDevWorkspaceKey
 } from "../shared/otel-resource-context.ts";
 
-const ATTR_MCP_METHOD_NAME = "mcp.method.name" as const;
-const ATTR_HTTP_RESPONSE_STATUS_CODE = "http.response.status_code" as const;
-const ATTR_ERROR_TYPE = "error.type" as const;
 const ATTR_AUTODEV_WORKSPACE = "autodev.workspace" as const;
 const ATTR_AUTODEV_AGENT_ROLE = "autodev.agent.role" as const;
+const ATTR_MCP_METHOD_NAME = "mcp.method.name" as const;
+const ATTR_GEN_AI_TOOL_NAME = "gen_ai.tool.name" as const;
+const ATTR_GEN_AI_OPERATION_NAME = "gen_ai.operation.name" as const;
+
+export const MCP_SEMCONV_GENAI_REVISION =
+  "bcc7f9c2856fa7f4feb753f54d4ebba9455cc3dc" as const;
 
 const MCP_METHOD_NAME_VALUE_TOOLS_CALL = "tools/call" as const;
+const MCP_OPERATION_NAME_EXECUTE_TOOL = "execute_tool" as const;
 
 const TRACER_NAME = "autodev.codex-tools-mcp";
 const TRACER_VERSION = "1.0.0";
@@ -324,10 +316,21 @@ export function resetTelemetryForTest(): void {
   }
 }
 
+/** Flush queued spans and shut down the provider before the MCP process exits. */
+export async function shutdownTelemetry(): Promise<void> {
+  const provider = state.provider;
+  state.provider = null;
+  if (!provider) return;
+  try {
+    await provider.shutdown();
+  } catch {
+    logTelemetryError("tracer_provider_shutdown_failed");
+  }
+}
+
 /**
- * Shutdown the registered tracer provider and its processors. Production
- * never calls this; it is intended for tests that re-install a provider
- * and need the previous one to stop sending its queued exports.
+ * Reset the global provider for isolated tests. The production process
+ * calls `shutdownTelemetry` once, on stdio close.
  *
  * Calling `trace.disable()` is required because the OTel API guards
  * `setGlobalTracerProvider` against duplicate registration: without
@@ -362,44 +365,22 @@ export async function shutdownTelemetryForTest(): Promise<void> {
 
 export interface ToolCallOutcome {
   status: "ok" | "error";
-  /**
-   * Bridge HTTP status when the bridge returned a structured status; 0
-   * when the bridge did not respond. Captured only for the
-   * `http.response.status_code` attribute on the tools/call span.
-   */
-  httpStatus: number;
   /** Categorical error tag; never includes tool arguments or output. */
   errorType?: string;
-  /** Bounded error marker; never includes tool arguments or output. */
-  errorMessage?: string;
 }
 
 function attachOutcome(span: Span, outcome: ToolCallOutcome): void {
-  if (
-    Number.isFinite(outcome.httpStatus) &&
-    Number.isInteger(outcome.httpStatus) &&
-    outcome.httpStatus > 0
-  ) {
-    try {
-      span.setAttribute(ATTR_HTTP_RESPONSE_STATUS_CODE, outcome.httpStatus);
-    } catch {
-      /* ignore attribute failures */
-    }
-  }
   if (outcome.status === "error") {
     const errorType = safeTrim(outcome.errorType);
     if (errorType) {
       try {
         span.setAttribute(ATTR_ERROR_TYPE, errorType);
       } catch {
-        /* ignore */
+        /* ignore attribute failures */
       }
     }
     try {
-      span.setStatus({
-        code: SpanStatusCode.ERROR,
-        message: safeTrim(outcome.errorMessage) ?? "transport/upstream failure"
-      });
+      span.setStatus({ code: SpanStatusCode.ERROR });
     } catch {
       /* ignore */
     }
@@ -412,6 +393,29 @@ function attachOutcome(span: Span, outcome: ToolCallOutcome): void {
   }
 }
 
+function traceContextCarrier(metadata: unknown): Record<string, string> {
+  if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) {
+    return {};
+  }
+  const fields = metadata as Record<string, unknown>;
+  const carrier: Record<string, string> = {};
+  for (const key of ["traceparent", "tracestate", "baggage"] as const) {
+    const value = fields[key];
+    if (typeof value === "string" && value.length <= 4096) {
+      carrier[key] = value;
+    }
+  }
+  return carrier;
+}
+
+function endSpan(span: Span): void {
+  try {
+    span.end();
+  } catch {
+    // Exporter/span finalization failures must not change the MCP response.
+  }
+}
+
 /**
  * Record one source-owned observation of the MCP `tools/call` operation
  * handled by the codex-tools-shim. The callback runs to completion
@@ -420,9 +424,9 @@ function attachOutcome(span: Span, outcome: ToolCallOutcome): void {
  * prompts, session IDs, request IDs, and JSON-RPC ids are never attached
  * to the span.
  *
- * The standard MCP semantic attribute `mcp.method.name` is verified
- * against the pinned `@opentelemetry/semantic-conventions` package
- * (1.43.0) and is the only MCP attribute the producer emits.
+ * The MCP and GenAI attribute names are from the incubating semantic-
+ * conventions package entrypoint; their source mapping is pinned by
+ * `MCP_SEMCONV_GENAI_REVISION` and asserted in tests.
  *
  * Returns the outcome reported by the callback. If the callback throws,
  * the span is finalized as ERROR and the throw propagates so the shim's
@@ -431,58 +435,45 @@ function attachOutcome(span: Span, outcome: ToolCallOutcome): void {
  */
 export async function recordToolCallSpan(
   name: string,
-  callback: () => Promise<ToolCallOutcome>
+  callback: () => Promise<ToolCallOutcome>,
+  metadata?: unknown
 ): Promise<ToolCallOutcome> {
+  let span: Span | null = null;
   try {
     const tracer = ensureOtelInitialized();
     const attributes: Record<string, string> = {
-      [ATTR_MCP_METHOD_NAME]: MCP_METHOD_NAME_VALUE_TOOLS_CALL
+      [ATTR_MCP_METHOD_NAME]: MCP_METHOD_NAME_VALUE_TOOLS_CALL,
+      [ATTR_GEN_AI_OPERATION_NAME]: MCP_OPERATION_NAME_EXECUTE_TOOL,
+      [ATTR_NETWORK_TRANSPORT]: "pipe"
     };
-    const trimmedName = safeTrim(name);
-    if (trimmedName) attributes["mcp.tool.name"] = trimmedName;
-    // Span name `tools/call <tool_name>` mirrors the Development MCP
-    // convention in open-telemetry/semantic-conventions-genai main
-    // (docs/gen-ai/mcp.md); the format is a string concatenation that
-    // does not introduce a new attribute key, so it can be adopted even
-    // before the convention is tagged.
-    const spanName = trimmedName ? `tools/call ${trimmedName}` : "tools/call";
-    const span = tracer.startSpan(spanName, {
-      kind: SpanKind.SERVER,
-      attributes
-    });
-    try {
-      const outcome = await callback();
-      attachOutcome(span, outcome);
-      try {
-        span.end();
-      } catch {
-        /* ignore */
-      }
-      return outcome;
-    } catch (error) {
-      attachOutcome(span, {
-        status: "error",
-        httpStatus: 0,
-        errorType: "callback_threw",
-        errorMessage: error instanceof Error ? error.message : String(error)
-      });
-      try {
-        span.end();
-      } catch {
-        /* ignore */
-      }
-      throw error;
-    }
+    const toolName = safeTrim(name);
+    if (toolName) attributes[ATTR_GEN_AI_TOOL_NAME] = toolName;
+    const spanName = toolName ? `tools/call ${toolName}` : "tools/call";
+    const parentContext = propagation.extract(
+      context.active(),
+      traceContextCarrier(metadata)
+    );
+    span = tracer.startSpan(
+      spanName,
+      { kind: SpanKind.SERVER, attributes },
+      parentContext
+    );
+  } catch {
+    // If tracing cannot initialize, run the operation without instrumentation.
+    // This branch must not skip or retry the callback.
+    logTelemetryError("tool_call_span_initialization_failed");
+  }
+
+  if (!span) return callback();
+
+  try {
+    const outcome = await callback();
+    attachOutcome(span, outcome);
+    return outcome;
   } catch (error) {
-    // A telemetry-side failure must never break or materially delay the
-    // tool call. Re-running the callback would double-emit the response;
-    // instead, return a minimal outcome and let the caller continue.
-    logTelemetryError("tool_call_span_finalization_failed");
-    return {
-      status: "error",
-      httpStatus: 0,
-      errorType: "telemetry_finalization_failed",
-      errorMessage: error instanceof Error ? error.message : String(error)
-    };
+    attachOutcome(span, { status: "error", errorType: "_OTHER" });
+    throw error;
+  } finally {
+    endSpan(span);
   }
 }
