@@ -21,9 +21,12 @@ export interface SyncWorkspacesOptions {
 }
 
 export interface SyncWorkspacesResult {
+  readonly organisation: string;
+  readonly project: string;
+  readonly environment: string;
   readonly totalWorkspaces: number;
-  readonly inserted: readonly string[];
-  readonly unchanged: readonly string[];
+  readonly workspaces: readonly string[];
+  readonly collapsedProjects: readonly string[];
 }
 
 interface WeightsRepositoriesJson {
@@ -86,136 +89,224 @@ const { PrismaClient } = require("@prisma/client");
 const prisma = new PrismaClient();
 
 async function run() {
-  const org = await prisma.organisation.findFirst();
-  if (!org) throw new Error("No organisation found in OpenLIT");
+  let org = await prisma.organisation.findFirst();
+  if (!org) {
+    const user = await prisma.user.findFirst();
+    org = await prisma.organisation.create({
+      data: {
+        name: "SimulatorLife",
+        slug: "simulatorlife",
+        createdByUserId: user ? user.id : "system"
+      }
+    });
+  } else if (org.name !== "SimulatorLife" || org.slug !== "simulatorlife") {
+    org = await prisma.organisation.update({
+      where: { id: org.id },
+      data: { name: "SimulatorLife", slug: "simulatorlife" }
+    });
+  }
 
   const user = await prisma.user.findFirst();
-  const orgUser = user ? await prisma.organisationUser.findFirst({ where: { userId: user.id, organisationId: org.id } }) : null;
-  const defaultDb =
-    (await prisma.databaseConfig.findFirst({ where: { projectId: "cmuog7ig20004fipedpz3n1og" } })) ||
-    (await prisma.databaseConfig.findFirst());
-  const existing = await prisma.project.findMany({ where: { organisationId: org.id } });
-  const existingByName = new Map(existing.map(p => [p.name, p]));
+  const orgUser = user
+    ? await prisma.organisationUser.findFirst({
+        where: { userId: user.id, organisationId: org.id }
+      })
+    : null;
 
-  const inserted = [];
-  const unchanged = [];
-  const repos = ${JSON.stringify(repoList)};
+  // Locate the canonical AutoDev project
+  let autoDevProject =
+    (await prisma.project.findFirst({
+      where: { organisationId: org.id, isDefault: true }
+    })) ||
+    (await prisma.project.findFirst({
+      where: { organisationId: org.id, slug: "autodev" }
+    })) ||
+    (await prisma.project.findFirst({
+      where: { organisationId: org.id }
+    }));
 
-  for (const repo of repos) {
-    let project = existingByName.get(repo.name);
-    if (!project) {
-      const baseSlug = repo.slug || "project";
-      const suffix = Math.random().toString(36).substring(2, 8);
-      project = await prisma.project.create({
+  if (autoDevProject) {
+    if (
+      autoDevProject.name !== "AutoDev" ||
+      autoDevProject.slug !== "autodev" ||
+      !autoDevProject.isDefault
+    ) {
+      autoDevProject = await prisma.project.update({
+        where: { id: autoDevProject.id },
+        data: { name: "AutoDev", slug: "autodev", isDefault: true }
+      });
+    }
+  } else {
+    autoDevProject = await prisma.project.create({
+      data: {
+        organisationId: org.id,
+        name: "AutoDev",
+        slug: "autodev",
+        isDefault: true
+      }
+    });
+  }
+
+  // Collapse / prune obsolete per-workspace projects to eliminate isolation silos
+  const obsoleteProjects = await prisma.project.findMany({
+    where: {
+      organisationId: org.id,
+      id: { not: autoDevProject.id }
+    }
+  });
+  const collapsedProjects = obsoleteProjects.map((p) => p.name);
+  if (obsoleteProjects.length > 0) {
+    await prisma.project.deleteMany({
+      where: {
+        id: { in: obsoleteProjects.map((p) => p.id) }
+      }
+    });
+  }
+
+  // Ensure organisationUser points to canonical project
+  if (orgUser) {
+    await prisma.organisationUser.update({
+      where: { id: orgUser.id },
+      data: { currentProjectId: autoDevProject.id, isCurrent: true }
+    });
+  }
+
+  // Ensure projectUser exists
+  if (user && orgUser) {
+    const pu = await prisma.projectUser.findFirst({
+      where: { projectId: autoDevProject.id, userId: user.id }
+    });
+    if (!pu) {
+      await prisma.projectUser.create({
         data: {
-          organisationId: org.id,
-          name: repo.name,
-          slug: baseSlug + "-" + suffix
+          projectId: autoDevProject.id,
+          userId: user.id,
+          organisationUserId: orgUser.id
         }
       });
-      inserted.push(repo.name);
-    } else {
-      unchanged.push(repo.name);
     }
+  }
 
-    if (user && orgUser) {
-      const pu = await prisma.projectUser.findFirst({ where: { projectId: project.id, userId: user.id } });
-      if (!pu) {
-        await prisma.projectUser.create({
+  // Ensure projectEnvironment 'production'
+  const pe = await prisma.projectEnvironment.findFirst({
+    where: { projectId: autoDevProject.id, name: "production" }
+  });
+  if (!pe) {
+    await prisma.projectEnvironment.create({
+      data: {
+        projectId: autoDevProject.id,
+        name: "production"
+      }
+    });
+  }
+
+  // Ensure databaseConfig
+  let db = await prisma.databaseConfig.findFirst({
+    where: { projectId: autoDevProject.id }
+  });
+  if (!db) {
+    const defaultDb = await prisma.databaseConfig.findFirst();
+    db = await prisma.databaseConfig.create({
+      data: {
+        name: "Default DB",
+        environment: "production",
+        username: defaultDb ? defaultDb.username : "default",
+        password: defaultDb
+          ? defaultDb.password
+          : "50713f4c7f6e8a62551d3ae64ac800e8d0a0b0cb1ec7a99cbd43e04979840a89",
+        host: defaultDb ? defaultDb.host : "clickhouse",
+        port: defaultDb ? defaultDb.port : "8123",
+        database: defaultDb ? defaultDb.database : "openlit",
+        createdByUserId: user ? user.id : "",
+        projectId: autoDevProject.id
+      }
+    });
+  }
+
+  // Ensure databaseConfigUser
+  if (user && db) {
+    const dbu = await prisma.databaseConfigUser.findFirst({
+      where: { userId: user.id, databaseConfigId: db.id }
+    });
+    if (!dbu) {
+      await prisma.databaseConfigUser.create({
+        data: {
+          userId: user.id,
+          databaseConfigId: db.id,
+          isCurrent: true,
+          canEdit: true,
+          canShare: true,
+          canDelete: true
+        }
+      });
+    }
+  }
+
+  // Ensure telemetry bindings
+  if (db) {
+    for (const signal of ["traces", "logs", "metrics", "intelligence"]) {
+      const binding = await prisma.telemetrySourceBinding.findUnique({
+        where: {
+          projectId_signal_environment: {
+            projectId: autoDevProject.id,
+            signal,
+            environment: "production"
+          }
+        }
+      });
+      if (!binding) {
+        await prisma.telemetrySourceBinding.create({
           data: {
-            projectId: project.id,
-            userId: user.id,
-            organisationUserId: orgUser.id,
+            projectId: autoDevProject.id,
+            signal,
+            environment: "production",
+            databaseConfigId: db.id
           }
         });
       }
     }
 
-    const pe = await prisma.projectEnvironment.findFirst({ where: { projectId: project.id, name: "production" } });
-    if (!pe) {
-      await prisma.projectEnvironment.create({
-        data: {
-          projectId: project.id,
-          name: "production",
-        }
+    // Ensure API Key for local health/telemetry probes
+    if (user) {
+      const key = await prisma.aPIKeys.findFirst({
+        where: { databaseConfigId: db.id, isDeleted: false }
       });
-    }
-
-    if (defaultDb) {
-      let db = await prisma.databaseConfig.findFirst({ where: { projectId: project.id } });
-      if (!db) {
-        db = await prisma.databaseConfig.create({
+      if (!key) {
+        await prisma.aPIKeys.create({
           data: {
-            name: defaultDb.name,
-            environment: defaultDb.environment,
-            username: defaultDb.username,
-            password: defaultDb.password,
-            host: defaultDb.host,
-            port: defaultDb.port,
-            database: defaultDb.database,
-            createdByUserId: defaultDb.createdByUserId,
-            projectId: project.id
-          }
-        });
-      }
-
-      if (user) {
-        const dbu = await prisma.databaseConfigUser.findFirst({
-          where: {
-            userId: user.id,
+            name: "AutoDev",
+            apiKey: "openlit-test-api-key-1234567890",
             databaseConfigId: db.id,
+            createdByUserId: user.id
           }
         });
-        if (!dbu) {
-          await prisma.databaseConfigUser.create({
-            data: {
-              userId: user.id,
-              databaseConfigId: db.id,
-              isCurrent: true,
-              canEdit: true,
-              canShare: true,
-              canDelete: true,
-            }
-          });
-        }
-      }
-
-      for (const signal of ["traces", "logs", "metrics", "intelligence"]) {
-        const binding = await prisma.telemetrySourceBinding.findUnique({
-          where: {
-            projectId_signal_environment: {
-              projectId: project.id,
-              signal,
-              environment: "production",
-            }
-          }
-        });
-        if (!binding) {
-          await prisma.telemetrySourceBinding.create({
-            data: {
-              projectId: project.id,
-              signal,
-              environment: "production",
-              databaseConfigId: db.id,
-            }
-          });
-        }
       }
     }
   }
 
-  console.log(JSON.stringify({ inserted, unchanged }));
+  const repos = ${JSON.stringify(repoList)};
+  console.log(
+    JSON.stringify({
+      organisation: org.name,
+      project: autoDevProject.name,
+      environment: "production",
+      collapsedProjects,
+      workspaces: repos.map((r) => r.name)
+    })
+  );
 }
 
-run().catch(err => {
-  console.error(err);
-  process.exit(1);
-}).finally(() => prisma.$disconnect());
+run()
+  .catch((err) => {
+    console.error(err);
+    process.exit(1);
+  })
+  .finally(() => prisma.$disconnect());
 `;
 }
 
 /**
- * Synchronize rulesync workspaces into OpenLIT's projects and databaseconfig tables.
+ * Synchronize the canonical SimulatorLife/AutoDev OpenLIT project and rulesync workspace architecture.
  */
 export async function syncRulesyncWorkspaces(
   options: SyncWorkspacesOptions = {}
@@ -235,25 +326,36 @@ export async function syncRulesyncWorkspaces(
   );
 
   const parsed = JSON.parse(stdout.trim()) as {
-    inserted?: string[];
-    unchanged?: string[];
+    organisation?: string;
+    project?: string;
+    environment?: string;
+    collapsedProjects?: string[];
+    workspaces?: string[];
   };
 
   return {
+    organisation: parsed.organisation ?? "SimulatorLife",
+    project: parsed.project ?? "AutoDev",
+    environment: parsed.environment ?? "production",
     totalWorkspaces: catalog.size,
-    inserted: parsed.inserted ?? [],
-    unchanged: parsed.unchanged ?? []
+    workspaces: parsed.workspaces ?? [...catalog.keys()],
+    collapsedProjects: parsed.collapsedProjects ?? []
   };
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   syncRulesyncWorkspaces()
     .then((result) => {
-      writeLine(
-        `Synchronized ${result.totalWorkspaces} rulesync workspaces to OpenLIT Projects:`
-      );
-      writeLine(`  Inserted:  ${result.inserted.length}`);
-      writeLine(`  Unchanged: ${result.unchanged.length}`);
+      writeLine("Synchronized OpenLIT project architecture for AutoDev:");
+      writeLine(`  Organisation:      ${result.organisation}`);
+      writeLine(`  Project:           ${result.project}`);
+      writeLine(`  Environment:       ${result.environment}`);
+      writeLine(`  Total Workspaces:  ${result.totalWorkspaces}`);
+      if (result.collapsedProjects.length > 0) {
+        writeLine(
+          `  Collapsed Silos:   ${result.collapsedProjects.join(", ")}`
+        );
+      }
       process.exitCode = 0;
       return result;
     })

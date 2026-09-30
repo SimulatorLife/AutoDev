@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Synchronize rulesync workspaces from .github/workflows/weights.json into OpenLIT Projects (Prisma / SQLite).
+# Synchronize canonical SimulatorLife/AutoDev project and rulesync workspace architecture in OpenLIT (Prisma / SQLite).
 
 set -euo pipefail
 

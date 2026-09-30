@@ -56,19 +56,27 @@ test("loadRulesyncWorkspaces extracts all 5 canonical workspaces from weights.js
   assert.equal(racingGame.weight, 1);
 });
 
-test("syncRulesyncWorkspaces synchronizes workspaces idempotently to OpenLIT projects", async () => {
+test("syncRulesyncWorkspaces synchronizes canonical AutoDev project under SimulatorLife organisation and collapses silos idempotently", async () => {
   try {
     const result1 = await syncRulesyncWorkspaces({ repositoryRoot });
+    assert.equal(result1.organisation, "SimulatorLife");
+    assert.equal(result1.project, "AutoDev");
+    assert.equal(result1.environment, "production");
     assert.equal(result1.totalWorkspaces, 5);
+    assert.ok(result1.workspaces.includes("SimulatorLife/AutoDev"));
+    assert.ok(result1.workspaces.includes("SimulatorLife/RacingGame"));
 
-    // Second run must be completely unchanged (idempotent)
+    // Second run must be completely idempotent (0 collapsed silos)
     const result2 = await syncRulesyncWorkspaces({ repositoryRoot });
-    assert.equal(result2.inserted.length, 0, "Second run should insert 0");
+    assert.equal(result2.organisation, "SimulatorLife");
+    assert.equal(result2.project, "AutoDev");
+    assert.equal(result2.environment, "production");
     assert.equal(
-      result2.unchanged.length,
-      5,
-      "All 5 workspaces must be reported unchanged"
+      result2.collapsedProjects.length,
+      0,
+      "Second run should have 0 projects to collapse"
     );
+    assert.equal(result2.totalWorkspaces, 5);
   } catch (error) {
     const message = (error as Error).message;
     if (

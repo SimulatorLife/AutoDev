@@ -107,7 +107,10 @@ OPENLIT_DB_PASSWORD="$OPENLIT_DB_PASSWORD" node "$REPO_ROOT/src/platform/sync-ru
 echo "==> Synchronizing rulesync agent roles to OpenLIT Agents Hub"
 OPENLIT_DB_PASSWORD="$OPENLIT_DB_PASSWORD" node "$REPO_ROOT/src/platform/sync-rulesync-agents.ts" || echo "Warning: agent synchronization failed" >&2
 
-echo "==> Synchronizing rulesync workspaces to OpenLIT Projects"
+echo "==> Synchronizing AutoDev provider models & pricing catalog to OpenLIT"
+node "$REPO_ROOT/src/platform/sync-rulesync-models.ts" || echo "Warning: model synchronization failed" >&2
+
+echo "==> Synchronizing AutoDev project and workspace architecture in OpenLIT"
 node "$REPO_ROOT/src/platform/sync-rulesync-workspaces.ts" || echo "Warning: workspace synchronization failed" >&2
 
 echo "==> OpenLIT stack started (container build/runtime still requires acceptance probes)."
