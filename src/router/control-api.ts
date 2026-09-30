@@ -1,5 +1,8 @@
 import { timingSafeEqual } from "node:crypto";
+import { existsSync, readFileSync } from "node:fs";
 import { type IncomingMessage, type ServerResponse } from "node:http";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 import { SpanStatusCode } from "@opentelemetry/api";
 
@@ -17,7 +20,8 @@ export const CONTROL_API_PATHS = {
   providers: "/control/providers",
   mcps: "/control/mcps",
   skills: "/control/skills",
-  runtime: "/control/runtime"
+  runtime: "/control/runtime",
+  workspaces: "/control/workspaces"
 } as const;
 
 const PROVIDER_ROLE_PATH =
@@ -359,6 +363,51 @@ function runtimeView(now: number): Record<string, unknown> {
   };
 }
 
+export interface ControlWorkspaceEntry {
+  readonly name: string;
+  readonly baseBranch: string;
+  readonly weight: number;
+}
+
+const DEFAULT_REPO_ROOT = fileURLToPath(new URL("../..", import.meta.url));
+
+export function loadConfiguredWorkspaces(
+  repositoryRoot: string = DEFAULT_REPO_ROOT
+): ControlWorkspaceEntry[] {
+  const weightsPath = path.join(
+    repositoryRoot,
+    ".github",
+    "workflows",
+    "weights.json"
+  );
+  if (!existsSync(weightsPath)) return [];
+  try {
+    const raw = JSON.parse(readFileSync(weightsPath, "utf8")) as {
+      repositories?: ControlWorkspaceEntry[];
+    };
+    return (raw.repositories ?? []).map((repo) => ({
+      name: repo.name,
+      baseBranch: repo.baseBranch ?? "main",
+      weight: repo.weight ?? 0
+    }));
+  } catch {
+    return [];
+  }
+}
+
+function workspacesView(
+  repositoryRoot: string = DEFAULT_REPO_ROOT
+): Record<string, unknown> {
+  const workspaces = loadConfiguredWorkspaces(repositoryRoot);
+  return {
+    schema: "autodev-control-workspaces-v1",
+    source: "weights.json",
+    readOnly: true,
+    totalWorkspaces: workspaces.length,
+    workspaces
+  };
+}
+
 async function persistProviderRole(): Promise<void> {
   const persisted = await getDefaultPersistenceManager().persistNow();
   if (!persisted) throw new Error("Provider policy persistence failed.");
@@ -565,7 +614,9 @@ function readOnlyCollection(
           ? skillsView()
           : pathname === CONTROL_API_PATHS.runtime
             ? runtimeView(now)
-            : null;
+            : pathname === CONTROL_API_PATHS.workspaces
+              ? workspacesView()
+              : null;
   if (!body) return false;
   if (method !== "GET") {
     auditMutation({

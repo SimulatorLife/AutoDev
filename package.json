@@ -15,6 +15,7 @@
     "autodev": "node src/cli/autodev.ts",
     "openlit:sync-prompts": "node src/platform/sync-rulesync-prompts.ts",
     "openlit:sync-agents": "node src/platform/sync-rulesync-agents.ts",
+    "openlit:sync-workspaces": "node src/platform/sync-rulesync-workspaces.ts",
     "install:codex": "bash scripts/install.sh",
     "validate:inventory": "AUTODEV_ENFORCE_INVENTORY=1 node --test tests/inventory/repository-inventory.test.ts",
     "lint": "eslint . --cache --max-warnings=0 --report-unused-disable-directives",

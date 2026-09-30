@@ -233,6 +233,15 @@ test("viewer reads control resources; MCP and Skills views contain configuration
     assert.equal(runtime.response.statusCode, 200);
     assert.equal("otelReceiver" in runtime.body, false);
     assert.equal("subagents" in runtime.body, false);
+
+    const workspaces = await call("GET", CONTROL_API_PATHS.workspaces, {
+      actor: "viewer-a"
+    });
+    assert.equal(workspaces.response.statusCode, 200);
+    assert.equal(workspaces.body.schema, "autodev-control-workspaces-v1");
+    assert.equal(workspaces.body.source, "weights.json");
+    assert.ok(Array.isArray(workspaces.body.workspaces));
+    assert.equal(workspaces.body.totalWorkspaces, 5);
   } finally {
     setExecutionContractForTests(priorContract);
     restoreEnv(saved);

@@ -107,6 +107,9 @@ OPENLIT_DB_PASSWORD="$OPENLIT_DB_PASSWORD" node "$REPO_ROOT/src/platform/sync-ru
 echo "==> Synchronizing rulesync agent roles to OpenLIT Agents Hub"
 OPENLIT_DB_PASSWORD="$OPENLIT_DB_PASSWORD" node "$REPO_ROOT/src/platform/sync-rulesync-agents.ts" || echo "Warning: agent synchronization failed" >&2
 
+echo "==> Synchronizing rulesync workspaces to OpenLIT Projects"
+node "$REPO_ROOT/src/platform/sync-rulesync-workspaces.ts" || echo "Warning: workspace synchronization failed" >&2
+
 echo "==> OpenLIT stack started (container build/runtime still requires acceptance probes)."
 echo "    Image tag:       $IMAGE_TAG"
 echo "    Image lock:      $LOCK_FILE"
