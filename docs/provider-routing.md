@@ -863,43 +863,21 @@ history. Rotate logs by restarting the router: launchd closes and reopens the
 log file handles, and the ensure hook reuses the same fallback PID file
 without leaking a stale tracker.
 
-### Provider administration, disable semantics, and loopback controls
+### Provider administration and disable semantics
 
-The router exposes a loopback-restricted administrative endpoint for enabling and disabling
-individual providers dynamically at runtime without restarting the daemon:
+Provider role enablement is mutable runtime/configuration state. The supported control boundary is the dedicated AutoDev Control API, not the model-router HTTP surface:
 
-```http
-POST /v1/providers/:provider
-Content-Type: application/json
+- `GET /control/providers` returns provider configuration and current role enablement.
+- `PATCH /control/providers/:provider/roles/:role` accepts only `{"enabled": boolean}`.
+- Mutations require operator authorization, are audited, persist atomically, and roll back the in-memory change when persistence fails.
 
-{ "enabled": false }
-```
-
-#### Loopback mutation endpoint specification
-
-- **Loopback-only access:** Enforced via `isLoopbackAddress` on the incoming socket
-  `remoteAddress` (`127.0.0.1`, `::1`, `::ffff:127.0.0.1`, and `localhost`). Calls from
-  non-loopback IP addresses are rejected immediately with HTTP 403 `router_access_denied`.
-- **HTTP method restriction:** Only `POST` is permitted; other methods return HTTP 405
-  `router_method_not_allowed` with `Allow: POST`.
-- **Provider validation:** `:provider` is trimmed case-insensitively and validated against
-  configured providers and registered routes; unknown providers return HTTP 404
-  `router_unknown_provider`.
-- **Payload validation:** The body must contain `role` (`"orchestrator"` or `"subagent"`)
-  and boolean `enabled`, for example `{ "role": "orchestrator", "enabled": false }`.
-  Invalid JSON, role, or enabled values return HTTP 400.
-- **Response shape:** Success returns HTTP 200 JSON containing `ok`, `provider`, `role`,
-  `enabled`, and the role's resulting status.
+The router may retain a loopback-only direct mutation endpoint temporarily as a compatibility implementation detail while callers migrate, but it is not an AutoDev Console/API contract and must not be used by new UI or automation. The canonical target is to remove duplicate mutation paths.
 
 #### Persistence and default behavior
 
 - **Default state:** Every configured provider starts enabled for both roles.
-- **Immediate atomic persistence:** Each role mutation immediately calls
-  `persistRouterStateNow()` and writes `disabledOrchestratorProviders` and
-  `disabledSubagentProviders` atomically to `$CODEX_HOME/codex-router-state.json`.
-- **Survives restarts:** `loadRouterState()` restores both role-specific arrays.
-  The persistence envelope is version `v4`; old single-toggle state is not migrated.
-
+- **Immediate atomic persistence:** A successful role mutation persists `disabledOrchestratorProviders` and `disabledSubagentProviders` atomically to `$CODEX_HOME/codex-router-state.json`.
+- **Survives restarts:** router-state loading restores both role-specific arrays.
 
 #### Disable semantics across routing tiers
 
@@ -928,11 +906,9 @@ The retired router HTML dashboard is not a control surface. Provider-role mutati
 - The AutoDev Console may render these controls under **Agents**/provider detail views, but browser UI code must call the authenticated Control API path rather than a router-local dashboard endpoint.
 
 
-### Local, provider-controlled workspace telemetry
+### Local provider/workspace diagnostics
 
-The router extends the `usage.byWorkspace` contract with first-class event
-counters so the dashboard can fail closed on per-workspace tool and skill
-attribution. A workspace must receive a first-class event from a provider
+The router extends the live `usage.byWorkspace` diagnostic contract with first-class event counters so attribution can fail closed on per-workspace tool and skill evidence. A workspace must receive a first-class event from a provider
 bridge before its `byTool` and `bySkill` rows move off the `unavailable`
 state; OTLP datapoints alone are not sufficient because the OTLP exporter
 only describes what Codex's own runtime emitted.
@@ -943,7 +919,7 @@ The new fields on every `usage.byWorkspace[*]` bucket are:
   this workspace. Reaching a positive value is what unlocks per-workspace
   tool attribution.
 - `toolsRequested`: count of `tool_requested` events. A model that asked
-  for a tool but never ran it still moves this counter so the dashboard can
+  for a tool but never ran it still moves this counter so diagnostics can
   distinguish "the provider never offered the tool" from "the provider
   offered it but something stopped it from running".
 - `toolsUnavailable`: count of `tool_unavailable` events with the workspace
@@ -956,19 +932,12 @@ The new fields on every `usage.byWorkspace[*]` bucket are:
   `toolsExecuted`/`skillsExposed` because it counts unjoined coverage rather
   than first-class evidence.
 - `bridgeTools`: the raw `tool_executed` rows the bridge reported for this
-  workspace (`{ tool, server, count, byStatus }`). The dashboard's per-workspace
-  "Tools" section prefers the OTLP-sourced `byTool` join and falls back to
-  `bridgeTools` only when `byTool` is unavailable or empty, so the two are
-  never summed into the same total.
+  workspace (`{ tool, server, count, byStatus }`). It is bridge evidence and must not be summed with OTLP-sourced `byTool` into the same total.
 - `bridgeSkills`: the raw `skill_exposed` rows the bridge reported for this
   workspace (`{ skill, count }`) -- evidence a skill was made available to the
   workspace, not that it was used. This is a distinct claim from `bySkill`
   (confirmed uses, the same source as `skillUses`): a workspace can have
-  `bridgeSkills` entries with zero `bySkill` entries. The dashboard displays
-  them together in the "Skills" section as `uses / exposed` (e.g.
-  `orchestration 0 / 1` or `lsp-mcp-server 5 / 10`) rather than folding
-  exposure into confirmed uses or treating an exposed workspace as if nothing
-  were observed there.
+  `bridgeSkills` entries with zero `bySkill` entries. Consumers must keep exposure and confirmed use distinct rather than folding them into one count.
 
 The companion OTLP metric `codex.tool_result` is the runtime-causal "the
 tool call landed" signal. Each datapoint carries a `call_id` (the same id
@@ -979,9 +948,7 @@ result against the call id and reports:
   tool call (unique `call_id`).
 - `unattributed`: number of result events whose `call_id` was either missing
   or had already been counted under another datapoint. This is the raw
-  coverage the dashboard reports as "executed / unattributed" so the
-  difference between "we observed N result events" and "we observed N
-  executed tools" is visible without reading the OTLP JSON.
+  coverage needed to distinguish observed result events from causally resolved executed tools.
 
 The router also persists a derived snapshot of the local Codex state
 database under `status.codexState`. The collector is read-only, opens
