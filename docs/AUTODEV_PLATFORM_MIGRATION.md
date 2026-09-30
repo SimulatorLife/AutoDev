@@ -2,6 +2,9 @@
 
 > Correctness pass against the current `SimulatorLife/AutoDev` repository and the audited upstream repositories as of 2026-09-14
 
+> Corrected observability ownership and the only active observability roadmap live in
+> [docs/observability-target-state.md](observability-target-state.md). This document retains the broader platform-migration history. Earlier Collector, semantic-enricher, and dashboard proposals below are historical where they conflict with that canonical target; do not use them as current observability instructions.
+
 ## Executive decision
 
 The previous direction was broadly correct but too aggressive in three places: it treated AutoDev as if it still needed to become a monorepo, treated Rulesync as if it could replace AutoDev's role/execution contract, and treated LiteLLM/router retirement as an expected destination rather than a compatibility-gated option.
@@ -14,9 +17,9 @@ The corrected target is:
 | Role/capability semantics, read-only policy, spawn semantics | Keep | AutoDev |
 | Provider-selection policy | Keep initially | AutoDev |
 | Cross-provider rules/skills/MCP/hooks/permissions translation | Adopt | Rulesync |
-| Standard OTLP receive/process/export | Adopt | OpenTelemetry Collector |
+| Standard OTLP receive/process/export | Use OpenLIT's bundled OTLP Collector/receiver by default; add a separate Collector only for a documented policy need | OpenLIT |
 | Provider transport/Responses normalization | Pilot per provider | LiteLLM |
-| Stateful workspace/skill/subagent telemetry enrichment | Keep | AutoDev |
+| Workspace/role/skill/subagent context | Emit at the operation-owning producer using standard OTel or minimal AutoDev-specific semantics; no generic historical aggregator | AutoDev producers / OpenLIT |
 | Codex/OpenAI subscription access | Keep OAuth-native | Codex native model provider |
 | Claude subscription access | Prefer OAuth-native Codex provider if parity is proven | Current Claude CLI bridge until a replacement passes all gates |
 | Antigravity subscription access | Prefer OAuth-native Codex provider if parity is proven | Current Antigravity CLI bridge until a replacement passes all gates |
@@ -27,7 +30,7 @@ The corrected target is:
 | Alternative gateway | Contingency only | Bifrost |
 | Agent-config package distribution | Defer | Grimoire if later needed |
 
-**Architectural rule:** Codex is the agent runtime. AutoDev owns **GitHub orchestration, capability/policy semantics, Codex-specific invariants, workspace/session attribution, and cross-provider subagent semantics**. Upstream dependencies own **portable provider configuration, standard provider transports where proven, and standard telemetry transport**. Direct OAuth/API-backed Codex model providers are the preferred simplification target, but provider CLIs and bridges remain supported incumbent paths until a candidate replacement has been verified against AutoDev's full contract. CLI removal is an outcome of successful validation, not an assumption of the migration.
+**Architectural rule:** Codex is the agent runtime. AutoDev retains SimulatorLife-specific GitHub orchestration, capability/policy semantics, Codex invariants, and provider-selection behavior. Provider CLI removal remains gated on full contract parity. The observability-specific ownership, OpenLIT extension, target, and migration status are maintained only in [docs/observability-target-state.md](observability-target-state.md).
 
 ---
 
@@ -128,18 +131,7 @@ Source: [`docs/provider-routing.md`](https://github.com/SimulatorLife/AutoDev/bl
 
 ## Telemetry semantics
 
-AutoDev currently receives Codex OTLP at `/v1/logs`, `/v1/traces`, and `/v1/metrics`, but the dashboard also performs stateful AutoDev-specific attribution:
-
-- `conversation.id` to Codex `state_5.sqlite` thread/workspace joins
-- Rollout-derived skill attribution
-- Native versus bridge tool attribution with precedence rules
-- Bridge-native subagent events invisible to native Codex OTLP
-- Fail-closed `unavailable` versus `0` semantics
-- GitHub automation metrics
-
-Source: [`docs/metrics-dashboard.md`](https://github.com/SimulatorLife/AutoDev/blob/main/docs/metrics-dashboard.md)
-
-**Conclusion:** OpenTelemetry Collector can replace generic OTLP transport plumbing, but not these semantic joins and attribution rules
+The preceding receiver and attribution description is an incumbent-state audit, not the target architecture. The active ownership contract, producer semantics, OpenLIT integration, gaps, migration gates, and handoff are maintained only in [`docs/observability-target-state.md`](observability-target-state.md). The target places verified context at its owning producer and sends standard OTLP to OpenLIT; it does not retain a generic AutoDev historical semantic aggregator.
 
 ---
 
@@ -337,6 +329,8 @@ Do not use Collector as a substitute for:
 - AutoDev fail-closed attribution semantics
 
 ### Correct migration shape
+
+> Historical Phase 3 intermediate design. The tee into an AutoDev semantic aggregator is superseded by the canonical OpenLIT target; do not extend it as the final topology.
 
 Insert Collector first as a **tee**, not a replacement:
 
@@ -609,6 +603,8 @@ native provider endpoints
 This is an option, not a required end state. Native/provider-direct setup and removal of a provider CLI do **not** require LiteLLM to own AutoDev's provider-selection policy
 
 ## Telemetry path
+
+> Historical topology from the broader platform audit. The active topology and Collector decision are in [`docs/observability-target-state.md`](observability-target-state.md).
 
 ```text
 Codex native OTLP -----\
@@ -1582,11 +1578,13 @@ Rulesync-generated portable surfaces are behaviorally equivalent and preserve un
 
 ---
 
-## Phase 3 — Insert OpenTelemetry Collector as OTLP ingress
+## Phase 3 — Insert OpenTelemetry Collector as OTLP ingress (historical intermediate)
 
 Pin an exact tested Collector build
 
 ### Status
+
+> This phase records implementation and validation of the incumbent pass-through Collector. It is historical evidence, not a permanent target or prerequisite; the canonical target uses OpenLIT's bundled receiver and removes the AutoDev-owned pass-through unless a documented policy need changes the decision.
 
 The Phase 3 runtime slice is implemented as a reversible, opt-in local
 Collector ingress. The pinned build remains `v0.160.0`; the platform artifact
@@ -2501,7 +2499,7 @@ After successful provider transport migrations, separate router responsibilities
 - Provider-limit semantics that are not delegated
 - Workspace/session continuity
 - Required Responses compatibility repairs
-- AutoDev semantic telemetry
+- Producer-owned context and domain-specific OTel observations needed by the Control API; no generic historical aggregator (see `docs/observability-target-state.md`)
 - Any provider-specific behavior for which no validated dependency replacement exists
 
 ### Delete only where upstream demonstrably owns it
@@ -2548,27 +2546,11 @@ Keep AutoDev selection policy. This is acceptable if it remains small and domain
 
 ---
 
-## Phase 8 — Split telemetry transport from AutoDev semantic enrichment
+## Phase 8 — OpenLIT observability migration
 
-Once Collector is stable:
+The previous Phase 8 plan to keep an AutoDev semantic enricher and AutoDev-specific observability UI is superseded. The only active observability target, progress, open gaps, and cutover gates are in [`docs/observability-target-state.md`](observability-target-state.md).
 
-- Make the AutoDev telemetry component consume standard OTel-derived events instead of acting as a generic OTLP server
-- Convert bridge/adapter child events to normal OTel logs/spans where practical
-- Keep stateful local joins in the AutoDev enricher
-- Select a local telemetry backend separately if generic querying/history is needed
-- Remove generic dashboard panels already better served by LiteLLM or the selected telemetry backend
-
-### Keep AutoDev UI only for AutoDev-specific views
-
-- Orchestrator/subagent topology
-- Role activity
-- Workspace attribution
-- Skill exposure/use
-- MCP exposure/use
-- GitHub automation
-- AutoDev provider-policy state
-
----
+AutoDev retains producer-owned telemetry context and the typed runtime Control API. OpenLIT owns observability persistence, querying, tracing, and dashboards. AutoDev-specific Providers, MCPs, Skills, and Runtime controls are isolated in the OpenLIT `/autodev` extension; they do not duplicate historical observability charts. Upstream acceptance of AutoDev's small OpenLIT patch is optional.
 
 ## Phase 9 — Re-evaluate deeper Rulesync role migration
 
@@ -2596,7 +2578,7 @@ Only now test whether Rulesync can replace more AutoDev role rendering
 ## Phase 10 — Final cleanup
 
 - Remove launch agents and ensure scripts only for provider CLI/proxy services that have actually been retired
-- Keep bootstrap/service lifecycle for Collector, LiteLLM, retained bridges/adapters, MCP runtime, and AutoDev edge as needed
+- Keep bootstrap/service lifecycle for OpenLIT, LiteLLM, retained bridges/adapters, MCP runtime, and AutoDev edge as needed; do not retain an AutoDev-owned pass-through Collector absent the policy need recorded in `docs/observability-target-state.md`
 - Remove unreachable compatibility shims
 - Update docs and diagrams
 - Keep rollback fixtures as regression tests
@@ -2646,9 +2628,7 @@ Only now test whether Rulesync can replace more AutoDev role rendering
 
 ## Telemetry
 
-- Which local backend, if any, should store/query generic OTel data
-- Whether incumbent `/v1/agent-events` semantics can be fully replaced with normal OTel events for each provider that successfully migrates away from its bridge
-- Which current dashboard panels remain valuable after generic observability moves upstream
+The backend/UI choice and active observability gaps are resolved or tracked in [`docs/observability-target-state.md`](observability-target-state.md). That document is the only observability plan and progress ledger. Any remaining provider event-semantic gap must be recorded there with source evidence and an exit test.
 
 ---
 
@@ -2657,7 +2637,7 @@ Only now test whether Rulesync can replace more AutoDev role rendering
 ## Conditional deletion targets
 
 - Repeated cross-provider rules/MCP/hooks/permissions translation where Rulesync reaches parity
-- Generic OTLP HTTP receive/process/export plumbing where Collector reaches parity
+- AutoDev-owned pass-through OTLP Collector and router receiver/aggregation after the OpenLIT cutover gate passes, unless a documented policy need changes the target
 - Antigravity CLI Responses bridge only after OAuth-native provider parity
 - Copilot CLI/Responses proxy only after OAuth-native provider parity
 - MiniMax Responses proxy only after direct/shared API parity
@@ -2674,8 +2654,8 @@ Only now test whether Rulesync can replace more AutoDev role rendering
 - MCP launcher/runtime boundary
 - Small Codex/AutoDev compatibility edge
 - Provider-selection policy if LiteLLM cannot model it cleanly
-- Stateful telemetry enricher
-- AutoDev-specific dashboard/status views
+- Producer-owned semantic context required for correct standard OTel
+- Typed AutoDev Control API and isolated OpenLIT `/autodev` control pages; no parallel observability dashboard
 - Provider CLI bridges or narrow adapters for any provider whose candidate replacement does not satisfy the full contract
 
 The success criterion is therefore **not “delete the router or provider CLIs at all costs.”** It is to leave AutoDev with only the code that is still justified by SimulatorLife/AutoDev-specific semantics or by gaps in available dependencies, while preferring normal Codex model-provider entries and standard OAuth/API transports wherever they have been proven to replace the incumbent implementation safely

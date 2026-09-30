@@ -7,6 +7,10 @@ const skillPath = new URL(
   ".rulesync/skills/opentelemetry/SKILL.md",
   repositoryRoot
 );
+const targetStatePath = new URL(
+  "docs/observability-target-state.md",
+  repositoryRoot
+);
 const materializerPath = new URL(
   "src/platform/install-materializer.ts",
   repositoryRoot
@@ -33,7 +37,7 @@ test("opentelemetry skill is a repository-only canonical skill", () => {
   );
   assert.doesNotMatch(front, /^targets:/mu);
 
-  // AutoDev-only development skill: must never be in user-level SKILLS
+  // AutoDev-only development skill: must never be in user-level SKILLS.
   const materializerContent = readFileSync(materializerPath, "utf8");
   const skillsMatch = /export const SKILLS = \[(.*?)\]/su.exec(
     materializerContent
@@ -41,8 +45,9 @@ test("opentelemetry skill is a repository-only canonical skill", () => {
   assert.ok(skillsMatch?.[1] !== undefined);
   assert.doesNotMatch(skillsMatch[1], /"opentelemetry"/);
 
-  // Verifies required section headings
+  // Required reusable OTel sections and project-specific source-of-truth pointer.
   assert.match(body, /^# OpenTelemetry$/mu);
+  assert.match(body, /^## AutoDev target-state pointer$/mu);
   assert.match(body, /^## Ownership boundaries$/mu);
   assert.match(body, /^## Semantic conventions$/mu);
   assert.match(body, /^## Attribute placement$/mu);
@@ -51,13 +56,25 @@ test("opentelemetry skill is a repository-only canonical skill", () => {
   assert.match(body, /^## Collector rules$/mu);
   assert.match(body, /^## Review checklist$/mu);
   assert.match(body, /^## Architectural preference$/mu);
+  assert.match(body, /docs\/observability-target-state\.md/);
 
-  // Verifies core architectural principles
+  // The canonical target document carries the maintenance rule future agents need.
+  const targetState = readFileSync(targetStatePath, "utf8");
   assert.match(
+    targetState,
+    /single living source of truth for AutoDev observability architecture/
+  );
+  assert.match(targetState, /update it in the same change\/PR/);
+  assert.match(targetState, /upstreaming is optional and never a prerequisite/);
+
+  // Project-specific architecture must not regress to the old local aggregator target.
+  assert.match(body, /OpenLIT bundled Collector\/receiver/);
+  assert.match(body, /authenticated AutoDev Control API/);
+  assert.doesNotMatch(
     body,
     /producer → OTel\/OTLP → Collector → AutoDev semantic aggregation/
   );
-  assert.match(
+  assert.doesNotMatch(
     body,
     /Keep \*\*stateful\/domain-specific interpretation\*\* in AutoDev/
   );
@@ -67,6 +84,6 @@ test("opentelemetry skill is a repository-only canonical skill", () => {
   );
   assert.match(
     body,
-    /Never fabricate an attribute because a schema provides a field/
+    /Never fabricate an attribute because a schema has a field/
   );
 });

@@ -1,3 +1,5 @@
+> **Incumbent-system runbook:** This document describes the current router-hosted dashboard only. The single source of truth for its target, decisions, gaps, migration progress, validation, and handoff is [docs/observability-target-state.md](observability-target-state.md). Keep this file limited to current operation until cutover; update the canonical ledger in the same change.
+
 # AutoDev metrics dashboard
 
 The live dashboard is maintained in the [AutoDev Metrics Dashboard issue](https://github.com/SimulatorLife/AutoDev/issues/2).
