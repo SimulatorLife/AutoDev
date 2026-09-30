@@ -462,3 +462,66 @@ Use existing projects as architecture/interaction references rather than inventi
 | **LangWatch** | overall product UX | unified AI observability + operational/provider/gateway controls |
 | **MCPJam Inspector** | MCP detail/debugging | tools/resources/prompts, connection state, requests, logs, auth/activity inspection |
 | **Unleash** | Skills/scoped capabilities | enabled state plus targeting/constraints/role/workspace scope |
+| **Argo CD** | desired versus actual state | desired/live state, health, pending operations, convergence, errors/history |
+| **Backstage** | modular console architecture | cohesive top-level modules/routes instead of one monolithic settings area |
+
+Use interaction models and architecture; copy source only after reviewing the exact license/dependency boundary.
+
+## 15. Tests and acceptance
+
+### Generic dashboard/filtering
+- stock OpenLIT time range;
+- typed workspace/provider/model/role/skill bindings where supported;
+- All/multi-select;
+- URL/saved-state persistence;
+- widget opt-in;
+- safe parameterization;
+- fail-closed unsupported scopes/signals.
+
+### Telemetry
+- one logical request versus N physical attempts;
+- no duplicated token/cost/latency accounting;
+- cache-read unavailable semantics;
+- bounded dimensions;
+- privacy/redaction;
+- source-owned workspace/role/provider/model attribution;
+- MCP and skill observations only when evidence exists.
+
+### RuleSync/configuration
+- canonical RuleSync sources round-trip through the pinned generator;
+- generated provider configs are deterministic projections;
+- no editable duplicate authority remains after each migration slice;
+- role/skill/MCP/permission behavior remains equivalent across supported targets;
+- console mutations update canonical RuleSync state and then reconcile runtime state.
+
+### Control
+- authenticated/authorized reads and mutations;
+- CSRF and scoped service credential;
+- viewer/operator boundaries;
+- audit record and bounded mutation telemetry;
+- desired/actual/pending/error convergence;
+- OTLP/query paths cannot mutate AutoDev.
+
+### Fork/upgrades
+- pinned OpenLIT revision and patch application;
+- upstream upgrade regression suite;
+- singleton tenancy behavior;
+- AutoDev navigation/modules;
+- storage/query/receiver behavior unchanged unless explicitly approved.
+
+Do not remove an incumbent path until the replacement has end-to-end evidence. Do not keep permanent compatibility paths after cutover.
+
+## 16. Secondary-document policy
+
+- `docs/AUTODEV_PLATFORM_MIGRATION.md` remains historical/broader platform context. Any older observability or RuleSync ownership guidance that conflicts with this document is superseded.
+- `.rulesync/skills/opentelemetry/SKILL.md` contains reusable OTel engineering rules and must point here for AutoDev-specific decisions.
+- This document replaces the former `docs/observability-target-state.md` and `docs/metrics-dashboard.md`; do not recreate separate competing target/runbook documents.
+- OpenLIT and OTel upstream behavior is evidence and a dependency to pin/test, not a prerequisite for AutoDev to ship local extensions.
+
+## Final target
+
+The target is **not** "OpenLIT with an AutoDev settings page."
+
+It is:
+
+> **An AutoDev control and observability console built as an AutoDev-centric OpenLIT distribution: retain OpenLIT's OpenTelemetry-native ingestion, storage, querying and observability foundations; collapse its generic organisation/project/environment product model; make agents, workspaces, providers, models, MCP servers, skills, routing and runtime configuration first-class resources; use RuleSync as the canonical source for agent-facing configuration it supports; and combine desired configuration, actual runtime state, and historical telemetry in one coherent product without conflating the control and observability planes.**
