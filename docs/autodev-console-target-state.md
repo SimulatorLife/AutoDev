@@ -275,3 +275,111 @@ Configured/Enabled → Eligible → Exposed/Selected → Used
 **Routing**
 - provider/model priority and fallback policy;
 - limits/cooldowns/concurrency;
+- logical request versus physical attempt diagnostics.
+
+### Usage
+
+Keep a single **Usage** dashboard; do not add a redundant Analytics page.
+
+Use OpenLIT's stock time-range control. Generic dashboard variables should support typed single/multi-select + All with URL/dashboard persistence. Target variables include:
+
+- workspace;
+- provider;
+- requested model;
+- agent/role;
+- skill where the queried telemetry actually carries skill identity safely.
+
+Widgets opt in only to variables whose semantics apply. Bind user selections through typed parameterized query inputs; never concatenate user-controlled SQL.
+
+## 8. Telemetry contract
+
+### Logical requests versus physical attempts
+
+A logical routed request and physical provider/model attempts are different observations:
+
+```text
+AutoDev logical routed request
+├── GenAI provider/model attempt 1
+└── GenAI provider/model attempt 2 (fallback/retry)
+```
+
+For a failed OpenAI attempt followed by successful Anthropic fallback, count **one logical request and two physical attempts**.
+
+- Provider reliability, attempt latency, tokens, cache use, and provider cost belong to attempt spans/metrics.
+- End-to-end duration and final outcome belong to the logical routed request.
+- Do not copy attempt token/cost totals to the parent and count them again.
+- Keep `autodev.requested_model` for the caller's routed model when needed across parent/attempt levels; keep `gen_ai.request.model` for the physical upstream target.
+
+### Semantic conventions
+
+- Prefer current official `gen_ai.*` and MCP conventions.
+- The current MCP convention pin is `open-telemetry/semantic-conventions-genai@bcc7f9c2856fa7f4feb753f54d4ebba9455cc3dc` (2026-09-29); it is a Development contract and must be revalidated when producer semantics change.
+- Use standard input/output/cache token attributes where reported.
+- Cache-read rate is cached input tokens divided by input tokens for attempts where both are available; missing evidence renders **unavailable**, not zero.
+- Keep IDs, raw paths, URLs, prompts/responses, credentials, raw tool arguments/results, and free-form errors out of metric dimensions.
+- Keep metric dimensions bounded and stable.
+- Attach provider/model/role/workspace context at the producer that actually knows it. Do not infer missing attribution downstream merely to satisfy a dashboard.
+
+### MCP
+
+The AutoDev Codex-tools MCP shim owns the server-side `tools/call` round trip. Its span duration is the MCP shim's round-trip duration, not Codex's downstream tool execution duration. Preserve W3C trace context where available and export only bounded categorical/error metadata.
+
+### Skills
+
+Use a minimal `autodev.skill.*` semantic contract because no suitable standard skill convention exists. Current trustworthy runtime observations include exposure/use and producer-reported unavailable/error; configuration itself is not runtime proof.
+
+Do not put skill name into broadly aggregated metric dimensions if it creates unbounded cardinality; use traces/events and bounded dashboard queries where appropriate.
+
+## 9. AutoDev Usage dashboard
+
+The current verified Usage board contains seven router widgets plus four MCP widgets:
+
+| View | Semantics |
+| --- | --- |
+| Logical routed requests | one per `autodev.routed_request`, including final failures |
+| Logical requests by agent/role | routed-request activity grouped by bounded role |
+| Input/output tokens | sum on physical GenAI attempts |
+| Cache-read rate | cached input / input where both are reported |
+| P95 attempt latency | physical attempt duration |
+| Physical attempts by provider | attempts grouped by `gen_ai.provider.name` |
+| MCP tool calls | shim-owned `tools/call` round trips |
+| P95 MCP tool-call duration | shim-side MCP span duration |
+| MCP tool-call errors | errored MCP `tools/call` spans |
+| MCP calls by tool | top bounded tool-name groups |
+
+Provider does not filter the logical-request count because a single logical route may touch multiple providers. Provider filters apply to attempt-level widgets.
+
+The pinned ClickHouse adapter maps standard `service.name` queries to ClickHouse's dedicated `ServiceName` projection. Structured trace queries bind time, keys, and values using query parameters; unsupported signal/variable combinations fail closed.
+
+## 10. Control API and authorization
+
+The Control API is the only AutoDev state/action boundary. Target resource families include:
+
+```text
+/control/agents
+/control/providers
+/control/models
+/control/mcps
+/control/skills
+/control/workspaces
+/control/routing
+/control/runtime
+```
+
+Use named typed operations only; no arbitrary command endpoint.
+
+For RuleSync-owned resources, mutations change the canonical RuleSync source and run validation/generation/apply. For runtime-only resources, mutate the authoritative typed AutoDev owner.
+
+The OpenLIT browser should use a same-origin server-side path/proxy. The private AutoDev control listener remains separate from the model/OTLP router listener.
+
+Security requirements:
+
+- authenticated user/session at the console boundary;
+- CSRF protection for browser mutations;
+- scoped service credential from console server to Control API;
+- independently verified actor identity;
+- viewer/operator authorization;
+- least privilege per resource/action;
+- redacted audit record for each mutation;
+- no bearer token, raw actor identifier, secret, or mutation body in telemetry.
+
