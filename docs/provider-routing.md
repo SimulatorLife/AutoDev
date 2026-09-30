@@ -717,9 +717,7 @@ The router cleanly separates user-facing agent workflow activity from transport-
   The router emits `status.agents` with schema `autodev-agent-status-v1`.
   `canonicalLiveCount` is the single canonical live-agent count, evaluated
   from `projectLiveAgents(at)` at the same `now` `getRouterStatus(now)`
-  passes through. The dashboard's `Active agents` KPI reads this field
-  exclusively; it no longer falls back to `status.liveActivity` or
-  `status.usage.totals.active` when the projection is absent. `byState`
+  passes through. Live-status consumers must read this field exclusively rather than falling back to `status.liveActivity` or `status.usage.totals.active`. `byState`
   is the complete tracker histogram (live states, terminal `finished`/
   `failed`, and derived `stale`). `liveByKind` counts only actual agent
   kinds (`session` and `bridge_subagent`), never `subagent_slot`
@@ -734,7 +732,7 @@ The router cleanly separates user-facing agent workflow activity from transport-
   at the same timestamp. The fixture and contract test in
   `tests/fixtures/contracts/agent-reconciliation-contract.json` and
   `tests/agent-reconciliation-contract.test.ts` freeze this shape.
-- **`Active agents` KPI and role breakdown:** The dashboard reads
+- **Canonical live-agent count and role breakdown:** Consumers read
   `status.agents.canonicalLiveCount`, `status.agents.liveByRole`, and
   `status.agents.liveByWorkspace` directly. It never takes a `Math.max()`
   of that canonical count against provider active-request counts
@@ -758,7 +756,7 @@ The router cleanly separates user-facing agent workflow activity from transport-
   admission counters. `status.agents.slotVsAgent` makes their relationship
   with live agents explicit without folding slots into the KPI.
 - **In-flight requests transport diagnostics (`inFlightRequests`):**
-  Represents currently open HTTP connections between the router daemon and upstream model provider endpoints. Surfaced separately in the dashboard's Operational summary (`In-flight requests`) and the Status CLI's dedicated `In-Flight` column.
+  Represents currently open HTTP connections between the router daemon and upstream model provider endpoints. It is surfaced separately in the Status CLI's dedicated `In-Flight` column and must not be conflated with live-agent identity.
 
 ### Lifecycle event contract and configurable TTL
 
@@ -1123,9 +1121,7 @@ time, because that is what a model actually reads. Concurrency denials return HT
 A started stream never ends without a terminal event on any of these paths: an
 exhausted chain, a concrete-request failure, or an internal router error will
 close the stream rather than leaving the caller with a truncated body that is
-indistinguishable from a hung provider. The dashboard's
-`Spawn failures` table renders the recent request IDs by reason so the
-same header can be traced from the API call through the router's event log.
+indistinguishable from a hung provider. Recent spawn failures retain request IDs and reasons in live status/event diagnostics so the same header can be traced from the API call through the router's event log.
 The router's `concurrency.scope` is `router-admitted-child-requests`:
 `activeSubagentThreads` reports only child requests currently admitted by the
 router, not open Codex app child handles or provider CLI processes. Cumulative
