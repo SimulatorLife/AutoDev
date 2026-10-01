@@ -102,3 +102,21 @@ test("documentation keeps one broad target-state authority", () => {
     assert.doesNotMatch(content, /\/Users\/henrykirk/);
   }
 });
+
+
+test("canonical target defines the flat four-module monorepo", () => {
+  const target = readFileSync(targetStatePath, "utf8");
+
+  for (const module of ["console/", "runtime/", "core/", "data/"]) {
+    assert.match(target, new RegExp(`\\b${module.replace("/", "\\/")}`));
+  }
+
+  assert.match(target, /small, flat pnpm TypeScript monorepo/);
+  assert.match(target, /Do not introduce `apps\/`, `packages\/`, or `modules\/` wrapper directories/);
+  assert.match(target, /do not create a package per left-navigation resource/i);
+  assert.match(target, /console\/src\/features\//);
+  assert.match(target, /runtime\/src\/telemetry\//);
+  assert.match(target, /core\/.*infrastructure-independent/s);
+  assert.match(target, /Console must not bypass the Control API/);
+  assert.match(target, /Do not create a separate `ui\/` workspace until there is a real second UI consumer/);
+});
